@@ -4952,7 +4952,7 @@ const AppView = {
     // Leaving whatever thread surface was open: drop the live render
     // target so incoming thread messages turn into badge bumps.
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
-    if (subTab !== 'topic') { AppView._devTopic = null; AppView._paintedTopic = null; AppView._devTopicInPanel = false; }
+    if (subTab !== 'topic') { AppView._devTopic = null; AppView._devTopicInPanel = false; }
     // #4480: a topic PAGE replaces the Workshop, so whatever its side panel
     // held is no longer the panel's. A link inside the panel (a change's
     // "Addresses #N" chip, a plan's request) lands here with the panel still
@@ -5387,7 +5387,7 @@ const AppView = {
         && painted.slug === slug) return;
     if (AppView._findTopicItem()) return;
     const react = AppView._reactDevBoard();
-    if (react) react.publishTopicHead({ card: null, body: null, item: null, loading: true });
+    if (react) react.publishTopicHead?.({ card: null, body: null, item: null, loading: true });
     // The previous thread's stream goes with the body: the same pair
     // `mountThread` runs before a remount (GroupChat.renderThread).
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) {
@@ -10235,11 +10235,11 @@ const AppView = {
     AppView._editingSessionTitle = null;
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
     AppView._devTopic = { kind, id };
-    AppView._devTopicInPanel = true;
     // #6608: switching the panel to another project's change must not leave
     // the previous change's body, votes, events or stream under the new
     // heading while this project's reads are in flight.
     AppView._clearTopicHeadBody();
+    AppView._devTopicInPanel = true;
     AppView._followPanelAddress(kind, id);
     if (kind === 'proposal' || kind === 'session') window.Notifications?.markProposalSeen?.(id);
     AppView._invalidateVoteRoster(id);
