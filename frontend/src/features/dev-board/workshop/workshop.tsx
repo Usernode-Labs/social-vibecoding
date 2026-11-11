@@ -116,6 +116,7 @@ import { ProjectPlaces } from './project-places';
 import {
   ProjectAllItemsFrame, ProjectFrameHead, ProjectHubFrame, ProjectTopicsFrame, ProjectWorkshopFrame, type AllItemRow, type ProjectTab,
 } from './frame/project-frame';
+import { placeRows } from './project-places';
 import { slotCounts, useBotSlots } from './bot-slots';
 import { weekName, weekRange } from './week-pages';
 import { liveSinceLine } from './hub-cards';
@@ -3824,7 +3825,7 @@ export function DevWorkshop(): ReactNode {
   // A topic's channel lights Topics but is the product's own page under
   // the head (its figures, its signals, its room), so the head says so and
   // app.css leaves the body on show.
-  const frameHead = { tabs: frameTabs, tab: frameTab, page: tab.startsWith('c:') && !frameTopics ? 'channel' : undefined, onTab: pickFrameTab, onAsk: askChange, onInvite: inviteHere, onJoin: joinHere };
+  const frameHead = { tabs: frameTabs, tab: frameTab, page: tab.startsWith('c:') && !frameTopics ? 'channel' : undefined, onTab: pickFrameTab, onInvite: inviteHere, onJoin: joinHere };
   // Said the same way on the Hub and in the Workshop: your work with
   // Homeroom bot here, and the approval rule in its short words, the wait
   // as its line.
@@ -3978,6 +3979,7 @@ export function DevWorkshop(): ReactNode {
     if (channel && !recent.length && channel.last_at) recent.push({ content: channel.last_message || '', by: channel.last_by, at: channel.last_at });
     const said = (m: { content: string | null }) => String(m.content || '').replace(/\s+/g, ' ').trim();
     const last = [...recent].reverse().find((m) => said(m)) || recent[recent.length - 1] || null;
+    const lastAgo = last && last.at ? agoStamp(last.at).text : '';
     const first = owedRows.find((row) => row.t === 'card') || null;
     const firstTitle = first && first.t === 'card' ? first.card.title.text || first.card.title.title || '' : '';
     const claims = Math.max(0, Number(v.dashboard?.unclaimed) || 0);
@@ -3985,60 +3987,69 @@ export function DevWorkshop(): ReactNode {
     const active = (community?.activity?.active_people || []).filter((person) => person && person.username).slice(0, 5);
     const names = listText(active.map((person) => person.username));
     const rest = Math.max(0, activeCount - active.length);
+    const liveRows = (v.recentLive || []).slice(0, 3);
     return (
       <ProjectHubFrame
         {...frameHead}
         name={projectName}
         purpose={community?.description || null}
-        needs={owed > 0 ? {
+        tile={{ src: own ? app.iconUrl || null : null, emoji: own ? app.iconEmoji || null : null }}
+        onOpenApp={!actions.selfHosted ? () => { (window as any).App?.openAppTab?.(slug, 'app'); } : null}
+        // As the Hub's own card (./hub-cards.tsx ForYouCard): the row while
+        // any vote is owed, seen or not, else the quiet line, which says
+        // nothing on a project nobody else is in unless requests wait.
+        needs={owedRows.length ? {
           count: owed,
-          title: owed > 1 && firstTitle ? t('project:hub.forYou.needs.firstAndMore', { title: firstTitle, count: owed - 1 }) : firstTitle,
+          line: owed > 0
+            ? (owed > 1 && firstTitle ? t('project:hub.forYou.needs.firstAndMore', { title: firstTitle, count: owed - 1 }) : firstTitle)
+            : t('project:hub.needs.skipped', { count: owedRows.length }),
+          join: owed > 0 && !canPost,
         } : null}
-        quiet={owed > 0 ? null
-          : owedRows.length ? t('project:hub.needs.skipped', { count: owedRows.length })
-            : alone && !claims ? null : t('project:hub.needs.none')}
+        quiet={owedRows.length || (alone && !claims) ? null : { claims, alone }}
         onNeeds={() => openTab('needs')}
-        work={frameWork()}
-        onWorkshop={() => openTab('workshop')}
+        onWorkshop={v.mine?.viewer ? () => openTab('workshop') : null}
         general={channel ? {
           handle: channel.handle || 'general',
-          line: last && said(last) ? (last.by ? t('project:frame.hub.saidBy', { username: last.by, message: said(last) }) : said(last)) : null,
-          ago: last && last.at ? agoStamp(last.at).text : null,
+          last: !!last,
+          said: last ? said(last) : '',
+          by: last ? last.by || null : null,
+          ago: lastAgo,
           unread: Number(channel.unread_count) || 0,
         } : null}
         onGeneral={() => openTab('discussion')}
-        live={(v.recentLive || []).slice(0, 3).map((row) => ({
-          key: row.key,
-          title: row.title,
-          who: row.who,
-          ago: row.going ? t('project:hub.recent.going') : row.at ? agoStamp(row.at).text : null,
-          href: changeHref(slug, row.sessionId, row.prNumber),
+        topics={frameTopicList.map((topic) => ({
+          key: channelPlace(topic.handle), name: topic.name || topic.handle, handle: topic.handle, icon: topic.icon || '', about: topic.about || '', unread: Math.max(0, Number(topic.unread) || 0),
         }))}
-        onAllLive={() => openTab('workshop')}
-        topics={frameTopicList.slice(0, 3).map((topic) => ({
-          key: channelPlace(topic.handle), name: topic.name || topic.handle, about: topic.about || '', unread: Math.max(0, Number(topic.unread) || 0),
-        }))}
-        topicsTotal={frameTopicList.length}
         onTopic={(key) => openTab(key as TabKey)}
-        onAllTopics={() => pickFrameTab('topics')}
+        live={liveRows.map((row) => {
+          const ago = row.at ? agoStamp(row.at).text : '';
+          return {
+            key: row.key,
+            title: row.title,
+            line: row.going
+              ? (row.who ? t('project:hub.recent.byGoing', { who: row.who }) : t('project:hub.recent.going'))
+              : row.who && ago ? t('project:hub.recent.byAgo', { who: row.who, ago }) : row.who || ago || null,
+            src: row.picture || null,
+            href: changeHref(slug, row.sessionId, row.prNumber),
+          };
+        })}
+        ownLive={!liveRows.length && ownLive && liveSinceLine(ownLive.since) ? {
+          name: ownLive.name,
+          line: liveSinceLine(ownLive.since),
+          onOpen: () => { (window as any).App?.openAppTab?.(slug, 'app'); },
+        } : null}
+        onAllLive={() => openTab('workshop')}
         people={activeCount ? {
           title: t('project:hub.people.active', { count: activeCount }),
           line: active.length ? (rest ? t('project:hub.people.namesAndMore', { names, count: rest }) : names) : null,
+          faces: active.map((person) => ({ name: person.username, color: swatchFor(person.username) })),
+          more: rest,
         } : null}
         audience={{
           kind: community?.audience || 'invited',
           title: community?.audience_label || '',
-          line: community && community.audience !== 'solo' ? t('project:frame.hub.members', { count: Number(community.member_count) || 0 }) : null,
+          line: community && community.audience !== 'solo' ? t('project:communityCard.people.members', { count: Number(community.member_count) || 0 }) : null,
         }}
-        rule={frameRule()}
-        app={!actions.selfHosted ? {
-          name: projectName,
-          src: own ? app.iconUrl || null : null,
-          emoji: own ? app.iconEmoji || null : null,
-          color: null,
-          line: community?.live_since ? liveSinceLine(community.live_since) : null,
-          onOpen: () => { (window as any).App?.openAppTab?.(slug, 'app'); },
-        } : null}
       />
     );
   };
@@ -4068,22 +4079,15 @@ export function DevWorkshop(): ReactNode {
       {frame && frameTopics ? (
         <ProjectTopicsFrame
           {...frameHead}
-          general={community?.channel ? { handle: community.channel.handle || 'general', unread: Number(community.channel.unread_count) || 0 } : null}
-          topics={frameTopicList.map((topic) => ({
-            key: channelPlace(topic.handle),
-            name: topic.name || topic.handle,
-            about: topic.about || '',
-            requests: topic.requests,
-            unread: Math.max(0, Number(topic.unread) || 0),
-          }))}
+          general={community?.channel ? placeRows(community?.places, owed).general : null}
+          topics={placeRows(community?.places, owed).topics}
           onOpen={(key) => { setFrameTopics(false); openTab(key as TabKey); }}
-          onPropose={community?.can_manage ? () => { window.UsernodeReact?.dialogs?.topics?.open({ slug }); } : null}
         />
       ) : null}
       {frame && !frameTopics && tab === 'status' && !pending ? frameHub() : null}
       {frameWorkshopUp ? frameWorkshop() : null}
       {frameAllUp ? frameAll() : null}
-      {frame && !frameTopics && tab !== 'status' && !frameWorkshopUp && !frameAllUp ? <ProjectFrameHead {...frameHead} title={pageTitle(tab)} purpose={framePurpose} /> : null}
+      {frame && !frameTopics && tab !== 'status' && !frameWorkshopUp && !frameAllUp ? <ProjectFrameHead {...frameHead} onAsk={tab === 'needs' ? askChange : null} onInvite={tab === 'needs' ? inviteHere : null} onJoin={tab === 'needs' ? joinHere : null} title={pageTitle(tab)} purpose={framePurpose} /> : null}
       {band}
       {tray}
       {/* Everything but the bar lives in here. It is what carries the

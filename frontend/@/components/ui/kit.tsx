@@ -895,8 +895,8 @@ export function Shot({ src, label }: { src: string; label: React.ReactNode }) {
 }
 
 /** A change's pictures side by side (before and after); three across with `cols={3}`, a sideways strip on a phone. */
-export function Shots({ cols, children }: { cols?: 3; children?: React.ReactNode }) {
-  return <div className={k('shots', cols === 3 && 's3')}>{children}</div>;
+export function Shots({ cols, cards, children }: { cols?: 3; /** Holds <ShotCard/>s, each a card of its own, not a before and after pair. */ cards?: boolean; children?: React.ReactNode }) {
+  return <div className={k('shots', cols === 3 && 's3', cards && 'cards')}>{children}</div>;
 }
 
 /** Cards in a grid: three across (two on a phone) for picture cards, `cols={2}` for two equal columns of small cards. */
@@ -1008,4 +1008,40 @@ export function Select({ label, hint, tone, bad, options, ...select }: {
 /** One line of what happened in a thread: a small glyph, then the words (a <b> in them is the name). */
 export function Evt({ icon, children }: { icon: string; children?: React.ReactNode }) {
   return <div className={k('evt')}><span className={k('ei')} aria-hidden="true"><Icon name={icon} size={16} /></span><span>{children}</span></div>;
+}
+
+/* ── Version 2, a project's pages (lane P) ── */
+
+/** One quiet sentence in a card, over its rows: what a row would say if it had anything to open ("Nothing more to vote on."). */
+export function CardNote({ children }: { children?: React.ReactNode }) {
+  if (saysNothing(children)) return null;
+  return <p className={k('cardnote')}>{children}</p>;
+}
+
+/**
+ * A change as a picture card, inside <Shots/>: its picture (or `fallback`,
+ * the project's tile, where it has none or the file is gone), its name in
+ * bold, then who and when. A link with `href`, a button with `onClick`.
+ */
+export function ShotCard({ href, onClick, src, fallback, title, line }: {
+  href?: string;
+  onClick?: (event: React.MouseEvent<HTMLElement>) => void;
+  src?: string | null;
+  fallback?: React.ReactNode;
+  title: React.ReactNode;
+  line?: React.ReactNode;
+}) {
+  const [bad, setBad] = React.useState(false);
+  const body = (
+    <>
+      <span className={k('pic', 'img')} aria-hidden="true">
+        {src && !bad ? <img src={src} alt="" loading="lazy" draggable={false} onError={() => setBad(true)} /> : fallback}
+      </span>
+      <span className={k('cap2')}><b>{title}</b></span>
+      {line ? <span className={k('cap2')}>{line}</span> : null}
+    </>
+  );
+  if (href) return <a className={k('shot', 'shotc')} href={href} onClick={onClick}>{body}</a>;
+  if (onClick) return <button type="button" className={k('shot', 'shotc')} onClick={onClick}>{body}</button>;
+  return <div className={k('shot', 'shotc')}>{body}</div>;
 }

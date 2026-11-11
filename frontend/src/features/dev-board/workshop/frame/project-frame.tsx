@@ -10,10 +10,10 @@
  * reads, already as words, with the presses its own cards make. Nothing is
  * fetched, counted or opened here.
  */
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
-import { Ballot, Btn, Card, Facts, Frame, GroupLink, Head, Lead, Meta, PageBody, Pill, type PillKind, Row, Search, Sec, Tabs, Tile, Track, k } from '@/components/ui/kit';
-import { useMessages } from '../../../../lib/i18n/react';
+import { Avs, Ballot, Btn, Card, CardNote, Facts, Frame, GroupLink, Head, Lead, Meta, Mut, PageBody, Pill, type PillKind, Row, Search, Sec, ShotCard, Shots, ShowAll, Tabs, Tile, Track, k } from '@/components/ui/kit';
+import { RichMessage, useMessages } from '../../../../lib/i18n/react';
 
 export interface ProjectTab { key: string; label: string; count?: number }
 
@@ -87,148 +87,171 @@ export function ProjectFrameHead({ title, purpose, ...head }: HeadProps & { titl
   );
 }
 
+/** A person as a face: the name's first letter on the colour the product gives it. */
+export interface HubFace { name: string; color?: string | null }
+
 export interface ProjectHubProps extends HeadProps {
   name: string;
   purpose?: string | null;
-  /** The votes owed here: how many, and the first one's title. */
-  needs: { count: number; title: string } | null;
-  /** Said under Needs you when no vote is owed; null leaves the row out. */
-  quiet: string | null;
+  /** The project's tile, before its name (the hero's own). */
+  tile: { src: string | null; emoji: string | null };
+  /** Open app, the hero's first action; null on Homeroom's own page, which has no app. */
+  onOpenApp: (() => void) | null;
+  /** Needs you while a vote is owed: how many you have not seen, and the row's line (the first one's title, or how many you skipped). */
+  needs: { count: number; line: string | null; join: boolean } | null;
+  /** With no vote owed, the quiet line in the row's place: the requests nobody has picked up, if any; null says nothing. */
+  quiet: { claims: number; alone: boolean } | null;
   onNeeds: () => void;
-  /** Your work with Homeroom bot in this project; null draws the Workshop's own row. */
-  work: { line: string | null; words: string | null; href: string } | null;
-  onWorkshop: () => void;
-  general: { handle: string; line: string | null; ago: string | null; unread: number } | null;
+  /** The Workshop's row, for anyone signed in; null for a visitor. */
+  onWorkshop: (() => void) | null;
+  /** #general: the last thing said in it (`said`, by `by`, `ago`), or `last` false for a channel nobody has posted in. */
+  general: { handle: string; last: boolean; said: string; by: string | null; ago: string; unread: number } | null;
   onGeneral: () => void;
-  /** The last changes that went live, each a link to its own page. */
-  live: Array<{ key: string; title: string; who: string | null; ago: string | null; href: string }>;
-  onAllLive: () => void;
-  topics: Array<{ key: string; name: string; about: string; unread: number }>;
-  topicsTotal: number;
+  /** Each live topic's channel, listed on a phone only (a wide window has the Topics tab). */
+  topics: Array<{ key: string; name: string; handle: string; icon: string; about: string; unread: number }>;
   onTopic: (key: string) => void;
-  onAllTopics: () => void;
-  people: { title: string; line: string | null } | null;
+  /** The last changes that went live, each a picture and a link to its own page. */
+  live: Array<{ key: string; title: string; line: string | null; src: string | null; href: string }>;
+  /** Before anything went live: the app itself, "Live since today". */
+  ownLive: { name: string; line: string; onOpen: () => void } | null;
+  onAllLive: () => void;
+  people: { title: string; line: string | null; faces: HubFace[]; more: number } | null;
   audience: { kind: 'solo' | 'invited' | 'open'; title: string; line: string | null };
-  rule: { title: string; line: string | null; onOpen: (() => void) | null } | null;
-  app: { name: string; src: string | null; emoji: string | null; color: string | null; line: string | null; onOpen: () => void } | null;
 }
 
+/**
+ * The Hub (version 2 of the tour's s23, s24 and s36): today's Hub in the
+ * kit's two columns. The head is the hero's (tile, name, description, Open
+ * app, Invite, Join; the hero's own ⋯ stands at its end, app.css). For you
+ * is the hero's three doors, Recently live its three pictures, and who is
+ * around and who it is for sit in the side column. On a phone the topics
+ * are listed too, as today's Hub lists them there.
+ */
 export function ProjectHubFrame(p: ProjectHubProps) {
   const t = useMessages('project');
   useProjectFrameFlag();
-  const acts = useActs(p);
+  const [allTopics, setAllTopics] = useState(false);
   const news = (count: number) => t('project:hub.channel.unread', { count, shown: count > 99 ? '99+' : String(count) });
-  const side = (
+  const tile = <Tile size={56} src={p.tile.src} emoji={p.tile.emoji} name={p.name} />;
+  const acts = p.onOpenApp || p.onInvite || p.onJoin ? (
     <>
-      <Sec label={t('project:frame.hub.people')}>
-        <Card>
-          {p.people ? <Row lead={<Lead icon="users" />} title={p.people.title} line={p.people.line || undefined} /> : null}
-          <Row lead={<Lead icon={p.audience.kind === 'open' ? 'globe' : p.audience.kind === 'solo' ? 'user' : 'lock'} />} title={p.audience.title} line={p.audience.line || undefined} />
-        </Card>
-      </Sec>
-      {p.rule ? (
-        <Sec label={t('project:frame.hub.rule')}>
-          <Card>
-            <Row lead={<Lead icon="shield" />} title={p.rule.title} line={p.rule.line || undefined} go={!!p.rule.onOpen} onClick={p.rule.onOpen || undefined} sm={false} wrap />
-          </Card>
-        </Sec>
-      ) : null}
-      {p.app ? (
-        <Sec label={t('project:frame.hub.app')}>
-          <Card>
-            <Row
-              lead={<Tile size={40} src={p.app.src} emoji={p.app.emoji} color={p.app.color} name={p.app.name} />}
-              title={t('project:frame.hub.openApp', { app: p.app.name })}
-              line={p.app.line || undefined}
-              right={<Btn kind="quiet" small onClick={p.app.onOpen}>{t('project:frame.hub.open')}</Btn>}
-            />
-          </Card>
-        </Sec>
-      ) : null}
+      {p.onOpenApp ? <Btn kind={p.onJoin ? 'line' : ''} icon="play" onClick={p.onOpenApp}>{t('project:communityCard.openApp')}</Btn> : null}
+      {p.onInvite ? <Btn kind="line" icon="users" onClick={p.onInvite}>{t('project:communityCard.invite.button')}</Btn> : null}
+      {p.onJoin ? <Btn icon="plus" onClick={p.onJoin}>{t('project:communityCard.join.button')}</Btn> : null}
     </>
+  ) : undefined;
+  // The message is cut short, never the time (the Hub's own row, audit P04).
+  const cut = [<span className={k('cut')} />, <span className={k('aft')} />];
+  const g = p.general;
+  const generalLine = !g ? null : !g.last ? t('project:hub.channel.empty')
+    : g.said && g.by ? <RichMessage id="project:hub.forYou.discussion.lastBy" values={{ username: g.by, message: g.said, ago: g.ago }} components={cut} />
+      : g.said ? <RichMessage id="project:hub.forYou.discussion.last" values={{ message: g.said, ago: g.ago }} components={cut} />
+        : g.by ? t('project:hub.forYou.discussion.postedBy', { username: g.by, ago: g.ago })
+          : t('project:hub.forYou.discussion.posted', { ago: g.ago });
+  const shownTopics = allTopics ? p.topics : p.topics.slice(0, HUB_TOPICS_FIRST);
+  const moreTopics = p.topics.length - shownTopics.length;
+  const side = (
+    <Sec label={t('project:frame.hub.people')}>
+      <Card>
+        {p.people ? (
+          <Row
+            lead={p.people.faces.length ? <Avs people={p.people.faces} max={p.people.faces.length} more={p.people.more} /> : <Lead icon="users" />}
+            title={p.people.title}
+            line={p.people.line || undefined}
+          />
+        ) : null}
+        <Row lead={<Lead icon={p.audience.kind === 'open' ? 'globe' : p.audience.kind === 'solo' ? 'user' : 'lock'} />} title={p.audience.title} line={p.audience.line || undefined} />
+      </Card>
+    </Sec>
   );
   return (
     <PageBody
       data-project-frame="status"
       title={p.name}
       purpose={p.purpose || undefined}
+      lead={tile}
       acts={acts}
       tabs={<PlaceTabs tabs={p.tabs} tab={p.tab} onTab={p.onTab} />}
       side={side}
+      sideFirst
     >
-      <Sec label={t('project:hub.forYou.title')}>
-        <Card>
-          {p.needs ? (
-            <Row
-              lead={<Lead icon="vote" tone="acc" />}
-              title={t('project:hub.needs.title')}
-              line={p.needs.title}
-              right={<Pill kind="act">{t('project:hub.needs.toVote', { count: p.needs.count })}</Pill>}
-              go
-              onClick={p.onNeeds}
-            />
-          ) : p.quiet ? (
-            <Row lead={<Lead icon="vote" />} title={t('project:hub.needs.title')} line={p.quiet} go onClick={p.onNeeds} />
-          ) : null}
-          {p.work ? (
-            <Row
-              href={p.work.href}
-              lead={<Lead icon="tool" />}
-              title={t('project:workshop.desk.title')}
-              line={p.work.line || undefined}
-              right={<Meta>{p.work.words}</Meta>}
-              go
-              sm={false}
-            />
-          ) : (
-            <Row lead={<Lead icon="tool" />} title={t('project:places.list.workshop')} line={t('project:hub.workshop.sub')} go onClick={p.onWorkshop} />
-          )}
-          {p.general ? (
-            <Row
-              lead={<Lead icon="hash" />}
-              title={t('project:frame.hub.channel', { handle: p.general.handle })}
-              line={p.general.line || t('project:hub.channel.empty')}
-              right={p.general.unread > 0 ? <Pill kind="act">{news(p.general.unread)}</Pill> : <Meta>{p.general.ago}</Meta>}
-              go
-              onClick={p.onGeneral}
-            />
-          ) : null}
-        </Card>
-      </Sec>
-      {p.live.length ? (
-        <Sec label={t('project:hub.recent.title')} action={<GroupLink onClick={p.onAllLive}>{t('project:hub.recent.all')}</GroupLink>}>
+      {p.needs || p.quiet || p.onWorkshop || p.general ? (
+        <Sec label={t('project:hub.forYou.title')}>
           <Card>
-            {p.live.map((row) => (
+            {p.needs ? (
               <Row
-                key={row.key}
-                lead={<Lead icon="rocket" tone="ok" />}
-                title={row.title}
-                line={row.who ? t('project:frame.hub.builtBy', { username: row.who }) : undefined}
-                right={<Meta>{row.ago}</Meta>}
+                lead={<Lead icon="vote" tone={p.needs.count ? 'acc' : undefined} />}
+                title={t('project:hub.needs.title')}
+                line={p.needs.line || undefined}
+                right={p.needs.count ? <Pill kind="act">{t('project:hub.needs.toVote', { count: p.needs.count })}</Pill> : undefined}
                 go
-                href={row.href}
+                sm={false}
+                onClick={p.onNeeds}
               />
-            ))}
+            ) : p.quiet ? (
+              <CardNote>
+                {!p.quiet.claims ? t('project:hub.needs.none') : (
+                  <RichMessage
+                    id={p.quiet.alone ? 'project:hub.needs.requestsAlone' : 'project:hub.needs.noneButRequests'}
+                    values={{ count: p.quiet.claims }}
+                    components={[<button type="button" className={k('link')} onClick={p.onWorkshop || p.onNeeds} />]}
+                  />
+                )}
+              </CardNote>
+            ) : null}
+            {p.needs && p.needs.join ? <CardNote>{t('project:hub.needs.joinToVote')}</CardNote> : null}
+            {p.onWorkshop ? (
+              <Row lead={<Lead icon="tool" />} title={t('project:places.list.workshop')} line={t('project:hub.workshop.sub')} go onClick={p.onWorkshop} />
+            ) : null}
+            {p.general ? (
+              <Row
+                lead={<Lead icon="hash" />}
+                title={<RichMessage id="project:hub.forYou.discussion.title" values={{ handle: p.general.handle }} components={[<Mut />]} />}
+                line={generalLine}
+                right={p.general.unread > 0 ? <Pill kind="act">{news(p.general.unread)}</Pill> : undefined}
+                go
+                onClick={p.onGeneral}
+              />
+            ) : null}
           </Card>
         </Sec>
       ) : null}
       {p.topics.length ? (
-        <Sec
-          label={t('project:hub.topics.title')}
-          action={p.topicsTotal > p.topics.length ? <GroupLink onClick={p.onAllTopics}>{t('project:frame.hub.allTopics', { count: p.topicsTotal })}</GroupLink> : undefined}
-        >
+        <Sec label={t('project:hub.topics.title')} className={k('sec', 'p')}>
           <Card>
-            {p.topics.map((topic) => (
+            {shownTopics.map((topic) => (
               <Row
                 key={topic.key}
-                lead={<Lead icon="hash" />}
-                title={topic.name}
+                lead={topic.icon ? <Lead>{topic.icon}</Lead> : <Lead icon="hash" />}
+                title={<>{topic.name} <Mut>#{topic.handle}</Mut></>}
                 line={topic.about || undefined}
                 right={topic.unread > 0 ? <Pill kind="act">{news(topic.unread)}</Pill> : undefined}
                 go
                 onClick={() => p.onTopic(topic.key)}
               />
             ))}
+            {moreTopics > 0 ? <ShowAll onClick={() => setAllTopics(true)}>{t('project:places.list.showMore', { count: moreTopics })}</ShowAll> : null}
+          </Card>
+        </Sec>
+      ) : null}
+      {p.live.length || p.ownLive ? (
+        <Sec label={t('project:hub.recent.title')} action={p.live.length ? <GroupLink onClick={p.onAllLive}>{t('project:hub.recent.all')}</GroupLink> : undefined}>
+          <Card>
+            <Shots cols={3} cards>
+              {!p.live.length && p.ownLive ? (
+                <ShotCard onClick={p.ownLive.onOpen} fallback={<Tile size={56} src={p.tile.src} emoji={p.tile.emoji} name={p.ownLive.name} />} title={p.ownLive.name} line={p.ownLive.line} />
+              ) : null}
+              {p.live.map((row) => (
+                <ShotCard
+                  key={row.key}
+                  href={row.href}
+                  src={row.src}
+                  fallback={<Tile size={56} src={p.tile.src} emoji={p.tile.emoji} name={p.name} />}
+                  title={row.title}
+                  line={row.line}
+                />
+              ))}
+            </Shots>
           </Card>
         </Sec>
       ) : null}
@@ -236,66 +259,43 @@ export function ProjectHubFrame(p: ProjectHubProps) {
   );
 }
 
+/** How many topics the phone's Hub lists before "Show N more" (the standard Hub's own number). */
+const HUB_TOPICS_FIRST = 6;
+
 /**
- * Topics (the tour's s25): each topic is a channel and a category of work.
- * #general first, then the topics, each a row that opens its channel; a new
- * topic is the page's one primary button and goes to a vote.
+ * Topics (version 2 of the tour's s25): the project's places list, the part
+ * of it the tabs do not already say. The topics in the work column and the
+ * channels beside them, each by its name alone, as the list names it, with
+ * how much is new in it. A row opens its channel.
  */
-export function ProjectTopicsFrame({ general, topics, onOpen, onPropose, ...head }: HeadProps & {
-  general: { handle: string; unread: number } | null;
-  topics: Array<{ key: string; name: string; about: string; requests: number | null; unread: number }>;
+export function ProjectTopicsFrame({ general, topics, onOpen, ...head }: HeadProps & {
+  general: { key: string; label: string; count: number } | null;
+  topics: Array<{ key: string; label: string; count: number }>;
   onOpen: (key: string) => void;
-  /** Propose a topic; null for someone who may not. */
-  onPropose: (() => void) | null;
 }) {
   useProjectFrameFlag();
   const t = useMessages('project');
-  const news = (count: number) => t('project:hub.channel.unread', { count, shown: count > 99 ? '99+' : String(count) });
-  const line = (topic: { about: string; requests: number | null }) => {
-    const open = topic.requests && topic.requests > 0 ? t('project:frame.topics.requests', { count: topic.requests }) : '';
-    return open && topic.about ? t('project:frame.topics.requestsAbout', { requests: open, about: topic.about }) : open || topic.about || undefined;
-  };
+  const news = (count: number) => (count > 0 ? <Pill kind="act">{t('project:places.count.unread', { count, shown: count > 99 ? '99+' : String(count) })}</Pill> : undefined);
   return (
     <PageBody
       data-project-frame="topics"
       title={t('project:places.list.topics')}
       purpose={t('project:frame.topics.purpose')}
-      acts={onPropose ? <Btn icon="plus" onClick={onPropose}>{t('project:frame.topics.propose')}</Btn> : undefined}
       tabs={<PlaceTabs tabs={head.tabs} tab={head.tab} onTab={head.onTab} />}
-      side={(
-        <Sec label={t('project:frame.topics.about')}>
-          <Card>
-            <Row lead={<Lead icon="shield" />} title={t('project:frame.topics.byVote')} line={t('project:frame.topics.byVoteLine')} />
-          </Card>
-        </Sec>
-      )}
-    >
-      {general ? (
+      sideFirst
+      side={general ? (
         <Sec label={t('project:places.list.channels')}>
           <Card>
-            <Row
-              lead={<Lead icon="hash" />}
-              title={t('project:frame.hub.channel', { handle: general.handle })}
-              right={general.unread > 0 ? <Pill kind="act">{news(general.unread)}</Pill> : undefined}
-              go
-              onClick={() => onOpen('discussion')}
-            />
+            <Row lead={<Lead icon="hash" />} title={general.label} right={news(general.count)} go onClick={() => onOpen(general.key)} />
           </Card>
         </Sec>
-      ) : null}
+      ) : undefined}
+    >
       {topics.length ? (
         <Sec label={t('project:places.list.topics')}>
           <Card>
             {topics.map((topic) => (
-              <Row
-                key={topic.key}
-                lead={<Lead icon="hash" />}
-                title={topic.name}
-                line={line(topic)}
-                right={topic.unread > 0 ? <Pill kind="act">{news(topic.unread)}</Pill> : undefined}
-                go
-                onClick={() => onOpen(topic.key)}
-              />
+              <Row key={topic.key} lead={<Lead icon="hash" />} title={topic.label} right={news(topic.count)} go onClick={() => onOpen(topic.key)} />
             ))}
           </Card>
         </Sec>

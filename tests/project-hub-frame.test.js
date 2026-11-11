@@ -1,10 +1,13 @@
 // A project's Hub in the one frame (frontend/src/features/dev-board/
-// workshop/frame/project-frame.tsx), as the 2026-11-06 screen tour draws it
-// (s23, s24, s36): the project's places are the page's tabs; For you,
-// Recently live and Topics are groups of the standard row; who is here, how
-// a change goes live and the app sit in the context column; one primary
-// button, Ask for a change. The page (../workshop.tsx) hands it what its own
-// Hub reads, as plain words.
+// workshop/frame/project-frame.tsx), version 2 of the screen tour's s23, s24
+// and s36: the first tour's layout (the places as the page's tabs, two
+// columns) holding today's Hub. The head is the hero's (tile, name,
+// description, Open app, Invite, Join); For you is its three doors, Recently
+// live its three pictures; who is around and who it is for sit in the side
+// column; a phone lists the topics too. What the first tour added and
+// today's Hub does not have is gone: Ask for a change, the Your work row,
+// Recently live as rows, How a change goes live, The app. The page
+// (../workshop.tsx) hands it what its own Hub reads.
 //
 // Run with: node --test tests/project-hub-frame.test.js
 
@@ -25,112 +28,142 @@ const tabs = [
   { key: 'discussion', label: '#general', count: 3 }, { key: 'topics', label: 'Topics' },
 ];
 const base = {
-  name: 'Homeroom', purpose: 'The community for the platform itself.', onAsk() {}, onInvite() {},
+  name: 'Homeroom', purpose: 'The community for the platform itself.', onInvite() {},
+  tile: { src: null, emoji: '☕' }, onOpenApp: null,
   tabs, tab: 'status', onTab() {},
-  needs: { count: 1, title: 'Email templates: keep translations' }, quiet: null, onNeeds() {},
-  work: { line: 'Next: Make proposals and voting more visual', words: 'In progress: 11', href: '#homeroom-bot?project=homeroom' }, onWorkshop() {},
-  general: { handle: 'general', line: 'evan: Thank you @kempis!', ago: '18h', unread: 0 }, onGeneral() {},
+  needs: { count: 1, line: 'Email templates: keep translations', join: false }, quiet: null, onNeeds() {},
+  onWorkshop() {},
+  general: { handle: 'general', last: true, said: 'Thank you @kempis!', by: 'evan', ago: '18h ago', unread: 0 }, onGeneral() {},
   live: [
-    { key: 'p1', title: 'Email templates, part 7', who: 'snait', ago: '48m', href: '#app/homeroom/dev/changes/6370' },
-    { key: 'p2', title: 'Email templates, part 6', who: null, ago: '1h', href: '#app/homeroom/dev/changes/6369' },
-  ], onAllLive() {},
-  topics: [{ key: 'c:onboarding', name: 'Onboarding', about: 'Signing up and the first week', unread: 0 }, { key: 'c:bot', name: 'Homeroom bot', about: '', unread: 2 }], topicsTotal: 6, onTopic() {}, onAllTopics() {},
-  people: { title: '26 active this week', line: 'snait, evan, Bruno and 23 more' },
+    { key: 'p1', title: 'Email templates, part 7', line: 'snait · 48m ago', src: '/visuals/abc', href: '#app/homeroom/dev/changes/6370' },
+    { key: 'p2', title: 'Email templates, part 6', line: null, src: null, href: '#app/homeroom/dev/changes/6369' },
+  ], ownLive: null, onAllLive() {},
+  topics: [{ key: 'c:onboarding', name: 'Onboarding', handle: 'onboarding', icon: '🚪', about: 'Signing up and the first week', unread: 0 }, { key: 'c:bot', name: 'Homeroom bot', handle: 'homeroom-bot', icon: '', about: '', unread: 2 }], onTopic() {},
+  people: { title: '26 active this week', line: 'snait, evan, Bruno and 23 more', faces: [{ name: 'snait', color: '#5b7f5a' }, { name: 'evan' }], more: 24 },
   audience: { kind: 'open', title: 'Public community', line: '228 members' },
-  rule: { title: 'evan or snait says yes', line: 'After the checks pass', onOpen() {} },
-  app: null,
 };
 const render = (over) => renderComponent(FRAME, 'ProjectHubFrame', { ...base, ...over }, { cache: false });
 
-test('the Hub is a page of the frame: the project\'s name, its sentence, two actions, its places as tabs', () => {
+test('the Hub is a page of the frame: the project\'s tile and name, its sentence, the hero\'s actions, its places as tabs', () => {
   const html = render();
-  assert.match(html, /^<div class="fr" data-project-frame="status"><div class="fr-inner"><div class="fr-head"><div class="fr-tx"><h1 class="fr-title">Homeroom<\/h1><p class="fr-purpose">The community for the platform itself\.<\/p><\/div><div class="fr-acts"><button type="button" class="fr-btn fr-line"><svg[^>]*>.*?<\/svg>Invite<\/button><button type="button" class="fr-btn"><svg[^>]*>.*?<\/svg>Ask for a change<\/button><\/div><\/div>/s);
+  assert.match(html, /^<div class="fr" data-project-frame="status"><div class="fr-inner"><div class="fr-head"><span class="fr-tile"[^>]*>☕<\/span><div class="fr-tx"><h1 class="fr-title">Homeroom<\/h1><p class="fr-purpose">The community for the platform itself\.<\/p><\/div><div class="fr-acts"><button type="button" class="fr-btn fr-line"><svg[^>]*>.*?<\/svg>Invite<\/button><\/div><\/div>/s);
   assert.deepEqual([...html.matchAll(/<button type="button" class="fr-tab[^"]*" aria-pressed="(true|false)">([^<]+)(?:<span class="fr-n">(\d+)<\/span>)?<\/button>/g)].map((m) => [m[2], m[1], m[3] || '']),
     [['Hub', 'true', ''], ['Needs you', 'false', '1'], ['Workshop', 'false', ''], ['#general', 'false', '3'], ['Topics', 'false', '']]);
   const classes = [...html.matchAll(/class="([^"]*)"/g)].flatMap((m) => m[1].split(/\s+/)).filter(Boolean);
   for (const c of classes) assert.match(c, /^fr(-|$)/, `${c} is not a kit class`);
+  assert.doesNotMatch(html, /Ask for a change/, 'today\'s Hub has no such button');
+  // A project with an app: Open app is the primary, before Invite.
+  const app = render({ onOpenApp() {} });
+  assert.match(app, /<div class="fr-acts"><button type="button" class="fr-btn"><svg[^>]*>.*?<\/svg>Open app<\/button><button type="button" class="fr-btn fr-line"><svg[^>]*>.*?<\/svg>Invite<\/button><\/div>/s);
 });
 
-test('For you: the vote owed in blue, your work with the bot, the channel\'s last line and when', () => {
+test('For you: the vote owed in blue, the Workshop\'s door, and Discussion #general with its last line and when', () => {
   const html = render();
   const at = html.indexOf('>For you<');
-  const you = html.slice(at, html.indexOf('>Recently live<'));
+  const you = html.slice(at, html.indexOf('<h2 class="fr-cap">Topics<'));
   assert.ok(at > 0);
   assert.match(you, /<button type="button" class="fr-row"><span class="fr-lead fr-acc" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Needs you<\/span><span class="fr-s">Email templates: keep translations<\/span><\/span><span class="fr-pill fr-act" data-kind="act">1 to vote<\/span><svg[^>]*fr-go[^>]*>.*?<\/svg><\/button>/s);
-  assert.match(you, /<a class="fr-row" href="#homeroom-bot\?project=homeroom"><span class="fr-lead" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Your work<\/span><span class="fr-s">Next: Make proposals and voting more visual<\/span><\/span><span class="fr-meta">In progress: 11<\/span>/s);
-  assert.match(you, /<span class="fr-t">#general<\/span><span class="fr-s">evan: Thank you @kempis!<\/span><\/span><span class="fr-meta">18h<\/span>/);
+  assert.match(you, /<span class="fr-t">Workshop<\/span><span class="fr-s">What happened, and every item<\/span>/);
+  assert.doesNotMatch(you, /Your work/, 'your work is the Workshop tab\'s card, not the Hub\'s');
+  assert.match(you, /<span class="fr-t">Discussion <span class="fr-mut">#general<\/span><\/span><span class="fr-s"><span class="fr-cut">@evan: Thank you @kempis!<\/span><span class="fr-aft"> · 18h ago<\/span><\/span>/, 'the product\'s own words; the message is cut short, never the time');
   assert.equal((you.match(/data-kind="act"/g) || []).length, 1);
+  assert.match(render({ needs: { count: 0, line: '2 skipped', join: false } }), /<span class="fr-lead" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Needs you<\/span><span class="fr-s">2 skipped<\/span><\/span><svg/s, 'votes all seen: the row stays, without its pill');
+  assert.match(render({ needs: { count: 2, line: 'x', join: true } }), /<p class="fr-cardnote">Join to vote on these\.<\/p>/);
+  assert.doesNotMatch(render({ onWorkshop: null }), /<span class="fr-t">Workshop<\/span>/, 'a visitor has no Workshop row');
 });
 
-test('with nothing to vote on the first row says so quietly, and something new in the channel is the blue pill', () => {
-  const html = render({ needs: null, quiet: 'Nothing more to vote on.', general: { handle: 'general', line: 'lukas: so good', ago: '3d', unread: 4 } });
-  assert.match(html, /<span class="fr-lead" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Needs you<\/span><span class="fr-s">Nothing more to vote on\.<\/span><\/span><svg/s);
-  assert.match(html, /<span class="fr-t">#general<\/span><span class="fr-s">lukas: so good<\/span><\/span><span class="fr-pill fr-act" data-kind="act">4 new<\/span>/);
-  assert.doesNotMatch(render({ needs: null, quiet: null }), />Needs you<\/span>/, 'a project with nobody else in it says nothing about votes');
-  const out = render({ work: null });
-  assert.match(out, /<span class="fr-t">Workshop<\/span><span class="fr-s">What happened, and every item<\/span>/, 'no work of yours: the Workshop\'s own row');
+test('with nothing to vote on the first line says so quietly, naming the requests nobody has picked up', () => {
+  const html = render({ needs: null, quiet: { claims: 0, alone: false }, general: { handle: 'general', last: true, said: 'so good', by: 'lukas', ago: '3d ago', unread: 4 } });
+  assert.match(html, /<div class="fr-card"><p class="fr-cardnote">Nothing more to vote on\.<\/p><button type="button" class="fr-row">/, 'a line, not a row');
+  assert.doesNotMatch(html, /<span class="fr-t">Needs you<\/span>/);
+  assert.match(html, /<span class="fr-aft"> · 3d ago<\/span><\/span><\/span><span class="fr-pill fr-act" data-kind="act">4 new<\/span>/);
+  const claims = render({ needs: null, quiet: { claims: 2, alone: false } });
+  assert.match(claims, /<p class="fr-cardnote">Nothing more to vote on · <button type="button" class="fr-link">2 requests nobody has picked up<\/button><\/p>/, 'the phrase is the way to the Workshop');
+  assert.match(render({ needs: null, quiet: { claims: 1, alone: true } }), /<p class="fr-cardnote"><button type="button" class="fr-link">1 request nobody has picked up<\/button><\/p>/);
+  assert.doesNotMatch(render({ needs: null, quiet: null }), /fr-cardnote/, 'a project with nobody else in it says nothing about votes');
+  assert.match(render({ general: { handle: 'general', last: false, said: '', by: null, ago: '', unread: 0 } }), /<span class="fr-s">No messages yet\.<\/span>/);
 });
 
-test('Recently live is rows with who built each and when; Topics, each with its line; both end in their link', () => {
+test('Recently live is three picture cards (who and when under each name), ending in its link; before anything went live, the app itself', () => {
   const html = render();
-  assert.match(html, /<h2 class="fr-cap">Recently live<\/h2><button type="button" class="fr-link">All in Workshop<\/button>/);
-  assert.match(html, /<span class="fr-lead fr-ok" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Email templates, part 7<\/span><span class="fr-s">Built by snait<\/span><\/span><span class="fr-meta">48m<\/span>/s);
-  assert.match(html, /<a class="fr-row fr-sm" href="#app\/homeroom\/dev\/changes\/6369"><span class="fr-lead fr-ok" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Email templates, part 6<\/span><\/span><span class="fr-meta">1h<\/span>/s, 'nobody named: one line');
-  assert.match(html, /<h2 class="fr-cap">Topics<\/h2><button type="button" class="fr-link">All 6<\/button>/);
-  assert.match(html, /<span class="fr-t">Onboarding<\/span><span class="fr-s">Signing up and the first week<\/span>/);
-  assert.match(html, /<span class="fr-t">Homeroom bot<\/span><\/span><span class="fr-pill fr-act" data-kind="act">2 new<\/span>/);
-  const none = render({ live: [], topics: [], topicsTotal: 0 });
-  assert.doesNotMatch(none, />Recently live<|>Topics<\/h2>/, 'an empty group is not drawn');
+  assert.match(html, /<h2 class="fr-cap">Recently live<\/h2><button type="button" class="fr-link">All in Workshop<\/button><\/div><div class="fr-card"><div class="fr-shots fr-s3 fr-cards">/);
+  assert.match(html, /<a class="fr-shot fr-shotc" href="#app\/homeroom\/dev\/changes\/6370"><span class="fr-pic fr-img" aria-hidden="true"><img src="\/visuals\/abc"[^>]*\/><\/span><span class="fr-cap2"><b>Email templates, part 7<\/b><\/span><span class="fr-cap2">snait · 48m ago<\/span><\/a>/);
+  assert.match(html, /<a class="fr-shot fr-shotc" href="#app\/homeroom\/dev\/changes\/6369"><span class="fr-pic fr-img" aria-hidden="true"><span class="fr-tile"[^>]*>☕<\/span><\/span><span class="fr-cap2"><b>Email templates, part 6<\/b><\/span><\/a>/, 'no picture: the project\'s tile; nobody named: no second line');
+  assert.doesNotMatch(html, /Built by/, 'not the first tour\'s rows');
+  const own = render({ live: [], ownLive: { name: 'Pourover Coffee', line: 'Live since today', onOpen() {} } });
+  assert.match(own, /<h2 class="fr-cap">Recently live<\/h2><\/div><div class="fr-card"><div class="fr-shots fr-s3 fr-cards"><button type="button" class="fr-shot fr-shotc">.*?<b>Pourover Coffee<\/b><\/span><span class="fr-cap2">Live since today<\/span><\/button>/s, 'no door to the Workshop while nothing has landed');
+  assert.doesNotMatch(render({ live: [] }), />Recently live</, 'an empty group is not drawn');
 });
 
-test('the context column: who is here, how a change goes live, and the app when it has one', () => {
-  const html = render({ app: { name: 'Pourover Coffee', src: null, emoji: '☕', color: null, line: 'Live since 22 Oct', onOpen() {} } });
-  const side = html.slice(html.lastIndexOf('<div class="fr-stack">'));
-  assert.match(side, /<h2 class="fr-cap">People<\/h2>.*?<span class="fr-t">26 active this week<\/span><span class="fr-s">snait, evan, Bruno and 23 more<\/span>.*?<span class="fr-t">Public community<\/span><span class="fr-s">228 members<\/span>/s);
-  assert.match(side, /<h2 class="fr-cap">How a change goes live<\/h2>.*?<button type="button" class="fr-row fr-wrap">.*?<span class="fr-t">evan or snait says yes<\/span><span class="fr-s">After the checks pass<\/span>/s);
-  assert.match(side, /<h2 class="fr-cap">The app<\/h2>.*?<span class="fr-tile"[^>]*>☕<\/span><span class="fr-tx"><span class="fr-t">Open Pourover Coffee<\/span><span class="fr-s">Live since 22 Oct<\/span><\/span><button type="button" class="fr-btn fr-quiet fr-sm">Open<\/button>/s);
-  assert.doesNotMatch(render(), />The app</, 'the platform\'s own community has no app of its own');
+test('the topics are listed on a phone only, each as the Hub\'s own row, the rest behind Show N more', () => {
+  const html = render();
+  assert.match(html, /<section class="fr-sec fr-p"><div class="fr-sechead"><h2 class="fr-cap">Topics<\/h2><\/div>/, 'the kit\'s phone-only mark: a wide window has the Topics tab');
+  assert.match(html, /<span class="fr-lead">🚪<\/span><span class="fr-tx"><span class="fr-t">Onboarding <span class="fr-mut">#onboarding<\/span><\/span><span class="fr-s">Signing up and the first week<\/span>/);
+  assert.match(html, /<span class="fr-t">Homeroom bot <span class="fr-mut">#homeroom-bot<\/span><\/span><\/span><span class="fr-pill fr-act" data-kind="act">2 new<\/span>/);
+  const many = render({ topics: Array.from({ length: 8 }, (_, i) => ({ key: `c:t${i}`, name: `T${i}`, handle: `t${i}`, icon: '', about: '', unread: 0 })) });
+  assert.equal((many.match(/<span class="fr-mut">#t\d<\/span>/g) || []).length, 6);
+  assert.match(many, /<button type="button" class="fr-row fr-sm fr-showall"><span class="fr-tx"><span class="fr-t">Show 2 more<\/span>/);
+  assert.doesNotMatch(render({ topics: [] }), />Topics<\/h2>/);
+  assert.match(read('frontend/looks/kit.css'), /\.hr:not\(\.phone\) \.p\{display:none!important\}/);
+});
+
+test('the side column is People alone: this week\'s faces and names, then who it is for', () => {
+  const html = render({ onOpenApp() {} });
+  const side = html.slice(html.lastIndexOf('<div class="fr-stack fr-first">'));
+  assert.match(side, /^<div class="fr-stack fr-first"><section class="fr-sec"><div class="fr-sechead"><h2 class="fr-cap">People<\/h2><\/div><div class="fr-card"><div class="fr-row"><span class="fr-avs"><span class="fr-av"[^>]*>s<\/span><span class="fr-av"[^>]*>e<\/span><span class="fr-av fr-more"[^>]*>\+24<\/span><\/span><span class="fr-tx"><span class="fr-t">26 active this week<\/span><span class="fr-s">snait, evan, Bruno and 23 more<\/span>.*?<span class="fr-t">Public community<\/span><span class="fr-s">228 members<\/span>/s, 'first on a phone, as the hero\'s people are');
+  assert.doesNotMatch(side, /How a change goes live|The app|fr-cap">Who decides/, 'today\'s Hub has neither');
   assert.doesNotMatch(render({ people: null }), /active this week/);
 });
 
 test('a visitor gets no actions, and a place that is not the Hub keeps the head and tabs alone', () => {
-  const html = render({ onAsk: null, onInvite: null });
+  const html = render({ onInvite: null });
   assert.doesNotMatch(html, /fr-acts/);
-  const joins = render({ onAsk: null, onInvite: null, onJoin() {} });
-  assert.match(joins, /<div class="fr-acts"><button type="button" class="fr-btn"><svg[^>]*>.*?<\/svg>Join<\/button><\/div>/s, 'signed in and not a member yet: Join is the one button');
+  const joins = render({ onInvite: null, onJoin() {}, onOpenApp() {} });
+  assert.match(joins, /<div class="fr-acts"><button type="button" class="fr-btn fr-line"><svg[^>]*>.*?<\/svg>Open app<\/button><button type="button" class="fr-btn"><svg[^>]*>.*?<\/svg>Join<\/button><\/div>/s, 'signed in and not a member yet: Join is the one primary button');
   assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /offerJoin\(\{ code: 'join_required', app: \{ slug, name: projectName \} \}\)/);
-  const head = renderComponent(FRAME, 'ProjectFrameHead', { title: 'Workshop', purpose: 'Everything asked for, being built and voted on in Homeroom.', tabs, tab: 'workshop', onTab() {}, onAsk() {} }, { cache: false });
-  assert.match(head, /^<div class="fr" data-project-frame="workshop"><div class="fr-inner"><div class="fr-head">.*?<h1 class="fr-title">Workshop<\/h1>.*?<\/div><nav class="fr-tabs">.*?<\/nav><\/div><\/div>$/s);
+  const head = renderComponent(FRAME, 'ProjectFrameHead', { title: 'Homeroom bot', purpose: 'Everything asked for, being built and voted on in Homeroom.', tabs, tab: 'workshop', onTab() {} }, { cache: false });
+  assert.match(head, /^<div class="fr" data-project-frame="workshop"><div class="fr-inner"><div class="fr-head"><div class="fr-tx"><h1 class="fr-title">Homeroom bot<\/h1>.*?<\/div><\/div><nav class="fr-tabs">.*?<\/nav><\/div><\/div>$/s, 'no buttons');
   assert.match(head, /class="fr-tab fr-on" aria-pressed="true">Workshop</);
 });
 
 test('the page draws the kit\'s Hub under a look, from what its own Hub reads', () => {
   const src = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(src, /const frame = isFrameSkin\(useLiveSkin\(\)\);/);
-  assert.match(src, /App\?\.openFeedbackModal\?\.\(\{ fromDev: true, intent: 'issue' \}\)/, 'Ask for a change is the menu\'s Suggest an improvement');
   assert.match(src, /openInviteLinks\(\)/);
   assert.match(src, /<ProjectHubFrame\b/);
   assert.match(src, /<ProjectFrameHead\b/);
+  const hub = src.slice(src.indexOf('const frameHub = (): ReactNode => {'), src.indexOf('const framePurpose ='));
+  assert.match(hub, /onOpenApp=\{!actions\.selfHosted \? \(\) => \{ \(window as any\)\.App\?\.openAppTab\?\.\(slug, 'app'\); \} : null\}/, 'the hero\'s Open app, not on the platform\'s own page');
+  assert.match(hub, /needs=\{owedRows\.length \? \{/, 'the row while any vote is owed, seen or not (ForYouCard)');
+  assert.match(hub, /quiet=\{owedRows\.length \|\| \(alone && !claims\) \? null : \{ claims, alone \}\}/);
+  assert.match(hub, /onWorkshop=\{v\.mine\?\.viewer \? \(\) => openTab\('workshop'\) : null\}/);
+  assert.match(hub, /src: row\.picture \|\| null,/, 'the after shot the standard card shows');
+  assert.match(hub, /t\('project:hub\.recent\.byGoing', \{ who: row\.who \}\)/);
+  assert.match(hub, /faces: active\.map\(\(person\) => \(\{ name: person\.username, color: swatchFor\(person\.username\) \}\)\)/);
+  assert.doesNotMatch(hub, /frameRule|frameWork|project:frame\.hub\.(builtBy|saidBy|members|openApp)/);
+  // Needs you is another lane's page and keeps its head as it was; no other place's head has buttons.
+  assert.match(src, /<ProjectFrameHead \{\.\.\.frameHead\} onAsk=\{tab === 'needs' \? askChange : null\} onInvite=\{tab === 'needs' \? inviteHere : null\} onJoin=\{tab === 'needs' \? joinHere : null\}/);
 });
 
-test('Topics is a page of rows: #general, then each topic with its open requests and what it is about', () => {
+test('Topics is the places list\'s own rows: the topics, and the channels beside them, each by its name', () => {
   const html = renderComponent(FRAME, 'ProjectTopicsFrame', {
-    tabs, tab: 'topics', onTab() {}, onAsk() {},
-    general: { handle: 'general', unread: 0 },
+    tabs, tab: 'topics', onTab() {},
+    general: { key: 'discussion', label: 'general', count: 0 },
     topics: [
-      { key: 'c:onboarding', name: 'Onboarding', about: 'Signing up and the first week', requests: 7, unread: 0 },
-      { key: 'c:infra', name: 'Infra', about: '', requests: 1, unread: 2 },
-      { key: 'c:misc', name: 'Misc', about: '', requests: 0, unread: 0 },
+      { key: 'c:onboarding', label: 'onboarding', count: 0 },
+      { key: 'c:infra', label: 'infra', count: 2 },
     ],
-    onOpen() {}, onPropose() {},
+    onOpen() {},
   }, { cache: false });
-  assert.match(html, /^<div class="fr" data-project-frame="topics"><div class="fr-inner"><div class="fr-head"><div class="fr-tx"><h1 class="fr-title">Topics<\/h1><p class="fr-purpose">Each topic is a channel and a category of work\. A new topic is voted on like any change\.<\/p><\/div><div class="fr-acts"><button type="button" class="fr-btn"><svg[^>]*>.*?<\/svg>Propose a topic<\/button>/s);
+  assert.match(html, /^<div class="fr" data-project-frame="topics"><div class="fr-inner"><div class="fr-head"><div class="fr-tx"><h1 class="fr-title">Topics<\/h1><p class="fr-purpose">Each topic is a channel and a category of work\.<\/p><\/div><\/div>/, 'one sentence, no button');
   assert.match(html, /class="fr-tab fr-on" aria-pressed="true">Topics</);
-  assert.match(html, /<h2 class="fr-cap">Channels<\/h2>.*?<span class="fr-t">#general<\/span>/s);
-  assert.match(html, /<span class="fr-t">Onboarding<\/span><span class="fr-s">7 open requests · Signing up and the first week<\/span>/);
-  assert.match(html, /<span class="fr-t">Infra<\/span><span class="fr-s">1 open request<\/span><\/span><span class="fr-pill fr-act" data-kind="act">2 new<\/span>/);
-  assert.match(html, /<button type="button" class="fr-row fr-sm"><span class="fr-lead" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Misc<\/span><\/span>/s, 'zero says nothing');
-  assert.match(html, /<h2 class="fr-cap">About topics<\/h2>.*?<span class="fr-t">Changed by a vote<\/span><span class="fr-s">New, renamed, merged or archived<\/span>/s);
+  const main = html.slice(html.indexOf('<div class="fr-cols">'), html.indexOf('<div class="fr-stack fr-first">'));
+  assert.match(main, /<h2 class="fr-cap">Topics<\/h2>.*?<button type="button" class="fr-row fr-sm"><span class="fr-lead" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">onboarding<\/span><\/span><svg/s, 'the name alone, as the list says it');
+  assert.match(main, /<span class="fr-t">infra<\/span><\/span><span class="fr-pill fr-act" data-kind="act">2 unread<\/span>/);
+  assert.match(html.slice(html.indexOf('<div class="fr-stack fr-first">')), /<h2 class="fr-cap">Channels<\/h2>.*?<span class="fr-t">general<\/span>/s, 'the channels beside them, first on a phone');
+  assert.doesNotMatch(html, /Propose a topic|About topics|Changed by a vote|open request/, 'what the first tour added to the list');
+  const page = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(page, /topics=\{placeRows\(community\?\.places, owed\)\.topics\}/, 'the places list\'s own rows (project-places.tsx placeRows)');
 });
 
 test('under a look the project\'s page has the frame\'s page area, and the standard page stays mounted behind the kit\'s', () => {

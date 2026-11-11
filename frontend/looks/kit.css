@@ -399,3 +399,13 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 .rx span.on{background:var(--acc-t);color:var(--acc)}
 .lone{padding:64px 16px;text-align:center;color:var(--mut)}
 .welcome{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;padding-top:8px}.welcome .tile{margin-bottom:6px}
+
+/* ---- v2, a project's pages: a change as a picture card ---- */
+.shots.cards{background:none;border-bottom:0}
+.shotc{display:block;min-width:0;color:inherit;font:inherit;text-decoration:none;text-align:left}
+.shotc .cap2{display:block}.shotc .cap2+.cap2{margin-top:2px}
+.pic.img{padding:0;overflow:hidden;display:grid;place-items:center}
+.pic.img img{width:100%;height:100%;object-fit:cover;object-position:top;display:block}
+.row .s:has(>.aft){display:flex;min-width:0}
+.row .s>.cut{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .s>.aft{flex:none;white-space:pre}
