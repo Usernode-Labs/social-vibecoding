@@ -32,7 +32,7 @@ const ws = require('../src/services/ws');
 // ── Mock pool ─────────────────────────────────────────────────────────────
 // The state a proposal leaves behind: the issue rows, the pending image rows,
 // and (never touched by the routes) the app's current illustration.
-const state = { art: null, manager: true, visible: true, issues: [], images: [], appWrites: 0, messages: [], pushes: [] };
+const state = { art: null, manager: true, visible: true, issues: [], images: [], appWrites: 0, messages: [], pushes: [], votesCleared: [] };
 let nextIssueId = 100;
 const query = async (sql, p) => {
   if (/^BEGIN|^COMMIT|^ROLLBACK/.test(sql)) return { rows: [] };
@@ -44,6 +44,23 @@ const query = async (sql, p) => {
     const row = { id: nextIssueId++, app_id: p[0], title: p[1], description: p[2], kind: p[3], payload: JSON.parse(p[4]), created_by: p[5], status: 'open' };
     state.issues.push(row);
     return { rows: [row] };
+  }
+  // #6601: replaceProposal locks the issue row, replaces the pending record
+  // and deletes the votes cast on the old picture. The issue row's payload is
+  // the workflow machine's to write (see the mocked reviseProposal below).
+  if (sql.includes('FOR UPDATE')) {
+    return { rows: state.issues.filter(i => i.id === p[0]) };
+  }
+  if (sql.startsWith('SELECT * FROM app_illustration_proposals')) {
+    return { rows: state.images.filter(r => r.issue_id === p[0]) };
+  }
+  if (sql.startsWith('DELETE FROM app_illustration_proposals')) {
+    state.images = state.images.filter(r => r.issue_id !== p[0]);
+    return { rows: [] };
+  }
+  if (sql.startsWith('DELETE FROM issue_votes')) {
+    state.votesCleared.push(p[0]);
+    return { rows: [] };
   }
   if (sql.includes('INSERT INTO app_illustration_proposals')) {
     state.images.push({ issue_id: p[0], app_id: p[1], id: p[2], content_type: p[3], data: p[4], dark_id: p[5], dark_content_type: p[6], dark_data: p[7],
@@ -69,9 +86,27 @@ access.getAppForUser = async () => state.visible ? { id: 1, slug: 'gym', name: '
 admins.canManageApp = async () => state.manager;
 ws.sendSystemMessage = async (...args) => { state.messages.push(args); return {}; };
 ws.pushIssueUpdate = (data) => { state.pushes.push(data); };
+// The replace path appends its Revise event through the workflow platform;
+// this suite is about the route, so the machine's two effects are modelled
+// here: it writes the new record onto the issue row (the machine owns
+// payload) and re-evaluates the gate.
+const reviseCalls = [];
+const platformPath = require.resolve('../src/workflow/platform.ts');
+require.cache[platformPath] = {
+  id: platformPath, filename: platformPath, loaded: true, exports: {
+    reviseProposal: async (issue, user, record) => {
+      reviseCalls.push({ issue, user, record });
+      const row = state.issues.find(i => i.id === issue.id);
+      if (row && record) { row.title = record.title; row.description = record.description; row.payload = record.payload; }
+      return { status: 200, body: { ok: true } };
+    },
+    fileProposal: async () => {},
+  },
+};
 delete require.cache[require.resolve('../src/services/illustration-proposals')];
 delete require.cache[require.resolve('../src/routes/app-illustrations')];
 const { illustrationRoutes, illustrationImageRoutes, parseFraming, validateImage, TONES, LEGACY_TINTS } = require('../src/routes/app-illustrations');
+const proposalsService = require('../src/services/illustration-proposals');
 const app = express();
 app.use(express.json());
 app.use((req, _res, next) => { req.user = { id: 7, username: 'maker' }; next(); });
@@ -85,7 +120,7 @@ const endpoint = '/api/apps/gym/featured-illustration';
 
 const reset = (art = null) => {
   state.art = art; state.manager = true; state.visible = true;
-  state.issues = []; state.images = []; state.appWrites = 0; state.messages = []; state.pushes = [];
+  state.issues = []; state.images = []; state.appWrites = 0; state.messages = []; state.pushes = []; state.votesCleared = []; reviseCalls.length = 0;
 };
 const openIssues = () => state.issues.filter(i => i.status === 'open');
 
@@ -163,14 +198,21 @@ test('a single upload opens a proposal carrying the new image, and never writes 
     assert.match(state.messages[0][2], /maker proposed changing the featured illustration/);
     assert.deepEqual(state.messages[0][5], { type: 'governance', ref: issue.id });
     assert.deepEqual(state.pushes, [{ action: 'created', appSlug: 'gym', appId: 1, issueId: issue.id, kind: 'featured_illustration' }]);
-    // GET now reports the open card, and a second save waits for it.
+    // GET now reports the open card, and a second save waits for it. #6601:
+    // it is the caller's own, so it carries `mine` and the proposed record.
     response = await request(endpoint);
-    assert.deepEqual((await response.json()).pending, data.proposal);
+    const shown = (await response.json()).pending;
+    assert.equal(shown.id, data.proposal.id);
+    assert.equal(shown.href, data.proposal.href);
+    assert.equal(shown.mine, true);
+    assert.deepEqual(shown.proposed, state.issues[0].payload.proposed);
     response = await request(endpoint + '?zoom=1&x=0&y=0', 'POST', png, 'application/octet-stream');
     assert.equal(response.status, 409);
     const dup = await response.json();
     assert.match(dup.error, /already waiting/);
-    assert.deepEqual(dup.pending, data.proposal);
+    assert.equal(dup.pending.id, data.proposal.id);
+    assert.equal(dup.pending.href, data.proposal.href);
+    assert.equal(dup.pending.mine, true, 'the 409 says the waiting change is the caller\'s');
     assert.equal(openIssues().length, 1);
     assert.equal(state.images.length, 1);
     // Out of the set is a 400 before anything is opened.
@@ -339,6 +381,71 @@ test('a preview loop rides with the picture: proposed, kept, dropped, refused, a
     reset(art);
     await put(request, { zoom: 1, x: 0, y: 0, light: png.toString('base64') });
     assert.ok(!('preview' in state.issues[0].payload.proposed), 'no loop, no key');
+  });
+});
+
+test('the proposer replaces a waiting card picture in place, and only the proposer may', async () => {
+  const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom'), Buffer.alloc(200, 7)]);
+  reset({ url: '/app-illustrations/' + 'a'.repeat(32), zoom: 1, x: 0, y: 0, tint: 'teal' });
+  await withServer(async (request) => {
+    const put = body => request(endpoint, 'PUT', JSON.stringify(body), 'application/octet-stream');
+    const dark = Buffer.concat([png, Buffer.from('dark')]);
+    let response = await put({ zoom: 1.2, x: 4, y: -2, light: png.toString('base64'), dark: dark.toString('base64'), preview: mp4.toString('base64') });
+    assert.equal(response.status, 201);
+    const first = state.issues[0];
+    const firstProposed = first.payload.proposed;
+    // A replace that sends only a new light picture (and the framing the
+    // editor always sends) keeps the waiting change's dark picture, loop,
+    // colour and number.
+    const fresh = Buffer.concat([png, Buffer.from('fresh')]);
+    response = await put({ replace: true, zoom: 1.2, x: 4, y: -2, light: fresh.toString('base64') });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.replaced, true);
+    assert.equal(body.proposal.id, first.id, 'the same vote keeps its number');
+    assert.equal(openIssues().length, 1);
+    const proposed = state.issues[0].payload.proposed;
+    assert.notEqual(proposed.url, firstProposed.url);
+    assert.equal(proposed.darkUrl, firstProposed.darkUrl, 'the proposed dark picture is kept');
+    assert.deepEqual(proposed.preview, firstProposed.preview, 'the proposed loop is kept');
+    assert.equal(proposed.zoom, 1.2); assert.equal(proposed.tint, 'teal');
+    // The new bytes wait and the old ones go with the delete; the votes cast
+    // on the old picture are cleared.
+    assert.equal(state.images.length, 1);
+    assert.equal(state.images[0].id, proposed.url.split('/').pop());
+    assert.equal(state.images[0].dark_id, firstProposed.darkUrl.split('/').pop());
+    assert.deepEqual(state.votesCleared, [first.id]);
+    assert.equal(state.appWrites, 0);
+    // Someone else's waiting change: refused, and nothing changes.
+    state.issues[0].created_by = 8;
+    response = await put({ replace: true, zoom: 1.2, x: 4, y: -2, light: fresh.toString('base64') });
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).code, 'not_proposer');
+    const seen = (await (await request(endpoint)).json()).pending;
+    assert.equal(seen.mine, false);
+    assert.equal('proposed' in seen, false, 'nobody else is shown what the waiting change proposes');
+    state.issues[0].created_by = 7;
+    // A change already decided cannot be replaced. The route cannot name a
+    // closed vote (there is no open row to find), so this is the service's
+    // own refusal, as when a vote applies between the route's read and the
+    // lock.
+    state.issues[0].status = 'closed';
+    await assert.rejects(
+      proposalsService.replaceProposal({ connect: async () => ({ query, release() {} }) }, {
+        app: { id: 1, slug: 'gym', name: 'Gym', featured_illustration: state.art },
+        user: { id: 7, username: 'maker' }, issueId: first.id, proposed: firstProposed, images: {},
+      }),
+      (err) => err.code === 'not_open' && /already decided/.test(err.message));
+    state.issues[0].status = 'open';
+    // Without the flag a save still answers 409, now saying whose change waits.
+    response = await put({ zoom: 1, x: 0, y: 0 });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).pending.mine, true);
+    // Replace with nothing waiting opens a new proposal as usual.
+    state.issues = []; state.images = []; state.art = null;
+    response = await put({ replace: true, zoom: 1, x: 0, y: 0, light: fresh.toString('base64') });
+    assert.equal(response.status, 201);
+    assert.equal(state.issues.length, 1);
   });
 });
 

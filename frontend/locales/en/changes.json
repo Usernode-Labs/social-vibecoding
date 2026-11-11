@@ -4387,6 +4387,14 @@
     "text": "Withdraw",
     "description": "Row in the ⋯ menu of a governance proposal's card, shown to the person who made it: takes the proposal back so it is no longer voted on. A verb."
   },
+  "governance.menu.edit": {
+    "text": "Edit proposal",
+    "description": "Row in the ⋯ menu of a card-picture proposal's card, shown to the person who proposed it while the vote waits: opens the picture editor to replace the waiting picture."
+  },
+  "governance.menu.editTitle": {
+    "text": "Replace the picture this waiting proposal carries",
+    "description": "Tooltip of the \"Edit proposal\" row in a card-picture proposal's ⋯ menu. \"Replace\" is a verb."
+  },
   "governance.menu.withdrawTitle": {
     "text": "Withdraw this proposal (removes it from the vote panel)",
     "description": "Tooltip of the \"Withdraw\" row in a governance proposal's ⋯ menu."
