@@ -9016,27 +9016,48 @@ async function seedStagingAppCategories(pool) {
 // health. The source description is exactly what public-app-directory.js
 // compares against, so the rows count. Display data on fake apps only;
 // idempotent on every boot. Strictly a no-op outside staging.
+//
+// The ids sit in the 90015x range, clear of every other 900xxx fixture. They
+// must not be 900110-900112: those belong to the quiet, vote-card and notes
+// demo apps, which are seeded later, and an app row taken here would make
+// their ON CONFLICT DO NOTHING skip them.
 async function seedStagingInferredCategories(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   try {
     const OWNER_ID = 900100;
     const fixtures = [
       {
-        id: 900110, name: '[Mock] Recipe box', slug: 'staging-landing-recipes',
+        id: 900150, name: '[Mock] Recipe box', slug: 'staging-landing-recipes',
         description: 'Recipes from what is in the fridge, shared with the people you cook for.',
         category: null, inferred: 'food', emoji: '🍲',
       },
       {
-        id: 900111, name: '[Mock] Bill splitter', slug: 'staging-landing-bills',
+        id: 900151, name: '[Mock] Bill splitter', slug: 'staging-landing-bills',
         description: 'Split the bills for a shared house and keep a simple budget.',
         category: 'other', inferred: 'money', emoji: '💸',
       },
       {
-        id: 900112, name: '[Mock] Run club', slug: 'staging-landing-runs',
+        id: 900152, name: '[Mock] Run club', slug: 'staging-landing-runs',
         description: 'Log your runs and keep a streak with your running club.',
         category: null, inferred: 'health', emoji: '🏃',
       },
     ];
+    // Self-heal a copy that booted the first version of this seed: it wrote
+    // these three apps at 900110-900112, before the quiet, vote-card and
+    // notes fixtures had their ids. Delete only rows carrying both that id
+    // and this seed's slug, so no real fixture can match; the inferred rows
+    // go with them (ON DELETE CASCADE), and each seed below makes its app
+    // again.
+    await pool.query(
+      `DELETE FROM apps
+        WHERE (id, slug) IN ((900110, 'staging-landing-recipes'),
+                             (900111, 'staging-landing-bills'),
+                             (900112, 'staging-landing-runs'))`
+    ).catch((err) => {
+      // Never let the cleanup stop the fixtures below: the three chips are
+      // what the landing check needs, and a fresh copy has nothing to delete.
+      log.warn('db', 'Staging inferred app-category cleanup failed', { message: err.message });
+    });
     for (const f of fixtures) {
       await pool.query(
         `INSERT INTO apps
