@@ -630,8 +630,10 @@ test('#6282: a change with an update on its way is Updating, then Update queued'
   const app = await one(
     `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
      VALUES ('Updates', 'uw-updates', 'running', $1, 'public', 'public') RETURNING id, slug`, [bob.id]);
+  // Both accepted today, so the project has two voters: bob's own yes is one
+  // of two and does not merge the change.
   for (const u of [ada, bob]) {
-    await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')`, [app.id, u.id]);
+    await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status, accepted_at) VALUES ($1, $2, 'member', NOW())`, [app.id, u.id]);
   }
   await pool.query(`INSERT INTO requests (app_id, number, title, created_by) VALUES ($1, 1, 'Bigger buttons', $2)`, [app.id, ada.id]);
   const change = await one(
