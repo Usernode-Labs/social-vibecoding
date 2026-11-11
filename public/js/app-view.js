@@ -5424,9 +5424,18 @@ const AppView = {
     if (AppView._findTopicItem()) return;
     const react = AppView._reactDevBoard();
     if (react) react.publishTopicHead?.({ card: null, body: null, item: null, loading: true });
+    // #6604: a request's or a decision's thread mounts on its ref alone,
+    // before its row exists, so it can start reading in the same tick. While
+    // that row is still in flight it IS this topic's thread, not a previous
+    // page to drop: unmounting it here leaves the page's stream empty for
+    // good, because the paint that follows mounts a thread only when none
+    // was mounted. A live repaint during the load is what found this.
+    const active = typeof GroupChat !== 'undefined' ? GroupChat.activeThread : null;
+    const threadType = t.kind === 'gov' ? 'governance' : (t.kind === 'issue' ? 'issue' : 'session');
+    const ownThread = !!active && active.type === threadType && Number(active.ref) === Number(t.id);
     // The previous thread's stream goes with the body: the same pair
     // `mountThread` runs before a remount (GroupChat.renderThread).
-    if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) {
+    if (!ownThread && typeof GroupChat !== 'undefined' && GroupChat.unmountThread) {
       const prev = document.getElementById('gc-thread-messages');
       if (prev) GroupChat._react?.()?.unmountTranscript?.(prev);
       GroupChat.unmountThread();

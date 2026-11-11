@@ -89,6 +89,7 @@ function makeAppView({ board = null, fetchImpl } = {}) {
   const thread = makeEl('dev-topic-thread');
   const switchTabCalls = [];
   const mountThreads = [];
+  const unmountThreads = [];
   const heads = [];
   const fetchLog = [];
   const telemetry = makeTelemetry();
@@ -103,7 +104,7 @@ function makeAppView({ board = null, fetchImpl } = {}) {
     },
     Kudos: { renderButton: () => '<button class="kudos">k</button>' },
     GroupChat: {
-      unmountThread() {},
+      unmountThread() { unmountThreads.push(true); },
       mountThread(opts) { mountThreads.push(opts); },
       refreshVoteControls() {},
     },
@@ -136,7 +137,7 @@ function makeAppView({ board = null, fetchImpl } = {}) {
   if (board) AppView._loadDevData = () => board.promise;
   AppView._renderTopicHead = () => { heads.push(AppView._findTopicItem()); };
   return {
-    AppView, sandbox, thread, state, switchTabCalls, mountThreads, heads,
+    AppView, sandbox, thread, state, switchTabCalls, mountThreads, unmountThreads, heads,
     fetchLog, telemetry,
   };
 }
@@ -183,6 +184,24 @@ test('an issue head paints once its single fetch answers, board still pending', 
   await tick();
   assert.equal(h.heads.length, 1, 'the board landing repaints nothing');
   assert.equal(h.heads[0].title, 'Issue 30', 'the page keeps the row its own read painted');
+});
+
+test('#6604: a repaint while a page is still loading keeps the thread it mounted', () => {
+  const h = makeAppView({
+    fetchImpl: () => Promise.resolve({ ok: false, status: 404, json: async () => ({}) }),
+  });
+  h.AppView._devTopic = { kind: 'issue', id: 30 };
+  h.AppView._paintedTopic = null;
+  // The row is still in flight, but the thread was mounted on the ref alone
+  // and is reading: it is THIS page's stream, not a previous page to drop.
+  h.sandbox.GroupChat.activeThread = { type: 'issue', ref: 30, language: 'request' };
+  h.AppView._clearTopicHeadBody();
+  assert.deepEqual(h.unmountThreads, [], 'the page keeps the stream it is loading');
+
+  // A different topic's thread is still a previous page, and goes.
+  h.sandbox.GroupChat.activeThread = { type: 'issue', ref: 29, language: 'request' };
+  h.AppView._clearTopicHeadBody();
+  assert.equal(h.unmountThreads.length, 1, 'another topic\'s stream is unmounted');
 });
 
 test('another app\'s row #30 is never painted under this app\'s name', async () => {
