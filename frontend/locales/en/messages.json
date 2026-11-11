@@ -3741,7 +3741,7 @@
   },
   "thread.botWorking.writing": {
     "text": "Writing",
-    "description": "On the card at the end of the chat while Homeroom bot writes its answer; the answer so far is shown under it as it grows. Three animated dots follow it, as an ellipsis."
+    "description": "On the card at the end of the chat while Homeroom bot writes its answer; the answer itself appears once it is sent, so no words are shown under this. Three animated dots follow it, as an ellipsis."
   },
   "thread.activityTimeRange": {
     "text": "{{start}} – {{end}}",

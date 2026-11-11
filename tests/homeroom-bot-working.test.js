@@ -809,7 +809,7 @@ test('#6405: once the turn has named a step, an unmapped tool does not drop the 
   assert.deepEqual(quiet, [null, null]);
 });
 
-test('#6405: the correction pass never shows the card a shorter answer than it already has', async () => {
+test('#6581: the correction pass sends one checked answer, and the card showed no words to replace', async () => {
   const first = 'Refreshed. Homeroom has 80 open requests. The newest is the one about the live reply jumping, '
     + 'and it has no votes yet.';
   let round = 0;
@@ -831,9 +831,10 @@ test('#6405: the correction pass never shows the card a shorter answer than it a
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(round, 2, 'the claim check asked it again');
   const writing = turn.doings.filter((d) => d?.kind === 'writing');
-  assert.equal(writing.length, 1, 'the first pass was shown, and the rewrite never replaced it with less');
-  assert.equal(writing[0].text, first);
+  assert.equal(writing.length, 1, 'the card said "Writing" once, across both passes');
+  assert.equal(writing[0].text, undefined, 'no words were shown, so none could be replaced');
   assert.equal(turn.sent.length, 1, 'one reply, checked');
+  assert.equal(turn.sent[0].content, 'I have not drafted it, so there is nothing to tap.');
 });
 
 test('a project it reads is named only when the person can see it, and asked about once a turn', async () => {

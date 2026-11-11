@@ -519,7 +519,37 @@ async function lastPostKind(pool, appId, issueNumber) {
 // failure; different words (a different cause) are news and go out normally.
 const FAILURE_TRIES_MARK = /\s*\(Tried \d+ times\.\)$/;
 
-async function updateRepeatedBuildFailure(pool, ws, { appId, issueNumber, content }) {
+/** Pure: a failure note's words, without the people it tagged or its try count. */
+function failureWords(content) {
+  return String(content || '')
+    .replace(/^(?:@[A-Za-z0-9_.-]+\s+)+/, '')
+    .replace(FAILURE_TRIES_MARK, '')
+    .trim();
+}
+
+/**
+ * #6581: whether somebody other than the bot has posted under a thread
+ * message since it went out. A reply answers the words it saw, so a note
+ * somebody has replied under is never rewritten in place: new words go
+ * below it, as a new note. System lines (no user) are not replies.
+ */
+async function repliedUnderMessage(pool, { appId, messageId, threadType, threadRef, issueNumber, botId }) {
+  const ref = Number(threadRef ?? issueNumber);
+  if (!Number.isSafeInteger(ref)) return false;
+  const { rows } = await pool.query(
+    `SELECT 1 FROM chat_messages r
+      WHERE r.app_id = $1 AND r.id > $2 AND r.deleted_at IS NULL
+        AND COALESCE(r.thread_type, 'issue') = $3
+        AND COALESCE(r.thread_ref, $4::int) = $4::int
+        AND r.user_id IS NOT NULL
+        AND ($5::int IS NULL OR r.user_id <> $5::int)
+      LIMIT 1`,
+    [appId, Number(messageId), threadType || 'issue', ref, botId == null ? null : Number(botId)],
+  );
+  return rows.length > 0;
+}
+
+async function updateRepeatedBuildFailure(pool, ws, { appId, issueNumber, content, botId = null }) {
   const want = String(content || '').trim();
   if (!want) return null;
   const { rows } = await pool.query(
@@ -535,11 +565,14 @@ async function updateRepeatedBuildFailure(pool, ws, { appId, issueNumber, conten
   if (!last) return null;
   // Who the post tagged is not part of the failure: the handles are put on
   // the same text, and a different tagger does not make it new news.
-  const said = String(last.content || '')
-    .replace(/^(?:@[A-Za-z0-9_.-]+\s+)+/, '')
-    .replace(FAILURE_TRIES_MARK, '')
-    .trim();
+  const said = failureWords(last.content);
   if (said !== want) return null;
+  // #6581: words already on screen stay. Once somebody has replied under the
+  // note, the count goes below as a new note, not over the words they read.
+  // A lookup that fails counts as a reply: the note is never rewritten then.
+  if (await repliedUnderMessage(pool, {
+    appId, messageId: last.message_id, threadType: last.thread_type, threadRef: last.thread_ref, issueNumber, botId,
+  }).catch(() => true)) return null;
   const metadata = last.metadata && typeof last.metadata === 'object' && !Array.isArray(last.metadata) ? last.metadata : {};
   const bot = metadata.homeroomBot && typeof metadata.homeroomBot === 'object' ? metadata.homeroomBot : {};
   const tries = (Number(bot.tries) || 1) + 1;
@@ -590,14 +623,18 @@ function saidInThread(kind) {
  * Decision 6: a failure, when the bot's last post in the request's thread
  * was a failure too, takes that post's place: its message gets the new
  * words and metadata (an offer to try again included), and the room hears
- * both (chat_edit, chat_message_updated). The same words again
- * are updateRepeatedBuildFailure's, before this. Resolves { id } of the
- * message, or null when there is no such post to replace (it is then
- * posted as new). `postId` is this post's own row, left out of the look.
+ * both (chat_edit, chat_message_updated). #6581: words already on screen
+ * stay, so this happens only while nobody has replied under the note and
+ * the words are the same; a note that says something different, or one
+ * somebody has answered, is left intact and the new failure goes below it
+ * as a new note. The same words again are updateRepeatedBuildFailure's,
+ * before this. Resolves { id } of the message, or null when there is no such
+ * post to replace (it is then posted as new). `postId` is this post's own
+ * row, left out of the look.
  */
-async function replaceFailurePost(pool, ws, { appId, issueNumber, postId, content, metadata }) {
+async function replaceFailurePost(pool, ws, { appId, issueNumber, postId, content, metadata, botId = null }) {
   const { rows: [last] } = await pool.query(
-    `SELECT p.kind, m.id AS message_id
+    `SELECT p.kind, m.id AS message_id, m.content, m.thread_type, m.thread_ref
        FROM homeroom_bot_posts p
        JOIN chat_messages m ON m.id = p.thread_message_id AND m.deleted_at IS NULL
       WHERE p.app_id = $1 AND p.issue_number = $2 AND p.id <> $3 AND p.thread_message_id IS NOT NULL
@@ -608,6 +645,13 @@ async function replaceFailurePost(pool, ws, { appId, issueNumber, postId, conten
   if (!last || !FAILURE_KINDS.has(last.kind)) return null;
   const text = String(content || '').trim();
   if (!text) return null;
+  // #6581: only the very same words may be written over the note. A note
+  // that says something else, or that somebody has replied under, stays. A
+  // lookup that fails counts as a reply, so nothing shown is ever overwritten.
+  if (failureWords(last.content) !== failureWords(text)) return null;
+  if (await repliedUnderMessage(pool, {
+    appId, messageId: last.message_id, threadType: last.thread_type, threadRef: last.thread_ref, issueNumber, botId,
+  }).catch(() => true)) return null;
   const { rows: [updated] } = await pool.query(
     `UPDATE chat_messages SET content = $2, metadata = $3::jsonb, edited_at = NOW()
       WHERE id = $1 AND deleted_at IS NULL
@@ -2340,7 +2384,7 @@ async function post({
   // request's thread, updates that post and tells nobody again.
   if (!had && kind === 'build_failed' && !noIssueThread) {
     const repeated = await updateRepeatedBuildFailure(pool, ws, {
-      appId: app.id, issueNumber, content: homeroomText || firstPerson(text),
+      appId: app.id, issueNumber, content: homeroomText || firstPerson(text), botId: sender?.id ?? null,
     }).catch((err) => {
       log.warn('homeroom-bot', 'Could not check the request\'s last failure line (posting again)', {
         app: app.slug, issueNumber, err: err.message,
@@ -2439,11 +2483,13 @@ async function post({
       hrbotPost: String(postId),
     });
     try {
-      // Decision 6: one failure post, updated in place. Nobody is tagged or
-      // told again for it: its requester's bell rang from its stage.
+      // Decision 6, #6581: a failure note with the same words, under which
+      // nobody has replied, is updated in place, and nobody is tagged or told
+      // again for it. Anything else is a new note below, so words already on
+      // screen never change.
       const replaced = FAILURE_KINDS.has(kind) && sender && !threadMessage
         ? await replaceFailurePost(pool, ws, {
-          appId: app.id, issueNumber, postId, content: threadText, metadata: marked(metadata),
+          appId: app.id, issueNumber, postId, content: threadText, metadata: marked(metadata), botId: sender.id ?? null,
         })
         : null;
       if (replaced) messageSentBefore = true;
