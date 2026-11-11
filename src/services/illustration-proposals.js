@@ -198,8 +198,10 @@ async function createProposal(pool, { app, user, proposed, images = {} }) {
  * Every write runs in one transaction holding the issue row lock, the same
  * lock the machine's facts take: a vote that is applying concurrently either
  * commits first (the issue is closed, and replace is refused) or waits and
- * then reads the new payload, the new bytes and no votes. The machine event
- * (Revise) is appended by the caller after this commits.
+ * then reads the new payload, the new bytes and no votes. The issue row's
+ * own payload is the machine's to write (it owns it), so the Revise event
+ * appended by the caller carries the new record and writes it in the same
+ * transaction that re-evaluates the gate.
  */
 async function replaceProposal(pool, { app, user, issueId, proposed, images = {} }) {
   const current = app.featured_illustration || null;
@@ -243,10 +245,6 @@ async function replaceProposal(pool, { app, user, issueId, proposed, images = {}
           preview ? preview.id : null, preview ? preview.contentType : null, preview ? preview.data : null]
       );
     }
-    await client.query(
-      `UPDATE issues SET title = $2, description = $3, payload = $4::jsonb WHERE id = $1`,
-      [issueId, title, description, JSON.stringify(payload)]
-    );
     // The votes were cast on the old picture.
     await client.query('DELETE FROM issue_votes WHERE issue_id = $1', [issueId]);
     await client.query('COMMIT');
@@ -258,11 +256,12 @@ async function replaceProposal(pool, { app, user, issueId, proposed, images = {}
     client.release();
   }
 
-  // Re-evaluate the gate from the now-empty votes and tell the thread. The
-  // data above is already committed, so a refusal is logged rather than
-  // thrown back at the caller.
+  // The issue row's payload is the workflow machine's to write: the Revise
+  // event carries the new record and writes it alongside the gate's
+  // re-evaluation. The pending bytes and the cleared votes above are already
+  // committed, so a refusal is logged rather than thrown back at the caller.
   const workflow = require('../workflow/platform.ts');
-  await workflow.reviseProposal(issue, user);
+  await workflow.reviseProposal(issue, user, { title, description, payload });
   pushIssueUpdate({ action: 'updated', appSlug: app.slug, appId: app.id, issueId: issue.id, kind: KIND });
   log.info('illustrations', 'Featured illustration proposal replaced', {
     issueId: issue.id, appId: app.id, remove,

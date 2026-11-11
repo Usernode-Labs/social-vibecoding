@@ -353,21 +353,27 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     await file(ill);
     await vote(ill, voter, 'up');
     assert.equal((await inst(ill)).state, 'open');
-    // What the replace route has already committed: the new record, the new
-    // bytes and no votes. The event re-evaluates the gate from the empty tally.
+    // What the replace route has already committed: the new pending bytes
+    // and no votes. The event carries the new record, which the machine
+    // writes (it owns issues.payload), and re-evaluates the gate from the
+    // empty tally.
     await pool.query('DELETE FROM issue_votes WHERE issue_id = $1', [ill.id]);
-    await pool.query(`UPDATE issues SET payload = $2::jsonb WHERE id = $1`,
-      [ill.id, JSON.stringify({ proposed: revised, current: null, remove: false })]);
     await pool.query('DELETE FROM app_illustration_proposals WHERE issue_id = $1', [ill.id]);
     await pool.query(
       `INSERT INTO app_illustration_proposals (issue_id, app_id, id, content_type, data)
        VALUES ($1, $2, $3, 'image/png', $4)`, [ill.id, a.id, hex('e'), Buffer.from('new-picture')]);
-    const notAuthor = await send(ill, 'Revise', { userId: stranger.id, username: stranger.username }, { actor: `user:${stranger.id}` });
-    const byAuthor = await send(ill, 'Revise', { userId: author.id, username: author.username }, { actor: `user:${author.id}` });
+    const record = {
+      title: 'Change the featured illustration',
+      description: `The author changed the proposed picture on ${a.name}.`,
+      payload: { proposed: revised, current: null, remove: false },
+    };
+    const notAuthor = await send(ill, 'Revise', { userId: stranger.id, username: stranger.username, ...record }, { actor: `user:${stranger.id}` });
+    const byAuthor = await send(ill, 'Revise', { userId: author.id, username: author.username, ...record }, { actor: `user:${author.id}` });
     await rt.drain();
     assert.equal((await event(notAuthor)).reason, 'not_author');
     assert.equal((await event(byAuthor)).result, 'accepted');
     assert.equal((await inst(ill)).state, 'open');
+    assert.deepEqual((await row(ill)).payload.proposed, revised, 'the machine wrote the new record');
     assert.match((await lines(ill)).at(-1), /changed the proposed picture\. Votes cast before the change were cleared\./);
     // The gate starts again from zero, and the new record is what applies.
     await vote(ill, voter, 'up');

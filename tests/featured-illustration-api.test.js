@@ -45,8 +45,9 @@ const query = async (sql, p) => {
     state.issues.push(row);
     return { rows: [row] };
   }
-  // #6601: replaceProposal locks the issue row, rewrites its payload and the
-  // pending record, and deletes the votes cast on the old picture.
+  // #6601: replaceProposal locks the issue row, replaces the pending record
+  // and deletes the votes cast on the old picture. The issue row's payload is
+  // the workflow machine's to write (see the mocked reviseProposal below).
   if (sql.includes('FOR UPDATE')) {
     return { rows: state.issues.filter(i => i.id === p[0]) };
   }
@@ -55,11 +56,6 @@ const query = async (sql, p) => {
   }
   if (sql.startsWith('DELETE FROM app_illustration_proposals')) {
     state.images = state.images.filter(r => r.issue_id !== p[0]);
-    return { rows: [] };
-  }
-  if (sql.startsWith('UPDATE issues SET title')) {
-    const issue = state.issues.find(i => i.id === p[0]);
-    if (issue) { issue.title = p[1]; issue.description = p[2]; issue.payload = JSON.parse(p[3]); }
     return { rows: [] };
   }
   if (sql.startsWith('DELETE FROM issue_votes')) {
@@ -91,11 +87,19 @@ admins.canManageApp = async () => state.manager;
 ws.sendSystemMessage = async (...args) => { state.messages.push(args); return {}; };
 ws.pushIssueUpdate = (data) => { state.pushes.push(data); };
 // The replace path appends its Revise event through the workflow platform;
-// this suite is about the route and the service's own transaction.
+// this suite is about the route, so the machine's two effects are modelled
+// here: it writes the new record onto the issue row (the machine owns
+// payload) and re-evaluates the gate.
+const reviseCalls = [];
 const platformPath = require.resolve('../src/workflow/platform.ts');
 require.cache[platformPath] = {
   id: platformPath, filename: platformPath, loaded: true, exports: {
-    reviseProposal: async () => ({ status: 200, body: { ok: true } }),
+    reviseProposal: async (issue, user, record) => {
+      reviseCalls.push({ issue, user, record });
+      const row = state.issues.find(i => i.id === issue.id);
+      if (row && record) { row.title = record.title; row.description = record.description; row.payload = record.payload; }
+      return { status: 200, body: { ok: true } };
+    },
     fileProposal: async () => {},
   },
 };
@@ -116,7 +120,7 @@ const endpoint = '/api/apps/gym/featured-illustration';
 
 const reset = (art = null) => {
   state.art = art; state.manager = true; state.visible = true;
-  state.issues = []; state.images = []; state.appWrites = 0; state.messages = []; state.pushes = []; state.votesCleared = [];
+  state.issues = []; state.images = []; state.appWrites = 0; state.messages = []; state.pushes = []; state.votesCleared = []; reviseCalls.length = 0;
 };
 const openIssues = () => state.issues.filter(i => i.status === 'open');
 

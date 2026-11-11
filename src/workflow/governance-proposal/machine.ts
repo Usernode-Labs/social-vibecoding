@@ -67,7 +67,15 @@ const EVENTS = {
   Evaluate: () => ({}),
   AdminApply: person,
   Withdraw: person,
-  Revise: person,
+  // #6601: the proposer swapped the waiting picture. `payload` is the
+  // complete new record; the machine owns issues.payload, so the transition
+  // writes it (title and description with it) rather than the route.
+  Revise: (p: any) => {
+    const record = p?.payload;
+    if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('payload must be an object');
+    if (typeof p?.title !== 'string' || typeof p?.description !== 'string') throw new Error('title and description are required');
+    return { ...person(p), title: p.title as string, description: p.description as string, payload: record as Json };
+  },
   TargetClosed: (p: any) => {
     const cause = p?.cause?.kind === 'pr-merge'
       ? { kind: 'pr-merge' as const, prNumber: int(p.cause.prNumber, 'prNumber') }
@@ -540,15 +548,24 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
             { writes: [chat(e, f.issue!, `${e.payload.username} withdrew their proposal: "${f.issue!.title}"`, governanceThread(f.issue!))] }),
         }),
         // #6601: the proposer swapped the waiting picture. The route has
-        // already written the new record and deleted the old votes; the gate
-        // is re-evaluated from the empty tally and the thread hears it.
+        // already replaced the pending bytes and deleted the old votes; this
+        // writes the new record (the machine owns issues.payload) and
+        // re-evaluates the gate from the empty tally.
         Revise: watchingOutside({
           guard: (s, e, f) => (f.issue!.kind === 'featured_illustration' ? ok() : reject('not_revisable')),
-          to: (s, e, f, ctx) => decide(s as any, e, f, ctx, timing, f.gate!, {
-            writes: [chat(e, f.issue!, `${e.payload.username} changed the proposed picture. `
-              + 'Votes cast before the change were cleared.', governanceThread(f.issue!))],
-            push: [boardMoved(issueUpdate(f.issue!, 'updated'))],
-          }),
+          to: (s, e, f, ctx) => {
+            // The facts were read before this transition's write; decide on
+            // the new record, so an apply (a zero-vote quorum) applies it.
+            const issue = { ...f.issue!, title: e.payload.title, payload: e.payload.payload };
+            return decide(s as any, e, { ...f, issue }, ctx, timing, f.gate!, {
+              writes: [
+                { type: 'revise', issueId: issue.id, title: e.payload.title, description: e.payload.description, payload: e.payload.payload },
+                chat(e, issue, `${e.payload.username} changed the proposed picture. `
+                  + 'Votes cast before the change were cleared.', governanceThread(issue)),
+              ],
+              push: [boardMoved(issueUpdate(issue, 'updated'))],
+            });
+          },
         }),
         TargetClosed: watchingOutside({
           guard: (s, e, f) => (f.issue!.kind === 'close_issue' && Number(f.issue!.payload.issueNumber) === e.payload.issueNumber
@@ -569,6 +586,13 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
     },
     writes: {
       vote: writeVote,
+      // #6601: the new record of a waiting picture change. The machine owns
+      // the row's payload, so the route asks rather than writing it itself.
+      revise: async (tx, w) => {
+        await tx.query(
+          `UPDATE issues SET title = $2, description = $3, payload = $4::jsonb WHERE id = $1`,
+          [w.issueId, w.title, w.description, JSON.stringify(w.payload)]);
+      },
       chat: async (tx, w, ctx) => {
         const { rows: [row] } = await tx.query(
           `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
