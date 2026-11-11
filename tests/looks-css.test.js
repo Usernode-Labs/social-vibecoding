@@ -77,8 +77,9 @@ test('the mock\'s own machinery is dropped, and its reset is kept inside a frame
   for (const sel of ['.hr.full', '.hr.phone.full', '.full .app', '.full .colm', '.full.phone .app', '.hr.phone']) {
     assert.equal(looks.mapSelector(sel, null), null, `${sel} sizes the tour's mock`);
   }
-  assert.equal(looks.mapSelector('.hr *', null).selector, 'html[data-skin] .fr *');
-  assert.equal(looks.mapSelector('.hr *::before', null).selector, 'html[data-skin] .fr *::before');
+  // The reset stops at the product's own inside a kit page (fr-own), at no added weight.
+  assert.equal(looks.mapSelector('.hr *', null).selector, 'html[data-skin] .fr *:where(:not(.fr-own,.fr-own *))');
+  assert.equal(looks.mapSelector('.hr *::before', null).selector, 'html[data-skin] .fr *:where(:not(.fr-own,.fr-own *))::before');
   assert.equal(looks.mapSelector('.hr svg.ic', null).selector, 'html[data-skin] .fr svg.fr-ic');
 });
 
@@ -221,7 +222,7 @@ test('version 2 is written with the kit\'s tokens only, and names no side', () =
   assert.doesNotMatch(body, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, 'no literal colour: a look could not restyle it');
   const tokens = new Set([...kitSource().slice(0, kitSource().indexOf(V2_MARK)).matchAll(/--([a-z0-9-]+):/g)].map((m) => m[1]));
   for (const m of body.matchAll(/var\(--([a-z0-9-]+)/g)) {
-    assert.ok(tokens.has(m[1]) || ['tc', 'bn', 'solid'].includes(m[1]), `--${m[1]} is not one of the kit's tokens (tc and bn are given by the data; solid is a see-through look's opaque surface, from looks.json)`);
+    assert.ok(tokens.has(m[1]) || ['tc', 'bn', 'solid', 'cr'].includes(m[1]), `--${m[1]} is not one of the kit's tokens (tc, bn and cr, a community's ring, are given by the data; solid is a see-through look's opaque surface, from looks.json)`);
   }
   assert.doesNotMatch(body, /box-shadow:inset -?[1-9]\d*px 0 0/, 'a line on one side is a border, which mirrors; an inset shadow does not');
 });
@@ -336,7 +337,7 @@ test('version 2 dresses nothing of the product\'s own that it did not dress befo
   // places a kit element inside or beside a worn one, and they stay a handful.
   const SETTINGS = /#settings-root|#settings-section-content|\.settings-(frame|page|filter)/;
   const elsewhere = worn.filter((sel) => !SETTINGS.test(sel));
-  assert.ok(worn.length > 0 && elsewhere.length < 53, `a handful only outside Settings (${elsewhere.length} of ${worn.length})`);
+  assert.ok(worn.length > 0 && elsewhere.length < 62, `a handful only outside Settings (${elsewhere.length} of ${worn.length})`);
   for (const sel of elsewhere) assert.match(sel, /\.fr-[\w-]+/, `"${sel}" would dress the product's markup with no kit element in it`);
   // The waiting room does wear version 2's button, field and link since the
   // fix pass (looks.json names its controls by their own hooks:

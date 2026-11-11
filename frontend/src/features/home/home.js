@@ -3990,7 +3990,7 @@ ${basic ? '' : `<div class="card-menu-slug">${escapeHtml(app.slug)}</div><div cl
     // fills the app's own page, search results and demo tiles carry no
     // data-yours, and while edit mode is on there is nothing to start.
     if (!basic && !Home._editing && anchorEl && typeof anchorEl.closest === 'function'
-        && anchorEl.closest('.app-card[data-yours]:not([data-demo])')) {
+        && anchorEl.closest('.app-card[data-yours]:not([data-demo]), [data-home-frame-tile="yours"]')) {
       items.push({
         key: 'edit-my-apps',
         label: message('home:menu.editMyApps.label'),

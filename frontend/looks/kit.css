@@ -500,3 +500,6 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 .botpage .purpose{text-wrap:balance}
 /* ---- v2, the week's bars (the fix pass): a day with nothing in it is a baseline, as the standard chart draws it ---- */
 .bcol.none i{height:2px;min-height:0;border-radius:1px;background:var(--faint)}
+/* ---- v2, the left-overs pass (group A): a piece of the product's own inside a kit page (the reset stops at it: build-looks-css.js), and a community's tile in the ring of its colour ---- */
+.own{display:contents}
+.at.ring .tile{outline:2px solid var(--cr,var(--line));outline-offset:1px}

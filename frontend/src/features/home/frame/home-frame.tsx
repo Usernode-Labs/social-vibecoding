@@ -32,9 +32,20 @@
  * standard Home stays mounted beside it, hidden by app.css, so what
  * home.js writes still lands and nothing of the standard look changes.
  *
- * Left out, noted in the plan: dragging a tile to rearrange Pinned apps
- * (PlatformUI's gesture works on the hidden standard grid's own cells),
- * the iOS widget strip, and the waitlist and verify cards.
+ * Four pieces of the standard Home are not redrawn: they are handed in by
+ * HomeScreen as they are, one instance each (so no id is in the document
+ * twice), and stand inside this page as the product's own (class `fr-own`,
+ * where the kit's reset stops; app.css, HOME UNDER A LOOK, dresses them):
+ *
+ *   the grid while it is arranged   Edit swaps the kit's tiles for the
+ *                         standard launcher grid (../app-grid.tsx), so a
+ *                         drag rearranges Pinned apps by the product's one
+ *                         controller and layout (home.js, HomeLayout: four
+ *                         columns of cells), on a desktop and by touch
+ *   the iOS widget strip, the waitlist card, the verify card
+ *
+ * A tile's menu opens on a right-click and on a hold (home.js
+ * _wireCardLongPressMenu, the standard tile's own), and offers Edit My apps.
  *
  * Every tile and row is a door (pinned-communities.tsx's rule): a plain
  * click lands on the place through AppView, a cmd-click or middle-click
@@ -43,6 +54,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Btn, Card, CapSub, Count, GroupLink, HCard, Icon, Lead, Mut, Note, PageBody, Pill, Row, Search, Sec, SecNote, ShowAll, Sub, Tile, k } from '@/components/ui/kit';
+import { useCommunityColor } from '../../../lib/community-color';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { liveAppLabel, useLiveAppSlugs } from '../../app-frame/live-apps';
@@ -94,7 +106,7 @@ function Minus() {
  * and at most one control of its own on a corner. Always a group holding
  * its door beside that control, since a button may not sit inside a link.
  */
-function HomeTile({ face, name, count, href, onClick, inert, dim, lit, pressed, corner, marks, status, title, label, id, onContextMenu }: {
+function HomeTile({ face, name, count, href, onClick, inert, dim, lit, pressed, corner, marks, status, title, label, id, onContextMenu, nodeRef, ring, ...data }: {
   face: React.ReactNode;
   name: React.ReactNode;
   count?: number;
@@ -114,10 +126,13 @@ function HomeTile({ face, name, count, href, onClick, inert, dim, lit, pressed, 
   label?: string;
   id?: string;
   onContextMenu?: (event: React.MouseEvent<HTMLElement>) => void;
-}) {
+  nodeRef?: React.Ref<HTMLDivElement>;
+  /** A community's tile: the ring of its colour, which tells it from an app (../pinned-communities.tsx). */
+  ring?: string;
+} & Record<`data-${string}`, string | undefined> & Pick<React.HTMLAttributes<HTMLDivElement>, 'onPointerDownCapture' | 'onPointerCancel'>) {
   const body = (<>{face}<Count>{count}</Count><span className={k('nm')}>{name}</span></>);
   return (
-    <div className={k('at', dim && 'dim', lit && 'lit')} title={title} onContextMenu={onContextMenu}>
+    <div ref={nodeRef} className={k('at', dim && 'dim', lit && 'lit', ring && 'ring')} style={ring ? { '--fr-cr': ring } as React.CSSProperties : undefined} title={title} onContextMenu={onContextMenu} {...data}>
       {inert
         ? <span className={k('atl')}>{body}</span>
         : href
@@ -130,6 +145,15 @@ function HomeTile({ face, name, count, href, onClick, inert, dim, lit, pressed, 
   );
 }
 
+/**
+ * A community's tile: the tile of the grid, in the ring of the community's
+ * colour, as the standard Home draws it so a community never reads as an app.
+ */
+function CommunityTile({ of, ...tile }: { of: { slug: string; iconUrl?: string | null; iconEmoji?: string | null; iconColor?: string | null } } & Omit<React.ComponentProps<typeof HomeTile>, 'ring'>) {
+  const ring = useCommunityColor({ color: of.iconColor || null, iconUrl: of.iconUrl || null, iconEmoji: of.iconEmoji || null, key: of.slug });
+  return <HomeTile ring={ring} {...tile} />;
+}
+
 /** An app of Pinned apps: the launcher's own tile, with what the standard tile says about it. */
 function AppTile({ app, editing, yours, live }: { app: HomeAppView; editing: boolean; yours: boolean; live: boolean }) {
   const t = useMessages('home');
@@ -138,12 +162,52 @@ function AppTile({ app, editing, yours, live }: { app: HomeAppView; editing: boo
     ? (app.forkDeleted ? t('home:grid.tile.remixedFromDeleted', { open: '<', close: '>' }) : t('home:grid.tile.remixedFrom', { app: app.forkName }))
     : '';
   const whose = app.audience === 'invited' ? t('home:grid.tile.audience.invited') : app.audience === 'solo' ? t('home:grid.tile.audience.solo') : '';
+  // A hold opens the tile's menu, as on the standard tile: home.js's own
+  // recogniser, which reads the slug off the node. The node carries no
+  // data-yours, which there hands a touch to the grid's drag: these tiles
+  // are not dragged (Edit shows the standard grid for that).
+  const node = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = node.current;
+    if (!el) return undefined;
+    const unwire = home()?._wireCardLongPressMenu?.(el);
+    // A menu opened by a finger's hold may lie under that finger, and the
+    // click its release sends would press whichever item is there. On the
+    // standard grid the drag's recogniser owns the touch and no such click
+    // arrives; here the release's click is eaten once.
+    const onDown = (event: PointerEvent) => {
+      if (event.pointerType !== 'touch') return;
+      const end = () => {
+        window.removeEventListener('pointerup', end, true);
+        window.removeEventListener('pointercancel', end, true);
+        if (!home()?._suppressClick) return;
+        const eat = (click: Event) => { click.preventDefault(); click.stopPropagation(); };
+        window.addEventListener('click', eat, { capture: true, once: true });
+        window.setTimeout(() => window.removeEventListener('click', eat, true), 400);
+      };
+      window.addEventListener('pointerup', end, true);
+      window.addEventListener('pointercancel', end, true);
+    };
+    el.addEventListener('pointerdown', onDown);
+    return () => { el.removeEventListener('pointerdown', onDown); if (typeof unwire === 'function') unwire(); };
+  }, [app.slug]);
   return (
     <HomeTile
+      nodeRef={node}
+      data-slug={app.slug}
+      // What home.js reads to offer "Edit My apps" in the menu: a tile of your own, not a demo.
+      data-home-frame-tile={yours && !app.demo ? 'yours' : 'app'}
+      onPointerDownCapture={(event) => { const N = home(); if (N) N._cardPointerType = event.pointerType; }}
+      onPointerCancel={() => { home()?.closeCardMenu?.(); }}
       face={<Tile size={FACE} name={app.name} {...iconProps(app.icon)} />}
       name={app.name}
       href={appHref(app.slug)}
-      onClick={(event) => openApp(event, app.slug)}
+      onClick={(event) => {
+        // The press that ends a hold opened the menu; it does not open the app too.
+        const N = home();
+        if (N?._suppressClick) { N._suppressClick = false; event.preventDefault(); return; }
+        openApp(event, app.slug);
+      }}
       // While the grid is being arranged a tile is not a door (#4669).
       inert={editing || !app.clickable}
       dim={!app.clickable && !app.showRetry}
@@ -153,7 +217,9 @@ function AppTile({ app, editing, yours, live }: { app: HomeAppView; editing: boo
         const N = home();
         if (!N?.openCardMenu || (event.target as HTMLElement).closest('button')) return;
         event.preventDefault();
-        if (N._menuAnchor === event.currentTarget) { N.closeCardMenu?.(); return; }
+        // A phone's browser sends contextmenu during the same hold: the menu is opened once.
+        if (N._cardPointerType === 'touch') { if (!N._menu) N.openCardMenu(app.slug, event.currentTarget); return; }
+        if ((N._menuAnchor || N._menuAnchorAtPress) === event.currentTarget) { N.closeCardMenu?.(); return; }
         N.openCardMenu(app.slug, event.currentTarget);
       }}
       marks={(
@@ -193,7 +259,7 @@ function AppTile({ app, editing, yours, live }: { app: HomeAppView; editing: boo
 }
 
 /** Pinned apps: the launcher's grid, as tiles in one card. */
-function PinnedApps() {
+function PinnedApps({ grid: standardGrid }: { grid?: React.ReactNode }) {
   const t = useMessages('home');
   const grid = useStoreState(gridStore);
   const { moreCount } = useStoreState(chromeStore);
@@ -237,7 +303,13 @@ function PinnedApps() {
         </SecNote>
       ) : null}
       {grid.resultsHeading ? <CapSub>{grid.resultsHeading}</CapSub> : null}
-      {tiles ? (
+      {grid.editing && standardGrid ? (
+        // Arranging: the standard grid itself, in the look's card. Its tiles
+        // are dragged, removed and added by home.js, as without a look.
+        <Card>
+          <div className={k('own')} data-home-frame-own="grid">{standardGrid}</div>
+        </Card>
+      ) : tiles ? (
         <Card>
           <div className={k('tiles')}>
             {grid.items.map((item) => (
@@ -336,8 +408,9 @@ function PinnedCommunities({ query }: { query: string }) {
       <Card>
         <div className={k('tiles')}>
           {pinned.map((pin) => (
-            <HomeTile
+            <CommunityTile
               key={pin.slug}
+              of={pin}
               face={<Tile size={FACE} name={pin.name} src={pin.iconUrl} emoji={pin.iconEmoji} color={pin.iconColor} />}
               name={pin.name}
               count={editing ? undefined : state.owed[pin.slug] || 0}
@@ -357,8 +430,9 @@ function PinnedCommunities({ query }: { query: string }) {
             />
           ))}
           {(showAll || query) && !editing ? unpinned.map((c) => (
-            <HomeTile
+            <CommunityTile
               key={c.slug}
+              of={c}
               dim
               face={<Tile size={FACE} name={c.name} src={c.iconUrl} emoji={c.iconEmoji} color={c.iconColor} />}
               name={c.name}
@@ -559,7 +633,14 @@ function HomeSearch() {
 }
 
 /** `initialDirectory` seeds the one state a render test cannot reach through effects. */
-export function HomeFrame({ initialDirectory = null }: { initialDirectory?: GuestApp[] | null }) {
+export function HomeFrame({ initialDirectory = null, grid, widgets, waitlist, verify }: {
+  initialDirectory?: GuestApp[] | null;
+  /** The standard pieces HomeScreen hands in, each drawn once on the page (see the header). */
+  grid?: React.ReactNode;
+  widgets?: React.ReactNode;
+  waitlist?: React.ReactNode;
+  verify?: React.ReactNode;
+}) {
   const t = useMessages('home');
   const query = useHomeQuery();
   const { challenges } = useStoreState(panelsStore) as HomePanelsState;
@@ -575,8 +656,11 @@ export function HomeFrame({ initialDirectory = null }: { initialDirectory?: Gues
       // standard page: the directory has no end to scroll past.
       tail={<ToJoin query={query} initialDirectory={initialDirectory} />}
     >
-      <PinnedApps />
+      {widgets ? <div className={k('own')} data-home-frame-own="widgets">{widgets}</div> : null}
+      <PinnedApps grid={grid} />
       <PinnedCommunities query={query} />
+      {waitlist ? <div className={k('own')} data-home-frame-own="waitlist">{waitlist}</div> : null}
+      {verify ? <div className={k('own')} data-home-frame-own="verify">{verify}</div> : null}
     </PageBody>
   );
 }
