@@ -1024,7 +1024,7 @@ test('#6600: a failed takeover before the reply says it tried and could not, wit
   assert.match(branch, /loadUpdate\(pool, ctx\.takeoverId\)/);
   assert.match(branch, /look\.state === 'failed'/);
   assert.match(branch, /text = takeoverFailedReply\(look\.error\)/);
-  for (const dropped of ['html = null', 'suggestions = null', 'othersSuggestions = null', 'offer = null']) {
+  for (const dropped of ['sentHtml = null', 'suggestions = null', 'othersSuggestions = null', 'offer = null']) {
     assert.match(branch, new RegExp(dropped.replace(/ /g, '\\s*\\*?\\s*')), `${dropped} is dropped`);
   }
 });

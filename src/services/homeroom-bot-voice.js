@@ -2037,18 +2037,19 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   }
   // Only beside those words unchanged: a cut claim, a "not done yet" or the
   // fallback line would leave the copy saying what the words no longer do.
-  let html = threadReplyHtml({ finalReply, text, asWritten, checkedProblems: ctx.checkedProblems, offer: ctx.offer });
-  let suggestions = finalReply?.suggestions;
-  let othersSuggestions = finalReply?.suggestionsForOthers;
-  let offer = ctx.offer;
+  const html = threadReplyHtml({ finalReply, text, asWritten, checkedProblems: ctx.checkedProblems, offer: ctx.offer });
   // #6600: a takeover the bot queued in this turn can already have failed
   // before the reply is posted (a worker that could not start, say). The
   // reply must say what happened, not that the work is queued.
+  let sentHtml = html;
+  let suggestions = finalReply?.suggestions;
+  let othersSuggestions = finalReply?.suggestionsForOthers;
+  let offer = ctx.offer;
   if (ctx.takeoverId) {
     const look = await takeoverModule(deps).loadUpdate(pool, ctx.takeoverId).catch(() => null);
     if (look && look.state === 'failed') {
       text = takeoverFailedReply(look.error);
-      html = null;
+      sentHtml = null;
       suggestions = null;
       othersSuggestions = null;
       offer = null;
@@ -2056,7 +2057,7 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   }
   const posted = await say(pool, {
     app, place, bot, text, answer: addressed.map((a) => ({ message: a.message, username: a.speaker.username, userId: a.speaker.id })),
-    offer, suggestions, othersSuggestions, html, mark, gallery: ctx.gallery, deps,
+    offer, suggestions, othersSuggestions, html: sentHtml, mark, gallery: ctx.gallery, deps,
     attachments: ctx.attached || [],
   });
   return { outcome: record.outcome === 'fallback' ? 'fallback' : 'replied', messageId: posted?.id || null };
