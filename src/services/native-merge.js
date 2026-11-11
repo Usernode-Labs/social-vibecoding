@@ -95,7 +95,14 @@ async function squashMerge({ owner, repo, number, pinnedSha = null }) {
     throw e;
   }
   if (merged.tree === await repoMirror.treeOf(dir, base)) {
-    throw refusal('Pull Request is not mergeable: it changes nothing on main', 405);
+    // Everything in it is on main already (request 6549: PR #15 of Gas &
+    // Lock, synced onto main after #14 merged the same work, so the sync
+    // kept main's side of every file). Asking again can never merge it, so
+    // it carries its own flag: the merge path closes the change instead of
+    // retrying it every few minutes as "Waiting on GitHub".
+    const e = refusal('Pull Request is not mergeable: it changes nothing on main', 405);
+    e.alreadyOnMain = true;
+    throw e;
   }
 
   const author = gitHost.defaultAuthor();

@@ -6617,6 +6617,7 @@ function githubChecksOf(message) {
 //   reopened   {}                 closed on GitHub, reopened: it can be merged again
 //   closed     { message }        closed on GitHub, and could not be reopened
 //   refused    { kind, message }  conflict | draft | blocked | base_moved | base_not_main | github_busy
+//   already_on_main { message }   the git host merged nothing: main already has all of it
 // An import is only ever merged into main (src/workflow/rules/pr-base.ts):
 // its pull request's base is read before GitHub is asked, one based on any
 // other branch is refused, and every `merged` names the branch it went into
@@ -6778,6 +6779,12 @@ async function attemptMerge(config, pool, sessionId, {
     // queue to resolve.
     if (codeMissing.isError(err)) {
       return { outcome: 'refused', kind: 'blocked', codeMissing: true, message: `${label} wasn't merged. ${codeMissing.REASON}` };
+    }
+    // Everything in it is on main already (services/native-merge.js): no
+    // answer to this head will ever be a merge, so it is not a refusal to
+    // try again (request 6549). The proposal machine closes it.
+    if (err && err.alreadyOnMain) {
+      return { outcome: 'already_on_main', message: `${label} has nothing left to merge: everything in it is already on main.` };
     }
     if (busy(err)) {
       const said = String((err && err.message) || '').slice(0, 300);
