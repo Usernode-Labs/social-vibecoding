@@ -3831,6 +3831,7 @@ export function DevWorkshop(): ReactNode {
     return {
       id: line.short,
       values: line.values,
+      faces: line.names ? line.names.map((name) => ({ name, color: swatchFor(name) })) : null,
       wait: (ruleHasWait(approval) ? approvalStep(approval, community, approvers).wait : '') || null,
       onRules: community.can_manage ? () => { window.UsernodeReact?.dialogs?.whoDecides?.open({ slug }); } : null,
     };
@@ -3944,6 +3945,7 @@ export function DevWorkshop(): ReactNode {
               label: t('project:workshop.dash.votes', { count: d.votesWaiting }),
               tone: d.votesWaiting ? 'wait' as const : undefined,
               sub: owed > 0 ? t('project:workshop.dash.onYou', { count: owed }) : null,
+              subAsks: owed > 0,
               onClick: d.votesWaiting > 0 ? votes : null,
             },
             {

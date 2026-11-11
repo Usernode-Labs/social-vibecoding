@@ -59,6 +59,8 @@ test('Order categories: the product\'s three orders, the current one lit; by sta
   const order = html.slice(html.indexOf('>Order categories<'));
   assert.deepEqual([...order.matchAll(/<button type="button" class="fr-row fr-sm( fr-on)?" aria-pressed="(true|false)">.*?<span class="fr-t">([^<]+)<\/span>/gs)].map((m) => [m[3], m[2]]),
     [['By people', 'false'], ['By activity', 'true'], ['By open items', 'false']]);
+  // Each is a radio row: a ring, filled with its mark on the chosen one.
+  assert.deepEqual([...order.matchAll(/<span class="fr-chk fr-round( fr-on)?" aria-hidden="true"><svg/g)].map((m) => !!m[1]), [false, true, false]);
   assert.match(html, /<div class="fr-cols fr-beside"><div class="fr-stack fr-first"><section class="fr-sec">/, 'the kit draws the side column alone: the list under it is the page\'s own');
   assert.doesNotMatch(render({ sort: null }), /Order categories/);
   const stage = render({ group: 'stage' });
@@ -96,7 +98,16 @@ test('the list is the page\'s own, in the kit\'s content column and wearing the 
   assert.match(hand, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/, 'All items\' body is on show');
   assert.ok(hand.includes(`${A}[data-all-group="category"] ~ .dev-ws-tabbody .dev-ws-allbar,\n${A} ~ .dev-ws-tabbody .dev-ws-sort-opts { display: none; }`), 'the page\'s bar and order chips are put away, mounted: the kit draws them');
   assert.ok(hand.includes(`${A}[data-all-group="stage"] ~ .dev-ws-tabbody .dev-ws-allbar > :is(.dev-ws-pagehead, .dev-ws-group),\n${A}[data-all-group="stage"] ~ .dev-ws-tabbody #dev-kanban-search { display: none; }`), 'by stage the bar keeps its filter chips over the board');
-  assert.ok(hand.includes(`${A}[data-all-group="stage"] ~ .dev-ws-tabbody > * { max-width: none; }`), 'the board has the page\'s width');
+  // …by a rule that outweighs the 720px column every place's body is held to (it cut the Done column off).
+  const wide = 'html[data-skin] .dev-ws:not([data-ws-tab="needs"]) > [data-project-frame="all-items"][data-all-group="stage"] ~ .dev-ws-tabbody > * { max-width: none; }';
+  const column = 'html[data-skin] .dev-ws:not([data-ws-tab="needs"]) > [data-project-frame] ~ .dev-ws-tabbody > * { max-width: 720px; margin-inline: 0; }';
+  assert.ok(hand.includes(wide), 'the board has the page\'s width');
+  assert.ok(hand.includes(column));
+  assert.doesNotMatch(hand, /\[data-all-group="stage"\] ~ \.dev-ws-tabbody > \* \{ max-width: none; \}[\s\S]*html\[data-skin\] \.dev-ws > \[data-project-frame="all-items"\]\[data-all-group="stage"\] ~ \.dev-ws-tabbody > \*/);
+  // A category's name on two lines keeps its second line under its first: the glyph hangs before it.
+  assert.ok(hand.includes(`${A} ~ .dev-ws-tabbody .dev-ws-theme-name { position: relative; min-height: 32px; padding-block: 4px; padding-inline-start: 44px; }`));
+  // The search has the room of its placeholder, at the tabs' end and under them on a phone.
+  assert.ok(hand.includes('html[data-skin] [data-project-frame="all-items"] .fr-tabs .fr-end .fr-inp { width: 360px; }'));
   assert.ok(hand.includes('html[data-skin] #dev-workshop.dev-ws-has-board > .dev-ws > [data-project-frame] { max-width: none; margin-inline: 0; }'));
   assert.ok(hand.includes(`${A} ~ .dev-ws-tabbody :is(.dev-ws-pane-head, .dev-ws-pane-body) { padding: 0; border-radius: 0; background: none;`), 'the pane gives up its sheet');
   // The kit's side column hangs from its page over the room the 720px column leaves.

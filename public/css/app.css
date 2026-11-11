@@ -27188,6 +27188,12 @@ html[data-skin] #messages-screen:has([data-messages-frame-list]) { padding-inlin
 /* The layout is the same strip (messages/index.tsx): bare under a look. */
 html[data-skin] .messages-layout:has(> [data-frame-list]) { background: none; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; border-radius: 0; border-top: 0; }
 html[data-skin] .messages-list-pane[data-frame-list] { overflow-y: auto; padding: 0; }
+/* A row's name is what gives way (frame-list.tsx InboxRow): a long group
+   name is cut with its dots, and the "AI" badge or the member count after
+   it keeps its place in the row. */
+html[data-skin] [data-messages-frame-list] .fr-row .fr-t:has(> .fr-cut) { display: flex; align-items: center; min-width: 0; }
+html[data-skin] [data-messages-frame-list] .fr-row .fr-t > .fr-cut { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html[data-skin] [data-messages-frame-list] .fr-row .fr-t > .fr-pill { vertical-align: 0; }
 @media (min-width: 768px) {
   html[data-skin] .messages-list-pane[data-frame-list] { flex: 0 0 520px; width: 520px; }
   /* With nothing open the standard look makes the list the whole page, in a
@@ -27244,7 +27250,10 @@ html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .de
    head already draws (the way back, the grouping, the search). */
 html[data-skin] .dev-ws > [data-project-frame="all-items"][data-all-group="stage"] ~ .dev-ws-tabbody .dev-ws-allbar > :is(.dev-ws-pagehead, .dev-ws-group),
 html[data-skin] .dev-ws > [data-project-frame="all-items"][data-all-group="stage"] ~ .dev-ws-tabbody #dev-kanban-search { display: none; }
-html[data-skin] .dev-ws > [data-project-frame="all-items"][data-all-group="stage"] ~ .dev-ws-tabbody > * { max-width: none; }
+/* The pane holding the board is not held to the 720px content column (the
+   rule for every place's body, below, which this one outweighs by naming
+   its grouping): held to it, the fourth column, Done, was cut off. */
+html[data-skin] .dev-ws:not([data-ws-tab="needs"]) > [data-project-frame="all-items"][data-all-group="stage"] ~ .dev-ws-tabbody > * { max-width: none; }
 /* The standard look holds everything over the board to a centred 760px; the kit's head is the page's. */
 html[data-skin] #dev-workshop.dev-ws-has-board > .dev-ws > [data-project-frame] { max-width: none; margin-inline: 0; }
 @media (min-width: 768px) {
@@ -27264,7 +27273,11 @@ html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .de
 html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-theme-head { padding: 16px; gap: 6px 12px; }
 html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-theme-head:hover { background: none; }
 html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-theme-name { font-weight: 650; letter-spacing: 0; }
-html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-theme-icon { width: 32px; height: 32px; margin-inline-end: 12px; border-radius: 10px; background: var(--fr-sunk); font-size: 17px; vertical-align: -9px; }
+/* The glyph hangs before the name, so a name on two lines ("Suggest an
+   improvement" on a phone) keeps its second line under its first, not
+   under the glyph. */
+html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-theme-name { position: relative; min-height: 32px; padding-block: 4px; padding-inline-start: 44px; }
+html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-theme-icon { position: absolute; top: 0; inset-inline-start: 0; width: 32px; height: 32px; margin: 0; border-radius: 10px; background: var(--fr-sunk); font-size: 17px; }
 html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-theme-people { color: var(--fr-mut); font-size: 13px; }
 html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-theme-people b { font-size: 17px; font-weight: 700; letter-spacing: 0; }
 html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-stat + .dev-ws-stat { border-inline-start-color: var(--fr-line2); }
@@ -27277,8 +27290,14 @@ html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .de
 html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-theme-foot .dev-ws-link { font-weight: 600; }
 html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-theme-body { border-top-color: var(--fr-line2); }
 html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-foot-note { color: var(--fr-mut); }
+/* WHO DECIDES (project-frame.tsx ProjectWorkshopFrame): the faces of the
+   people the sentence names stand in its line, before their names, as the
+   standard line draws them. */
+html[data-skin] [data-project-frame="workshop-kit"] .fr-row .fr-t > .fr-avs { display: inline-flex; vertical-align: -5px; margin-inline-end: 6px; }
 /* The board's search, at the tabs' end, has the words of its placeholder to hold. */
-html[data-skin] [data-project-frame="all-items"] .fr-tabs .fr-end .fr-inp { width: 340px; }
+html[data-skin] [data-project-frame="all-items"] .fr-tabs .fr-end .fr-inp { width: 360px; }
+/* …and on a phone, where it stands under the tabs, the field's own margin gives them the room ("… or #" was cut at 390px). */
+html[data-skin] [data-project-frame="all-items"] .fr-inner > .fr-search .fr-inp { padding-inline: 12px; }
 /* #GENERAL under a look (version 2 of the tour's s31): the room in the
    kit's content column and, beside it, This channel (its members and Mute:
    channel-head.tsx draws the kit's group there under a look). On a phone
@@ -27292,6 +27311,24 @@ html[data-skin] .dev-ws-channel-head.fr { display: block; margin: 0 0 16px; padd
   html[data-skin] .dev-ws > [data-project-frame="discussion"] ~ .dev-ws-tabbody > .dev-ws-general-channel:not(.dev-ws-discussion-threaded, :has(.messages-reply-pane)) > .dev-ws-channel-head { grid-column: 2; grid-row: 1; align-self: start; margin: 0; }
   html[data-skin] .dev-ws > [data-project-frame="discussion"] ~ .dev-ws-tabbody > .dev-ws-general-channel:not(.dev-ws-discussion-threaded, :has(.messages-reply-pane)) > :not(.dev-ws-channel-head) { grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; }
   html[data-skin] .dev-ws > [data-project-frame="discussion"] ~ .dev-ws-tabbody > .dev-ws-general-channel { max-width: none; }
+}
+/* …and on a phone in a browser, while a banner stands over the page ("Changes
+   to this project's code are paused…", merges paused), the room ends at the
+   tab bar. The fitted box (`--ws-fit`, THE DISCUSSION TAB) is the window
+   less the header and the tab bar, measured without the banner over it, so
+   the box ran a banner's height under the tab bar and the message box with
+   it. Under a look the scroller takes that length itself, the banner and
+   the page share it down the flex chain that is already there, and the
+   page's box is what is left. The standard look's own measure is not
+   touched. With the keys up the room is laid on the visible band as before
+   (`platform-kb-open`). */
+@media (max-width: 767.98px) {
+  html[data-skin][data-browser-scroller="dev-forum-scroll"] #dev-forum-scroll:has(> :is(#dev-main-pause-notice, #dev-code-pause-notice):not(.hidden)):has(.dev-ws:is([data-ws-tab="discussion"], [data-ws-tab^="c:"]) > [data-project-frame]) {
+    height: calc(100dvh - var(--browser-banner-h, 0px) - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px));
+  }
+  html[data-skin][data-browser-scroller="dev-forum-scroll"] #dev-forum-scroll:has(> :is(#dev-main-pause-notice, #dev-code-pause-notice):not(.hidden)) .dev-ws:is([data-ws-tab="discussion"], [data-ws-tab^="c:"]):has(> [data-project-frame]) { height: auto; min-height: 0; }
+  /* The room is short there: it keeps the air a kit page has at its foot. */
+  html[data-skin][data-browser-scroller="dev-forum-scroll"] #dev-forum-scroll:has(> :is(#dev-main-pause-notice, #dev-code-pause-notice):not(.hidden)) .dev-ws:is([data-ws-tab="discussion"], [data-ws-tab^="c:"]) > [data-project-frame] ~ .dev-ws-tabbody { padding-block-end: 4px; }
 }
 /* Under the kit's Hub the standard Hub is put away part by part, not
    whole: the cards that ask something of you once and that the kit has no

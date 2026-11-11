@@ -110,7 +110,7 @@ test('the topics are listed on a phone only, each as the Hub\'s own row, the res
 test('the side column is People alone: this week\'s faces and names, then who it is for', () => {
   const html = render({ onOpenApp() {} });
   const side = html.slice(html.lastIndexOf('<div class="fr-stack fr-first">'));
-  assert.match(side, /^<div class="fr-stack fr-first"><section class="fr-sec"><div class="fr-sechead"><h2 class="fr-cap">People<\/h2><\/div><div class="fr-card"><div class="fr-row"><span class="fr-avs"><span class="fr-av"[^>]*>s<\/span><span class="fr-av"[^>]*>e<\/span><span class="fr-av fr-more"[^>]*>\+24<\/span><\/span><span class="fr-tx"><span class="fr-t">26 active this week<\/span><span class="fr-s">snait, evan, Bruno and 23 more<\/span>.*?<span class="fr-t">Public community<\/span><span class="fr-s">228 members<\/span>/s, 'first on a phone, as the hero\'s people are');
+  assert.match(side, /^<div class="fr-stack fr-first"><section class="fr-sec"><div class="fr-sechead"><h2 class="fr-cap">People<\/h2><\/div><div class="fr-card"><div class="fr-row fr-wrap fr-all"><span class="fr-avs"><span class="fr-av"[^>]*>s<\/span><span class="fr-av"[^>]*>e<\/span><span class="fr-av fr-more"[^>]*>\+24<\/span><\/span><span class="fr-tx"><span class="fr-t">26 active this week<\/span><span class="fr-s">snait, evan, Bruno and 23 more<\/span>.*?<span class="fr-t">Public community<\/span><span class="fr-s">228 members<\/span>/s, 'first on a phone, as the hero\'s people are');
   assert.doesNotMatch(side, /How a change goes live|The app|fr-cap">Who decides/, 'today\'s Hub has neither');
   assert.doesNotMatch(render({ people: null }), /active this week/);
 });

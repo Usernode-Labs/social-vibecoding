@@ -12,7 +12,7 @@
  */
 import { useEffect, useState, type ReactNode } from 'react';
 
-import { Avs, Btn, Card, CardNote, Facts, Frame, GroupLink, Head, HeadRow, Lead, Meta, Mut, PageBody, Pill, Row, Search, Sec, ShotCard, Shots, ShowAll, Tabs, Tile, k } from '@/components/ui/kit';
+import { Avs, Btn, Card, CardNote, Facts, Frame, GroupLink, Head, HeadRow, Icon, Lead, Meta, Mut, PageBody, Pill, Row, Search, Sec, ShotCard, Shots, ShowAll, Tabs, Tile, k } from '@/components/ui/kit';
 import { RichMessage, useMessages } from '../../../../lib/i18n/react';
 import { BOT_AVATAR } from '../../../messages/format';
 
@@ -139,6 +139,7 @@ export function ProjectHubFrame(p: ProjectHubProps) {
             lead={p.people.faces.length ? <Avs people={p.people.faces} max={p.people.faces.length} more={p.people.more} /> : <Lead icon="users" />}
             title={p.people.title}
             line={p.people.line || undefined}
+            wrap="all"
           />
         ) : null}
         <Row lead={<Lead icon={p.audience.kind === 'open' ? 'globe' : p.audience.kind === 'solo' ? 'user' : 'lock'} />} title={p.audience.title} line={p.audience.line || undefined} />
@@ -286,7 +287,15 @@ export function ProjectTopicsFrame({ general, topics, onOpen, ...head }: HeadPro
 }
 
 /** A figure of the Overview: its number, what it counts, the line under it and where its press goes. */
-export interface WorkshopFact { value: number | string; label: string; tone?: 'acc' | 'ok' | 'wait'; sub?: string | null; onClick?: (() => void) | null }
+export interface WorkshopFact {
+  value: number | string;
+  label: string;
+  tone?: 'acc' | 'ok' | 'wait';
+  sub?: string | null;
+  /** The line under it asks for the viewer ("3 on you"): the accent, as the standard figure draws it. */
+  subAsks?: boolean;
+  onClick?: (() => void) | null;
+}
 
 /** One row of this week in What happened. */
 export interface HappenedItem {
@@ -352,7 +361,8 @@ export function ProjectWorkshopFrame({
     started: string | null;
   } | null;
   slots: { title: string; line: string | null; onOpen: () => void } | null;
-  rule: { id: string; values: Record<string, string | number>; wait: string | null; onRules: (() => void) | null } | null;
+  /** `faces`: the approvers the sentence names, whose faces lead their names. */
+  rule: { id: string; values: Record<string, string | number>; faces?: HubFace[] | null; wait: string | null; onRules: (() => void) | null } | null;
   /** Under What happened, the product's own (an admin's private requests). */
   below?: ReactNode;
 }) {
@@ -388,7 +398,7 @@ export function ProjectWorkshopFrame({
               <Card>
                 <Row
                   lead={<Lead icon="shield" />}
-                  title={<RichMessage id={rule.id} values={rule.values} components={[<span />, <b />]} />}
+                  title={<RichMessage id={rule.id} values={rule.values} components={[rule.faces && rule.faces.length ? <Avs people={rule.faces} size={20} max={rule.faces.length} /> : <span />, <b />]} />}
                   line={rule.wait || undefined}
                   sm={false}
                   wrap="all"
@@ -409,7 +419,7 @@ export function ProjectWorkshopFrame({
                 : t('project:workshop.allItems.seeAll')}
               onClick={overview.onAll}
             />
-            <Facts bare items={overview.facts.map((f) => ({ value: f.value, label: f.label, tone: f.tone, sub: f.sub || undefined, onClick: f.onClick || undefined }))} />
+            <Facts bare items={overview.facts.map((f) => ({ value: f.value, label: f.label, tone: f.tone, sub: f.sub ? (f.subAsks ? <span className={k('acc')}>{f.sub}</span> : f.sub) : undefined, onClick: f.onClick || undefined }))} />
           </Card>
         ) : null}
         {first}
@@ -425,6 +435,8 @@ export function ProjectWorkshopFrame({
               go
               sm={false}
             />
+            {/* A phone's row has no room for the words at its end: they stand under it, never left out. */}
+            {work.words ? <p className={k('cardnote', 'last', 'p')}><RichMessage id={work.words.id} values={work.words.values} components={[<b className={k('acc')} />]} /></p> : null}
           </Card>
         ) : null}
       </Sec>
@@ -554,7 +566,7 @@ export function ProjectAllItemsFrame({
         <Sec label={t('project:allItems.sort.label')}>
           <Card>
             {sort.options.map((option) => (
-              <Row key={option.key} lead={<Lead icon={sort.key === option.key ? 'check' : ''} />} title={option.label} on={sort.key === option.key} pressed={sort.key === option.key} sm onClick={() => sort.onSort(option.key)} />
+              <Row key={option.key} lead={<span className={k('chk', 'round', sort.key === option.key && 'on')} aria-hidden="true"><Icon name="check" size={14} /></span>} title={option.label} on={sort.key === option.key} pressed={sort.key === option.key} sm onClick={() => sort.onSort(option.key)} />
             ))}
           </Card>
         </Sec>

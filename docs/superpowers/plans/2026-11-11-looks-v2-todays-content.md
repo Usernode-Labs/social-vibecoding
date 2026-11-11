@@ -804,3 +804,40 @@ Rulings taken: the standard History row has no visible second line (its project 
 so the tabs draw that line on a phone only, where the number has no column; on a desktop it is the tooltip.
 Left, and why: see the hand-back table (the bar's title and Mosaic's tiles are group 1's; the kit's `Bars`,
 the product's menus, sheets and dialogs, and the wash behind Make are outside these pages' files).
+### Fix group 2, as built (11 Nov 2026)
+
+What the visual pass found on Messages and a project's pages (`skins-tour-v2/visual/v2.md`), on
+`redesign/skins-v2-fix2`, cut from `5e90072f2`.
+
+Fixed:
+
+- **All items by stage: the Done column** (A). The board's pane was held to the 720px content column: the rule
+  that frees it (`… [data-all-group="stage"] ~ .dev-ws-tabbody > * { max-width: none }`) weighed the same as
+  the later rule for every place's body and lost to it. It now carries the same `:not([data-ws-tab="needs"])`
+  and wins. Under the kit's column the board still scrolls sideways where four columns do not fit, as the
+  standard board does.
+- **Your work on a phone** (A). The counts ("Needs you: 5 · In progress: 6") end the row on a desktop
+  (`meta d`) and stand under it on a phone, as a `cardnote last p` inside the card.
+- **Messages, Try again** (B). `state.reading` (a read under way with no conversation in hand) keeps "Nothing
+  here yet." away. The standard list says nothing there either.
+- **Messages, a long group name** (B). The name is in a `cut` span, which is what gives way; the "AI" badge
+  and the member count keep their place (three hand rules under `[data-messages-frame-list]`).
+- **#general on a phone while a banner is up** (B). Under a look, in a phone browser, with either pause
+  notice shown, `#dev-forum-scroll` takes the window less the header itself and the page's box is what the
+  flex chain leaves (`height: auto`), so the room ends at the tab bar. The standard page's measure
+  (`--ws-fit`) is not touched and its composer is still cut there.
+- **Who decides** (C): the named approvers' faces lead their names (`rule.faces`, the kit's `Avs` at 20px,
+  inline by one hand rule). **"3 on you"** (C) is in the accent (`subAsks`). **Order categories** (C) are radio
+  rows (the kit's `chk round`). **The board's search** (C) holds its placeholder (360px at the tabs' end, 12px
+  margins on a phone). **A category's name on two lines** (C) keeps its second line under its first (the glyph
+  hangs before it). **The Hub's People line** (C) is printed whole (`wrap="all"`).
+
+Not faults:
+
+- A deleted account's face says "D": the kit's face is a name's first letter for everybody (`Av`), where the
+  standard list draws two initials.
+- Mosaic draws Topics as tiles without arrows: that is the look ("Lists become tiles", `mosaic.css`), and the
+  Channels row beside it is in the side column, which it leaves as rows.
+- Pourover's bar has no Suggest on a phone in the standard look either.
+
+Left to group 1: the project's name in the bar running under the bar's buttons on a phone.
