@@ -172,3 +172,22 @@ test('the profile draws the kit\'s page under a look, from its own view, with it
   assert.match(css, /html\[data-skin\]\[data-you-frame\] #profile-screen \{ padding-inline-start: var\(--platform-rail-w, 0px\) !important; padding-inline-end: 0 !important; \}/, 'the page has the frame\'s page area');
   assert.match(css, /html\[data-skin\] \[data-you-frame\] \.fr-tabs \{ overflow-x: auto; scrollbar-width: none; \}/, 'six tabs scroll on a phone');
 });
+
+test('Edit profile is the product\'s dialog wearing the look: nothing rebuilt, its parts worn through the wear map', () => {
+  const looks = JSON.parse(read('frontend/looks/looks.json')).wear.roots;
+  assert.ok(looks.card.to.includes('.un-group:where(#profile-edit-sheet *)'), 'a group is the kit\'s card');
+  assert.equal(looks.cap.to, '.un-group-header:where(#profile-edit-sheet *)', 'a group\'s label is the kit\'s');
+  assert.ok(looks.title.to.includes('#profile-edit-sheet > div:first-child'), 'the title is the kit\'s');
+  assert.ok(looks.btn.to.includes('#profile-edit-save'), 'Save is the kit\'s button');
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('/* EDIT PROFILE (features/profile/profile-edit-sheet.tsx'), css.indexOf('/* A REQUEST\'S PAGE'));
+  assert.ok(hand.length > 0);
+  for (const line of hand.split('\n').filter((l) => l.startsWith('html'))) {
+    assert.match(line, /^html\[data-skin\]:not\(\[data-skin="brand"\]\) #profile-edit-sheet/, 'only under a look of the frame, only inside the dialog');
+    assert.doesNotMatch(line, /#[0-9a-f]{3,8}\b|rgba?\(/i, 'kit tokens only');
+  }
+  assert.match(hand, /:is\(a, button\)\.text-violet-700 \{ color: var\(--fr-acc\); font-weight: 600; \}/, 'an action row is in the accent');
+  const sheet = read('frontend/src/features/profile/profile-edit-sheet.tsx');
+  assert.doesNotMatch(sheet, /isFrameSkin|useLiveSkin|components\/ui\/kit/, 'the dialog does not branch on the look');
+  for (const id of ['profile-edit-sheet', 'profile-edit-save', 'profile-edit-name', 'profile-edit-bio', 'public-profile-publish', 'profile-edit-remove']) assert.ok(sheet.includes(`id="${id}"`), `${id} stays`);
+});
