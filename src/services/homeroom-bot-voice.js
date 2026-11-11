@@ -907,6 +907,35 @@ async function goAheadCannotReply(pool, { app, place, row, speaker, deps = {} })
 }
 
 /**
+ * #6614: whether `row` is a person's reply to the bot's own short yes: the
+ * bot's newest message in this thread (below `row`) stored that wording as
+ * its affirmation and answered this speaker. Read best-effort: a failed read
+ * is false.
+ */
+async function affirmedAck(pool, { app, place, bot, row, speaker }) {
+  if (!place || (place.type !== 'issue' && place.type !== 'session') || !row || !speaker) return false;
+  const thread = threadOf(place);
+  if (!thread) return false;
+  try {
+    const { rows: [prev] } = await pool.query(
+      `SELECT metadata FROM chat_messages
+        WHERE app_id = $1 AND thread_type = $2 AND thread_ref = $3 AND user_id = $4
+          AND id < $5 AND deleted_at IS NULL
+        ORDER BY id DESC LIMIT 1`,
+      [Number(app.id), thread.type, thread.ref, Number(bot.id), Number(row.id)],
+    );
+    const homeroomBot = prev?.metadata?.homeroomBot || null;
+    const label = String(homeroomBot?.affirm?.label || '').trim();
+    if (!label) return false;
+    if (label.toLowerCase() !== String(row.content || '').trim().toLowerCase()) return false;
+    const ids = (homeroomBot?.suggest?.forUserIds || []).map(Number);
+    return ids.includes(Number(speaker.id));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Run one turn in one place (the bot-voice machine's `voice.turn` work):
  * read what was said there since `through`, answer the people who wrote to
  * the bot (or say nothing), and record it. `turnKey` is the work item's: a
@@ -1036,6 +1065,18 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
       // The smaller part is the primary button (its own words), then Not now.
       extra: { goAheadCannot: { messageId: Number(last.message.id) }, actions: goAheadCannot.labels },
       deps,
+    });
+    record.replyId = sent?.id || null;
+    await restOfChat();
+    return finishWith('replied');
+  }
+  // 11 Nov 2026 (#6614): the person's yes to the bot's own short yes gets one
+  // line back and no buttons; the bot then says nothing until the work's
+  // result arrives.
+  if (await affirmedAck(pool, { app, place, bot, row: last.message, speaker: last.speaker })) {
+    const sent = await say(pool, {
+      app, place, bot, text: AFFIRMED_ACK_TEXT, answer, mark, suggest: false,
+      extra: { affirmed: { messageId: Number(last.message.id) } }, deps,
     });
     record.replyId = sent?.id || null;
     await restOfChat();
@@ -1311,6 +1352,9 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
         'Never write them in the text. When your reply asks a question, they are its answers (for "Want me to tell',
         'you here when it is ready to vote?" put "Yes, tell me here" and "No thanks"). When the change is live or',
         'the request is closed, a short closing pair such as "Thanks" and "Something\'s still wrong".',
+        'When your reply says work is queued, running or about to start and asks nothing, the first is a short yes in',
+        'their words, such as "Sounds good", and any others are light, such as "Tell me when it\'s ready": never one',
+        'that changes or adds to the work. Their yes is answered with one short line and no buttons.',
         'Put one to three short things a member of this community whom you did not answer might say next in the',
         'reply tool\'s suggestionsForOthers field, such as "I\'d like this too", "Can I try it?" or "What\'s left',
         'to do?".']
@@ -1401,7 +1445,9 @@ function replyToolWithSuggestions() {
       description: 'One to three short things the people you answered might say next, in their own words, shown as '
         + 'buttons to tap that send them as that person\'s reply. Always give them: when your reply asks a question '
         + 'they are its answers, and when the request is closed or the change is live they are a short closing pair. '
-        + `Each at most ${mayor.MAX_SUGGESTION_CHARS} characters.`,
+        + 'When your reply says work is queued, running or about to start and asks nothing, the first is a short yes '
+        + 'in their words, such as "Sounds good", and any others are light, such as "Tell me when it\'s ready": never '
+        + `one that changes or adds to the work. Each at most ${mayor.MAX_SUGGESTION_CHARS} characters.`,
       items: { type: 'string' },
     },
     suggestionsForOthers: {
@@ -2045,6 +2091,9 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   let suggestions = finalReply?.suggestions;
   let othersSuggestions = finalReply?.suggestionsForOthers;
   let offer = ctx.offer;
+  // #6614: the turn queued or started work, so its reply's first button is a
+  // plain yes (unless the takeover already failed, below).
+  let queued = !!(ctx.revised || ctx.rebuilt || ctx.takeoverId);
   if (ctx.takeoverId) {
     const look = await takeoverModule(deps).loadUpdate(pool, ctx.takeoverId).catch(() => null);
     if (look && look.state === 'failed') {
@@ -2053,11 +2102,12 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
       suggestions = null;
       othersSuggestions = null;
       offer = null;
+      queued = false;
     }
   }
   const posted = await say(pool, {
     app, place, bot, text, answer: addressed.map((a) => ({ message: a.message, username: a.speaker.username, userId: a.speaker.id })),
-    offer, suggestions, othersSuggestions, html: sentHtml, mark, gallery: ctx.gallery, deps,
+    offer, suggestions, othersSuggestions, html: sentHtml, mark, gallery: ctx.gallery, deps, queued,
     attachments: ctx.attached || [],
   });
   return { outcome: record.outcome === 'fallback' ? 'fallback' : 'replied', messageId: posted?.id || null };
@@ -2786,14 +2836,61 @@ async function dropThreadOffer(pool, offerId) {
     .catch((err) => log.warn('homeroom-bot-voice', 'Could not drop an offer for an unposted note', { offerId, err: err.message }));
 }
 
+// #6614: when the bot says work is under way, its first button is a plain
+// yes in the person's words, and the answer to it is one short line.
+const AFFIRMATION = 'Sounds good';
+const AFFIRMED_ACK_TEXT = 'Thanks, I\'ll tell you here when it\'s ready.';
+
+/** Pure: whether the reply's last sentence asks something. */
+function asksQuestion(text) {
+  const lastSentence = String(text || '').trim().split(/(?<=[.!?])\s+/).pop() || '';
+  return /\?[\s"'”’]*$/.test(lastSentence);
+}
+
+// Pure: the words a short yes is made of. A label of at most three of them
+// affirms; "Sounds good", "Thanks", "Go ahead", "Yes, thanks".
+const AFFIRMATION_WORDS = new Set([
+  'sounds', 'good', 'thanks', 'thank', 'you', 'go', 'ahead', 'ok', 'okay',
+  'great', 'perfect', 'yes', 'carry', 'on', 'please', 'sure', 'absolutely', 'nice',
+]);
+
+/** Pure: whether a suggested reply is a short yes rather than a new ask. */
+function isAffirmation(label) {
+  const words = String(label || '')
+    .toLowerCase()
+    .replace(/[^a-z]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+  return words.length > 0 && words.length <= 3 && words.every((word) => AFFIRMATION_WORDS.has(word));
+}
+
+/**
+ * Pure (#6614): a turn that queued work puts an affirmation first. Keeps the
+ * model's own first label when it already affirms, else puts `AFFIRMATION`
+ * ahead of it, drops a later label that repeats the affirmation, and clips
+ * to `max`. Resolves `{ labels, affirm }`: the affirmation's wording, which
+ * the next turn matches a person's reply against.
+ */
+function withAffirmationFirst(labels = [], max = 3) {
+  const clean = (Array.isArray(labels) ? labels : [])
+    .map((label) => String(label || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const affirm = clean.length && isAffirmation(clean[0]) ? clean[0] : AFFIRMATION;
+  const rest = clean.filter((label) => label.toLowerCase() !== affirm.toLowerCase());
+  const limit = Math.max(1, Number(max) || 3);
+  return { labels: [affirm, ...rest].slice(0, limit), affirm };
+}
+
 /**
  * Pure (#6391): the button sets Homeroom builds when the model gave none, or
  * wrote one that cannot be used. `ended`: the request is closed or the change
- * is live, so the reply is only where things stand. A reply that asks
- * something gets its answers; any other gets a way to say thanks and a way
- * to ask what happens next.
+ * is live, so the reply is only where things stand. `queued`: the turn queued
+ * or started work, so a reply that asks nothing gets the short yes first.
+ * A reply that asks something gets its answers; any other gets a way to say
+ * thanks and a way to ask what happens next.
  */
-function fallbackSuggestions({ text = '', ended = false } = {}) {
+function fallbackSuggestions({ text = '', ended = false, queued = false } = {}) {
   const mayor = require('./homeroom-bot-mayor');
   const others = ended
     ? ["Something's still wrong", 'Can I try it?']
@@ -2802,8 +2899,10 @@ function fallbackSuggestions({ text = '', ended = false } = {}) {
   if (ended) answered = ['Thanks', "Something's still wrong"];
   else {
     const lastSentence = String(text || '').trim().split(/(?<=[.!?])\s+/).pop() || '';
-    if (/\?[\s"'”’]*$/.test(lastSentence)) {
+    if (asksQuestion(text)) {
       answered = /tell you here when/i.test(lastSentence) ? ['Yes, tell me here', 'No thanks'] : ['Yes', 'No'];
+    } else if (queued) {
+      answered = [AFFIRMATION, 'Tell me when it\'s ready'];
     } else {
       answered = ['Thanks', 'What happens next?'];
     }
@@ -2892,6 +2991,7 @@ function threadReplyHtml({ finalReply = null, text = '', asWritten = null, check
 async function say(pool, {
   app, place, bot, text, answer = [], offer = null, suggestions = [], othersSuggestions = [],
   suggest = true, ended = null, mark = null, html = null, extra = null, gallery = null, deps = {}, attachments = [],
+  queued = false,
 }) {
   const ws = wsModule(deps);
   const newest = answer[answer.length - 1] || null;
@@ -2915,7 +3015,8 @@ async function say(pool, {
   // An offer keeps its own Yes/No instead, and a caller that says
   // `suggest: false` (the "I couldn't answer" line) carries none.
   const threadPlace = place.type === 'issue' || place.type === 'session';
-  const labelsOf = (list) => require('./homeroom-bot-mayor').suggestionLabels(list);
+  const mayor = require('./homeroom-bot-mayor');
+  const labelsOf = (list) => mayor.suggestionLabels(list);
   let suggestFor = suggest && !offer && threadPlace
     ? [...new Set(answer.map((a) => Number(a.userId)).filter((id) => Number.isSafeInteger(id) && id > 0))]
     : [];
@@ -2928,10 +3029,19 @@ async function say(pool, {
   if (suggest && !offer && threadPlace
       && ((suggestFor.length && !modelAnswered.length) || !modelOthers.length)) {
     const over = ended != null ? ended : await threadEnded(pool, { app, place, deps });
-    fallback = fallbackSuggestions({ text, ended: !!over });
+    fallback = fallbackSuggestions({ text, ended: !!over, queued });
   }
-  const answeredLabels = modelAnswered.length ? modelAnswered : (fallback?.answered || []);
+  let answeredLabels = modelAnswered.length ? modelAnswered : (fallback?.answered || []);
   const othersLabels = modelOthers.length ? modelOthers : (fallback?.others || []);
+  // #6614: a turn that queued work and asks nothing puts a plain yes first,
+  // even when the model offered only new asks. The wording is stored so the
+  // next turn can answer that yes and end the exchange.
+  let affirm = null;
+  if (queued && threadPlace && suggestFor.length && !offer && !asksQuestion(text)) {
+    const withFirst = withAffirmationFirst(answeredLabels, mayor.MAX_SUGGESTIONS);
+    answeredLabels = withFirst.labels;
+    affirm = withFirst.affirm;
+  }
   let suggestActions = suggestFor.length
     ? answeredLabels.map((label, i) => ({ id: `suggest-${i + 1}`, label, style: 'secondary', type: 'prompt' }))
     : [];
@@ -2966,6 +3076,8 @@ async function say(pool, {
       ...((suggestActions.length || othersActions.length) ? {
         suggest: { status: 'open', forUserIds: suggestFor }, actions: suggestActions, othersActions,
       } : {}),
+      // #6614: the wording of the short yes, so the next turn answers it.
+      ...(affirm ? { affirm: { label: affirm } } : {}),
       // Task 2020 follow-up: the answer laid out, drawn in place of the words
       // (frontend features/group-chat/long-body.tsx, messages/bot-html.tsx).
       ...(html && !offer ? { html } : {}),
@@ -3878,6 +3990,12 @@ module.exports = {
   say,
   threadReplyHtml,
   fallbackSuggestions,
+  asksQuestion,
+  isAffirmation,
+  withAffirmationFirst,
+  affirmedAck,
+  AFFIRMATION,
+  AFFIRMED_ACK_TEXT,
   retireThreadSuggestions,
   decideOffer,
   actOnOffer,

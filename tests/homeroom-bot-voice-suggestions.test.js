@@ -39,6 +39,11 @@ test('the prompt asks for both sets in a request or a change, and nowhere else',
   assert.match(issue, /Never write them in the text/);
   assert.match(issue, /When your reply asks a question,\s+they are its answers/);
   assert.match(issue, /suggestionsForOthers field/);
+  // #6614: the queued-work rule sits beside the question and closing-pair rules.
+  assert.match(issue, /When your reply says work is queued, running or about to start and asks nothing/);
+  assert.match(issue, /Their yes is answered with one short line and no buttons/);
+  const described = tools.find((t) => t.function.name === 'reply').function.parameters.properties.suggestions.description;
+  assert.match(described, /When your reply says work is queued, running or about to start and asks nothing/);
   assert.doesNotMatch(issue, /plainly ended/, 'the conversation ending no longer drops the buttons');
   assert.doesNotMatch(issue, /End the reply with one to three short things/, 'no longer invites a list in the text');
   const chatTools = voice.toolsFor({ type: 'chat', ref: null });
@@ -106,6 +111,44 @@ test('the fallback set fits the reply and the thread\'s state', () => {
   const ended = voice.fallbackSuggestions({ text: 'It is live now.', ended: true });
   assert.deepEqual(ended.answered, ['Thanks', "Something's still wrong"]);
   assert.deepEqual(ended.others, ["Something's still wrong", 'Can I try it?']);
+});
+
+// ── #6614: work under way puts a plain yes first ─────────────────────────
+
+test('withAffirmationFirst puts Sounds good before new asks, keeps a yes, drops a duplicate', () => {
+  const asks = voice.withAffirmationFirst([
+    'Also fix the Codex config note', 'Leave the test alone, just rebase', 'Show me the failing test output',
+  ]);
+  assert.deepEqual(asks.labels, ['Sounds good', 'Also fix the Codex config note', 'Leave the test alone, just rebase']);
+  assert.equal(asks.affirm, 'Sounds good');
+
+  const kept = voice.withAffirmationFirst(['Thanks, go ahead', 'Tell me when it\'s ready']);
+  assert.deepEqual(kept.labels, ['Thanks, go ahead', "Tell me when it's ready"]);
+  assert.equal(kept.affirm, 'Thanks, go ahead');
+
+  const duplicate = voice.withAffirmationFirst(['Sounds good', 'sounds good', 'Tell me when it\'s ready']);
+  assert.deepEqual(duplicate.labels, ['Sounds good', "Tell me when it's ready"]);
+
+  const clipped = voice.withAffirmationFirst(['One', 'Two', 'Three', 'Four']);
+  assert.equal(clipped.labels.length, 3);
+  assert.equal(clipped.labels[0], 'Sounds good');
+});
+
+test('isAffirmation knows a short yes from a new ask', () => {
+  for (const yes of ['Sounds good', 'Thanks!', 'ok', 'Yes, go ahead', 'Carry on']) {
+    assert.equal(voice.isAffirmation(yes), true, yes);
+  }
+  for (const ask of ['Also fix the Codex config note', 'Show me the failing test output', 'Can I try it?']) {
+    assert.equal(voice.isAffirmation(ask), false, ask);
+  }
+});
+
+test('fallbackSuggestions after queued work gives the yes first; a question keeps its answers', () => {
+  const queued = voice.fallbackSuggestions({ text: 'I\'ve queued a fix on PR #6586.', queued: true });
+  assert.deepEqual(queued.answered, ['Sounds good', "Tell me when it's ready"]);
+  const question = voice.fallbackSuggestions({ text: 'Want me to tell you here when it is ready?', queued: true });
+  assert.deepEqual(question.answered, ['Yes, tell me here', 'No thanks']);
+  assert.deepEqual(voice.fallbackSuggestions({ text: 'It is queued.' }).answered, ['Thanks', 'What happens next?']);
 });
 
 // ── say() ────────────────────────────────────────────────────────────────
@@ -240,4 +283,49 @@ test('say() stops carrying Go ahead once it was said, or a change started', asyn
   });
   const started = await sayWith({ suggestions: ['Thanks'], text: 'On it.' }, startedPool);
   assert.deepEqual(started.sent[0].metadata.homeroomBot.actions.map((a) => a.label), ['Thanks']);
+});
+
+// ── #6614: queued work, and the yes that ends the exchange ───────────────
+
+test('say() puts a plain yes first when the turn queued work, and stores its wording', async () => {
+  const { sent } = await sayWith({
+    text: 'I\'ve queued a fix on PR #6586. Here is what I\'ll do.',
+    queued: true,
+    suggestions: ['Also fix the Codex config note', 'Leave the test alone, just rebase', 'Show me the failing test output'],
+  });
+  const bot = sent[0].metadata.homeroomBot;
+  assert.deepEqual(bot.actions.map((a) => a.label),
+    ['Sounds good', 'Also fix the Codex config note', 'Leave the test alone, just rebase']);
+  assert.deepEqual(bot.affirm, { label: 'Sounds good' });
+});
+
+test('say() keeps a reply that asks a question as it is, and stores no affirmation', async () => {
+  const { sent } = await sayWith({
+    text: 'Want me to tell you here when it is ready?',
+    queued: true,
+    suggestions: ['Yes, tell me here', 'No thanks'],
+  });
+  const bot = sent[0].metadata.homeroomBot;
+  assert.deepEqual(bot.actions.map((a) => a.label), ['Yes, tell me here', 'No thanks']);
+  assert.equal(bot.affirm, undefined);
+});
+
+test('say() falls back to the queued set when the model gave none', async () => {
+  const { sent } = await sayWith({ text: 'I\'ve queued a fix.', queued: true });
+  const bot = sent[0].metadata.homeroomBot;
+  assert.deepEqual(bot.actions.map((a) => a.label), ['Sounds good', "Tell me when it's ready"]);
+  assert.deepEqual(bot.affirm, { label: 'Sounds good' });
+});
+
+test('affirmedAck matches the bot\'s stored yes from a person it answered, and nothing else', async () => {
+  const yes = { metadata: { homeroomBot: { affirm: { label: 'Sounds good' }, suggest: { forUserIds: [9] } } } };
+  const pool = { async query() { return { rows: [yes] }; } };
+  const args = { app: { id: 1 }, place: { type: 'issue', ref: 7 }, bot: { id: 2 }, speaker: { id: 9 } };
+  assert.equal(await voice.affirmedAck(pool, { ...args, row: { id: 60, content: ' sounds good ' } }), true);
+  assert.equal(await voice.affirmedAck(pool, { ...args, row: { id: 60, content: 'Also fix the Codex config note' } }), false);
+  // A member the bot did not answer goes to the model as today.
+  assert.equal(await voice.affirmedAck(pool, { ...args, row: { id: 60, content: 'Sounds good' }, speaker: { id: 10 } }), false);
+  // A newer bot message (the result) is the one read, so the old yes no longer matches.
+  const newer = { async query() { return { rows: [{ metadata: { homeroomBot: { kind: 'voice' } } }] }; } };
+  assert.equal(await voice.affirmedAck(newer, { ...args, row: { id: 61, content: 'Sounds good' } }), false);
 });
