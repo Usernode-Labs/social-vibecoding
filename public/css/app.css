@@ -27876,9 +27876,9 @@ html[data-skin]:where(:not([data-skin="brand"])) [data-sign-in-sheet] > [role="d
 html[data-skin]:where(:not([data-skin="brand"])) #sign-in-sheet-title { font-size: 24px; line-height: 1.15; font-weight: 700; letter-spacing: -0.02em; color: var(--fr-ink); }
 html[data-skin]:where(:not([data-skin="brand"])) #sign-in-sheet-title + button { background: var(--fr-sunk); color: var(--fr-ink); }
 html[data-skin]:where(:not([data-skin="brand"])) [data-sign-in-sheet] > [role="dialog"] p { color: var(--fr-mut); }
-html[data-skin]:where(:not([data-skin="brand"])) [data-sign-in-sheet-method] { background: var(--fr-sunk); }
-html[data-skin]:where(:not([data-skin="brand"])) [data-sign-in-sheet-method] > [role="radio"] { color: var(--fr-mut); }
-html[data-skin]:where(:not([data-skin="brand"])) [data-sign-in-sheet-method] > [role="radio"][aria-checked="true"] { background: var(--fr-surface); color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) [data-sign-in-sheet-method]:not(.fr-tabs) { background: var(--fr-sunk); }
+html[data-skin]:where(:not([data-skin="brand"])) [data-sign-in-sheet-method]:not(.fr-tabs) > [role="radio"] { color: var(--fr-mut); }
+html[data-skin]:where(:not([data-skin="brand"])) [data-sign-in-sheet-method]:not(.fr-tabs) > [role="radio"][aria-checked="true"] { background: var(--fr-surface); color: var(--fr-ink); }
 html[data-skin]:where(:not([data-skin="brand"])) [data-sign-in-sheet] .rounded-2xl.overflow-hidden > div { padding: 16px 16px 0; border: 0; }
 html[data-skin]:where(:not([data-skin="brand"])) [data-sign-in-sheet] .rounded-2xl.overflow-hidden > div:last-child { padding-bottom: 16px; }
 html[data-skin]:where(:not([data-skin="brand"])) [data-sign-in-sheet] .rounded-2xl.overflow-hidden label { margin-bottom: 8px; font-size: 13px; font-weight: 650; color: var(--fr-ink); }
@@ -27888,6 +27888,20 @@ html[data-skin]:where(:not([data-skin="brand"])) [data-sign-in-sheet] .rounded-2
 }
 html[data-skin]:where(:not([data-skin="brand"])) [data-sign-in-sheet] .rounded-2xl.overflow-hidden input:not([type="checkbox"], [type="radio"]):focus { background: var(--fr-surface); box-shadow: inset 0 0 0 2px var(--fr-acc); outline: 0; }
 html[data-skin]:where(:not([data-skin="brand"])) [data-sign-in-sheet] > [role="dialog"] button.bg-violet-600 { height: 44px; }
+/* Version 2 (11 Nov 2026): the first step, the phone step and the password
+   step are laid out as the kit's sheet by the sheet itself (its kit
+   branch, data-sign-in-sheet-kit): the field's card, the other ways as
+   rows in one card under "or", the primary button, the terms as the foot.
+   The kit's own classes draw them; these rules only stand in for the
+   kit's reset, which the sheet is not inside (its fields are the
+   product's), and give the switch the look's tabs. */
+html[data-skin] [data-sign-in-sheet-kit] .fr-row { width: 100%; text-align: start; font: inherit; color: inherit; }
+html[data-skin] [data-sign-in-sheet-kit] .fr-row:disabled { opacity: 0.45; }
+html[data-skin] [data-sign-in-sheet-kit] .fr-cap { margin: 0; }
+html[data-skin] [data-sign-in-sheet-kit] .fr-btn { font-family: inherit; }
+html[data-skin] [data-sign-in-sheet-kit] .fr-btn.fr-block { height: 44px; }
+html[data-skin] [data-sign-in-sheet-kit] .fr-foot .fr-link { font: inherit; font-weight: 600; }
+html[data-skin] [data-sign-in-sheet-kit] .fr-tab { font-size: 15px; }
 
 /* THE HOMEROOM MENU (features/app-context/app-context-sheet.tsx, the
    bar's mark and ⌄). The menu stays the product's: its rows, its About and

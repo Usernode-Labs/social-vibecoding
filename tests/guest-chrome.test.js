@@ -139,7 +139,7 @@ test('the sign-in sheet is the kit\'s sheet: the look\'s surface, title, field a
   assert.ok(css.includes('THE SIGN-IN SHEET'));
   assert.match(hand, /\[data-sign-in-sheet\] > \[role="dialog"\] \{[^}]*background: var\(--fr-solid, var\(--fr-ground\)\);[^}]*box-shadow: var\(--fr-sh\), inset 0 0 0 1px var\(--fr-line\);/);
   assert.match(hand, /#sign-in-sheet-title \{ font-size: 24px; line-height: 1\.15; font-weight: 700; letter-spacing: -0\.02em; color: var\(--fr-ink\); \}/);
-  assert.match(hand, /\[data-sign-in-sheet-method\] \{ background: var\(--fr-sunk\); \}/, 'the two ways are the look\'s own switch');
+  assert.match(hand, /\[data-sign-in-sheet-method\]:not\(\.fr-tabs\) \{ background: var\(--fr-sunk\); \}/, 'the two ways are the look\'s own switch (the kit\'s tabs on the three steps laid out as the kit\'s sheet: tests/sign-in-sheet-kit.test.js)');
   const sheet = read('frontend/src/features/auth/sign-in-sheet.tsx');
   for (const hook of ['data-sign-in-sheet={step}', 'role="dialog"', 'id="sign-in-sheet-title"', 'data-sign-in-sheet-method=""', 'role="radio"']) assert.ok(sheet.includes(hook), hook);
 });
