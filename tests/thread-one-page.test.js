@@ -246,11 +246,12 @@ test('#6599: a built draft of yours puts itself up for a vote from its card', ()
   const promoted = signedIn(false, () => draw({ ...review(91, 6581), mine: true }));
   assert.ok(!promoted.includes('data-thread-change-propose'), 'up for a vote: its Vote card, not the button');
 
-  // The ⋯ offers the same action, through the same hook instance as the button.
+  // The ⋯ offers the same action, from the hook its line is drawn with; the
+  // card's own button calls the same thing from its own instance.
   const src = read(`${TOPIC}/thread-changes.tsx`);
   assert.match(src, /useThreadMenu\(propose\.can \? key : null, 'propose', propose\.can/, 'the row goes on the change\'s own ⋯');
   assert.match(src, /\{ label: t\('project:topic\.thread\.page\.proposeAction'\), icon: 'default', act: propose\.propose \}/);
-  assert.match(src, /const propose = useProposeChange\(item, onChanged\);\s*useInView/, 'the card draws the button and the row from one hook');
+  assert.match(src, /const propose = useProposeChange\(item, onChanged\);\s*useInView/, 'the line and its ⋯ draw from one hook');
   assert.match(src, /<ChangeMenu item=\{item\} view=\{view\} propose=\{propose\} \/>/);
 });
 
@@ -402,7 +403,7 @@ test('D5: a change folded under its ballot has no Vote of its own', () => {
   const head = read(`${TOPIC}/change-head.tsx`);
   assert.match(head, /<GateCard which="votes" g=\{v\.votes\} action=\{ballot \? null : voteAction\} id=\{id\} closes=\{closes\} \/>/);
   const src = read(`${TOPIC}/thread-changes.tsx`);
-  assert.match(src, /<ChangeBody item=\{item\} view=\{view\} propose=\{propose\} plan=\{plan\} ballot request=\{request\} \/>/);
+  assert.match(src, /<ChangeBody item=\{item\} view=\{view\} plan=\{plan\} ballot request=\{request\} \/>/);
   assert.match(src, /<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} closes=\{closesList\(item\)\} \/>/);
   assert.match(src, /querySelector<HTMLElement>\('\[data-change-gate="ballot"\]'\)/, 'a door to one of them lands on the ballot');
 });

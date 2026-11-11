@@ -200,8 +200,9 @@ const NO_PROPOSE: ProposeState = Object.freeze({ can: false, busy: false, error:
 /**
  * #6599: `busy` stays true once it went up, until the change leaves
  * `underway`, so the label never flashes back to Put it up for a vote while
- * the thread re-reads. `onDone` is the thread's own re-read, which draws the
- * vote card in the card's place.
+ * the thread re-reads. `onDone` is the thread's own immediate re-read; the
+ * card's own instance passes none, and the `change-detail-refresh` that
+ * `proposeChange` dispatches makes the request's page re-read it too.
  */
 function useProposeChange(item: ThreadItem, onDone?: () => void): ProposeState {
   const [busy, setBusy] = useState(false);
@@ -331,8 +332,8 @@ function useKicker(item: ThreadItem, letter: string | null): string {
  * 1 Nov 2026: a change's own ⋯, its page's rows (AppView._topicCard
  * registers them under its view's key), which the document-level handler
  * opens as any `data-card-menu` disc. #6599: a built draft of the viewer's
- * gets Put it up for a vote among them too, acting through the same hook
- * instance its card's button uses.
+ * gets Put it up for a vote among them too, the same call its card's button
+ * makes.
  */
 function ChangeMenu({ item, view, propose }: { item: ThreadItem; view: ChangeView | null; propose: ProposeState }): ReactNode {
   const t = useMessages('project');
@@ -682,10 +683,11 @@ function ClosesOf({ item, requests }: { item: ThreadItem; requests: number }): R
  * that says so), and the sheets its ⋯ opens. `ballot`: folded under the
  * ballot, which is where it is voted on.
  */
-function ChangeBody({ item, view, propose, plan = null, ballot = false, request }: {
-  item: ThreadItem; view: ChangeView | null; propose: ProposeState; plan?: RequestSpecCard | null; ballot?: boolean; request: number;
+function ChangeBody({ item, view, plan = null, ballot = false, request }: {
+  item: ThreadItem; view: ChangeView | null; plan?: RequestSpecCard | null; ballot?: boolean; request: number;
 }): ReactNode {
   const t = useMessages('project');
+  const propose = useProposeChange(item);
   const summary = view?.body.summaryHtml || '';
   const threadRequests = useContext(ThreadRequests);
   return (
@@ -749,7 +751,7 @@ function ChangeBlock({ item, plan = null, request, onChanged }: {
   return (
     <div ref={box} className="mt-3" data-thread-change={item.id} data-thread-change-state={item.state || ''}>
       <ChangeLine item={item} view={view} propose={propose} />
-      <ChangeBody item={item} view={view} propose={propose} plan={plan} request={request} />
+      <ChangeBody item={item} view={view} plan={plan} request={request} />
       {/* 1 Nov 2026: ask about it, or sketch a revision, privately. #6392: the
           words say so, and the bot building or fixing it leaves this out. */}
       <WorkWithBotButton
@@ -790,7 +792,7 @@ function FoldedChange({ item, i, view, plan, request, open, onToggle, onChanged 
         {status ? <span className="shrink-0" data-thread-change-status={status.key}><StatusPill s={status} inline /></span> : null}
         <ChangeMenu item={item} view={view} propose={propose} />
       </div>
-      {open ? <div className="ps-[22px]"><ChangeBody item={item} view={view} propose={propose} plan={plan} ballot request={request} /></div> : null}
+      {open ? <div className="ps-[22px]"><ChangeBody item={item} view={view} plan={plan} ballot request={request} /></div> : null}
     </div>
   );
 }
