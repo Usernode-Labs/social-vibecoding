@@ -34,6 +34,28 @@ test('a kit selector is scoped to any look, a look\'s selector to its own flag',
   assert.equal(looks.mapSelector('.tab.on::after', null).selector, 'html[data-skin] .fr-tab.fr-on::after');
 });
 
+test('Mosaic lays a list out as tiles, never a card of launcher tiles or a list of one-line rows', () => {
+  const mosaic = read('frontend', 'looks', 'mosaic.css');
+  const not = ':not(.list,:has(>.tiles,>.row.showall,>.row.item,>.row.proj,>.row.month,>.row.th,>.row.rk))';
+  // Every rule of the mosaic carries the same exceptions: Home's Pinned apps
+  // (tiles, then "Show all N apps") and You's History (an item under its
+  // project's head row) were both laid out as two columns of tiles.
+  const all = mosaic.split('.cols>.stack:first-child .card:has(>.row)').length - 1;
+  assert.ok(all >= 9);
+  assert.equal(mosaic.split(`.cols>.stack:first-child .card:has(>.row)${not}`).length - 1, all);
+  assert.ok(read('public', 'css', 'app.css').includes('html[data-skin="mosaic"] .fr-cols>.fr-stack:first-child .fr-card:has(>.fr-row):not(.fr-list,:has(>.fr-tiles,>.fr-row.fr-showall,>.fr-row.fr-item,>.fr-row.fr-proj,>.fr-row.fr-month,>.fr-row.fr-th,>.fr-row.fr-rk)),'));
+});
+
+test('on a phone only a card\'s own item rows wrap; a compact list\'s stay one line', () => {
+  const css = read('public', 'css', 'app.css');
+  assert.ok(css.includes('html[data-skin][data-skin] .fr-row.fr-item:not(.fr-list .fr-row){flex-wrap:wrap;'));
+  assert.ok(css.includes('html[data-skin][data-skin] .fr-row.fr-item:not(.fr-list .fr-row) .fr-t{white-space:normal}'));
+  // Homeroom bot's rows are a .list's, which the rule used to catch: three
+  // rows filled a phone's screen where the standard list shows eight.
+  assert.doesNotMatch(css, /html\[data-skin\]\[data-skin\] \.fr-row\.fr-item\{flex-wrap/);
+  assert.doesNotMatch(css, /html\[data-skin\]\[data-skin\] \.fr-row\.fr-item \.fr-t\{white-space:normal\}/);
+});
+
 test('.phone becomes a media query and keeps its extra weight', () => {
   // `.phone .title` outweighs `.title` in the tour by one class; here by
   // one more attribute on html, so a look's plain rule cannot overtake the

@@ -483,10 +483,16 @@ export function Tabs({ tabs, current, onPick, end, flush, seg, label }: {
  * The page's body: work in the 720px column, context in the 320px column
  * beside it, which goes below on a phone (above with `sideFirst`).
  */
-export function Cols({ side, sideFirst, wide, flip, children }: {
+export function Cols({ side, sideFirst, wide, flip, tail, children }: {
   side?: React.ReactNode;
   sideFirst?: boolean;
   wide?: boolean;
+  /**
+   * The work column's last groups, which a phone puts AFTER the side column:
+   * a list with no end (Home's directory) would otherwise keep the side
+   * column's groups under every row of it.
+   */
+  tail?: React.ReactNode;
   /** Flipped: the side column leads, 360px, and the work is the 680px column after it (a list of panes, then the pane). */
   flip?: boolean;
   children?: React.ReactNode;
@@ -500,8 +506,11 @@ export function Cols({ side, sideFirst, wide, flip, children }: {
     );
   }
   return (
-    <div className={k('cols', !side && 'one', wide && 'wide')}>
-      <div className={k('stack')}>{children}</div>
+    <div className={k('cols', !side && 'one', wide && 'wide', tail != null && 'mix')}>
+      <div className={k('stack')}>
+        {children}
+        {tail != null ? <div className={k('stack', 'tail')}>{tail}</div> : null}
+      </div>
       {side ? <div className={k('stack', sideFirst && 'first')}>{side}</div> : null}
     </div>
   );
@@ -512,7 +521,9 @@ export function Cols({ side, sideFirst, wide, flip, children }: {
  * columns. The sidebar, bar and tab bar around it are the shell's
  * (features/frame/frame-app.tsx).
  */
-export function PageBody({ title, purpose, acts, over, lead, under, tabs, side, sideFirst, wide, flip, narrow, below, children, ...props }: {
+export function PageBody({ title, purpose, acts, over, lead, under, tabs, side, sideFirst, wide, flip, narrow, below, tail, children, ...props }: {
+  /** The work column's last groups, after the side column on a phone (see <Cols/>). */
+  tail?: React.ReactNode;
   title: React.ReactNode;
   purpose?: React.ReactNode;
   acts?: React.ReactNode;
@@ -538,7 +549,7 @@ export function PageBody({ title, purpose, acts, over, lead, under, tabs, side, 
       <div className={k('inner', narrow && 'narrow')}>
         <Head title={title} purpose={purpose} acts={acts} over={over} lead={lead} under={under} />
         {tabs}
-        <Cols side={side} sideFirst={sideFirst} wide={wide} flip={flip}>{children}</Cols>
+        <Cols side={side} sideFirst={sideFirst} wide={wide} flip={flip} tail={tail}>{children}</Cols>
         {below ? <div className={k('stack', 'wide')}>{below}</div> : null}
       </div>
     </Frame>

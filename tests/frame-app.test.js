@@ -26,12 +26,13 @@ const INFO = {
   'game-corner': { slug: 'game-corner', name: 'Game Corner', iconUrl: null, iconEmoji: '🎮', iconColor: '#3b2d8f', needs: 0 },
   lobby: { slug: 'lobby', name: 'Lobby', iconUrl: null, iconEmoji: null, iconColor: null, needs: 9, unchosen: true },
 };
-function stubs({ tab = 'home', screen = 'home-screen', bot = false, messages = 2, ai = 18, slug = null, page = { crumb: null, onBack: null }, place = null } = {}) {
+function stubs({ tab = 'home', screen = 'home-screen', bot = false, messages = 2, ai = 18, slug = null, page = { crumb: null, onBack: null }, place = null, railOpen = true, botHead = { on: false, level: 0, title: '', sub: '' } } = {}) {
   return {
     '../dev-board/workshop/place-store': { placeStore: fixedStore({ slug: place ? slug : null, place: place || 'status', owed: 0, unread: 0, tray: false }), openPlace() {} },
     '../dev-board/workshop/places': { placeName: (key) => ({ status: 'Hub', needs: 'Needs you', workshop: 'Workshop', discussion: '#general' }[key] || key) },
     './frame-page-store': { framePageStore: fixedStore(page) },
-    '../nav/nav-store.js': { navStore: fixedStore({ tab, screen, bot, messages, ai, viewer: 'snait' }) },
+    '../nav/nav-store.js': { navStore: fixedStore({ tab, screen, bot, messages, ai, railOpen, viewer: 'snait' }) },
+    '../nav-drawer/bot-drawer': { botDrawerStore: fixedStore(botHead) },
     '../nav/rail-communities': { useRailCommunities: () => ['homeroom', 'game-corner', 'lobby'] },
     '../workshop/community-scope': { communityScopeStore: fixedStore({ slug, info: INFO, list: Object.keys(INFO) }), goToCommunity() {} },
     '../../lib/visibility-store': { useVisibility: (id, initial) => initial },
@@ -80,7 +81,7 @@ test('the bot\'s chat lights Homeroom bot, though it is drawn on the Messages sc
 
 test('the bar says where you are, with search and the bell; the phone\'s tab bar has the four places', () => {
   const html = chrome({ tab: 'messages' });
-  assert.match(html, /<header class="fr-bar">.*?<div class="fr-crumb"><span class="fr-ci fr-here fr-keep">Messages<\/span><\/div><span class="fr-sp"><\/span>/s);
+  assert.match(html, /<header class="fr-bar">.*?<div class="fr-crumb"><span class="fr-ci fr-here fr-keep"><span class="fr-cw"><span class="fr-cn">Messages<\/span><\/span><\/span><\/div><span class="fr-sp"><\/span>/s);
   assert.match(html, /<button type="button" class="fr-ib fr-d" aria-label="[^"]+">/, 'search, on a desktop');
   assert.match(html, /<button type="button" class="fr-ib" aria-label="Notifications" aria-haspopup="dialog" data-frame-bell="">/);
   // The Homeroom mark and the menu behind it (the standard header's
@@ -105,10 +106,50 @@ test('the bar says where you are, with search and the bell; the phone\'s tab bar
   assert.match(bar, />Bot<span class="fr-n">18<\/span>/, 'the bar has room for one short word');
 });
 
+test('a long place name is cut before the bar\'s buttons, and a phone\'s bar says Main Chat\'s line under its title', () => {
+  const css = read('public', 'css', 'app.css');
+  // The crumb's words are a box of their own that may shrink: without it a
+  // request's, a project's or a Settings section's name ran under the look
+  // picker and the bell on a phone, in every look.
+  assert.ok(css.includes('html[data-skin] .fr-crumb .fr-cn,html[data-skin] .fr-crumb .fr-cs{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3}'));
+  // The standard phone header says "Only you can see this chat" under
+  // "Main Chat" (nav-drawer/bot-drawer.ts); the kit's bar reads the same
+  // store, on a phone only (from 768px the chat's own head says it).
+  const main = chrome({ tab: 'messages', bot: true, botHead: { on: true, level: 1, title: 'Main Chat', sub: 'Only you can see this chat' } });
+  assert.match(main, /<span class="fr-cw"><span class="fr-cn">[^<]*<\/span><span class="fr-cs fr-p" data-frame-crumb-line="">Only you can see this chat<\/span><\/span>/);
+  assert.doesNotMatch(chrome({ tab: 'messages', bot: true, botHead: { on: true, level: 0, title: '', sub: 'Only you can see this chat' } }), /data-frame-crumb-line/, 'not on the list');
+  assert.doesNotMatch(chrome({ tab: 'messages' }), /data-frame-crumb-line/);
+});
+
+test('the bar hides and shows the sidebar with the standard header\'s own toggle', () => {
+  const src = read('frontend', 'src', 'features', 'frame', 'frame-app.tsx');
+  const open = chrome();
+  assert.match(open, /<header class="fr-bar"><button type="button" class="fr-ib fr-d" data-frame-sidebar="" aria-pressed="true" aria-label="Hide sidebar" title="Hide sidebar">/, 'first in the bar, on a desktop only');
+  assert.match(open, /<div class="fr fr-app fr-shell" data-frame-app="">/);
+  const folded = chrome({ railOpen: false });
+  assert.match(folded, /data-frame-sidebar="" aria-pressed="false" aria-label="Show sidebar"/);
+  // Folded, both layers are the kit's frame with no sidebar, so the page
+  // area the chrome publishes starts at the window's edge.
+  assert.match(folded, /^<div class="fr fr-app fr-shell fr-shell-under fr-noside" aria-hidden="true">/);
+  assert.match(folded, /<div class="fr fr-app fr-shell fr-noside" data-frame-app="">/);
+  assert.match(src, /onClick=\{\(\) => press\('sidebar-toggle'\)\}/, 'the press is the product\'s own control\'s (features/nav/sidebar-toggle.tsx)');
+  assert.match(src, /const \{ railOpen \} = useStoreState\(navStore\);/, 'and the state is the one fact it writes');
+});
+
+test('the chrome starts under the offline strip, as it does under the install strip', () => {
+  const css = read('public', 'css', 'app.css');
+  assert.match(css, /body\.is-offline \.fr\.fr-app\.fr-shell\[data-frame-app\],\s*body\.is-offline \.fr\.fr-app\.fr-shell\.fr-shell-under \{ top: calc\(var\(--platform-safe-top, 0px\) \+ var\(--browser-banner-h, 0px\)\); \}/);
+  assert.match(css, /html\[data-frame-chrome\] body\.is-offline #platform-header \{ height: calc\(var\(--fr-shell-top\) - var\(--browser-banner-h, 0px\)\) !important; \}/);
+  assert.match(css, /html\[data-frame-chrome\] body\.is-offline \{ --platform-header-h: calc\(var\(--fr-shell-top\) - var\(--browser-banner-h, 0px\) - var\(--platform-safe-top, 0px\)\); \}/);
+  assert.match(css, /body\.is-offline \.fr\.fr-shell \.fr-bar \{ margin-top: 0; \}/);
+  // After the install strip's rules, at the same weight: with both strips up these say the height of both.
+  assert.ok(css.indexOf('body.is-offline .fr.fr-shell .fr-bar { margin-top: 0; }') > css.indexOf('body.has-install-strip .fr.fr-shell .fr-bar { margin-top: 0; }'));
+});
+
 test('a kit page with places of its own gives the bar its breadcrumb and its back arrow', () => {
   const html = chrome({ page: { crumb: ['Home', 'All apps'], onBack() {} } });
   assert.match(html, /<button type="button" class="fr-ib" aria-label="Back">/, 'the back arrow, in place of the phone\'s mark');
-  assert.match(html, /<div class="fr-crumb"><span class="fr-ci">Home<\/span><svg class="fr-ic"[^>]*>.*?<\/svg><span class="fr-ci fr-here fr-keep">All apps<\/span><\/div>/s,
+  assert.match(html, /<div class="fr-crumb"><span class="fr-ci"><span class="fr-cw"><span class="fr-cn">Home<\/span><\/span><\/span><svg class="fr-ic"[^>]*>.*?<\/svg><span class="fr-ci fr-here fr-keep"><span class="fr-cw"><span class="fr-cn">All apps<\/span><\/span><\/span><\/div>/s,
     'each place, a chevron between, the last one where you are; flat, so a phone keeps only the last (.crumb > *:not(.keep))');
   const src = read('frontend', 'src', 'features', 'frame', 'frame-app.tsx');
   assert.match(src, /if \(page\.crumb && page\.onBack\) page\.onBack\(\); else press\('back-btn'\);/, 'its back, else the shell\'s');
@@ -120,15 +161,15 @@ test('on a project\'s page the bar leads with its tile and name, then the place,
   // tile and name, then where you are in it.
   const hub = chrome({ tab: null, screen: 'app-view', slug: 'game-corner', place: 'status' });
   assert.match(hub, /<button type="button" class="fr-ib" aria-label="Back">/);
-  assert.match(hub, /<div class="fr-crumb"><span class="fr-ci fr-here fr-keep"><span class="fr-tile" style="--fr-ts:24px;--fr-tc:#3b2d8f" aria-hidden="true">🎮<\/span>Game Corner<\/span><\/div>/,
+  assert.match(hub, /<div class="fr-crumb"><span class="fr-ci fr-here fr-keep"><span class="fr-tile" style="--fr-ts:24px;--fr-tc:#3b2d8f" aria-hidden="true">🎮<\/span><span class="fr-cw"><span class="fr-cn">Game Corner<\/span><\/span><\/span><\/div>/,
     'on the Hub the project is where you are');
   const ws = chrome({ tab: null, screen: 'app-view', slug: 'game-corner', place: 'workshop' });
-  assert.match(ws, /<div class="fr-crumb"><span class="fr-ci"><span class="fr-tile"[^>]*>🎮<\/span>Game Corner<\/span><svg class="fr-ic"[^>]*>.*?<\/svg><span class="fr-ci fr-here fr-keep">Workshop<\/span><\/div>/s);
+  assert.match(ws, /<div class="fr-crumb"><span class="fr-ci"><span class="fr-tile"[^>]*>🎮<\/span><span class="fr-cw"><span class="fr-cn">Game Corner<\/span><\/span><\/span><svg class="fr-ic"[^>]*>.*?<\/svg><span class="fr-ci fr-here fr-keep"><span class="fr-cw"><span class="fr-cn">Workshop<\/span><\/span><\/span><\/div>/s);
   const src = read('frontend', 'src', 'features', 'frame', 'frame-app.tsx');
   assert.match(src, /if \(here && here !== 'status'\) openPlace\(inCommunity, 'status'\); else pressTab\('home'\);/,
     'from a place up to the Hub, from the Hub back to Home, as the standard header\'s arrow goes');
   // A kit page that says its own breadcrumb still has the last word.
-  assert.match(chrome({ tab: null, screen: 'app-view', slug: 'game-corner', place: 'status', page: { crumb: ['Home', 'All apps'], onBack() {} } }), /<span class="fr-ci fr-here fr-keep">All apps<\/span>/);
+  assert.match(chrome({ tab: null, screen: 'app-view', slug: 'game-corner', place: 'status', page: { crumb: ['Home', 'All apps'], onBack() {} } }), /<span class="fr-ci fr-here fr-keep"><span class="fr-cw"><span class="fr-cn">All apps<\/span><\/span><\/span>/);
 });
 
 test('a press is handed to the shell\'s own control, and a cmd-click keeps the address', () => {

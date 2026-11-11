@@ -81,9 +81,18 @@ test('the page is the kit\'s: the head with one fixed sentence, the search field
   assert.match(html, /^<div class="fr" data-home-frame=""><div class="fr-inner"><div class="fr-head"><div class="fr-tx"><h1 class="fr-title">Home<\/h1><p class="fr-purpose">Your apps and your communities\.<\/p><\/div><\/div><div data-home-frame-search=""><div class="fr-search">/);
   assert.doesNotMatch(html, /class="fr-acts"/, 'no button in the head: New project is Pinned apps\' own');
   assert.match(html, /<input type="search" class="fr-v" placeholder="Search apps and communities… \(Ctrl\+K\)" aria-label="Search apps and communities" value=""\/>/, 'the standard field\'s own words');
-  assert.match(html, /<div class="fr-cols"><div class="fr-stack">/, 'the tour\'s 720 and 320, not the wide Home of 10 Nov');
+  assert.match(html, /<div class="fr-cols fr-mix"><div class="fr-stack">/, 'the tour\'s 720 and 320, not the wide Home of 10 Nov');
+  // The directory is the work column's tail: on a phone, and in a window too
+  // narrow for two columns, the challenges come before it, as on the
+  // standard page (it has no end to scroll past).
+  assert.match(html, /id="home-frame-communities".*<div class="fr-stack fr-tail"><section[^>]*id="home-frame-to-join".*<\/div><\/div><div class="fr-stack"><section[^>]*id="home-frame-challenges"/s);
+  const css = read('public', 'css', 'app.css');
+  assert.ok(css.includes('html[data-skin][data-skin] .fr-cols.fr-mix>.fr-stack{display:contents}'));
+  assert.ok(css.includes('html[data-skin][data-skin] .fr-cols.fr-mix>.fr-stack>.fr-tail{order:1}'));
+  assert.match(css, /html\[data-skin\] \[data-home-frame\] > \.fr-inner \{ container: fr-home \/ inline-size; \}\n@container fr-home \(max-width: 911\.98px\) \{\n  html\[data-skin\] \[data-home-frame\] \.fr-cols \{ grid-template-columns: minmax\(0, 1fr\); gap: 24px; \}/,
+    'beside the sidebar in a narrow window the page is one column, never six tiles in 350px');
   assert.doesNotMatch(html, /fr-wide|fr-first/, 'and the side column comes after the main one on a phone');
-  assert.match(render(), /<div class="fr-cols fr-one"><div class="fr-stack">/, 'no side column without challenges');
+  assert.match(render(), /<div class="fr-cols fr-one fr-mix"><div class="fr-stack">/, 'no side column without challenges');
   // Kit classes only: a utility class beside a look's rule would break one of the nine.
   const classes = [...html.matchAll(/class="([^"]*)"/g)].flatMap((m) => m[1].split(/\s+/)).filter(Boolean);
   assert.ok(classes.length > 10);

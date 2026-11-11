@@ -48,6 +48,7 @@ import { communityScopeStore, goToCommunity } from '../workshop/community-scope'
 import { swatchFor } from '../messages/format';
 import { appContextStore } from '../app-context/app-context-store.js';
 import { useInAppShown } from '../header/in-app-actions';
+import { botDrawerStore } from '../nav-drawer/bot-drawer';
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { framePageStore } from './frame-page-store';
@@ -172,6 +173,19 @@ export function FrameChrome() {
     if (!inCommunity) return;
     if (here && here !== 'status') openPlace(inCommunity, 'status'); else pressTab('home');
   };
+  // A PHONE'S BAR SAYS THE LINE UNDER THE TITLE TOO, where the standard
+  // header has one the page itself does not draw: Main Chat's "Only you can
+  // see this chat" (../nav-drawer/bot-drawer.ts publishes it for the
+  // standard header's two-line title; from 768px the chat's own head says
+  // it, so the kit shows this line on a phone only).
+  const botHead = useStoreState(botDrawerStore);
+  const crumbLine = botHead.on && botHead.level === 1 ? botHead.sub : '';
+  // THE SIDEBAR FOLDS AS THE STANDARD ONE DOES: the same fact (navStore's
+  // railOpen), turned over by the standard header's own toggle
+  // (../nav/sidebar-toggle.tsx), which this bar's button presses. Folded,
+  // the frame is the kit's own frame with no sidebar (.noside), and the
+  // page area it publishes starts at the window's edge.
+  const { railOpen } = useStoreState(navStore);
   const unread = useNodeShown('notifications-badge');
   const menuOpen = !!(useStoreState(appContextStore) as { open?: boolean }).open;
   const user = (typeof window === 'undefined' ? undefined : (window as any).App?.user) as { username?: string; avatar_url?: string | null } | undefined;
@@ -229,12 +243,12 @@ export function FrameChrome() {
   return (
     <>
       {/* Behind the screens: what a look gives the page column itself. */}
-      <div className="fr fr-app fr-shell fr-shell-under" aria-hidden="true">
+      <div className={`fr fr-app fr-shell fr-shell-under${railOpen ? '' : ' fr-noside'}`} aria-hidden="true">
         <aside className={k('side')} />
         <div className={k('colm')} />
       </div>
 
-      <Frame className="fr-app fr-shell" data-frame-app="">
+      <Frame className={`fr-app fr-shell${railOpen ? '' : ' fr-noside'}`} data-frame-app="">
         <aside className={k('side')} aria-label={t('core:frame.navigation')}>
           <div className={k('brand')}>
             <Tile size={28} src={MARK} color="#0f1116" name={t('core:frame.brand')} />
@@ -308,6 +322,20 @@ export function FrameChrome() {
 
         <div className={k('colm')}>
           <header className={k('bar')}>
+            {/* Hide or show the sidebar, on a desktop: the standard header's
+                own control (#sidebar-toggle), pressed from here. A toggle,
+                so the name is the act and aria-pressed the state. */}
+            <button
+              type="button"
+              className={k('ib d')}
+              data-frame-sidebar=""
+              aria-pressed={railOpen ? 'true' : 'false'}
+              aria-label={railOpen ? t('core:rail.hideSidebar') : t('core:rail.showSidebar')}
+              title={railOpen ? t('core:rail.hideSidebar') : t('core:rail.showSidebar')}
+              onClick={() => press('sidebar-toggle')}
+            >
+              <Icon name="sidebar" />
+            </button>
             {back ? (
               <button type="button" className={k('ib')} aria-label={t('core:header.back')} onClick={!page.crumb && inCommunity && !onApp ? goUp : goBack}>
                 <Icon name="cl" />
@@ -319,7 +347,15 @@ export function FrameChrome() {
               {crumbs.map(({ word, lead }, i) => (
                 <Fragment key={`${i}:${word}`}>
                   {i > 0 ? <Icon name="cr" size={14} /> : null}
-                  <span className={k('ci', i === crumbs.length - 1 && 'here keep')}>{lead}{word}</span>
+                  <span className={k('ci', i === crumbs.length - 1 && 'here keep')}>
+                    {lead}
+                    {/* The words are a box of their own, so a long name is
+                        cut with an ellipsis before the bar's buttons. */}
+                    <span className={k('cw')}>
+                      <span className={k('cn')}>{word}</span>
+                      {i === crumbs.length - 1 && crumbLine ? <span className={k('cs p')} data-frame-crumb-line="">{crumbLine}</span> : null}
+                    </span>
+                  </span>
                 </Fragment>
               ))}
             </div>
