@@ -53,6 +53,28 @@ test('conductor completion durably publishes a committed turn without repeating 
       receipt: async () => (await pool.query('SELECT * FROM turn_effects WHERE turn_id = $1 AND effect_key = $2', [publication.receiptId(turn), publication.EFFECT])).rows[0],
       saved: async () => (await pool.query('SELECT unpushed_sha FROM session_workers WHERE session_id = $1', [s.id])).rows[0]?.unpushed_sha };
   }
+  // #6602: Homeroom bot's turn on a change its author made in Claude Code
+  // locks the author's session row, while the ledger row stays the bot's
+  // (the account whose key calls the model).
+  await t.test('startCodexAttempt locks the session for its owner and the ledger row for the paying account', async () => {
+    const { rows: [botUser] } = await pool.query(
+      `INSERT INTO users (username, password) VALUES ($1, 'x') RETURNING id`, [`bot-${randomUUID().slice(0, 8)}`]);
+    const f = await fixture();
+    await pool.query(`UPDATE chat_sessions SET active_turn = NULL, agent_backend = 'codex_openrouter', agent_config_version = 1
+      WHERE id = $1`, [f.id]);
+    const agent = require('../src/services/agent-turn');
+    const args = {
+      pool, session: { id: f.id, agent_config_version: 1 }, userId: botUser.id,
+      logicalTurnId: randomUUID(), attemptNumber: 1, model: 'openai/gpt-5.3-codex', mode: 'build',
+      runtimeContext: { agentConfigVersion: 1 },
+    };
+    // Without the owner named, the lock asks for the paying account's row and finds none.
+    await assert.rejects(agent.startCodexAttempt(args), (e) => e.code === 'agent_context_changed');
+    const started = await agent.startCodexAttempt({ ...args, logicalTurnId: randomUUID(), sessionOwnerId: f.target.userId });
+    const { rows: [turn] } = await pool.query('SELECT user_id, session_id FROM agent_turns WHERE id = $1', [started.turnUuid]);
+    assert.equal(Number(turn.session_id), Number(f.id));
+    assert.equal(Number(turn.user_id), Number(botUser.id), 'the ledger row is the account whose key calls the model');
+  });
   for (const mode of ['build', 'sync']) await t.test(`${mode}: exact target/commit, including a sync fast-forward with no commits ahead`, async () => {
     const f = await fixture(mode);
     const out = await publication.publish(f.options);

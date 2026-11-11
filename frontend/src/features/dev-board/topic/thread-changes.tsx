@@ -77,6 +77,7 @@ import { RequestWords } from './request-head';
 import { openRequestSpec, type RequestSpecCard } from './request-model';
 import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
 import { pageSlug } from './thread-items';
+import { useThreadMenu } from './thread-menu';
 import { swatchFor } from '../../group-chat/swatch';
 import { WorkWithBotButton } from './work-with-bot';
 import {
@@ -132,6 +133,100 @@ function changeBotAtWork(item: ThreadItem, view: ChangeView | null): boolean {
   if (item.byBot && item.state === 'underway' && !item.ready) return true;
   const fix = view?.v.testing.botFix;
   return fix === 'fixing' || fix === 'queued';
+}
+
+/**
+ * #6599: a built draft of yours goes up for a vote from its own card. Before
+ * this the only door was the old session view's Submit for review, and the
+ * card said its votes open once it is put up without offering a way to do
+ * it. Who may: its author, signed in on a screen that is not read-only — the
+ * promote route loads the session by `user_id`, so an admin who is not its
+ * author would only be refused. A draft still being built, or whose checks
+ * do not pass, has nothing to put up (`item.ready`, services/threads.js).
+ */
+function canPropose(item: ThreadItem): boolean {
+  if (item.state !== 'underway' || !item.ready || !item.mine) return false;
+  if (typeof window === 'undefined') return false;
+  const w = window as any;
+  return !!w.App?.user && !w.App.user.isSynthetic && !w.AppView?.readOnly;
+}
+
+/**
+ * What Homeroom said when it refused, in its own words: `proposal_not_ready`
+ * carries a sentence in `message`, and other refusals put one in `error`.
+ * A code such as `session_state_changed` is nothing to a reader, so it falls
+ * back to the card's own sentence.
+ */
+function proposeRefusal(body: any): string {
+  const message = body && typeof body.message === 'string' ? body.message.trim() : '';
+  if (message) return message;
+  const error = body && typeof body.error === 'string' ? body.error : '';
+  if (/\s/.test(error)) return error;
+  return translate('project:topic.thread.page.proposeFailed');
+}
+
+/**
+ * The one call the old view's Submit for review made (POST
+ * /api/sessions/:id/promote), resolving to the sentence to show when it
+ * refused and to null when the change went up. It went up: the change's own
+ * read is asked again, so its section becomes its vote card.
+ */
+export async function proposeChange(id: number): Promise<string | null> {
+  let body: any = null;
+  try {
+    const res = await fetch(`/api/sessions/${id}/promote`, { method: 'POST', credentials: 'same-origin' });
+    body = await res.json().catch(() => null);
+    if (!res.ok || (body && body.ok === false)) return proposeRefusal(body);
+  } catch {
+    return translate('project:topic.thread.page.proposeFailed');
+  }
+  if (typeof window === 'undefined') return null;
+  window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(id) }));
+  return null;
+}
+
+interface ProposeState {
+  /** The card may put its change up for a vote, and the ⋯ offers it. */
+  can: boolean;
+  busy: boolean;
+  /** Homeroom's sentence when it refused, or the card's own. */
+  error: string | null;
+  propose: () => void;
+}
+
+/** A line drawn without its card (`ChangeLine` on its own): nothing to put up. */
+const NO_PROPOSE: ProposeState = Object.freeze({ can: false, busy: false, error: null, propose: () => {} });
+
+/**
+ * #6599: `busy` stays true once it went up, until the change leaves
+ * `underway`, so the label never flashes back to Put it up for a vote while
+ * the thread re-reads. `onDone` is the thread's own immediate re-read; the
+ * card's own instance passes none, and the `change-detail-refresh` that
+ * `proposeChange` dispatches makes the request's page re-read it too.
+ */
+function useProposeChange(item: ThreadItem, onDone?: () => void): ProposeState {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const can = canPropose(item);
+  const propose = () => {
+    if (busy || !can) return;
+    setBusy(true);
+    setError(null);
+    void proposeChange(item.id).then((refusal) => {
+      if (refusal) {
+        setError(refusal);
+        setBusy(false);
+        return;
+      }
+      onDone?.();
+    });
+  };
+  useEffect(() => {
+    if (item.state === 'underway') return;
+    setBusy(false);
+    setError(null);
+  }, [item.state]);
+  return { can, busy, error, propose };
 }
 
 /**
@@ -221,11 +316,16 @@ function useKicker(item: ThreadItem, letter: string | null): string {
 /**
  * 1 Nov 2026: a change's own ⋯, its page's rows (AppView._topicCard
  * registers them under its view's key), which the document-level handler
- * opens as any `data-card-menu` disc.
+ * opens as any `data-card-menu` disc. #6599: a built draft of the viewer's
+ * gets Put it up for a vote among them too, the same call its card's button
+ * makes.
  */
-function ChangeMenu({ item, view }: { item: ThreadItem; view: ChangeView | null }): ReactNode {
+function ChangeMenu({ item, view, propose }: { item: ThreadItem; view: ChangeView | null; propose: ProposeState }): ReactNode {
   const t = useMessages('project');
   const key = view?.card.rail?.menuKey || '';
+  useThreadMenu(propose.can ? key : null, 'propose', propose.can
+    ? [{ label: t('project:topic.thread.page.proposeAction'), icon: 'default', act: propose.propose }]
+    : []);
   if (!key) return null;
   const label = item.number
     ? t(projectChangesOnGithub() ? 'project:topic.thread.page.moreNumberedPr' : 'project:topic.thread.page.moreNumbered', { number: item.number })
@@ -242,7 +342,9 @@ function ChangeMenu({ item, view }: { item: ThreadItem; view: ChangeView | null 
  * its status pill and its ⋯ on that line, then its title. The title is not
  * a door any more: this is the change's page.
  */
-export function ChangeLine({ item, view, letter = null }: { item: ThreadItem; view: ChangeView | null; letter?: string | null }): ReactNode {
+export function ChangeLine({ item, view, propose = NO_PROPOSE, letter = null }: {
+  item: ThreadItem; view: ChangeView | null; propose?: ProposeState; letter?: string | null;
+}): ReactNode {
   const t = useMessages('project');
   const kicker = useKicker(item, letter);
   const status = view?.v.status || null;
@@ -264,7 +366,7 @@ export function ChangeLine({ item, view, letter = null }: { item: ThreadItem; vi
             {t('project:change.reload')}
           </button>
         ) : null}
-        <ChangeMenu item={item} view={view} />
+        <ChangeMenu item={item} view={view} propose={propose} />
       </div>
       <h3 className="mt-0.5 min-w-0 text-[15px] font-[650] leading-snug text-zinc-900 dark:text-zinc-100" data-thread-change-title={item.id}>
         {item.title || t('project:topic.thread.item.changeUnnumbered')}
@@ -570,6 +672,7 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
   item: ThreadItem; view: ChangeView | null; plan?: RequestSpecCard | null; ballot?: boolean; request: number;
 }): ReactNode {
   const t = useMessages('project');
+  const propose = useProposeChange(item);
   const summary = view?.body.summaryHtml || '';
   const threadRequests = useContext(ThreadRequests);
   return (
@@ -583,9 +686,33 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
       {plan ? <PlanLine plan={plan} builtFrom={item.builtFrom} /> : null}
       {view?.v.shots ? <ShotsPair id={item.id} number={item.number ?? null} s={view.v.shots} /> : null}
       {item.state === 'underway' || !hasCards(item) ? (
-        <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-waiting={item.ready ? 'ready' : 'building'}>
-          {t(item.ready ? 'project:topic.thread.page.ready' : 'project:topic.thread.page.underway')}
-        </p>
+        propose.can ? (
+          // #6599: its one action, where the Votes card will appear, with the
+          // shorter line under it; a refusal keeps its sentence here too.
+          <div className="mt-2" data-thread-change-propose={item.id}>
+            <button
+              type="button"
+              className="dev-vote-btn"
+              disabled={propose.busy}
+              aria-busy={propose.busy || undefined}
+              onClick={() => propose.propose()}
+            >
+              {t(propose.busy ? 'project:topic.thread.page.proposing' : 'project:topic.thread.page.proposeAction')}
+            </button>
+            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-waiting="ready">
+              {t('project:topic.thread.page.readyMine')}
+            </p>
+            {propose.error ? (
+              <p className="mt-1 text-[13px] text-[color:var(--state-blocked)]" role="alert" data-thread-change-propose-error>
+                {propose.error}
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-waiting={item.ready ? 'ready' : 'building'}>
+            {t(item.ready ? 'project:topic.thread.page.ready' : 'project:topic.thread.page.underway')}
+          </p>
+        )
       ) : view ? (
         <ChangeGates id={item.id} card={view.card} v={view.v} ballot={ballot} closes={closesList(item)} />
       ) : (
@@ -599,13 +726,16 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
 }
 
 /** One change, on its own: its line, then everything its page had. */
-function ChangeBlock({ item, plan = null, request }: { item: ThreadItem; plan?: RequestSpecCard | null; request: number }): ReactNode {
+function ChangeBlock({ item, plan = null, request, onChanged }: {
+  item: ThreadItem; plan?: RequestSpecCard | null; request: number; onChanged?: () => void;
+}): ReactNode {
   const [view] = useChangeViews([item]);
   const box = useRef<HTMLDivElement>(null);
+  const propose = useProposeChange(item, onChanged);
   useInView(item.id, !!view || item.state === 'underway', box);
   return (
     <div ref={box} className="mt-3" data-thread-change={item.id} data-thread-change-state={item.state || ''}>
-      <ChangeLine item={item} view={view} />
+      <ChangeLine item={item} view={view} propose={propose} />
       <ChangeBody item={item} view={view} plan={plan} request={request} />
       {/* 1 Nov 2026: ask about it, or sketch a revision, privately. #6392: the
           words say so, and the bot building or fixing it leaves this out. */}
@@ -624,12 +754,14 @@ function ChangeBlock({ item, plan = null, request }: { item: ThreadItem; plan?: 
  * the rest of its section. `open` is the ballot's, so a tap on the change's
  * row in the ballot opens it too.
  */
-function FoldedChange({ item, i, view, plan, request, open, onToggle }: {
+function FoldedChange({ item, i, view, plan, request, open, onToggle, onChanged }: {
   item: ThreadItem; i: number; view: ChangeView | null; plan: RequestSpecCard | null; request: number; open: boolean; onToggle: () => void;
+  onChanged?: () => void;
 }): ReactNode {
   const t = useMessages('project');
   const kicker = useKicker(item, letterOf(i));
   const status = view?.v.status || null;
+  const propose = useProposeChange(item, onChanged);
   return (
     <div className="dev-thread-fold" data-thread-change={item.id} data-thread-change-state={item.state || ''} data-thread-fold={open ? 'open' : 'shut'}>
       <div className="flex min-w-0 items-center gap-2" data-thread-change-line={item.id}>
@@ -643,7 +775,7 @@ function FoldedChange({ item, i, view, plan, request, open, onToggle }: {
           </span>
         </button>
         {status ? <span className="shrink-0" data-thread-change-status={status.key}><StatusPill s={status} inline /></span> : null}
-        <ChangeMenu item={item} view={view} />
+        <ChangeMenu item={item} view={view} propose={propose} />
       </div>
       {open ? <div className="ps-[22px]"><ChangeBody item={item} view={view} plan={plan} ballot request={request} /></div> : null}
     </div>
@@ -957,7 +1089,7 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
       <div className="mt-2 flex flex-col" data-thread-folds={options.length}>
         {options.map((o, i) => (
           <FoldedChange key={o.id} item={o} i={i} view={views[i]} plan={plans?.get(o.id) || null} request={Number(anchor[0])}
-            open={open.has(o.id)} onToggle={() => toggle(o.id)} />
+            open={open.has(o.id)} onToggle={() => toggle(o.id)} onChanged={onChanged} />
         ))}
       </div>
     </div>
@@ -1290,7 +1422,7 @@ export function ThreadChanges({ slug, data, number, changes, close, onChanged, p
           <Competing key={ballot.options.map((o) => o.id).join(',')} slug={slug} data={data} anchor={anchor}
             options={ballot.options} close={ballot.close} onChanged={onChanged} plans={plans} />
         ) : null}
-        {rest.map((item) => <Fragment key={item.id}><ChangeBlock item={item} plan={plans?.get(item.id) || null} request={number} /></Fragment>)}
+        {rest.map((item) => <Fragment key={item.id}><ChangeBlock item={item} plan={plans?.get(item.id) || null} request={number} onChanged={onChanged} /></Fragment>)}
         {closeAlone ? <CloseVote slug={slug} close={closeAlone} onChanged={onChanged} /> : null}
         <Elsewhere list={elsewhere} slug={slug} onChanged={onChanged} />
       </section>

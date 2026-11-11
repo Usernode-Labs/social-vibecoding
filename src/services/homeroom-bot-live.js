@@ -3691,6 +3691,29 @@ async function stampSessionModel(pool, session, model) {
 }
 
 /**
+ * #6602: make a session run on `backend` for one turn. A turn runs on the
+ * backend its session carries (agent-turn resolveCodexRuntimeContext reads
+ * session.agent_backend, and startCodexAttempt locks the ROW and refuses one
+ * that is not codex_openrouter), so updating a change its author made in
+ * Claude Code needs the row written, not just the object. Writes both, and
+ * resolves true when the session is on `backend` afterwards. Best-effort: a
+ * failed write is logged and answers false, so the caller can say plainly
+ * that it cannot run instead of dispatching into a refusal.
+ */
+async function stampSessionBackend(pool, session, backend) {
+  if (!session || !backend) return false;
+  if (session.agent_backend === backend) return true;
+  try {
+    await pool.query('UPDATE chat_sessions SET agent_backend = $2 WHERE id = $1', [session.id, backend]);
+    session.agent_backend = backend;
+    return true;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not set the session\'s backend', { sessionId: session.id, err: err.message });
+    return false;
+  }
+}
+
+/**
  * Which CLI runs a turn of a first version built under a configuration
  * (services/bot-configs.js). An Anthropic model runs in Claude Code, against
  * OpenRouter's Anthropic-compatible endpoint (#3296's `claude` harness):
@@ -5941,6 +5964,7 @@ module.exports = {
   turnFailureReason,
   failureDetail,
   stampSessionModel,
+  stampSessionBackend,
   draftSpec,
   fillSavedScreens,
   FIRST_VERSION_SCREENS_FIRST,

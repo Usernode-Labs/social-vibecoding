@@ -54,7 +54,7 @@
 const log = require('./logger');
 const repoRef = require('./repo-ref');
 const workState = require('./work-state');
-const { updateComingSql, updateAskSql } = require('./homeroom-bot-progress');
+const { updateComingSql, updateAskSql, updateFailedSql } = require('./homeroom-bot-progress');
 const { planRecordSql } = require('./request-specs');
 
 const THREADS_MAX = 80;
@@ -121,7 +121,8 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
        ch.title AS change_title, ch.promoted_at, ch.merged_at, ch.live_at, ch.last_activity_at,
        ch.voted, ch.my_vote, ch.check_state, ch.needs_fix,
        -- #6282: an update on its way holds the vote the change would ask for.
-       ch.update_coming, ch.update_ask,
+       -- #6600: and why a takeover's last attempt failed, when it did.
+       ch.update_coming, ch.update_ask, ch.update_failed,
        dec.id AS decision_id, dec.status AS decision_status, dec.mine AS decision_mine, dec.my_vote AS decision_vote,
        cl.username AS claimed_by, cl.mine AS claimed_mine,
        COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, req.updated_at, t.created_at) AS sort_at,
@@ -174,7 +175,8 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
            -- #6282: 'running' while a turn updates it, 'queued' while an
            -- ask waits its turn, and what was asked, for the row's words.
            ${updateComingSql('cs')} AS update_coming,
-           ${updateAskSql('cs')} AS update_ask
+           ${updateAskSql('cs')} AS update_ask,
+           ${updateFailedSql('cs')} AS update_failed
       FROM chat_sessions cs
      WHERE cs.thread_id = t.id AND cs.is_headless = FALSE
        -- A posted plan is no change (threads.js ITEMS_SQL says the same).
@@ -395,7 +397,11 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   // people and for the ones who would have been asked to vote; somebody who
   // already voted and only wrote in it gets no row.
   const code = state.line?.code;
-  const updating = status === 'promoted' && (code === 'revising' || code === 'update_queued');
+  // #6600: a takeover the bot is running on the change is an update under
+  // way, whether it is fixing its failing checks or revising it.
+  const updating = status === 'promoted' && (code === 'revising' || code === 'update_queued' || code === 'fixing');
+  // #6600: its last takeover attempt failed, and nothing has checked it since.
+  const botFixFailed = row.update_failed != null || code === 'bot_fix_failed';
   // Owed only while its change is open for votes (work_states.vote_open).
   const voteOwed = (state.voteOpen ?? state.stage === 'up_for_vote') && !updating && status === 'promoted' && wouldVote;
   // Their own change (not Homeroom bot's, whose fixes are its own) that
@@ -403,8 +409,9 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   // conflict to resolve (THREADS_SQL needs_fix). Needs you, with Fix it,
   // not Waiting under "Checks failing", which it would wait in forever. The
   // stage stays the change's own; that it is theirs to fix is the viewer's.
+  // #6600: after Homeroom bot's own attempt failed it says that instead.
   if (status === 'promoted' && theirs && row.needs_fix === true && !updating && state.stage !== 'building') {
-    return { group: 'needs', work: stored, at: iso(row.last_activity_at || row.promoted_at) || at, fixYours: true };
+    return { group: 'needs', work: stored, at: iso(row.last_activity_at || row.promoted_at) || at, fixYours: true, ...(botFixFailed ? { botFixFailed: true } : {}) };
   }
   // #6402: a change still being checked asks nobody for a vote yet. Someone
   // who would have been asked, but is not its author or a follower, sees it
@@ -415,7 +422,7 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   // One they only voted or wrote in is listed while no change of it is in
   // flight, as Waiting: it asks nothing of them, and nobody is building it.
   const place = updating
-    ? ((own || wouldVote) ? (code === 'revising' ? 'next' : 'waiting') : null)
+    ? ((own || wouldVote) ? ((code === 'revising' || code === 'fixing') ? 'next' : 'waiting') : null)
     : workState.placeFor(state, { requester: decides, own, voteOwed }) || (!own && !inFlight(state) ? 'waiting' : null);
   if (!place) return null;
   const out = { group: place, work: stored, at };
@@ -781,7 +788,11 @@ const NEED_SAYS = Object.freeze({
  * slot.
  */
 function threadSays(t, slotVotes = 0) {
-  if (t.fixYours) return 'their own change waits for their fix: its checks failed, its preview did not build, or it conflicts';
+  if (t.fixYours) {
+    return t.botFixFailed
+      ? 'Homeroom bot could not fix their own change'
+      : 'their own change waits for their fix: its checks failed, its preview did not build, or it conflicts';
+  }
   const work = t.work || { stage: 'reading' };
   const yours = t.group === 'needs';
   let says = workState.says(work, { yours });

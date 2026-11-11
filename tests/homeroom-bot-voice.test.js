@@ -1103,6 +1103,27 @@ test('#6534: an HTML comparison is self-contained, and a stored one is an html a
   assert.match(both.error, /one thing per call/);
 });
 
+// #6600: a takeover the bot queued in a turn can have failed before its
+// reply is posted. The reply says what happened, never that work is queued,
+// and carries none of the queued buttons.
+test('#6600: a failed takeover before the reply says it tried and could not, with no buttons', () => {
+  assert.equal(voice.takeoverFailedReply('the failing check is still failing'),
+    "I tried that just now and it didn't work: the failing check is still failing. Nothing was changed. You can ask me again, or fix it yourself.");
+  assert.equal(voice.takeoverFailedReply('it ran out of time.'), voice.takeoverFailedReply('it ran out of time'),
+    'trailing punctuation folds into one sentence');
+  assert.match(voice.takeoverFailedReply(null), /it did not finish\. Nothing was changed/);
+  // The turn reads the takeover it queued before posting, and drops the
+  // queued reply's html, suggestions and offer when it has already failed.
+  const src = read('src/services/homeroom-bot-voice.js');
+  const branch = src.slice(src.indexOf('if (ctx.takeoverId) {'), src.indexOf('const posted = await say(pool, {'));
+  assert.match(branch, /loadUpdate\(pool, ctx\.takeoverId\)/);
+  assert.match(branch, /look\.state === 'failed'/);
+  assert.match(branch, /text = takeoverFailedReply\(look\.error\)/);
+  for (const dropped of ['sentHtml = null', 'suggestions = null', 'othersSuggestions = null', 'offer = null']) {
+    assert.match(branch, new RegExp(dropped.replace(/ /g, '\\s*\\*?\\s*')), `${dropped} is dropped`);
+  }
+});
+
 // ── A start GitHub's outage stopped (#6598) ──────────────────────────────
 
 test('a start that could not run is said in plain words, never as an unreadable answer', () => {

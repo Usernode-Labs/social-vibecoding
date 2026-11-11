@@ -92,6 +92,12 @@ export interface AiThread {
    * it; its stage stays the change's own (absent from an older server).
    */
   fixYours?: boolean;
+  /**
+   * #6600: that change's fix, taken over by Homeroom bot, whose last attempt
+   * failed: it stays in Needs you, saying so, with Ask again. Absent from an
+   * older server.
+   */
+  botFixFailed?: boolean;
   at: string | null;
   /**
    * #6233: on a Live row, when the change merged and its id, so the tab can
@@ -487,6 +493,7 @@ const NEED_PILLS: Record<string, string> = {
   fix_stopped: 'messages:ai.pill.letTryAgain',
   detail: 'messages:ai.pill.needsYou',
   fix_yours: 'messages:ai.pill.fixIt',
+  bot_fix_failed: 'messages:ai.pill.askAgain',
 };
 
 /**
@@ -643,7 +650,7 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
   }
   for (const t of work?.needs || []) {
     if (isOwed(owed, t)) continue;
-    const kind = t.fixYours ? 'fix_yours' : needKind(t.work);
+    const kind = t.botFixFailed ? 'bot_fix_failed' : t.fixYours ? 'fix_yours' : needKind(t.work);
     rows.push({
       key: `${kind}:${t.threadId}`,
       title: t.title || '',
@@ -653,16 +660,21 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       // detail), or stopped: nothing moves until a person does, so it is
       // Needs you's, and says so in its stage's words.
       // Your own change waiting on your fix says so, in the change's words
-      // ("PR 12" on GitHub).
-      sub: t.fixYours
-        ? { id: prWord('messages:ai.row.fixYours', changeOnGithub(t)), values: where(t.app, t.number) }
-        : stageLine(t),
+      // ("PR 12" on GitHub). #6600: once Homeroom bot's own try failed, it
+      // says that instead.
+      sub: t.botFixFailed
+        ? { id: prWord('messages:ai.row.botCouldntFix', changeOnGithub(t)), values: where(t.app, t.number) }
+        : t.fixYours
+          ? { id: prWord('messages:ai.row.fixYours', changeOnGithub(t)), values: where(t.app, t.number) }
+          : stageLine(t),
       pill: { id: NEED_PILLS[kind] || 'messages:ai.pill.needsYou' },
       // A phone shows it under the title, where nothing hovers: its second
       // line where it has one (the bot's own reason), else its stage.
-      why: t.fixYours
-        ? { id: 'messages:ai.why.fixYours' }
-        : lineWords(t.work) || stageWords(t.work, { yours: true }),
+      why: t.botFixFailed
+        ? { id: 'messages:ai.why.botCouldntFix' }
+        : t.fixYours
+          ? { id: 'messages:ai.why.fixYours' }
+          : lineWords(t.work) || stageWords(t.work, { yours: true }),
       href: t.href,
       rootId: null,
       threadId: t.threadId,
@@ -886,6 +898,7 @@ const PR_TWIN: Record<string, string> = {
   'messages:ai.row.stageLine': 'messages:ai.row.stageLinePr',
   'messages:ai.live.row': 'messages:ai.live.rowPr',
   'messages:ai.row.fixYours': 'messages:ai.row.fixYoursPr',
+  'messages:ai.row.botCouldntFix': 'messages:ai.row.botCouldntFixPr',
 };
 
 /** Whether a row names a change on a project whose code is on GitHub. */

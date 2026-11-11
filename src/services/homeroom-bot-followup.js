@@ -59,7 +59,8 @@
 // changes nothing says nothing: the shots card already gives the reason.
 
 const log = require('./logger');
-const { parseStopMentioning, failedClaudeTurn, requestRulesLines, localeRule } = require('./homeroom-bot-live');
+const { parseStopMentioning, failedClaudeTurn, requestRulesLines, localeRule, stampSessionBackend } = require('./homeroom-bot-live');
+const registry = require('../agents/registry');
 const shotsState = require('./shots-state');
 const proposalDescription = require('./proposal-description');
 const { withoutEmDashes } = require('./em-dashes');
@@ -1047,6 +1048,38 @@ function checksPersonText({ why, failingCount = 0, broken = [] }) {
 
 // ── The turn ─────────────────────────────────────────────────────────────
 
+// #6602: the backend the bot's own turns run on. A change its author made in
+// Claude Code keeps `claude_code` on its session, so the takeover's update of
+// it resolved no runtime and came back as an empty answer.
+const FOLLOWUP_BACKEND = 'codex_openrouter';
+
+/** Pure: whether a session runs on the bot's own backend (an unknown one reads as not). */
+function onFollowUpBackend(session) {
+  try {
+    return registry.resolveBackend(session?.agent_backend) === FOLLOWUP_BACKEND;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * #6602: put the author's own backend back after a turn that stamped it.
+ * Only a row still on the bot's backend is written: a value somebody changed
+ * meanwhile is left alone. Never throws.
+ */
+async function restoreSessionBackend(pool, session, original) {
+  try {
+    await pool.query(
+      `UPDATE chat_sessions SET agent_backend = $2 WHERE id = $1 AND agent_backend = '${FOLLOWUP_BACKEND}'`,
+      [session.id, original ?? null],
+    );
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not put the session\'s backend back', { sessionId: session.id, err: err.message });
+    return;
+  }
+  if (onFollowUpBackend(session)) session.agent_backend = original ?? null;
+}
+
 /**
  * Is somebody else working on the proposal's session now, read from the
  * durable record of each kind of work (src/workflow/session-work.ts): a
@@ -1154,6 +1187,29 @@ async function runFollowUpTurn({
       }));
     }
   }
+  // #6602: the turn runs on the bot's own backend, whatever built the change.
+  // A change its author made in Claude Code, or in Codex, keeps that on its
+  // session, and the runtime for it resolves to nothing, so the update never
+  // ran. The author's own value is put back in the finally below. It is read
+  // from a durable step, so a restart restores the real original and not the
+  // one stamped here.
+  let backendStamped = false;
+  let originalBackend = null;
+  const savedBackend = typeof st.get === 'function' ? st.get(`backend:${key}`) : undefined;
+  if (savedBackend || !onFollowUpBackend(session)) {
+    const kept = await st.once(`backend:${key}`, async () => ({ original: session.agent_backend ?? null }));
+    originalBackend = kept ? (kept.original ?? null) : null;
+    backendStamped = true;
+    // The new message says plainly the bot cannot run on this change rather
+    // than that its answer could not be read (the caller maps the code).
+    if (!onFollowUpBackend(session)
+        && !(await stampSessionBackend(pool, session, FOLLOWUP_BACKEND))) {
+      return {
+        routed: { error: 'backend_unsupported', tool: session.external_agent || null },
+        result: {}, stopped: false, stoppedBy: null, costUsd: null, pricing: null,
+      };
+    }
+  }
   // A build turn that pushed and lost its record before it was kept: the
   // branch tip is its result (the worker pushes only a turn that succeeded).
   const github = deps.github || null;
@@ -1174,6 +1230,9 @@ async function runFollowUpTurn({
         turnModel: model, resumeThreadId: null, mode,
         telemetryComponent: 'homeroom_bot_followup',
         owner: extra.owner || null,
+        // #6602: on another person's change the row still belongs to its
+        // author; the attempt's ledger row stays the bot's, whose key pays.
+        sessionOwnerId: session.user_id,
         resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
           pool, session, userId: bot.id, model, resumeThreadId: null, config,
           // The platform's per-model choice of CLI, as the bot's build makes
@@ -1211,8 +1270,15 @@ async function runFollowUpTurn({
   } catch (err) {
     durableSteps.rethrowStop(err, 'follow-up turn');
     turn = { routed: { error: `dispatch: ${err.message}` }, stopped: false, stoppedBy: null };
+  } finally {
+    // The turn is over here, however it ended (a stop included), so the
+    // author's own backend goes back now.
+    if (backendStamped) await restoreSessionBackend(pool, session, originalBackend);
   }
-  const routed = turn.routed;
+  // #6602: a null never comes back from the dispatch loop for a turn that
+  // ran. The loop answers null for a session it has no runtime for, and an
+  // empty answer then read as unreadable; it is said as what it is instead.
+  const routed = turn.routed || { error: 'backend_unsupported', tool: session.external_agent || null };
   const result = (routed && routed.result) || {};
   const costUsd = Number.isFinite(routed && routed.estimatedCostUsd) ? routed.estimatedCostUsd : null;
   if (turn.stopped) log.warn('homeroom-bot', 'Follow-up turn stopped on its budget', { sessionId: session.id, issueNumber });
