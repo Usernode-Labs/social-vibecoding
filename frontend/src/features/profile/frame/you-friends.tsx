@@ -2,7 +2,8 @@
  * Friends, as a tab of You under a look (the version 2 tour's s49). It is the
  * standard Friends card's content (../friends-section.tsx) in two columns:
  * the username search, then one group holding the people who asked (Decline,
- * Accept) and your friends, each a door to their page, with the line saying
+ * Accept) and your friends, each a door to their page (with the chevron the
+ * standard rows have), with the line saying
  * only you see it; the requests you sent, each with Cancel, in the side
  * column. Private to you, and it counts nothing.
  *
@@ -76,7 +77,7 @@ export function YouFriends({ shell, view, pendingId, status }: {
               />
             ))}
             {view.friends.map((row) => (
-              <Row key={row.key} href={row.href} lead={<Av size={40} name={row.username} src={row.avatarUrl} />} title={`@${row.username}`} line={row.meta} />
+              <Row key={row.key} href={row.href} lead={<Av size={40} name={row.username} src={row.avatarUrl} />} title={`@${row.username}`} line={row.meta} go />
             ))}
           </Card>
         ) : null}

@@ -801,3 +801,35 @@ What the visual pass found (`visual/v1.md`, and the shared faults of v2 to v5) a
   lane's wear, shared with Messages' own reply pane); changing it is that group's.
 - The list beside an open request scrolled past its head, and a private thread's title cut in the narrower
   pane: the tour's 520px list and what is left for the column.
+
+### Fix group 3, as built (11 Nov 2026): the visual pass on lanes T, K and Y
+
+Work list: `skins-tour-v2/visual/v3.md`. Captures: `skins-tour-v2/local/caps/f3-*.png`.
+
+- **Challenges on a phone (s53).** An open challenge is the kit's wrapping row (`<Row wrap>`), so its name and
+  its line are whole beside the points pill.
+- **The friend search (s49).** The kit's page resets every margin and padding inside it, so the result list's
+  utilities said nothing there. Its card, rows, picture and friend button are spelt in the Friends block of
+  app.css with the kit's values (`.row`, `.av`, `.btn.sm`); an act (Add friend, Accept) keeps the accent.
+- **You's Changes, Requests and Votes (s46 to s48) hold what History holds.** The rows are built by the bot's
+  lists' own model (`features/ai/lines.ts` `useAiLines`, fed History's rows alone) and drawn by the rows the
+  bot's page draws under a look (`features/ai/frame-list.tsx` `Groups`, now exported, with one new prop,
+  `where`). So a project folds after its first three rows with "Show N more" (`GROUP_FIRST.live`, as History),
+  a row's own line ("Homeroom · #6454") is its tooltip and its spoken words, and on a phone it is the row's
+  second line, which is where the number is said there. One project picked: its name is not said again over
+  its rows, as on the bot's page. A row is a button that opens its page, as History's is (it was a link).
+  "You left" is said in History's own words; `profile:frame.projectLeft` is removed. On a phone how a row ended
+  stays beside its title instead of dropping under it.
+- **A request and a change (s32 to s35).** The reply box is as wide as the cards it answers (the standard
+  thread's 12px and 32px insets are dropped under a look). The Tested card's Open app is the kit's small quiet
+  button.
+- **Import (s43).** The page is 1024px at most, so the title and its sentence keep one line each beside the
+  buttons in every look (measured: a 498px sentence beside 439px of buttons).
+- **Friends (s49).** A friend's row has the chevron the standard rows have.
+- **Edit profile (s50).** Display name and Bio are the kit's sunk field under their label.
+- **A public profile with no bio (s51, s52).** One column: the verified accounts lead it, then Report user.
+
+Rulings taken: the standard History row has no visible second line (its project and number are its tooltip),
+so the tabs draw that line on a phone only, where the number has no column; on a desktop it is the tooltip.
+Left, and why: see the hand-back table (the bar's title and Mosaic's tiles are group 1's; the kit's `Bars`,
+the product's menus, sheets and dialogs, and the wash behind Make are outside these pages' files).

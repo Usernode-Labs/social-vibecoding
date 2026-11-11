@@ -40,8 +40,12 @@ const ICON: Record<Glyph, string> = {
   upload: 'up', eye: 'eye', cog: 'tool', reply: 'reply', code: 'code', clock: 'clock', x: 'x', bubble: 'chat',
 };
 
-/** One line of the lists: its glyph, its number, its title, the one word on its right. */
-function LineRow({ line, plain = false }: { line: Line; plain?: boolean }): ReactNode {
+/**
+ * One line of the lists: its glyph, its number, its title, the one word on its right.
+ * `where`: on a phone, where the number has no room and nothing hovers, the
+ * row's own line (its project and number, the tooltip's words) is its second line.
+ */
+function LineRow({ line, plain = false, where = false }: { line: Line; plain?: boolean; where?: boolean }): ReactNode {
   const t = useMessages('messages');
   // #6421: a thread that holds several requests says how many after its title.
   const many = Number(line.requests) > 1;
@@ -69,7 +73,8 @@ function LineRow({ line, plain = false }: { line: Line; plain?: boolean }): Reac
           {line.title}
           {many ? <span className={k('mut')} data-ai-line-requests={line.requests}> {requestsWord}</span> : null}
         </span>
-        {line.why ? <span className={k('s p')} aria-hidden="true" data-ai-line-why="">{line.why}</span> : null}
+        {line.why ? <span className={k('s p')} aria-hidden="true" data-ai-line-why="">{line.why}</span>
+          : where && line.tooltip ? <span className={k('s p')} aria-hidden="true" data-ai-line-where="">{line.tooltip}</span> : null}
       </span>
       {line.owe ? <Pill kind="act">{line.right}</Pill> : line.right ? <span className={k('meta')}>{line.right}</span> : null}
       <span className="sr-only">{tooltip}</span>
@@ -106,8 +111,10 @@ function MoreRow({ open, onClick, disabled, children, ...data }: {
 /**
  * One list's rows under their project's name, each project's first few
  * before its own Show more: the standard list's GroupList, in kit rows.
+ * You's Changes, Requests and Votes draw History with it too
+ * (../profile/frame/you-history.tsx).
  */
-function Groups({ lines, heads, first, freshStyle = false, freshProjects, dayHeads = false, foldFresh = false }: {
+export function Groups({ lines, heads, first, freshStyle = false, freshProjects, dayHeads = false, foldFresh = false, where = false }: {
   lines: Line[];
   heads: boolean;
   first: number;
@@ -115,6 +122,8 @@ function Groups({ lines, heads, first, freshStyle = false, freshProjects, dayHea
   freshProjects?: Record<string, number>;
   dayHeads?: boolean;
   foldFresh?: boolean;
+  /** Each row says its project and number on a phone's second line (<LineRow where/>). */
+  where?: boolean;
 }): ReactNode {
   const t = useMessages('messages');
   const [opened, setOpened] = useState<Record<string, boolean>>({});
@@ -159,7 +168,7 @@ function Groups({ lines, heads, first, freshStyle = false, freshProjects, dayHea
               <Fragment key={line.key}>
                 {i === earlierAt ? <Rule>{t('messages:ai.work.earlier')}</Rule> : null}
                 {divider ? <Rule day={dayKey(line.at)}>{dayHeading(line.at, t, locale)}</Rule> : null}
-                <LineRow line={line} plain={anyFresh && !line.fresh} />
+                <LineRow line={line} plain={anyFresh && !line.fresh} where={where} />
               </Fragment>
             ))}
             {hidden ? (

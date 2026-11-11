@@ -107,6 +107,31 @@ export function PublicProfileCard({
         {allowMessage ? <MessageButton username={profile.username} /> : null}
       </>
     ) : undefined;
+    // The verified accounts stand beside the words. With no bio there are no
+    // words to stand beside, so they lead the one column instead of sitting
+    // alone at the far side of an empty page.
+    const verified = socialLinks.length ? (
+      <Sec label={t('profile:frame.public.verified')}>
+        <Card>
+          {socialLinks.map((link) => (
+            <Row
+              key={link.key}
+              href={link.href}
+              // Another site: a new tab, as the standard card's chip opens it. A modified click is the browser's.
+              onClick={(event) => {
+                if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+                event.preventDefault();
+                window.open(link.href, '_blank', 'noopener,noreferrer');
+              }}
+              lead={<Av size={32} name={link.key === 'github' ? 'G' : 'X'} />}
+              title={link.key === 'github' ? t('profile:frame.public.github') : t('profile:frame.public.x')}
+              line={link.key === 'github' ? String(profile.links?.github || '') : `@${String(profile.links?.x || '').replace(/^@/, '')}`}
+              go
+            />
+          ))}
+        </Card>
+      </Sec>
+    ) : null;
     return (
       <PageBody
         data-public-profile-frame={profile.username}
@@ -114,34 +139,13 @@ export function PublicProfileCard({
         title={name}
         purpose={handle}
         acts={acts}
-        side={socialLinks.length ? (
-          <Sec label={t('profile:frame.public.verified')}>
-            <Card>
-              {socialLinks.map((link) => (
-                <Row
-                  key={link.key}
-                  href={link.href}
-                  // Another site: a new tab, as the standard card's chip opens it. A modified click is the browser's.
-                  onClick={(event) => {
-                    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
-                    event.preventDefault();
-                    window.open(link.href, '_blank', 'noopener,noreferrer');
-                  }}
-                  lead={<Av size={32} name={link.key === 'github' ? 'G' : 'X'} />}
-                  title={link.key === 'github' ? t('profile:frame.public.github') : t('profile:frame.public.x')}
-                  line={link.key === 'github' ? String(profile.links?.github || '') : `@${String(profile.links?.x || '').replace(/^@/, '')}`}
-                  go
-                />
-              ))}
-            </Card>
-          </Sec>
-        ) : null}
+        side={profile.bio ? verified : null}
       >
         {profile.bio ? (
           <Sec label={t('profile:frame.public.about')}>
             <Card pad><Sub size={15} as="p">{profile.bio}</Sub></Card>
           </Sec>
-        ) : null}
+        ) : verified}
         {allowReport ? (
           <div id="public-profile-report">
             <GroupLink bad onClick={() => openReport({ targetType: 'user', target: profile.username, label: `@${profile.username}` })}>

@@ -115,10 +115,20 @@ test('what the first tour invented is gone', () => {
 
 test('Changes, Requests and Votes are History for that kind, read with History\'s own hook', () => {
   const src = read(`${DIR}/you-history.tsx`);
-  assert.match(src, /import \{ byMonth, historyGlyph, historyWords, monthName, useHistory, type HistoryRow \} from '\.\.\/\.\.\/ai\/history';/);
+  assert.match(src, /import \{ monthName, useHistory, type HistoryRow \} from '\.\.\/\.\.\/ai\/history';/);
   assert.match(src, /const history = useHistory\(\{\s+showing,\s+signedIn: [^\n]+\n\s+projects: one,\s+kind,\s+demo: isDemo\(\),\s+\}\);/);
-  assert.match(src, /byProject\(month\.rows\)\.map/, 'by month, then by project');
-  assert.match(src, /'messages:ai\.live\.numberPr' : 'messages:ai\.live\.number'/, 'a change on GitHub reads PR, as History writes it');
+  // What today's History holds for the kind: its rows are the bot's lists' own
+  // lines, drawn by the rows its page draws under a look, so a project folds
+  // after its first rows ("Show N more") and a row says its project and number
+  // (its tooltip; its second line on a phone).
+  assert.match(src, /const \{ historyMonths: months \} = useAiLines\(\{\s+ready: history\.ready, rows: NO_ROWS, owed: 0, progress: NO_ROWS, waiting: NO_ROWS, live: NO_ROWS,\s+openRow: nothing, openThread: nothing, history: \{ \.\.\.history, rows \}, openHistory,\s+\}\);/, 'by month, as the bot\'s lists build them');
+  assert.match(src, /<Groups lines=\{month\.rows\} heads=\{!picked\} first=\{GROUP_FIRST\.live\} where \/>/, 'by project, folded as History folds');
+  assert.doesNotMatch(src, /byProject|historyWords|historyGlyph|numberPr/, 'no second copy of the rows\' words');
+  const list = read('frontend/src/features/ai/frame-list.tsx');
+  assert.match(list, /export function Groups\(/);
+  assert.match(list, /: where && line\.tooltip \? <span className=\{k\('s p'\)\} aria-hidden="true" data-ai-line-where="">\{line\.tooltip\}<\/span> : null\}/, 'the row\'s own line, on a phone');
+  assert.match(list, /t\('messages:ai\.work\.showMore', \{ count: hidden \}\)/);
+  assert.equal(JSON.parse(read('frontend/locales/en/profile.json'))['frame.projectLeft'], undefined, 'a project left is said in History\'s own words');
   assert.match(src, /<ShowAll onClick=\{history\.more\}>\{history\.loading \? t\('messages:ai\.history\.loading'\) : t\('messages:ai\.history\.earlier'\)\}<\/ShowAll>/);
   assert.doesNotMatch(src, /HISTORY_KINDS|ai\.history\.kind\.|Track\b/, 'the tab is the kind: no kind buttons, no five-stop line');
   const html = renderComponent(`${DIR}/you-history.tsx`, 'YouHistory', { shell: shell({ tab: 'changes' }), kind: 'change' }, { cache: false });
@@ -136,7 +146,7 @@ test('Friends is a tab: the search, who asked and your friends in one group, sen
   const html = renderComponent(`${DIR}/you-friends.tsx`, 'YouFriends', { shell: shell({ tab: 'friends' }), view, pendingId: null, status: '' }, { cache: false });
   const { main, side } = columns(html);
   assert.match(main, /<div data-you-friends-search=""><div id="profile-friend-search"/, 'the product\'s own search');
-  assert.match(main, /<h2 class="fr-cap">Friends<\/h2><\/div><div class="fr-card"><div class="fr-row fr-wrap"><span class="fr-av"[^>]*>k<\/span><span class="fr-tx"><span class="fr-t"><a href="#profile\/kempis">@kempis<\/a><\/span><span class="fr-s">Asked yesterday<\/span><\/span><button type="button" class="fr-btn fr-quiet fr-sm" data-friend-request-decline="kempis">Decline<\/button><button type="button" class="fr-btn fr-sm" data-friend-request-accept="kempis">Accept<\/button><\/div><a class="fr-row" href="#profile\/evan"><span class="fr-av"[^>]*>e<\/span><span class="fr-tx"><span class="fr-t">@evan<\/span><span class="fr-s">Friends since September 2026<\/span><\/span><\/a><\/div>/);
+  assert.match(main, /<h2 class="fr-cap">Friends<\/h2><\/div><div class="fr-card"><div class="fr-row fr-wrap"><span class="fr-av"[^>]*>k<\/span><span class="fr-tx"><span class="fr-t"><a href="#profile\/kempis">@kempis<\/a><\/span><span class="fr-s">Asked yesterday<\/span><\/span><button type="button" class="fr-btn fr-quiet fr-sm" data-friend-request-decline="kempis">Decline<\/button><button type="button" class="fr-btn fr-sm" data-friend-request-accept="kempis">Accept<\/button><\/div><a class="fr-row" href="#profile\/evan"><span class="fr-av"[^>]*>e<\/span><span class="fr-tx"><span class="fr-t">@evan<\/span><span class="fr-s">Friends since September 2026<\/span><\/span><svg[^>]*class="[^"]*fr-go[^"]*"[^>]*>.*?<\/svg><\/a><\/div>/);
   assert.match(main, /<p class="fr-secnote">Only you can see your friends\. Nobody else sees this list or how long it is\.<\/p>/);
   assert.match(side, /<h2 class="fr-cap">Sent requests<\/h2><\/div><div class="fr-card"><div class="fr-row fr-wrap">.*?<a href="#profile\/nisarena1">@nisarena1<\/a>.*?Requested 2 days ago.*?<button type="button" class="fr-btn fr-quiet fr-sm" data-friend-sent-cancel="nisarena1">Cancel<\/button>/s);
   const busy = renderComponent(`${DIR}/you-friends.tsx`, 'YouFriends', { shell: shell({ tab: 'friends' }), view, pendingId: 1, status: 'Could not answer.' }, { cache: false });
