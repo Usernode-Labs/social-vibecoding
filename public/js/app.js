@@ -877,7 +877,6 @@ const App = {
     App.user = user;
     App._syncViewer();
     window.UsernodeReact?.appOpenings?.setUser?.(user.id, true);
-    window.UsernodeReact?.googleAnalytics?.setSession?.(user, true);
     App.saveSessionSnapshot(user);
     // The verified answer, for everyone who joined bootSession() rather
     // than reading /api/auth/me for themselves. Published HERE on an
@@ -988,7 +987,6 @@ const App = {
     App.user = null;
     App._syncViewer();
     window.UsernodeReact?.appOpenings?.setUser?.(null, true);
-    window.UsernodeReact?.googleAnalytics?.setSession?.(null);
     window.UITelemetry?.clearUser?.();
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
@@ -1212,7 +1210,6 @@ const App = {
     // the server's answer; a normal login publishes immediately.
     if (!App._sessionFromSnapshot) App._publishBootSession({ user });
     window.UsernodeReact?.appOpenings?.setUser?.(user.id, !App._sessionFromSnapshot);
-    window.UsernodeReact?.googleAnalytics?.setSession?.(user, !App._sessionFromSnapshot);
     // "View as non-admin" admin tool. We mask `App.user.isAdmin`
     // for client-side UI gating (admin buttons, retry, delete, lock,
     // app-secrets edit, etc. — see grep for App.user?.isAdmin) so
@@ -3956,6 +3953,14 @@ const App = {
         });
       }
     }
+    // #6490: a merge that arrives as a plain session update patches the same
+    // caches the vote_update path does, so the card's pill flips whichever
+    // event carried the news. No server sends one today; the guard keeps
+    // every merge path patching the same way.
+    if ((data.merged === true || data.status === 'merged')
+        && typeof AppView !== 'undefined' && AppView.noteSessionMerged) {
+      AppView.noteSessionMerged(data.sessionId, data.appSlug, { live: data.live === true });
+    }
     // Refresh proposals / inline chat vote state on the other dev sub-tabs,
     // and the drawer and Home, once for the whole burst (see _liveRefresh).
     App._liveRefresh('session', data.sessionId, { appSlug: data.appSlug, home: true });
@@ -4626,7 +4631,7 @@ const App = {
     // belong to, so it is called whatever is showing here; the burst below
     // covers the board showing live.
     if (data.merged && typeof AppView !== 'undefined' && AppView.noteSessionMerged) {
-      AppView.noteSessionMerged(data.sessionId, data.appSlug);
+      AppView.noteSessionMerged(data.sessionId, data.appSlug, { live: !!data.live });
     }
     // Refresh the proposals tab / inline chat vote state if we're in this
     // app's Dev view, and the work drawer and Home, which track tallies:
@@ -5070,6 +5075,7 @@ const App = {
         expired: 'shell:invite.dead.expired',
         revoked: 'shell:invite.dead.revoked',
         used_up: 'shell:invite.dead.usedUp',
+        paused: 'shell:invite.dead.paused',
         unknown: 'shell:invite.dead.unknown',
       };
       const openHub = (slug) => {
@@ -5950,6 +5956,13 @@ const App = {
             threadRootId: at.threadRootId || null,
             focusMessageId: at.focusMessageId || null,
           });
+        }
+        // 10 Nov 2026: `new` is the bot's "+" pressed for you, a blank thread
+        // that may come already set (`?project=<slug>&with=<builder>`,
+        // features/ai/door.ts botNewAt): a project's Workshop asking a
+        // newcomer who should build.
+        if (parts[1] === 'new') {
+          window.UsernodeReact?.ai?.openNew?.('#' + parts.join('/') + (fragQuery ? '?' + fragQuery : ''));
         }
         return;
       }

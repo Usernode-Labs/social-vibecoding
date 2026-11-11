@@ -25,12 +25,75 @@ test('a token is 22 base64url characters, and nothing else reaches the database'
   assert.equal(invites.invitePath('abc'), '/invite/abc');
 });
 
-test('defaults are 7 days and 25 people, within 1–30 days and 1–100 people', () => {
-  assert.equal(invites.DEFAULT_DAYS, 7);
-  assert.equal(invites.DEFAULT_USES, 25);
+test('a new link has no end and no limit unless its maker picks one, within 1–30 days and 1–100 people', () => {
+  // 9 Nov 2026: no cap and no expiry by default (the leaked-link guard
+  // stands where a week and 25 people did).
+  assert.equal(invites.DEFAULT_DAYS, invites.NO_LIMIT);
+  assert.equal(invites.DEFAULT_USES, invites.NO_LIMIT);
+  assert.equal(invites.NO_LIMIT, 0);
   assert.deepEqual({ ...invites.LIMITS }, { minDays: 1, maxDays: 30, minUses: 1, maxUses: 100 });
   const schema = read('src/db/schema.sql');
+  // The baseline's column, as it shipped, then the migration that drops its
+  // default of 25: a link made before keeps what it had.
   assert.match(schema, /max_uses\s+INTEGER NOT NULL DEFAULT 25 CHECK \(max_uses BETWEEN 1 AND 100\)/);
+  const migration = read('src/db/migrations/invite-link-guard.sql');
+  assert.match(migration, /^ALTER TABLE community_invites ALTER COLUMN max_uses DROP DEFAULT;$/m);
+  assert.doesNotMatch(migration, /UPDATE community_invites/, 'no existing link is changed');
+  // Nothing asked is the defaults: NULL for both, stored by the one INSERT.
+  const src = read('src/services/community-invites.js');
+  assert.match(src, /const askedDays = given\(days\) \? days : DEFAULT_DAYS;\s+const askedUses = given\(maxUses\) \? maxUses : DEFAULT_USES;/);
+  assert.match(src, /\[token, app\.community_id, app\.id, user\.id, anyone \? null : u, noEnd \? null : d, cleaned\.note\]/);
+});
+
+test('the leaked-link guard: told at 20 in a rolling day, once; paused at 100, the 100th let in', () => {
+  assert.deepEqual({ ...invites.GUARD }, { windowHours: 24, noticeAt: 20, pauseAt: 100 });
+  assert.deepEqual(invites.guardStep({ joins: 1 }), { pause: false, busy: false });
+  assert.deepEqual(invites.guardStep({ joins: 19 }), { pause: false, busy: false });
+  assert.deepEqual(invites.guardStep({ joins: 20 }), { pause: false, busy: true });
+  assert.deepEqual(invites.guardStep({ joins: 20, noticed: true }), { pause: false, busy: false }, 'once per window');
+  assert.deepEqual(invites.guardStep({ joins: 57 }), { pause: false, busy: true }, 'a window that never heard hears late');
+  assert.deepEqual(invites.guardStep({ joins: 99, noticed: true }), { pause: false, busy: false });
+  assert.deepEqual(invites.guardStep({ joins: 100, noticed: true }), { pause: true, busy: false });
+  assert.deepEqual(invites.guardStep({ joins: 100 }), { pause: true, busy: false }, 'a pause says it all');
+  assert.deepEqual(invites.guardStep({}), { pause: false, busy: false });
+  // Paused is the last reason a link does not work: anything final first.
+  const now = new Date('2026-11-09T12:00:00Z');
+  const live = { revoked_at: null, expires_at: null, uses: 100, max_uses: null, paused_at: null };
+  assert.equal(invites.deadReason(live, now), null);
+  assert.equal(invites.deadReason({ ...live, paused_at: now }, now), 'paused');
+  assert.equal(invites.deadReason({ ...live, paused_at: now, revoked_at: now }, now), 'revoked');
+  assert.equal(invites.deadReason({ ...live, paused_at: now, expires_at: '2026-11-01T00:00:00Z' }, now), 'expired');
+  // Counted and decided under the redeem's row lock, for a new join only: a
+  // queued redemption applied again (or on release) is not refused.
+  const src = read('src/services/community-invites.js');
+  assert.match(src, /\$\{lock \? 'FOR UPDATE OF i' : ''\}/);
+  assert.match(src, /const reason = deadReason\(invite\);[\s\S]{0,1200}guard = await guardJoin\(client, invite\.id\);\n    \}/);
+  assert.match(src, /x\.created_at >= GREATEST\(NOW\(\) - make_interval\(hours => \$2::int\),\s+COALESCE\(i\.reopened_at, '-infinity'::timestamptz\)\)/);
+  assert.match(src, /UPDATE community_invites SET paused_at = NULL, reopened_at = NOW\(\)/);
+  // The pause and the count are the migration's columns.
+  const migration = read('src/db/migrations/invite-link-guard.sql');
+  for (const column of ['paused_at', 'reopened_at', 'busy_noticed_at']) {
+    assert.match(migration, new RegExp(`ADD COLUMN IF NOT EXISTS ${column} TIMESTAMPTZ;`));
+  }
+  assert.match(migration, /ON community_invite_redemptions \(invite_id, created_at\)/);
+  // Its maker hears (the bell and a push), and the full admins see it as an
+  // unexpected event; the token never goes in either.
+  assert.match(src, /require\('\.\/invite-activity'\)\.noteGuard\(pool, \{ inviteId: invite\.id, kind, joins: guard\.joins \}\)/);
+  assert.match(src, /require\('\.\/platform-incidents'\)\.record\(pool, \{\s+kind,\s+appId: invite\.app_id,/);
+  const incidents = require('../src/services/platform-incidents');
+  assert.equal(incidents.KINDS.INVITE_LINK_BUSY, 'invite_link_busy');
+  assert.equal(incidents.KINDS.INVITE_LINK_PAUSED, 'invite_link_paused');
+  // The page a paused link opens, and the toasts a Join that met one says.
+  assert.equal(message('auth:invite.dead.paused'), 'This invite link is paused');
+  assert.equal(message('auth:invite.dead.pausedNext'), 'Ask the person who shared it for a new one.');
+  assert.match(read('frontend/src/features/auth/invite-card.tsx'), /paused: \{ title: 'auth:invite\.dead\.paused', next: 'auth:invite\.dead\.pausedNext' \}/);
+  assert.equal(message('shell:invite.dead.paused'), 'This invite link is paused. Ask the person who shared it for a new one.');
+  assert.match(read('public/js/app.js'), /paused: 'shell:invite\.dead\.paused',/);
+  assert.equal(message('project:invite.dead.paused'), 'This invite link is paused. Ask the person who shared it for a new one.');
+  assert.match(read('frontend/src/features/dev-board/workshop/invite-offer.ts'), /paused: 'project:invite\.dead\.paused',/);
+  // The redeem route says it in its own words too.
+  assert.match(read('src/routes/community-invites.js'), /'This invite link is paused\. Ask the person who shared it for a new one\.'/);
+  assert.match(read('src/routes/community-invites.js'), /router\.post\('\/api\/invite-links\/:id\/reopen', drainGuard, sameOriginBrowserOnly,/);
 });
 
 test('why a link is dead: turned off, then expired, then used up', () => {
@@ -270,17 +333,23 @@ test('the words: the landing card, the invite pane', async () => {
   assert.equal(pane.linkDetail({ ...fresh, uses: 3, status: 'expired' }, now), '3 of 25 used · expired');
   assert.equal(pane.linkDetail({ ...fresh, maxUses: 1, uses: 1, status: 'used_up' }, now), '1 of 1 used · all used');
   assert.equal(pane.linkDetail({ ...fresh, uses: 3, status: 'revoked' }, now), '3 of 25 used · turned off');
+  // The guard paused it: not over, so it says paused, not why it ended.
+  assert.equal(pane.linkDetail({ ...forever, uses: 100, status: 'paused' }, now), 'for anyone · paused');
   // The second line: who came in through the link.
   assert.equal(pane.statusLine({ joined: 2, waiting: 1 }), '2 joined · 1 waiting');
   assert.equal(pane.statusLine({ joined: 0, waiting: 1 }), '1 waiting');
   assert.equal(pane.statusLine({ joined: 3, waiting: 0 }), '3 joined');
   assert.equal(pane.statusLine({ joined: 0, waiting: 0 }), 'No one has joined yet');
   const paneSrc = read('frontend/src/features/app-context/invite-pane.tsx');
-  assert.match(paneSrc, /const DAY_CHOICES = \[1, 7, 30, NO_LIMIT\];/);
+  // Never and No limit come first and are the defaults (9 Nov 2026).
+  assert.match(paneSrc, /const DAY_CHOICES = \[NO_LIMIT, 1, 7, 30\];/);
+  assert.match(paneSrc, /const USE_CHOICES = \[NO_LIMIT, 1, 5, 10, 25, 50, 100\];/);
+  assert.match(paneSrc, /useState\(prepared\?\.state\?\.defaults\.days \?\? NO_LIMIT\)/);
+  assert.match(paneSrc, /useState\(prepared\?\.state\?\.defaults\.maxUses \?\? NO_LIMIT\)/);
   assert.match(paneSrc, /t\('agent:appContext\.invite\.option\.untilOff'\)/);
-  assert.equal(message('agent:appContext.invite.option.untilOff'), 'Until you turn it off');
+  assert.equal(message('agent:appContext.invite.option.untilOff'), 'Never');
   assert.match(paneSrc, /t\('agent:appContext\.invite\.option\.anyone'\)/);
-  assert.equal(message('agent:appContext.invite.option.anyone'), 'Anyone with the link');
+  assert.equal(message('agent:appContext.invite.option.anyone'), 'No limit');
   // #4599 (evan): no explanatory lines under the link. Its row of Your links
   // says how long and how many; Change sits beside that heading.
   assert.equal(pane.linkSentence, undefined);
@@ -303,9 +372,14 @@ test('the words: the landing card, the invite pane', async () => {
     mine: true, note: null, status: 'live', joined: 2, waiting: 1,
   };
   const endedRow = { ...liveRow, id: 8, token: 'b'.repeat(22), path: '/invite/' + 'b'.repeat(22), status: 'expired', joined: 1, waiting: 0 };
+  // The guard paused it: listed, with Open it again beside its Turn off.
+  const pausedRow = {
+    ...liveRow, id: 7, token: 'c'.repeat(22), path: '/invite/' + 'c'.repeat(22), maxUses: null, uses: 100,
+    expiresAt: null, status: 'paused', joined: 100, waiting: 0,
+  };
   const rowsState = {
-    links: [liveRow, endedRow], manages: false, canCreate: true, grant: 'member',
-    defaults: { days: 7, maxUses: 25 }, limits: { minDays: 1, maxDays: 30, minUses: 1, maxUses: 100 },
+    links: [liveRow, pausedRow, endedRow], manages: false, canCreate: true, grant: 'member',
+    defaults: { days: 0, maxUses: 0 }, limits: { minDays: 1, maxDays: 30, minUses: 1, maxUses: 100 },
   };
   const rowsFetch = async () => ({ ok: true, json: async () => rowsState });
   const realFetch = global.fetch;
@@ -328,6 +402,13 @@ test('the words: the landing card, the invite pane', async () => {
   assert.doesNotMatch(endedRowHtml, /Turn off/, 'an ended row is already off');
   assert.match(liveRowHtml, /Turn off/);
   assert.match(endedRowHtml, /1 joined/, 'its counts stay on the row');
+  const pausedRowHtml = rowsHtml.match(/<div[^>]*data-invite-link="7"[^>]*>[\s\S]*?<\/div>/)?.[0] || '';
+  assert.match(pausedRowHtml, /data-invite-status="paused"/);
+  assert.match(pausedRowHtml, /for anyone · paused/);
+  assert.match(pausedRowHtml, /data-invite-reopen="7"[^>]*>Open it again</);
+  assert.match(pausedRowHtml, /Turn off/, 'a paused link can still be turned off');
+  assert.doesNotMatch(liveRowHtml, /Open it again/);
+  assert.match(paneSrc, /await inviteApi\(`\/api\/invite-links\/\$\{link\.id\}\/reopen`, \{ method: 'POST' \}\);/);
 
   // #3362: the menu's "Invite to community" row is gone; the pane opens from
   // the hub's Invite (and a just-yours project's Share it card), beside the
@@ -446,4 +527,42 @@ test(`a live link's landing is "Made for you"; the pitch stays in the document, 
   assert.match(card, /data-landing-invite-note=""/);
   assert.match(card, /\{t\('auth:invite\.join', \{ project: project\.name \}\)\}/);
   assert.equal(message('auth:invite.join', { project: 'Game Corner' }), 'Join Game Corner');
+});
+
+test('an invite landing keeps where they came from: a host and a tag, in a one-hour cookie (#6540)', () => {
+  const activity = require('../src/services/invite-activity');
+  const arrival = require('../src/services/arrival-source');
+  const cookies = [];
+  const req = { secure: false, headers: {}, cookies: {} };
+  const res = { cookie: (name, value, opts) => cookies.push({ name, value, opts }) };
+
+  activity.setSourceCookie(req, res, { referrerHost: 'discord.com', via: 'copied' });
+  assert.deepEqual(cookies[0], {
+    name: 'hr_iv_src',
+    value: 'discord.com|copied',
+    opts: { httpOnly: true, sameSite: 'lax', secure: false, maxAge: 60 * 60 * 1000, path: '/' },
+  });
+  // The page's own API reads carry the cookie, so the open is counted with it.
+  assert.deepEqual(activity.sourceFrom({ cookies: { hr_iv_src: 'discord.com|copied' } }),
+    { referrerHost: 'discord.com', via: 'copied' });
+
+  // Looked for and none given: 'none', explicitly, not a blank field.
+  activity.setSourceCookie(req, res, { referrerHost: 'none', via: null });
+  assert.equal(cookies[1].value, 'none|');
+  assert.deepEqual(activity.sourceFrom({ cookies: { hr_iv_src: 'none|' } }),
+    { referrerHost: 'none', via: null });
+
+  // A forged tag is dropped; a cookie that cannot name a host is no source.
+  activity.setSourceCookie(req, res, { referrerHost: 't.co', via: 'evil <script>' });
+  assert.equal(cookies[2].value, 't.co|');
+  assert.equal(activity.sourceFrom({ cookies: { hr_iv_src: '|' } }), null);
+
+  // The page reads the Referer's host and the link's via, and leaves an
+  // existing cookie alone when the referrer is Homeroom itself (a reload).
+  const src = read('src/routes/community-invites.js');
+  assert.match(src, /const referrerHost = arrivalSource\.hostOf\(req\.get\('referer'\)\);/);
+  assert.match(src, /if \(!referrerHost \|\| referrerHost !== ownHost\) \{/);
+  assert.match(src, /via: arrivalSource\.cleanVia\(req\.query\.via\)/);
+  assert.match(src, /const source = inviteActivity\.sourceFrom\(req\);/);
+  assert.equal(arrival.hostOf('https://app.example/invite/abc'), arrival.hostOf('app.example'), 'same-origin is the same host');
 });

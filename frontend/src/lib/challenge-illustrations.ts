@@ -44,6 +44,16 @@ export const TONE_CLASS: Record<Tone, string> = {
   mint: 'home-tone-mint', sage: 'home-tone-sage', gray: 'home-tone-gray',
 };
 
+/**
+ * The tone's fill, as `.home-tone-*` sets `--tone-50` in app.css: for a
+ * surface drawn outside the standard shell (the frame's kit, which may not
+ * wear a product class), set inline.
+ */
+export const TONE_FILL: Record<Tone, string> = {
+  cream: '#fefdf5', yellow: '#fff9de', orange: '#fff0e0', coral: '#fde8e4', pink: '#f8e4ee', purple: '#ede4f4',
+  indigo: '#e4e8f6', blue: '#deedf8', teal: '#deeeed', mint: '#e2f2e8', sage: '#eaf2e4', gray: '#f4f3f1',
+};
+
 export function isTone(value: unknown): value is Tone {
   return typeof value === 'string' && (TONES as readonly string[]).includes(value);
 }

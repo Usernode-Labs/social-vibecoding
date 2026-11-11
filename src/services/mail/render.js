@@ -65,6 +65,9 @@ function renderMessage(kind, { template, layout }, payload = {}, t, { readerHasL
     }
     : content;
 
+  // The address a reply goes to, on a kind that names one (actions.js
+  // replyTo); left out otherwise, so every other message keeps its shape.
+  const replyTo = action.replyTo ? action.replyTo(payload) : null;
   return {
     subject: (t || readerHasLanguage) && !action.englishOnly ? cleanSubject(subject) : subject,
     html: framed.html,
@@ -72,6 +75,7 @@ function renderMessage(kind, { template, layout }, payload = {}, t, { readerHasL
     why,
     preheader,
     headers: action.headers ? action.headers(payload) : null,
+    ...(replyTo ? { replyTo } : {}),
   };
 }
 

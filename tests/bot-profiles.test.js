@@ -94,6 +94,17 @@ test('the request profile hears a plain Go ahead right after a followed post', (
   assert.ok(speaks.indexOf('go_ahead_reply') < speaks.indexOf('addressed_or_stop'));
 });
 
+// #6539: a change's thread hears the follow-up straight after the bot's post,
+// after the words already passed on as an ask and the bot's own change, and
+// before the silence that needs an @.
+test('the change profile hears a follow-up after the bot\'s post, before the silence', () => {
+  const speaks = profiles.profileOf('change').speaks;
+  assert.equal(speaks[speaks.indexOf('followed_change_post') - 1], 'own_change');
+  assert.equal(speaks[speaks.indexOf('followed_change_post') + 1], 'addressed');
+  assert.ok(speaks.indexOf('not_queued_as_ask') < speaks.indexOf('followed_change_post'));
+  assert.ok(!profiles.profileOf('request').speaks.includes('followed_change_post'), 'a request keeps its own rule');
+});
+
 test('the surfaces\' limits are their profiles\'', () => {
   const mayor = require('../src/services/homeroom-bot-mayor');
   const voice = require('../src/services/homeroom-bot-voice');

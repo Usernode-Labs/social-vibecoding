@@ -82,13 +82,13 @@ import { gridStore } from '../../home/grid-store';
 import { homePinsStore, setHomePin } from '../../home/home-pins-store';
 import { useSidebarRows } from '../../nav/sidebar-rows';
 import type { StagedObject } from '../../messages/types';
-import { devWorkshopStore, voteSavedStore } from '../card/cards-store';
+import { devKanbanStore, devWorkshopStore, voteSavedStore } from '../card/cards-store';
 import { DevKanban, StageStrip, syncStrip } from '../card/dev-kanban';
 import { DevActionsRow, DevPlusMenu } from '../actions-row';
 import { useDevActions } from '../actions-store';
 import { callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
-import type { ActionRef, DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
+import type { ActionRef, DevCardModel, DevKanbanView, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
 import { composeNoReason, VotePicker } from '../card/dev-card';
 import type { NoChoice } from '../../review-flow/vote-sheet';
@@ -97,8 +97,8 @@ import { communityScopeStore, describe as describeCommunity, openSwitcher } from
 import { registerLevel } from '../../workshop/tab-ladder';
 import { firstUnseenIndex, markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import {
-  ApprovalLine, CommunityCard, HubCardClose, ShareItCard, canLeave,
-  communityPending, leaveCommunity, useCommunity,
+  ApprovalLine, CommunityCard, HubCardClose, ShareItCard, approvalStep, canLeave,
+  communityPending, leaveCommunity, openInviteLinks, reloadCommunity, ruleHasWait, useCommunity,
 } from './community-card';
 import {
   FirstVersionCard, ForYouCard, FromVersionsCard, HubSkeleton, RecentlyLive, TopicsCard, UpdateCard, hubAlone, owesVote,
@@ -107,12 +107,23 @@ import { CommunityAsk } from '../../notify-ask/community-ask';
 import { useHubDismissed } from './hub-dismissed';
 import { ProjectDiscussion } from './project-discussion';
 import {
-  channelPlace, findChannel, isChannelPlace, isPlaceKey, placeHandle, placeHref, unreadTotal, type PlaceKey,
+  channelPlace, findChannel, isChannelPlace, isPlaceKey, liveTopics, placeHandle, placeHref, unreadTotal, type PlaceKey,
 } from './places';
 import { PlaceBar } from './place-bar';
 import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { drawerStore } from '../../nav-drawer/drawer-store';
 import { ProjectPlaces } from './project-places';
+import {
+  ProjectAllItemsFrame, ProjectFrameHead, ProjectHubFrame, ProjectTopicsFrame, ProjectWorkshopFrame, type AllItemRow, type ProjectTab,
+} from './frame/project-frame';
+import { slotCounts, useBotSlots } from './bot-slots';
+import { weekName, weekRange } from './week-pages';
+import { liveSinceLine } from './hub-cards';
+import { offerJoin } from '../../../lib/join-required';
+import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
+import { deskLine, deskWords, useDesk } from '../../ai/desk';
+import { projectTabAddress } from '../../ai/filter-address';
+import { changeHref } from '../../../lib/change-href';
 import { ProjectReviewFlow } from '../../review-flow/review-flow';
 import { clearPlace, publishPlace, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
 import { PlanPage } from './plan-page';
@@ -855,10 +866,10 @@ const SORTS: { key: SortKey; label: string }[] = [
 
 type Dash = NonNullable<DevWorkshopView['dashboard']>;
 
-/** The rate, as a sentence: this week's merges against last week's. */
+/** The rate, as a sentence: this week's merges against the same point last week. */
 function pace(d: Dash): string {
   const n = d.shippedWeek;
-  const p = d.shippedPrevWeek;
+  const p = d.shippedPrevWeekToDate;
   // ── Why a partial history states no rate ──────────────────────────
   //
   // Both weeks are counted from the SAME page of merged history, and when
@@ -908,8 +919,9 @@ function pace(d: Dash): string {
  *
  * ── AND A LINE UNDER TWO OF THEM (After-Workshop-B) ──
  * Waiting on votes says how many of those wait on YOU ("4 on you", the
- * place bar's own count, `owed`), and live this week what last week came to
- * ("from 382"), the rate `pace()` words in full on hover. Each is left out
+ * place bar's own count, `owed`), and live this week what last week had come
+ * to by this same point ("from 382 by this time last week"), the rate `pace()`
+ * words in full on hover. Each is left out
  * when it would say zero, and the rate is left out of a paged history,
  * where the earlier week is a floor and the comparison would lie. Open and
  * unclaimed have no line: nothing stores what they were last week.
@@ -933,7 +945,7 @@ type DashStage = 'open' | 'unclaimed' | 'shipped';
 
 function DashTiles({ d, owed, onVotes, onStage }: { d: Dash; owed: number; onVotes?: () => void; onStage?: (stage: DashStage) => void }): ReactNode {
   const t = useMessages('project');
-  const rate = !d.partial && d.shippedPrevWeek > 0 ? (d.shippedWeek > d.shippedPrevWeek ? 'up' : d.shippedWeek < d.shippedPrevWeek ? 'down' : 'same') : null;
+  const rate = !d.partial && d.shippedPrevWeekToDate > 0 ? (d.shippedWeek > d.shippedPrevWeekToDate ? 'up' : d.shippedWeek < d.shippedPrevWeekToDate ? 'down' : 'same') : null;
   const cells: { key: string; n: number; label: string; tone?: string; title?: string; sub?: ReactNode }[] = [
     { key: 'open', n: d.open, label: t('project:workshop.dash.open', { count: d.open }) },
     { key: 'unclaimed', n: d.unclaimed, label: t('project:workshop.dash.unclaimed') },
@@ -957,7 +969,7 @@ function DashTiles({ d, owed, onVotes, onStage }: { d: Dash; owed: number; onVot
       sub: rate ? (
         <span className="dev-ws-dash-sub" data-ws-dash-sub="rate" data-dir={rate} title={pace(d)}>
           {rate === 'same' ? null : <ArrowUpIcon className="dev-ws-dash-trend" aria-hidden="true" />}
-          {t('project:workshop.dash.fromLastWeek', { count: d.shippedPrevWeek })}
+          {t('project:workshop.dash.fromLastWeek', { count: d.shippedPrevWeekToDate })}
         </span>
       ) : null,
     },
@@ -3078,6 +3090,13 @@ export function DevWorkshop(): ReactNode {
   // about which app this is, and no second fetch: the controller publishes
   // both `app_icon_*` columns here already.
   const app = useStoreState(improveStore);
+  // Under one of the frame's looks the page is the kit's (./frame/project-
+  // frame.tsx): the places are its tabs and the Hub is groups of one row.
+  // Your work is read only then; Topics is a page the kit adds, held here.
+  const frame = isFrameSkin(useLiveSkin());
+  const desk = useDesk(frame ? v.slug : null);
+  const frameSlots = useBotSlots(frame ? v.slug : null);
+  const [frameTopics, setFrameTopics] = useState(false);
   const hostRef = useRef<HTMLDivElement>(null);
   const [sortKey, setSortKey] = useState<SortKey>('people');
   // Which themes are unfolded, keyed by id. The FIRST theme opens by
@@ -3104,6 +3123,13 @@ export function DevWorkshop(): ReactNode {
   // #4457: the item whose page is open in the panel beside the list (wide
   // windows only; ./side-panel.tsx), as the kind and id AppView opens.
   const [sideItem, setSideItem] = useState<TopicRef | null>(null);
+  // All items in the kit reads the board's own columns (frameAll, below);
+  // its stage, Show and search box are this page's own state. Here with the
+  // other hooks: the kit's branch sits after the page's early returns.
+  const kanban = useStoreState(devKanbanStore);
+  const [frameStage, setFrameStage] = useState('');
+  const [frameMine, setFrameMine] = useState(false);
+  const [frameQuery, setFrameQuery] = useState('');
   const sideWide = useMediaFlag(WORKSHOP_SIDE_QUERY);
   // Whether the Workshop tab's Your work shows every row or its first
   // WORKSHOP_WORK_FIRST.
@@ -3129,6 +3155,14 @@ export function DevWorkshop(): ReactNode {
   // the prerendered page is unchanged; the publish is the fallback where
   // AppView is not there to ask.
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
+  // The board's columns are published only while its "By stage" pane is up
+  // (app-view.js _rerenderWorkshop). The kit's All items asks for them
+  // itself, from the same bucketing, whenever the Workshop view is republished.
+  const [frameKanban, setFrameKanban] = useState<DevKanbanView | null>(null);
+  useEffect(() => {
+    if (!frame || tab !== 'all') return;
+    try { setFrameKanban(((window as any).AppView?._kanbanView?.() as DevKanbanView | undefined) || null); } catch { setFrameKanban(null); }
+  }, [frame, tab, v]);
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
   // from a door lower down should start at its own head — in the element
@@ -3752,6 +3786,267 @@ export function DevWorkshop(): ReactNode {
     return null;
   };
 
+  /* ── The page in the one frame (./frame/project-frame.tsx) ──
+     Under one of the frame's looks the places are the page's tabs and the
+     Hub is the kit's, from what this Hub reads: the same votes owed, the
+     same work with Homeroom bot, the channel's last line, the last changes
+     live, the topics, who is around and the approval rule. A place not yet
+     drawn in the kit keeps its own body under the kit's head. Topics is a
+     page the kit adds (the tour's s25); it lists the channels this page's
+     places already name, and opening one is that place. */
+  const frameTopicList = frame ? liveTopics(community?.places) : [];
+  const frameTabs: ProjectTab[] = frame ? [
+    { key: 'status', label: t('project:places.list.hub') },
+    { key: 'needs', label: t('project:places.list.needsYou'), count: owed },
+    { key: 'workshop', label: t('project:places.list.workshop') },
+    ...(community?.channel ? [{
+      key: 'discussion',
+      label: t('project:frame.hub.channel', { handle: community.channel.handle || 'general' }),
+      count: Number(community.channel.unread_count) || 0,
+    }] : []),
+    ...(frameTopicList.length ? [{ key: 'topics', label: t('project:places.list.topics') }] : []),
+  ] : [];
+  const frameTab = frameTopics || tab.startsWith('c:') ? 'topics'
+    : tab === 'all' || tab === 'bot' || tab === 'plan' ? 'workshop' : tab;
+  const pickFrameTab = (key: string) => {
+    if (key === 'topics') { setFrameTopics(true); scrollToHead(hostRef.current); return; }
+    setFrameTopics(false);
+    if (key === tabRef.current) scrollToHead(hostRef.current);
+    else openTab(key as TabKey);
+  };
+  const askChange = canPost ? () => { (window as any).App?.openFeedbackModal?.({ fromDev: true, intent: 'issue' }); } : null;
+  const inviteHere = community?.is_member ? () => { openInviteLinks(); } : null;
+  // Join, for someone signed in who is not in yet: the hero's own Join
+  // (lib/join-required.ts offerJoin asks, joins and re-reads the hub).
+  const joinHere = community && !community.is_member && (window as any).App?.user
+    ? () => { void offerJoin({ code: 'join_required', app: { slug, name: projectName } }).finally(() => { void reloadCommunity(slug); }); }
+    : null;
+  // A topic's channel lights Topics but is the product's own page under
+  // the head (its figures, its signals, its room), so the head says so and
+  // app.css leaves the body on show.
+  const frameHead = { tabs: frameTabs, tab: frameTab, page: tab.startsWith('c:') && !frameTopics ? 'channel' : undefined, onTab: pickFrameTab, onAsk: askChange, onInvite: inviteHere, onJoin: joinHere };
+  // Said the same way on the Hub and in the Workshop: your work with
+  // Homeroom bot here, and the approval rule in its short words, the wait
+  // as its line.
+  const frameWork = () => {
+    if (!v.mine?.viewer) return null;
+    const line = deskLine(desk);
+    const words = deskWords(desk);
+    return {
+      line: line ? t(line.id, line.values) : null,
+      words: words ? translate(words.id, words.values).replace(/<\/?\d+>/g, '') : null,
+      href: projectTabAddress(slug),
+    };
+  };
+  const frameRule = () => {
+    const approval = community?.approval || null;
+    if (!approval || !community) return null;
+    const approvers = Array.isArray(approval.approvers) ? approval.approvers : null;
+    // A few words, as the tour's row says it ("3 members say yes"); the
+    // page's own sentence stays the standard look's (ApprovalLine).
+    const required = Math.max(1, Number(approval.required) || 1);
+    const electorate = Math.max(required, Number(approval.electorate) || required);
+    const title = community.audience === 'solo' && community.is_member && electorate === 1
+      ? t('project:frame.rule.you')
+      : approval.policy === 'invited'
+        ? t('project:frame.rule.approvers', { count: required, total: electorate })
+        : t('project:frame.rule.members', { count: required, total: electorate });
+    return {
+      title,
+      line: (ruleHasWait(approval) ? approvalStep(approval, community, approvers).wait : '') || t('project:frame.rule.afterChecks'),
+      onOpen: community.can_manage ? () => { window.UsernodeReact?.dialogs?.whoDecides?.open({ slug }); } : null,
+    };
+  };
+  const frameWorkshopUp = frame && !frameTopics && tab === 'workshop' && !weekUp;
+  // ALL ITEMS IN THE KIT (the tour's s29): the board's own columns as rows,
+  // from the same view model the board renders; the stage, Show and the
+  // search box are this page's own state, as the board's filters are its.
+  const frameAllUp = frame && !frameTopics && tab === 'all';
+  const frameAll = (): ReactNode => {
+    const board = kanban.cols.length ? kanban : frameKanban || kanban;
+    const cols = board.cols.map((col) => ({
+      key: col.key,
+      title: col.title,
+      items: col.rows.flatMap((row): AllItemRow[] => {
+        if (row.t !== 'card') return [];
+        const b = row.brief;
+        const pill = row.card.pill?.state || null;
+        const asks = pill && /^(vote|reply|decide|question|needs)/i.test(pill.key);
+        return [{
+          key: row.key,
+          title: row.card.title.text || row.card.title.title || '',
+          line: factsLine([b && b.n ? `#${b.n}` : null, b?.category || null]) || null,
+          href: openHref(slug, row.card),
+          mine: !!b?.mine,
+          word: pill && !asks ? pill.label : (b?.kind === 'request' && b.unclaimed ? t('project:frame.allItems.nobody') : null),
+          pill: pill && asks ? { kind: pill.tone === 'ok' || pill.tone === 'done' ? 'ok' : pill.tone === 'bad' || pill.tone === 'blocked' || pill.tone === 'error' ? 'bad' : /wait|on votes/i.test(pill.label) ? 'wait' : 'act', label: pill.label } : null,
+        }];
+      }),
+    }));
+    return (
+      <ProjectAllItemsFrame
+        {...frameHead}
+        project={projectName}
+        cols={cols}
+        topics={v.themes.filter((th) => !th.ungrouped && th.topic).map((th) => ({ key: th.id, name: th.name, icon: th.icon, people: th.people.length, items: th.counts.open + th.counts.underway + th.counts.review, href: placeHref(slug, channelPlace(th.topic!.handle)) }))}
+        loading={!!board.loading && !board.cols.length}
+        stage={frameStage}
+        onStage={setFrameStage}
+        mine={frameMine}
+        onMine={setFrameMine}
+        query={frameQuery}
+        onQuery={setFrameQuery}
+        openKey={sideKey}
+        onOpen={(event, row) => {
+          const ref = board.cols.flatMap((col) => col.rows).find((r) => r.key === row.key);
+          const topic = ref && ref.t === 'card' ? topicRef(ref.card) : null;
+          if (topic) openItem(event, topic);
+        }}
+      />
+    );
+  };
+  const frameWorkshop = (): ReactNode => {
+    const d = v.dashboard;
+    const first = owedRows.find((row) => row.t === 'card') || null;
+    const approval = community?.approval || null;
+    const need = Math.max(1, Number(approval?.required) || 1);
+    const slots = frameSlots.view && (frameSlots.view.acts || frameSlots.view.slots.length) ? frameSlots.view : null;
+    const counts = slots ? slotCounts(slots) : null;
+    const open = [v.nextUp, ...(v.nextMore || [])].filter((row): row is NonNullable<typeof row> => !!row && row.t === 'card');
+    return (
+      <ProjectWorkshopFrame
+        {...frameHead}
+        purpose={t('project:frame.place.workshop', { project: projectName })}
+        onAll={() => openTab('all')}
+        facts={d ? [
+          { value: d.open, label: t('project:workshop.dash.open', { count: d.open }) },
+          { value: d.unclaimed, label: t('project:workshop.dash.unclaimed') },
+          { value: d.votesWaiting, label: t('project:workshop.dash.votes', { count: d.votesWaiting }), tone: owed > 0 ? 'acc' as const : d.votesWaiting ? 'wait' as const : undefined },
+          { value: d.shippedWeek, label: t('project:workshop.dash.shipped'), tone: 'ok' as const },
+        ] : []}
+        vote={first && first.t === 'card' && owed > 0 ? {
+          id: first.number ? `#${first.number}` : null,
+          title: first.card.title.text || first.card.title.title || '',
+          line: factsLine([first.who, first.ago]) || null,
+          yes: Number(first.tally?.yes) || 0,
+          no: Number(first.tally?.no) || 0,
+          of: Math.max(need, Number(approval?.electorate) || need),
+          need,
+          note: null,
+          onVote: () => openTab('needs'),
+        } : null}
+        work={frameWork()}
+        live={(v.recentLive || []).slice(0, 3).map((row) => ({
+          key: row.key,
+          title: row.title,
+          ago: row.going ? t('project:hub.recent.going') : row.at ? agoStamp(row.at).text : null,
+          href: changeHref(slug, row.sessionId, row.prNumber),
+        }))}
+        weeks={weeks.slice(0, 4).map((week) => ({
+          key: sinceWeekStateKey(week),
+          title: weekName(week),
+          line: week.title || week.key === 'lastWeek' ? weekRange(week.startMs, week.endMs, week.live) : null,
+          right: week.counts && week.counts.closed ? t('project:frame.workshop.liveCount', { count: week.counts.closed }) : null,
+          onOpen: () => openWeekPage(sinceWeekStateKey(week)),
+        }))}
+        slots={slots && counts ? {
+          title: t('project:frame.workshop.building', { used: counts.building, cap: slots.buildCap ?? counts.building }),
+          line: factsLine([
+            counts.voting ? t('project:botSlots.doorVotes', { count: counts.voting }) : null,
+            slots.waiting.length ? t('project:botSlots.doorWaiting', { count: slots.waiting.length }) : null,
+          ]) || null,
+          onOpen: () => openTab('bot'),
+        } : null}
+        rule={frameRule()}
+        unclaimed={open.slice(0, 3).map((row) => {
+          const ref = row.t === 'card' ? topicRef(row.card) : null;
+          return {
+            key: row.key,
+            title: row.t === 'card' ? row.card.title.text || row.card.title.title || '' : '',
+            id: ref ? `#${ref.id}` : null,
+            onOpen: () => { if (ref) callAppView('openTopic', ref.kind, ref.id); },
+          };
+        })}
+        unclaimedTotal={d ? d.unclaimed : open.length}
+        onAllUnclaimed={() => { callAppView('openWorkshopStage', 'unclaimed'); openTab('all'); }}
+      />
+    );
+  };
+  const frameHub = (): ReactNode => {
+    const channel = community?.channel || null;
+    const recent = channel ? (channel.recent || []).map((m) => ({ content: m.content as string | null, by: m.by, at: m.created_at as string | null })) : [];
+    if (channel && !recent.length && channel.last_at) recent.push({ content: channel.last_message || '', by: channel.last_by, at: channel.last_at });
+    const said = (m: { content: string | null }) => String(m.content || '').replace(/\s+/g, ' ').trim();
+    const last = [...recent].reverse().find((m) => said(m)) || recent[recent.length - 1] || null;
+    const first = owedRows.find((row) => row.t === 'card') || null;
+    const firstTitle = first && first.t === 'card' ? first.card.title.text || first.card.title.title || '' : '';
+    const claims = Math.max(0, Number(v.dashboard?.unclaimed) || 0);
+    const activeCount = Number(community?.activity?.active_week) || 0;
+    const active = (community?.activity?.active_people || []).filter((person) => person && person.username).slice(0, 5);
+    const names = listText(active.map((person) => person.username));
+    const rest = Math.max(0, activeCount - active.length);
+    return (
+      <ProjectHubFrame
+        {...frameHead}
+        name={projectName}
+        purpose={community?.description || null}
+        needs={owed > 0 ? {
+          count: owed,
+          title: owed > 1 && firstTitle ? t('project:hub.forYou.needs.firstAndMore', { title: firstTitle, count: owed - 1 }) : firstTitle,
+        } : null}
+        quiet={owed > 0 ? null
+          : owedRows.length ? t('project:hub.needs.skipped', { count: owedRows.length })
+            : alone && !claims ? null : t('project:hub.needs.none')}
+        onNeeds={() => openTab('needs')}
+        work={frameWork()}
+        onWorkshop={() => openTab('workshop')}
+        general={channel ? {
+          handle: channel.handle || 'general',
+          line: last && said(last) ? (last.by ? t('project:frame.hub.saidBy', { username: last.by, message: said(last) }) : said(last)) : null,
+          ago: last && last.at ? agoStamp(last.at).text : null,
+          unread: Number(channel.unread_count) || 0,
+        } : null}
+        onGeneral={() => openTab('discussion')}
+        live={(v.recentLive || []).slice(0, 3).map((row) => ({
+          key: row.key,
+          title: row.title,
+          who: row.who,
+          ago: row.going ? t('project:hub.recent.going') : row.at ? agoStamp(row.at).text : null,
+          href: changeHref(slug, row.sessionId, row.prNumber),
+        }))}
+        onAllLive={() => openTab('workshop')}
+        topics={frameTopicList.slice(0, 3).map((topic) => ({
+          key: channelPlace(topic.handle), name: topic.name || topic.handle, about: topic.about || '', unread: Math.max(0, Number(topic.unread) || 0),
+        }))}
+        topicsTotal={frameTopicList.length}
+        onTopic={(key) => openTab(key as TabKey)}
+        onAllTopics={() => pickFrameTab('topics')}
+        people={activeCount ? {
+          title: t('project:hub.people.active', { count: activeCount }),
+          line: active.length ? (rest ? t('project:hub.people.namesAndMore', { names, count: rest }) : names) : null,
+        } : null}
+        audience={{
+          kind: community?.audience || 'invited',
+          title: community?.audience_label || '',
+          line: community && community.audience !== 'solo' ? t('project:frame.hub.members', { count: Number(community.member_count) || 0 }) : null,
+        }}
+        rule={frameRule()}
+        app={!actions.selfHosted ? {
+          name: projectName,
+          src: own ? app.iconUrl || null : null,
+          emoji: own ? app.iconEmoji || null : null,
+          color: null,
+          line: community?.live_since ? liveSinceLine(community.live_since) : null,
+          onOpen: () => { (window as any).App?.openAppTab?.(slug, 'app'); },
+        } : null}
+      />
+    );
+  };
+  const framePurpose = tab === 'workshop' || tab === 'all' || tab === 'bot' || tab === 'plan'
+    ? t('project:frame.place.workshop', { project: projectName })
+    : tab === 'needs' ? t('project:frame.place.needs', { project: projectName })
+      : t('project:frame.place.channel', { project: projectName });
+
   return (
     <div
       ref={hostRef}
@@ -3766,6 +4061,29 @@ export function DevWorkshop(): ReactNode {
       // host's classes are written by useWorkshopHostState.
       data-ws-side-open={sideOpen ? '' : undefined}
     >
+      {/* Under one of the frame's looks the kit's page comes first, and
+          app.css puts the bar away and, where the kit draws the whole place
+          (the Hub, Topics), the body below as well: they stay mounted, as
+          written, behind the kit's page. */}
+      {frame && frameTopics ? (
+        <ProjectTopicsFrame
+          {...frameHead}
+          general={community?.channel ? { handle: community.channel.handle || 'general', unread: Number(community.channel.unread_count) || 0 } : null}
+          topics={frameTopicList.map((topic) => ({
+            key: channelPlace(topic.handle),
+            name: topic.name || topic.handle,
+            about: topic.about || '',
+            requests: topic.requests,
+            unread: Math.max(0, Number(topic.unread) || 0),
+          }))}
+          onOpen={(key) => { setFrameTopics(false); openTab(key as TabKey); }}
+          onPropose={community?.can_manage ? () => { window.UsernodeReact?.dialogs?.topics?.open({ slug }); } : null}
+        />
+      ) : null}
+      {frame && !frameTopics && tab === 'status' && !pending ? frameHub() : null}
+      {frameWorkshopUp ? frameWorkshop() : null}
+      {frameAllUp ? frameAll() : null}
+      {frame && !frameTopics && tab !== 'status' && !frameWorkshopUp && !frameAllUp ? <ProjectFrameHead {...frameHead} title={pageTitle(tab)} purpose={framePurpose} /> : null}
       {band}
       {tray}
       {/* Everything but the bar lives in here. It is what carries the

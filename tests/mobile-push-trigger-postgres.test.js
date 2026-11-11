@@ -46,6 +46,8 @@ const PUSH_DDL = [
     'the closed kind/category seed'),
   extract(/INSERT INTO mobile_push_kind_categories \(kind, category, default_enabled\) VALUES\s+\('voted_digest'[\s\S]*?EXCLUDED\.default_enabled;/,
     '#5404: the kind a later migration seeded'),
+  extract(/INSERT INTO mobile_push_kind_categories \(kind, category, default_enabled\) VALUES\s+\('invite_link_busy'[\s\S]*?EXCLUDED\.default_enabled;/,
+    'the leaked-link guard\'s two, a later migration\'s'),
   extract(/CREATE TABLE IF NOT EXISTS mobile_push_preferences \([\s\S]*?\n\);/,
     'the account preferences table'),
   extract(/CREATE TABLE IF NOT EXISTS mobile_push_deliveries \([\s\S]*?\n\);/,
@@ -276,8 +278,10 @@ pgTest('the closed kind policy and account preferences gate enqueue at insert ti
   // 50 with #6019's change_thread_reply (a message in a change's or a
   // decision's thread you follow, direct_interactions beside
   // issue_thread_reply). 50 → 51 with #5404's voted_digest (proposal_alerts,
-  // the first kind seeded by a migration rather than the baseline).
-  assert.equal(policy.length, 51, 'the seed carries the reviewed closed set');
+  // the first kind seeded by a migration rather than the baseline). 51 → 53
+  // with the leaked-link guard's invite_link_busy and invite_link_paused
+  // (invite_activity, a migration's rows too).
+  assert.equal(policy.length, 53, 'the seed carries the reviewed closed set');
   for (const { kind, default_enabled: enabled } of policy) {
     const row = await notify(client, { userId: alice, kind });
     assert.equal((await deliveriesFor(client, row.id)).length, enabled ? 1 : 0,

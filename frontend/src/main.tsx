@@ -70,12 +70,12 @@ import { installActionOutbox } from './lib/action-outbox';
 import { registerServiceWorker } from './lib/service-worker';
 import { applyNavSnapshot, applyShellSnapshot } from './lib/shell-snapshot-apply';
 import { installFirstPaintReserve } from './lib/first-paint-reserve';
+import { installBootRecovery } from './lib/boot-recovery';
 import { installJoinRequired } from './lib/join-required';
 import { installAdultGate } from './features/auth/adult-gate';
 import { installSessionRenewalRetry } from './lib/session-renewal-retry';
 import { installApiCacheIdentity } from './lib/api-cache-identity';
 import { installReadTimeout } from './lib/read-timeout';
-import { installGoogleAnalytics } from './lib/google-analytics';
 // #6233: publishes window.UsernodeReact.tabBuild at module scope. app.js's
 // /api/version poll writes the build this tab loaded and its merge boundary
 // here, and screens read it to say "Live · reload to get it".
@@ -244,7 +244,6 @@ bootStep('installSessionRenewalRetry', () => installSessionRenewalRetry());
 // identity confirmation, a native renewal and its one retry), and its signal
 // reaches the request that goes out.
 bootStep('installReadTimeout', () => installReadTimeout());
-bootStep('installGoogleAnalytics', () => installGoogleAnalytics());
 // Votes and reactions with no answer wait on the device for the connection
 // (./lib/action-outbox.ts), and go once the shell says it is back.
 bootStep('installActionOutbox', () => installActionOutbox());
@@ -299,3 +298,8 @@ bootStep('applyNavSnapshot', () => {
 // kept for the next cold load, whose head script holds their skeletons at
 // those heights (./lib/first-paint-reserve.ts).
 bootStep('installFirstPaintReserve', installFirstPaintReserve);
+// #6564: a shell that opened blank asks the server for one copy the service
+// worker cannot answer from its cache. Installed after hydration, so a throw
+// in hydration cannot stop the recovery from being armed (each step swallows
+// its own throw). See ./lib/boot-recovery.ts for the two loop guards.
+bootStep('installBootRecovery', () => installBootRecovery());

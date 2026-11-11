@@ -464,6 +464,7 @@ const TopochainLeaderboard = {
         // Nobody to name: the row's sentence has an unnamed wording.
         anonymous: !name,
         points: TopochainLeaderboard._points(r.total_points),
+        viewer: !!r.is_viewer,
       };
     });
 

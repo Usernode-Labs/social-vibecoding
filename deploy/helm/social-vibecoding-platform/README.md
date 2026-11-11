@@ -170,9 +170,19 @@ endpoint and `config.mediaStorage.bucket` as `MEDIA_STORAGE_ENDPOINT` and
 without a bucket, or, when the chart creates the Secret, without both keys.
 Give the platform a key that can reach only its own bucket: a Hetzner Object
 Storage key reaches every bucket in its project, so the media bucket lives in a
-project of its own, apart from the database backups. App file uploads
-(`MINIO_*`, `src/services/app-files.js`) are a separate store this chart does
-not configure, so they stay off.
+project of its own, apart from the database backups.
+
+App file uploads (images and audio apps store, `src/services/app-files.js`)
+are a second store, off until `config.appFileStorage.endpoint` is set; until
+then every upload answers 503 `storage_unavailable`. The chart passes the
+endpoint and `config.appFileStorage.bucket` as `MINIO_ENDPOINT` and
+`STORAGE_BUCKET`, and maps `secrets.appFileStorageAccessKey` /
+`secrets.appFileStorageSecretKey` to `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`
+(names kept from the MinIO sidecar; any S3-compatible endpoint works). It is
+refused the same half configurations as the media store. Always set the
+bucket: bucket names are global, so the code's default, `usernode-app-files`,
+is not one to rely on. Its bucket may share the media project, and so its key, since both hold
+what people put into the platform.
 
 The infra values can use a separate SOPS-encrypted overlay containing only this
 new field, encrypted to the same cluster recipients and listed after the existing
@@ -408,26 +418,50 @@ storage settings. Removing an assignment restores a previously small app to
 standard. A request change rolls that app's Pod using its existing rollout
 strategy; it does not change quotas or authorize additional app slots.
 
-Production sleeping is a separate, opt-in policy. `config.appSleepAppIds`
-defaults to `[]`; `config.appSleepAfterMs` defaults to one hour. Select only
-request-driven apps with durable external state and no timers, scheduled
-work, subscriptions or background queues. Homeroom, previews and deployments
-in progress are excluded. All live gateway Pods must supply fresh activity
-data over private port 3001: active HTTP requests, streams and WebSockets
-prevent sleep; missing telemetry keeps apps awake. The database records
-authorized access, and health probes neither count as activity nor wake apps.
+Ordinary Kubernetes production apps sleep by default after fourteen days of
+inactivity (`config.appSleepAfterMs: 1209600000`). New apps and later source
+revisions qualify automatically; there is no app-ID or revision approval list.
+The controller discovers running apps and starts an observation window when
+it first sees them. Homeroom itself, previews, other runtimes and deployments
+in progress remain outside this policy. Previews retain their separate
+one-hour default.
+
+`config.appSleepExcludedApps` is an optional app-ID-to-reason map for narrow
+keep-awake exceptions. Background work alone is not a reason: polling,
+cleanup, disposable activity and durable catch-up may pause. Document an
+actual outstanding commitment or a concrete restart defect, and remove a
+temporary exception after its fix is verified. A source change does not
+require another infrastructure edit or approval. This deliberately replaces
+the previous revision-review prerequisite; the SQL revision snapshot and
+Kubernetes resourceVersion still fence concurrent deployments.
+
+All live gateway Pods must supply fresh activity over private port 3001.
+Active HTTP requests, streams and WebSockets prevent sleep; missing telemetry
+keeps apps awake. Authorized non-health traffic resets the durable clock.
+Health paths and exact GET/HEAD homepage probes with the directory's
+`usernode-dapp-homepage-healthcheck/1` user agent neither count as use nor
+wake apps. Writes and WebSocket upgrades still count with that user agent.
+Server-side background work does not reset the clock. Ordinary browser
+polling remains traffic; this measures requests, not human intent.
 
 An authorized visit schedules a conductor wake, bounded to two apps globally.
 The gateway holds the original request for up to 45 seconds and forwards it
 once when ready. A longer browser cold start shows `/__app_starting` with
 automatic retries; API clients receive 503 and `Retry-After: 5`. Scale-to-zero
-releases the Pod's reservations, processes and database connections, but
-retains its Service, Ingress, image and database. Check the first sleep and
-wake, concurrent visits, a POST and a persistent connection before expanding
-the allowlist. To roll back, set `appSleepAfterMs: 0`, verify every recorded
-sleeping app is ready at one replica, then clear the allowlist. Keep the
-gateway and its telemetry rules until all apps are awake. Existing deployments
-whose routes bypass the gateway stay awake until their normal redeploy.
+releases the Pod's reservations, processes and database connections, while
+retaining its Service, Ingress, image and database. Check the first sleep and
+wake, concurrent visits, a POST and a persistent connection after activation.
+The legacy app directory currently labels an asleep 503 as unreachable; a
+separate sleep-aware status change is needed there.
+
+To pause or roll back, set `appSleepAfterMs: 0` and verify every recorded
+sleeper is ready at one replica. Adding an exception also schedules a wake
+for that app. Both recoveries work without gateway telemetry, and actual
+access can still wake an excluded app. Keep the gateway and telemetry rules
+until all sleepers are awake. Existing deployments whose routes bypass the
+gateway stay awake until their normal redeploy. Deploy this support while
+production is paused, then apply the infrastructure defaults/exceptions.
+Legacy app-ID and reviewed-revision settings are no longer used.
 
 A lost scale-down response is treated as an uncertain write. The SQL wake
 claim is retained and a bounded conductor wake is requested, even if the

@@ -953,7 +953,7 @@
   },
   "account.change": {
     "text": "Change",
-    "description": "Link at the right of the Username, Email & recovery and Password rows in Settings: opens a small form under that row to change it."
+    "description": "Link at the right of the Username and Password rows in Settings: opens a small form under that row to change it."
   },
   "account.add": {
     "text": "Add",
@@ -1343,6 +1343,54 @@
     "text": "Try Homeroom's new look: white cards on a light grey background, the Geist typeface with a serif for titles, and colours that each have a job: yellow for what needs you, black for where you are. Light mode only. On for this browser.",
     "description": "Explanation under the New look switch in Settings, Experimental. Geist is the name of a typeface; keep it as is. Homeroom is the product name. Yellow and black name the colours of the highlights on screen."
   },
+  "experimental.look.label": {
+    "text": "Look",
+    "description": "Label of a menu in Settings, Experimental, which only admins see. It chooses the visual style Homeroom is drawn in on this browser."
+  },
+  "experimental.look.standard": {
+    "text": "Standard",
+    "description": "First option of the Look menu in Settings, Experimental: Homeroom's usual visual style, with no experimental look applied."
+  },
+  "experimental.look.glass": {
+    "text": "Glass",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (frosted glass panels floating on the wallpaper). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.brandkit": {
+    "text": "Brand kit",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (the brand's cream page, a serif for titles and one yellow button). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.workbench": {
+    "text": "Workbench",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (dense one-line rows for people who work in it all day). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.paper": {
+    "text": "Paper",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (one white sheet on the wallpaper with quiet grey panels). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.pastel": {
+    "text": "Pastel",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (groups tinted lavender, pink and peach in turn). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.mosaic": {
+    "text": "Mosaic",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (lists drawn as tiles, two across). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.sunrise": {
+    "text": "Sunrise",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (white cards and a peach-to-lavender main button). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.today": {
+    "text": "Today",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (large headings and big cards, like an app store's front page). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.playground": {
+    "text": "Playground",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (chunky rounded blocks and heavy friendly type). A proper name; translate it as a short name, not a sentence."
+  },
+  "experimental.look.description": {
+    "text": "Try one of nine looks for Homeroom, in light and dark. Each has its own typeface, colours and shapes. Not every screen is drawn in them yet; admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",
+    "description": "Explanation under the Look menu in Settings, Experimental, which only admins see while the looks are being drawn. Homeroom is the product name; Home is its first screen."
+  },
   "experimental.localAgents.title": {
     "text": "Local coding agent",
     "description": "Heading of a block in Settings > Experimental that lists the person's own computers attached to run the coding agent."
@@ -1461,11 +1509,11 @@
   },
   "privacy.state.on": {
     "text": "On",
-    "description": "Small word after a switch's label in Settings > Privacy (\"Let people find my profile\", \"Share usage analytics\") while that switch is on."
+    "description": "Small word after a switch's label in Settings > Privacy (\"Let people find my profile\") while that switch is on."
   },
   "privacy.state.off": {
     "text": "Off",
-    "description": "Small word after a switch's label in Settings > Privacy (\"Let people find my profile\", \"Share usage analytics\") while that switch is off."
+    "description": "Small word after a switch's label in Settings > Privacy (\"Let people find my profile\") while that switch is off."
   },
   "privacy.loadFailed": {
     "text": "Couldn't load your privacy settings. Try again in a moment.",
@@ -1480,44 +1528,48 @@
     "description": "Short confirmation under a block of the Settings > Privacy page when a change to one of its settings has been saved. It goes away after about three seconds."
   },
   "privacy.usageAnalytics.title": {
-    "text": "Usage analytics",
-    "description": "Heading of the last block of Settings > Privacy, above the Share usage analytics switch."
+    "text": "Usage data",
+    "description": "Heading of the last block of Settings > Privacy: what usage data Homeroom keeps."
   },
   "privacy.usageAnalytics.intro": {
-    "text": "Whether Homeroom may keep a record of how you use it, linked to your account.",
-    "description": "One line under the Usage analytics heading in Settings > Privacy."
+    "text": "Homeroom keeps a record of how it's used, linked to your account, to see where people get stuck and fix it.",
+    "description": "One line under the Usage data heading in Settings > Privacy: what Homeroom records and why."
   },
-  "privacy.usageAnalytics.label": {
-    "text": "Share usage analytics",
-    "description": "Label of the switch in Settings > Privacy that lets Homeroom record how the person uses it. Off unless they turn it on."
+  "privacy.usageAnalytics.alwaysKept.title": {
+    "text": "Always kept, because Homeroom runs on it",
+    "description": "Small heading in Settings > Privacy > Usage data over the list of what is kept for everyone and cannot be turned off."
   },
-  "privacy.usageAnalytics.stateOff": {
-    "text": "Off. Homeroom doesn't keep a record linked to your account unless you turn this on.",
-    "description": "First line under the Share usage analytics switch in Settings > Privacy while the switch is off: what is true now."
+  "privacy.usageAnalytics.alwaysKept.apps": {
+    "text": "Which apps you use each day, and for how long",
+    "description": "Item in the 'Always kept' list in Settings > Privacy > Usage data."
   },
-  "privacy.usageAnalytics.stateOn": {
-    "text": "On. Homeroom keeps a record linked to your account, to see where people get stuck or lost. Turning it off stops this from then on.",
-    "description": "First line under the Share usage analytics switch in Settings > Privacy while the switch is on: what is true now. \"Lost\" means unable to find their way around."
+  "privacy.usageAnalytics.alwaysKept.acts": {
+    "text": "Your votes, messages, requests and projects",
+    "description": "Item in the 'Always kept' list in Settings > Privacy > Usage data."
   },
-  "privacy.usageAnalytics.records": {
-    "text": "When it's on, we record: the screens you open and in what order, which apps you open, how long pages take to load and whether a few actions worked.",
-    "description": "Line under the Share usage analytics switch in Settings > Privacy, after the on/off line: everything that is recorded while the switch is on."
+  "privacy.usageAnalytics.alwaysKept.challenges": {
+    "text": "The challenges you earn",
+    "description": "Item in the 'Always kept' list in Settings > Privacy > Usage data."
   },
-  "privacy.usageAnalytics.neverRecords": {
-    "text": "We never record: what you type or what is on screen.",
-    "description": "Last line under the Share usage analytics switch in Settings > Privacy: what is never recorded, whether the switch is on or off."
+  "privacy.usageAnalytics.alsoRecorded.title": {
+    "text": "Also recorded, for everyone: screen usage data",
+    "description": "Small heading in Settings > Privacy > Usage data over the list of screen usage data, which Homeroom records for everyone. Someone who doesn't want it can email to be left out (the block's last line)."
   },
-  "privacy.usageAnalytics.googleAnalytics": {
-    "text": "On or off, Google Analytics counts the screens and apps you open, without your name. When this is on, those visits also carry your account number.",
-    "description": "Line under the Share usage analytics switch in Settings > Privacy. Says Google Analytics counts visits whatever the switch says, and what the switch adds."
+  "privacy.usageAnalytics.alsoRecorded.screens": {
+    "text": "The screens you open, and in what order",
+    "description": "Item in the 'Also recorded' list in Settings > Privacy > Usage data."
   },
-  "privacy.usageAnalytics.alreadyRecorded": {
-    "text": "Turning this off doesn't delete what was already recorded.",
-    "description": "Last line under the Share usage analytics switch in Settings > Privacy, shown whether the switch is on or off: switching off only stops new recording."
+  "privacy.usageAnalytics.alsoRecorded.speed": {
+    "text": "How long pages take to load, and actions that fail",
+    "description": "Item in the 'Also recorded' list in Settings > Privacy > Usage data."
   },
-  "privacy.usageAnalytics.saveFailed": {
-    "text": "Could not save that. Try again.",
-    "description": "Error under the Share usage analytics switch in Settings > Privacy when saving the choice failed; the switch goes back to how it was."
+  "privacy.usageAnalytics.neverRecorded": {
+    "text": "Never recorded: what you type, or what's on your screen.",
+    "description": "Line in Settings > Privacy > Usage data: what Homeroom never records, for anyone."
+  },
+  "privacy.usageAnalytics.leaveOut.ask": {
+    "text": "Don't want your screen usage data recorded? Email us and we'll erase what was recorded and stop recording it:",
+    "description": "Settings > Privacy, the usage data block: its last line, followed by the data protection email address as a link. \"Screen usage data\" is the list above it: the screens someone opens, page load times and actions that fail."
   },
   "phones.title": {
     "text": "Linked devices",
@@ -1780,7 +1832,7 @@
     "description": "Name of a phone notification category in Settings > Mobile push categories: activity on invite links the person shared."
   },
   "alerts.push.inviteActivity.description": {
-    "text": "When someone opens your invite link, joins through it, or says hi for the first time.",
+    "text": "When someone opens your invite link, joins through it, or says hi for the first time, and when a link brings in a lot of people in a day.",
     "description": "What the \"Your invites\" category covers, under its name in Settings > Mobile push categories."
   },
   "alerts.push.directInteractions.label": {
@@ -4634,5 +4686,81 @@
   "experimental.interfaceMode.saveFailed": {
     "text": "Your choice could not be saved on this device. Try again.",
     "description": "Error below the mode switch when browser storage refuses a save."
+  },
+  "frame.purpose.account": {
+    "text": "Your profile and how you sign in.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Account."
+  },
+  "frame.purpose.linkedAccounts": {
+    "text": "A connected account helps check that one person is not making many, because Homeroom pays for your AI credit.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Linked accounts."
+  },
+  "frame.purpose.contactPrivacy": {
+    "text": "Who can reach you, who can find you, and what Homeroom may send you.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Privacy."
+  },
+  "frame.purpose.phones": {
+    "text": "The phones and browsers signed in to your account. Unlink any you no longer use or do not recognize.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Linked devices."
+  },
+  "frame.purpose.wallet": {
+    "text": "The wallet linked to your account for this season's challenges.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Homeroom Wallet."
+  },
+  "frame.purpose.ai": {
+    "text": "What is left of this week's allowance, where it went, and which model does the work.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: AI usage & models."
+  },
+  "frame.purpose.connectors": {
+    "text": "Work on your apps from a Claude or ChatGPT chat, or from your own terminal, without using your weekly credit.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Connectors & CLI."
+  },
+  "frame.purpose.agentFiles": {
+    "text": "Personal files the coding agent follows on every build or plan you start, in any app.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Agent instructions & skills."
+  },
+  "frame.purpose.theme": {
+    "text": "How Homeroom looks on this browser.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Appearance."
+  },
+  "frame.purpose.accessibility": {
+    "text": "Make Homeroom easier to read on this browser.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Accessibility."
+  },
+  "frame.purpose.language": {
+    "text": "The language of Homeroom's own screens. Apps use it as their default and may offer their own choice.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Language."
+  },
+  "frame.purpose.alerts": {
+    "text": "Choose what reaches your phone and this browser.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Notifications."
+  },
+  "frame.purpose.appPermissions": {
+    "text": "What apps on Homeroom may use on your behalf, and which apps you have blocked.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: App permissions."
+  },
+  "frame.purpose.developer": {
+    "text": "Tools for people building and testing apps.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Developer."
+  },
+  "frame.purpose.tour": {
+    "text": "Take the welcome tour again.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Welcome tour."
+  },
+  "frame.purpose.guide": {
+    "text": "The places of Homeroom, and how a change gets voted in.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: User guide."
+  },
+  "frame.purpose.usernode": {
+    "text": "The Homeroom app on this phone, and its diagnostics.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Homeroom app."
+  },
+  "frame.purpose.about": {
+    "text": "Which build of Homeroom this is, and what is being improved.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: About."
+  },
+  "frame.purpose.experimental": {
+    "text": "Features still being tried. Switch one on to see it; switch it off to go back.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Experimental."
   }
 }

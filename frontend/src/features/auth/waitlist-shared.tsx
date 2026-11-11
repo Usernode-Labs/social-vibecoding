@@ -208,6 +208,11 @@ export interface WaitlistOptions {
    *  Settings › About links to it (#5094, #5106). Always served; absent only
    *  before the options arrive, when the notice names it without a link. */
   privacy_link?: string | null;
+  /** Where people write about their data (src/config.js
+   *  dataProtectionEmail): Settings › Privacy's usage data block offers it
+   *  for being left out of screen usage data. Absent before the options
+   *  arrive, when the block shows the default address. */
+  data_protection_email?: string | null;
   /** The Child Safety Standards and the account-deletion page, absolute
    *  (src/services/marketing-links.js): the other two legal pages the terms
    *  name, which Settings › About lists beside them (#6043). Always served;

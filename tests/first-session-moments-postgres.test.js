@@ -63,10 +63,9 @@ test('the made screen\'s moments are kept for its maker, test accounts included,
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
 
   const user = async (username, { test: testAccount = false } = {}) => (await pool.query(
-    // Each switched "Share usage analytics" on (#5097); the last test below
-    // switches it off again.
-    `INSERT INTO users (username, password, has_platform_access, test_account_created_at, usage_analytics)
-     VALUES ($1, 'x', TRUE, CASE WHEN $2 THEN NOW() END, TRUE) RETURNING id, username`,
+    // Recorded by default; a test below objects to being recorded.
+    `INSERT INTO users (username, password, has_platform_access, test_account_created_at)
+     VALUES ($1, 'x', TRUE, CASE WHEN $2 THEN NOW() END) RETURNING id, username`,
     [username, testAccount],
   )).rows[0];
   const alex = await user('alex_t1013', { test: true });
@@ -179,16 +178,20 @@ test('the made screen\'s moments are kept for its maker, test accounts included,
     viewer = alex;
   });
 
-  await t.test('somebody who switched usage analytics off is answered, never recorded (#5097)', async () => {
-    const before = (await moments()).length;
-    await pool.query('UPDATE users SET usage_analytics = FALSE WHERE id = $1', [alex.id]);
+  await t.test('somebody who objected to being recorded is answered, never recorded', async () => {
+    // An admin adds them to the Journey left-out list (services/usage-analytics.js),
+    // which erases their moments too.
+    const leftOut = require('../src/services/journey-left-out');
+    await leftOut.add(pool, { userId: alex.id, reason: 'objected', note: 'asked by email' });
     try {
+      const before = await moments();
+      assert.equal(before.some((m) => m.user_id === alex.id), false, 'what was recorded is erased');
       const res = await post({ kind: 'made_shown', clientAt: new Date().toISOString() });
       assert.equal(res.status, 200);
       assert.deepEqual(await res.json(), { ok: true, recorded: false });
-      assert.equal((await moments()).length, before);
+      assert.equal((await moments()).length, before.length);
     } finally {
-      await pool.query('UPDATE users SET usage_analytics = TRUE WHERE id = $1', [alex.id]);
+      await leftOut.remove(pool, alex.id);
     }
   });
 

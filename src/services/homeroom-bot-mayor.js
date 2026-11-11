@@ -267,6 +267,11 @@ const NEW_REQUEST = 'New request';
 const ADD_TO_EXISTING = 'Add to an existing request…';
 // The answers under each kind of offer (bot_cards.kind), the
 // one that does it first.
+// The bring-a-friend nudge's card (homeroom-bot-dm.js INVITE_NUDGE_KIND,
+// invite-nudge.js): a card with one server choice, Not now, so it is no
+// offer here and has no words to type.
+const INVITE_NUDGE_KIND = 'invite_friends';
+
 const OFFER_ANSWERS = Object.freeze({
   file_request: Object.freeze([FILE_IT, NOT_NOW]),
   withdraw_proposal: Object.freeze([WITHDRAW_IT, KEEP_IT]),
@@ -677,8 +682,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  in plain words, and say which file you read. Never quote secrets, and say plainly when the code you read does',
     '  not answer the question.',
     '- Tell the Homeroom team about a problem they hit that nothing above fixes, when they ask you to or say yes',
-    '  when you offer (report_problem). It is filed as a report from them where the team tracks problems, which',
-    '  anyone can read; the last few messages of this chat go only to the team, privately. Say so.',
+    '  when you offer (report_problem). It is filed as a request from them on Homeroom\'s requests board, where',
+    '  anyone can read it; the last few messages of this chat go only to the team, privately. Say so, and give the',
+    '  number the result returns: Filed as #N on Homeroom\'s requests board. If the same problem was already',
+    '  reported in this thread, nothing new is filed and the result gives that report: say Already filed as #N.',
     // Homeroom bot parity (P1-P9): what the thread tools add this turn (homeroom-bot-thread-tools/).
     ...extra,
     'Finish every turn by calling reply exactly once: plain text (short unless they asked for more), cards for up to 3 requests,',
@@ -1048,7 +1055,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'report_problem',
-      description: 'Tell the Homeroom team about a problem they hit with Homeroom or with you that nothing else you can do fixes (something broken, work stuck, a proposal that should not be there). Call it only when they ask you to tell the team, or say yes when you offer. It is filed as a report from them where the team tracks problems, which anyone can read: the summary, the details, the request it is about and your records of your work on it are public, and a private project is not named there. The last few messages of this chat go only to the team, privately: say so. Keep anything private out of the summary and details (a private project\'s name, anything about other people). One person can send only a few a day this way. The result says it was sent, or why not. One per turn.',
+      description: 'Tell the Homeroom team about a problem they hit with Homeroom or with you that nothing else you can do fixes (something broken, work stuck, a proposal that should not be there). Call it only when they ask you to tell the team, or say yes when you offer. It is filed as a request from them on Homeroom\'s requests board, where anyone can read it: the summary, the details, the request it is about and your records of your work on it are public, and a private project is not named there. The last few messages of this chat go only to the team, privately. Say so, and give the number the result returns: Filed as #N on Homeroom\'s requests board. If the same problem was already reported in this thread, nothing new is filed and the result gives that report: say Already filed as #N. Keep anything private out of the summary and details (a private project\'s name, anything about other people). One person can send only a few a day this way. The result says it was sent, or why not. One per turn.',
       parameters: {
         type: 'object',
         properties: {
@@ -1426,12 +1433,13 @@ async function sourceRepo(pool, { user, project, deps = {} }) {
   return { app, repo };
 }
 
-async function listSource(pool, { user, project, dir, match, deps = {} }) {
+async function listSource(pool, { user, project, dir, match, ref, at, deps = {} }) {
   const found = await sourceRepo(pool, { user, project, deps });
   if (found.error) return found;
   const github = deps.github || require('./github');
-  const tree = await github.listRepoFiles(found.repo.owner, found.repo.repo, SOURCE_REF);
-  if (!tree) return { error: 'Could not read that project\'s code on main.' };
+  const sha = typeof ref === 'string' && /^[0-9a-f]{40}$/i.test(ref) ? ref.toLowerCase() : null;
+  const tree = await github.listRepoFiles(found.repo.owner, found.repo.repo, sha || SOURCE_REF);
+  if (!tree) return { error: sha ? 'Could not read that change\'s code.' : 'Could not read that project\'s code on main.' };
   const prefix = dir ? sourcePath(dir) : null;
   if (dir && !prefix) return { error: 'That folder is not a path in the project.' };
   const words = String(match || '').toLowerCase().split(/\s+/).filter(Boolean);
@@ -1440,22 +1448,24 @@ async function listSource(pool, { user, project, dir, match, deps = {} }) {
     && words.every((w) => f.path.toLowerCase().includes(w)));
   return {
     project: found.app.slug,
-    branch: SOURCE_REF,
+    at: sha ? (at || 'with_change') : 'main',
+    ...(sha ? {} : { branch: SOURCE_REF }),
     files: hits.slice(0, SOURCE_MAX_PATHS).map((f) => ({ path: f.path, size: f.size })),
     more: Math.max(0, hits.length - SOURCE_MAX_PATHS),
     ...(tree.truncated ? { note: 'The project is very large, so some files may be missing from this list.' } : {}),
   };
 }
 
-async function readSource(pool, { user, project, path: rawPath, fromLine, deps = {} }) {
+async function readSource(pool, { user, project, path: rawPath, fromLine, ref, at, deps = {} }) {
   const found = await sourceRepo(pool, { user, project, deps });
   if (found.error) return found;
   const filePath = sourcePath(rawPath);
   if (!filePath) return { error: 'That is not a file path in the project.' };
   if (SECRET_PATH_RE.test(filePath)) return { error: 'That file holds secrets, so it is never read.' };
   const github = deps.github || require('./github');
-  const text = await github.getFileContent(found.repo.owner, found.repo.repo, filePath, SOURCE_REF);
-  if (text == null) return { error: 'No such file on main. Use list_source to find it.' };
+  const sha = typeof ref === 'string' && /^[0-9a-f]{40}$/i.test(ref) ? ref.toLowerCase() : null;
+  const text = await github.getFileContent(found.repo.owner, found.repo.repo, filePath, sha || SOURCE_REF);
+  if (text == null) return { error: sha ? 'No such file at that change\'s version.' : 'No such file on main. Use list_source to find it.' };
   if (text.includes('\u0000')) return { error: 'That file is not text.' };
   const lines = text.split('\n');
   const from = Math.min(Math.max(1, Number.isInteger(Number(fromLine)) ? Number(fromLine) : 1), lines.length);
@@ -1470,11 +1480,80 @@ async function readSource(pool, { user, project, path: rawPath, fromLine, deps =
   }
   return {
     project: found.app.slug,
-    branch: SOURCE_REF,
+    at: sha ? (at || 'with_change') : 'main',
+    ...(sha ? {} : { branch: SOURCE_REF }),
     path: filePath,
     totalLines: lines.length,
     text: out.join('\n'),
     ...(line <= lines.length ? { nextLine: line } : {}),
+  };
+}
+
+/**
+ * #6533, #6541: the two versions of a change's code. Its saved starting
+ * point (`base_sha`) and its NEWEST version: the head the before/after shots
+ * recorded when the proposal last moved (`shots_detail->>'headSha'`,
+ * shots-state.js markStaleForHead, the same one get_proposal reports as
+ * `shots.headSha`), ahead of the reviewed and last-checked pins, so a commit
+ * pushed with no checks or review on it still wins. The old expression stays
+ * as the fallback for a change whose newest head was never recorded.
+ * Resolves `{ base, head, headSource, number }` or `{ error }`.
+ */
+async function changeRefs(pool, sessionId, appId, { deps = {} } = {}) {
+  const id = Number(sessionId);
+  const app = Number(appId);
+  if (!Number.isSafeInteger(id) || id <= 0) return { error: 'That change\'s code cannot be read yet.' };
+  const { rows: [row] } = await pool.query(
+    `SELECT id, app_id, pr_number, source, handoff_base_sha,
+            imported_pr_head_sha, reviewed_head_sha, checks_commit_sha, handoff_head_sha,
+            shots_detail->>'headSha' AS newest_head_sha,
+            COALESCE(CASE WHEN source = 'imported' THEN imported_pr_head_sha ELSE reviewed_head_sha END,
+                     checks_commit_sha, handoff_head_sha) AS head_sha
+       FROM chat_sessions WHERE id = $1`,
+    [id],
+  );
+  if (!row || (Number.isSafeInteger(app) && Number(row.app_id) !== app)) {
+    return { error: 'That change\'s code cannot be read yet.' };
+  }
+  const exact = (value) => (/^[0-9a-f]{40}$/i.test(String(value || '')) ? String(value).toLowerCase() : null);
+  const newest = exact(row.newest_head_sha);
+  const head = newest || exact(row.head_sha);
+  const headSource = newest ? 'newest' : 'last_checked';
+  if (!head) return { error: 'That change\'s code cannot be read yet.' };
+  // The starting point is the handoff base when the change has one, else the
+  // merge base with main, exactly as the before/after shots resolve theirs.
+  let base = exact(row.handoff_base_sha);
+  if (!base) {
+    try {
+      const { rows: [project] } = await pool.query('SELECT repo_url FROM apps WHERE id = $1', [row.app_id]);
+      const repo = require('./homeroom-bot').parseRepo(project?.repo_url);
+      if (repo) {
+        const github = deps.github || require('./github');
+        const comparison = await github.compareRefs(repo.owner, repo.repo, `main...${head}`);
+        base = exact(comparison?.mergeBaseSha);
+      }
+    } catch (err) {
+      log.warn('homeroom-bot-mayor', 'A change\'s starting point could not be read', { sessionId: id, err: err.message });
+    }
+  }
+  return { base, head, headSource, number: row.pr_number || null };
+}
+
+/** The paths a change alters, between its base and its head, secrets left out. */
+async function listChangeFiles(pool, { user, project, change, deps = {} }) {
+  const found = await sourceRepo(pool, { user, project, deps });
+  if (found.error) return found;
+  const refs = await changeRefs(pool, change?.id ?? change?.sessionId, found.app.id, { deps });
+  if (refs.error) return refs;
+  if (!refs.base) return { error: 'That change has no starting point to compare with, so its files cannot be listed yet.' };
+  const github = deps.github || require('./github');
+  const files = await github.listChangedFiles(found.repo.owner, found.repo.repo, `${refs.base}...${refs.head}`);
+  if (!files) return { error: 'That change\'s files could not be read just now.' };
+  return {
+    project: found.app.slug,
+    at: 'with_change',
+    files: files.filter((path) => !SECRET_PATH_RE.test(path)).slice(0, SOURCE_MAX_PATHS),
+    more: Math.max(0, files.length - SOURCE_MAX_PATHS),
   };
 }
 
@@ -1710,6 +1789,16 @@ const CLAIMS = Object.freeze([
     instead: 'I haven\'t posted that anywhere yet.',
   },
   {
+    // #6534: a reply that says pictures, shots or a design are posted, when
+    // nothing was stored under it. In a project's thread only what was stored
+    // as an attachment counts; in the bot's own chat the gallery card does.
+    kind: 'posted_pictures',
+    re: /\bhere (?:are|is) the (?:pictures|shots|stills|designs?)\b|\bI(?:'ve| have)(?: just| now)? (?:attached|posted|added|put up) (?:the |your |two |three |four )?(?:pictures?|shots?|stills|designs?|before and after)\b|\battached below\b/i,
+    backed: (ctx) => !!(ctx.attached?.length || (!ctx.place && ctx.pictures?.made)),
+    said: 'says pictures or a design were posted',
+    instead: 'I haven\'t attached any pictures.',
+  },
+  {
     kind: 'started',
     re: /\bI(?:'m| am)\s+(?:now\s+)?(?:starting|working on (?:it|that|this|#\d+)|building (?:it|that|this|#\d+)|on it)\b|\bI(?:'ve| have)\s+started\b|\bI(?:'ll| will) (?:start(?: on)?|look at|pick up) (?:it|that|this|#\d+) (?:now|right away|right now)\b/i,
     // Homeroom bot parity (P4): reads a batch queued this turn (work_through).
@@ -1726,16 +1815,19 @@ const CLAIMS = Object.freeze([
   },
   {
     kind: 'withdrew',
-    // "I withdrew / closed the duplicate proposal", "it has been withdrawn".
-    re: /\bI(?:'ve| have)?(?: just| now| already)? (?:withdrawn|withdrew|closed|cancell?ed|taken down|took down) (?:the |your |its |that |this |my |both |one of the |a )?(?:duplicate |extra |second |other |old |older )?(?:proposals?|duplicates?|PRs?|pull requests?)\b|\b(?:has|have) been withdrawn\b/i,
+    // "I withdrew / closed the duplicate proposal", "the proposal has been
+    // withdrawn". #6566: a bare passive is about anything ("the window has
+    // been withdrawn"); only one that names a proposal, PR or #N counts.
+    re: /\bI(?:'ve| have)?(?: just| now| already)? (?:withdrawn|withdrew|closed|cancell?ed|taken down|took down) (?:the |your |its |that |this |my |both |one of the |a )?(?:duplicate |extra |second |other |old |older )?(?:proposals?|duplicates?|PRs?|pull requests?)\b|\b(?:(?:the|your|this|that|my|its) )?(?:duplicate )?(?:proposals?|PRs?|pull requests?)\s+(?:(?:has|have) been|was) withdrawn\b|\b#\d+\s+(?:(?:has|have) been|was) withdrawn\b/i,
     backed: (ctx) => !!ctx.withdrew,
     said: 'says a proposal was withdrawn',
     instead: 'I haven\'t withdrawn anything.',
   },
   {
     kind: 'moved',
-    // #4239: a request is moved only by its Move it to Homeroom tap.
-    re: /\bI(?:'ve| have)?(?: just| now| already)? moved (?:it|this|that|the request|your request|#\d+)\b|\b(?:has|have) been moved\b/i,
+    // #4239: a request is moved only by its Move it to Homeroom tap. #6566:
+    // a passive sentence counts only when it names what was moved.
+    re: /\bI(?:'ve| have)?(?: just| now| already)? moved (?:it|this|that|the request|your request|#\d+)\b|\b(?:(?:the|your|this|that) request(?: #\d+)?|#\d+)\s+(?:(?:has|have) been|was) moved\b/i,
     backed: () => false,
     said: 'says a request was moved',
     instead: 'I haven\'t moved it yet.',
@@ -1743,8 +1835,10 @@ const CLAIMS = Object.freeze([
   {
     kind: 'closed_request',
     // #4525: a request closes only when its group votes for it, so the bot
-    // never closes one: an offer only opens the vote.
-    re: /\bI(?:'ve| have)?(?: just| now| already)? closed (?:it|this|that|the request|your request|#\d+)\b|\b(?:has|have) been closed\b/i,
+    // never closes one: an offer only opens the vote. #6566: "after the app
+    // has been closed for a while" is not a claim; a passive sentence counts
+    // only when it names a request or #N.
+    re: /\bI(?:'ve| have)?(?: just| now| already)? closed (?:it|this|that|the request|your request|#\d+)\b|\b(?:(?:the|your|this|that) request(?: #\d+)?|#\d+)\s+(?:(?:has|have) been|was|is (?:now )?)\s*closed\b/i,
     backed: () => false,
     said: 'says a request was closed',
     instead: 'I haven\'t closed it. Its group decides that by a vote.',
@@ -1851,6 +1945,8 @@ async function unknownRequests(pool, ctx, numbers) {
 const PROJECT_NAME_STOPWORDS = new Set([
   'main chat', 'workshop', 'discover', 'messages', 'home', 'needs you', 'hub', 'all communities', 'settings',
   'homeroom bot', 'the app',
+  // #6566: "on Homeroom's requests board" names the platform, not a project.
+  'homeroom', 'homerooms', 'homeroom s',
 ]);
 // A sentence that speaks of a draft, a request or the next one is where a
 // project's name is expected.
@@ -1960,6 +2056,18 @@ async function unknownProjects(pool, ctx, text) {
 }
 
 /**
+ * #6566: the receipt a report's own reply may carry ("Filed as #6564 on
+ * Homeroom's requests board"), accepted only for the number this turn filed.
+ * The true sentence is blanked before the claims are tested, so `filed`
+ * does not fire on it; a different number is not accepted.
+ */
+function receiptPhrases(ctx) {
+  const number = Number(ctx?.reported?.number);
+  if (!Number.isInteger(number) || number <= 0) return null;
+  return new RegExp(`(?:Already )?[Ff]iled as #${number} on Homeroom['’]s requests board`, 'i');
+}
+
+/**
  * Pure apart from the request lookup: what `text` claims that this turn did
  * not do, as [{ kind, said }], plus { kind: 'unknown', numbers } for request
  * numbers that do not exist and { kind: 'unknown_project', names } for
@@ -1969,9 +2077,15 @@ async function claimProblems(pool, ctx, text) {
   // Read as it would be sent: a leading note is taken off first.
   const body = cleanReply(text);
   if (!body) return [];
-  const out = CLAIMS.filter((c) => c.re.test(body) && !c.backed(ctx)).map((c) => ({ kind: c.kind, said: c.said }));
+  // #6566: the report's own receipt is true, so it is not read as a claim.
+  const receipt = receiptPhrases(ctx);
+  const claimBody = receipt ? body.replace(receipt, ' ') : body;
+  const out = CLAIMS.filter((c) => c.re.test(claimBody) && !c.backed(ctx)).map((c) => ({ kind: c.kind, said: c.said }));
   try {
-    const missing = await unknownRequests(pool, ctx, requestNumbers(body));
+    // #6566: the report just filed is a real request on Homeroom's board.
+    const filed = Number(ctx?.reported?.number);
+    const numbers = requestNumbers(body).filter((n) => !(Number.isInteger(filed) && n === filed));
+    const missing = await unknownRequests(pool, ctx, numbers);
     if (missing.length) out.push({ kind: 'unknown', numbers: missing, said: `names ${missing.map((n) => `request #${n}`).join(' and ')}, which no project of theirs has` });
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'Could not check the requests a reply names', { err: err.message });
@@ -2035,12 +2149,15 @@ const DRAFT_PROMISE_RE = /\b(?:drafts?|drafted|drafting|File it)\b|\bnext one\b|
  * sending is left. A request that does not exist is said not to, and so is a
  * project no tool returned.
  */
-function stripClaims(text, problems) {
+function stripClaims(text, problems, ctx = null) {
   if (!problems?.length) return text;
   const kinds = new Set(problems.map((p) => p.kind));
   const res = CLAIMS.filter((c) => kinds.has(c.kind));
   const unknownProjectNames = (problems.find((p) => p.kind === 'unknown_project')?.names || []).map((n) => squashWords(n)).filter(Boolean);
+  // #6566: a report's own receipt is always true, whatever else is cut.
+  const receipt = receiptPhrases(ctx);
   const keeps = (sentence) => {
+    if (receipt && receipt.test(sentence)) return true;
     if (res.some((c) => c.re.test(sentence))) return false;
     if (kinds.has('drafted') && DRAFT_PROMISE_RE.test(sentence)) return false;
     if (unknownProjectNames.length && projectMentions(sentence).some((n) => {
@@ -2049,10 +2166,36 @@ function stripClaims(text, problems) {
     })) return false;
     return true;
   };
-  const kept = String(text || '').split('\n').map((line) => line
-    .split(/(?<=[.!?])\s+/)
-    .filter(keeps)
-    .join(' ')).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  // #6566: sentences are split within a paragraph, not per line, so a
+  // sentence wrapped over two lines is dropped whole, never left as a
+  // fragment. A list line is kept as it is.
+  const sentencesOf = (paragraph) => {
+    const out = [];
+    let buf = '';
+    for (const line of paragraph.split('\n')) {
+      if (/^\s*(?:[-*]|\d+\.)\s/.test(line)) {
+        if (buf) { out.push(buf); buf = ''; }
+        out.push(line);
+        continue;
+      }
+      buf = buf ? `${buf} ${line}` : line;
+      if (/[.!?:]\s*$/.test(line)) { out.push(buf); buf = ''; }
+    }
+    if (buf) out.push(buf);
+    return out.flatMap((piece) => (/^\s*(?:[-*]|\d+\.)\s/.test(piece)
+      ? [piece] : piece.split(/(?<=[.!?])\s+/)));
+  };
+  const kept = String(text || '').split(/\n{2,}/).map((paragraph) => {
+    let out = '';
+    let wasList = false;
+    for (const piece of sentencesOf(paragraph).filter(keeps)) {
+      const isList = /^\s*(?:[-*]|\d+\.)\s/.test(piece);
+      if (!out) out = piece;
+      else out += (isList || wasList ? '\n' : ' ') + piece;
+      wasList = isList;
+    }
+    return out;
+  }).filter(Boolean).join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
   const lines = res.map((c) => c.instead);
   if (kept.replace(/[^\w]/g, '').length >= 20) lines.push(kept);
   const unknown = problems.find((p) => p.kind === 'unknown');
@@ -3841,7 +3984,10 @@ async function fallbackAnswer(pool, t, { error, errorStatus = null, history }) {
   if (ctx.withdrew || ctx.reported) {
     const done = [
       ctx.withdrew ? `I withdrew the ${ctx.withdrew.projectName} proposal${ctx.withdrew.title ? ` "${ctx.withdrew.title}"` : ''}.` : '',
-      ctx.reported ? 'I sent your report to the Homeroom team.' : '',
+      // #6566: the report's own number, so it is never asked for twice.
+      ctx.reported ? (Number(ctx.reported.number) > 0
+        ? `${ctx.reported.repeat ? 'Already filed' : 'Filed'} as #${ctx.reported.number} on Homeroom's requests board.`
+        : 'I sent your report to the Homeroom team.') : '',
     ].filter(Boolean).join(' ');
     return { fallback: 'done', text: done, cards: ctx.cards.slice(0, MAX_CARDS), defer: false };
   }
@@ -4310,7 +4456,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     log.info('homeroom-bot-mayor', 'Cut what a DM reply still claimed', {
       userId: user.id, messageId: message.id, kinds: ctx.checkedProblems.map((p) => p.kind),
     });
-    text = stripClaims(text, ctx.checkedProblems);
+    text = stripClaims(text, ctx.checkedProblems, ctx);
   }
   const html = replyHtmlFor(ctx, text);
   let cards = [];
@@ -5201,8 +5347,9 @@ async function decideTyped(pool, config, { bot, user, settings, conversationId, 
       WHERE a.user_id = $1 AND a.conversation_id = $2 AND a.status = 'open'
         AND a.created_at > NOW() - make_interval(mins => $3)
         -- B6: a plan is built by its own button (or a reply to it), never by
-        -- a "yes" typed under some other offer's words.
-        AND a.kind <> 'build_plan'
+        -- a "yes" typed under some other offer's words. The bring-a-friend
+        -- nudge is decided by its Not now alone (invite-nudge.js).
+        AND a.kind NOT IN ('build_plan', 'invite_friends')
       ORDER BY a.id DESC LIMIT 4`,
     [user.id, conversationId, OFFER_TYPED_MINUTES],
   );
@@ -5244,8 +5391,10 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
     );
     action = rows[0];
   }
-  // B6: a reply to a plan is the plan's (homeroom-bot-dm.js changePlan).
-  if (!action || action.kind === 'build_plan') return null;
+  // B6: a reply to a plan is the plan's (homeroom-bot-dm.js changePlan). A
+  // reply to the bring-a-friend nudge is read by the model: its Not now is a
+  // button (invite-nudge.js dismiss).
+  if (!action || action.kind === 'build_plan' || action.kind === INVITE_NUDGE_KIND) return null;
   const [yesWord, noWord] = answersFor(action);
   const yes = typed ? typed.yes : said(message.content, yesWord);
   const no = typed ? !typed.yes : said(message.content, noWord);
@@ -5273,8 +5422,12 @@ async function decideOfferTap(pool, config, { user, actionId, choice, answers = 
   const { rows } = await pool.query('SELECT * FROM bot_cards WHERE id = $1 AND user_id = $2 AND place = \'dm\'', [id, user.id]);
   const action = rows[0];
   const plan = action?.kind === 'build_plan';
-  if (!action || (!plan && !OFFER_ANSWERS[action.kind])) return { ok: false, status: 404, error: 'No such choice' };
-  if (plan ? choice !== 'build' : choice === 'build') {
+  // The bring-a-friend nudge (invite-nudge.js): Not now is its one server
+  // choice, decided here at once; its Invite people is answered on the device.
+  const nudge = action?.kind === INVITE_NUDGE_KIND;
+  if (!action || (!plan && !nudge && !OFFER_ANSWERS[action.kind])) return { ok: false, status: 404, error: 'No such choice' };
+  if (nudge && choice !== 'no') return { ok: false, status: 400, error: 'choice must be no' };
+  if (!nudge && (plan ? choice !== 'build' : choice === 'build')) {
     return { ok: false, status: 400, error: plan ? 'choice must be build' : 'choice must be yes or no' };
   }
   if (action.status !== 'open') return { ok: false, status: 409, error: 'already_decided', decided: action.status };
@@ -5287,6 +5440,7 @@ async function decideOfferTap(pool, config, { user, actionId, choice, answers = 
     }).catch(() => {});
     return { ok: false, status: 410, error: 'expired' };
   }
+  if (nudge) return (deps.inviteNudge || require('./invite-nudge')).dismiss(pool, { user, action, deps });
   const out = await (deps.replies || require('../workflow/platform.ts')).tapDmAction({
     userId: Number(user.id), actionId: id, choice, answers: Array.isArray(answers) ? answers.slice(0, 2) : [],
   });
@@ -6868,11 +7022,15 @@ async function withdrawFromCard(pool, { user, sessionId, deps = {} }) {
 // ── Telling the Homeroom team (#11, WP3) ──
 
 /**
- * The project and request a report is about: the one named, else the one
- * the bot's DM last said something about. With the bot's own records of its
- * work on it: its runs' ids and its proposals'.
+ * The project and request a report is about: the one named; else the
+ * request's thread this turn is in; else the private thread's own subject
+ * (private_threads.app_id and about_kind/about_number). #6566: never the
+ * bot's last news, which named whatever project it had just talked about.
+ * With the bot's own records of its work on it: its runs' ids and its
+ * proposals'.
  */
 async function reportSubject(pool, ctx, args) {
+  const deps = ctx.deps || {};
   let app = null;
   let issueNumber = null;
   if (args.project) {
@@ -6881,18 +7039,32 @@ async function reportSubject(pool, ctx, args) {
       app = named;
       issueNumber = Number.isInteger(Number(args.number)) && Number(args.number) > 0 ? Number(args.number) : null;
     }
-  } else {
+  }
+  // A request's thread knows its project and request.
+  if (!app && deps.threadRequest) {
+    const found = await findApp(pool, deps.threadRequest.appSlug);
+    if (found && await canView(pool, found, ctx.user)) {
+      app = found;
+      const n = Number(deps.threadRequest.issueNumber);
+      issueNumber = Number.isInteger(n) && n > 0 ? n : null;
+    }
+  }
+  // Any other private thread knows what it is about, and the project it is in.
+  if (!app && deps.threadRootId) {
     const { rows } = await pool.query(
-      `SELECT app_id, issue_number FROM homeroom_bot_dm_messages
-        WHERE user_id = $1 AND app_id IS NOT NULL ORDER BY message_id DESC LIMIT 1`,
-      [ctx.user.id],
+      `SELECT app_id, about_kind, about_number FROM private_threads
+        WHERE root_message_id = $1 AND user_id = $2`,
+      [deps.threadRootId, ctx.user.id],
     );
-    if (rows[0]) {
-      const { rows: apps } = await pool.query('SELECT slug FROM apps WHERE id = $1', [rows[0].app_id]);
+    const thread = rows[0];
+    if (thread?.app_id) {
+      const { rows: apps } = await pool.query('SELECT slug FROM apps WHERE id = $1', [thread.app_id]);
       const found = apps[0] ? await findApp(pool, apps[0].slug) : null;
       if (found && await canView(pool, found, ctx.user)) {
         app = found;
-        issueNumber = Number(rows[0].issue_number) || null;
+        // A change's number is not a request's.
+        const n = Number(thread.about_number);
+        issueNumber = thread.about_kind === 'request' && Number.isInteger(n) && n > 0 ? n : null;
       }
     }
   }
@@ -6935,9 +7107,13 @@ async function recentChat(pool, ctx) {
 function aboutLines(about, { named = false } = {}) {
   const lines = [];
   if (about.app) {
-    lines.push(named || about.app.view_visibility === 'public'
-      ? `**App:** ${about.app.name || about.app.slug} (${about.app.slug})`
-      : `**App:** a private project (app id ${about.app.id})`);
+    // #6566: Homeroom's own project is never named by a slug or hidden as
+    // private: it is "Homeroom" in both copies.
+    lines.push(about.app.self_hosted
+      ? '**App:** Homeroom'
+      : named || about.app.view_visibility === 'public'
+        ? `**App:** ${about.app.name || about.app.slug} (${about.app.slug})`
+        : `**App:** a private project (app id ${about.app.id})`);
   }
   if (about.issueNumber) lines.push(`**Request:** #${about.issueNumber}`);
   if (about.runs?.length) lines.push(`**Homeroom bot runs:** ${about.runs.join(', ')}`);
@@ -6991,6 +7167,32 @@ async function reportProblem(pool, ctx, args) {
     return { ok: false, error: 'Say what went wrong: a short sentence, and what happened. Nothing was sent.' };
   }
   const feedback = deps.feedbackSvc || require('./feedback-reports');
+  const moveSvc = require('./homeroom-bot-move');
+  const threadRootId = deps.threadRequest?.rootId || deps.threadRootId || null;
+  const platform = await moveSvc.platformApp(pool, deps).catch(() => null);
+  const linkFor = (number) => (platform && Number.isInteger(Number(number)) && Number(number) > 0
+    ? moveSvc.requestLink(domainOf(deps), platform.slug, Number(number)) : null);
+  // #6566: asked again in the same thread about the same problem (a link,
+  // say), it is the report already filed that answers, not a second one. A
+  // repeat files nothing, so it is answered before the daily limit.
+  const recent = typeof feedback.findRecentReport === 'function'
+    ? await feedback.findRecentReport(pool, {
+      userId: user.id, source: REPORT_SOURCE, conversationId: ctx.conversationId, threadRootId, title: summary, hours: 6,
+    }).catch(() => null)
+    : null;
+  if (recent && Number(recent.number) > 0) {
+    const number = Number(recent.number);
+    const link = linkFor(number);
+    ctx.reported = { title: summary, number, link, repeat: true };
+    if (platform) {
+      ctx.appIds.add(Number(platform.id));
+      ctx.cards.push({ type: 'issue', appId: Number(platform.id), issueNumber: number });
+    }
+    return {
+      ok: true, repeat: true, number, link, title: summary,
+      sent: `Already filed as #${number} on Homeroom's requests board. Nothing new was filed.`,
+    };
+  }
   const sent = await feedback.recentReports(pool, { userId: user.id, source: REPORT_SOURCE, hours: 24 });
   if (sent >= MAX_REPORTS_PER_DAY) {
     return {
@@ -7007,6 +7209,8 @@ async function reportProblem(pool, ctx, args) {
     description: reportReceipt({ details, about, chat: await recentChat(pool, ctx) }),
     source: REPORT_SOURCE,
     via: 'through Homeroom bot',
+    conversationId: ctx.conversationId,
+    threadRootId,
   });
   // Filed once per answer: a retry of the answer's work after a restart
   // (deps.once, its checkpoint) gets the report it filed, not a second one.
@@ -7014,11 +7218,22 @@ async function reportProblem(pool, ctx, args) {
   if (!filed.ok) {
     return { ok: false, error: 'It could not be sent just now. Nothing was sent. They can use Send feedback instead.' };
   }
-  ctx.reported = { title: summary, issueNumber: filed.issueNumber };
+  const number = Number(filed.issueNumber) > 0 ? Number(filed.issueNumber) : null;
+  const link = linkFor(number) || filed.url || null;
+  ctx.reported = { title: summary, number, link };
+  // #6566: the card under the reply opens the report on Homeroom's board.
+  if (platform && number) {
+    ctx.appIds.add(Number(platform.id));
+    ctx.cards.push({ type: 'issue', appId: Number(platform.id), issueNumber: number });
+  }
   return {
     ok: true,
-    sent: 'To the Homeroom team, as a report from them where the team tracks problems, which anyone can read. The last few messages of this chat went only to the team, privately.',
+    number,
+    link,
     title: summary,
+    sent: number
+      ? `Filed as #${number} on Homeroom's requests board, where anyone can read it; the last few messages of this chat went only to the team, privately.`
+      : 'To the Homeroom team, as a report from them on Homeroom\'s requests board, where anyone can read it; the last few messages of this chat went only to the team, privately.',
   };
 }
 
@@ -7101,6 +7316,9 @@ module.exports = {
   sourceRepo,
   listSource,
   readSource,
+  // #6533: a change's two versions, and the files it alters.
+  changeRefs,
+  listChangeFiles,
   historyMessages,
   picturesMessage,
   withoutPictures,

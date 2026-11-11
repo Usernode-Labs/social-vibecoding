@@ -62,6 +62,8 @@ import {
 import { cn } from '@/lib/utils';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { t as translate } from '../../lib/i18n/runtime';
+import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 import { useStoreState } from '../../lib/use-store-state';
 import { FILTER_SHORTCUT_KEYS, installFilterShortcut } from './filter-shortcut';
 import { forgetSearches, loadRecent, recentSearchesStore, rememberSearch, visibleRecent } from './recent-searches.js';
@@ -940,11 +942,37 @@ export function SettingsMobileMenu() {
  */
 export function SettingsPageTitle() {
   const { desktop } = useStoreState(settingsNavStore) as NavState;
+  // Under one of the frame's looks every page is named at its head (a
+  // one-part page too, app.css) with one sentence saying what it is for,
+  // as the tour draws a section (its s57 to s69).
+  const frame = isFrameSkin(useLiveSkin());
   let label = '';
+  let key = '';
   for (const group of desktop || []) {
     const hit = group.items.find((item) => item.active);
-    if (hit) { label = hit.label; break; }
+    if (hit) { label = hit.label; key = hit.key; break; }
   }
   if (!label) return null;
-  return <h2 className="settings-page-title" data-settings-page-title="">{label}</h2>;
+  const purpose = frame ? pagePurpose(key) : null;
+  if (!purpose) return <h2 className="settings-page-title" data-settings-page-title="">{label}</h2>;
+  return (
+    <>
+      <h2 className="settings-page-title" data-settings-page-title="">{label}</h2>
+      <p className="settings-page-purpose" data-settings-page-purpose="">{purpose}</p>
+    </>
+  );
+}
+
+/** The pages that have a sentence (settings:frame.purpose.*), by page key. */
+const PURPOSES: Record<string, string> = {
+  account: 'account', 'linked-accounts': 'linkedAccounts', 'contact-privacy': 'contactPrivacy', phones: 'phones', wallet: 'wallet',
+  ai: 'ai', connectors: 'connectors', 'agent-files': 'agentFiles', theme: 'theme', accessibility: 'accessibility', language: 'language',
+  alerts: 'alerts', 'app-permissions': 'appPermissions', developer: 'developer', tour: 'tour', guide: 'guide', usernode: 'usernode',
+  about: 'about', experimental: 'experimental',
+};
+
+/** One sentence under a page's name, under a look; null for a page without one. */
+export function pagePurpose(page: string): string | null {
+  const id = PURPOSES[page];
+  return id ? translate(`settings:frame.purpose.${id}`) : null;
 }

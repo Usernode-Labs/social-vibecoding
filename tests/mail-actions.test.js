@@ -7,7 +7,8 @@ const { ACTIONS, actionFor } = require('../src/services/mail/actions');
 
 test('covers every kind', () => {
   assert.deepEqual(Object.keys(ACTIONS).sort(), [...templates.KINDS].sort());
-  assert.equal(templates.KINDS.length, 13);
+  // 13, then the two waitlist reminders (services/waitlist-reminders.js).
+  assert.equal(templates.KINDS.length, 15);
   assert.equal(actionFor('otp'), ACTIONS.otp);
   assert.equal(actionFor('nope'), null);
   assert.equal(actionFor('constructor'), null);
@@ -70,9 +71,9 @@ test('words built in code keep the catalog\'s apostrophes in html, and escape a 
   assert.equal(ACTIONS.invite_activity.values({ line: long }).line.length, 200);
 });
 
-test('activity mails carry their unsubscribe headers; nothing else has headers', () => {
+test('activity mails and the waitlist reminders carry their unsubscribe headers; nothing else has headers', () => {
   const unsubscribeUrl = 'https://app.onhomeroom.com/mail/unsubscribe?x=1';
-  for (const kind of ['build_ready', 'invite_activity', 'project_opened']) {
+  for (const kind of ['build_ready', 'invite_activity', 'project_opened', 'waitlist_reminder', 'waitlist_reminder_last']) {
     assert.deepEqual(ACTIONS[kind].headers({ unsubscribeUrl }), {
       'List-Unsubscribe': `<${unsubscribeUrl}>`,
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
@@ -80,7 +81,7 @@ test('activity mails carry their unsubscribe headers; nothing else has headers',
     assert.equal(ACTIONS[kind].headers({ unsubscribeUrl: 'javascript:x' }), null, kind);
     assert.equal(ACTIONS[kind].headers({}), null, kind);
   }
-  assert.equal(Object.entries(ACTIONS).filter(([, a]) => a.headers).length, 3);
+  assert.equal(Object.entries(ACTIONS).filter(([, a]) => a.headers).length, 5);
 });
 
 test('only admin_test and content_report are English only', () => {

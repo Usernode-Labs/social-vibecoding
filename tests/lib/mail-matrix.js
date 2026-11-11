@@ -27,6 +27,19 @@ const BROKEN = 'A  B\nBcc: x@y.z';
 
 const CODES = ['123456', '<&>"9', 654321];
 
+// A sign-in link's expiry, and the moments a reminder is worded from: let in
+// three days before `now` (a weekday) or nine (a date).
+const EXPIRES = '2026-11-13T10:00:00.000Z';
+const REMINDER_ROWS = {
+  url: [URL_PLAIN, `${PRODUCTION_ORIGIN}/r?key=secret`],
+  hasAccount: [undefined, true],
+  signInLink: [undefined, true],
+  signInExpiresAt: [undefined, EXPIRES],
+  releasedAt: [undefined, '2026-11-06T09:00:00.000Z', '2026-10-31T09:00:00.000Z'],
+  now: ['2026-11-09T09:00:00.000Z'],
+  unsubscribeUrl: [undefined, '', `${PRODUCTION_ORIGIN}/mail/reminders/stop?w=1&t=abc`],
+};
+
 // No value has an apostrophe: the seeds escape one in a value as &#39;, where
 // the code they replaced left it bare (see WITH_APOSTROPHE).
 const MATRIX = {
@@ -48,6 +61,9 @@ const MATRIX = {
     url: [URL_PLAIN, URL_AWKWARD, `${PRODUCTION_ORIGIN}/r?key=secret`],
     hasAccount: [undefined, false, true],
     signInLink: [undefined, false, true],
+    // When the one-time link stops working (its line above the button),
+    // added with that line (waitlist reminders, Nov 2026).
+    signInExpiresAt: [undefined, EXPIRES],
     mobile: [
       undefined, {},
       { ios: URL_PLAIN }, { android: URL_AWKWARD }, { ios: '', android: URL_PLAIN },
@@ -105,6 +121,9 @@ const MATRIX = {
     url: [undefined, URL_AWKWARD],
     unsubscribeUrl: [undefined, '', UNSUBSCRIBE],
   }),
+  // Not in the snapshot: they came after it (services/waitlist-reminders.js).
+  waitlist_reminder: cross(REMINDER_ROWS),
+  waitlist_reminder_last: cross({ ...REMINDER_ROWS, replyTo: [undefined, 'support@usernodelabs.org', 'not an address'] }),
 };
 
 const APOSTROPHE = "O'Brien";

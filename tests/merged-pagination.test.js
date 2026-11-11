@@ -111,7 +111,13 @@ function loadVotes({ mergedRows, total, shipped, app, deploymentBoundary, legacy
         // #1922: the whole-history week counts. Unanswered (rows: []) unless
         // a test passes `shipped`, which is what an older stub looks like.
         if (/AS shipped_week/.test(sql)) {
-          return { rows: shipped ? [{ shipped_week: shipped.week, shipped_prev_week: shipped.prevWeek }] : [] };
+          return {
+            rows: shipped ? [{
+              shipped_week: shipped.week,
+              shipped_prev_week: shipped.prevWeek,
+              shipped_prev_week_to_date: shipped.prevWeekToDate,
+            }] : [],
+          };
         }
         // Only the merged SELECT returns rows; the topic-attrs query (and
         // anything else) returns empty.
@@ -531,10 +537,10 @@ test('per-row fields survive paging', async () => {
 test('the first page carries exact week counts over the whole merged history', async () => {
   // 21 rows → the page is partial (hasMore), which is exactly when the
   // Workshop could only say "20+". The counts come from their own query.
-  const { routes, captured } = loadVotes({ mergedRows: makeRows(21), shipped: { week: 34, prevWeek: 27 } });
+  const { routes, captured } = loadVotes({ mergedRows: makeRows(21), shipped: { week: 34, prevWeek: 27, prevWeekToDate: 19 } });
   const { payload } = await callMerged(routes, captured, {});
   assert.equal(payload.hasMore, true);
-  assert.deepEqual(payload.shipped, { week: 34, prevWeek: 27 });
+  assert.deepEqual(payload.shipped, { week: 34, prevWeek: 27, prevWeekToDate: 19 });
   const call = captured.calls.find((c) => /AS shipped_week/.test(c.sql));
   assert.ok(call, 'the week counts are queried');
   assert.equal(call.params[0], 1, 'scoped to this app only');
@@ -547,11 +553,23 @@ test('the first page carries exact week counts over the whole merged history', a
   // #2176: the calendar week (Monday 00:00 UTC), not a trailing seven days.
   assert.match(call.sql, /t >= \$2::timestamptz\)::int AS shipped_week/);
   assert.match(call.sql, /t < \$2::timestamptz\s+AND t >= \$2::timestamptz - interval '7 days'\)::int AS shipped_prev_week/);
+  // #6547: last week up to the same point — from last Monday 00:00 UTC to
+  // seven days before now.
+  assert.match(call.sql, /t >= \$2::timestamptz - interval '7 days'\s+AND t < now\(\) - interval '7 days'\)::int AS shipped_prev_week_to_date/);
   assert.match(String(call.params[1]), /^\d{4}-\d{2}-\d{2}T00:00:00Z$/, 'the week start rides as a parameter');
   assert.equal(new Date(call.params[1]).getUTCDay(), 1, 'and it is a Monday');
   // #6482: this query now aliases its table `cs` for the twin exclusion, so
   // the distinct `AS total` alias is what keeps it apart from the Done total.
   assert.doesNotMatch(call.sql, /AS total\b/, 'never collides with the other stubs');
+});
+
+test('an older server\'s week counts omit the to-date figure, and the client falls back', async () => {
+  // The row has no `shipped_prev_week_to_date` at all, which is what a
+  // server merged before #6547 sends. The week counts still come through;
+  // only the comparison figure is absent.
+  const { routes, captured } = loadVotes({ mergedRows: makeRows(5), shipped: { week: 3, prevWeek: 1 } });
+  const { payload } = await callMerged(routes, captured, {});
+  assert.deepEqual(payload.shipped, { week: 3, prevWeek: 1 });
 });
 
 test('a cursor page does not recount the weeks', async () => {

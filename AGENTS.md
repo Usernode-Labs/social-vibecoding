@@ -274,6 +274,15 @@ is no replay plan to write and nothing to verify locally.
   from Main, answering what was said there, or from a request's page or a
   captured screen keeps its line in Main, which is the way to its row in the
   list. Main also holds what you said there, even when a thread grew from it.
+  The "+" also has an address, `#homeroom-bot/new`, which may name the
+  project and who works on the thread (`?project=<slug>&with=claude-code` or
+  `chatgpt`; `features/ai/door.ts` `botNewAddress`). Who works on it is a
+  second chip beside the project's (`features/messages/thread-builder.tsx`):
+  Homeroom bot, or the person's own Claude Code or ChatGPT, for which nothing
+  is sent or made here. The send opens that product with the person's own
+  words in the link, after the connector steps when it has no connection. A
+  project's Workshop offers the same three to somebody who has made nothing
+  there yet, in Your work's place (`dev-board/workshop/first-change.tsx`).
   **Home is the one page of apps and communities, signed in or out (One
   Home, #6361).** Its sections are **Pinned apps** (`app_favorites`: a tile
   opens the app; hidden until the first pin), **Pinned communities**
@@ -454,8 +463,12 @@ is no replay plan to write and nothing to verify locally.
 - **An invite link grants what its maker could grant.** `/invite/<token>`
   (`services/community-invites.js`, the "Communities, stage 6" block of
   `schema.sql`) is made by any member from the logo menu's "Invite to
-  community" pane: 7 days and 25 people unless they choose otherwise, and
-  revocable. On a project where building is by invitation it is the
+  community" pane: no end date and no limit of people unless they choose
+  one, and revocable. The leaked-link guard (`GUARD` in that service)
+  counts joins through one link over a rolling 24 hours: at 20 its maker is
+  told once, with Turn off; at 100 the link pauses (`paused_at`), new joins
+  are refused and queued ones still apply, until its maker opens it again.
+  On a project where building is by invitation it is the
   collaborator invite, accepted; anywhere else it is membership. One SQL
   function, `apply_community_invite()`, applies it, both on the spot and from
   the trigger that runs when an account is let in, so a person without
@@ -826,9 +839,7 @@ Two behaviours are easy to lose to React's defaults and are worth naming:
   pins the Docker builder/copy contract. Its `public/index.html` input is the
   ignored output materialized by the test preflight, never a committed
   artifact.
-- The shell document loads **no cross-origin assets** (the live site's Google
-  Analytics tag is the one exception, by decision, and stays inside
-  `public/analytics-frame.html`, never in the shell's own page: #6314). marked, DOMPurify and qrcodejs
+- The shell loads **no cross-origin assets**. marked, DOMPurify and qrcodejs
   are vendored under `public/vendor/` by `npm run vendor:assets` (provenance
   in `public/vendor/README.md`). Don't add a CDN `<script>`/`<link>` to
   `frontend/src/head.html` — vendor or compile it instead; three tests

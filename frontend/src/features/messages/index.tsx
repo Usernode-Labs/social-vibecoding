@@ -47,16 +47,18 @@ import { RequestTag, stripGroups, summaryParts } from './bot-strip';
 import { useTrackOf } from './bot-track';
 import { asksInChat, BotNewsLine, foldBotNews, isBotNews, newsStatusOf, SettledRun, type SettledRunItem } from './bot-news-line';
 import { isPlusThreadOpener, isRequestNews, requestKey } from './bot-request';
+import { firstRowInView, scrollCorrection, type MeasuredRow, type SavedPlace } from './list-place';
 import { ThreadDoneMenu } from './private-thread-done';
 import { MessageComposer } from './composer';
+import { InboxToEnd } from './inbox-to-end';
 import { WelcomeBack } from './welcome-back';
 import { dropOnComposer, useComposerDropReady } from './pane-drop';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { useMessagesDrawer } from './phone-drawer';
-import { messagesDrawerStore } from '../nav-drawer/messages-drawer';
+import { messagesBack, messagesDrawerStore } from '../nav-drawer/messages-drawer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
-import { fullTime, UserAvatar, senderName } from './format';
+import { fullTime, UserAvatar, senderName, swatchFor } from './format';
 import { DiscussionRow, MessageRow } from './message-row';
 import { OPEN_HOLD_MS, openHoldDone } from './open-hold';
 import { plainText } from './plain-text';
@@ -129,6 +131,11 @@ import {
 import { listArchivedSessions } from '../agent-session/api';
 import type { AgentSession as MayorSession } from '../agent-session/api';
 import { changeRowWords } from '../agent-session/transcript';
+import { isFrameSkin, useLiveSkin, useSkin } from '../../lib/skin';
+import { useFramePage } from '../frame/frame-page-store';
+import { Av as KitAv, Lead as KitLead } from '@/components/ui/kit';
+import { NewMessageSheet } from './frame-new';
+import { MessagesFrameList, type FrameInboxRow, type FrameInboxTab } from './frame-list';
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { SessionRow, type SessionRowView } from '../improve/session-row';
@@ -236,6 +243,10 @@ function GroupFaces({ conversation }: { conversation: Pick<ConversationSummary, 
   const others = conversation.members
     .filter((member) => member.status === 'member' && Number(member.id) !== viewerId)
     .slice(0, 2);
+  // Under one of the frame's looks a group wears one face, a member's who is
+  // not you, at the row's size (the tour's group, s18).
+  const frame = isFrameSkin(useLiveSkin());
+  if (frame) return <UserAvatar user={others[0] || null} title={conversation.title} size="lg" shape="square" />;
   if (others.length === 2) {
     return (
       <span className="messages-group-faces" aria-hidden="true">
@@ -248,11 +259,13 @@ function GroupFaces({ conversation }: { conversation: Pick<ConversationSummary, 
   return <UserAvatar user={null} title={conversation.title} size="lg" shape="square" />;
 }
 
-const ConversationRow = memo(function ConversationRow({ conversation, active, preview = null }: {
+const ConversationRow = memo(function ConversationRow({ conversation, active, preview = null, rowKey }: {
   conversation: ConversationSummary;
   active: boolean;
   /** 16 Oct 2026: the Homeroom bot's row says what waits on you, not its last message. */
   preview?: string | null;
+  /** #6508: the inbox entry's key, so the list can hold its place across a re-sort. */
+  rowKey?: string;
 }) {
   const t = useMessages('messages');
   const peer = directPerson(conversation);
@@ -289,6 +302,7 @@ const ConversationRow = memo(function ConversationRow({ conversation, active, pr
       }}
       className={`messages-conversation-row ${conversation.homeroomBot ? 'messages-bot-row' : ''} ${active ? 'messages-conversation-active' : ''}`}
       aria-current={active ? 'page' : undefined}
+      data-inbox-row={rowKey}
     >
       {conversation.kind === 'group' && !invited
         ? <GroupFaces conversation={conversation} />
@@ -463,11 +477,17 @@ function inboxSessionView(session: SessionRowView): SessionRowView {
   };
 }
 
-const AgentSessionRow = memo(function AgentSessionRow({ session, active }: { session: SessionRowView; active: boolean }) {
+const AgentSessionRow = memo(function AgentSessionRow({ session, active, rowKey }: {
+  session: SessionRowView;
+  active: boolean;
+  /** #6508: the inbox entry's key (see ConversationRow). */
+  rowKey?: string;
+}) {
   return (
     <div
       className={`messages-inbox-session ${active ? 'messages-inbox-session-active' : ''}`}
       data-inbox-session={session.key}
+      data-inbox-row={rowKey}
       aria-current={active ? 'page' : undefined}
     >
       <SessionRow session={session} showApp onNavigate={() => {}} tile={<ChangeTile session={session} />} />
@@ -721,12 +741,33 @@ function ConversationRowSkeleton() {
   );
 }
 
+/**
+ * #6508: the selector for one row's key. A key is built from a numeric id, an
+ * agent-session key or a Mayor session's id (./inbox.ts), and an agent
+ * session's key can hold characters a selector would read as syntax, so it is
+ * escaped where `CSS.escape` exists (every browser that draws the shell) and
+ * quoted with its own quotes and backslashes escaped where it does not.
+ */
+function keyedRow(key: string): string {
+  const escaped = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(key)
+    : key.replace(/["\\\n\r\f]/g, (ch) => `\\${ch}`);
+  return `[data-inbox-row="${escaped}"]`;
+}
+
 function ConversationList({ drawer = false }: {
   /** The phone's drawer holds the screen (./phone-drawer.tsx): the list stays drawn beside a conversation. */
   drawer?: boolean;
 } = {}) {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
+  // A look of the one frame draws the list with the kit (./frame-list.tsx),
+  // from the same conversations and presses. Read after mount (lib/skin.ts
+  // says why). The agent catalog is the words a change in flight is said in.
+  const frame = isFrameSkin(useSkin());
+  const [frameTab, setFrameTab] = useState<FrameInboxTab>('people');
+  const [frameNew, setFrameNew] = useState(false);
+  useMessages('agent');
   // The search: REMEMBERED PER DEVICE SINCE #5459, AND STILL NOT IN THE STORE. A daily
   // voter narrows the list to the changes waiting on them, leaves to vote,
   // and comes back: the query now survives that, kept in localStorage
@@ -914,6 +955,60 @@ function ConversationList({ drawer = false }: {
   // last look shows where it now belongs; a query hides the toggle, because
   // search covers the open chats only.
   const showArchivedToggle = mounted && !!agentChatsShown && !snap.folded.includes('agents') && !searching;
+
+  // #6508: the list keeps its place while it updates live (./list-place.ts).
+  // The row at the top of what the reader sees is noted on every scroll, and
+  // a live re-sort puts that same row back where it was. At the very top
+  // nothing is held, so new rows arrive there as they always have; the
+  // browser's own anchoring is switched off for this scroller in app.css,
+  // because it was the one dragging the list with a row that had moved.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const anchor = useRef<SavedPlace | null>(null);
+  const readAnchor = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (el.scrollTop <= 0) { anchor.current = null; return; }
+    const box = el.getBoundingClientRect();
+    const rows: MeasuredRow[] = [];
+    for (const node of Array.from(el.querySelectorAll<HTMLElement>('[data-inbox-row]'))) {
+      const key = node.dataset.inboxRow;
+      if (!key) continue;
+      const rect = node.getBoundingClientRect();
+      rows.push({ key, top: rect.top - box.top, bottom: rect.bottom - box.top });
+    }
+    anchor.current = firstRowInView(rows, 0);
+  }, []);
+  // The reader changing the list (a search, a fold, older or archived chats)
+  // drops the held place: that is them moving the list, not it moving itself.
+  const listShape = `${deferredQuery}\u0000${snap.folded.join(',')}\u0000${agentsExpanded}\u0000${archivedOpen}`;
+  const lastShape = useRef(listShape);
+  useIsomorphicLayoutEffect(() => {
+    if (lastShape.current === listShape) return;
+    lastShape.current = listShape;
+    anchor.current = null;
+  }, [listShape]);
+  // After a commit that changes the order (a live re-sort, or the bot's line
+  // changing its row's height), put the saved row back at its offset. The
+  // scroll event our own write fires records the same row again, so this
+  // settles in one step rather than looping.
+  const orderKey = `${found.map((entry) => entry.key).join('|')}\u0000${botLine || ''}`;
+  useIsomorphicLayoutEffect(() => {
+    const el = scrollRef.current;
+    const saved = anchor.current;
+    // A list the layout has taken off screen (the phone's drawer behind an
+    // open conversation, the column beside a spec pane) measures every row at
+    // zero; correcting there would move it while nobody can see it.
+    if (!el || !saved || !el.clientHeight) return;
+    const box = el.getBoundingClientRect();
+    let row: Element | null = null;
+    try {
+      row = el.querySelector(keyedRow(saved.key));
+    } catch { row = null; }
+    const nowTop = row ? row.getBoundingClientRect().top - box.top : null;
+    const delta = scrollCorrection(saved, nowTop, 0);
+    if (delta) el.scrollTop += delta;
+  }, [orderKey]);
+
   const archivedToggle = showArchivedToggle ? (
     <button
       key="show-archived"
@@ -926,6 +1021,113 @@ function ConversationList({ drawer = false }: {
       {archivedOpen ? t('messages:inbox.archived.hide') : t('messages:inbox.archived.show')}
     </button>
   ) : null;
+
+  if (frame) {
+    const me = Number(window.App?.user?.id);
+    const rows: FrameInboxRow[] = [];
+    for (const entry of found) {
+      const active = isOpen(entry);
+      if (entry.kind === 'person') {
+        const c = byConversation.get(entry.key.slice('person:'.length));
+        if (!c) continue;
+        const peer = directPerson(c);
+        const invited = c.membershipStatus === 'invited';
+        const name = c.kind === 'direct' && peer ? senderName(peer, { bare: true }) : c.title;
+        const face = c.kind === 'group' && !invited
+          ? c.members.find((member) => member.status === 'member' && Number(member.id) !== me) || null
+          : peer;
+        const sender = c.kind === 'group' && !invited ? c.latestMessage?.sender || null : null;
+        const said = sender?.id && c.latestSummary
+          ? (Number(sender.id) === me
+            ? t('messages:inbox.previewYou', { message: ownDirection(c.latestSummary) })
+            : t('messages:inbox.previewBy', { username: sender.username, message: ownDirection(c.latestSummary) }))
+          : c.latestSummary || '';
+        const href = `#messages/${c.id}`;
+        rows.push({
+          key: entry.key,
+          section: entry.section,
+          // A group wears the face of someone in it who is not you (the
+          // tour's rows), a direct message the person's own.
+          lead: <KitAv size={40} name={face?.username || name || '?'} src={face?.avatarUrl} color={swatchFor(face?.username || name || '?')} />,
+          title: name || '',
+          line: c.homeroomBot ? botLine || said : said,
+          time: agoStamp(c.lastActivityAt).text,
+          fresh: c.unreadCount > 0 ? t('messages:inbox.newCount', { count: c.unreadCount }) : null,
+          active,
+          href,
+          onClick: (event) => {
+            if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+            if (window.location.hash === href) { event.preventDefault(); selectConversation(c.id); }
+          },
+        });
+      } else if (entry.kind === 'mayor') {
+        const m = byMayor.get(entry.key.slice('mayor:'.length));
+        if (!m) continue;
+        const thread: MessagesAgentThread = { kind: 'agent', id: m.id };
+        const href = agentThreadAddress(thread);
+        // The tour's agent row (s20): where it was and when on the line, and
+        // where its change stands as the one word the row ends in.
+        const change = m.activeChange;
+        const at = m.lastActivityAt || m.createdAt || null;
+        const when = at ? agoStamp(at).text : null;
+        rows.push({
+          key: entry.key,
+          section: entry.section,
+          lead: <KitLead icon="wand" />,
+          title: m.title || t('messages:agent.row.newSession'),
+          line: dotText([m.focusApp?.name, when]),
+          time: when,
+          status: m.busy
+            ? { text: t('messages:agent.row.working'), kind: '' }
+            : change
+              ? { text: changeRowWords(change), kind: change.status === 'merged' ? 'ok' : change.status === 'promoted' ? 'wait' : '' }
+              : null,
+          active,
+          href,
+          onClick: (event) => {
+            if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+            if (window.location.hash === href) { event.preventDefault(); openAgentThread(thread); }
+          },
+        });
+      } else if (entry.kind === 'session') {
+        const sn = bySession.get(entry.key.slice('session:'.length));
+        if (!sn) continue;
+        rows.push({
+          key: entry.key,
+          section: entry.section,
+          lead: <KitLead icon="wand" />,
+          title: sn.title,
+          line: dotText([sn.appName, sn.lastActivityAt ? agoStamp(sn.lastActivityAt).text : null]),
+          time: sn.lastActivityAt ? agoStamp(sn.lastActivityAt).text : null,
+          status: sn.status ? { text: sn.status, kind: '' } : null,
+          active,
+          href: sn.href,
+          onClick: () => {},
+        });
+      }
+    }
+    // New message's own list: the people there is already a direct message
+    // with, in the inbox's order, the bot left out.
+    const known: ConversationUser[] = [];
+    for (const c of snap.conversations) {
+      const person = c.kind === 'direct' && !c.homeroomBot ? directPerson(c) : null;
+      if (person?.id && !person.unnamed && !person.bot && !known.some((item) => item.id === person.id)) known.push(person);
+    }
+    return (
+      <section className={`messages-list-pane ${specBeside ? 'hidden' : drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label={t('core:tabs.messages')} data-frame-list="">
+        <MessagesFrameList
+          rows={rows}
+          tab={frameTab}
+          onTab={setFrameTab}
+          query={query}
+          onQuery={changeQuery}
+          onNew={() => setFrameNew(true)}
+          loaded={!!snap.listLoaded}
+        />
+        {frameNew ? <NewMessageSheet known={known} onClose={() => setFrameNew(false)} /> : null}
+      </section>
+    );
+  }
 
   return (
     <section className={`messages-list-pane ${specBeside ? 'hidden' : drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label={t('messages:inbox.listName')}>
@@ -964,6 +1166,8 @@ function ConversationList({ drawer = false }: {
       <div
         className="messages-list-scroll platform-safe-scroll"
         data-page-bounce=""
+        ref={scrollRef}
+        onScroll={readAnchor}
         onClick={(e) => {
           if (e.target === e.currentTarget && snap.route.conversationId) openConversation(null);
         }}
@@ -1056,6 +1260,7 @@ function ConversationList({ drawer = false }: {
           );
         })}
       </div>
+      <InboxToEnd scroller={scrollRef} />
     </section>
   );
 
@@ -1069,6 +1274,7 @@ function ConversationList({ drawer = false }: {
             conversation={conversation}
             active={snap.route.conversationId === conversation.id}
             preview={conversation.homeroomBot ? botLine : null}
+            rowKey={entry.key}
           />
         )
         : null;
@@ -1076,13 +1282,13 @@ function ConversationList({ drawer = false }: {
     if (entry.kind === 'session') {
       const session = bySession.get(entry.key.slice('session:'.length));
       return session
-        ? <AgentSessionRow key={entry.key} session={session} active={open?.kind === 'session' && open.id === session.id} />
+        ? <AgentSessionRow key={entry.key} session={session} active={open?.kind === 'session' && open.id === session.id} rowKey={entry.key} />
         : null;
     }
     if (entry.kind === 'mayor') {
       const session = byMayor.get(entry.key.slice('mayor:'.length));
       return session
-        ? <MayorSessionRow key={entry.key} session={session} active={open?.kind === 'agent' && open.id === session.id} />
+        ? <MayorSessionRow key={entry.key} session={session} active={open?.kind === 'agent' && open.id === session.id} rowKey={entry.key} />
         : null;
     }
     return null;
@@ -1257,7 +1463,12 @@ function ThreadHeader() {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
   const active = snap.active;
-  const { on: inDrawer } = useStoreState(messagesDrawerStore);
+  const { on: drawerOn } = useStoreState(messagesDrawerStore);
+  // Under one of the frame's looks a phone's bar says only where you are
+  // (Messages, and the way back to the list), so the conversation names
+  // itself here, as the tour's open-item pane does at any width (s17).
+  const frame = isFrameSkin(useLiveSkin());
+  const inDrawer = drawerOn && !frame;
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
   // QA 2026-09-24 Q18: the ⋯ menu is a real menu now. It closes on a press
@@ -1649,7 +1860,12 @@ const ACTIVITY_SAID: Record<'working' | 'done', string> = {
   done: 'messages:agent.row.activity.done',
 };
 
-const MayorSessionRow = memo(function MayorSessionRow({ session, active }: { session: MayorSession; active: boolean }) {
+const MayorSessionRow = memo(function MayorSessionRow({ session, active, rowKey }: {
+  session: MayorSession;
+  active: boolean;
+  /** #6508: the inbox entry's key (see ConversationRow); the archived list passes none. */
+  rowKey?: string;
+}) {
   const t = useMessages('messages');
   // Subscribed: changeRowWords reads where the change stands from the agent catalog.
   useMessages('agent');
@@ -1672,6 +1888,7 @@ const MayorSessionRow = memo(function MayorSessionRow({ session, active }: { ses
     <a
       href={href}
       data-inbox-agent-session={session.id}
+      data-inbox-row={rowKey}
       className={`messages-conversation-row ${active ? 'messages-conversation-active' : ''}`}
       aria-current={active ? 'page' : undefined}
       onClick={(event) => {
@@ -3186,6 +3403,11 @@ export function MessagesScreen() {
   const agentWords = useAgentThreadWords(snap.route.agent);
   const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, threadWords, agentWords);
   const drawerClass = drawer.on ? ` messages-drawer${drawer.level === 0 ? ' messages-drawer-alone' : ''}` : '';
+  // Under one of the frame's looks the phone's bar is the kit's: in a
+  // conversation it says Messages, and its arrow goes back to the list.
+  const frame = isFrameSkin(useSkin());
+  const tc = useMessages('core');
+  useFramePage(frame && snap.route.open && drawer.on && drawer.level === 1 ? [tc('core:tabs.messages')] : null, messagesBack);
   // ON A DESKTOP, with nothing open, the whole list is the page (All
   // messages), with its search and previews; an open conversation has the
   // list beside it. (v3, 18 Oct 2026, put the list in the sidebar under

@@ -54,9 +54,13 @@ test('every kind is framed, and framed exactly once', () => {
     // notification ask project_opened) stands in for a push, so it says that,
     // and how to turn it off.
     const activity = ['build_ready', 'invite_activity', 'project_opened'].includes(kind);
+    // The waitlist reminders say why, and that they stop.
+    const reminder = ['waitlist_reminder', 'waitlist_reminder_last'].includes(kind);
     assert.match(html, kind === 'project_invite'
       ? /someone on Homeroom invited this address to a project\. You will not hear from us again unless you join, or somebody invites you again\./
-      : activity
+      : reminder
+        ? /you were let in from the waitlist and haven't signed in yet\. (We send one more reminder, then stop\.|This is the last reminder\.)/
+        : activity
         ? /there was news on Homeroom for you and no phone to send it to\. Turn these emails off with the link above\./
         : kind === 'content_report'
           ? /this address is Homeroom's compliance inbox for content reports\./

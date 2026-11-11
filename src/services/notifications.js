@@ -262,9 +262,27 @@ const RELEASE_PENDING_SQL = `(COALESCE(cs.merged_at, cs.created_at), cs.id) > (
                WHERE self_app.id = cs.app_id AND self_app.self_hosted
                ORDER BY COALESCE(running.merged_at, running.created_at) DESC, running.id DESC
                LIMIT 1)`;
+// The leaked-link guard's two rows (services/invite-activity.js noteGuard,
+// `detail` "<inviteId>:<joins>"): where the link stands now, so the row's
+// Turn off and Open it again are offered only while they still do
+// something. 'live', 'paused', or 'ended' (turned off, past its end, used
+// up); NULL for a link that is gone, or is not the reader's own.
+const INVITE_LINK_STATE_SQL = `CASE WHEN n.kind IN ('invite_link_busy', 'invite_link_paused')
+              AND n.detail ~ '^[0-9]{1,9}:[0-9]{1,9}$' THEN (
+              SELECT CASE
+                       WHEN guarded.revoked_at IS NOT NULL
+                         OR (guarded.expires_at IS NOT NULL AND guarded.expires_at <= NOW())
+                         OR (guarded.max_uses IS NOT NULL AND guarded.uses >= guarded.max_uses) THEN 'ended'
+                       WHEN guarded.paused_at IS NOT NULL THEN 'paused'
+                       ELSE 'live'
+                     END
+                FROM community_invites guarded
+               WHERE guarded.id = split_part(n.detail, ':', 1)::int AND guarded.created_by = n.user_id) END`;
 const LIVE_ROW_COLUMNS_SQL = `CASE WHEN cs.status = 'merged' AND (cs.live_at IS NULL OR ${RELEASE_PENDING_SQL}) THEN 'merging' ELSE cs.status END AS session_status,
             CASE WHEN n.kind = 'vote_digest' THEN ${DIGEST_WAITING_SQL} END AS digest_waiting,
-            bot_request.issue_number AS bot_request_number`;
+            bot_request.issue_number AS bot_request_number,
+            ${INVITE_LINK_STATE_SQL} AS invite_link_state`;
+const INVITE_GUARD_KINDS = new Set(['invite_link_busy', 'invite_link_paused']);
 // The kinds whose row carries `sessionStatus`: a "ready to try" (Live, Going
 // live or Closed), and the author's and the voters' news that it went live.
 const SESSION_STATUS_KINDS = new Set(['change_ready', 'pr_merged', 'voted_change_merged']);
@@ -2511,6 +2529,9 @@ function serialize(row) {
       ? { digestWaiting: Number(row.digest_waiting) } : {}),
     ...(row.kind === 'first_message' || row.kind === 'channel_message'
       ? { requestNumber: row.bot_request_number != null ? Number(row.bot_request_number) : null } : {}),
+    // The leaked-link guard's rows: where their link stands now
+    // (INVITE_LINK_STATE_SQL), which decides the buttons the bell offers.
+    ...(INVITE_GUARD_KINDS.has(row.kind) ? { inviteLinkState: row.invite_link_state || null } : {}),
     // #4769: whether this row is in the user's saved set. Only the feed
     // page and the saved section select the flag (the exact lookup
     // doesn't), so it is false there — a false rather than absent keeps

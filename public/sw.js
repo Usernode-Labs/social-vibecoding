@@ -680,6 +680,11 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
     // `install` as the App tab and reopened the app: the tap did nothing a
     // tester could see.
     if (APP_INSTALL_PAGE.test(p)) return 'bypass';
+    // #6564: the page's own recovery asks once for a document the browser
+    // must fetch rather than replay from the release cache. Answering this
+    // navigation from the cache is exactly what made a blank shell survive a
+    // reload; the parameter's unique value also keeps the HTTP cache out.
+    if (u.searchParams.has('fresh-shell')) return 'bypass';
     return 'navigate';
   }
 

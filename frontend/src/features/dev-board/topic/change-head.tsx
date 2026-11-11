@@ -57,7 +57,7 @@ import { askToFit, upstreamAction } from '../../versions/upstream';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel } from '../card/model';
-import type { ChangeGateView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
+import type { ChangeGateView, ChangeMergeView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
 import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
 import { ThreadItems, pageSlug } from './thread-items';
@@ -68,6 +68,12 @@ import { TopicBack } from './topic-back';
 import { WorkWithBotButton } from './work-with-bot';
 import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
 import { IncludedIn, IssueAssociations, ProposalBody, SummaryMore } from './topic-head';
+import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
+import { useFramePage } from '../../frame/frame-page-store';
+import { placeName } from '../workshop/places';
+import { TopicFrameAbout, TopicFrameHead, TopicFrameStatus } from './frame/topic-frame';
+import { useSideStack } from './frame/side-stack';
+import { changeStop, dotLine, pillKind, topicBack } from './frame/topic-page';
 
 function host(id: string): Element | null {
   return typeof document === 'undefined' ? null : document.getElementById(id);
@@ -79,13 +85,23 @@ function host(id: string): Element | null {
  * gate the ⋯ Details row uses), the title itself opens the Details sheet
  * (#5329): it looks as it always did, and underlines on hover.
  */
-export function ChangeBar({ v, menuKey, detailsId = null }: { v: ChangeThreadView; menuKey: string; detailsId?: number | null }): ReactNode {
+export function ChangeBar({ v, menuKey, detailsId = null, name = null }: {
+  v: ChangeThreadView;
+  menuKey: string;
+  detailsId?: number | null;
+  /** The change's own title, for the kit's head under one of the frame's looks. */
+  name?: string | null;
+}): ReactNode {
   const t = useMessages('project');
   const title = v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title');
   // #6431: beside the Homeroom bot page this bar is not drawn at all (app.css),
   // and the column's heading carries its pill and its rows instead. Publishing
   // them is all this does there; nowhere else does it publish anything.
   usePanelHead({ kind: 'change', pill: v.status || null, menuKey: menuKey || null });
+  // UNDER ONE OF THE FRAME'S LOOKS the page's head is the kit's (the tour's
+  // s34): the change's title and one line saying what it is, with this menu.
+  const frame = isFrameSkin(useLiveSkin());
+  if (frame) return <TopicFrameHead title={name || title} purpose={dotLine([title, v.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.change.bar.more') } : null} />;
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
@@ -233,7 +249,7 @@ function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
  * turn ends it reads "Fixing", with a door into that conversation.
  */
 export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
-  which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; closes?: ClosesRequest[];
+  which: 'votes' | 'testing' | 'merge'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; closes?: ClosesRequest[];
 }): ReactNode {
   const t = useMessages('project');
   const open = () => (window as any).AppView?.openTechnicalDetails?.(id, 'checks');
@@ -361,6 +377,66 @@ export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
   );
 }
 
+/** #6563: how long a held merge may wait before the card calls it out. */
+export const MERGE_WAIT_LONG_MS = 30 * 60 * 1000;
+/** #6563: how often the times under the Merging card are worded again. */
+export const MERGE_TICK_MS = 30 * 1000;
+
+const minutesBetween = (fromIso: string | null, toMs: number): number | null => {
+  if (!fromIso) return null;
+  const at = Date.parse(fromIso);
+  if (!Number.isFinite(at)) return null;
+  return Math.floor((toMs - at) / 60000);
+};
+
+/**
+ * #6563: the merge step, under Votes and Tested, while GitHub holds an
+ * approved change's merge or it is under way. It reuses GateCard: the same
+ * card, bar and grey line. Its one job is to say what the merge still waits
+ * on, so it carries the last try and the next one, counted from the viewer's
+ * own clock (a timer every MERGE_TICK_MS, started only in an effect so the
+ * first render matches what the view holds). A wait of MERGE_WAIT_LONG_MS or
+ * more turns amber and says how long and what to do; GitHub's checks failing
+ * again is red, with no times and no button.
+ */
+export function MergeCard({ g, id }: { g: ChangeMergeView; id: number | null }): ReactNode {
+  const t = useMessages('project');
+  const wait = g.wait || null;
+  const held = !!wait;
+  const [, setTick] = useState(0);
+  const now = Date.now();
+  useEffect(() => {
+    if (!held) return undefined;
+    const timer = window.setInterval(() => setTick((n) => n + 1), MERGE_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, [held]);
+  const triedMin = minutesBetween(wait?.triedAt || null, now);
+  const retryAt = wait?.retryAt ? Date.parse(wait.retryAt) : NaN;
+  // A retry time that is missing or already past reads "Trying again now."
+  const nextMin = Number.isFinite(retryAt) && retryAt > now ? Math.max(1, Math.round((retryAt - now) / 60000)) : null;
+  const waitedMin = minutesBetween(wait?.since || null, now);
+  const long = wait?.since ? waitedMin != null && waitedMin * 60000 >= MERGE_WAIT_LONG_MS : false;
+  const note = [...g.note];
+  if (long) note.push(t('project:topic.change.gate.merge.long', { minutes: waitedMin ?? 0 }));
+  if (held && wait?.triedAt) {
+    note.push(triedMin == null || triedMin < 1
+      ? t('project:topic.change.gate.merge.triedJustNow')
+      : t(triedMin === 1 ? 'project:topic.change.gate.merge.tried_one' : 'project:topic.change.gate.merge.tried_other', { count: triedMin }));
+  }
+  if (held) {
+    note.push(nextMin == null
+      ? t('project:topic.change.gate.merge.nextNow')
+      : t(nextMin === 1 ? 'project:topic.change.gate.merge.next_one' : 'project:topic.change.gate.merge.next_other', { count: nextMin }));
+  }
+  const shown: ChangeGateView = {
+    ...g,
+    figure: long ? t('project:topic.change.gate.merge.longFigure') : g.figure,
+    tone: long ? 'warn' : g.tone,
+    note,
+  };
+  return <GateCard which="merge" g={shown} action={null} id={id} />;
+}
+
 /**
  * A change whose code did not come across when Homeroom moved off GitHub
  * (`v.codeMissing`, src/services/code-missing.js): its branch is not on the
@@ -445,6 +521,17 @@ function ShotsCard({ s }: { s: NonNullable<ChangeThreadView['shots']> }): ReactN
           {s.waiting ? <span className="dc-status-spinner-arc" aria-hidden="true"></span> : null}
           <span>{s.line}</span>
         </p>
+      ) : null}
+      {s.retake ? (
+        <button
+          type="button"
+          className="gc-vote-btn"
+          data-shots-retake="1"
+          title={translate('changes:page.menu.takeShotsAgainTitle')}
+          onClick={(e) => (window as any).AppView?.rerunShots?.(s.retake!, e.currentTarget)}
+        >
+          {translate('changes:shots.card.takeAgain')}
+        </button>
       ) : null}
     </section>
   );
@@ -550,7 +637,7 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
     if (!el) return;
     if (!stuck) { full.current = el.offsetHeight; setGive(0); return; }
     setGive(Math.max(0, full.current - el.offsetHeight));
-  }, [stuck, v.votes, v.testing, stick]);
+  }, [stuck, v.votes, v.testing, v.merge, stick]);
   return (
     <>
       {stick ? <span ref={mark} className="dev-change-pair-mark" aria-hidden="true" /> : null}
@@ -563,6 +650,8 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
       >
         <GateCard which="votes" g={v.votes} action={ballot ? null : voteAction} id={id} closes={closes} />
         <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix || stopped ? testingActions : null} id={id} />
+        {/* #6563: the merge itself, while GitHub holds it or it is under way. */}
+        {v.merge ? <MergeCard g={v.merge} id={id} /> : null}
       </div>
     </>
   );
@@ -581,6 +670,14 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   threadAsChange?: boolean;
 }): ReactNode {
   const t = useMessages('project');
+  // Under one of the frame's looks the page tells the bar its trail (the
+  // Workshop, then this change) and stands its votes and checks, and About,
+  // in the context column beside its words (./frame/side-stack.ts).
+  const frame = isFrameSkin(useLiveSkin());
+  const trail = v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title');
+  useFramePage(frame ? [placeName('workshop'), trail] : null, topicBack);
+  useSideStack(frame, `[data-change-root="${id ?? ''}"] > [data-image-viewer-scope]`, ['.dev-change-status', '.dev-change-pair', '.fr-topicside']);
+  const tc = useMessages('changes');
   const images = useInlineImageViewer();
   const thanks = v.thanks && id ? <span className="contents" data-kudos-host={id} data-kudos-face="thread"></span> : null;
   const issues = body.issues || [];
@@ -609,7 +706,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
-      {bar ? createPortal(<ChangeBar v={v} menuKey={menuKey} detailsId={id && body.changeId ? id : null} />, bar) : null}
+      {bar ? createPortal(<ChangeBar v={v} menuKey={menuKey} detailsId={id && body.changeId ? id : null} name={card.title.text || card.title.title || null} />, bar) : null}
       {images.viewer}
       <article className="messages-message dev-request-root dev-change-root" data-change-root={id ?? ''}>
         <Avatar shape="square" size="sm" color={swatchFor(v.author)} aria-hidden="true">
@@ -654,6 +751,16 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {/* #6019: the requests, other changes and votes in its thread. */}
           {id ? <ThreadItems slug={pageSlug()} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} menuKey={menuKey || null} /> : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
+          {frame ? (
+            <div className="dev-change-status">
+              <TopicFrameStatus
+                pill={v.status ? { word: v.status.label, kind: pillKind(v.status, v.votes) } : null}
+                at={changeStop(v.status, v.votes, v.testing).at}
+                state={changeStop(v.status, v.votes, v.testing).state}
+                words={[tc('changes:track.plan'), tc('changes:track.build'), tc('changes:track.checks'), tc('changes:track.vote'), tc('changes:track.live')]}
+              />
+            </div>
+          ) : null}
           {v.codeMissing ? <CodeMissingNotice /> : null}
           {v.waitsFor || v.baseNotMain ? <StackNotice v={v} /> : null}
           <ChangeGates ref={pair} id={id} card={card} v={v} />
@@ -667,6 +774,16 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
             voting={!!v.votes.facts?.length}
             botAtWork={v.testing.botFix === 'fixing' || v.testing.botFix === 'queued'}
           />
+          {frame ? (
+            <TopicFrameAbout
+              label={t('project:frame.topic.about')}
+              asker={v.author}
+              color={swatchFor(v.author)}
+              line={dotLine([v.time, v.via])}
+              topic={v.category}
+              topicLine={t('project:frame.topic.topic')}
+            />
+          ) : null}
         </div>
       </article>
     </>

@@ -7236,6 +7236,8 @@ const AppView = {
       detail: blocked || (release ? PlatformI18n.t('changes:page.steps.detail.release', { release }) : req ? (req.detail || null) : null),
       done: req ? req.done : null,
       total: req ? req.total : null,
+      // #6552: the change this sheet explains, so its "?" reads its votes.
+      changeId: Number(item.id) || null,
       rows: out,
     };
   },
@@ -7300,7 +7302,11 @@ const AppView = {
       }
       return step;
     });
-    return { headline: req.headline, detail: null, done: req.done, total: req.total, rows, simple: true };
+    return {
+      headline: req.headline, detail: null, done: req.done, total: req.total, rows, simple: true,
+      // #6552: the change these steps belong to, so each "?" reads its votes.
+      changeId: Number(item.id) || null,
+    };
   },
 
   // ── A draft's steps ──────────────────────────────────────────────
@@ -7837,10 +7843,13 @@ const AppView = {
     // A change still being built or closed has no pill worth repeating: its
     // card pill would read as a bare tally, and the Votes card under the
     // title already says where those stand. The card's own state wins, so
-    // the kind (proposal or gov) and majority stay the card's.
+    // the kind (proposal or gov) and majority stay the card's — EXCEPT once
+    // the change merged or is merging: a card drawn before the merge carries
+    // the open-vote pill, so the row's current status decides then (#6490).
+    const settled = item.status === 'merged' || item.status === 'merging';
     const statusState = ['active', 'paused', 'closed'].includes(item.status)
       ? null
-      : ((card && card.pill && card.pill.state) || AppView.statusPillState(item, kind === 'gov' ? { kind: 'gov' } : {}) || null);
+      : ((!settled && card && card.pill && card.pill.state) || AppView.statusPillState(item, kind === 'gov' ? { kind: 'gov' } : {}) || null);
     return {
       number: n || null,
       category,
@@ -7852,6 +7861,9 @@ const AppView = {
       status: statusState && statusState.label ? statusState : null,
       votes: AppView._changeVotesView(item, card),
       testing: AppView._changeTestingView(item),
+      // #6563: the merge itself, as a third card under Votes and Tested. Null
+      // unless GitHub is holding the merge or it is under way.
+      merge: AppView._changeMergeView(item),
       shots: AppView._changeShotsView(kind, item),
       thanks: !AppView.readOnly && AppView._kudosOffered(item) && !['active', 'paused'].includes(item.status),
       // Its code did not come across from GitHub (_codeMissing): the page
@@ -7865,6 +7877,63 @@ const AppView = {
       // change has (_stackedOn): said in a notice above Votes and Testing,
       // with a door to the change it waits for.
       ...AppView._stackedView(kind, item),
+    };
+  },
+
+  // #6563: the merge step, a third card under Votes and Tested, while an
+  // approved change's merge is held by GitHub or is under way. It names what
+  // the merge waits on (GitHub's own required checks, a second set from
+  // Homeroom's), and carries the times the card counts (`wait`: the last try,
+  // the next one and the first held try). Once merged it says nothing and the
+  // page reads as before.
+  _changeMergeView(item) {
+    if (!item) return null;
+    const reasons = item.integration && Array.isArray(item.integration.blockReasons)
+      ? item.integration.blockReasons : [];
+    const moving = [{ weight: 1, pct: 60, state: 'moving' }];
+    if (item.status === 'merging') {
+      return {
+        name: PlatformI18n.t('changes:page.merge.name'),
+        figure: PlatformI18n.t('changes:page.merge.figure.merging'),
+        tone: 'muted', done: false, segments: moving,
+        label: PlatformI18n.t('changes:page.merge.label.merging'),
+        note: [], wait: null,
+      };
+    }
+    if (item.status !== 'promoted') return null;
+    const failing = reasons.indexOf('github_checks_failing') !== -1;
+    const waiting = reasons.indexOf('github_checks') !== -1;
+    const busy = reasons.indexOf('github_busy') !== -1 || reasons.indexOf('github_refused') !== -1;
+    if (!failing && !waiting && !busy) return null;
+    const integration = item.integration || {};
+    const wait = {
+      triedAt: integration.heldAt || null,
+      retryAt: integration.heldUntil || null,
+      since: integration.heldSince || null,
+    };
+    if (failing) {
+      return {
+        name: PlatformI18n.t('changes:page.merge.name'),
+        figure: PlatformI18n.t('changes:page.merge.figure.failing'),
+        tone: 'bad', done: false,
+        segments: [{ weight: 1, pct: 100, state: 'bad' }],
+        label: PlatformI18n.t('changes:page.merge.label.failing'),
+        note: [PlatformI18n.t('changes:page.merge.note.failing')],
+      };
+    }
+    return {
+      name: PlatformI18n.t('changes:page.merge.name'),
+      figure: PlatformI18n.t(waiting
+        ? 'changes:page.merge.figure.githubChecks'
+        : 'changes:page.merge.figure.githubWait'),
+      tone: 'muted', done: false, segments: moving,
+      label: PlatformI18n.t(waiting
+        ? 'changes:page.merge.label.githubChecks'
+        : 'changes:page.merge.label.githubWait'),
+      note: [PlatformI18n.t(waiting
+        ? 'changes:page.merge.note.githubChecks'
+        : 'changes:page.merge.note.githubWait')],
+      wait,
     };
   },
 
@@ -7946,7 +8015,7 @@ const AppView = {
       tone: 'muted',
       done: false,
       segments: [{ weight: 1, pct: 100, state: 'idle' }],
-      label: PlatformI18n.t('changes:page.votes.label.tally', { yes, needed: maj }),
+      label: PlatformI18n.t('changes:page.votes.label.tally', { count: yes, needed: maj }),
       note: [head
         ? PlatformI18n.t('changes:page.votes.note.adminMerge', { by, head })
         : PlatformI18n.t('changes:page.votes.note.adminMergeNoHead', { by })],
@@ -7977,7 +8046,12 @@ const AppView = {
         note: [PlatformI18n.t('changes:page.votes.note.closed')],
       };
     }
-    const pill = (card && card.pill && card.pill.state) || AppView.statusPillState(item, {}) || {};
+    // #6490: a card drawn before the merge keeps the open-vote pill in its
+    // state. While the change merged or is merging the row's own status is
+    // what the card says; an open row still prefers the card's, so its
+    // majority and kind stay the same.
+    const settled = item.status === 'merged' || item.status === 'merging';
+    const pill = ((!settled && card && card.pill && card.pill.state) || AppView.statusPillState(item, {}) || {});
     const yes = Number(pill.yes) || 0;
     const maj = Math.max(1, Number(pill.majority) || 1);
     const roster = AppView._voteRoster[item.id];
@@ -7998,6 +8072,8 @@ const AppView = {
     // #6531: a conflicting promoted change says what its conflict means for
     // the vote, in the same words as the Homeroom bot tab's row. A conflict
     // only its author can move keeps the integration line's own wording.
+    // #6563: what GitHub's required checks mean for the merge moved to the
+    // Merging card (AppView._changeMergeView), so it is said once.
     if (!updateComing && item.status === 'promoted' && item.integration_merges_clean === false) {
       const blocked = item.integration && Array.isArray(item.integration.blockReasons) ? item.integration.blockReasons : [];
       const authors = ['unresolvable', 'fork_head', 'checks_failing', 'checks_error'];
@@ -8055,7 +8131,7 @@ const AppView = {
     else if (yes >= maj && waitsOnMember) {
       figure = canVote && item.approval_policy !== 'invited' ? PlatformI18n.t('changes:page.votes.figure.needsYours') : PlatformI18n.t('changes:page.votes.figure.needsAnother');
       tone = canVote ? 'ask' : 'warn';
-    } else if (reached) { figure = PlatformI18n.t('changes:page.votes.figure.reached', { yes, needed: maj }); tone = 'done'; }
+    } else if (reached) { figure = PlatformI18n.t('changes:page.votes.figure.reached', { count: yes, needed: maj }); tone = 'done'; }
     else if (pill.key === 'needs_vote' && !updateComing && AppView._approveSolo(item)) { figure = PlatformI18n.t('changes:page.votes.figure.yourApproval'); tone = 'ask'; }
     else { figure = PlatformI18n.t('changes:page.votes.figure.needsMore', { count: maj - yes }); tone = canVote ? 'ask' : 'muted'; }
     if (updateComing) tone = 'muted';
@@ -8067,11 +8143,8 @@ const AppView = {
       if (approvers) note.push(PlatformI18n.t('changes:page.votes.note.anyApprover', { count: approvers }));
       else if (members > 1) note.push(PlatformI18n.t('changes:page.votes.note.anyMember', { count: members }));
     }
-    // A countdown or a contest says what happens next, in a few words. Once
-    // the vote is decided nobody can object from this card, so it promises
-    // nothing of the sort (#6505).
-    if (pill.key === 'merge_countdown') note.push(PlatformI18n.t(AppView._votesDecided(item)
-      ? 'changes:page.votes.note.mergeCountdownDecided' : 'changes:page.votes.note.mergeCountdown'));
+    // A countdown or a contest says what happens next, in a few words.
+    if (pill.key === 'merge_countdown') note.push(PlatformI18n.t('changes:page.votes.note.mergeCountdown'));
     else if (pill.key === 'reject_countdown') note.push(PlatformI18n.t('changes:page.votes.note.rejectCountdown'));
     else if (pill.key === 'contested') note.push(PlatformI18n.t('changes:page.votes.note.contested'));
     const earlierYes = ready && Array.isArray(ready.earlierYes) ? ready.earlierYes : [];
@@ -8121,7 +8194,7 @@ const AppView = {
     return {
       name: PlatformI18n.t('changes:page.votes.name'), figure, tone, done: tone === 'done',
       segments: AppView._changeVoteSegments(fill, maj, tone === 'done' ? 'done' : 'moving'),
-      label: PlatformI18n.t('changes:page.votes.label.tally', { yes, needed: maj }),
+      label: PlatformI18n.t('changes:page.votes.label.tally', { count: yes, needed: maj }),
       note,
       // #6282: no Vote button while the update is on its way (change-head.tsx
       // gateActions), so the card never asks for a yes that would be cleared.
@@ -8524,9 +8597,17 @@ const AppView = {
     }
     if (cs === 'passing') {
       const superseded = AppView._freshnessOf(item).baseVerdict === 'superseded';
+      // #6563: while GitHub's own required checks are what hold the merge,
+      // a second set is still running, so the card says whose checks passed
+      // instead of claiming all of them did.
+      const github = item.integration && Array.isArray(item.integration.blockReasons)
+        ? item.integration.blockReasons : [];
+      const homeroomOnly = github.indexOf('github_checks') !== -1 || github.indexOf('github_checks_failing') !== -1;
       return {
-        name: PlatformI18n.t('changes:page.testing.name.tested'), figure: PlatformI18n.t('changes:page.testing.figure.passed'), tone: 'done', done: true, segments: full('done'),
-        label: PlatformI18n.t('changes:page.testing.label.passed'),
+        name: PlatformI18n.t('changes:page.testing.name.tested'),
+        figure: PlatformI18n.t(homeroomOnly ? 'changes:page.testing.figure.passedHomeroom' : 'changes:page.testing.figure.passed'),
+        tone: 'done', done: true, segments: full('done'),
+        label: PlatformI18n.t(homeroomOnly ? 'changes:page.testing.label.passedHomeroom' : 'changes:page.testing.label.passed'),
         note: [cost(), superseded ? PlatformI18n.t('changes:page.testing.note.olderMain') : null].filter(Boolean), actions,
       };
     }
@@ -8711,7 +8792,10 @@ const AppView = {
     }
     const running = !view.notStarted && (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(view.state) || view.retrying);
     if (running) return { state: view.state, html: '', line: PlatformI18n.t('changes:page.shots.taking'), waiting: true };
-    return { state: view.state, html: '', line: view.sentence, waiting: false };
+    return {
+      state: view.state, html: '', line: view.sentence, waiting: false,
+      retake: AppView._canRetakeShots(item) ? Number(item.id) : null,
+    };
   },
 
   // "The preview is ready · Try it", in a change's stream.
@@ -10471,21 +10555,49 @@ const AppView = {
   // Waiting for approval — and, while the board they belong to is NOT
   // showing live (the board's own burst refresh covers that), re-reads its
   // proposals + merged parts in the background, so the row is in Done when
-  // the board next paints. Writes caches only, and never repaints: an open
-  // proposal page is undisturbed (_topicRowFor also looks in _merged, so it
-  // still finds the row there after the partial load moves it).
+  // the board next paints. The open change page and topic head are told of
+  // the patch too, so their pill flips without a reload (#6490).
   //
   // `appSlug` decides whose lists these are (_devDataSlug names the app the
   // last load was made for), so a merge on one app never touches another's
   // caches, and a board that has not loaded whole once does nothing here —
   // its own whole load on open is already correct.
-  noteSessionMerged(sessionId, appSlug) {
+  //
+  // #6490: the merge reaches EVERY cached copy of the row, not just the open
+  // list's. A viewer's own card (_mySessions), a shared card
+  // (_sharedSessions), a merged column's row and the change open on its page
+  // (_topicProposal) otherwise kept drawing the open-vote pill. The change
+  // page and the request page's section are told too, so their pill re-derives
+  // from the patched status. `live` (a vote_update once production runs it)
+  // fills `live_at`, which statusPillState reads; without it a freshly merged
+  // row must carry `live_at: null` or it would read ✓ Live too early.
+  noteSessionMerged(sessionId, appSlug, opts) {
     if (!appSlug || AppView._devDataSlug !== appSlug) return false;
     const id = Number(sessionId);
     if (!Number.isFinite(id)) return false;
-    const row = (AppView._proposals || []).find((p) => p && Number(p.id) === id);
-    if (row && (row.status === 'promoted' || row.status === 'merging')) {
-      row.status = 'merged';
+    const live = !!(opts && opts.live);
+    // The lists _topicRowFor reads. The open topic row is often the very
+    // object in _proposals, so patch each row object once.
+    const rows = [];
+    for (const list of [AppView._proposals, AppView._mySessions, AppView._sharedSessions, AppView._merged]) {
+      const row = (list || []).find((p) => p && Number(p.id) === id);
+      if (row && !rows.includes(row)) rows.push(row);
+    }
+    if (AppView._topicProposal && Number(AppView._topicProposal.id) === id
+        && !rows.includes(AppView._topicProposal)) rows.push(AppView._topicProposal);
+    let patch = null;
+    for (const row of rows) {
+      const moving = row.status === 'promoted' || row.status === 'merging';
+      // A second merged event is a no-op, except that `live` fills `live_at`
+      // on a row that merged before production ran it.
+      if (!moving && !(live && row.status === 'merged')) continue;
+      const kept = row.live_at !== null && row.live_at !== undefined;
+      patch = { status: 'merged', live_at: live ? (kept ? row.live_at : new Date().toISOString()) : null };
+      Object.assign(row, patch);
+    }
+    if (patch) {
+      AppView._forwardChangePatch(id, patch);
+      AppView._repaintTopicIfShowing(id);
     }
     if (!AppView._devDataReady) return false;
     if (!AppView.appData || AppView.appData.slug !== appSlug) return false;
@@ -11752,7 +11864,11 @@ const AppView = {
       const shipped = mergedData.shipped;
       AppView._mergedShipped = shipped
         && Number.isFinite(shipped.week) && Number.isFinite(shipped.prevWeek)
-        ? { week: shipped.week, prevWeek: shipped.prevWeek }
+        ? {
+          week: shipped.week,
+          prevWeek: shipped.prevWeek,
+          prevWeekToDate: Number.isFinite(shipped.prevWeekToDate) ? shipped.prevWeekToDate : null,
+        }
         : null;
       }
       // Every cache this function fills is now populated, so the surfaces may
@@ -12413,6 +12529,9 @@ const AppView = {
         ...base, kind: 'request', noun: 'request', n: Number(it.number) || null,
         category: cat ? cat.label : '', replies: Number(it.chatCount) || 0,
         stage: ws && ws.key !== 'claimed' && ws.key !== 'in_review' ? 'worked' : (ws && ws.key === 'in_review' ? 'vote' : 'request'),
+        // Nobody has taken it (the Workshop's "Nobody is on these"), so a
+        // row can say so where it would otherwise only name its column.
+        unclaimed: AppView._issueUnclaimed(it),
         at: ts(it.createdAt || it.created_at), ago: agoOf(it.createdAt || it.created_at),
       };
     }
@@ -14310,6 +14429,17 @@ const AppView = {
         const t = mergedAtOf(m);
         return t < weekStartMs && t >= weekStartMs - WEEK;
       }).length;
+    // #6547: the same point last week — last Monday 00:00 UTC to seven days
+    // ago — so a Monday morning compares like with like instead of reading as
+    // a fall against the whole of last week. An older server sends no
+    // to-date count, and the full prior week is then the comparison, as it
+    // was before.
+    const shippedPrevToDate = serverShipped
+      ? (serverShipped.prevWeekToDate != null ? serverShipped.prevWeekToDate : serverShipped.prevWeek)
+      : allMerged.filter((m) => {
+        const t = mergedAtOf(m);
+        return t >= weekStartMs - WEEK && t < nowMs - WEEK;
+      }).length;
     // Page-counted numbers are floors; server counts never are. The walk
     // marks its own figures with this for the same reason the tiles do.
     const weekCountsPartial = !serverShipped && !!AppView._mergedHasMore;
@@ -14325,6 +14455,7 @@ const AppView = {
         .filter((r) => r.id > 0),
       shippedWeek: shippedThisWeek,
       shippedPrevWeek: shippedPrev,
+      shippedPrevWeekToDate: shippedPrevToDate,
       people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
       unclaimed: idle.length,
       busiest: AppView._busiestTheme(named),
@@ -14341,9 +14472,11 @@ const AppView = {
       openLine: (tData && tData.digestCards && tData.digestCards.open) || '',
       // The weeks, newest first, each with what the server can stand behind
       // for it. `shippedWeek`/`shippedPrevWeek` are the SAME two numbers the
-      // tiles use (#1922: counted over the whole merged history server-side,
-      // so exact whatever the page holds) — the walk states them per window
-      // rather than recomputing anything. There is no `opened` counterpart:
+      // walk states per window (#1922: counted over the whole merged history
+      // server-side, so exact whatever the page holds) — while the tiles'
+      // rate compares the week against `shippedPrevWeekToDate`, because a
+      // complete "Last week" row and a rate measured to the same point are
+      // two different questions. There is no `opened` counterpart:
       // nothing counts issues created per window, and deriving one from the
       // capped board snapshot would put a floor next to an exact number and
       // read as if both were counts.
@@ -17844,7 +17977,21 @@ const AppView = {
   // `html` is `DevChat.renderMarkdown`'s output: another renderer's markup,
   // sanitised where it is built, rendered through a sink.
   _proposalBodyView(pr) {
-    const md = pr && typeof pr.pr_body === 'string' ? pr.pr_body.trim() : '';
+    let md = pr && typeof pr.pr_body === 'string' ? pr.pr_body.trim() : '';
+    // When the screenshots failed, the description's "Before & after" block
+    // links to shots that do not exist. Leave it out here, where Homeroom
+    // shows the description; the pull request on GitHub keeps it.
+    const failedShots = pr && pr.shots && typeof pr.shots === 'object'
+      && String(pr.shots.state || '') === 'failed' && pr.shots.automaticRetryPending !== true;
+    if (failedShots) {
+      for (const [open, close] of [['<!-- usernode:shots -->', '<!-- /usernode:shots -->'],
+        ['<!-- usernode:visual-evidence -->', '<!-- /usernode:visual-evidence -->']]) {
+        const start = md.indexOf(open);
+        const end = md.indexOf(close);
+        if (start !== -1 && end > start) md = `${md.slice(0, start)}${md.slice(end + close.length)}`;
+      }
+      md = md.replace(/\n{3,}/g, '\n\n').trim();
+    }
     if (!md) return null;
     const id = Number(pr && pr.id);
     const hasStableId = Number.isInteger(id) && id > 0;
@@ -17989,6 +18136,19 @@ const AppView = {
     const actions = (isMerged || AppView.readOnly)
       ? []
       : [...AppView._cardVoteButtonSpecs(pr), ...bandKudos];
+    // A change whose screenshots failed offers its author or a project admin
+    // the retake the change page's ⋯ menu already has, right where the
+    // failure shows. The band's one-line fold moves it into ⋯ when there is
+    // no room, like any other action that does not fit. The detail head
+    // (`noNav`) carries none: its page keeps the ⋯ row.
+    if (!noNav && !isMerged && !AppView.readOnly && AppView._canRetakeShots(pr)) {
+      actions.push({
+        key: 'shots-retake', cls: 'gc-vote-btn',
+        label: PlatformI18n.t('changes:shots.card.takeAgain'),
+        title: PlatformI18n.t('changes:page.menu.takeShotsAgainTitle'),
+        act: { fn: 'rerunShots', args: [pr.id] }, passNode: true,
+      });
+    }
     // With the slot on the face, ⋯ drops its "Give kudos" row — the same
     // rule the merged card has always applied (two ways to give one kudos
     // on one card is one too many).
@@ -18265,17 +18425,27 @@ const AppView = {
   // The integration step's line, from the same columns integrationStep reads
   // and the conflict lane's verdict on this head.
   _integrationLine(g, p, viewer) {
-    if (g.state === 'done') return null;
-    const served = (p.integration && Array.isArray(p.integration.blockReasons)) ? p.integration.blockReasons : [];
     const fresh = AppView._freshnessOf(p);
+    // A measurement is only honest with its age: "measured 2 minutes ago".
+    // MergeStatus loads before this module; a sandbox without it gives the
+    // bare line rather than throwing.
+    const aged = (line) => {
+      const age = (typeof MergeStatus !== 'undefined' && MergeStatus && typeof MergeStatus.ageOf === 'function')
+        ? MergeStatus.ageOf(fresh.checkedAt) : null;
+      return age ? PlatformI18n.t('changes:step.integration.withAge', { line, measured: age }) : line;
+    };
+    if (g.state === 'done') return aged(PlatformI18n.t('changes:step.integration.clean'));
+    const served = (p.integration && Array.isArray(p.integration.blockReasons)) ? p.integration.blockReasons : [];
     const n = Array.isArray(p.integration_conflict_paths) && p.integration_conflict_paths.length
       ? p.integration_conflict_paths.length : (Array.isArray(fresh.files) ? fresh.files.length : 0);
     const IDS = AppView.INTEGRATION_LINE_IDS;
-    const conflict = (ids) => (n ? PlatformI18n.t(ids.files, { count: n }) : PlatformI18n.t(ids.main));
+    const conflict = (ids) => aged(n ? PlatformI18n.t(ids.files, { count: n }) : PlatformI18n.t(ids.main));
     const conflicting = g.state !== 'pending' || fresh.mergeability === 'conflict'
       || p.merge_conflict_state === 'failed' || served.length > 0;
     if (!conflicting) {
-      return fresh.mergeability === 'unknown' || fresh.mergeability == null ? PlatformI18n.t('changes:step.integration.notMeasured') : null;
+      return fresh.mergeability === 'clean'
+        ? aged(PlatformI18n.t('changes:step.integration.clean'))
+        : PlatformI18n.t('changes:step.integration.measuring');
     }
     if (served.includes('integrating')) return n ? PlatformI18n.t('changes:step.integration.resolvingFiles', { count: n }) : PlatformI18n.t('changes:step.integration.resolvingMain');
     if (served.includes('unresolvable') || p.merge_conflict_state === 'failed') return conflict(IDS.manualSync);
@@ -18531,9 +18701,6 @@ const AppView = {
     if (!pr || pr.status !== 'promoted') return [];
     // A project's first version is not put to a vote (D1): no Yes or No.
     if (pr.first_version === true) return [];
-    // #6505: the yes votes its rule asks for are in, so the vote is decided
-    // and the button takes no further part in it.
-    if (AppView._votesDecided(pr)) return [];
     // #2038: the vote carries the approval EPOCH the card was rendered with,
     // not the commit. A commit changes whenever the platform brings the
     // proposal up to date with main, and comparing commits made every one of
@@ -18580,23 +18747,6 @@ const AppView = {
         act: { fn: 'castVote', args: [pr.id, 'no', ...rev] },
       },
     ];
-  },
-
-  // #6505: the vote is DECIDED, so there is nothing left to press. True once
-  // the yes votes its rule asks for are in (the pill's own tally, which is
-  // already the approvals-mode n) and the change is not waiting on another
-  // member's Yes. A change counting down to go live is decided while the
-  // clock runs; one being set aside or contested is not, because a vote
-  // there can still change how it ends. A leading change below its majority
-  // (lazyLead) keeps its buttons too.
-  //
-  // Only the controls this reads go: the server's vote rules are unchanged.
-  _votesDecided(pr) {
-    if (!pr || pr.status !== 'promoted' || pr.first_version === true) return false;
-    const st = AppView.statusPillState(pr);
-    if (!st || st.key === 'reject_countdown' || st.key === 'contested') return false;
-    if (!(Number(st.yes) >= Math.max(1, Number(st.majority) || 1))) return false;
-    return !AppView._awaitingOtherMember(pr);
   },
 
   // The Needs-you card's "your yes puts it live" (and the end card's "Your
@@ -18896,6 +19046,11 @@ const AppView = {
       notes,
       linked,
       blocks,
+      // #6552: the help "?" explains THIS change, whose row the Votes step
+      // was built from — not the page's item, which on a request's page is
+      // the request and has no votes. The id rides beside data-voting-help
+      // so the click handler can resolve it through `_changeItems`.
+      changeId: pr.id,
       // The roster arrives from its own fetch; the head paints 'loading'
       // and `_loadVoteRoster` republishes when it answers.
       roster: showHelp ? (AppView._voteRoster[pr.id] || { phase: 'loading' }) : null,
@@ -19047,12 +19202,14 @@ const AppView = {
       // come from the same fields the pill uses, so they cannot disagree.
       rows.push({
         key: 'votes', tone: yes >= req ? 'ok' : 'vote', label: PlatformI18n.t('changes:ledger.label.votes'),
-        sub: PlatformI18n.t('changes:ledger.votes.needed', { yes, required: req }),
+        sub: PlatformI18n.t('changes:ledger.votes.needed', { count: yes, required: req }),
         text: [], roster: { ...d.roster, approved: yes >= req }, foot: [],
         warnFoot: [d.explicitNote, d.lockedNote].filter(Boolean).map((n) => [n]),
         // "How voting works" rides at the right end of this row's line — the
         // one row it explains — instead of a caption under the whole ledger.
         help: !!d.helpHint,
+        // #6552: the change the row is about, so the "?" reads its votes.
+        changeId: d.changeId != null ? d.changeId : pr.id,
       });
     }
 
@@ -22534,12 +22691,19 @@ const AppView = {
       }
       // "How voting works" help affordance (topic-head "?" button + the
       // inline "How voting works" link). Both carry data-voting-help and
-      // open the same read-only popover for the current topic item.
+      // open the same read-only popover for the change they explain.
+      // #6552: on a request's page the page item is the REQUEST, which has
+      // no votes; the Votes step carries its change's id beside the hint,
+      // so the popover counts the same row the card does.
       const help = e.target.closest('[data-voting-help]');
       if (help) {
         e.preventDefault();
         e.stopPropagation();
-        AppView._openVotingHelpPopover(help, AppView._findTopicItem());
+        const changeId = Number(help.dataset && help.dataset.votingHelpChange);
+        const row = Number.isFinite(changeId) && changeId > 0
+          ? (AppView._changeItems.get(changeId) || AppView._findTopicItem())
+          : AppView._findTopicItem();
+        AppView._openVotingHelpPopover(help, row);
         return;
       }
       // The click that RAN a ⋯ menu row is the click that opened whatever
@@ -25099,12 +25263,26 @@ const AppView = {
     const integrationMergeability = p.integration_merges_clean === true ? 'clean'
       : p.integration_merges_clean === false ? 'conflict' : null;
     const integrationFiles = Array.isArray(p.integration_conflict_paths) ? p.integration_conflict_paths : [];
-    const useIntegrationMerge = integrationWins && integrationMergeability !== null;
+    // #6550 — the integration record is our own real merge, made for this
+    // version of the change. A later GitHub snapshot that says nothing
+    // (mergeability null or 'unknown') is not a newer answer, so it must not
+    // hide one: the step read "Not measured yet" beside a clean measurement.
+    // A snapshot with a real verdict of its own still wins, as before.
+    const integrationCurrent = !(p.integration && p.integration.stale === true)
+      && !(p.integration_head_sha && p.reviewed_head_sha
+        && String(p.integration_head_sha).toLowerCase() !== String(p.reviewed_head_sha).toLowerCase());
+    const useIntegrationMerge = integrationMergeability !== null
+      && (integrationWins
+        || (integrationCurrent && (legacyMergeability == null || legacyMergeability === 'unknown')));
     const files = useIntegrationMerge ? integrationFiles : legacyFiles;
     const complete = useIntegrationMerge ? true : legacyComplete;
     const integrationBehind = num(p.integration_behind_by);
     return {
-      checkedAt: integrationWins ? p.integration_measured_at : legacyCheckedAt,
+      // The time belongs to the newest measurement, even when neither source
+      // carries a verdict yet: a row says how old what it reports is. A record
+      // with no timestamp of its own leaves the older one in place.
+      checkedAt: (integrationWins || (useIntegrationMerge && integrationAt !== null))
+        ? p.integration_measured_at : legacyCheckedAt,
       mergeability: useIntegrationMerge ? integrationMergeability : legacyMergeability,
       files: files.filter((x) => typeof x === 'string'),
       filesComplete: complete === undefined ? null : complete,
@@ -25449,6 +25627,26 @@ const AppView = {
           ? PlatformI18n.t('changes:badge.reason.githubRefused.detailSoon')
           : PlatformI18n.t('changes:badge.reason.githubRefused.detail', { time: heldTime }),
         waiting: true,
+      });
+    }
+    // #6546: GitHub's required checks held it back: still running, or failed
+    // and being run again on today's main (amber, Homeroom acts), or failed
+    // again after that (its author's to fix).
+    if (served.includes('github_checks')) {
+      out.push({
+        key: 'github_checks',
+        label: PlatformI18n.t('changes:badge.reason.githubChecks.label'),
+        detail: heldSoon
+          ? PlatformI18n.t('changes:badge.reason.githubChecks.detailSoon')
+          : PlatformI18n.t('changes:badge.reason.githubChecks.detail', { time: heldTime }),
+        waiting: true,
+      });
+    }
+    if (served.includes('github_checks_failing')) {
+      out.push({
+        key: 'github_checks_failing',
+        label: PlatformI18n.t('changes:badge.reason.githubChecksFailing.label'),
+        detail: PlatformI18n.t('changes:badge.reason.githubChecksFailing.detail'),
       });
     }
     // The APP's merges are paused by a red main (services/main-watch.js).
@@ -26475,6 +26673,23 @@ const AppView = {
     };
   },
 
+  // Whether the viewer may start a failed run again: its author or an app
+  // admin, the same people the change page's ⋯ menu offers it to, and only
+  // while the platform is not already retrying it on its own. A failure
+  // caused by a declaration that says nothing visible changed has no retry
+  // worth pressing. Mirrors the server's rule (src/routes/shots.js).
+  _canRetakeShots(item) {
+    if (!item || AppView.readOnly) return false;
+    const shots = item.shots && typeof item.shots === 'object' ? item.shots : null;
+    if (!shots || String(shots.state || '') !== 'failed') return false;
+    if (shots.automaticRetryPending === true) return false;
+    if (shots.failureCode === 'visible_changes_conflict') return false;
+    const mine = !!(App.user && Number(item.user_id) === Number(App.user.id));
+    const manager = !!(App.user && App.user.canAdminWrite)
+      || !!(AppView._proposalsCtx && AppView._proposalsCtx.isAppAdmin);
+    return mine || manager;
+  },
+
   // An element shot too small to read at card size (a corner badge is a few
   // dozen pixels) does not lead; the screen shot does, on both sides, so the
   // pair stays comparable. A shot without recorded dimensions still leads.
@@ -26731,11 +26946,16 @@ const AppView = {
     if (!shots || typeof shots !== 'object') return '';
     const thread = !!opts.thread;
     const detailsOnly = !!opts.details;
-    if ((thread || detailsOnly) && String(shots.state || '') !== 'verified') return '';
+    const state = String(shots.state || 'planned');
+    // A failed run's details reading is the one non-verified one that draws:
+    // the sheet says what happened and why, instead of linking to shots that
+    // do not exist. One the platform is already retrying reads as under way
+    // and draws nothing there.
+    const failedDetails = detailsOnly && state === 'failed' && shots.automaticRetryPending !== true;
+    if ((thread || detailsOnly) && state !== 'verified' && !failedDetails) return '';
     const sessionId = Number(opts.sessionId);
     const claims = Array.isArray(shots.claims) ? shots.claims.slice(0, 3) : [];
     const artifacts = Array.isArray(shots.artifacts) ? shots.artifacts : [];
-    const state = String(shots.state || 'planned');
     const esc = escapeHtml;
     const attr = escapeAttr;
     const shortSha = (sha) => /^[0-9a-f]{40}$/i.test(String(sha || ''))
@@ -26767,8 +26987,12 @@ const AppView = {
       const retryable = (state === 'failed' && shots.automaticRetryPending !== true
           && (shots.repairAvailable === true || shots.failureCode === 'shots_stopped'))
         || AppView._shotsNotStarted(shots);
-      const retry = retryable && Number.isInteger(sessionId) && sessionId > 0
-        ? `<button type="button" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.takeAgain')}</button>`
+      // The details reading of a failed run asks only whether this reader may
+      // start it again (`canRetake`, the author or an app admin); every other
+      // reading keeps the `retryable` rule above.
+      const wantsRetake = detailsOnly ? opts.canRetake === true : retryable;
+      const retry = wantsRetake && Number.isInteger(sessionId) && sessionId > 0
+        ? `<button type="button"${detailsOnly ? ' data-shots-retake="1"' : ''} class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.takeAgain')}</button>`
         : '';
       const stoppable = ['provisioning', 'exploring', 'replaying', 'reviewing'].includes(state)
         && Number.isInteger(sessionId) && sessionId > 0;
@@ -28303,10 +28527,13 @@ const AppView = {
   // started after the server answered has landed.
   _pendingVotes: new Map(),
   // The optimistic change to one cached row: the viewer's side and the raw
-  // counts. `qualified_yes_count` is left to the server — whether this voter
-  // qualifies is the invited-approver roster's call, not the client's. A
-  // null vote is a vote taken back (retractVote): the side it was on loses
-  // one and nothing gains.
+  // counts. A vote taken back also lowers the qualified count of its own side
+  // when that vote counted (#6477: every screen draws `qualified_yes_count`,
+  // so leaving it to the server kept the figure where it was until a reload);
+  // casting still leaves the qualified counts to the server, because whether
+  // this voter qualifies is the invited-approver roster's call. A null vote is
+  // a vote taken back (retractVote): the side it was on loses one and nothing
+  // gains.
   _applyVoteToRow(row, vote) {
     if (!row || row.my_vote === vote) return;
     if (vote == null && row.my_vote == null) return;
@@ -28314,9 +28541,16 @@ const AppView = {
       if (row[key] == null) return;
       row[key] = Math.max(0, (parseInt(row[key], 10) || 0) + by);
     };
+    const counted = row.my_vote_uncounted !== true && row.my_vote_advisory !== true;
     if (row.my_vote === 'yes') bump('yes_count', -1);
     if (row.my_vote === 'no') bump('no_count', -1);
     if (vote === 'yes' || vote === 'no') bump(vote === 'yes' ? 'yes_count' : 'no_count', 1);
+    // #6477: a counted vote taken back lowers the figure every screen draws,
+    // on the spot. An uncounted or advisory one never raised it.
+    if (vote == null && counted) {
+      if (row.my_vote === 'yes') bump('qualified_yes_count', -1);
+      if (row.my_vote === 'no') bump('qualified_no_count', -1);
+    }
     row.my_vote = vote == null ? null : vote;
   },
   _overlayPendingVote(row) {
@@ -28747,10 +28981,10 @@ const AppView = {
       ? AppView.voteState.bySession[String(sessionId)] : null;
     const targets = [];
     if (pr && pr.my_vote) {
-      targets.push({ row: pr, prev: { my_vote: pr.my_vote, yes_count: pr.yes_count, no_count: pr.no_count } });
+      targets.push({ row: pr, prev: { my_vote: pr.my_vote, yes_count: pr.yes_count, no_count: pr.no_count, qualified_yes_count: pr.qualified_yes_count, qualified_no_count: pr.qualified_no_count } });
     }
     if (live && live !== pr && live.my_vote) {
-      targets.push({ row: live, prev: { my_vote: live.my_vote, yes_count: live.yes_count, no_count: live.no_count } });
+      targets.push({ row: live, prev: { my_vote: live.my_vote, yes_count: live.yes_count, no_count: live.no_count, qualified_yes_count: live.qualified_yes_count, qualified_no_count: live.qualified_no_count } });
     }
     // The side being taken back, for the "Sending…" mark every Vote button
     // for this change reads (#3984), whichever surface it is on.

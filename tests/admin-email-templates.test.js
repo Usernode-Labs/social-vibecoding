@@ -82,17 +82,17 @@ test('email template admin routes against PostgreSQL', { timeout: 180000 }, asyn
   await t.test('the list answers any admin with every action, template and layout', async () => {
     const res = await call('GET', '/api/admin/email-templates', undefined, 'view');
     assert.equal(res.status, 200);
-    assert.equal(res.body.actions.length, 13);
+    assert.equal(res.body.actions.length, 15);
     const otp = res.body.actions.find((a) => a.action === 'otp');
     assert.deepEqual(otp.required, { html: ['code'], text: ['code'] });
     assert.ok(otp.placeholders.some((p) => p.name === 'code'));
     assert.ok(res.body.actions.find((a) => a.action === 'build_ready').placeholders.find((p) => p.name === 'lead').fromCode);
-    assert.equal(res.body.templates.filter((r) => r.status === 'live').length, 13);
+    assert.equal(res.body.templates.filter((r) => r.status === 'live').length, 15);
     assert.ok(Array.isArray(res.body.templates[0].locales));
     assert.ok(res.body.layouts.length >= 1);
     const layouts = await call('GET', '/api/admin/email-layouts', undefined, 'view');
     assert.equal(layouts.status, 200);
-    assert.equal(layouts.body.layouts[0].usedBy.length, 13);
+    assert.equal(layouts.body.layouts[0].usedBy.length, 15);
     const outsider = await call('GET', '/api/admin/email-templates', undefined, 'none');
     assert.notEqual(outsider.status, 200, 'not an admin: adminMiddleware turns them away');
   });
@@ -286,7 +286,8 @@ test('email template admin routes against PostgreSQL', { timeout: 180000 }, asyn
     const res = await call('POST', '/api/admin/email-layouts', { familyId: layout.family_id, name: layout.name, html: withoutWhy, text: layout.text, expectedLiveId: layout.id });
     assert.equal(res.status, 400);
     assert.ok(res.body.errors.some((e) => e.message.includes('Opened, link in why') && e.message.includes('{{unsubscribeUrl}}')), JSON.stringify(res.body));
-    assert.deepEqual(res.body.templates.map((x) => x.action), ['project_opened']);
+    // The first waitlist reminder's stop link lives in its why line too.
+    assert.deepEqual(res.body.templates.map((x) => x.action), ['project_opened', 'waitlist_reminder']);
     assert.equal((await liveLayout()).id, layout.id);
   });
 
