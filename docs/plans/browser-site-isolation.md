@@ -3,12 +3,16 @@
 Status: implementation and local validation; deployment acceptance is separate.
 
 Target layout: the platform stays on `onhomeroom.com` (`app.onhomeroom.com`),
-production apps move to `onhomeroom.app`, and previews get a registrable
-domain of their own (to be registered). Three ICANN sites, not one: the
-Public Suffix List's private section would give each app its own site, but it
-holds only in browsers that already ship an entry, and the list's maintainers
-decline projects of our size. This change prepares the cutover and leaves it
-disabled. It is not a declaration that deployment isolation is complete.
+and production apps and their previews move to `onhomeroom.app`. Two ICANN
+sites, not one: the Public Suffix List's private section would give each app
+its own site, but it holds only in browsers that already ship an entry, and
+the list's maintainers decline projects of our size. Previews share the apps'
+site for now. That keeps the platform out of their reach, but a preview's
+unreviewed code is same-site with every production app; only a previews
+domain of its own (a later setting beside `USERNODE_APPS_DOMAIN` in
+`caddy.js`) protects apps from their previews. This change prepares the
+cutover and leaves it disabled. It is not a declaration that deployment
+isolation is complete.
 The strict cutover in this change targets Kubernetes. The stock Compose edge
 still routes one wildcard site and captures production over private HTTP;
 startup refuses strict mode there until that edge and capture transport are
@@ -72,13 +76,13 @@ shared site too:
    Android currently construct `session` when restoring a web session. They
    must install and inspect the protected cookie on HTTPS, clear both names
    at sign-out, and handle the one-time browser reauthentication below.
-4. Provision `onhomeroom.app` for production apps and a previews domain: DNS
-   at a provider cert-manager can drive (wildcards need DNS-01), wildcard TLS,
+4. Provision `onhomeroom.app` for production apps and previews: DNS at a
+   provider cert-manager can drive (wildcards need DNS-01), wildcard TLS,
    shared assets, gate, preview and custom-domain routes, network policy and
    ingress, the iOS App-Bound Domains list, and the token relay for private
    apps in shell frames (the gate's Lax cookie is not sent to a cross-site
-   frame). Previews may move after apps: strict mode needs only both off the
-   platform's site. Inventory and retire old app/preview routes on the
+   frame). Strict mode needs apps and previews off the platform's site, not
+   apart from each other. Inventory and retire old app/preview routes on the
    platform site, including old captures and custom domains. A configuration
    check cannot prove their absence. Do not leave an alias serving untrusted
    content on the old site. `git.onhomeroom.com` and the marketing apex stay
