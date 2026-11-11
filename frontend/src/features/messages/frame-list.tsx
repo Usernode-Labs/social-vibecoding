@@ -161,7 +161,7 @@ export function MessagesFrameList({
           {state.error ? (
             <Card pad>
               <div className={k('txt')} role="status" data-inbox-failed="">
-                {state.error}{' '}
+                {`${state.error} `}
                 <button type="button" className={k('link')} onClick={state.onRetry}>{tc('core:common.tryAgain')}</button>
               </div>
             </Card>
@@ -190,7 +190,7 @@ export function MessagesFrameList({
               {archive.error ? (
                 <Card pad>
                   <div className={k('txt')} role="status">
-                    {archive.error}{' '}
+                    {`${archive.error} `}
                     <button type="button" className={k('link')} onClick={archive.onRetry}>{tc('core:common.tryAgain')}</button>
                   </div>
                 </Card>

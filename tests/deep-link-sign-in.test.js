@@ -135,6 +135,7 @@ test('under a look the bar names the place a gated link was for, in the product\
   assert.equal(renderToHtml(createElement(lib().GatePlace, { target: '#profile/evan' })), '<span hidden="" data-guest-place="head">@evan</span>');
   assert.deepEqual(said('#settings/account'), ['Settings']);
   assert.deepEqual(said('#leaderboard'), ['Challenges']);
+  assert.deepEqual(said('#challenges'), ['Challenges'], 'the older address of the same page');
   assert.deepEqual(said('#leaderboard/challenges/3/9'), ['Challenges']);
   assert.deepEqual(said('#leaderboard/kudos'), [null], 'a place with no name of its own leaves the bar its brand');
   assert.deepEqual(said('#notifications'), [null]);

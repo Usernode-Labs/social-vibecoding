@@ -296,7 +296,7 @@
     }
   },
   "wear": {
-    "note": "What the product's own markup wears. A conversation is drawn by the product's renderer, not by kit components, so for each kit component named here (roots) every kit rule that mentions it is repeated for the product's class (to), with the component's inner classes swapped for the product's (parts: a kit class, or a state the kit writes as a class, to a product selector). skip lists tour selectors left out. A part only counts inside a rule that names its root. The composer's field is not worn: the kit draws a placeholder's words, not a field (app.css, THE FRAME IN THE SHELL). The stand-alone pages a visitor signs in on (features/auth: sign-in, register, the waitlist form, more ways) are the product's own forms and wear the title, the card and the button; their one accent-filled control is the primary button, a white or grey pill a quiet one. Settings (features/settings, looks v2) is the product's own screen wearing the kit everywhere inside #settings-root, scoped with :is(#settings-root *) inside the compound, so a rule naming the row twice (.row+.row) stays one selector and every worn rule outranks the standard sheet's own (which reach a heading with six classes): its head's title and purpose (the head's own box is laid by hand in app.css: as a root it would take the rules that dress a button in a kit page's head away from the other wearers of btn), the open page's name (the 22px sub-heading), the search field, and stable ui-* names in the shared markup that draw nothing in the standard look: ui-glist and ui-card the card; ui-lrow and ui-row the row (always the wrapping kind, so a switch's sentence is never cut; ui-row-sm and a menu row the 48px one, the open page the lit one); ui-sechead and ui-cap the small-caps label; ui-secblurb and ui-note the 13px note; un-switch the switch; ui-inp the field; ui-btn the button with its kinds; ui-link the link; ui-pill the pill. A part mapped to an empty string is a state every one of these carries. Where Settings shares a root with another page (cap, card, title, btn) it is a wearer of its own (\"also\"), so its id weighs on nobody else. Edit profile (features/profile/profile-edit-sheet.tsx) is the product's dialog: its title, group labels, groups and Save wear the title, the cap, the card and the button; its rows are dressed by hand in app.css, since a field row is a label over its box, not the kit's one-line row. The bell's sheet (#notifications-sheet) stays the product's and wears the card on each of its cards and the look's tabs on its Unread and All (a tab that is on is the one aria-selected). An item's page (a request, a change: features/dev-board/topic) keeps the product's own discussion: the stream wears the card (\"also\": a second wearer written as a selector of its own, since it needs two ids to outweigh the standard look's rule and :is() would lift every other wearer with it), the line that counts the replies wears a section's label (cap, and sechead for the looks that draw a section's label larger; the section head's own box is skipped, the stream is not one), and a line of what happened wears the event (evt). New message's own dialog (features/messages/create-dialog.tsx, the tour's s16) is the product's: its card is lifted out of its root when shown, so it is named by an attribute of its own ([data-new-message]), and its title, its Direct and Group switch and its two buttons wear the title, the look's tabs and the button, each as a further wearer; the rest is dressed by hand in app.css. In a reply thread's pane the line that counts the replies wears the day's label. Needs you (features/review-flow, the stage a vote is reviewed and cast on, in a project's page and on #needs) is the product's own and wears the look: the change's page the card (with the help rows' group), its back and its ⌄ the round button, its title the 17px sub-heading, Skip, Next, Send, the reason chips, the vote-kind chips and the end's buttons the button (quiet until chosen), a help row the 48px row, the reason's field the field. The Yes | No pair, the picture, the strip and every measure are the stage's own (app.css, NEEDS YOU).",
+    "note": "What the product's own markup wears. A conversation is drawn by the product's renderer, not by kit components, so for each kit component named here (roots) every kit rule that mentions it is repeated for the product's class (to), with the component's inner classes swapped for the product's (parts: a kit class, or a state the kit writes as a class, to a product selector). skip lists tour selectors left out. A part only counts inside a rule that names its root. The composer's field is not worn: the kit draws a placeholder's words, not a field (app.css, THE FRAME IN THE SHELL). The stand-alone pages a visitor signs in on (features/auth: sign-in, register, the waitlist form, more ways) are the product's own forms and wear the title, the card and the button; their one accent-filled control is the primary button, a white or grey pill a quiet one. Settings (features/settings, looks v2) is the product's own screen wearing the kit everywhere inside #settings-root, scoped with :is(#settings-root *) inside the compound, so a rule naming the row twice (.row+.row) stays one selector and every worn rule outranks the standard sheet's own (which reach a heading with six classes): its head's title and purpose (the head's own box is laid by hand in app.css: as a root it would take the rules that dress a button in a kit page's head away from the other wearers of btn), the open page's name (the 22px sub-heading), the search field, and stable ui-* names in the shared markup that draw nothing in the standard look: ui-glist and ui-card the card; ui-lrow and ui-row the row (always the wrapping kind, so a switch's sentence is never cut; ui-row-sm and a menu row the 48px one, the open page the lit one); ui-sechead and ui-cap the small-caps label; ui-secblurb and ui-note the 13px note; un-switch the switch; ui-inp the field; ui-btn the button with its kinds; ui-link the link; ui-pill the pill. A part mapped to an empty string is a state every one of these carries. Where Settings shares a root with another page (cap, card, title, btn) it is a wearer of its own (\"also\"), so its id weighs on nobody else. Edit profile (features/profile/profile-edit-sheet.tsx) is the product's dialog: its title, group labels, groups and Save wear the title, the cap, the card and the button; its rows are dressed by hand in app.css, since a field row is a label over its box, not the kit's one-line row. The bell's sheet (#notifications-sheet) stays the product's and wears the card on each of its cards and the look's tabs on its Unread and All (a tab that is on is the one aria-selected). An item's page (a request, a change: features/dev-board/topic) keeps the product's own discussion: the stream wears the card (\"also\": a second wearer written as a selector of its own, since it needs two ids to outweigh the standard look's rule and :is() would lift every other wearer with it), the line that counts the replies wears a section's label (cap, and sechead for the looks that draw a section's label larger; the section head's own box is skipped, the stream is not one), and a line of what happened wears the event (evt). New message's own dialog (features/messages/create-dialog.tsx, the tour's s16) is the product's: its card is lifted out of its root when shown, so it is named by an attribute of its own ([data-new-message]), and its title, its Direct and Group switch and its two buttons wear the title, the look's tabs and the button, each as a further wearer; the rest is dressed by hand in app.css. In a reply thread's pane the line that counts the replies wears the day's label. Needs you (features/review-flow, the stage a vote is reviewed and cast on, in a project's page and on #needs) is the product's own and wears the look: the change's page the card (with the help rows' group), its back and its ⌄ the round button, its title the 17px sub-heading, Skip, Next, Send, the reason chips, the vote-kind chips and the end's buttons the button (quiet until chosen), a help row the 48px row, the reason's field the field. The Yes | No pair, the picture, the strip and every measure are the stage's own (app.css, NEEDS YOU). The waiting room (features/auth/waiting.tsx and waiting-about.tsx) and a dead invite link are the product's own too, and every control in them is worn, each as a further wearer named by the node's own hooks: Look around, Join, Save and a \"How did you find us?\" choice the button (a choice not taken the quiet small one, Save and Join dimmed while disabled), Skip the link, \"Two quick questions\" the card with its title as the label over it, the dead link's title the title and its Continue the button. The fields of the stand-alone pages, of the sign-in sheet and of the waiting room wear the field (inp), so each look's own fill, ring and corners reach them.",
     "roots": {
       "post": {
         "to": ".messages-message",
@@ -356,6 +356,9 @@
           },
           {
             "to": "#auth-landing-screen [data-landing-invite=\"dead\"] > img + div"
+          },
+          {
+            "to": "form[data-waiting-about=\"ask\"] > h2"
           }
         ]
       },
@@ -370,6 +373,9 @@
           },
           {
             "to": ":is(.rf-page,.rf-desc-help)"
+          },
+          {
+            "to": "form[data-waiting-about=\"ask\"]"
           }
         ]
       },
@@ -384,6 +390,9 @@
           },
           {
             "to": "#auth-login-screen #recovery-view > h2"
+          },
+          {
+            "to": "#auth-landing-screen [data-landing-invite=\"dead\"] > h1"
           }
         ]
       },
@@ -414,6 +423,15 @@
             "parts": {
               "quiet": ":is(.rf-desc-go,.rf-end-btn:not(.rf-end-btn-go),.rf-morph:not([data-rf-morph=\"next\"]),.rf-chip:not([aria-checked=\"true\"]),[data-needs-vote-chip]:not([aria-pressed=\"true\"]))",
               "sm": "[data-needs-vote-chip]",
+              "off": ":disabled"
+            }
+          },
+          {
+            "to": ":is(a[data-waiting-look-around][href=\"#apps\"],form[data-waiting-invite] button[type=\"submit\"],#waiting-about-save,#waiting-about-discovery > button,#auth-landing-screen [data-landing-invite-dead-continue])",
+            "parts": {
+              "quiet": ".bg-zinc-100",
+              "block": ":is([data-waiting-look-around],[data-landing-invite-dead-continue])",
+              "sm": ":is(#waiting-about-discovery > *)",
               "off": ":disabled"
             }
           }
@@ -511,6 +529,13 @@
               "val": "",
               "focus": ":focus"
             }
+          },
+          {
+            "to": ":is(:is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen),[data-sign-in-sheet]) .rounded-2xl.overflow-hidden input:not([type=\"checkbox\"],[type=\"radio\"]),#recovery-email-input,#waitlist-confirm-email,#waiting-about-country,form[data-waiting-invite] input[type=\"url\"])",
+            "parts": {
+              "val": "",
+              "focus": ":focus"
+            }
           }
         ]
       },
@@ -532,7 +557,12 @@
         "to": ":is(.ui-link,:is(button,a):is(.text-violet-600,.text-violet-700,.underline,.text-red-700:not(.bg-red-50,.bg-red-500\\/10,.w-full)):not(.ui-lrow,.ui-row,.border,.bg-violet-600,.bg-zinc-100,.ui-btn)):is(#settings-root *)",
         "parts": {
           "bad": ":is(.ui-link-bad,.text-red-700,.text-red-600)"
-        }
+        },
+        "also": [
+          {
+            "to": "#waiting-about-skip"
+          }
+        ]
       },
       "secnote": {
         "to": ":is(.ui-secblurb,.ui-note):is(#settings-root *)"

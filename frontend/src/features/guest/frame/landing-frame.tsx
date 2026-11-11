@@ -119,7 +119,11 @@ export function LandingFrame({ apps, failed, onRetry, waitlist, waiting = null, 
       </span>
     );
   };
-  const search = <Search value={query} onChange={changeQuery} placeholder={th('home:search.placeholder')} label={th('home:search.label')} />;
+  // In the page's column the field is one of the stack's own items, whose gap
+  // is the room under it: the field's own margin on top of that made the one
+  // double gap of the page (flush). At the tabs' place (an account in line)
+  // it keeps its margin.
+  const search = <Search flush={!waiting} value={query} onChange={changeQuery} placeholder={th('home:search.placeholder')} label={th('home:search.label')} />;
 
   const side = waiting ? (
     <Sec label={t('auth:waiting.title')} data-guest-waitlist="">

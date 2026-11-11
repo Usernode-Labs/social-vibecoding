@@ -377,7 +377,7 @@ export function AiFrameList({
                 <div className={k('list')}>
                   {failed ? (
                     <div className={k('txt')} role="status" data-ai-failed={failed}>
-                      {failed === 'unreachable' ? t('messages:ai.work.unreachable') : t('messages:ai.work.failed')}{' '}
+                      {`${failed === 'unreachable' ? t('messages:ai.work.unreachable') : t('messages:ai.work.failed')} `}
                       <button type="button" className={k('link')} onClick={() => onRetry?.()} data-ai-retry="">{tco('core:common.tryAgain')}</button>
                     </div>
                   ) : null}
@@ -419,7 +419,7 @@ export function AiFrameList({
                   {liveBehind ? (
                     // #6233: one Reload under the list, for every row this tab is older than.
                     <div className={k('txt')} data-ai-older-tab="">
-                      {t('messages:ai.live.olderTab')}{' '}
+                      {`${t('messages:ai.live.olderTab')} `}
                       <button type="button" className={k('link')} onClick={() => reloadTab()} data-ai-older-tab-reload="">{t('messages:ai.short.reload')}</button>
                     </div>
                   ) : null}
@@ -442,7 +442,7 @@ export function AiFrameList({
                     {!history.ready ? <p className={k('txt')} role="status" data-ai-history-loading="">{t('messages:ai.history.loading')}</p> : null}
                     {history.ready && history.failed && !historyLines.length ? (
                       <div className={k('txt')} role="status" data-ai-history-failed="">
-                        {t('messages:ai.history.failed')}{' '}
+                        {`${t('messages:ai.history.failed')} `}
                         <button type="button" className={k('link')} onClick={history.retry}>{tco('core:common.tryAgain')}</button>
                       </div>
                     ) : null}

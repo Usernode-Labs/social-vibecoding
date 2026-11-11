@@ -841,3 +841,59 @@ Not faults:
 - Pourover's bar has no Suggest on a phone in the standard look either.
 
 Left to group 1: the project's name in the bar running under the bar's buttons on a phone.
+### Fix group 5, as built (11 Nov 2026): signed out and the waiting room
+
+Repairs to lane G after the visual pass (`skins-tour-v2/visual/v5.md`), on `redesign/skins-v2-fix5`, cut
+from `5e90072f2`. What changed, and what a later lane should know:
+
+- **The waiting room's controls are worn, not dressed by hand.** Look around, Join, Save and the "How did
+  you find us?" choices wear the button (a choice not taken is the quiet small one, the chosen one the
+  look's primary; Save and Join dim while they cannot be pressed), Skip the link, the country and the
+  invite's field the field, and "Two quick questions" the card with its title as the label over it, as the
+  invite card's is. A dead invite link's title and Continue wear the title and the button. A hand-set
+  `background: var(--fr-acc)` was the cause of the blue buttons under Brand kit and Sunrise: a look says its
+  own button, and only a worn node gets it.
+- **These wearers are named by the nodes' own hooks** (`form[data-waiting-about="ask"]`,
+  `a[data-waiting-look-around][href="#apps"]`, `#waiting-about-save`, …), not by `#auth-waiting-screen`:
+  `tests/looks-css.test.js` holds that version 2's kit rules name no waiting-room node, and a wearer of
+  `btn`, `inp` or `link` picks up the few version 2 rules that place those inside a kit element (ten
+  selectors, none of which can match in the room, which holds no kit element). The guard's count is 47 now
+  and its bound 53.
+- **The fields of the stand-alone pages and of the sign-in sheet wear the kit's field** (`inp`), in place of
+  a hand-set `--fr-ground` box. Every look but the kit's default restates its field (Paper white, Sunrise
+  sunk, Workbench 34px square), so the hand-set one was a cream box on Paper's white and matched no look.
+- **The address in the room's sentence** breaks only when it cannot fit a line (`overflow-wrap: anywhere`
+  under a look; the standard room's `break-all` is untouched).
+- **The sheet's dimming covers the bar.** The sheet is the landing screen's child, and that screen is a
+  layer under the guest's bar (40 under 41); while a sheet is up the screen is the upper one
+  (`#auth-landing-screen:has([data-sign-in-sheet])`, in the sheet's own block of app.css).
+- **The sheet's email step is laid out as the kit's sheet** (`kitSteps`), the fourth such step: the field's
+  card, "or" over a card of rows ("Other ways to continue" when Apple and Google are known, the phone, an
+  invite's ways), Send code, and the terms only where the standard step says them. A members' address
+  opened by a visitor asks for the sheet before the providers have answered, so it opens on
+  this step or on the first one as the timing falls (both were captured locally with the options answered in
+  the test browser, on one address); the standard look does the same, and under a look both are now the
+  kit's sheet. Every step that carries Email code | Password now draws it as the look's
+  tabs. `code`, `phone-code`, `forgot`, `username`, `account` and `link` still only wear the look.
+- **`#login-form` and `#register-form` keep their box.** The ways that stood after each form are its last
+  child now, in a neutral wrapper (`.auth-ways`: a class, no id, so the shell baseline is unchanged) that
+  takes back the one gap the form would put before it (`-mt-4` in the login form's `gap-4`, `!mt-0` in the
+  register form's `space-y-4`). Under a look the form is the flex column `order` works in. Sixteen
+  `look=standard` captures (sign in, forgot, email code, register; desktop and phone; light and dark) are
+  the same bytes before and after, and so are the Glass and Paper captures of the two pages.
+  `#otp-step-email` and `#recovery-email` still step aside with `display: contents`: they are `<div>`s with
+  no role to lose, and what `order` puts between their children (the error, the status, the way back) is
+  shared with the steps beside them.
+- Smaller: the landing's search is flush in the page's column (one gap, not two); on a phone the three
+  points are their titles alone, as the standard landing; `#challenges` names the bar Challenges; "I already
+  have a code" stands 16px under the primary button; a public project's four buttons take 12px of padding
+  on a phone and may wrap; the Discussion tab's Join stands 16px under its sentence.
+
+Left, and why:
+
+- **Communities on the landing** (ten featured cards in three columns, a blank tile while an icon loads, two
+  tile sizes down the rows, the closing line at the start): all drawn by `home/frame/to-join.tsx`, Home's
+  own view, which the landing only mounts.
+- The rows of a stand-alone page are still drawn by hand (the `row` root is Settings').
+- Not seen: the room with a real account in line, and what follows Save, Skip or Join (nothing was
+  submitted). The room was seen through `/?shot=waiting` and `/?shot=waiting-invite`.
