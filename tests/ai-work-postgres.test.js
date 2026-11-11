@@ -682,12 +682,16 @@ test('#6282: a change with an update on its way is Updating, then Update queued'
   // Proposing is never its author's yes: until bob taps his own, he owes the
   // vote like ada, and the Needs you feed asks for it.
   assert.deepEqual(await what(bob), []);
-  // Once he has said yes, his change is listed as up for a vote, and he sees
-  // the update instead of waiting on the vote.
+  // Once he has said yes, his yes is the vote the project's rule needs
+  // (#6594): the change is Approved and going live, owed by nobody, and he
+  // sees the update instead of waiting on the vote.
   await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [change.id, bob.id]);
-  assert.deepEqual(await what(bob), ['up_for_vote']);
+  assert.deepEqual(await what(bob), ['going_live']);
+  // An approved change merges as it was approved (nothing in the proposal's
+  // merge waits for an ask), so an update asked for now does not call it
+  // back to a vote: it stays Approved and going live.
   const second = await ask('queued');
-  assert.deepEqual(await what(bob), ['building:update_queued']);
+  assert.deepEqual(await what(bob), ['going_live']);
   await pool.query(`UPDATE homeroom_bot_change_asks SET status = 'done', done_at = NOW() WHERE id = $1`, [second.id]);
-  assert.deepEqual(await what(bob), ['up_for_vote']);
+  assert.deepEqual(await what(bob), ['going_live']);
 });
