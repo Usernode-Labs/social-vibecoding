@@ -188,7 +188,7 @@ test('a place\'s own body starts where its look\'s page does', () => {
 test('Challenges and Standings say "You, Challenges" to the bar, and go back the way the shell\'s arrow goes', () => {
   const frame = read('frontend/src/features/leaderboard/frame/challenges-frame.tsx');
   assert.match(frame, /const shellBack = \(\) => \{ document\.getElementById\('back-btn'\)\?\.click\(\); \};/);
-  assert.match(frame, /const crumb = \[you, here\];\n\s+framePageStore\.set\(\{ crumb, onBack: shellBack \}\);\n\s+return \(\) => \{ if \(framePageStore\.get\(\)\.crumb === crumb\) framePageStore\.set\(\{ crumb: null, onBack: null \}\); \};/, 'a pane going down takes back only its own crumb: the two tabs are two panes');
+  assert.match(frame, /const crumb = \[you, here\];\n\s+\/\/ [^\n]+\n\s+framePageStore\.set\(\{ crumb, onBack: shellBack, phoneUp: true \}\);\n\s+return \(\) => \{ if \(framePageStore\.get\(\)\.crumb === crumb\) framePageStore\.set\(\{ crumb: null, onBack: null \}\); \};/, 'a pane going down takes back only its own crumb: the two tabs are two panes');
   assert.equal((frame.match(/useChallengesCrumb\(up\);/g) || []).length, 2, 'both tabs, while each is the one on show');
   assert.match(frame, /const you = tc\('core:tabs\.me'\);\n\s+const here = t\('leaderboard:tabs\.challenges'\);/, 'words the product already has');
 });

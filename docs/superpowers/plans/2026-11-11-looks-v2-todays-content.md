@@ -978,8 +978,9 @@ Done:
   each look's page does (Workbench, Paper, Today).
 - **Challenges**: an open challenge is a row holding today's picture on its tone and today's rail (the state in
   words, a bar when the challenge is counted), from the standard card's own registry
-  (`lib/challenge-illustrations.ts`). The picture and the rail are drawn with the kit's existing `cart` and
-  `rail` classes inside `challenges-frame.tsx`, sized for a row by app.css: nothing was added to the kit.
+  (`lib/challenge-illustrations.ts`). The picture is the kit's `ChallengeArt` (group A's, added for Home's
+  Next challenges and this page) and the rail the kit's existing `rail` class inside `challenges-frame.tsx`,
+  sized for a row by app.css.
 - **The bar on Challenges and Standings** says You, then Challenges; its arrow presses the shell's own back.
 - **Messages' list**: a change in flight with news not seen ends in the standard row's dot; the pane keeps its
   place across a live re-sort (`list-place.ts`, a kit row told apart by its address) and offers "Oldest
@@ -1126,3 +1127,90 @@ head has none); "N more" and the chips' pickers (the product's own menus).
 answering `/api/me/waitlist` in the test browser and setting the two flags); the widget strip on iOS (shown by
 setting Home's widget state); an unread notification; a tile's locked or failed state. Dragging was done by
 mouse and by synthetic touch with the layout write caught, not sent.
+
+### Leftovers, group D, as built (11 Nov 2026): what groups A and B reported as left or as needing the kit and frame
+
+On `redesign/skins-v2-left-d`, cut from `ce6b5f7a9` (groups A and B merged). Group D owned the shared kit and
+frame files. Captures: `skins-tour-v2/local/caps/ld-b-*.png` (before) and `ld-a-*.png` (after). Pinned in
+`tests/looks-left-d.test.js`.
+
+**Kit (`kit.tsx`, the end of `kit.css`).**
+
+- *`Bars`*: a day may say itself (`spoken`, and its date as `id`). With that the chart is a list (`role="list"`,
+  each column a list item with the words for a screen reader, `.sro`, and as its hover), as the standard
+  chart is a `<ul>` of days; without it, the picture it was. You's This week hands it the standard chart's
+  own sentence (`profile:activity.daySpoken`, already built by `profile-store.js`). The grey baseline of an
+  empty day was already there (`.bcol.none`).
+- *`Row`*: `target` (and `rel`, `noopener noreferrer` unless given) makes a row that opens another site a real
+  link; `data-*` attributes pass through to the row's node. `Pill` takes `target` too. A public profile's
+  Verified rows and You's verified pills use them; nothing opens a site by `window.open` any more.
+- *Messages' list* tells a kit row apart by `data-inbox-row`, the standard row's own attribute and key, so the
+  pane has one reader and one correction for both lists (`FRAME_ROW` and the `href` comparison are gone).
+- *`Av`* takes `initials`. The standard Messages list says two letters for a name of two words on every face
+  (`format.tsx` `initials()`), so the kit's faces in Messages are handed the same.
+- *`PicCard`* takes `end`: a control of the card's own beside `meta`. A button may not sit in a link, so the
+  card is then a group (`.fdoor` over `.fm`).
+
+**Every native-kit shell wears the look (app.css, "EVERY MODAL, SHEET, ALERT AND MENU OF THE NATIVE KIT").**
+One rule for `.un-modal`, `.un-sheet`, `.un-alert` and `.un-popover`: the look's solid ground, ink and type,
+the kit sheet's corner (24px, Workbench 12px), shadow and edge, and the shell's own colour tokens
+(`--un-sheet-bg`, `--un-popover-bg`, `--dc-sheet`, `--dc-sheet-solid`, `--un-hairline`, `--un-muted`,
+`--un-accent`) pointed at the look's, so what a dialog paints with them inside (the feedback form's sticky
+foot) follows. An alert's answers are in the accent, a destructive one in the look's red; a menu's rows are
+the kit's small rows. Padding and width stay each dialog's own. The action sheet (group B) and the three You
+dialogs keep their rules, which come after and weigh more. Seen: Invite to community, Who can see & change
+it, a confirm, the feedback dialog, members and approvals, Share, Topics, in Glass, Paper and Workbench dark
+on a desktop, and Glass and Workbench dark on a phone. What a dialog draws inside (its buttons' shape, its
+fields) is still the product's, in the look's colours: a dialog by dialog job, not done.
+
+**The bar on a phone (`frame-app.tsx`, `frame-page-store.ts`).**
+
+- *A second line that does not fit* (Main Chat's "Only you can see this chat", for an admin) moves under the
+  bar's first row (`.barline`, the bar's ground and edge), where it wraps. The line in the crumb stays in the
+  document at no height as the measure (`scrollWidth > clientWidth`, followed by a ResizeObserver), hidden
+  from a screen reader while the other is up. The page area the chrome publishes starts under it.
+- *Challenges and Standings*: the bar says "You" and the title "Challenges". A page may ask the bar to keep
+  the crumb before the last on a phone (`phoneUp`), for a page whose own title says the last.
+
+**Pages that kept a standard body.**
+
+- *A week's page* (Workshop, "All of this week" or a past week's row; no address of its own): the kit's head
+  says the week's name; the bar says Homeroom, Workshop, the week, and its arrow goes back to the Workshop
+  (`page-back.tsx` publishes the crumb under a look; the page's own bar is put away, mounted). The week's
+  line and each group are the look's card, a group's count the small grey pill. The rows are the board's own
+  cards. All items and the slots page get the same bar through the same component.
+- *Homeroom bot's slots* (`?ws=bot`): its pane has no plate, a heading is the kit's label, a list the look's
+  card, a row keeps its own lines in the look's ink and hairline.
+- *A topic's channel* (`/app/<slug>/dev/c/<handle>`): laid out as #general is, the room in the content column
+  and beside it This channel (what the topic is for, and its requests as a row: `topic-head.tsx` draws the
+  kit's group under a look). The topic's numbers and Open problems stand over the room, each a label over
+  the look's card.
+- *The made screen after Make* (from Create): it stands in the frame's page area as Make does (it was drawn
+  across the sidebar: its root lacked the class the placing rule named), its two buttons are the kit's, its
+  cards the look's surface. The first session's own made screen has no chrome and is not touched.
+- *A challenge's own page* (`#leaderboard/challenges/<event>/<id>`): the kit's narrow page. Its name is the
+  kit's title, the action the kit's button, "What counts" a label, the rail the look's sunk bar.
+
+**Smaller pieces.** On an item's page the small Before and after pair, the Before and after card of a
+change's own page, a spec card in a discussion and the plan card are the look's card (hand rules). Edit
+profile's cards have the kit's plain edge in the sheet (Glass's own card had nothing to stand out from there,
+so Username and Account email read as bare lines) and the "What's on it" preview is a card on the look's
+surface. The New message dialog's foot wraps, so "Blocked people" is never broken over two lines. A member's
+Home lists Communities to join as picture cards with their line and Join, Featured first, as the standard
+Home does (this replaces group A's "a member's Home keeps Featured as text cards and the rest as rows").
+
+**Wear map and bounds.** New `also` wearers at the end of `cap`, `card`, `title` and `btn`.
+`tests/looks-css.test.js` passed without its bound being raised.
+
+**Not faults (ruled).** Mosaic's tiles; "Bot" on the phone's tab; Suggest in the bar; the sidebar's
+arrangement (it does not list a community's places); Make it in the head on a phone; Import at 1024px; the
+standard grid while Pinned apps is being rearranged.
+
+**Not seen in a browser.** The plan card on a request (no request on this copy has a plan waiting), a spec
+card in a discussion and the Before and after card of a change's own page (none found on this copy): their
+rules were written from the markup. The made screen was reached by answering the create request inside the
+test browser with an existing project; nothing was written. A bar line that wraps to two lines (the one line
+the product has fits one row under the bar at 390px).
+
+**Left.** A dialog's inner controls, dialog by dialog (above). A phone's bar on a channel says the handle the
+title says ("homeroom-bot" over "#homeroom-bot"): lane P's, as on #general; `phoneUp` is there for it.

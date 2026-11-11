@@ -27986,6 +27986,38 @@ html[data-skin]:where(:not([data-skin="brand"])) [data-first-session-made].platf
 html[data-skin]:where(:not([data-skin="brand"])) [data-first-session-made].platform-under-header .rounded-\[20px\]:is(.bg-white, [data-featured-card]) { background: var(--fr-surface); box-shadow: inset 0 0 0 1px var(--fr-line); color: var(--fr-ink); }
 html[data-skin]:where(:not([data-skin="brand"])) [data-first-session-made].platform-under-header [data-first-session-seat], html[data-skin]:where(:not([data-skin="brand"])) [data-first-session-made].platform-under-header [data-first-session-people] > span { box-shadow: 0 0 0 2px var(--fr-ground) !important; }
 html[data-skin="workbench"] [data-first-session-made].platform-under-header .rounded-\[20px\]:is(.bg-white, [data-featured-card]) { border-radius: 10px; }
+/* ON AN ITEM'S PAGE, THE THREE SURFACES LANE T LEFT (group D): the plan
+   card on a request (request-plan.tsx, the product's PlanCardView), a spec
+   posted in the discussion (group-chat/transcript.tsx .gc-spec-card), and
+   Before and after: the small pair in a change's section of a request's
+   page (thread-changes.tsx) and the card on a change's own page
+   (change-head.tsx ShotsCard). Each is the look's card: its surface, the
+   kit's edge and corner, the look's ink; a control in it the kit's small
+   quiet button or its link. */
+html[data-skin]:where(:not([data-skin="brand"])) .dev-request-plan > [data-bot-plan] { padding: 16px; border: 0; border-radius: 20px; background: var(--fr-surface); box-shadow: inset 0 0 0 1px var(--fr-line); color: var(--fr-ink); font-family: var(--fr-f); }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-request-plan :is(.text-zinc-900, .text-zinc-800, .text-zinc-700) { color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-request-plan :is(.text-zinc-500, .text-zinc-600, .text-zinc-400, .messages-bot-answered, .messages-bot-note) { color: var(--fr-mut); }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-request-plan :is(.text-violet-700, .dev-request-plan-read) { color: var(--fr-acc); }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-request-plan [data-bot-plan-lines] > li { border-color: var(--fr-line2); }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-request-plan .ring-zinc-300 { --tw-ring-color: var(--fr-line); }
+html[data-skin]:where(:not([data-skin="brand"])) .gc-spec-card { padding: 12px 16px; border: 0; border-radius: 16px; background: var(--fr-surface); box-shadow: inset 0 0 0 1px var(--fr-line); color: var(--fr-ink); font-family: var(--fr-f); }
+html[data-skin]:where(:not([data-skin="brand"])) .gc-spec-card-header { font-size: 15px; font-weight: 650; }
+html[data-skin]:where(:not([data-skin="brand"])) .gc-spec-card-title { color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) .gc-spec-card-attribution { color: var(--fr-mut); font-size: 12px; }
+html[data-skin]:where(:not([data-skin="brand"])) .gc-spec-card-snippet { color: var(--fr-mut); }
+html[data-skin]:where(:not([data-skin="brand"])) .gc-spec-card-view { min-height: 32px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--fr-sunk); color: var(--fr-ink); font: 600 13px/1 var(--fr-f); }
+html[data-skin]:where(:not([data-skin="brand"])) .gc-spec-card-view:hover:not(:disabled) { background: var(--fr-sunk); color: var(--fr-ink); filter: brightness(.97); }
+html[data-skin]:where(:not([data-skin="brand"])) .gc-spec-card :is(a, .gc-spec-pr) { color: var(--fr-acc); }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-thread-shot { border-radius: 12px; background: var(--fr-sunk); box-shadow: inset 0 0 0 1px var(--fr-line); }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-thread-shots-pair { border-radius: 12px; }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-thread-shot-label { background: var(--fr-solid, var(--fr-ground)); color: var(--fr-ink); font-family: var(--fr-f); }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-thread-shots-expand { min-height: 28px; padding: 0 12px; background: var(--fr-sunk); color: var(--fr-ink); font: 600 13px/1 var(--fr-f); }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-change-shots { border-radius: 20px; background: var(--fr-surface); box-shadow: inset 0 0 0 1px var(--fr-line); color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-change-shots .dev-change-card-name { color: var(--fr-ink); font-weight: 650; }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-change-shots-line { color: var(--fr-mut); }
+html[data-skin="workbench"] :is(.dev-request-plan > [data-bot-plan], .gc-spec-card, .dev-change-shots) { border-radius: 10px; }
+html[data-skin="workbench"] :is(.dev-thread-shot, .dev-thread-shots-pair) { border-radius: 6px; }
+html[data-skin="workbench"] :is(.gc-spec-card-view, .dev-thread-shots-expand) { border-radius: 6px; }
 /* MAKE'S TWO SHEETS (features/who-decides/make-rule.tsx "Who can change
    it?", features/first-session/more-sheet.tsx "Something else"): the
    product's own bottom sheets, which lane K left in the standard dress.
@@ -29816,6 +29848,7 @@ html[data-skin] .fr-lookmenu{position:absolute;top:calc(100% + 8px);inset-inline
 html[data-skin] .fr-lookrow{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;padding:0 12px;border-radius:12px;font-size:15px;font-weight:550;color:var(--fr-ink);position:relative;width:100%;text-align:start}
 html[data-skin] .fr-lookrow .fr-v{color:var(--fr-mut);font-weight:500}
 html[data-skin] .fr-lookrow select{position:absolute;top:0;inset-inline-start:0;width:100%;height:100%;opacity:0}
+html[data-skin] .fr-sro{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
 html[data-skin] .fr-crumb .fr-cs.fr-off{height:0}
 html[data-skin] .fr-barline{display:none}
 html[data-skin] .fr-fcard .fr-fdoor{display:flex;flex-direction:column;flex:1;min-width:0;color:inherit;text-decoration:none}
@@ -29887,7 +29920,7 @@ html[data-skin][data-skin] .fr-botpage .fr-head .fr-acts{width:auto}
 html[data-skin][data-skin] .fr-cols.fr-mix>.fr-stack{display:contents}
 html[data-skin][data-skin] .fr-cols.fr-mix>.fr-stack>.fr-tail{order:1}
 html[data-skin][data-skin] .fr-grid.fr-c4:not(.fr-across){grid-template-columns:repeat(2,minmax(0,1fr))}
-html[data-skin][data-skin] .fr-crumb .fr-ci.fr-keep{color:var(--fr-ink)}
+html[data-skin][data-skin] .fr-crumb>.fr-keep{color:var(--fr-ink)}
 html[data-skin][data-skin] .fr-barline{display:block;flex:none;padding:0 12px 8px;font:500 12px/1.35 var(--fr-f);color:var(--fr-mut);border-bottom:1px solid var(--fr-line)}
 html[data-skin][data-skin] .fr-bar:has(+.fr-barline){border-bottom-color:transparent}
 }

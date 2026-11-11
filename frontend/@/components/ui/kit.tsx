@@ -1069,7 +1069,7 @@ export function Bars({ days, label }: {
       <div className={k('bars')} style={style} role="list" aria-label={label}>
         {days.map((day, i) => (
           <div className={k('bcol', day.now && 'now', !(day.value > 0) && 'none')} key={i} role="listitem" title={day.spoken} data-activity-day={day.id}>
-            <span className="sr-only">{day.spoken}</span>
+            <span className={k('sro')}>{day.spoken}</span>
             <span className={k('bv')} aria-hidden="true">{day.text}</span>
             <i aria-hidden="true" style={bar(day)} />
             <span className={k('bl')} aria-hidden="true">{day.label}</span>

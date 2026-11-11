@@ -523,8 +523,9 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 .lookrow .v{color:var(--mut);font-weight:500}
 .lookrow select{position:absolute;top:0;left:0;width:100%;height:100%;opacity:0}
 /* left-overs D: a phone's bar says the crumb it keeps in the ink (it may not be the last: .here), and a line
-   under the title that does not fit beside the bar's buttons stands under the bar's first row, where it wraps */
-.phone .crumb .ci.keep{color:var(--ink)}
+   under the title that does not fit beside the bar's buttons stands under the bar's first row, where it wraps; .sro is said to a screen reader and not drawn */
+.phone .crumb>.keep{color:var(--ink)}
+.sro{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
 .crumb .cs.off{height:0}
 .barline{display:none}
 .phone .barline{display:block;flex:none;padding:0 12px 8px;font:500 12px/1.35 var(--f);color:var(--mut);border-bottom:1px solid var(--line)}
