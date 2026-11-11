@@ -117,6 +117,9 @@ import {
   ProjectAllItemsFrame, ProjectFrameHead, ProjectHubFrame, ProjectTopicsFrame, ProjectWorkshopFrame, type AllItemRow, type ProjectTab,
 } from './frame/project-frame';
 import { placeRows } from './project-places';
+import { ruleSentence } from './community-card';
+import { THIS_WEEK_NEW_MAX, THIS_WEEK_SEEN } from './week-pages';
+import { FirstChangeCard, useFirstChange } from './first-change';
 import { slotCounts, useBotSlots } from './bot-slots';
 import { weekName, weekRange } from './week-pages';
 import { liveSinceLine } from './hub-cards';
@@ -3096,6 +3099,8 @@ export function DevWorkshop(): ReactNode {
   // Your work is read only then; Topics is a page the kit adds, held here.
   const frame = isFrameSkin(useLiveSkin());
   const desk = useDesk(frame ? v.slug : null);
+  // The kit's Workshop asks a newcomer who should build, as the Your work card does (./first-change.tsx).
+  const frameFirst = useFirstChange(frame ? v.slug || '' : '', desk);
   const frameSlots = useBotSlots(frame ? v.slug : null);
   const [frameTopics, setFrameTopics] = useState(false);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -3826,36 +3831,19 @@ export function DevWorkshop(): ReactNode {
   // the head (its figures, its signals, its room), so the head says so and
   // app.css leaves the body on show.
   const frameHead = { tabs: frameTabs, tab: frameTab, page: tab.startsWith('c:') && !frameTopics ? 'channel' : undefined, onTab: pickFrameTab, onInvite: inviteHere, onJoin: joinHere };
-  // Said the same way on the Hub and in the Workshop: your work with
-  // Homeroom bot here, and the approval rule in its short words, the wait
-  // as its line.
-  const frameWork = () => {
-    if (!v.mine?.viewer) return null;
-    const line = deskLine(desk);
-    const words = deskWords(desk);
-    return {
-      line: line ? t(line.id, line.values) : null,
-      words: words ? translate(words.id, words.values).replace(/<\/?\d+>/g, '') : null,
-      href: projectTabAddress(slug),
-    };
-  };
+  // The approval rule, as the Overview's own line says it where the card is
+  // narrow (./community-card.tsx ApprovalLine, RuleWords): the sentence,
+  // the wait after it, and Rules for whoever may change it.
   const frameRule = () => {
     const approval = community?.approval || null;
     if (!approval || !community) return null;
     const approvers = Array.isArray(approval.approvers) ? approval.approvers : null;
-    // A few words, as the tour's row says it ("3 members say yes"); the
-    // page's own sentence stays the standard look's (ApprovalLine).
-    const required = Math.max(1, Number(approval.required) || 1);
-    const electorate = Math.max(required, Number(approval.electorate) || required);
-    const title = community.audience === 'solo' && community.is_member && electorate === 1
-      ? t('project:frame.rule.you')
-      : approval.policy === 'invited'
-        ? t('project:frame.rule.approvers', { count: required, total: electorate })
-        : t('project:frame.rule.members', { count: required, total: electorate });
+    const line = ruleSentence(approval, community, approvers);
     return {
-      title,
-      line: (ruleHasWait(approval) ? approvalStep(approval, community, approvers).wait : '') || t('project:frame.rule.afterChecks'),
-      onOpen: community.can_manage ? () => { window.UsernodeReact?.dialogs?.whoDecides?.open({ slug }); } : null,
+      id: line.short,
+      values: line.values,
+      wait: (ruleHasWait(approval) ? approvalStep(approval, community, approvers).wait : '') || null,
+      onRules: community.can_manage ? () => { window.UsernodeReact?.dialogs?.whoDecides?.open({ slug }); } : null,
     };
   };
   const frameWorkshopUp = frame && !frameTopics && tab === 'workshop' && !weekUp;
@@ -3908,48 +3896,109 @@ export function DevWorkshop(): ReactNode {
   };
   const frameWorkshop = (): ReactNode => {
     const d = v.dashboard;
-    const first = owedRows.find((row) => row.t === 'card') || null;
-    const approval = community?.approval || null;
-    const need = Math.max(1, Number(approval?.required) || 1);
     const slots = frameSlots.view && (frameSlots.view.acts || frameSlots.view.slots.length) ? frameSlots.view : null;
     const counts = slots ? slotCounts(slots) : null;
-    const open = [v.nextUp, ...(v.nextMore || [])].filter((row): row is NonNullable<typeof row> => !!row && row.t === 'card');
+    // The Overview's figures, as DashTiles draws them: each opens what it
+    // counts when it counts something (the votes figure the one waiting
+    // item's page, or All items).
+    const stage = (key: 'open' | 'unclaimed' | 'shipped') => () => { callAppView('openWorkshopStage', key); openTab('all'); };
+    const votes = () => {
+      const refs = v.dashboard?.votesWaitingRefs || [];
+      if (refs.length === 1) callAppView('openTopic', refs[0].kind, refs[0].id);
+      else openTab('all');
+    };
+    const paced = !!d && !d.partial && d.shippedPrevWeekToDate > 0;
+    const line = deskLine(desk);
+    const liveOf = (week: (typeof weeks)[number]) => (week.counts && week.counts.closed ? { count: week.counts.closed, partial: !!week.counts.partial } : null);
+    const weekOf = (week: (typeof weeks)[number], open: boolean) => ({
+      key: sinceWeekStateKey(week),
+      name: weekName(week),
+      range: week.title || week.key === 'lastWeek' || week.live ? weekRange(week.startMs, week.endMs, week.live) : null,
+      fresh: week.fresh.filter((r) => !!r.brief).length,
+      live: liveOf(week),
+      onOpen: open ? () => openWeekPage(sinceWeekStateKey(week)) : null,
+    });
+    const GLYPH: Record<string, string> = { request: 'chat', change: 'edit', live: 'rocket', vote: 'vote' };
+    const itemOf = (row: WorkCardRow, fresh: boolean) => {
+      const b = row.brief!;
+      const ref = topicRef(row.card);
+      const state = row.card.pill?.state || null;
+      const going = b.kind === 'live' && !!state && (state.key === 'deploying' || state.key === 'delivery_pending' || state.key === 'merging');
+      const at = Number(row.at) || 0;
+      // Build it, on a new request nobody has picked up (freshAct, above).
+      const a = fresh && !b.mine && !b.requested && b.kind === 'request' ? primaryAct(row.card) : null;
+      const fn = a && a.act ? a.act.fn : '';
+      const actLabel = fn === 'askBotToBuild' || fn === 'chooseIssueWork' ? t('project:workshop.fresh.buildIt')
+        : fn === 'workOnIssueWithBot' ? t('project:workshop.fresh.workOnIt') : '';
+      return {
+        key: row.key,
+        title: row.card.title.text || row.card.title.title || '',
+        href: openHref(slug, row.card),
+        glyph: going ? 'refresh' : GLYPH[b.kind] || 'edit',
+        fresh,
+        you: !!b.mine,
+        going,
+        stuck: b.kind === 'live' && state && !going && state.tone === 'blocked' ? state.label : null,
+        ago: at > 0 ? agoStamp(at).text : null,
+        on: !!ref && sideKey === `${ref.kind}:${ref.id}`,
+        onOpen: ref ? (event: ReactMouseEvent<HTMLAnchorElement>) => openItem(event, ref) : undefined,
+        act: a && a.act && actLabel ? {
+          label: actLabel,
+          title: a.title || a.label,
+          onPress: (button: HTMLElement) => { callAppView(a.act!.fn, ...(a.act!.args || []), ...(a.passNode ? [button] : [])); },
+        } : null,
+      };
+    };
+    const cards = (rows: ListRow[]) => rows.filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief);
     return (
       <ProjectWorkshopFrame
         {...frameHead}
         purpose={t('project:frame.place.workshop', { project: projectName })}
-        onAll={() => openTab('all')}
-        facts={d ? [
-          { value: d.open, label: t('project:workshop.dash.open', { count: d.open }) },
-          { value: d.unclaimed, label: t('project:workshop.dash.unclaimed') },
-          { value: d.votesWaiting, label: t('project:workshop.dash.votes', { count: d.votesWaiting }), tone: owed > 0 ? 'acc' as const : d.votesWaiting ? 'wait' as const : undefined },
-          { value: d.shippedWeek, label: t('project:workshop.dash.shipped'), tone: 'ok' as const },
-        ] : []}
-        vote={first && first.t === 'card' && owed > 0 ? {
-          id: first.number ? `#${first.number}` : null,
-          title: first.card.title.text || first.card.title.title || '',
-          line: factsLine([first.who, first.ago]) || null,
-          yes: Number(first.tally?.yes) || 0,
-          no: Number(first.tally?.no) || 0,
-          of: Math.max(need, Number(approval?.electorate) || need),
-          need,
-          note: null,
-          onVote: () => openTab('needs'),
+        overview={d ? {
+          onAll: () => openTab('all'),
+          filtered: !!v.meta.filtered,
+          facts: [
+            { value: d.open, label: t('project:workshop.dash.open', { count: d.open }), onClick: d.open > 0 ? stage('open') : null },
+            { value: d.unclaimed, label: t('project:workshop.dash.unclaimed'), onClick: d.unclaimed > 0 ? stage('unclaimed') : null },
+            {
+              value: d.votesWaiting,
+              label: t('project:workshop.dash.votes', { count: d.votesWaiting }),
+              tone: d.votesWaiting ? 'wait' as const : undefined,
+              sub: owed > 0 ? t('project:workshop.dash.onYou', { count: owed }) : null,
+              onClick: d.votesWaiting > 0 ? votes : null,
+            },
+            {
+              value: d.partial && d.shippedWeek ? `${d.shippedWeek}+` : d.shippedWeek,
+              label: t('project:workshop.dash.shipped'),
+              tone: d.shippedWeek ? 'ok' as const : undefined,
+              sub: paced ? t('project:workshop.dash.fromLastWeek', { count: d.shippedPrevWeekToDate }) : null,
+              onClick: d.shippedWeek > 0 ? stage('shipped') : null,
+            },
+          ],
         } : null}
-        work={frameWork()}
-        live={(v.recentLive || []).slice(0, 3).map((row) => ({
-          key: row.key,
-          title: row.title,
-          ago: row.going ? t('project:hub.recent.going') : row.at ? agoStamp(row.at).text : null,
-          href: changeHref(slug, row.sessionId, row.prNumber),
-        }))}
-        weeks={weeks.slice(0, 4).map((week) => ({
-          key: sinceWeekStateKey(week),
-          title: weekName(week),
-          line: week.title || week.key === 'lastWeek' ? weekRange(week.startMs, week.endMs, week.live) : null,
-          right: week.counts && week.counts.closed ? t('project:frame.workshop.liveCount', { count: week.counts.closed }) : null,
-          onOpen: () => openWeekPage(sinceWeekStateKey(week)),
-        }))}
+        first={v.mine?.viewer && frameFirst.show ? <FirstChangeCard slug={slug} onClose={frameFirst.close} /> : null}
+        work={v.mine?.viewer ? {
+          line: line ? t(line.id, line.values) : null,
+          words: deskWords(desk),
+          href: projectTabAddress(slug),
+          hint: t('project:workshop.desk.open', { project: projectName }),
+        } : null}
+        happened={weeks.length || v.since ? {
+          onClear: v.since ? clearSince : null,
+          clearOff: !sinceRows.length,
+          none: !!v.since && !sinceRows.length,
+          thisWeek: thisWeek ? {
+            ...weekOf(thisWeek, false),
+            items: [
+              ...cards(thisWeek.fresh).slice(0, THIS_WEEK_NEW_MAX).map((row) => itemOf(row, true)),
+              ...cards(thisWeek.seen).slice(0, THIS_WEEK_SEEN).map((row) => itemOf(row, false)),
+            ],
+            onAll: thisWeek.fresh.length || thisWeek.seen.length || thisWeek.line ? () => openWeekPage(sinceWeekStateKey(thisWeek)) : null,
+          } : null,
+          weeks: pastWeeks.slice(0, weeksShown).map((week) => weekOf(week, true)),
+          onEarlier: weeksShown < pastWeeks.length ? () => setWeeksShown(weeksShown + WEEKS_STEP) : null,
+          started: !(weeksShown < pastWeeks.length) && firstWeek && pastWeeks.length ? t('project:since.projectStarted', { date: weekDate(firstWeek) }) : null,
+        } : null}
         slots={slots && counts ? {
           title: t('project:frame.workshop.building', { used: counts.building, cap: slots.buildCap ?? counts.building }),
           line: factsLine([
@@ -3959,17 +4008,7 @@ export function DevWorkshop(): ReactNode {
           onOpen: () => openTab('bot'),
         } : null}
         rule={frameRule()}
-        unclaimed={open.slice(0, 3).map((row) => {
-          const ref = row.t === 'card' ? topicRef(row.card) : null;
-          return {
-            key: row.key,
-            title: row.t === 'card' ? row.card.title.text || row.card.title.title || '' : '',
-            id: ref ? `#${ref.id}` : null,
-            onOpen: () => { if (ref) callAppView('openTopic', ref.kind, ref.id); },
-          };
-        })}
-        unclaimedTotal={d ? d.unclaimed : open.length}
-        onAllUnclaimed={() => { callAppView('openWorkshopStage', 'unclaimed'); openTab('all'); }}
+        below={slug ? <PrivateRequests slug={slug} /> : null}
       />
     );
   };

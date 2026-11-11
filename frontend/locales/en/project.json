@@ -6495,54 +6495,6 @@
     "text": "Each topic is a channel and a category of work.",
     "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title."
   },
-  "frame.workshop.where": {
-    "text": "Where things are",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group of figures at the top: how many items are open, unclaimed, waiting on votes and live this week."
-  },
-  "frame.workshop.needsVote": {
-    "text": "Needs your vote",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group holding the one change that waits for this person's vote."
-  },
-  "frame.workshop.yourVote": {
-    "text": "Your vote",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Blue pill over a change's title on its vote card: it waits for this person's vote."
-  },
-  "frame.workshop.yes_one": {
-    "text": "{{count}} yes",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a vote card: how many people have voted yes."
-  },
-  "frame.workshop.yes_other": {
-    "text": "{{count}} yes",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a vote card: how many people have voted yes."
-  },
-  "frame.workshop.noMore_one": {
-    "text": "{{no}} no · {{count}} more to pass",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a vote card, after the yes count: how many voted no ({{no}}), then how many more yes votes ({{count}}) the change needs to pass."
-  },
-  "frame.workshop.noMore_other": {
-    "text": "{{no}} no · {{count}} more to pass",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a vote card, after the yes count: how many voted no ({{no}}), then how many more yes votes ({{count}}) the change needs to pass."
-  },
-  "frame.workshop.noPassed": {
-    "text": "{{no}} no · passed",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a vote card, after the yes count: how many voted no ({{no}}), and that the change has the yes votes it needs."
-  },
-  "frame.workshop.needed_one": {
-    "text": "{{count}} yes needed",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label on a vote card's bar, at the point the yes votes must reach."
-  },
-  "frame.workshop.needed_other": {
-    "text": "{{count}} yes needed",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label on a vote card's bar, at the point the yes votes must reach."
-  },
-  "frame.workshop.review": {
-    "text": "Review and vote",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The vote card's one button: opens the Needs you page, where the change is reviewed and the vote is cast."
-  },
-  "frame.workshop.weeks": {
-    "text": "Week by week",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group that lists earlier weeks, each opening what happened in it."
-  },
   "frame.workshop.bot": {
     "text": "Homeroom bot",
     "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says how many of the bot's build slots are in use. Homeroom bot is a name."
@@ -6554,50 +6506,6 @@
   "frame.workshop.rule": {
     "text": "Who decides",
     "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who must approve a change."
-  },
-  "frame.workshop.unclaimed": {
-    "text": "Nobody is on these",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column listing open requests nobody has picked up."
-  },
-  "frame.workshop.all_one": {
-    "text": "All {{count}}",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Link at the end of a group's label: opens the full list; {{count}} is how many there are."
-  },
-  "frame.workshop.all_other": {
-    "text": "All {{count}}",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Link at the end of a group's label: opens the full list; {{count}} is how many there are."
-  },
-  "frame.workshop.liveCount_one": {
-    "text": "{{count}} live",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). At the end of a past week's row: how many changes went live that week."
-  },
-  "frame.workshop.liveCount_other": {
-    "text": "{{count}} live",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). At the end of a past week's row: how many changes went live that week."
-  },
-  "frame.rule.you": {
-    "text": "You say yes",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, as a row's title in the context column: on a project that is just this person's, their own yes is what a change needs."
-  },
-  "frame.rule.members_one": {
-    "text": "{{count}} of {{total}} members says yes",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, as a row's title in the context column: how many of the active members ({{total}}) must approve a change ({{count}})."
-  },
-  "frame.rule.members_other": {
-    "text": "{{count}} of {{total}} members say yes",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, as a row's title in the context column: how many of the active members ({{total}}) must approve a change ({{count}})."
-  },
-  "frame.rule.approvers_one": {
-    "text": "{{count}} of {{total}} approvers says yes",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, as a row's title in the context column: how many of the named approvers ({{total}}) must approve a change ({{count}})."
-  },
-  "frame.rule.approvers_other": {
-    "text": "{{count}} of {{total}} approvers say yes",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, as a row's title in the context column: how many of the named approvers ({{total}}) must approve a change ({{count}})."
-  },
-  "frame.rule.afterChecks": {
-    "text": "After the checks pass",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, Line under the approval rule's row: a change is voted on once its automatic checks have passed."
   },
   "frame.topic.about": {
     "text": "About",

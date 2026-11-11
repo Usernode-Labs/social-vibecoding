@@ -12,8 +12,9 @@
  */
 import { useEffect, useState, type ReactNode } from 'react';
 
-import { Avs, Ballot, Btn, Card, CardNote, Facts, Frame, GroupLink, Head, Lead, Meta, Mut, PageBody, Pill, type PillKind, Row, Search, Sec, ShotCard, Shots, ShowAll, Tabs, Tile, Track, k } from '@/components/ui/kit';
+import { Avs, Btn, Card, CardNote, Facts, Frame, GroupLink, Head, HeadRow, Lead, Meta, Mut, PageBody, Pill, type PillKind, Row, Search, Sec, ShotCard, Shots, ShowAll, Tabs, Tile, Track, k } from '@/components/ui/kit';
 import { RichMessage, useMessages } from '../../../../lib/i18n/react';
+import { BOT_AVATAR } from '../../../messages/format';
 
 export interface ProjectTab { key: string; label: string; count?: number }
 
@@ -28,8 +29,6 @@ interface HeadProps {
   onInvite?: (() => void) | null;
   /** Join, for someone signed in who is not a member yet: the page's primary button until they are. */
   onJoin?: (() => void) | null;
-  /** The place's own second button, in Invite's place (the Workshop's All items). */
-  second?: { label: string; icon: string; onClick: () => void } | null;
 }
 
 /**
@@ -50,15 +49,13 @@ function useProjectFrameFlag(): void {
   }, []);
 }
 
-/** The page's actions, or nothing at all for someone who has none (a visitor): no empty box. */
-function useActs({ onAsk, onInvite, onJoin, second }: Pick<HeadProps, 'onAsk' | 'onInvite' | 'onJoin' | 'second'>): ReactNode {
+/** Needs you's head keeps the buttons it had (its page is drawn by the product); nothing at all for someone who has none. */
+function useActs({ onAsk, onInvite, onJoin }: Pick<HeadProps, 'onAsk' | 'onInvite' | 'onJoin'>): ReactNode {
   const t = useMessages('project');
-  if (!onAsk && !onInvite && !onJoin && !second) return undefined;
+  if (!onAsk && !onInvite && !onJoin) return undefined;
   return (
     <>
-      {second
-        ? <Btn kind="line" icon={second.icon} onClick={second.onClick}>{second.label}</Btn>
-        : onInvite ? <Btn kind="line" icon="users" onClick={onInvite}>{t('project:frame.invite')}</Btn> : null}
+      {onInvite ? <Btn kind="line" icon="users" onClick={onInvite}>{t('project:frame.invite')}</Btn> : null}
       {onJoin
         ? <Btn icon="plus" onClick={onJoin}>{t('project:communityCard.join.button')}</Btn>
         : onAsk ? <Btn icon="plus" onClick={onAsk}>{t('project:frame.ask')}</Btn> : null}
@@ -304,114 +301,188 @@ export function ProjectTopicsFrame({ general, topics, onOpen, ...head }: HeadPro
   );
 }
 
-type RuleRow = { title: string; line: string | null; onOpen: (() => void) | null };
+/** A figure of the Overview: its number, what it counts, the line under it and where its press goes. */
+export interface WorkshopFact { value: number | string; label: string; tone?: 'acc' | 'ok' | 'wait'; sub?: string | null; onClick?: (() => void) | null }
+
+/** One row of this week in What happened. */
+export interface HappenedItem {
+  key: string;
+  title: string;
+  href: string | null;
+  /** What it is, as a kit glyph: a request, a change, live work, a vote. */
+  glyph: string;
+  /** It moved since your last visit. */
+  fresh: boolean;
+  you: boolean;
+  going: boolean;
+  /** A merge that is stuck, in the pill's own words. */
+  stuck: string | null;
+  ago: string | null;
+  /** Its page is open beside the list. */
+  on: boolean;
+  onOpen?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
+  /** A new request nobody has picked up: Build it. */
+  act?: { label: string; title?: string; onPress: (button: HTMLElement) => void } | null;
+}
+
+/** A week of What happened: its name, its dates, how many are new in it and what went live. */
+export interface HappenedWeek { key: string; name: string; range: string | null; fresh: number; live: { count: number; partial: boolean } | null; onOpen: (() => void) | null }
+
+/** "496 live", or "496+ live" when the figure is a floor. */
+function WeekLive({ live }: { live: HappenedWeek['live'] }) {
+  useMessages('project');
+  if (!live) return null;
+  return (
+    <span className={k('meta', 'ok')}>
+      <RichMessage id={live.partial ? 'project:weeks.row.liveAtLeast' : 'project:weeks.row.live'} values={{ count: live.count }} components={[<span />]} />
+    </span>
+  );
+}
 
 /**
- * The Workshop (the tour's s27): where things are, the vote that waits for
- * you, your work, what went live and the weeks before; beside them
- * Homeroom bot's slots, who decides and the requests nobody is on.
- *
- * The ballot's one button opens Needs you, where a vote is cast: a No there
- * says why, which the tour's two buttons leave no room for.
+ * The Workshop (version 2 of the tour's s27, s28 and s37): today's Workshop
+ * in the kit's two columns. Overview is All items with its four figures
+ * (each opens what it counts) and the Your work card; What happened is this
+ * week row by row, then the weeks before it; Homeroom bot's slots and the
+ * approval rule, the Overview card's last two lines, stand beside them.
  */
 export function ProjectWorkshopFrame({
-  purpose, onAll, facts, vote, work, live, weeks, slots, rule, unclaimed, unclaimedTotal, onAllUnclaimed, ...head
+  purpose, overview, first, work, happened, slots, rule, below, ...head
 }: HeadProps & {
   purpose: string;
-  /** All items, the Workshop's own page. */
-  onAll: () => void;
-  facts: Array<{ value: number | string; label: string; tone?: 'acc' | 'ok' | 'wait' }>;
-  vote: { id: string | null; title: string; line: string | null; yes: number; no: number; of: number; need: number; note: string | null; onVote: () => void } | null;
-  work: { line: string | null; words: string | null; href: string } | null;
-  live: Array<{ key: string; title: string; ago: string | null; href: string }>;
-  weeks: Array<{ key: string; title: string; line: string | null; right: string | null; onOpen: () => void }>;
+  /** All items: its door (with the dot when a search or filter narrows it) and its figures; null before the board is read. */
+  overview: { onAll: () => void; filtered: boolean; facts: WorkshopFact[] } | null;
+  /** For somebody who has made nothing here yet, the product's own card in Your work's place. */
+  first?: ReactNode;
+  work: { line: string | null; words: { id: string; values?: Record<string, string | number> } | null; href: string; hint: string } | null;
+  happened: {
+    /** Mark all seen, where there is a last visit to measure from; `clearOff` when nothing is new. */
+    onClear: (() => void) | null;
+    clearOff: boolean;
+    /** "Nothing new since you were last here." */
+    none: boolean;
+    thisWeek: (HappenedWeek & { items: HappenedItem[]; onAll: (() => void) | null }) | null;
+    weeks: HappenedWeek[];
+    onEarlier: (() => void) | null;
+    /** In Earlier weeks' place once every week is out: when the project started. */
+    started: string | null;
+  } | null;
   slots: { title: string; line: string | null; onOpen: () => void } | null;
-  rule: RuleRow | null;
-  unclaimed: Array<{ key: string; title: string; id: string | null; onOpen: () => void }>;
-  unclaimedTotal: number;
-  onAllUnclaimed: () => void;
+  rule: { id: string; values: Record<string, string | number>; wait: string | null; onRules: (() => void) | null } | null;
+  /** Under What happened, the product's own (an admin's private requests). */
+  below?: ReactNode;
 }) {
   useProjectFrameFlag();
   const t = useMessages('project');
-  const acts = useActs({ ...head, second: { label: t('project:workshop.allItems.title'), icon: 'list', onClick: onAll } });
-  const left = vote ? Math.max(0, vote.need - vote.yes) : 0;
+  const week = happened?.thisWeek || null;
+  const weekTitle = (w: HappenedWeek) => (w.range ? <>{w.name} <Mut>{w.range}</Mut></> : w.name);
+  const weekEnd = (w: HappenedWeek) => (
+    <>
+      {w.fresh ? <Pill kind="act">{t('project:weeks.row.fresh', { count: w.fresh })}</Pill> : null}
+      <WeekLive live={w.live} />
+    </>
+  );
   return (
     <PageBody
       data-project-frame="workshop-kit"
       title={t('project:places.list.workshop')}
       purpose={purpose}
-      acts={acts}
       tabs={<PlaceTabs tabs={head.tabs} tab={head.tab} onTab={head.onTab} />}
-      side={(
+      sideFirst
+      side={slots || rule ? (
         <>
           {slots ? (
             <Sec label={t('project:frame.workshop.bot')}>
-              <Card><Row lead={<Lead icon="spark" />} title={slots.title} line={slots.line || undefined} go onClick={slots.onOpen} sm={false} /></Card>
+              <Card><Row lead={<Tile size={40} src={BOT_AVATAR} />} title={slots.title} line={slots.line || undefined} go onClick={slots.onOpen} sm={false} /></Card>
             </Sec>
           ) : null}
           {rule ? (
-            <Sec label={t('project:frame.workshop.rule')}>
-              <Card><Row lead={<Lead icon="shield" />} title={rule.title} line={rule.line || undefined} go={!!rule.onOpen} onClick={rule.onOpen || undefined} sm={false} wrap /></Card>
-            </Sec>
-          ) : null}
-          {unclaimed.length ? (
             <Sec
-              label={t('project:frame.workshop.unclaimed')}
-              action={unclaimedTotal > unclaimed.length ? <GroupLink onClick={onAllUnclaimed}>{t('project:frame.workshop.all', { count: unclaimedTotal })}</GroupLink> : undefined}
+              label={t('project:frame.workshop.rule')}
+              action={rule.onRules ? <GroupLink onClick={rule.onRules}>{t('project:communityCard.rule.rules')}</GroupLink> : undefined}
             >
               <Card>
-                {unclaimed.map((row) => <Row key={row.key} title={row.title} line={row.id || undefined} go onClick={row.onOpen} sm={false} />)}
+                <Row
+                  lead={<Lead icon="shield" />}
+                  title={<RichMessage id={rule.id} values={rule.values} components={[<span />, <b />]} />}
+                  line={rule.wait || undefined}
+                  sm={false}
+                  wrap="all"
+                />
               </Card>
             </Sec>
           ) : null}
         </>
-      )}
+      ) : undefined}
     >
-      {facts.length ? <Sec label={t('project:frame.workshop.where')}><Facts items={facts} /></Sec> : null}
-      {vote ? (
-        <Sec label={t('project:frame.workshop.needsVote')}>
-          <Ballot
-            pill={<Pill kind="act">{t('project:frame.workshop.yourVote')}</Pill>}
-            id={vote.id}
-            title={vote.title}
-            line={vote.line}
-            yes={vote.yes}
-            no={vote.no}
-            of={vote.of}
-            need={vote.need}
-            words={{
-              yes: t('project:frame.workshop.yes', { count: vote.yes }),
-              rest: left > 0 ? t('project:frame.workshop.noMore', { no: vote.no, count: left }) : t('project:frame.workshop.noPassed', { no: vote.no }),
-              needed: t('project:frame.workshop.needed', { count: vote.need }),
-            }}
-            actions={<Btn kind="ok" icon="check" onClick={vote.onVote}>{t('project:frame.workshop.review')}</Btn>}
-            note={vote.note}
-          />
-        </Sec>
-      ) : null}
-      {work ? (
-        <Sec label={t('project:workshop.desk.title')}>
+      <Sec label={t('project:workshop.part.overview')}>
+        {overview ? (
           <Card>
-            <Row href={work.href} lead={<Lead icon="tool" />} title={work.line || work.words || t('project:workshop.desk.title')} line={work.line && work.words ? work.words : undefined} go sm={false} />
+            <HeadRow
+              title={t('project:workshop.allItems.title')}
+              link={overview.filtered
+                ? <RichMessage id="project:workshop.allItems.seeAllFiltered" components={[<span className={k('fdot')} aria-hidden="true" />, <span className={k('sro')} />]} />
+                : t('project:workshop.allItems.seeAll')}
+              onClick={overview.onAll}
+            />
+            <Facts bare items={overview.facts.map((f) => ({ value: f.value, label: f.label, tone: f.tone, sub: f.sub || undefined, onClick: f.onClick || undefined }))} />
           </Card>
-        </Sec>
-      ) : null}
-      {live.length ? (
-        <Sec label={t('project:hub.recent.title')}>
+        ) : null}
+        {first}
+        {!first && work ? (
           <Card>
-            {live.map((row) => <Row key={row.key} sm href={row.href} lead={<Lead icon="rocket" tone="ok" />} title={row.title} right={<Meta>{row.ago}</Meta>} go />)}
+            <Row
+              href={work.href}
+              label={work.hint}
+              lead={<Tile size={40} src={BOT_AVATAR} />}
+              title={t('project:workshop.desk.title')}
+              line={work.line || undefined}
+              right={work.words ? <span className={k('meta', 'd')}><RichMessage id={work.words.id} values={work.words.values} components={[<b className={k('acc')} />]} /></span> : undefined}
+              go
+              sm={false}
+            />
           </Card>
-        </Sec>
-      ) : null}
-      {weeks.length ? (
-        <Sec label={t('project:frame.workshop.weeks')}>
+        ) : null}
+      </Sec>
+      {happened ? (
+        <Sec
+          label={t('project:workshop.part.happened')}
+          action={happened.onClear ? <GroupLink onClick={happened.onClear} disabled={happened.clearOff}>{t('project:since.markAllSeen')}</GroupLink> : undefined}
+        >
           <Card>
-            {weeks.map((week) => (
-              <Row key={week.key} lead={<Lead icon="clock" />} title={week.title} line={week.line || undefined} right={<Meta>{week.right}</Meta>} go onClick={week.onOpen} sm={false} />
+            {happened.none ? <CardNote>{t('project:since.none')}</CardNote> : null}
+            {week ? <Row kind="week" sm title={weekTitle(week)} right={weekEnd(week)} /> : null}
+            {week ? week.items.map((item) => {
+              const end = (
+                <>
+                  {item.you ? <Pill>{t('project:happened.row.you')}</Pill> : null}
+                  {item.going ? <Pill kind="ok">{t('project:happened.row.goingLive')}</Pill> : null}
+                  {item.stuck ? <Pill kind="bad">{item.stuck}</Pill> : null}
+                  <Meta>{item.ago}</Meta>
+                  {item.act ? <Btn small kind="line" title={item.act.title} onClick={(event) => item.act!.onPress(event.currentTarget)}>{item.act.label}</Btn> : null}
+                </>
+              );
+              // A row with its own button is not itself a link (a button inside a link is neither): its title is.
+              const title = item.fresh ? <><span className={k('sro')}>{t('project:happened.row.new')} </span>{item.title}</> : item.title;
+              return item.act && item.href ? (
+                <Row key={item.key} kind="item" sm glyph={item.glyph} glyphTone={item.fresh ? 'acc' : undefined} on={item.on}
+                  title={<a className={k('tlink')} href={item.href} onClick={item.onOpen}>{title}</a>} right={end} />
+              ) : (
+                <Row key={item.key} kind="item" sm glyph={item.glyph} glyphTone={item.fresh ? 'acc' : undefined} on={item.on}
+                  href={item.href || undefined} onClick={item.href && item.onOpen ? (event) => item.onOpen!(event as React.MouseEvent<HTMLAnchorElement>) : undefined}
+                  title={title} right={end} />
+              );
+            }) : null}
+            {week && week.onAll ? <ShowAll go onClick={week.onAll}>{t('project:happened.allOfWeek')}</ShowAll> : null}
+            {happened.weeks.map((w) => (
+              <Row key={w.key} kind="week" sm title={weekTitle(w)} right={weekEnd(w)} go={!!w.onOpen} onClick={w.onOpen || undefined} />
             ))}
+            {happened.onEarlier ? <ShowAll onClick={happened.onEarlier}>{t('project:happened.earlierWeeks')}</ShowAll>
+              : happened.started ? <CardNote>{happened.started}</CardNote> : null}
           </Card>
         </Sec>
       ) : null}
+      {below}
     </PageBody>
   );
 }
