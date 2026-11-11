@@ -94,7 +94,15 @@ test('one story: who the platform pings about a change Homeroom bot built, again
        VALUES ($1, $2, $3, $4, 'change_ready', 'epoch:0', NOW() - INTERVAL '1 hour')`,
       [ben.id, app.id, rota.id, cy.id],
     );
+    // 11 Nov 2026: the digest reads whether a change is open for votes off
+    // its stored work state (the drain derives it within seconds; here the
+    // changes' rows are derived now, ringing nothing). Their requests' rows
+    // go again after, so the next story's request rings as it first is.
+    const ws = require('../src/services/work-state');
+    await ws.refresh(pool, [{ sessionId: darkMode.id }, { sessionId: rota.id }]);
     const result = await voteDigest.sweep(pool);
+    await pool.query(`DELETE FROM work_states WHERE app_id = $1 AND item_kind = 'request'`, [app.id]);
+    await pool.query('DELETE FROM work_state_dirty');
     assert.ok(result.candidates >= 1);
     const { rows } = await pool.query(
       `SELECT user_id, detail, session_id FROM notifications WHERE kind = 'vote_digest' ORDER BY user_id`,

@@ -98,6 +98,9 @@ test('accepting an invite pins the project, against the full PostgreSQL schema',
     'SELECT source FROM community_members WHERE community_id = $1 AND user_id = $2',
     [club.community_id, userId])).rows[0]?.source || null;
   const owed = async (userId) => {
+    // 11 Nov 2026: the digest reads whether a change is open for votes off
+    // its stored work state, derived once the drain has run.
+    await require('./lib/work-states').settleWorkStates(pool);
     const row = (await pool.query(PENDING_SQL, [String(MIN_GAP_HOURS)])).rows
       .find((r) => Number(r.user_id) === Number(userId));
     return row ? Number(row.pending) : 0;

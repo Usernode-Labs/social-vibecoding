@@ -147,5 +147,7 @@ test('the request\'s page draws the plan once it is read, with Build it, and Cha
   // The words.
   assert.equal(message('project:topic.request.botPlan.subYours', { number: '6210' }), 'Plan for #6210 · waiting for you');
   assert.equal(message('project:topic.request.botPlan.subTheirs', { number: '6210', requester: 'evan' }), '@evan\'s plan for #6210 · any member can build it');
-  assert.equal(message('changes:request.status.lead.botPlanYours'), 'Your plan is ready. Build it is on the plan below.');
+  // 11 Nov 2026 (one model): the status card above it says the standing's
+  // own words, the ones the Homeroom bot tab says for it.
+  assert.equal(message('changes:request.status.lead.stands', { stage: message('core:work.why.plan') }), 'Waiting for you to OK the plan.');
 });

@@ -30,8 +30,10 @@ function fakePool(cfg = {}) {
   const query = async (sql, params = []) => {
     const text = String(sql);
     calls.push({ sql: text, params });
-    if (/metadata->'homeroomBot'->>'kind' = \$3/.test(text)) {
-      return { rows: cfg.existingLine ? [{ id: cfg.existingLine }] : [] };
+    // Step 4: a line is one post, claimed by its key (services/bot-post.js):
+    // one said before answers what it said.
+    if (/INSERT INTO bot_posts/.test(text)) {
+      return { rows: [cfg.existingLine ? { id: 1, fresh: false, outcome: 'said', chat_message_id: cfg.existingLine } : { id: 1, fresh: true, outcome: 'pending' }] };
     }
     if (/SELECT id, mode, verdict, build_ok, build_session_id, proposal_session_id, plan/.test(text)) {
       return { rows: cfg.run ? [cfg.run] : [] };
