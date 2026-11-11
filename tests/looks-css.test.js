@@ -338,7 +338,14 @@ test('version 2 dresses nothing of the product\'s own that it did not dress befo
   const elsewhere = worn.filter((sel) => !SETTINGS.test(sel));
   assert.ok(worn.length > 0 && elsewhere.length < 53, `a handful only outside Settings (${elsewhere.length} of ${worn.length})`);
   for (const sel of elsewhere) assert.match(sel, /\.fr-[\w-]+/, `"${sel}" would dress the product's markup with no kit element in it`);
-  assert.doesNotMatch(css, /messages-|dev-request|dev-change|auth-waiting/, 'no conversation, request or waiting-room node is named');
+  // The waiting room does wear version 2's button, field and link since the
+  // fix pass (looks.json names its controls by their own hooks:
+  // data-waiting-about, data-waiting-look-around, #waiting-about-save), so
+  // its nodes ARE named here; what holds for them is the line above: each
+  // such rule needs a kit element, and the room has none, so none of them
+  // draws there. A conversation's and a request's nodes stay unnamed.
+  assert.doesNotMatch(css, /messages-|dev-request|dev-change/, 'no conversation or request node is named');
+  assert.match(css, /data-waiting-|waiting-about-save/, 'the waiting room\'s controls are named, by their own hooks');
 });
 
 test('an item\'s page keeps the product\'s discussion and dresses it: the stream a card, its count a section\'s label, what happened an event line', () => {
