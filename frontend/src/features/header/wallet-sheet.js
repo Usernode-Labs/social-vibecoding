@@ -342,7 +342,10 @@ import { requireAdult } from '../auth/adult-gate';
       const items = WalletSheet._records;
       if (items == null) return null;
       return items.map((r, i) => {
-        const when = r.submittedAt ? new Date(r.submittedAt).toLocaleString() : '';
+        // #6479: in the zone picked in Settings › Language, else the device's.
+        // Read off PlatformI18n: tests run this file as a classic script.
+        const timeZone = typeof PlatformI18n !== 'undefined' && PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
+        const when = r.submittedAt ? new Date(r.submittedAt).toLocaleString(undefined, timeZone ? { timeZone } : {}) : '';
         // The second line is one message per status, with the time in it.
         let line2;
         if (r.status === 'confirmed' || r.confirmedAt) {

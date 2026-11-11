@@ -56,7 +56,7 @@ export function getTimeZone(): string | undefined {
  * `options` with the picked zone added, for a formatter that writes an
  * instant's time or day. Unchanged under Auto, so the device's zone stands.
  */
-export function inZone<T extends Intl.DateTimeFormatOptions>(options: T): T {
+export function inZone<T extends Intl.DateTimeFormatOptions>(options: T = {} as T): T {
   return zone ? { ...options, timeZone: zone } : options;
 }
 
@@ -108,6 +108,38 @@ export function zonedDay(date: Date): ZonedDay {
     else if (part.type === 'day') out.day = Number(part.value);
   }
   return out;
+}
+
+/**
+ * The calendar day `date` falls on in the shown zone, as a whole number of
+ * days (the days since 1 Jan 1970 of that calendar date). Two of them
+ * subtract to "how many days apart on the calendar", which no clock change
+ * can make 23 or 25 hours long.
+ */
+export function dayNumber(date: Date): number {
+  const { year, month, day } = zonedDay(date);
+  return Math.round(Date.UTC(year, month - 1, day) / 86400000);
+}
+
+/** A grouping key for the calendar day `date` falls on in the shown zone: "2026-11-01". */
+export function dayKeyOf(date: Date): string {
+  const { year, month, day } = zonedDay(date);
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+const hourFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/** The hour of day (0-23) `date` falls in, in the shown zone. */
+export function zonedHour(date: Date): number {
+  if (!zone) return date.getHours();
+  let formatter = hourFormatters.get(zone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', hourCycle: 'h23' });
+    hourFormatters.set(zone, formatter);
+  }
+  const hour = Number(formatter.formatToParts(date).find((part) => part.type === 'hour')?.value);
+  // Some ICU builds still write midnight as 24 under h23.
+  return hour === 24 ? 0 : hour;
 }
 
 type ShellApp = { user?: { timeZone?: string | null } | null };

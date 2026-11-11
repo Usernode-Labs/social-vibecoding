@@ -4113,15 +4113,22 @@ const AppView = {
   _liveDay(at, now = new Date(), locale) {
     const when = new Date(at);
     if (!Number.isFinite(when.getTime())) return null;
-    const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-    // Rounded: a day across a clock change is 23 or 25 hours long.
-    const days = Math.round((midnight(when) - midnight(now)) / 86400000);
+    // #6479: calendar days, and the words, in the zone picked in Settings ›
+    // Language (else the device's), as messages/bot-ready.tsx liveDay.
+    const timeZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
+    const zone = timeZone ? { timeZone } : {};
+    const dayOf = (d) => {
+      const z = PlatformI18n.zonedDay ? PlatformI18n.zonedDay(d)
+        : { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
+      return Math.round(Date.UTC(z.year, z.month - 1, z.day) / 86400000);
+    };
+    const days = dayOf(when) - dayOf(now);
     if (when.getTime() > now.getTime()) {
       if (days === 0) return { kind: 'today', day: null };
       if (days === 1) return { kind: 'tomorrow', day: null };
-      if (days < 7) return { kind: 'weekday', day: new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(when) };
+      if (days < 7) return { kind: 'weekday', day: new Intl.DateTimeFormat(locale, { ...zone, weekday: 'long' }).format(when) };
     }
-    return { kind: 'date', day: new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(when) };
+    return { kind: 'date', day: new Intl.DateTimeFormat(locale, { ...zone, month: 'long', day: 'numeric' }).format(when) };
   },
 
   /** Try it, on the first version's screen: its change's preview, as its ready card's Try it opens it. */
@@ -27004,7 +27011,7 @@ const AppView = {
         ? `<button type="button" data-shots-stop="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.stopShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.stop')}</button>`
         : '';
       const override = state === 'overridden' && shots.overriddenAt
-        ? `<div class="text-[0.68rem] text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:shots.card.overriddenAt', { when: new Date(shots.overriddenAt).toLocaleString() })}</div>`
+        ? `<div class="text-[0.68rem] text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:shots.card.overriddenAt', { when: new Date(shots.overriddenAt).toLocaleString(undefined, PlatformI18n.timeZone && PlatformI18n.timeZone() ? { timeZone: PlatformI18n.timeZone() } : {}) })}</div>`
         : '';
       return `<section data-shots="1" data-shots-state="${attr(state)}" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
         <div class="flex items-center justify-between gap-3"><strong class="text-sm">${esc(copy[0])}</strong>${badge}</div>
@@ -28103,8 +28110,12 @@ const AppView = {
     try {
       const d = new Date(ms);
       const locale = PlatformI18n.dateLocale ? PlatformI18n.dateLocale() : undefined;
-      const other = d.getFullYear() !== new Date().getFullYear();
+      // #6479: the zone picked in Settings › Language, else the device's.
+      const timeZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
+      const yearOf = (x) => (PlatformI18n.zonedDay ? PlatformI18n.zonedDay(x).year : x.getFullYear());
+      const other = yearOf(d) !== yearOf(new Date());
       return d.toLocaleDateString(locale, {
+        ...(timeZone ? { timeZone } : {}),
         month: 'short', day: 'numeric', ...(other ? { year: 'numeric' } : {}),
       });
     } catch { return ''; }

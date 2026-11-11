@@ -130,6 +130,7 @@ import { NotificationsSheet } from './notifications-sheet-controller.js';
 import { NotificationsPinnedSections } from './notifications-list';
 import type { NotificationRowView } from './notifications-list';
 import { CardHistory, ProjectStack, foldLive, foldStories, type CardPlace, type LiveItem } from './notification-stacks';
+import { dayNumber } from '../../lib/time-zone';
 
 type ScreenRowView = NotificationRowView & {
   /** The unelided instant for the `<time>`'s title (#1808, stampFields). */
@@ -542,12 +543,12 @@ const OLDER_SECTION_LABELS: Record<OlderSectionKey, string> = {
   longAgo: 'notifications:sheet.longAgo',
 };
 
-/** Local midnight `days` days before today's. */
-function startOfDayBefore(days: number, now: Date): number {
-  const d = new Date(now.getTime());
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() - days);
-  return d.getTime();
+/**
+ * How many calendar days before today `at` fell, in the zone picked in
+ * Settings › Language (#6479), else the device's. 0 is today.
+ */
+function daysAgo(at: number, now: Date): number {
+  return dayNumber(now) - dayNumber(new Date(at));
 }
 
 /**
@@ -586,9 +587,6 @@ function foldEachProject(entries: Entry[], fold: (list: Entry[]) => Entry[]): En
 export function groupOlderByTime(rows: ScreenRowView[], t: Translate, now: Date = new Date()): OlderSection[] {
   const entries: Entry[] = rows.map((view) => ({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
   const cards = foldEachProject(entries, (list) => foldStories(list));
-  const today = startOfDayBefore(0, now);
-  const yesterday = startOfDayBefore(1, now);
-  const week = startOfDayBefore(6, now);
   const sections: OlderSection[] = [
     { key: 'today', entries: [] },
     { key: 'yesterday', entries: [] },
@@ -596,8 +594,8 @@ export function groupOlderByTime(rows: ScreenRowView[], t: Translate, now: Date 
     { key: 'longAgo', entries: [] },
   ];
   for (const card of cards) {
-    const at = card.at;
-    sections[at >= today ? 0 : at >= yesterday ? 1 : at >= week ? 2 : 3].entries.push(card);
+    const days = daysAgo(card.at, now);
+    sections[days <= 0 ? 0 : days === 1 ? 1 : days <= 6 ? 2 : 3].entries.push(card);
   }
   for (const section of sections) section.entries = foldEachProject(section.entries, (list) => foldRepeats(foldLive(list, t), t));
   return sections.filter((section) => section.entries.length > 0);

@@ -39,6 +39,7 @@ import { SectionHeading } from '@/components/ui/field';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { useWindowEvent } from '../../../lib/legacy-dom';
+import { inZone } from '../../../lib/time-zone';
 
 interface LinkedPhone {
   id: string;
@@ -130,7 +131,7 @@ function day(value: string | null): string {
   if (!value) return '';
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return '';
-  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  return date.toLocaleDateString(undefined, inZone({ year: 'numeric', month: 'short', day: 'numeric' }));
 }
 
 /** True when the device's last use is more than 30 days ago. */

@@ -531,3 +531,54 @@ test('#6479: the transcript\'s day separators group by the picked zone, as its s
     zone.setTimeZone(null);
   }
 });
+
+test('#6479: day words and day groups elsewhere read the picked zone too', () => {
+  const zone = loadTsx('frontend/src/lib/time-zone.ts', { cache: false });
+  const stub = (entry, spec) => loadTsx(entry, { cache: false, stubs: { [spec]: zone } });
+  const { liveDay } = stub('frontend/src/features/messages/bot-ready.tsx', '../../lib/time-zone');
+  const { dayKey } = stub('frontend/src/features/ai/model.ts', '../../lib/time-zone');
+  const { monthKey } = stub('frontend/src/features/ai/history.ts', '../../lib/time-zone');
+  const { visitDay } = stub('frontend/src/features/messages/welcome-back.tsx', '../../lib/time-zone');
+  const { liveSinceLine } = stub('frontend/src/features/dev-board/workshop/hub-cards.tsx', '../../../lib/time-zone');
+  try {
+    zone.setTimeZone('Asia/Tokyo');
+    // 23:00Z on the 10th is 08:00 on the 11th in Tokyo; 00:30Z on the 11th is
+    // 09:30 the same Tokyo day: today, not tomorrow.
+    assert.deepEqual({ ...liveDay('2026-11-11T00:30:00Z', new Date('2026-11-10T23:00:00Z'), 'en-US') }, { kind: 'today' });
+    assert.deepEqual({ ...liveDay('2026-11-12T00:30:00Z', new Date('2026-11-10T23:00:00Z'), 'en-US') }, { kind: 'tomorrow' });
+    // 16:00Z on 31 Oct is 1 Nov in Tokyo: the AI tab's day and History's month.
+    assert.equal(dayKey('2026-10-31T16:00:00Z'), '2026-11-01');
+    assert.equal(monthKey('2026-10-31T16:00:00Z'), '2026-11');
+    // A visit at 23:30Z on the 10th was this morning (08:30) in Tokyo on the 11th.
+    assert.equal(visitDay('2026-11-10T23:30:00Z', new Date('2026-11-11T03:00:00Z'), 'en-US').kind, 'thisMorning');
+    assert.equal(liveSinceLine('2026-11-10T23:30:00Z', Date.parse('2026-11-11T03:00:00Z')),
+      message('project:hub.recent.own.today'));
+    zone.setTimeZone('Europe/London');
+    assert.deepEqual({ ...liveDay('2026-11-11T00:30:00Z', new Date('2026-11-10T23:00:00Z'), 'en-US') }, { kind: 'tomorrow' });
+    assert.equal(dayKey('2026-10-31T16:00:00Z'), '2026-10-31');
+    assert.equal(monthKey('2026-10-31T16:00:00Z'), '2026-10');
+    assert.equal(visitDay('2026-11-10T23:30:00Z', new Date('2026-11-11T03:00:00Z'), 'en-US').kind, 'yesterday');
+  } finally {
+    zone.setTimeZone(null);
+  }
+});
+
+test('#6479: the notification sheet\'s Today / Yesterday sections are the picked zone\'s days', () => {
+  const zone = loadTsx('frontend/src/lib/time-zone.ts', { cache: false });
+  const { groupOlderByTime } = loadTsx('frontend/src/features/notifications/notifications-sheet.tsx', { cache: false, stubs: { '../../lib/time-zone': zone } });
+  const row = (id, iso) => ({ id, createdAtMs: Date.parse(iso), kind: 'mention', appSlug: null, actor: { username: `p${id}` } });
+  const now = new Date('2026-11-11T03:00:00Z');
+  try {
+    zone.setTimeZone('Asia/Tokyo');
+    // 23:30Z on the 10th is the 11th in Tokyo: today there.
+    const tokyo = groupOlderByTime([row(1, '2026-11-10T23:30:00Z')], (id) => id, now);
+    assert.equal(tokyo[0].key, 'today');
+    zone.setTimeZone('America/Los_Angeles');
+    // ...and the 10th, which is today in Los Angeles too (19:00 on the 10th).
+    assert.equal(groupOlderByTime([row(1, '2026-11-10T23:30:00Z')], (id) => id, now)[0].key, 'today');
+    zone.setTimeZone('Europe/London');
+    assert.equal(groupOlderByTime([row(1, '2026-11-10T23:30:00Z')], (id) => id, now)[0].key, 'yesterday');
+  } finally {
+    zone.setTimeZone(null);
+  }
+});

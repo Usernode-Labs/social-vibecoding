@@ -19,6 +19,7 @@ import { quoteInComposer } from './store';
 import type {
   ConversationMessage, HomeroomBotAction, HomeroomBotGoesLive, HomeroomBotMeta, HomeroomBotReady, HomeroomBotReadyNow,
 } from './types';
+import { dayNumber, inZone } from '../../lib/time-zone';
 
 /*
  * B7: a change Homeroom bot built, ready to try, as a card in place of the
@@ -167,8 +168,6 @@ export function waitingLine(ready: HomeroomBotReady | undefined, canApprove: boo
   });
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 /**
  * Pure: the day a change goes live if nobody objects, in the reader's own
  * clock, worded to follow "It goes live": "later today", "tomorrow", "on
@@ -178,15 +177,15 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export function liveDay(at: string, now: Date = new Date(Date.now()), locale?: string): LiveDay | null {
   const when = new Date(at);
   if (Number.isNaN(when.getTime())) return null;
-  const midnight = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-  // Rounded: a day across a clock change is 23 or 25 hours long.
-  const days = Math.round((midnight(when) - midnight(now)) / DAY_MS);
+  // Calendar days apart in the zone picked in Settings › Language (#6479),
+  // else the device's; the day and date are written in it too.
+  const days = dayNumber(when) - dayNumber(now);
   if (when.getTime() > now.getTime()) {
     if (days === 0) return { kind: 'today' };
     if (days === 1) return { kind: 'tomorrow' };
-    if (days < 7) return { kind: 'weekday', weekday: new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(when) };
+    if (days < 7) return { kind: 'weekday', weekday: new Intl.DateTimeFormat(locale, inZone({ weekday: 'long' })).format(when) };
   }
-  return { kind: 'date', date: new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(when) };
+  return { kind: 'date', date: new Intl.DateTimeFormat(locale, inZone({ month: 'long', day: 'numeric' })).format(when) };
 }
 
 /** Which day it goes live, for the sentence that says so (APPROVED_LINES). */

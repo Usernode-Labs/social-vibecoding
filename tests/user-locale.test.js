@@ -256,7 +256,7 @@ function sliceSettingsMethod(src, name) {
 // what #settings-timezone does in the page, without a browser.
 function zoneController({ save, zones = ['Asia/Tokyo', 'Europe/Paris'] } = {}) {
   const src = read('frontend/src/features/settings/settings.js');
-  const methods = ['_renderTimeZoneSection', '_labelTimeZoneAuto', '_saveTimeZone']
+  const methods = ['_renderTimeZoneSection', '_ensureTimeZoneOption', '_labelTimeZoneAuto', '_saveTimeZone']
     .map((n) => sliceSettingsMethod(src, n)).join(',\n');
   const options = [{ value: '', textContent: '' }];
   const select = {
@@ -307,6 +307,19 @@ test('#6479: one save at a time, so the list never shows a pick a late answer ov
   assert.equal(Settings.state.timeZone, 'Europe/Paris');
   assert.equal(select.value, 'Europe/Paris');
   assert.equal(status.textContent, 'en:settings:timezone.saved:Europe / Paris');
+});
+
+test('#6479: a zone the server spells differently from the list still shows, never a blank picker', async () => {
+  // The server canonicalises with its own Intl: Europe/Kyiv on this browser's
+  // list may come back as Europe/Kiev.
+  const { Settings, select, status } = zoneController({ save: async () => 'Europe/Kiev', zones: ['Europe/Kyiv'] });
+  Settings._renderTimeZoneSection();
+  await Settings._saveTimeZone('Europe/Kyiv');
+  assert.equal(Settings.state.timeZone, 'Europe/Kiev');
+  assert.ok(select.options.some((o) => o.value === 'Europe/Kiev' && o.textContent === 'Europe / Kiev'),
+    'an option for the stored spelling is added');
+  assert.equal(select.value, 'Europe/Kiev');
+  assert.equal(status.textContent, 'en:settings:timezone.saved:Europe / Kiev');
 });
 
 test('#6479: a failed save puts the list back and says so from the catalog, never a client-made English line', async () => {

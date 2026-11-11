@@ -2118,15 +2118,23 @@
       // A save in flight decides what the list shows when it lands.
       if (this._timeZoneSaving) return;
       const value = this.state.timeZone || '';
-      if (value && ![...select.options].some((o) => o.value === value)) {
-        const opt = document.createElement('option');
-        opt.value = value;
-        opt.textContent = label(value);
-        select.appendChild(opt);
-      }
+      this._ensureTimeZoneOption(select, value);
       select.value = value;
       const status = document.getElementById('settings-timezone-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
+    },
+
+    // A zone the list does not offer still shows as itself, never as a blank
+    // or as "Auto": one saved from an engine that knew it, or the server's
+    // canonical spelling of a pick (its Intl may say Europe/Kiev where this
+    // browser listed Europe/Kyiv).
+    _ensureTimeZoneOption(select, value) {
+      if (!value || [...select.options].some((o) => o.value === value)) return;
+      const i18n = window.PlatformI18n;
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = i18n.timeZoneLabel ? i18n.timeZoneLabel(value) : value;
+      select.appendChild(opt);
     },
 
     // The Auto option's words, with the device's zone in them. The option is
@@ -3571,7 +3579,10 @@
         if (select) select.disabled = false;
       }
       this.state.timeZone = saved;
-      if (select) select.value = saved || '';
+      if (select) {
+        this._ensureTimeZoneOption(select, saved);
+        select.value = saved || '';
+      }
       const zone = saved || (i18n.deviceTimeZone ? i18n.deviceTimeZone() : '');
       paint(i18n.t('settings:timezone.saved', { zone: i18n.timeZoneLabel ? i18n.timeZoneLabel(zone) : zone }), true);
     },
@@ -6764,7 +6775,7 @@
       if (payload.published_at) {
         try {
           meta.push(tr('settings:terms.published', {
-            date: new Date(payload.published_at).toLocaleDateString(),
+            date: new Date(payload.published_at).toLocaleDateString(undefined, inZone()),
           }));
         } catch (_) {}
       }
@@ -6791,7 +6802,7 @@
         : 'text-zinc-600 dark:text-zinc-400'),
       accepted
         ? (payload.consent.responded_at
-          ? tr('settings:terms.acceptedOn', { date: new Date(payload.consent.responded_at).toLocaleDateString() })
+          ? tr('settings:terms.acceptedOn', { date: new Date(payload.consent.responded_at).toLocaleDateString(undefined, inZone()) })
           : tr('settings:terms.accepted'))
         : tr('settings:terms.notAccepted'));
       panel.appendChild(statusEl);

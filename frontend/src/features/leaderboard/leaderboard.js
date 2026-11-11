@@ -848,7 +848,9 @@ const Leaderboard = {
   _fmtDate(ts) {
     const d = new Date(ts);
     if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    // #6479: the day in the zone picked in Settings › Language, else the device's.
+    const timeZone = window.PlatformI18n?.timeZone?.();
+    return d.toLocaleDateString(undefined, { ...(timeZone ? { timeZone } : {}), year: 'numeric', month: 'short', day: 'numeric' });
   },
 
   // Rows that carry a slug route to that app's group chat — the PR card /

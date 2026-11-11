@@ -50,9 +50,9 @@ import { communityScopeStore, loadCommunities } from '../workshop/community-scop
 import { switcherRecent } from '../workshop/community-switcher';
 import { asksInChat } from './bot-news-line';
 import { send, useMessagesSnapshot } from './store';
+import { dayNumber, inZone, zonedHour } from '../../lib/time-zone';
 
 const HOUR_MS = 60 * 60 * 1000;
-const DAY_MS = 24 * HOUR_MS;
 /** "About 8 hours", read as exactly eight. */
 export const AWAY_MS = 8 * HOUR_MS;
 
@@ -166,13 +166,13 @@ export function visitDay(
 ): VisitDay | null {
   const when = since instanceof Date ? since : new Date(since);
   if (Number.isNaN(when.getTime())) return null;
-  const midnight = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-  // Rounded: a day across a clock change is 23 or 25 hours long.
-  const days = Math.round((midnight(now) - midnight(when)) / DAY_MS);
-  if (days <= 0) return when.getHours() < 12 ? { kind: 'thisMorning' } : { kind: 'earlierToday' };
+  // #6479: calendar days, the hour and the words in the zone picked in
+  // Settings › Language, else the device's.
+  const days = dayNumber(now) - dayNumber(when);
+  if (days <= 0) return zonedHour(when) < 12 ? { kind: 'thisMorning' } : { kind: 'earlierToday' };
   if (days === 1) return { kind: 'yesterday' };
-  if (days < 7) return { kind: 'weekday', weekday: new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(when) };
-  return { kind: 'date', date: new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' }).format(when) };
+  if (days < 7) return { kind: 'weekday', weekday: new Intl.DateTimeFormat(locale, inZone({ weekday: 'long' })).format(when) };
+  return { kind: 'date', date: new Intl.DateTimeFormat(locale, inZone({ month: 'short', day: 'numeric' })).format(when) };
 }
 
 /** Pure: the day's words, from the catalog or the formatter above. */

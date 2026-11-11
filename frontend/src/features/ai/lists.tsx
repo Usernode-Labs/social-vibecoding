@@ -79,6 +79,7 @@ import { ProjectPicker } from './project-picker';
 import { SmallTile } from './small-tile';
 import { HISTORY_KINDS, type HistoryKind } from './filter-address';
 import { byMonth, historyGlyph, historyTooltip, historyWords, monthName, type HistoryRow, type HistoryState } from './history';
+import { dayNumber, inZone, zonedDay } from '../../lib/time-zone';
 
 // The plane a list stands on, as GroupedList draws one: the sheet's solid
 // fill, 20px, one inset hairline. Complete literals for Tailwind.
@@ -274,13 +275,15 @@ function EarlierRule(): ReactNode {
 function dayHeading(at: string | null | undefined, t: (id: string, values?: Record<string, string | number>) => string, locale: string | undefined): string {
   const d = new Date(String(at || ''));
   if (!Number.isFinite(d.getTime())) return '';
-  const today = new Date();
-  const days = Math.round((new Date(today.toDateString()).getTime() - new Date(d.toDateString()).getTime()) / 86400000);
+  const today = new Date(Date.now());
+  // #6479: calendar days in the zone picked in Settings › Language, the same
+  // zone ./model.ts dayKey groups by, so a heading names its group's day.
+  const days = dayNumber(today) - dayNumber(d);
   if (days <= 0) return t('messages:ai.short.today');
   if (days === 1) return t('messages:ai.short.yesterday');
   // The year too, only when it is another one (as History's months say it).
-  const other = d.getFullYear() !== today.getFullYear();
-  return d.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', ...(other ? { year: 'numeric' } : {}) });
+  const other = zonedDay(d).year !== zonedDay(today).year;
+  return d.toLocaleDateString(locale, inZone({ weekday: 'long', day: 'numeric', month: 'long', ...(other ? { year: 'numeric' } : {}) }));
 }
 
 /**
@@ -660,11 +663,10 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
 function dayOf(at: string | null, t: (id: string, values?: Record<string, string | number>) => string): string {
   if (!at) return '';
   const d = new Date(at);
-  const today = new Date();
-  const days = Math.round((new Date(today.toDateString()).getTime() - new Date(d.toDateString()).getTime()) / 86400000);
+  const days = dayNumber(new Date(Date.now())) - dayNumber(d);
   if (days <= 0) return t('messages:ai.short.today');
   if (days === 1) return t('messages:ai.short.yesterday');
-  return d.toLocaleDateString(undefined, { weekday: 'short' });
+  return d.toLocaleDateString(undefined, inZone({ weekday: 'short' }));
 }
 
 /**

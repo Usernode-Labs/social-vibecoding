@@ -28,6 +28,7 @@
 
 import { lineWords, stageWords } from '../../lib/work-state';
 import type { WorkState } from '../../lib/work-state';
+import { dayKeyOf } from '../../lib/time-zone';
 
 export interface AiApp {
   slug: string;
@@ -279,7 +280,8 @@ export function byProject<T extends { app: AiApp | null }>(rows: T[]): { app: Ai
 export function dayKey(at: string | null | undefined): string {
   const d = new Date(String(at || ''));
   if (!Number.isFinite(d.getTime())) return '';
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  // #6479: the zone picked in Settings › Language, else the device's.
+  return dayKeyOf(d);
 }
 
 /**

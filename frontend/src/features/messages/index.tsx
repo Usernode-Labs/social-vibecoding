@@ -26,7 +26,7 @@ import { confirmAction } from '../../lib/confirm';
 import { useMenuKeyboard } from '../../lib/menu-keys';
 import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
 import { agoStamp, timeOfDay } from '../../lib/timestamp';
-import { getTimeZone, getTimeZoneSnapshot, zonedDay } from '../../lib/time-zone';
+import { getTimeZone, getTimeZoneSnapshot, inZone, zonedDay } from '../../lib/time-zone';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
@@ -3022,7 +3022,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
     const which = Math.max(1, tryStarts.filter((start) => start <= at).length);
     if (which === lastTry) return null;
     lastTry = which;
-    const date = new Date(tryStarts[which - 1]).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    const date = new Date(tryStarts[which - 1]).toLocaleDateString(undefined, inZone({ day: 'numeric', month: 'short' }));
     return (
       <div className="messages-reply-count" data-bot-try={which}>
         <span>{t('messages:bot.track.tryDivider', { number: String(which), date })}</span>
