@@ -20,10 +20,14 @@ Agreed with Evan on 5 Nov 2026:
 4. One stage vocabulary everywhere (below).
 5. The work state is stored, written when it changes; one push carries it.
 6. In a request's thread the bot posts only: its question or plan; "built it,
-   up for a vote"; one failure post, updated in place; and "live". Nothing
-   else is a message: no relays into Main Chat, no private-thread milestone
-   lines, no channel chips. The first-version line in a project's channel
-   stays.
+   up for a vote"; a failure note; and "live" (and its answers when somebody
+   speaks to it there). Nothing else is a message: no relays into Main Chat,
+   no private-thread milestone lines, no channel chips. The first-version
+   line in a project's channel stays. Amended by Evan, 11 Nov 2026: failure
+   notes are never edited. A new failure is a new note, said only when its
+   words differ from the last failure note in that place or somebody has
+   replied since; a repeat posts nothing (the status card already shows
+   it); a newer note retires the older note's buttons.
 7. The bell is derived from stage changes: needs you, ready to vote, stopped,
    live.
 8. Main Chat holds only the conversation.
@@ -133,13 +137,49 @@ These read `work_states`; their own deciders are deleted:
 - the bell (dm moments)
 - the Workshop (needs-feed, waiting)
 
+### Step 1, built 11 Nov 2026
+
+The standing, finished on the server (the first commit of the one-model
+proposal):
+
+- Each row also stores its `standing` (its change: checks, votes this
+  round, GitHub's hold, shots, an update on its way; what is asked of the
+  requester: an open question, a plan, a vote to close it, a private
+  thread holding it, open cards; the bot's newest post about it; a
+  request's tries, why its build stopped, who shipped it), `vote_open` and,
+  on a request, `lead_change_id`. A change has its own row even when it was
+  built for a request; that row never rings the bell.
+- `vote_open` is the change's stage being `up_for_vote`. `deriveChange`
+  holds a vote for a first version, an update on its way (now `building`,
+  `update_queued`, not `up_for_vote`), a merge GitHub holds, and shots
+  still being taken, so a stage of `up_for_vote` is always a change open
+  for votes. Needs you and the vote digest read `vote_open`.
+- The words exist once: `phrasesOf(item)` maps an item to core catalog
+  phrase ids and ships with every row and push as `words`; the server's
+  English reads the same catalog (push-text.js). The hand-copied table is
+  gone.
+- The bot tab, the activity cards, project chat cards, a request's track,
+  the request page's `standing` (with the viewer's `mine` and `voteOwed`),
+  Homeroom bot's progress, my_work and request_detail, and the voice's
+  facts read the rows. Gone: ai-work's fallback, the chat card's own
+  derivation, progressFor, progressText, proposalFacts, botWorkByIssue,
+  statusOf, and the track's own reads of holds, tries and who shipped it.
+- Left for later: requestStates (with progress.outcomeOf) still drives a
+  first version's App tab steps (homeroom-bot-dm.js firstVersionStateOf)
+  and the activity cards' catch-up keys; the "new proposal" ping still reads
+  the SQL predicate inside the proposal machine's transition.
+
 ## Step 4: posting rules
 
 The request thread keeps:
 - the bot's question or plan;
 - "built it, up for a vote";
-- one failure post, edited in place;
-- "live".
+- a failure note, never edited (decision 6 as amended, 11 Nov 2026): a new
+  failure is a new note only when its words differ from the last failure
+  note there or somebody has replied since; a repeat posts nothing; a newer
+  note retires the older one's buttons;
+- "live";
+- its answers when somebody speaks to it there.
 
 These go:
 - DM relays of request news (`relayIssuePost`);
@@ -149,6 +189,68 @@ These go:
 - duplicate change-thread copies.
 
 The first-version line in a project's channel stays.
+
+### Step 4, built 11 Nov 2026
+
+One posting function, append-only (`src/services/bot-post.js`, migration
+`bot-posts`):
+
+- Every word the bot says to people is one post, keyed by what it is:
+  `kind:subject:version` (`build_failed:request:3-12:run-40`,
+  `checks_retry:change:6564:look-3`, `reply:place:3:issue:12:turn-<key>`,
+  `going_ahead:request:3-75:mention-4242`). The key is claimed in
+  `bot_posts` (`said_key` unique) before anything is sent, so a post asked
+  for twice (a retry, a restart, two passes at once) is said once; one a
+  restart caught going out is `pending`, and the retry sends only what its
+  row has not recorded. The ask that claims a post holds the claim while it
+  says it (migration `bot-posts-claims`: `claimed_at`, `claimed_by`); a
+  second ask meanwhile says nothing (`busy`), and a pending post is taken
+  over only once its claim has lapsed, by one conditional UPDATE (a durable
+  work's own post, keyed by its run, look or turn, is taken over at once by
+  that work's next attempt after a crash, as before claims). A send
+  that fails throws, its claim let go, so the caller's retry says it (the
+  voice's replies, a "tell me when"); only best-effort callers (the
+  change's notes, `live.post`'s copy on a change) pass `soft`. The message
+  is written with its record (`ws.sendBotMessage` / `sendSystemMessage`
+  `onInsert`, and `sendDm`'s `afterInsert`). Outcomes: `said`, `refused`,
+  `repeat`, `pending`. `homeroom_bot_posts` stays as the request's
+  projection its readers use, written once a post is said.
+- One rule table per place (`RULES`) replaces THREAD_KINDS, with no bypass:
+  `live.post`, the thread notes (`postThreadNote`), the change's notes
+  (`live.postOnProposal`), the voice's replies and its pointer to another
+  request, a held request's answer, a newer plan taken up, a person's change
+  claiming a request, a "tell me when" kept, the plan card on a change,
+  the bot's own version of a change, and the move's lines all say through
+  it. What a place does not hear is recorded as `refused`. A request's
+  thread hears the families above; a build's note on another change it
+  builds beside or on top of (#6423, #6428) is part of its plan. A person's
+  chat with the bot records each message through its transport
+  (`homeroom-bot-dm.js sendDm`, keyed by its idempotency key), and refuses
+  request news, recorded.
+- Failure notes as amended: the same words as the place's last failure
+  note (its newest by message), with nobody writing since (there, or in a
+  reply thread under a message there since) and nothing else said there
+  since, are a `repeat` (no message, no GitHub comment, no DM, no
+  mention); anything new is a new note, and the older note's buttons retire
+  (`bot-cards.js retireFor` `messageIds`). A change's notes on its checks
+  are failure notes in its thread.
+- Words shown never change: a plan's row keeps its words and only its
+  status moves (`notePlanRows`, the boot backfill); no bot UPDATE of a
+  message's content remains (`tests/bot-post.test.js` pins it). Nothing
+  streams an answer's words: the working card names the step, and the
+  answer appears once, whole.
+- Gone: `updateRepeatedBuildFailure`, `replaceFailurePost`,
+  `FAILURE_TRIES_MARK` and the "(Tried N times.)" rewrite, THREAD_KINDS,
+  `saidInThread`, `threadMessageOf`, `takeUpPending` and the pending
+  projection rows (the held answer is claimed in `bot_posts`), `runPosted`,
+  `postOnce`, the looks' once for notes and waits, the voice's reply found
+  by scanning for its turn mark, the step 5 hand-off and checks-note repeat
+  reads (the failure rule says it), `PLAN_ROW_ENDINGS`, and the dead
+  streaming code (`draftTail`, `MAX_DRAFT_*`, the typing event's words,
+  `botDraftText`, the working card's draft and its stitching).
+- `duplicateNotes(pool, { since })`: the notes on requests said or asked
+  for more than once (per request and kind, past the first, and every ask
+  for a key already said), the admin's re-read numbers' "Notes said twice".
 
 ## Step 2: one tool registry, one card store, one change-ask queue
 
@@ -222,6 +324,49 @@ Built 5 Nov 2026 (migration `bot-cards`, `src/services/bot-cards.js`):
 - Not moved: admin confirm cards (their own 15-minute store), the cards a
   thread tool draws in message metadata, suggestion prompts, and private
   threads' File it / Post it, which are not offers of the bot's.
+
+### Step 3, built 11 Nov 2026
+
+One offer store, written with its message (migration `bot-cards-retired`):
+
+- A card is written in the same transaction as the message that shows its
+  buttons, and the message's id is set there too: `ws.sendBotMessage` and
+  `homeroom-bot-dm.js sendDm` take a `card` (what it is: kind, args, who it
+  is for; `onInsert` for the caller's own write in that transaction). The
+  callers pass that and nothing more: the voice's replies, an "already
+  works" note's Propose to close, a note about Homeroom itself, a stop's Let
+  it try again (inside the post the look says once, so a retried hand-off
+  writes no second card), an overlap question, Main's offers, a design's
+  plan, a first version's plan, a folded offer and the bring-a-friend
+  nudge. Gone: `newOffer`, `tieOffer`, `threadOffer`, `tieThreadOffer`,
+  `dropThreadOffer`, `settleThreadOffer`, live.post's re-link (#6582) and
+  every link written after the message. A thread card from before whose
+  link was lost is linked by the migration, from the id its message names.
+- A tap names its card: the thread's buttons send `offerId` (from
+  `metadata.homeroomBot.offer.id`), and `decideOffer` takes the card by id
+  and project, then checks it is the tapped message's (`not_this_message`).
+  A client that sends no id is answered from the id its message names; an
+  offer from before the card store, by its message. A card whose buttons
+  are on screen is always found.
+- Buttons retire from the standing (`bot-cards.js retireFor`, one table,
+  `STILL_WORTH`): Propose to close while the request is open and no vote on
+  closing it is; Let it try again while it is stopped; an overlap, a copy,
+  a move or a request to file while nobody is building it; a plan's Build
+  it while the plan waits; Withdraw it while the change can be withdrawn.
+  Work-state's refresh calls it when a row moves (its stage, why or reason
+  changed, or a vote on closing it opened), so a card made a moment before
+  its request's stage catches up is never taken back. It marks the card
+  `retired` with why (`close_vote`, `closed`, `building`, `moved_on`,
+  `superseded`) and empties the buttons on its message, whose words never
+  change. `keep` (card ids) is the posting function's: a newer card of the
+  same kind supersedes the older one. Gone: `retireOverlapOffers` and the
+  plan card updates it covers (a newer plan, a plan that stopped waiting).
+- A refused tap says why in place: the routes answer `{ error, code,
+  reason? }`; the thread's line under an offer (`transcript.tsx
+  BotOfferStatus`, the side panel's too) is drawn from its state and the
+  refusal GroupChat keeps for the message, so it outlives the buttons; in
+  Messages, a line after `.messages-bot-answers` (`bot-question.tsx`,
+  `bot-plan.tsx`), and a retired card's line says why.
 
 ### One change-ask queue
 

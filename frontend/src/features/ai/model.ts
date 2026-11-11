@@ -26,8 +26,8 @@
  * are drawn, so this module needs no i18n runtime and its tests read it bare.
  */
 
-import { lineWords, stageWords } from '../../lib/work-state';
-import type { WorkState } from '../../lib/work-state';
+import { lineWords, normalizeWorkState, stageWords, standingOfPush, waitsForPlan, withoutClosedVote } from '../../lib/work-state';
+import type { WorkState, WorkStatePush } from '../../lib/work-state';
 
 export interface AiApp {
   slug: string;
@@ -469,14 +469,17 @@ function waitingRow(reasons: string[]) {
 }
 
 /**
- * Pure: which hand-back a Needs you row of the bot's is, by its stage: the
+ * Pure: which hand-back a Needs you row of the bot's is, by its standing: the
  * row's key and pill. A plan waits for Build it; a decision, for a person;
  * #6306: one already there only needs closing; a stopped build, for a
- * restart; #6284: failing checks it stopped fixing, for one more try.
+ * restart; #6284: failing checks it stopped fixing, for one more try. Only a
+ * standing waiting for its requester has a why: one that is anything else
+ * (being built, say) is never "Review plan", whatever an older read said.
  */
 function needKind(work: WorkState): string {
   if (work.stage === 'stopped') return work.reason === 'fix_stopped' ? 'fix_stopped' : 'stopped';
-  if (work.why === 'plan') return 'plan';
+  if (work.stage !== 'waiting_for_you') return 'needs';
+  if (waitsForPlan(work)) return 'plan';
   if (work.why === 'already_works') return 'works';
   if (work.why === 'needs_detail') return 'detail';
   return 'decide';
@@ -794,6 +797,56 @@ export function upNext(needs: NeedItem[] | null, work: AiWork | null): AiThread[
     const yourVotes = (needs || []).filter((item) => item.app?.slug === row.app!.slug && holdsSlot(item)).length;
     return yourVotes ? { ...row, yourVotes } : row;
   });
+}
+
+/**
+ * Pure (11 Nov 2026): the lists with a `work_state` push applied where they
+ * hold its item, so a row says where it stands now rather than after the
+ * next read. Its request's row (or its change's own, for a change with no
+ * request) takes the standing the push carries; a row of Needs you that no
+ * longer asks its requester anything (a plan OK'd and now being built) leaves
+ * Needs you; and a Vote card of the feed whose change the push says is not
+ * open for votes (merged, merging, held, closed) leaves at once. Which list a
+ * row belongs in is the server's to say: the read that follows the push puts
+ * it there. Hands back the same lists when nothing matched.
+ */
+export function applyWorkState(
+  work: AiWork | null,
+  needs: NeedItem[] | null,
+  push: WorkStatePush,
+): { work: AiWork | null; needs: NeedItem[] | null } {
+  const standing = standingOfPush(push);
+  const state = normalizeWorkState(push.state);
+  if (!standing || !state) return { work, needs };
+  const { kind, issueNumber, sessionId } = standing;
+  const slug = push.appSlug || null;
+  const holds = (t: AiThread) => !!slug && t.app?.slug === slug && (kind === 'change'
+    ? t.kind === 'change' && !!sessionId && t.change?.id === sessionId
+    : t.kind !== 'change' && t.kind !== 'decision' && !!issueNumber && t.number === issueNumber);
+  let moved = false;
+  const take = (list: AiThread[] | undefined, group: AiThread['group']) => {
+    if (!list) return list;
+    let changed = false;
+    const out: AiThread[] = [];
+    for (const t of list) {
+      if (!holds(t)) { out.push(t); continue; }
+      changed = true;
+      // Needs you is what asks the person something: a row that asks
+      // nothing any more waits for the read to say where it went.
+      if (group === 'needs' && !t.fixYours && state.stage !== 'waiting_for_you' && state.stage !== 'stopped') continue;
+      out.push({ ...t, work: state });
+    }
+    if (changed) moved = true;
+    return changed ? out : list;
+  };
+  const nextWork = work ? {
+    ...work,
+    needs: take(work.needs, 'needs'),
+    next: take(work.next, 'next') || [],
+    waiting: take(work.waiting, 'waiting') || [],
+    live: take(work.live, 'live') || [],
+  } : work;
+  return { work: moved ? nextWork : work, needs: withoutClosedVote(needs, push) };
 }
 
 /** How long a done private thread stays under Live this week. */

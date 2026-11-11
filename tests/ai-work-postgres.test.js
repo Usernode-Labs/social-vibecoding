@@ -22,6 +22,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { settleWorkStates } = require('./lib/work-states');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const express = require('express');
@@ -280,7 +281,7 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
      VALUES ($1, $2, 'me too', 'issue', 32)`, [app.id, ada.id]);
   const withFacts = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot, settings: { mode: 'live' } } });
   const fact = (title) => withFacts.waiting.find((r) => r.title === title);
-  assert.deepEqual([fact('Held 30').work.stage, fact('Held 30').work.line], ['building', { code: 'held_waiting' }],
+  assert.deepEqual([fact('Held 30').work.stage, fact('Held 30').work.line], ['building', { code: 'held_waiting', position: 1 }],
     'ready to build, held for a vote slot');
   assert.deepEqual([fact('Queued for a read').work.stage, fact('Queued for a read').work.line], ['reading', { code: 'queued', place: 1 }],
     'its place in the project\'s line, from the bot\'s queue');
@@ -321,6 +322,7 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const later = await change(app, 43, bob, 42, 'promoted', { promotedAt: new Date(Date.now() - 3600000), checkState: 'passing' });
   await pool.query('UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1', [earlier.id]);
   const workshop = require('../src/routes/workshop-overview');
+  await settleWorkStates(pool);
   const feed = await workshop.needsFeedFor(pool, { user: { id: ada.id }, inThreads: true });
   const pair = feed.filter((item) => item.kind === 'proposal' && [41, 43].includes(item.number));
   assert.deepEqual(pair.map((item) => item.number), [43, 41], 'the vote that opened later comes first');
@@ -659,9 +661,10 @@ test('#6282: a change with an update on its way is Updating, then Update queued'
   // ada still owes the vote: none of these lists is where it stands (the
   // Needs you feed asks for it).
   assert.deepEqual(await what(ada), []);
-  // An ask waits its turn: Waiting, Update queued, with what was asked.
+  // An ask waits its turn: Waiting, Update queued, with what was asked
+  // (11 Nov 2026: the bot's, waiting its turn; not open for votes).
   const queued = await ask('queued');
-  assert.deepEqual(await what(ada), ['up_for_vote:update_queued']);
+  assert.deepEqual(await what(ada), ['building:update_queued']);
   const [queuedRow] = await all(ada);
   assert.equal(queuedRow.group, 'waiting');
   assert.equal(queuedRow.ask, 'drop the second credit line');
@@ -681,12 +684,14 @@ test('#6282: a change with an update on its way is Updating, then Update queued'
   // Proposing is never its author's yes: until bob taps his own, he owes the
   // vote like ada, and the Needs you feed asks for it.
   assert.deepEqual(await what(bob), []);
-  // Once he has said yes, his change is listed as up for a vote, and he sees
-  // the update instead of waiting on the vote.
+  // Once he has said yes (one of the two votes the project needs), his
+  // change is listed as up for a vote, and he sees the update instead of
+  // waiting on the vote: an ask queued holds it as the bot's, waiting its
+  // turn (11 Nov 2026: not open for votes while it comes).
   await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [change.id, bob.id]);
   assert.deepEqual(await what(bob), ['up_for_vote']);
   const second = await ask('queued');
-  assert.deepEqual(await what(bob), ['up_for_vote:update_queued']);
+  assert.deepEqual(await what(bob), ['building:update_queued']);
   await pool.query(`UPDATE homeroom_bot_change_asks SET status = 'done', done_at = NOW() WHERE id = $1`, [second.id]);
   assert.deepEqual(await what(bob), ['up_for_vote']);
 });

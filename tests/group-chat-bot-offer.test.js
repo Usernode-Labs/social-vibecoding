@@ -4,11 +4,13 @@
 // to close under an "already works" note) says a refusal where it was tapped,
 // and an offer that is gone for good leaves a line instead of its buttons.
 //
-// The refusal line is a useState inside BotOfferButtons, which
-// renderToStaticMarkup cannot click, so its wiring is asserted on the
-// component's source (the split tests/dialog-import-pr.test.js describes:
-// the root suite has no jsdom). The gone line is pinned by rendering the
-// request's rows, and the client's answer is pinned by running the module.
+// Step 3 (11 Nov 2026): a tap sends its card's id (the offer's in the
+// message's metadata), and a refusal's code is kept by GroupChat for its
+// message, so the line under the offer (transcript.tsx BotOfferStatus) says
+// why in the reader's language and outlives the buttons the refusal takes
+// away. An offer retired because what it was about moved on, or expired,
+// says so too. The client's answer is pinned by running the module, the
+// lines by rendering the request's rows.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -18,6 +20,8 @@ const vm = require('node:vm');
 const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
+// What the sandboxed module answers, as plain values (its objects are another realm's).
+const plain = (value) => JSON.parse(JSON.stringify(value));
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 function loadGroupChat(userId = 9, { fetch, toasts = [] } = {}) {
@@ -48,9 +52,9 @@ const closeOffer = (status, over = {}) => ({
   },
 });
 
-test('#6582: an offer that is gone or expired is read, with no actions left to tap', () => {
+test('#6582: an offer that is gone, expired or retired is read, with no actions left to tap', () => {
   const gc = loadGroupChat(9);
-  for (const status of ['gone', 'expired']) {
+  for (const status of ['gone', 'expired', 'retired']) {
     const view = gc._botOfferView(closeOffer(status));
     assert.ok(view, `${status} is a status the row reads`);
     assert.equal(view.status, status);
@@ -58,68 +62,96 @@ test('#6582: an offer that is gone or expired is read, with no actions left to t
     assert.deepEqual(view.actions, [], 'nothing to tap');
   }
   assert.equal(gc._botOfferView(closeOffer('gone')).status, 'gone');
+  // Its card's id, which a tap sends; a retired one keeps why.
+  assert.equal(gc._botOfferView(closeOffer('open')).id, 1);
+  assert.equal(gc._botOfferView(closeOffer('retired', { retired: 'close_vote' })).retired, 'close_vote');
 });
 
-test('#6582: a refused tap is answered to its buttons, and no longer toasted', async () => {
+test('#6582, step 3: a tap sends its card\'s id, and a refusal is kept for its message, never toasted', async () => {
   const toasts = [];
   const messageId = 238255;
   const seen = [];
+  let answer = { ok: false, status: 410, body: { error: 'That offer is no longer needed.', code: 'retired', reason: 'close_vote' } };
   const gc = loadGroupChat(9, {
     toasts,
     async fetch(url, options) {
-      seen.push({ url, options });
-      return {
-        ok: false,
-        status: 410,
-        async json() { return { error: 'That offer is no longer available.' }; },
-      };
+      seen.push({ url, body: JSON.parse(options.body) });
+      return { ok: answer.ok, status: answer.status, async json() { return answer.body; } };
     },
   });
   gc.appSlug = 'usernode-2d5619';
-  const out = await gc.decideBotOffer(messageId, 'yes');
-  assert.equal(out.ok, false);
-  assert.equal(out.error, 'That offer is no longer available.');
-  assert.equal(out.gone, true);
-  assert.equal(seen.length, 1);
+  const out = await gc.decideBotOffer(messageId, 'yes', undefined, 77);
+  assert.deepEqual(plain(out), { ok: false, code: 'retired' });
   assert.equal(seen[0].url, `/api/apps/usernode-2d5619/messages/${messageId}/bot-offer`);
-  assert.equal(toasts.length, 0, 'the reason is shown under the buttons, not toasted');
+  assert.deepEqual(seen[0].body, { choice: 'yes', offerId: 77 }, 'the card it is for');
+  assert.deepEqual(plain(gc._offerRefusals.get(messageId)), { code: 'retired', reason: 'close_vote' });
+  assert.deepEqual(plain(gc._botOfferView(closeOffer('open'), messageId).refused), { code: 'retired', reason: 'close_vote' },
+    'the row reads it for as long as the chat is open');
+  assert.equal(gc._botOfferView(closeOffer('open'), 1).refused, undefined, 'another message\'s offer has none');
+  assert.equal(toasts.length, 0, 'the reason is shown under the offer, not toasted');
 
-  // No reason of the server's: the catalog's fallback.
-  const bare = loadGroupChat(9, {
-    toasts,
-    async fetch() { return { ok: false, status: 400, async json() { return {}; } }; },
-  });
-  bare.appSlug = 'usernode-2d5619';
-  const bareOut = await bare.decideBotOffer(1, 'no');
-  assert.deepEqual([bareOut.ok, bareOut.error, bareOut.gone], [false, message('chat:group.botOffer.failed'), false]);
-  // Sent, and the server already said what happened: the buttons say nothing more.
-  const said = loadGroupChat(9, {
-    toasts,
-    async fetch() { return { ok: false, status: 409, async json() { return { said: 'A vote is open.' }; } }; },
-  });
-  said.appSlug = 'usernode-2d5619';
-  const saidOut = await said.decideBotOffer(1, 'yes');
-  assert.deepEqual([saidOut.ok, saidOut.error, saidOut.gone], [false, null, false]);
-  // The request never left: the same fallback.
+  // A tap that then goes through clears it.
+  answer = { ok: true, status: 200, body: { ok: true } };
+  assert.deepEqual(plain(await gc.decideBotOffer(messageId, 'yes', undefined, 77)), { ok: true, code: null });
+  assert.equal(gc._offerRefusals.has(messageId), false);
+
+  // No code of the server's: failed, the catalog's fallback line.
+  answer = { ok: false, status: 400, body: {} };
+  assert.deepEqual(plain(await gc.decideBotOffer(5, 'no')), { ok: false, code: 'failed' });
+  assert.equal(seen[seen.length - 1].body.offerId, undefined, 'a client with no id sends none');
+  // Sent, and the server already said what happened: nothing more is kept.
+  answer = { ok: false, status: 409, body: { said: 'A vote is open.' } };
+  assert.deepEqual(plain(await gc.decideBotOffer(6, 'yes', undefined, 3)), { ok: false, code: null });
+  assert.equal(gc._offerRefusals.has(6), false);
+  // The request never left: failed.
   const offline = loadGroupChat(9, { toasts, async fetch() { throw new Error('offline'); } });
   offline.appSlug = 'usernode-2d5619';
-  const offlineOut = await offline.decideBotOffer(1, 'yes');
-  assert.deepEqual([offlineOut.ok, offlineOut.error, offlineOut.gone], [false, message('chat:group.botOffer.failed'), false]);
+  assert.deepEqual(plain(await offline.decideBotOffer(1, 'yes', undefined, 3)), { ok: false, code: 'failed' });
   assert.equal(toasts.length, 0);
 });
 
-test('#6582: the refusal is drawn under the buttons, from what the tap answered', () => {
+test('step 3: the line under an offer is drawn from its state and its refusal, and outlives its buttons', () => {
   const src = read('frontend/src/features/group-chat/transcript.tsx');
   const at = src.indexOf('export function BotOfferButtons');
-  assert.ok(at > 0);
   const body = src.slice(at, src.indexOf('\n}\n', at));
-  assert.match(body, /const \[error, setError\] = useState<string \| null>\(null\);/);
-  assert.match(body, /const result = await controller\(\)\?\.decideBotOffer\?\./);
-  assert.match(body, /if \(result && result\.ok === false && result\.error\) setError\(String\(result\.error\)\);/);
-  assert.match(body, /setError\(null\);/);
-  assert.match(body, /<p className="mt-1 text-\[12px\] text-zinc-500 dark:text-zinc-400" role="status" data-gc-bot-offer-error="">\s*\{error\}\s*<\/p>/);
-  // The line is inside the buttons' own stack, under the row of buttons.
-  assert.ok(body.indexOf('data-gc-bot-offer-error') > body.indexOf('<div className="flex flex-wrap gap-2">'));
+  assert.match(body, /await controller\(\)\?\.decideBotOffer\?\.\(id, choice, many \? picks : undefined, offer\.id\)/, 'the tap names its card');
+  assert.doesNotMatch(body, /setError/, 'the buttons keep no line of their own: it would go with them');
+  const { renderComponent } = require('./lib/render-tsx');
+  const rowBase = {
+    id: 1, kind: 'message', username: 'homeroom_bot', time: '11:56', timeTitle: 't', bodyHtml: '<p>Already works.</p>',
+    systemText: '', mine: false, editedTitle: null, unread: false, bookmarked: false, canEdit: false, flash: false,
+    showEdit: false, showBookmark: false, showReact: false, quote: null, reactions: [],
+    attachments: [], voteRowClass: '', voteRef: null, specShare: null,
+  };
+  const lead = { earlier: false, placeholder: null, language: 'request', request: { loaded: true, githubMore: null } };
+  const draw = (botOffer) => renderComponent('frontend/src/features/group-chat/transcript.tsx', 'RequestRows', {
+    view: { lead, messages: [{ ...rowBase, botOffer }] },
+  });
+  const actions = [{ id: 'yes', label: 'Propose to close', primary: true }, { id: 'no', label: 'Keep it open', primary: false }];
+  // Refused, with its buttons still up: the line is under them.
+  const refused = draw({ status: 'open', forMe: true, kind: 'close_request', id: 7, actions, refused: { code: 'already_decided' } });
+  assert.match(refused, /data-gc-bot-offer=""/);
+  assert.match(refused, /role="status" data-gc-bot-offer-status="already_decided"[^>]*data-gc-bot-offer-error=""/);
+  assert.ok(refused.includes(message('chat:group.botOffer.refused.alreadyDecided')));
+  assert.ok(refused.indexOf('data-gc-bot-offer-status') > refused.indexOf('data-gc-bot-offer=""'), 'under the buttons');
+  // Decided elsewhere meanwhile: the buttons go, the line stays.
+  const decided = draw({ status: 'done', forMe: true, kind: 'close_request', id: 7, actions: [], refused: { code: 'already_decided' } });
+  assert.doesNotMatch(decided, /data-gc-bot-offer=""/);
+  assert.ok(decided.includes(message('chat:group.botOffer.refused.alreadyDecided')));
+  // Retired, with why; expired; not for this viewer.
+  assert.ok(draw({ status: 'retired', forMe: true, kind: 'overlap', retired: 'building', actions: [] })
+    .includes(message('chat:group.botOffer.retired.building')));
+  assert.ok(draw({ status: 'retired', forMe: true, kind: 'close_request', retired: 'close_vote', actions: [] })
+    .includes(message('chat:group.botOffer.retired.closeVote')));
+  assert.ok(draw({ status: 'retired', forMe: true, kind: 'overlap', retired: 'unheard_of', actions: [] })
+    .includes(message('chat:group.botOffer.retired.other')));
+  assert.ok(draw({ status: 'expired', forMe: true, kind: 'overlap', actions: [] }).includes(message('chat:group.botOffer.expired')));
+  assert.ok(draw({ status: 'open', forMe: true, kind: 'overlap', actions, refused: { code: 'not_for_you' } })
+    .includes(message('chat:group.botOffer.refused.notForYou')));
+  assert.ok(draw({ status: 'open', forMe: true, kind: 'overlap', actions, refused: { code: 'failed' } })
+    .includes(message('chat:group.botOffer.failed')));
+  assert.doesNotMatch(draw({ status: 'retired', forMe: false, kind: 'overlap', retired: 'building', actions: [] }), /data-gc-bot-offer-status/);
+  assert.doesNotMatch(draw({ status: 'open', forMe: true, kind: 'overlap', actions }), /data-gc-bot-offer-status/, 'an open offer says nothing');
 });
 
 test('#6582: a gone close offer\'s row draws the line where its buttons were', () => {

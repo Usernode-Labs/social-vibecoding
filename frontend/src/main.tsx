@@ -116,6 +116,9 @@ import './features/header/mount';
 // Publishes window.UsernodeReact.verifyIdentity: the sheet a public vote the
 // verified-identity rule refused opens (public/js/app-view.js castVote).
 import './features/auth/verify-identity';
+// Publishes window.UsernodeReact.illustrationEditor: the picture editor a
+// waiting card-picture vote's ⋯ menu opens (#6601).
+import './features/apps/illustration-editor-bridge';
 // The platform tab bar's bridge: publishes window.UsernodeReact.nav. Same
 // window as the header's — App._syncPlatformTabs() runs inside
 // PlatformUI.transition's reveal callback on every screen swap, the earliest

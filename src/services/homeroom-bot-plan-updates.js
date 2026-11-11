@@ -241,8 +241,9 @@ async function botUser(pool, deps = {}) {
 
 /**
  * Post one bot line in the request's thread, unless the same line (kind,
- * stage, plan session, version) was already posted there. Resolves the
- * message { id } it posted or found, or null. Never throws.
+ * stage, plan session, version) was already posted there. Step 4 (11 Nov
+ * 2026): one post (bot-post.js), keyed by that line, so it is said once.
+ * Resolves the message { id } it posted or found, or null. Never throws.
  */
 async function postLine(pool, { app, issueNumber, stage, planSessionId, version, content, bot = null }, deps = {}) {
   try {
@@ -257,27 +258,16 @@ async function postLine(pool, { app, issueNumber, stage, planSessionId, version,
         issueNumber: n,
       },
     };
-    const { rows: [existing] = [] } = await pool.query(
-      `SELECT id FROM chat_messages
-        WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2
-          AND metadata->'homeroomBot'->>'kind' = $3
-          AND metadata->'homeroomBot'->>'stage' = $4
-          AND metadata->'homeroomBot'->>'planSessionId' = $5
-          AND metadata->'homeroomBot'->>'version' = $6
-        ORDER BY id LIMIT 1`,
-      [Number(app.id), n, KIND, String(stage), String(planSessionId), String(version)],
-    );
-    if (existing) return { id: Number(existing.id), existed: true };
     const user = bot || await botUser(pool, deps);
     if (!user) return null;
     const words = require('./em-dashes').withoutEmDashes(String(content || ''));
-    const sent = await ws.sendBotMessage(pool, app.id, {
-      user,
-      content: words,
-      metadata: meta,
-      thread: { type: 'issue', ref: n },
-    });
-    return sent ? { id: Number(sent.id), existed: false } : null;
+    const botPost = require('./bot-post');
+    const out = await botPost.post(pool, {
+      place: { type: 'issue', ref: n }, appId: Number(app.id), kind: KIND, words, author: user, metadata: meta,
+      issueNumber: n, version: `${stage}-${num(planSessionId) || 0}-v${Number(version)}`, record: false,
+    }, { ws });
+    if (out.outcome === 'again') return out.messageId ? { id: Number(out.messageId), existed: true } : null;
+    return out.outcome === 'said' ? { id: Number(out.messageId), existed: false } : null;
   } catch (err) {
     log.warn('homeroom-bot-plan-updates', 'Could not say a newer plan came in', {
       appId: app && app.id, issueNumber, stage, err: err.message,

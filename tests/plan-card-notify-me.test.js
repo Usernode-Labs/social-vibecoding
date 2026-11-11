@@ -289,7 +289,8 @@ test('offered inside the built plan while it is being built, and not again once 
   const card = read('frontend/src/features/messages/bot-plan.tsx');
   assert.match(card, /const \[offer\] = useState\(\(\) => !notifyMeChosen\(userId\)\);/,
     'decided when the card is drawn: an account that chose here is not asked again');
-  assert.match(card, /footer=\{state === 'built' && card && card\.state !== 'done'\s*\? notifyFooter\(meta, offer, userId, conversationId, Number\(message\.id\)\)\s*: null\}/,
+  // Step 3: until then, the line a refused Build it leaves under the buttons.
+  assert.match(card, /footer=\{state === 'built' && card && card\.state !== 'done'\s*\? notifyFooter\(meta, offer, userId, conversationId, Number\(message\.id\)\)\s*: state === 'open' && refused \? <OfferRefused refusal=\{refused\} \/> : null\}/,
     'only once built, and only while it is being built');
   // Run six: a first version's plan gets the switch that starts on
   // (tests/first-version-notify-live.test.js); a complicated change's keeps

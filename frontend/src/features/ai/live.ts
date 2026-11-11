@@ -34,11 +34,18 @@
  * public/js/app.js hands every events-socket message to `handleEvent`
  * (window.UsernodeReact.aiScreen), as it hands conversation events to
  * Messages; which of them matter is decided here.
+ *
+ * IN PLACE FIRST (11 Nov 2026). A `work_state` push carries the whole
+ * standing of the item that moved (lib/work-state.ts). The page applies it
+ * at once to the row it holds (`apply`, ./model.ts applyWorkState), so the
+ * row's words and a Vote that closed change with the push, not a read later;
+ * the read still follows, since which list a row is in is the server's.
  */
 
 import { useEffect, useRef } from 'react';
 
 import { watch } from '../../lib/live-reads';
+import { isWorkStatePush, type WorkStatePush } from '../../lib/work-state';
 import { WORK_CHANGED_EVENT } from '../messages/bot-shared';
 
 /** How long the events of one burst are gathered before the read. */
@@ -153,15 +160,24 @@ export function pacedReads(reread: () => void, hidden: () => boolean = tabHidden
 
 /**
  * While `visible`, run `reread` again whenever something the lists show
- * may have moved (see the header), at the pace above.
+ * may have moved (see the header), at the pace above. A `work_state` push
+ * is handed to `apply` first (IN PLACE FIRST above).
  */
-export function useLiveLists(reread: () => void, visible: boolean, showing: Showing): void {
-  const latest = useRef({ reread, showing });
-  latest.current = { reread, showing };
+export function useLiveLists(
+  reread: () => void,
+  visible: boolean,
+  showing: Showing,
+  apply: ((push: WorkStatePush) => void) | null = null,
+): void {
+  const latest = useRef({ reread, showing, apply });
+  latest.current = { reread, showing, apply };
   useEffect(() => {
     if (!visible || typeof window === 'undefined') return undefined;
     const reads = pacedReads(() => latest.current.reread());
-    const onEvent: Listener = (event) => { if (movesLists(event, latest.current.showing)) reads.ask(); };
+    const onEvent: Listener = (event) => {
+      if (isWorkStatePush(event)) latest.current.apply?.(event);
+      if (movesLists(event, latest.current.showing)) reads.ask();
+    };
     listeners.add(onEvent);
     window.addEventListener(WORK_CHANGED_EVENT, reads.ask);
     document.addEventListener('visibilitychange', reads.seen);

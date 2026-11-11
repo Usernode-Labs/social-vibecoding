@@ -15,6 +15,11 @@
 //   3. A card is open 14 days: a tap after that is refused (410) and its
 //      buttons go, in a thread and in the chat.
 //   4. Up to three offers under one reply, and the same one twice is one.
+//   5. Step 3 (11 Nov 2026): a card is written with the message that shows
+//      its buttons, in one transaction; a tap finds it by its id, and no tap
+//      404s while its buttons are shown. Its buttons retire from the
+//      standing: a vote on closing the request opening retires Propose to
+//      close, a build starting retires an overlap question, each saying why.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/bot-cards-postgres.test.js
 
@@ -47,17 +52,23 @@ test('Homeroom bot\'s cards, in one store', { timeout: 180000 }, async (t) => {
   await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
   await require('../src/db/reference-data').seedReferenceData(pool);
   await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  require('../src/db/pool').getPool = () => pool;
   const voice = require('../src/services/homeroom-bot-voice');
   const mayor = require('../src/services/homeroom-bot-mayor');
+  const realWs = require('../src/services/ws');
+  const cards = require('../src/services/bot-cards');
+  const workState = require('../src/services/work-state');
 
   const one = async (sql, params) => (await pool.query(sql, params)).rows[0];
   const ada = await one(`INSERT INTO users (username, password, has_platform_access) VALUES ('bc_ada', 'x', TRUE) RETURNING id, username`);
   const app = await one(
     `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
      VALUES ('Seed swap', 'bc-seeds', 'running', $1, 'public', 'public') RETURNING id, slug, name`, [ada.id]);
-  const note = async (metadata) => (await one(
-    `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, metadata)
-     VALUES ($1, $2, 'A note.', 'issue', 4, $3) RETURNING id`, [app.id, ada.id, JSON.stringify(metadata || {})])).id;
+  const bot = await one(`INSERT INTO users (username, password, is_synthetic) VALUES ('homeroom_bot', 'x', TRUE) RETURNING id, username`);
+  // A note with a card, as the bot writes one (ws.sendBotMessage `card`).
+  const noteWith = (card, ref = 4, content = 'A note.') => realWs.sendBotMessage(pool, app.id, {
+    user: bot, content, thread: { type: 'issue', ref }, card,
+  });
   const broadcasts = [];
   const deps = { ws: { broadcast(appId, frame) { broadcasts.push(frame); } } };
 
@@ -77,18 +88,20 @@ test('Homeroom bot\'s cards, in one store', { timeout: 180000 }, async (t) => {
     const old = await one(
       `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id) VALUES ($1, 'close_request', '{}', $2) RETURNING id`,
       [app.id, ada.id]);
-    const offer = await voice.threadOffer(pool, { app, kind: 'copy_request', forUserId: ada.id, args: { issueNumber: 4 } });
+    const sent = await noteWith({ kind: 'copy_request', forUserId: ada.id, args: { issueNumber: 4 } });
+    const offer = { id: sent.cardId };
     assert.ok(offer.id > old.id, 'above every older offer\'s id');
-    const messageId = await note({ homeroomBot: { kind: 'voice', ...offer.metadata } });
-    await voice.tieThreadOffer(pool, offer.id, messageId);
     const card = await one('SELECT place, kind, user_id, chat_message_id, message_id, status FROM bot_cards WHERE id = $1', [offer.id]);
-    assert.deepEqual(card, { place: 'thread', kind: 'copy_request', user_id: ada.id, chat_message_id: messageId, message_id: null, status: 'open' });
+    assert.deepEqual(card, { place: 'thread', kind: 'copy_request', user_id: ada.id, chat_message_id: sent.id, message_id: null, status: 'open' });
     const out = await voice.actOnOffer(pool, {}, { offerId: offer.id, userId: ada.id, choice: 'no', key: 'bc-no', deps });
     assert.equal(out.decision, 'declined');
     assert.equal((await one('SELECT status FROM bot_cards WHERE id = $1', [offer.id])).status, 'declined');
 
     // One made before, in the old table, still decides.
-    const oldMessage = await note({ homeroomBot: { kind: 'voice', offer: { id: old.id, kind: 'close_request', status: 'open' } } });
+    const oldMessage = (await one(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, metadata)
+       VALUES ($1, $2, 'A note.', 'issue', 4, $3) RETURNING id`,
+      [app.id, bot.id, JSON.stringify({ homeroomBot: { kind: 'voice', offer: { status: 'open' } } })])).id;
     await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1', [old.id, oldMessage]);
     const kept = await voice.actOnOffer(pool, {}, { offerId: old.id, userId: ada.id, choice: 'no', key: 'bc-old', deps });
     assert.equal(kept.decision, 'declined');
@@ -96,12 +109,11 @@ test('Homeroom bot\'s cards, in one store', { timeout: 180000 }, async (t) => {
   });
 
   await t.test('a card is open 14 days: a later tap is refused and its buttons go', async () => {
-    const offer = await voice.threadOffer(pool, { app, kind: 'copy_request', forUserId: ada.id, args: { issueNumber: 4 } });
-    const messageId = await note({ homeroomBot: { kind: 'voice', ...offer.metadata } });
-    await voice.tieThreadOffer(pool, offer.id, messageId);
-    await pool.query("UPDATE bot_cards SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [offer.id]);
-    const tapped = await voice.decideOffer(pool, {}, { app, messageId, user: { id: ada.id }, choice: 'yes', deps });
-    assert.deepEqual([tapped.ok, tapped.status], [false, 410]);
+    const sent = await noteWith({ kind: 'copy_request', forUserId: ada.id, args: { issueNumber: 4 } });
+    const messageId = sent.id;
+    await pool.query("UPDATE bot_cards SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [sent.cardId]);
+    const tapped = await voice.decideOffer(pool, {}, { app, messageId, offerId: sent.cardId, user: { id: ada.id }, choice: 'yes', deps });
+    assert.deepEqual([tapped.ok, tapped.status, tapped.code], [false, 410, 'expired']);
     const { metadata } = await one('SELECT metadata FROM chat_messages WHERE id = $1', [messageId]);
     assert.deepEqual([metadata.homeroomBot.offer.status, metadata.homeroomBot.actions], ['expired', []]);
 
@@ -115,7 +127,7 @@ test('Homeroom bot\'s cards, in one store', { timeout: 180000 }, async (t) => {
        VALUES ($1, $2, $3, $4, 'file_request', 'Swap by post', NOW() - INTERVAL '1 minute') RETURNING id`,
       [ada.id, conversation.id, said.id, app.id]);
     const refused = await mayor.decideOfferTap(pool, {}, { user: { id: ada.id }, actionId: dmCard.id, choice: 'yes', deps: {} });
-    assert.deepEqual(refused, { ok: false, status: 410, error: 'expired' });
+    assert.deepEqual(refused, { ok: false, status: 410, error: 'expired', code: 'expired' });
     assert.equal((await one('SELECT status FROM bot_cards WHERE id = $1', [dmCard.id])).status, 'expired');
   });
 
@@ -175,6 +187,215 @@ test('Homeroom bot\'s cards, in one store', { timeout: 180000 }, async (t) => {
     meta = (await one('SELECT metadata FROM conversation_messages WHERE id = $1', [optionsId])).metadata;
     assert.equal(meta.homeroomBot.card.picked, 'B');
     assert.equal(meta.homeroomBot.status, 'open', 'another card type keeps its own lifecycle');
+  });
+
+  await t.test('step 3: a card is written with its message, or not at all, and a tap finds it by its id', async () => {
+    const sent = await noteWith({ kind: 'close_request', forUserId: null, args: { issueNumber: 6, title: 'Dark mode' } }, 6);
+    const card = await one('SELECT chat_message_id, status FROM bot_cards WHERE id = $1', [sent.cardId]);
+    assert.deepEqual([Number(card.chat_message_id), card.status], [sent.id, 'open'], 'its message is set in the same transaction');
+    const { metadata } = await one('SELECT metadata FROM chat_messages WHERE id = $1', [sent.id]);
+    assert.deepEqual(metadata.homeroomBot.offer, { id: sent.cardId, kind: 'close_request', status: 'open', forUserId: null });
+    assert.deepEqual(metadata.homeroomBot.actions.map((a) => [a.id, a.label, a.offerId]),
+      [['yes', 'Propose to close', sent.cardId], ['no', 'Keep it open', sent.cardId]], 'each button names its card');
+
+    // A write that fails after the card writes neither: no buttons without a card, no card without its message.
+    const before = await one('SELECT COUNT(*)::int AS n FROM bot_cards');
+    await assert.rejects(noteWith({
+      kind: 'close_request', args: { issueNumber: 6 }, onInsert: async () => { throw new Error('the write failed'); },
+    }, 6, 'Never shown.'), /the write failed/);
+    assert.equal((await one('SELECT COUNT(*)::int AS n FROM bot_cards')).n, before.n);
+    assert.equal((await one(`SELECT COUNT(*)::int AS n FROM chat_messages WHERE content = 'Never shown.'`)).n, 0);
+
+    // The tap names its card; a screen from before names none, and the
+    // message's own metadata does. Neither is ever a 404.
+    const taps = [];
+    const replies = { async tapVoiceOffer(args) { taps.push(args); return { ok: true }; } };
+    const byId = await voice.decideOffer(pool, {}, { app, user: { id: ada.id }, messageId: sent.id, offerId: sent.cardId, choice: 'yes', deps: { replies } });
+    const cached = await voice.decideOffer(pool, {}, { app, user: { id: ada.id }, messageId: sent.id, choice: 'yes', deps: { replies } });
+    assert.deepEqual([byId.ok, cached.ok], [true, true]);
+    assert.deepEqual(taps.map((a) => a.offerId), [sent.cardId, sent.cardId]);
+
+    // Its id under another message: refused as not this message's, and neither note changes.
+    const other = await noteWith(null, 6, 'Another note.');
+    const elsewhere = await voice.decideOffer(pool, {}, { app, user: { id: ada.id }, messageId: other.id, offerId: sent.cardId, choice: 'yes', deps: { replies } });
+    assert.deepEqual([elsewhere.ok, elsewhere.status, elsewhere.code], [false, 409, 'not_this_message']);
+    assert.equal((await one('SELECT status FROM bot_cards WHERE id = $1', [sent.cardId])).status, 'open');
+
+    // Another project's card, named by this project's note: gone, and the note's buttons go.
+    const elsewhereApp = await one(
+      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+       VALUES ('Other', 'bc-other', 'running', $1, 'public', 'public') RETURNING id`, [ada.id]);
+    const foreign = await one(
+      `INSERT INTO bot_cards (place, app_id, kind, args) VALUES ('thread', $1, 'close_request', '{}') RETURNING id`, [elsewhereApp.id]);
+    const naming = (await one(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, metadata)
+       VALUES ($1, $2, 'A note.', 'issue', 6, $3) RETURNING id`,
+      [app.id, bot.id, JSON.stringify({ homeroomBot: { kind: 'voice', offer: { id: foreign.id, status: 'open' }, actions: [{ id: 'yes' }] } })])).id;
+    const lost = await voice.decideOffer(pool, {}, { app, user: { id: ada.id }, messageId: naming, choice: 'yes', deps: { replies, ...deps } });
+    assert.deepEqual([lost.status, lost.code], [410, 'gone']);
+    const goneMeta = (await one('SELECT metadata FROM chat_messages WHERE id = $1', [naming])).metadata;
+    assert.deepEqual([goneMeta.homeroomBot.offer.status, goneMeta.homeroomBot.actions], ['gone', []]);
+  });
+
+  await t.test('step 3: buttons retire from the standing (a close vote opens, a build starts), and say why', async () => {
+    // The table, as the standing reads it.
+    const at = (stage, extra = {}) => ({ stage, why: null, reason: null, standing: { asks: {} }, ...extra });
+    assert.equal(cards.retireReason('close_request', at('reading')), null);
+    assert.equal(cards.retireReason('close_request', at('reading', { standing: { asks: { closeVote: { issueId: 1 } } } })), 'close_vote');
+    assert.equal(cards.retireReason('close_request', at('closed')), 'closed');
+    assert.equal(cards.retireReason('try_again', at('stopped', { reason: 'fix_stopped' })), null);
+    assert.equal(cards.retireReason('try_again', at('up_for_vote')), 'moved_on');
+    assert.equal(cards.retireReason('overlap', at('waiting_for_you', { why: 'plan' })), null);
+    assert.equal(cards.retireReason('overlap', at('building')), 'building');
+    assert.equal(cards.retireReason('build_plan', at('waiting_for_you', { why: 'plan' })), null);
+    assert.equal(cards.retireReason('build_plan', at('building')), 'building');
+    assert.equal(cards.retireReason('withdraw_change', at('live')), 'moved_on');
+    assert.equal(cards.retireReason('post_design', at('closed')), null, 'a kind about words, not where the work stands');
+    assert.equal(cards.moved(null, at('building')), false, 'nothing to compare: no move');
+    assert.equal(cards.moved({ stage: 'building', why: null, reason: null, closeVote: false }, at('building')), false);
+    // Ready to build and waiting its turn (in the bot's line, or held) is not
+    // built yet: its overlap, copy, move and file buttons stay until a build
+    // really starts, and that start is a move of its own.
+    for (const code of ['queued', 'held_builds', 'held_waiting']) {
+      for (const kind of ['overlap', 'copy_request', 'move_request', 'file_request']) {
+        assert.equal(cards.retireReason(kind, at('building', { line: { code } })), null, `${kind} while ${code}`);
+      }
+    }
+    assert.equal(cards.retireReason('overlap', at('building', { line: { code: 'starting' } })), 'building');
+    assert.equal(cards.retireReason('overlap', at('building', { line: { code: 'claimed', by: 'ada' } })), 'building');
+    const was = (code) => ({ stage: 'building', why: null, reason: null, closeVote: false, line: { code } });
+    assert.equal(cards.moved(was('queued'), at('building', { line: { code: 'starting' } })), true, 'its build started');
+    assert.equal(cards.moved(was('queued'), at('building', { line: { code: 'held_builds' } })), false, 'still waiting its turn');
+    assert.equal(cards.moved(was('starting'), at('building', { line: { code: 'reviewing' } })), false);
+
+    const ask = async (n) => {
+      await pool.query('INSERT INTO issues (app_id, github_issue_number, title, created_by) VALUES ($1, $2, $3, $4)',
+        [app.id, n, `Request ${n}`, ada.id]);
+      await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, asked_text) VALUES ($1, $2, $3, $4)',
+        [app.id, n, ada.id, `Request ${n}`]);
+      await pool.query('INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, enqueued_at) VALUES ($1, $2, 1, NOW())', [app.id, n]);
+    };
+    await ask(21);
+    await ask(22);
+    const move = async (n) => {
+      const changed = await workState.refresh(pool, [{ appId: app.id, issueNumber: n }]);
+      return { changed, pushes: await workState.pushesOf(pool, changed) };
+    };
+    assert.equal((await move(21)).changed[0].state.stage, 'reading');
+    await move(22);
+    const close = await noteWith({ kind: 'close_request', forUserId: null, args: { issueNumber: 21 } }, 21);
+    const overlap = await noteWith({ kind: 'overlap', forUserId: ada.id, args: { issueNumber: 21, other: 22, overlap: 'part_of' } }, 21);
+    const otherOverlap = await noteWith({ kind: 'overlap', forUserId: ada.id, args: { issueNumber: 22, other: 21, overlap: 'part_of' } }, 22);
+    const file = await noteWith({ kind: 'file_request', forUserId: ada.id, args: { issueNumber: 21, title: 'A swap calendar too' } }, 21);
+    const status = async (id) => (await one('SELECT status, retired_reason FROM bot_cards WHERE id = $1', [id]));
+    // Its own cards change the standing (its open offers), but nothing moved: every button stays.
+    const quiet = await move(21);
+    assert.equal(quiet.changed.length, 1);
+    assert.deepEqual((await status(close.cardId)).status, 'open');
+    assert.deepEqual((await status(overlap.cardId)).status, 'open');
+
+    // A vote on closing it opens: Propose to close goes, saying so; the overlap question stays.
+    await pool.query(
+      `INSERT INTO issues (app_id, title, kind, payload, created_by) VALUES ($1, 'Close issue #21', 'close_issue', $2, $3)`,
+      [app.id, JSON.stringify({ issueNumber: 21 }), ada.id]);
+    const voted = await move(21);
+    assert.deepEqual(await status(close.cardId), { status: 'retired', retired_reason: 'close_vote' });
+    assert.equal((await status(overlap.cardId)).status, 'open');
+    assert.equal((await status(file.cardId)).status, 'open');
+    const closeMeta = (await one('SELECT metadata FROM chat_messages WHERE id = $1', [close.id])).metadata;
+    assert.deepEqual([closeMeta.homeroomBot.offer.status, closeMeta.homeroomBot.offer.retired, closeMeta.homeroomBot.actions],
+      ['retired', 'close_vote', []], 'its words stay; its buttons go, and why is kept');
+    assert.ok(voted.pushes.some((p) => p.kind === 'room' && p.data.type === 'chat_message_updated' && p.data.id === close.id),
+      'everybody reading hears it when the transaction commits');
+    const tapped = await voice.decideOffer(pool, {}, { app, user: { id: ada.id }, messageId: close.id, offerId: close.cardId, choice: 'yes', deps });
+    assert.deepEqual([tapped.ok, tapped.status, tapped.code, tapped.reason], [false, 410, 'retired', 'close_vote']);
+    // Its row is derived again at once: its open cards no longer list it, and
+    // its push says so.
+    const stored21 = (await workState.forRequests(pool, app.id, [21])).get(21);
+    assert.deepEqual(stored21.asks.offers.map((o) => o.id).sort((a, b) => a - b), [overlap.cardId, file.cardId].sort((a, b) => a - b));
+    const again = voted.pushes.filter((p) => p.data.type === 'work_state' && p.data.item.ref === 21);
+    assert.equal(again.length, 2, 'the move, then the row without the retired card');
+    assert.deepEqual([again[1].data.state.asks.offers, again[1].data.state.asks.openOffers], [[], 2],
+      'the push counts its cards and names none (anybody may read it)');
+
+    // Ready to build, held for the project's build slots: nothing is being
+    // built yet, so the overlap question and the request to file stay.
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 21', [app.id]);
+    const ready = await one(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, cap_suppressed) VALUES ($1, 21, 'live', 'ready', 'builds_per_app')
+       RETURNING id`,
+      [app.id]);
+    const held = await move(21);
+    assert.deepEqual([held.changed[0].state.stage, held.changed[0].state.line.code], ['building', 'held_builds']);
+    assert.equal((await status(overlap.cardId)).status, 'open', 'held for its turn: not built yet');
+    assert.equal((await status(file.cardId)).status, 'open');
+    // Its build starts: the overlap question goes; another request's stays.
+    await pool.query('UPDATE homeroom_bot_runs SET cap_suppressed = NULL WHERE id = $1', [ready.id]);
+    const built = await move(21);
+    assert.deepEqual([built.changed[0].state.stage, built.changed[0].state.line.code], ['building', 'starting']);
+    assert.deepEqual(await status(overlap.cardId), { status: 'retired', retired_reason: 'building' });
+    assert.deepEqual(await status(file.cardId), { status: 'retired', retired_reason: 'building' });
+    assert.equal((await status(otherOverlap.cardId)).status, 'open', 'another request\'s question is untouched');
+    const overlapMeta = (await one('SELECT metadata FROM chat_messages WHERE id = $1', [overlap.id])).metadata;
+    assert.deepEqual([overlapMeta.homeroomBot.offer.status, overlapMeta.homeroomBot.actions], ['retired', []]);
+  });
+
+  await t.test('a retire marks nothing; the posting function\'s retire marks its item; the drain never waits on a tapped card', async () => {
+    const marks = async () => (await pool.query(
+      'SELECT app_id, issue_number, session_id FROM work_state_dirty ORDER BY id')).rows
+      .map((r) => (r.session_id ? `s${r.session_id}` : `${r.issue_number}`));
+    const a = await noteWith({ kind: 'close_request', forUserId: null, args: { issueNumber: 41 } }, 41);
+    await pool.query('DELETE FROM work_state_dirty');
+    await cards.retireCards(pool, [{ id: a.cardId, kind: 'close_request', place: 'thread', chat_message_id: a.id }], 'moved_on');
+    assert.equal((await one('SELECT status FROM bot_cards WHERE id = $1', [a.cardId])).status, 'retired');
+    assert.deepEqual(await marks(), [], 'a card only retired marks nothing (the deadlock with the drain)');
+    const older = await noteWith({ kind: 'try_again', forUserId: ada.id, args: { issueNumber: 41 } }, 41);
+    const newer = await noteWith({ kind: 'try_again', forUserId: ada.id, args: { issueNumber: 41 } }, 41);
+    await pool.query('DELETE FROM work_state_dirty');
+    await cards.retireFor(pool, { appId: app.id, issueNumber: 41, keep: [newer.cardId] });
+    assert.equal((await one('SELECT status FROM bot_cards WHERE id = $1', [older.cardId])).status, 'retired');
+    assert.deepEqual(await marks(), ['41'], 'a supersede marks its request, so its open cards catch up');
+
+    // A tap holds a card (deciding, its transaction still open) while its
+    // request's build starts. The drain takes the mark, stores the move and
+    // commits, then leaves the held card to the tap rather than wait on it.
+    await pool.query('INSERT INTO issues (app_id, github_issue_number, title, created_by) VALUES ($1, 42, $2, $3)', [app.id, 'Request 42', ada.id]);
+    await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, asked_text) VALUES ($1, 42, $2, $3)',
+      [app.id, ada.id, 'Request 42']);
+    await workState.refresh(pool, [{ appId: app.id, issueNumber: 42 }]);
+    const held = await noteWith({ kind: 'overlap', forUserId: ada.id, args: { issueNumber: 42, other: 41, overlap: 'part_of' } }, 42);
+    const loose = await noteWith({ kind: 'copy_request', forUserId: ada.id, args: { issueNumber: 42 } }, 42);
+    await require('./lib/work-states').settleWorkStates(pool);
+    await pool.query(`INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 42, 'live', 'ready')`, [app.id]);
+    const tap = await pool.connect();
+    try {
+      await tap.query('BEGIN');
+      await tap.query(`UPDATE bot_cards SET status = 'deciding', decided_key = 'held' WHERE id = $1`, [held.cardId]);
+      let deadline;
+      const drained = await Promise.race([
+        workState.drainDirty(pool),
+        // fixed wait: a deadline the drain must beat (it never sleeps through it), not a pause
+        new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('the drain waited on the tapped card')), 10000); }),
+      ]).finally(() => clearTimeout(deadline));
+      assert.ok(drained.changed.some((c) => c.kind === 'request' && c.ref === 42 && c.state.stage === 'building'));
+      assert.equal((await one('SELECT status FROM bot_cards WHERE id = $1', [loose.cardId])).status, 'retired', 'the loose card goes');
+      await tap.query('ROLLBACK');
+    } finally {
+      tap.release();
+    }
+    assert.equal((await one('SELECT status FROM bot_cards WHERE id = $1', [held.cardId])).status, 'open', 'the tapped one was left to its tap');
+  });
+
+  await t.test('step 3: a newer card of the same kind supersedes an older one, kept by id (the posting function\'s)', async () => {
+    const older = await noteWith({ kind: 'try_again', forUserId: ada.id, args: { sessionId: 900, issueNumber: 31 } }, 31);
+    const newer = await noteWith({ kind: 'try_again', forUserId: ada.id, args: { sessionId: 900, issueNumber: 31 } }, 31);
+    const close = await noteWith({ kind: 'close_request', forUserId: null, args: { issueNumber: 31 } }, 31);
+    const pushes = await cards.retireFor(pool, { appId: app.id, issueNumber: 31, keep: [newer.cardId] });
+    const of = async (id) => (await one('SELECT status, retired_reason FROM bot_cards WHERE id = $1', [id]));
+    assert.deepEqual(await of(older.cardId), { status: 'retired', retired_reason: 'superseded' });
+    assert.equal((await of(newer.cardId)).status, 'open');
+    assert.equal((await of(close.cardId)).status, 'open', 'another kind is not superseded by it');
+    assert.deepEqual(pushes.map((p) => p.data.id), [older.id]);
   });
 
   await t.test('up to three offers under one reply, and the same one twice is one', () => {

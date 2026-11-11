@@ -119,7 +119,7 @@ const TOOLS = Object.freeze({
   },
   propose_featured_illustration: {
     title: 'Propose a featured picture',
-    say: 'Propose new framing (zoom, x, y) or tint for a project\'s featured picture, or pictures the admin sent ahead by uploadId. It opens a vote in the project\'s group.',
+    say: 'Propose new framing (zoom, x, y) or tint for a project\'s featured picture, or pictures the admin sent ahead by uploadId. It opens a vote in the project\'s group; replacePending swaps the admin\'s own waiting change instead, keeping every field left out.',
   },
   get_homeroom_bot: {
     say: 'Your own settings, spend, queue, incidents and recent runs, as the admin console shows them (username for one person\'s week).',
@@ -142,7 +142,7 @@ const LABELS = Object.freeze({
   role: 'Role', notes: 'Notes', scope: 'Scope', versionId: 'Version', weeklyUsd: 'Weekly budget', username: 'Username',
   platformAccess: 'Let in at once', welcomeDm: 'Welcome DM', everyTemplate: 'A project from each template',
   userId: 'Account', email: 'Email', slug: 'Project', lightUploadId: 'Light picture', darkUploadId: 'Dark picture',
-  zoom: 'Zoom', x: 'Across', y: 'Up and down', tint: 'Card colour', mode: 'Mode', pausedApps: 'Paused projects',
+  zoom: 'Zoom', x: 'Across', y: 'Up and down', tint: 'Card colour', replacePending: 'Replace the waiting change', mode: 'Mode', pausedApps: 'Paused projects',
   defaultModel: 'Default model', helperModel: 'Helper model', weeklyLimitCents: 'Bot\'s weekly budget (cents)',
   userWeeklyCents: 'A person\'s week (cents)', adminWeeklyCents: 'An admin\'s week (cents)',
   triage: 'triage', spec: 'spec', build: 'build', followup: 'follow-ups', reviewer: 'reviewer', pack: 'context pack',
@@ -793,7 +793,9 @@ function outcomeLine(name, stored) {
         : `Sent the release email to ${plainText(s.email)}.`;
     }
     case 'propose_featured_illustration':
-      return `Proposed the new picture for ${plainText(s.slug)}: it changes once the project's group votes it in.`;
+      return s.replaced
+        ? `Replaced the waiting picture for ${plainText(s.slug)}: the group votes again on the new one.`
+        : `Proposed the new picture for ${plainText(s.slug)}: it changes once the project's group votes it in.`;
     case 'set_homeroom_bot_settings': {
       const changed = Array.isArray(s.changed) ? s.changed.map(plainText).filter(Boolean) : [];
       return changed.length ? `Changed: ${clip(changed.join(', '), 240)}.` : 'Saved.';
