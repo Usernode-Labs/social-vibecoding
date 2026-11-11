@@ -833,6 +833,7 @@ SELECT cs.id, cs.pr_number, COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed
        (c.disputed_at IS NOT NULL) AS disputed,
        rq.state = 'closed' AS request_closed, cs.status,
        (n.number = cs.linked_issues[array_lower(cs.linked_issues, 1)]) AS first,
+       EXISTS (SELECT 1 FROM pr_votes v WHERE v.session_id = cs.id) AS has_votes,
        t.number AS home, n.number AS request
   FROM chat_sessions cs
   JOIN threads t ON t.id = cs.thread_id
@@ -880,10 +881,13 @@ async function changesElsewhere(db, { thread, numbers, viewerId = null }) {
     const disputed = row.disputed === true;
     // #6605: a request that is already closed is not open work; and when the
     // change belongs in this request's thread but stayed because people have
-    // voted on it, say why rather than only where it is.
+    // voted on it, say why rather than only where it is. Votes are what the
+    // line names, so it is shown only when there are some: a gather still
+    // being arranged kept the change away for a reason the line would
+    // misreport.
     const live = row.status !== 'merging' && row.status !== 'merged';
     const closed = row.request_closed === true && live;
-    const stays = row.first === true && live;
+    const stays = row.first === true && live && row.has_votes === true;
     out.push({
       id: Number(row.id),
       number: row.pr_number == null ? null : Number(row.pr_number),
