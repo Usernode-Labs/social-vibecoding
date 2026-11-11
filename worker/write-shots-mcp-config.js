@@ -107,7 +107,8 @@ const browserArgs = (persona, { phone = false } = {}) => {
   return [
     '/usr/local/bin/shots-browser-observer.js',
     observed,
-    '--browser', 'chromium', '--headless', '--isolated', '--no-sandbox', '--caps', 'vision',
+    '--browser', 'chromium', '--executable-path', '/usr/bin/chromium',
+    '--headless', '--isolated', '--no-sandbox', '--caps', 'vision',
     ...(phone ? ['--device', PHONE_DEVICE] : deviceDensity ? ['--config', desktopConfig] : []),
     '--storage-state', path.join(stateDir, `${persona}.json`),
     '--block-service-workers', '--image-responses', 'allow',

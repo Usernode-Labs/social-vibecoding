@@ -125,7 +125,7 @@ test('a Playwright version whose tool moved fails the image build instead of sav
 
 test('the worker image patches the tool right after installing it, and verifies the density after', () => {
   const dockerfile = fs.readFileSync(path.join(root, 'worker', 'Dockerfile'), 'utf8');
-  const install = dockerfile.indexOf('RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION}');
+  const install = dockerfile.indexOf('npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION}');
   const copy = dockerfile.indexOf('COPY patch-playwright-mcp-screenshot.js /usr/local/bin/patch-playwright-mcp-screenshot.js');
   const patch = dockerfile.indexOf('RUN node /usr/local/bin/patch-playwright-mcp-screenshot.js');
   const verify = dockerfile.indexOf('RUN node /usr/local/bin/verify-shots-browser-mcp.js');

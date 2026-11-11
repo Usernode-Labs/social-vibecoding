@@ -165,24 +165,39 @@ COPY --from=esbuild-build /out/esbuild /usr/local/bin/esbuild
 #
 # Unlike the Claude Code layer above, the MCP version is PINNED (not
 # day-bumped) — bump deliberately. The MCP package bundles its OWN
-# `playwright` dependency, and the Chromium revision it launches is tied
-# to THAT version — not to any separately-pinned playwright. Installing
-# browsers with a standalone playwright pin is exactly what broke #688:
-# the image carried chromium-1148 (playwright 1.49.1) while the MCP's
-# bundled 1.56-alpha wanted chromium-1194, so every launch failed and
-# agents skipped the visual check. So the install step below `cd`s into
-# the MCP package directory and runs its package-local playwright CLI:
-# the downloaded Chromium revision can never drift from the server that
-# launches it, even across MCP pin bumps. `install --with-deps chromium`
-# also pulls Chromium's apt runtime deps (runs as root, before the USER
-# node switch below). The browser launches LAZILY — only when the agent
+# `playwright` dependency; installing with a standalone playwright pin is
+# what broke #688 (chromium-1148 in the image, the MCP's 1.56-alpha wanting
+# chromium-1194: every launch failed). So the install step below `cd`s into
+# the MCP package directory and runs its package-local playwright CLI.
+#
+# The browser itself is Debian's `chromium`, the package the capture image
+# uses, not the Chromium that Playwright version downloads: that one was
+# fixed at Chromium 141 by the 0.0.41 pin, a year of security fixes behind,
+# and invisible to the image audit, which knows distro packages only.
+# Debian's is security-supported, refreshed by every rebuild of this layer,
+# and seen by the audit. Every launcher names it (--executable-path for the
+# MCP servers, executablePath for the worker's scripts). The MCP's own
+# Playwright drives a newer Chromium than it was released with, so the
+# build-time checks below prove the pair on every build: a launch, the fonts
+# through CDP, the shots MCP (named, element and close-up screenshots,
+# density, navigation) and the shots sign-in. No Playwright Chromium is
+# installed, so a launcher that forgot the path fails instead of quietly
+# running an old browser. `install-deps chromium` keeps the system packages
+# Playwright's Chromium needed (the emoji, CJK and Thai fonts the shots
+# render with among them), and `install ffmpeg` the encoder Playwright
+# records clips with. The browser launches LAZILY — only when the agent
 # actually calls a browser tool — so turns that never reach for it pay
 # no runtime cost; scout/sync never wire the MCP server at all.
 ARG PLAYWRIGHT_MCP_VERSION=0.0.41
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
-RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
+RUN apt-get update && apt-get install -y --no-install-recommends chromium \
+  && npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
   && cd /usr/local/lib/node_modules/@playwright/mcp \
-  && npx playwright install --with-deps chromium \
+  && npx playwright install-deps chromium \
+  && npx playwright install ffmpeg \
+  && rm -rf /var/lib/apt/lists/* \
+  && if ls -d "$PLAYWRIGHT_BROWSERS_PATH"/chromium* 2>/dev/null; then echo 'Playwright installed its own Chromium' >&2; exit 1; fi \
+  && /usr/bin/chromium --version \
   && command -v mcp-server-playwright \
   && mcp-server-playwright --version
 # Shots are saved at the browser's device density (3 on a phone, 2 on a
@@ -336,16 +351,17 @@ WORKDIR /home/node/workspace
 # noise here, and the ls-remote a delay on every turn.
 ENV SOCIAL_VIBECODING_DRIFT_CHECK=off
 
-# Build-time smoke test: launch the MCP's bundled Chromium headless (as
-# node, same channel + sandbox setting + SwiftShader flags worker-run.sh seeds) and close
-# it. A future MCP pin bump that reintroduces a channel/revision mismatch
-# — the failure mode behind #688 — fails the image build loudly here,
-# instead of silently degrading every build turn to "skipped the
-# screenshot check". Then (#4087) the same Chromium renders the shell's font
+# Build-time smoke test: the MCP's Playwright launches Debian's Chromium
+# headless (as node, same executable + sandbox setting + SwiftShader flags
+# worker-run.sh seeds), a page gets a software WebGL context, and it closes.
+# A Playwright or Chromium that no longer pair — or a revision mismatch, the
+# failure mode behind #688 — fails the image build loudly here, instead of
+# silently degrading every build turn to "skipped the screenshot check".
+# Then (#4087) the same Chromium renders the shell's font
 # stack, and bare system-ui, at weights 400/650/700/800 and must report Inter
 # Regular/Bold/Bold/ExtraBold through CDP CSS.getPlatformFontsForNode.
 RUN cd /usr/local/lib/node_modules/@playwright/mcp \
-  && node -e "require('playwright').chromium.launch({channel:'chromium',headless:true,chromiumSandbox:false,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']}).then(b=>b.close()).catch(e=>{console.error(e);process.exit(1);})" \
+  && node -e "require('playwright').chromium.launch({executablePath:'/usr/bin/chromium',headless:true,chromiumSandbox:false,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']}).then(async(b)=>{const p=await b.newPage();if(!(await p.evaluate(()=>!!document.createElement('canvas').getContext('webgl'))))throw new Error('no WebGL context');await b.close();}).catch(e=>{console.error(e);process.exit(1);})" \
   && node /usr/local/bin/verify-shots-browser-fonts.js
 
 # Validate the actual shots MCP config against the installed package.

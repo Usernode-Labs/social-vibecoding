@@ -148,11 +148,13 @@ test('the shots agent launches Playwright through the content-free timing observ
       assert.ok(args.includes('--no-sandbox'));
       assert.ok(args.includes('--caps'));
       assert.ok(args.includes('vision'));
+      // Debian's chromium, the image's only Chromium (worker/Dockerfile).
+      assert.equal(args[args.indexOf('--executable-path') + 1], '/usr/bin/chromium');
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  assert.match(read('worker-run.sh'), /"--browser", "chromium", "--headless", "--isolated", "--no-sandbox"/);
+  assert.match(read('worker-run.sh'), /"--browser", "chromium", "--executable-path", "\/usr\/bin\/chromium", "--headless", "--isolated", "--no-sandbox"/);
   assert.match(claudeRunner, /SHOTS_HOSTED_ORIGINS_FILE/);
 });
 

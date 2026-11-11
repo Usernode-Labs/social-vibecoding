@@ -1361,7 +1361,7 @@ async function main() {
   try {
     if (!playwright) throw new Error('playwright is not available in this worker');
     browser = await playwright.chromium.launch({
-      channel: 'chromium', headless: true,
+      executablePath: '/usr/bin/chromium', headless: true,
       args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
     });
     // The declared checks first, on the app's own seed, as a proposal's

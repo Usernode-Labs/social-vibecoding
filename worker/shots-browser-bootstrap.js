@@ -183,7 +183,7 @@ async function main(progress) {
   const warmDemo = warmsDemoData();
   progress.stage = 'launch';
   const browser = await chromium.launch({
-    channel: 'chromium', headless: true, proxy: { server: proxy },
+    executablePath: '/usr/bin/chromium', headless: true, proxy: { server: proxy },
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
   });
   try {

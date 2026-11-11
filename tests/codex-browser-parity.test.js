@@ -17,11 +17,14 @@ test('Codex build turns receive the same pinned Playwright MCP surface as Claude
   assert.doesNotMatch(codex, /if \[ "\$MODE" = "scout" \][\s\S]{0,300}\[mcp_servers\.playwright\]/);
 });
 
-test('worker image pins the browser server and installs its matching Chromium', () => {
+test('worker image pins the browser server and installs Debian\'s Chromium for it', () => {
   const dockerfile = fs.readFileSync(path.join(__dirname, '..', 'worker/Dockerfile'), 'utf8');
   assert.match(dockerfile, /ARG PLAYWRIGHT_MCP_VERSION=0\.0\.41/);
   assert.match(dockerfile, /@playwright\/mcp@\$\{PLAYWRIGHT_MCP_VERSION\}/);
-  assert.match(dockerfile, /npx playwright install --with-deps chromium/);
+  assert.match(dockerfile, /apt-get install -y --no-install-recommends chromium \\/);
+  assert.match(dockerfile, /npx playwright install-deps chromium/);
+  assert.match(dockerfile, /npx playwright install ffmpeg/);
+  assert.doesNotMatch(dockerfile, /npx playwright install (?:--with-deps )?chromium/);
 });
 
 // App bench run 193: a Claude Code build's browser_evaluate waited 1,800 s

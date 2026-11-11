@@ -29,24 +29,53 @@ test('Dockerfile installs a PINNED MCP server and Chromium via its bundled Playw
   // from the one the server launches (#688: chromium-1148 installed,
   // chromium-1194 expected → every launch failed).
   assert.doesNotMatch(df, /ARG PLAYWRIGHT_VERSION=/);
-  // the browser install runs FROM the MCP package directory so npx
-  // resolves its package-local playwright CLI (revision match by
-  // construction), and still pulls Chromium's apt runtime deps
-  assert.match(df, /cd \/usr\/local\/lib\/node_modules\/@playwright\/mcp[\s\S]{0,120}playwright install --with-deps chromium/);
-  // browsers cached under /home/node so the existing chown picks them up
+  // the browser is Debian's package; the MCP's package-local playwright CLI
+  // (run FROM its directory) installs only the system packages its Chromium
+  // needed and the ffmpeg it records clips with, and the build fails if a
+  // Playwright Chromium appears anyway
+  assert.match(df, /apt-get install -y --no-install-recommends chromium \\/);
+  assert.match(df, /cd \/usr\/local\/lib\/node_modules\/@playwright\/mcp[\s\S]{0,120}playwright install-deps chromium[\s\S]{0,80}playwright install ffmpeg/);
+  assert.match(df, /ls -d "\$PLAYWRIGHT_BROWSERS_PATH"\/chromium\*[^\n]*exit 1; fi/);
+  // ffmpeg cached under /home/node so the existing chown picks it up
   assert.match(df, /PLAYWRIGHT_BROWSERS_PATH=\/home\/node\//);
+});
+
+// Every browser the worker starts is Debian's chromium (worker/Dockerfile):
+// the image has no Playwright Chromium, so a launcher that forgot the path
+// would fail, and one that named a channel would look for a browser the
+// image does not ship.
+test('every worker browser launch names Debian\'s Chromium', () => {
+  const files = fs.readdirSync(WORKER_DIR).filter((f) => fs.statSync(path.join(WORKER_DIR, f)).isFile());
+  let launches = 0;
+  let servers = 0;
+  for (const file of files) {
+    const text = read(file);
+    assert.doesNotMatch(text, /channel:\s*'chromium'/, `${file} names Playwright's Chromium channel`);
+    for (const at of [...text.matchAll(/chromium\.launch\(/g)].map((m) => m.index)) {
+      launches += 1;
+      assert.match(text.slice(at, at + 120), /executablePath:\s*'\/usr\/bin\/chromium'/, `${file}: a launch without Debian's chromium`);
+    }
+    for (const at of [...text.matchAll(/["']--browser["'],\s*["']chromium["']/g)].map((m) => m.index)) {
+      servers += 1;
+      assert.match(text.slice(at, at + 80), /["']--executable-path["'],\s*["']\/usr\/bin\/chromium["']/, `${file}: a browser server without Debian's chromium`);
+    }
+  }
+  // The six scripts and the image's smoke test; the shots, Claude and Codex servers.
+  assert.ok(launches >= 7, `found ${launches} launches`);
+  assert.ok(servers >= 4, `found ${servers} browser servers`);
 });
 
 test('Dockerfile smoke-tests a headless Chromium launch at image build time, as node', () => {
   const df = read('Dockerfile');
-  // launches the bundled-chromium channel with the SwiftShader flags the
-  // seeded config uses, so a future pin bump that reintroduces a
-  // channel/revision mismatch fails the image build instead of silently
+  // launches Debian's chromium with the SwiftShader flags the seeded config
+  // uses and asks a page for a WebGL context, so a Playwright and Chromium
+  // that no longer pair fail the image build instead of silently
   // degrading every build turn
   const smokeIdx = df.search(/RUN cd \/usr\/local\/lib\/node_modules\/@playwright\/mcp[\s\S]{0,80}chromium\.launch/);
   assert.ok(smokeIdx !== -1, 'smoke-test RUN present');
-  assert.match(df, /chromium\.launch\(\{channel:'chromium',headless:true,chromiumSandbox:false/);
+  assert.match(df, /chromium\.launch\(\{executablePath:'\/usr\/bin\/chromium',headless:true,chromiumSandbox:false/);
   assert.match(df, /--enable-unsafe-swiftshader/);
+  assert.match(df, /getContext\('webgl'\)/);
   // runs after the final USER node switch (browsers are node-owned by then)
   const userNodeIdx = df.lastIndexOf('USER node');
   assert.ok(userNodeIdx !== -1 && smokeIdx > userNodeIdx, 'smoke test runs as node');

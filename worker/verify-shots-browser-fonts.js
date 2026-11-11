@@ -16,7 +16,7 @@ const EXPECTED = { 400: 'Inter-Regular', 650: 'Inter-Bold', 700: 'Inter-Bold', 8
 
 async function platformFonts({ stack = SHELL_STACK, chromium } = {}) {
   const browser = await chromium.launch({
-    channel: 'chromium', headless: true, chromiumSandbox: false,
+    executablePath: '/usr/bin/chromium', headless: true, chromiumSandbox: false,
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
   });
   try {

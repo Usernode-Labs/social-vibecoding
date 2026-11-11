@@ -610,7 +610,7 @@ async function main() {
   const playwright = loadPlaywright();
   if (!playwright) return stop('no_browser');
   browser = await playwright.chromium.launch({
-    channel: 'chromium', headless: true,
+    executablePath: '/usr/bin/chromium', headless: true,
     args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
   });
   const identity = lib.throwawayIdentity(CONFIG.appId);

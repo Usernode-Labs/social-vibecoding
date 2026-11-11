@@ -155,11 +155,12 @@ JSON
 #                which the worker image deliberately does not ship — so
 #                without this flag every launch fails with "Chromium
 #                distribution 'chrome' is not found" and the agent skips
-#                the visual check. The flag maps to channel "chromium",
-#                the Playwright-bundled Chromium the image installs
-#                (worker/Dockerfile); CLI options merge LAST, so it beats
-#                the default channel while --config below still
-#                contributes the SwiftShader launch args.
+#                the visual check. The flag maps to channel "chromium";
+#                CLI options merge LAST, so it beats the default channel
+#                while --config below still contributes the SwiftShader
+#                launch args.
+#   --executable-path : Debian's chromium, the image's only Chromium
+#                (worker/Dockerfile says why it is not Playwright's).
 #   --headless : no display in the worker; Chromium runs headless.
 #   --isolated : ephemeral profile per session, no on-disk profile state.
 #   --no-sandbox : Chromium's own sandbox cannot start in the worker container.
@@ -184,7 +185,7 @@ cat > "$BROWSER_MCP_CONFIG" <<JSON
     },
     "playwright": {
       "command": "/usr/local/bin/mcp-server-playwright",
-      "args": ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "$BROWSER_PW_CONFIG", "--output-dir", "$BROWSER_OUTPUT_DIR"]
+      "args": ["--browser", "chromium", "--executable-path", "/usr/bin/chromium", "--headless", "--isolated", "--no-sandbox", "--config", "$BROWSER_PW_CONFIG", "--output-dir", "$BROWSER_OUTPUT_DIR"]
     }
   }
 }
@@ -199,7 +200,7 @@ cat > "$BROWSER_ONLY_MCP_CONFIG" <<JSON
   "mcpServers": {
     "playwright": {
       "command": "/usr/local/bin/mcp-server-playwright",
-      "args": ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "$BROWSER_PW_CONFIG", "--output-dir", "$BROWSER_OUTPUT_DIR"]
+      "args": ["--browser", "chromium", "--executable-path", "/usr/bin/chromium", "--headless", "--isolated", "--no-sandbox", "--config", "$BROWSER_PW_CONFIG", "--output-dir", "$BROWSER_OUTPUT_DIR"]
     }
   }
 }

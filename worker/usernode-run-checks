@@ -380,7 +380,7 @@ async function main() {
   let browser;
   try {
     browser = await playwright.chromium.launch({
-      channel: 'chromium',
+      executablePath: '/usr/bin/chromium',
       headless: true,
       args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
     });
