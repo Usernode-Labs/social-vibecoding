@@ -206,10 +206,14 @@ test('the chrome keeps clear of a phone\'s status bar and home strip', () => {
   assert.match(css, /html\[data-skin\] \.fr\.fr-shell \.fr-tabbar \{\s*position: relative;\s*margin-bottom: var\(--platform-safe-bottom, 0px\);\s*\}/);
   assert.match(css, /html\[data-skin\] \.fr\.fr-shell \.fr-tabbar::after \{[^}]*top: 100%;[^}]*height: var\(--platform-safe-bottom, 0px\);[^}]*background: inherit;/,
     'the tab bar\'s ground fills the home strip');
-  assert.match(css, /html\[data-skin="glass"\] \.fr\.fr-shell \.fr-tabbar,\s*html\[data-skin="pastel"\] \.fr\.fr-shell \.fr-tabbar \{\s*margin-bottom: calc\(12px \+ var\(--platform-safe-bottom, 0px\)\);\s*\}/,
-    'a floating tab bar rises with the home strip');
+  assert.match(css, /html\[data-skin="glass"\] \.fr\.fr-shell \.fr-tabbar,\s*html\[data-skin="pastel"\] \.fr\.fr-shell \.fr-tabbar \{\s*margin-bottom: 0;\s*\}/,
+    'a floating tab bar reaches the foot of the screen');
+  assert.match(css, /html\[data-skin="glass"\] \.fr\.fr-shell \.fr-tabbar \{\s*height: calc\(64px \+ var\(--platform-tabs-inset, 0px\)\);\s*padding-bottom: calc\(8px \+ var\(--platform-tabs-inset, 0px\)\);\s*\}/,
+    'and spends the home strip as its own padding, the way #platform-tabs does');
+  assert.match(css, /html\[data-skin="pastel"\] \.fr\.fr-shell \.fr-tabbar \{\s*height: calc\(62px \+ var\(--platform-tabs-inset, 0px\)\);\s*padding-bottom: calc\(6px \+ var\(--platform-tabs-inset, 0px\)\);\s*\}/,
+    'Pastel too, at its own height');
   assert.match(css, /html\[data-skin="glass"\] \.fr\.fr-shell \.fr-tabbar::after,\s*html\[data-skin="pastel"\] \.fr\.fr-shell \.fr-tabbar::after \{ content: none; \}/,
-    'and leaves the strip under it clear');
+    'the bar\'s own box fills the strip under it, so the general rule\'s strip is not drawn');
   assert.match(css, /html\[data-skin="pastel"\] \.fr\.fr-app\.fr-shell \{ top: var\(--platform-safe-top, 0px\); \}/,
     'Pastel\'s horizontal pill is in the top row, so its layer is offset instead');
   // --platform-header-h is defined without the inset and the screens add it

@@ -1560,7 +1560,9 @@ test('a stage filter narrows every kanban column by its own lane', () => {
   a._envIssueNumbers = new Set();
   a._proposals = [prop({ id: 91, pr_title: 'Waiting change' })];
   a._govProposals = [];
-  a._merged = [merged({ id: 80, pr_title: 'Landed Monday', merged_at: new Date(ws + 3600000).toISOString(), live_at: new Date(ws + 3600000).toISOString() }), merged({ id: 81, pr_title: 'Landed long ago', created_at: '2026-09-01' })];
+  // #6482: two different changes, so two different pull request numbers —
+  // the same one now means one change.
+  a._merged = [merged({ id: 80, pr_number: 800101, pr_title: 'Landed Monday', merged_at: new Date(ws + 3600000).toISOString(), live_at: new Date(ws + 3600000).toISOString() }), merged({ id: 81, pr_number: 800102, pr_title: 'Landed long ago', created_at: '2026-09-01' })];
   a._mySessions = [];
   a._sharedSessions = [];
   a._kanbanFilters = { ...none, stage: 'open' };
