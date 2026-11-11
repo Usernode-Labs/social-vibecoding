@@ -232,7 +232,9 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
       const signupCookie = cookieValue(verify.headers, 'usernode_signup');
       assert.match(signupCookie, /^[0-9a-f]{64}$/);
       assert.match(verify.headers.get('set-cookie'), /HttpOnly/i);
-      assert.match(verify.headers.get('set-cookie'), /Path=\/api\/auth\/otp/i);
+      // Path=/, as a `__Host-` name needs over HTTPS (the bare name is plain
+      // HTTP's; tests/protected-cookie-names.test.js pins both).
+      assert.match(verify.headers.get('set-cookie'), /usernode_signup=[^;]+; Path=\/;/i);
 
       // #2563 + #3575: the address is NEVER the handle, and the suggestion
       // is only offered, never stored. Until the person chooses, the row

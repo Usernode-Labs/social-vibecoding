@@ -1,5 +1,7 @@
 'use strict';
 
+const { readSessionCookie } = require('./browser-session-cookies');
+
 // The app-host gate: who may load an app at its own address, and as whom.
 //
 // Every request to an app host (<slug>.<apps domain>) or a preview host
@@ -34,6 +36,16 @@
 //     trades it for an HttpOnly, Secure, host-only (`__Host-`), SameSite=Lax
 //     cookie and redirects to the same-host path the visitor asked for, with
 //     the code gone from the address.
+//   * the code is also bound to the BROWSER that started the hop, the way
+//     OAuth's `state` is: starting the hop sets a random value in a
+//     five-minute, HttpOnly, host-only cookie here (`state` in cookieNames)
+//     and sends only its SHA-256 to the apex, which writes it into the code
+//     (`state` claim). The callback trades a code only in the browser that
+//     holds the matching cookie, before it spends the code, and clears the
+//     cookie once its hop is over. Without it, somebody could run the hop
+//     with their OWN session and send the code to another person's browser,
+//     which would then be signed in to the app as them (login CSRF). The
+//     cookie is stripped from what the app receives, like the others.
 //   * not signed in, public app: the apex sends the browser back with a
 //     one-minute "anonymous" token instead, which the gate turns into a
 //     ten-minute marker so it stops asking; the visitor sees what they see
@@ -128,6 +140,14 @@ const SAFE_METHODS = new Set(['GET', 'HEAD']);
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 // How long the readable guest hint lasts. Signing in clears it.
 const GUEST_HINT_TTL_S = 12 * 60 * 60;
+// How long a sign-in hop's state cookie lives: the hop itself is three
+// redirects. Signing up or in on the platform first (the bridge's account
+// buttons) can take a person much longer, so that hop's state lives longer.
+const STATE_TTL_S = 5 * 60;
+const ACCOUNT_STATE_TTL_S = 30 * 60;
+// The state cookie's value is 32 random bytes and the address carries its
+// SHA-256: both are 43 base64url characters.
+const STATE_RE = /^[A-Za-z0-9_-]{43}$/;
 
 const ACCOUNT_REQUIRED = Object.freeze({
   error: 'account_required',
@@ -143,8 +163,8 @@ function secureCookies() {
 // ("cookie tossing"). Plain HTTP dev boxes cannot use the prefix.
 function cookieNames() {
   return secureCookies()
-    ? { access: '__Host-usernode_access', anon: '__Host-usernode_anon', guest: '__Host-usernode_guest' }
-    : { access: '__usernode_access', anon: '__usernode_anon', guest: '__usernode_guest' };
+    ? { access: '__Host-usernode_access', anon: '__Host-usernode_anon', guest: '__Host-usernode_guest', state: '__Host-usernode_state' }
+    : { access: '__usernode_access', anon: '__usernode_anon', guest: '__usernode_guest', state: '__usernode_state' };
 }
 
 function signinEnabled() {
@@ -176,9 +196,34 @@ function safeNext(raw) {
   return next || '/';
 }
 
-function authorizeUrl(host, next) {
+// The apex hop's address. `state` is the SHA-256 of this browser's state
+// cookie (hopStateDigest), never the cookie's value; without one the apex
+// mints no code.
+function authorizeUrl(host, next, state = null) {
   return `https://${USERNODE_DOMAIN}/__access/authorize`
-    + `?host=${encodeURIComponent(host)}&next=${encodeURIComponent(next)}`;
+    + `?host=${encodeURIComponent(host)}&next=${encodeURIComponent(next)}`
+    + (state ? `&state=${encodeURIComponent(state)}` : '');
+}
+
+// ── The sign-in hop's state (see the header) ─────────────────────────────
+function newHopState() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+function hopStateDigest(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('base64url');
+}
+
+function wellFormedState(value) {
+  return typeof value === 'string' && STATE_RE.test(value);
+}
+
+// Does the state cookie this browser holds match the code's claim?
+function stateMatches(cookieValue, claimed) {
+  if (!wellFormedState(cookieValue) || !wellFormedState(claimed)) return false;
+  const held = Buffer.from(hopStateDigest(cookieValue));
+  const named = Buffer.from(claimed);
+  return held.length === named.length && crypto.timingSafeEqual(held, named);
 }
 
 // The platform shell's chromeless view of the app: where a visitor the app
@@ -214,6 +259,23 @@ function isTopLevelNavigation(headers, method) {
     && header(headers, 'sec-fetch-dest').toLowerCase() === 'document';
 }
 
+// A request that may be a person's navigation, and so may start a sign-in
+// hop with its state: a top-level visit, a frame's navigation (a private
+// app in Homeroom's frame whose door cookie ran out signs in again inside
+// the frame), or a read from a browser that sends no Fetch Metadata at all
+// (an old one's visit). A fetch, an asset or a WebSocket never sets the
+// state cookie, so polling in one tab, or a sibling app's <img>, cannot
+// overwrite the state of a hop in flight; their trip to the apex carries no
+// state and gets no code, which a request that is not a visit could not
+// have used anyway. A sibling app can frame one to restart a hop, which
+// costs the other hop one retry and grants nothing: the code still only
+// works in the browser holding its state.
+function mayStartHop(headers, method) {
+  if (!SAFE_METHODS.has(method) || isWebSocketUpgrade(headers)) return false;
+  const dest = header(headers, 'sec-fetch-dest').toLowerCase();
+  return dest === 'document' || dest === 'iframe' || dest === '';
+}
+
 function selfOrigins(host) {
   const origins = [`https://${host}`];
   if (!secureCookies()) origins.push(`http://${host}`);
@@ -245,7 +307,8 @@ function sameOriginWrite({ headers, host }) {
 }
 
 // Every gate cookie name, in either spelling, for stripping before the app.
-const GATE_COOKIE_RE = /^(?:__Host-usernode|__usernode)_(?:access|anon)$/;
+// (The guest hint is not one: the bridge reads it on the app's own page.)
+const GATE_COOKIE_RE = /^(?:__Host-usernode|__usernode)_(?:access|anon|state)$/;
 
 // The Cookie header minus the gate's own cookies (scripts/app-gate.js; the
 // Caddyfile does the same with a header_up replacement).
@@ -358,8 +421,9 @@ function browserRequest(headers) {
 
 // The platform's sign-up or sign-in, coming back through the authorize hop
 // to the same page of the app, signed in (auth-screens.js RETURN_TO_PATHS).
-function accountUrl(kind, host, next) {
-  const back = `/__access/authorize?host=${encodeURIComponent(host)}&next=${encodeURIComponent(next)}`;
+function accountUrl(kind, host, next, state = null) {
+  const back = `/__access/authorize?host=${encodeURIComponent(host)}&next=${encodeURIComponent(next)}`
+    + (state ? `&state=${encodeURIComponent(state)}` : '');
   return `https://${USERNODE_DOMAIN}/?return_to=${encodeURIComponent(back)}#${kind === 'signup' ? 'signup' : 'login'}`;
 }
 
@@ -458,6 +522,22 @@ async function handleAccess(pool, req, res) {
     return res.redirect(302, location);
   };
 
+  // Every sign-in hop starts here. A visit gets a FRESH state each time
+  // (never one it already holds, which the app's own code could have
+  // planted): its value in the cookie, its SHA-256 in the address. Two tabs
+  // that start hops at once overwrite each other's; the loser's code is
+  // refused at the callback, which sends it on to its page with the loop
+  // marker rather than into another hop (see the callback).
+  const startHop = (next, { account = null } = {}) => {
+    let state = null;
+    if (mayStartHop(req.headers, method)) {
+      const value = newHopState();
+      res.cookie(names.state, value, cookieOptions(account ? ACCOUNT_STATE_TTL_S : STATE_TTL_S));
+      state = hopStateDigest(value);
+    }
+    return redirect(account ? accountUrl(account, host, next, state) : authorizeUrl(host, next, state));
+  };
+
   // Every 2xx goes out through here, so what an edge copies onto the
   // request is decided in one place.
   const allow = async ({ identityFor = null, guest = false } = {}) => {
@@ -519,9 +599,9 @@ async function handleAccess(pool, req, res) {
     // The bridge's "Continue with email" and "I have an account".
     const account = query.get('account');
     if (account === 'signup' || account === 'signin') {
-      return redirect(isProduction
-        ? accountUrl(account, host, next)
-        : `https://${USERNODE_DOMAIN}/`);
+      return isProduction
+        ? startHop(next, { account })
+        : redirect(`https://${USERNODE_DOMAIN}/`);
     }
     const anon = query.get('anon');
     if (anon) {
@@ -541,9 +621,29 @@ async function handleAccess(pool, req, res) {
       && claims.host === host
       && claims.appId === vis.appId
       && Number.isInteger(claims.uid)
-      && typeof claims.sid === 'string';
+      && typeof claims.sid === 'string'
+      && wellFormedState(claims.state);
     // Cheap checks first; the redemption is last so a code that fails
     // anything else is not spent.
+    //
+    // The code must come back to the browser whose hop it ends: the one
+    // holding the state cookie the code names. A code planted in another
+    // browser (login CSRF), or a tab whose state another tab's hop
+    // overwrote, is refused without being spent and goes on to the page
+    // with the loop marker, never straight into another hop: where a
+    // browser that refuses cookies has always ended up (the check step's
+    // answer), and signed in if the other tab's hop has finished. A private
+    // preview, which never honoured the marker, starts a fresh hop there.
+    if (ok) {
+      const held = req.cookies?.[names.state];
+      if (!stateMatches(held, claims.state)) {
+        log.warn('edge-gate', 'Sign-in code refused', { host, reason: held ? 'state_mismatch' : 'state_missing' });
+        return redirect(withRetryMarker(next));
+      }
+      // This hop is over, whatever comes next. A mismatched cookie above is
+      // left alone: it belongs to another tab's hop, still in flight.
+      res.clearCookie(names.state, { path: '/', secure: secureCookies(), sameSite: 'lax', httpOnly: true });
+    }
     if (ok) ok = await appAccess.isViewMember(pool, vis.appId, claims.uid);
     if (ok) ok = await sessionLive(pool, claims.sid, claims.uid);
     if (ok) ok = await redeemOnce(pool, claims.jti, claims.exp);
@@ -586,7 +686,7 @@ async function handleAccess(pool, req, res) {
       return allow({ identityFor: ok ? cookie.uid : null });
     }
     if (signin && topNav && !anonMarked(req) && query.get(RETRY_MARKER) !== '1') {
-      return redirect(authorizeUrl(host, safeNext(uri)));
+      return startHop(safeNext(uri));
     }
     if (guests) {
       // Every write needs an account.
@@ -635,7 +735,7 @@ async function handleAccess(pool, req, res) {
       // A door-only cookie (from an iframe token) on a direct visit: trade
       // it for one that signs the person in, if they are signed in.
       if (signin && topNav && query.get(RETRY_MARKER) !== '1') {
-        return redirect(authorizeUrl(host, safeNext(uri)));
+        return startHop(safeNext(uri));
       }
       return allow();
     }
@@ -645,11 +745,13 @@ async function handleAccess(pool, req, res) {
   // 4. Nothing valid. A visit that already went round the hop (the loop
   // marker) goes where an unsigned visitor goes rather than round again.
   if (topNav && isProduction) {
-    return redirect(signin && query.get(RETRY_MARKER) !== '1'
-      ? authorizeUrl(host, safeNext(uri))
-      : chromelessUrl(slug));
+    return signin && query.get(RETRY_MARKER) !== '1'
+      ? startHop(safeNext(uri))
+      : redirect(chromelessUrl(slug));
   }
-  if (method === 'GET') return redirect(authorizeUrl(host, safeNext(uri)));
+  // A preview's visit hops here too (it only ever opens the door), and so
+  // does an old browser's; anything else goes without a state (startHop).
+  if (method === 'GET') return startHop(safeNext(uri));
   return res.status(404).send('Not found');
 }
 
@@ -683,11 +785,15 @@ async function handleAuthorize(pool, req, res) {
   );
   // The session the code is bound to. A request authenticated some other
   // way (a CLI bearer) has none, and gets no code.
-  const sessionToken = typeof req.cookies?.session === 'string' ? req.cookies.session : '';
-  if (!app || app.id !== vis.appId || !sessionToken) return res.redirect(302, fallback);
+  const sessionToken = readSessionCookie(req) || '';
+  // And the browser: the SHA-256 of the state cookie the gate set when it
+  // started this hop. A hop that names none (not started by the gate, or
+  // not a visit) gets no code.
+  const state = wellFormedState(req.query.state) ? req.query.state : null;
+  if (!app || app.id !== vis.appId || !sessionToken || !state) return res.redirect(302, fallback);
 
   const code = appAccess.mintAccessGrant({
-    uid: req.user.id, appId: app.id, host: parsed.host, sid: sha256Hex(sessionToken),
+    uid: req.user.id, appId: app.id, host: parsed.host, sid: sha256Hex(sessionToken), state,
   });
   return res.redirect(302, `https://${parsed.host}${CALLBACK_PATH}`
     + `?code=${encodeURIComponent(code)}&next=${encodeURIComponent(next)}`);
@@ -697,11 +803,14 @@ module.exports = {
   CALLBACK_PATH,
   RETRY_MARKER,
   ANON_TTL_S,
+  STATE_TTL_S,
+  ACCOUNT_STATE_TTL_S,
   CAPTURE_USERNAME,
   ACCOUNT_REQUIRED,
   cookieNames,
   signinEnabled,
   sha256Hex,
+  hopStateDigest,
   safeNext,
   authorizeUrl,
   chromelessUrl,

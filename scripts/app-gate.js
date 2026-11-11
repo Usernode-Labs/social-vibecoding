@@ -53,8 +53,10 @@ const { URL } = require('url');
 const offlineCache = require('../src/services/offline-cache');
 const { createActivity } = require('../src/services/gateway-activity');
 
-// The same stripping the Caddyfile does with a header_up replacement.
-const GATE_COOKIE_RE = /^(?:__Host-usernode|__usernode)_(?:access|anon)$/;
+// The same stripping the Caddyfile does with a header_up replacement: the
+// access cookie, the anonymous marker and the sign-in hop's state
+// (src/services/edge-gate.js cookieNames).
+const GATE_COOKIE_RE = /^(?:__Host-usernode|__usernode)_(?:access|anon|state)$/;
 function hasGateCookie(cookieHeader) {
   if (typeof cookieHeader !== 'string' || !cookieHeader) return false;
   return cookieHeader.split(';').some((part) => GATE_COOKIE_RE.test(part.split('=')[0].trim()));
@@ -77,7 +79,10 @@ const HOP_BY_HOP = new Set([
 // Headers only the platform may set on what the app receives. A client that
 // sends one has it discarded before anything else happens.
 const GATE_HEADERS = ['x-usernode-identity', 'x-usernode-upstream', 'x-usernode-gate', 'x-usernode-applink', 'x-usernode-cache', 'x-usernode-runtime-sleep'];
-// What a refusal may carry back to the visitor.
+// What a refusal may carry back to the visitor. `set-cookie` is what makes
+// the sign-in hop work at all: the redirect that starts it sets the state
+// cookie, and the callback's sets the access cookie (every value, when
+// there are several).
 const RELAYED = ['location', 'set-cookie', 'content-type', 'cache-control', 'referrer-policy', 'retry-after'];
 
 function cleanHeaders(headers) {

@@ -2,6 +2,14 @@
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "social-vibecoding-platform.browserSiteIsolation" -}}
+{{- $mode := .Values.config.browserSiteIsolation -}}
+{{- if not (and (kindIs "string" $mode) (has $mode (list "legacy" "strict"))) -}}
+{{- fail "config.browserSiteIsolation must be legacy or strict" -}}
+{{- end -}}
+{{- $mode -}}
+{{- end -}}
+
 {{- define "social-vibecoding-platform.fullname" -}}
 {{- default (printf "%s-%s" .Release.Name (include "social-vibecoding-platform.name" .)) .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

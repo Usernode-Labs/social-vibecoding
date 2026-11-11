@@ -104,6 +104,10 @@ function normalizeHostname(raw) {
   }
   const ascii = domainToASCII(value);
   if (!ascii) throw fail('invalid_hostname', 'That is not a valid domain name.');
+  if (require('./browser-session-cookies').isolationMode() === 'strict'
+      && !require('./browser-site-isolation').appHostIsIsolated(ascii, caddy.USERNODE_DOMAIN)) {
+    throw fail('platform_domain', 'That address is on Homeroom’s browser site. Use a different domain you own.');
+  }
   if (ascii.length > 253) throw fail('invalid_hostname', 'That domain name is too long.');
   const labels = ascii.split('.');
   if (labels.length < 2 || !labels.every((l) => LABEL_RE.test(l))) {
@@ -569,6 +573,8 @@ async function resolveAppHost(pool, rawHost) {
   if (parsed) return parsed;
   const host = String(rawHost || '').trim().toLowerCase().replace(/:\d+$/, '');
   if (!host || !host.includes('.') || !/^[a-z0-9.-]+$/.test(host)) return null;
+  if (require('./browser-session-cookies').isolationMode() === 'strict'
+      && !require('./browser-site-isolation').appHostIsIsolated(host, caddy.USERNODE_DOMAIN)) return null;
   for (const domain of platformDomains()) if (underDomain(host, domain)) return null;
   const hit = hostCache.get(host);
   if (hit && Date.now() - hit.at < HOST_CACHE_TTL_MS) return hit.value;

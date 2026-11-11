@@ -24,6 +24,10 @@ function assertAppHostname(hostname, platformDomain = USERNODE_DOMAIN) {
   if (hostname.toLowerCase() === platformDomain.toLowerCase()) {
     throw new Error('App hostname conflicts with the platform hostname');
   }
+  if (require('./browser-session-cookies').isolationMode() === 'strict'
+      && !require('./browser-site-isolation').appHostIsIsolated(hostname, platformDomain)) {
+    throw new Error('App hostname must be on a different browser site from the platform');
+  }
   return hostname;
 }
 

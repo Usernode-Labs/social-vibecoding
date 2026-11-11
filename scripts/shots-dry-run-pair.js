@@ -284,7 +284,8 @@ async function up(options) {
           const page = await context.newPage();
           await page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: 30_000 });
           await page.close();
-          if (!(await context.cookies(ORIGINS[side])).some((cookie) => cookie.name === 'session')) {
+          if (!(await context.cookies(ORIGINS[side])).some((cookie) =>
+            cookie.name === 'session' || (ORIGINS[side].startsWith('https:') && cookie.name === '__Host-usernode_session'))) {
             throw new Error(`${persona} has no session on ${ORIGINS[side]}`);
           }
           // The demo data a copy makes on first view, made on both sides

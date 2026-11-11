@@ -243,8 +243,11 @@ const App = {
   // screen selector must not restore another session's display-only state.
   _sessionCacheScope() {
     try {
-      const value = document.cookie.split(';').map(s => s.trim())
-        .find(s => s.startsWith('usernode_api_scope='))?.slice('usernode_api_scope='.length);
+      const name = typeof location !== 'undefined' && location.protocol === 'http:'
+        ? 'usernode_api_scope' : '__Host-usernode_api_scope';
+      const values = document.cookie.split(';').map(s => s.trim()).filter(s => s.startsWith(name + '='));
+      if (values.length !== 1) return null;
+      const value = values[0].slice(name.length + 1);
       return /^[a-f0-9]{64}$/.test(value || '') ? value : null;
     } catch (err) { return null; }
   },

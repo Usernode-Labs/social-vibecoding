@@ -261,6 +261,9 @@ function openRouterProviderShortlists(value) {
 }
 
 function load() {
+  // Check the deployment boundary before making keys, opening clients or
+  // starting roles. An explicit invalid setting must never downgrade silently.
+  const browserSiteIsolation = require('./services/browser-site-isolation').validateBrowserSiteIsolation();
   const staging = IS_STAGING();
   const appRuntime = process.env.APP_RUNTIME || 'docker';
 
@@ -373,6 +376,7 @@ function load() {
     // `env !== 'production'`. Not in REQUIRED: defaults to 'development'
     // so a bare checkout without NODE_ENV set behaves like local dev.
     env: process.env.NODE_ENV || 'development',
+    browserSiteIsolation,
     port: parseInt(process.env.PORT || '3000', 10),
     databaseUrl: process.env.DATABASE_URL,
     sessionSecret: process.env.SESSION_SECRET,

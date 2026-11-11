@@ -109,9 +109,9 @@ test.before(async () => {
 
 test.after(() => new Promise((resolve) => server.close(resolve)));
 
-function openEvents(who) {
+function openEvents(who, cookie = `session=${who}`) {
   const sock = new WebSocket(`ws://127.0.0.1:${port}/ws/events`, {
-    headers: { cookie: `session=${who}` },
+    headers: { cookie },
   });
   sock.received = [];
   sock.on('message', (raw) => { sock.received.push(JSON.parse(String(raw))); });
@@ -122,6 +122,25 @@ function openEvents(who) {
 }
 
 const settle = (ms = 120) => new Promise((r) => setTimeout(r, ms));
+
+test('strict WebSocket authentication accepts only an unambiguous protected cookie', async t => {
+  const priorMode = process.env.BROWSER_SITE_ISOLATION, priorEnv = process.env.NODE_ENV;
+  process.env.BROWSER_SITE_ISOLATION = 'strict';
+  process.env.NODE_ENV = 'production';
+  t.after(() => {
+    if (priorMode === undefined) delete process.env.BROWSER_SITE_ISOLATION;
+    else process.env.BROWSER_SITE_ISOLATION = priorMode;
+    if (priorEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = priorEnv;
+  });
+  const owner = await openEvents('owner', 'session=stranger; __Host-usernode_session=owner');
+  t.after(() => owner.terminate());
+  assert.equal(owner.readyState, WebSocket.OPEN);
+  for (const cookie of ['session=owner',
+    '__Host-usernode_session=owner; __Host-usernode_session=stranger']) {
+    await assert.rejects(openEvents('owner', cookie), /401/);
+  }
+});
 
 function sessionEvents(sock, sessionId) {
   return sock.received.filter((m) => m.type === 'session_event' && m.sessionId === sessionId);

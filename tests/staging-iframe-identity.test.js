@@ -622,3 +622,33 @@ test('#3413 React bridge labels a failed-build retry "Retry preview" and resets 
   h.bridge.setLoader(true, { title: 'Could not sign in to the preview', retry: true });
   assert.equal(h.store.get().loaderRetryLabel, null, 'back to the shipped "Retry sign-in"');
 });
+
+test('a preview navigates only under the production app frame sandbox, and clears to a fully restricted one', async () => {
+  const storeMod = await import(
+    new URL('../frontend/src/features/staging/staging-store.js', `file://${__filename}`).href
+  );
+  const { stagingBridge } = await import(
+    new URL('../frontend/src/features/staging/staging-bridge.js', `file://${__filename}`).href
+  );
+  const { APP_FRAME_SANDBOX } = await import(
+    new URL('../frontend/src/features/app-frame/app-frame-policy.js', `file://${__filename}`).href
+  );
+  const log = [];
+  const iframe = {
+    setAttribute(name, value) { log.push(['attr', name, value]); },
+    set src(value) { log.push(['src', value]); },
+  };
+  const saved = storeMod.stagingRefs.iframe;
+  storeMod.stagingRefs.iframe = iframe;
+  try {
+    stagingBridge.setSrc('https://fake-app--s1.example.invalid/');
+    stagingBridge.clearSrc();
+  } finally {
+    storeMod.stagingRefs.iframe = saved;
+  }
+  assert.deepEqual(log, [
+    ['attr', 'sandbox', APP_FRAME_SANDBOX], ['src', 'https://fake-app--s1.example.invalid/'],
+    ['attr', 'sandbox', ''], ['src', ''],
+  ]);
+  assert.doesNotMatch(APP_FRAME_SANDBOX, /allow-top-navigation/);
+});
