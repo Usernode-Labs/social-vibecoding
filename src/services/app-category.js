@@ -16,7 +16,7 @@
 
 const llm = require('./llm');
 const log = require('./logger');
-const { APP_CATEGORIES } = require('./app-manifest');
+const { APP_CATEGORIES } = require('./app-categories');
 const { HIDDEN_APP_STATUSES } = require('./public-app-directory');
 const { FLAGGED_STATES } = require('./discovery-curation');
 

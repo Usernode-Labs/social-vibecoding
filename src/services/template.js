@@ -7,7 +7,10 @@ const repoRef = require('./repo-ref');
 // `dependencies` in services/app-templates.js), with their lockfile entries.
 const extraPackages = require('../templates/node-app/extra-packages.json');
 const appTemplates = require('./app-templates');
-const { APP_CATEGORIES } = require('./app-manifest');
+// From services/app-categories.js, which requires nothing: this module is
+// loaded by scripts/security-starter.js with only the starter's packages
+// installed, so it must not reach app-manifest.js's server dependencies.
+const { APP_CATEGORIES } = require('./app-categories');
 const { WORDS_PATH } = require('./upstream-lineage');
 
 // Forwarder snippet injected into every scaffolded app's public/index.html.
@@ -1173,7 +1176,7 @@ value = "build"
         {
           ...(about ? { description: about } : {}),
           // What kind of app it is, for the kind chips (#3962, #6585;
-          // app-manifest.js APP_CATEGORIES has the set). A game starter is a
+          // app-categories.js APP_CATEGORIES has the set). A game starter is a
           // game; otherwise the kind the first plan implies, and `other` only
           // when nothing fits. The group changes it by proposal like any
           // other line.
