@@ -405,3 +405,80 @@ Left, and why:
 - Not seen in a browser: a new (unread) Needs you row with the Earlier line, the failed and loading notes, the
   older-tab reload note, and a project in a community the person left (History). They are pinned in
   `tests/ai-frame-list.test.js` from fixtures instead.
+
+### Lane M, as built (11 Nov 2026)
+
+Messages (s15 to s20), on `redesign/skins-v2-m`, cut from `5f6faf062` (P0 and lanes Y, H, T, P, B).
+
+- **s15, the list** (`features/messages/frame-list.tsx`, fed by the frame branch of `index.tsx`
+  `ConversationList`). The head (Messages, "People and groups you talk to.", New message); People and Agents as
+  tabs, People counting the unread messages from people (the standard heading's count); the product's search
+  ("Search") under the tabs; then the tab's conversations as one card of rows. A group says how many are in it
+  after its name (a people glyph and the figure, the words to a screen reader), a bot's direct message keeps
+  its "AI" badge, an invitation's row says "Tap to review", a row ends in "N new" or its time. Offline, a failed
+  read with Try again, the first read, an empty inbox with New conversation, and a search that matched nothing
+  are the standard list's sentences. With nothing open the pane beside the list is the product's "Choose a
+  conversation".
+- **s20, Agents.** "Chats with coding agents." The standard section, folded by its own rule and state
+  (`shownInSection`, `agentsExpanded`): this week's chats, the open one and any that asks for you, then "N older
+  chats" as the card's centred link, which stays where it is with the older chats under it ("Hide older chats").
+  An agent chat's line is `MayorSessionRow`'s (the project and its change's state, or "No active change";
+  "Working…" while it works) and it ends in its date; a change in flight is `SessionRow`'s (project, what is
+  known, when) and ends in its state as the one pill, from `sessionRowState` (new, beside `stateOf` in
+  `features/improve/session-row.tsx`: the same word, and a kit tone). "Show archived" ends the card where the
+  standard list offers it and opens the archived chats under their own label.
+- **s16, New message** (`frame-new.tsx`). The kit's sheet with the standard menu's three choices (`NEW_CHOICES`):
+  Agent chat, Direct message, Group chat, each with its line. A press closes the sheet and calls `startNew`:
+  an agent chat starts; the other two open the product's create dialog on that tab. The dialog wears the look:
+  its card carries `data-new-message` (it is lifted out of its root when shown), its Direct and Group switch
+  and its buttons wear the look's tabs and buttons through `looks.json`, its title, fields, found people and
+  blocked list are dressed by hand in app.css (NEW MESSAGE'S DIALOG).
+- **s17, s18, a conversation.** The product's renderer, as before. Added by hand in app.css (VERSION 2, s17 to
+  s19): a quoted reply and the reply staged over the composer are the kit's quote; reactions are the kit's
+  small pills; the thread card under a message and a thread's replies in the stream are one small surface
+  card, the open thread's with the accent's ring, the replies' glyph in the faces' column. These rules name
+  the renderer's own classes, so a project's channel and the bot's chat get them too.
+- **s19, the reply thread.** The product's pane, as ruled: beside the conversation (the list steps aside under
+  1600px, as in the standard look), a page on a phone. In Messages it is flat with one line between it and
+  the conversation, the kit's margins, and its count ("3 replies") is the day's label (a second wearer of `day`).
+
+Gone: the To field, the people rows, Start chat, "Or else", the sheet's Blocked people, groups named after
+their members, the "N older chats" label over Agents, the sentence sending new work to the bot's tab, a second
+search placeholder, and twenty `messages:frame.*` ids. Three stay: the two sentences under the title and an
+empty tab's line.
+
+Rulings taken:
+
+- **The search is under the tabs at every width** (audit, s15 point 2): the pane is 520px, and the mockup's own
+  picture draws it there.
+- **The empty pane keeps the product's two sentences** (question 6).
+- **An agent chat's line keeps the change's title** when it has one ("Homeroom · title · Ready"), as the standard
+  row does; the audit's shorter form would have dropped it.
+- **A change waiting on you is the blue pill**, the kit's colour for what waits on you; the standard row draws
+  it green like every settled state.
+- **Agents has no count on its tab.** The standard heading's "N working" is not a count that asks for you.
+- **An empty tab beside a full one says "Nothing here yet."** The standard list leaves the section out; a tab
+  cannot be left out without the tabs moving.
+- **The dialog's title is set by hand** (24px, the look's face): a `title` wearer would have meant editing
+  Settings' suite while lane S is in it. Brand kit's serif title is the one thing lost.
+- **The reply thread is a pane, not the kit's right sheet** (question 5, as ruled on 10 Nov).
+
+Fixed on the way: under a look a continuation row's words started 12px after the first line's (the time's
+gutter was 44px beside a 32px face; 38 and 26 in Workbench).
+
+Left, and why:
+
+- A change in flight's unread dot (the standard `SessionRow` reads the notifications store for it) is not on
+  the kit row.
+- The list does not hold its place across a live re-sort under a look (`list-place.ts` anchors the standard
+  scroller), and "Oldest chats" (`InboxToEnd`) is not offered.
+- The dialog's "Blocked people" link wraps to two lines on a phone beside Cancel and Create group.
+- In Paper a long Agents list runs past the page card's rounded bottom edge, as lane B noted for its list.
+- Not seen in a browser: an unread conversation (this copy has none), an invitation's row, a working agent,
+  the offline note, the failed and empty states, the archived group with rows (seen opened, at its end). They
+  are pinned in `tests/messages-frame-list.test.js`.
+
+Seen in a browser (local stack): the list, Agents folded and open with Show archived, the New message sheet,
+the dialog (Direct, Group, Blocked people), a direct message, a group and its reply thread, in Glass and Paper
+(desktop and phone), Workbench (desktop, dark), Glass dark on a phone, and the dialog in Brand kit. The
+standard list's capture is byte-identical before and after.
