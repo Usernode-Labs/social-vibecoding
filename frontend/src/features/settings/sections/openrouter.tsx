@@ -45,6 +45,12 @@ export function OpenRouterSection() {
       <SectionHeading title={<>OpenRouter</>}>
         {t('settings:openrouter.intro')}
       </SectionHeading>
+      {/* One neutral wrapper (looks v2, s61), nothing in the standard look:
+          under a look the included key, the personal key and the model block
+          are one card, each inside it without a card of its own (app.css,
+          SETTINGS). Every node inside keeps its id, its place among its
+          siblings and the `hidden` settings.js toggles on it. */}
+      <div className="ui-card ui-onecard">
       <div id="settings-openrouter-included" className="ui-card ui-pad hidden rounded-lg border border-violet-200 dark:border-violet-900 bg-violet-50 dark:bg-violet-950/30 px-3 py-3 mb-3">
         <div className="ui-row-t text-sm font-medium text-zinc-900 dark:text-zinc-100">{t('settings:openrouter.included.title')}</div>
         <div id="settings-openrouter-included-status" className="ui-row-s mt-1 text-xs text-zinc-600 dark:text-zinc-400"></div>
@@ -54,19 +60,19 @@ export function OpenRouterSection() {
       </div>
       <div id="settings-openrouter-key-info" className="ui-card ui-pad hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs mb-2 text-zinc-600 dark:text-zinc-400"></div>
       <div id="settings-openrouter-personal-controls" onKeyDown={returnKeyHandler({ submit: saveKey })}>
-        <Label className="ui-cap px-1 pb-1 text-[15px] font-normal text-zinc-500 dark:text-zinc-500" htmlFor="settings-openrouter-key">
+        <Label className="px-1 pb-1 text-[15px] font-normal text-zinc-500 dark:text-zinc-500" htmlFor="settings-openrouter-key">
           {t('settings:openrouter.personalKey.label')}
         </Label>
-        <div className="ui-card rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
+        <div className="ui-card ui-keyrow rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
           <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
             {/* Same shape as #settings-api-key above — see the note there. */}
             <PasswordInput id="settings-openrouter-key" placeholder="sk-or-..." autoComplete="off" spellCheck={false} enterKeyHint="done" wrapperClassName="flex-1 min-w-0" className="font-mono" box="card" ring="bare" hint="dim" />
           </div>
           <div className="flex gap-2 px-4 py-3">
-            <Button id="settings-openrouter-save" layout="shrink" variant="pillAccent" size="pill">
+            <Button id="settings-openrouter-save" layout="shrink" variant="pillAccent" size="pill" className="ui-btn-sm">
               {t('settings:openrouter.personalKey.testAndSave')}
             </Button>
-            <Button id="settings-openrouter-remove" layout="hiddenShrink" variant="pillDanger" size="pill" ink="dangerTint">
+            <Button id="settings-openrouter-remove" layout="hiddenShrink" variant="pillDanger" size="pill" ink="dangerTint" className="ui-btn-sm">
               {t('settings:openrouter.personalKey.remove')}
             </Button>
           </div>
@@ -136,6 +142,7 @@ export function OpenRouterSection() {
         <button id="settings-claude-set-default" className="mt-2 rounded-full bg-zinc-100 dark:bg-zinc-800 px-5 py-2.5 text-[15px] font-semibold text-zinc-900 dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors">
           {t('settings:openrouter.useClaudeDefault')}
         </button>
+      </div>
       </div>
       <StatusLine id="settings-openrouter-status" spacing={3} />
     </div>

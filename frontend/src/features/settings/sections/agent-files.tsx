@@ -40,9 +40,15 @@ export function AgentFilesSection() {
         <SectionHeading title={t('settings:agentFiles.title')}>
           {t('settings:agentFiles.intro')}
         </SectionHeading>
-        <div className="mb-4">
+        {/* `ui-card ui-filecard` on each kind's block (looks v2, s63) draws
+            nothing in the standard look. Under a look the block is one card:
+            the kind's name, its empty line or its files under it, and Upload
+            at the end of the first row, placed by the stylesheet's grid
+            (app.css, SETTINGS). No node is moved: the button settings.js
+            binds stays where it is in the markup. */}
+        <div className="ui-card ui-filecard mb-4">
           <div className="flex items-center justify-between mb-1.5">
-            <h4 className="ui-cap text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+            <h4 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
               {t('settings:agentFiles.instructions.heading')}
             </h4>
             <button
@@ -59,9 +65,9 @@ export function AgentFilesSection() {
             />
           </div>
         </div>
-        <div className="mb-2">
+        <div className="ui-card ui-filecard mb-2">
           <div className="flex items-center justify-between mb-1.5">
-            <h4 className="ui-cap text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+            <h4 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
               {t('settings:agentFiles.skills.heading')}
             </h4>
             <button

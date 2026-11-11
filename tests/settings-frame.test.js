@@ -189,6 +189,85 @@ test('the lists of small cards are one card of rows, and the hand-made cards wea
   assert.match(settings, new RegExp(`${ANY} #settings-root \\.ui-card > \\.ui-mini \\+ \\.ui-mini \\{ border-top: 1px solid var\\(--fr-line2\\); \\}`));
 });
 
+// What the visual pass of 11 Nov 2026 found on Settings, and what lane S left partly done (s61, s62, s63).
+const IN = `${ANY} #settings-screen #settings-root `;
+
+test('a field\'s value is the ink: the worn field\'s own colour is the placeholder\'s, and three ids outrank it', () => {
+  assert.match(settings, new RegExp(`${IN}#settings-section-content :is\\(input, select, textarea\\) \\{ color: var\\(--fr-ink\\); \\}`));
+  assert.match(settings, new RegExp(`${ANY} #settings-section-content :is\\(input, textarea\\)::placeholder \\{ color: var\\(--fr-faint\\); \\}`), 'the placeholder alone is faint');
+  assert.equal(roots.inp.parts.val, undefined, 'the map still gives the field no `val`: the hand rule says the ink');
+});
+
+test('Copy and Test connection are the same small button, centred on the address', () => {
+  const src = section('connectors.tsx');
+  assert.match(src, /id="connector-url-test"[^>]*className="ui-btn-sm w-full sm:w-auto min-h-\[44px\] sm:min-h-\[36px\]"/);
+  const btn = roots.btn.also.find((w) => /#settings-root/.test(w.to));
+  assert.match(btn.parts.sm, /\.text-sm:not\(\.w-full\)/, 'Copy is small by its own classes');
+  assert.match(btn.parts.sm, /\.ui-btn-sm/, 'and Test connection by name, since its `w-full` keeps it out of that');
+  assert.match(settings, new RegExp(`${ANY} #settings-root #connectors-section :has\\(> #connector-url\\) \\{ align-items: center; \\}`));
+  assert.match(settings, new RegExp(`${IN}#connectors-section > :is\\(label, details\\) \\{ padding-inline: 4px; \\}`), 'the label and How it works start where the notes do');
+});
+
+test('a card of fields the standard sheet rules off keeps the card\'s padding at its head (the Look menu)', () => {
+  assert.match(settings, new RegExp(`${IN}\\.ui-fields\\.pt-6 \\{ margin-top: 24px; padding-top: 16px; border-top: 0; \\}`), 'named with the screen, so it outranks the rule that takes a ruled-off block\'s padding');
+});
+
+test('OpenRouter is one card: a neutral wrapper round its parts, each keeping its node, id and `hidden`', () => {
+  const src = section('openrouter.tsx');
+  const open = src.indexOf('<div className="ui-card ui-onecard">');
+  const close = src.indexOf('<StatusLine id="settings-openrouter-status"');
+  assert.ok(open > 0 && close > open);
+  const inside = src.slice(open, close);
+  const ids = ['settings-openrouter-included', 'settings-openrouter-key-display', 'settings-openrouter-key-info', 'settings-openrouter-personal-controls', 'settings-openrouter-models-wrap'];
+  let at = 0;
+  for (const id of ids) {
+    const i = inside.indexOf(`id="${id}"`, at);
+    assert.ok(i > at, `${id} is inside the wrapper, in today's order`);
+    at = i;
+  }
+  assert.match(src, /<Label className="px-1 pb-1 text-\[15px\] font-normal text-zinc-500 dark:text-zinc-500" htmlFor="settings-openrouter-key">/, 'the personal key\'s label is a field\'s label, not a small-caps one');
+  assert.match(settings, new RegExp(`${IN}:is\\(\\.ui-onecard, \\.ui-filecard\\) > \\.ui-card, ${IN}\\.ui-onecard \\.ui-keyrow \\{ margin: 0; border: 0; border-radius: 0; background: none; box-shadow: none;`), 'a part has no card of its own inside it');
+  assert.match(settings, new RegExp(`${IN}#settings-openrouter-personal-controls > label \\{ display: block; padding: 0 0 8px; font-size: 13px; font-weight: 650;`));
+  for (const file of ['openrouter.tsx', 'api-key.tsx']) {
+    assert.match(section(file), /<div className="ui-card ui-keyrow rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">/, file);
+  }
+  assert.match(settings, new RegExp(`${IN}\\.ui-keyrow \\{ display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 16px; \\}`), 'a key is a field with its button beside it');
+  assert.doesNotMatch(css.replace(settings, ''), /\.ui-(onecard|keyrow|filecard)/, 'the standard look says nothing for these names');
+});
+
+test('a kind of agent file is one card with Upload at the end of its first row, placed by the grid', () => {
+  const src = section('agent-files.tsx');
+  assert.match(src, /<div className="ui-card ui-filecard mb-4">\s*<div className="flex items-center justify-between mb-1\.5">\s*<h4 className="text-xs font-semibold /);
+  assert.match(src, /<div className="ui-card ui-filecard mb-2">/);
+  assert.match(src, /<\/h4>\s*<button\s+data-agent-files-upload="instruction"/, 'the button settings.js binds stays where it was in the markup');
+  assert.match(settings, new RegExp(`${IN}\\.ui-filecard \\{ display: grid; grid-template-columns: minmax\\(0, 1fr\\) auto;`));
+  assert.match(settings, new RegExp(`${IN}\\.ui-filecard > div:first-child \\{ display: contents; \\}`));
+  assert.match(settings, new RegExp(`${IN}\\.ui-filecard \\[data-agent-files-upload\\] \\{ grid-column: 2; grid-row: 1 / span 2;`));
+  assert.match(settings, new RegExp(`${IN}\\.ui-filecard:has\\(\\.ui-mini\\) > \\.ui-card \\{ grid-column: 1 / -1; border-top: 1px solid var\\(--fr-line2\\); \\}`), 'its files are rows across the card');
+});
+
+test('inside a tool\'s guided set-up the product\'s nodes are drawn in the kit\'s type and tokens', () => {
+  const G = `${IN}#connectors-list `;
+  assert.match(settings, new RegExp(`${G}details > div :is\\(p, ol > li > span\\) \\{ font-size: 15px; line-height: 1\\.45; color: var\\(--fr-mut\\); \\}`));
+  assert.match(settings, new RegExp(`${G}\\[data-connector-step-tick\\] > span \\{ width: 24px; height: 24px; border-radius: 8px; background: var\\(--fr-sunk\\);`));
+  assert.match(settings, new RegExp(`${G}\\[data-connector-step-tick\\]\\[aria-pressed="true"\\] > span \\{ background: var\\(--fr-acc\\); color: var\\(--fr-acc-ink\\); \\}`));
+  assert.match(settings, new RegExp(`${G}details > div pre \\{ padding: 12px; border: 1px solid var\\(--fr-line\\); border-radius: 12px; background: var\\(--fr-ground\\); font-family: var\\(--fr-fm\\);`));
+  assert.match(settings, new RegExp(`${G}details > div > \\.rounded-xl \\{ border-radius: 12px; background: var\\(--fr-sunk\\); \\}`));
+});
+
+test('the small pieces: Legal as rows, the version row centred, the look\'s check and avatar, a note\'s bold words', () => {
+  assert.match(settings, new RegExp(`${IN}\\.ui-links \\.ui-link \\{ display: flex; align-items: center; min-height: 48px; padding: 8px 16px;`));
+  assert.match(settings, new RegExp(`${IN}\\.ui-links \\.ui-link \\+ \\.ui-link \\{ border-top: 1px solid var\\(--fr-line2\\); \\}`));
+  assert.match(settings, new RegExp(`${IN}#settings-about-section \\.drawer-ver-row \\{ align-items: center; min-height: 48px;`));
+  assert.match(settings, new RegExp(`${IN}\\[data-settings-section="linked-accounts"\\] span\\.rounded-full\\.bg-violet-600 \\{ background: var\\(--fr-acc\\); color: var\\(--fr-acc-ink\\); \\}`));
+  assert.match(settings, new RegExp(`${IN}:is\\(\\.ui-note, \\.ui-secblurb\\) strong \\{ color: var\\(--fr-ink\\); font-weight: 650; \\}`));
+  assert.match(settings, new RegExp(`${IN}\\.ui-card\\.ui-pad\\[class\\*="space-y-"\\] > \\* \\+ \\* \\{ margin-top: 12px; \\}`));
+  assert.match(settings, new RegExp(`${IN}\\[data-mobile-push-status\\] \\{ margin: 8px 0 0; padding: 0 4px;`));
+  assert.match(settings, new RegExp(`${IN}#settings-mobile-menu-host \\.settings-menu-row \\{ gap: 12px; padding-inline: 16px; \\}`));
+  assert.deepEqual(roots.av, { to: '#settings-profile-card > span[aria-hidden]:is(#settings-root *)' }, 'the profile row\'s letter wears the kit\'s avatar');
+  assert.match(section('profile.tsx'), /style=\{\{ '--fr-ac': swatchFor\(user\?\.username \|\| '\?'\) \} as React\.CSSProperties\}/, 'on the colour the frame\'s bar draws the person in');
+});
+
 test('no rule here paints a literal colour or blurs the page', () => {
   assert.doesNotMatch(settings, /#[0-9a-fA-F]{3,8}\b|rgba?\(/);
   assert.doesNotMatch(settings.replace(/backdrop-filter: none/g, ''), /backdrop-filter/);

@@ -549,6 +549,9 @@
       },
       "sub17": {
         "to": ":is(.rf-bar-title,.rf-why-head,.rf-sub h2)"
+      },
+      "av": {
+        "to": "#settings-profile-card > span[aria-hidden]:is(#settings-root *)"
       }
     }
   }

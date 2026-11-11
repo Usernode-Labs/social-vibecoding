@@ -501,6 +501,36 @@ Left, and why:
 - The filter's results and the recent searches wear the card and row; a look's own hover state for a list
   row is not drawn (the kit has none).
 
+#### Settings after the visual pass (fix group 4, 11 Nov 2026)
+
+The rules of lane S held: one markup for both looks, no node settings.js binds moved or re-created, the
+standard look compared before and after on all seventeen pages, desktop and phone (the same pixels outside
+the sidebar's live counts).
+
+- **A field's value is the ink.** The worn `.inp` is the kit's wrapper, whose own colour is the placeholder's;
+  the hand rule that said the ink tied with the worn rule (two ids each) and lost by order. It names three ids
+  now. The wear map's `inp` entry was not rewritten.
+- **Copy and Test connection** are both the kit's small button (`ui-btn-sm` on Test connection, whose `w-full`
+  kept it out of the map's `sm`), centred on the field. **The Look menu's card** keeps 16px at its head.
+- **s61 is one card.** A neutral wrapper (`ui-onecard`) stands round the included key, the saved key's two
+  lines, the personal key and the model block; under a look each loses its own card inside it. Every node keeps
+  its id, its order and the `hidden` settings.js toggles; nothing is moved at run time. The personal key's label
+  is a field's label inside the card, and each key is a field with its small button beside it (`ui-keyrow`).
+  The included key's row and the model block are still hidden on the local copy, so they were not seen.
+- **s62, inside a tool's guided set-up**: the product's nodes in the kit's type and tokens (numbers as the lead
+  tile at 24px, the accent once ticked; code and bold words in the ink; the two labels small caps; the further
+  help a sunk box of rows; a file's lines on the kit's ground in the mono face). Dressed by hand rules only.
+- **s63**: each kind's block is the card (`ui-card ui-filecard`); a grid puts Upload at the end of the first
+  row and the files, when there are some, across the card under it. A kind with nothing under its name (while
+  the files load or fail) is still a card.
+- Also: Legal's links are rows; the version row is centred; the check discs of Linked accounts and the profile
+  row's letter are the look's (the letter wears the kit's avatar, a new root `av`, on the person's own colour);
+  a note's bold words are the ink; the Usage data card keeps 12px between its lists; the line under the push
+  categories starts with the notes; the phone list's rows stand 12px apart so "Connectors & CLI" is whole.
+- Not done here: the bar's title under its buttons and the Reconnecting banner over the bar (group 1); a field
+  inside a white card in Pastel and Paper has almost no edge (the look's own `.inp`, group 1's file); the tab
+  bar's glow with the filter focused in Glass dark was not reproduced.
+
 ### Lane M, as built (11 Nov 2026)
 
 Messages (s15 to s20), on `redesign/skins-v2-m`, cut from `5f6faf062` (P0 and lanes Y, H, T, P, B).
