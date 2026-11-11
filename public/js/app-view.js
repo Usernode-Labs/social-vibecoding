@@ -1864,13 +1864,21 @@ const AppView = {
   // open offline there (docs/plans/project-apps-offline.md).
   //
   // Three things make it work, all here and in the bridge:
-  //   * ONE address per app, whatever the token: buildAppIframeSrc puts the
-  //     token and the theme after `#`, and the bridge moves them into the
-  //     query before the app's code runs.
+  //   * ONE address per app and build, whatever the token: buildAppIframeSrc
+  //     puts the token and the theme after `#`, and the bridge moves them
+  //     into the query before the app's code runs. The build goes in the
+  //     query (`un-build`), so each build's page is its own cached copy. A
+  //     page kept fresh for 30 days at one bare address outlived every merge
+  //     after it: the bridge's refetch below never replaced the copy the
+  //     frame itself navigates to (Chrome keeps a frame's document apart from
+  //     a fetch of the same address), and Homeroom showed an app's old
+  //     version while its own domain showed the new one. Offline, the address
+  //     is the build this device kept (_offlineCacheAddressBuild).
   //   * A copy that keeps up: when the app's build differs from the one this
   //     device last opened, the address carries `un-refresh`, and the bridge
   //     downloads the app's files and page again, past the cache, and
-  //     reloads. Online only.
+  //     reloads. Online only. The files keep one address across builds, so
+  //     this is still what brings them up to date.
   //   * A way back: the frame must say it opened (the bridge's
   //     `__usernode_offline_cache: 'open'`). Online, a page that never says so
   //     (one that needs the token to load, or loads no bridge) is framed the
@@ -1935,13 +1943,51 @@ const AppView = {
   },
 
   // The copy this device keeps is of another build than the one live now
-  // (or of none it knows), so the bridge refreshes it. Never offline.
+  // (or of none it knows), so the bridge refreshes it. Never offline. A copy
+  // recorded before the address named its build (no `addressed`) is
+  // refreshed once too: its files may be as old as its page was.
   _offlineCacheNeedsRefresh(slug) {
     if (window.Offline && Offline.isOffline()) return false;
     const build = AppView.buildFor(slug);
     if (!build) return false;
     const entry = AppView._offlineCacheEntry(slug);
-    return !entry || entry.build !== build;
+    return !entry || entry.build !== build || !entry.addressed;
+  },
+
+  // A build as it goes in the address: short, and only characters a query
+  // value carries as they are. '' for none.
+  _addressBuild(sha) {
+    const s = String(sha || '').trim();
+    return /^[A-Za-z0-9._-]{1,64}$/.test(s) ? s.slice(0, 12) : '';
+  },
+
+  // The build whose address the frame opens (`un-build`). Online, the live
+  // one. Offline, the one this device kept, since that is the address its
+  // page is cached under; a copy kept before addresses named a build was
+  // kept at the bare address, so that one opens with none ('').
+  _offlineCacheAddressBuild(slug) {
+    const entry = AppView._offlineCacheEntry(slug);
+    if (window.Offline && Offline.isOffline() && entry && entry.build) {
+      return entry.addressed ? AppView._addressBuild(entry.build) : '';
+    }
+    return AppView._addressBuild(AppView.buildFor(slug));
+  },
+
+  // `src` at the address of the build live now, for a frame reloaded in
+  // place (reloadAppFrame): re-applying its own src would open the build it
+  // was opened on. Anything but an offline app's address is returned as is.
+  _offlineCacheLiveSrc(src, slug) {
+    let url;
+    try { url = new URL(src); } catch { return src; }
+    if (!url.hash.startsWith('#un-') || !url.searchParams.has(AppView.BUILD_PARAM)) return src;
+    const build = AppView._offlineCacheAddressBuild(slug);
+    if (!build) return src;
+    url.searchParams.set(AppView.BUILD_PARAM, build);
+    const own = new URLSearchParams(url.hash.slice(1));
+    if (AppView._offlineCacheNeedsRefresh(slug)) own.set(AppView.REFRESH_PARAM, '1');
+    else own.delete(AppView.REFRESH_PARAM);
+    url.hash = own.toString();
+    return url.toString();
   },
 
   _offlineCacheWatch: null,
@@ -2019,11 +2065,17 @@ const AppView = {
     if (watch && watch.slug === slug) watch.opened = true;
     if (data.fresh !== true) return;
     if (window.Offline && Offline.isOffline()) return;
-    // Online: the copy the browser now keeps is of the build live now.
+    // Online: the copy the browser now keeps is of the build live now, but
+    // only when the frame was opened at that build's own address. A frame
+    // opened before the build changed holds the page of the build before;
+    // recording the new build against it would mean never refreshing it.
     const build = AppView.buildFor(slug);
     if (!build) return;
+    let opened = '';
+    try { opened = new URL(appIframe.src).searchParams.get(AppView.BUILD_PARAM) || ''; } catch { opened = ''; }
+    if (!opened || opened !== AppView._addressBuild(build)) return;
     const map = AppView._readOfflineCache();
-    map[slug] = { at: Date.now(), build };
+    map[slug] = { at: Date.now(), build, addressed: true };
     AppView._writeOfflineCache(map);
   },
 
@@ -2079,7 +2131,10 @@ const AppView = {
       // so the page the browser kept is the page asked for, online or not.
       // The token and the theme go after `#`, which is never sent and is not
       // part of the cache key; the bridge moves them into the query before
-      // the app's own code reads them.
+      // the app's own code reads them. The build goes in the query, so a
+      // new build is an address the browser has no copy of yet.
+      const build = AppView._offlineCacheAddressBuild(slug);
+      if (build) url.searchParams.set(AppView.BUILD_PARAM, build);
       const own = new URLSearchParams();
       if (token) own.set('un-token', token);
       own.set(AppView.THEME_PARAM, AppView.resolvedTheme());
@@ -2627,12 +2682,14 @@ const AppView = {
     const frame = AppView._appFrame();
     if (!frame || !frame.hasFrame()) return false;
     const el = frame.frame();
-    const src = el && el.src;
+    const slug = typeof frame.slug === 'function' ? frame.slug() : '';
+    // An offline app's address names its build: reload onto the live one's.
+    const src = el && el.src ? AppView._offlineCacheLiveSrc(el.src, slug) : '';
     if (!src) return false;
     const granted = typeof AppView._grantedNow === 'function' ? AppView._grantedNow() : [];
     // The build it reloads onto, so the frame is not taken for the old one
     // when it is next left and resumed (see buildFor).
-    const build = AppView.buildFor(typeof frame.slug === 'function' ? frame.slug() : '');
+    const build = AppView.buildFor(slug);
     frame.setOnLoad(() => {
       frame.setOnLoad(null);
       setTimeout(() => { frame.setSrc(src, { granted, build }); }, AppView.APP_RELOAD_SETTLE_MS);
@@ -31705,6 +31762,8 @@ const AppView = {
   THEME_PARAM: 'un-theme',
   // An offline app's one-off "refresh your copies" flag, after `#`.
   REFRESH_PARAM: 'un-refresh',
+  // The build an offline app's address names, in its query (cache key).
+  BUILD_PARAM: 'un-build',
 
   // A staging preview shown as of a chosen moment (src/services/preview-
   // clock.js). The ensure answer's `previewAt` ({ at, label }) becomes
@@ -31741,8 +31800,11 @@ const AppView = {
         url.searchParams.delete(AppView.THEME_PARAM);
         // An offline app's address (buildAppIframeSrc) carries the platform's
         // parameters after `#`: its theme is ignored like the query's, and so
-        // is the one-off refresh flag.
+        // is the one-off refresh flag. So is the build in its query: a build
+        // that lands under an open app is the reload Improve offers, never
+        // one a render makes on its own (evictKeptApp, markStale).
         if (url.hash.startsWith('#un-')) {
+          url.searchParams.delete(AppView.BUILD_PARAM);
           const own = new URLSearchParams(url.hash.slice(1));
           own.delete(AppView.THEME_PARAM);
           own.delete(AppView.REFRESH_PARAM);
