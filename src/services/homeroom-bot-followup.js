@@ -1128,7 +1128,15 @@ async function runFollowUpTurn({
       return busy;
     }
     durableSteps.rethrowStop(err, 'follow-up worker');
-    return { routed: { error: `worker: ${err.message}` }, result: {}, stopped: false, stoppedBy: null, costUsd: null, infra: true };
+    // #6598: a start that GitHub's own outage stopped is a different thing
+    // from a turn that ran and said nothing usable. Tag it so its caller can
+    // try again by itself instead of reporting an unreadable answer.
+    const startTransient = typeof worker.isTransientStartError === 'function'
+      ? worker.isTransientStartError(err) : false;
+    return {
+      routed: { error: `worker: ${err.message}` }, result: {}, stopped: false, stoppedBy: null, costUsd: null,
+      infra: true, startFailed: true, startTransient, startCode: err.code || null,
+    };
   }
   if (!resumed) {
     // A fresh model conversation (#3035's reason): the saved thread is the

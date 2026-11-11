@@ -610,3 +610,118 @@ test('the facts tell the author the bot can update their change, and anybody els
   });
   assert.match(spent, /You cannot update this change just now: @evan's building time for this week is used up/);
 });
+
+// ── A worker that could not start (#6598) ─────────────────────────────────
+
+const START_ROW = { id: 301, app_id: APP.id, session_id: 13112, user_id: EVAN.id, asked_by: EVAN.id, kind: 'update', state: 'running' };
+
+function startDeps(pool, answers, { reports = [], turns = [] } = {}) {
+  return {
+    ...runDeps(pool, { reply: REVISED }),
+    startRetryMs: 0,
+    followup: {
+      ...followup,
+      runFollowUpTurn: async (args) => {
+        turns.push(args);
+        const answer = answers[Math.min(turns.length - 1, answers.length - 1)];
+        return answer;
+      },
+    },
+    voice: { ...voice, reportFollowUp: async (_p, _c, args) => { reports.push(args); return 1; } },
+  };
+}
+
+const START_FAILED = {
+  routed: { error: 'worker: GitHub didn\'t answer when Homeroom tried to start working on owner/repo, so nothing was changed. Try again in a few minutes.' },
+  result: {}, stopped: false, stoppedBy: null, costUsd: null, infra: true, startFailed: true, startTransient: true, startCode: 'github_unavailable',
+};
+
+test('an update whose worker could not start tries again by itself, says so once, and then makes the turn', async () => {
+  const pool = runPool();
+  const reports = [];
+  const turns = [];
+  const deps = startDeps(pool, [START_FAILED, START_FAILED, { result: { pushOk: true, sha: NEW, ahead: 1, lastResultText: REVISED }, costUsd: 0.42, stopped: false, routed: { result: {} } }], { reports, turns });
+  const out = await takeover.updateOnce(pool, {}, { row: START_ROW, steps: fakeSteps(), runTag: 'upd301', deps });
+
+  assert.equal(turns.length, 3, 'three tries in all');
+  assert.equal(out.ok, true, 'the third try made the change');
+  assert.equal(out.moved, true);
+  // The interim note, said once when it was going to try again. The final
+  // report is said by runUpdateWork, which these tests' other cases cover.
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].outcome.action, 'start_retrying');
+  assert.equal(reports[0].finish, null, 'the asks stay queued meanwhile');
+  assert.equal(reports[0].runTag, 'upd301-start');
+});
+
+test('all three tries failing reports start_failed once, and never "unreadable"', async () => {
+  const pool = runPool();
+  const reports = [];
+  const turns = [];
+  const deps = startDeps(pool, [START_FAILED], { reports, turns });
+  const out = await takeover.updateOnce(pool, {}, { row: START_ROW, steps: fakeSteps(), runTag: 'upd301', deps });
+
+  assert.equal(turns.length, takeover.START_TRIES);
+  assert.equal(out.ok, false);
+  assert.equal(out.code, 'start_failed');
+  assert.match(out.error, /GitHub didn't answer when I tried to start, so nothing was changed/);
+  assert.equal(reports.length, 1, 'the interim note, and no second report');
+  assert.equal(reports[0].outcome.action, 'start_retrying');
+});
+
+test('a private repository says the worker\'s message once, with no wait', async () => {
+  const pool = runPool();
+  const reports = [];
+  const turns = [];
+  const privateFail = {
+    routed: { error: 'worker: Cannot bootstrap worker for owner/repo: repo is private. Homeroom requires public repositories.' },
+    result: {}, stopped: false, stoppedBy: null, costUsd: null, infra: true,
+    startFailed: true, startTransient: false, startCode: null,
+  };
+  const deps = startDeps(pool, [privateFail], { reports, turns });
+  const out = await takeover.updateOnce(pool, {}, { row: START_ROW, steps: fakeSteps(), runTag: 'upd301', deps });
+
+  assert.equal(turns.length, 1, 'no retry for a settled answer');
+  assert.equal(out.code, 'start_failed');
+  assert.match(out.error, /repo is private/);
+  assert.doesNotMatch(out.error, /^worker:/);
+  assert.equal(reports.length, 0, 'the normal report says it once');
+});
+
+test('a turn that never ran is not an unreadable answer', async () => {
+  const pool = runPool();
+  const deps = startDeps(pool, [{ routed: { result: {} }, result: {}, stopped: false, stoppedBy: null, costUsd: null }]);
+  const out = await takeover.updateOnce(pool, {}, { row: START_ROW, steps: fakeSteps(), runTag: 'upd301', deps });
+  assert.equal(out.ok, false);
+  assert.equal(out.code, 'failed');
+  assert.equal(out.error, 'the turn did not run');
+});
+
+test('a turn that really ran and gave nothing usable is still unreadable', async () => {
+  const pool = runPool();
+  const text = 'I could not work out what to do.';
+  const deps = startDeps(pool, [{
+    routed: { result: { lastResultText: text } }, result: { lastResultText: text }, stopped: false, stoppedBy: null, costUsd: 0.1,
+  }]);
+  const out = await takeover.updateOnce(pool, {}, { row: START_ROW, steps: fakeSteps(), runTag: 'upd301', deps });
+  assert.equal(out.ok, false);
+  assert.equal(out.code, 'unreadable');
+  assert.equal(out.error, 'its answer could not be read');
+});
+
+test('outcomeOf says a start failure as its own action', () => {
+  const started = takeover.outcomeOf({ ok: false, code: 'start_failed', error: 'GitHub didn\'t answer when I tried to start, so nothing was changed' });
+  assert.equal(started.outcome.action, 'start_failed');
+  assert.equal(started.status, 'failed');
+  assert.deepEqual(voice.mustSay(started.outcome), ["GitHub still didn't answer, so nothing was changed. Ask me again here when you'd like me to try."]);
+});
+
+test('a private repository is reported with the worker\'s own words, not as GitHub being down', () => {
+  const out = takeover.outcomeOf({
+    ok: false, code: 'start_failed', startTransient: false,
+    error: 'Cannot bootstrap worker for owner/repo: repo is private. Homeroom requires public repositories.',
+  });
+  assert.equal(out.outcome.action, 'failed');
+  assert.equal(out.outcome.why, 'Cannot bootstrap worker for owner/repo: repo is private. Homeroom requires public repositories.');
+  assert.doesNotMatch(voice.plainReport(out.outcome), /GitHub still didn't answer/);
+});
