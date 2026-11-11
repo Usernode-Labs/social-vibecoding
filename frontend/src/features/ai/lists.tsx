@@ -132,6 +132,7 @@ function needGlyph(row: WorkRow): ReactNode {
   if (kind === 'stopped') return <ArrowPathIcon className={G} />;
   if (kind === 'fix_stopped') return <ArrowPathIcon className={G} />;
   if (kind === 'fix_yours') return <WarningTriangleIcon className={G} />;
+  if (kind === 'bot_fix_failed') return <WarningTriangleIcon className={G} />;
   if (kind === 'private') return <LockIcon className={G} />;
   return <BallotIcon className={G} />;
 }

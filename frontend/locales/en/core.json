@@ -819,6 +819,10 @@
     "text": "Tests are failing",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: some of its change's tests failed."
   },
+  "work.line.botFixFailed": {
+    "text": "Homeroom bot couldn't fix it",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot took over the change's failing tests and its last attempt could not fix them."
+  },
   "work.line.checksFailingCount_one": {
     "text": "{{count}} test failing",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: how many of its change's tests failed. {{count}} is a number."
