@@ -375,5 +375,29 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     assert.equal(after.length, 2);
     assert.equal(after[1].read_at, null, 'the new one rings');
   });
+
+  // #6600: a takeover of a change nobody asked for (its own item) is read
+  // from its own record: running says the bot is fixing its failing checks,
+  // and a failed one says it could not, until the change is checked again.
+  await t.test('#6600: a takeover holds its change, and a failed one says so', async () => {
+    const ownTakeover = await change(bob, 550, [], 'promoted', { promotedAt: new Date(Date.now() - 60000), checkState: 'failing' });
+    const look = await one(
+      `INSERT INTO homeroom_bot_looks (user_id, app_id, session_id, question, kind, state)
+       VALUES ($1, $2, $3, 'An update its author asked for', 'update', 'running') RETURNING id`,
+      [bob.id, app.id, ownTakeover.id]);
+    await ws.refresh(pool, [{ sessionId: ownTakeover.id }]);
+    let state = await stored('change', ownTakeover.id);
+    assert.deepEqual([state.stage, state.line], ['building', { code: 'fixing' }], 'the bot is fixing what its tests found');
+    await pool.query(
+      `UPDATE homeroom_bot_looks SET state = 'failed', error = 'the failing check is still failing', ended_at = NOW()
+        WHERE id = $1`, [look.id]);
+    await ws.refresh(pool, [{ sessionId: ownTakeover.id }]);
+    state = await stored('change', ownTakeover.id);
+    assert.deepEqual([state.stage, state.line], ['checking', { code: 'bot_fix_failed' }], 'it says the bot could not fix it');
+    await pool.query(`UPDATE chat_sessions SET checks_checked_at = NOW() + INTERVAL '1 second' WHERE id = $1`, [ownTakeover.id]);
+    await ws.refresh(pool, [{ sessionId: ownTakeover.id }]);
+    state = await stored('change', ownTakeover.id);
+    assert.deepEqual([state.stage, state.line], ['checking', { code: 'checks_failing' }], 'a verdict after it clears it');
+  });
 });
 

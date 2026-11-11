@@ -2334,6 +2334,13 @@
       "preview": "VOTES_IN_SQL"
     },
     {
+      "source": "src/services/work-state.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "f20155d3c2a832a82323",
+      "count": 1,
+      "preview": "CHANGE_FACTS_SQL"
+    },
+    {
       "source": "src/services/worker-eviction.js",
       "kind": "structural-template",
       "fingerprint": "420c49cd61d8e0ca08ca",

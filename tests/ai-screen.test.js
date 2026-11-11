@@ -2242,3 +2242,27 @@ test('#6595: pageProject reads the project off a page route, and only there', ()
   assert.match(index, /column\?\.at === 'page' \? pageProject\(column\.route\)/);
   assert.match(index, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects: shownProjects, botId \}\)/);
 });
+
+// #6600: after Homeroom bot took over the person's change and its last try
+// failed, the row says so and offers Ask again, not Fix it.
+test('#6600: a takeover that failed says the bot could not fix it, with Ask again', () => {
+  const { needsYou } = loadTsx(MODEL);
+  const work = {
+    private: [],
+    needs: [thread(7, 410, 'fixing', {
+      group: 'needs', kind: 'change', title: 'Show the reason', fixYours: true, botFixFailed: true,
+      work: { stage: 'checking', line: { code: 'bot_fix_failed' } },
+    })],
+    next: [], waiting: [], live: [],
+  };
+  const [row] = needsYou(null, work);
+  assert.equal(row.key, 'bot_fix_failed:7');
+  assert.equal(message(row.pill.id), 'Ask again');
+  assert.equal(words(row.sub), "Garden club · #410 · Homeroom bot couldn't fix it");
+  assert.equal(message(row.why.id), "Homeroom bot couldn't fix it. Ask it again, or fix it yourself");
+  assert.equal(row.href, '#app/garden/dev/issues/410', 'the change, where the bot can be asked again');
+  // On GitHub the change's number is written PR, not #.
+  const onGithub = { ...app, changesOnGithub: true };
+  const [pr] = needsYou(null, { ...work, needs: [{ ...work.needs[0], app: onGithub }] });
+  assert.equal(words(pr.sub), "Garden club · PR 410 · Homeroom bot couldn't fix it");
+});
