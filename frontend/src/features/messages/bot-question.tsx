@@ -9,8 +9,58 @@ import { MakeSheet } from './bot-make';
 import type { Made } from '../first-session/make';
 import { AnsweredChoices } from './bot-plan-view';
 import { useTrackOf } from './bot-track';
+import type { MessagesApiError } from './api';
 import { answerBotQuestion, quoteInComposer, tapBotAction } from './store';
 import type { ConversationMessage, HomeroomBotAction, HomeroomBotMeta } from './types';
+
+// Step 3 (11 Nov 2026): what an offer's line says once its buttons went
+// because what it was about moved on (services/bot-cards.js retireFor), by
+// why, and under a press the server refused, by its code. Whole ids, so the
+// inventory can check each exists.
+const OFFER_RETIRED: Record<string, string> = {
+  close_vote: 'messages:bot.offer.retired.closeVote',
+  closed: 'messages:bot.offer.retired.closed',
+  building: 'messages:bot.offer.retired.building',
+  moved_on: 'messages:bot.offer.retired.movedOn',
+  superseded: 'messages:bot.offer.retired.superseded',
+};
+
+/** Pure: the line an offer retired for `reason` leaves behind. */
+export function retiredLine(reason: string | null | undefined): string {
+  return OFFER_RETIRED[reason || ''] || 'messages:bot.offer.retired.other';
+}
+
+/** A press refused by the server, as its line says it: the code (and a retired card's why), or failed. */
+export interface OfferRefusal { code: string; reason: string | null }
+
+export function refusalOf(error: unknown): OfferRefusal {
+  // The server's answer (api.ts MessagesApiError carries its code); anything else did not reach it.
+  const answered = error && typeof error === 'object' ? error as Partial<MessagesApiError> : null;
+  if (answered && typeof answered.code === 'string' && answered.code) {
+    return { code: answered.code, reason: typeof answered.reason === 'string' ? answered.reason : null };
+  }
+  return { code: 'failed', reason: null };
+}
+
+/** Pure: the id of the line a refused press says. */
+export function refusalLine(refusal: OfferRefusal): string {
+  if (refusal.code === 'retired') return retiredLine(refusal.reason);
+  if (refusal.code === 'expired') return 'messages:bot.offer.expired';
+  if (refusal.code === 'already_decided') return 'messages:bot.offer.refused.alreadyDecided';
+  if (refusal.code === 'no_such_offer' || refusal.code === 'gone') return 'messages:bot.offer.refused.gone';
+  return 'messages:bot.offer.refused.failed';
+}
+
+/**
+ * The line under an offer's buttons when a press was refused, after them
+ * (never inside `.messages-bot-answers`, whose last button a declared check
+ * selects), until the message's own state says what became of it.
+ */
+export function OfferRefused({ refusal }: { refusal: OfferRefusal | null }) {
+  const t = useMessages('messages');
+  if (!refusal) return null;
+  return <p className="messages-bot-answered" role="status" data-bot-refused={refusal.code}>{t(refusalLine(refusal))}</p>;
+}
 
 /*
  * #3624: what hangs under a message from the Homeroom bot.
@@ -212,6 +262,8 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
   // The button pressed here, until the server's own state comes back.
   const t = useMessages('messages');
   const [pressed, setPressed] = useState<HomeroomBotAction | null>(null);
+  // Step 3: a press the server refused, said under the buttons.
+  const [refused, setRefused] = useState<OfferRefusal | null>(null);
   // #4231: the invite sheet, opened in place by Invite people.
   const [inviting, setInviting] = useState(false);
   // 1 Nov 2026 (C2.4): the make sheet, opened in place by Make the project.
@@ -274,9 +326,14 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
       return;
     }
     // A prompt is their own message; the buttons give way at once, and the
-    // server settles them on every device when it lands.
+    // server settles them on every device when it lands. A refused press
+    // brings them back with a line under them that says why.
     setPressed(action);
-    void tapBotAction(message, action).catch(() => setPressed(null));
+    setRefused(null);
+    void tapBotAction(message, action).catch((error: unknown) => {
+      setPressed(null);
+      if (action.type !== 'prompt') setRefused(refusalOf(error));
+    });
   }
 
   return (
@@ -299,6 +356,7 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
           ))}
         </div>
       ) : null}
+      {!settled ? <OfferRefused refusal={refused} /> : null}
       {posts ? (
         <p className="messages-bot-note">
           <InfoCircleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -307,7 +365,11 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
       ) : null}
       {open && meta.dbRead === true ? <DbReadNote /> : null}
       {chosen ? <p className="messages-bot-answered">{chosenAction?.type === 'prompt' && !chosenAction.quote ? t('messages:bot.actions.youAsked', { question: chosen }) : t('messages:bot.actions.youChose', { choice: chosen })}</p> : null}
-      {meta.status === 'closed' && !chosen ? <p className="messages-bot-answered" data-bot-closed-why={closedWhy ? '' : undefined}>{closedWhy || t('messages:bot.actions.closed')}</p> : null}
+      {meta.status === 'closed' && !chosen ? (
+        <p className="messages-bot-answered" data-bot-closed-why={closedWhy ? '' : undefined} data-bot-retired={meta.retired ? meta.retired : undefined}>
+          {closedWhy || (meta.retired ? t(retiredLine(meta.retired)) : meta.expired ? t('messages:bot.offer.expired') : t('messages:bot.actions.closed'))}
+        </p>
+      ) : null}
       {inviting && invite ? (
         <InviteSheet made={invite} me={inviterName()} onClose={() => setInviting(false)} onSent={() => {}} />
       ) : null}

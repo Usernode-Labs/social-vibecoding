@@ -32,7 +32,11 @@ test('#6228: a reply the bot will read is Reading your reply, In progress, not D
   const reading = stored({ ...handedBack, queue_id: 3, started_at: '2026-11-03T16:52:00Z', reply_at: '2026-11-03T16:50:00Z' });
   assert.deepEqual([reading.stage, reading.line], ['reading', { code: 'reply' }]);
   assert.deepEqual(standing(row, 7, NOW, 99, reading), {
-    group: 'next', work: { stage: 'reading', why: null, reason: null, line: { code: 'reply' }, since: '2026-11-03T16:52:00.000Z' },
+    group: 'next',
+    work: {
+      stage: 'reading', why: null, reason: null, line: { code: 'reply' }, since: '2026-11-03T16:52:00.000Z',
+      words: { stage: { id: 'core:work.stage.reading' }, stageOthers: { id: 'core:work.stage.reading' }, line: { id: 'core:work.line.reply' } },
+    },
     at: '2026-11-03T16:52:00.000Z',
   });
   // A plain read of the request is unchanged.
@@ -74,7 +78,11 @@ test('#6246: a waiting plan wins over a reply being read', () => {
   });
   assert.deepEqual([plan.stage, plan.why], ['waiting_for_you', 'plan']);
   assert.deepEqual(standing(row, 7, NOW, 99, plan), {
-    group: 'needs', work: { stage: 'waiting_for_you', why: 'plan', reason: null, line: null, since: '2026-11-03T16:40:00.000Z' },
+    group: 'needs',
+    work: {
+      stage: 'waiting_for_you', why: 'plan', reason: null, line: null, since: '2026-11-03T16:40:00.000Z',
+      words: { stage: { id: 'core:work.why.plan' }, stageOthers: { id: 'core:work.whyOthers.plan' }, line: null },
+    },
     at: '2026-11-03T16:40:00.000Z',
   });
 });
@@ -111,15 +119,12 @@ test('#6313: a read queued after a plan that could not be written is retrying th
 // with no title, "Not started yet", that opened the project's Workshop:
 // twelve of them under Not moving on Evan's tab.
 test('a thread whose request has no row is not listed as Not started yet', () => {
-  const { fallbackState } = require('../src/services/ai-work');
   const orphan = { state: 'open', kind: 'request', number: 52, request_id: null, request_state: null, own: true,
     created_at: '2026-04-20T10:00:00Z' };
-  assert.equal(fallbackState(orphan), null);
   assert.equal(standing(orphan, 7, NOW, 99, null), null, 'no row on the tab');
-  // An open request with no stored row yet still waits to be read.
-  assert.deepEqual(fallbackState(row), {
-    stage: 'reading', why: null, reason: null, line: { code: 'waiting' }, since: '2026-11-03T15:00:00.000Z',
-  });
-  // A closed one is not listed either.
-  assert.equal(fallbackState({ ...row, request_state: 'closed' }), null);
+  // 11 Nov 2026: the tab reads stored rows alone (statesFor makes a missing
+  // one first, and only for a request that has a row: shapeThread), so a
+  // thread with no stored state is not listed, open or not.
+  assert.equal(standing(row, 7, NOW, 99, null), null);
+  assert.equal(require('../src/services/ai-work').fallbackState, undefined, 'no second decider');
 });

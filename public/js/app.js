@@ -3626,11 +3626,11 @@ const App = {
             // the chat draw (React, features/messages/bot-work.tsx) are read
             // again under the viewer's own session; nothing here writes the
             // DOM. The Homeroom bot tab hears the same push (features/ai/live.ts).
-            window.dispatchEvent(new CustomEvent('homeroom-bot-work-changed'));
-            // #6595: a work state also names the item whose stage moved, so
-            // a request or a change open on screen re-reads itself wherever
-            // it is shown. `dev: false`: the Workshop's own refresh is told
-            // nothing by a work state.
+            // 11 Nov 2026: with the push, which a screen holding its item
+            // draws at once (lib/work-state.ts).
+            window.dispatchEvent(new CustomEvent('homeroom-bot-work-changed', { detail: data }));
+            // #6595: and the item shown re-reads itself wherever it is
+            // (`dev: false`: the Workshop's own refresh is not told).
             if (data.type === 'work_state') {
               App._liveRefresh('work', data.item?.sessionId ?? null, {
                 appSlug: data.appSlug,

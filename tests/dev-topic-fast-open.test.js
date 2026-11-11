@@ -322,3 +322,140 @@ test('a proposal page paints from its single fetch and mounts after it', async (
   assert.equal(h.heads.length, 1, 'and painted');
   assert.deepEqual(h.switchTabCalls, []);
 });
+
+// ── #6608: a switch to another project's change never shows the old page ──
+//
+// The head is published from `_renderTopicHead`. Its state now names the
+// project it was painted for (`slug`) and the route it was published on
+// (`route`), and a repaint for a DIFFERENT topic whose row is not in hand yet
+// publishes a loading state instead of leaving the previous change's body
+// under the new heading. The same topic that merely left the lists (closed or
+// merged mid-view) keeps its last render.
+
+function makeHeadAppView() {
+  const els = {};
+  const getEl = (id) => {
+    if (!(id in els)) els[id] = makeEl(id);
+    return els[id];
+  };
+  const thread = makeEl('dev-topic-thread');
+  const publishes = [];
+  const heads = [];
+  const unmounted = { threads: 0, transcripts: [] };
+  const sandbox = {
+    console,
+    relTime: () => 'just now',
+    URLSearchParams,
+    location: { search: '', hash: '', pathname: '/' },
+    App: { user: { id: 1 }, currentApp: 'a', _currentRoute: '' },
+    Kudos: { renderButton: () => '', attach() {} },
+    GroupChat: {
+      unmountThread() { unmounted.threads += 1; },
+      mountThread() {},
+      _react: () => ({
+        unmountTranscript(el) { unmounted.transcripts.push(el); },
+      }),
+    },
+    document: {
+      getElementById: (id) => (id === 'dev-topic-thread' ? thread : getEl(id)),
+      querySelector: () => null,
+      querySelectorAll: () => ({ forEach() {} }),
+      addEventListener() {},
+      createElement: () => ({ style: {}, classList: { add() {}, remove() {} } }),
+      body: { appendChild() {} },
+    },
+    UsernodeReact: {
+      devBoard: {
+        mountTopicHead: (host) => { heads.push(host); },
+        publishTopicHead: (state) => { publishes.push(state); },
+      },
+    },
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    requestAnimationFrame: (fn) => fn(),
+    alert() {},
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    addEventListener() {},
+    localStorage: { getItem: () => null, setItem() {} },
+    PlatformI18n: englishPlatformI18n(),
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
+  const AppView = sandbox.__AppView;
+  AppView.appData = { slug: 'a' };
+  AppView._topicViewFor = () => ({ card: {}, body: {} });
+  AppView._refreshAiAvailability = () => {};
+  AppView._fillKudosHosts = () => {};
+  AppView._loadVoteRoster = () => {};
+  AppView._loadGovVoteRoster = () => {};
+  AppView._govRequestNumber = () => null;
+  AppView._loadGovRequest = () => {};
+  return { AppView, sandbox, publishes, heads, unmounted };
+}
+
+function paintChange(h, { slug, id, route, status = 'promoted' }) {
+  h.AppView.appData = { slug };
+  h.sandbox.App._currentRoute = `#${route}`;
+  h.AppView._devTopic = { kind: 'proposal', id };
+  h.AppView._topicProposal = { id, status, pr_title: `Change ${id}` };
+  h.AppView._renderTopicHead();
+  return h.publishes.at(-1);
+}
+
+test('a repaint for another project\'s unloaded change clears the old body first (#6608)', () => {
+  const h = makeHeadAppView();
+  const first = paintChange(h, { slug: 'a', id: 12, route: 'app/a/dev/changes/12' });
+  assert.equal(first.item.id, 12, 'the change\'s own row is published');
+  assert.equal(first.loading, false, 'a drawn page is not a loading one');
+  assert.equal(first.slug, 'a', 'with the project it was painted for');
+  assert.equal(first.route, 'app/a/dev/changes/12', 'and the route it was published on');
+
+  const before = h.publishes.length;
+  const threadsBefore = h.unmounted.threads;
+  const transcriptsBefore = h.unmounted.transcripts.length;
+
+  // The viewer picks Community Tier Lists' #44 while The Best Color's #12 was
+  // open. The new project's board read and by-id fetch are still in flight.
+  h.AppView.appData = { slug: 'b' };
+  h.sandbox.App._currentRoute = '#app/b/dev/changes/44';
+  h.AppView._devTopic = { kind: 'proposal', id: 44 };
+  h.AppView._topicProposal = null;
+  h.AppView._renderTopicHead();
+
+  const cleared = h.publishes.at(-1);
+  assert.deepEqual(
+    { card: cleared.card, body: cleared.body, item: cleared.item, loading: cleared.loading },
+    { card: null, body: null, item: null, loading: true },
+    'the previous change\'s votes and events are gone, not left under the new heading',
+  );
+  assert.equal(h.unmounted.threads, threadsBefore + 1, 'and its stream is dropped');
+  assert.equal(h.unmounted.transcripts.length, transcriptsBefore + 1, 'with the transcript');
+  for (const state of h.publishes.slice(before)) {
+    assert.ok(!(state.item && state.item.id === 12), 'no publish after the switch carries #12\'s item');
+  }
+
+  // The new project's read lands: #44 paints under its own project.
+  h.AppView._topicProposal = { id: 44, status: 'promoted', pr_title: 'Community Tier Lists change' };
+  h.AppView._renderTopicHead();
+  const painted = h.publishes.at(-1);
+  assert.equal(painted.item.id, 44);
+  assert.equal(painted.slug, 'b', 'the head names the project it was painted for');
+  assert.equal(painted.route, 'app/b/dev/changes/44');
+  assert.equal(painted.loading, false);
+});
+
+test('a change that leaves the lists mid-view keeps its last render (#6608)', () => {
+  const h = makeHeadAppView();
+  paintChange(h, { slug: 'a', id: 12, route: 'app/a/dev/changes/12' });
+  const before = h.publishes.length;
+  const threadsBefore = h.unmounted.threads;
+
+  // Same topic, same project, its row gone (it closed or merged while open):
+  // the page the reader is on stays readable.
+  h.AppView._topicProposal = null;
+  h.AppView._renderTopicHead();
+
+  assert.equal(h.publishes.length, before, 'nothing is republished');
+  assert.equal(h.unmounted.threads, threadsBefore, 'and its stream is left mounted');
+});

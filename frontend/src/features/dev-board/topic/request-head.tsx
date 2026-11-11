@@ -44,6 +44,7 @@ import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { StatusPill, TitleContent } from '../card/dev-card';
 import type { StatusPillState } from '../card/model';
 import { normalizeBotTrack } from '../../messages/api';
+import { normalizeWorkState } from '../../../lib/work-state';
 import { TrackCard, trackLinks } from '../../messages/bot-track';
 import { RequestPlan } from './request-plan';
 import type { RequestStatusView, RequestView } from './model';
@@ -597,17 +598,12 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // section held open while the thread loads counts the same way: its own
   // outline already says where things stand.
   const working = layout.changes.length > 0 || (!!layout.close && layout.close.status === 'open') || holding;
-  // #6532: a build waiting its turn reads Ready to build, as the progress
-  // card under the bar does, never Being built.
-  const stand = useMemo(() => {
-    if (r.status.closed) return 'closed';
-    if (!track) return null;
-    const code = track.work.line?.code;
-    if (track.work.stage === 'building' && !track.busy
-      && (code === 'queued' || code === 'held_builds' || code === 'held_waiting')) return 'ready_to_build';
-    return track.work.stage;
-  }, [track, r.status.closed]);
-  const pill = requestPill(layout, stand, (id) => translate(id));
+  // 11 Nov 2026 (one model): the pill draws the request's standing, as the
+  // server stored and worded it (issue.standing; from an older server, the
+  // track's own work state). A standing gone live never draws a vote, and a
+  // build waiting its turn is Ready to build (thread-model.ts requestPill).
+  const standing = useMemo(() => normalizeWorkState(r.standing) || track?.work || null, [r.standing, track]);
+  const pill = requestPill(layout, r.status.closed ? 'closed' : standing, (id) => translate(id));
   // A plan a change in the thread was built from goes with that change.
   const { plans, unbuilt } = useMemo(() => plansByChange(specs, layout.changes), [specs, layout.changes]);
   // 1 Nov 2026 (one page per thread): its changes' replies are in its one

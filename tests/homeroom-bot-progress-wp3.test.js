@@ -53,8 +53,14 @@ test('#19 (WP3): how long a step usually takes is a fixed range, never past its 
     assert.ok(progress.BUSY_STAGES.has(key) || key === 'checks', `${key} is a step that takes a while`);
     assert.ok(Number.isInteger(from) && Number.isInteger(to) && from > 0 && from < to, key);
   }
-  // On an entry, beside the limit; never on one that waits on the person.
-  const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-progress.js'), 'utf8');
-  assert.match(src, /const typical = state\.waitingOn \? null : typicalMinutes\(state\.stage, limit\);/);
-  assert.match(src, /\.\.\.\(limit \? \{ stepTimeLimitMinutes: limit \} : \{\}\),\n\s+\.\.\.\(typical \? \{ typicalMinutes: typical \} : \{\}\),/);
+  // 11 Nov 2026: on what the bot says of a request's stored work state
+  // (homeroom-bot-mayor.js standingItem), while it is at it; never on one
+  // that waits on somebody.
+  const { standingItem } = require('../src/services/homeroom-bot-mayor');
+  const item = (work) => standingItem({ app: { slug: 'a', name: 'A' }, issueNumber: 1, ...work });
+  assert.deepEqual(item({ stage: 'building', line: null, whoseMove: 'bot' }).typicalMinutes, { from: 10, to: 25 });
+  assert.deepEqual(item({ stage: 'building', line: { code: 'reviewing', round: 1, of: 2 }, whoseMove: 'bot' }).typicalMinutes, { from: 5, to: 25 });
+  assert.equal(item({ stage: 'waiting_for_you', why: 'plan', whoseMove: 'requester' }).typicalMinutes, undefined);
+  assert.equal(item({ stage: 'building', line: { code: 'queued', place: 2 }, whoseMove: 'bot' }).typicalMinutes, undefined, 'waiting its turn');
+  assert.equal(item({ stage: 'up_for_vote', whoseMove: 'group' }).typicalMinutes, undefined);
 });

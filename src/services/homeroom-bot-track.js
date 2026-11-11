@@ -15,7 +15,7 @@
 
 const log = require('./logger');
 const repoRef = require('./repo-ref');
-const { requestClosedSql, requestRecordJoinsSql, holdOf } = require('./homeroom-bot-progress');
+const { holdOf } = require('./homeroom-bot-progress');
 const workState = require('./work-state');
 const { changeHref } = require('./change-destination');
 
@@ -141,20 +141,21 @@ function linksFor(slug, issueNumber, proposalId, prNumber = null) {
 }
 
 /**
- * Pure: one request's track, from its stored work state.
+ * Pure: one request's track, from its stored work state (work-state.js
+ * fromRow: its stage, its line, and its standing).
  *
  *   job      who it is (key, project, number, title, links, its change)
- *   work     its work state (work-state.js fromRow; a fresh request with
- *            none yet reads as not started)
- *   runs     its live runs, newest first, for its tries and a stop's cause
- *   held     its place among the project's held requests ({ position })
- *   doneBy   who shipped it, when somebody else's change closed it
- *            ({ username, prNumber, sessionId })
- *   until    when its hold lifts (its queue row's held_until): the week's
- *            building time's (`held`), or a day's pause after its look
- *            threw again and again (`retryAt`, #6357)
+ *   work     its work state (a fresh request with none yet reads as not
+ *            started). 11 Nov 2026: the row carries what the track used to
+ *            read again for itself: its place in a held line
+ *            (line.position), when a hold lifts (line.until), its tries
+ *            (tries, tryStarts), why a build stopped (cause) and who shipped
+ *            it when somebody else's change closed it (doneBy).
+ *   runs, held, doneBy, until
+ *            the same facts handed in by a fixture with no stored row
+ *            (staging's demo slots), else left out
  */
-function trackOf({ job, work = null, runs = [], held = null, doneBy = null, until = null }) {
+function trackOf({ job, work = null, runs = null, held = null, doneBy = null, until = null }) {
   const state = work || { stage: 'reading', why: null, reason: null, line: { code: 'waiting' }, whoseMove: 'bot', since: null };
   const code = state.line?.code || null;
   let step = STEP_OF_STAGE[state.stage] ?? null;
@@ -162,15 +163,16 @@ function trackOf({ job, work = null, runs = [], held = null, doneBy = null, unti
   // The bot is at it this minute: reading, planning, building, putting it live.
   const busy = (state.stage === 'reading' && !NOT_STARTED.has(code))
     || (state.stage === 'planning' && code !== 'retry_plan' && code !== 'planning_with_you')
-    || (state.stage === 'building' && !READY.has(code) && code !== 'claimed')
+    || (state.stage === 'building' && !READY.has(code) && code !== 'claimed' && code !== 'update_queued')
     || state.stage === 'going_live';
   const waitingOn = state.whoseMove === 'requester' ? 'you' : state.whoseMove === 'group' ? 'group' : null;
   const since = iso(state.since) || iso(job.at);
-  // A change being fixed or updated is its next try, until a run records it.
+  // A fixture's runs, read as the stored row reads them (work-state.js
+  // requestStandingOf): a change being fixed or updated is its next try,
+  // until a run records it.
   const loop = code === 'fixing' || code === 'revising';
-  const underWay = loop && !runs.some((run) => run.verdict === 'revise' && Date.parse(run.created_at) >= Date.parse(since || 0));
-  const lead = runs[0] || null;
-  const lastBuild = runs.find((run) => Number(run.build_session_id) > 0);
+  const underWay = !!runs && loop && !runs.some((run) => run.verdict === 'revise' && Date.parse(run.created_at) >= Date.parse(since || 0));
+  const lead = runs ? runs[0] || null : null;
   const wait = workState.outdatedReason(state);
   const line = wait && state.line ? { ...state.line, outdated: wait } : (state.line || null);
   const track = {
@@ -182,11 +184,15 @@ function trackOf({ job, work = null, runs = [], held = null, doneBy = null, unti
     issueNumber: Number(job.issueNumber) || null,
     title: job.title || null,
     firstVersion: !!job.firstVersion,
-    work: { stage: state.stage, why: state.why || null, reason: state.reason || null, line, since },
+    work: {
+      stage: state.stage, why: state.why || null, reason: state.reason || null, line, since,
+      // The words every screen draws it with (work-state.js phrasesOf).
+      words: state.words || workState.phrasesOf(state),
+    },
     step,
     waitingOn,
     busy,
-    try: triesOf(runs, { underWay }),
+    try: runs ? triesOf(runs, { underWay }) : Math.max(1, Number(state.tries) || 1),
     // This try's clock: when the work under way began, never the wait
     // before it nor an earlier try (#5210 read "16h 31m so far" on a build
     // fifteen minutes old).
@@ -197,27 +203,31 @@ function trackOf({ job, work = null, runs = [], held = null, doneBy = null, unti
     askThreadId: Number(job.ask?.threadRootId) || null,
     proposalId: Number(job.proposalId) || null,
     // The session its plan and change live in: the change, else its build.
-    sessionId: Number(job.proposalId) || Number(lastBuild?.build_session_id) || null,
-    tryStarts: tryStartsOf(runs, { underWay: underWay ? since : null }),
+    sessionId: Number(job.proposalId) || Number(job.buildSessionId) || null,
+    tryStarts: runs ? tryStartsOf(runs, { underWay: underWay ? since : null }) : (Array.isArray(state.tryStarts) ? state.tryStarts : []),
     links: job.links || null,
     ...(job.release ? { release: job.release } : {}),
   };
   // Held for one of the project's builds, or for its changes up for a vote:
   // its place in that line. On hold for the week's building time: until when.
   if (code === 'held_builds' || code === 'held_waiting') {
-    track.held = { limit: code === 'held_builds' ? 'builds' : 'slots', position: held?.position || null, until: null };
+    const position = Number(held?.position) || Number(state.line.position) || null;
+    track.held = { limit: code === 'held_builds' ? 'builds' : 'slots', position, until: null };
   }
-  if (code === 'on_hold') track.held = { limit: 'allowance', position: null, until: iso(until) };
-  if (code === 'cooldown' && iso(until)) track.retryAt = iso(until);
+  const liftsAt = iso(until) || iso(state.line?.until);
+  if (code === 'on_hold') track.held = { limit: 'allowance', position: null, until: liftsAt };
+  if (code === 'cooldown' && liftsAt) track.retryAt = liftsAt;
   if (state.stage === 'reading' && code === 'queued' && Number(state.line.place) > 0) {
     track.queue = { ahead: Number(state.line.place) - 1 };
   }
   // A build that did not finish says why, in a code (buildStopWhy).
-  if (state.stage === 'stopped' && state.reason === 'build_failed' && lead) {
-    track.cause = buildStopWhy(lead.build_error, lead.no_change_said ? { said: lead.no_change_said } : null);
+  if (state.stage === 'stopped' && state.reason === 'build_failed') {
+    const cause = lead ? buildStopWhy(lead.build_error, lead.no_change_said ? { said: lead.no_change_said } : null) : state.cause;
+    if (cause) track.cause = cause;
   }
-  if (state.stage === 'closed' && doneBy) {
-    track.doneBy = { username: doneBy.username || null, prNumber: Number(doneBy.prNumber) || null };
+  const shipped = doneBy || state.doneBy || null;
+  if (state.stage === 'closed' && shipped) {
+    track.doneBy = { username: shipped.username || null, prNumber: Number(shipped.prNumber) || null };
   }
   return track;
 }
@@ -324,29 +334,6 @@ function requestExcerpt(body, max = 140) {
   return null;
 }
 
-// Who shipped a closed request: the newest merged change linked to it that
-// is not the bot's. `$1`/`$2` the requests as parallel arrays of project
-// and number, `$3` the bot's username.
-const DONE_BY_SQL = `
-  SELECT DISTINCT ON (w.app_id, w.n) w.app_id, w.n, cs.id AS session_id, cs.pr_number, u.username
-    FROM UNNEST($1::int[], $2::int[]) AS w(app_id, n)
-    JOIN chat_sessions cs ON cs.app_id = w.app_id AND cs.status = 'merged'
-         AND (w.n = ANY(cs.linked_issues) OR cs.created_from_issue_number = w.n)
-    JOIN users u ON u.id = cs.user_id
-   WHERE u.username <> $3
-   ORDER BY w.app_id, w.n, cs.merged_at DESC NULLS LAST, cs.id DESC`;
-
-async function doneByFor(pool, pairs) {
-  const out = new Map();
-  if (!pairs.length) return out;
-  const { rows } = await pool.query(DONE_BY_SQL, [pairs.map((p) => p.appId), pairs.map((p) => p.n), 'homeroom_bot']);
-  for (const row of rows) {
-    out.set(`${row.app_id}#${row.n}`, { username: row.username, prNumber: row.pr_number, sessionId: row.session_id });
-  }
-  return out;
-}
-
-
 // ── One project's requests, whoever asked (the request page, the slots) ──
 
 // Of `$2`, the requests of project `$1` the bot has a live run or a queue
@@ -359,56 +346,39 @@ const TOUCHED_SQL = `
    WHERE EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.app_id = $1 AND r.issue_number = w.n AND r.mode = 'live')
       OR EXISTS (SELECT 1 FROM homeroom_bot_queue q WHERE q.app_id = $1 AND q.issue_number = w.n)`;
 
-// One project's requests as a track names them (its title, its run, its
-// change up for a vote), from the shared per-request record
-// (homeroom-bot-progress.js requestRecordJoinsSql): `$1` the project, `$2`
-// the request numbers.
-const REQUEST_ROWS_SQL = `
+// One project's requests as a track names them (its project, its title,
+// whether it is a first version, the bot's newest look and the newest
+// build it started): `$1` the project, `$2` the request numbers. Where it
+// stands is its stored work state.
+const JOB_ROWS_SQL = `
   SELECT a.id AS app_id, a.slug, a.name, w.n AS issue_number,
          (SELECT i.title FROM issues i WHERE i.app_id = a.id AND i.github_issue_number = w.n
            ORDER BY i.id DESC LIMIT 1) AS issue_title,
          COALESCE((SELECT rq.first_version FROM homeroom_bot_requesters rq
                     WHERE rq.app_id = a.id AND rq.issue_number = w.n), FALSE) AS first_version,
-         q.id AS queue_id, q.started_at, q.enqueued_at, q.reason AS queue_reason, q.held_until, q.held_reason,
-         run.id AS run_id, run.mode, run.verdict, run.created_at AS run_at, run.duration_ms AS run_duration_ms,
-         run.cap_suppressed, run.build_ok, run.build_error, run.build_session_id, run.proposal_session_id AS run_proposal,
-         run.live_build_waiting_at AS build_waiting_at, run.awaiting_go_at AS plan_waiting_at,
-         run.review_state, run.review_started_at, run.review_round, run.review_max_rounds, run.review_minutes,
-         run.no_change_said,
-         bs.status AS build_status, bs.created_at AS build_started_at, bs.last_activity_at AS build_last_activity,
-         bs.active_turn->>'mode' AS build_turn_mode, bs.active_turn->>'startedAt' AS build_turn_at,
-         spec.created_at AS spec_at,
-         prop.proposal_session_id,
-         CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS proposal_status,
-         cs.pr_number AS proposal_pr_number,
-         cs.check_state, cs.check_phase, cs.checks_progress, cs.checks_checked_at AS checks_at, cs.test_results,
-         cs.checks_commit_sha AS checks_sha, cs.reviewed_head_sha, cs.imported_pr_head_sha,
-         cs.source AS proposal_source,
-         COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.live_at AS merged_at,
-         ${requestClosedSql({ appId: 'a.id', issueNumber: 'w.n' })} AS request_closed,
-         oq.created_at AS question_at,
-         reply.reply_id, reply.reply_at, reply.reply_user_id
+         run.id AS run_id, run.created_at AS run_at,
+         (SELECT r.build_session_id FROM homeroom_bot_runs r
+           WHERE r.app_id = a.id AND r.issue_number = w.n AND r.mode = 'live' AND r.build_session_id IS NOT NULL
+           ORDER BY r.id DESC LIMIT 1) AS build_session_id,
+         EXISTS (SELECT 1 FROM homeroom_bot_queue q WHERE q.app_id = a.id AND q.issue_number = w.n) AS queued
     FROM UNNEST($2::int[]) AS w(n)
     JOIN apps a ON a.id = $1
-    ${requestRecordJoinsSql({ appId: 'a.id', issueNumber: 'w.n' })}`;
-
-// Every live run of those requests, newest first, for their tries.
-const REQUEST_RUNS_SQL = `
-  SELECT r.id, r.app_id, r.issue_number, r.verdict, r.cap_suppressed, r.awaiting_go_at, r.proposal_session_id,
-         r.build_ok, r.build_error, r.build_session_id, r.error, r.created_at,
-         (r.plan IS NOT NULL AND r.plan->'chosen' IS NULL AND r.build_ok IS FALSE
-           AND r.build_session_id IS NULL AND r.proposal_session_id IS NULL) AS plan_only
-    FROM homeroom_bot_runs r
-   WHERE r.app_id = $1 AND r.issue_number = ANY($2::int[]) AND r.mode = 'live'
-   ORDER BY r.id DESC`;
+    LEFT JOIN LATERAL (
+      SELECT id, created_at FROM homeroom_bot_runs
+       WHERE app_id = a.id AND issue_number = w.n AND mode = 'live'
+       ORDER BY id DESC LIMIT 1
+    ) run ON TRUE`;
 
 /**
- * Pure: who one row of REQUEST_ROWS_SQL is (its project, number, title, its
- * change up for a vote or merging, the links to it), for its track.
+ * Pure: who one request is (its project, number, title, the change it
+ * draws while that is up for a vote or going live, the links to it), from
+ * a JOB_ROWS_SQL row and its stored work state, for its track.
  */
-function jobOfRow(row) {
+function jobOf(row, work = null) {
   const n = Number(row.issue_number);
-  const open = ['promoted', 'merging'].includes(row.proposal_status) ? Number(row.proposal_session_id) || null : null;
+  const change = work?.change || null;
+  const open = change && (change.status === 'promoted' || change.status === 'merging'
+    || (change.status === 'merged' && work.stage === 'going_live')) ? Number(change.id) || null : null;
   return {
     key: `${row.slug}#${n}`,
     id: Number(row.run_id) || null,
@@ -419,17 +389,18 @@ function jobOfRow(row) {
     firstVersion: row.first_version === true,
     at: iso(row.run_at),
     proposalId: open,
-    links: linksFor(row.slug, n, open, row.proposal_pr_number || null),
+    buildSessionId: Number(row.build_session_id) || null,
+    links: linksFor(row.slug, n, open, open ? change.number || null : null),
   };
 }
 
 /**
  * The tracks of one project's requests `numbers`, whoever asked for them:
  * Map n → track, only for requests the bot has had anything to do with.
- * What the request page and the slots view draw. Never throws. `people`:
- * issueHolders' Map for the project, when the caller has read it already.
+ * What the request page and the slots view draw, from their stored work
+ * states. Never throws.
  */
-async function tracksForRequests(pool, { appId, numbers, deps = {}, people = null }) {
+async function tracksForRequests(pool, { appId, numbers, deps = {} }) {
   const out = new Map();
   const asked = [...new Set((numbers || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
   if (!appId || !asked.length) return out;
@@ -442,41 +413,14 @@ async function tracksForRequests(pool, { appId, numbers, deps = {}, people = nul
     if (!wanted.length) return out;
     const items = wanted.map((n) => ({ appId: Number(appId), issueNumber: n }));
     await workState.ensure(pool, items);
-    const [{ rows }, { rows: runs }, states] = await Promise.all([
-      pool.query(REQUEST_ROWS_SQL, [Number(appId), wanted]),
-      pool.query(REQUEST_RUNS_SQL, [Number(appId), wanted]),
+    const [{ rows }, states] = await Promise.all([
+      pool.query(JOB_ROWS_SQL, [Number(appId), wanted]),
       workState.forRequests(pool, Number(appId), wanted),
     ]);
-    const bot = rows.filter((row) => row.run_id || row.queue_id);
-    if (!bot.length) return out;
-    const runsOf = new Map();
-    for (const run of runs) {
-      const n = Number(run.issue_number);
-      if (!runsOf.has(n)) runsOf.set(n, []);
-      runsOf.get(n).push(run);
-    }
-    const jobs = bot.map((row) => [row, jobOfRow(row), states.get(Number(row.issue_number)) || null]);
-    const code = (work) => work?.line?.code || null;
-    let held = new Map();
-    if (jobs.some(([, , work]) => code(work) === 'held_builds' || code(work) === 'held_waiting')) {
-      // A held request a person has taken since reads as theirs (heldQueue).
-      const holders = people || await (deps.botSvc || require('./homeroom-bot')).issueHolders(pool, appId);
-      held = await heldQueue(pool, [appId], { takenBy: new Map([[Number(appId), holders]]) });
-    }
-    const closed = jobs.filter(([, , work]) => work?.stage === 'closed').map(([, job]) => ({ appId: Number(appId), n: job.issueNumber }));
-    const doneBy = closed.length ? await doneByFor(pool, closed) : new Map();
-    for (const [row, job, work] of jobs) {
-      const runsHere = (runsOf.get(job.issueNumber) || []).map((run) => (Number(run.id) === Number(row.run_id)
-        ? { ...run, no_change_said: row.no_change_said } : run));
-      out.set(job.issueNumber, trackOf({
-        job,
-        work,
-        runs: runsHere,
-        held: held.get(`${appId}#${job.issueNumber}`) || null,
-        doneBy: doneBy.get(`${appId}#${job.issueNumber}`) || null,
-        // #6357: the hold's own end, never a guess at the week's.
-        until: holdOf(row)?.until || null,
-      }));
+    for (const row of rows.filter((r) => r.run_id || r.queued)) {
+      const work = states.get(Number(row.issue_number)) || null;
+      const job = jobOf(row, work);
+      out.set(job.issueNumber, trackOf({ job, work }));
     }
     // A merge of Homeroom itself going live: when its release comes
     // (release-watch.js releasesFor), as the change's own pill says it.
@@ -613,7 +557,7 @@ async function slotsView(pool, { app, user = null, settings = null, deps = {} })
   const numbers = [...holders.map((h) => Number(h.issue_number)), ...waiting.map((w) => w.issueNumber),
     ...taken.map((w) => w.issueNumber), ...onHold.map((q) => Number(q.issue_number))].filter((n) => n > 0);
   const [tracks, asked] = await Promise.all([
-    tracksForRequests(pool, { appId: app.id, numbers, deps, people }),
+    tracksForRequests(pool, { appId: app.id, numbers, deps }),
     askersFor(pool, app.id, numbers),
   ]);
   // Who asked, its title and a line of it: GitHub's list first, then what
@@ -689,7 +633,7 @@ async function placeTheRest(pool, view, { app, open, queue, people, tracks, aske
     const rest = openNumbers.filter((n) => !people.has(n));
     const isRest = new Set(rest);
     view.withPeople = openNumbers.length - rest.length;
-    const more = await tracksForRequests(pool, { appId: app.id, numbers: rest.filter((n) => !tracks.has(n)), deps, people });
+    const more = await tracksForRequests(pool, { appId: app.id, numbers: rest.filter((n) => !tracks.has(n)), deps });
     const trackOfN = (n) => tracks.get(n) || more.get(n) || null;
     // Titles for the ones the first read did not ask about.
     const missing = rest.filter((n) => !asked.has(n));
@@ -872,13 +816,10 @@ module.exports = {
   NOT_STARTED,
   HELD_QUEUE_SQL,
   heldQueue,
-  DONE_BY_SQL,
-  doneByFor,
   TOUCHED_SQL,
-  REQUEST_ROWS_SQL,
-  REQUEST_RUNS_SQL,
+  JOB_ROWS_SQL,
   QUEUE_SQL,
-  jobOfRow,
+  jobOf,
   tracksForRequests,
   forViewer,
   slotsView,

@@ -90,15 +90,27 @@ async function checkDrift({
   return { state: 'unknown', headSha, upstreamSha };
 }
 
+// 11 Nov 2026: the notice said only that the CODE was old, and a session in a
+// checkout two months behind followed that checkout's own usernode-proposal
+// skill into a CLI login that main's copy of the skill forbids. The checkout's
+// instructions are as old as its code, so the notice says that too, points at
+// the connector, and has the agent pass the one fix (sync the fork) to the
+// user rather than make it: the fork and its working tree are the user's.
+// Codex caps the notice at 1200 characters (src/cli/main.js setupToml).
 function driftNotice({ headSha, upstreamSha }) {
   return [
     `Checkout freshness: HEAD ${headSha.slice(0, 12)} does not contain the platform's canonical main`,
     `(Usernode-Labs/social-vibecoding main is at ${upstreamSha}).`,
-    'This checkout, often a fork, may describe code that has since changed.',
+    'This checkout, often a fork, may describe code that has since changed, and its AGENTS.md and',
+    '.agents/skills/ are just as old.',
     `To answer a question about current behavior, read the canonical code: git fetch ${CANONICAL_REPO} main,`,
-    'then git show FETCH_HEAD:<path> or git grep <pattern> FETCH_HEAD.',
+    'then git show FETCH_HEAD:<path> or git grep <pattern> FETCH_HEAD. Read a skill the same way',
+    '(git show FETCH_HEAD:.agents/skills/<name>/SKILL.md) before following it.',
     'To change code, start from the exact base commit your work order (prepare_work) or proposal_start gives;',
     'never merge or rebase onto upstream main yourself. A proposal branch already under way keeps its base.',
+    'With the Homeroom web connector connected, use prepare_work and submit_work, never the CLI or its login.',
+    "Tell the user once that syncing their fork's main with Usernode-Labs/social-vibecoding (GitHub's Sync fork)",
+    'and pulling it here lets later sessions read current instructions; do not sync or pull unless they ask.',
     'See AGENTS.md, "Check that this checkout is current".',
   ].join(' ');
 }

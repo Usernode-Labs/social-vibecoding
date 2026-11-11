@@ -48,10 +48,16 @@ type JsonRecord = Record<string, unknown>;
 
 export class MessagesApiError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /** The server's code for a refusal, when it gave one (a bot card's tap: expired, retired, already_decided, ...). */
+  readonly code: string | null;
+  /** Why, for a code that has one (a retired card's reason). */
+  readonly reason: string | null;
+  constructor(status: number, message: string, code: string | null = null, reason: string | null = null) {
     super(message);
     this.name = 'MessagesApiError';
     this.status = status;
+    this.code = code;
+    this.reason = reason;
   }
 }
 
@@ -315,6 +321,9 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       ...(goesLive ? { goesLive } : {}),
       // Why its buttons were closed, said in their place.
       ...(text(pick(bot, 'closedWhy')) ? { closedWhy: text(pick(bot, 'closedWhy')).slice(0, 120) } : {}),
+      // Step 3: an offer expired, or retired because what it was about moved on, and why.
+      ...(pick(bot, 'expired') === true ? { expired: true } : {}),
+      ...(text(pick(bot, 'retired')) ? { retired: text(pick(bot, 'retired')).slice(0, 40) } : {}),
       // One request, one story: the thread it is in, the moment it rings
       // as, and the names its label and its push use.
       ...(strictId(pick(bot, 'threadRootId')) ? { threadRootId: strictId(pick(bot, 'threadRootId'))! } : {}),
@@ -673,7 +682,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (pick(body, 'code') === 'contact_restricted') {
       throw new MessagesApiError(response.status, t('messages:api.contactRestricted'));
     }
-    throw new MessagesApiError(response.status, errorText(body) || text(pick(body, 'message'), t('messages:api.requestFailed', { status: response.status })));
+    throw new MessagesApiError(
+      response.status,
+      errorText(body) || text(pick(body, 'message'), t('messages:api.requestFailed', { status: response.status })),
+      text(pick(body, 'code')) || null,
+      text(pick(body, 'reason')) || null,
+    );
   }
   return data as T;
 }

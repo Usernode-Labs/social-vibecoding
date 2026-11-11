@@ -45,7 +45,7 @@ function demoWork() {
   const anchor = now >= todayNoon + 3600000 ? todayNoon : todayNoon - 86400000;
   const day = (minutes) => new Date(anchor - minutes * 60000).toISOString();
   const issue = (a, n) => `#app/${a.slug}/dev/issues/${n}`;
-  return {
+  return withWords({
     private: [
       { rootId: -9101, title: 'Staging demo idea: a calendar for the garden', kind: 'idea', app: null, at: at(2) },
       { rootId: -9102, title: 'Staging demo draft: sort by date', kind: 'draft_request', app, at: at(5) },
@@ -86,7 +86,18 @@ function demoWork() {
       { threadId: -9223, number: 9223, kind: 'work', title: 'Staging demo: roll two dice', app: dice, change: { id: -9223, number: 9224 }, href: issue(dice, 9223), group: 'live', work: { stage: 'live' }, at: at(60) },
       { threadId: -9225, number: 9225, kind: 'work', title: 'Staging demo: a hint button', app: puzzle, change: { id: -9225, number: 9226 }, href: issue(puzzle, 9225), group: 'live', work: { stage: 'live' }, at: at(80) },
     ],
-  };
+  });
+}
+
+// The demo rows' words, as every real row carries them (services/work-state.js
+// phrasesOf), so the tab draws them the same way.
+function withWords(lists) {
+  const { phrasesOf } = require('../services/work-state');
+  const out = { ...lists };
+  for (const key of ['needs', 'next', 'waiting', 'live']) {
+    out[key] = (lists[key] || []).map((row) => (row.work ? { ...row, work: { ...row.work, words: phrasesOf(row.work) } } : row));
+  }
+  return out;
 }
 
 // `?demo=1` on staging: the History card's rows (services/ai-history.js),
