@@ -227,6 +227,28 @@ test('on a phone the keyboard is not the page moving, and the sheet stays under 
   assert.match(css, /#comment-pin-box\.comment-sheet \.comment-sheet-actions \{\s*position: sticky;\s*bottom: calc\(-1 \* var\(--comment-sheet-pb\)\);/);
 });
 
+test('the picture stays still while the comment box has the keyboard (#6448)', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  // While the person is typing, a chat that scrolls a reply in must not
+  // rewrite the picture under their words. The retake is skipped, and the
+  // move is remembered.
+  assert.match(src, /const shotPending = useRef\(false\);/);
+  assert.match(src, /if \(textFocused\(document\)\) \{ shotPending\.current = true; return; \}\s*const timer = setTimeout\(\(\) => \{/,
+    'the tick effect skips the retake while a text field has the keyboard');
+  // And again when the timer fires: focusing the box during the 250ms wait
+  // freezes the picture too.
+  assert.match(src, /const timer = setTimeout\(\(\) => \{\s*if \(textFocused\(document\)\) \{ shotPending\.current = true; return; \}\s*takeViewShot\(\);\s*\}, 250\);/);
+  // Leaving the box catches up, once, and only when the page moved while it
+  // was frozen. `activeElement` has not moved when focusout fires, so the
+  // check waits a frame.
+  assert.match(src, /host\.addEventListener\('focusout', onFocusOut\);/);
+  assert.match(src, /frame = requestAnimationFrame\(\(\) => \{\s*frame = 0;\s*if \(!shotPending\.current \|\| textFocused\(document\)\) return;\s*shotPending\.current = false;\s*takeViewShot\(\);\s*\}\);/);
+  assert.match(src, /host\.removeEventListener\('focusout', onFocusOut\);\s*if \(frame\) cancelAnimationFrame\(frame\);/,
+    'the listener and its frame go with the mode');
+  // The first picture is still taken as it always was: only the redraws after it freeze.
+  assert.match(src, /const ahead = takeAhead\(sizeRef\.current\);\s*void Promise\.all\(\[ahead, overlaysGone\(\)\]\)\.then\(\(\[got\]\) => \{\s*if \(!live\) return;\s*if \(!got\) \{ takeViewShot\(\); return; \}/);
+});
+
 test('on a phone a tap leaves a small comment, and only its field opens the sheet', () => {
   // Evan, 14 Oct 2026: a tap opened the whole sheet with the keyboard over
   // the page he was still looking at, the sheet's ✕ was hard to find and to
@@ -1318,6 +1340,9 @@ test('handing over opens the dialog with the words, the pictures, the pin, the t
   assert.deepEqual(got, {
     target: 'app',
     description: 'Make the Join   button\nbigger',
+    // #6485: the app the person picked travels with the words, so the form
+    // files there even with no app tab open behind it.
+    appSlug: 'demo',
     screenshots: [{ blob, pins: [{ x: 0.25, y: 0.5, n: null, note: 'Make the Join button bigger' }] }, { blob: imageA }, { blob: imageB }],
     title: 'Bigger Join button',
     bounty: true,
@@ -1335,6 +1360,25 @@ test('handing over opens the dialog with the words, the pictures, the pin, the t
   // The form sends the pins beside the pictures it was handed with.
   assert.match(fc, /const pinned = screenshots\.filter\(\(shot\) => shot\.id && shot\.pins && shot\.pins\.length\)\s*\.flatMap\(/);
   assert.match(fc, /if \(pinned\.length\) body\.screenshotPins = pinned;/);
+});
+
+// #6485: the destination the person picked is the app the form files on, so
+// the hand-over carries the app itself — its address and the name the box
+// showed — and the form's own row names that app.
+test('the hand-over carries the picked app, and only when the app is the destination', () => {
+  assert.deepEqual(post.handOverOptions({ ...base, appName: 'Inbox' }), {
+    target: 'app',
+    description: 'Make it bigger',
+    appSlug: 'demo',
+    appName: 'Inbox',
+    screenshots: [{ blob }],
+  });
+  assert.deepEqual(post.handOverOptions({ ...base, target: 'platform', appName: 'Inbox' }), {
+    target: 'platform',
+    description: 'Make it bigger',
+    screenshots: [{ blob }],
+  }, 'Homeroom takes no app with it');
+  assert.equal(post.handOverOptions({ ...base, appSlug: null }).appSlug, undefined, 'nor an app with no address');
 });
 
 // ── 2b. The pin as data (#4482) ───────────────────────────────────────

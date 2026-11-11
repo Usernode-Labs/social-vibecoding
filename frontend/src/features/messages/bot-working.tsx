@@ -30,24 +30,24 @@ import type { BotDoing, Typist } from './store';
  * of its own until the store says the bot is typing, so a first render is
  * the empty transcript it always was.
  *
- * Homeroom bot parity, P1: AS IT WRITES. While the model writes its answer,
- * the typing event's `doing` is { kind: 'writing', text } (the newest part
- * of the answer so far, services/homeroom-bot-mayor.js draftWriter), and the
- * card shows those words under "Writing", growing, drawn as the message's
- * own words are. It is a preview: the message the bot sends, checked, takes
- * the card's place as before.
+ * Homeroom bot parity, P1, and #6581 (11 Nov 2026): the card shows the
+ * STEP, never the words. While the model writes its answer the typing
+ * event's `doing` is { kind: 'writing' } and the card says "Writing"; the
+ * checked answer appears once, as the bot's message. It used to show the
+ * words as they were written, and a failed check then swapped them for a
+ * repaired reply under the reader's eyes: a message that is shown must never
+ * change. Nothing carries an answer's words here any more (`botDraftText`
+ * stays for a stored draft, which no server writes now).
  *
- * 4 Nov 2026 (#6302): and the words stay under whatever the card says next.
- * The server names a new doing as each step starts ("Reading request #436")
- * and none while it thinks, which used to drop the answer so far and draw it
- * again as the next round streamed: the card flashed between output and
- * thinking. The store now holds the draft on the bot's Typist
- * (store.ts `botTypist`) and this draws it whatever the doing kind is.
+ * 4 Nov 2026 (#6302): the words held for a message stay under whatever the
+ * card says next. The server names a new doing as each step starts ("Reading
+ * request #436") and none while it thinks, which used to drop the answer so
+ * far and draw it again as the next round streamed: the card flashed between
+ * output and thinking.
  *
  * 6 Nov 2026 (#6405): the draft only grows. A tail the server cut from
- * part-way through is stitched under the words already held, and a rewrite
- * (the correction pass) waits until it has caught up with them, so the card
- * never shrinks and never streams the answer again from its first word.
+ * part-way through is stitched under the words already held, so the card
+ * never shrinks and never streams an answer again from its first word.
  */
 
 type Translate = (id: string, values?: Record<string, unknown>) => string;
@@ -66,6 +66,8 @@ export function typingBesides(typing: readonly Typist[], working: Typist | null)
 const DOING_WORDS: Record<string, string> = {
   progress: 'messages:thread.botWorking.progress',
   drawing: 'messages:thread.botWorking.drawing',
+  // #6354: Homeroom is opening one of its own pages to copy it for a design.
+  capturing: 'messages:thread.botWorking.capturing',
   designing: 'messages:thread.botWorking.designing',
   drafting: 'messages:thread.botWorking.drafting',
   writing: 'messages:thread.botWorking.writing',
@@ -79,6 +81,12 @@ export function botDraftText(doing: BotDoing | null | undefined): string {
 /** What the card says the bot is doing: "Reading request #12", or "Thinking" for nothing (or a kind it does not know). */
 export function botDoingLine(t: Translate, doing: BotDoing | null | undefined): string {
   if (doing?.kind === 'request' && doing.number) return t('messages:thread.botWorking.request', { number: doing.number });
+  // #6354: "Opening the Homeroom bot page as it is now".
+  if (doing?.kind === 'capturing') {
+    return doing.page
+      ? t('messages:thread.botWorking.capturing', { page: doing.page })
+      : t('messages:thread.botWorking.capturingUnnamed');
+  }
   if (doing?.kind === 'code') {
     return doing.project ? t('messages:thread.botWorking.code', { project: doing.project }) : t('messages:thread.botWorking.codeUnnamed');
   }

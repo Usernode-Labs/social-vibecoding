@@ -1452,7 +1452,7 @@ test('a drop writes the whole width through PUT /api/home-layout', () => {
   assert.match(place, /if \(!next\) return;/, 'an illegal drop persists nothing');
   assert.match(place, /_rerenderPending = true/, 'repaint is deferred to onSettle');
   assert.match(place, /_persistLayout\(cols, next\)/);
-  const persist = HOME.match(/async _persistLayout\(cols, layout\) \{[\s\S]*?\n {2}\},/)[0];
+  const persist = HOME.match(/async _persistLayout\(cols, layout, \{ quiet = false \} = \{\}\) \{[\s\S]*?\n {2}\},/)[0];
   assert.match(persist, /'\/api\/home-layout'/);
   assert.match(persist, /method: 'PUT'/);
   assert.match(persist, /HomeLayout\.toWire\(layout\)/);
@@ -1461,10 +1461,8 @@ test('a drop writes the whole width through PUT /api/home-layout', () => {
   assert.match(persist, /_ensureLayoutLoaded\(\{ force: true \}\)/);
 });
 
-// A derivation is not a claim: visiting at a width you have never dragged at
-// must not silently write a layout for it, or a phone visit would overwrite
-// the arrangement the viewer made on their laptop.
-test('only a stored layout is repaired in place; a derivation is not persisted', () => {
+// A saved arrangement wins; only a fully loaded derivation is saved once.
+test('stored layouts are repaired in place and a full derivation is saved once', () => {
   const cur = HOME.match(/currentLayout\(cols\) \{[\s\S]*?\n {2}\},/)[0];
   // A pre-overhaul DESKTOP arrangement lived under '5'. Seeding from it is
   // what stops four columns everywhere reading as "my home screen was reset".

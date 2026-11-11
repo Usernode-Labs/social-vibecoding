@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AdminUI } from './admin-console.js';
+import { needsYouSentence, pinnedSections } from './admin-workspace.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
 // Operations overview — the console's landing section (#admin, #admin/overview).
@@ -33,6 +34,16 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 //
 // `overview` is also the console's DEFAULT section, so `_renderSection`'s
 // `default:` arm dispatches here too — see `_renderModule` there.
+//
+// ── Admin home (#6456) ──
+//
+// On a desktop this is the console's Home tab: a heading with one sentence
+// saying whether anything needs you, the three tiles and their detail as
+// before, then Pinned (the sections admins open most) and All sections, the
+// whole menu as cards grouped as the top bar groups them. Every card opens
+// its section through AdminConsole.goTo, the chassis's one way in. On a
+// phone's level 1 this renders into #admin-mobile-overview above the
+// chassis's own section menu, so there it is the tiles alone, as before.
 
 interface OverviewData {
   stuckApps?: Array<{ slug: string; dbStatus: string; createdBy?: string; createdAt: string }>;
@@ -46,7 +57,7 @@ const GROUP_LABEL = 'text-xs uppercase tracking-wide text-zinc-500 dark:text-zin
 const ROW = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2 rounded bg-zinc-100 dark:bg-zinc-800';
 const MUTED_SM = 'text-xs text-zinc-500 dark:text-zinc-400';
 
-function OverviewSection() {
+function OverviewSection({ compact }: { compact?: boolean }) {
   const [data, setData] = useState<OverviewData | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
@@ -67,7 +78,7 @@ function OverviewSection() {
   const spenders = (llm.users || []).slice(0, 5);
   const anyDetail = stuck.length || orphans.length || spenders.length;
 
-  return (
+  const ops = (
     <div className={`${AdminUI.card} p-4`}>
       <div className="flex items-center justify-between mb-3">
         <h2 className={AdminUI.cardTitle}>Operations</h2>
@@ -145,6 +156,78 @@ function OverviewSection() {
       </div>
     </div>
   );
+
+  if (compact) return ops;
+
+  const consoleApi = (window as any).AdminConsole;
+  const visible: Section[] = consoleApi?._visibleSections?.() || [];
+  const pinned: Section[] = pinnedSections(visible);
+  const groups: Array<{ name: string; items: Section[] }> = (consoleApi?._groupedSections?.() || [])
+    .map((g: { name: string; items: Section[] }) => ({ ...g, items: g.items.filter((x) => x.key !== 'overview') }))
+    .filter((g: { items: Section[] }) => g.items.length);
+  const sentence = needsYouSentence(data);
+  const needs = (stuck.length + orphans.length) > 0;
+
+  return (
+    <div id="admin-home" className="space-y-10 pb-4">
+      <header>
+        <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">Admin home</h1>
+        <p id="admin-home-status" className={`mt-1 text-sm ${needs ? 'font-medium text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>
+          {sentence || 'Checking what needs you…'}
+        </p>
+      </header>
+      {ops}
+      {pinned.length ? (
+        <section aria-labelledby="admin-home-pinned-title">
+          <h2 id="admin-home-pinned-title" className={HOME_LABEL}>Pinned</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {pinned.map((x) => (
+              <SectionCard key={x.key} section={x} large />
+            ))}
+          </div>
+        </section>
+      ) : null}
+      <section aria-labelledby="admin-home-all-title">
+        <h2 id="admin-home-all-title" className={HOME_LABEL}>All sections</h2>
+        <div className="space-y-8">
+          {groups.map((g) => (
+            <div key={g.name} data-admin-home-group={g.name}>
+              <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-3">{g.name}</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                {g.items.map((x) => <SectionCard key={x.key} section={x} />)}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+interface Section { key: string; label: string; group?: string }
+
+const HOME_LABEL = 'text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-4';
+
+// One card per section, a real <button> carrying data-admin-section like
+// every other way into a section. Its glyph is the chassis's own NAV_ICONS
+// entry: a static string in this bundle, never anything a server sent.
+function SectionCard({ section, large }: { section: Section; large?: boolean }) {
+  const icon = (window as any).AdminConsole?.NAV_ICONS?.[section.key] || '';
+  return (
+    <button
+      type="button"
+      data-admin-section={section.key}
+      onClick={() => (window as any).AdminConsole?.goTo?.(section.key)}
+      className={`${AdminUI.card} flex items-center gap-4 w-full text-start ${large ? 'p-5' : 'px-4 py-3'} transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500`}
+    >
+      <span className={`flex items-center justify-center shrink-0 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 ${large ? 'w-11 h-11' : 'w-9 h-9'}`}
+        dangerouslySetInnerHTML={{ __html: icon }} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{section.label}</span>
+        {large && section.group ? <span className="block text-xs text-zinc-500 dark:text-zinc-400">{section.group}</span> : null}
+      </span>
+    </button>
+  );
 }
 
 let host: Element | null = null;
@@ -152,7 +235,9 @@ let host: Element | null = null;
 const AdminOverview = {
   render(el: Element) {
     host = el;
-    mountLegacyPortal(el, <OverviewSection />);
+    // The phone's level 1 hands over #admin-mobile-overview, a sub-host above
+    // the chassis's own menu: the tiles alone there (see the note above).
+    mountLegacyPortal(el, <OverviewSection compact={el.id === 'admin-mobile-overview'} />);
   },
 
   destroy() {

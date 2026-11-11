@@ -57,7 +57,7 @@ function makeCtx(over) {
     alert: () => {},
     setTimeout, clearTimeout, setInterval, clearInterval,
     addEventListener: () => {},
-    localStorage: o.localStorage || { getItem: () => null, setItem: () => {} },
+    localStorage: o.localStorage || makeMemoryStore(),
     sessionStorage: o.sessionStorage || makeMemoryStore(),
   };
   sandbox.window = sandbox;
@@ -639,7 +639,7 @@ test('_kanbanAssigneeOptions unions assignees and authors and keeps the current 
   assert.deepEqual(names(), ['casey', 'evan', 'kim', 'maya', 'sam', 'zoe']);
 });
 
-// ── Persistence helpers (sessionStorage-backed, per app slug) ──────────
+// ── Persistence helpers (localStorage-backed, per app slug) ────────────
 
 // Objects come back from the vm realm with a foreign Object.prototype, which
 // trips deepStrictEqual — copy into the host realm before comparing (same
@@ -664,7 +664,7 @@ test('_saveKanbanFilters round-trips through _loadKanbanFilters under the slug',
 
 test('_saveKanbanFilters clears the key when filters are at defaults', () => {
   const store = makeMemoryStore();
-  const AppView = makeCtx({ sessionStorage: store }).__AppView;
+  const AppView = makeCtx({ localStorage: store }).__AppView;
   const key = `${AppView.KANBAN_FILTERS_KEY}:my-app`;
   // First persist an active filter, then clear it — the key must be removed
   // rather than left holding an empty object (no residue for a cleared board).
@@ -686,9 +686,70 @@ test('persisted filters are isolated per app slug', () => {
   assert.equal(AppView._loadKanbanFilters('app-b').q, 'beta');
 });
 
+test('filters survive a second tab: localStorage is shared, a tab session is not (#6509)', () => {
+  const shared = makeMemoryStore();
+  const sandboxA = makeCtx({ localStorage: shared, sessionStorage: makeMemoryStore() });
+  const a = sandboxA.__AppView;
+  a._kanbanFilters = { q: 'dark', priority: 'high', assignee: null, category: null, needsVote: false };
+  a._saveKanbanFilters('my-app');
+  // A second tab has its own empty sessionStorage but the same localStorage.
+  const b = makeCtx({ localStorage: shared, sessionStorage: makeMemoryStore() }).__AppView;
+  assert.deepEqual(plain(b._loadKanbanFilters('my-app')),
+    { q: 'dark', priority: 'high', assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, yours: false, stage: null });
+  // The filters no longer live in the per-tab store at all.
+  assert.equal(sandboxA.sessionStorage.getItem(`${a.KANBAN_FILTERS_KEY}:my-app`), null);
+});
+
+test('a filter set before the change is carried over from sessionStorage once (#6509)', () => {
+  const shared = makeMemoryStore();
+  const legacy = makeMemoryStore();
+  const key = 'devKanbanFilters:my-app';
+  // The old build kept this per tab; this tab still holds it.
+  legacy.setItem(key, JSON.stringify({ q: 'old', priority: 'high' }));
+  const AppView = makeCtx({ localStorage: shared, sessionStorage: legacy }).__AppView;
+  const loaded = AppView._loadKanbanFilters('my-app');
+  assert.equal(loaded.q, 'old');
+  assert.equal(loaded.priority, 'high');
+  assert.equal(legacy.getItem(key), null, 'the old per-tab key is dropped');
+  assert.deepEqual(JSON.parse(shared.getItem(key)), { q: 'old', priority: 'high' },
+    'the legacy value now lives where every tab can see it');
+  // From then on localStorage answers on its own.
+  const other = makeCtx({ localStorage: shared, sessionStorage: makeMemoryStore() }).__AppView;
+  assert.equal(other._loadKanbanFilters('my-app').q, 'old');
+});
+
+test('clearing the filters removes the key from both stores (#6509)', () => {
+  const local = makeMemoryStore();
+  const session = makeMemoryStore();
+  const AppView = makeCtx({ localStorage: local, sessionStorage: session }).__AppView;
+  const key = `${AppView.KANBAN_FILTERS_KEY}:my-app`;
+  local.setItem(key, JSON.stringify({ q: 'dark' }));
+  session.setItem(key, JSON.stringify({ q: 'dark' }));
+  AppView._kanbanFilters = AppView._defaultKanbanFilters();
+  AppView._saveKanbanFilters('my-app');
+  assert.equal(local.getItem(key), null);
+  assert.equal(session.getItem(key), null);
+});
+
+test('the mobile column tab and the review sort stay per tab (#6509)', () => {
+  const local = makeMemoryStore();
+  const session = makeMemoryStore();
+  const AppView = makeCtx({ localStorage: local, sessionStorage: session }).__AppView;
+  // Only the board's filters moved; these two are still per-tab preferences.
+  AppView._kanbanTab = 'inreview';
+  AppView._saveKanbanTab('my-app');
+  assert.equal(session.getItem(`${AppView.KANBAN_TAB_KEY}:my-app`), 'inreview');
+  assert.equal(local.getItem(`${AppView.KANBAN_TAB_KEY}:my-app`), null);
+  AppView.appData = { slug: 'my-app' };
+  AppView._repaintBoardSurface = () => {};
+  AppView._setReviewSort('priority');
+  assert.equal(session.getItem(`${AppView.REVIEW_SORT_KEY}:my-app`), 'priority');
+  assert.equal(local.getItem(`${AppView.REVIEW_SORT_KEY}:my-app`), null);
+});
+
 test('_loadKanbanFilters merges over defaults for a partial stored object', () => {
   const store = makeMemoryStore();
-  const AppView = makeCtx({ sessionStorage: store }).__AppView;
+  const AppView = makeCtx({ localStorage: store }).__AppView;
   store.setItem(`${AppView.KANBAN_FILTERS_KEY}:my-app`, JSON.stringify({ q: 'hi' }));
   // Missing fields fall back to their defaults rather than becoming undefined.
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
@@ -697,20 +758,20 @@ test('_loadKanbanFilters merges over defaults for a partial stored object', () =
 
 test('_loadKanbanFilters yields defaults on corrupt stored JSON', () => {
   const store = makeMemoryStore();
-  const AppView = makeCtx({ sessionStorage: store }).__AppView;
+  const AppView = makeCtx({ localStorage: store }).__AppView;
   store.setItem(`${AppView.KANBAN_FILTERS_KEY}:my-app`, '{not valid json');
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')), none);
 });
 
 test('persistence helpers survive a storage-less environment', () => {
-  // Simulate sessionStorage throwing (private-window / disabled storage):
+  // Simulate localStorage throwing (private-window / disabled storage):
   // load falls back to defaults and save is a silent no-op, never throwing.
   const throwing = {
     getItem: () => { throw new Error('denied'); },
     setItem: () => { throw new Error('denied'); },
     removeItem: () => { throw new Error('denied'); },
   };
-  const AppView = makeCtx({ sessionStorage: throwing }).__AppView;
+  const AppView = makeCtx({ localStorage: throwing, sessionStorage: throwing }).__AppView;
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')), none);
   AppView._kanbanFilters = { q: 'dark', priority: null, assignee: null, needsVote: false };
   assert.doesNotThrow(() => AppView._saveKanbanFilters('my-app'));
@@ -718,7 +779,7 @@ test('persistence helpers survive a storage-less environment', () => {
 
 test('?q= seeds the search on the first load, and only the first (#2090)', () => {
   const store = makeMemoryStore();
-  const sandbox = makeCtx({ sessionStorage: store });
+  const sandbox = makeCtx({ localStorage: store });
   const AppView = sandbox.__AppView;
   const key = `${AppView.KANBAN_FILTERS_KEY}:my-app`;
   // The sandbox has no URL of its own; hand it the deep link.
@@ -738,11 +799,11 @@ test('?q= seeds the search on the first load, and only the first (#2090)', () =>
   assert.equal(AppView._loadKanbanFilters('my-app').q, '', 'a cleared search stays cleared');
   assert.equal(AppView._loadKanbanFilters('other-app').q, '', 'and no other app inherits it');
   // Blank is absent: nothing seeded, nothing written.
-  const blank = makeCtx({ sessionStorage: makeMemoryStore() });
+  const blank = makeCtx({ localStorage: makeMemoryStore() });
   blank.location = { search: '?q=%20%20' };
   blank.URLSearchParams = URLSearchParams;
   assert.deepEqual(plain(blank.__AppView._loadKanbanFilters('my-app')), none);
-  assert.equal(blank.sessionStorage.getItem(`${blank.__AppView.KANBAN_FILTERS_KEY}:my-app`), null);
+  assert.equal(blank.localStorage.getItem(`${blank.__AppView.KANBAN_FILTERS_KEY}:my-app`), null);
 });
 
 // ── Session cards have only the filters their data supports ─────────────────
@@ -1175,7 +1236,7 @@ test('signed out, a persisted quick toggle matches nothing and the strip hides b
 
 test('a quick toggle flips, counts as an active filter, and persists like the rest (#1935)', () => {
   const store = makeMemoryStore();
-  const sandbox = makeCtx({ sessionStorage: store });
+  const sandbox = makeCtx({ localStorage: store });
   const AppView = sandbox.__AppView;
   sandbox.App.user = { id: 1, username: 'evan' };
   sandbox.App.currentApp = 'my-app';
@@ -1499,7 +1560,9 @@ test('a stage filter narrows every kanban column by its own lane', () => {
   a._envIssueNumbers = new Set();
   a._proposals = [prop({ id: 91, pr_title: 'Waiting change' })];
   a._govProposals = [];
-  a._merged = [merged({ id: 80, pr_title: 'Landed Monday', merged_at: new Date(ws + 3600000).toISOString(), live_at: new Date(ws + 3600000).toISOString() }), merged({ id: 81, pr_title: 'Landed long ago', created_at: '2026-09-01' })];
+  // #6482: two different changes, so two different pull request numbers —
+  // the same one now means one change.
+  a._merged = [merged({ id: 80, pr_number: 800101, pr_title: 'Landed Monday', merged_at: new Date(ws + 3600000).toISOString(), live_at: new Date(ws + 3600000).toISOString() }), merged({ id: 81, pr_number: 800102, pr_title: 'Landed long ago', created_at: '2026-09-01' })];
   a._mySessions = [];
   a._sharedSessions = [];
   a._kanbanFilters = { ...none, stage: 'open' };

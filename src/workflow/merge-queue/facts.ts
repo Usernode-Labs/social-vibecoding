@@ -41,6 +41,9 @@ export interface Candidate {
   // not measure: it is the conflict lane's (and its sync runs the turn).
   githubConflict: boolean;
   conflictPaths: number;
+  // The paths that conflicted against main (#6531): a conflict only in a
+  // mechanical file is settled without a resolution.
+  conflictFiles: string[];
   integrationMain: string | null;
   // A settled verdict stands on the pinned head; a run for it is under way.
   settled: boolean;
@@ -109,7 +112,7 @@ const LINE_SQL = `
     JOIN apps a ON a.id = cs.app_id
     LEFT JOIN wf_instances w ON w.machine = 'proposal' AND w.key = 'session:' || cs.id
    WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.is_headless = FALSE
-     AND (cs.source IS DISTINCT FROM 'imported' OR cs.imported_pr_base_ref IS NULL)
+     AND cs.imported_pr_base_ref IS NULL
    ORDER BY cs.id`;
 
 export async function readLine(tx: Tx, appId: number, now: Date): Promise<Candidate[]> {
@@ -138,6 +141,7 @@ export async function readLine(tx: Tx, appId: number, now: Date): Promise<Candid
       mergesClean: githubConflict ? false : r.integration_merges_clean == null ? null : !!r.integration_merges_clean,
       githubConflict,
       conflictPaths: Array.isArray(r.integration_conflict_paths) ? r.integration_conflict_paths.length : 0,
+      conflictFiles: Array.isArray(r.integration_conflict_paths) ? r.integration_conflict_paths.map(String) : [],
       integrationMain,
       settled,
       runInFlight: r.check_state === 'pending' && r.check_phase !== 'deferred' && onHead && !!checksSha,

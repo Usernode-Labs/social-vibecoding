@@ -1,6 +1,7 @@
 'use strict';
 
-// One-time uploads through the connector: a plan, a video or a screenshot.
+// One-time uploads through the connector: a plan, a video, a screenshot or
+// an HTML design.
 //
 // A coding agent hands Homeroom large things through tool calls, and a tool
 // argument is text the agent has to reproduce in full. post_spec took a plan
@@ -50,7 +51,7 @@ const log = require('./logger');
 const TOKEN_PREFIX = 'svcu_';
 const TOKEN_RE = /^svcu_[A-Za-z0-9_-]{43}$/;
 const TOKEN_TTL_HOURS = 24;
-const KINDS = Object.freeze(['plan', 'video', 'screenshot']);
+const KINDS = Object.freeze(['plan', 'video', 'screenshot', 'design']);
 // Unused commands one person may hold at once. Minting past it drops the
 // oldest unused one, as the patch upload drops its oldest token: an agent
 // that asks twenty times is not using the first.
@@ -72,6 +73,7 @@ function maxBytesFor(kind) {
   if (kind === 'plan') return require('./request-specs').MAX_SPEC_HTML_CHARS * 4;
   if (kind === 'video') return require('../routes/feedback').MAX_VIDEO_BYTES;
   if (kind === 'screenshot') return require('../routes/feedback').MAX_SCREENSHOT_BYTES;
+  if (kind === 'design') return require('./attachments').MAX_HTML_BYTES;
   return 0;
 }
 
@@ -109,8 +111,9 @@ function uploadIdOf(value) {
 // What the agent does with a stored upload, said in the upload's answer.
 function nextStepFor(kind, uploadId) {
   if (kind === 'plan') return `Call post_spec with specUploadId ${uploadId} instead of spec.`;
+  if (kind === 'design') return `Call post_message with designUploadId ${uploadId}.`;
   if (kind === 'video') return `Call create_request with videoUploadId ${uploadId}.`;
-  return `Call create_request with ${uploadId} in screenshotUploadIds, or show it in a plan's text as <img src="PATH"> (PATH is this answer's \`path\`).`;
+  return `Call create_request with ${uploadId} in screenshotUploadIds, or show it in a plan's text as <img src="PATH"> (PATH is this answer's \`path\`), or post_message with it in screenshotUploadIds.`;
 }
 
 // Where a stored video or screenshot is served (routes/issue-videos.js,
@@ -231,11 +234,11 @@ async function storeUpload(pool, { uploadId, userId, kind, contentType, body }) 
     'This upload command was already used: each one stores one file. Ask prepare_upload for a new one.',
     { status: 409 }
   );
-  if (kind === 'plan') {
+  if (kind === 'plan' || kind === 'design') {
     const { rows } = await pool.query(
       `UPDATE connector_uploads
           SET stored_at = NOW(), data = $2, bytes = $3, sha256 = $4, content_type = $5
-        WHERE id = $1 AND user_id = $6 AND kind = 'plan' AND stored_at IS NULL AND expires_at > NOW()
+        WHERE id = $1 AND user_id = $6 AND kind IN ('plan', 'design') AND stored_at IS NULL AND expires_at > NOW()
         RETURNING id`,
       [uploadId, body, body.length, sha256, contentType, userId]
     );
@@ -317,6 +320,10 @@ async function takeUpload(pool, { userId, uploadId, kind, field }) {
     const buf = Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data || '');
     return { ok: true, uploadId: id, kind, text: buf.toString('utf8'), bytes: Number(row.bytes) || buf.length };
   }
+  if (kind === 'design') {
+    const buf = Buffer.isBuffer(row.data) ? row.data : Buffer.from(row.data || '');
+    return { ok: true, uploadId: id, kind, data: buf, bytes: Number(row.bytes) || buf.length };
+  }
   return { ok: true, uploadId: id, kind, mediaId: String(row.media_id || ''), bytes: Number(row.bytes) || 0 };
 }
 
@@ -338,6 +345,24 @@ async function takeImage(pool, { userId, uploadId, field }) {
     return fail('upload_not_found', `Upload ${taken.uploadId}'s picture is gone. Ask prepare_upload for a new command and send it again.`);
   }
   return { ok: true, uploadId: taken.uploadId, data };
+}
+
+// An uploaded video, read back for its owner: { ok, uploadId, data,
+// contentType } or a refusal. The connector's card preview loop
+// (propose_featured_illustration's previewUploadId) reads it this way.
+async function takeVideo(pool, { userId, uploadId, field }) {
+  const taken = await takeUpload(pool, { userId, uploadId, kind: 'video', field });
+  if (!taken.ok) return taken;
+  const { rows } = await pool.query(
+    `SELECT data, content_type FROM issue_videos
+      WHERE id = $1 AND user_id = $2 AND issue_number IS NULL`,
+    [taken.mediaId, userId]
+  );
+  const data = rows && rows[0] && Buffer.isBuffer(rows[0].data) ? rows[0].data : null;
+  if (!data) {
+    return fail('upload_not_found', `Upload ${taken.uploadId}'s video is gone. Ask prepare_upload for a new command and send it again.`);
+  }
+  return { ok: true, uploadId: taken.uploadId, data, contentType: rows[0].content_type };
 }
 
 // After a call that used them: the rows are done with. A video's or a
@@ -377,6 +402,7 @@ module.exports = {
   authenticateUpload,
   storeUpload,
   takeUpload,
+  takeVideo,
   takeImage,
   consumeUploads,
 };

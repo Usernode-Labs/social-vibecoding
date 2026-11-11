@@ -103,6 +103,12 @@ export const CORNER_ATTR = 'data-side-corner';
 export const CORNER_W_PROP = '--platform-corner-w';
 /** What `?side-strip=corner` paints: the pill in the folded Duo's corner. */
 export const CORNER_SHOT_PX = 52;
+/**
+ * How long after a resume the inset is read again: WebKit hands the real
+ * safe area in a pass after the app comes back, about a quarter of a second
+ * later. Long enough for that report, short enough not to read as a jump.
+ */
+export const RESUME_SETTLE_MS = 250;
 
 export type StripSide = 'left' | 'right';
 export type SideInsets = { top?: number; left: number; right: number };
@@ -291,6 +297,15 @@ type ResizeObserverWindow = Window & { ResizeObserver?: typeof ResizeObserver };
  * own box follows the inset (sideInsetProbe), so a ResizeObserver on it
  * reads every change whenever it lands. The window's events stay, for an
  * engine with no ResizeObserver.
+ *
+ * WHY A RESUME READS AGAIN TOO (#6450, 6 Nov 2026). Leaving Homeroom for
+ * another app and coming back dropped the Duo's tabs to the foot of the
+ * folded cover. On the resume WebKit reports no inset at all until a later
+ * pass hands over the real safe area, and that bad read removes
+ * `data-side-strip`. If the probe's own box does not change again
+ * afterwards, nothing read it a second time. So `pageshow`, `focus` and
+ * `visibilitychange` read now, on the next frame and once more after
+ * RESUME_SETTLE_MS, when the late inset has landed.
  */
 export function watchSideStrip(doc: Document = document, win: Window = window): () => void {
   const root = doc.documentElement;
@@ -343,14 +358,53 @@ export function watchSideStrip(doc: Document = document, win: Window = window): 
     try { observer = new RO(update); } catch { observer = null; }
   }
   update();
+  // A resume (another app and back, or the home screen) can read no inset
+  // at all, and the real one lands a moment later (#6450). Read now, on the
+  // next frame, and once more after the phone's late report.
+  let resumeFrame: number | null = null;
+  let resumeTimer: number | null = null;
+  const cancelResume = () => {
+    if (resumeFrame !== null) {
+      if (typeof win.cancelAnimationFrame === 'function') win.cancelAnimationFrame(resumeFrame);
+      resumeFrame = null;
+    }
+    if (resumeTimer !== null) {
+      if (typeof win.clearTimeout === 'function') win.clearTimeout(resumeTimer);
+      resumeTimer = null;
+    }
+  };
+  const resume = () => {
+    // Repeated events (a focus beside a pageshow) collapse to one set of
+    // reads: the frame and timer from an earlier resume are dropped.
+    cancelResume();
+    update();
+    if (typeof win.requestAnimationFrame === 'function') {
+      resumeFrame = win.requestAnimationFrame(() => { resumeFrame = null; update(); });
+    }
+    if (typeof win.setTimeout === 'function') {
+      resumeTimer = win.setTimeout(() => { resumeTimer = null; update(); }, RESUME_SETTLE_MS);
+    }
+  };
+  const onVisibility = () => {
+    // Keeping a missing value visible: only a page that says it is hidden
+    // is left unread.
+    if (doc.visibilityState !== 'hidden') resume();
+  };
   win.addEventListener('resize', update);
   win.addEventListener('orientationchange', update);
   win.visualViewport?.addEventListener('resize', update);
+  win.addEventListener('pageshow', resume);
+  win.addEventListener('focus', resume);
+  doc.addEventListener?.('visibilitychange', onVisibility);
   return () => {
+    cancelResume();
     observer?.disconnect();
     win.removeEventListener('resize', update);
     win.removeEventListener('orientationchange', update);
     win.visualViewport?.removeEventListener('resize', update);
+    win.removeEventListener('pageshow', resume);
+    win.removeEventListener('focus', resume);
+    doc.removeEventListener?.('visibilitychange', onVisibility);
   };
 }
 

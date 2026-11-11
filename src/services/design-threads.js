@@ -187,12 +187,12 @@ async function draftingThread(pool, { userId, botId, rootId }) {
  * it holds already takes the size of its newest screen. Resolves the design
  * (designFor), or null when the thread is not one the person may draw in.
  */
-async function ensureDesign(pool, config, { user, thread, app = null, title, size: sized = 'phone' }) {
+async function ensureDesign(pool, config, { user, thread, app = null, title, size: sized = 'phone', surface: givenSurface = null, route = null }) {
   if (!user?.id || !thread?.rootId) return null;
   const named = clip(title, MAX_TITLE) || 'Screen';
   const { width, height } = SCREEN_SIZES[sized] || SCREEN_SIZES.phone;
   const project = thread.app || app || null;
-  const surface = surfaceFor(config, project);
+  const surface = givenSurface || surfaceFor(config, project);
   const { rows: [row] } = await pool.query(
     `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
      VALUES ($1, $2, $3, $4, 'idea', 'open')
@@ -203,10 +203,13 @@ async function ensureDesign(pool, config, { user, thread, app = null, title, siz
   );
   if (!row || Number(row.user_id) !== Number(user.id)) return null;
   await pool.query(
-    `INSERT INTO design_threads (private_thread_id, title, surface, width, height)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (private_thread_id) DO UPDATE SET width = EXCLUDED.width, height = EXCLUDED.height`,
-    [row.id, named, DRAWN_SURFACES.has(surface) ? surface : 'new', width, height],
+    `INSERT INTO design_threads (private_thread_id, title, surface, route, width, height)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (private_thread_id) DO UPDATE
+       SET width = EXCLUDED.width, height = EXCLUDED.height,
+           surface = EXCLUDED.surface,
+           route = COALESCE(EXCLUDED.route, design_threads.route)`,
+    [row.id, named, DRAWN_SURFACES.has(surface) ? surface : 'new', route ? clip(route, MAX_ROUTE) : null, width, height],
   );
   return designFor(pool, { userId: user.id, rootId: thread.rootId });
 }

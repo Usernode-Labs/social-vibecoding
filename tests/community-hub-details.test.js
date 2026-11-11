@@ -119,11 +119,13 @@ test('#3268: the hub\'s head is what it is and who is around this week', async (
     assert.match(solo, /<div class="dev-ws-hero-actions"><button[^>]*data-ws-community-invite=""[^>]*>Invite<\/button><span class="dev-ws-plus"><button id="dev-plus-btn"><\/button><\/span><\/div>/,
       'Invite, then the ⋯');
     assert.doesNotMatch(solo, /data-ws-active-people/, 'no faces: nobody else to name');
-    // Somebody outside it (an admin's look) reads the audience's name, and
-    // is offered no Invite: making a link is a member's.
+    // Somebody outside it (an admin's look) is still deciding: the project
+    // card (the hand-off of 11 Nov 2026), its people card reading the
+    // audience's name, and no Invite: making a link is a member's.
     await reloadCommunity('garden-solo-outside');
     const outside = renderToHtml(createElement(CommunityCard, { slug: 'garden-solo-outside', name: 'Garden', menu }));
-    assert.match(outside, /data-ws-community-audience="">Just you<\/span>/);
+    assert.match(outside, /^<div class="dev-ws-project-card[^"]*" data-ws-community="" data-ws-project-card="" data-audience="solo">/);
+    assert.match(outside, /data-ws-community-audience=""><svg[^>]*>[\s\S]*?<\/svg><b>Just you<\/b><\/span>/);
     assert.doesNotMatch(outside, /Just you so far|data-ws-community-invite/);
   } finally {
     globalThis.fetch = realFetch;
@@ -304,30 +306,35 @@ test('For you: Needs you counts the votes you owe, not the requests nobody has c
   assert.doesNotMatch(card(claims), /requests? nobody has picked up/, 'queue rows are not requests any more');
 });
 
-test('#3489, 5 Nov 2026: For you\'s Your work row opens the Homeroom bot tab narrowed to this project, for a signed-in viewer', () => {
+test('#6438, 6 Nov 2026: on a wide window For you draws the Workshop row, opening the project\'s Workshop, and no Your work row', () => {
   const { ForYouCard } = loadTsx(HUB);
   const card = (mine, over = {}) => renderToHtml(createElement(ForYouCard, {
     slug: 'garden', queue: [], mine, alone: false,
     data: community(), canPost: true, onNeeds: () => {}, onWork: () => {}, onDiscussion: () => {}, ...over,
   }));
-  // Your work is the Homeroom bot tab's (frontend/src/features/ai/): the row
-  // counts it there, in the tab's words, and opens it on this project. Its
-  // first render says nothing of counts; they load in an effect
-  // (../frontend/src/features/ai/desk.ts).
+  // No `places`: a wide window. 6 Nov 2026: For you's row is the Workshop's
+  // (the phone's row until then), and it opens the project's Workshop, where
+  // what happened and every item are. Your own work is the Workshop tab's
+  // own card (your-work.tsx YourWorkCard), not a row here.
   const html = card({ viewer: true });
-  const link = (html.match(/<a [^>]*href="#homeroom-bot\?project=garden"[^>]*>/) || [''])[0];
-  assert.ok(link, 'a link, the browser\'s own ways to open it included');
-  assert.match(link, /class="[^"]*dev-ws-foryou-row[^"]*"/);
-  assert.match(link, /title="Opens Homeroom bot, showing your work in Garden"/);
-  assert.match(link, /data-ws-desk-open="" data-ws-mine-card=""/);
-  assert.match(html, /<div class="[^"]*">Your work<\/div>/);
-  assert.doesNotMatch(html, /data-ws-mine-open="workshop"|No work in progress/, 'no longer a door to the Workshop\'s list');
-  // Only a signed-in viewer's hub draws it: a visitor has no work to list.
-  // A project nobody else is in draws it the same way, from its first day
-  // (15 Oct 2026, tests/hub-just-you.test.js).
-  assert.doesNotMatch(card({ viewer: false }), /data-ws-mine-card/);
-  assert.match(card({ viewer: true }, { alone: true, data: community({ audience: 'solo', member_count: 1 }) }), /href="#homeroom-bot\?project=garden"/);
-  assert.match(LANDER, /<ForYouCard\s+slug=\{slug\}\s+queue=\{v\.queue\}\s+unclaimed=\{v\.dashboard \? v\.dashboard\.unclaimed : 0\}\s+mine=\{v\.mine\}\s+alone=\{alone\}\s+data=\{community\}\s+canPost=\{canPost\}\s+onNeeds=\{\(\) => openTab\('needs'\)\}\s+onWork=\{\(\) => openTab\('workshop'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}\s+places=\{drawerOn\}\s+\/>/);
+  const row = (html.match(/<button [^>]*data-ws-workshop-row=""[^>]*>/) || [''])[0];
+  assert.ok(row, 'a button: it opens the Workshop on this page, not an address');
+  assert.match(row, /class="[^"]*dev-ws-foryou-row[^"]*"/);
+  assert.match(html, /<div class="[^"]*">Workshop<\/div>/);
+  assert.match(html, /<div class="[^"]*">What happened, and every item<\/div>/);
+  // It is the Workshop's row, wired to onWork, not the Homeroom bot tab's.
+  assert.match(read(HUB), /\{work \? <WorkshopRow onOpen=\{onWork\} \/> : null\}/);
+  assert.doesNotMatch(html, /data-ws-mine-card|#homeroom-bot\?project=/, 'no Your work row on the Hub, at any width');
+  // Only a signed-in viewer's hub draws it: a visitor has no work to be
+  // told about. A project nobody else is in draws it the same way, from its
+  // first day (15 Oct 2026, tests/hub-just-you.test.js).
+  assert.doesNotMatch(card({ viewer: false }), /data-ws-workshop-row/);
+  assert.match(card({ viewer: true }, { alone: true, data: community({ audience: 'solo', member_count: 1 }) }), /data-ws-workshop-row/);
+  assert.match(LANDER, /<ForYouCard\s+slug=\{slug\}\s+queue=\{v\.queue\}\s+unclaimed=\{v\.dashboard \? v\.dashboard\.unclaimed : 0\}\s+mine=\{v\.mine\}\s+alone=\{alone\}\s+data=\{community\}\s+canPost=\{canPost\}\s+onNeeds=\{\(\) => openTab\('needs'\)\}\s+onWork=\{\(\) => openTab\('workshop'\)\}\s+onDiscussion=\{\(\) => openTab\('discussion'\)\}\s+\/>/);
+  assert.doesNotMatch(LANDER, /places=\{drawerOn\}/, 'For you needs no phone-only flag');
+});
+
+test('the Your work row counts in the Homeroom bot tab\'s own words, for the Workshop tab\'s card', () => {
   // The counts: the tab's own lists for this project, by the tab's own rules.
   const { deskOf, deskWords, deskLine } = loadTsx('frontend/src/features/ai/desk.ts');
   const app = { slug: 'garden', name: 'Garden' };
@@ -584,4 +591,104 @@ test('Home\'s See all links carry the accent, not the header\'s periwinkle', () 
     assert.match(tag, /text-\[color:var\(--accent\)\]/, `${cls} is the accent`);
     assert.doesNotMatch(tag, /brand-ink/);
   }
+});
+
+// ── Still deciding: the project card (the hand-off of 11 Nov 2026) ───────
+
+test('signed in but not in it: the hub leads with the project card, Open app, Join and the ⋯, and the people card under it', async () => {
+  const { CommunityCard, reloadCommunity } = loadTsx(CARD);
+  const five = ['evan', 'talha', 'zura', 'scraido2', 'kempis'].map((u, i) => ({ id: i + 1, username: u, display_name: null }));
+  const record = (slug, member) => community({
+    slug, name: 'Garden', is_member: member, member_count: 91, audience: 'open', audience_label: 'Public community',
+    description: 'Seeds, swaps and Sunday digs.',
+    cover: { illustration_url: '/app-illustrations/abc', illustration_dark_url: null, preview_url: '/app-previews/loop' },
+    activity: { active_week: 34, shipped_month: 39, active_people: five },
+  });
+  const realFetch = globalThis.fetch;
+  const over = new Map();
+  globalThis.fetch = async (url) => {
+    const slug = String(url).match(/\/api\/apps\/([^/]+)\/community/)[1];
+    return { ok: true, json: async () => ({ ...record(slug, slug === 'garden-member'), ...(over.get(slug) || {}) }) };
+  };
+  const reloadCommunityAs = async (slug, extra) => { over.set(slug, extra); await reloadCommunity(slug); };
+  try {
+    await reloadCommunity('garden-outsider');
+    await reloadCommunity('garden-member');
+    const menu = (place) => createElement('span', { className: 'dev-ws-plus', 'data-place': place });
+    const html = renderToHtml(createElement(CommunityCard, { slug: 'garden-outsider', name: 'Garden', canOpenApp: true, menu }));
+    // (React's server render hoists a preload for the card's picture ahead of it.)
+    assert.match(html, /^(?:<link rel="preload" as="image" href="\/app-illustrations\/abc"\/>)?<div class="dev-ws-project-card[^"]*" data-ws-community="" data-ws-project-card="" data-audience="open"><section data-project-card="hub"/);
+    assert.match(html, /style="background:var\(--community-tint, #2a2e34\)"/, 'in the project\'s colour');
+    // Its picture: the featured illustration, and no video in the first
+    // render (the loop mounts after, where it may play).
+    assert.match(html, /<img src="\/app-illustrations\/abc"/);
+    assert.doesNotMatch(html, /<video/);
+    assert.match(html, /<h1 data-project-card-name=""[^>]*>Garden<\/h1>/);
+    assert.match(html, /data-project-card-description=""[^>]*>Seeds, swaps and Sunday digs\.</);
+    // Open app, the same Join (popup and all), and the ⋯ drawn for the card.
+    const actions = html.slice(html.indexOf('data-project-card-actions'));
+    assert.ok(actions.indexOf('data-ws-community-open-app') < actions.indexOf('data-ws-community-join'));
+    assert.ok(actions.indexOf('data-ws-community-join') < actions.indexOf('data-place="card"'));
+    assert.match(html, /<button type="button" data-ws-community-join="" aria-haspopup="dialog" aria-expanded="false" class="rounded-full bg-violet-600 /);
+    // Who is around, in its own card: the faces and names a signed-in
+    // viewer reads on the hub, and who it is for.
+    assert.match(html, /<div data-ws-people-card=""[^>]*>[\s\S]*data-ws-active-people="34"[\s\S]*data-ws-community-audience=""/);
+    assert.doesNotMatch(html, /dev-ws-hero-id|data-ws-community-invite/, 'not the member\'s hero');
+    // Zero says nothing: a project nobody is in yet says who it is for alone.
+    await reloadCommunityAs('garden-empty', { member_count: 0, members: [], activity: null });
+    const empty = renderToHtml(createElement(CommunityCard, { slug: 'garden-empty', name: 'Garden', canOpenApp: true, menu }));
+    assert.match(empty, /<span class="dev-ws-hero-count" data-ws-members-cell="members"><span class="dev-ws-hero-audience" data-ws-community-audience=""><svg[^>]*>[\s\S]*?<\/svg><b>Public community<\/b><\/span><\/span>/);
+    assert.doesNotMatch(empty, /0 members|data-ws-active-people/);
+    // A member keeps the hub's own hero, the ⋯ drawn for it.
+    const member = renderToHtml(createElement(CommunityCard, { slug: 'garden-member', name: 'Garden', canOpenApp: true, menu }));
+    assert.match(member, /^<section class="dev-ws-hero dev-ws-hero-summary"/);
+    assert.match(member, /data-place="hero"/);
+    assert.doesNotMatch(member, /data-project-card/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  // The route sends the picture its group voted in (routes/apps.js).
+  assert.match(read('src/routes/apps.js'), /preview_url: art\[0\]\.preview_id \? `\/app-previews\/\$\{art\[0\]\.preview_id\}` : null,/);
+});
+
+test('For you for somebody not in it: "Up for a vote · Join to vote on these." with a light count, and no unread pill', () => {
+  const { ForYouCard } = loadTsx(HUB);
+  const queue = Array.from({ length: 13 }, (_, i) => ({ kind: 'vote', t: 'card', key: `v${i}`, card: { title: { text: `Vote ${i}` } } }));
+  const data = (member) => community({
+    is_member: member, member_count: 91,
+    channel: { last_message: 'Hello', last_at: new Date().toISOString(), last_by: 'mei215', unread_count: 5, handle: 'general', recent: [] },
+  });
+  const card = (member) => renderToHtml(createElement(ForYouCard, {
+    slug: 'garden', queue, unclaimed: 0, mine: { viewer: 1 }, alone: false, data: data(member), canPost: member,
+    onNeeds() {}, onWork() {}, onDiscussion() {},
+  }));
+  const outside = card(false);
+  assert.match(outside, /data-ws-hub-needs-votes="13" data-ws-hub-needs-outsider=""/);
+  assert.ok(outside.includes(`>${message('project:hub.needs.upForVote')}<`));
+  assert.match(outside, /<span data-ws-hub-needs-join="">Join to vote on these\.<\/span>/);
+  assert.match(outside, /class="dev-ws-foryou-pill dev-ws-foryou-pill-light" data-ws-hub-needs-count=""><span aria-hidden="true">13<\/span><span class="sr-only">13 changes up for a vote<\/span>/);
+  assert.doesNotMatch(outside, /to vote<\/span>|data-ws-channel-unread/);
+  // A member's: Needs you, "13 to vote", and the room's unread count.
+  const inside = card(true);
+  assert.doesNotMatch(inside, /data-ws-hub-needs-outsider/);
+  assert.match(inside, />13 to vote</);
+  assert.match(inside, /data-ws-channel-unread="5"/);
+  assert.match(CSS, /\.dev-ws-foryou-pill\.dev-ws-foryou-pill-light \{ background: color-mix\(in srgb, var\(--accent\) 12%, transparent\); color: var\(--accent\); \}/);
+});
+
+test('every hub\'s Recently live ends with how many more went live this month, opening the Workshop, and nothing at zero', () => {
+  const { RecentlyLive } = loadTsx(HUB);
+  const rows = [1, 2, 3].map((n) => ({ key: `r${n}`, sessionId: n, prNumber: n, title: `Change ${n}`, who: 'ada', at: new Date().toISOString(), going: false, picture: null }));
+  let opened = 0;
+  const live = (props) => renderToHtml(createElement(RecentlyLive, { slug: 'garden', rows, onAll() { opened++; }, ...props }));
+  const html = live({ month: 39 });
+  assert.match(html, /<button type="button" class="dev-ws-recent-more" data-ws-recent-more="36"><span class="dev-ws-recent-more-n" aria-hidden="true">\+36<\/span><span class="dev-ws-recent-more-words">36 more live this month<\/span>/);
+  assert.ok(html.indexOf('</ul>') < html.indexOf('data-ws-recent-more'), 'under the pictures');
+  assert.doesNotMatch(live({ month: 3 }), /data-ws-recent-more/, 'all of the month shown: nothing more to say');
+  assert.doesNotMatch(live({}), /data-ws-recent-more/, 'an older server without the count');
+  assert.doesNotMatch(live({ rows: [], own: { name: 'Garden', since: new Date().toISOString() }, month: 5 }), /data-ws-recent-more/, 'the app\'s own card stands alone');
+  // The hub hands it the month's count, and the row opens the Workshop.
+  assert.match(LANDER, /month=\{community\?\.activity\?\.shipped_month\}/);
+  assert.match(read(HUB), /data-ws-recent-more=\{String\(more\)\} onClick=\{onAll\}/);
+  assert.equal(opened, 0);
 });

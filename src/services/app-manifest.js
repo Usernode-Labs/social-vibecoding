@@ -62,6 +62,11 @@ const governanceRules = require('./governance-rules');
 const appPermissions = require('./app-permissions');
 const { validatePath } = require('./testing-notes');
 const topicFigures = require('./topic-figures');
+// The kinds list and `readCategory` live in a module that requires nothing,
+// because services/template.js writes a category and must stay loadable in
+// the starter image (see services/app-categories.js). They are re-exported
+// below, so every existing caller stays as it is.
+const { APP_CATEGORIES, readCategory } = require('./app-categories');
 
 const MANIFEST_FILENAME = 'dapp.json';
 
@@ -336,7 +341,13 @@ const LEGACY_GATING_HEAD = 12;
 // rather than `undefined`.
 const MAX_TESTS = LEGACY_GATING_HEAD;
 const MAX_TEST_NAME_LEN = 120;
-const MAX_TEST_SELECTOR_LEN = 256;
+// How long a declared check's `expectSelector` may be. The old 256 cut a
+// 286-character selector of this repo's side-panel check mid-token, which
+// left invalid CSS and made the check report "was not found" on every build.
+// capture/capture.js repeats this number because the capture image cannot
+// require the platform's code; tests/proposal-tests-manifest.test.js holds
+// the two equal. `expectText` keeps its own, smaller cap below.
+const MAX_TEST_SELECTOR_LEN = 512;
 const MAX_TEST_TEXT_LEN = 256;
 // How many times one check may load its page (`repeat`). Each load is a
 // fresh browser context, so this is a wall-clock budget as much as a repair
@@ -854,31 +865,6 @@ function readDescription(parsed) {
   const text = parsed.description.replace(/\s+/g, ' ').trim();
   if (!text) return null;
   return text.length > MAX_DESCRIPTION_LENGTH ? text.slice(0, MAX_DESCRIPTION_LENGTH).trimEnd() : text;
-}
-
-// The optional top-level `category` (#3962): what kind of app this is, the
-// one word Discover's "Filter by type" chips sort the directory by. A fixed
-// set, and THIS is the only list of it: the template writes one of these,
-// and Discover keeps a labelled copy (frontend/src/features/apps/browse.js
-// CATEGORIES) that tests/browse-screen.test.js pins to this one. Order is
-// the chips' order. `other` is for an app that is none of the five; it is
-// what a new project's dapp.json starts with, a line its group can change
-// by proposal like any other.
-const APP_CATEGORIES = Object.freeze(['games', 'social', 'tools', 'learning', 'creative', 'other']);
-const APP_CATEGORY_SET = new Set(APP_CATEGORIES);
-
-// Normalize `"category": "games"`. Lenient like `visibility` and
-// `screenshot`: case and surrounding space are forgiven, and anything else
-// (an unknown word, a list, a number) is ignored with a warn and reads as
-// null, which is the same as saying nothing: the app is listed under All
-// types only. Never throws, so a typo never fails a deploy.
-function readCategory(parsed) {
-  const raw = parsed?.category;
-  if (raw == null) return null;
-  const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-  if (APP_CATEGORY_SET.has(key)) return key;
-  log.warn('app-manifest', 'Ignoring unknown category', { value: raw });
-  return null;
 }
 
 // `"followOriginal": true | false`: whether a version gets its original's
@@ -2655,6 +2641,7 @@ module.exports = {
   MAX_PLATFORM_ENV,
   MAX_TESTS,
   MAX_DECLARED_TESTS,
+  MAX_TEST_SELECTOR_LEN,
   MAX_CHECK_REPEAT,
   LEGACY_GATING_HEAD,
   MAX_APP_ADMINS,

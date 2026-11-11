@@ -141,7 +141,9 @@ test('Me draws the list only once it is asked for', () => {
   // Me's row is Your requests now (UI overhaul), a view of the Your work
   // screen; this card is the feedback challenge's, at its address.
   assert.match(closed, /id="profile-row-feedback"[^>]*href="#homeroom-bot\/history\?kind=request"/);
-  assert.doesNotMatch(closed, /3 sent · 1 counted/, 'the challenge\'s tally is the card\'s, not a row\'s');
+  // #6452: the tally the sheet shows now also stands on Your work's own row,
+  // which opens that sheet at any time.
+  assert.match(closed, /id="profile-row-feedback-history"[^>]*href="#profile\?feedback"[\s\S]*?3 sent · 1 counted/);
   assert.match(render({ ...base, feedbackOpen: true }), /id="profile-feedback-sheet"/);
   // The shipped state is `open: false`, which renders nothing at all.
   assert.equal(real.profileStore.get().feedbackOpen, false);
@@ -156,8 +158,20 @@ test('the Your requests row falls back to what is behind it, and is a plain link
   // The Your work screen has an address of its own, so the row needs no
   // handler: every click is the browser's.
   const src = fs.readFileSync(path.join(root, 'frontend/src/features/profile/account-panel.tsx'), 'utf8');
-  const row = src.slice(src.indexOf('id="profile-row-feedback"'), src.indexOf('id="profile-row-votes"'));
+  const row = src.slice(src.indexOf('id="profile-row-feedback"'), src.indexOf('id="profile-row-feedback-history"'));
   assert.doesNotMatch(row, /onClick|showFeedback/);
+});
+
+test('Your feedback opens its sheet in place on a plain click (#6452)', () => {
+  const src = fs.readFileSync(path.join(root, 'frontend/src/features/profile/account-panel.tsx'), 'utf8');
+  const at = src.indexOf('id="profile-row-feedback-history"');
+  const row = src.slice(src.lastIndexOf('<ListRow', at), src.indexOf('id="profile-row-votes"', at));
+  assert.match(row, /as="a"/);
+  assert.ok(row.includes('href="#profile?feedback"'), 'the sheet\'s own address, as the challenge page uses');
+  assert.match(row, /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*Profile\.showFeedback\(\);/);
+  // A modified click keeps the browser's behaviour on the address.
+  assert.match(row, /title=\{t\('profile:work\.feedback\.title'\)\}/);
+  assert.match(row, /rows\.feedback \|\| t\('profile:work\.feedback\.hint'\)/);
 });
 
 // ── The address ─────────────────────────────────────────────────────────

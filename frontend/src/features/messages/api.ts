@@ -607,6 +607,7 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     lastActivityAt: dateText(pick(row, 'lastActivityAt', 'last_activity_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at')),
     unreadCount: Number(pick(row, 'unreadCount', 'unread_count')) || 0,
     lastReadMessageId: readCursor(pick(row, 'lastReadMessageId', 'last_read_message_id')),
+    lastVisitAt: text(pick(row, 'lastVisitAt', 'last_visit_at')) || null,
     awaitingAcceptance: kind === 'direct' && pick(row, 'awaitingAcceptance', 'awaiting_acceptance') === true,
     canSend: typeof canSendValue === 'boolean' ? canSendValue : membershipStatus !== 'invited',
     canInvite: bool(pick(row, 'canInvite', 'can_invite'), kind === 'group' && membershipStatus !== 'invited'),
@@ -905,6 +906,26 @@ export async function startBotThread(input: { project: string | null; kind: stri
   const rootId = strictId(pick(data, 'rootId'));
   if (!rootId) throw new Error(text(pick(data, 'error')) || 'The thread could not be started');
   return { conversationId: strictId(pick(data, 'conversationId')) || 0, rootId };
+}
+
+/**
+ * The chat products this account has connected Homeroom to, as Settings ›
+ * Connectors lists them, for a new thread's "who works on it"
+ * (./thread-builder.tsx). Each is the name its client chose and whether its
+ * sign-in still holds. A staging copy has none unless the page carries one of
+ * Settings' own `?demo=connectors-…` flags, which rides along here the way it
+ * does there (`?demo=1` already rides on every read, in `request`).
+ */
+export async function listConnectors(): Promise<Array<{ clientName: string; live: boolean }>> {
+  let flag = '';
+  try { flag = new URLSearchParams(window.location.search).get('demo') || ''; } catch { flag = ''; }
+  const path = flag.startsWith('connectors-') ? `/api/me/connectors?demo=${encodeURIComponent(flag)}` : '/api/me/connectors';
+  const data = record(await request<unknown>(path, { cache: 'no-store' }));
+  const rows = pick(data, 'connectors');
+  return (Array.isArray(rows) ? rows : []).map((row) => {
+    const one = record(row);
+    return { clientName: text(pick(one, 'client_name')), live: pick(one, 'status') !== 'expired' };
+  });
 }
 
 /** Open a design thread for a captured screen: where it is, to open it. */
@@ -1295,6 +1316,30 @@ export async function decideBotAction(actionId: number, choice: string, answers?
     method: 'POST', body: JSON.stringify(answers ? { choice, answers } : { choice }),
   }));
   return { label: text(pick(data, 'label')) || null };
+}
+
+/** #6248: a drafted request, as it will be filed: its whole description, its project and the line it ends with. */
+export interface RequestDraft {
+  title: string;
+  details: string;
+  app: { slug: string; name: string };
+  footer: string;
+}
+
+/**
+ * #6248: the saved draft an offer waits on, for the pane that previews it
+ * before it is filed. The message clips a long description; this reads the
+ * row's own words. 404 once it is decided, or is not the viewer's.
+ */
+export async function readRequestDraft(actionId: number): Promise<RequestDraft> {
+  const data = record(await request<unknown>(`/api/conversations/homeroom-bot/actions/${actionId}/draft`));
+  const app = record(pick(data, 'app'));
+  return {
+    title: text(pick(data, 'title')),
+    details: text(pick(data, 'details')),
+    app: { slug: text(pick(app, 'slug')), name: text(pick(app, 'name')) },
+    footer: text(pick(data, 'footer')),
+  };
 }
 
 /**

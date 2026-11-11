@@ -4008,9 +4008,7 @@ cannot override them.
   advertising or session-recording SDKs, pixels or beacons, and no
   `<script>` from another origin. An app loads its own code and the
   centrally hosted Homeroom assets only. A legacy `cdn.tailwindcss.com`
-  tag (rule 1) is tolerated; new code adds none. One exception:
-  the platform's own Google Analytics tag, isolated in
-  `public/analytics-frame.html`. It is no precedent: no app may add a tracker.
+  tag (rule 1) is tolerated; new code adds none.
 - **Special-category data.** Never ask for, infer or store health,
   religious beliefs, sexual orientation, racial or ethnic origin, political
   opinions, trade-union membership, genetic or biometric data, whether

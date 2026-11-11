@@ -264,10 +264,11 @@ test('countUnreadSplit reads the total and the plain messages in one query', asy
   for (const piece of ['DECIDED_ASK_SETTLED_SQL', 'CONVERSATION_ACCESS_SQL', 'CHAT_SENDER_ACCESS_SQL', 'PARKED_KINDS_SQL']) {
     assert.ok(total.includes(piece) && notifications.countUnreadSplit.toString().includes(piece), piece);
   }
-  // Every response that hands the bell its count hands it both.
+  // Every response that hands the bell its count hands it both. The app-less
+  // "Across Homeroom" clear (#6579) is the sixth scope and carries both too.
   const route = read('src/routes/notifications.js');
   assert.match(route, /Object\.assign\(payload, await notifications\.countUnreadSplit\(pool, req\.user\.id\)\);/);
-  assert.equal((route.match(/res\.json\(\{ unread, messageUnread, cleared \}\)/g) || []).length, 5);
+  assert.equal((route.match(/res\.json\(\{ unread, messageUnread, cleared \}\)/g) || []).length, 6);
   assert.doesNotMatch(route, /notifications\.countUnread\(/, 'no response carries the total alone');
   // …and the client keeps both, wherever it takes the server's word.
   const takes = FE_SRC.match(/Notifications\.unread = data\.unread \|\| 0;/g) || [];

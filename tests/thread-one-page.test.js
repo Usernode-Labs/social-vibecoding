@@ -314,24 +314,40 @@ test('#6139: reading a thread again keeps it through a failed read and past a sa
 
 test('D5: a change folded under its ballot has no Vote of its own', () => {
   const head = read(`${TOPIC}/change-head.tsx`);
-  assert.match(head, /<GateCard which="votes" g=\{v\.votes\} action=\{ballot \? null : voteAction\} id=\{id\} \/>/);
+  assert.match(head, /<GateCard which="votes" g=\{v\.votes\} action=\{ballot \? null : voteAction\} id=\{id\} closes=\{closes\} \/>/);
   const src = read(`${TOPIC}/thread-changes.tsx`);
   assert.match(src, /<ChangeBody item=\{item\} view=\{view\} plan=\{plan\} ballot request=\{request\} \/>/);
-  assert.match(src, /<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} \/>/);
+  assert.match(src, /<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} closes=\{closesList\(item\)\} \/>/);
   assert.match(src, /querySelector<HTMLElement>\('\[data-change-gate="ballot"\]'\)/, 'a door to one of them lands on the ballot');
 });
 
-test('D4: a change for this request on another request\'s page is one line that says where', () => {
+test('D4: a change for this request on another request\'s page is a card that names it', () => {
   const { elsewhereFor } = loadTsx(`${TOPIC}/thread-model.ts`);
-  const elsewhere = [{ id: 91, number: 12, title: 'Pin it', on: 10, request: 11 }, { id: 92, number: 13, title: 'x', on: 11, request: 11 }];
+  const elsewhere = [
+    { id: 91, number: 12, title: 'Pin it', summary: 'Pin one message.', on: 10, request: 11, ask: true, mine: true, disputed: false },
+    { id: 92, number: 13, title: 'x', on: 11, request: 11 },
+  ];
   assert.deepEqual(JSON.parse(JSON.stringify(elsewhereFor(thread([], { elsewhere }), 11))), [elsewhere[0]], 'not one on this very page');
   assert.deepEqual(JSON.parse(JSON.stringify(elsewhereFor(thread([]), 11))), []);
   const html = renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
     slug: 'club', data: thread([{ ...request, number: 11 }], { elsewhere }), number: 11, changes: [], close: null, onChanged: () => {},
   });
   assert.match(html, /data-thread-elsewhere="1"/);
-  assert.match(html, /Change #12 for this request is on <a [^>]*data-thread-elsewhere-on="10"[^>]*>#10<\/a>/);
-  assert.equal(message('project:topic.thread.page.elsewhereUnnumbered', { on: 10 }), 'A change for this request is on <0>#10</0>');
+  assert.match(html, /<a [^>]*data-thread-elsewhere-on="10"[^>]*>Change #12<\/a> says it closes this/);
+  assert.match(html, /Pin it/, 'the change\'s title');
+  assert.match(html, /Pin one message\./, 'its one-line summary');
+  assert.match(html, /data-thread-elsewhere-dispute="91"[^>]*>This doesn(?:'|&#x27;)t close it<\/button>/, 'the requester can answer it');
+  const answered = renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+    slug: 'club',
+    data: thread([{ ...request, number: 11 }], {
+      elsewhere: [{ ...elsewhere[0], ask: false, disputed: true }],
+    }),
+    number: 11, changes: [], close: null, onChanged: () => {},
+  });
+  assert.doesNotMatch(answered, />This doesn(?:'|&#x27;)t close it<\/button>/, 'no button once answered');
+  assert.match(answered, /You said this doesn(?:'|&#x27;)t close it/, 'the requester reads their answer back');
+  assert.equal(message('project:topic.thread.page.claimsUnnumbered'), '<0>A change</0> says it closes this');
+  assert.equal(message('project:topic.thread.page.claimNotConfirmed'), '(not confirmed)');
 });
 
 // #6224: a change for several requests lives on its first one's page, so its
@@ -416,4 +432,72 @@ test('D2: a change built for a request lands on the request\'s page, at it; one 
   assert.match(panel, /if \(home\) return AppView\._openChangeOnRequest\(home, id, \{ panel: true \}\);/, 'the Workshop\'s side panel too');
   const changes = read(`${TOPIC}/thread-changes.tsx`);
   assert.match(changes, /if \(!card \|\| !takeVotesInView\(id\)\) return;/, 'the change\'s section takes the ask');
+});
+
+// #6225: a change's Votes card lists every request a yes would close, each
+// with its title and filer, and marks a request its requester has not agreed
+// to. The card is GateCard (change-head.tsx), which a change's section on the
+// request's page draws, and a ballot's folded change with it.
+const gate = () => ({
+  name: 'Votes', figure: '1 of 2', tone: 'ask', done: false,
+  segments: [{ weight: 1, pct: 50, state: 'moving' }], label: 'One of two',
+  note: ['1 yes, 1 more needed'], facts: [{ key: 'tally', text: '1 yes, 1 more needed' }],
+});
+
+function drawGate(props = {}) {
+  const wasWindow = globalThis.window;
+  globalThis.window = { AppView: { appData: { slug: 'club' } }, addEventListener() {}, removeEventListener() {} };
+  try {
+    return renderComponent(`${TOPIC}/change-head.tsx`, 'GateCard', { which: 'votes', g: gate(), action: null, id: 91, ...props });
+  } finally {
+    if (wasWindow === undefined) delete globalThis.window; else globalThis.window = wasWindow;
+  }
+}
+
+const closesOf = (list) => list.map(([number, title, by, confirmed]) => ({ number, title, by, confirmed }));
+
+test('#6225: the Votes card lists every request the change will close, marking the unconfirmed', () => {
+  const html = drawGate({
+    closes: closesOf([
+      [10, 'Phone navigation opens the wrong tab', 'evan', true],
+      [11, 'Back arrow skips a page', 'evan', true],
+      [12, 'Sidebar rows too tight', 'mara', false],
+    ]),
+  });
+  assert.match(html, /data-change-vote-closes="3"/);
+  assert.match(html, /Closes 3 requests when it merges/, 'the heading names what a yes would do');
+  assert.equal((html.match(/data-change-vote-closes-on=/g) || []).length, 3, 'one line each');
+  assert.match(html, /data-change-vote-closes-on="10" data-confirmed="true"/);
+  assert.match(html, /data-change-vote-closes-on="12" data-confirmed="false"/, 'a request nobody agreed to');
+  assert.equal((html.match(/not confirmed by its requester/g) || []).length, 1, 'said only of the unconfirmed one');
+  assert.match(html, /href="#app\/club\/dev\/issues\/10"/, 'each number opens that request\'s page');
+  assert.match(html, /Phone navigation opens the wrong tab · evan/, 'its title and who filed it');
+  assert.ok(html.indexOf('data-change-vote-fact="tally"') < html.indexOf('data-change-vote-closes='), 'under the tally');
+  assert.doesNotMatch(html, /data-change-vote-closes-more=/, 'three need no fold');
+});
+
+test('#6225: one request reads "Closes 1 request", and past five the rest fold behind a tap', () => {
+  assert.match(drawGate({ closes: closesOf([[10, 'One', 'evan', false]]) }), /Closes 1 request when it merges/);
+  const html = drawGate({
+    closes: closesOf([10, 11, 12, 13, 14, 15, 16].map((n) => [n, `Request ${n}`, 'evan', true])),
+  });
+  assert.equal((html.match(/data-change-vote-closes-on=/g) || []).length, 5, 'the first five');
+  assert.match(html, /data-change-vote-closes-more="2"[^>]*>2 more<\/button>/, 'the rest behind one tap');
+  assert.equal(message('project:topic.change.gate.closesMore', { count: 2 }), '2 more');
+});
+
+test('#6225: only a change up for a vote draws the list', () => {
+  const list = closesOf([[10, 'One', 'evan', true], [11, 'Two', 'mara', false]]);
+  assert.doesNotMatch(drawGate({ which: 'testing', closes: list }), /data-change-vote-closes=/);
+  assert.doesNotMatch(drawGate({ closes: [] }), /data-change-vote-closes=/);
+});
+
+test('#6225: closesList is the review change\'s list, sorted, and nothing for one confirmed request', () => {
+  const { closesList } = loadTsx(`${TOPIC}/thread-model.ts`);
+  const list = closesOf([[12, 'C', 'mara', false], [10, 'A', 'evan', true]]);
+  assert.deepEqual(closesList({ ...review(91, 6223, [10, 12]), closesRequests: list }).map((r) => r.number), [10, 12], 'ascending');
+  assert.deepEqual(closesList({ ...review(91, 6223, [10]), closesRequests: [list[1]] }), [], 'one it was built for has nothing to say');
+  assert.deepEqual(closesList({ ...review(91, 6223, [10, 12]), closesRequests: list, state: 'merged' }), [], 'not after it merges');
+  assert.deepEqual(closesList({ ...review(91, 6223, [10, 12]), closesRequests: list, state: 'underway' }), [], 'not before it is proposed');
+  assert.deepEqual(closesList({ ...review(91, 6223, []), closesRequests: undefined }), [], 'and not without the list');
 });

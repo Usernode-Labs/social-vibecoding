@@ -33,6 +33,8 @@ export interface WorkLine {
   failing?: number;
   /** `checks_running`: about how many minutes are left. */
   minutes?: number;
+  /** `earlier_yes`: how many yes votes a push retired. */
+  count?: number;
   /** `claimed`: who pressed Claim. */
   by?: string;
   /** `reason`: Homeroom bot's own sentence. */
@@ -114,7 +116,12 @@ const LINE_WORDS: Record<string, string> = {
   revising: 'core:work.line.revising',
   update_queued: 'core:work.line.updateQueued',
   checks_failing: 'core:work.line.checksFailing',
+  approved_checking: 'core:work.line.approvedChecking',
   sync_wait: 'core:work.line.syncWait',
+  conflict_on_yes: 'core:work.line.conflictOnYes',
+  github_checks: 'core:work.line.githubChecks',
+  github_checks_failing: 'core:work.line.githubChecksFailing',
+  github_wait: 'core:work.line.githubWait',
   first_version: 'core:work.line.firstVersion',
   planning_with_you: 'core:work.line.planningWithYou',
   waiting: 'core:work.line.waiting',
@@ -137,6 +144,19 @@ export function stageWords(state: WorkState, { yours = true }: { yours?: boolean
   // The same stages in plainer words: nobody has started on it yet, or it is
   // read and waits its turn to be built.
   const code = state.line?.code || '';
+  // #6531: a conflicting change the lane is catching up says "Syncing with
+  // main" in its stage word, not "Checking".
+  if (state.stage === 'checking' && code === 'syncing') return { id: 'core:work.stage.syncing' };
+  // #6594: its votes are in, so it is approved and its checks are what it
+  // waits on, not a vote.
+  if (state.stage === 'checking' && code === 'approved_checking') return { id: 'core:work.stage.approved' };
+  // #6563: an approved change whose merge GitHub holds is not going live yet.
+  // #6594: waiting on GitHub's checks is still approved; only GitHub itself
+  // holding the merge reads "Waiting to merge".
+  if (state.stage === 'going_live' && code === 'github_checks') return { id: 'core:work.stage.approved' };
+  if (state.stage === 'going_live' && code === 'github_wait') {
+    return { id: 'core:work.stage.waitingToMerge' };
+  }
   if (state.stage === 'reading' && NOT_STARTED.has(code)) return { id: 'core:work.stage.notStarted' };
   if (state.stage === 'building' && READY.has(code)) return { id: 'core:work.stage.readyToBuild' };
   return { id: STAGE_WORDS[state.stage] || STAGE_WORDS.reading };
@@ -158,6 +178,10 @@ export function lineWords(state: WorkState): Phrase | null {
     case 'checks_running':
       return line.minutes
         ? { id: 'core:work.line.checksRunning', values: { count: line.minutes } }
+        : null;
+    case 'earlier_yes':
+      return line.count
+        ? { id: line.count === 1 ? 'core:work.line.earlierYes_one' : 'core:work.line.earlierYes_other', values: { count: line.count } }
         : null;
     case 'claimed':
       return line.by ? { id: 'core:work.line.claimed', values: { username: line.by } } : null;
@@ -196,6 +220,7 @@ export function normalizeWorkState(input: unknown): WorkState | null {
     ...(num(lineIn.of) ? { of: num(lineIn.of) } : {}),
     ...(num(lineIn.failing) ? { failing: num(lineIn.failing) } : {}),
     ...(num(lineIn.minutes) ? { minutes: num(lineIn.minutes) } : {}),
+    ...(num(lineIn.count) ? { count: num(lineIn.count) } : {}),
     ...(text(lineIn.by) ? { by: text(lineIn.by).slice(0, 64) } : {}),
     ...(text(lineIn.text) ? { text: text(lineIn.text).slice(0, 200) } : {}),
   } : null;

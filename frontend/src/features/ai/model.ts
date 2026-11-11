@@ -72,6 +72,12 @@ export interface AiThread {
   title: string | null;
   app: AiApp | null;
   change: { id: number; number: number | null } | null;
+  /**
+   * #6421: how many requests the thread holds (a change for several requests
+   * gathers their threads into one). Absent from an older server, which reads
+   * as one.
+   */
+  requests?: number;
   href: string;
   group: 'needs' | 'next' | 'waiting' | 'live';
   /**
@@ -138,6 +144,11 @@ export interface NeedItem {
   ballot?: { number?: number | null; title?: string | null } | null;
   /** A change for a request: the request it closes (absent from an older server). */
   request?: { number?: number | null; title?: string | null } | null;
+  /**
+   * A group decision's facts (routes/workshop-overview.js decisionFacts): what
+   * kind it is, and for a vote to close a request, the request's number.
+   */
+  decision?: { kind?: string | null; issueNumber?: number | null } | null;
   /** Who proposed it, by username: Homeroom bot's own changes hold its slots. */
   author?: string | null;
   /**
@@ -152,6 +163,12 @@ export interface NeedItem {
    * says what it waits on instead of Vote.
    */
   waitingOn?: string[];
+  /**
+   * #6531: a conflicting change that only a yes can move. Its Vote row names
+   * the conflict ("Homeroom resolves it once you approve"), so it does not
+   * read as a plain vote.
+   */
+  conflictOnYes?: boolean;
   /** #6389: the coding tool the change was made in, such as `claude-code`. */
   agent?: string | null;
   /** #6262: the thread its page is, and how many messages in it are new. */
@@ -481,7 +498,15 @@ export function needHref(item: NeedItem): string | null {
   const slug = item.app?.slug;
   if (!slug) return null;
   const app = encodeURIComponent(slug);
-  if (item.kind === 'governance') return `#app/${app}/dev/governance/${Number(item.id)}`;
+  if (item.kind === 'governance') {
+    // 6 Nov 2026 (#6439): a vote to close a request is decided on the
+    // request's page, where it already draws, not on the old governance
+    // page. Every other decision keeps its own page.
+    const closing = item.decision && item.decision.kind === 'close_issue'
+      ? Number(item.decision.issueNumber) : 0;
+    if (closing > 0) return `#app/${app}/dev/issues/${closing}`;
+    return `#app/${app}/dev/governance/${Number(item.id)}`;
+  }
   const closes = item.kind === 'proposal' ? Number(item.request?.number) : 0;
   if (closes > 0) return `#app/${app}/dev/issues/${closes}`;
   const number = needNumber(item);
@@ -582,6 +607,8 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
     // its fix still owed. It keeps its row because you are the one to act,
     // and says what it waits on in place of Vote.
     const waiting = item.waitingOn && item.waitingOn.length ? waitingRow(item.waitingOn) : null;
+    // #6531: a conflicting change only a yes can move says so on its Vote row.
+    const conflicted = item.kind === 'proposal' && item.conflictOnYes === true;
     rows.push({
       key: `need:${item.kind}:${item.id}`,
       title: (item.kind === 'ballot' && item.ballot?.title) || item.title || '',
@@ -589,11 +616,15 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       who: 'all',
       // A vote on a change of Homeroom bot's, where a request of yours waits
       // for one of its slots: deciding it lets that request be built.
-      sub: waiting
-        ? { id: waiting.sub, values: where(app, shownNumber(item)) }
-        : app && held.has(app.slug) && holdsSlot(item)
-          ? { id: 'messages:ai.row.voteFreesSlot', values: where(app, shownNumber(item)) }
-          : whereLine(app, shownNumber(item)),
+      sub: conflicted
+        ? { id: 'messages:ai.row.voteConflict', values: where(app, shownNumber(item)) }
+        : waiting
+          ? { id: waiting.sub, values: where(app, shownNumber(item)) }
+          : app && held.has(app.slug) && holdsSlot(item)
+            ? { id: 'messages:ai.row.voteFreesSlot', values: where(app, shownNumber(item)) }
+            : whereLine(app, shownNumber(item)),
+      // A phone shows it under the title where nothing hovers.
+      ...(conflicted ? { why: { id: 'messages:ai.why.voteConflict' } } : {}),
       pill: waiting
         ? { id: waiting.pill }
         : item.kind === 'proposal' && item.approve === true
@@ -818,6 +849,18 @@ export function prWord(id: string, onGithub: boolean): string {
 const yours = (t: AiThread) => t.group === 'needs';
 
 /**
+ * Pure: who is building a row that has no line of its own (#6596): the
+ * bot's build or the viewer's own. A claim already says it through
+ * `lineWords`; anybody else says nothing extra.
+ */
+function builderLine(t: AiThread): Phrase | null {
+  if (t.work.stage !== 'building') return null;
+  if (t.by === 'bot') return { id: 'messages:ai.why.botBuilding' };
+  if (t.by === 'you') return { id: 'messages:ai.why.youBuilding' };
+  return null;
+}
+
+/**
  * Pure: a row's whole line: its project and number, its stage, and the
  * stage's second line when it has one ("Seed swap · #12 · Ready to build ·
  * Number 2 in line"). A decision has no number.
@@ -825,7 +868,7 @@ const yours = (t: AiThread) => t.group === 'needs';
 function stageLine(t: AiThread): Phrase {
   const values = where(t.app, t.number);
   const stage = stageWords(t.work, { yours: yours(t) });
-  const line = lineWords(t.work);
+  const line = lineWords(t.work) || builderLine(t);
   if (!t.number) {
     return line
       ? { id: 'messages:ai.row.stageLineBare', values: { project: values.project }, nested: { stage, line } }
@@ -853,12 +896,10 @@ export function notMoving(t: AiThread): boolean {
 
 /**
  * Pure: the word on the right of an In progress or Waiting row (./lists.tsx):
- * who is building it, or its stage. The whole line (nextWords) is its tooltip.
+ * its stage (#6596). Who is building it is said in the line under the row
+ * (nextWords), which is its tooltip.
  */
 export function shortWords(t: AiThread): Phrase {
-  if (t.work.stage === 'building' && !t.work.line && t.by === 'bot') return { id: 'messages:ai.short.bot' };
-  if (t.work.stage === 'building' && !t.work.line && t.by === 'you') return { id: 'messages:ai.short.you' };
-  if (t.work.line?.code === 'claimed' && t.work.line.by) return { id: 'messages:ai.short.claimed', values: { username: t.work.line.by } };
   return stageWords(t.work, { yours: yours(t) });
 }
 

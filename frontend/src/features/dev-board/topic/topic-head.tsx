@@ -50,6 +50,7 @@ import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { TopicBack } from './topic-back';
 import { RequestHead, RequestWords } from './request-head';
 import { ChangeThreadHead } from './change-head';
+import { GovernanceHead } from './governance-head';
 import { ThreadItems, pageSlug } from './thread-items';
 import { changeDetailAsk, changeDetailRow, mergeChangePatch } from './change-detail-refresh';
 import { DescriptionEditor } from './description-editor';
@@ -189,9 +190,23 @@ function TestOutput({ details }: { details: NonNullable<CheckRow['details']> }):
 function UnitSuiteRow({ r }: { r: CheckRow }): ReactNode {
   const t = useMessages('project');
   const tests = r.details || [];
+  // The first failing test leads; the rest fold under one line.
+  const first = tests.slice(0, 1);
+  const rest = tests.slice(1);
   const tally = r.unitTally || null;
   // Without per-test output, the reason's own first part names the files.
   const reason = String(r.reason || '').split(/\s\|\s#\s/)[0].trim();
+  const testItem = (d: NonNullable<CheckRow['details']>[number], i: number) => (
+    <li key={i}>
+      <span className="dev-ledger-unit-test">{d.test}</span>
+      {d.said ? <span className="dev-ledger-unit-said">{t('project:topic.check.unit.said', { said: d.said })}</span> : null}
+      {d.file ? (
+        <span className="dev-ledger-unit-where font-mono">
+          {d.line ? t('project:topic.check.unit.fileLine', { file: d.file, line: d.line }) : d.file}
+        </span>
+      ) : null}
+    </li>
+  );
   return (
     <li className={`dev-ledger-check dev-ledger-check-unit${r.advisory ? ' opacity-70' : ''}`} data-check-unit="">
       <div className="dev-ledger-unit-head">
@@ -211,18 +226,18 @@ function UnitSuiteRow({ r }: { r: CheckRow }): ReactNode {
         <div className="dev-ledger-unit-part">
           <div className="dev-ledger-unit-k">{t('project:topic.check.unit.testsThatFailed', { count: tests.length })}</div>
           <ul className="dev-ledger-unit-tests">
-            {tests.map((d, i) => (
-              <li key={i}>
-                <span className="dev-ledger-unit-test">{d.test}</span>
-                {d.said ? <span className="dev-ledger-unit-said">{t('project:topic.check.unit.said', { said: d.said })}</span> : null}
-                {d.file ? (
-                  <span className="dev-ledger-unit-where font-mono">
-                    {d.line ? t('project:topic.check.unit.fileLine', { file: d.file, line: d.line }) : d.file}
-                  </span>
-                ) : null}
-              </li>
-            ))}
+            {first.map(testItem)}
           </ul>
+          {rest.length ? (
+            <details className="dev-ledger-why dev-ledger-unit-more">
+              <summary className="dev-ledger-check-line">
+                <span className="dev-ledger-check-open">{t('project:topic.check.unit.showMore', { count: rest.length })}</span>
+              </summary>
+              <ul className="dev-ledger-unit-tests">
+                {rest.map(testItem)}
+              </ul>
+            </details>
+          ) : null}
         </div>
       ) : (reason ? <p className="dev-ledger-unit-reason">{reason}</p> : null)}
       {tests.length ? (
@@ -285,18 +300,27 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
             />
           ) : (r.reason || t('project:topic.check.failed'))}
           {r.note ? <div className="dev-ledger-why-note mt-1">{r.note}</div> : null}
-          {r.errors && r.errors.length ? (
-            <ul className="dev-ledger-why-errors">
-              {r.errors.map((e, i) => (
-                <li key={i}>
-                  <span className="opacity-70">{`[${e.kind}] `}</span>
-                  {e.message}
-                  {e.source ? <span className="opacity-60">{` (${e.source})`}</span> : null}
-                </li>
-              ))}
-            </ul>
+          {r.errors?.length || r.details?.length ? (
+            <details className="dev-ledger-why dev-ledger-why-full">
+              <summary className="dev-ledger-check-line">
+                <span className="dev-ledger-check-open">{t('project:topic.check.showFullOutput')}</span>
+              </summary>
+              <div className="dev-ledger-why-body">
+                {r.errors && r.errors.length ? (
+                  <ul className="dev-ledger-why-errors">
+                    {r.errors.map((e, i) => (
+                      <li key={i}>
+                        <span className="opacity-70">{`[${e.kind}] `}</span>
+                        {e.message}
+                        {e.source ? <span className="opacity-60">{` (${e.source})`}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {r.details && r.details.length ? <TestOutput details={r.details} /> : null}
+              </div>
+            </details>
           ) : null}
-          {r.details && r.details.length ? <TestOutput details={r.details} /> : null}
         </div>
       </details>
     </li>
@@ -485,7 +509,7 @@ function Progress({ p }: { p: LedgerProgress }): ReactNode {
  * and the policy's wording is the "How voting works" popover's — neither is
  * repeated here.
  */
-function Roster({ r }: { r: RosterView }): ReactNode {
+export function Roster({ r }: { r: RosterView }): ReactNode {
   const t = useMessages('project');
   if (r.phase === 'hidden') return null;
   if (r.phase === 'loading') return <span className="dev-ledger-roster">{t('project:topic.roster.loading')}</span>;
@@ -543,16 +567,20 @@ function Roster({ r }: { r: RosterView }): ReactNode {
 }
 
 /** "How voting works", and the circular "?" — both open the same popover. */
-function HelpLinks({ question }: { question: boolean }): ReactNode {
+function HelpLinks({ question, changeId }: { question: boolean; changeId?: number | null }): ReactNode {
   const t = useMessages('project');
+  // #6552: the change the hint explains, beside data-voting-help, so the
+  // popover reads that row rather than the page's item.
+  const change = changeId ? { 'data-voting-help-change': changeId } : {};
   return (
     <span className="dev-ledger-help voting-help-hint">
-      <button type="button" className="voting-help-link un-touch-target" data-voting-help="">{t('project:topic.help.howVotingWorks')}</button>
+      <button type="button" className="voting-help-link un-touch-target" data-voting-help="" {...change}>{t('project:topic.help.howVotingWorks')}</button>
       {question ? (
         <button
           type="button"
           className="voting-help-btn un-touch-target"
           data-voting-help=""
+          {...change}
           aria-label={t('project:topic.help.votingAndMerges')}
           title={t('project:topic.help.votingAndMerges')}
         >?</button>
@@ -575,9 +603,11 @@ function passingCount(r: LedgerRow): number {
   return r.passCount ?? (r.passes ? r.passes.length : 0);
 }
 
-function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode {
+function LedgerRowBody({ r, help, changeId }: { r: LedgerRow; help: boolean; changeId?: number | null }): ReactNode {
   const t = useMessages('project');
   const names = usePassNames(r.passesFor);
+  // The sheet's change wins; a row may carry its own for another reader.
+  const hint = changeId ?? r.changeId ?? null;
   return (
     <>
       {r.text.length ? (
@@ -594,7 +624,7 @@ function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode 
       {r.roster || r.help ? (
         <span className="dev-ledger-review-line">
           {r.roster ? <Roster r={r.roster} /> : null}
-          {r.help ? <HelpLinks question={help} /> : null}
+          {r.help ? <HelpLinks question={help} changeId={hint} /> : null}
         </span>
       ) : null}
       {/* One ordered sequence: a line, or the list its previous line
@@ -720,10 +750,14 @@ const GOVERNANCE_KINDS = new Set(['secret_change', 'rename', 'close_issue', 'mai
 
 export function TopicHead(): ReactNode {
   const { card, body, item } = useStoreState(topicHeadStore);
-  if (!card || !body) return null;
+  if (!body) return null;
   // #4453: a request's page is a Messages reply thread with the request as
   // its root post, not the card and its sheets.
   if (body.request) return <RequestHead key={`request:${body.request.number}`} r={body.request} />;
+  // #6440: a governance vote's page is the same thread, the vote as its root
+  // post. It has no card: the head IS the page.
+  if (body.decision) return <GovernanceHead key={`decision:${body.decision.id}`} row={body.decision} />;
+  if (!card) return null;
   // `back`: this IS the topic page, whose one back control is the chip at the
   // top of the pane (#2916, ./topic-back.tsx). Every kind of topic comes
   // through here, a change page and an issue/governance thread head alike.
@@ -1232,7 +1266,7 @@ function VoteTally({ v }: { v: NonNullable<StepRow['vote']> }): ReactNode {
 }
 
 /** One step: the mark, the label, who acts at the right; under them, what the row says. */
-function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
+function StepRowView({ r, help, changeId }: { r: StepRow; help: boolean; changeId?: number | null }): ReactNode {
   const row = r.row || null;
   const gateAttrs = r.gate ? { 'data-req-gate': r.gate, 'data-req-state': r.state } : {};
   return (
@@ -1245,7 +1279,7 @@ function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
       {r.vote || row || r.note || r.action ? (
         <div className="dev-step-body">
           {r.vote ? <VoteTally v={r.vote} /> : null}
-          {row ? <LedgerRowBody r={row} help={help} /> : (r.note ? <span className="dev-step-note">{r.note}</span> : null)}
+          {row ? <LedgerRowBody r={row} help={help} changeId={changeId} /> : (r.note ? <span className="dev-step-note">{r.note}</span> : null)}
           {r.action ? <span className="dev-ledger-ops"><ActionButton a={r.action} /></span> : null}
         </div>
       ) : null}
@@ -1254,7 +1288,7 @@ function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
 }
 
 /** "?" — How voting works, on the Votes step's line. */
-function HelpQuestion(): ReactNode {
+function HelpQuestion({ changeId }: { changeId?: number | null }): ReactNode {
   const t = useMessages('project');
   return (
     <span className="dev-ledger-help voting-help-hint">
@@ -1262,6 +1296,7 @@ function HelpQuestion(): ReactNode {
         type="button"
         className="voting-help-btn un-touch-target"
         data-voting-help=""
+        {...(changeId ? { 'data-voting-help-change': changeId } : {})}
         aria-label={t('project:topic.steps.votingHelp')}
         title={t('project:topic.steps.votingHelp')}
       >?</button>
@@ -1428,7 +1463,7 @@ function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
  * onto its run (RunPanel) by itself while a run is going and when it failed,
  * and a reader's own open or close sticks after that.
  */
-function GateStepView({ r }: { r: StepRow }): ReactNode {
+function GateStepView({ r, changeId }: { r: StepRow; changeId?: number | null }): ReactNode {
   const run = r.run || null;
   const seed = !!(run && run.open);
   const [open, setOpen] = useState(seed);
@@ -1476,7 +1511,7 @@ function GateStepView({ r }: { r: StepRow }): ReactNode {
           {r.votes || r.help ? (
             <span className="dev-ledger-review-line">
               {r.votes ? <span className="dev-ledger-roster dev-step-line">{r.votes}</span> : null}
-              {r.help ? <HelpQuestion /> : null}
+              {r.help ? <HelpQuestion changeId={changeId} /> : null}
             </span>
           ) : null}
           {r.was ? <span className="dev-step-line dev-step-vote-was">{r.was}</span> : null}
@@ -1520,8 +1555,8 @@ function StepsSheet({ s, help }: { s: StepsView; help: boolean }): ReactNode {
               detail (_topicStepsView's `useRow`), which remounted the step
               and redrew it from nothing mid-read. */}
           {s.rows.map((r) => (s.simple
-            ? <GateStepView key={r.gate || r.key} r={r} />
-            : <StepRowView key={r.gate || r.key} r={r} help={help} />))}
+            ? <GateStepView key={r.gate || r.key} r={r} changeId={s.changeId} />
+            : <StepRowView key={r.gate || r.key} r={r} help={help} changeId={s.changeId} />))}
         </ol>
       </div>
     </section>
@@ -1662,7 +1697,7 @@ export function ChangeSheets({ id, row, body }: { id: number; row: any; body: To
         steps={body.steps}
         help={!!(body.details && body.details.help)}
         html={body.proposalBody?.html || ''}
-        shotsHtml={av && row?.shots ? av.shotsHtml(row.shots, { sessionId: id, details: true }) : ''}
+        shotsHtml={av && row?.shots ? av.shotsHtml(row.shots, { sessionId: id, details: true, canRetake: !!av._canRetakeShots?.(row) }) : ''}
       />
       {av?._canEditDescription?.(row) ? (
         <DescriptionEditor key={id} id={id} onSaved={(data) => av._cacheDescription(id, data)} />
@@ -1822,7 +1857,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
               steps={body.steps}
               help={!!(body.details && body.details.help)}
               html={body.proposalBody?.html || ''}
-              shotsHtml={av && session?.shots ? av.shotsHtml(session.shots, { sessionId: Number(id), details: true }) : ''}
+              shotsHtml={av && session?.shots ? av.shotsHtml(session.shots, { sessionId: Number(id), details: true, canRetake: !!av._canRetakeShots?.(session) }) : ''}
             />
           ) : null}
           {id && active && av?._canEditDescription(session) ? <DescriptionEditor key={id} id={Number(id)} onSaved={(data) => {

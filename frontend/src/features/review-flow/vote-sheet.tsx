@@ -46,7 +46,11 @@ import type { ReviewItem } from './model';
  * another.
  */
 function ThreadTalk({ item }: { item: ReviewItem }): ReactNode {
-  const own = item.kind === 'governance' ? { type: 'governance', ref: item.id } : { type: 'session', ref: item.id };
+  // #6439: a vote to close a request talks on the request, as everything
+  // else about the request does; every other decision talks on its own row.
+  const own = item.kind === 'governance'
+    ? (item.request ? { type: 'issue', ref: item.request } : { type: 'governance', ref: item.id })
+    : { type: 'session', ref: item.id };
   const asks = item.kind === 'proposal' && !!item.number;
   const [anchor, setAnchor] = useState<{ type: string; ref: number } | null>(asks ? null : own);
   useEffect(() => {
@@ -175,7 +179,12 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
   // Ask for changes does). The questions asked here before stay readable.
   const askInAi = () => {
     void openBot(item.kind === 'governance'
-      ? { type: 'governance', proposalId: item.id, appSlug: item.app.slug, title: item.title }
+      ? {
+        type: 'governance', proposalId: item.id, appSlug: item.app.slug, title: item.title,
+        // #6439: a vote to close a request is about the request, so the
+        // reference carries its number and the bot's answer names the request.
+        ...(item.request ? { issueNumber: item.request } : {}),
+      }
       : { type: 'proposal', sessionId: item.id, appSlug: item.app.slug, title: item.title });
   };
 

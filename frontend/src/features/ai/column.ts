@@ -7,9 +7,12 @@
  *   page <route>    a request, a change or a decision, on its own page
  *                   (the side panel, drawn as the column)
  *   new             a blank thread from "+"
- *   null            nothing: a phone's list, or before the page has mounted
+ *   null            nothing beside the lists: a phone's list, before the page
+ *                   has mounted, or a desktop with nothing opened yet
  *
- * The page (./index.tsx) works the column out once from what holds it (the
+ * On a desktop `null` is where the page starts (6 Nov 2026, #6425): the bare
+ * tab address is `null`, and `#homeroom-bot/main` is Main. The page
+ * (./index.tsx) works the column out once from what holds it (the
  * Messages store's route, the side panel, the blank thread, a phone's level)
  * and every reader takes it from there:
  *
@@ -53,6 +56,12 @@ export function columnKey(column: Column): string | null {
   if (column.at === 'thread') return `private:${column.rootId}`;
   if (column.at === 'page') return `page:${column.route}`;
   return 'new';
+}
+
+/** Pure: the project a page route belongs to (`app/<slug>/…`), else null. */
+export function pageProject(route: string | null | undefined): string | null {
+  const match = /^app\/([a-z0-9][a-z0-9-]{0,254})(?:\/|$)/.exec(String(route || '').split('?')[0].replace(/^\/+/, ''));
+  return match ? match[1] : null;
 }
 
 /** Pure: where a row of the lists goes: its private thread, else its page. */
@@ -99,8 +108,8 @@ function columnAddressBase(column: Column): string {
 
 /**
  * How the column came to show what it does: `row` (a row, Main Chat's row,
- * "+", the router's ask: anything this page opened) or `back` (the page's
- * own ‹ Main Chat, which closed it from inside the side panel).
+ * "+", the router's ask: anything this page opened) or `back` (the column's
+ * own ×, which closed it).
  */
 export type ColumnHow = 'row' | 'back';
 

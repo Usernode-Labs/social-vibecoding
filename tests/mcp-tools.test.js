@@ -1661,8 +1661,9 @@ test('proposing to close files a close_issue vote through the platform route', a
     assert.equal(out.title, '<untrusted-content>Dark mode</untrusted-content>');
     assert.equal(out.reasonChars, 'Shipped in PR #901 (proposal 4223).'.length);
     assert.equal(out.inProgress, null);
-    // The proposal's own page, keyed by its id — it has no GitHub issue.
-    assert.equal(out.webPath, `${ORIGIN}/app/recipe-box/dev/governance/701`);
+    // #6439: the vote is read on the request's page, where its thread draws
+    // it; the proposal id still comes back for anyone who needs the row.
+    assert.equal(out.webPath, `${ORIGIN}/app/recipe-box/dev/issues/12`);
     assert.match(out.nextStep, /stays open until that vote passes/);
     assert.match(out.nextStep, /never that it is closed/);
     assert.doesNotMatch(out.nextStep, /work in progress/, 'nobody is on it, so there is nobody to warn about');
@@ -2911,6 +2912,10 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // uploads its counterpart takes.
     'get_featured_illustration',
     'get_homeroom_bot',
+    // Admin › Journey, the waitlist and first-mile funnel, read from
+    // services/journey.js: registered only for a full platform admin, and
+    // refused in every handler for anybody else (tests/mcp-journey-tools.test.js).
+    'get_journey_cohorts', 'get_journey_first_mile', 'get_journey_person', 'get_journey_readings',
     // #4884. One discussion message whole, when the page cut the thread.
     'get_message',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',

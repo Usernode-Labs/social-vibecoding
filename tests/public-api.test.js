@@ -69,9 +69,10 @@ const APPS = [
     created_at: '2026-06-01T00:00:00.000Z', last_deploy_at: '2026-06-10T00:00:00.000Z',
     icon_emoji: '🎯', icon_image_id: null, anon_shell: 'public', active_users: '5',
     guest_shell: 'public', icon_color: '#2e6660',
-    description: '  A shared   todo list,\nshaped together.  ', category: 'Tools',
+    description: '  A shared   todo list,\nshaped together.  ', category: 'Tools', inferred_category: 'money',
     featured: true, featured_order: 2,
     illustration_id: 'abcabcabcabcabcabcabcabcabcabcab', illustration_dark_id: null,
+    preview_id: 'cdecdecdecdecdecdecdecdecdecdecd',
     member_count: '12', open_votes: '3', last_merged_at: '2026-06-09T00:00:00.000Z',
   },
   {
@@ -91,7 +92,7 @@ const APPS = [
     created_at: '2026-06-03T00:00:00.000Z', last_deploy_at: '2026-06-08T00:00:00.000Z',
     icon_emoji: null, icon_image_id: null, anon_shell: 'unknown', active_users: '0',
     guest_shell: 'gated', icon_color: null,
-    description: 'x'.repeat(260), category: null,
+    description: 'x'.repeat(260), category: null, inferred_category: 'food',
     featured: false, featured_order: null,
     illustration_id: null, illustration_dark_id: null,
     member_count: '2', open_votes: '0', last_merged_at: null,
@@ -139,6 +140,10 @@ function makeMockPool() {
     }
     if (/FROM chat_sessions cs/i.test(s) && /status = 'merged'/.test(s)) {
       return { rows: params[0] === 1 ? MERGED.map((r) => ({ ...r })) : [] };
+    }
+    // The week's people and the month's changes, as numbers (communities.js activityCounts).
+    if (/AS active_week/.test(s) && /AS shipped_month/.test(s)) {
+      return { rows: [{ active_week: params[0] === 1 ? 14 : 0, shipped_month: params[0] === 1 ? 9 : 0 }] };
     }
     if (/SELECT repo_url FROM apps WHERE id = \$1/i.test(s)) {
       return { rows: [{ repo_url: 'https://github.com/usernode-bot/app-one' }] };
@@ -297,6 +302,9 @@ test('apps list: the guest Discover card fields', async () => {
     assert.equal(one.illustration_url, '/app-illustrations/abcabcabcabcabcabcabcabcabcabcab');
     assert.equal(one.illustration_dark_url, null);
     assert.equal(two.illustration_url, null);
+    // Its animated preview loop, only ever with a picture under it.
+    assert.equal(one.preview_url, '/app-previews/cdecdecdecdecdecdecdecdecdecdecd');
+    assert.equal(two.preview_url, null);
     assert.equal(one.icon_color, '#2e6660');
     // Counts arrive as numbers.
     assert.equal(one.member_count, 12);
@@ -304,6 +312,22 @@ test('apps list: the guest Discover card fields', async () => {
     assert.equal(two.open_votes, 0);
     // The raw guest probe column never rides the wire shape either.
     assert.ok(!('guest_shell' in one));
+  } finally { await srv.close(); }
+});
+
+test('apps list: a kind the group did not choose is the one worked out from the description', async () => {
+  const pool = makeMockPool();
+  const srv = await startTestServer(pool);
+  try {
+    const { body } = await get(srv.baseUrl, '/api/public/apps');
+    const one = body.apps.find((a) => a.slug === 'app-one');
+    const three = body.apps.find((a) => a.slug === 'app-three');
+    assert.equal(one.category, 'tools', 'a kind the group chose always wins');
+    assert.equal(three.category, 'food', 'no chosen kind: the inferred one stands in');
+    const list = pool.calls.find((c) => /last_deploy_at DESC NULLS LAST/.test(c.sql));
+    assert.match(list.sql, /LEFT JOIN app_inferred_categories ic/);
+    assert.match(list.sql, /ic\.source_description = COALESCE\(a\.manifest_snapshot->>'description', ''\)/,
+      'the stored kind counts only while the description it came from still matches');
   } finally { await srv.close(); }
 });
 
@@ -339,6 +363,10 @@ test('overview: the card, the votes with plain summaries and tallies, and the ch
     }]);
     assert.equal(body.merged[0].title, 'Swipe to archive');
     assert.equal(body.merged[0].summary, 'Swipe a done task away.');
+    // Its after still where anybody may see it: none here.
+    assert.equal(body.merged[0].picture, null);
+    // How many took part this week and went live this month: numbers, never who.
+    assert.deepEqual(body.activity, { active_week: 14, merged_month: 9 });
     // GitHub is not configured in the test process: the open requests are
     // unknown, which the page shows as nothing rather than "none".
     assert.equal(body.requests, null);
@@ -600,7 +628,7 @@ test('waitlist options: the seven question maps are served untouched beside it',
     }
     assert.deepEqual(
       Object.keys(body).sort(),
-      [...Object.keys(expected), 'account_deletion_link', 'child_safety_link', 'marketing_url', 'native_sign_in_providers', 'phone_sign_in', 'privacy_link', 'sign_in_providers', 'story_landing', 'terms_link', 'waitlist_url'].sort(),
+      [...Object.keys(expected), 'account_deletion_link', 'child_safety_link', 'data_protection_email', 'marketing_url', 'native_sign_in_providers', 'phone_sign_in', 'privacy_link', 'sign_in_providers', 'story_landing', 'terms_link', 'waitlist_url'].sort(),
       'the public payload grew or lost a field'
     );
     // And the service's own constants are unmutated by the spread: the live
@@ -618,5 +646,50 @@ test('waitlist options: the never-public fields are still absent', async () => {
     const { body } = await get(srv.baseUrl, '/api/public/waitlist/options');
     assert.equal('max_invites' in body, false);
     assert.equal('discovery_detail_labels' in body, false);
+  } finally { await srv.close(); }
+});
+
+test('a waitlist join stores where the landing page sent them, a host only (#6540)', async () => {
+  const calls = [];
+  const pool = {
+    query: async (sql, params = []) => {
+      const s = String(sql);
+      calls.push({ sql: s, params });
+      if (/INSERT INTO waitlist_signups/.test(s)) return { rows: [{ submitted_at: '2026-11-09T10:00:00Z' }] };
+      if (/FROM waitlist_signups WHERE invite_code/.test(s)) return { rows: [] };
+      throw new Error(`unhandled mock SQL: ${s.slice(0, 90)}`);
+    },
+  };
+  const srv = await startTestServer(pool, {});
+  const join = (body) => fetch(`${srv.baseUrl}/api/public/waitlist`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }).then((r) => r.json());
+  try {
+    // A full URL is kept as its host, never its path or query.
+    await join({ email: 'ada@example.com', referrer_host: 'https://discord.com/channels/12?secret=1',
+      utm_source: 'x', utm_campaign: 'launch', ref: 'post-1' });
+    const first = calls.find((c) => /INSERT INTO waitlist_signups/.test(c.sql));
+    // $6 is which form the signup came from (Admin › Journey's "where they
+    // signed up"); the landing page's arrival facts follow it.
+    assert.equal(first.params[5], 'form');
+    assert.deepEqual(first.params.slice(6), ['discord.com', 'x', 'launch', 'post-1']);
+
+    // Present but empty: looked for, none given, never a blank field.
+    calls.length = 0;
+    await join({ email: 'bo@example.com', referrer_host: '' });
+    const none = calls.find((c) => /INSERT INTO waitlist_signups/.test(c.sql));
+    assert.deepEqual(none.params.slice(6), ['none', null, null, null]);
+
+    // Absent: not recorded at all.
+    calls.length = 0;
+    await join({ email: 'cy@example.com' });
+    const absent = calls.find((c) => /INSERT INTO waitlist_signups/.test(c.sql));
+    assert.deepEqual(absent.params.slice(6), [null, null, null, null]);
+
+    // A tag that fails its pattern is dropped, not stored.
+    calls.length = 0;
+    await join({ email: 'di@example.com', utm_source: 'two words', utm_campaign: 'a/b', ref: '<script>' });
+    const bad = calls.find((c) => /INSERT INTO waitlist_signups/.test(c.sql));
+    assert.deepEqual(bad.params.slice(6), [null, null, null, null]);
   } finally { await srv.close(); }
 });

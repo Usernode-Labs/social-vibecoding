@@ -113,6 +113,8 @@ const THREADS_SQL = `
 WITH mine AS (${threadsInSql('$1')})
 SELECT * FROM (
 SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.state, t.created_at, t.closed_at,
+       -- #6421: a merged thread holds several requests; its row says how many.
+       (SELECT COUNT(*) FROM requests r WHERE r.thread_id = t.id)::int AS request_count,
        a.slug, a.name, a.icon_emoji, a.icon_image_id, a.repo_url,
        req.id AS request_id, req.title AS request_title, req.state AS request_state, req.updated_at AS request_at,
        ch.id AS change_id, ch.pr_number, ch.status AS change_status, ch.user_id AS change_user,
@@ -163,7 +165,13 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
            -- not finish: that is nobody's to fix.
            (cs.check_state = 'failing'
             OR (cs.staging_url IS NULL AND cs.check_state = 'error' AND cs.check_error_detail IS NOT NULL)
-            OR cs.merge_conflict_state = 'failed') AS needs_fix,
+            OR cs.merge_conflict_state = 'failed'
+            -- #6531: a conflict only its author (or the bot) can now move,
+            -- after the conflict lane's free resolution was spent.
+            OR cs.integration_block_reasons ?| array['unresolvable','fork_head','checks_failing','checks_error']
+            -- #6546: GitHub's required checks failed again after Homeroom ran
+            -- them on today's main.
+            OR cs.integration_block_reasons ? 'github_checks_failing') AS needs_fix,
            -- #6282: 'running' while a turn updates it, 'queued' while an
            -- ask waits its turn, and what was asked, for the row's words.
            ${updateComingSql('cs')} AS update_coming,
@@ -369,7 +377,8 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
     return { group: 'live', work: stored, at: iso(liveAt),
       mergedAt: iso(row.merged_at), changeId: Number(row.change_id) || null };
   }
-  if (row.state !== 'open' || state.stage === 'closed') return null;
+  // A merge closes its request before the release carrying it is live.
+  if ((row.state !== 'open' && state.stage !== 'going_live') || state.stage === 'closed') return null;
   const decides = viewer?.decides === true
     || (state.requesterId != null && Number(state.requesterId) === Number(viewerId));
   // The bot's question is the Needs you feed's Answer.
@@ -446,12 +455,17 @@ function fallbackState(row) {
       status: row.change_status, check_state: row.check_state, promoted_at: row.promoted_at,
       merged_at: row.merged_at, live_at: row.live_at, last_activity_at: row.last_activity_at,
     });
-    // #6282: an update on its way holds the vote (work-state.js derive says the same).
+    // #6282: an update on its way holds the vote (work-state.js derive says
+    // the same). #6545: a queued one holds only a vote, never a change still
+    // checking (a fix waiting its turn).
     if (row.update_coming && row.change_status === 'promoted') {
       const since = iso(row.last_activity_at || row.promoted_at);
-      return row.update_coming === 'running'
-        ? { stage: 'building', why: null, reason: null, line: { code: 'revising' }, since }
-        : { stage: 'up_for_vote', why: null, reason: null, line: { code: 'update_queued' }, since };
+      if (row.update_coming === 'running') {
+        return { stage: 'building', why: null, reason: null, line: { code: 'revising' }, since };
+      }
+      if (change.stage === 'up_for_vote') {
+        return { stage: 'up_for_vote', why: null, reason: null, line: { code: 'update_queued' }, since };
+      }
     }
     return change;
   }
@@ -498,10 +512,17 @@ function shapeThread(row, viewerId, now, botId, states, viewers) {
   // A change's own thread with no number (its PR number is a request's) is
   // named by its change.
   const number = row.number != null ? Number(row.number) : row.pr_number != null ? Number(row.pr_number) : null;
-  const title = row.request_title || row.change_title || row.thread_title || null;
+  const requests = Number(row.request_count) || 0;
+  // #6421: a merged thread is called by its change's title while a change
+  // lives there; otherwise its first request's title (the lateral read).
+  const title = (requests > 1 && row.change_id && row.change_status !== 'merged' && row.change_title)
+    ? row.change_title
+    : row.request_title || row.change_title || row.thread_title || null;
   return {
     threadId: Number(row.id),
     number,
+    // #6421: how many requests it holds, for "· 10 requests" on its row.
+    requests,
     // A thread with a change and no request of its own is led by the change:
     // its number is the PR's, which on GitHub reads "PR 12", never "#12"
     // (frontend/src/features/ai/model.ts changeOnGithub). A change built for

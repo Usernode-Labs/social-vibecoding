@@ -786,17 +786,36 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
-      // New look (an experiment), kept on the device by the head's
+      // New look (an experiment) and the Look menu (the frame's nine looks,
+      // an admin's preview), both kept on the device by the head's
       // window.Skin: the change is the save, and the look applies at once.
+      // They are exclusive (one data-skin on <html>), so each change
+      // repaints both controls. The menu's options are the frame's looks;
+      // anything else stored (New look, nothing) reads as Standard there.
       const lookToggle = document.getElementById('new-look-enabled');
+      const lookSelect = document.getElementById('settings-look');
+      const paintLooks = () => {
+        const skin = window.Skin?.get?.();
+        if (lookToggle) lookToggle.checked = skin === 'brand';
+        if (lookSelect) {
+          lookSelect.value = Array.from(lookSelect.options).some((o) => o.value === skin) ? skin : '';
+        }
+      };
       if (lookToggle) {
         lookToggle.addEventListener('change', (e) => {
           window.Skin?.set?.(e.target.checked ? 'brand' : 'standard');
+          paintLooks();
         });
-        // Another tab flipping it re-paints the switch here too.
-        window.Skin?.onChange?.(() => {
-          lookToggle.checked = window.Skin?.get?.() === 'brand';
+      }
+      if (lookSelect) {
+        lookSelect.addEventListener('change', (e) => {
+          window.Skin?.set?.(e.target.value || 'standard');
+          paintLooks();
         });
+      }
+      if (lookToggle || lookSelect) {
+        // Another tab changing it repaints the controls here too.
+        window.Skin?.onChange?.(paintLooks);
       }
 
       // Platform-level language preference (issue #757). Server-side
@@ -1723,7 +1742,11 @@
       // me-scoped fetch and is throttled inside AiCredit, so refreshing it on
       // every section change is cheap and keeps it honest. This is where the
       // hamburger's open-time refresh went when the row moved here.
-      if (window.AiCredit?.refreshAll) window.AiCredit.refreshAll();
+      // #6493: the AI usage page is the page people open to CHECK the figure,
+      // so it fetches fresh rather than waiting out the three-minute throttle.
+      if (Settings._section === 'ai' && window.AiCredit?.Budget?.refresh) {
+        window.AiCredit.Budget.refresh({ force: true });
+      } else if (window.AiCredit?.refreshAll) window.AiCredit.refreshAll();
       // Announce which section is showing. The one listener today is the
       // Theme pane (features/settings/sections/theme.tsx), which re-reads
       // Theme.get() so a mode changed in another tab — or an explicit value
@@ -1910,6 +1933,11 @@
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
       const look = document.getElementById('new-look-enabled');
       if (look) look.checked = window.Skin?.get?.() === 'brand';
+      const lookMenu = document.getElementById('settings-look');
+      if (lookMenu) {
+        const stored = window.Skin?.get?.();
+        lookMenu.value = Array.from(lookMenu.options).some((o) => o.value === stored) ? stored : '';
+      }
       this._renderLocalAgentsSection();
     },
 
@@ -3522,10 +3550,13 @@
     // applied the mask either, so the live value still reflects the
     // server truth. `??` (not `||`) so an explicit `false` from a
     // current-cache app.js wins over the fallback.
+    //
+    // The Look menu in Experimental is gated the same way: an admin's
+    // preview of looks drawn screen by screen, hidden from everyone else
+    // until they are whole (a `?skin=<look>` pin in the address stays open).
     _renderAdminSection() {
       const section = document.getElementById('settings-admin-section');
       const toggle = document.getElementById('view-as-non-admin');
-      if (!section || !toggle) return;
       // Read the bare `App` identifier rather than `window.App` —
       // app.js declares `App` with `const`, which does NOT write to
       // `window` in non-module browser scripts, so `window.App` is
@@ -3538,6 +3569,18 @@
       // app.js wins over the fallback.
       const realAdmin = (typeof App !== 'undefined' ? App._realIsAdmin : undefined)
         ?? (typeof App !== 'undefined' && !!App.user?.isAdmin);
+      // A device left in one of the menu's looks keeps the menu whoever is
+      // signed in (an admin's device in other hands, an admin who lost the
+      // role): the look is stored on the device and the menu is what
+      // clears it. New look has its own switch and does not count.
+      const lookSection = document.getElementById('settings-look-section');
+      if (lookSection) {
+        const lookMenu = document.getElementById('settings-look');
+        const stored = window.Skin?.get?.();
+        const inLook = !!lookMenu && Array.from(lookMenu.options).some((o) => o.value && o.value === stored);
+        lookSection.classList.toggle('hidden', !realAdmin && !inLook);
+      }
+      if (!section || !toggle) return;
       if (!realAdmin) {
         section.classList.add('hidden');
         return;
@@ -3697,22 +3740,30 @@
     // fresh on every modal open; the block stays hidden while loading,
     // on fetch failure, or when no key is saved, so it never shows
     // stale or irrelevant figures.
+    //
+    // #6493: the platform line is the ONE shared allowance
+    // (features/header/ai-credit.js `AiCredit.Budget`), so it cannot
+    // disagree with the AI credit row above it. /api/budget is still fetched
+    // for the BYOK figure and the reset boundary only it carries; its
+    // snapshot half is adopted into the shared state, and the platform line
+    // reads that.
     async _refreshSpend() {
       const block = document.getElementById('settings-spend');
       if (!block) return;
       block.classList.add('hidden');
       if (!this.state.hasApiKey) return;
       try {
+        const AiCredit = window.AiCredit;
+        const seq = AiCredit?.Budget?._takeTicket ? AiCredit.Budget._takeTicket() : null;
         const r = await fetch('/api/budget', { credentials: 'same-origin' });
         if (!r.ok) return;
         const b = await r.json();
+        if (AiCredit?.Budget?.adopt) {
+          AiCredit.Budget.adopt(b, seq == null ? undefined : { seq });
+        }
         document.getElementById('settings-spend-byok').textContent =
           '$' + ((b.byokSpentCents || 0) / 100).toFixed(2);
-        document.getElementById('settings-spend-platform').textContent =
-          tr('settings:usage.spend.platformOfLimit', {
-            spent: '$' + ((b.spentCents || 0) / 100).toFixed(2),
-            limit: '$' + ((b.limitCents || 0) / 100).toFixed(2),
-          });
+        Settings._paintSpendPlatform(b);
         // #3230: the weekly reset in the viewer's own clock, UTC on hover.
         const reset = document.getElementById('settings-spend-reset');
         const RT = window.ResetTime;
@@ -3723,6 +3774,21 @@
         }
         block.classList.remove('hidden');
       } catch {}
+    },
+
+    // #6493: the spend card's platform line, spelled from the shared
+    // allowance so it always adds up to the AI credit row's figure.
+    // `fallback` is the /api/budget answer on the fetch path; on a live
+    // update there is no answer in hand and the shared state is the source.
+    _paintSpendPlatform(fallback) {
+      const el = document.getElementById('settings-spend-platform');
+      if (!el) return;
+      const state = window.AiCredit?.Budget?.current?.() || fallback || null;
+      if (!state) return;
+      el.textContent = tr('settings:usage.spend.platformOfLimit', {
+        spent: '$' + ((state.spentCents || 0) / 100).toFixed(2),
+        limit: '$' + ((state.limitCents || 0) / 100).toFixed(2),
+      });
     },
 
     _setStatus(text, kind) {
@@ -7387,6 +7453,17 @@
     document.addEventListener('homeroom:languages-changed', () => {
       if (!Settings._open) return;
       try { Settings._renderLanguageSection(); } catch { /* a pane that is not mounted */ }
+    });
+  }
+
+  // #6493: the one shared allowance moved (a fetch anywhere, or a live
+  // push). While the spend card is on screen, its platform line follows it —
+  // the same figure the AI credit row shows.
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('homeroom:ai-budget-changed', () => {
+      const block = document.getElementById('settings-spend');
+      if (!block || block.classList.contains('hidden')) return;
+      Settings._paintSpendPlatform();
     });
   }
 

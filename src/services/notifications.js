@@ -262,9 +262,27 @@ const RELEASE_PENDING_SQL = `(COALESCE(cs.merged_at, cs.created_at), cs.id) > (
                WHERE self_app.id = cs.app_id AND self_app.self_hosted
                ORDER BY COALESCE(running.merged_at, running.created_at) DESC, running.id DESC
                LIMIT 1)`;
+// The leaked-link guard's two rows (services/invite-activity.js noteGuard,
+// `detail` "<inviteId>:<joins>"): where the link stands now, so the row's
+// Turn off and Open it again are offered only while they still do
+// something. 'live', 'paused', or 'ended' (turned off, past its end, used
+// up); NULL for a link that is gone, or is not the reader's own.
+const INVITE_LINK_STATE_SQL = `CASE WHEN n.kind IN ('invite_link_busy', 'invite_link_paused')
+              AND n.detail ~ '^[0-9]{1,9}:[0-9]{1,9}$' THEN (
+              SELECT CASE
+                       WHEN guarded.revoked_at IS NOT NULL
+                         OR (guarded.expires_at IS NOT NULL AND guarded.expires_at <= NOW())
+                         OR (guarded.max_uses IS NOT NULL AND guarded.uses >= guarded.max_uses) THEN 'ended'
+                       WHEN guarded.paused_at IS NOT NULL THEN 'paused'
+                       ELSE 'live'
+                     END
+                FROM community_invites guarded
+               WHERE guarded.id = split_part(n.detail, ':', 1)::int AND guarded.created_by = n.user_id) END`;
 const LIVE_ROW_COLUMNS_SQL = `CASE WHEN cs.status = 'merged' AND (cs.live_at IS NULL OR ${RELEASE_PENDING_SQL}) THEN 'merging' ELSE cs.status END AS session_status,
             CASE WHEN n.kind = 'vote_digest' THEN ${DIGEST_WAITING_SQL} END AS digest_waiting,
-            bot_request.issue_number AS bot_request_number`;
+            bot_request.issue_number AS bot_request_number,
+            ${INVITE_LINK_STATE_SQL} AS invite_link_state`;
+const INVITE_GUARD_KINDS = new Set(['invite_link_busy', 'invite_link_paused']);
 // The kinds whose row carries `sessionStatus`: a "ready to try" (Live, Going
 // live or Closed), and the author's and the voters' news that it went live.
 const SESSION_STATUS_KINDS = new Set(['change_ready', 'pr_merged', 'voted_change_merged']);
@@ -1010,6 +1028,24 @@ async function createAppHealthNotification(pool, { appId, detail }) {
   });
   if (!allowed.length) return [];
 
+  const token = (detail || '').slice(0, 32) || null;
+  // Storage notices supersede each other: a newer one replaces an unread
+  // older one for the same project, and is not blocked by some OTHER kind's
+  // unread row (a failed deploy used to swallow the storage warning and even
+  // the freeze notice). Any other token keeps the any-unread guard, so a
+  // deploy failure still does not repeat itself.
+  const storage = typeof token === 'string' && token.startsWith('storage_');
+  if (storage) {
+    await pool.query(
+      `UPDATE notifications
+          SET read_at = NOW()
+        WHERE app_id = $1 AND kind = 'app_health' AND read_at IS NULL
+          AND user_id = ANY($2::int[])
+          AND LEFT(detail, 8) = 'storage_'`,
+      [appId, allowed]
+    );
+  }
+
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
      SELECT u, $2, NULL, 'app_health', $3
@@ -1018,11 +1054,12 @@ async function createAppHealthNotification(pool, { appId, detail }) {
         SELECT 1 FROM notifications n
         WHERE n.user_id = u AND n.app_id = $2
           AND n.kind = 'app_health' AND n.read_at IS NULL
+          ${storage ? "AND LEFT(n.detail, 8) = 'storage_'" : ''}
       )
      RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
     // VARCHAR(32). See the note above the function: this is a short token,
     // not a reason line.
-    [allowed, appId, (detail || '').slice(0, 32) || null]
+    [allowed, appId, token]
   );
   return rows;
 }
@@ -2042,7 +2079,9 @@ const ACTION_COMPLETIONS = {
   // Only pr_proposed: revision_recheck asks for a re-vote and stale_pr is the
   // author's warning, and looking at a card resolves neither. Triggered by
   // POST /api/notifications/read { session_id } from the dev board.
-  proposal_opened: { kinds: ['pr_proposed'], scope: 'session_id' },
+  // #6441: and its "ready to try", which opening the change's page or its
+  // before-and-after answers the same way.
+  proposal_opened: { kinds: ['pr_proposed', 'build_ready'], scope: 'session_id' },
 };
 
 // The scope columns the registry is allowed to target. A defensive
@@ -2232,6 +2271,24 @@ async function markReadForApp(pool, userId, appId) {
   return rowCount || 0;
 }
 
+// The app-less counterpart to markReadForApp (#6579): backs the Unread tab's
+// "Across Homeroom" group Mark read. Clears every unread row this user has
+// that belongs to no app, including ones a client has not paged in, while
+// leaving every app's rows and the plain messages the Messages tab owns
+// untouched. Idempotent via the read_at IS NULL guard; returns rows cleared so
+// the route can decide whether to fan out a cross-tab refresh.
+async function markReadForNoApp(pool, userId) {
+  if (!userId) return 0;
+  const { rowCount } = await pool.query(
+    `UPDATE notifications AS n
+        SET read_at = NOW()
+      WHERE n.user_id = $1 AND n.app_id IS NULL AND n.read_at IS NULL
+        AND NOT ${PLAIN_MESSAGE_SQL}`,
+    [userId]
+  );
+  return rowCount || 0;
+}
+
 // Per-conversation counterpart to markReadForApp. Conversation ids never
 // fall back to app ids: the two notification domains remain disjoint even if
 // their integer primary keys happen to be equal.
@@ -2250,7 +2307,7 @@ async function markReadForConversation(pool, userId, conversationId) {
 // Single-id and mark-all clears. Returns rows actually cleared (like the
 // scoped helpers above) so the route can decide whether to fan out a
 // cross-tab `notifications_changed` refresh.
-async function markRead(pool, userId, { id, ids = null, all = false, kinds = null, excludeKinds = null, olderThanDays = null } = {}) {
+async function markRead(pool, userId, { id, ids = null, all = false, kinds = null, excludeKinds = null, olderThanDays = null, keepPlainMessages = false } = {}) {
   // One clear that is several notifications (a story card, a folded row, a
   // conversation run): one statement, so the count the route reads back
   // after it is the count after all of them. One request per member raced:
@@ -2278,6 +2335,9 @@ async function markRead(pool, userId, { id, ids = null, all = false, kinds = nul
       if ((Array.isArray(kinds) && kinds.length) || (Array.isArray(excludeKinds) && excludeKinds.length)) {
         throw new TypeError('olderThanDays does not combine with kind scoping');
       }
+      if (keepPlainMessages) {
+        throw new TypeError('olderThanDays does not combine with keepPlainMessages');
+      }
       const { rowCount } = await pool.query(
         `UPDATE notifications SET read_at = NOW()
           WHERE user_id = $1 AND read_at IS NULL
@@ -2303,6 +2363,21 @@ async function markRead(pool, userId, { id, ids = null, all = false, kinds = nul
         `UPDATE notifications SET read_at = NOW()
           WHERE user_id = $1 AND read_at IS NULL AND NOT (kind = ANY($2))`,
         [userId, excludeKinds]
+      );
+      return rowCount || 0;
+    }
+    // Opening the bell is reading it (#6498). The bell's badge leaves out the
+    // plain messages the Messages tab counts (#18), so a clear-on-open must
+    // leave them out too — otherwise the Messages tab's own count would go
+    // stale or a badge the bell never showed would be cleared. `all` alone
+    // still clears everything ("Mark all read"); this flag is the narrower
+    // clear that reuses countUnreadSplit's own predicate, so what stays
+    // unread is exactly what the bell's number did not include.
+    if (keepPlainMessages) {
+      const { rowCount } = await pool.query(
+        `UPDATE notifications AS n SET read_at = NOW()
+          WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT ${PLAIN_MESSAGE_SQL}`,
+        [userId]
       );
       return rowCount || 0;
     }
@@ -2472,6 +2547,9 @@ function serialize(row) {
       ? { digestWaiting: Number(row.digest_waiting) } : {}),
     ...(row.kind === 'first_message' || row.kind === 'channel_message'
       ? { requestNumber: row.bot_request_number != null ? Number(row.bot_request_number) : null } : {}),
+    // The leaked-link guard's rows: where their link stands now
+    // (INVITE_LINK_STATE_SQL), which decides the buttons the bell offers.
+    ...(INVITE_GUARD_KINDS.has(row.kind) ? { inviteLinkState: row.invite_link_state || null } : {}),
     // #4769: whether this row is in the user's saved set. Only the feed
     // page and the saved section select the flag (the exact lookup
     // doesn't), so it is false there — a false rather than absent keeps
@@ -2548,6 +2626,7 @@ module.exports = {
   markReadForAction,
   markReadForAgentSession,
   markReadForApp,
+  markReadForNoApp,
   markReadForConversation,
   markReadForMessage,
   unreadMessageIdsForUser,

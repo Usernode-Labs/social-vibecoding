@@ -125,6 +125,14 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
   };
 
   return {
+    [WORK.wake]: {
+      maxAttempts: 2, leaseMs: 60000, concurrency: 2,
+      async run({ input }): Promise<Json> {
+        return legacy('services/preview-sleep').wake(config, pool, Number(input.sessionId), {
+          reason: String(input.reason), repairRoute: input.repairRoute === true,
+        });
+      },
+    },
     // Build attempt n of the head into its own checkout, database and env
     // Secret, then update the session's runtime to it (fenced by attempt,
     // the serving template restored on a failed rollout). A build or boot
@@ -186,11 +194,16 @@ export function previewServices({ config, pool }: Deps): Record<string, WorkHand
           if (rollout) policy.markRollout(err);
           const detail = rollout ? policy.ROLLOUT_DETAIL : visuals().summarizeBootFailure(err);
           const infrastructure = rollout || !!legacy('services/deploy-failure').bootFailureIsInfrastructure(err);
+          // #6536: a failed build's own first error, for the check row and
+          // the fix turn. A rollout or an infrastructure failure is not the
+          // change's build and says nothing to fix.
+          const buildError = infrastructure ? null : (legacy('services/deploy-failure').firstBuildError(err) || null);
           const sync = legacy('services/boot-failure-sync');
           const catchUp = infrastructure ? null
             : await sync.afterBootFailure({ config, pool, session: row, commitHash: input.head, err }).catch(() => null);
           return {
             ok: false, detail, infrastructure, aboutMain: sync.explain(catchUp) || null, sync: !!catchUp?.sync,
+            buildError,
             platformFault: rollout || refusal.previewDatabaseServerFault === true,
             servingRemoved: !!(err as { servingRemoved?: boolean }).servingRemoved,
           };

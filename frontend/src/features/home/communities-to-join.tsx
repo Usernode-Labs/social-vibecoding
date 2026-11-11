@@ -6,17 +6,25 @@
  *
  *   signed in    "N up for a vote" and Join (Home.setMembership, which joins
  *                and pins the community; the card leaves this list then).
- *   signed out   Pin (kept on the device) and Join (which asks to sign up).
+ *   signed out   nothing: a visitor's card is its picture, name and sentence
+ *                (#6433), and the page behind it has Try it, Join and Pin.
  *
  * Kind chips over the cards. Then FEATURED, the communities an admin
- * featured, in their order (featured_order), as one sideways row of the
- * same cards: the first strip of the section, of the chosen kind, and left
- * out while a search is typed (its matches are the grid, featured first).
- * Then the rest, the most used first; more load as the reader reaches the
- * end (an IntersectionObserver on the last card's
- * sentinel, inside Home's own scroller), with two placeholder cards while
- * they come. The directory is GET /api/public/apps, which answers every
- * public project at once today, so "more" pages through it here.
+ * featured, in their order (featured_order), in the same wrapping grid as
+ * the rest (#6434): the first group of the section, of the chosen kind, and
+ * left out while a search is typed (its matches are the grid, featured
+ * first). Then the rest under "More communities" whenever Featured is
+ * shown, under All or a chosen kind (#6584, #6597): every community of the
+ * kind that Featured does not already show, most used first, so no
+ * community appears twice. The heading tells the rest apart from Featured;
+ * when every community of the kind is featured there is nothing left and
+ * it is not drawn. No heading while searching, or with nothing featured:
+ * then there is one grid. More load as the reader reaches the end (an
+ * IntersectionObserver on the last card's sentinel, inside Home's own
+ * scroller), with two
+ * placeholder cards while they come. The directory is
+ * GET /api/public/apps, which answers every public project at once today,
+ * so "more" pages through it here.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -38,18 +46,18 @@ export function joinOrder(apps: readonly GuestApp[]): GuestApp[] {
   return [...featured, ...sortApps(apps, 'trending').filter((a) => !first.has(a.slug))];
 }
 
-export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPin, pinned }: {
+export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onJoin, onRetry }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
+  /** The directory could not be read: say so, with a way to try again. */
+  failed?: boolean;
   /** Communities already on this Home (joined or pinned), left out of the list. */
   exclude: ReadonlySet<string>;
   signedIn: boolean;
   query: string;
   onJoin: (app: GuestApp) => void;
-  /** Signed out only: pin to this device's Home. */
-  onPin?: (app: GuestApp) => void;
-  /** Signed out only: what this device has pinned already. */
-  pinned?: ReadonlySet<string>;
+  /** Read the directory again, from the line that says it could not be. */
+  onRetry?: () => void;
 }) {
   const t = useMessages('home');
   const ta = useMessages('auth');
@@ -62,12 +70,15 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
   const kinds = useMemo(() => presentCategories(pool), [pool]);
   const featured = useMemo(() => (query ? [] : featuredApps(pool).filter((a) => !kind || a.category === kind)), [pool, kind, query]);
   const list = useMemo(() => {
+    // Searching keeps the join order (featured first); otherwise this is the
+    // rest, most used first, the featured ones left out because Featured
+    // already shows them (#6597). When every community of the kind is
+    // featured, nothing is left and the list is empty.
     const lead = new Set(featured.map((a) => a.slug));
-    return joinOrder(pool)
-      .filter((a) => !lead.has(a.slug))
+    return (query ? joinOrder(pool) : sortApps(pool, 'trending').filter((a) => !lead.has(a.slug)))
       .filter((a) => !kind || a.category === kind)
       .filter((a) => matchesQuery(query, a.name, a.slug, a.description));
-  }, [pool, featured, kind, query]);
+  }, [pool, kind, query, featured]);
   useEffect(() => { setShown(JOIN_PAGE); }, [kind, query]);
   const more = list.length > shown;
 
@@ -91,6 +102,8 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
   }, [more, shown]);
 
   if (query && !list.length) return null;
+  // Signed out, a card has no footer at all (#6433): the row is the
+  // signed-in one's, with the votes or members line and Join.
   const footerFor = (app: GuestApp) => (signedIn ? (
       <>
         <span className="min-w-0 flex-1 truncate text-[12.5px] text-zinc-500 dark:text-zinc-400">
@@ -98,27 +111,13 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
             ? t('home:join.votes', { count: app.open_votes })
             : t('home:join.members', { count: app.member_count || 0 })}
         </span>
-        <Button type="button" variant="pillAccent" size="sm" ink="solid" className="h-8 min-h-[44px] py-0 md:min-h-0" data-home-join={app.slug}
+        <Button type="button" variant="pillAccent" size="sm" ink="solid" className="min-h-11 py-0 un-touch-target" data-home-join={app.slug}
           aria-label={t('home:join.buttonNamed', { community: app.name })}
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); onJoin(app); }}>
           {t('home:join.button')}
         </Button>
       </>
-    ) : (
-      <>
-        <Button type="button" variant="pillNeutral" size="sm" ink="neutral" className="h-8 min-h-[44px] flex-1 py-0 md:min-h-0" data-home-pin={app.slug}
-          aria-pressed={!!pinned?.has(app.slug)}
-          aria-label={t('home:join.pinNamed', { community: app.name })}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onPin?.(app); }}>
-          {pinned?.has(app.slug) ? t('home:join.pinned') : t('home:join.pin')}
-        </Button>
-        <Button type="button" variant="pillAccent" size="sm" ink="solid" className="h-8 min-h-[44px] py-0 md:min-h-0" data-home-join={app.slug}
-          aria-label={t('home:join.buttonNamed', { community: app.name })}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onJoin(app); }}>
-          {t('home:join.button')}
-        </Button>
-      </>
-    ));
+    ) : null);
   const heading = signedIn ? t('home:join.heading') : t('home:join.headingSignedOut');
   return (
     // The id is the signed-in Home's (the tours and the declared checks find
@@ -144,21 +143,40 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
           <div
             role="list"
             aria-labelledby={signedIn ? 'home-join-featured-label' : 'guest-join-featured-label'}
-            className="-mx-3 flex snap-x snap-mandatory scroll-px-4 gap-3 overflow-x-auto px-4 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            className={`${CARD_GRID} px-1`}
           >
             {featured.map((app, i) => (
-              <div key={app.slug} role="listitem" className="flex w-[min(17rem,72vw)] shrink-0 snap-start [&>article]:flex-1">
+              <div key={app.slug} role="listitem" className="flex [&>article]:flex-1">
                 <Card app={app} eager={i < 3} featured footer={footerFor(app)} />
               </div>
             ))}
           </div>
         </div>
       ) : null}
-      {!apps ? (
+      {failed ? (
+        // #6354 review: a request that failed must say so and offer to try
+        // again, rather than leaving the loading placeholders up forever.
+        <div className="flex flex-col items-center gap-3 px-2 py-6" data-home-join-failed="">
+          <p className="text-center text-[14px] text-zinc-500 dark:text-zinc-400">{t('home:join.failed')}</p>
+          {onRetry ? (
+            <Button type="button" variant="pill" size="sm" className="min-h-11 px-5 py-0 un-touch-target"
+              data-home-join-retry="" onClick={onRetry}>
+              {t('home:join.retry')}
+            </Button>
+          ) : null}
+        </div>
+      ) : !apps ? (
         <div className={`${CARD_GRID} px-1`} aria-label={ta('auth:guest.loading')}>
           {[0, 1, 2, 3].map((i) => <span key={i} className="aspect-[16/10] rounded-[20px] bg-black/5 dark:bg-white/10" />)}
         </div>
       ) : list.length ? (
+        <>
+        {/* Featured above, so the rest gets a heading of its own: without it
+            every card reads as featured (#6434, #6584). It is not drawn when
+            nothing is left (every community of the kind is featured, #6597).
+            A search leaves Featured out, and then there is one grid with no
+            heading. */}
+        {featured.length ? <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`} data-home-join-rest="">{t('home:join.more')}</h3> : null}
         <div className={`${CARD_GRID} px-1`}>
           {list.slice(0, shown).map((app, i) => (
             <Card
@@ -169,8 +187,11 @@ export function CommunitiesToJoin({ apps, exclude, signedIn, query, onJoin, onPi
             />
           ))}
         </div>
+        </>
       ) : featured.length ? null : (
-        <p className="px-2 py-4 text-[14px] text-zinc-500 dark:text-zinc-400">{t('home:join.allJoined')}</p>
+        <p className="px-2 py-4 text-[14px] text-zinc-500 dark:text-zinc-400">
+          {!pool.length && !kind && !query ? t('home:join.empty') : t('home:join.allJoined')}
+        </p>
       )}
       {more ? (
         <>
@@ -201,7 +222,8 @@ export function scrollParent(el: Element | null): Element | null {
 
 /** The public directory, read once per page load (GET /api/public/apps). */
 let directory: Promise<GuestApp[] | null> | null = null;
-export function readDirectory(): Promise<GuestApp[] | null> {
+export function readDirectory(refresh = false): Promise<GuestApp[] | null> {
+  if (refresh) directory = null;
   if (!directory) {
     directory = fetch('/api/public/apps?include_wallets=0', { credentials: 'same-origin' })
       .then((res) => (res.ok ? res.json() : null))

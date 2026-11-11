@@ -512,6 +512,25 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     assert.equal((await designs.designFor(pool, { userId: ada.id, rootId: root.id })).latest, 1);
   });
 
+  await t.test('ensureDesign keeps the surface and route a captured Homeroom page gives', async () => {
+    const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
+    const root = (await conversations.sendMessage(pool, ada, opened.conversationId, { content: 'design the bot page' })).message;
+    const thread = { conversationId: opened.conversationId, rootId: root.id };
+    await designs.ensureDesign(pool, config, {
+      user: ada, thread, title: 'Homeroom bot page', size: 'desktop',
+      surface: 'platform', route: '/?demo=1#homeroom-bot',
+    });
+    const first = await designs.designFor(pool, { userId: ada.id, rootId: root.id });
+    assert.equal(first.surface, 'platform');
+    assert.equal(first.route, '/?demo=1#homeroom-bot');
+    assert.deepEqual([first.width, first.height], [1280, 800]);
+    // A later call without a route keeps the one already held.
+    await designs.ensureDesign(pool, config, { user: ada, thread, title: 'Homeroom bot page', size: 'phone' });
+    const after = await designs.designFor(pool, { userId: ada.id, rootId: root.id });
+    assert.equal(after.route, '/?demo=1#homeroom-bot');
+    assert.deepEqual([after.width, after.height], [390, 844]);
+  });
+
   await t.test('pure: a plan\'s screens are script-free, and sized by the capture', () => {
     const doc = '<html><head><style>.x{color:red}</style><script>alert(1)</script></head><body class="dark"><p onclick="x()">Hi</p><script src="/a.js"></script></body></html>';
     const markup = designs.screenMarkup(doc);

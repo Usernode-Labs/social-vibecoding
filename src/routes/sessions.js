@@ -4117,7 +4117,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 ) AS base_sha,
                 -- When the merge queue tries this change again after GitHub
                 -- held its merge back (services/integration.js HELD_UNTIL_SQL).
-                ${require('../services/integration').HELD_UNTIL_SQL} AS merge_held_until
+                ${require('../services/integration').HELD_UNTIL_SQL} AS merge_held_until,
+                -- #6563: when Homeroom last tried it, and first met this hold.
+                ${require('../services/integration').HELD_AT_SQL} AS merge_held_at,
+                ${require('../services/integration').HELD_SINCE_SQL} AS merge_held_since
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND (cs.user_id = $2 OR $3::boolean)`,

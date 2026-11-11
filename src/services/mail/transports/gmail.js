@@ -94,6 +94,9 @@ function buildRaw({ from, to, message, boundary }) {
     `From: ${headerSafe(from)}`,
     `To: ${headerSafe(to)}`,
     `Subject: ${encodeHeader(headerSafe(message.subject))}`,
+    // Where a reply goes, on a kind that names one (the last waitlist
+    // reminder), header-safe like the rest.
+    ...(message.replyTo ? [`Reply-To: ${headerSafe(message.replyTo)}`] : []),
     // A kind's own headers (activity mail's List-Unsubscribe), by name and
     // value, each made header-safe like the rest.
     ...Object.entries(message.headers || {})

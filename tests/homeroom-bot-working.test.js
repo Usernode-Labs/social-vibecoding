@@ -809,7 +809,7 @@ test('#6405: once the turn has named a step, an unmapped tool does not drop the 
   assert.deepEqual(quiet, [null, null]);
 });
 
-test('#6405: the correction pass never shows the card a shorter answer than it already has', async () => {
+test('#6581: the correction pass sends one checked answer, and the card showed no words to replace', async () => {
   const first = 'Refreshed. Homeroom has 80 open requests. The newest is the one about the live reply jumping, '
     + 'and it has no votes yet.';
   let round = 0;
@@ -831,9 +831,10 @@ test('#6405: the correction pass never shows the card a shorter answer than it a
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(round, 2, 'the claim check asked it again');
   const writing = turn.doings.filter((d) => d?.kind === 'writing');
-  assert.equal(writing.length, 1, 'the first pass was shown, and the rewrite never replaced it with less');
-  assert.equal(writing[0].text, first);
+  assert.equal(writing.length, 1, 'the card said "Writing" once, across both passes');
+  assert.equal(writing[0].text, undefined, 'no words were shown, so none could be replaced');
   assert.equal(turn.sent.length, 1, 'one reply, checked');
+  assert.equal(turn.sent[0].content, 'I have not drafted it, so there is nothing to tap.');
 });
 
 test('a project it reads is named only when the person can see it, and asked about once a turn', async () => {
@@ -883,6 +884,11 @@ test('in a thread, "status?" is about that thread; a screen asked for is drawn i
   assert.ok(request.includes('- Here, "status?", "how is it going?" or "where are we?" means this request: say where it stands right now,\n'
     + '  from request_detail or progress, and what happens next. Do not list the rest of their page (my_work) unless\n'
     + '  they ask about everything.'));
+  // #6390: they are on this request's page already, so a link to it says
+  // nothing; the bot says what it is doing in words.
+  assert.match(request, /never link to this request or its page/);
+  assert.match(request, /never say "follow it\n  here"/);
+  assert.doesNotMatch(main, /never link to this request or its page/, 'a chat outside a request thread keeps neither line');
   for (const prompt of [plus, bare, main, request]) {
     assert.match(prompt, /\(draw_screen\): your designer draws it from their words/);
     assert.ok(prompt.includes('and do not reply: the designer answers them. When they have asked you to draw, render, show or mock up a\n'
@@ -935,6 +941,12 @@ test('the bot\'s typing is a card with its face, its name and what it is doing; 
   assert.equal(card.botDoingLine(t, { kind: 'code', project: 'Ear Trainer' }), 'Reading Ear Trainer\'s code');
   assert.equal(card.botDoingLine(t, { kind: 'code' }), 'Reading the code');
   assert.equal(card.botDoingLine(t, { kind: 'drawing' }), 'Drawing the screen');
+  // #6354: Homeroom opening one of its own pages to copy for a design.
+  assert.equal(card.botDoingLine(t, { kind: 'capturing', page: 'Homeroom bot page' }), 'Opening Homeroom bot page as it is now');
+  assert.equal(card.botDoingLine(t, { kind: 'capturing' }), 'Opening the page as it is now');
+  const capturing = renderToHtml(createElement(card.BotWorkingCard, { typist: { ...bot, doing: { kind: 'capturing', page: 'Homeroom bot page' } } }));
+  assert.match(capturing, /data-bot-working="capturing"/);
+  assert.match(capturing, />Opening Homeroom bot page as it is now</);
   assert.equal(card.botDoingLine(t, { kind: 'designing' }), 'Changing the design');
   assert.equal(card.botDoingLine(t, { kind: 'drafting' }), 'Drafting the request');
   assert.equal(card.botDoingLine(t, { kind: 'something_new' }), 'Thinking', 'a kind this screen does not know yet');
@@ -955,8 +967,9 @@ test('the card ends the transcript where the answer lands, in Main Chat and in a
   assert.match(screen, /\{rows\}\n\s+\{working \? <BotWorkingCard typist=\{working\} \/> : null\}\n\s+\{\/\* #2387: a message link opened the transcript part-way back\. \*\/\}/);
   assert.match(screen, /const threadWorking = workingBot\(threadTypists\);\n\s+const threadTyping = typingBesides\(threadTypists, threadWorking\);/);
   assert.match(screen, /\}\)\}\n\s+\{threadWorking \? <BotWorkingCard typist=\{threadWorking\} \/> : null\}\n\s+\{privateRoot && privateMine && root \? \(/);
-  // The foot is as #6091 left it: the status line still follows Jump to latest.
-  assert.match(screen, /<\/TranscriptOverlay>\n\s*<ChatStatusLine className="messages-typing">\{typingLine\(t, typing\)\}<\/ChatStatusLine>\n\s*<MessageComposer \/>/);
+  // The foot is as #6091 left it: the status line still follows Jump to
+  // latest, and #6426's Welcome back card sits between it and the box.
+  assert.match(screen, /<\/TranscriptOverlay>\n\s*<ChatStatusLine className="messages-typing">\{typingLine\(t, typing\)\}<\/ChatStatusLine>\n\s*(?:\{mainChat && botDm && conversationId \? <WelcomeBack[^\n]*\/> : null\}\n\s*)?<MessageComposer \/>/);
   assert.match(screen, /<ChatStatusLine className="messages-typing">\{typingLine\(t, threadTyping\)\}<\/ChatStatusLine>\n\s*<MessageComposer threadRootId=\{rootId\} \/>/);
   // An island's first render is the empty transcript: the card waits for the store.
   const card = read('frontend/src/features/messages/bot-working.tsx');

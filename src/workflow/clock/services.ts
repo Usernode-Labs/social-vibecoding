@@ -461,6 +461,19 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/welcome-dm').sweep(pool),
   },
   {
+    // The bring-a-friend nudge: somebody new to a project, after their first
+    // act there, is asked once by Homeroom bot to invite one or two friends.
+    // Each person owed one a target, whose item claims it (once per project,
+    // one a week) and sends it once (services/invite-nudge.js).
+    name: 'invite-nudge', everyMs: 10 * MIN,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/invite-nudge').targets(pool, { limit: MAX_ITEMS }),
+    item: {
+      concurrency: 2,
+      maxAttempts: 3,
+      run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/invite-nudge').nudge(pool, ctx.input.input, ctx.steps()),
+    },
+  },
+  {
     // The email a notice owes when no phone could take its push (an invite
     // moment, a project opening): each notice that owes one
     // (its `mailed_at` NULL, written with it) a target, sent once and marked
@@ -471,6 +484,22 @@ export const JOBS: readonly Job[] = Object.freeze([
       concurrency: 2,
       maxAttempts: 5,
       run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/activity-mail').mailNotice(pool, Number(ctx.input.input?.notificationId), ctx.steps()),
+    },
+  },
+  {
+    // The two reminders to somebody let in from the waitlist who has not
+    // signed in: each row owed one a target, claimed by a compare-and-set
+    // on its stamp and sent once (services/waitlist-reminders.js). Paced
+    // under the reminders' own hourly mail budget; off with Admin ›
+    // Waitlist's Reminders switch.
+    name: 'waitlist-reminders', everyMs: 10 * MIN,
+    run: (_ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/waitlist-reminders').owedTargets(config, pool),
+    item: {
+      concurrency: 2,
+      maxAttempts: 3,
+      run: (ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/waitlist-reminders').remindItem(config, pool, {
+        signupId: Number(ctx.input.input?.signupId), reminder: Number(ctx.input.input?.reminder),
+      }, ctx.steps()),
     },
   },
   {
@@ -889,6 +918,14 @@ export const JOBS: readonly Job[] = Object.freeze([
       leaseMs: 5 * MIN,
       run: (ctx: WorkContext, { pool }: JobDeps) => legacy('services/workshop-themes').sweepApp({ pool, appId: Number(ctx.input.input?.appId) }),
     },
+  },
+  {
+    // #6585: the kind each public project is sorted under when its group
+    // never chose one (services/app-category.js sweep). Twenty-five every ten
+    // minutes fills a fresh directory in about an hour, then reworks only a
+    // description that changed, or a failed answer a day old.
+    name: 'app-category-infer', everyMs: 10 * MIN, newestOnly: true,
+    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/app-category').sweep(pool),
   },
 ] as Job[]);
 

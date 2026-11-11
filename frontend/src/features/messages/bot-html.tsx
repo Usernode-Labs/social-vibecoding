@@ -208,7 +208,8 @@ const BASE_CSS = [
   '.reply>:first-child,.reply>style:first-child+*{margin-top:0}.reply>:last-child{margin-bottom:0}',
   'p{margin:0 0 .6em}',
   'h1,h2,h3,h4,h5,h6{margin:.9em 0 .35em;font-size:1em;font-weight:650;line-height:1.3}',
-  'ul,ol{margin:0 0 .6em;padding-inline-start:1.3em}li{margin:.15em 0}',
+  // A numbered list's markers sit in its indent: room for "10." and on.
+  'ul,ol{margin:0 0 .6em;padding-inline-start:1.3em}ol{padding-inline-start:2em}li{margin:.15em 0}',
   // A link whose address was taken out is words, and looks it.
   'a[href]{color:var(--accent);text-decoration:underline;text-underline-offset:2px}a:not([href]){color:inherit;text-decoration:none}',
   'table{border-collapse:collapse;width:100%;margin:0 0 .6em;font-size:.875em}',
@@ -298,7 +299,13 @@ function tappedIn(frame: HTMLIFrameElement, x: number, y: number): Element | nul
  * until the frame is measured, and in its place when the fragment cannot be
  * cleaned (no DOMPurify on the page, or nothing left to draw).
  */
-export function BotHtmlReply({ html, fallback }: { html: string; fallback: ReactNode }) {
+export function BotHtmlReply({ html, fallback, className = '', onSized }: {
+  html: string;
+  fallback: ReactNode;
+  className?: string;
+  /** Told each height the frame is drawn at, so a box around it (a thread's fold) can measure again. */
+  onSized?: (height: number) => void;
+}) {
   const t = useMessages('messages');
   const clean = useMemo(() => cleanReplyHtml(html), [html]);
   const host = useRef<HTMLDivElement | null>(null);
@@ -361,6 +368,11 @@ export function BotHtmlReply({ html, fallback }: { html: string; fallback: React
     };
   }, [doc, html]);
 
+  // A box around it measures again once the frame has its size.
+  useEffect(() => {
+    if (height > 0) onSized?.(height);
+  }, [height, onSized]);
+
   if (!clean) return <>{fallback}</>;
 
   // A tap on the answer: a link in it opens, a summary toggles. Anything else is the row's.
@@ -398,7 +410,7 @@ export function BotHtmlReply({ html, fallback }: { html: string; fallback: React
   // paints the frame opaque instead of letting the bubble show through.
   const scheme = typeof document !== 'undefined' && document.documentElement.classList.contains('dark') ? 'dark' : 'light';
   return (
-    <div ref={host} className="messages-bot-html relative" data-bot-html={measured ? 'drawn' : 'waiting'} onClick={onClick} onMouseMove={onMove}>
+    <div ref={host} className={className ? `messages-bot-html relative ${className}` : 'messages-bot-html relative'} data-bot-html={measured ? 'drawn' : 'waiting'} onClick={onClick} onMouseMove={onMove}>
       {/* The words, until the frame has its size: never an empty bubble. */}
       {measured ? null : fallback}
       {doc ? (

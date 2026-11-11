@@ -63,6 +63,15 @@ const listText = (parts) => PlatformI18n.listText(parts);
 const NATIVE_INVALIDATION_TIMEOUT_MS = 10000;
 const NATIVE_INVALIDATION_REFRESH_VERSION = 1;
 
+// #18: a plain message belongs to the Messages tab rather than the bell — the
+// Unread tab neither lists nor counts it. rowView prints this as `plainMessage`
+// (using an item's `appId` rather than the raw row's `app_id`), and the
+// controller's app-less clear reads the same rule so it leaves those messages
+// unread (#6579).
+function isPlainMessageNotification(n) {
+  return !!n && ((n.kind === 'conversation_message' && n.appId == null) || n.kind === 'channel_message');
+}
+
 const Notifications = {
   // #1191 slice 6: the drawer's two innerHTML hosts are React now. This module
   // still owns the fetches, the mark-read discipline, the click routing and
@@ -672,6 +681,12 @@ const Notifications = {
     }
   },
 
+  // #6527: opening the bell no longer marks anything read. The sheet only
+  // refreshes on open; reading is explicit (markAllRead, clearNotification,
+  // markOlderRead, opening a row). The server's narrow-clear option that
+  // opening used to send (#6498) remains on the route, though nothing in the
+  // app sends it now.
+
   // #5929 (item 13): mark every unread notification older than `days` whole
   // days read — the Unread tab's "Mark everything older than a week as
   // read", which lets a 99+ backlog go while this week's news stays unread.
@@ -792,6 +807,50 @@ const Notifications = {
       return true;
     } catch (err) {
       console.warn('[notifications] markAppRead failed', err);
+      failed();
+      return false;
+    }
+  },
+
+  // #6579: mark every unread notification that belongs to NO project read —
+  // the Unread tab's "Across Homeroom" heading's Mark read. The route's
+  // `{ no_app: true }` branch (markReadForNoApp) clears every such unread row
+  // the server has, including ones the sheet has not paged in, while every
+  // project's rows and the plain messages stay unread. Same discipline as
+  // markAppRead: nothing flips until the server answers, and a failure keeps
+  // every mark and says so with a toast.
+  async markNoAppRead() {
+    const inHand = (n) => !!n && n.appId == null && !n.readAt && !isPlainMessageNotification(n);
+    // Nothing in hand to clear (another tab or a refresh got there first):
+    // no request, and the caller's button has nothing to wait on.
+    if (!Notifications.items.some(inHand)) return false;
+    const failed = () => window.PlatformUI?.toast?.(t('notifications:toast.markAppFailed'));
+    try {
+      const res = await fetch('/api/notifications/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ no_app: true }),
+      });
+      if (!res.ok) { failed(); return false; }
+      const data = await res.json();
+      Notifications.unread = data.unread || 0;
+      Notifications.messageUnread = Number(data.messageUnread) || 0;
+      // Flip only what is still unread: a refresh that landed while the
+      // request was running replaced `items` with the server's own rows,
+      // which already say what is true.
+      const now = new Date().toISOString();
+      for (const n of Notifications.items) {
+        if (inHand(n)) n.readAt = now;
+      }
+      Notifications._reconcileCompletionTitle();
+      Notifications._renderBadge();
+      Notifications._renderList();
+      // #449's reason, for the app-less group: an open group chat may be
+      // drawing dots for the notifications that were just cleared.
+      window.GroupChat?.reconcileDotsFromNotifications?.();
+      return true;
+    } catch (err) {
+      console.warn('[notifications] markNoAppRead failed', err);
       failed();
       return false;
     }
@@ -1046,12 +1105,16 @@ const Notifications = {
   // delegated card click) through `window.Notifications`. Skipped when
   // nothing is unread, so the common click costs no request; the server
   // scopes the clear to pr_proposed rows for this one session.
+  // #6441: opening a change's page (which for most changes is its request's
+  // page) or its before-and-after also answers its "ready to try", so the
+  // same call clears that too.
   async markProposalSeen(sessionId) {
     const id = Number(sessionId);
     if (!Number.isSafeInteger(id) || id <= 0 || Notifications.unread === 0) return;
     const now = new Date().toISOString();
     for (const n of Notifications.items) {
-      if (n && !n.readAt && n.kind === 'pr_proposed' && Number(n.sessionId) === id) n.readAt = now;
+      if (n && !n.readAt && (n.kind === 'pr_proposed' || n.kind === 'build_ready')
+        && Number(n.sessionId) === id) n.readAt = now;
     }
     try {
       const res = await fetch('/api/notifications/read', {
@@ -1079,6 +1142,12 @@ const Notifications = {
     if (!item) return false;
     if ((key === 'friend_accept' || key === 'friend_decline') && item.kind === 'friend_request') {
       return Notifications._answerFriendRequest(item, key === 'friend_accept');
+    }
+    // The leaked-link guard's rows: turn the link off, or open a paused one
+    // again, right on the row.
+    if ((key === 'invite_turn_off' || key === 'invite_reopen')
+      && (item.kind === 'invite_link_busy' || item.kind === 'invite_link_paused')) {
+      return Notifications._actOnInviteLink(item, key === 'invite_reopen');
     }
     // #3227: the kudos row's button opens the Kudos leaderboard, where the
     // change it thanks is ranked; the row itself still opens the change.
@@ -1148,6 +1217,40 @@ const Notifications = {
     } catch (err) {
       console.warn('[notifications] friend answer failed', err);
       toast(t('notifications:friend.answerFailed'));
+      return false;
+    }
+  },
+
+  // The leaked-link guard's buttons (src/services/community-invites.js
+  // GUARD): Turn off this link (DELETE /api/invite-links/:id, as the invite
+  // pane's Turn off) or Open it again (POST /api/invite-links/:id/reopen).
+  // The row is read once acted on, and stops offering what no longer
+  // applies; the toast is the reader's own confirmation.
+  async _actOnInviteLink(item, reopen) {
+    const guard = parseInviteGuardDetail(item.detail);
+    if (!guard || !(guard.inviteId > 0)) return false;
+    const toast = (message, error) => {
+      if (typeof PlatformUI !== 'undefined' && PlatformUI.toast) PlatformUI.toast(message, error ? { error: true } : undefined);
+    };
+    try {
+      const res = await fetch(
+        reopen ? `/api/invite-links/${guard.inviteId}/reopen` : `/api/invite-links/${guard.inviteId}`,
+        reopen
+          ? { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' } }
+          : { method: 'DELETE', credentials: 'same-origin', headers: { Accept: 'application/json' } },
+      );
+      if (!res.ok) {
+        toast(t('notifications:row.inviteGuard.failed'), true);
+        return false;
+      }
+      item.inviteLinkState = reopen ? 'live' : 'ended';
+      Notifications._markOneRead(item.id);
+      Notifications._renderList();
+      toast(reopen ? t('notifications:row.inviteGuard.reopened') : t('notifications:row.inviteGuard.turnedOff'));
+      return true;
+    } catch (err) {
+      console.warn('[notifications] invite link action failed', err);
+      toast(t('notifications:row.inviteGuard.failed'), true);
       return false;
     }
   },
@@ -1378,6 +1481,14 @@ const Notifications = {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) return App.openAppTab(item.appSlug, 'app');
       window.location.hash = `#app/${encodeURIComponent(item.appSlug)}`;
+      return;
+    }
+    // #6371: the one weekly digest covers every project and names none, so
+    // its row (no app) opens the This week page. An older per-project row
+    // still falls through with its app and opens that project's discussion.
+    if (item.kind === 'weekly_digest' && !item.appSlug && /^w:/.test(String(item.detail || ''))) {
+      Notifications._dismissSheetForNav();
+      window.location.hash = '#week';
       return;
     }
     if (item.kind === 'vote_digest' && !item.appSlug) {
@@ -2837,6 +2948,15 @@ function botMomentLine(detail, message) {
   return { label, subject, meta, needsYou, ...(noteId ? { note: t(noteId) } : {}) };
 }
 
+// #6494: a storage token carries MiB used and MiB of cap. MB below 1 GiB,
+// else GB with at most one decimal ("1.6 GB", "3 GB").
+function storageSizeText(mib) {
+  const n = Number(mib);
+  if (!Number.isFinite(n) || n < 0) return '';
+  if (n < 1024) return `${Math.round(n)} MB`;
+  return `${(n / 1024).toFixed(1).replace(/\.0$/, '')} GB`;
+}
+
 // A whole message with one emphasised part, as a row's segments: the catalog
 // text is "<0>12 of 50 apps in use.</0> New apps are refused…", and what is
 // inside the tag is the strong segment. A parameter is filled in after the
@@ -2930,13 +3050,24 @@ function rowView(n) {
   return tone ? { ...view, tone } : view;
 }
 
+/**
+ * The leaked-link guard's `detail` ("<inviteId>:<joins>",
+ * src/services/invite-activity.js noteGuard) as { inviteId, joins }, or null.
+ */
+function parseInviteGuardDetail(detail) {
+  const m = /^(\d{1,9}):(\d{1,9})$/.exec(String(detail || ''));
+  return m ? { inviteId: Number(m[1]), joins: Number(m[2]) } : null;
+}
+
 function rowWords(n) {
-  // #103: keep the violet left line on every row, read or unread, so a
-  // notification never "loses its line" when read. Only the background
-  // tint stays unread-conditional (the unread dot below is the other cue).
+  // #6506: the subject line's weight and ink. An unread notice is bold in the
+  // strong ink; a read one is regular and softer, so a list holding both
+  // tells them apart at a glance. The unread dot in ./notifications-sheet.tsx
+  // is the other cue; the sheet chooses by `unread` so a story card, whose
+  // view is rebuilt, reads its own state.
   const unreadCls = n.readAt
-    ? 'border-s-2 border-violet-500'
-    : 'bg-violet-500/5 border-s-2 border-violet-500';
+    ? 'font-normal text-zinc-700 dark:text-zinc-300'
+    : 'font-semibold text-zinc-900 dark:text-zinc-100';
   // WHERE this came from, for the meta line — and EMPTY when there is no
   // app, not the literal string 'app'. Plenty of kinds have no app at all (a
   // conversation, an account-level key, an agent question the platform cannot
@@ -2955,7 +3086,7 @@ function rowWords(n) {
     // tab neither lists nor counts it, so it says what the badge says.
     // #5580: the Homeroom bot's reply about a project is the exception: it
     // carries that project, files under it on Unread, and the bell counts it.
-    plainMessage: (n.kind === 'conversation_message' && n.appId == null) || n.kind === 'channel_message',
+    plainMessage: isPlainMessageNotification(n),
     // #4769: whether the user has bookmarked this row — the feed row's
     // bookmark button and the pinned section both read it. A save is not a
     // read state; the two flags never derive from each other.
@@ -3476,7 +3607,34 @@ function rowWords(n) {
   // #1688: the Friday card. `detail` is "<merged>:<open>" — what went live
   // this week and what is waiting on votes. This is the whole card now: a
   // channel carries no activity (services/ws.js sendSystemMessage).
+  //
+  // #6371: one row now covers every project, with `w:<projects>:<merged>:<open>`
+  // (services/weekly-digest.js notifyPeople). Its label says the digest is
+  // ready and its subject adds up the week; tapping it opens This week. An
+  // older per-project row keeps its wording and still opens its project.
   if (n.kind === 'weekly_digest') {
+    const week = /^w:(\d+):(\d+):(\d+)$/.exec(String(n.detail || ''));
+    if (week) {
+      const merged = Number(week[2]);
+      const open = Number(week[3]);
+      const shipped = merged === 0
+        ? t('notifications:row.weekly.nothing')
+        : t('notifications:row.weekly.wentLive', { count: merged });
+      const waiting = open
+        ? t('notifications:row.weekly.waiting', { count: open })
+        : '';
+      return {
+        ...base,
+        // The shell's own newspaper glyph (components/ui/icons), drawn by
+        // the sheet's tile: an icon is a line icon, never an emoji.
+        icon: null,
+        lineIcon: 'newspaper',
+        ...headline(
+          t('notifications:row.weekly.ready'),
+          waiting ? t('notifications:row.factPair', { first: shipped, second: waiting }) : shipped,
+        ),
+      };
+    }
     const counts = /^(\d+):(\d+)$/.exec(String(n.detail || ''));
     const merged = counts ? Number(counts[1]) : 0;
     const open = counts ? Number(counts[2]) : 0;
@@ -3537,6 +3695,23 @@ function rowWords(n) {
     // the app. The app name leads the line on purpose: this row is only
     // ever about one app, and "has used most of its storage" with nothing
     // in front of it reads as the platform talking about itself.
+    // #6494: the early and warning tokens carry the figures, so the row says
+    // how full the database is ("1.6 GB of 3 GB") instead of only "most of".
+    // A bare token from a row written before this change keeps its old words.
+    const storage = /^storage_(early|warn):(\d{1,9}):(\d{1,9})$/.exec(String(n.detail || ''));
+    if (storage) {
+      const key = storage[1] === 'early' ? 'early' : 'warnSized';
+      const values = { used: storageSizeText(Number(storage[2])), limit: storageSizeText(Number(storage[3])) };
+      return {
+        ...base,
+        wrap: true,
+        icon: '\u{1F4BE}',
+        label: t('notifications:row.health.storage.label'),
+        segments: n.appName
+          ? messageSegments(`notifications:row.health.storage.${key}`, { ...values, app: n.appName })
+          : messageSegments(`notifications:row.health.storage.${key}Unnamed`, values),
+      };
+    }
     if (n.detail === 'storage_warn') {
       return {
         ...base,
@@ -3801,6 +3976,33 @@ function rowWords(n) {
         : headline(asked ? t('notifications:row.inviteLink.asked')
           : (count > 1 ? t('notifications:row.inviteLink.saidHiWithOthers', { count: count - 1 })
             : t('notifications:row.inviteLink.saidHi')), messageWords(n.messageContent))),
+    };
+  }
+
+  // The leaked-link guard (src/services/community-invites.js GUARD): one of
+  // the reader's invite links brought in a lot of people today, or paused
+  // itself. `detail` is "<inviteId>:<joins>"; `inviteLinkState` is where the
+  // link stands now, so a button shows only while it still does something:
+  // Turn off on a link that works or is paused, Open it again on a paused one.
+  if (n.kind === 'invite_link_busy' || n.kind === 'invite_link_paused') {
+    const guard = parseInviteGuardDetail(n.detail);
+    const count = guard ? guard.joins : 0;
+    const project = n.appName || null;
+    const paused = n.kind === 'invite_link_paused';
+    const label = paused
+      ? (project ? t('notifications:row.inviteGuard.paused', { project, count }) : t('notifications:row.inviteGuard.pausedPlain', { count }))
+      : (project ? t('notifications:row.inviteGuard.busy', { project, count }) : t('notifications:row.inviteGuard.busyPlain', { count }));
+    const state = guard && guard.inviteId > 0 ? n.inviteLinkState : null;
+    const actions = [];
+    if (state === 'paused') actions.push({ key: 'invite_reopen', label: t('notifications:row.inviteGuard.reopen'), primary: true });
+    if (state === 'live' || state === 'paused') actions.push({ key: 'invite_turn_off', label: t('notifications:row.inviteGuard.turnOff') });
+    return {
+      ...base,
+      wrap: true,
+      icon: paused ? '\u23F8\uFE0F' : '\u{1F517}',
+      by: null,
+      ...headline(label, null),
+      ...(actions.length ? { actions } : {}),
     };
   }
 

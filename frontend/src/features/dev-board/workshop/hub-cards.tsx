@@ -6,10 +6,10 @@
  * for and who is around this week), top to bottom:
  *
  *   FOR YOU, one card of doors, a row each, each opening its place: Needs
- *   you (the first vote you owe "and 3 more", "4 to vote"), Your work (the
- *   first of yours in flight, "1 in progress", or "No work in progress.")
- *   and the Discussion (#general and its last line, or "No messages yet.").
- *   ForYouCard.
+ *   you (the first vote you owe "and 3 more", "4 to vote"), the Workshop
+ *   (what happened, and every item; 6 Nov 2026: it took Your work's place
+ *   there) and the Discussion (#general and its last line, or "No messages
+ *   yet."). ForYouCard.
  *   RECENTLY LIVE, the last three changes that went live, each as its after
  *   shot, its title, and who made it and when; before any has, the app
  *   itself and since when it has been live. RecentlyLive.
@@ -41,9 +41,9 @@
  * nothing (`alone` in NothingToVote). For a while an empty Your work and
  * the Discussion left a new project's hub too, and a ready-made app's hub
  * then looked nothing like an older project's (15 Oct 2026). So For you is
- * the same card from the first day: Your work and the Discussion always,
- * each saying so when it is empty, and Needs you only when something needs
- * you.
+ * the same card from the first day: the Workshop and the Discussion always,
+ * the Discussion saying so when it is empty, and Needs you only when
+ * something needs you.
  *
  * ── The channel lives on the page ──────────────────────────────────────
  *
@@ -86,7 +86,6 @@ import { isNeedsSeen, needsRowKey, useNeedsSeen } from '../../workshop/needs-see
 import { reloadCommunity, type CommunityPayload, type HubFirstVersion } from './community-card';
 import { channelPlace, liveTopics, placeName, type PlaceKey } from './places';
 import { useHubDismissed, type HubCard } from './hub-dismissed';
-import { YourWorkRow } from './your-work';
 import {
   askToFit, goTo, upstreamAction, useUpstream, useVersionsSummary,
   type UpstreamState, type VersionsSummary,
@@ -545,15 +544,43 @@ const OWED_TILE = 'bg-violet-50 text-violet-700 dark:bg-violet-500/15 dark:text-
  * have not seen. The row stays while any vote is owed, seen or not: with
  * nothing new it says how many skipped ones are still open instead.
  */
-function NeedsRow({ queue, slug, canPost, onOpen }: {
+function NeedsRow({ queue, slug, canPost, onOpen, outsider = false }: {
   queue: DevWorkshopView['queue'];
   slug: string;
   canPost: boolean;
   onOpen: () => void;
+  /**
+   * Signed in but not in the community (the hand-off of 11 Nov 2026): the
+   * votes are not theirs to cast yet, so the door is "Up for a vote · Join
+   * to vote on these." with how many as a light pill, not "Needs you".
+   */
+  outsider?: boolean;
 }): ReactNode {
   const t = useMessages('project');
   useNeedsSeen();
   const votes = queue.filter((row) => row.kind === 'vote');
+  if (outsider) {
+    return (
+      <div className="dev-ws-foryou-item" data-ws-hub-needs="" data-ws-hub-needs-votes={String(votes.length)} data-ws-hub-needs-outsider="">
+        <ListRow
+          as="button"
+          inset="none"
+          className="dev-ws-foryou-row"
+          data-ws-hub-needs-open=""
+          onClick={onOpen}
+          leading={<IconTile size="xs" className={OWED_TILE}><BallotIcon aria-hidden="true" /></IconTile>}
+          title={t('project:hub.needs.upForVote')}
+          subtitle={<span data-ws-hub-needs-join="">{t('project:hub.needs.joinToVote')}</span>}
+          trailing={(
+            <span className="dev-ws-foryou-pill dev-ws-foryou-pill-light" data-ws-hub-needs-count="">
+              <span aria-hidden="true">{votes.length}</span>
+              <span className="sr-only">{t('project:hub.needs.upForVoteCount', { count: votes.length })}</span>
+            </span>
+          )}
+        />
+      </div>
+    );
+  }
   const fresh = votes.filter((row) => !isNeedsSeen(slug, needsRowKey(row)));
   const skipped = votes.length - fresh.length;
   const first = fresh.find((row) => row.t === 'card') || null;
@@ -587,12 +614,12 @@ function NeedsRow({ queue, slug, canPost, onOpen }: {
 }
 
 /**
- * THE WORKSHOP, on a phone (3 Nov 2026): the Hub is the way to the
- * community's places there, so the Workshop has a row of its own, named for
- * it. 5 Nov 2026: it was the Your work row as well, opening the Workshop
- * where your work was listed; your work is the Homeroom bot tab's now (the
- * Your work row beside it, ./your-work.tsx), and this row is only the door
- * to the place: what happened here, and All items.
+ * THE WORKSHOP, For you's door to the place: what happened here, and All
+ * items. It was the phone's row alone (3 Nov 2026), with Your work beside it
+ * from 5 Nov 2026; on 6 Nov 2026 it took Your work's place at every width,
+ * so the Hub's rows are the places it leads to. Your own work is the Homeroom
+ * bot tab's, and its card is on the Workshop tab (./your-work.tsx,
+ * YourWorkCard).
  */
 function WorkshopRow({ onOpen }: { onOpen: () => void }): ReactNode {
   const t = useMessages('project');
@@ -619,9 +646,11 @@ function WorkshopRow({ onOpen }: { onOpen: () => void }): ReactNode {
  * 2026): the room is there from the first day, for the people an invite
  * brings. No row without a channel this viewer may talk in.
  */
-function DiscussionRow({ data, onOpen }: {
+function DiscussionRow({ data, onOpen, outsider = false }: {
   data: CommunityPayload | null;
   onOpen: () => void;
+  /** Not in the community: nothing in the room is theirs to catch up on, so no unread pill. */
+  outsider?: boolean;
 }): ReactNode {
   const t = useMessages('project');
   const channel = data?.channel;
@@ -632,7 +661,7 @@ function DiscussionRow({ data, onOpen }: {
   if (!recent.length && channel.last_at) recent.push({ content: channel.last_message || '', by: channel.last_by, at: channel.last_at });
   const words = (m: { content: string | null }) => String(m.content || '').replace(/\s+/g, ' ').trim();
   const last = [...recent].reverse().find((m) => words(m)) || recent[recent.length - 1] || null;
-  const unread = Number(channel.unread_count) || 0;
+  const unread = outsider ? 0 : Number(channel.unread_count) || 0;
   const line = last ? words(last) : '';
   const ago = last && last.at ? agoStamp(last.at).text : '';
   const sub = last ? (
@@ -688,16 +717,20 @@ function DiscussionRow({ data, onOpen }: {
 
 /**
  * FOR YOU: what on this project is the viewer's, one card of doors under its
- * label — Needs you, Your work, the Discussion — each row a door to its
+ * label — Needs you, the Workshop, the Discussion — each row a door to its
  * place, at most one pill on it, 15 over 13. The same card from a project's
- * first day (15 Oct 2026): Your work and the Discussion are always there,
- * saying so when they are empty, and Needs you only when a vote waits on
- * you. With no vote owed, Needs you is the quiet line that says so
+ * first day (15 Oct 2026): the Workshop and the Discussion are always there,
+ * the Discussion saying so when it is empty, and Needs you only when a vote
+ * waits on you. With no vote owed, Needs you is the quiet line that says so
  * (NothingToVote, #3408), or nothing on a project nobody else is in.
  * Nothing at all when no row has anything to say.
+ *
+ * 6 Nov 2026: the Workshop's row is drawn at every width, in the place Your
+ * work had, and opens the Workshop (the phone's row until then). Your work
+ * is the Homeroom bot tab's, said on the Workshop tab's own card.
  */
 export function ForYouCard({
-  slug, queue, unclaimed, mine, alone, data, canPost, onNeeds, onWork, onDiscussion, places = false,
+  slug, queue, unclaimed, mine, alone, data, canPost, onNeeds, onWork, onDiscussion,
 }: {
   slug: string;
   queue: DevWorkshopView['queue'];
@@ -713,31 +746,28 @@ export function ForYouCard({
   onNeeds: () => void;
   onWork: () => void;
   onDiscussion: () => void;
-  /** A phone (3 Nov 2026): the Hub is the way to the community's places, so
-      the Workshop's row is always drawn, and named for the place it opens. */
-  places?: boolean;
 }): ReactNode {
   const t = useMessages('project');
   const headId = useId();
   const owes = owesVote(queue);
   const claims = Math.max(0, Number(unclaimed) || 0);
   const needs = owes || !alone || claims > 0;
-  // Your work: anyone signed in has some, or none, to be told about.
+  // The Workshop's row is for anyone signed in, whose work there may be, or
+  // not; a visitor has no work to be told about.
   const work = !!mine?.viewer;
   const talk = !!(data && data.channel);
-  if (!needs && !work && !places && !talk) return null;
+  // Signed in and not in it: the votes are the group's, the room theirs to read.
+  const outsider = !!data && !data.is_member;
+  if (!needs && !work && !talk) return null;
   return (
     <section className="dev-ws-hub-section" data-ws-hub-for-you="" aria-labelledby={headId}>
       <SectionHeader id={headId} className={HUB_HEAD}>{t('project:hub.forYou.title')}</SectionHeader>
       <div className="dev-ws-strip dev-ws-foryou">
         {owes
-          ? <NeedsRow queue={queue} slug={slug} canPost={canPost} onOpen={onNeeds} />
+          ? <NeedsRow queue={queue} slug={slug} canPost={canPost} onOpen={onNeeds} outsider={outsider} />
           : <NothingToVote unclaimed={claims} onOpen={onWork} alone={alone} />}
-        {work ? (
-          <YourWorkRow slug={slug} name={data?.name || slug} className="dev-ws-foryou-row" data-ws-mine-card="" />
-        ) : null}
-        {places ? <WorkshopRow onOpen={onWork} /> : null}
-        <DiscussionRow data={data} onOpen={onDiscussion} />
+        {work ? <WorkshopRow onOpen={onWork} /> : null}
+        <DiscussionRow data={data} onOpen={onDiscussion} outsider={outsider} />
       </div>
     </section>
   );
@@ -970,10 +1000,16 @@ function openApp(slug: string): void {
  * version Homeroom bot is still building (the page leaves `own` out), is
  * not live yet.
  */
-export function RecentlyLive({ slug, rows, onAll, own = null, ident = null }: {
+export function RecentlyLive({ slug, rows, onAll, own = null, ident = null, month = 0 }: {
   slug: string;
   rows: DevWorkshopView['recentLive'];
   onAll: () => void;
+  /**
+   * How many changes went live in the last thirty days (GET .../community
+   * `activity.shipped_month`): the section ends "36 more live this month",
+   * those less the ones it shows, opening the Workshop. Nothing at zero.
+   */
+  month?: number | null;
   /** The app itself, drawn while `rows` is empty. */
   own?: RecentOwn | null;
   /**
@@ -986,6 +1022,7 @@ export function RecentlyLive({ slug, rows, onAll, own = null, ident = null }: {
   const headId = useId();
   const list = (rows || []).slice(0, RECENT_LIVE_SHOWN);
   const self = !list.length && own && own.since ? liveSinceLine(own.since) : '';
+  const more = list.length ? Math.max(0, (Number(month) || 0) - list.length) : 0;
   if (!slug || (!list.length && !self)) return null;
   const app = own ? { slug, name: own.name, icon_url: own.iconUrl || null, icon_emoji: own.iconEmoji || null } : null;
   const tile = ident ? { slug, name: ident.name, icon_url: ident.iconUrl || null, icon_emoji: ident.iconEmoji || null } : null;
@@ -1054,6 +1091,13 @@ export function RecentlyLive({ slug, rows, onAll, own = null, ident = null }: {
             );
           })}
         </ul>
+        {more ? (
+          <button type="button" className="dev-ws-recent-more" data-ws-recent-more={String(more)} onClick={onAll}>
+            <span className="dev-ws-recent-more-n" aria-hidden="true">{t('project:hub.recent.morePill', { count: more })}</span>
+            <span className="dev-ws-recent-more-words">{t('project:hub.recent.moreThisMonth', { count: more })}</span>
+            <ChevronRightIcon className="w-4 h-4" aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
     </section>
   );

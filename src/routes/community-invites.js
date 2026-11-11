@@ -11,6 +11,8 @@
  *                                                  for someone who manages
  *                                                  the project)
  *   DELETE /api/invite-links/:id                   turn one off
+ *   POST   /api/invite-links/:id/reopen            open one the leaked-link
+ *                                                  guard paused again
  *   POST   /api/invite-links/:id/shared            it went out: copied or
  *                                                  shared from the pane
  *   GET    /api/public/invites/:token              the preview, signed out
@@ -39,6 +41,7 @@ const path = require('path');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const inviteActivity = require('../services/invite-activity');
+const arrivalSource = require('../services/arrival-source');
 const journeyEvents = require('../services/journey-events');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
@@ -160,6 +163,7 @@ function communityInviteRoutes(config) {
         manages: listed.manages,
         canCreate,
         grant: invites.grantFor(app),
+        // No end and no limit (NO_LIMIT) unless the maker picks one.
         defaults: { days: invites.DEFAULT_DAYS, maxUses: invites.DEFAULT_USES },
         limits: invites.LIMITS,
         // WP-D: 0 for days or maxUses asks for no limit (until turned off).
@@ -181,6 +185,20 @@ function communityInviteRoutes(config) {
       return res.json({ ok: true });
     } catch (err) {
       log.error('invites', 'Marking an invite link sent failed', { id: req.params.id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The leaked-link guard paused it; its maker (or whoever may turn it off)
+  // opens it again, from the invite pane or the notice that said so.
+  router.post('/api/invite-links/:id/reopen', drainGuard, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      const done = await invites.reopenInvite(pool, { inviteId: req.params.id, user: req.user });
+      if (!done.ok) return res.status(done.status).json({ error: done.error });
+      return res.json({ ok: true, reopened: done.reopened });
+    } catch (err) {
+      log.error('invites', 'Opening an invite link again failed', { id: req.params.id, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -207,7 +225,8 @@ function communityInviteRoutes(config) {
   const countOpen = (req, res, token, viewerId = null) => {
     const seenBefore = inviteActivity.countedBefore(req, token);
     const browser = inviteActivity.ensureBrowser(req, res);
-    void inviteActivity.noteOpened(pool, { token, viewerId, browser, seenBefore });
+    const source = inviteActivity.sourceFrom(req);
+    void inviteActivity.noteOpened(pool, { token, viewerId, browser, seenBefore, source });
   };
 
   // Anonymous: under /api/public/, so authMiddleware never resolves a user
@@ -383,7 +402,14 @@ function communityInviteRoutes(config) {
       if (result.reason === 'username_required') {
         return res.status(409).json({ ...require('../services/usernames').USERNAME_REQUIRED, reason: result.reason });
       }
-      if (!result.ok) return res.status(result.status).json({ error: 'This invite link is not active.', reason: result.reason });
+      if (!result.ok) {
+        return res.status(result.status).json({
+          error: result.reason === 'paused'
+            ? 'This invite link is paused. Ask the person who shared it for a new one.'
+            : 'This invite link is not active.',
+          reason: result.reason,
+        });
+      }
       // In the community now, so its challenge counts now (#3564). A queued
       // person is not in it yet; the schedule counts them once let in.
       if (result.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
@@ -427,6 +453,17 @@ function communityInviteRoutes(config) {
         // The page's two reads (the preview and, signed in, the standing)
         // may start together: both carry this browser, so it counts once.
         inviteActivity.ensureBrowser(req, res);
+        // Where they came from (#6540): the referring site's host only, and
+        // the link's own short tag. A reload, or a link inside Homeroom,
+        // names this same host and leaves the first visit's source alone.
+        const referrerHost = arrivalSource.hostOf(req.get('referer'));
+        const ownHost = arrivalSource.hostOf(req.headers.host || requestOrigin(req));
+        if (!referrerHost || referrerHost !== ownHost) {
+          inviteActivity.setSourceCookie(req, res, {
+            referrerHost: referrerHost || 'none',
+            via: arrivalSource.cleanVia(req.query.via),
+          });
+        }
       }
       const html = await fs.promises.readFile(INDEX_PATH, 'utf8');
       res.setHeader('Cache-Control', 'no-store');

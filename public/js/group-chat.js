@@ -352,7 +352,11 @@ const GroupChat = {
       return;
     }
     // The same channel: the cards it draws by time may have moved.
-    if (here && channel) GroupChat._channel = channel;
+    if (here && channel) {
+      GroupChat._channel = channel;
+      // #6538: the channel it now shows is the one whose bot line it draws.
+      GroupChat._syncBotStatus();
+    }
     if (GroupChat.appSlug === appSlug && liveWs) {
       GroupChat.render();
       // #4177: a catch-up still owed (the last one failed) runs on the way in;
@@ -381,6 +385,7 @@ const GroupChat = {
     GroupChat._historyLoad = null;
     GroupChat._resetStreamCatchUp();
     GroupChat._channel = channel || null;
+    GroupChat._syncBotStatus();
     GroupChat.messages = [];
     GroupChat.oldestMessageId = null;
     GroupChat.hasMore = true;
@@ -410,6 +415,7 @@ const GroupChat = {
     GroupChat.appSlug = appSlug;
     // #4417 follow-up: the channel the general stream is (null: the app's own).
     GroupChat._channel = channel || null;
+    GroupChat._syncBotStatus();
     GroupChat.messages = [];
     GroupChat.threads = new Map();
     GroupChat._member = null;
@@ -893,12 +899,22 @@ const GroupChat = {
   _handleThreadIncoming(msg) {
     const { type, ref } = msg.thread;
     const st = GroupChat._threadState(type, ref);
-    // #6228: the bot's own answer is the end of its reply line.
-    if (type === 'issue' && msg.username === 'homeroom_bot') {
-      const key = GroupChat.threadKey('issue', ref);
-      clearTimeout(GroupChat._botStatusTimers.get(key));
-      GroupChat._botStatusTimers.delete(key);
-      GroupChat._botStatus.delete(key);
+    // #6228/#6538: the bot's own answer is the end of its reply line, in any
+    // kind of thread. A channel's answer lands in the reply thread under the
+    // message, so it ends the line that channel showed for that message too.
+    if (msg.username === 'homeroom_bot') {
+      const clearKey = (key) => {
+        clearTimeout(GroupChat._botStatusTimers.get(key));
+        GroupChat._botStatusTimers.delete(key);
+        GroupChat._botStatus.delete(key);
+      };
+      clearKey(GroupChat.threadKey(type, type === 'chat' ? '' : ref));
+      if (type === 'message') {
+        for (const [key, entry] of [...GroupChat._botStatus]) {
+          const channelKey = key.startsWith('chat:') || key.startsWith('category:');
+          if (channelKey && entry.replyId != null && String(entry.replyId) === String(ref)) clearKey(key);
+        }
+      }
       GroupChat._syncBotStatus();
     }
     // Already in hand from a catch-up read (#4177).
@@ -935,7 +951,7 @@ const GroupChat = {
           return;
         }
         GroupChat._react()?.appendTranscriptMessage(
-          GroupChat._messageView(msg, { language: GroupChat.activeThread && GroupChat.activeThread.language }),
+          GroupChat._messageView(msg, { language: GroupChat.activeThread && GroupChat.activeThread.language, number: GroupChat.activeThread && GroupChat.activeThread.ref }),
           'thread',
         );
         if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
@@ -963,14 +979,16 @@ const GroupChat = {
     }, 3000);
   },
 
-  // #6228: a `bot_status` frame from the server: what Homeroom bot is doing
-  // with the newest reply on one request thread. Kept by thread key so a
-  // thread reopened while the bot still reads shows it, and shown only by
-  // the thread on screen.
+  // #6228/#6538: a `bot_status` frame from the server: what Homeroom bot is
+  // doing with the newest reply in one place (`thread: { type, ref }`, its
+  // ref null for the main channel). Kept by thread key so a place reopened
+  // while the bot still reads shows it, and shown only by the thread (or the
+  // channel) on screen.
   _applyBotStatus(msg) {
-    if (!msg || !msg.thread || msg.thread.type !== 'issue') return;
-    const ref = Number(msg.thread.ref);
-    const key = GroupChat.threadKey('issue', ref);
+    if (!msg || !msg.thread || !msg.thread.type) return;
+    const type = msg.thread.type;
+    const ref = type === 'chat' ? null : Number(msg.thread.ref);
+    const key = GroupChat.threadKey(type, ref == null ? '' : ref);
     clearTimeout(GroupChat._botStatusTimers.get(key));
     GroupChat._botStatusTimers.delete(key);
     const authorId = msg.authorId == null ? null : Number(msg.authorId);
@@ -978,6 +996,7 @@ const GroupChat = {
       GroupChat._botStatus.set(key, {
         state: msg.status,
         mine: authorId != null && Number(App.user?.id) === authorId,
+        replyId: msg.replyId == null ? null : Number(msg.replyId),
       });
       // "Nothing to add" fades, as the typing line does.
       if (msg.status === 'quiet') {
@@ -991,8 +1010,8 @@ const GroupChat = {
       GroupChat._botStatus.delete(key);
     }
     GroupChat._syncBotStatus();
-    // The request's page re-reads its track (and the Homeroom bot page its
-    // row) from this same frame.
+    // A request's page re-reads its track (and the Homeroom bot page its
+    // row) from this same frame. Only a request has one.
     const a = GroupChat.activeThread;
     if (a && a.type === 'issue' && Number(a.ref) === ref && a.language === 'request'
       && typeof AppView !== 'undefined' && AppView.refreshDevData) {
@@ -1000,11 +1019,23 @@ const GroupChat = {
     }
   },
 
-  // What the mounted thread's status slot should say about the bot, or null.
+  // What the mounted thread's status slot should say about the bot, and the
+  // general pane's for the channel it shows, or null for either.
   _syncBotStatus() {
     const a = GroupChat.activeThread;
-    const kept = a && a.type === 'issue'
-      ? GroupChat._botStatus.get(GroupChat.threadKey('issue', a.ref)) || null
+    // #6538: the channel's own line, drawn under the channel while it is the
+    // one open (as people's typing is).
+    const channelKey = GroupChat._channel
+      ? GroupChat.threadKey('category', Number(GroupChat._channel.ref))
+      : GroupChat.threadKey('chat', '');
+    const shown = GroupChat._botStatus.get(channelKey) || null;
+    GroupChat._publishComposer('general', {
+      bot: shown ? { state: shown.state, mine: shown.mine === true } : null,
+    });
+    const kept = a && a.type
+      ? GroupChat._botStatus.get(GroupChat.threadKey(
+        a.type, a.type === 'chat' || a.ref == null ? '' : Number(a.ref),
+      )) || null
       : null;
     GroupChat._publishComposer('thread', {
       bot: kept ? { state: kept.state, mine: kept.mine === true } : null,
@@ -1249,6 +1280,12 @@ const GroupChat = {
         : (opts && opts.language === 'request' && meta.aboutChange && Number(meta.aboutChange.sessionId))
           ? { changeOf: { sessionId: Number(meta.aboutChange.sessionId) } }
           : {}),
+      // #6421: on a request's page, a message written on another request of
+      // the merged thread carries that request's number, drawn as "on #N".
+      ...(opts && opts.language === 'request' && !changeRow && scopeType === 'issue' && opts.number != null
+        && Number(msg.thread_ref ?? (msg.thread && msg.thread.ref)) !== Number(opts.number)
+        ? { requestOf: { number: Number(msg.thread_ref ?? (msg.thread && msg.thread.ref)) || null } }
+        : {}),
       senderId: Number(msg.userId ?? msg.user_id) || null,
       kind,
       username,
@@ -1273,6 +1310,11 @@ const GroupChat = {
       // messages from one person on (groupsWithPrevious); `time` is display.
       at: msg.createdAt || msg.created_at || null,
       bodyHtml: kind === 'message' && !deleted ? renderMessageBody(msg.content) : '',
+      // Task 2020 follow-up: Homeroom bot's answer laid out, drawn in place of
+      // the words by the body (features/group-chat/long-body.tsx), which stay
+      // its fallback. Only the bot's own thread replies carry it: a person's
+      // message metadata is built by the server from fixed fields (ws.js).
+      botHtml: GroupChat._botHtmlOf(meta, kind, deleted),
       systemText: kind === 'message' ? '' : String(msg.content == null ? '' : msg.content),
       mine: msg.userId === App.user?.id || msg.user_id === App.user?.id,
       editedTitle: editedAt ? GroupChat._editedTitle(editedAt) : null,
@@ -1346,7 +1388,7 @@ const GroupChat = {
         && (msg.userId === App.user?.id || msg.user_id === App.user?.id)
         // A message an older chip names (its metadata) is a request already.
         && !(meta.botRequest) && !GroupChat._botCards.has(Number(msg.id))
-        && !/(^|[^\w])@(homeroom_bot\b|homeroom\s+bot\b)/i.test(String(msg.content || '')),
+        && !/(^|[^\w])@(homeroom_bot\b|homeroombot\b|homeroom\s+bot\b)/i.test(String(msg.content || '')),
       // Only the message knows WHICH change it is about, so the pair rides
       // on the view model: the row renders it as data-vote-session /
       // data-vote-pr, which refreshVoteControls reads back to resolve the
@@ -1379,7 +1421,26 @@ const GroupChat = {
       // 3 Nov 2026: the suggested replies under the bot's message in a
       // request's or a change's discussion, for the people it names.
       botSuggest: GroupChat._botSuggestView(kind === 'message' && !deleted ? meta : null),
+      // #6533: what a change looks like, under Homeroom bot's reply in its thread.
+      botGallery: GroupChat._botGalleryView(kind === 'message' && !deleted ? meta : null),
     };
+  },
+
+  /** #6533: the pictures under a reply (homeroom-bot-voice.js say), or null. */
+  _botGalleryView(meta) {
+    const bot = meta && meta.homeroomBot;
+    const gallery = bot && bot.gallery;
+    return gallery && gallery.purpose === 'change' && Array.isArray(gallery.images) && gallery.images.length
+      ? gallery : null;
+  },
+
+  // Task 2020 follow-up: the laid-out copy of a reply of Homeroom bot's in a
+  // thread (homeroom-bot-voice.js say), or null.
+  _botHtmlOf(meta, kind, deleted) {
+    const bot = meta && meta.homeroomBot;
+    if (kind !== 'message' || deleted || !bot || bot.kind !== 'voice' || bot.offer) return null;
+    const html = typeof bot.html === 'string' ? bot.html : '';
+    return html.trim() && html.length <= 60000 ? html : null;
   },
 
   // The buttons under Homeroom bot's offer, from its message's metadata
@@ -1391,11 +1452,12 @@ const GroupChat = {
   _botOfferView(meta) {
     const bot = meta && meta.homeroomBot;
     if (!bot || bot.kind !== 'voice' || !bot.offer || typeof bot.offer !== 'object') return null;
-    const status = ['open', 'deciding', 'done', 'declined', 'failed'].includes(bot.offer.status) ? bot.offer.status : null;
+    const status = ['open', 'deciding', 'done', 'declined', 'failed', 'gone', 'expired'].includes(bot.offer.status) ? bot.offer.status : null;
     if (!status) return null;
     const me = window.App && App.user ? Number(App.user.id) : null;
     const actions = (Array.isArray(bot.actions) ? bot.actions : [])
-      .filter((a) => a && (a.id === 'yes' || a.id === 'no') && typeof a.label === 'string' && a.label)
+      // #6211: an overlap note also offers `first` (build this one first).
+      .filter((a) => a && (a.id === 'yes' || a.id === 'no' || a.id === 'first') && typeof a.label === 'string' && a.label)
       .map((a) => ({ id: a.id, label: a.label.slice(0, 40), primary: a.style === 'primary' }));
     // #6305: a many-project offer carries the rows it would file.
     const rows = Array.isArray(bot.offer.rows) ? bot.offer.rows.slice(0, 12) : null;
@@ -1456,19 +1518,24 @@ const GroupChat = {
   },
 
   // Yes or No under one of Homeroom bot's offers. The buttons go when the
-  // room hears it was decided (`chat_message_updated`); a refusal is said.
+  // room hears it was decided (`chat_message_updated`); #6582: a refusal is
+  // returned for the buttons to say in place, not toasted away.
   async decideBotOffer(messageId, choice, rows) {
     const slug = GroupChat.appSlug;
-    if (!slug || !messageId || (choice !== 'yes' && choice !== 'no')) return;
+    const no = (error, gone = false) => ({ ok: false, error, gone });
+    if (!slug || !messageId || (choice !== 'yes' && choice !== 'no' && choice !== 'first')) return no(null);
+    const failed = () => PlatformI18n.t('chat:group.botOffer.failed');
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/${Number(messageId)}/bot-offer`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ choice, ...(Array.isArray(rows) ? { rows } : {}) }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok && !data.said && window.PlatformUI) PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('chat:group.botOffer.failed'));
+      if (res.ok) return { ok: true, error: null, gone: false };
+      // A `said` line already tells the room what happened: the buttons say nothing more.
+      return no(data.said ? null : (PlatformI18n.errorText(data) || failed()), res.status === 410);
     } catch {
-      if (window.PlatformUI) PlatformUI.toast(PlatformI18n.t('chat:group.botOffer.failed'));
+      return no(failed());
     }
   },
 
@@ -1648,7 +1715,7 @@ const GroupChat = {
     // the change as its root post and every notice a single line. `closed`
     // is what a change nobody else can see yet says instead of a stream: its
     // thread is not read at all (only its author can open the page).
-    const language = ['chat', 'request', 'change'].includes(opts.language) ? opts.language : 'flat';
+    const language = ['chat', 'request', 'change', 'decision'].includes(opts.language) ? opts.language : 'flat';
     const closed = language === 'change' && opts.closed ? String(opts.closed) : null;
     // #5007: a change built for a request points its replies at that
     // request's own page, where the conversation lives. Only the change
@@ -1707,6 +1774,8 @@ const GroupChat = {
       maxLength: GC_MAX_MESSAGE_LEN,
       request: fill && language === 'request',
       change: fill && language === 'change',
+      // #6440: a governance vote's page, the same sheet as a request's.
+      decision: fill && language === 'decision',
     });
 
     // Kit polish: keyboard avoidance on the unified thread scroller
@@ -1954,6 +2023,13 @@ const GroupChat = {
       if (!isFirstPage) GroupChat._takeOlder(st, thread, messages, data, events);
       else {
         if (GroupChat._fromSavedCopy(res)) GroupChat._owe(st, true);
+        // #6497: a request's first page carries its GitHub comments, so the
+        // one render below draws the whole discussion in time order. A
+        // payload only ever rides an issue thread's first page.
+        if (type === 'issue' && data.request_comments
+            && typeof AppView !== 'undefined' && AppView._takeIssueComments) {
+          AppView._takeIssueComments(slug, ref, data.request_comments);
+        }
         GroupChat._takeNewest(st, thread, messages, data, events, true);
       }
       st.loaded = true;
@@ -2058,12 +2134,21 @@ const GroupChat = {
   },
   // #4417 follow-up: no thread is the general pane's stream, which is a
   // topic's channel while one is open there (`_channel`).
+  //
+  // #6497: a request's discussion opens whole. Its first page asks for the
+  // server's request ceiling (500 rows), so a thread of a few dozen replies
+  // arrives in one read instead of 50 at a time; "Load earlier" still asks
+  // `&limit=50&before=`. Every other stream keeps 50. The URL stays
+  // byte-identical between the first load and `_refreshLatest`, as the
+  // comment above `_threadQuery` requires for the service worker.
   _firstPageUrl(slug, thread) {
     const scope = thread || GroupChat._channel;
+    const limit = scope && scope.type === 'issue' ? GroupChat.REQUEST_THREAD_LIMIT : 50;
     return scope
-      ? `${GroupChat._threadQuery(slug, scope)}&limit=50${GroupChat._demoParam()}`
+      ? `${GroupChat._threadQuery(slug, scope)}&limit=${limit}${GroupChat._demoParam()}`
       : `/api/apps/${slug}/messages?limit=50${GroupChat._demoParam()}`;
   },
+  REQUEST_THREAD_LIMIT: 500,
 
   // A catch-up waits for the network (the worker's `no-cache` rule, sw.js),
   // but not forever: a half-dead link would otherwise hold it, and "Load
@@ -2290,6 +2375,12 @@ const GroupChat = {
       if (!res.ok || GroupChat._fromSavedCopy(res)) return;
       const data = await res.json();
       if (GroupChat.appSlug !== slug || !current()) return;
+      // #6497: a catch-up refreshes the request's comments the same way its
+      // first page brought them.
+      if (thread && thread.type === 'issue' && data.request_comments
+          && typeof AppView !== 'undefined' && AppView._takeIssueComments) {
+        AppView._takeIssueComments(slug, thread.ref, data.request_comments);
+      }
       GroupChat._takeNewest(s, thread, Array.isArray(data.messages) ? data.messages : [], data, events);
       if (thread) {
         if (GroupChat._isOpenThread(thread.type, thread.ref)) GroupChat.renderThread({ keepScroll: true });
@@ -2504,7 +2595,7 @@ const GroupChat = {
     const prevTop = scroll ? scroll.scrollTop : 0;
     const wasLoaded = el.dataset.loaded === '1';
 
-    const language = ['chat', 'request', 'change'].includes(a.language) ? a.language : 'flat';
+    const language = ['chat', 'request', 'change', 'decision'].includes(a.language) ? a.language : 'flat';
     const chat = language === 'chat';
     GroupChat._react()?.mountTranscript(el, 'thread');
     // #2387: a reply thread opens with the message it hangs off — from the
@@ -2513,8 +2604,8 @@ const GroupChat = {
     if (a.type === 'message') {
       root = st.root || GroupChat.messages.find((m) => Number(m.id) === Number(a.ref)) || null;
     }
-    let rows = st.messages.map((m) => GroupChat._messageView(m, { language }));
-    if (root) rows.unshift(GroupChat._messageView({ ...root, _threadRoot: true }, { language }));
+    let rows = st.messages.map((m) => GroupChat._messageView(m, { language, number: a.ref }));
+    if (root) rows.unshift(GroupChat._messageView({ ...root, _threadRoot: true }, { language, number: a.ref }));
     // #4453: a request's page is ONE stream in time order. Its GitHub
     // comments (AppView's per-issue cache, fetched once the page opens) join
     // the thread's own rows by when they were written, and the specs among
@@ -3796,7 +3887,8 @@ const GroupChat = {
     const gc = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.groupChat : null;
     if (!gc || !gc.patchTranscriptMessage) return;
-    const patch = { bodyHtml: renderMessageBody(content) };
+    // An edited message's laid-out copy no longer says what its words do.
+    const patch = { bodyHtml: renderMessageBody(content), botHtml: null };
     if (editedAt) patch.editedTitle = GroupChat._editedTitle(editedAt);
     gc.patchTranscriptMessage(messageId, patch);
   },
@@ -3961,10 +4053,13 @@ const GroupChat = {
   // Operates only over messages the list actually references, so older
   // dotted messages outside the capped list aren't wrongly touched: a
   // referenced message's dot becomes (readAt == null).
+  // #6441: every kind a message can ring with is here, so a thread reply
+  // that arrives while the thread is open gets its dot and is then read by
+  // the transcript's on-screen observer.
   reconcileDotsFromNotifications() {
     const items = (window.Notifications && Notifications.items) || [];
     if (!Array.isArray(items)) return;
-    const KINDS = new Set(['mention', 'reply', 'reaction']);
+    const KINDS = new Set(['mention', 'reply', 'reaction', 'thread_reply', 'issue_thread_reply', 'change_thread_reply']);
     const state = new Map(); // chatMessageId -> isUnread
     for (const n of items) {
       if (!n || !KINDS.has(n.kind) || n.chatMessageId == null) continue;
@@ -5381,7 +5476,7 @@ function channelRefLink(handle) {
 // its mention ("@Homeroom bot", or its handle) stays text.
 function isBotMention(name) {
   const key = String(name || '').toLowerCase();
-  return key === 'homeroom bot' || key === 'homeroom_bot';
+  return key === 'homeroom bot' || key === 'homeroom_bot' || key === 'homeroombot';
 }
 
 function mentionHref(name) {

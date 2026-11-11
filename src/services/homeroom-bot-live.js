@@ -191,8 +191,18 @@ function questionText({ question, plan = null }) {
 }
 
 // A reason the model wrote, as a whole sentence: it ends with a full stop.
-function reasonSentence(reason) {
-  const text = clipText(plainWords(reason));
+// 6 Nov 2026 (#6430): in a reply to the person who said go ahead, `reader`
+// (their username) becomes "your" or "you", so the note never talks about the
+// reader in the third person ("evan's go-ahead").
+function reasonSentence(reason, { reader = null } = {}) {
+  let text = clipText(plainWords(reason));
+  const name = typeof reader === 'string' ? reader.trim() : '';
+  if (text && name) {
+    const at = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    text = text
+      .replace(new RegExp(`@?${at}'s\\b`, 'gi'), 'your')
+      .replace(new RegExp(`@?${at}\\b`, 'gi'), 'you');
+  }
   if (!text) return 'No reason given.';
   return /[.!?…)"']$/.test(text) ? text : `${text}.`;
 }
@@ -232,7 +242,9 @@ function personText({ reason, platform = false, project = null, done = false, wi
   // change that is not append-only, or too big for one build), so the copy
   // names no Go ahead and leads with the part it can build.
   if (goAheadDecides === false) {
-    return `I can't build all of this one: ${reasonSentence(reason)} ${canBuildPart(firstStep)}`;
+    return `I don't build changes like this myself, even with a go-ahead: ${reasonSentence(reason)} `
+      + `A person has to build it, for example with a coding agent, and the group votes on it as usual. `
+      + canBuildPart(firstStep);
   }
   // GitHub never carries a platform username (#723): its copy names nobody.
   // Homeroom's names who can say Go ahead (personHomeroomText).
@@ -247,7 +259,7 @@ function personText({ reason, platform = false, project = null, done = false, wi
  */
 function canBuildPart(firstStep) {
   const step = typeof firstStep === 'string' ? firstStep.replace(/\s+/g, ' ').trim() : '';
-  return step ? `I can do this part here: ${step}.` : 'Reply here if a smaller part would help.';
+  return step ? `I can build this part now: ${step}.` : 'Reply here if a smaller part would help.';
 }
 
 /**
@@ -271,7 +283,9 @@ function personHomeroomText({ reason, platform = false, project = null, requeste
   // 6 Nov 2026 (#6395): no Go ahead can settle this one, and nobody is named
   // as able to say it. It says what it can build here instead.
   if (goAheadDecides === false) {
-    return firstPerson(`I can't build all of this one: ${reasonSentence(reason)} ${canBuildPart(firstStep)}`);
+    return firstPerson(`I don't build changes like this myself, even with a go-ahead: ${reasonSentence(reason)} `
+      + `A person has to build it, for example with a coding agent, and the group votes on it as usual. `
+      + canBuildPart(firstStep));
   }
   const named = (Array.isArray(deciders) && deciders.length ? deciders : [requester]).filter(Boolean);
   const who = named.length ? decidersPhrase(named) : 'The person who asked for it';
@@ -328,8 +342,21 @@ function personSuggestions({ firstStep = null, platform = false, done = false, w
  * request, instead of the note again. It says what a go-ahead cannot change,
  * then the part the bot can still build. Server text, like the labels.
  */
-function goAheadCannotText({ reason, firstStep = null } = {}) {
-  return `A go-ahead can't change this one: ${reasonSentence(reason)} ${canBuildPart(firstStep)}`;
+function goAheadCannotText({ reason, firstStep = null, reader = null } = {}) {
+  return `I don't build changes like this myself, even with a go-ahead: ${reasonSentence(reason, { reader })} `
+    + 'A person has to build it, for example you with a coding agent, and the group votes on it as usual. '
+    + canBuildPart(firstStep);
+}
+
+// 6 Nov 2026 (#6430): a plain reply that starts with "go ahead" and is no
+// longer than this is a go-ahead, when the bot's last note named the speaker.
+const GO_AHEAD_REPLY_MAX_CHARS = 60;
+
+/** Pure: whether a message's words are a plain go-ahead. */
+function saysGoAhead(text) {
+  const words = typeof text === 'string' ? text.trim() : '';
+  return !!words && words.length <= GO_AHEAD_REPLY_MAX_CHARS
+    && words.slice(0, 8).toLowerCase() === 'go ahead';
 }
 
 function emptyText({ reason }) {
@@ -492,7 +519,37 @@ async function lastPostKind(pool, appId, issueNumber) {
 // failure; different words (a different cause) are news and go out normally.
 const FAILURE_TRIES_MARK = /\s*\(Tried \d+ times\.\)$/;
 
-async function updateRepeatedBuildFailure(pool, ws, { appId, issueNumber, content }) {
+/** Pure: a failure note's words, without the people it tagged or its try count. */
+function failureWords(content) {
+  return String(content || '')
+    .replace(/^(?:@[A-Za-z0-9_.-]+\s+)+/, '')
+    .replace(FAILURE_TRIES_MARK, '')
+    .trim();
+}
+
+/**
+ * #6581: whether somebody other than the bot has posted under a thread
+ * message since it went out. A reply answers the words it saw, so a note
+ * somebody has replied under is never rewritten in place: new words go
+ * below it, as a new note. System lines (no user) are not replies.
+ */
+async function repliedUnderMessage(pool, { appId, messageId, threadType, threadRef, issueNumber, botId }) {
+  const ref = Number(threadRef ?? issueNumber);
+  if (!Number.isSafeInteger(ref)) return false;
+  const { rows } = await pool.query(
+    `SELECT 1 FROM chat_messages r
+      WHERE r.app_id = $1 AND r.id > $2 AND r.deleted_at IS NULL
+        AND COALESCE(r.thread_type, 'issue') = $3
+        AND COALESCE(r.thread_ref, $4::int) = $4::int
+        AND r.user_id IS NOT NULL
+        AND ($5::int IS NULL OR r.user_id <> $5::int)
+      LIMIT 1`,
+    [appId, Number(messageId), threadType || 'issue', ref, botId == null ? null : Number(botId)],
+  );
+  return rows.length > 0;
+}
+
+async function updateRepeatedBuildFailure(pool, ws, { appId, issueNumber, content, botId = null }) {
   const want = String(content || '').trim();
   if (!want) return null;
   const { rows } = await pool.query(
@@ -508,11 +565,14 @@ async function updateRepeatedBuildFailure(pool, ws, { appId, issueNumber, conten
   if (!last) return null;
   // Who the post tagged is not part of the failure: the handles are put on
   // the same text, and a different tagger does not make it new news.
-  const said = String(last.content || '')
-    .replace(/^(?:@[A-Za-z0-9_.-]+\s+)+/, '')
-    .replace(FAILURE_TRIES_MARK, '')
-    .trim();
+  const said = failureWords(last.content);
   if (said !== want) return null;
+  // #6581: words already on screen stay. Once somebody has replied under the
+  // note, the count goes below as a new note, not over the words they read.
+  // A lookup that fails counts as a reply: the note is never rewritten then.
+  if (await repliedUnderMessage(pool, {
+    appId, messageId: last.message_id, threadType: last.thread_type, threadRef: last.thread_ref, issueNumber, botId,
+  }).catch(() => true)) return null;
   const metadata = last.metadata && typeof last.metadata === 'object' && !Array.isArray(last.metadata) ? last.metadata : {};
   const bot = metadata.homeroomBot && typeof metadata.homeroomBot === 'object' ? metadata.homeroomBot : {};
   const tries = (Number(bot.tries) || 1) + 1;
@@ -563,14 +623,18 @@ function saidInThread(kind) {
  * Decision 6: a failure, when the bot's last post in the request's thread
  * was a failure too, takes that post's place: its message gets the new
  * words and metadata (an offer to try again included), and the room hears
- * both (chat_edit, chat_message_updated). The same words again
- * are updateRepeatedBuildFailure's, before this. Resolves { id } of the
- * message, or null when there is no such post to replace (it is then
- * posted as new). `postId` is this post's own row, left out of the look.
+ * both (chat_edit, chat_message_updated). #6581: words already on screen
+ * stay, so this happens only while nobody has replied under the note and
+ * the words are the same; a note that says something different, or one
+ * somebody has answered, is left intact and the new failure goes below it
+ * as a new note. The same words again are updateRepeatedBuildFailure's,
+ * before this. Resolves { id } of the message, or null when there is no such
+ * post to replace (it is then posted as new). `postId` is this post's own
+ * row, left out of the look.
  */
-async function replaceFailurePost(pool, ws, { appId, issueNumber, postId, content, metadata }) {
+async function replaceFailurePost(pool, ws, { appId, issueNumber, postId, content, metadata, botId = null }) {
   const { rows: [last] } = await pool.query(
-    `SELECT p.kind, m.id AS message_id
+    `SELECT p.kind, m.id AS message_id, m.content, m.thread_type, m.thread_ref
        FROM homeroom_bot_posts p
        JOIN chat_messages m ON m.id = p.thread_message_id AND m.deleted_at IS NULL
       WHERE p.app_id = $1 AND p.issue_number = $2 AND p.id <> $3 AND p.thread_message_id IS NOT NULL
@@ -581,6 +645,13 @@ async function replaceFailurePost(pool, ws, { appId, issueNumber, postId, conten
   if (!last || !FAILURE_KINDS.has(last.kind)) return null;
   const text = String(content || '').trim();
   if (!text) return null;
+  // #6581: only the very same words may be written over the note. A note
+  // that says something else, or that somebody has replied under, stays. A
+  // lookup that fails counts as a reply, so nothing shown is ever overwritten.
+  if (failureWords(last.content) !== failureWords(text)) return null;
+  if (await repliedUnderMessage(pool, {
+    appId, messageId: last.message_id, threadType: last.thread_type, threadRef: last.thread_ref, issueNumber, botId,
+  }).catch(() => true)) return null;
   const { rows: [updated] } = await pool.query(
     `UPDATE chat_messages SET content = $2, metadata = $3::jsonb, edited_at = NOW()
       WHERE id = $1 AND deleted_at IS NULL
@@ -1768,9 +1839,83 @@ async function notePlanRows(pool, runIds, note, { ws = null } = {}) {
         thread: { type: row.thread_type, ref: Number(row.thread_ref) },
       });
     }
+    // #6535: once its plan stops waiting and starts building, an overlap
+    // question asked before that point has been overtaken: its buttons go.
+    if (note === 'building') {
+      for (const row of rows) {
+        if (row.thread_type !== 'issue') continue;
+        await retireOverlapOffers(pool, {
+          appId: Number(row.app_id), issueNumber: Number(row.thread_ref),
+          beforeMessageId: Number(row.id), deps: { ws },
+        });
+      }
+    }
     return rows.length;
   } catch (err) {
     log.warn('homeroom-bot-live', 'Could not say what became of a plan on its request', { runs: ids, note, err: err.message });
+    return 0;
+  }
+}
+
+/**
+ * #6535: once a request's plan stops waiting and starts building, an open
+ * "This overlaps #N" question asked before that point is no longer a choice
+ * worth making: the build has gone ahead. Its message keeps its words and
+ * its card, and loses its three buttons, as an answered offer does; the
+ * row behind it is expired so a tap from a screen that has not drawn again
+ * records nothing. Nothing is posted on either request and no ordering is
+ * recorded. Never throws; resolves how many questions closed.
+ */
+async function retireOverlapOffers(pool, { appId, issueNumber, beforeMessageId, deps = {} } = {}) {
+  const app = Number(appId);
+  const issue = Number(issueNumber);
+  const before = Number(beforeMessageId);
+  if (!Number.isSafeInteger(app) || app <= 0
+    || !Number.isSafeInteger(issue) || issue <= 0
+    || !Number.isSafeInteger(before) || before <= 0) return 0;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE chat_messages
+          SET metadata = jsonb_set(
+                jsonb_set(
+                  jsonb_set(metadata, '{homeroomBot,offer,status}', '"expired"'::jsonb, true),
+                  '{homeroomBot,actions}', '[]'::jsonb, true),
+                '{homeroomBot,othersActions}', '[]'::jsonb, true)
+        WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2 AND id < $3
+          AND metadata->'homeroomBot'->'offer'->>'kind' = 'overlap'
+          AND metadata->'homeroomBot'->'offer'->>'status' = 'open'
+        RETURNING id, metadata, thread_type, thread_ref,
+                  metadata->'homeroomBot'->'offer'->>'id' AS offer_id`,
+      [app, issue, before],
+    );
+    const offerIds = [...new Set(rows
+      .map((row) => Number(row.offer_id))
+      .filter((id) => Number.isSafeInteger(id) && id > 0))];
+    if (offerIds.length) {
+      await pool.query(
+        `UPDATE bot_cards SET status = 'expired'
+          WHERE place = 'thread' AND id = ANY($1::int[]) AND status = 'open'`,
+        [offerIds],
+      );
+      await pool.query(
+        `UPDATE homeroom_bot_voice_offers SET status = 'expired'
+          WHERE id = ANY($1::int[]) AND status = 'open'`,
+        [offerIds],
+      );
+    }
+    const sock = deps.ws || require('./ws');
+    for (const row of rows) {
+      if (typeof sock?.broadcast !== 'function') break;
+      sock.broadcast(app, {
+        type: 'chat_message_updated', id: Number(row.id), metadata: row.metadata,
+        thread: { type: row.thread_type, ref: Number(row.thread_ref) },
+      });
+    }
+    return rows.length;
+  } catch (err) {
+    log.warn('homeroom-bot-live', 'Could not close an overlap question once its build started', {
+      appId: app, issueNumber: issue, beforeMessageId: before, err: err.message,
+    });
     return 0;
   }
 }
@@ -2265,7 +2410,7 @@ async function post({
   // request's thread, updates that post and tells nobody again.
   if (!had && kind === 'build_failed' && !noIssueThread) {
     const repeated = await updateRepeatedBuildFailure(pool, ws, {
-      appId: app.id, issueNumber, content: homeroomText || firstPerson(text),
+      appId: app.id, issueNumber, content: homeroomText || firstPerson(text), botId: sender?.id ?? null,
     }).catch((err) => {
       log.warn('homeroom-bot', 'Could not check the request\'s last failure line (posting again)', {
         app: app.slug, issueNumber, err: err.message,
@@ -2364,11 +2509,13 @@ async function post({
       hrbotPost: String(postId),
     });
     try {
-      // Decision 6: one failure post, updated in place. Nobody is tagged or
-      // told again for it: its requester's bell rang from its stage.
+      // Decision 6, #6581: a failure note with the same words, under which
+      // nobody has replied, is updated in place, and nobody is tagged or told
+      // again for it. Anything else is a new note below, so words already on
+      // screen never change.
       const replaced = FAILURE_KINDS.has(kind) && sender && !threadMessage
         ? await replaceFailurePost(pool, ws, {
-          appId: app.id, issueNumber, postId, content: threadText, metadata: marked(metadata),
+          appId: app.id, issueNumber, postId, content: threadText, metadata: marked(metadata), botId: sender.id ?? null,
         })
         : null;
       if (replaced) messageSentBefore = true;
@@ -2394,6 +2541,30 @@ async function post({
     if (message?.id != null && !messageSentBefore) {
       await require('./homeroom-bot-voice').retireThreadSuggestions(pool, {
         appId: app.id, thread: { type: 'issue', ref: issueNumber }, keepMessageId: Number(message.id), deps: { ws },
+      });
+    }
+    // #6535: the card that says its plan is building also overtakes an
+    // overlap question the bot asked in this thread before it.
+    if (message?.id != null && threadMessage?.metadata?.specShare?.botNote === 'building') {
+      await retireOverlapOffers(pool, {
+        appId: app.id, issueNumber, beforeMessageId: Number(message.id), deps: { ws },
+      });
+    }
+  }
+  // #6582: an offer written before its note (a verdict's Propose to close) is
+  // linked to the message in this same step, so the note never shows buttons
+  // whose offer decideOffer cannot find. Tried twice; a failure is logged and
+  // the post kept, because a tap falls back to the offer id the note names.
+  const offeredId = Number(metadata?.homeroomBot?.offer?.id);
+  if (message?.id != null && Number.isSafeInteger(offeredId) && offeredId > 0) {
+    const voiceSvc = require('./homeroom-bot-voice');
+    try {
+      await voiceSvc.tieOffer(pool, offeredId, message.id);
+    } catch {
+      await voiceSvc.tieOffer(pool, offeredId, message.id).catch((err) => {
+        log.warn('homeroom-bot', 'Could not tie an offer to its note (a tap falls back to its id)', {
+          app: app.slug, issueNumber, messageId: Number(message.id), offerId: offeredId, err: err.message,
+        });
       });
     }
   }
@@ -4748,6 +4919,10 @@ async function buildAndPropose({
   // #6407: the plan a person posted that this build is built from (with the
   // version of its after screen the triage named), or null.
   fromPlan = null,
+  // #6423: the change touching the same files this one is built on top of
+  // (`{ sessionId, branch }`): its branch is this change's base, and it
+  // waits for it the way a stacked import does.
+  stackOn = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle } = deps;
   // Each step below is a durable step of the build's work item when the
@@ -4785,15 +4960,21 @@ async function buildAndPropose({
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, is_headless,
                                   created_from_issue_number, linked_issues, issue_link_seeded,
                                   session_title, agent_backend, agent_provider, agent_model,
-                                  agent_reasoning_effort, workflow_owner, workflow_step, rebuilt_from_session_id)
+                                  agent_reasoning_effort, workflow_owner, workflow_step, rebuilt_from_session_id,
+                                  waits_for_session_id, imported_pr_base_ref)
        VALUES ($1, $2, NULL, 'active', FALSE, $3,
                CASE WHEN $3::int IS NULL THEN '{}'::int[] ELSE ARRAY[$3::int] END, TRUE, $4,
-               'codex_openrouter', 'openrouter', $5, $6, $7, $8, $9)
+               'codex_openrouter', 'openrouter', $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [app.id, bot.id, propose ? issueNumber : null,
         sessionTitle || `${propose ? 'Homeroom bot' : 'Homeroom bot shadow build'}: #${issueNumber} ${title}`,
         model, config.openrouterDefaultCodexReasoning || 'low', owner, step,
-        Number.isInteger(Number(fromSessionId)) && Number(fromSessionId) > 0 ? Number(fromSessionId) : null],
+        Number.isInteger(Number(fromSessionId)) && Number(fromSessionId) > 0 ? Number(fromSessionId) : null,
+        // #6423: a build on top of another change waits for it, as a
+        // stacked import does (rules/pr-base.ts). Never rebuilt_from: that
+        // would close the parent as an "own version".
+        Number.isInteger(Number(stackOn?.sessionId)) && Number(stackOn.sessionId) > 0 ? Number(stackOn.sessionId) : null,
+        stackOn?.branch ? String(stackOn.branch).slice(0, 255) : null],
     );
     openedRow = rows[0];
     return { id: Number(openedRow.id) };
@@ -5857,6 +6038,9 @@ module.exports = {
   withdrawnHomeroomText,
   personSuggestions,
   goAheadCannotText,
+  canBuildPart,
+  saysGoAhead,
+  GO_AHEAD_REPLY_MAX_CHARS,
   GO_AHEAD_LABEL,
   SMALLER_STEP_LABEL,
   NOT_NOW_LABEL,
@@ -6006,6 +6190,7 @@ module.exports = {
   shareSpecVersion,
   notePlanRows,
   PLAN_ROW_ENDINGS,
+  retireOverlapOffers,
   postSpecOnProposal,
   revisedSpecCommentText,
   postRevisedSpecComment,

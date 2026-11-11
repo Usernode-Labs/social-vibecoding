@@ -473,6 +473,13 @@ test('#name is a channel only when the viewer has one; #123 stays an issue and P
   assert.equal(segs.map((s) => s.value || '').join('').includes('#todo'), true, 'an unknown #word is left as text');
   assert.deepEqual(channels.tokenizeRefs('x#general', known), [{ type: 'text', value: 'x#general' }],
     'not inside a word');
+  assert.deepEqual(channels.tokenizeRefs('thanks @homeroombot', known), [
+    { type: 'text', value: 'thanks ' },
+    { type: 'mention', name: 'homeroombot' },
+  ], 'the no-space bot handle is one mention');
+  assert.equal(channels.isBotMention('HomeroomBot'), true);
+  assert.equal(channels.isBotMention('homeroombot'), true);
+  assert.equal(channels.isBotMention('homeroombotx'), false);
 });
 
 test('the app chat chips the same channels, as a link and not as a drawer ref', () => {
@@ -620,4 +627,16 @@ test('a new account\'s Messages says it is empty: #general is read but never lis
   assert.match(SCREEN, /\{!snap\.loadingList && !snap\.error && snap\.listLoaded && !inbox\.length\n\s+\? <div className="messages-empty"><h3>\{t\('messages:inbox\.empty\.title'\)\}<\/h3>/);
   assert.doesNotMatch(SCREEN, /!snap\.conversations\.length && !inbox\.length/);
   assert.equal(message('messages:inbox.empty.title'), 'No messages yet');
+});
+
+
+test('the oldest-chats shortcut shows only above the end of a visible overflowing inbox', () => {
+  const { showsToEnd } = loadTsx('frontend/src/features/messages/inbox-to-end.tsx');
+  assert.equal(showsToEnd({ clientHeight: 500, scrollHeight: 500, scrollTop: 0 }), false);
+  assert.equal(showsToEnd({ clientHeight: 0, scrollHeight: 900, scrollTop: 0 }), false);
+  assert.equal(showsToEnd({ clientHeight: 500, scrollHeight: 1200, scrollTop: 0 }), true);
+  assert.equal(showsToEnd({ clientHeight: 500, scrollHeight: 1200, scrollTop: 580 }), false);
+  assert.equal(showsToEnd({ clientHeight: 500, scrollHeight: 1200, scrollTop: 579 }), true);
+  assert.match(SCREEN, /<InboxToEnd scroller=\{scrollRef\} \/>/);
+  assert.equal(message('messages:inbox.toEnd.label'), 'Oldest chats');
 });

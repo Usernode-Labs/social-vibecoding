@@ -83,7 +83,11 @@
  * app.js's router.
  */
 
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+
+import { whenPlatformViewer } from '../../lib/platform-viewer';
+import { isFrameSkin, useSkin } from '../../lib/skin';
+import { HomeFrame } from './frame/home-frame';
 
 import { SearchIcon } from '@/components/ui/icons';
 
@@ -103,6 +107,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { gridStore } from './grid-store';
+import { HOME_SEARCH_SHORTCUT_KEYS } from './search-shortcut';
 
 // The three modules that fill this screen, imported in the order their
 // <script> tags had: HomeLayout (pure geometry) is read by both of the others,
@@ -121,16 +126,37 @@ export function HomeScreen() {
   // with no items and editing off, so the prerender and the first client
   // render draw no action at all.
   const grid = useStoreState(gridStore);
+  // A look of the one frame draws this page in it (./frame/home-frame.tsx).
+  // Read after mount only: the first render must match the prerendered
+  // document, which knows no look (lib/skin.ts says why).
+  const skin = useSkin();
+  // And for a viewer the member APIs answer: the signed-out landing and the
+  // waiting room keep the standard body (lib/platform-viewer.ts says why a
+  // member-only read from either is a console error).
+  const [viewer, setViewer] = useState(false);
+  useEffect(() => whenPlatformViewer(() => setViewer(true)), []);
+  const frame = isFrameSkin(skin) && viewer;
   const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.some((item) => !item.app.demo);
   // ONE HOME (#6361): Pinned apps appears once something is pinned. A new
   // member meets their communities first, and the second kind of pin when
   // they choose it (the app's Pin to Home, the hub's ⋯, "Pin its app too").
-  // Never hidden before the grid's first paint, so the prerender agrees.
-  const noApps = grid.ready && grid.view === 'grid' && !grid.editing && grid.items.length === 0;
+  // My apps is hidden only when the loaded grid has nothing at all to show:
+  // an account at rest with no apps still draws the trailing New project tile
+  // (#6522), so an empty grid whose create view Home.render() hands it keeps
+  // the section — a private member, who gets no create view, is the case that
+  // hides it. Never hidden before the grid's first paint, so the prerender
+  // agrees.
+  const noApps = grid.ready && grid.view === 'grid' && !grid.editing
+    && grid.items.length === 0 && !grid.create;
 
   return (
-    <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="">
+    <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="" data-frame-page={frame ? '' : undefined}>
+      {/* A look of the one frame draws this page with the kit
+          (./frame/home-frame.tsx), as the scroller's first child. The
+          standard Home below stays mounted, so what home.js writes still
+          lands; app.css hides it while data-frame-page is set. */}
+      {frame ? <HomeFrame /> : null}
       {/*
           Hidden-until-pulled search bar (iOS idiom). Deliberately the FIRST
           child of the scroller and NOT sticky: it occupies real scroll space
@@ -187,6 +213,7 @@ export function HomeScreen() {
               autoComplete="off"
               placeholder={t('home:search.placeholder')}
               aria-label={t('home:search.label')}
+              aria-keyshortcuts={HOME_SEARCH_SHORTCUT_KEYS}
               className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ps-9 pe-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"
             />
             <button

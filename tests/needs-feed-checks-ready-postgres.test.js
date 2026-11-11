@@ -68,10 +68,11 @@ test('a vote is asked only once the checks pass and it merges cleanly', { timeou
   await pool.query(`INSERT INTO requests (app_id, number, title, created_by) VALUES ($1, 7, 'Night mode', $2)`, [app.id, ada.id]);
   const change = async (by, pr, linked, extra = {}) => (await pool.query(
     `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, pr_number, pr_title, check_state,
-                                check_phase, merge_conflict_state, integration_merges_clean, promoted_at)
-     VALUES ($1, $2, 'promoted', $3::int[], $4, $5, $6, $7, $8, $9, NOW()) RETURNING id`,
+                                check_phase, merge_conflict_state, integration_merges_clean, integration_block_reasons,
+                                promoted_at)
+     VALUES ($1, $2, 'promoted', $3::int[], $4, $5, $6, $7, $8, $9, $10::jsonb, NOW()) RETURNING id`,
     [app.id, by.id, linked, pr, `Change ${pr}`, extra.checkState ?? 'passing', extra.checkPhase ?? null,
-      extra.conflict ?? null, extra.clean ?? null])).rows[0];
+      extra.conflict ?? null, extra.clean ?? null, JSON.stringify(extra.reasons ?? [])])).rows[0];
 
   // What the four readers say about the change for ada, who would owe it.
   const feed = async () => (await pool.query(
@@ -133,6 +134,21 @@ test('a vote is asked only once the checks pass and it merges cleanly', { timeou
     }
   });
 
+  await t.test('#6531: a conflict only a yes can move is owed, and says so on its row', async () => {
+    const c = await change(bob, 33, [7], { clean: false, reasons: ['awaiting_approval'] });
+    assert.deepEqual(await everywhere(), {
+      feed: [c.id], needs: 1, owed: [`proposal:${c.id}@0`], waiting: 1, digest: 1,
+    });
+    const row = (await pool.query(overview.NEEDS_FEED_SQL, [ada.id, false, false, overview.NEEDS_FEED_MAX]))
+      .rows.find((r) => Number(r.id) === Number(c.id));
+    assert.equal(row.conflict_on_yes, true, 'its Vote row names the conflict');
+    assert.equal(overview.shapeNeedsFeed([row])[0].conflictOnYes, true);
+    // A conflict the lane is still resolving is not owed.
+    await pool.query(`UPDATE chat_sessions SET integration_block_reasons = '["integrating"]'::jsonb WHERE id = $1`, [c.id]);
+    assert.deepEqual(await everywhere(), { feed: [], needs: 0, owed: [], waiting: 0, digest: 0 });
+    await pool.query('DELETE FROM chat_sessions WHERE id = $1', [c.id]);
+  });
+
   await t.test('skipped checks and a never-measured merge count as clean', async () => {
     const c = await change(bob, 32, [7], { checkState: 'skipped', clean: null });
     assert.deepEqual(await everywhere(), {
@@ -148,6 +164,61 @@ test('a vote is asked only once the checks pass and it merges cleanly', { timeou
     await pool.query('UPDATE chat_sessions SET check_state = \'passing\' WHERE id = $1', [b.id]);
     assert.deepEqual(await feed(), [a.id], 'the older change carries the ready ballot');
     await pool.query('UPDATE chat_sessions SET status = \'closed\' WHERE id = ANY($1::int[])', [[a.id, b.id]]);
+  });
+
+  // #6594 (11 Nov 2026): once a change has the votes its rule needs it asks
+  // nobody for one, not only the person who voted. The work state says it is
+  // going live, so it leaves the feed, the counts and the digest.
+  await t.test('#6594: a change whose votes are in is owed by nobody', async () => {
+    const workState = require('../src/services/work-state');
+    const c = await change(bob, 60, [7], { clean: true });
+    await pool.query(
+      `INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch)
+       SELECT cs.id, $2, 'yes', cs.approval_epoch FROM chat_sessions cs WHERE cs.id = $1`, [c.id, cat.id]);
+    const changed = await workState.refresh(pool, [{ sessionId: c.id }]);
+    assert.equal(changed.length, 1);
+    assert.equal(changed[0].state.stage, 'going_live', 'its votes are in, so it is being merged');
+    const stored = (await pool.query(
+      'SELECT stage, line FROM work_states WHERE app_id = $1 AND session_id = $2', [app.id, c.id])).rows[0];
+    assert.equal(stored.stage, 'going_live');
+    assert.deepEqual(await everywhere(), { feed: [], needs: 0, owed: [], waiting: 0, digest: 0 },
+      'the member who voted and one who did not are asked alike');
+    const bobSees = (await pool.query(overview.NEEDS_FEED_SQL, [bob.id, false, false, overview.NEEDS_FEED_MAX])).rows
+      .filter((r) => Number(r.app_id) === Number(app.id) && r.kind === 'proposal');
+    assert.deepEqual(bobSees, [], 'its author is not asked either');
+    await pool.query(`DELETE FROM chat_sessions WHERE id = $1`, [c.id]);
+  });
+
+  // #6594: a push that retires earlier yes votes puts the change back in the
+  // feed, and its work state says why a new yes is needed.
+  await t.test('#6594: a new version retires earlier yes votes, and the row says why', async () => {
+    const workState = require('../src/services/work-state');
+    const c = await change(bob, 61, [7], { clean: true });
+    const before = await pool.query('SELECT approval_epoch FROM chat_sessions WHERE id = $1', [c.id]);
+    const epoch = Number(before.rows[0].approval_epoch);
+    await pool.query(
+      `INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', $3)`,
+      [c.id, cat.id, epoch]);
+    await workState.refresh(pool, [{ sessionId: c.id }]);
+    await pool.query('UPDATE chat_sessions SET approval_epoch = $2 WHERE id = $1', [c.id, epoch + 1]);
+    const changed = await workState.refresh(pool, [{ sessionId: c.id }]);
+    assert.equal(changed.length, 1);
+    assert.equal(changed[0].state.stage, 'up_for_vote');
+    assert.deepEqual(changed[0].state.line, { code: 'earlier_yes', count: 1 },
+      'the earlier yes no longer counts, and the line says so');
+    assert.ok((await feed()).includes(Number(c.id)), 'and it is owed again');
+    await pool.query(`DELETE FROM chat_sessions WHERE id = $1`, [c.id]);
+  });
+
+  await t.test('#6594: a vote marks its change to be derived again', async () => {
+    const c = await change(bob, 62, [7], { clean: true });
+    await pool.query('DELETE FROM work_state_dirty');
+    await pool.query(
+      `INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch)
+       SELECT cs.id, $2, 'yes', cs.approval_epoch FROM chat_sessions cs WHERE cs.id = $1`, [c.id, cat.id]);
+    const { rows } = await pool.query('SELECT session_id FROM work_state_dirty WHERE session_id = $1', [c.id]);
+    assert.equal(rows.length, 1, 'the trigger marked it');
+    await pool.query(`DELETE FROM chat_sessions WHERE id = $1`, [c.id]);
   });
 
   await t.test('the new-proposal ping waits for the checks to pass', async () => {

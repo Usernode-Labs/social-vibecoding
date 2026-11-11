@@ -390,11 +390,16 @@ export type ReleaseAccount = {
 /**
  * The same lookup, with `new_account` beside the address. A GET, so it spends
  * nothing: no link, no session. Null on anything unexpected, and anything
- * but a literal `true` is not a new account.
+ * but a literal `true` is not a new account. `fromAdmitMail`: the read the
+ * "You're in" mail's page makes as it opens, which Admin › Journey records as
+ * that page opened (src/routes/public-api.js).
  */
-export async function releaseAccountFromToken(token: string): Promise<ReleaseAccount | null> {
+export async function releaseAccountFromToken(
+  token: string,
+  { fromAdmitMail = false }: { fromAdmitMail?: boolean } = {},
+): Promise<ReleaseAccount | null> {
   try {
-    const res = await fetch(`/api/public/waitlist/more/${encodeURIComponent(token)}`);
+    const res = await fetch(`/api/public/waitlist/more/${encodeURIComponent(token)}${fromAdmitMail ? '?from=admit' : ''}`);
     if (!res.ok) return null;
     const data = await res.json();
     const email = typeof data?.email === 'string' ? data.email.trim().toLowerCase() : '';

@@ -266,11 +266,11 @@ test('a public profile opened meanwhile is left alone, while the own copy still 
 test('the row holds its line\'s place at the subtitle\'s height, with words for a screen reader', () => {
   const mod = loadTsx('frontend/src/features/profile/account-panel.tsx');
   const pending = renderToHtml(createElement(mod.WorkPanel, { rows: { challenges: null, kudos: null, requestsPending: true } }));
-  const row = pending.slice(pending.indexOf('id="profile-row-feedback"'), pending.indexOf('id="profile-row-votes"'));
+  const row = pending.slice(pending.indexOf('id="profile-row-feedback"'), pending.indexOf('id="profile-row-feedback-history"'));
   assert.match(row, /<div class="flex h-\[1\.125rem\] items-center"><span class="sr-only">Counting your requests<\/span><div class="[^"]*animate-pulse[^"]*" aria-hidden="true"><\/div><\/div>/);
   assert.doesNotMatch(row, /What you asked for/, 'the fallback is not said while the counts are coming');
   // The bar stands in for ListRow's one subtitle line (13px on 1.125rem).
-  assert.match(read('frontend/@/components/ui/grouped-list.tsx'), /'mt-0\.5 truncate text-\[0\.8125rem\] leading-\[1\.125rem\]/);
+  assert.match(read('frontend/@/components/ui/grouped-list.tsx'), /'ui-lrow-s mt-0\.5 truncate text-\[0\.8125rem\] leading-\[1\.125rem\]/);
   assert.equal(message('profile:work.requests.counting'), 'Counting your requests');
 
   const landed = renderToHtml(createElement(mod.WorkPanel, { rows: { challenges: null, kudos: null, requests: '56 open · 750 done', requestsPending: true } }));

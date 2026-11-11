@@ -54,6 +54,9 @@ function buildPayload(from, to, message) {
     subject: message.subject,
     text: message.text,
     ...(message.trackingLinks ? { html: message.html } : {}),
+    // Where a reply goes, on a kind that names one (the last waitlist
+    // reminder): Resend's `reply_to`.
+    ...(message.replyTo ? { reply_to: message.replyTo } : {}),
     // A kind's own headers (activity mail's List-Unsubscribe), in the
     // `headers` object Resend takes.
     ...(message.headers ? { headers: { ...message.headers } } : {}),

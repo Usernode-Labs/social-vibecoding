@@ -391,6 +391,28 @@ test('the backdrop dismiss rule matches the handlers it replaced', () => {
   assert.match(USE_DIALOG, /if \(!isBackdrop\) return;/);
 });
 
+test('a near-edge tap or a press inside the card does not dismiss the dialog', () => {
+  // #6475. A click lands on the backdrop when a press inside the card is
+  // released there — selecting text, a small slip — and touch hit-testing
+  // can retarget a tap on the card's padding near its edge to the backdrop.
+  // Neither is a dismissal: the press must have started on the backdrop and
+  // both points must be clear of the card's box plus a finger's width.
+  assert.match(STATIC_MODAL, /export function dialogCard\(/,
+    'the card lookup useDialog needs is exported from the seam');
+  assert.match(USE_DIALOG, /onPointerDown:/,
+    'the press that precedes a click is recorded');
+  assert.match(USE_DIALOG, /dialogCard\(rootRef\.current\)/,
+    'the presented card is resolved the same way the sheet finds it');
+  assert.match(USE_DIALOG, /nearRect\(/,
+    'the card box is grown by the edge tolerance');
+  assert.match(USE_DIALOG, /DISMISS_EDGE_TOLERANCE_PX/);
+  assert.match(USE_DIALOG,
+    /if \(event\.detail > 0 && !\(started && started\.onBackdrop\)\) return;/,
+    'a pointer click with no press on the backdrop is not a dismissal');
+  assert.match(USE_DIALOG, /press = null;/,
+    'the press is consumed by the click it led to');
+});
+
 test('the controller is published by name and withdrawn on unmount', () => {
   assert.match(USE_DIALOG, /dialogs\[name\] = controller/);
   assert.match(USE_DIALOG, /if \(dialogs\[name\] === controller\) delete dialogs\[name\]/);
@@ -462,6 +484,10 @@ test('close-issue: takes the issue number as payload and POSTs a close', () => {
   assert.match(src, /useDialog<number \| string>\('closeIssue'/);
   assert.match(src, /\/issues`/);
   assert.match(src, /reasonRef\.current\.value = ''/, 'the reason field is cleared on both open and close');
+  // #6595: the view it was proposed from re-reads at once, not only after the
+  // broadcast or a reload.
+  assert.match(src, /_liveRefresh[\s\S]{0,200}?\('issue', null, \{ appSlug: appData\.slug, issueNumber: target \}\)/);
+  assert.match(dialog('reopen-issue.tsx'), /_liveRefresh[\s\S]{0,200}?\('issue', null, \{ appSlug: appData\.slug, issueNumber: target \}\)/);
 });
 
 test('import-pr: loads candidates on open, imports the selected one', () => {

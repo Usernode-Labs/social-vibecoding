@@ -1520,11 +1520,14 @@ function planQuestions(raw) {
  * is nothing to build) without em dashes, whatever the model wrote
  * (em-dashes.js). Pure.
  */
-function plainVerdict(v) {
+function plainVerdict(v, { overlapCandidates = [], issueNumber = null } = {}) {
   if (!v) return v;
   const plain = (t) => (typeof t === 'string' ? withoutEmDashes(t) : t);
   return {
     ...v,
+    // #6211: the read's overlap call, kept only when it names one of the
+    // requests it was given and one of the three kinds (homeroom-bot-overlap.js).
+    overlap: require('./homeroom-bot-overlap').parseOverlap(v.overlap, overlapCandidates, issueNumber),
     question: plain(v.question),
     questionDefault: plain(v.questionDefault),
     questionAnswers: Array.isArray(v.questionAnswers) ? v.questionAnswers.map(plain) : v.questionAnswers,
@@ -1538,8 +1541,8 @@ function plainVerdict(v) {
   };
 }
 
-function parseVerdict(text) {
-  return plainVerdict(readVerdict(text));
+function parseVerdict(text, opts = {}) {
+  return plainVerdict(readVerdict(text), opts);
 }
 
 // How much of a reply whose verdict could not be read is kept on its run:
@@ -1762,6 +1765,9 @@ function readVerdict(text) {
         ? obj.go_ahead !== false : null,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
+      // #6211: the read's overlap call, as it wrote it. plainVerdict keeps it
+      // only when it names one of the board's requests (parseOverlap).
+      overlap: obj.overlap && typeof obj.overlap === 'object' ? obj.overlap : null,
     };
   }
   return null;
@@ -2551,6 +2557,10 @@ function triagePromptFor({
   // #6383: the newest plan a person posted on the request ({ version,
   // author, screens, markdown }), which is its specification.
   personPlan = null,
+  // #6211: the project's other open requests and changes under way, as
+  // homeroom-bot-overlap.js candidatesFor gives them. Nothing is added to
+  // the prompt without them, so a read without the board is what it was.
+  overlapCandidates = null,
 }) {
   return [
     seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
@@ -2558,6 +2568,7 @@ function triagePromptFor({
     locale ? `The requester's locale is \`${locale}\`.` : null,
     live.requestRulesLines().join('\n').trim(),
     signal ? signalNote(signal) : null,
+    require('./homeroom-bot-overlap').overlapNote(overlapCandidates) || null,
     firstVersion ? firstVersionNote(starter) : null,
     firstVersion ? membersNote(members) : null,
     firstVersion ? planChangeNote(planChange) : null,
@@ -2756,10 +2767,15 @@ function deciderNote(decider) {
 function goAheadNote(goAhead) {
   const by = typeof goAhead?.by === 'string' ? goAhead.by.trim() : '';
   if (!by) return null;
+  // 6 Nov 2026 (#6430): the go-ahead may be typed in the request's own
+  // discussion, not only in the bot's private chat with the person.
+  const inThread = goAhead?.where === 'thread';
   return [
-    '==== A GO-AHEAD FROM THEIR CHAT ====',
+    inThread ? '==== A GO-AHEAD FROM THIS REQUEST\'S DISCUSSION ====' : '==== A GO-AHEAD FROM THEIR CHAT ====',
     '',
-    `@${by}, who your last note on this request named, said to go ahead in their private chat with you just now. Their words are not in the discussion below. What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still \`person\`, with \`go_ahead\` false; \`reason\` says who acts and where. So is a change too big for one build, and \`first_step\` names the part that can be built here.`,
+    `@${by}, who your last note on this request named, said to go ahead ${inThread
+      ? 'in this request\'s discussion just now, in reply to your last note. Their words are below in the discussion.'
+      : 'in their private chat with you just now. Their words are not in the discussion below.'} What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Changes to auth, billing, permissions or credentials, and database changes that are not append-only, are still \`person\`, with \`go_ahead\` false; \`reason\` says what kind of change this is in plain words, that you do not build it yourself even with a go-ahead, and that a person has to build it (for example with a coding agent). It never names the person who gave the go-ahead or anybody who said it in the third person, and never says somebody has to approve it. So is a change too big for one build, and \`first_step\` names the part that can be built here.`,
   ].join('\n');
 }
 
@@ -2890,6 +2906,61 @@ async function goAheadCounts(pool, app, requester, userId, decider = null) {
     return (await idsOfUsernames(pool, names)).includes(id);
   } catch (err) {
     log.warn('homeroom-bot', 'Could not read whether a go-ahead counts', { app: app?.slug, err: err.message });
+    return false;
+  }
+}
+
+/**
+ * 6 Nov 2026 (#6430): a go-ahead typed in the request's own discussion. The
+ * bot's last live read left the request for a person, and a plain go-ahead
+ * from the person that read named, newer than the read, is the same decision
+ * a go-ahead in the bot's chat is. Resolves { by, where: 'thread',
+ * messageId } or null. Never throws.
+ */
+async function threadGoAhead(pool, { app, issueNumber, botId, requester, decider = null }) {
+  try {
+    const { rows: [lastRun] } = await pool.query(
+      `SELECT verdict, created_at FROM homeroom_bot_runs
+        WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' ORDER BY id DESC LIMIT 1`,
+      [app.id, Number(issueNumber)],
+    );
+    if (lastRun?.verdict !== 'person' || !lastRun.created_at) return null;
+    const { rows: [message] } = await pool.query(
+      `SELECT m.id, m.content, m.user_id, u.username
+         FROM chat_messages m JOIN users u ON u.id = m.user_id
+        WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = $2
+          AND m.deleted_at IS NULL AND m.msg_type = 'message'
+          AND m.user_id <> $3 AND m.created_at > $4
+        ORDER BY m.id DESC LIMIT 1`,
+      [app.id, Number(issueNumber), Number(botId), lastRun.created_at],
+    );
+    if (!message || !live.saysGoAhead(message.content)) return null;
+    if (!(await goAheadCounts(pool, app, requester, message.user_id, decider))) return null;
+    return { by: message.username, where: 'thread', messageId: Number(message.id) };
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read a go-ahead in a request\'s discussion', {
+      app: app.slug, issueNumber, err: err.message,
+    });
+    return null;
+  }
+}
+
+/**
+ * #6430: whether the bot already answered this go-ahead in the request's
+ * discussion (its fixed reply carries the message id it answered). A re-read
+ * then says nothing: the refusal appears once. Never throws.
+ */
+async function threadAnsweredGoAhead(pool, { app, issueNumber, messageId }) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM chat_messages
+        WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2 AND deleted_at IS NULL
+          AND metadata->'homeroomBot'->'goAheadCannot'->>'messageId' = $3
+        LIMIT 1`,
+      [app.id, Number(issueNumber), String(Number(messageId))],
+    );
+    return rows.length > 0;
+  } catch {
     return false;
   }
 }
@@ -4264,6 +4335,13 @@ async function runTriage(pool, config, {
       if (who?.username) goAhead = { by: who.username };
     }
   }
+  // 6 Nov 2026 (#6430): a go-ahead typed in the request's own discussion,
+  // after the bot's last read left it for a person, is the same decision as
+  // one in its chat. It is read here so the re-read knows it is decided, and
+  // so a read a go-ahead cannot settle answers once instead of asking again.
+  if (liveMode && !goAhead) {
+    goAhead = await threadGoAhead(pool, { app, issueNumber, botId: bot.id, requester, decider });
+  }
   // 2026-10-04: and who is in its project, so the plan is about its real
   // people rather than the sketch's sample ones.
   const members = liveMode && requester?.firstVersion
@@ -4320,6 +4398,15 @@ async function runTriage(pool, config, {
   const personPlan = postedPlan
     ? { version: postedPlan.version, author: postedPlan.author || null, screens: postedPlan.screens, markdown: postedPlan.markdown }
     : null;
+  // #6211: the board the read is given, so it can say when this request is a
+  // duplicate of, part of, or overlaps an open one. A project's first
+  // version is read alone (there is no board it belongs on), and a read that
+  // is not the bot's to speak from has nobody to offer anything.
+  const overlapCandidates = liveMode && !requester?.firstVersion
+    ? await require('./homeroom-bot-overlap').candidatesFor(pool, {
+      app, bot, issueNumber, deps: { github, ...(deps.slotHolders ? { slotHolders: deps.slotHolders } : {}) },
+    })
+    : [];
   const promptInput = {
     seed, issueNumber, firstVersion: !!requester?.firstVersion, decider,
     ...(members ? { members } : {}),
@@ -4332,6 +4419,8 @@ async function runTriage(pool, config, {
     ...(personPlan ? { personPlan } : {}),
     // #6252: a go-ahead said in the person's chat, when this look carries one.
     goAhead,
+    // #6211: the board the read was given, so it can offer an overlap.
+    ...(overlapCandidates.length ? { overlapCandidates } : {}),
   };
   // The prompt as it stands before the turn resolves its model. The one sent
   // is rendered at dispatch, for what that model can see, and replaces this
@@ -4361,6 +4450,8 @@ async function runTriage(pool, config, {
   };
   // #6252: and the go-ahead, so the benchmark replays the prompt it read.
   snapshot.extra.goAhead = goAhead;
+  // #6211: and the board it read, so the replay says the same thing.
+  if (overlapCandidates.length) snapshot.extra.overlapCandidates = overlapCandidates;
 
   let session;
   try {
@@ -4673,7 +4764,7 @@ async function runTriage(pool, config, {
     return recordFailure(code, { sessionId: session.id }, { infra: INFRA_ERRORS.has(code) || code.startsWith('dispatch:') });
   }
   const text = String(result.lastResultText || '');
-  let parsed = parseVerdict(text);
+  let parsed = parseVerdict(text, { overlapCandidates, issueNumber });
   if (!parsed) {
     const body = clip(text.slice(-300), 300);
     if (!body) {
@@ -4733,7 +4824,7 @@ async function runTriage(pool, config, {
       usage.inputTokens = addKnown(usage.inputTokens, spent.inputTokens);
       usage.outputTokens = addKnown(usage.outputTokens, spent.outputTokens);
       repairText = repair.routed?.result?.lastResultText || null;
-      parsed = repair.stopped || repair.routed?.error ? null : parseVerdict(repairText);
+      parsed = repair.stopped || repair.routed?.error ? null : parseVerdict(repairText, { overlapCandidates, issueNumber });
       log.info('homeroom-bot', parsed ? 'Triage verdict recovered by asking for its JSON block' : 'Asking for the JSON block did not recover a verdict', {
         app: app.slug, issueNumber, verdict: parsed?.verdict || null, costUsd: spent.costUsd,
         stopped: repair.stopped || null, error: repair.routed?.error || null,
@@ -5077,7 +5168,7 @@ function liveBuildDeps(deps = {}) {
 // modules) is read again where it runs.
 const LIVE_BUILD_INPUT_KEYS = [
   'issueNumber', 'issue', 'parsed', 'seed', 'seedReadAt', 'turnBudgetMs', 'botLogin', 'model', 'specModel',
-  'proposalCeiling', 'firstVersion', 'presetSpec', 'carriedCostUsd', 'complicated', 'plan', 'presetSpecHtml',
+  'proposalCeiling', 'firstVersion', 'presetSpec', 'carriedCostUsd', 'complicated', 'plan', 'presetSpecHtml', 'stackOn',
 ];
 function liveBuildInput(args) {
   const out = {};
@@ -5304,7 +5395,9 @@ async function postThreadNote(args) {
   return look ? look.once(`note:${args?.kind}`, () => postThreadNoteNow(args)) : postThreadNoteNow(args);
 }
 
-async function postThreadNoteNow({ pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId = null }) {
+async function postThreadNoteNow({
+  pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId = null, metadata = null,
+}) {
   try {
     if (sessionId) {
       await live.postOnProposal({ pool, ws, app, issueNumber, runId, kind, text, bot, sessionId: Number(sessionId) });
@@ -5314,10 +5407,15 @@ async function postThreadNoteNow({ pool, ws, app, issueNumber, runId = null, kin
       'INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind) VALUES ($1, $2, $3, $4)',
       [app.id, issueNumber, runId, kind],
     );
-    await ws.sendBotMessage(pool, app.id, {
-      user: bot, content: require('./homeroom-bot-words').firstPerson(text), thread: { type: 'issue', ref: Number(issueNumber) },
+    // #6211: an offer's metadata rides with the note, as a live reply's does:
+    // its buttons are drawn from the message, so the note is what ties them.
+    const posted = await ws.sendBotMessage(pool, app.id, {
+      user: bot, content: require('./homeroom-bot-words').firstPerson(text),
+      thread: { type: 'issue', ref: Number(issueNumber) },
+      ...(metadata ? { metadata } : {}),
     });
-    return true;
+    // `messageId` for a caller that ties an offer to it; true for the rest.
+    return posted?.id ? { messageId: Number(posted.id), message: posted } : true;
   } catch (err) {
     log.warn('homeroom-bot', 'Could not post a note in the thread', { app: app?.slug, issueNumber, kind, err: err.message });
     return false;
@@ -5588,7 +5686,12 @@ async function runFollowUp(pool, config, {
     // Updates a person asked for have their own higher cap, and an open
     // grant buys one more of the bot's own.
     const revisions = await followup.revisionCounts(pool, session.id);
-    return { ...revisions, baseSha: session.reviewed_head_sha || null, spec: await proposalSpec(pool, session.id) };
+    // #6406: the newest plan on the request, when the change is not built
+    // from it, so the update follows it and notes what it now builds from.
+    const newerPlan = await require('./homeroom-bot-plan-updates')
+      .newerPlanFor(pool, { appId: app.id, issueNumber, sessionId: session.id })
+      .catch(() => null);
+    return { ...revisions, baseSha: session.reviewed_head_sha || null, spec: await proposalSpec(pool, session.id), newerPlan };
   });
   // A checks fix may run on the bot's own rounds, or on a grant somebody
   // spent; a reply may update the change while asked updates remain.
@@ -5642,6 +5745,8 @@ async function runFollowUp(pool, config, {
     // #5371: the requester's name, so the prompt can tell them apart from
     // whoever answered its questions about the request.
     requester: requester?.username || null,
+    // #6406: the newer plan this update should follow, when there is one.
+    newerPlan: basis.newerPlan || null,
   });
   snapshot = {
     stage: 'followup', appId: app.id, issueNumber,
@@ -5806,6 +5911,14 @@ async function runFollowUp(pool, config, {
   // this for the new head (server.js finalizeRecoveredTurn).
   // Each once across the look's attempts (a retry after a restart).
   if (moved) await look.once('reconcile', async () => { await reconcileRevision({ config, pool, session, app, issueNumber, deps }); return true; });
+  // #6406: an update that followed a newer plan now builds from it, so the
+  // change's plan line reads "Built from v2" and no longer says v2 is newer.
+  if (moved && basis.newerPlan) {
+    await look.once('built_from', () => noteBuiltFrom(pool, {
+      sessionId: session.id,
+      from: { sessionId: basis.newerPlan.sessionId, version: basis.newerPlan.version },
+    }));
+  }
   // #3767: and its name, when the revision changed what it does. Ear Trainer's
   // size options were taken out and its proposal was still called "Lead size
   // options with the number of sounds" when it merged.
@@ -6954,6 +7067,14 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
         app: app.slug, issueNumber, sessionId: built.sessionId, err: err.message,
       }));
     }
+    // #6406: a plan posted while this build ran is followed now, without
+    // waiting for somebody to ask. It says so in the thread and queues the
+    // update through the voice's ask path. Best effort, never into the build.
+    await require('./homeroom-bot-plan-updates').followNewerPlan(pool, {
+      app, issueNumber, sessionId: built.sessionId, bot, reason: 'building',
+    }).catch((err) => log.warn('homeroom-bot', 'Could not follow a plan posted while building', {
+      app: app.slug, issueNumber, sessionId: built.sessionId, err: err.message,
+    }));
     return 'proposed';
   }
   if (built.blocked) {
@@ -7618,10 +7739,29 @@ async function actOnVerdict({
     });
   };
   // The note it went under was posted, or it was not and the offer goes.
+  // #6582: the message id comes from the step's own result, or, for a result
+  // stored before that carried it, from the post row it made. The offer is
+  // dropped only when the post made no message at all, or when the message
+  // names a different offer (a cached post from an earlier attempt).
   const settleThreadOffer = async (offer, posted) => {
     if (!offer) return;
-    if (posted?.messageId) await voiceModule(deps).tieThreadOffer(pool, offer.id, posted.messageId);
-    else await voiceModule(deps).dropThreadOffer(pool, offer.id);
+    const voice = voiceModule(deps);
+    let messageId = posted?.messageId ? Number(posted.messageId) : null;
+    if (!messageId && posted?.postId) {
+      const { rows: [row] } = await pool.query(
+        'SELECT thread_message_id FROM homeroom_bot_posts WHERE id = $1', [Number(posted.postId)],
+      ).catch(() => ({ rows: [] }));
+      if (row?.thread_message_id) messageId = Number(row.thread_message_id);
+    }
+    if (!messageId) return voice.dropThreadOffer(pool, offer.id);
+    const { rows: [message] } = await pool.query(
+      'SELECT metadata FROM chat_messages WHERE id = $1', [messageId],
+    ).catch(() => ({ rows: [] }));
+    const named = Number(message?.metadata?.homeroomBot?.offer?.id);
+    if (Number.isSafeInteger(named) && named > 0 && named !== Number(offer.id)) {
+      return voice.dropThreadOffer(pool, offer.id);
+    }
+    await voice.tieThreadOffer(pool, offer.id, messageId);
   };
   if (!gate.speak) {
     log.info('homeroom-bot', 'Live note not repeated: nobody addressed the bot', {
@@ -7695,14 +7835,25 @@ async function actOnVerdict({
     // Go ahead that was just refused.
     const goAheadCannot = parsed.goAheadDecides === false && !!goAhead?.by;
     const noteText = goAheadCannot
-      ? live.goAheadCannotText({ reason: parsed.reason, firstStep: parsed.firstStep })
+      ? live.goAheadCannotText({ reason: parsed.reason, firstStep: parsed.firstStep, reader: goAhead.by })
       : withdrawnNote
         ? live.withdrawnHomeroomText(parsed)
         : live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders });
     // #6391: the note also gives the other members a set of their own.
     const suggestOthers = ["I'd like this too", "What's left to do?"]
       .map((label, i) => ({ id: `others-${i + 1}`, label, style: 'secondary', type: 'prompt' }));
-    if (await unchangedNote('person', noteText, parsed.done ? 'empty' : null)) {
+    // 6 Nov 2026 (#6430): the request's own discussion already answered this
+    // go-ahead with the one plain sentence, so the re-read says nothing: the
+    // refusal appears once, not under itself.
+    const alreadyAnswered = goAheadCannot && goAhead?.messageId
+      ? await threadAnsweredGoAhead(pool, { app, issueNumber, messageId: goAhead.messageId })
+      : false;
+    if (alreadyAnswered) {
+      acted = 'answered';
+      log.info('homeroom-bot', 'A go-ahead in the request\'s discussion was already answered', {
+        app: app.slug, issueNumber, messageId: Number(goAhead.messageId),
+      });
+    } else if (await unchangedNote('person', noteText, parsed.done ? 'empty' : null)) {
       acted = 'unchanged';
       log.info('homeroom-bot', 'Live note not repeated: same verdict and reason', {
         app: app.slug, issueNumber, verdict: parsed.verdict,
@@ -7736,6 +7887,10 @@ async function actOnVerdict({
         dm: {
           reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
           ...(parsed.done ? { done: true } : {}),
+          // 6 Nov 2026 (#6430): the DM says a person has to build it, not
+          // that a go-ahead can settle it, and names the smaller part.
+          ...(parsed.goAheadDecides === false ? { goAheadDecides: false } : {}),
+          ...(parsed.firstStep ? { firstStep: parsed.firstStep } : {}),
           ...(parsed.builder ? { builder: parsed.builder, quiet: true } : quiet),
           ...(withdrawnNote ? { withdrawn: true, quiet: true } : {}),
         },
@@ -7817,6 +7972,17 @@ async function actOnVerdict({
       await queueLiveBuild(pool, { runId, appId: app.id });
       acted = 'build_queued';
     }
+  }
+  // #6211: the read found this request is a duplicate of, part of, or
+  // overlaps one on the board: one note in this discussion, after the usual
+  // reply, with the choice for its requester (homeroom-bot-overlap.js). A
+  // request with nothing in it, one already done, and one asked to be closed
+  // get none, and neither does a note whose pair was offered before.
+  if (parsed.overlap && parsed.verdict !== 'empty' && !parsed.done && !parsed.withdrawn) {
+    const requester = await require('./homeroom-bot-dm').requesterOf(pool, app.id, issueNumber).catch(() => null);
+    await require('./homeroom-bot-overlap').offerOverlap(pool, {
+      app, bot, issueNumber, overlap: parsed.overlap, requester, ws: ws || null, deps,
+    }).catch(() => false);
   }
   await live.advanceSeen({
     pool, github, threadContext: deps.threadContext, app, repo, issueNumber, runId,
@@ -8810,6 +8976,8 @@ async function buildLive({
   // (planBeforeBuilding), and once its requester said Build it, built from
   // that spec (presetSpec, its screens `presetSpecHtml`) and reviewed.
   complicated = false, plan = null, presetSpecHtml = null,
+  // #6423: the change this build is on top of: `{ sessionId, branch }`.
+  stackOn = null,
 }) {
   const { github, ws } = deps;
   // The build's durable steps (services/durable-steps.js): run again after
@@ -8951,6 +9119,8 @@ async function buildLive({
       // #6389: the change this version is built from, for its branch
       // (session-lifecycle.ensureSessionBranch) and their link on the page.
       fromSessionId: ownAsk?.fromSessionId || null,
+      // #6423: built on top of the change touching the same files.
+      stackOn,
       locale: requester?.locale || null,
       // #3737: a first version's spec and build decide and record its look;
       // made from a game starter, they build on it.
@@ -9518,7 +9688,7 @@ async function whyNotBuild(pool, { runId, botId, appId, issueNumber, github = nu
  * cannot read the issue leaves it waiting. A build that throws is recorded
  * as failed and said, so it is never started again in a loop.
  */
-async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
+async function buildOne(pool, config, { bot, app, run, settings, stackOn = null, deps = {} }) {
   const buildDeps = liveBuildDeps(deps);
   const { github, sessions, threadContext } = buildDeps;
   const issueNumber = Number(run.issue_number);
@@ -9621,6 +9791,9 @@ async function buildOne(pool, config, { bot, app, run, settings, deps = {} }) {
     presetSpecHtml: run.build_spec_md
       ? ((run.complicated === true ? await approvedSpecHtml(pool, run.plan) : null) || run.build_spec_html || null)
       : null,
+    // #6423: built on top of the change that touches the same files: its
+    // branch is the new change's base (session-lifecycle, pr-metadata).
+    stackOn,
   };
   // How long it waited its turn since its go-ahead (a ready verdict, or
   // Build it under a plan): live_build_waiting_at is cleared once the build
@@ -10906,6 +11079,7 @@ async function retriageApp(pool, { slug, actorId = null, deps = {} } = {}) {
 
 const { AsyncLocalStorage } = require('node:async_hooks');
 const loopRules = require('../workflow/rules/bot-loop.ts');
+const { isAppendOnly } = require('../workflow/rules/append-only-files.ts');
 
 // The look under way in this call chain (lookAt), for the effects deep in
 // it that must happen once across its item's attempts (insertRun, the
@@ -10922,7 +11096,7 @@ async function postOnce(look, kind, post) {
   if (!look?.steps?.active) return post();
   return look.once(`post:${kind}`, async () => {
     const p = await post();
-    return p ? { githubCreatedAt: p.githubCreatedAt || null, postId: p.postId ?? null, posted: true } : null;
+    return p ? { githubCreatedAt: p.githubCreatedAt || null, postId: p.postId ?? null, messageId: p.messageId ?? null, posted: true } : null;
   });
 }
 
@@ -11066,6 +11240,102 @@ async function lookOutcome(r, L, { pool, settings, bot, app, item, deps }) {
 }
 
 /**
+ * #6423: the repository paths a build expects to touch: those its run's
+ * plan names (the triage's `build_note`, and the spec kept on the run when
+ * a person's plan was approved). A plan that names none overlaps nothing.
+ */
+function expectedBuildFiles(run) {
+  return loopRules.filesNamed([run?.build_note, run?.build_spec_md].filter(Boolean).join('\n'));
+}
+
+// The sessions of this project whose diffs a new build compares with its
+// own files: being worked on, up for a vote or merging. Never a merged one,
+// never a headless (shadow/bench) one, never one linked to this request
+// (its own change is bot-request's `build_pending` business). A running
+// build is its session, read by its branch's diff once the branch has
+// commits; before it has a branch it is skipped, since what its plan names
+// is no change yet (#6428).
+const OVERLAP_SESSIONS_SQL = `
+  SELECT id, status, branch_name, pr_number, waits_for_session_id, rebuilt_from_session_id,
+         created_from_issue_number, linked_issues
+    FROM chat_sessions
+   WHERE app_id = $1 AND is_headless = FALSE AND branch_name IS NOT NULL
+     AND status = ANY('{active,promoted,merging}'::text[])
+     AND NOT COALESCE($2::int = ANY(linked_issues), FALSE)
+   ORDER BY id DESC
+   LIMIT 30`;
+
+/** The open changes of one project (running builds among them), with the files each one's diff changes. */
+async function overlapOthers(pool, { app, issueNumber, github }) {
+  const repo = parseRepo(app.repo_url);
+  const diff = async (branch) => {
+    if (!repo || !github?.isEnabled() || typeof github.listChangedFiles !== 'function') return [];
+    try {
+      const files = await github.listChangedFiles(repo.owner, repo.repo, `main...${branch}`);
+      return Array.isArray(files) ? files : [];
+    } catch {
+      return [];
+    }
+  };
+  const { rows } = await pool.query(OVERLAP_SESSIONS_SQL, [app.id, Number(issueNumber)]);
+  const read = await Promise.all(rows.map(async (r) => ({ r, files: await diff(r.branch_name) })));
+  return read.filter(({ files }) => files.length).map(({ r, files }) => {
+    const requests = (Array.isArray(r.linked_issues) ? r.linked_issues : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    const from = Number(r.created_from_issue_number);
+    return {
+      sessionId: Number(r.id), runId: null, issueNumber: Number.isInteger(from) && from > 0 ? from : (requests[0] ?? null),
+      prNumber: r.pr_number == null ? null : Number(r.pr_number), status: r.status, branch: r.branch_name, requests,
+      stacked: !!(r.waits_for_session_id || r.rebuilt_from_session_id), files,
+    };
+  });
+}
+
+/** At most three file names, then "and N more". */
+function filesListed(files) {
+  const shown = (files || []).slice(0, 3).map((f) => `\`${f}\``);
+  const rest = (files || []).length - shown.length;
+  return rest > 0 ? `${shown.join(', ')} and ${rest} more` : shown.join(', ');
+}
+
+// What an overlap names as the other side: its pull request, or the change
+// for its request until it has one.
+const overlapSubject = (w) => (w?.prNumber ? `PR #${Number(w.prNumber)}`
+  : w?.issueNumber ? `the change for request #${Number(w.issueNumber)}` : 'another open change');
+
+// #6423, #6428: what this build shares with the project's other open
+// changes, and whether it goes on top of one. `dependsOn` names the requests
+// its own depends on (a "build first" link, #6211); nothing passes it yet,
+// so nothing is stacked today.
+async function overlapFor(pool, { app, run, issueNumber, dependsOn = [], deps = {} }) {
+  const files = expectedBuildFiles(run);
+  if (!files.length && !dependsOn.length) return { decision: null };
+  const github = deps.github || require('./github');
+  const others = await overlapOthers(pool, { app, issueNumber, github }).catch(() => []);
+  return { decision: loopRules.decideOverlap({ files, others, dependsOn }) };
+}
+
+// The note a build's thread gets about what it shares, said once per run:
+// building now beside the other change, or on top of it.
+function overlapNote(decision) {
+  if (decision?.strategy === 'stack' && decision.with) {
+    return {
+      kind: 'overlap_stack',
+      text: `This depends on ${overlapSubject(decision.with)}, so I'm building it on top of that change. `
+        + 'Once that merges, this change moves onto main and its checks run again.',
+    };
+  }
+  if (decision?.strategy === 'parallel' && decision.with) {
+    const combined = decision.files.every(isAppendOnly) ? ', which Homeroom combines on its own' : '';
+    return {
+      kind: 'overlap_parallel',
+      text: `This and ${overlapSubject(decision.with)} both touch ${filesListed(decision.files)}${combined}. `
+        + 'Building now; whichever merges second gets an automatic sync with main.',
+    };
+  }
+  return null;
+}
+
+/**
  * bot-request's `bot.build`: a ready verdict's build, its slot granted.
  * What buildOne checks before a build starts (the request open, no
  * proposal of the bot's, no other build of it, the bot's budget, its
@@ -11115,7 +11385,31 @@ async function startBuild(config, pool, { appId, issueNumber, runId, replyTo, pe
       app, issueNumber: Number(issueNumber), requester, bot, payerUserId: payerId, settings, deps: { dm },
     });
   }
-  const r = await buildOne(pool, config, { bot, app, run, settings, deps: { ...deps, replyTo } });
+  // #6423, #6428: before the build takes its slot, the files its plan names
+  // are compared with what the project's other open changes change. A shared
+  // file never holds it: it builds now, and its thread says what it shares
+  // (said once per run). It goes on top of another change only when its
+  // request depends on that one's. A first version skips it: there is
+  // nothing else open on a project without a first version. A plan-only
+  // pass never reaches a build start.
+  let stackOn = null;
+  if (!requester?.firstVersion) {
+    const { decision } = await overlapFor(pool, { app, run, issueNumber: Number(issueNumber), deps })
+      .catch((err) => {
+        log.warn('homeroom-bot', 'Could not compare a build\'s files with the project\'s other work', {
+          app: app.slug, issueNumber, runId, err: err.message,
+        });
+        return { decision: null };
+      });
+    const note = overlapNote(decision);
+    if (note && !(await runPosted(pool, Number(runId), note.kind))) {
+      await postThreadNoteNow({
+        pool, ws: deps.ws || liveDeps().ws, app, issueNumber: Number(issueNumber), runId: Number(runId), kind: note.kind, text: note.text, bot,
+      });
+    }
+    if (decision?.strategy === 'stack' && decision.with) stackOn = { sessionId: decision.with.sessionId, branch: decision.with.branch };
+  }
+  const r = await buildOne(pool, config, { bot, app, run, settings, stackOn, deps: { ...deps, replyTo } });
   if (r?.requested) return { outcome: 'requested', key: r.requested };
   if (r?.reason === 'infra') return { outcome: 'fault', why: r.detail || null };
   if (r?.acted === 'not_started') return { outcome: 'not_started' };
@@ -11186,6 +11480,9 @@ async function sweep(config, pool, { deps = {} } = {}) {
   await each('flakyChecks', () => flakyChecks(deps).sweep(pool, config, { deps }));
   // #6264: a promise about a change that never came is dropped quietly.
   await each('followupsExpired', () => require('./thread-followups').expireOld(pool));
+  // #6420: a change that names requests it closes tells them once, including
+  // the links set when the change was made or that became visible later.
+  await each('claimsAnnounced', () => require('./change-claims').announce(pool, { appId: null }));
   return out;
 }
 
@@ -11304,6 +11601,8 @@ module.exports = {
   starterOfApp,
   deciderNote,
   goAheadNote,
+  threadGoAhead,
+  threadAnsweredGoAhead,
   whoDecides,
   goAheadCounts,
   answerersOf,
@@ -11411,6 +11710,12 @@ module.exports = {
   // #4662: put a live run back in line with its kept plan, markdown and HTML.
   liveSayer,
   announceBuilt,
+  // 1 Nov 2026 (C2.3): a ready request with a plan a person posted on it.
+  // #6406: the plan update module calls it when a newer version replaces the
+  // one a waiting run recorded.
+  usePersonPlan,
+  // C2.3: the plan a change is built from.
+  noteBuiltFrom,
   RESTART_REASON,
   RETRY_FAILED_REASON,
   READ_AGAIN_REASON,
@@ -11459,6 +11764,8 @@ module.exports = {
   BLOCKERS,
   capRoomFor,
   slotHolders,
+  // #6211: a note in a request's thread, which an overlap's choice is tied to.
+  postThreadNoteNow,
   slotCounts,
   SLOT_HOLDERS_SQL,
   simulateCaps,

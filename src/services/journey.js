@@ -340,11 +340,20 @@ function nextSteps(visitsByPerson, { top = 3 } = {}) {
 // Parameters, fixed for every first-mile query: $1 the admit day or the
 // newcomer window, $2 now, $3 the reserved name patterns, $4 the left-out ids.
 
+// The keys the waitlist's follow-up form ("Want in sooner?",
+// services/waitlist-questions.js validateStage2, and its verified handles)
+// writes into answers: any of them means it was answered.
+const FOLLOW_UP_KEYS_SQL = `'made_url', 'made_note', 'group', 'loss', 'handles', 'followed_claim', 'verified'`;
+
 const ADMITTED_CTE = `admitted AS (
     SELECT DISTINCT ON (COALESCE('u' || w.linked_user_id::text, 'w' || w.id::text))
            w.id AS signup_id, w.email, w.released_at, w.linked_user_id,
            w.release_mail_sent_at, w.release_mail_tracked, w.release_mail_opened_at,
-           w.release_mail_clicked_at, w.release_code_asked_at, w.release_link_followed_at
+           w.release_mail_clicked_at, w.release_code_asked_at, w.release_link_followed_at,
+           w.submitted_at, w.source, w.answers->'discovery'->>'source' AS discovery,
+           (w.answers ?| ARRAY[${FOLLOW_UP_KEYS_SQL}]) AS answered_follow_up,
+           w.invited_by IS NOT NULL AS referred, w.project_invite_id IS NOT NULL AS project_invite,
+           w.release_page_opened_at, w.release_page_outcome
       FROM waitlist_signups w
      WHERE w.released_at IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM test_waitlist_releases t WHERE t.signup_id = w.id)
@@ -384,6 +393,26 @@ const COHORTS_SQL = `WITH ${ADMITTED_CTE}
 // columns, schema.sql), so each is the earlier of the log and the row. The
 // mail's button is its one-time sign-in link, which click tracking leaves
 // out: its first spend is the row's release_link_followed_at, `mail_link_at`.
+// How the account was made, from the sign-in it was made with: an identity
+// added with the account (within ten minutes of it) is how it signed
+// up. The admit mail's link spends when the account is made; an email code
+// is the mail log's (30 days). NULL when nothing says.
+const SIGNUP_WINDOW = "INTERVAL '10 minutes'";
+const SIGNUP_METHOD_SQL = `(CASE
+      WHEN u.id IS NULL THEN NULL
+      WHEN EXISTS (SELECT 1 FROM user_phone_identities ph
+                    WHERE ph.user_id = u.id AND ph.created_at <= u.created_at + ${SIGNUP_WINDOW}) THEN 'phone'
+      WHEN EXISTS (SELECT 1 FROM user_oauth_identities oi WHERE oi.user_id = u.id AND oi.provider = 'apple'
+                    AND oi.created_at <= u.created_at + ${SIGNUP_WINDOW}) THEN 'apple'
+      WHEN EXISTS (SELECT 1 FROM user_oauth_identities oi WHERE oi.user_id = u.id AND oi.provider = 'google'
+                    AND oi.created_at <= u.created_at + ${SIGNUP_WINDOW}) THEN 'google'
+      WHEN a.release_link_followed_at IS NOT NULL
+        AND a.release_link_followed_at BETWEEN u.created_at - ${SIGNUP_WINDOW} AND u.created_at + ${SIGNUP_WINDOW} THEN 'mail_link'
+      WHEN u.email IS NOT NULL AND EXISTS (SELECT 1 FROM mail_deliveries d WHERE d.kind = 'otp' AND d.recipient = u.email
+                    AND d.created_at BETWEEN u.created_at - INTERVAL '30 minutes' AND u.created_at + ${SIGNUP_WINDOW}) THEN 'email_code'
+      WHEN u.password_set THEN 'password'
+      ELSE NULL END)`;
+
 const PERSON_FACTS = `
     COALESCE(m.status, CASE WHEN a.release_mail_sent_at IS NOT NULL THEN 'sent' END) AS mail_status,
     m.error AS mail_error, COALESCE(m.created_at, a.release_mail_sent_at) AS mail_at,
@@ -421,7 +450,18 @@ const PERSON_FACTS = `
         AND (e.metadata->>'kind' IN ('loading_timeout', 'navigation_abandonment', 'boot_failure', 'server_failure')
           OR (e.metadata->>'kind' = 'action_outcome' AND e.metadata->>'outcome' = 'failure'))) AS failed_attempts,
     (SELECT COUNT(*)::int FROM events e WHERE e.user_id = u.id AND e.event_type = 'ui_experience'
-        AND e.metadata->>'kind' = 'repeated_action') AS repeated_taps`;
+        AND e.metadata->>'kind' = 'repeated_action') AS repeated_taps,
+    a.submitted_at AS waitlist_joined_at, a.source AS waitlist_source, a.discovery AS waitlist_discovery,
+    a.answered_follow_up, a.referred AS waitlist_referred, a.project_invite AS waitlist_project_invite,
+    a.release_page_opened_at AS mail_page_at, a.release_page_outcome AS mail_page_outcome,
+    (SELECT MIN(w2.release_page_opened_at) FROM waitlist_signups w2) AS mail_page_since,
+    (SELECT COUNT(*)::int FROM mail_deliveries d
+      WHERE a.email IS NOT NULL AND d.recipient = a.email
+        AND d.kind IN ('waitlist_released', 'waitlist_reminder', 'waitlist_reminder_last')
+        AND d.created_at <= COALESCE(LEAST(a.release_link_followed_at, a.release_code_asked_at,
+          (SELECT MIN(d2.created_at) FROM mail_deliveries d2
+            WHERE d2.recipient = a.email AND d2.kind = 'otp' AND d2.created_at >= a.released_at)), NOW())) AS mail_sends_before_follow,
+    ${SIGNUP_METHOD_SQL} AS signup_method`;
 
 const PERSON_JOINS = `
     LEFT JOIN LATERAL (
@@ -486,11 +526,66 @@ const FIRST_MILE_OTHER_WAY_SQL = `WITH ${ADMITTED_CTE}
      AND ${REAL_PERSON_SQL}
    ORDER BY u.platform_access_granted_at, u.id`;
 
+// Somebody who came by a member's invite link (community_invite_redemptions,
+// their first that was not cancelled): who made the link, for which project,
+// when they opened it (community_invite_opens: their account's row, which the
+// open they made signed out becomes once they sign up carrying the link,
+// invite-activity.js claimOpen / settleOpen), how the link brought them
+// (journey-events.js noteInviteSignedIn) and whether they joined or wait.
+const INVITE_COLUMNS = `iv.invite_id, iv.invite_status, iv.invite_redeemed_at, iv.invite_joined_at,
+         iv.invited_by, iv.invite_project, iv.invite_project_slug, iv.invite_opened_at, iv.invite_how`;
+const INVITE_JOIN = `
+    LEFT JOIN LATERAL (
+      SELECT ci.id AS invite_id, r.status AS invite_status, r.created_at AS invite_redeemed_at,
+             r.applied_at AS invite_joined_at, mk.username AS invited_by,
+             ap.name AS invite_project, ap.slug AS invite_project_slug,
+             (SELECT MIN(o.opened_at) FROM community_invite_opens o
+               WHERE o.user_id = u.id AND o.app_id = ci.app_id) AS invite_opened_at,
+             (SELECT e.metadata->>'how' FROM events e
+               WHERE e.event_type = 'invite_signed_in' AND e.user_id = u.id AND e.metadata->>'inviteId' = ci.id::text
+               ORDER BY e.created_at, e.id LIMIT 1) AS invite_how
+        FROM community_invite_redemptions r
+        JOIN community_invites ci ON ci.id = r.invite_id
+        LEFT JOIN users mk ON mk.id = ci.created_by
+        LEFT JOIN apps ap ON ap.id = ci.app_id
+       WHERE r.user_id = u.id AND r.status <> 'cancelled'
+       ORDER BY r.created_at, r.id
+       LIMIT 1
+    ) iv ON TRUE`;
+
+// Invited, not let in yet: people who joined a project through an invite
+// link (#5959, as private members) or are queued on one, with no platform
+// access yet. Admitted later, they are in their admit's cohort instead. $1
+// the window in days back from $2, now, by when the link brought them.
+const INVITED_DAYS = 90;
+const FIRST_MILE_INVITED_SQL = `WITH ${ADMITTED_CTE}
+  SELECT NULL::bigint AS signup_id, NULL::text AS email, NULL::timestamptz AS released_at,
+         'invite_link' AS door, ${INVITE_COLUMNS}, ${PERSON_FACTS}
+    FROM users u
+    LEFT JOIN admitted a ON FALSE
+    ${INVITE_JOIN}
+    ${PERSON_JOINS}
+   WHERE iv.invite_id IS NOT NULL
+     AND u.has_platform_access IS NOT TRUE
+     AND iv.invite_redeemed_at >= $2::timestamptz - make_interval(days => $1::int)
+     AND iv.invite_redeemed_at <= $2::timestamptz
+     AND ${REAL_PERSON_SQL}
+   ORDER BY iv.invite_redeemed_at, u.id`;
+
 const MAIL_PROOF_DAYS = 30;
 
 const FIRST_MILE_STEPS = Object.freeze([
-  'admitted', 'mail_sent', 'code_asked', 'account', 'access', 'opened', 'username', 'join', 'first_act',
+  'admitted', 'mail_sent', 'mail_page', 'code_asked', 'account', 'access', 'opened', 'username', 'join', 'first_act',
 ]);
+
+// What happened on the "You're in" mail's own page (release-links.js).
+const MAIL_PAGE_NOTES = Object.freeze({
+  opened: 'opened',
+  signed_in: 'signed in',
+  welcome: 'welcome shown, no Get started',
+  link_expired: 'link expired',
+  link_used: 'link already used',
+});
 
 /**
  * One person's first mile, step by step, from the facts row. Each step is
@@ -512,6 +607,10 @@ function firstMileSteps(row, now = new Date()) {
       ? { done: true, at: t(row.mail_at), note: mailEngagement(row).note }
       : { done: false, stuck: row.mail_status ? `Mail not sent: ${row.mail_status}` : 'No admit mail on record',
         expired: mailExpired && !row.mail_status },
+    // The mail's own page opened (its read as it opens, not a scanner's
+    // fetch), with what happened there. Before that was recorded
+    // (mail_page_since), or for a mail sent before then, nothing says.
+    mail_page: mailPageFact(row, { expired: mailExpired && !row.mail_status }),
     // The mail followed: its one-time sign-in link spent, or a sign-in
     // code asked for (the page asks for one when the link no longer works,
     // and a code is how an older mail's button signed in). The earlier one.
@@ -567,6 +666,9 @@ function firstMileSteps(row, now = new Date()) {
   const steps = order.map((key, i) => {
     const f = facts[key];
     if (f.done) return { key, state: 'done', at: f.at || null, note: f.note || null };
+    // A step that was not recorded then (the mail's page, for a mail sent
+    // before its opens were) is not where anybody stopped, nor past.
+    if (f.unrecorded) return { key, state: 'unknown', at: null, note: f.note || 'Not recorded then', unrecorded: true };
     // (A weak "done" above can sit after the stuck step: shown as done, it
     // does not hide where the person stopped.)
     if (i < furthest) return { key, state: f.expired ? 'unknown' : 'skipped', at: null, note: null };
@@ -588,6 +690,98 @@ function firstMileSteps(row, now = new Date()) {
     tour: row.tour_done_at ? { ended: seen.tour_ended || null, step: seen.tour_step ?? null, at: t(row.tour_done_at) } : null,
     welcome: row.welcome_status ? { status: row.welcome_status, at: t(row.welcome_at), replied: !!row.welcome_reply_at } : null,
   };
+}
+
+// The first mile of somebody invited and not let in yet: the invite link,
+// not the admit mail.
+const INVITED_MILE_STEPS = Object.freeze(['invite_opened', 'signed_up', 'joined', 'opened', 'first_act', 'let_in']);
+
+/**
+ * Pure: one invited person's first mile, step by step, from a facts row with
+ * INVITE_COLUMNS, in firstMileSteps' shape. Their open of the link is known
+ * only when it was made in the browser they signed up in; otherwise it is
+ * not where they stopped.
+ */
+function invitedMileSteps(row, now = new Date()) {
+  const t = (v) => (v ? new Date(v) : null);
+  const nowMs = new Date(now).getTime();
+  const seen = row.getting_started_seen && typeof row.getting_started_seen === 'object' ? row.getting_started_seen : {};
+  let how = null;
+  if (row.invite_how === 'signed_up') how = 'from the invite';
+  else if (row.invite_how) how = 'already had an account';
+  const facts = {
+    invite_opened: row.invite_opened_at ? { done: true, at: t(row.invite_opened_at) }
+      : { done: false, unrecorded: true },
+    signed_up: row.user_id != null ? { done: true, at: t(row.account_at), note: how }
+      : { done: false, stuck: 'No account yet' },
+    joined: row.invite_status === 'joined' ? { done: true, at: t(row.invite_joined_at || row.invite_redeemed_at) }
+      : { done: false, stuck: 'Waiting for access to join' },
+    opened: row.opened_at ? { done: true, at: t(row.opened_at) } : { done: false, stuck: 'Never opened Homeroom' },
+    first_act: row.first_act_at ? { done: true, at: t(row.first_act_at), note: row.first_act_kind }
+      : { done: false, stuck: 'Inside, no act yet' },
+    let_in: row.has_platform_access ? { done: true, at: t(row.access_at) } : { done: false, stuck: 'Not let in yet' },
+  };
+  let furthest = -1;
+  INVITED_MILE_STEPS.forEach((key, i) => { if (facts[key].done) furthest = i; });
+  let stuckAt = null;
+  const steps = INVITED_MILE_STEPS.map((key, i) => {
+    const f = facts[key];
+    if (f.done) return { key, state: 'done', at: f.at || null, note: f.note || null };
+    if (f.unrecorded) return { key, state: 'unknown', at: null, note: 'Opened where we could not see', unrecorded: true };
+    if (i < furthest) return { key, state: 'skipped', at: null, note: null };
+    if (stuckAt == null) {
+      stuckAt = key;
+      return { key, state: 'stuck', at: null, note: f.stuck };
+    }
+    return { key, state: 'not_yet', at: null, note: null };
+  });
+  const since = t(row.invite_redeemed_at) || t(row.account_at);
+  return {
+    steps,
+    furthest: furthest >= 0 ? INVITED_MILE_STEPS[furthest] : null,
+    stuckAt,
+    stuckReason: stuckAt ? steps.find((s) => s.key === stuckAt).note : null,
+    daysSince: since ? Math.floor((nowMs - since.getTime()) / DAY_MS) : null,
+    failedAttempts: row.failed_attempts || 0,
+    repeatedTaps: row.repeated_taps || 0,
+    tour: row.tour_done_at ? { ended: seen.tour_ended || null, step: seen.tour_step ?? null, at: t(row.tour_done_at) } : null,
+    welcome: row.welcome_status ? { status: row.welcome_status, at: t(row.welcome_at), replied: !!row.welcome_reply_at } : null,
+  };
+}
+
+/** One invited person's row, in firstMilePerson's shape. */
+function invitedMilePerson(row, now) {
+  return {
+    signupId: null,
+    userId: row.user_id != null ? Number(row.user_id) : null,
+    name: row.username || null,
+    hasAccount: row.user_id != null,
+    door: 'invite_link',
+    mail: null,
+    ...cameInFacts(row),
+    ...invitedMileSteps(row, now),
+  };
+}
+
+/**
+ * Pure: the first-mile step for the mail's own page, from a facts row: done
+ * when it opened (with what happened there); not known for a mail sent before
+ * the page's opens were recorded, or for somebody who had an account when
+ * they were let in, whose mail opens plain sign-in (`/?login=1`, no token:
+ * services/mail/index.js sendWaitlistReleaseMail); otherwise not opened.
+ */
+function mailPageFact(row, { expired = false } = {}) {
+  const at = row.mail_page_at ? new Date(row.mail_page_at) : null;
+  if (at) return { done: true, at, note: MAIL_PAGE_NOTES[row.mail_page_outcome] || null };
+  const released = row.released_at ? new Date(row.released_at) : null;
+  const account = row.account_at ? new Date(row.account_at) : null;
+  if (released && account && account.getTime() <= released.getTime()) {
+    return { done: false, unrecorded: true, note: 'Had an account: the mail opens sign-in' };
+  }
+  const since = row.mail_page_since ? new Date(row.mail_page_since) : null;
+  const sent = row.mail_at ? new Date(row.mail_at) : null;
+  const unrecorded = !since || !sent || sent.getTime() < since.getTime();
+  return { done: false, stuck: "Never opened the mail's page", expired, unrecorded };
 }
 
 /**
@@ -624,6 +818,127 @@ function mailEngagement(row) {
   return { tracked: true, opened, clicked, note: clicked ? 'clicked the link' : opened ? 'opened' : 'no open seen' };
 }
 
+// ── Where people came from ─────────────────────────────────────────────
+//
+// #6540: the first invite link a person opened, and the waitlist row they
+// signed up on. Both are hosts and short tags only; a full URL is never
+// stored. A null value means nothing was recorded (a row from before this
+// change, or a client that did not send it). 'none' means the source was
+// looked for and none was given, which Journey says as "no referrer".
+//
+// The records already follow the person (community_invite_opens.user_id,
+// waitlist_signups.linked_user_id), so nothing is copied onto the account.
+
+const CAME_FROM_INVITES_SQL = `SELECT o.user_id, o.referrer_host, o.via, o.opened_at, ap.name AS project
+    FROM community_invite_opens o
+    JOIN apps ap ON ap.id = o.app_id
+   WHERE o.user_id = ANY($1::int[])
+   ORDER BY o.opened_at, o.id`;
+
+// A sign-up is read by the account it was linked to, and, for a person who
+// has no account yet, by the sign-up's own id.
+const CAME_FROM_WAITLIST_SQL = `SELECT w.id, w.linked_user_id, w.referrer_host, w.utm_source,
+         w.utm_campaign, w.ref, w.submitted_at
+    FROM waitlist_signups w
+   WHERE w.linked_user_id = ANY($1::int[]) OR w.id = ANY($2::bigint[])
+   ORDER BY w.submitted_at, w.id`;
+
+function inviteCameFrom(row) {
+  return {
+    referrerHost: row.referrer_host == null ? null : String(row.referrer_host),
+    via: row.via == null ? null : String(row.via),
+    project: row.project || null,
+    at: new Date(row.opened_at).toISOString(),
+  };
+}
+
+function waitlistCameFrom(row) {
+  return {
+    referrerHost: row.referrer_host == null ? null : String(row.referrer_host),
+    utmSource: row.utm_source == null ? null : String(row.utm_source),
+    utmCampaign: row.utm_campaign == null ? null : String(row.utm_campaign),
+    ref: row.ref == null ? null : String(row.ref),
+    at: new Date(row.submitted_at).toISOString(),
+  };
+}
+
+/**
+ * The invite and waitlist records for a set of people, each keyed so one
+ * person is read once: the earliest invite open per account, and a waitlist
+ * row by the account it was linked to and by its own id.
+ */
+async function cameFromFor(pool, { userIds = [], signupIds = [] } = {}) {
+  const ids = (userIds || []).map(Number).filter((n) => Number.isSafeInteger(n) && n > 0);
+  const signups = (signupIds || []).map(Number).filter((n) => Number.isSafeInteger(n) && n > 0);
+  const records = { invites: new Map(), waitlistsByUser: new Map(), waitlistsBySignup: new Map() };
+  if (!ids.length && !signups.length) return records;
+  const [{ rows: inviteRows }, { rows: waitlistRows }] = await Promise.all([
+    ids.length ? pool.query(CAME_FROM_INVITES_SQL, [ids]) : Promise.resolve({ rows: [] }),
+    pool.query(CAME_FROM_WAITLIST_SQL, [ids, signups]),
+  ]);
+  for (const row of inviteRows) {
+    const id = Number(row.user_id);
+    if (!records.invites.has(id)) records.invites.set(id, inviteCameFrom(row));
+  }
+  for (const row of waitlistRows) {
+    const rowId = Number(row.id);
+    if (!records.waitlistsBySignup.has(rowId)) records.waitlistsBySignup.set(rowId, waitlistCameFrom(row));
+    if (row.linked_user_id != null) {
+      const id = Number(row.linked_user_id);
+      if (!records.waitlistsByUser.has(id)) records.waitlistsByUser.set(id, waitlistCameFrom(row));
+    }
+  }
+  return records;
+}
+
+/** One person's two records, from cameFromFor's maps: either may be null. */
+function cameFromOf(records, { userId = null, signupId = null } = {}) {
+  const invite = userId != null ? records.invites.get(Number(userId)) || null : null;
+  const waitlist = (userId != null ? records.waitlistsByUser.get(Number(userId)) : null)
+    || (signupId != null ? records.waitlistsBySignup.get(Number(signupId)) : null)
+    || null;
+  return { invite, waitlist };
+}
+
+/** The word a waitlist record's source starts with: utm_source, then host, then ref. */
+function waitlistSource(waitlist) {
+  return waitlist ? (waitlist.utmSource || waitlist.referrerHost || waitlist.ref || null) : null;
+}
+
+/**
+ * Which of a person's two records came first, and where that one says they
+ * came from. `unknown` is nobody recorded at all.
+ */
+function cameFromWay(cameFrom) {
+  const invite = cameFrom?.invite || null;
+  const waitlist = cameFrom?.waitlist || null;
+  if (!invite && !waitlist) return { way: 'unknown', from: null };
+  if (invite && waitlist) {
+    const byInvite = new Date(invite.at).getTime() <= new Date(waitlist.at).getTime();
+    return byInvite ? { way: 'invite', from: invite.referrerHost } : { way: 'waitlist', from: waitlistSource(waitlist) };
+  }
+  return invite ? { way: 'invite', from: invite.referrerHost } : { way: 'waitlist', from: waitlistSource(waitlist) };
+}
+
+/**
+ * A cohort's people, counted once each by where they came from: the earlier
+ * of their two records. Sorted most people first. 'none' is kept as is; a
+ * null `from` is "not recorded".
+ */
+function cohortSources(people) {
+  const counts = new Map();
+  for (const person of people || []) {
+    const { way, from } = cameFromWay(person?.cameFrom || {});
+    const key = `${way}|${from == null ? '' : from}`;
+    const row = counts.get(key) || { way, from: from == null ? null : from, people: 0 };
+    row.people += 1;
+    counts.set(key, row);
+  }
+  return [...counts.values()].sort((a, b) => b.people - a.people
+    || a.way.localeCompare(b.way)
+    || String(a.from || '').localeCompare(String(b.from || '')));
+}
+
 function firstMilePerson(row, now) {
   const mile = firstMileSteps(row, now);
   const mail = mailEngagement(row);
@@ -636,7 +951,43 @@ function firstMilePerson(row, now) {
     hasAccount: row.user_id != null,
     door: row.door || (row.released_at ? 'admitted' : null),
     mail: mail.tracked ? { opened: mail.opened, clicked: mail.clicked } : null,
+    ...cameInFacts(row),
     ...mile,
+  };
+}
+
+/**
+ * Pure: how a person came in, from a facts row (PERSON_FACTS): how the
+ * account signed up, the waitlist row's facts, the mail's own page and which
+ * mail led to the sign-in, counting the admit mail and its reminders (1 is
+ * the first send). Each is null when nothing says. `invite` only for somebody who came by an invite link.
+ */
+function cameInFacts(row) {
+  const t = (v) => (v ? new Date(v) : null);
+  const joined = t(row.waitlist_joined_at);
+  const released = t(row.released_at);
+  const followed = row.mail_link_at || row.code_asked_at;
+  return {
+    signupMethod: row.signup_method || null,
+    waitlist: joined ? {
+      joinedAt: joined,
+      waitedDays: released ? Math.max(0, Math.floor((released.getTime() - joined.getTime()) / DAY_MS)) : null,
+      source: row.waitlist_source || null,
+      discovery: row.waitlist_discovery || null,
+      answeredFollowUp: row.answered_follow_up === true,
+      referred: row.waitlist_referred === true,
+      projectInvite: row.waitlist_project_invite === true,
+    } : null,
+    mailPage: row.mail_page_at ? { at: t(row.mail_page_at), outcome: row.mail_page_outcome || null } : null,
+    fromEmail: followed && row.mail_sends_before_follow > 0 ? Number(row.mail_sends_before_follow) : null,
+    invite: row.invite_id != null ? {
+      by: row.invited_by || null,
+      project: row.invite_project || null,
+      slug: row.invite_project_slug || null,
+      openedAt: t(row.invite_opened_at),
+      how: row.invite_how || null,
+      status: row.invite_status || null,
+    } : null,
   };
 }
 
@@ -647,8 +998,11 @@ function firstMileCounts(people) {
     key,
     passed: people.filter((p) => {
       const step = p.steps.find((s) => s.key === key);
-      return step && (step.state === 'done' || step.state === 'skipped' || step.state === 'unknown');
+      return step && (step.state === 'done' || step.state === 'skipped' || (step.state === 'unknown' && !step.unrecorded));
     }).length,
+    // Not recorded for them (the mail's page, for an earlier mail or one that
+    // opens plain sign-in): neither past the step nor stopped at it.
+    unrecorded: people.filter((p) => (p.steps.find((s) => s.key === key) || {}).unrecorded === true).length,
     stuck: people.filter((p) => p.stuckAt === key).map((p) => ({
       userId: p.userId, signupId: p.signupId, name: p.name, days: p.daysSince, reason: p.stuckReason,
       failedAttempts: p.failedAttempts,
@@ -664,9 +1018,11 @@ function realPersonParams(leftOutIds) {
 async function cohorts(pool, { now = new Date(), leftOutIds = [] } = {}) {
   const { rows } = await pool.query(COHORTS_SQL, [null, now, ...realPersonParams(leftOutIds)]);
   const other = await pool.query(FIRST_MILE_OTHER_WAY_SQL, [NEWCOMER_DAYS, now, ...realPersonParams(leftOutIds)]);
+  const invited = await pool.query(FIRST_MILE_INVITED_SQL, [INVITED_DAYS, now, ...realPersonParams(leftOutIds)]);
   return {
     cohorts: rows.map((r) => ({ day: r.day, admitted: r.admitted, withAccount: r.with_account })),
     otherWay: { people: other.rows.length },
+    invited: { people: invited.rows.length },
   };
 }
 
@@ -705,12 +1061,19 @@ async function onboardFor(pool, row, seasonId) {
 /** One cohort's first mile: `day` is an admit day, or 'other_way'. */
 async function firstMile(pool, { day, now = new Date(), leftOutIds = [] } = {}) {
   const params = realPersonParams(leftOutIds);
-  const result = day === 'other_way'
-    ? await pool.query(FIRST_MILE_OTHER_WAY_SQL, [NEWCOMER_DAYS, now, ...params])
-    : await pool.query(FIRST_MILE_ADMITTED_SQL, [day, now, ...params]);
+  let result;
+  if (day === 'other_way') result = await pool.query(FIRST_MILE_OTHER_WAY_SQL, [NEWCOMER_DAYS, now, ...params]);
+  else if (day === 'invited') result = await pool.query(FIRST_MILE_INVITED_SQL, [INVITED_DAYS, now, ...params]);
+  else result = await pool.query(FIRST_MILE_ADMITTED_SQL, [day, now, ...params]);
   const season = result.rows.some(cardWasShown) ? await fetchCurrentSeason(pool) : null;
+  const person = day === 'invited' ? invitedMilePerson : firstMilePerson;
+  const cameFromRecords = await cameFromFor(pool, {
+    userIds: result.rows.map((r) => r.user_id).filter((v) => v != null),
+    signupIds: result.rows.map((r) => r.signup_id).filter((v) => v != null),
+  });
   const people = await Promise.all(result.rows.map(async (row) => ({
-    ...firstMilePerson(row, now),
+    ...person(row, now),
+    cameFrom: cameFromOf(cameFromRecords, { userId: row.user_id, signupId: row.signup_id }),
     onboard: await onboardFor(pool, row, season ? season.id : null),
   })));
   const tracked = people.filter((p) => p.mail);
@@ -718,6 +1081,7 @@ async function firstMile(pool, { day, now = new Date(), leftOutIds = [] } = {}) 
     cohort: day,
     people,
     steps: firstMileCounts(people),
+    sources: cohortSources(people),
     mail: tracked.length ? {
       tracked: tracked.length,
       opened: tracked.filter((p) => p.mail.opened).length,
@@ -1382,10 +1746,11 @@ const FIRST_VERSION_FACTS = `
 // Challenges, and their First challenges with the time each was done.
 
 const PERSON_SQL = `WITH ${ADMITTED_CTE}
-  SELECT a.signup_id, a.email, a.released_at, ${PERSON_FACTS}
+  SELECT a.signup_id, a.email, a.released_at, ${INVITE_COLUMNS}, ${PERSON_FACTS}
     FROM users u
     LEFT JOIN admitted a ON a.linked_user_id = u.id
       AND (u.platform_access_granted_at IS NULL OR u.platform_access_granted_at >= a.released_at)
+    ${INVITE_JOIN}
     ${PERSON_JOINS}
    WHERE u.id = $1::int AND u.created_at <= $2::timestamptz`;
 
@@ -1469,17 +1834,21 @@ async function person(pool, { userId, now = new Date() } = {}) {
   const { rows } = await pool.query(PERSON_SQL, [id, now]);
   const row = rows[0];
   if (!row) return null;
-  const mile = firstMileSteps(row, now);
+  // Somebody invited and not let in yet has the invite's first mile, not the
+  // admit mail's (the "Invited, not let in yet" cohort).
+  const invitedOnly = row.invite_id != null && !row.released_at && !row.has_platform_access;
+  const mile = invitedOnly ? invitedMileSteps(row, now) : firstMileSteps(row, now);
   const since = row.released_at || row.access_at || row.account_at;
   const to = new Date(now);
   const from = since ? new Date(Math.min(new Date(since).getTime(), to.getTime() - NEWCOMER_DAYS * DAY_MS))
     : new Date(to.getTime() - NEWCOMER_DAYS * DAY_MS);
-  const [{ byPerson, leftOut }, apps, challenges, made, moments] = await Promise.all([
+  const [{ byPerson, leftOut }, apps, challenges, made, moments, cameFromRecords] = await Promise.all([
     visitsFor(pool, { userIds: [id], from, to }),
     pool.query(PERSON_APPS_SQL, [id, from, to]),
     pool.query(PERSON_CHALLENGES_SQL, [id, from, to]),
     pool.query(PERSON_MADE_SQL, [id]),
     pool.query(PERSON_MOMENTS_SQL, [id]),
+    cameFromFor(pool, { userIds: [id] }),
   ]);
   const visits = byPerson.get(id) || [];
   const steps = visits.flatMap((v) => v.steps);
@@ -1517,8 +1886,16 @@ async function person(pool, { userId, now = new Date() } = {}) {
   return {
     userId: id,
     name: row.username,
-    cohort: row.released_at ? isoDay(row.released_at) : null,
+    cohort: row.released_at ? isoDay(row.released_at) : (invitedOnly ? 'invited' : null),
+    // How they came in (cameInFacts): the door, the waitlist row, the mail's
+    // own page, which mail (admit or reminder) led in, how the account signed up, and the
+    // invite link when one brought them.
+    cameIn: {
+      door: row.invite_id != null ? 'invite_link' : (row.released_at ? 'admitted' : null),
+      ...cameInFacts(row),
+    },
     firstMile: mile,
+    cameFrom: cameFromOf(cameFromRecords, { userId: id, signupId: row.signup_id }),
     found,
     cameBackTo,
     usedOftenNotOnHome: appRows.filter((a) => a.daysUsed >= 3 && !a.onHome).map((a) => ({ slug: a.slug, name: a.name, days: a.daysUsed })),
@@ -2687,7 +3064,11 @@ module.exports = {
   DAY_MS,
   FIRST_MILE_ADMITTED_SQL,
   FIRST_MILE_OTHER_WAY_SQL,
+  FIRST_MILE_INVITED_SQL,
   FIRST_MILE_STEPS,
+  INVITED_MILE_STEPS,
+  INVITED_DAYS,
+  MAIL_PAGE_NOTES,
   STAGES,
   STAGES_SQL,
   STAY_EVER_SQL,
@@ -2734,6 +3115,7 @@ module.exports = {
   inviteFunnelReading,
   firstMileCounts,
   firstMileSteps,
+  cohortSources,
   followedMail,
   mailEngagement,
   groupLifecycle,
@@ -2752,4 +3134,8 @@ module.exports = {
   trustChecks,
   visitsFor,
   weekStart,
+  cameInFacts,
+  invitedMileSteps,
+  invitedMilePerson,
+  mailPageFact,
 };

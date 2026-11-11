@@ -49,8 +49,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "2a8bbe1bbf739a09",
-          "length": 226040
+          "sha": "a357f599a1b28c2e",
+          "length": 225891
         },
         "tools": [
           "dispatch_claude_code",
@@ -152,8 +152,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e0bdb16034ea33c2",
-          "length": 224413
+          "sha": "0c8b65107f12fbee",
+          "length": 224264
         },
         "tools": [
           "dispatch_claude_code",
@@ -187,8 +187,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e0bdb16034ea33c2",
-          "length": 224413
+          "sha": "0c8b65107f12fbee",
+          "length": 224264
         },
         "tools": [
           "dispatch_claude_code",
@@ -319,8 +319,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e0bdb16034ea33c2",
-          "length": 224413
+          "sha": "0c8b65107f12fbee",
+          "length": 224264
         },
         "tools": [
           "dispatch_claude_code",
@@ -414,8 +414,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e0bdb16034ea33c2",
-          "length": 224413
+          "sha": "0c8b65107f12fbee",
+          "length": 224264
         },
         "tools": [
           "dispatch_claude_code",
@@ -506,8 +506,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e0bdb16034ea33c2",
-          "length": 224413
+          "sha": "0c8b65107f12fbee",
+          "length": 224264
         },
         "tools": [
           "dispatch_claude_code",
@@ -603,8 +603,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e0bdb16034ea33c2",
-          "length": 224413
+          "sha": "0c8b65107f12fbee",
+          "length": 224264
         },
         "tools": [
           "dispatch_claude_code",
@@ -706,8 +706,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e0bdb16034ea33c2",
-          "length": 224413
+          "sha": "0c8b65107f12fbee",
+          "length": 224264
         },
         "tools": [
           "dispatch_claude_code",
@@ -795,8 +795,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e0bdb16034ea33c2",
-          "length": 224413
+          "sha": "0c8b65107f12fbee",
+          "length": 224264
         },
         "tools": [
           "dispatch_claude_code",
@@ -881,8 +881,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e0bdb16034ea33c2",
-          "length": 224413
+          "sha": "0c8b65107f12fbee",
+          "length": 224264
         },
         "tools": [
           "dispatch_claude_code",
@@ -1034,6 +1034,7 @@
       "SELECT (cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status … <sha:606178aea56d8f55 len:1515> :: [4242]",
       "SELECT linked_issues, pr_linked_issues_applied FROM chat_sessions WHERE id = $1 :: [4242]",
       "UPDATE chat_sessions SET linked_issues = $1 WHERE id = $2 :: [[34],4242]",
+      "SELECT cs.id AS session_id, cs.app_id, cs.pr_number, n.number AS request_number, a.repo_url FROM chat_sessions cs JOIN a… <sha:720383c75afaa40f len:749> :: [4242,null]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Scouting the repo for context (Opus)...\",{\"json\":{\"agentBackend\":\"claude_code\",\"agentModel\":\"claude-opus-5-5\"}}]",
       "SELECT spec_md, spec_html FROM chat_sessions WHERE id = $1 :: [4242]",
@@ -1077,8 +1078,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e0bdb16034ea33c2",
-          "length": 224413
+          "sha": "0c8b65107f12fbee",
+          "length": 224264
         },
         "tools": [
           "dispatch_claude_code",
@@ -1112,8 +1113,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "fc79bc100523b129",
-          "length": 224775
+          "sha": "ab8db7a7c8c833c8",
+          "length": 224626
         },
         "tools": [
           "suggest_replies"
@@ -1316,8 +1317,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "fc79bc100523b129",
-          "length": 224775
+          "sha": "ab8db7a7c8c833c8",
+          "length": 224626
         },
         "tools": [
           "dispatch_claude_code",
@@ -1359,8 +1360,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "a30a2987649ad016",
-          "length": 225509
+          "sha": "e83b36f27c85a86c",
+          "length": 225360
         },
         "tools": [
           "suggest_replies"
@@ -1561,8 +1562,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "fc79bc100523b129",
-          "length": 224775
+          "sha": "ab8db7a7c8c833c8",
+          "length": 224626
         },
         "tools": [
           "dispatch_claude_code",
@@ -1596,8 +1597,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "fc79bc100523b129",
-          "length": 224775
+          "sha": "ab8db7a7c8c833c8",
+          "length": 224626
         },
         "tools": [
           "suggest_replies"
@@ -1764,8 +1765,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "fc79bc100523b129",
-          "length": 224775
+          "sha": "ab8db7a7c8c833c8",
+          "length": 224626
         },
         "tools": [
           "dispatch_claude_code",
@@ -1874,8 +1875,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "8512180684e814e3",
-          "length": 224475
+          "sha": "a10803ccaaf9675e",
+          "length": 224326
         },
         "tools": [
           "suggest_answers",
@@ -1963,8 +1964,8 @@
         "model": "openai/gpt-5.3-codex",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e0bdb16034ea33c2",
-          "length": 224413
+          "sha": "0c8b65107f12fbee",
+          "length": 224264
         },
         "tools": [
           "dispatch_claude_code",
@@ -2107,8 +2108,8 @@
         "model": "openai/gpt-5.3-codex",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "e0bdb16034ea33c2",
-          "length": 224413
+          "sha": "0c8b65107f12fbee",
+          "length": 224264
         },
         "tools": [
           "dispatch_claude_code",
@@ -2138,7 +2139,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"38a5b7ff6f189c05\",\"length\":233735},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"71c6a13ee94ee6d4\",\"length\":233586},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"wrapUpPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
@@ -2262,7 +2263,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"38a5b7ff6f189c05\",\"length\":233735},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"71c6a13ee94ee6d4\",\"length\":233586},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"wrapUpPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
@@ -2383,7 +2384,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"bdb5aba55cea42bf\",\"length\":12954},\"systemPrompt\":{\"sha\":\"7d1bb0be2c651222\",\"length\":212209},\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"bdb5aba55cea42bf\",\"length\":12954},\"systemPrompt\":{\"sha\":\"7c70e5cea44031a9\",\"length\":212060},\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"wrapUpPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
@@ -2505,8 +2506,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "fc79bc100523b129",
-          "length": 224775
+          "sha": "ab8db7a7c8c833c8",
+          "length": 224626
         },
         "tools": [
           "dispatch_claude_code",
@@ -2540,8 +2541,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "a30a2987649ad016",
-          "length": 225509
+          "sha": "e83b36f27c85a86c",
+          "length": 225360
         },
         "tools": [
           "suggest_replies"

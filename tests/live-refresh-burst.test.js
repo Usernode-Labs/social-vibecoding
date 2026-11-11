@@ -18,6 +18,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const APP_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+const APP_VIEW = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
 
 function sliceMember(src, signature) {
   const start = src.indexOf(`\n  ${signature}`);
@@ -36,6 +37,7 @@ function harness({ currentApp = 'demo', currentTab = 'dev', homeVisible = false,
   const told = [];
   const voteReads = [];
   const voteControlRefreshes = [];
+  const shown = [];
   const toasts = [];
   let homeLoads = 0;
   let drawer = 0;
@@ -57,6 +59,9 @@ function harness({ currentApp = 'demo', currentTab = 'dev', homeVisible = false,
     AppView: {
       _liveHandedOff: null,
       refreshDevData: (kind, live) => { refreshes.push({ kind, live }); return Promise.resolve(true); },
+      // #6595: what is shown beside the Workshop (the bot tab's column, the
+      // side panel, an item's own page) re-reads from the same burst.
+      refreshShownTopic: (live) => { shown.push(live); return Promise.resolve(true); },
       // Calls back the way the real one patches the hosts, so a test can see
       // the tally repainted without the thread being remounted.
       loadVoteState: (slug) => {
@@ -90,7 +95,7 @@ function harness({ currentApp = 'demo', currentTab = 'dev', homeVisible = false,
   const flush = () => { const due = timers.splice(0); due.forEach((t) => t.fn()); };
   const runLast = () => { const t = timers.pop(); t.fn(); };
   return {
-    App, sandbox, refreshes, told, flush, runLast, timers, voteReads, voteControlRefreshes, toasts,
+    App, sandbox, refreshes, told, flush, runLast, timers, voteReads, voteControlRefreshes, toasts, shown,
     homeLoads: () => homeLoads, drawer: () => drawer,
   };
 }
@@ -170,7 +175,72 @@ test('the socket handlers route through the burst', () => {
   assert.match(block('handleSessionUpdate(data) {'), /App\._liveRefresh\('session', data\.sessionId/);
   assert.match(block('handleSessionState(data) {'), /App\._liveRefresh\('session', data\.sessionId/);
   assert.match(block('handleIssueUpdate(data) {'), /App\._liveRefresh\('issue'/);
+  assert.match(block('handleIssueUpdate(data) {'), /issueNumber: data\.issueNumber/,
+    '#6595: an update that names its request lets a shown one tell it apart');
   assert.match(APP_JS, /case 'board_order_update':[\s\S]{0,600}?App\._liveRefresh\('board-order'[^\n]*\n\s*break;/);
+  assert.match(APP_JS, /case 'work_state':[\s\S]{0,900}?App\._liveRefresh\('work', data\.item\?\.sessionId \?\? null, \{[\s\S]{0,200}?issueNumber: data\.item\?\.issueNumber[\s\S]{0,80}?dev: false/,
+    '#6595: a work state names the item whose stage moved, without asking the Workshop');
+});
+
+// #6595: a request or a change open on the Homeroom bot page (or in the side
+// panel) is not on App.currentApp, so the dev refresh returns at once. The
+// burst still carries the project it was about, and the shown topic re-reads
+// itself from that.
+test('#6595: an issue update for a project that is not App.currentApp reaches what is shown', () => {
+  const h = harness({ currentApp: null, currentTab: 'homeroom-bot' });
+  h.App._liveRefresh('issue', null, { appSlug: 'other' });
+  assert.equal(h.shown.length, 0, 'nothing runs until the window closes');
+  h.flush();
+  assert.equal(h.refreshes.length, 0, 'the Workshop is not this project');
+  assert.equal(h.shown.length, 1, 'the shown topic heard the burst');
+  assert.deepEqual([...h.shown[0].slugs], ['other'], 'every project the burst named, whatever currentApp says');
+  assert.equal(h.shown[0].unnamed, true, 'a close vote names no request number');
+  assert.equal(h.shown[0].devRead, false, 'the dev refresh read nothing, so the shown row is not skipped');
+});
+
+test('#6595: a burst of events about another project is one shown-topic call', () => {
+  const h = harness({ currentApp: null, currentTab: 'homeroom-bot' });
+  h.App._liveRefresh('issue', null, { appSlug: 'other' });
+  h.App._liveRefresh('vote', 7, { appSlug: 'other' });
+  h.App._liveRefresh('work', null, { appSlug: 'other', issueNumber: 6580, dev: false });
+  h.flush();
+  assert.equal(h.shown.length, 1, 'one read for the burst');
+  assert.deepEqual([...h.shown[0].slugs], ['other']);
+  assert.deepEqual([...h.shown[0].numbers], [6580], 'the request numbers the burst named travel with it');
+});
+
+test('#6595: a work state routes through the burst without asking the Workshop', () => {
+  const h = harness({ currentApp: 'demo', currentTab: 'dev' });
+  h.App._liveRefresh('work', null, { appSlug: 'other', issueNumber: 3, dev: false });
+  h.flush();
+  assert.equal(h.refreshes.length, 0, 'dev: false means no board read');
+  assert.equal(h.shown.length, 1, 'but what is shown still hears it');
+});
+
+test('#6595: an own write joins the same gathered burst', async () => {
+  const h = harness({ currentApp: null, currentTab: 'homeroom-bot' });
+  const post = h.App._liveRefresh('issue', null, { appSlug: 'other', issueNumber: 6580 });
+  const ws = h.App._liveRefresh('issue', null, { appSlug: 'other', issueNumber: 6580 });
+  assert.equal(post, ws, 'the POST and its broadcast share one read');
+  h.flush();
+  assert.equal(h.shown.length, 1);
+  await post;
+  assert.equal(h.shown.length, 1, 'settled after the shown read landed');
+});
+
+test('#6595: claim, release and a decision vote re-read the view they were made from', () => {
+  const fn = (head) => {
+    const at = APP_VIEW.indexOf(head);
+    assert.ok(at > -1, `${head.trim()} is found`);
+    return APP_VIEW.slice(at, APP_VIEW.indexOf('\n  },\n', at));
+  };
+  for (const [head, issue] of [
+    ['  async markIssueInProgress(issueNumber) {', /App\._liveRefresh\('issue', null, \{ appSlug: slug, issueNumber \}\)/],
+    ['  async clearIssueClaim(issueNumber, userId) {', /App\._liveRefresh\('issue', null, \{ appSlug: slug, issueNumber \}\)/],
+    ['  async castIssueVote(issueId, vote, opts = null) {', /App\._liveRefresh\('vote', null, \{ appSlug: [^\n]*issueNumber: targetN \}\)/],
+  ]) {
+    assert.match(fn(head), issue, head.trim());
+  }
 });
 
 // #6109: the tally on a proposal's vote row in a chat thread follows other

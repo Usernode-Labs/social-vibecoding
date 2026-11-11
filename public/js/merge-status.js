@@ -279,14 +279,20 @@
     // it again on its own, and the tooltip says when. Amber, no spinner:
     // waiting, not working, and the reader has nothing to do.
     var held = served.indexOf('github_busy') !== -1 ? 'github_busy'
-      : served.indexOf('github_refused') !== -1 ? 'github_refused' : null;
+      : served.indexOf('github_refused') !== -1 ? 'github_refused'
+        // #6546: its required GitHub checks are still running, or are being
+        // run again on today's main.
+        : served.indexOf('github_checks') !== -1 ? 'github_checks' : null;
     if (status === 'promoted' && held) {
       var until = integ && integ.heldUntil ? Date.parse(integ.heldUntil) : NaN;
       var soon = !Number.isFinite(until) || until <= Date.now();
       var time = soon ? null : new Date(until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       var title = held === 'github_busy'
         ? t(soon ? 'session:merge.title.githubBusySoon' : 'session:merge.title.githubBusy', { time: time })
-        : t(soon ? 'session:merge.title.githubRefusedSoon' : 'session:merge.title.githubRefused', { time: time });
+        : held === 'github_checks'
+          // #6593: what GitHub is doing, not when Homeroom asks again.
+          ? t('session:merge.title.githubChecks')
+          : t(soon ? 'session:merge.title.githubRefusedSoon' : 'session:merge.title.githubRefused', { time: time });
       return descriptor('merge_held', t('session:merge.status.waitingOnGithub'), 'amber', false, {
         votes: votes, title: title,
       });
@@ -634,6 +640,9 @@
     explicitApprovalCopy: explicitApprovalCopy,
     awaitingOtherMember: awaitingOtherMember,
     checksWillRetry: checksWillRetry,
+    // "measured 2 minutes ago", so a surface that states a measurement can
+    // say how old it is from the same wording as the status tooltip.
+    ageOf: ageOf,
     // Keys whose canonical badge belongs in the feed card's "state" slot.
     // In-vote / draft are conveyed by the vote pill; checks states keep their
     // own detailed badge (with per-test counts), so they're excluded here.

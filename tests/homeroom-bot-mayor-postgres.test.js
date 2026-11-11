@@ -1806,11 +1806,13 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.match(card.content, /Note colours\n\nFiled\. I'll look at it now\. How it goes shows on its page\.$/);
     assert.equal((await read(offered)).metadata.homeroomBot.status, 'answered');
 
-    // Nothing waiting now: a typed "file it" is said to the model as such.
+    // #6583: a draft decided done moments ago is what a typed "file it" may
+    // mean, so the model reads the conversation instead of being told there
+    // is no draft.
     const none = await say('file it');
-    assert.deepEqual(
+    assert.equal(
       await mayor.decideTyped(pool, CONFIG, { bot, user: ada, settings, conversationId: opened.conversationId, message: none, deps: {} }),
-      { decisionWithoutOffer: true },
+      null,
     );
     const seen = [];
     await mayor.runDmTurn(pool, CONFIG, {
@@ -1862,8 +1864,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       [['reply', { text: 'Filed: **Note board** request #99: Note colours.' }]],
     ]));
     assert.equal((await read(stubborn)).content,
-      'I haven\'t filed anything for that yet. Tell me what you want filed and I\'ll draft it for you to confirm.\n\n'
-      + '(I can\'t find request #99 on your projects.)');
+      '(I can\'t find request #99 on your projects.)');
     // A true answer passes untouched, in one pass.
     const fine = [];
     await turn('what is #5?', scripted([[['reply', { text: 'Request #5 is Pin notes, up for a vote.' }]]], fine));
@@ -1885,8 +1886,11 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       },
     ]);
     const sent = await turn('add to the share request that it should be by link', chat);
+    // #6583: a record-backed claim proven false is cut with no fixed line; the
+    // second pass's own words are kept.
     assert.equal((await read(sent)).content,
-      'I haven\'t posted that anywhere yet.\n\n**Note board** · request #6:\n\n'
+      'This chat is private. Want me to post this on the public discussion of request #6, as you?\n\n'
+      + '**Note board** · request #6:\n\n'
       + '> add to the share request that it should be by link\n> \n'
       + '> (Sent in a chat with Homeroom bot. What they asked to add, as Homeroom bot understood it: Share by link, not by email.)');
     assert.equal(threadPosts.length, 0, 'nothing is public before the tap');
@@ -1977,8 +1981,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const out = await mayor.startRequest(pool, ctx(), { project: 'note-board', number: 6 });
     assert.equal(out.ok, false);
     assert.equal(out.code, 'go_ahead_cannot');
-    assert.match(out.said, /^A go-ahead can't change this one: moving App secrets and deleting a GitHub Actions secret are operator work outside this app\./);
-    assert.match(out.said, /I can do this part here: Remove the dead bot token line from the deploy workflow\.$/);
+    assert.match(out.said, /^I don't build changes like this myself, even with a go-ahead: moving App secrets and deleting a GitHub Actions secret are operator work outside this app\./);
+    assert.match(out.said, /I can build this part now: Remove the dead bot token line from the deploy workflow\.$/);
     assert.match(out.next, /Do not say you are on it/);
     const { rows: queued } = await pool.query(
       'SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id],
@@ -2191,9 +2195,11 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     // "File it" typed is no decision on it; "Withdraw it" tapped is.
     await pool.query(`UPDATE bot_cards SET status = 'declined' WHERE user_id = $1 AND kind = 'file_request' AND status = 'open'`, [ada.id]);
     const typed = await say('file it');
-    assert.deepEqual(
+    // #6583: a filing decided in the last ten minutes is what "File it" may
+    // mean, so the model answers from the conversation.
+    assert.equal(
       await mayor.decideTyped(pool, CONFIG, { bot, user: ada, settings, conversationId: opened.conversationId, message: typed, deps: { sessionLifecycle } }),
-      { decisionWithoutOffer: true },
+      null,
     );
     assert.deepEqual(archives, []);
     const tap = await say('Withdraw it', { reply_to_id: offered.messageId });
@@ -2345,7 +2351,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       summary: 'A build that never finishes', details: 'My request has been building for hours.', project: 'secret-diary', number: 2,
     });
     assert.equal(hidden.result.ok, true);
-    assert.match(hidden.result.sent, /which anyone can read\. The last few messages of this chat went only to the team, privately\.$/);
+    assert.match(hidden.result.sent, /on Homeroom's requests board, where anyone can read it; the last few messages of this chat went only to the team, privately\.$/);
     const privateBody = posted.at(-1).body;
     assert.match(privateBody, new RegExp(`\\*\\*App:\\*\\* a private project \\(app id ${diary.id}\\)\\n\\*\\*Request:\\*\\* #2\\n`));
     assert.match(privateBody, /My request has been building for hours\./);
@@ -2616,6 +2622,137 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       'SELECT id FROM issue_screenshots WHERE issue_number = $1', [once.issueNumber],
     );
     assert.equal(copies.length, 1, 'one copy for the one filing');
+  });
+
+  await t.test('#6566: a report names its thread\'s project, never the bot\'s last news, and a repeat files nothing', async (tt) => {
+    await pool.query('DELETE FROM feedback_reports WHERE user_id = $1', [ada.id]);
+    // Homeroom's own project, so the reply can carry its link and card.
+    const { rows: [platform] } = await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by, repo_url, view_visibility, collab_visibility, self_hosted)
+       VALUES ('Homeroom', 'usernode-2d5619', 'running', $1, 'https://github.com/usernode-labs/social-vibecoding', 'public', 'public', TRUE)
+       ON CONFLICT (slug) DO UPDATE SET self_hosted = TRUE
+       RETURNING id, slug, name, self_hosted, view_visibility`,
+      [ada.id],
+    );
+    const config = { ...CONFIG, platformRepoUrl: 'https://github.com/usernode-labs/social-vibecoding' };
+    const root = await say('a problem on my phone');
+    // The bot's newest news is about another project's request: never the subject.
+    const news = await say('News about Seed swap request #99');
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind)
+       VALUES ($1, $2, $3, $4, 99, 'progress')`,
+      [news.id, ada.id, opened.conversationId, seeds.id],
+    );
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, about_kind, about_number)
+       VALUES ($1, $2, $3, $4, NULL, NULL)`,
+      [ada.id, opened.conversationId, root.id, platform.id],
+    );
+    const threadCtx = (rootId) => ({
+      user: ada, deps: { domain: 'app.test', threadRootId: rootId }, config,
+      conversationId: opened.conversationId, appIds: new Set(), cards: [],
+    });
+    const before = created.length;
+    const args = { summary: 'Blank screen after the app was closed', details: 'It stays blank after a while.' };
+    const firstCtx = threadCtx(root.id);
+    const first = await mayor.reportProblem(pool, firstCtx, args);
+    assert.equal(first.ok, true);
+    assert.equal(first.repeat, undefined);
+    assert.equal(created.length - before, 1, 'filed once');
+    const body = created.at(-1).body;
+    assert.match(body, /\*\*App:\*\* Homeroom\n/, 'the thread about Homeroom names Homeroom');
+    assert.doesNotMatch(body, /Seed swap|seed-swap|#99/, 'never the bot\'s last news');
+    assert.equal(first.number, 40 + before + 1);
+    assert.equal(first.link, `https://app.test/#app/${platform.slug}/dev/issues/${first.number}`);
+    assert.deepEqual(firstCtx.cards, [{ type: 'issue', appId: platform.id, issueNumber: first.number }], 'a card opens the report');
+
+    // The same problem again in the same thread: the first report, nothing filed.
+    const again = await mayor.reportProblem(pool, threadCtx(root.id), args);
+    assert.equal(again.repeat, true);
+    assert.equal(again.number, first.number);
+    assert.equal(again.link, first.link);
+    assert.equal(created.length - before, 1, 'nothing new was filed');
+
+    // A different problem, and the same problem in another thread, each file.
+    const other = await mayor.reportProblem(pool, threadCtx(root.id), { summary: 'Messages do not send', details: 'The send button does nothing.' });
+    assert.equal(other.repeat, undefined);
+    assert.equal(created.length - before, 2, 'a different problem is its own report');
+    const root2 = await say('another problem');
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, about_kind, about_number)
+       VALUES ($1, $2, $3, $4, NULL, NULL)`,
+      [ada.id, opened.conversationId, root2.id, platform.id],
+    );
+    const elsewhere = await mayor.reportProblem(pool, threadCtx(root2.id), args);
+    assert.equal(elsewhere.repeat, undefined);
+    assert.equal(created.length - before, 3, 'another thread is another report');
+
+    // The next threads file new reports: clear the day's count so the limit
+    // does not answer for them.
+    await pool.query('DELETE FROM feedback_reports WHERE user_id = $1', [ada.id]);
+
+    // A thread about request #3 of Note board names it and #3.
+    const requestRoot = await say('a problem with my notes');
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, about_kind, about_number)
+       VALUES ($1, $2, $3, $4, 'request', 3)`,
+      [ada.id, opened.conversationId, requestRoot.id, notes.id],
+    );
+    await mayor.reportProblem(pool, threadCtx(requestRoot.id), { summary: 'Notes list is empty', details: 'The list shows nothing.' });
+    assert.match(created.at(-1).body, /\*\*App:\*\* Note board \(note-board\)\n\*\*Request:\*\* #3\n/);
+
+    // A thread about a change names its project and leaves the request out.
+    const changeRoot = await say('a problem with a change');
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, about_kind, about_number)
+       VALUES ($1, $2, $3, $4, 'change', 3)`,
+      [ada.id, opened.conversationId, changeRoot.id, notes.id],
+    );
+    await mayor.reportProblem(pool, threadCtx(changeRoot.id), { summary: 'Change preview will not open', details: 'The preview stays blank.' });
+    const changeBody = created.at(-1).body;
+    assert.match(changeBody, /\*\*App:\*\* Note board \(note-board\)/);
+    assert.doesNotMatch(changeBody, /\*\*Request:\*\*/, 'a change number is not a request\'s');
+    await pool.query('DELETE FROM feedback_reports WHERE user_id = $1', [ada.id]);
+  });
+
+  await t.test('#6581: a report filed on Homeroom\'s board is real in the thread that filed it', async (tt) => {
+    await pool.query('DELETE FROM feedback_reports WHERE user_id = $1', [ada.id]);
+    // Homeroom's own project, so the board lookup has somewhere to look.
+    await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by, repo_url, view_visibility, collab_visibility, self_hosted)
+       VALUES ('Homeroom', 'usernode-2d5619', 'running', $1, 'https://github.com/usernode-labs/social-vibecoding', 'public', 'public', TRUE)
+       ON CONFLICT (slug) DO UPDATE SET self_hosted = TRUE`,
+      [ada.id],
+    );
+    // What report_problem writes: a feedback_reports row with no app, and no
+    // issues or queue row until the bot reaches it.
+    await pool.query(
+      `INSERT INTO feedback_reports (user_id, target, app_id, issue_number, title, description, source)
+       VALUES ($1, 'platform', NULL, 6580, 'Blank screen after a while', 'It stays blank.', 'homeroom_bot')`,
+      [ada.id],
+    );
+    const ctx = { user: ada, bot, appIds: new Set(), conversationId: opened.conversationId, deps: {} };
+    const kinds = async (text) => (await mayor.claimProblems(pool, ctx, text)).map((p) => p.kind);
+    assert.deepEqual(await kinds('It is in its queue, just not reached yet: #6580 shows as not started.'), [],
+      'the report this person filed through the bot is real');
+
+    // A request card the bot put in this conversation counts too. A fresh
+    // turn: this turn's known numbers are read once, as the real one is.
+    const card = await conversations.sendMessage(pool, bot, opened.conversationId, { content: 'Your report is #6581.' });
+    await pool.query(
+      `INSERT INTO conversation_message_objects (message_id, object_type, app_id, object_ref)
+       VALUES ($1, 'github_issue', $2, 6581)`,
+      [card.message.id, notes.id],
+    );
+    const cardCtx = { user: ada, bot, appIds: new Set(), conversationId: opened.conversationId, deps: {} };
+    assert.deepEqual((await mayor.claimProblems(pool, cardCtx, 'Your report is #6581.')).map((p) => p.kind), [],
+      'a request card in the thread says it is real');
+
+    // An invented number is still unknown, even with the board reachable.
+    const otherCtx = { user: ada, bot, appIds: new Set(), conversationId: opened.conversationId, deps: {} };
+    assert.deepEqual((await mayor.claimProblems(pool, otherCtx, 'Your report is #987654.')).map((p) => p.kind), ['unknown'],
+      'a number nobody filed is still cut');
+    await pool.query('DELETE FROM feedback_reports WHERE user_id = $1', [ada.id]);
   });
 
 });

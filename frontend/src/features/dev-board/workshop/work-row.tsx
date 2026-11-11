@@ -93,6 +93,8 @@ export function topicRef(card: DevCardModel): TopicRef | null {
     return Number.isFinite(n) && n > 0 ? n : 0;
   };
   if (num(a['data-issue-row'])) return { kind: 'issue', id: num(a['data-issue-row']) };
+  // #6439: a vote to close a request opens the request's page, where its vote is.
+  if (num(a['data-close-request'])) return { kind: 'issue', id: num(a['data-close-request']) };
   if (num(a['data-gov-row'])) return { kind: 'gov', id: num(a['data-gov-row']) };
   const change = num(a['data-proposal-row']) || num(a['data-shared-session-row']) || num(a['data-session-chip']);
   return change ? { kind: 'proposal', id: change } : null;

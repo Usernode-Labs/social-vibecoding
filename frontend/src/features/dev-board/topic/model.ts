@@ -294,6 +294,8 @@ export interface LedgerRow {
    * It used to be a caption under the whole ledger; it explains this row.
    */
   help?: boolean;
+  /** #6552: the change this row explains, so its "?" reads that change's votes. */
+  changeId?: number | null;
 }
 
 export interface ProposalDetails {
@@ -515,6 +517,12 @@ export interface StepsView {
   rows: StepRow[];
   /** One short step per merge gate (`_gateStepsView`), rather than ledger rows. */
   simple?: boolean;
+  /**
+   * #6552: the change these steps belong to, riding on the "?" hints as
+   * `data-voting-help-change`. On a request's page the page item is the
+   * request, so the help popover must read this change's row instead.
+   */
+  changeId?: number | null;
 }
 
 /** Everything under the card, by topic kind. */
@@ -725,6 +733,23 @@ export interface ChangeGateView {
   release?: unknown;
 }
 
+/**
+ * #6563: the merge step under Votes and Tested, while GitHub holds the merge
+ * or it is under way. `wait` carries the times the card counts in the
+ * viewer's own clock: when Homeroom last tried, when it tries next, and when
+ * it first met this hold on this head (AppView._changeMergeView).
+ */
+export type ChangeMergeView = ChangeGateView & {
+  wait?: { triedAt: string | null; retryAt: string | null; since: string | null } | null;
+  /**
+   * #6593: which hold this card is about, so the card knows whether the
+   * tries are news. `github_checks` is GitHub still building and scanning
+   * the release images: Homeroom's own tries say nothing a reader needs, so
+   * the card leaves them out. `github_wait` (busy or refused) keeps them.
+   */
+  hold?: 'github_checks' | 'github_wait' | 'failing' | 'merging';
+};
+
 /** #4455: what a change's page says about the change itself, as the thread's root post. */
 export interface ChangeThreadView {
   /** The pull request's number, for "Change #N"; null before it has one. */
@@ -744,6 +769,11 @@ export interface ChangeThreadView {
   via: string | null;
   votes: ChangeGateView;
   testing: ChangeGateView;
+  /**
+   * #6563: the merge step, under Votes and Tested, while GitHub holds the
+   * merge or it is under way. Null once merged or when nothing holds it.
+   */
+  merge?: ChangeMergeView | null;
   /** The Before and after card, or null when there is nothing to show. */
   shots: {
     state: string; html: string; line: string | null; waiting?: boolean;
@@ -803,6 +833,11 @@ export interface ChangeUpstreamView {
 
 export interface TopicBody {
   changeId?: number;
+  /**
+   * #6440: a governance vote's page — the model its head draws
+   * (./governance-model.ts). The page has no card: the head IS the page.
+   */
+  decision?: any;
   issues?: IssueLink[];
   /** #2431 — on an ISSUE's page, the change on it (an open issue's). */
   addressedBy?: IssueProposalRef | null;
@@ -851,6 +886,12 @@ export interface TopicBody {
      * way, not as a failure.
      */
     retrying?: boolean;
+    /**
+     * The change this viewer may start the failed run again on, or null.
+     * `_canRetakeShots` decides: its author or a project admin, on a failed
+     * run with no automatic retry coming.
+     */
+    retake?: number | null;
     label: string;
     sentence: string;
     claims: string[];

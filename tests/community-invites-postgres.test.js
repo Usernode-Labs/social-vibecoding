@@ -133,6 +133,10 @@ async function connectPool() {
   await pool.query(stageSixBlock());
   // Audit D03: when a link went out, a migration of its own after the baseline.
   await pool.query(fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'migrations', '0010-invite-link-shared.sql'), 'utf8'));
+  // No cap and no end by default, and the leaked-link guard's columns: a
+  // migration of its own too (tests/invite-link-guard-postgres.test.js runs
+  // the guard itself against the full schema).
+  await pool.query(fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'migrations', 'invite-link-guard.sql'), 'utf8'));
   // The fixture: ada (who had access before the invite tree), an open
   // community and a group.
   await pool.query(`
@@ -326,9 +330,12 @@ test('invite links against a real PostgreSQL', async (t) => {
         ['revoked', async (link) => invites.revokeInvite(pool, { inviteId: link.id, user: ADA })],
         ['expired', async (link) => pool.query("UPDATE community_invites SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1", [link.id])],
         ['used_up', async (link) => pool.query('UPDATE community_invites SET uses = max_uses WHERE id = $1', [link.id])],
+        // The leaked-link guard paused it (tests/invite-link-guard-postgres.test.js).
+        ['paused', async (link) => pool.query('UPDATE community_invites SET paused_at = NOW() WHERE id = $1', [link.id])],
       ];
       for (const [reason, kill] of deadly) {
-        const link = (await invites.createInvite(pool, { app: group, user: ADA })).link;
+        // A limit of its own, since a new link has none (9 Nov 2026).
+        const link = (await invites.createInvite(pool, { app: group, user: ADA, maxUses: 25 })).link;
         await kill(link);
         const dead = await invites.standing(pool, link.token, jo);
         assert.deepEqual([dead.live, dead.reason, dead.page, dead.invitePreview, dead.project], [false, reason, null, null, undefined], reason);

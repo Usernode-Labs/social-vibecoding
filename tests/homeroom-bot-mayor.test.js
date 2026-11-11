@@ -92,7 +92,7 @@ test('the tools: sixteen lookups and actions and a reply, every one closed to ex
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
     ['progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'answer_question', 'revise_proposal',
       'comment_on_request', 'start_request', 'offer_request', 'offer_move_request', 'offer_copy_request', 'offer_close_request', 'withdraw_proposal',
-      'draw_screen', 'close_thread', 'report_problem', 'start_project_thread', 'reply']);
+      'draw_screen', 'close_thread', 'report_problem', 'start_project_thread', 'offer_new_project', 'reply']);
   for (const t of mayor.TOOLS) {
     assert.equal(t.type, 'function');
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
@@ -116,6 +116,12 @@ test('#3733: a failed model request is asked again while that can help, and neve
   assert.deepEqual(mayor.retryPlan(err('output_limit')), { maxOutputTokens: mayor.RETRY_OUTPUT_TOKENS },
     'cut off at its limit: more room');
   assert.ok(mayor.RETRY_OUTPUT_TOKENS > mayor.MAX_OUTPUT_TOKENS);
+  // #6358: a caller (the design turn) may bring its own retried allowance; it
+  // is not sent to the model, only used when a draw is cut off.
+  assert.deepEqual(mayor.retryPlan(err('output_limit'), { retryOutputTokens: 32000 }), { maxOutputTokens: 32000 });
+  const askSrc = read('src/services/homeroom-bot-mayor.js');
+  assert.match(askSrc, /async function askModel\(t, \{[^}]*retryOutputTokens[^}]*\.\.\.rest \}\)/);
+  assert.match(askSrc, /retryPlan\(err, \{ forced, elapsedMs: Date\.now\(\) - t\.startedMs, attempt, retryOutputTokens \}\)/);
   for (const code of ['timeout', 'network', 'provider_unavailable', 'provider_error', 'invalid_response', 'stream_error',
     'response_too_large', 'empty_answer']) {
     assert.deepEqual(mayor.retryPlan(err(code)), { waitMs: 0 }, `${code}: at once, on a fresh route`);
@@ -347,12 +353,17 @@ test('#3772: what a typed message decides about a draft', () => {
   for (const text of ['yes, but make it blue', 'file it on ear trainer instead', 'what is it?', '']) {
     assert.equal(mayor.typedDecision(text), null, text);
   }
-  assert.match(mayor.NO_OFFER_NOTE, /no draft is waiting for them, so nothing has been filed/);
+  assert.match(mayor.NO_OFFER_NOTE, /no draft from the last hour is open to decide/);
+  assert.doesNotMatch(mayor.NO_OFFER_NOTE, /nothing has been filed/);
 });
 
 test('#3772: the request numbers a reply names, less a proposal\'s or a pull request\'s', () => {
   assert.deepEqual(mayor.requestNumbers('Filed #14, see request #3 and proposal #6011, PR #12, pr#13, &#39; x#9'), [14, 3]);
   assert.deepEqual(mayor.requestNumbers('Change #6002 closes #5997'), [5997], 'a change is named by its pull request number');
+  // #6583: a colour and a ranking are not requests.
+  assert.deepEqual(mayor.requestNumbers('Use #222 for the header'), []);
+  assert.deepEqual(mayor.requestNumbers('That\'s the #1 priority'), []);
+  assert.deepEqual(mayor.requestNumbers('That\'s #3 on the list'), []);
   assert.deepEqual(mayor.requestNumbers('nothing here'), []);
 });
 
@@ -381,18 +392,21 @@ test('#3772: a claim nothing backs is asked about once, then cut and said plainl
   const note = mayor.checkNote([{ kind: 'filed', said: 'says a request was filed' }, { kind: 'unknown', numbers: [14], said: 'names request #14, which no project of theirs has' }]);
   assert.match(note, /^\[Homeroom check, not from them: your reply says a request was filed; and it names request #14/);
   assert.match(note, /offer_request drafts a request for them to file, comment_on_request posts on a request, start_request starts one/);
-  assert.match(note, /never name one that does not exist\. Then call reply again\.\]$/);
+  // #6581: the unknown tail asks for a check and keeps what a tool returns.
+  assert.match(note, /check it with request_detail \(or get_request\), and if a tool returns it, keep the number\./);
+  assert.match(note, /Then call reply again\.\]$/);
+  assert.doesNotMatch(note, /has not been done/);
 
+  // #6583: a record-backed claim proven false is cut with no fixed "I haven't…" line.
   assert.equal(
     mayor.stripClaims('Filed: **Ear Trainer** request #14: Richer synth tones. I\'ll look at it now.', [
-      { kind: 'filed' }, { kind: 'started' }, { kind: 'unknown', numbers: [14] },
+      { kind: 'filed', proof: 'records' }, { kind: 'started', proof: 'records' }, { kind: 'unknown', numbers: [14] },
     ]),
-    'I haven\'t filed anything for that yet. Tell me what you want filed and I\'ll draft it for you to confirm.\n\n'
-      + 'I haven\'t started on it yet.\n\n(I can\'t find request #14 on your projects.)',
+    '(I can\'t find request #14 on your projects.)',
   );
   assert.equal(
-    mayor.stripClaims('Here is what I found about the size options on Ear Trainer. I\'ve updated the proposal.', [{ kind: 'revised' }]),
-    'I haven\'t changed the proposal yet.\n\nHere is what I found about the size options on Ear Trainer.',
+    mayor.stripClaims('Here is what I found about the size options on Ear Trainer. I\'ve updated the proposal.', [{ kind: 'revised', proof: 'records' }]),
+    'Here is what I found about the size options on Ear Trainer.',
   );
   assert.equal(mayor.stripClaims('Unchanged.', []), 'Unchanged.');
 });
@@ -415,7 +429,7 @@ test('#4605: a draft promised with no offer behind it is caught, and the second 
 
   const note = mayor.checkNote([{ kind: 'drafted', said: 'says a drafted request with File it is under it' }]);
   assert.match(note, /^\[Homeroom check, not from them: your reply says a drafted request with File it is under it\./);
-  assert.match(note, /did not call offer_request in this turn, so nothing is under it\. Call offer_request now/);
+  assert.match(note, /no draft is open in this conversation, so nothing is under it\. Call offer_request now/);
   assert.match(note, /Call offer_request now with the project, title and details; if it is refused, say why plainly and do not mention File it\. Then reply with one short line about the draft at most/);
   assert.match(note, /Then call reply again\.\]$/);
   assert.doesNotMatch(note, /—/);
@@ -475,26 +489,26 @@ test('#6307: a project a reply names must be one this turn\'s tools returned', a
   const offer = { app: { slug: 'community-tier-lists', name: 'Community Tier Lists' } };
   const ctx = { user: { id: 1 }, appIds: new Set(), offer };
   const kinds = async (text, extra = {}) => (await mayor.claimProblems(pool, { ...ctx, ...extra }, text)).map((p) => p.kind);
-  assert.deepEqual(mayor.projectMentions('The draft for Community Tier Lists is ready.'), ['Community Tier Lists']);
+  assert.deepEqual(mayor.projectMentions('The draft for Community Tier Lists is ready.'), [{ name: 'Community Tier Lists', labelled: false }]);
   assert.deepEqual(await kinds('The draft for Community Tier Lists is ready.'), [], 'the offer returned it');
   // The 15:47:01 reply: a name the tools never returned.
   const garbled = await mayor.claimProblems(pool, ctx, 'Sorry. The draft for Community Components is ready.');
   assert.deepEqual(garbled.map((p) => p.kind), ['unknown_project']);
   assert.deepEqual(garbled[0].names, ['Community Components']);
   // A quoted name where it says which project it is, and names the wrong one.
-  assert.deepEqual(mayor.projectMentions('Next after this is "Block World" and I\'ll check which project that is.'), ['Block World']);
+  assert.deepEqual(mayor.projectMentions('Next after this is "Block World" and I\'ll check which project that is.'), [{ name: 'Block World', labelled: true }]);
   const cut = mayor.stripClaims('Sorry. The draft for Community Components is ready. The card is under this reply.',
     [{ kind: 'unknown_project', names: ['Community Components'] }]);
   assert.equal(cut, 'Sorry. The card is under this reply.\n\n(I can\'t find a project called "Community Components".)');
   // The second pass is told, and a tool that returned it clears the claim.
   const note = mayor.checkNote([{ kind: 'unknown_project', names: ['Community Components'], said: 'x' }]);
-  assert.match(note, /A project you name must be one a tool returned in this turn, spelled exactly as it returned it/);
+  assert.match(note, /Look the project up \(my_work, list_requests\) and write its name as the tool returns it/);
   const known = { user: { id: 1 }, appIds: new Set(), knownProjects: new Set(['community tier lists']) };
   assert.deepEqual(await kinds('The draft for Community Tier Lists is ready.', { offer: null, knownProjects: known.knownProjects }), []);
   // A name caught only at its first word ("on Note board request #6" gives
   // "Note") is the project a tool returned, said short: not a garble, and the
   // sentence is not cut.
-  assert.deepEqual(mayor.projectMentions('The draft for Note board is ready.'), ['Note']);
+  assert.deepEqual(mayor.projectMentions('The draft for Note board is ready.'), [{ name: 'Note', labelled: false }]);
   assert.deepEqual(await kinds('The draft for Note board is ready.', { offer: null, knownProjects: new Set(['note board']) }), []);
 });
 
@@ -513,14 +527,16 @@ test('#6376: a day, a month or a time word is not a project', async () => {
     'The request waits on Mon.',
   ]) assert.deepEqual(mayor.projectMentions(text), [], text);
   assert.deepEqual(await mayor.claimProblems(pool, ctx, 'I tried to start it, and it did not start: the building time for this week is used up. It will start this request on Monday when it resets.'), []);
-  // A name the tools never returned is still caught, and cut.
-  assert.deepEqual(await mayor.claimProblems(pool, ctx, 'The draft for Community Components is ready.').then((p) => p.map((x) => x.kind)), ['unknown_project']);
+  // A name the tools never returned is still caught, and cut, when it looks
+  // like one of their projects (#6583).
+  const knownCtx = { ...ctx, knownProjects: new Set(['community tier lists']) };
+  assert.deepEqual(await mayor.claimProblems(pool, knownCtx, 'The draft for Community Components is ready.').then((p) => p.map((x) => x.kind)), ['unknown_project']);
   assert.equal(mayor.stripClaims('The draft for Community Components is ready. It will start this request on Monday when it resets.',
     [{ kind: 'unknown_project', names: ['Community Components'] }]),
   'It will start this request on Monday when it resets.\n\n(I can\'t find a project called "Community Components".)');
   // A trailing full stop is not part of the name; a dot inside one is.
-  assert.deepEqual(mayor.projectMentions('The draft for Pageberry.'), ['Pageberry']);
-  assert.deepEqual(mayor.projectMentions('The draft for Node.js is ready.'), ['Node.js']);
+  assert.deepEqual(mayor.projectMentions('The draft for Pageberry.'), [{ name: 'Pageberry', labelled: false }]);
+  assert.deepEqual(mayor.projectMentions('The draft for Node.js is ready.'), [{ name: 'Node.js', labelled: false }]);
 });
 
 test('#11 (WP3): a promise to come back later, "the team was told" and "I withdrew it" count only when this turn did it', async () => {
@@ -547,7 +563,10 @@ test('#11 (WP3): a promise to come back later, "the team was told" and "I withdr
 
   assert.deepEqual(await kinds('I\'ve withdrawn the duplicate proposal.'), ['withdrew']);
   assert.deepEqual(await kinds('I closed the second proposal.'), ['withdrew']);
-  assert.deepEqual(await kinds('It has been withdrawn.'), ['withdrew']);
+  // #6566: a passive sentence with no subject name is left alone, as "It has
+  // been closed" is; the proposal named is what makes it a claim.
+  assert.deepEqual(await kinds('It has been withdrawn.'), []);
+  assert.deepEqual(await kinds('The proposal has been withdrawn.'), ['withdrew']);
   assert.deepEqual(await kinds('I\'ve withdrawn the duplicate proposal.', { withdrew: { proposal: 1 } }), []);
   assert.deepEqual(await kinds('Tap Withdraw it below and I\'ll withdraw it.'), [], 'an offer is no withdrawal');
 
@@ -557,13 +576,14 @@ test('#11 (WP3): a promise to come back later, "the team was told" and "I withdr
     mayor.stripClaims('I\'ll look into why there are two proposals. You can vote No on the second one meanwhile.', [{ kind: 'promised' }]),
     'I can\'t look into that myself from here.\n\nYou can vote No on the second one meanwhile.',
   );
-  assert.equal(mayor.stripClaims('I\'ve let the team know.', [{ kind: 'reported' }]), 'I haven\'t told the team yet.');
-  assert.equal(mayor.stripClaims('Done, I withdrew the duplicate proposal.', [{ kind: 'withdrew' }]), 'I haven\'t withdrawn anything.');
+  // #6583: a record-backed claim proven false is cut with no fixed line.
+  assert.equal(mayor.stripClaims('I\'ve let the team know.', [{ kind: 'reported', proof: 'records' }]), '');
+  assert.equal(mayor.stripClaims('Done, I withdrew the duplicate proposal.', [{ kind: 'withdrew', proof: 'records' }]), '');
   const note = mayor.checkNote([{ kind: 'promised', said: 'promises to come back to something later' }]);
   assert.match(note, /^\[Homeroom check, not from them: your reply promises to come back to something later\./);
   assert.match(note, /withdraw_proposal withdraws one of your proposals, report_problem tells the Homeroom team/);
   assert.match(note, /Never promise to look into something or come back to it later: say what you cannot do from here, and what they can do \(leave it, vote No on the proposal, comment on the request, or use Send feedback\), or offer report_problem\. Then call reply again\.\]$/);
-  for (const text of [note, ...['promised', 'reported', 'withdrew'].map((k) => mayor.stripClaims('x', [{ kind: k }]))]) {
+  for (const text of [note, ...['promised', 'reported', 'withdrew'].map((k) => mayor.stripClaims('x', [{ kind: k, proof: k === 'promised' ? 'turn' : 'records' }]))]) {
     assert.doesNotMatch(text, /—/);
   }
 });
@@ -572,7 +592,7 @@ test('#11 (WP3): withdrawing a proposal and telling the team are tools, describe
   const prompt = mayor.systemPrompt({ username: 'ada' });
   assert.match(prompt, /- Withdraw one of your own changes that is still open when the person who asked for its request, or the\n  project's owner, asks you to \(withdraw_proposal\)\. It is withdrawn only once they tap Withdraw it under your\n  message, so ask them to\./);
   assert.match(prompt, /The one exception: a second change for a request that already has one approved\n  or up for a vote is withdrawn straight away, and you say so\./);
-  assert.match(prompt, /\(report_problem\)\. It is filed as a report from them where the team tracks problems, which\n  anyone can read; the last few messages of this chat go only to the team, privately\. Say so\./);
+  assert.match(prompt, /\(report_problem\)\. It is filed as a request from them on Homeroom's requests board, where\n  anyone can read it; the last few messages of this chat go only to the team, privately\. Say so, and give the\n  number the result returns: Filed as #N on Homeroom's requests board\./);
   assert.doesNotMatch(prompt.slice(0, prompt.indexOf('PLATFORM RULES')), /—/);
 
   const withdraw = mayor.TOOLS.find((t) => t.function.name === 'withdraw_proposal').function;
@@ -587,7 +607,7 @@ test('#11 (WP3): withdrawing a proposal and telling the team are tools, describe
   assert.deepEqual(Object.keys(report.parameters.properties).sort(), ['details', 'number', 'project', 'summary']);
   assert.match(report.description, /Call it only when they ask you to tell the team, or say yes when you offer\./);
   assert.match(report.description, /the summary, the details, the request it is about and your records of your work on it are public, and a private project is not named there\./);
-  assert.match(report.description, /The last few messages of this chat go only to the team, privately: say so\./);
+  assert.match(report.description, /The last few messages of this chat go only to the team, privately\. Say so, and give the number the result returns: Filed as #N on Homeroom's requests board\./);
   assert.match(report.description, /Keep anything private out of the summary and details/);
   assert.doesNotMatch(report.description, /last few messages of this chat[^.]*anyone can read/, 'the chat is never said to be public');
   assert.deepEqual(mayor.OFFER_ANSWERS, {
@@ -856,10 +876,12 @@ test('#4525: offering a vote on closing a request, as the model and the person s
   // sent as it is.
   const problems = [{ kind: 'closed_request', said: 'says a request was closed' }];
   assert.equal(mayor.stripClaims('I closed the request.', problems), 'I haven\'t closed it. Its group decides that by a vote.');
-  assert.equal(mayor.stripClaims('It has been closed.', problems), 'I haven\'t closed it. Its group decides that by a vote.');
+  // #6583: a passive status with no request named cannot be checked, so it is kept.
+  assert.equal(mayor.stripClaims('It has been closed for a while now, and nobody reopened it.', [{ kind: 'closed_status', proof: 'records' }]),
+    'It has been closed for a while now, and nobody reopened it.');
   // A withdrawal's own wording still strips as it did.
-  assert.equal(mayor.stripClaims('I closed the duplicate proposal.', [{ kind: 'withdrew', said: 'says a proposal was withdrawn' }]),
-    'I haven\'t withdrawn anything.');
+  assert.equal(mayor.stripClaims('I closed the duplicate proposal.', [{ kind: 'withdrew', proof: 'records' }]),
+    '');
   const meta = mayor.offerActions('close_request');
   assert.deepEqual(meta.map((a) => [a.id, a.label, a.type, a.style]), [['yes', 'Propose to close', 'server', 'primary'], ['no', 'Keep it open', 'server', 'secondary']]);
   for (const text of [tool.description, prompt.match(/- When they ask you to close a request[^\n]*\n[^\n]*\n[^\n]*/)?.[0] || '']) {
@@ -1091,6 +1113,46 @@ test('#6346: a chat turn stops reading source after eight and still answers', as
   assert.equal(turn.sent[0].content, 'It saves each set in src/db.js.');
 });
 
+test('#6523: offer_new_project is the bot\'s to offer, in a private thread, and rides its reply', async () => {
+  const mayor = require('../src/services/homeroom-bot-mayor');
+  // The tool itself: no arguments, and it says when it applies.
+  const tool = mayor.TOOLS.find((t) => t.function.name === 'offer_new_project').function;
+  assert.match(tool.description, /an idea for a NEW project of its own/);
+  assert.deepEqual(tool.parameters, { type: 'object', properties: {}, additionalProperties: false });
+  // Outside a thread it is refused and sets nothing.
+  const mainCtx = { user: { id: 9 }, settings: {}, deps: {} };
+  assert.equal((await mayor.runTool(null, mainCtx, 'offer_new_project', {})).ok, false);
+  assert.equal(mainCtx.newProjectOffer, undefined);
+  // In a private thread it sets the flag, and in a thread opened this turn.
+  const threadCtx = { user: { id: 9 }, settings: {}, deps: { threadRootId: 5 }, newProjectOffer: false };
+  assert.equal((await mayor.runTool(null, threadCtx, 'offer_new_project', {})).ok, true);
+  assert.equal(threadCtx.newProjectOffer, true);
+  const openedCtx = { user: { id: 9 }, settings: {}, deps: {}, projectThread: { rootId: 8 }, newProjectOffer: false };
+  assert.equal((await mayor.runTool(null, openedCtx, 'offer_new_project', {})).ok, true);
+  // Its reply carries it; the main chat's does not.
+  const offering = saying((i) => (i === 0
+    ? { content: '', calls: [callOf('o0', 'offer_new_project', {})] }
+    : { content: '', calls: [callOf(`o${i}`, 'reply', { text: 'That sounds like a project of its own. Want to start it?' })] }));
+  const inThread = chatTurn(offering, { extra: { threadRootId: 5 }, message: { content: 'I want an app where my flatmates and I split chores each week' } });
+  await inThread.run;
+  assert.equal(inThread.sent.length, 1);
+  assert.equal(inThread.sent[0].metadata.newProject, true, 'New project shows under the reply');
+  const refused = saying((i) => (i === 0
+    ? { content: '', calls: [callOf('m0', 'offer_new_project', {})] }
+    : { content: '', calls: [callOf(`m${i}`, 'reply', { text: 'Here is what I found.' })] }));
+  const inMain = chatTurn(refused, { message: { content: 'What are all the verbs in Needs you?' } });
+  await inMain.run;
+  assert.equal(inMain.sent.length, 1);
+  assert.equal(inMain.sent[0].metadata.newProject, undefined, 'never in the main chat');
+  // The private prompt tells it when to offer one, and never for a question or a report.
+  const plus = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'fix', appSlug: 'notes', appName: 'Notes' } } });
+  assert.match(plus, /When, and only when, this thread is an idea for a project of its own with no project yet, call\n  offer_new_project so New project shows under your reply\. Never for a question, a report, or a request about a\n  project that exists\./);
+  const idea = mayor.systemPrompt({ username: 'ada', thread: { draft: null } });
+  assert.match(idea, /only when, this thread is an idea for a project of its own with no project yet/);
+  const project = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'project' } } });
+  assert.match(project, /New project is already at the foot of this thread, so do not call offer_new_project here\./);
+});
+
 test('#6346: an offer on the chat\'s last round is the answer, with no fallback', async () => {
   const seen = [];
   const chat = saying((i, req) => {
@@ -1111,4 +1173,215 @@ test('#6346: an offer on the chat\'s last round is the answer, with no fallback'
   assert.equal(turn.sent.length, 1);
   assert.match(String(turn.sent[0].content), /new request/i, 'the offer card is sent');
   assert.doesNotMatch(String(turn.sent[0].content), /couldn't answer just now/);
+});
+
+test('#6534: a reply saying pictures are posted is caught unless files were stored', async () => {
+  const pool = { query: async () => ({ rows: [{ n: 13 }] }) };
+  const ctx = { user: { id: 1 }, appIds: new Set() };
+  const kinds = async (text, extra = {}) => (await mayor.claimProblems(pool, { ...ctx, ...extra }, text)).map((p) => p.kind);
+  assert.deepEqual(await kinds('Here are the pictures for the empty state.'), ['posted_pictures']);
+  assert.deepEqual(await kinds('I\'ve attached the before and after shots.'), ['posted_pictures']);
+  assert.deepEqual(await kinds('The comparisons are attached below.'), ['posted_pictures']);
+  assert.deepEqual(await kinds('Here are the pictures.',
+    { attached: [{ id: 'a'.repeat(32), kind: 'image' }] }), [], 'stored under the reply');
+  assert.deepEqual(await kinds('I made two options for you.',
+    { pictures: { made: 2 } }), [], 'made this turn in the chat');
+  assert.deepEqual(await kinds('Here are the pictures.',
+    { place: { type: 'issue', ref: 1 }, pictures: { made: 2 } }), ['posted_pictures'],
+  'made but not stored in a project thread');
+  assert.deepEqual(await kinds('Here are the pictures.',
+    { place: { type: 'issue', ref: 1 }, attached: [{ id: 'b'.repeat(32), kind: 'image' }] }), [],
+  'stored under a reply in a project thread');
+  assert.deepEqual(await kinds('The pictures are in the thread above.'), [],
+    'not a claim that they were posted now');
+});
+
+test('#6566: a passive sentence is a claim only when it names what was closed, moved or withdrawn', async () => {
+  const pool = { query: async () => ({ rows: [{ n: 12 }] }) };
+  const ctx = { user: { id: 1 }, appIds: new Set() };
+  const kinds = async (text) => (await mayor.claimProblems(pool, ctx, text)).map((p) => p.kind);
+  // Evan's reply about the phone app: nothing about a request was closed.
+  assert.deepEqual(await kinds('That sounds like the screen stays blank after the app has been closed for a while.'), []);
+  assert.deepEqual(await kinds('It has been closed.'), [], 'no subject, no claim');
+  assert.deepEqual(await kinds('I closed #12.'), ['closed_request']);
+  // #6583: a passive status with no request number is a fact to check, not an
+  // action; with none named it cannot be checked and is kept.
+  assert.deepEqual(await kinds('Your request has been closed.'), []);
+  assert.deepEqual(await kinds('It has been moved for a while.'), []);
+  assert.deepEqual(await kinds('Your request has been moved.'), []);
+  assert.deepEqual(await kinds('The proposal has been withdrawn.'), ['withdrew']);
+  assert.deepEqual(await kinds('The window has been withdrawn from the build.'), [], 'not a proposal');
+});
+
+test('#6566: a sentence wrapped over two lines is dropped whole, never left as a fragment', () => {
+  const wrapped = 'Here is what I found.\nI closed the\nrequest yesterday. The rest is unchanged.';
+  assert.equal(mayor.stripClaims(wrapped, [{ kind: 'closed_request' }]),
+    'I haven\'t closed it. Its group decides that by a vote.\n\nHere is what I found. The rest is unchanged.');
+});
+
+test('#6566: the report\'s own receipt is accepted, and only for the number just filed', async () => {
+  const pool = { query: async () => ({ rows: [] }) };
+  const ctx = { user: { id: 1 }, appIds: new Set(), reported: { number: 6564 } };
+  const kinds = async (text) => (await mayor.claimProblems(pool, ctx, text)).map((p) => p.kind);
+  assert.deepEqual(await kinds('Filed as #6564 on Homeroom\'s requests board, where anyone can read it. The last few messages of this chat went only to the team, privately.'), [],
+    'the true receipt is no filing claim, names no unknown project, and its number is known');
+  assert.ok((await kinds('Filed as #7000 on Homeroom\'s requests board.')).includes('filed'), 'a different number is not accepted');
+  // The receipt sentence is never cut, whatever else is.
+  assert.equal(mayor.stripClaims('Filed as #6564 on Homeroom\'s requests board. I closed the request.',
+    [{ kind: 'closed_request' }], ctx),
+  'I haven\'t closed it. Its group decides that by a vote.\n\nFiled as #6564 on Homeroom\'s requests board.');
+});
+
+test('#6581: a request this conversation filed or read is real, before any queue or issues row has it', async () => {
+  // The report the bot filed a turn earlier: a feedback_reports row with no
+  // app (Homeroom's board), and no issues or queue row until the bot picks it up.
+  const pool = {
+    query: async (sql) => (/FROM feedback_reports/.test(String(sql)) ? { rows: [{ n: 6580 }] } : { rows: [] }),
+  };
+  const ctx = { user: { id: 7 }, appIds: new Set(), conversationId: 41, bot: { id: 2 } };
+  const kinds = async (text) => (await mayor.claimProblems(pool, ctx, text)).map((p) => p.kind);
+  assert.deepEqual(await kinds('It is in its queue, just not reached yet: #6580 shows as not started.'), [],
+    'the report it filed a turn earlier is no unknown number');
+  assert.deepEqual(await kinds('There is already a request for this exact problem: #6564.'), ['unknown'],
+    'a number nothing filed, read or returned still is');
+
+  // A request card the bot put in this conversation.
+  const cardPool = {
+    query: async (sql) => (/conversation_message_objects/.test(String(sql)) ? { rows: [{ n: 6580 }] } : { rows: [] }),
+  };
+  const cardCtx = { user: { id: 7 }, appIds: new Set(), conversationId: 41, bot: { id: 2 } };
+  assert.deepEqual((await mayor.claimProblems(cardPool, cardCtx, 'Your report is #6580, still not started.')).map((p) => p.kind), [],
+    'a request card in the conversation says it is real');
+});
+
+test('#6581: a number a tool returned this turn is real, and an error result notes nothing', async () => {
+  const pool = { query: async () => ({ rows: [] }) };
+  const ctx = { user: { id: 7 }, appIds: new Set() };
+  const kinds = async (text, extra = {}) => (await mayor.claimProblems(pool, { ...ctx, ...extra }, text)).map((p) => p.kind);
+  assert.deepEqual(await kinds('It is #6580, still not started.'), ['unknown'], 'no tool returned it');
+  const seen = { ...ctx };
+  mayor.noteKnownRequests(seen, { project: 'note-board', projectName: 'Note board', number: 6580 });
+  assert.deepEqual(await kinds('It is #6580, still not started.', seen), [],
+    'a request_detail result this turn returned it');
+  assert.deepEqual(await kinds('Its pull request is #7001.', { knownRequests: new Set([7001]) }), [],
+    'an issueNumber counts the same');
+  mayor.noteKnownRequests(seen, { result: JSON.stringify({ requests: [{ number: 7002 }] }) });
+  assert.deepEqual(await kinds('That one is #7002.', seen), [], 'a platform tool\'s JSON answer counts too');
+  mayor.noteKnownRequests(seen, { error: 'No such request on a project they can see.' });
+  assert.deepEqual([...seen.knownRequests].sort((a, b) => a - b), [6580, 7002], 'an error result notes nothing');
+});
+
+test('#6581: a number Homeroom\'s own board has is real; one it does not is still unknown', async () => {
+  const platform = { id: 3, slug: 'usernode-2d5619', name: 'Homeroom', view_visibility: 'public', community_id: null };
+  const pool = {
+    query: async (sql) => {
+      const s = String(sql);
+      if (/FROM apps/.test(s)) return { rows: [platform] };
+      // The board lookup: this app's rows, and any report filed on Homeroom's board.
+      if (/FROM issues/.test(s) && /app_id = \$1/.test(s)) return { rows: [{ n: 6580 }] };
+      return { rows: [] };
+    },
+  };
+  const ctx = { user: { id: 7 }, appIds: new Set() };
+  const kinds = async (text) => (await mayor.claimProblems(pool, ctx, text)).map((p) => p.kind);
+  assert.deepEqual(await kinds('Your report is #6580.'), [], 'the board has it');
+  assert.deepEqual(await kinds('Your report is #7000.'), ['unknown'], 'an invented number is still cut');
+});
+
+test('#6581: the repair note for an unknown number never asks the model to undo an earlier filing', () => {
+  const note = mayor.checkNote([{ kind: 'unknown', numbers: [6580], said: 'names request #6580, which no project of theirs has' }]);
+  assert.match(note, /request_detail/, 'it checks the number');
+  assert.match(note, /keep/, 'and keeps it when a tool returns it');
+  assert.doesNotMatch(note, /has not been done|was not (done|filed)|did not happen|No tool you called/,
+    'nothing reads as "it did not happen"');
+  assert.match(note, /Never retract an earlier action in this conversation/);
+  assert.doesNotMatch(note, /—/);
+  // A mixed note still says what the turn did not do, and carries the same words.
+  const mixed = mayor.checkNote([
+    { kind: 'filed', said: 'says a request was filed' },
+    { kind: 'unknown', numbers: [14], said: 'names request #14, which no project of theirs has' },
+  ]);
+  assert.match(mixed, /No tool you called in this turn did that\./);
+  assert.match(mixed, /check it with request_detail/);
+  assert.doesNotMatch(mixed, /never name one that does not exist/);
+});
+
+test('#6581: no "I can\'t find" line for a number the conversation filed or a tool returned', () => {
+  const problems = [{ kind: 'unknown', numbers: [6580], said: 'names request #6580, which no project of theirs has' }];
+  const said = 'It is in its queue, just not reached yet: #6580 shows as not started.';
+  assert.equal(mayor.stripClaims(said, problems, { threadKnown: new Set([6580]) }), said, 'the thread filed it');
+  assert.equal(mayor.stripClaims(said, problems, { knownRequests: new Set([6580]) }), said, 'a tool returned it');
+  assert.equal(mayor.stripClaims(said, problems, { reported: { number: 6580 } }), said, 'this turn filed it');
+  assert.equal(mayor.stripClaims(said, problems, {}),
+    `${said}\n\n(I can't find request #6580 on your projects.)`, 'a number nothing knows still says so');
+});
+
+test('#6581: a reply that fails a check shows no words first, and the checked answer appears once', async () => {
+  const doings = [];
+  let first = true;
+  const words = 'Nothing has been filed yet. Tell me what you want filed.';
+  const chat = async (req) => {
+    // The transport calls onDelta as the reply's arguments arrive.
+    const reply = first ? "I've filed it for you." : words;
+    first = false;
+    const args = JSON.stringify({ text: reply });
+    for (const at of [10, args.length]) {
+      req.onDelta({ content: '', toolCalls: [{ index: 0, function: { name: 'reply', arguments: args.slice(0, at) } }] });
+    }
+    return { content: '', toolCalls: [callOf('r', 'reply', { text: reply })] };
+  };
+  const turn = chatTurn(chat, { extra: { doing: async (what) => { doings.push(what); } } });
+  await turn.run;
+  assert.equal(turn.sent.length, 1, 'one message, the checked one');
+  assert.equal(turn.sent[0].content, words);
+  assert.ok(doings.some((d) => d?.kind === 'writing'), 'the card said it was writing');
+  assert.ok(doings.every((d) => !d || d.text === undefined), 'no words were ever shown on the card');
+  assert.equal(doings.filter((d) => d?.kind === 'writing').length, 1, 'one "Writing", across both passes');
+});
+
+test('#6566: report_problem returns the report\'s number and link, with a card, and a repeat files nothing', async () => {
+  const platform = { id: 9, slug: 'usernode-2d5619', name: 'Homeroom', self_hosted: true, view_visibility: 'public' };
+  const pool = {
+    query: async (sql) => {
+      if (/FROM apps/.test(sql)) return { rows: [platform] };
+      if (/conversation_messages/.test(sql)) return { rows: [] };
+      return { rows: [] };
+    },
+  };
+  const filed = [];
+  const feedbackSvc = {
+    recentReports: async () => 0,
+    findRecentReport: async () => null,
+    filePlatformReport: async (...args) => {
+      filed.push(args);
+      return { ok: true, issueNumber: 6564, url: 'https://github.com/usernode-labs/social-vibecoding/issues/6564' };
+    },
+  };
+  const ctx = {
+    user: { id: 7 }, deps: { domain: 'app.test', feedbackSvc }, conversationId: 5,
+    appIds: new Set(), cards: [], config: {},
+  };
+  const result = await mayor.reportProblem(pool, ctx, { summary: 'Blank screen after the app was closed', details: 'It stays blank.' });
+  assert.equal(result.ok, true);
+  assert.equal(result.number, 6564);
+  assert.equal(result.link, 'https://app.test/#app/usernode-2d5619/dev/issues/6564');
+  assert.equal(result.sent, 'Filed as #6564 on Homeroom\'s requests board, where anyone can read it; the last few messages of this chat went only to the team, privately.');
+  assert.deepEqual(ctx.cards, [{ type: 'issue', appId: 9, issueNumber: 6564 }], 'the card opens the report');
+  assert.equal(filed.length, 1);
+
+  // The same problem again in the same thread: the first report, nothing filed.
+  const repeatCtx = {
+    user: { id: 7 }, deps: { domain: 'app.test', feedbackSvc }, conversationId: 5,
+    appIds: new Set(), cards: [], config: {},
+  };
+  feedbackSvc.findRecentReport = async () => ({ number: 6564 });
+  feedbackSvc.recentReports = async () => 3;
+  feedbackSvc.filePlatformReport = async () => { filed.push('again'); return { ok: true, issueNumber: 7000 }; };
+  const again = await mayor.reportProblem(pool, repeatCtx, { summary: 'Blank screen after the app was closed', details: 'It stays blank.' });
+  assert.equal(again.ok, true);
+  assert.equal(again.repeat, true);
+  assert.equal(again.number, 6564);
+  assert.equal(again.sent, 'Already filed as #6564 on Homeroom\'s requests board. Nothing new was filed.');
+  assert.deepEqual(repeatCtx.cards, [{ type: 'issue', appId: 9, issueNumber: 6564 }]);
+  assert.equal(filed.length, 1, 'nothing new was filed');
 });

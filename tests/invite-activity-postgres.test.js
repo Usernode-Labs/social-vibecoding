@@ -96,7 +96,9 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
         WHERE category IN ('builds', 'invite_activity') ORDER BY kind`);
     assert.deepEqual(rows.map((r) => `${r.kind}:${r.category}:${r.default_enabled}`), [
       'build_live:builds:true', 'build_needs_you:builds:true', 'build_ready:builds:true', 'build_stopped:builds:true',
-      'first_message:invite_activity:true', 'invite_opened:invite_activity:true', 'member_joined:invite_activity:true',
+      'first_message:invite_activity:true', 'invite_link_busy:invite_activity:true',
+      'invite_link_paused:invite_activity:true', 'invite_opened:invite_activity:true',
+      'member_joined:invite_activity:true',
     ]);
     // A person may switch either off.
     await pool.query(`INSERT INTO mobile_push_preferences (user_id, category, enabled) VALUES ($1, 'builds', FALSE), ($1, 'invite_activity', FALSE)`, [alex.id]);
@@ -126,7 +128,7 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
   // A browser, as the route hands it over: the hash of its cookie.
   const browser = (name) => crypto.createHash('sha256').update(`test-browser:${name}`).digest('hex');
   const opensOf = async (app) => (await pool.query(
-    `SELECT user_id, browser, notification_id FROM community_invite_opens WHERE app_id = $1 ORDER BY id`, [app.id])).rows;
+    `SELECT user_id, browser, notification_id, referrer_host, via FROM community_invite_opens WHERE app_id = $1 ORDER BY id`, [app.id])).rows;
   const openEvents = async (invite) => (await pool.query(
     `SELECT user_id, app_id, metadata FROM events
       WHERE event_type = 'invite_opened' AND (metadata->>'inviteId')::int = $1`, [invite.id])).rows;
@@ -152,6 +154,32 @@ test('invite activity against the full PostgreSQL schema', { timeout: 120000 }, 
     const recorded = await waitForEvents(invite, 2);
     assert.deepEqual(recorded.map((r) => [r.user_id, r.app_id, r.metadata.signedIn]), Array(2).fill([null, app.id, false]),
       'two browsers, two opens, with no name on either');
+  });
+
+  await t.test('an open keeps where it came from, and a merge keeps the first open\'s source (#6540)', async () => {
+    const { app, invite } = await project();
+    // One browser opened it signed out from Discord, the link tagged copied.
+    await activity.noteOpened(pool, {
+      token: invite.token, browser: browser('came-from'),
+      source: { referrerHost: 'discord.com', via: 'copied' },
+    });
+    const [row] = await opensOf(app);
+    assert.equal(row.referrer_host, 'discord.com');
+    assert.equal(row.via, 'copied');
+    const recorded = await waitForEvents(invite, 1);
+    assert.equal(recorded[0].metadata.referrerHost, 'discord.com');
+    assert.equal(recorded[0].metadata.via, 'copied');
+    // Opening it signed in is the same person: one row, and the first open's
+    // source stays.
+    await activity.noteOpened(pool, {
+      token: invite.token, viewerId: sam.id, browser: browser('came-from'),
+      source: { referrerHost: 't.co', via: 'shared' },
+    });
+    const rows = await opensOf(app);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].user_id, sam.id);
+    assert.equal(rows[0].referrer_host, 'discord.com');
+    assert.equal(rows[0].via, 'copied');
   });
 
   await t.test('three people signed in on the first day ring once, and the push waits for a join', async () => {

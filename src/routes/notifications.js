@@ -1132,7 +1132,9 @@ function notificationsRoutes(config) {
     const {
       id, ids, all, chat_message_id: chatMessageId, app_id: appId,
       conversation_id: conversationId, session_id: sessionId,
+      no_app: noApp,
       kinds, exclude_kinds: excludeKinds, older_than_days: olderThanDays,
+      keep_plain_messages: keepPlainMessages,
     } = req.body || {};
     // #5929 (item 13): `{ all: true, older_than_days: N }` is the Unread
     // tab's "Mark everything older than a week as read": the mark-all,
@@ -1146,7 +1148,9 @@ function notificationsRoutes(config) {
     if (olderThanDays != null) {
       const windowOk = Number.isInteger(olderThanDays) && olderThanDays >= 1 && olderThanDays <= 365;
       if (!windowOk || !all || id != null || ids != null || chatMessageId != null || appId != null
-        || conversationId != null || sessionId != null || kinds != null || excludeKinds != null) {
+        || conversationId != null || sessionId != null || noApp != null
+        || kinds != null || excludeKinds != null
+        || keepPlainMessages != null) {
         return res.status(400).json({ error: 'Invalid older_than_days' });
       }
       olderThan = olderThanDays;
@@ -1165,6 +1169,31 @@ function notificationsRoutes(config) {
     const kindList = Array.isArray(kinds) ? kinds.filter((k) => typeof k === 'string') : null;
     const excludeList = Array.isArray(excludeKinds) ? excludeKinds.filter((k) => typeof k === 'string') : null;
     try {
+      // `{ no_app: true }` is the Unread tab's "Across Homeroom" group Mark
+      // read (#6579): clear every unread notification this user has that
+      // belongs to no app. It is its own scope, refused beside any other
+      // rather than dropped, so a stray key cannot widen a scoped clear into
+      // a different one. Same reply and cross-tab fan-out as the branches
+      // around it. It sits before the scoped branches so that a combination
+      // is refused here rather than cleared by the branch below it.
+      if (noApp === true) {
+        if (id != null || idList != null || appId != null || conversationId != null
+          || sessionId != null || chatMessageId != null) {
+          return res.status(400).json({ error: 'Invalid no_app' });
+        }
+        const cleared = await notifications.markReadForNoApp(pool, req.user.id);
+        const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
+        if (cleared > 0) {
+          try {
+            const { pushNotificationToUser } = require('../services/ws');
+            pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+          } catch (err) {
+            log.warn('notifications', 'cross-tab push failed', { message: err.message });
+          }
+        }
+        return res.json({ unread, messageUnread, cleared });
+      }
+
       // Platform conversations are a separate notification domain from app
       // chats. A dedicated scope prevents equal integer ids from clearing
       // one another and gives conversation groups one atomic mark-read path.
@@ -1268,6 +1297,10 @@ function notificationsRoutes(config) {
       // like the branches above whenever something actually changed.
       const cleared = await notifications.markRead(pool, req.user.id, {
         id, ids: idList, all: !!all, kinds: kindList, excludeKinds: excludeList, olderThanDays: olderThan,
+        // #6498: opening the bell clears exactly what it counts, leaving the
+        // plain messages the Messages tab owns. `all` without this flag is
+        // still the "Mark all read" clear-all.
+        keepPlainMessages: keepPlainMessages === true,
       });
       const { unread, messageUnread } = await notifications.countUnreadSplit(pool, req.user.id);
       if (cleared > 0) {

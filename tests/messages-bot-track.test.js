@@ -196,8 +196,12 @@ test('the bar lights the step it is on; a loop back to building names its try un
   assert.equal(trackLook({ work: at('building', { line: { code: 'claimed', by: 'maya' } }) }).tone, 'ended', 'a person has it');
   assert.equal(trackLook({ work: at('stopped', { reason: 'change_closed' }) }).tone, 'ended', 'a closed change is a quiet stop');
   assert.equal(trackLook({ work: at('stopped', { reason: 'build_failed' }) }).tone, 'trouble');
-  assert.deepEqual([trackLook({ work: at('building') }).spin, trackLook({ work: at('planning') }).spin, trackLook({ work: at('planning'), busy: true }).spin],
-    [true, false, true], 'turning while it builds, or while the bot is at it');
+  assert.deepEqual([
+    trackLook({ work: at('building'), busy: true }).spin,
+    trackLook({ work: at('building') }).spin,
+    trackLook({ work: at('planning') }).spin,
+    trackLook({ work: at('planning'), busy: true }).spin,
+  ], [true, false, false, true], 'turning only while the bot is at it, never while a build waits its turn');
   const badge = renderToHtml(createElement(TrackBadge, { track: track({ work: at('waiting_for_you', { why: 'question' }), step: 'plan' }) }));
   assert.match(badge, /data-bot-track-badge="waiting_for_you"/);
   assert.match(badge, /bg-amber-100/, 'what waits on the person wears the need colour');
@@ -251,7 +255,7 @@ test('a thread\'s card is the track once the viewer\'s tracks have one for the r
   assert.match(head, /<div className="dev-request-track" data-request-track=\{r\.trackPending \? 'pending' : track\.work\.stage\} inert=\{!!r\.trackPending\}>\s*<TrackCard track=\{track\} title=\{r\.title\} links=\{trackLinks\(track, \{ request: false \}\)\} pictures \/>/, 'the request\'s page draws the same card');
   // Polish board #12: one row of steps on the page, the track card's, and
   // the card unseen while the page is drawn from the board's older row.
-  assert.match(head, /<RequestStatus s=\{r\.status\} specs=\{specs\} tracked=\{!!track\} \/>/);
+  assert.match(head, /<RequestStatus s=\{r\.status\} specs=\{specs\} tracked=\{!!track\} frame=\{frame\} \/>/);
   assert.match(head, /\{s\.closed \|\| tracked \? null : \(\s*<ol className="dev-request-steps">/);
   assert.match(read('public/css/app.css'), /\.dev-request-track\[data-request-track="pending"\] \{ visibility: hidden; \}/);
 });

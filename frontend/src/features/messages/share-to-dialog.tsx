@@ -113,6 +113,7 @@ export function itemLink(item: SharedObjectReference, origin: string, page?: str
   const base = `${origin}/app/${slug}`;
   if (item.type === 'issue' && item.issueNumber) return `${base}/dev/issues/${item.issueNumber}`;
   if (item.type === 'proposal' && item.sessionId) return `${base}/dev/proposals/${item.sessionId}`;
+  if (item.type === 'governance' && item.issueNumber) return `${base}/dev/issues/${item.issueNumber}`;
   if (item.type === 'governance' && item.proposalId) return `${base}/dev/governance/${item.proposalId}`;
   if (item.type === 'spec' && item.sessionId) return `${base}/dev/sessions/${item.sessionId}`;
   if (item.type === 'app') return base;

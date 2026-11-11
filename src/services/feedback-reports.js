@@ -65,18 +65,21 @@ async function createPlatformIssue({ owner, repo, title, body, labels = ['userno
 // submission into an error and invite a duplicate. `source` is null for the
 // feedback dialog, and 'homeroom_bot' for a report the bot filed for them.
 async function recordFeedbackReport(pool, { user, app, owner, repo, issueNumber, title, description, source = null,
-  bodyPrefix = null, bodySuffix = null }) {
+  bodyPrefix = null, bodySuffix = null, conversationId = null, threadRootId = null }) {
   if (!user?.id) return;
   try {
     const { rows } = await pool.query(
       `INSERT INTO feedback_reports
-         (user_id, target, app_id, issue_owner, issue_repo, issue_number, title, description, source, body_prefix, body_suffix)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         (user_id, target, app_id, issue_owner, issue_repo, issue_number, title, description, source, body_prefix, body_suffix,
+          conversation_id, thread_root_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING id`,
       [user.id, app ? 'app' : 'platform', app ? app.id : null,
         owner || null, repo || null,
         Number.isSafeInteger(issueNumber) ? issueNumber : null,
-        title ? String(title).slice(0, 512) : null, description, source, bodyPrefix, bodySuffix]
+        title ? String(title).slice(0, 512) : null, description, source, bodyPrefix, bodySuffix,
+        Number.isSafeInteger(conversationId) ? conversationId : null,
+        Number.isSafeInteger(threadRootId) ? threadRootId : null]
     );
     return rows[0] || null;
   } catch (err) {
@@ -98,6 +101,33 @@ async function recentReports(pool, { userId, source, hours = 24 }) {
 }
 
 /**
+ * #6566: the report already filed for the same problem, in the same
+ * conversation thread, in the last `hours`. The Homeroom bot calls it before
+ * filing so that asking again (for a link, say) files nothing new. The same
+ * summary ignoring case and spacing is the same problem; a different one is
+ * a different problem. Returns `{ number }`, or null (and always null
+ * without a conversation, since then nothing ties it to a thread).
+ */
+async function findRecentReport(pool, { userId, source, conversationId, threadRootId = null, title, hours = 6 }) {
+  const conversation = Number(conversationId);
+  if (!Number.isSafeInteger(conversation) || !userId || !source || !title) return null;
+  const { rows } = await pool.query(
+    `SELECT issue_number FROM feedback_reports
+      WHERE user_id = $1 AND source = $2 AND conversation_id = $3
+        AND thread_root_id IS NOT DISTINCT FROM $4
+        AND issue_number IS NOT NULL
+        AND created_at > NOW() - make_interval(hours => $5)
+        AND lower(regexp_replace(title, '\\s+', ' ', 'g'))
+          = lower(regexp_replace($6, '\\s+', ' ', 'g'))
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+    [userId, source, conversation, Number.isSafeInteger(Number(threadRootId)) ? Number(threadRootId) : null,
+      Number(hours) || 6, String(title)],
+  );
+  return rows[0] ? { number: Number(rows[0].issue_number) } : null;
+}
+
+/**
  * #11 (WP3): file a report to the Homeroom team for `user`, as the feedback
  * dialog files platform feedback: an issue in the platform repository whose
  * Source line names them (routes/issues.js creatorFromSourceLine reads it),
@@ -109,7 +139,7 @@ async function recentReports(pool, { userId, source, hours = 24 }) {
  * { ok: false, error } ('not_configured', 'github', 'failed'). Never throws.
  */
 async function filePlatformReport(pool, config, {
-  user, title, body, description, source, via = null,
+  user, title, body, description, source, via = null, conversationId = null, threadRootId = null,
 }) {
   if (!user?.id || !config?.platformRepoUrl) return { ok: false, error: 'not_configured' };
   try {
@@ -126,7 +156,7 @@ async function filePlatformReport(pool, config, {
       owner, repo, issueNumber: issue.number, authorId: user.id, text: `${title}\n\n${body}`,
     });
     await recordFeedbackReport(pool, {
-      user, app: null, owner, repo, issueNumber: issue.number, title, description, source,
+      user, app: null, owner, repo, issueNumber: issue.number, title, description, source, conversationId, threadRootId,
     });
     log.info('feedback', 'Filed a report for a person', { userId: user.id, source, issueNumber: issue.number });
     return { ok: true, issueNumber: Number(issue.number) || null, url: issue.html_url || null };
@@ -142,5 +172,6 @@ module.exports = {
   createPlatformIssue,
   recordFeedbackReport,
   recentReports,
+  findRecentReport,
   filePlatformReport,
 };

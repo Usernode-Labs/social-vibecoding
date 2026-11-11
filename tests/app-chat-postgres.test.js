@@ -721,6 +721,49 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     }
   });
 
+  // #6497: a request's discussion opens whole, up to its ceiling, so a
+  // 40-comment thread is not paged 50 rows at a time.
+  await t.test('#6497: a request\'s first page is its whole discussion, up to 500 rows', async () => {
+    const whole = await makeApp('ta-whole', { owner: alice, name: 'Whole' });
+    await member(whole, alice);
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref)
+       SELECT $1, $2, 'r' || g, 'issue', 77 FROM generate_series(1, 501) g`, [whole.id, alice.id]);
+    const get = (qs) => call('GET', `/api/apps/ta-whole/messages?${qs}`, alice);
+    const page = (await get('thread_type=issue&thread_ref=77')).body;
+    assert.equal(page.messages.length, 500, 'the whole thread, not a page of 50');
+    assert.equal(page.has_more_before, true, 'one row past the ceiling is still older');
+    assert.deepEqual(page.request_comments, { comments: [], truncated: false, note: 'unavailable' },
+      'the first page carries the GitHub comments read (none without a repository)');
+    const older = (await get(`thread_type=issue&thread_ref=77&limit=50&before=${page.messages[0].id}`)).body;
+    assert.equal(older.messages.length, 1, 'the one row past the ceiling');
+    assert.equal(older.has_more_before, false);
+    assert.equal(older.request_comments, undefined, 'an older page does not re-read the comments');
+
+    // A thread of a normal size opens with no "Load earlier" at all.
+    const small = await makeApp('ta-small-thread', { owner: alice, name: 'Small thread' });
+    await member(small, alice);
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref)
+       SELECT $1, $2, 's' || g, 'issue', 78 FROM generate_series(1, 120) g`, [small.id, alice.id]);
+    const normal = (await call('GET', '/api/apps/ta-small-thread/messages?thread_type=issue&thread_ref=78', alice)).body;
+    assert.equal(normal.messages.length, 120);
+    assert.equal(normal.has_more_before, false);
+    const olderPage = (await call(
+      'GET', `/api/apps/ta-small-thread/messages?thread_type=issue&thread_ref=78&limit=50&before=${normal.messages[50].id}`, alice
+    )).body;
+    assert.equal(olderPage.messages.length, 50, 'an older request page still stops at 50');
+
+    // Every other stream keeps pageLimit: a change's thread, and an older
+    // request page, still stop at 50.
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref)
+       SELECT $1, $2, 'c' || g, 'session', 5 FROM generate_series(1, 60) g`, [small.id, alice.id]);
+    const change = (await call('GET', '/api/apps/ta-small-thread/messages?thread_type=session&thread_ref=5', alice)).body;
+    assert.equal(change.messages.length, 50, 'a change\'s thread still pages at 50');
+    assert.equal(change.request_comments, undefined, 'and carries no request comments');
+  });
+
   // ── The read cursor ──────────────────────────────────────────────────
 
   await t.test('#6019: a request\'s stream reads its whole thread, its changes\' replies included (1 Nov 2026)', async () => {
@@ -769,6 +812,19 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     assert.ok(!page.messages.some((m) => m.content === 'on a draft'), 'nobody else does');
     const newer = (await call('GET', `/api/apps/ta-merged/messages?thread_type=issue&thread_ref=61&after=${onOther.id}`, alice)).body;
     assert.deepEqual(newer.messages.map((m) => m.content), ['on the change', 'after the change'], 'a catch-up reads them too');
+    // #6421: a new reply on a merged thread's page is stored on that page's
+    // request, and reads back in the one merged stream.
+    await joinCommunity(merged, alice);
+    const said = await call('POST', '/api/apps/ta-merged/messages', alice, { content: 'a new word', thread_type: 'issue', thread_ref: 61 });
+    assert.equal(said.status, 201, JSON.stringify(said.body));
+    const { rows: [stored] } = await pool.query(
+      `SELECT thread_id, thread_ref FROM chat_messages WHERE app_id = $1 AND content = 'a new word'`, [merged.id]);
+    assert.equal(Number(stored.thread_ref), 61, 'written on the page\'s request');
+    assert.equal(Number(stored.thread_id), Number(onLead.thread_id), 'in the merged thread');
+    const reread = (await call('GET', '/api/apps/ta-merged/messages?thread_type=issue&thread_ref=61', alice)).body;
+    assert.ok(reread.messages.some((m) => m.content === 'a new word'));
+    const onOtherPage = (await call('GET', '/api/apps/ta-merged/messages?thread_type=issue&thread_ref=62', alice)).body;
+    assert.ok(onOtherPage.messages.some((m) => m.content === 'a new word'), 'the other request\'s page reads it too');
     const alone = (await call('GET', '/api/apps/ta-merged/messages?thread_type=issue&thread_ref=63', alice)).body;
     assert.deepEqual(alone.messages, [], 'a number with no request reads only its own anchor');
   });

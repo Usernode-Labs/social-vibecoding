@@ -7,11 +7,93 @@ import { XIcon } from '@/components/ui/icons';
 import { Html } from '../../../lib/html';
 import { useMessages } from '../../../lib/i18n/react';
 import { pushDismissible } from '../../../lib/back-stack';
+import { KEPT_MAX_AGE_MS } from '../../../lib/kept-copies';
 
 type Description = {
   description: string; version: number; stale: boolean; maxLength: number;
   prBody?: string | null; prBodyStatus?: string;
 };
+
+/**
+ * What this device kept of an unsaved change description, so a sign-in that
+ * ran out mid-sentence does not lose it (#6481). Kept by ACCOUNT, not by
+ * session: the plan's first key was the session's API cache scope, and
+ * App._dropCachedSession wipes that on exactly the 401 this change is for.
+ * The key sits outside `kept-copies.ts`'s `usernode:kept:` prefix for the
+ * same reason, like the chat's `usernode:gc-draft:*`.
+ */
+const DRAFT_PREFIX = 'usernode:description-draft:';
+
+/** The key for one account's copy of one change's unsaved description, or null with nobody signed in. */
+export function descriptionDraftKey(userId: string | number | null | undefined, changeId: number): string | null {
+  if (userId == null || userId === '') return null;
+  return `${DRAFT_PREFIX}${userId}:${changeId}`;
+}
+
+/** localStorage, or null when the browser refuses it. */
+function draftStore(): Storage | null {
+  try { return typeof localStorage === 'undefined' ? null : localStorage; } catch { return null; }
+}
+
+/** The signed-in account to keep for, or null (not signed in, or a synthetic staging viewer). */
+function draftUserId(): string | number | null {
+  try {
+    const user = (window as any)?.App?.user;
+    if (!user || user.isSynthetic) return null;
+    return user.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Keep `text` as the unsaved description of `changeId` for `userId`. Empty text
+ * forgets it, and text over the change's own limit writes nothing so the last
+ * copy that fit stays. Every storage call is best effort.
+ */
+export function keepDescriptionDraft(store: Storage | null, userId: string | number | null | undefined,
+  changeId: number, text: string, maxLength: number, now: number = Date.now()): void {
+  const key = descriptionDraftKey(userId, changeId);
+  if (!store || !key) return;
+  try {
+    if (!text) { store.removeItem(key); return; }
+    if (text.length > maxLength) return;
+    store.setItem(key, JSON.stringify({ text, at: now }));
+  } catch {
+    /* storage full or refused: the last copy that fit stays */
+  }
+}
+
+/**
+ * The kept unsaved description of `changeId` for `userId`, when it parses and
+ * is under KEPT_MAX_AGE_MS old. Anything else is forgotten and reads null.
+ */
+export function keptDescriptionDraft(store: Storage | null, userId: string | number | null | undefined,
+  changeId: number, now: number = Date.now()): string | null {
+  const key = descriptionDraftKey(userId, changeId);
+  if (!store || !key) return null;
+  try {
+    const raw = store.getItem(key);
+    if (!raw) return null;
+    const entry = JSON.parse(raw);
+    if (entry && typeof entry.text === 'string' && typeof entry.at === 'number'
+      && entry.at <= now && now - entry.at < KEPT_MAX_AGE_MS) {
+      return entry.text;
+    }
+    store.removeItem(key);
+  } catch {
+    try { store.removeItem(key); } catch { /* nothing to remove */ }
+  }
+  return null;
+}
+
+/** Forget one account's kept unsaved description of one change. */
+export function forgetDescriptionDraft(store: Storage | null,
+  userId: string | number | null | undefined, changeId: number): void {
+  const key = descriptionDraftKey(userId, changeId);
+  if (!store || !key) return;
+  try { store.removeItem(key); } catch { /* nothing to remove */ }
+}
 
 function Preview({ text }: { text: string }) {
   const render = (window as any).DevChat?.renderMarkdown;
@@ -37,6 +119,10 @@ export function DescriptionEditor({ id, onSaved }: { id: number; onSaved: (data:
   const [conflict, setConflict] = useState(false);
   const [latest, setLatest] = useState<Description | null>(null);
   const [notice, setNotice] = useState('');
+  const [restored, setRestored] = useState(false);
+  const draftRef = useRef('');
+  /** Whether this open actually read the description: a close before the read lands must not drop a kept draft. */
+  const loadedRef = useRef(false);
   const fieldId = `change-description-${id}`;
 
   useEffect(() => {
@@ -58,24 +144,40 @@ export function DescriptionEditor({ id, onSaved }: { id: number; onSaved: (data:
     const controller = new AbortController();
     request.current = controller;
     setCurrent(null); setDraft(''); setPreview(false); setError('');
-    setLatest(null); setConflict(false); setNotice(''); setBusy(true);
+    setLatest(null); setConflict(false); setNotice(''); setRestored(false); setBusy(true);
+    loadedRef.current = false;
     dialog.current?.showModal();
     const release = pushDismissible(() => {
       if (saving.current) return false;
       setOpen(false);
     });
     read(controller.signal).then((data) => {
-      if (!controller.signal.aborted) { setCurrent(data); setDraft(data.description); }
+      if (controller.signal.aborted) return;
+      setCurrent(data);
+      loadedRef.current = true;
+      const userId = draftUserId();
+      const kept = keptDescriptionDraft(draftStore(), userId, id);
+      if (kept && kept !== data.description) {
+        // Last time this change was open on this device the sign-in ran out
+        // before Save description: the typed text wins, with the saved one
+        // offered in the dialog's existing comparison box.
+        setDraft(kept); setLatest(data); setRestored(true);
+      } else {
+        if (kept) forgetDescriptionDraft(draftStore(), userId, id);
+        setDraft(data.description);
+      }
     }).catch((err) => {
       if (!controller.signal.aborted) setError(err.message || t('project:topic.editor.loadFailed'));
     }).finally(() => { if (!controller.signal.aborted) setBusy(false); });
     return () => {
       controller.abort(); request.current?.abort();
       release();
+      if (loadedRef.current && !draftRef.current.trim()) forgetDescriptionDraft(draftStore(), draftUserId(), id);
       if (focused?.isConnected) focused.focus();
     };
   }, [open, id]);
 
+  useEffect(() => { draftRef.current = draft; }, [draft]);
   useEffect(() => { if (open && current) input.current?.focus(); }, [open, !!current]);
 
   async function reviewLatest() {
@@ -105,7 +207,8 @@ export function DescriptionEditor({ id, onSaved }: { id: number; onSaved: (data:
         throw new Error(data.message || data.error || t('project:topic.editor.saveFailed'));
       }
       if (controller.signal.aborted) return;
-      setCurrent(data); setDraft(data.description); onSaved(data);
+      forgetDescriptionDraft(draftStore(), draftUserId(), id);
+      setCurrent(data); setDraft(data.description); setRestored(false); onSaved(data);
       if (String(data.prBodyStatus || '').startsWith('github_')) {
         setNotice(t('project:topic.editor.savedSyncIncomplete'));
       } else {
@@ -133,12 +236,17 @@ export function DescriptionEditor({ id, onSaved }: { id: number; onSaved: (data:
           </button>
         </div>
         <p id={`${fieldId}-help`} className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">{t('project:topic.editor.help')}</p>
+        {restored ? <p role="status" className="text-sm my-3">{t('project:topic.editor.restored')}</p> : null}
         {!current && busy ? <p role="status">{t('project:topic.editor.loading')}</p> : null}
         {current ? <>
           <label className="block text-sm font-medium mb-2" htmlFor={fieldId}>{t('project:topic.editor.fieldLabel')}</label>
           <Textarea ref={input} id={fieldId} rows={11} className={preview ? 'hidden' : 'w-full'}
             aria-describedby={`${fieldId}-help ${fieldId}-count`} value={draft} disabled={saving.current}
-            onChange={(event) => setDraft(event.target.value)} />
+            onChange={(event) => {
+              const value = event.target.value;
+              setDraft(value);
+              keepDescriptionDraft(draftStore(), draftUserId(), id, value, current.maxLength);
+            }} />
           {preview ? <div className="max-h-[45vh] overflow-auto" aria-label={t('project:topic.editor.previewRegion')}><Preview text={draft} /></div> : null}
           <div className="flex items-center justify-between gap-3 my-3">
             <Button type="button" variant="neutral" ink="neutral" onClick={() => setPreview(!preview)} aria-pressed={preview}>{preview ? t('project:topic.editor.editText') : t('project:topic.editor.preview')}</Button>
@@ -153,8 +261,8 @@ export function DescriptionEditor({ id, onSaved }: { id: number; onSaved: (data:
           <h3 className="text-sm font-medium mb-2">{t('project:topic.editor.latestTitle')}</h3>
           <div className="max-h-40 overflow-auto"><Preview text={latest.description} /></div>
           <div className="flex flex-wrap gap-2 mt-3">
-            <Button type="button" variant="neutral" ink="neutral" onClick={() => { setDraft(latest.description); setCurrent(latest); setLatest(null); setConflict(false); setError(''); }}>{t('project:topic.editor.useLatest')}</Button>
-            <Button type="button" variant="neutral" ink="neutral" onClick={() => { setCurrent(latest); setLatest(null); setConflict(false); setError(''); }}>{t('project:topic.editor.keepDraft')}</Button>
+            <Button type="button" variant="neutral" ink="neutral" onClick={() => { setDraft(latest.description); setCurrent(latest); setLatest(null); setConflict(false); setError(''); setRestored(false); forgetDescriptionDraft(draftStore(), draftUserId(), id); }}>{t('project:topic.editor.useLatest')}</Button>
+            <Button type="button" variant="neutral" ink="neutral" onClick={() => { setCurrent(latest); setLatest(null); setConflict(false); setError(''); setRestored(false); }}>{t('project:topic.editor.keepDraft')}</Button>
           </div>
         </div> : null}
         {notice ? <p role="status" className="text-sm my-3">{notice}</p> : null}

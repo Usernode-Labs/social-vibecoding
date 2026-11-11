@@ -130,9 +130,9 @@ export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share' | 'github
  * 'open' and the buttons go, for everybody.
  */
 export interface BotOfferView {
-  status: 'open' | 'deciding' | 'done' | 'declined' | 'failed';
+  status: 'open' | 'deciding' | 'done' | 'declined' | 'failed' | 'gone' | 'expired';
   forMe: boolean;
-  actions: { id: 'yes' | 'no'; label: string; primary: boolean }[];
+  actions: { id: 'yes' | 'no' | 'first'; label: string; primary: boolean }[];
   /** #6305: 'file_many' when one request is offered on several projects. */
   kind?: string;
   rows?: BotOfferRow[] | null;
@@ -357,6 +357,8 @@ export interface TranscriptMessage {
   at?: string | null;
   /** Sanitized markdown for an ordinary message; plain text for a system row. */
   bodyHtml: string;
+  /** Task 2020 follow-up: Homeroom bot's reply laid out (group-chat.js _botHtmlOf), drawn in place of `bodyHtml` by ./long-body.tsx. */
+  botHtml?: string | null;
   systemText: string;
   /** Set by transcript.tsx's foldRepeats: how many identical lines this one stands for. */
   repeat?: number;
@@ -431,6 +433,8 @@ export interface TranscriptMessage {
   botOffer?: BotOfferView | null;
   /** 3 Nov 2026: the suggested replies under Homeroom bot's message in a thread. */
   botSuggest?: BotSuggestView | null;
+  /** #6533: the pictures under Homeroom bot's reply in a change's thread. */
+  botGallery?: Record<string, unknown> | null;
   /**
    * #4455: a system row that announces the preview build, from its metadata:
    * `started` (a change's page leaves it out: its Testing card says so) or
@@ -443,6 +447,11 @@ export interface TranscriptMessage {
    * that change. Absent on every other row.
    */
   changeOf?: { sessionId: number | null };
+  /**
+   * #6421: on a request's page, a message written on another request of a
+   * merged thread, tagged with that request's number ("on #6212").
+   */
+  requestOf?: { number: number | null };
   /** Spec-share rows only — see SpecShareView. Null on every other kind. */
   specShare: SpecShareView | null;
   /**

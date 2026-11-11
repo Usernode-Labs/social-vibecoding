@@ -121,7 +121,7 @@ test('on the GitHub issue, a mention of the bot or its login speaks, and its own
 });
 
 test('the same text the holds module matches a mention with, both places build it', () => {
-  assert.equal(holds.mentionPattern(), "(^|[^a-z0-9_])@(homeroom_bot|[\u200b\u200c\u200d\u2060]?homeroom bot)([^a-z0-9_-]|$)");
+  assert.equal(holds.mentionPattern(), "(^|[^a-z0-9_])@(homeroom_bot|homeroombot|[\u200b\u200c\u200d\u2060]?homeroom bot)([^a-z0-9_-]|$)");
   const src = read('src/services/homeroom-bot-holds.js');
   assert.match(src, /AND m\.content ~\* \$3/);
   assert.match(src, /\[appId, numbers, mentionPattern\(\), windowHours\]/, 'recentMentions uses it');
@@ -131,12 +131,14 @@ test('#4610: "@Homeroom bot", as the composer writes it, is a mention too; a lon
   const mention = new RegExp(holds.mentionPattern(), 'i');
   for (const text of [
     '@homeroom_bot can you look?',
+    '@homeroombot can you look?',
+    'thanks @HomeroomBot!',
     '@Homeroom bot inset it even more',
     '@\u200bHomeroom bot inset it even more',
     'thanks @\u200dHomeroom bot!',
     '@Homeroom bot',
   ]) assert.ok(mention.test(text), JSON.stringify(text));
-  for (const text of ['@homeroom_botx', '@Homeroom botany', 'ada@homeroom_bot.example', 'Homeroom bot said so']) {
+  for (const text of ['@homeroom_botx', '@homeroombotx', '@Homeroom botany', 'ada@homeroom_bot.example', 'ada@homeroombot.example', 'Homeroom bot said so']) {
     assert.ok(!mention.test(text), JSON.stringify(text));
   }
 });
@@ -433,6 +435,43 @@ test('a first look posts as it always did, and runs no gate query', async (t) =>
   assert.equal(await bot.actOnVerdict(verdictArgs({ pool, relook: false })), 'person');
   assert.equal(seen.posts.length, 1);
   assert.ok(!pool.queries.some(([sql]) => /homeroom_bot_posts/.test(sql)), 'the gate is not even asked');
+});
+
+// 6 Nov 2026 (#6430): a go-ahead typed in the request's own discussion is
+// the same refusal as one typed in the chat: one plain answer, said to the
+// person who gave it, and no note again.
+test('#6430: a re-read after a thread go-ahead posts the one plain answer, not the note', async (t) => {
+  const seen = stubLive(t);
+  const pool = fakePool([[/goAheadCannot/, { rows: [] }]]);
+  const parsed = {
+    verdict: 'person', reason: 'it was evan\'s go-ahead, and production access is involved',
+    goAheadDecides: false, firstStep: 'Just the three missing read tools',
+  };
+  const acted = await bot.actOnVerdict(verdictArgs({
+    pool, relook: false, parsed, goAhead: { by: 'evan', where: 'thread', messageId: 41 },
+  }));
+  assert.equal(acted, 'person');
+  assert.equal(seen.posts.length, 1, 'one post, not a note and an answer');
+  const said = seen.posts[0].homeroomText;
+  assert.match(said, /even with a go-ahead/);
+  assert.match(said, /your go-ahead/, 'the reader is spoken to, never named in the third person');
+  assert.doesNotMatch(said, /evan/i);
+  assert.doesNotMatch(said, /\bapprove/i, 'it never says somebody has to approve it');
+  assert.match(said, /A person has to build it, for example you with a coding agent/);
+  assert.match(said, /I can build this part now: Just the three missing read tools\.$/);
+  assert.equal(seen.posts[0].dm.goAheadDecides, false);
+  assert.equal(seen.posts[0].dm.firstStep, 'Just the three missing read tools');
+});
+
+test('#6430: a re-read says nothing when the thread already answered that go-ahead', async (t) => {
+  const seen = stubLive(t);
+  const pool = fakePool([[/goAheadCannot/, { rows: [{ ok: 1 }] }]]);
+  const parsed = { verdict: 'person', reason: 'x', goAheadDecides: false, firstStep: 'Just the read tools' };
+  const acted = await bot.actOnVerdict(verdictArgs({
+    pool, relook: false, parsed, goAhead: { by: 'evan', where: 'thread', messageId: 41 },
+  }));
+  assert.equal(acted, 'answered');
+  assert.equal(seen.posts.length, 0, 'the refusal appears once, under itself never twice');
 });
 
 test('#6399: a person note after "I\'m taking this up now" is posted, with its suggestion buttons', async (t) => {

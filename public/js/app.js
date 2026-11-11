@@ -89,6 +89,11 @@ const App = {
   _inMessages: false,
   // Agent sessions (#2779): one conversation with the Mayor at #agent/<id>.
   _inAgentSession: false,
+  // The Homeroom bot tab (#6019): set by navigateToAi(), cleared by any other
+  // screen's reveal in _showOnlyScreen. Without it Back from the tab to "/"
+  // took the "already on home" branch and drew Home beside the bot page
+  // (#6530).
+  _inAi: false,
 
   // Chromeless full-screen mode (/app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -173,6 +178,27 @@ const App = {
   // before using this session's display-only snapshot; the worker never
   // supplies a cached /me. A later live answer still reconciles the viewer.
   BOOT_SESSION_TIMEOUT_MS: 2000,
+
+  // The boot stops WAITING at the deadline above, but the read itself is
+  // not aborted there (#6429): a server answering the identity check in
+  // 2.049 s used to leave the tab on the snapshot — and therefore with no
+  // events socket, frozen lists and no bell — until the next reload, even
+  // though the connectivity probe said online the whole time. A read that
+  // lands late settles the check. This is how long a stalled one is
+  // allowed to stay out, so it cannot hold the next read forever.
+  BOOT_SESSION_LATE_LIMIT_MS: 30000,
+
+  // How often a check that ran out of time is asked again while the probe
+  // says online: after 2 s, 5 s, 15 s, then every 30 s (#6429). A tab that
+  // stays online used to hear nothing from `usernode:offline-change`, which
+  // fires only when the probe's answer CHANGES, so a slow boot's check was
+  // never retried at all.
+  SESSION_RETRY_DELAYS_MS: [2000, 5000, 15000, 30000],
+  _sessionRetryStep: 0,
+  _sessionRetryTimer: null,
+  // One reconcile read at a time: the retry ladder, the foreground hook and
+  // a network handover can now coincide.
+  _reconcileInFlight: null,
 
   saveSessionSnapshot(user) {
     if (!user || !user.id) return;
@@ -620,15 +646,21 @@ const App = {
   // The header stays empty and the option is read from the first argument:
   // suites that pin this chain slice its source between the exact headers
   // `_fetchSession()` and `_fetchWebSession()`.
+  //
+  // `late` says the read belongs to a snapshot boot that has stopped
+  // WAITING at BOOT_SESSION_TIMEOUT_MS but not stopped reading (#6429), so
+  // it gets the longer deadline in _fetchWebSession. The no-snapshot boot
+  // keeps the short one.
   async _fetchSession() {
     const optional = !!(arguments[0] && arguments[0].optional);
-    let response = await App._fetchWebSession({ optional });
+    const late = !!(arguments[0] && arguments[0].late);
+    let response = await App._fetchWebSession({ optional, late });
     if (optional) response = await App._settleOptionalSession(response);
     if (window.NativeChrome && typeof NativeChrome.restoreWebSession === 'function') {
       try {
         const restored = await App._withinNativeRestoreLimit(
           NativeChrome.restoreWebSession({ force: response.status === 401 }));
-        if (restored) return App._fetchWebSession();
+        if (restored) return App._fetchWebSession({ late });
       } catch (error) {
         // Native uncertainty must not erase a display snapshot. A valid web
         // response can still be used while native recovery is unavailable.
@@ -679,9 +711,15 @@ const App = {
   // first argument, for the same reason.
   async _fetchWebSession() {
     const optional = !!(arguments[0] && arguments[0].optional);
+    const late = !!(arguments[0] && arguments[0].late);
     let timer = null;
     const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
-    if (ctrl) timer = setTimeout(() => ctrl.abort(), App.BOOT_SESSION_TIMEOUT_MS);
+    if (ctrl) {
+      // A late read is one the boot has already stopped waiting for: it may
+      // land whenever it lands, and its answer still settles the check.
+      timer = setTimeout(() => ctrl.abort(),
+        late ? App.BOOT_SESSION_LATE_LIMIT_MS : App.BOOT_SESSION_TIMEOUT_MS);
+    }
     try {
       if (optional) return await fetch('/api/auth/me?optional=1', ctrl ? { signal: ctrl.signal } : undefined);
       return await fetch('/api/auth/me', ctrl ? { signal: ctrl.signal } : undefined);
@@ -693,7 +731,78 @@ const App = {
   // Replace the snapshot-derived session with a verified one. This runs on
   // EVERY boot that started from a snapshot — which, since the shell boots
   // optimistically, is every boot on a device that has been signed in here
-  // — and again from the reconnect path when the network returns.
+  // — and again from the reconnect path when the network returns, from the
+  // foreground hook, and from the retry ladder below.
+  //
+  // It stops WAITING at BOOT_SESSION_TIMEOUT_MS, but the read is not
+  // aborted there (#6429): a server that answered /api/auth/me in 2.049 s
+  // left the tab unverified — no events socket, so Needs you, the bot's
+  // lists and the bell froze — for as long as the probe kept saying online,
+  // because `usernode:offline-change` fires only when the probe's answer
+  // CHANGES. Now the late answer settles the check, and a check that did
+  // not answer at all is retried while online.
+  //
+  // One read at a time: two answers settling together would start the held
+  // work twice.
+  async _reconcileSession({ fromBoot = false } = {}) {
+    if (!App._sessionFromSnapshot) return;
+    if (App._reconcileInFlight) return App._reconcileInFlight;
+    const attempt = App._runSessionReconcile({ fromBoot });
+    App._reconcileInFlight = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (App._reconcileInFlight === attempt) App._reconcileInFlight = null;
+    }
+  },
+
+  async _runSessionReconcile({ fromBoot = false } = {}) {
+    const read = App._fetchSession({ late: true }).catch(() => null);
+    let timer = null;
+    let reloading = false;
+    let settled = null;
+    const settle = async (res) => {
+      const outcome = await App._settleSnapshotSession(res, { fromBoot });
+      settled = outcome;
+      if (outcome === 'reloading') reloading = true;
+      return outcome;
+    };
+    const deadline = new Promise((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), App.BOOT_SESSION_TIMEOUT_MS);
+    });
+    try {
+      const first = await Promise.race([read, deadline]);
+      clearTimeout(timer);
+      timer = null;
+      if (first === 'timeout') {
+        // Still no answer — stay on the snapshot and say so on screen. This
+        // is where the offline strip belongs: the shell is up and READABLE,
+        // and the thing the viewer needs to know is that it is not live.
+        await settle(null);
+        // The read is still out. Ask again on the ladder meanwhile; a retry
+        // that finds it still out joins it rather than starting a second.
+        App._scheduleSessionRetry();
+        const late = await read;
+        if (late && App._sessionFromSnapshot) await settle(late);
+        return;
+      }
+      await settle(first);
+    } finally {
+      if (timer) clearTimeout(timer);
+      // Still unverified: keep the ladder going. Offline this schedules
+      // nothing — `usernode:offline-change` asks again as it always has. A
+      // reload takes the document away, and a 200 with no `user` said
+      // nothing to ask about, so neither keeps asking.
+      if (!reloading && settled !== 'empty' && App._sessionFromSnapshot) {
+        App._scheduleSessionRetry();
+      }
+    }
+  },
+
+  // What an answer to the check means. Shared by the answer that arrives
+  // inside the boot's deadline, the one that lands after it, and each
+  // retry, so all three settle the check the same way — and only the first
+  // of them does.
   //
   // Four outcomes, and each matters:
   //   401/403     → the session really did end. Drop every cached trace and
@@ -702,27 +811,14 @@ const App = {
   //                 rebuild a shell that was painted for someone else.
   //   same id     → promote to a live session: start everything the
   //                 unverified guards held back, and resync the screen.
-  //   no answer   → offline. Raise the strip and stay on the snapshot; the
-  //                 reconnect path calls this again.
-  //
-  // Uses the same deadline'd read as the boot (_fetchSession): an
-  // open-but-stalled socket must not hold this open forever either, and on
-  // the boot path this IS the boot's read.
-  async _reconcileSession({ fromBoot = false } = {}) {
-    if (!App._sessionFromSnapshot) return;
-    let res;
-    try {
-      res = await App._fetchSession();
-    } catch (err) {
-      res = null;
-    }
+  //   no answer   → offline, or answered but not about the session. Raise
+  //                 the strip and stay on the snapshot; the ladder retries.
+  async _settleSnapshotSession(res, { fromBoot = false } = {}) {
+    if (!App._sessionFromSnapshot) return null;
     if (!res) {
-      // Still unreachable — stay on the snapshot and say so on screen. This
-      // is where the offline strip belongs: the shell is up and READABLE,
-      // and the thing the viewer needs to know is that it is not live.
       try { window.Offline?.nudge(); } catch (e) { /* ignore */ }
       App._publishBootSession({ unknown: true });
-      return;
+      return 'unknown';
     }
     if (!res.ok && !App._answeredSignedOut(res)) {
       // Answered, but not ABOUT the session (#1608). A signed-in reload that
@@ -732,22 +828,27 @@ const App = {
       // answer at all, because that is exactly what this is.
       try { window.Offline?.nudge(); } catch (e) { /* ignore */ }
       App._publishBootSession({ unknown: true });
-      return;
+      return 'unknown';
     }
+    // A definitive answer: nothing more is retried. Every path that reloads
+    // passes through here first, so the timer never survives a reload.
+    App._clearSessionRetry();
     if (!res.ok) {
       App._dropCachedSession();
       App._sessionFromSnapshot = false;
       App._publishBootSession({ signedOut: true });
       location.reload();
-      return;
+      return 'reloading';
     }
     let user = null;
     try { user = (await res.json()).user; } catch (err) { user = null; }
-    if (!user) return;
+    // A 200 with no `user` says nothing about the session: no action, and no
+    // further attempts either — asking again would get the same empty answer.
+    if (!user) return 'empty';
     if (String(user.id) !== String(App.user?.id)) {
       App._dropCachedSession();
       location.reload();
-      return;
+      return 'reloading';
     }
     // Platform access is the one field whose value decides which SHELL is
     // on screen rather than what is inside it — enterAuthed sends a viewer
@@ -757,7 +858,7 @@ const App = {
     if (!!user.hasPlatformAccess !== !!App.user?.hasPlatformAccess) {
       App.saveSessionSnapshot(user);
       location.reload();
-      return;
+      return 'reloading';
     }
     // So is being a private member, for the same reason: it decides the mark
     // menu, Home's sections and the app's ✕. Being let in off the waitlist
@@ -765,7 +866,7 @@ const App = {
     if (!!user.privateMember !== !!App.user?.privateMember) {
       App.saveSessionSnapshot(user);
       location.reload();
-      return;
+      return 'reloading';
     }
     App._sessionFromSnapshot = false;
     if (window.NativeChrome &&
@@ -776,7 +877,6 @@ const App = {
     App.user = user;
     App._syncViewer();
     window.UsernodeReact?.appOpenings?.setUser?.(user.id, true);
-    window.UsernodeReact?.googleAnalytics?.setSession?.(user, true);
     App.saveSessionSnapshot(user);
     // The verified answer, for everyone who joined bootSession() rather
     // than reading /api/auth/me for themselves. Published HERE on an
@@ -824,6 +924,33 @@ const App = {
     }
   },
 
+  // Ask again while the check has not settled (#6429). Deliberately not a
+  // poll: once /api/auth/me answers, the events socket takes over and this
+  // stops. While the probe says offline it schedules nothing — coming back
+  // online already asks (usernode:offline-change), and a timer would only
+  // spend requests on a network that carries none.
+  _scheduleSessionRetry() {
+    if (App._sessionRetryTimer) return;
+    if (!App._sessionFromSnapshot) return;
+    if (window.Offline?.isOffline?.() === true) return;
+    const delays = App.SESSION_RETRY_DELAYS_MS;
+    const last = delays.length - 1;
+    const delay = delays[Math.min(App._sessionRetryStep, last)];
+    App._sessionRetryStep = Math.min(App._sessionRetryStep + 1, last);
+    App._sessionRetryTimer = setTimeout(() => {
+      App._sessionRetryTimer = null;
+      App._reconcileSession().catch(() => {});
+    }, delay);
+  },
+
+  // The check settled (or the document is going away): forget where the
+  // ladder was, so a later boot asks again after 2 s rather than at 30.
+  _clearSessionRetry() {
+    if (App._sessionRetryTimer) clearTimeout(App._sessionRetryTimer);
+    App._sessionRetryTimer = null;
+    App._sessionRetryStep = 0;
+  },
+
   // ── Staged boot (fold-auth-pages-into-SPA) ──────────────────────────
   // The SPA now serves anonymous visitors too: landing / login / signup /
   // register / waiting are hash-routed in-SPA screens (auth-screens.js),
@@ -860,7 +987,6 @@ const App = {
     App.user = null;
     App._syncViewer();
     window.UsernodeReact?.appOpenings?.setUser?.(null, true);
-    window.UsernodeReact?.googleAnalytics?.setSession?.(null);
     window.UITelemetry?.clearUser?.();
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
@@ -1084,7 +1210,6 @@ const App = {
     // the server's answer; a normal login publishes immediately.
     if (!App._sessionFromSnapshot) App._publishBootSession({ user });
     window.UsernodeReact?.appOpenings?.setUser?.(user.id, !App._sessionFromSnapshot);
-    window.UsernodeReact?.googleAnalytics?.setSession?.(user, !App._sessionFromSnapshot);
     // "View as non-admin" admin tool. We mask `App.user.isAdmin`
     // for client-side UI gating (admin buttons, retry, delete, lock,
     // app-secrets edit, etc. — see grep for App.user?.isAdmin) so
@@ -3426,15 +3551,18 @@ const App = {
           case 'budget_updated':
             // #2598: a model call's cost just landed against this user's
             // weekly pool (services/budget-live.js). Both meters repaint from
-            // the figures the event carries — the composer's and the header
-            // drawer's AI-credit row — so "$x left this week" ticks while the
-            // agent works instead of only once the turn ends. No refetch:
-            // the payload IS the snapshot both surfaces read, which is why
-            // this can fire every few seconds during a build.
+            // the figures the event carries — the composer's and the Settings
+            // AI-credit row — so "$x left this week" ticks while the agent
+            // works instead of only once the turn ends. No refetch: the
+            // payload IS the snapshot both surfaces read, which is why this
+            // can fire every few seconds during a build.
+            //
+            // #6493: the shared allowance is adopted FIRST, then the dev chat
+            // repaints from the state that just moved.
+            window.AiCredit?.Budget?.applyPush?.(data.budget);
             if (typeof DevChat !== 'undefined' && DevChat.applyBudgetUpdate) {
               DevChat.applyBudgetUpdate(data.budget);
             }
-            window.AiCredit?.Budget?.applyPush?.(data.budget);
             break;
           case 'bot_request_card':
             // B9: the card under a message of this person's that asked
@@ -3499,6 +3627,17 @@ const App = {
             // again under the viewer's own session; nothing here writes the
             // DOM. The Homeroom bot tab hears the same push (features/ai/live.ts).
             window.dispatchEvent(new CustomEvent('homeroom-bot-work-changed'));
+            // #6595: a work state also names the item whose stage moved, so
+            // a request or a change open on screen re-reads itself wherever
+            // it is shown. `dev: false`: the Workshop's own refresh is told
+            // nothing by a work state.
+            if (data.type === 'work_state') {
+              App._liveRefresh('work', data.item?.sessionId ?? null, {
+                appSlug: data.appSlug,
+                issueNumber: data.item?.issueNumber,
+                dev: false,
+              });
+            }
             break;
           case 'app_version_changed':
             // A new build of an app is live: its pills, its open change, and
@@ -3824,6 +3963,14 @@ const App = {
           if (!DevChat.currentSession) DevChat.renderSessionList();
         });
       }
+    }
+    // #6490: a merge that arrives as a plain session update patches the same
+    // caches the vote_update path does, so the card's pill flips whichever
+    // event carried the news. No server sends one today; the guard keeps
+    // every merge path patching the same way.
+    if ((data.merged === true || data.status === 'merged')
+        && typeof AppView !== 'undefined' && AppView.noteSessionMerged) {
+      AppView.noteSessionMerged(data.sessionId, data.appSlug, { live: data.live === true });
     }
     // Refresh proposals / inline chat vote state on the other dev sub-tabs,
     // and the drawer and Home, once for the whole burst (see _liveRefresh).
@@ -4311,7 +4458,7 @@ const App = {
   // Refresh the relevant dev sub-tab when another user creates, votes on,
   // or closes an issue / governance proposal so everyone sees it live.
   handleIssueUpdate(data) {
-    App._liveRefresh('issue', null, { appSlug: data.appSlug });
+    App._liveRefresh('issue', null, { appSlug: data.appSlug, issueNumber: data.issueNumber });
   },
 
   // The Workshop's grouping for the open app moved server-side (cards
@@ -4372,6 +4519,11 @@ const App = {
     if (!b) {
       b = {
         kinds: new Set(), ids: new Set(), voteSlugs: new Set(),
+        // #6595: what a request or a change open anywhere re-reads itself
+        // from — every project the burst named (whether or not it is the
+        // app on screen), every request number it named, and whether any of
+        // its events named no session and no request (a close vote, say).
+        slugs: new Set(), numbers: new Set(), unnamed: false,
         unscoped: false, merged: false, home: false, dev: false, resolve: null,
       };
       b.promise = new Promise((resolve) => { b.resolve = resolve; });
@@ -4380,6 +4532,15 @@ const App = {
     }
     const ids = sessionIds == null ? [] : [].concat(sessionIds);
     const forThisApp = opts.appSlug == null || opts.appSlug === App.currentApp;
+    if (opts.appSlug) b.slugs.add(opts.appSlug);
+    if (opts.issueNumber != null) {
+      const number = Number(opts.issueNumber);
+      if (Number.isFinite(number)) b.numbers.add(number);
+    } else if (!ids.length) {
+      // Named neither a session nor a request: it may be about whatever is
+      // open, so the shown topic re-reads rather than guessing it is not.
+      b.unnamed = true;
+    }
     if (opts.dev !== false && forThisApp) {
       b.dev = true;
       b.kinds.add(kind);
@@ -4430,6 +4591,21 @@ const App = {
         chatRead = AppView.loadVoteState(chatSlug);
       } catch { chatRead = null; }
     }
+    // #6595: a request or a change open OUTSIDE the Workshop's own sub-view
+    // — the Homeroom bot tab's column, the platform side panel, the item's
+    // own page — re-reads itself for the same burst. refreshDevData above
+    // returns at once off the board, and even on it the thread read that
+    // draws a close vote's card is not part of that read. Routed by what is
+    // shown (AppView._devTopic), never by App.currentApp.
+    let shownRead = null;
+    if (typeof AppView !== 'undefined' && AppView.refreshShownTopic) {
+      try {
+        shownRead = AppView.refreshShownTopic({
+          kinds: b.kinds, ids: b.ids, numbers: b.numbers, slugs: b.slugs,
+          unnamed: b.unnamed, devRead: !!out,
+        });
+      } catch { shownRead = null; }
+    }
     // A change's page (topic-head.tsx's ChangeDetail) re-reads its row when
     // told to, rather than every ten seconds. The Workshop's own refresh
     // hands the open topic its row directly; every other mounted page for
@@ -4441,7 +4617,7 @@ const App = {
     }
     if (typeof AppView !== 'undefined' && AppView._liveHandedOff) AppView._liveHandedOff = null;
     if (b.home) App._refreshHomeLive();
-    Promise.all([out, chatRead]).then(() => b.resolve(out), () => b.resolve(undefined));
+    Promise.all([out, chatRead, shownRead]).then(() => b.resolve(out), () => b.resolve(undefined));
   },
   // The drawer and Home for a live burst. Home's grid is one request for
   // every app the viewer can see (670 KB on production), so a stream of
@@ -4495,7 +4671,7 @@ const App = {
     // belong to, so it is called whatever is showing here; the burst below
     // covers the board showing live.
     if (data.merged && typeof AppView !== 'undefined' && AppView.noteSessionMerged) {
-      AppView.noteSessionMerged(data.sessionId, data.appSlug);
+      AppView.noteSessionMerged(data.sessionId, data.appSlug, { live: !!data.live });
     }
     // Refresh the proposals tab / inline chat vote state if we're in this
     // app's Dev view, and the work drawer and Home, which track tallies:
@@ -4564,10 +4740,14 @@ const App = {
     if (home) {
       // The Challenges block keeps its read for a minute (HomePanels.TTL_MS),
       // which a pull must not be answered from (#3985): it reads again,
-      // fresh, and Home.load() joins that read.
+      // fresh. The tiles' vote counts are re-read too (request 6500), by the
+      // same forced path the pull is for; it goes before Home.load() so the
+      // forced read is the one that starts, rather than Home's own unforced
+      // read already being under way.
       PlatformUI.pullToRefresh(home,
         () => App._refreshOrReload(() => Promise.all([
           window.HomePanels?.ensureLoaded?.({ force: true, fresh: true }),
+          window.UsernodeReact?.homePins?.refresh?.({ force: true }),
           Home.load(),
         ])));
     }
@@ -4935,6 +5115,7 @@ const App = {
         expired: 'shell:invite.dead.expired',
         revoked: 'shell:invite.dead.revoked',
         used_up: 'shell:invite.dead.usedUp',
+        paused: 'shell:invite.dead.paused',
         unknown: 'shell:invite.dead.unknown',
       };
       const openHub = (slug) => {
@@ -5403,7 +5584,9 @@ const App = {
         // home without hiding the screen it was on. Messages and the Workshop
         // were left out (QA 2026-09-24 Q1), so Back from either to "/" drew
         // Home over the list or the panel, with that tab still lit and the
-        // phone's bar floating mid-page.
+        // phone's bar floating mid-page; the Homeroom bot tab was left out too
+        // (#6530), and Back from it left Home, its list and the open request's
+        // panel sharing the window.
         if (App.currentApp) App.navigateHome();
         else if (App._inLeaderboard) App.navigateHome();
         else if (App._inProfile) App.navigateHome();
@@ -5412,6 +5595,7 @@ const App = {
         else if (App._inAgentSession) App.navigateHome();
         else if (App._inMessages) App.navigateHome();
         else if (App._inWorkshop) App.navigateHome();
+        else if (App._inAi) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -5440,7 +5624,7 @@ const App = {
         if (App.currentApp || App._inLeaderboard || App._inProfile
           || App._inAdmin || App._inSettings
           || App._inAgentSession
-          || App._inMessages || App._inWorkshop) {
+          || App._inMessages || App._inWorkshop || App._inAi) {
           App.navigateHome();
         } else {
           App._ensureHomeVisible();
@@ -5533,6 +5717,15 @@ const App = {
       if (parts[0] === 'profile') {
         App.setChromeless(false);
         App.navigateToProfile(parts[1] ? decodeURIComponent(parts[1]) : null);
+        return;
+      }
+      if (parts[0] === 'week') {
+        // This week (#6371): the page the Friday "Your weekly digest is
+        // ready" row opens, listing what happened in your projects over the
+        // last seven days (features/weekly-digest/index.tsx). The read is
+        // me-scoped server-side and answers 401 to a caller with no session.
+        App.setChromeless(false);
+        App.navigateToWeeklyDigest();
         return;
       }
       if (parts[0] === 'needs') {
@@ -5787,6 +5980,13 @@ const App = {
         // not fit.
         App.setChromeless(false);
         App.navigateToAi();
+        // 6 Nov 2026 (#6425): on a desktop the tab's own page is its lists
+        // alone. The bare address closes whatever was open beside them — the
+        // tab pressed, or Back to `#homeroom-bot` — and the page takes it
+        // once, as it takes every ask.
+        if (parts.length === 1) {
+          window.UsernodeReact?.ai?.closeColumn?.();
+        }
         if (parts[1] === 'request' || parts[1] === 'change' || parts[1] === 'decision') {
           window.UsernodeReact?.ai?.openItem?.('#' + parts.join('/'));
         }
@@ -5796,6 +5996,13 @@ const App = {
             threadRootId: at.threadRootId || null,
             focusMessageId: at.focusMessageId || null,
           });
+        }
+        // 10 Nov 2026: `new` is the bot's "+" pressed for you, a blank thread
+        // that may come already set (`?project=<slug>&with=<builder>`,
+        // features/ai/door.ts botNewAt): a project's Workshop asking a
+        // newcomer who should build.
+        if (parts[1] === 'new') {
+          window.UsernodeReact?.ai?.openNew?.('#' + parts.join('/') + (fragQuery ? '?' + fragQuery : ''));
         }
         return;
       }
@@ -5963,6 +6170,9 @@ const App = {
             subTab = 'topic'; // #4367: by PR number; the topic view finds the session
             ref = { kind: 'proposal', id: null, pr: App._changeNumber(parts[4]) };
           } else if (sec === 'governance' && parts[4]) {
+            // #6439: a vote to close a request forwards to the request's
+            // page (`AppView._renderTopicSubView` and `openTopicInPanel`);
+            // every other decision keeps this page.
             subTab = 'topic';
             ref = { kind: 'gov', id: parseInt(parts[4]) || null };
           } else if (sec === 'shared' && parts[4]) {
@@ -6305,7 +6515,7 @@ const App = {
   // two visible roots split the viewport 50/50 — see the #764 note on
   // the zoom transition).
   SCREEN_IDS: ['app-view', 'home-screen',
-    'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
+    'workshop-screen', 'weekly-digest-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
     'settings-screen', 'messages-screen',
     'agent-session-screen', 'ai-screen'],
 
@@ -6377,6 +6587,11 @@ const App = {
     // Here rather than in those six: a flag that says "this screen is the one
     // showing" belongs to the function that decides which screen is showing.
     if (revealId !== 'messages-screen' && App._inMessages) App._exitMessages();
+    // …and the bot tab's visit ends the same way (#6530). The page keeps no
+    // state to leave, so there is no _exitAi: the flag only says "the bot tab
+    // is the one showing", and the reveal that shows something else is what
+    // makes that untrue.
+    if (revealId !== 'ai-screen') App._inAi = false;
     // Publish the final root state directly. Showing a house and then hiding
     // it in a per-screen callback shifts the shared title slot unnecessarily.
     //
@@ -6909,6 +7124,8 @@ const App = {
     'messages-screen': 'messages',
     'agent-session-screen': 'agent_session',
     'ai-screen': 'ai',
+    // This week (#6371): the page the weekly digest's bell row opens.
+    'weekly-digest-screen': 'weekly_digest',
   }),
 
   _navPending: null,
@@ -7384,6 +7601,9 @@ const App = {
     // features/workshop/index.tsx takes useVisibilityHiddenClass, so it has to
     // be listed here or the class gets the two owners the note above describes.
     'workshop-screen',
+    // This week (#6371): features/weekly-digest/index.tsx takes
+    // useVisibilityHiddenClass from its first commit, same seam.
+    'weekly-digest-screen',
     // The AI tab's main view (#6019 follow-up): features/ai/index.tsx takes
     // useVisibilityHiddenClass from its first commit, same seam.
     'ai-screen',
@@ -7834,6 +8054,31 @@ const App = {
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
+  // This week (#6371): the page the Friday "Your weekly digest is ready"
+  // bell row opens. Read-only, a page under Home like Needs you, so it takes
+  // the same slot and leaves the app the same way. The island owns the whole
+  // root; it loads from the controller's open() while still hidden.
+  navigateToWeeklyDigest() {
+    if (App._revealedScreen === 'weekly-digest-screen' && !App.currentApp) return;
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inMessages) App._exitMessages();
+    if (App._inWorkshop) App._exitWorkshop();
+    const screen = document.getElementById('weekly-digest-screen');
+    window.UsernodeReact?.weeklyDigest?.open?.();
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('weekly-digest-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle(PlatformI18n.t('weekly-digest:title'));
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
   // #6019 follow-up: the Homeroom bot tab's own page (features/ai/), a tab
   // root like the Workshop. Main, the chat with the bot, is in its column
   // (1 Nov 2026: no longer a level under it on the Messages screen). The
@@ -7850,6 +8095,10 @@ const App = {
     if (App._inSettings) App._exitSettings();
     if (App._inMessages) App._exitMessages();
     if (App._inWorkshop) App._exitWorkshop();
+    // Before the transition, like _inWorkshop above: popstate and hashchange
+    // land in the same tick, and the reveal is not recorded until the
+    // callback runs, so a later-set flag would let the second run through.
+    App._inAi = true;
     const screen = document.getElementById('ai-screen');
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
@@ -9213,6 +9462,9 @@ const App = {
     // One Home (#6361): Needs you is a page under Home (its tile opens it),
     // so it has an arrow up to Home, as Challenges has one up to Me.
     'workshop-screen': ['arrow', '/'],
+    // This week (#6371) is a page under Home too: the weekly digest row
+    // opens it, and its arrow goes back up.
+    'weekly-digest-screen': ['arrow', '/'],
     // #6019 follow-up: the AI tab's page is a tab root; Main is a level
     // under it (the Messages store's syncChrome points its arrow here).
     'ai-screen': ['none'],
@@ -9832,6 +10084,12 @@ window.App = App;
 App._foregroundResync = () => {
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
   if (window.SessionState) SessionState.syncIfStale?.();
+  // #6429: coming back to the tab is also a reason to ask who is signed in,
+  // when the boot's check ran out of time. A slow server used to leave the
+  // tab unverified — no socket, frozen lists, no bell — until a reload.
+  if (App._sessionFromSnapshot && !(window.Offline?.isOffline?.() === true)) {
+    App._reconcileSession().catch(() => {});
+  }
 };
 // Guarded: app.js is loaded into bare vm sandboxes by several unit tests,
 // which stub `document` / `window` with only the members they need.
@@ -9970,6 +10228,7 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
     case 'apps': return frag.split('/')[1] ? 'app-view' : null;
     case 'discover': return frag.split('/')[1] ? 'app-view' : null;
     case 'needs': return 'workshop-screen';  // Needs you (One Home, #6361)
+    case 'week': return 'weekly-digest-screen'; // This week (#6371)
     case 'profile': return 'profile-screen';
     case 'settings': return 'settings-screen';
     case 'admin': return 'admin-screen';

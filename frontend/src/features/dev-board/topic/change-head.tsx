@@ -25,6 +25,11 @@
  * then the Before and after card. The view model is
  * `AppView._changeThreadView`; this only draws.
  *
+ * 6 Nov 2026 (#6419): the pair stays caught under the sheet's header as the
+ * reader scrolls, shrunk to one line each, until the change's own content
+ * ends above the replies. It replaces the second Votes card that used to
+ * appear there (#5725).
+ *
  * An UPDATE (docs/plans/versions.md: a change a version was given by the
  * project it was made from, its original) adds two things: under the summary,
  * the From <original> card (what it brings from there, then "In <version>":
@@ -34,7 +39,7 @@
  * clashes with the version's own changes, Ask Homeroom bot to fit it.
  */
 
-import { forwardRef, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Html } from '../../../lib/html';
@@ -52,15 +57,23 @@ import { askToFit, upstreamAction } from '../../versions/upstream';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel } from '../card/model';
-import type { ChangeGateView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
+import type { ChangeGateView, ChangeMergeView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
 import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
 import { ThreadItems, pageSlug } from './thread-items';
+import type { ClosesRequest } from './thread-model';
 import { changeMenuKey } from './thread-menu';
+import { usePanelHead } from '../../side-panel/head-store';
 import { TopicBack } from './topic-back';
 import { WorkWithBotButton } from './work-with-bot';
 import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
 import { IncludedIn, IssueAssociations, ProposalBody, SummaryMore } from './topic-head';
+import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
+import { useFramePage } from '../../frame/frame-page-store';
+import { placeName } from '../workshop/places';
+import { TopicFrameAbout, TopicFrameHead, TopicFrameStatus } from './frame/topic-frame';
+import { useSideStack } from './frame/side-stack';
+import { changeStop, dotLine, pillKind, topicBack } from './frame/topic-page';
 
 function host(id: string): Element | null {
   return typeof document === 'undefined' ? null : document.getElementById(id);
@@ -72,9 +85,23 @@ function host(id: string): Element | null {
  * gate the ⋯ Details row uses), the title itself opens the Details sheet
  * (#5329): it looks as it always did, and underlines on hover.
  */
-export function ChangeBar({ v, menuKey, detailsId = null }: { v: ChangeThreadView; menuKey: string; detailsId?: number | null }): ReactNode {
+export function ChangeBar({ v, menuKey, detailsId = null, name = null }: {
+  v: ChangeThreadView;
+  menuKey: string;
+  detailsId?: number | null;
+  /** The change's own title, for the kit's head under one of the frame's looks. */
+  name?: string | null;
+}): ReactNode {
   const t = useMessages('project');
   const title = v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title');
+  // #6431: beside the Homeroom bot page this bar is not drawn at all (app.css),
+  // and the column's heading carries its pill and its rows instead. Publishing
+  // them is all this does there; nowhere else does it publish anything.
+  usePanelHead({ kind: 'change', pill: v.status || null, menuKey: menuKey || null });
+  // UNDER ONE OF THE FRAME'S LOOKS the page's head is the kit's (the tour's
+  // s34): the change's title and one line saying what it is, with this menu.
+  const frame = isFrameSkin(useLiveSkin());
+  if (frame) return <TopicFrameHead title={name || title} purpose={dotLine([title, v.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.change.bar.more') } : null} />;
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
@@ -146,6 +173,70 @@ function FixRow({ fix, rerun }: { fix: FixChecksView; rerun: ReactNode }): React
 }
 
 /**
+ * #6225: what a yes on a change would close, under its Votes card's tally:
+ * every request the change closes, each a link to its page with its title and
+ * filer. A request its requester has not agreed to says so, so a voter can see
+ * overreach and vote no. Five lines, then one tap for the rest.
+ */
+function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
+  const t = useMessages('project');
+  const [open, setOpen] = useState(false);
+  const shown = open || closes.length <= 5 ? closes : closes.slice(0, 5);
+  const rest = closes.length - shown.length;
+  const slug = (window as any).AppView?.appData?.slug || '';
+  const linkClass = 'font-semibold text-violet-700 hover:underline dark:text-violet-300';
+  const link = (n: number) => (
+    <a href={slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${n}` : `#${n}`} className={linkClass} />
+  );
+  return (
+    <div
+      className="col-span-full mt-2.5 border-t border-[color:var(--app-sheet-line)] pt-2 text-[13px] leading-normal text-zinc-500 dark:text-zinc-400"
+      data-change-vote-closes={closes.length}
+    >
+      <p className="font-semibold text-zinc-700 dark:text-zinc-300">
+        {t('project:topic.change.gate.closesHead', { count: closes.length })}
+      </p>
+      {shown.map((r) => (
+        <p
+          key={r.number}
+          // #6225: a hanging indent, so a long title wrapping on a phone stays
+          // aligned after the "#number" link rather than under it.
+          className="ps-[3.4em] -indent-[3.4em]"
+          data-change-vote-closes-on={r.number}
+          data-confirmed={r.confirmed ? 'true' : 'false'}
+        >
+          {r.title && r.by ? (
+            <RichMessage
+              id="project:topic.change.gate.closesLine"
+              values={{ number: r.number, title: r.title, by: r.by }}
+              components={[link(r.number)]}
+            />
+          ) : r.title ? (
+            <RichMessage id="project:topic.change.gate.closesLineNoFiler" values={{ number: r.number, title: r.title }} components={[link(r.number)]} />
+          ) : (
+            <RichMessage id="project:topic.change.gate.closesLineUntitled" values={{ number: r.number }} components={[link(r.number)]} />
+          )}
+          {r.confirmed ? null : (
+            <>{' · '}<span className="whitespace-nowrap font-semibold text-zinc-700 dark:text-zinc-300">{t('project:topic.change.gate.closesUnconfirmed')}</span></>
+          )}
+        </p>
+      ))}
+      {rest > 0 ? (
+        <button
+          type="button"
+          className={linkClass}
+          aria-expanded="false"
+          data-change-vote-closes-more={rest}
+          onClick={() => setOpen(true)}
+        >
+          {t('project:topic.change.gate.closesMore', { count: rest })}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * One card: its name and figure over its bar, its button beside them, and
  * one line under. A bar still moving is drawn in the lit ink; a finished
  * one is full and green, with a green check and figure (AGENTS.md: a
@@ -157,8 +248,8 @@ function FixRow({ fix, rerun }: { fix: FixChecksView; rerun: ReactNode }): React
  * beside it (`fix`, `rerun`). From the tap until the build conversation's
  * turn ends it reads "Fixing", with a door into that conversation.
  */
-export function GateCard({ which, g, action, rerun = null, id, repeat = false }: {
-  which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; repeat?: boolean;
+export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
+  which: 'votes' | 'testing' | 'merge'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; closes?: ClosesRequest[];
 }): ReactNode {
   const t = useMessages('project');
   const open = () => (window as any).AppView?.openTechnicalDetails?.(id, 'checks');
@@ -200,11 +291,7 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
   return (
     <div
       className="dev-change-gate"
-      // #5725: the repeat at the foot of the page is the same card, but
-      // `data-change-gate` stays the ONE card declared checks, votes-in-view
-      // and tests find; the repeat carries its own attribute instead.
-      data-change-gate={repeat ? undefined : which}
-      data-change-gate-repeat={repeat ? which : undefined}
+      data-change-gate={which}
       data-done={shown.done ? 'true' : 'false'}
       data-tone={shown.tone}
       data-change-fixing={fixing ? '' : undefined}
@@ -229,14 +316,16 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
         </div>
       </div>
       {action ? <div className="dev-change-gate-act">{action}</div> : null}
-      {/* #3800: the repeat at the foot of the page stays one small card. */}
-      {shown.facts?.length && !repeat ? (
+      {/* #3800: the vote's lines under the bar. */}
+      {shown.facts?.length ? (
         <div className="dev-change-gate-facts">
           {shown.facts.map((fact) => (
             <p key={fact.key} data-change-vote-fact={fact.key} data-ask={fact.ask ? 'true' : undefined}>{fact.text}</p>
           ))}
         </div>
       ) : null}
+      {/* #6225: what a yes would close, under the tally. */}
+      {which === 'votes' && closes.length ? <VoteCloses closes={closes} /> : null}
       {why ? (
         <p className="dev-change-gate-why" data-change-gate-why={explanation ? 'explained' : 'own-words'}>
           {page ? `${why} ` : why}
@@ -286,6 +375,71 @@ export function GateCard({ which, g, action, rerun = null, id, repeat = false }:
       ) : null}
     </div>
   );
+}
+
+/** #6563: how long a held merge may wait before the card calls it out. */
+export const MERGE_WAIT_LONG_MS = 30 * 60 * 1000;
+/** #6563: how often the times under the Merging card are worded again. */
+export const MERGE_TICK_MS = 30 * 1000;
+
+const minutesBetween = (fromIso: string | null, toMs: number): number | null => {
+  if (!fromIso) return null;
+  const at = Date.parse(fromIso);
+  if (!Number.isFinite(at)) return null;
+  return Math.floor((toMs - at) / 60000);
+};
+
+/**
+ * #6563: the merge step, under Votes and Tested, while GitHub holds an
+ * approved change's merge or it is under way. It reuses GateCard: the same
+ * card, bar and grey line. Its one job is to say what the merge still waits
+ * on, so it carries the last try and the next one, counted from the viewer's
+ * own clock (a timer every MERGE_TICK_MS, started only in an effect so the
+ * first render matches what the view holds) — except while GitHub's required
+ * checks are still running (#6593), where those tries are bookkeeping and
+ * only the note and the wait's length are said. A wait of MERGE_WAIT_LONG_MS
+ * or more turns amber and says how long and what to do; GitHub's checks
+ * failing again is red, with no times and no button.
+ */
+export function MergeCard({ g, id }: { g: ChangeMergeView; id: number | null }): ReactNode {
+  const t = useMessages('project');
+  const wait = g.wait || null;
+  const held = !!wait;
+  const [, setTick] = useState(0);
+  const now = Date.now();
+  useEffect(() => {
+    if (!held) return undefined;
+    const timer = window.setInterval(() => setTick((n) => n + 1), MERGE_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, [held]);
+  const triedMin = minutesBetween(wait?.triedAt || null, now);
+  const retryAt = wait?.retryAt ? Date.parse(wait.retryAt) : NaN;
+  // A retry time that is missing or already past reads "Trying again now."
+  const nextMin = Number.isFinite(retryAt) && retryAt > now ? Math.max(1, Math.round((retryAt - now) / 60000)) : null;
+  const waitedMin = minutesBetween(wait?.since || null, now);
+  const long = wait?.since ? waitedMin != null && waitedMin * 60000 >= MERGE_WAIT_LONG_MS : false;
+  const note = [...g.note];
+  if (long) note.push(t('project:topic.change.gate.merge.long', { minutes: waitedMin ?? 0 }));
+  // #6593: GitHub building and scanning the release images is a normal wait,
+  // not a failed try. Homeroom's own tries are bookkeeping, so this hold
+  // says nothing about them; a busy or refused merge still does.
+  if (held && g.hold !== 'github_checks' && wait?.triedAt) {
+    note.push(triedMin == null || triedMin < 1
+      ? t('project:topic.change.gate.merge.triedJustNow')
+      : t(triedMin === 1 ? 'project:topic.change.gate.merge.tried_one' : 'project:topic.change.gate.merge.tried_other', { count: triedMin }));
+  }
+  if (held && g.hold !== 'github_checks') {
+    note.push(nextMin == null
+      ? t('project:topic.change.gate.merge.nextNow')
+      : t(nextMin === 1 ? 'project:topic.change.gate.merge.next_one' : 'project:topic.change.gate.merge.next_other', { count: nextMin }));
+  }
+  const shown: ChangeGateView = {
+    ...g,
+    figure: long ? t('project:topic.change.gate.merge.longFigure') : g.figure,
+    tone: long ? 'warn' : g.tone,
+    note,
+  };
+  return <GateCard which="merge" g={shown} action={null} id={id} />;
 }
 
 /**
@@ -373,6 +527,17 @@ function ShotsCard({ s }: { s: NonNullable<ChangeThreadView['shots']> }): ReactN
           <span>{s.line}</span>
         </p>
       ) : null}
+      {s.retake ? (
+        <button
+          type="button"
+          className="gc-vote-btn"
+          data-shots-retake="1"
+          title={translate('changes:page.menu.takeShotsAgainTitle')}
+          onClick={(e) => (window as any).AppView?.rerunShots?.(s.retake!, e.currentTarget)}
+        >
+          {translate('changes:shots.card.takeAgain')}
+        </button>
+      ) : null}
     </section>
   );
 }
@@ -418,18 +583,84 @@ function gateActions(card: DevCardModel, v: ChangeThreadView) {
  * 1 Nov 2026: `ballot`, a change folded under the ballot that decides
  * between it and its rivals keeps its Votes card without its own Vote
  * button, so there is one way to vote.
+ *
+ * 6 Nov 2026 (#6419): on the change's own page this same pair stays caught
+ * under the sheet's header as the reader scrolls, instead of a second Votes
+ * card appearing above the replies (#5725, removed). It is the pair, not the
+ * Votes card alone, that sticks: a sticky box travels only within its
+ * parent, and the Votes card's parent is this pair, exactly as tall as the
+ * two cards. The pair's parent is the article's content column, which ends
+ * with the change's own content, above the replies, so the pair lets go there
+ * with no extra code, and the real Testing card rides under the Votes card,
+ * so the checks' state is always in sight. The page that holds the pair
+ * decides it: only the change's own article carries `dev-change-root`, so a
+ * change section on a request's page draws the pair as before.
  */
-export const ChangeGates = forwardRef<HTMLDivElement, { id: number | null; card: DevCardModel; v: ChangeThreadView; ballot?: boolean }>(
-  function ChangeGates({ id, card, v, ballot = false }, ref) {
-    const { voteAction, testAction, withFix, testingActions, stopped } = gateActions(card, v);
-    return (
-      <div ref={ref} className="dev-change-pair">
-        <GateCard which="votes" g={v.votes} action={ballot ? null : voteAction} id={id} />
+export const ChangeGates = forwardRef<HTMLDivElement, {
+  id: number | null; card: DevCardModel; v: ChangeThreadView; ballot?: boolean; closes?: ClosesRequest[];
+}>(function ChangeGates({ id, card, v, ballot = false, closes = [] }, ref) {
+  const { voteAction, testAction, withFix, testingActions, stopped } = gateActions(card, v);
+  const pair = useRef<HTMLDivElement>(null);
+  const mark = useRef<HTMLSpanElement>(null);
+  const [stick, setStick] = useState(false);
+  const [stuck, setStuck] = useState(false);
+  // What the pair gives up when it shrinks, kept as margin so the words under
+  // it do not jump up and the page's scroll height does not change.
+  const [give, setGive] = useState(0);
+  const full = useRef(0);
+  const setPair = useCallback((node: HTMLDivElement | null) => {
+    pair.current = node;
+    if (typeof ref === 'function') ref(node);
+    else if (ref) (ref as { current: HTMLDivElement | null }).current = node;
+  }, [ref]);
+  // Only the change's own page holds the pair in `dev-change-root`; a change
+  // section on a request's page does not, and keeps the pair as it was. Found
+  // from the pair itself so every caller writes the same element.
+  useEffect(() => {
+    setStick(!!pair.current?.closest('.dev-change-root'));
+  }, [id]);
+  // Stuck is where the mark above the pair has left the top of the thread's
+  // own scroller. The scroller is found from the mark itself, never by a
+  // document-wide id: another pane can hold the same id (#4640). A browser
+  // without an observer leaves the pair at full size; it still sticks.
+  useEffect(() => {
+    if (!stick) return;
+    const el = mark.current;
+    const scroller = el ? el.closest<HTMLElement>('#gc-thread-scroll') : null;
+    if (!el || !scroller || typeof IntersectionObserver !== 'function') return;
+    const io = new IntersectionObserver((entries) => {
+      const entry = entries[entries.length - 1];
+      if (!entry) return;
+      setStuck(!entry.isIntersecting && entry.boundingClientRect.top < (entry.rootBounds?.top ?? 0));
+    }, { root: scroller, rootMargin: '4px 0px 0px 0px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [id, stick]);
+  useLayoutEffect(() => {
+    if (!stick) return;
+    const el = pair.current;
+    if (!el) return;
+    if (!stuck) { full.current = el.offsetHeight; setGive(0); return; }
+    setGive(Math.max(0, full.current - el.offsetHeight));
+  }, [stuck, v.votes, v.testing, v.merge, stick]);
+  return (
+    <>
+      {stick ? <span ref={mark} className="dev-change-pair-mark" aria-hidden="true" /> : null}
+      <div
+        ref={setPair}
+        className="dev-change-pair"
+        data-stick={stick ? '' : undefined}
+        data-stuck={stick && stuck ? '' : undefined}
+        style={stick && give ? { marginBlockEnd: give } : undefined}
+      >
+        <GateCard which="votes" g={v.votes} action={ballot ? null : voteAction} id={id} closes={closes} />
         <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix || stopped ? testingActions : null} id={id} />
+        {/* #6563: the merge itself, while GitHub holds it or it is under way. */}
+        {v.merge ? <MergeCard g={v.merge} id={id} /> : null}
       </div>
-    );
-  },
-);
+    </>
+  );
+});
 
 export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSaved, threadNumber = null, threadAsChange = false }: {
   id: number | null;
@@ -444,9 +675,15 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   threadAsChange?: boolean;
 }): ReactNode {
   const t = useMessages('project');
+  // Under one of the frame's looks the page tells the bar its trail (the
+  // Workshop, then this change) and stands its votes and checks, and About,
+  // in the context column beside its words (./frame/side-stack.ts).
+  const frame = isFrameSkin(useLiveSkin());
+  const trail = v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title');
+  useFramePage(frame ? [placeName('workshop'), trail] : null, topicBack);
+  useSideStack(frame, `[data-change-root="${id ?? ''}"] > [data-image-viewer-scope]`, ['.dev-change-status', '.dev-change-pair', '.fr-topicside']);
+  const tc = useMessages('changes');
   const images = useInlineImageViewer();
-  // The Votes card's buttons, for its repeat in the pin host.
-  const { voteAction } = gateActions(card, v);
   const thanks = v.thanks && id ? <span className="contents" data-kudos-host={id} data-kudos-face="thread"></span> : null;
   const issues = body.issues || [];
   const back = host('gc-thread-back');
@@ -471,83 +708,10 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
     const off = onVotesAsked(show);
     return () => { off(); release?.(); };
   }, [id]);
-  // #5725: the Votes card repeated in the thread's pin host, at the top of
-  // the scroller, so a long page keeps where the vote stands and its button
-  // on screen however far down the reader is (evan asked for it to stick as
-  // you scroll rather than only sit at the bottom). The pin host is a child
-  // of the scroller and `position: sticky` (app.css): the reading area's top
-  // edge is its offset, with the scroller's own 4px top padding pulled in so
-  // no reply shows in the slit above the card, and the replies scroll under
-  // it. Nothing else pins inside this scroller, so nothing is overlapped.
-  //
-  // It is HIDDEN while the card under the description is on screen, so a
-  // page short enough to show both still shows one card. It is in the DOM
-  // from the first paint (hidden), so a reader who scrolled before this
-  // mounted still gets it.
-  //
-  // BOTH ends are found from the card itself, never by a document-wide id:
-  // the pin host through the scroller that holds the card, and "on screen"
-  // through an observer with no root. A second thread — the Workshop's panel,
-  // another pane — can hold a host of the same id, and a document-wide
-  // `#gc-thread-scroll` can be that thread's box (#4640), which clamps nothing
-  // this card is in and so never reports it gone.
-  //
-  // The observer's root is the viewport (#5725, second run): it applies every
-  // clipping ancestor itself, so the card counts as in view only where a
-  // reader can see it, whichever box moved it — the thread's own scroller,
-  // the page, a restored scroll position on reload, or a reflow of the words
-  // above it. A `scroll` listener only hears the scroller it was attached to,
-  // and the card stayed hidden when that was not the box that moved.
-  const [pin, setPin] = useState<Element | null>(null);
-  const [topInView, setTopInView] = useState(true);
-  useEffect(() => {
-    const card = pair.current?.querySelector<HTMLElement>('[data-change-gate="votes"]');
-    const scroller = card ? card.closest<HTMLElement>('#gc-thread-scroll') : null;
-    setPin(scroller ? scroller.querySelector('#gc-thread-pin') : null);
-    if (!card) { setTopInView(true); return; }
-    if (typeof IntersectionObserver === 'function') {
-      const io = new IntersectionObserver((entries) => {
-        const entry = entries[entries.length - 1];
-        if (entry) setTopInView(entry.isIntersecting);
-      });
-      io.observe(card);
-      return () => io.disconnect();
-    }
-    // No IntersectionObserver: the card's box against its nearest scroller
-    // and the window, re-measured on any scroll of the document (capture, so
-    // it hears every scroller) and on resize.
-    const view = () => {
-      const box = card.getBoundingClientRect();
-      const clip = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight || 0 };
-      const top = Math.max(clip.top, 0);
-      const bottom = Math.min(clip.bottom, window.innerHeight || 0);
-      return box.height > 0 && box.bottom > top && box.top < bottom;
-    };
-    let frame = 0;
-    const measure = () => { frame = 0; if (card.isConnected) setTopInView(view()); };
-    const schedule = () => { if (!frame) frame = window.requestAnimationFrame(measure); };
-    measure();
-    document.addEventListener('scroll', schedule, { capture: true, passive: true });
-    window.addEventListener('resize', schedule);
-    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null;
-    ro?.observe(card);
-    return () => {
-      if (frame) window.cancelAnimationFrame(frame);
-      document.removeEventListener('scroll', schedule, { capture: true });
-      window.removeEventListener('resize', schedule);
-      ro?.disconnect();
-    };
-  }, [id]);
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
-      {bar ? createPortal(<ChangeBar v={v} menuKey={menuKey} detailsId={id && body.changeId ? id : null} />, bar) : null}
-      {pin ? createPortal(
-        <div className="dev-change-gate-repeat" hidden={topInView}>
-          <GateCard which="votes" g={v.votes} action={voteAction} id={id} repeat />
-        </div>,
-        pin,
-      ) : null}
+      {bar ? createPortal(<ChangeBar v={v} menuKey={menuKey} detailsId={id && body.changeId ? id : null} name={card.title.text || card.title.title || null} />, bar) : null}
       {images.viewer}
       <article className="messages-message dev-request-root dev-change-root" data-change-root={id ?? ''}>
         <Avatar shape="square" size="sm" color={swatchFor(v.author)} aria-hidden="true">
@@ -592,6 +756,16 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {/* #6019: the requests, other changes and votes in its thread. */}
           {id ? <ThreadItems slug={pageSlug()} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} menuKey={menuKey || null} /> : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
+          {frame ? (
+            <div className="dev-change-status">
+              <TopicFrameStatus
+                pill={v.status ? { word: v.status.label, kind: pillKind(v.status, v.votes) } : null}
+                at={changeStop(v.status, v.votes, v.testing).at}
+                state={changeStop(v.status, v.votes, v.testing).state}
+                words={[tc('changes:track.plan'), tc('changes:track.build'), tc('changes:track.checks'), tc('changes:track.vote'), tc('changes:track.live')]}
+              />
+            </div>
+          ) : null}
           {v.codeMissing ? <CodeMissingNotice /> : null}
           {v.waitsFor || v.baseNotMain ? <StackNotice v={v} /> : null}
           <ChangeGates ref={pair} id={id} card={card} v={v} />
@@ -605,6 +779,16 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
             voting={!!v.votes.facts?.length}
             botAtWork={v.testing.botFix === 'fixing' || v.testing.botFix === 'queued'}
           />
+          {frame ? (
+            <TopicFrameAbout
+              label={t('project:frame.topic.about')}
+              asker={v.author}
+              color={swatchFor(v.author)}
+              line={dotLine([v.time, v.via])}
+              topic={v.category}
+              topicLine={t('project:frame.topic.topic')}
+            />
+          ) : null}
         </div>
       </article>
     </>

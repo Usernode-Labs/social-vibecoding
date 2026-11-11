@@ -48,8 +48,9 @@ test('Messages is a hidden React-owned top-level screen with global navigation',
   // out as Home, AI, Messages, you. D (18 Oct 2026): Recents (the
   // communities pinned to its top, then your others) sits after them, drawn
   // only on a desktop.
-  // Most hrefs are left out: the runner clips a selector at 256 characters
-  // (tests/proposal-tests-manifest.test.js), and the render tests pin them.
+  // Most hrefs are left out: the runner's selector cap
+  // (`MAX_TEST_SELECTOR_LEN`, tests/proposal-tests-manifest.test.js) would
+  // clip them, and the render tests pin them.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
     === '#platform-tabs #platform-tab-home + #platform-tab-ai[href="#homeroom-bot"]'
       + ' + #platform-tab-messages + #platform-rail-pinned'

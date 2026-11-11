@@ -44,6 +44,8 @@ import { cn } from '@/lib/utils';
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { Message, RichMessage, useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
+import { useStoreState } from '../../lib/use-store-state';
+import { isFrameSkin, useSkin } from '../../lib/skin';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { FRAME_THEME_PARAM } from '../app-frame/app-frame-policy.js';
 import {
@@ -77,7 +79,10 @@ import {
 } from './sign-in-sheet';
 import { Story } from './story';
 import { cardCover, morph, projectHero } from '../guest/card-morph';
+import { devicePinsStore, loadDevicePins, toggleDevicePin } from '../guest/device-pins';
 import { GuestDiscover } from '../guest/guest-discover';
+import { GatedFrame } from '../guest/frame/gated-frame';
+import { LandingFrame } from '../guest/frame/landing-frame';
 import { type GuestIntent, GuestProject } from '../guest/guest-project';
 import { type GuestApp, linksToWorkshop, NEW_ACCOUNTS_WAIT, projectHash } from '../guest/guest-data';
 import { noteSignUpFrom } from './sign-up-from';
@@ -821,6 +826,10 @@ export function LandingScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.landing, false);
   const t = useMessages('auth');
+  // Under one of the frame's looks the guest Discover is the kit's page
+  // (../guest/frame/landing-frame.tsx). Standard until mount: this screen
+  // is in the prerendered document.
+  const frame = isFrameSkin(useSkin());
   // The screen's interior mounts on its first reveal, not in the prerender —
   // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
   // window.UsernodeReact.mount) before it wires or reveals the screen, so the
@@ -870,7 +879,13 @@ export function LandingScreen() {
   const [deepLink, setDeepLink] = useState<{ target: string; place: DeepLinkPlace } | null>(null);
   // Closed without signing in: the story, under an address that says so. The
   // link stays remembered, so a sign-in from the story still lands on it.
+  // UNDER A LOOK the link has a page of its own (../guest/frame/gated-frame
+  // .tsx) and the sheet opens from its Sign in, not by itself: closing the
+  // sheet then closes the sheet, and the page stays.
+  const [gateSheet, setGateSheet] = useState(false);
+  const gateSheetUp = useRef(false);
   const closeGate = useCallback(() => {
+    if (gateSheetUp.current) { setGateSheet(false); return; }
     setDeepLink(null);
     closeSheet();
     try {
@@ -913,7 +928,7 @@ export function LandingScreen() {
     const token = release.token;
     const run = straightRun.current;
     let live = true;
-    void Promise.all([releaseAccountFromToken(token), straightLink(link) ? waitlistOptions() : null]).then(async ([account, options]) => {
+    void Promise.all([releaseAccountFromToken(token, { fromAdmitMail: true }), straightLink(link) ? waitlistOptions() : null]).then(async ([account, options]) => {
       if (!live) return;
       setReleaseEmail(account?.email ?? null);
       if (run !== straightRun.current || !spendsOnLoad({ link, account, options })) {
@@ -957,6 +972,13 @@ export function LandingScreen() {
   // show, i.e. after hydration.
   const [session, setSession] = useState(false);
   const [openApp, setOpenApp] = useState<{ slug: string; name: string } | null>(null);
+  // #6433: what this device has pinned while signed out (features/guest/
+  // device-pins.ts), for the bar's Pin while an app is open. A visitor has no
+  // app menu and no About pane, so the bar is where an app is pinned; Home's
+  // Pinned apps reads the same store. Loaded in an effect, so the first
+  // render is the prerender's.
+  const devicePins = useStoreState(devicePinsStore);
+  useEffect(() => { loadDevicePins(); }, []);
   // The public directory (loadLandingApps), for the guest Discover and the
   // guest project pages: null until it has been read, and `appsFailed` when
   // it could not be.
@@ -1061,6 +1083,8 @@ export function LandingScreen() {
   // (./sign-up-from.ts): noted as it shows, in an effect, never the render.
   const gateTarget = gate?.target ?? null;
   useEffect(() => { if (gateTarget) noteSignUpFrom('link'); }, [gateTarget]);
+  gateSheetUp.current = frame && !!gate && gateSheet;
+  useEffect(() => { setGateSheet(false); }, [gateTarget]);
   const storyFront = storyOn && inApp && !linkedSlug && !discoverLink && !gate;
   // The guest pages (Discover, a project's page) and their bar.
   const guestPages = guestOn && !storyFront;
@@ -1608,12 +1632,15 @@ export function LandingScreen() {
     byId('auth-landing-scroll')?.scrollTo?.(0, 0);
     if (document.documentElement.dataset.browserScroller) window.scrollTo(0, 0);
   }, [shownSlug]);
-  // The bar's back button: out of the open app, else from a project's page
-  // to Discover.
-  const showBack = !!openApp || !!guestProject || appDiscover;
-  // The guest Discover's own bar: the wordmark at the left edge of the
-  // column, Sign in and Sign up at its right, a hairline under it. A
-  // project's page or an open app keeps the centred title and its back.
+  // The bar's back button: out of the open app, or from Discover in the app
+  // back to the story. A project's page keeps the signed-out site's own bar
+  // (the hand-off of 11 Nov 2026: "Maybe we shouldn't replace the header for
+  // signed out users?"); its way back is the page's All communities chip,
+  // which runs `onBack` below.
+  const showBack = !!openApp || appDiscover;
+  // The guest pages' own bar: the wordmark at the left edge of the column,
+  // Sign in and Sign up at its right, a hairline under it, on Home and on a
+  // project's page alike. An open app keeps the centred title and its back.
   const guestTop = guestPages && !showBack && !gate;
   const onBack = useCallback(() => {
     if (st.openSlug) { live.current.closeLandingApp(); return; }
@@ -1718,7 +1745,7 @@ export function LandingScreen() {
           id="landing-header-title"
           className="flex-1 min-w-0 px-10 text-lg font-bold pointer-events-none truncate text-center [[data-guest-top]_&]:px-0 [[data-guest-top]_&]:text-start"
         >
-          {openApp || guestProject ? headerTitle : <Wordmark className="h-7 w-auto inline-block align-middle text-zinc-950 dark:text-white" title={LANDING_TITLE} />}
+          {openApp ? headerTitle : <Wordmark className="h-7 w-auto inline-block align-middle text-zinc-950 dark:text-white" title={LANDING_TITLE} />}
         </div>
         {/*
             The trailing 28px, mirroring the lead box so the label sits on the
@@ -1755,6 +1782,23 @@ export function LandingScreen() {
           data-landing-actions=""
           className={hiddenLast(session || !guestPages, guestTop ? 'flex shrink-0 items-center gap-1.5' : `absolute bottom-4 end-4 flex items-center gap-1.5 ${GUEST_BAR_RIGHT}`)}
         >
+          {/* #6433: an app open for a visitor is pinned HERE, to this device,
+              because a visitor has no app menu or About pane. The same quiet
+              button as Sign in beside it, drawn at the row's 28px with a 44px
+              touch box, so the bar keeps its height. Not in the first render
+              (`openApp` starts null), so hydration is unaffected. */}
+          {openApp && !session ? (
+            <button
+              type="button"
+              data-landing-pin-app={openApp.slug}
+              aria-pressed={devicePins.apps.includes(openApp.slug)}
+              aria-label={t('auth:landing.pinAppNamed', { app: openApp.name })}
+              className="un-touch-target -my-2 min-h-11 rounded-full px-2 text-[15px] font-semibold text-zinc-950 hover:text-zinc-600 dark:text-white dark:hover:text-zinc-300"
+              onClick={() => { toggleDevicePin('apps', openApp.slug); }}
+            >
+              {devicePins.apps.includes(openApp.slug) ? t('auth:landing.pinnedApp') : t('auth:landing.pinApp')}
+            </button>
+          ) : null}
           <button
             type="button"
             data-landing-sign-in=""
@@ -2229,6 +2273,31 @@ export function LandingScreen() {
               onIntent={askFor}
               onOpenInside={(app) => { void live.current.openLandingApp(app); }}
               onShare={shareProject}
+              onAllCommunities={onBack}
+            />
+          ) : null}
+          {/* The same page in the one frame, ahead of the standard one, which
+              app.css puts away while this is up. An account still in line
+              looks around on it too. */}
+          {frame && gate ? (
+            <GatedFrame
+              target={gate.target}
+              title={deepLinkTitle(gate.place, gateProject, (id, params) => t(id, params))}
+              waitlist={NEW_ACCOUNTS_WAIT}
+              onSignIn={() => setGateSheet(true)}
+              onStart={() => setSheet('start')}
+              onBrowse={closeGate}
+            />
+          ) : null}
+          {frame && guestPages && !guestProject && !linkPending && !gate ? (
+            <LandingFrame
+              apps={apps}
+              failed={appsFailed && !apps}
+              waitlist={NEW_ACCOUNTS_WAIT}
+              waiting={waitingGuest ? { email: sessionEmail() } : null}
+              onStart={() => setSheet('start')}
+              onOpenInside={(app) => { void live.current.openLandingApp(app); }}
+              onRetry={() => { st.appsReady = live.current.loadLandingApps(); }}
             />
           ) : null}
           {guestPages && !guestProject && !linkPending ? (
@@ -2296,7 +2365,7 @@ export function LandingScreen() {
       {gate ? <DeepLinkBackdrop /> : null}
       {gate ? (
         <SignInSheet
-          open
+          open={!frame || gateSheet}
           title={deepLinkTitle(gate.place, gateProject, (id, params) => t(id, params))}
           providers={providers}
           native={nativeSignIn}

@@ -25,7 +25,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
-export type DetailKind = 'design' | 'plan' | 'shots';
+export type DetailKind = 'design' | 'plan' | 'shots' | 'draft';
 
 /** What the detail is about: a design's thread, a plan's session, a change. */
 export interface DetailRef {
@@ -33,6 +33,16 @@ export interface DetailRef {
   rootId?: number;
   sessionId?: number;
   changeId?: number;
+  /** A request draft's offer (`homeroom_bot_dm_actions.id`, #6248). */
+  actionId?: number;
+}
+
+/** What the message says about a draft, shown until the saved row is read. */
+export interface DetailDraftCopy {
+  title: string;
+  project: string;
+  details: string;
+  appSlug: string | null;
 }
 
 /** A plan that exists only as text (a request card's Read): no fetch, no address. */
@@ -42,6 +52,8 @@ export interface DetailPayload {
   html?: string | null;
   /** The text is an error or a 404, so it renders as text, never as a document. */
   error?: boolean;
+  /** A request draft's own copy, until the pane reads the saved row (#6248). */
+  draft?: DetailDraftCopy;
 }
 
 export interface DetailEntry {
@@ -347,15 +359,23 @@ export function openDetail(input: {
   from?: string | null;
 }): void {
   const kind = input?.kind;
-  if (kind !== 'design' && kind !== 'plan' && kind !== 'shots') return;
+  if (kind !== 'design' && kind !== 'plan' && kind !== 'shots' && kind !== 'draft') return;
   const ref = input.ref || {};
   if (kind === 'design' && (!valid(ref.conversationId) || !valid(ref.rootId))) return;
+  if (kind === 'draft' && (!valid(ref.conversationId) || !valid(ref.actionId)
+    || (ref.rootId != null && !valid(ref.rootId)))) return;
   if (!valid(input.version)) input = { ...input, version: null };
   // Inside the side panel's frame the bot page's column is the top document's.
   const top = topStore();
   if (top && top !== api) {
     top.open({ kind, ref, version: input.version ?? null, payload: input.payload, from: input.from ?? null });
     return;
+  }
+  // #6441: opening a change's before-and-after is seeing it, so its "Ready
+  // to try" leaves the bell. The top document's store only (the branch above
+  // has already handed the side panel's frame over to it), so it runs once.
+  if (kind === 'shots' && valid(ref.changeId)) {
+    if (typeof window !== 'undefined') window.Notifications?.markProposalSeen?.(Number(ref.changeId));
   }
   holder.seq += 1;
   const entry: DetailEntry = {
@@ -400,6 +420,10 @@ export function openDetail(input: {
     } else {
       window.setTimeout(go, 32);
     }
+  }
+  // #6248: a draft goes to the thread it was said in, or to Main.
+  if (kind === 'draft' && typeof window !== 'undefined' && !/^#homeroom-bot(?:\/|$)/.test(window.location.hash)) {
+    window.location.hash = valid(ref.rootId) ? `homeroom-bot/thread/${ref.rootId}` : 'homeroom-bot/main';
   }
 }
 

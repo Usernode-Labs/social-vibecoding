@@ -1,7 +1,8 @@
 'use strict';
 
 // The Me tab's lists of rows (UI overhaul, regrouped by the navigation
-// review): "Your work" (Your changes, Your requests, Your votes), "Rewards"
+// review): "Your work" (Your changes, Your requests, Your feedback, Your
+// votes), "Rewards"
 // (Challenges & standings, Kudos) and "Account" (Friends, App slots), each
 // row with a line under it that says what is behind it (`scrMe` in the
 // prototype), and a Settings card at the foot shown at every width (#5557).
@@ -47,15 +48,16 @@ const ROWS = [
   // username can have (a username has no hyphen).
   ['profile-row-proposals', '#homeroom-bot/history?kind=change'],
   ['profile-row-feedback', '#homeroom-bot/history?kind=request'],
+  ['profile-row-feedback-history', '#profile?feedback'],
   ['profile-row-votes', '#homeroom-bot/history?kind=vote'],
   // Rewards.
   ['profile-row-challenges', '#leaderboard/challenges'],
   ['profile-row-kudos', '#leaderboard/kudos'],
-  // Account. The Friends card over Me, by the address Profile.open() honours;
-  // App slots opens the create dialog, whose allowance card offers "Request
-  // more" (#3250); `#create` is the same dialog's deep link.
+  // Account. Both cards over Me, by the addresses Profile.open() honours:
+  // Friends, and the App allowance card (#6466, where the row used to open
+  // the create dialog).
   ['profile-row-friends', '#profile?friends'],
-  ['profile-row-app-slots', '#create'],
+  ['profile-row-app-slots', '#profile?slots'],
   // Settings (#5557): Profile opens the Edit profile sheet in place; the
   // card shows at every width, so the Settings row is no longer a phone's
   // entrance only.
@@ -77,7 +79,7 @@ test('the rows are anchors to their destinations', () => {
   }
 });
 
-test('in order: Your changes, requests, votes; then Challenges & standings, Kudos; Friends, App slots; Profile, Notifications, Settings', () => {
+test('in order: Your changes, requests, feedback, votes; then Challenges & standings, Kudos; Friends, App slots; Profile, Notifications, Settings', () => {
   const order = ROWS.map(([id]) => CODE.indexOf(`id="${id}"`));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
   // The regrouped panels: Your work, then Rewards, then Account, then the
@@ -90,8 +92,11 @@ test('in order: Your changes, requests, votes; then Challenges & standings, Kudo
   assert.ok(!CODE.includes('id="profile-more"'), 'the "More" list is gone');
   // Friends opens its card in place on a plain click; the browser keeps the rest.
   assert.match(rowSource(CODE, 'profile-row-friends'), /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*Profile\.showFriends\(\);/);
+  // Your feedback opens its sheet the same way (#6452).
+  assert.match(rowSource(CODE, 'profile-row-feedback-history'), /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*Profile\.showFeedback\(\);/);
   const { validateUsername } = require('../src/services/usernames');
-  for (const [, href] of ROWS.filter(([id]) => /proposals|feedback|votes/.test(id))) {
+  const historyRows = ['profile-row-proposals', 'profile-row-feedback', 'profile-row-votes'];
+  for (const [, href] of ROWS.filter(([id]) => historyRows.includes(id))) {
     const tail = href.split('/')[1];
     assert.equal(validateUsername(tail).ok, false, `${tail} can never be somebody's username`);
   }
@@ -118,14 +123,28 @@ test('Profile opens the Edit profile sheet in place on a plain click', () => {
     /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*Profile\.showEditSheet\(\);/);
 });
 
-test('App slots says the allowance in words, and opens the create dialog in place', () => {
-  assert.match(rowSource(CODE, 'profile-row-app-slots'),
-    /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*\(window[^;]*\.App\?\.showCreateModal\?\.\(\);/);
+test('App slots says how much room is free, and always opens the allowance card', () => {
+  // #6466: the row says how many slots are FREE and always opens the App
+  // allowance card (Profile.showAppSlots); making a project is Home's job.
+  const slotsRow = rowSource(CODE, 'profile-row-app-slots');
+  assert.match(slotsRow,
+    /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*Profile\.showAppSlots\(\);/);
+  assert.doesNotMatch(slotsRow, /showCreateModal/,
+    'the row never opens the make screen');
   const { appSlotsLine } = loadTsx('frontend/src/features/dialogs/app-allowance.tsx');
   assert.equal(appSlotsLine(null, null), null, 'no allowance yet, no invented count');
-  assert.equal(appSlotsLine({ used: 1, limit: 2, remaining: 1 }, null), '1 of 2 app slots used');
+  assert.equal(appSlotsLine({ used: 1, limit: 2, remaining: 1 }, null), '1 app slot free of 2',
+    'the free count, not the used one');
+  assert.equal(appSlotsLine({ used: 2, limit: 2, remaining: 0 }, null),
+    'No app slots free · Request more');
   assert.equal(appSlotsLine({ used: 2, limit: 2, remaining: 0 }, '2026-09-07T12:00:00Z'),
-    '2 of 2 app slots used · more requested');
+    'No app slots free · more requested');
+  assert.equal(appSlotsLine({ used: 1, limit: 3, remaining: 2 }, '2026-09-07T12:00:00Z'),
+    '2 app slots free of 3 · more requested');
+  // Only the limit is known: the row keeps today's line.
+  assert.equal(appSlotsLine({ used: null, limit: 3, remaining: null }, null), '3 app slots');
+  assert.equal(appSlotsLine({ used: null, limit: 3, remaining: null }, '2026-09-07T12:00:00Z'),
+    '3 app slots · more requested');
   assert.equal(appSlotsLine({ used: 3, limit: null, remaining: null }, null), '3 apps made · no limit',
     'an admin without a slot limit is told so, not shown a fraction, and that these are the apps made');
 
@@ -138,9 +157,76 @@ test('App slots says the allowance in words, and opens the create dialog in plac
     stubs: { '../dialogs/app-allowance': allowance },
   });
   const html = renderToHtml(createElement(mod.AccountPanel, { rows: { challenges: null, kudos: null } }));
-  assert.match(html, /id="profile-row-app-slots"[\s\S]*?App slots[\s\S]*?1 of 2 app slots used/);
+  assert.match(html, /id="profile-row-app-slots"[\s\S]*?App slots[\s\S]*?1 app slot free of 2/);
   assert.match(html, /id="profile-account"/);
   assert.match(html, /id="profile-row-friends"/, 'Friends sits in the Account group with it');
+});
+
+test('with no slot free the App allowance card says so, and offers Request more (#6446)', () => {
+  const store = loadTsx('frontend/src/features/dialogs/app-allowance-store.js');
+  const allowance = loadTsx('frontend/src/features/dialogs/app-allowance.tsx', {
+    stubs: { './app-allowance-store.js': store },
+  });
+  const sheet = loadTsx('frontend/src/features/profile/app-slots-sheet.tsx', {
+    stubs: { '../dialogs/app-allowance': allowance },
+  });
+
+  store.seedAppAllowance({ appCreationQuota: { used: 2, limit: 2, remaining: 0 } });
+  const spent = renderToHtml(createElement(sheet.AppSlotsSheet, {}));
+  assert.match(spent, /id="profile-app-slots-sheet"/);
+  assert.match(spent, /id="profile-app-slots-close"/);
+  assert.match(spent, /App allowance/);
+  assert.match(spent, /data-quota-state="spent"/);
+  assert.match(spent, /2 of 2 app slots used/);
+  assert.match(spent, /Request more/);
+
+  // A full server is a no-slot state too, and more slots would not help, so
+  // the card says so and offers no request.
+  store.seedAppAllowance({
+    appCreationQuota: { used: 0, limit: 2, remaining: 2 },
+    appServerCapacity: { used: 50, limit: 50, remaining: 0 },
+  });
+  const full = renderToHtml(createElement(sheet.AppSlotsSheet, {}));
+  assert.match(full, /data-quota-state="server-full"/);
+  assert.match(full, /Server is full/);
+  assert.doesNotMatch(full, /Request more/);
+
+  // The card renders only while it is asked for: the store starts closed.
+  const STORE = fs.readFileSync(
+    path.join(ROOT, 'frontend/src/features/profile/profile-store.js'), 'utf8');
+  assert.match(STORE, /appSlotsOpen: false/);
+});
+
+test('#profile?slots opens the App allowance card after load, and takes the ask off the address', (t) => {
+  t.after(() => { delete globalThis.location; delete globalThis.history; });
+  const replaced = [];
+  globalThis.location = { hash: '#profile?slots', pathname: '/', search: '' };
+  globalThis.history = { state: null, replaceState(_s, _t, url) { replaced.push(url); } };
+  const { Profile, profileStore } = loadTsx('frontend/src/features/profile/mount.ts');
+  assert.equal(Profile._takeSheetAsk('slots'), true, '#profile?slots asks for the card');
+  assert.deepEqual(replaced, ['/#profile'], 'the ask comes off the address');
+  globalThis.location.hash = '#profile';
+  assert.equal(Profile._takeSheetAsk('slots'), false, 'a reload does not reopen it');
+
+  // The card opens over the viewer's own profile only, once it has loaded.
+  Profile._open = true;
+  Profile._appSlotsRequested = true;
+  Profile._data = null;
+  Profile._maybeOpenAppSlots();
+  assert.equal(profileStore.get().appSlotsOpen, false, 'still loading: the load opens it');
+  assert.equal(Profile._appSlotsRequested, true);
+  Profile._data = { error: true };
+  Profile._maybeOpenAppSlots();
+  assert.equal(profileStore.get().appSlotsOpen, false, 'never over an error');
+  assert.equal(Profile._appSlotsRequested, false, 'and the ask is spent');
+  Profile._appSlotsRequested = true;
+  Profile._data = { ranking: {} };
+  Profile._maybeOpenAppSlots();
+  assert.equal(profileStore.get().appSlotsOpen, true);
+  Profile._appSlotsRequested = true;
+  Profile.close();
+  assert.equal(profileStore.get().appSlotsOpen, false);
+  assert.equal(Profile._appSlotsRequested, false, 'a pending ask does not outlive the screen');
 });
 
 test('the rows that moved to Settings are not on Me any more', () => {
@@ -175,15 +261,15 @@ test('it renders the data\'s lines, and quiet fallbacks without them', () => {
   assert.match(quietAccount, /How many apps you can create/, 'no allowance yet, no invented count');
 
   const work = renderToHtml(createElement(mod.WorkPanel, {
-    rows: { changes: '9 merged · 2 in progress', requests: '2 open · 1 done', votes: 'Latest: Timer sounds' },
+    rows: { changes: '9 merged · 2 in progress', requests: '2 open · 1 done', feedback: '3 sent · 1 counted', votes: 'Latest: Timer sounds' },
   }));
   assert.match(work, /id="profile-work"/);
   assert.match(work, /Your work<\/h2>/);
-  for (const line of ['Your changes', '9 merged · 2 in progress', 'Your requests', '2 open · 1 done', 'Your votes', 'Latest: Timer sounds']) {
+  for (const line of ['Your changes', '9 merged · 2 in progress', 'Your requests', '2 open · 1 done', 'Your feedback', '3 sent · 1 counted', 'Your votes', 'Latest: Timer sounds']) {
     assert.ok(work.includes(line), line);
   }
   const quiet = renderToHtml(createElement(mod.WorkPanel, { rows: {} }));
-  for (const line of ['Everything you have started', 'What you asked for, and where it stands', 'The changes and decisions you voted on']) {
+  for (const line of ['Everything you have started', 'What you asked for, and where it stands', 'What you sent, and whether it counted', 'The changes and decisions you voted on']) {
     assert.ok(quiet.includes(line), line);
   }
 });

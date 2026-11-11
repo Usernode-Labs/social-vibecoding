@@ -9,11 +9,11 @@
   },
   "sheet.markAppRead": {
     "text": "Mark read",
-    "description": "Small button beside an app's name on the notifications sheet's Unread filter. It marks every unread notification from that app as read."
+    "description": "Small button beside a group's name on the notifications sheet's Unread filter: an app's name, or \"Across Homeroom\" for notifications that belong to no app. It marks every unread notification in that group as read."
   },
   "sheet.markAppReadLabel": {
     "text": "Mark all from {{app}} as read",
-    "description": "Accessible name of that button. {{app}} is the project's name."
+    "description": "Accessible name of that button. {{app}} is the group's name: a project's, or \"Across Homeroom\"."
   },
   "sheet.markOlder": {
     "text": "Mark everything older than a week as read",
@@ -219,42 +219,6 @@
     "text": "All",
     "description": "Filter button at the top of the notifications sheet: shows every notification, read ones included."
   },
-  "sheet.needsYou": {
-    "text": "Needs you",
-    "description": "Small label over the project groups on the notifications sheet's Unread tab that hold something waiting on the reader (an approval, a decision, a friend request), shown only when other groups follow under \"Everything else\"."
-  },
-  "sheet.everythingElse": {
-    "text": "Everything else",
-    "description": "Small label over the remaining project groups on the notifications sheet's Unread tab, under the \"Needs you\" groups: the rows that only tell the reader what happened."
-  },
-  "sheet.catchUp.needsYou_one": {
-    "text": "{{count}} needs you",
-    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab: one notification or invite is waiting on the reader. May stand alone."
-  },
-  "sheet.catchUp.needsYou_other": {
-    "text": "{{count}} need you",
-    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab: {{count}} notifications or invites are waiting on the reader. May stand alone."
-  },
-  "sheet.catchUp.needsYouAtLeast_one": {
-    "text": "At least {{count}} needs you",
-    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab, while older unread notifications have not loaded yet: one is known to wait on the reader and there may be more. May stand alone."
-  },
-  "sheet.catchUp.needsYouAtLeast_other": {
-    "text": "At least {{count}} need you",
-    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab, while older unread notifications have not loaded yet: {{count}} are known to wait on the reader and there may be more. May stand alone."
-  },
-  "sheet.catchUp.unread_one": {
-    "text": "{{count}} unread",
-    "description": "End of the one-line summary over the groups on the notifications sheet's Unread tab: how many notifications are unread in all, counting any that need the reader. May stand alone."
-  },
-  "sheet.catchUp.unread_other": {
-    "text": "{{count}} unread",
-    "description": "End of the one-line summary over the groups on the notifications sheet's Unread tab: how many notifications are unread in all, counting any that need the reader. May stand alone."
-  },
-  "sheet.catchUp.unreadCapped": {
-    "text": "99+ unread",
-    "description": "End of the one-line summary over the groups on the notifications sheet's Unread tab, when more than 99 are unread: the same capped number the bell's badge shows. May stand alone."
-  },
   "sheet.today": {
     "text": "Today",
     "description": "Heading over the notifications that arrived today, in the notifications sheet."
@@ -450,6 +414,22 @@
   "row.group.sessionDone_other": {
     "text": "{{count}} sessions finished",
     "description": "Heading of a notification row on the Unread filter that stands for several notifications of the same kind from one project, folded into one row. {{count}} is how many. The viewer's coding sessions finished their work."
+  },
+  "row.group.live_one": {
+    "text": "{{count}} of your requests went live",
+    "description": "Subject of one notification row in the bell that stands for several requests of one project which went live close together, each listed under it. {{count}} is how many; it is at least 1. 'Live' is the app's word for a change that is now part of the app."
+  },
+  "row.group.live_other": {
+    "text": "{{count}} of your requests went live",
+    "description": "Subject of one notification row in the bell that stands for several requests of one project which went live close together, each listed under it. {{count}} is how many. 'Live' is the app's word for a change that is now part of the app."
+  },
+  "row.group.liveItem": {
+    "text": "#{{number}} · {{title}}",
+    "description": "One request listed under a notification row that folds several requests which went live together. {{number}} is the request's number, kept with its # before it, and {{title}} is what the request asked for."
+  },
+  "row.group.liveItemUnnumbered": {
+    "text": "{{title}}",
+    "description": "One request listed under a notification row that folds several requests which went live together, for a request that has no number to show. {{title}} is what the request asked for."
   },
   "row.sending": {
     "text": "Sending…",
@@ -1019,6 +999,10 @@
     "text": "This week on {{project}}",
     "description": "First line of the weekly summary notification for one project. {{project}} is the project's name."
   },
+  "row.weekly.ready": {
+    "text": "Your weekly digest is ready",
+    "description": "First line of the one weekly notification that covers all of the viewer's projects. Tapping it opens the This week page. What happened is on the line below."
+  },
   "row.weekly.labelUnnamed": {
     "text": "This week on the app",
     "description": "First line of the weekly summary notification when the project's name is not known."
@@ -1078,6 +1062,22 @@
   "row.health.storage.warnUnnamed": {
     "text": "Your app has used most of its storage",
     "description": "Second line of the \"App storage\" notification when the app's name is not known: the app is close to its storage limit."
+  },
+  "row.health.storage.early": {
+    "text": "<0>{{app}}</0> has used over half its storage: {{used}} of {{limit}}",
+    "description": "Second line of the \"App storage\" notification: the app is over half full, with the space used and the limit. {{app}} is the app's name and is shown bold; {{used}} and {{limit}} are sizes such as \"1.6 GB\" and \"3 GB\"."
+  },
+  "row.health.storage.earlyUnnamed": {
+    "text": "Your app has used over half its storage: {{used}} of {{limit}}",
+    "description": "Second line of the \"App storage\" notification when the app's name is not known: it is over half full. {{used}} and {{limit}} are sizes such as \"1.6 GB\" and \"3 GB\"."
+  },
+  "row.health.storage.warnSized": {
+    "text": "<0>{{app}}</0> has used most of its storage: {{used}} of {{limit}}",
+    "description": "Second line of the \"App storage\" notification: the app is close to its storage limit, with the space used and the limit. {{app}} is the app's name and is shown bold; {{used}} and {{limit}} are sizes such as \"2.5 GB\" and \"3 GB\"."
+  },
+  "row.health.storage.warnSizedUnnamed": {
+    "text": "Your app has used most of its storage: {{used}} of {{limit}}",
+    "description": "Second line of the \"App storage\" notification when the app's name is not known: it is close to its storage limit. {{used}} and {{limit}} are sizes such as \"2.5 GB\" and \"3 GB\"."
   },
   "row.health.storage.full": {
     "text": "<0>{{app}} is out of storage.</0> New data cannot be saved until an admin raises its limit or allows time to clean up",
@@ -1306,6 +1306,58 @@
   "row.inviteLink.saidHiWithOthers_other": {
     "text": "Said hi, with {{count}} others",
     "description": "First line of a notification to the person who made an invite link: the person named on the last line wrote their first message, and so did {{count}} more people who joined through it."
+  },
+  "row.inviteGuard.busy_one": {
+    "text": "Your {{project}} invite link brought in {{count}} person today.",
+    "description": "The whole text of a notification to the person who made an invite link, when a lot of people joined through that one link within a day, which can mean it was shared further than they meant. {{project}} is the project's name; {{count}} is how many people joined through it in the last day. A button under it turns the link off."
+  },
+  "row.inviteGuard.busy_other": {
+    "text": "Your {{project}} invite link brought in {{count}} people today.",
+    "description": "The whole text of a notification to the person who made an invite link, when a lot of people joined through that one link within a day, which can mean it was shared further than they meant. {{project}} is the project's name; {{count}} is how many people joined through it in the last day. A button under it turns the link off."
+  },
+  "row.inviteGuard.busyPlain_one": {
+    "text": "Your invite link brought in {{count}} person today.",
+    "description": "The whole text of a notification to the person who made an invite link, when a lot of people joined through that one link within a day, used when the project's name is not known. {{count}} is how many people joined through it in the last day. A button under it turns the link off."
+  },
+  "row.inviteGuard.busyPlain_other": {
+    "text": "Your invite link brought in {{count}} people today.",
+    "description": "The whole text of a notification to the person who made an invite link, when a lot of people joined through that one link within a day, used when the project's name is not known. {{count}} is how many people joined through it in the last day. A button under it turns the link off."
+  },
+  "row.inviteGuard.paused_one": {
+    "text": "Your {{project}} invite link is paused: {{count}} person joined through it today. Open it again if that's expected.",
+    "description": "The whole text of a notification to the person who made an invite link, when so many people joined through that one link within a day that it stopped letting more in. {{project}} is the project's name; {{count}} is how many people joined through it in the last day. Buttons under it open the link again or turn it off."
+  },
+  "row.inviteGuard.paused_other": {
+    "text": "Your {{project}} invite link is paused: {{count}} people joined through it today. Open it again if that's expected.",
+    "description": "The whole text of a notification to the person who made an invite link, when so many people joined through that one link within a day that it stopped letting more in. {{project}} is the project's name; {{count}} is how many people joined through it in the last day. Buttons under it open the link again or turn it off."
+  },
+  "row.inviteGuard.pausedPlain_one": {
+    "text": "Your invite link is paused: {{count}} person joined through it today. Open it again if that's expected.",
+    "description": "The whole text of a notification to the person who made an invite link, when so many people joined through that one link within a day that it stopped letting more in, used when the project's name is not known. {{count}} is how many people joined through it in the last day. Buttons under it open the link again or turn it off."
+  },
+  "row.inviteGuard.pausedPlain_other": {
+    "text": "Your invite link is paused: {{count}} people joined through it today. Open it again if that's expected.",
+    "description": "The whole text of a notification to the person who made an invite link, when so many people joined through that one link within a day that it stopped letting more in, used when the project's name is not known. {{count}} is how many people joined through it in the last day. Buttons under it open the link again or turn it off."
+  },
+  "row.inviteGuard.turnOff": {
+    "text": "Turn off this link",
+    "description": "Button on a notification about one of the reader's invite links that brought in a lot of people in a day: stops the link working, for good."
+  },
+  "row.inviteGuard.reopen": {
+    "text": "Open it again",
+    "description": "Button on a notification about one of the reader's invite links that paused itself after a lot of people joined through it in a day: lets people join through it again."
+  },
+  "row.inviteGuard.turnedOff": {
+    "text": "Invite link turned off",
+    "description": "Short confirmation shown after the reader turned one of their invite links off from a notification."
+  },
+  "row.inviteGuard.reopened": {
+    "text": "Invite link open again",
+    "description": "Short confirmation shown after the reader opened one of their paused invite links again from a notification: people can join through it again."
+  },
+  "row.inviteGuard.failed": {
+    "text": "Could not change the invite link. Try again.",
+    "description": "Error shown when turning an invite link off, or opening it again, from a notification did not work."
   },
   "row.collab.invitedJoin": {
     "text": "Invited you to join",
@@ -1782,5 +1834,45 @@
   "row.chat.changeReplyPr": {
     "text": "Replied on change PR {{number}}",
     "description": "First line of a notification: somebody posted in the discussion of a change on a project whose code is on GitHub, where a change's number is written PR, not #. The viewer built it, voted on it or posted in it. {{number}} is the change's number. \"Change\" is a noun. The message is on the line below."
+  },
+  "frame.title": {
+    "text": "Notifications",
+    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The sheet's title."
+  },
+  "frame.purposeNeeds_one": {
+    "text": "{{count}} needs an answer. The rest is news.",
+    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title: how many notifications wait for the person's answer. Singular."
+  },
+  "frame.purposeNeeds_other": {
+    "text": "{{count}} need an answer. The rest is news.",
+    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title: how many notifications wait for the person's answer. Plural."
+  },
+  "frame.purposeNews": {
+    "text": "Nothing needs an answer. This is news.",
+    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title when no notification waits for an answer."
+  },
+  "frame.purposeEmpty": {
+    "text": "Nothing yet. What happens in your communities shows up here.",
+    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title when the person has never had a notification."
+  },
+  "frame.needsAnswer": {
+    "text": "Needs an answer",
+    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the first group: notifications that wait for the person to vote, reply or decide."
+  },
+  "frame.news": {
+    "text": "News",
+    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group of unread notifications that only tell the person something happened."
+  },
+  "frame.earlier": {
+    "text": "Earlier",
+    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group of notifications the person has already seen."
+  },
+  "frame.answer": {
+    "text": "Answer",
+    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Status word on a row that waits for the person: pressing the row opens what to answer."
+  },
+  "frame.markAllRead": {
+    "text": "Mark all read",
+    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The sheet's one button: marks every notification as read."
   }
 }

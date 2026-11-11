@@ -58,8 +58,20 @@ const SHEET_ROWS = 'a[href], button:not([disabled])';
  * on that string in the sheet's style attribute, and it is the inline-start
  * inset the rule reads, wherever the reading starts.
  */
+/**
+ * The mark the menu belongs to: the standard header's, or, while a look's
+ * chrome folds that header away (features/frame/frame-app.tsx), the
+ * frame bar's own, which carries `data-frame-mark`. Whichever has a box.
+ */
+function visibleMark(): HTMLElement | null {
+  const std = document.getElementById(MARK_ID);
+  const r = std?.getBoundingClientRect();
+  if (std && r && (r.width || r.height)) return std;
+  return (document.querySelector('[data-frame-mark]') as HTMLElement | null) || std;
+}
+
 function anchorUnderMark(sheet: HTMLElement): void {
-  const mark = document.getElementById(MARK_ID);
+  const mark = visibleMark();
   if (!mark) return;
   const r = mark.getBoundingClientRect();
   if (!r.width && !r.height) return;
@@ -119,9 +131,10 @@ export function AppContextIsland() {
       const t = event.target as Node | null;
       const sheet = document.getElementById('apps-switcher-sheet');
       const mark = document.getElementById(MARK_ID);
+      const frameMark = document.querySelector('[data-frame-mark]');
       const tour = document.getElementById(TOUR_ID);
       const firstSession = document.querySelector(FIRST_SESSION_TOUR);
-      if (t && (sheet?.contains(t) || mark?.contains(t) || tour?.contains(t) || firstSession?.contains(t))) return;
+      if (t && (sheet?.contains(t) || mark?.contains(t) || frameMark?.contains(t) || tour?.contains(t) || firstSession?.contains(t))) return;
       if (AppContext._sheet) return;
       void AppContext.close();
     };
@@ -223,7 +236,7 @@ export function AppContextIsland() {
       const inside = !!el && el.contains(event.target as Node);
       if (event.key === 'Escape') {
         AppContext.close();
-        if (inside) document.getElementById(MARK_ID)?.focus({ preventScroll: true });
+        if (inside) visibleMark()?.focus({ preventScroll: true });
         return;
       }
       if (inside) roveMenuFocus(event, el, SHEET_ROWS);
