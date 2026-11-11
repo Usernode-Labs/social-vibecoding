@@ -992,7 +992,14 @@ async function upsert(db, key, next, { touch = false } = {}) {
       next.line ? JSON.stringify(next.line) : null, next.whoseMove, next.requesterId ?? null, next.since,
       JSON.stringify(standing), !!next.voteOpen, next.leadChangeId ?? null],
   );
-  return { prev: prev ? { stage: prev.stage, why: prev.why || null, reason: prev.reason || null, line: prev.line || null } : null };
+  return {
+    prev: prev ? {
+      stage: prev.stage, why: prev.why || null, reason: prev.reason || null, line: prev.line || null,
+      // Whether a vote on closing it was open: one opening retires its
+      // Propose to close buttons (bot-cards.js retireFor).
+      closeVote: !!prev.standing?.asks?.closeVote,
+    } : null,
+  };
 }
 
 const IN_FLIGHT_CHECKS = (s) => s === 'pending' || s === 'running';
@@ -1526,9 +1533,34 @@ async function withdrawReady(db, changed) {
   return pushes;
 }
 
-/** The pushes changed rows are carried by: their work_state, the bell of each that rang, and each ready one withdrawn. */
+/**
+ * Step 3 (11 Nov 2026): the buttons of Homeroom bot's cards about a row that
+ * moved, which its new standing no longer keeps (bot-cards.js retireFor, the
+ * one table), retired in the same transaction. Resolves the pushes of the
+ * messages they were under.
+ */
+async function retiredCards(db, changed) {
+  const cards = require('./bot-cards');
+  const pushes = [];
+  for (const row of changed || []) {
+    pushes.push(...await cards.retireFor(db, {
+      appId: row.appId,
+      ...(row.kind === 'request' ? { issueNumber: row.issueNumber } : { sessionId: row.sessionId }),
+      standing: row.state, prev: row.prev,
+    }));
+  }
+  return pushes;
+}
+
+/**
+ * The pushes changed rows are carried by: their work_state, the bell of each
+ * that rang, each ready one withdrawn, and the cards their move retired.
+ */
 async function pushesOf(db, changed) {
-  return [...changed.map(pushOf), ...(await bellPushes(db, changed)), ...(await withdrawReady(db, changed))];
+  return [
+    ...changed.map(pushOf), ...(await bellPushes(db, changed)), ...(await withdrawReady(db, changed)),
+    ...(await retiredCards(db, changed)),
+  ];
 }
 
 /**

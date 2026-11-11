@@ -338,6 +338,53 @@ test('a request\'s own step closed by newer news says why in its place', () => {
   assert.equal(draw({ status: 'closed' }), '', 'closed with no reason: suggestions still go quietly');
 });
 
+// Step 3 (11 Nov 2026): an offer whose buttons went because what it was
+// about moved on (services/bot-cards.js retireFor) says why in their place,
+// and a press the server refused says why in a line after the buttons,
+// never inside `.messages-bot-answers` (a declared check selects its last
+// button).
+test('step 3: a retired or expired offer says why in its place, and a refused press says why after the buttons', () => {
+  const { BotQuestion, OfferRefused, refusalOf, refusalLine, retiredLine } = loadTsx('frontend/src/features/messages/bot-question.tsx');
+  const { MessagesApiError, normalizeBotMeta } = loadTsx('frontend/src/features/messages/api.ts');
+  const close = [
+    { id: 'yes', label: 'Propose to close', style: 'primary', type: 'server' },
+    { id: 'no', label: 'Keep it open', style: 'secondary', type: 'server' },
+  ];
+  const draw = (meta) => renderToHtml(createElement(BotQuestion, {
+    message: message(BOT, 62, { content: 'Want me to open a vote on closing request #4?', metadata: { homeroomBot: {
+      kind: 'confirm', appSlug: 'plant-pal', issueNumber: 4, actionId: 13, actions: close, ...meta,
+    } } }),
+    conversationId: 42,
+  }));
+  const retired = draw({ status: 'closed', retired: 'close_vote' });
+  assert.doesNotMatch(retired, /Propose to close/);
+  assert.match(retired, /data-bot-retired="close_vote"/);
+  assert.ok(retired.includes(catalog('messages:bot.offer.retired.closeVote')));
+  assert.ok(draw({ status: 'closed', retired: 'nonsense' }).includes(catalog('messages:bot.offer.retired.other')));
+  assert.ok(draw({ status: 'closed', expired: true }).includes(catalog('messages:bot.offer.expired')));
+  assert.ok(draw({ status: 'closed' }).includes(catalog('messages:bot.actions.closed')), 'a plain close keeps its line');
+  // The client keeps them.
+  const kept = normalizeBotMeta({ homeroomBot: { kind: 'confirm', status: 'closed', retired: 'building', expired: true } }).homeroomBot;
+  assert.deepEqual([kept.retired, kept.expired], ['building', true]);
+  // A refused press: its code, as the server answered it, and its line.
+  assert.deepEqual(refusalOf(new MessagesApiError(410, 'retired', 'retired', 'close_vote')), { code: 'retired', reason: 'close_vote' });
+  assert.deepEqual(refusalOf(new Error('offline')), { code: 'failed', reason: null });
+  assert.equal(refusalLine({ code: 'retired', reason: 'close_vote' }), retiredLine('close_vote'));
+  assert.equal(refusalLine({ code: 'expired', reason: null }), 'messages:bot.offer.expired');
+  assert.equal(refusalLine({ code: 'already_decided', reason: null }), 'messages:bot.offer.refused.alreadyDecided');
+  assert.equal(refusalLine({ code: 'no_such_offer', reason: null }), 'messages:bot.offer.refused.gone');
+  assert.equal(refusalLine({ code: 'something_else', reason: null }), 'messages:bot.offer.refused.failed');
+  const line = renderToHtml(createElement(OfferRefused, { refusal: { code: 'already_decided', reason: null } }));
+  assert.equal(line, `<p class="messages-bot-answered" role="status" data-bot-refused="already_decided">${catalog('messages:bot.offer.refused.alreadyDecided')}</p>`);
+  assert.equal(renderToHtml(createElement(OfferRefused, { refusal: null })), '');
+  // After the buttons' group, in both the question and the plan.
+  const src = read('frontend/src/features/messages/bot-question.tsx');
+  const body = src.slice(src.indexOf('function BotActions('));
+  assert.ok(body.indexOf('<OfferRefused refusal={refused} />') > body.indexOf('className="messages-bot-answers"'));
+  assert.ok(body.indexOf('<OfferRefused refusal={refused} />') > body.indexOf('</div>\n      ) : null}'), 'outside the group');
+  assert.match(read('frontend/src/features/messages/bot-plan.tsx'), /state === 'open' && refused \? <OfferRefused refusal=\{refused\} \/> : null/);
+});
+
 test('"done already" is one message: Propose to close is decided, Tell me what\'s missing is written', () => {
   const { BotQuestion } = loadTsx('frontend/src/features/messages/bot-question.tsx');
   const html = renderToHtml(createElement(BotQuestion, {

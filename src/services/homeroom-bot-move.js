@@ -657,11 +657,11 @@ const DONE_ACTIONS = Object.freeze([
  * reason, so one verdict is one message and rings once (homeroom-bot-dm.js
  * relayIssuePost). `kind` is 'move_request' (about Homeroom itself: Move it
  * to Homeroom · Keep it here) or 'close_request' (done already: Propose to
- * close · Tell me what's missing). Records the offer, once per request and
- * person (and, for a close, not while a close vote is open), and resolves
- * { actionId, metadata } to send with the message, then `attach` it to the
- * message sent (foldedOfferSent). Null when there is nothing to offer.
- * Never throws.
+ * close · Tell me what's missing), once per request and person (and, for
+ * a close, not while a close vote is open). Resolves { card, metadata } to
+ * send with the message: its card is written with it (step 3, sendDm
+ * `card`), and what came of it is noted after (foldedOfferSent). Null when
+ * there is nothing to offer. Never throws.
  */
 async function foldOffer(pool, { kind, userId, app, issueNumber, title, reason = null, runId = null, deps = {} }) {
   try {
@@ -686,19 +686,15 @@ async function foldOffer(pool, { kind, userId, app, issueNumber, title, reason =
       if (move) await noteMoveOffer(pool, runId, 'already_offered');
       return null;
     }
-    const { rows: [action] } = await pool.query(
-      `INSERT INTO bot_cards (user_id, app_id, kind, title, details, source_issue_number)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-      [userId, app.id, kind, clip(title || `Request #${n}`, MAX_TITLE_CHARS), reason ? clip(reason, 600) : null, n],
-    );
-    const actionId = Number(action.id);
     const mayor = mayorModule();
     const actions = move ? mayor.offerActions('move_request') : DONE_ACTIONS.map((a) => ({ ...a }));
     return {
-      actionId, kind, runId,
-      metadata: {
-        actionId, actions, answers: actions.map((a) => a.label), status: 'open',
+      kind, runId,
+      card: {
+        kind, appId: app.id, title: clip(title || `Request #${n}`, MAX_TITLE_CHARS),
+        details: reason ? clip(reason, 600) : null, sourceIssueNumber: n,
       },
+      metadata: { actions, answers: actions.map((a) => a.label), status: 'open' },
     };
   } catch (err) {
     log.warn('homeroom-bot-move', 'Could not fold an offer into its message', { app: app?.slug, issueNumber, kind, err: err.message });
@@ -708,25 +704,14 @@ async function foldOffer(pool, { kind, userId, app, issueNumber, title, reason =
 }
 
 /**
- * The message a folded offer (foldOffer) went out in, or did not: the offer
- * is tied to it, or dropped. Never throws.
+ * What came of a folded offer (foldOffer): its card was written with the
+ * message sent, or with nothing, when no message was. A move's run says
+ * which (noteMoveOffer). Never throws.
  */
 async function foldedOfferSent(pool, offer, sent) {
-  if (!offer) return;
-  try {
-    if (!sent?.messageId || sent.duplicate) {
-      await pool.query('DELETE FROM bot_cards WHERE id = $1 AND message_id IS NULL', [offer.actionId]);
-      if (offer.kind === 'move_request') await noteMoveOffer(pool, offer.runId, sent?.duplicate ? 'already_offered' : 'not_sent');
-      return;
-    }
-    await pool.query(
-      'UPDATE bot_cards SET message_id = $2, conversation_id = $3 WHERE id = $1',
-      [offer.actionId, sent.messageId, sent.conversationId],
-    );
-    if (offer.kind === 'move_request') await noteMoveOffer(pool, offer.runId, 'sent');
-  } catch (err) {
-    log.warn('homeroom-bot-move', 'Could not tie a folded offer to its message', { actionId: offer.actionId, err: err.message });
-  }
+  if (!offer || offer.kind !== 'move_request') return;
+  const outcome = !sent?.messageId ? 'not_sent' : sent.duplicate ? 'already_offered' : 'sent';
+  await noteMoveOffer(pool, offer.runId, outcome);
 }
 
 /** Pure: the words of a move offer. */

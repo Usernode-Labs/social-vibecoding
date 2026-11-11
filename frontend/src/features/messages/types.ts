@@ -156,6 +156,10 @@ export interface HomeroomBotMeta {
   goesLive?: HomeroomBotGoesLive;
   /** Why its buttons were closed ("No longer needed", "A newer plan replaced this"), said in their place. */
   closedWhy?: string;
+  /** Step 3 (11 Nov 2026): an offer 14 days old, no longer to be chosen. */
+  expired?: boolean;
+  /** Step 3: why an offer's buttons went when what it was about moved on (services/bot-cards.js retireFor). */
+  retired?: string;
   /**
    * One request, one story: the request's activity card (its thread's root)
    * that this message was posted under. Set on every message in a request's

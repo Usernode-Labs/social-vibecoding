@@ -1801,83 +1801,12 @@ async function notePlanRows(pool, runIds, note, { ws = null } = {}) {
         thread: { type: row.thread_type, ref: Number(row.thread_ref) },
       });
     }
-    // #6535: once its plan stops waiting and starts building, an overlap
-    // question asked before that point has been overtaken: its buttons go.
-    if (note === 'building') {
-      for (const row of rows) {
-        if (row.thread_type !== 'issue') continue;
-        await retireOverlapOffers(pool, {
-          appId: Number(row.app_id), issueNumber: Number(row.thread_ref),
-          beforeMessageId: Number(row.id), deps: { ws },
-        });
-      }
-    }
+    // #6535: an overlap question asked before its build started goes with
+    // the request's move to building (bot-cards.js retireFor, from its
+    // standing), not here.
     return rows.length;
   } catch (err) {
     log.warn('homeroom-bot-live', 'Could not say what became of a plan on its request', { runs: ids, note, err: err.message });
-    return 0;
-  }
-}
-
-/**
- * #6535: once a request's plan stops waiting and starts building, an open
- * "This overlaps #N" question asked before that point is no longer a choice
- * worth making: the build has gone ahead. Its message keeps its words and
- * its card, and loses its three buttons, as an answered offer does; the
- * row behind it is expired so a tap from a screen that has not drawn again
- * records nothing. Nothing is posted on either request and no ordering is
- * recorded. Never throws; resolves how many questions closed.
- */
-async function retireOverlapOffers(pool, { appId, issueNumber, beforeMessageId, deps = {} } = {}) {
-  const app = Number(appId);
-  const issue = Number(issueNumber);
-  const before = Number(beforeMessageId);
-  if (!Number.isSafeInteger(app) || app <= 0
-    || !Number.isSafeInteger(issue) || issue <= 0
-    || !Number.isSafeInteger(before) || before <= 0) return 0;
-  try {
-    const { rows } = await pool.query(
-      `UPDATE chat_messages
-          SET metadata = jsonb_set(
-                jsonb_set(
-                  jsonb_set(metadata, '{homeroomBot,offer,status}', '"expired"'::jsonb, true),
-                  '{homeroomBot,actions}', '[]'::jsonb, true),
-                '{homeroomBot,othersActions}', '[]'::jsonb, true)
-        WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2 AND id < $3
-          AND metadata->'homeroomBot'->'offer'->>'kind' = 'overlap'
-          AND metadata->'homeroomBot'->'offer'->>'status' = 'open'
-        RETURNING id, metadata, thread_type, thread_ref,
-                  metadata->'homeroomBot'->'offer'->>'id' AS offer_id`,
-      [app, issue, before],
-    );
-    const offerIds = [...new Set(rows
-      .map((row) => Number(row.offer_id))
-      .filter((id) => Number.isSafeInteger(id) && id > 0))];
-    if (offerIds.length) {
-      await pool.query(
-        `UPDATE bot_cards SET status = 'expired'
-          WHERE place = 'thread' AND id = ANY($1::int[]) AND status = 'open'`,
-        [offerIds],
-      );
-      await pool.query(
-        `UPDATE homeroom_bot_voice_offers SET status = 'expired'
-          WHERE id = ANY($1::int[]) AND status = 'open'`,
-        [offerIds],
-      );
-    }
-    const sock = deps.ws || require('./ws');
-    for (const row of rows) {
-      if (typeof sock?.broadcast !== 'function') break;
-      sock.broadcast(app, {
-        type: 'chat_message_updated', id: Number(row.id), metadata: row.metadata,
-        thread: { type: row.thread_type, ref: Number(row.thread_ref) },
-      });
-    }
-    return rows.length;
-  } catch (err) {
-    log.warn('homeroom-bot-live', 'Could not close an overlap question once its build started', {
-      appId: app, issueNumber: issue, beforeMessageId: before, err: err.message,
-    });
     return 0;
   }
 }
@@ -2311,6 +2240,7 @@ async function post({
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
   proposalSessionId = null, sender = null, threadMessage = null, dm = null, untag = null, onlyProposal = false,
   skipIssueThread = false, skipGithub = false, homeroomText = null, strict = false, takeUpPending = false,
+  card = null,
 }) {
   // Homeroom bot parity (P4, P5): the request moved; its batch's roll-up and
   // its build notes are read again shortly (homeroom-bot-batches.js).
@@ -2343,8 +2273,11 @@ async function post({
   // messages from it, drawn as its bubbles. `msgType` then no longer picks
   // the row's kind: the proposal link is a message whose `metadata.vote`
   // the chat hangs the vote card on. Without one, the old system line.
-  const inThread = (content, thread, meta = metadata, kindOfRow = msgType) => (sender
-    ? ws.sendBotMessage(pool, app.id, { user: sender, content, metadata: meta, thread })
+  // Step 3 (11 Nov 2026): `card` ({ kind, args, forUserId }), an offer under
+  // the note in the request's thread, is written with that message
+  // (ws.sendBotMessage), so its buttons always have their card.
+  const inThread = (content, thread, meta = metadata, kindOfRow = msgType, withCard = null) => (sender
+    ? ws.sendBotMessage(pool, app.id, { user: sender, content, metadata: meta, thread, ...(withCard ? { card: withCard } : {}) })
     : ws.sendSystemMessage(pool, app.id, content, kindOfRow, meta, thread));
   // A post of this run's that a restart cut short (its durable build says it
   // again): its row is taken up, and what of it went out already is not sent
@@ -2474,8 +2407,9 @@ async function post({
       // Decision 6, #6581: a failure note with the same words, under which
       // nobody has replied, is updated in place, and nobody is tagged or told
       // again for it. Anything else is a new note below, so words already on
-      // screen never change.
-      const replaced = FAILURE_KINDS.has(kind) && sender && !threadMessage
+      // screen never change. A note with a card is always a new message: the
+      // card is written with it.
+      const replaced = FAILURE_KINDS.has(kind) && sender && !threadMessage && !card
         ? await replaceFailurePost(pool, ws, {
           appId: app.id, issueNumber, postId, content: threadText, metadata: marked(metadata), botId: sender.id ?? null,
         })
@@ -2489,7 +2423,7 @@ async function post({
           metadata: marked(threadMessage.metadata),
           thread: { type: 'issue', ref: issueNumber }, msgType: threadMessage.msgType,
         })
-        : await inThread(threadText, { type: 'issue', ref: issueNumber }, marked(metadata)));
+        : await inThread(threadText, { type: 'issue', ref: issueNumber }, marked(metadata), msgType, card));
     } catch (err) {
       log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
       failed.push(`the thread message (${err.message})`);
@@ -2503,30 +2437,6 @@ async function post({
     if (message?.id != null && !messageSentBefore) {
       await require('./homeroom-bot-voice').retireThreadSuggestions(pool, {
         appId: app.id, thread: { type: 'issue', ref: issueNumber }, keepMessageId: Number(message.id), deps: { ws },
-      });
-    }
-    // #6535: the card that says its plan is building also overtakes an
-    // overlap question the bot asked in this thread before it.
-    if (message?.id != null && threadMessage?.metadata?.specShare?.botNote === 'building') {
-      await retireOverlapOffers(pool, {
-        appId: app.id, issueNumber, beforeMessageId: Number(message.id), deps: { ws },
-      });
-    }
-  }
-  // #6582: an offer written before its note (a verdict's Propose to close) is
-  // linked to the message in this same step, so the note never shows buttons
-  // whose offer decideOffer cannot find. Tried twice; a failure is logged and
-  // the post kept, because a tap falls back to the offer id the note names.
-  const offeredId = Number(metadata?.homeroomBot?.offer?.id);
-  if (message?.id != null && Number.isSafeInteger(offeredId) && offeredId > 0) {
-    const voiceSvc = require('./homeroom-bot-voice');
-    try {
-      await voiceSvc.tieOffer(pool, offeredId, message.id);
-    } catch {
-      await voiceSvc.tieOffer(pool, offeredId, message.id).catch((err) => {
-        log.warn('homeroom-bot', 'Could not tie an offer to its note (a tap falls back to its id)', {
-          app: app.slug, issueNumber, messageId: Number(message.id), offerId: offeredId, err: err.message,
-        });
       });
     }
   }
@@ -2584,9 +2494,9 @@ async function post({
   });
   return {
     postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!(message || proposalMessage),
-    // #6311: the note's message in the request's thread, for an offer that
-    // was written before it (a platform verdict's copy offer).
+    // The note's message in the request's thread, and the card written with it.
     messageId: (message || (proposalOnly ? proposalMessage : null))?.id ?? null,
+    ...(message?.cardId ? { cardId: Number(message.cardId) } : {}),
   };
 }
 
@@ -6120,7 +6030,6 @@ module.exports = {
   shareSpecVersion,
   notePlanRows,
   PLAN_ROW_ENDINGS,
-  retireOverlapOffers,
   postSpecOnProposal,
   revisedSpecCommentText,
   postRevisedSpecComment,

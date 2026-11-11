@@ -4413,14 +4413,14 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
   // request (`issueNumber`), or on the change it asks to revise (`sessionId`).
   const post = o.kind === 'post_reply';
   const kind = withdraw || move || copy || close || post ? o.kind : 'file_request';
-  const { rows: [action] } = await pool.query(
-    `INSERT INTO bot_cards (user_id, conversation_id, app_id, kind, title, details, session_id, source_issue_number,
-                                          target_message_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-    [user.id, conversationId, o.app.id, kind, o.title, o.details || null,
-      withdraw || (post && o.sessionId) ? o.sessionId : null,
-      move || copy || close || post ? o.issueNumber : null, post && o.targetMessageId ? Number(o.targetMessageId) : null],
-  );
+  // Step 3 (11 Nov 2026): the offer's card, written with its message
+  // (dm.sendDm `card`), whose metadata then names it (`actionId`).
+  const card = {
+    kind, appId: o.app.id, title: o.title, details: o.details || null,
+    sessionId: withdraw || (post && o.sessionId) ? o.sessionId : null,
+    sourceIssueNumber: move || copy || close || post ? o.issueNumber : null,
+    targetMessageId: post && o.targetMessageId ? Number(o.targetMessageId) : null,
+  };
   const moveSvc = require('./homeroom-bot-move');
   const body = post
     ? postOfferText({ name, issueNumber: o.issueNumber, revise: !!o.sessionId, text, draft: o.details })
@@ -4471,17 +4471,18 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     // The proposal it would withdraw, to open before deciding.
     objects: withdraw || (post && o.sessionId) ? [{ type: 'proposal', appId: Number(o.app.id), sessionId: Number(o.sessionId) }]
       : move || copy || close || post ? [{ type: 'issue', appId: Number(o.app.id), issueNumber: Number(o.issueNumber) }] : null,
+    card,
     metadata: {
       ...(post ? confirmMeta('post_reply', {
-        app: o.app, name, actionId: action.id,
+        app: o.app, name, actionId: null,
         question: o.sessionId ? `Post this on the change for request #${o.issueNumber} on ${name}?` : `Post this on request #${o.issueNumber} on ${name}?`,
       })
-        : move ? moveSvc.moveOfferMeta({ app: o.app, actionId: action.id })
-        : copy ? moveSvc.copyOfferMeta({ app: o.app, actionId: action.id })
-        : close ? closeOfferMeta({ app: o.app, name, actionId: action.id, issueNumber: o.issueNumber })
-        : o.guess ? guessMeta({ app: o.app, name, actionId: action.id })
+        : move ? moveSvc.moveOfferMeta({ app: o.app, actionId: null })
+        : copy ? moveSvc.copyOfferMeta({ app: o.app, actionId: null })
+        : close ? closeOfferMeta({ app: o.app, name, actionId: null, issueNumber: o.issueNumber })
+        : o.guess ? guessMeta({ app: o.app, name, actionId: null })
         : confirmMeta(kind, {
-          app: o.app, name, actionId: action.id,
+          app: o.app, name, actionId: null,
           question: withdraw ? `Withdraw this proposal on ${name}?` : `File this as a request on ${name}?`,
         })),
       // 2 Nov 2026: the turn's "Looked at" line and a thread tool's card (answer()).
@@ -4493,17 +4494,9 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       ...dbRead,
     },
   });
-  if (sent?.messageId && sent.duplicate) {
-    // Offered already, by an attempt a restart cut short: that offer is
-    // the one under the message; this one was never shown.
-    await pool.query('DELETE FROM bot_cards WHERE id = $1 AND message_id IS NULL', [action.id]);
-    await pool.query(
-      `UPDATE bot_cards a SET message_id = $1
-        WHERE a.id = (SELECT id FROM bot_cards WHERE user_id = $2 AND conversation_id = $3 AND message_id IS NULL ORDER BY id DESC LIMIT 1)
-          AND NOT EXISTS (SELECT 1 FROM bot_cards WHERE message_id = $1)`,
-      [sent.messageId, user.id, conversationId]);
-  } else if (sent?.messageId) {
-    await pool.query('UPDATE bot_cards SET message_id = $2 WHERE id = $1', [action.id, sent.messageId]);
+  // Offered already, by an attempt a restart cut short (a duplicate): its
+  // card was written with it, and nothing more is.
+  if (sent?.messageId && !sent.duplicate) {
     // #6251: the pictures that go with the request show on the draft, the
     // same thumbnails as any picture in a chat message. Only on the new
     // message: an offer said already keeps the ones it had.
@@ -4705,12 +4698,6 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
     ? `Tap the card to post version ${v} on request #${n} as its plan, publicly, under your name.`
     : `Tap New request to file a request on ${name} with version ${v} as its plan, publicly, under your name, `
       + 'or add it to a request you name.';
-  const { rows: [action] } = await pool.query(
-    `INSERT INTO bot_cards (user_id, conversation_id, app_id, kind, title, source_issue_number,
-                                          private_thread_id, design_version)
-     VALUES ($1, $2, $3, 'post_design', $4, $5, $6, $7) RETURNING id`,
-    [user.id, conversationId, app.id, clip(design.title, MAX_TITLE_CHARS) || 'Design', n, design.threadId, v],
-  );
   // #6353: a plan that would show lists empty because a script builds them
   // says so before it is posted, and offers to write the rows in first. The
   // post stays, as a secondary action: the warning informs, it does not block.
@@ -4726,8 +4713,15 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
     user, conversationId,
     roots: [message?.threadRootId || message?.thread_root_id || null, deps?.threadRootId || null],
   });
-  const sent = await dm.sendDm(pool, {
+  // Step 3: its card, written with the message (dm.sendDm `card`). A
+  // duplicate (offered already, by an attempt a restart cut short) keeps the
+  // card it was written with.
+  return dm.sendDm(pool, {
     bot, userId: user.id, idempotencyKey: key, replyToId: message.id, moment: 'reply',
+    card: {
+      kind: 'post_design', appId: app.id, title: clip(design.title, MAX_TITLE_CHARS) || 'Design',
+      sourceIssueNumber: n, privateThreadId: design.threadId, designVersion: v,
+    },
     content: [
       cardSentence(text, { issueNumber: n, fallback }),
       '',
@@ -4735,18 +4729,11 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
       ...(o.gap ? ['', `${o.gap.reason} I can write the rows into the screen first.`] : []),
     ].join('\n'),
     metadata: {
-      kind: 'confirm', appSlug: app.slug, appName: name, actionId: action.id,
+      kind: 'confirm', appSlug: app.slug, appName: name, actionId: null,
       question: n ? `Post version ${v} as a plan on #${n}?` : `Post version ${v} as a plan on ${name}?`,
       answers: designPlanAnswers(n), actions, status: 'open', mirrors: false, ...dbRead,
     },
   });
-  if (sent?.messageId && sent.duplicate) {
-    // Offered already, by an attempt a restart cut short: that card stands.
-    await pool.query('DELETE FROM bot_cards WHERE id = $1 AND message_id IS NULL', [action.id]);
-  } else if (sent?.messageId) {
-    await pool.query('UPDATE bot_cards SET message_id = $2 WHERE id = $1', [action.id, sent.messageId]);
-  }
-  return sent;
 }
 
 /**
@@ -4949,26 +4936,34 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
  * is a 409 and does nothing, and every device shows the choice
  * (setQuestionState). Decided in the person's DM machine
  * (src/workflow/bot-dm/), whose work then does it (actOnTap). Resolves
- * { ok: true, choice, label } or { ok: false, status, error }.
+ * { ok: true, choice, label } or { ok: false, status, error, code? }: a
+ * card retired because what it was about moved on (bot-cards.js retireFor)
+ * is a 410 with its `reason`.
  */
 async function decideOfferTap(pool, config, { user, actionId, choice, answers = [], deps = {} }) {
   if (choice !== 'yes' && choice !== 'no' && choice !== 'build') {
-    return { ok: false, status: 400, error: 'choice must be yes, no or build' };
+    return { ok: false, status: 400, error: 'choice must be yes, no or build', code: 'no_such_choice' };
   }
   const id = Number(actionId);
-  if (!user?.id || !Number.isInteger(id) || id <= 0) return { ok: false, status: 404, error: 'No such choice' };
+  if (!user?.id || !Number.isInteger(id) || id <= 0) return { ok: false, status: 404, error: 'No such choice', code: 'no_such_offer' };
   const { rows } = await pool.query('SELECT * FROM bot_cards WHERE id = $1 AND user_id = $2 AND place = \'dm\'', [id, user.id]);
   const action = rows[0];
   const plan = action?.kind === 'build_plan';
   // The bring-a-friend nudge (invite-nudge.js): Not now is its one server
   // choice, decided here at once; its Invite people is answered on the device.
   const nudge = action?.kind === INVITE_NUDGE_KIND;
-  if (!action || (!plan && !nudge && !OFFER_ANSWERS[action.kind])) return { ok: false, status: 404, error: 'No such choice' };
-  if (nudge && choice !== 'no') return { ok: false, status: 400, error: 'choice must be no' };
-  if (!nudge && (plan ? choice !== 'build' : choice === 'build')) {
-    return { ok: false, status: 400, error: plan ? 'choice must be build' : 'choice must be yes or no' };
+  if (!action || (!plan && !nudge && !OFFER_ANSWERS[action.kind])) {
+    return { ok: false, status: 404, error: 'No such choice', code: 'no_such_offer' };
   }
-  if (action.status !== 'open') return { ok: false, status: 409, error: 'already_decided', decided: action.status };
+  if (nudge && choice !== 'no') return { ok: false, status: 400, error: 'choice must be no', code: 'no_such_choice' };
+  if (!nudge && (plan ? choice !== 'build' : choice === 'build')) {
+    return { ok: false, status: 400, error: plan ? 'choice must be build' : 'choice must be yes or no', code: 'no_such_choice' };
+  }
+  if (action.status === 'retired') {
+    return { ok: false, status: 410, error: 'retired', code: 'retired', reason: action.retired_reason || null };
+  }
+  if (action.status === 'expired') return { ok: false, status: 410, error: 'expired', code: 'expired' };
+  if (action.status !== 'open') return { ok: false, status: 409, error: 'already_decided', code: 'already_decided', decided: action.status };
   // 5 Nov 2026 (docs/plans/bot-one-model.md, decision 3): a card is open 14
   // days (bot_cards.expires_at), then it is no longer an offer.
   if (!require('./bot-cards').stillOpen(action)) {
@@ -4976,13 +4971,13 @@ async function decideOfferTap(pool, config, { user, actionId, choice, answers = 
     await dmModule(deps).setQuestionState(pool, Number(action.message_id), { status: 'closed', expired: true }, {
       ws: deps.ws || null, conversationId: action.conversation_id, userId: user.id,
     }).catch(() => {});
-    return { ok: false, status: 410, error: 'expired' };
+    return { ok: false, status: 410, error: 'expired', code: 'expired' };
   }
   if (nudge) return (deps.inviteNudge || require('./invite-nudge')).dismiss(pool, { user, action, deps });
   const out = await (deps.replies || require('../workflow/platform.ts')).tapDmAction({
     userId: Number(user.id), actionId: id, choice, answers: Array.isArray(answers) ? answers.slice(0, 2) : [],
   });
-  if (!out.ok) return { ok: false, status: out.status || 409, error: out.error || 'already_decided' };
+  if (!out.ok) return { ok: false, status: out.status || 409, error: out.error || 'already_decided', code: out.code || 'already_decided' };
   if (plan) return { ok: true, choice: 'build', label: 'Build it' };
   const [yesWord, noWord] = answersFor(action);
   return { ok: true, choice, label: choice === 'yes' ? yesWord : noWord };

@@ -152,22 +152,8 @@ const SWITCH_OF = Object.freeze({
   session: 'voiceSession', issue: 'voiceIssue', chat: 'voiceChat', category: 'voiceChat', message: 'voiceChat',
 });
 
-const OFFER_WORDS = Object.freeze({
-  file_request: { yes: 'File it', no: 'Not now' },
-  file_many: { yes: 'File on all', no: 'Not now' },
-  withdraw_change: { yes: 'Withdraw it', no: 'Keep it' },
-  close_request: { yes: 'Propose to close', no: 'Keep it open' },
-  try_again: { yes: 'Let it try again', no: 'Not now' },
-  // #6311: the copy beside the move. The original stays open.
-  copy_request: { yes: 'Put it on Homeroom\'s board', no: 'Keep it here only' },
-  // 5 Nov 2026: the move itself, under the note in the request's thread
-  // (its news no longer goes to their chat with the bot, where it was
-  // offered): filed on Homeroom's board, the original closed or voted on.
-  move_request: { yes: 'Move it to Homeroom', no: 'Keep it here' },
-  // #6533: a change's thread, showing what it looks like.
-  run_shots: { yes: 'Take the shots', no: 'Not now' },
-  post_pictures_plan: { yes: 'Post as a plan', no: 'Not now' },
-});
+// A thread card's buttons: their words (services/bot-cards.js).
+const { OFFER_WORDS, offerActions } = require('./bot-cards');
 
 let sharedConfig = null;
 /** The platform's config, as ws.attach hands it over (the hooks have none). */
@@ -1061,8 +1047,8 @@ async function newestIn(pool, { app, place }) {
 
 /**
  * The reply a turn (`turnKey`) already posted, by its mark, with what it
- * read through; null when it posted none. Its offer's message id is put
- * right if the attempt that posted it stopped before writing it.
+ * read through; null when it posted none. Its offer, if it has one, was
+ * written with it (say).
  */
 async function replyOf(pool, { app, place, bot, turnKey }) {
   const { rows: [m] } = await pool.query(
@@ -1072,8 +1058,6 @@ async function replyOf(pool, { app, place, bot, turnKey }) {
     [app.id, bot.id, String(turnKey)],
   );
   if (!m) return null;
-  const offerId = Number(m.metadata?.homeroomBot?.offer?.id);
-  if (offerId) await tieOffer(pool, offerId, m.id);
   return { id: Number(m.id), through: Number(m.metadata?.homeroomBot?.turn?.through) || null };
 }
 
@@ -2744,120 +2728,27 @@ function quoteOf(message, username) {
   };
 }
 
-/** Pure (#6211): the words an overlap note's buttons carry, from what it found. */
-function overlapWords(args = {}) {
-  const other = Number(args.other);
-  if (args.overlap === 'duplicate') {
-    return { yes: 'Propose to close as a duplicate', no: 'Keep both' };
-  }
-  if (args.overlap === 'part_of') {
-    return { yes: `Fold it into #${other}`, first: 'Build this one first', no: 'Keep separate' };
-  }
-  return { yes: `Build #${other} first`, first: 'Build this one first', no: 'Keep separate' };
-}
-
-/** Pure: an offer's buttons, as the thread draws them under the reply. */
-function offerActions(kind, offerId, args = {}) {
-  // #6211: an overlap's three choices for the requester. Duplicate is the
-  // two the close vote's own note has; the rest offer the order as well.
-  if (kind === 'overlap') {
-    const words = overlapWords(args);
-    return [
-      { id: 'yes', label: words.yes, style: 'primary', offerId: Number(offerId) },
-      ...(words.first ? [{ id: 'first', label: words.first, style: 'secondary', offerId: Number(offerId) }] : []),
-      { id: 'no', label: words.no, style: 'secondary', offerId: Number(offerId) },
-    ];
-  }
-  const words = OFFER_WORDS[kind];
-  if (!words) return [];
-  // #6533: the plan offer names its request, as the change page does.
-  const yes = kind === 'post_pictures_plan' && Number(args.issueNumber) > 0
-    ? `${words.yes} on request #${Number(args.issueNumber)}` : words.yes;
-  return [
-    { id: 'yes', label: yes, style: 'primary', offerId: Number(offerId) },
-    { id: 'no', label: words.no, style: 'secondary', offerId: Number(offerId) },
-  ];
-}
-
-/**
- * #6311: an offer under a fixed note in a request's thread (a platform
- * verdict's copy offer), stored now and tied to the note's message once it
- * is posted (tieThreadOffer). Resolves { id, metadata } in the shape say()
- * builds, or null. Never throws.
- */
 // ── Offers, in one store (5 Nov 2026, docs/plans/bot-one-model.md, step 2) ──
 //
 // A thread's offers are Homeroom bot's cards (bot_cards, place 'thread',
-// their message in chat_message_id). Those said before stay in
-// homeroom_bot_voice_offers until they are answered or 14 days old. Every
-// card's id is above every older offer's (migration bot-cards), so an id
-// names one row: a thread card when bot_cards has it, else an older offer.
-// Read through OFFERS_SQL, in the older table's own words.
+// their message in chat_message_id), each written with the message that
+// shows its buttons (step 3: ws.sendBotMessage's `card`). Those said before
+// the card store stay in homeroom_bot_voice_offers until they are answered
+// or 14 days old. Every card's id is above every older offer's (migration
+// bot-cards), so an id names one row: a thread card when bot_cards has it,
+// else an older offer. Read through OFFERS_SQL, in the older table's own
+// words.
 const OFFERS_SQL = `(
   SELECT id, app_id, chat_message_id AS message_id, kind, args, user_id AS for_user_id, status, result,
-         created_at, decided_at, decided_key, expires_at, 'cards' AS store
+         created_at, decided_at, decided_key, expires_at, retired_reason, 'cards' AS store
     FROM bot_cards WHERE place = 'thread'
   UNION ALL
   SELECT id, app_id, message_id, kind, args, for_user_id, status, result,
-         created_at, decided_at, decided_key, created_at + INTERVAL '14 days' AS expires_at, 'voice' AS store
+         created_at, decided_at, decided_key, created_at + INTERVAL '14 days' AS expires_at, NULL AS retired_reason,
+         'voice' AS store
     FROM homeroom_bot_voice_offers
 )`;
 const OFFER_TABLES = Object.freeze({ cards: 'bot_cards', voice: 'homeroom_bot_voice_offers' });
-
-/** A new offer in a project's thread, open, before its message: its id. */
-async function newOffer(db, { appId, kind, args = {}, forUserId = null }) {
-  const { rows: [row] } = await db.query(
-    `INSERT INTO bot_cards (place, app_id, kind, args, user_id) VALUES ('thread', $1, $2, $3, $4) RETURNING id`,
-    [Number(appId), String(kind), JSON.stringify(args || {}), forUserId || null],
-  );
-  return row ? Number(row.id) : null;
-}
-
-/** Name the message an offer was said on (a new card; or, after a restart, an older offer not yet tied). */
-async function tieOffer(db, offerId, messageId) {
-  await db.query('UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1 AND place = \'thread\' AND chat_message_id IS NULL',
-    [Number(offerId), Number(messageId)]);
-  await db.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1 AND message_id IS NULL',
-    [Number(offerId), Number(messageId)]);
-}
-
-async function threadOffer(pool, { app, kind, forUserId, args = {} }) {
-  try {
-    const id = await newOffer(pool, { appId: app.id, kind, args, forUserId });
-    if (!id) return null;
-    return {
-      id,
-      metadata: {
-        offer: { id, kind, status: 'open', forUserId: Number(forUserId) || null },
-        actions: offerActions(kind, id, args),
-      },
-    };
-  } catch (err) {
-    log.warn('homeroom-bot-voice', 'Could not put an offer under a note', { app: app?.slug, kind, err: err.message });
-    return null;
-  }
-}
-
-/**
- * #6311: tie a thread offer to the note's message, so decideOffer finds it.
- * #6582: tried twice before it is only logged, and still never throws
- * (homeroom-bot-overlap.js relies on that): a tap falls back to the offer id
- * the note's own metadata names.
- */
-async function tieThreadOffer(pool, offerId, messageId) {
-  try {
-    await tieOffer(pool, offerId, messageId);
-  } catch {
-    await tieOffer(pool, offerId, messageId)
-      .catch((err) => log.warn('homeroom-bot-voice', 'Could not tie an offer to its note', { offerId, messageId, err: err.message }));
-  }
-}
-
-/** #6311: the note could not be posted: its offer is dropped. */
-async function dropThreadOffer(pool, offerId) {
-  await pool.query('DELETE FROM bot_cards WHERE id = $1 AND place = \'thread\' AND chat_message_id IS NULL', [Number(offerId)])
-    .catch((err) => log.warn('homeroom-bot-voice', 'Could not drop an offer for an unposted note', { offerId, err: err.message }));
-}
 
 /**
  * Pure (#6391): the button sets Homeroom builds when the model gave none, or
@@ -2959,8 +2850,9 @@ function threadReplyHtml({ finalReply = null, text = '', asWritten = null, check
  * One message from the bot in `place`, quoting the newest message it
  * answers and telling the people it answers (a mention notification each,
  * never in the text). In a project's main chat or a topic, it goes in a
- * reply thread under that message. With an offer, its buttons go under it.
- * Resolves the message, or null.
+ * reply thread under that message. With an offer ({ kind, args, forUserId }),
+ * its buttons go under it: the card is written with the message (step 3,
+ * ws.sendBotMessage `card`). Resolves the message, or null.
  */
 async function say(pool, {
   app, place, bot, text, answer = [], offer = null, suggestions = [], othersSuggestions = [],
@@ -2977,11 +2869,6 @@ async function say(pool, {
   if (mark) {
     const had = await replyOf(pool, { app, place, bot, turnKey: mark.key });
     if (had) return { id: had.id, again: true };
-  }
-  let offerRow = null;
-  if (offer) {
-    const id = await newOffer(pool, { appId: app.id, kind: offer.kind, args: offer.args, forUserId: offer.forUserId });
-    offerRow = id ? { id } : null;
   }
   // #6391: a request's or a change's discussion always ends in buttons. The
   // people it answered see one set; the other members see the second one.
@@ -3027,15 +2914,6 @@ async function say(pool, {
     homeroomBot: {
       kind: 'voice',
       ...(mark ? { turn: { key: String(mark.key), ...(mark.through ? { through: Number(mark.through) } : {}) } } : {}),
-      ...(offerRow ? {
-        offer: {
-          id: Number(offerRow.id), kind: offer.kind, status: 'open', forUserId: Number(offer.forUserId) || null,
-          // #6305: a many-project offer's rows travel with it, so a thread
-          // draws the same card a private chat does.
-          ...(Array.isArray(offer.args?.rows) ? { rows: offer.args.rows } : {}),
-        },
-        actions: offerActions(offer.kind, offerRow.id),
-      } : {}),
       ...((suggestActions.length || othersActions.length) ? {
         suggest: { status: 'open', forUserIds: suggestFor }, actions: suggestActions, othersActions,
       } : {}),
@@ -3053,13 +2931,9 @@ async function say(pool, {
   const sent = await ws.sendBotMessage(pool, app.id, {
     user: bot, content: text, metadata, thread,
     attachmentIds: attachments.map((a) => a.id).filter(Boolean),
+    ...(offer ? { card: { kind: offer.kind, args: offer.args || {}, forUserId: offer.forUserId || null } } : {}),
   });
   if (!sent?.id) return null;
-  if (offerRow) {
-    // Without it the buttons decide nothing (decideOffer finds the offer by
-    // its message): a failure here is the turn's, and retried.
-    await pool.query('UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1 AND place = \'thread\'', [offerRow.id, sent.id]);
-  }
   // A newer word from the bot in this thread retires the suggested replies
   // on its older messages there, as a newer word in its chat does.
   await retireThreadSuggestions(pool, { appId: app.id, thread, keepMessageId: Number(sent.id), deps });
@@ -3090,59 +2964,67 @@ async function say(pool, {
  * any member, for Propose to close under an "already works" note), in the
  * place its message is in (the bot-voice machine), whose work then acts on
  * it (actOnOffer): the buttons give way when the room hears it was decided.
- * Resolves { ok, status?, error? }.
+ *
+ * Step 3 (11 Nov 2026): found by its id, which the buttons send
+ * (`offerId`), or, from a client that sends none, the id its message's
+ * metadata names; it must be the offer of the message tapped. A message
+ * that names none is looked up by its id, the way offers were found before.
+ * A card is written with its message, so buttons on screen always have
+ * one. Resolves { ok } or { ok: false, status, code,
+ * error, reason? }: `code` is what the buttons' line says in the reader's
+ * language (frontend chat.json group.botOffer.refused.*), `error` the
+ * English for anybody else.
  */
-async function decideOffer(pool, config, { app, user: viewer, messageId, choice, rows = null, deps = {} }) {
-  if (!viewer?.id) return { ok: false, status: 404, error: 'Nothing to decide here.' };
-  if (choice !== 'yes' && choice !== 'no' && choice !== 'first') return { ok: false, status: 400, error: 'choice must be yes or no' };
+async function decideOffer(pool, config, { app, user: viewer, messageId, offerId = null, choice, rows = null, deps = {} }) {
+  const refused = (status, code, error, more = {}) => ({ ok: false, status, code, error, ...more });
+  if (!viewer?.id) return refused(404, 'no_such_offer', 'Nothing to decide here.');
+  if (choice !== 'yes' && choice !== 'no' && choice !== 'first') return refused(400, 'no_such_choice', 'choice must be yes or no');
   // #6305: a many-project card's File on all says which rows are ticked.
   if (choice === 'yes' && Array.isArray(rows) && !rows.length) {
-    return { ok: false, status: 400, error: 'Tick at least one project.' };
+    return refused(400, 'no_rows', 'Tick at least one project.');
   }
-  const { rows: [found] } = await pool.query(
-    `SELECT o.id, o.kind, o.status, o.expires_at <= NOW() AS expired FROM ${OFFERS_SQL} o
-      WHERE o.message_id = $1 AND o.app_id = $2 ORDER BY o.id DESC LIMIT 1`, [Number(messageId), app.id],
+  const { rows: [message] } = await pool.query(
+    'SELECT id, metadata FROM chat_messages WHERE id = $1 AND app_id = $2', [Number(messageId), app.id],
   );
-  let offer = found;
-  // #6582: the note names its own offer in its metadata, so a tap still finds
-  // it when the offer was never linked to the message (a lost link write).
-  // Only an offer of this project's, made for this note, is taken.
-  if (!offer) {
-    const { rows: [message] } = await pool.query(
-      'SELECT id, thread_type, thread_ref, metadata FROM chat_messages WHERE id = $1 AND app_id = $2',
-      [Number(messageId), app.id],
-    );
-    const namedId = Number(message?.metadata?.homeroomBot?.offer?.id);
-    if (message && Number.isSafeInteger(namedId) && namedId > 0) {
-      const { rows: [named] } = await pool.query(
-        `SELECT o.id, o.kind, o.status, o.message_id, o.args, o.expires_at <= NOW() AS expired FROM ${OFFERS_SQL} o
-          WHERE o.id = $1 AND o.app_id = $2 ORDER BY o.store LIMIT 1`,
-        [namedId, app.id],
-      );
-      const sameRequest = message.thread_type !== 'issue'
-        || Number(named?.args?.issueNumber) === Number(message.thread_ref);
-      const forThisMessage = named && (named.message_id == null || Number(named.message_id) === Number(message.id));
-      if (forThisMessage && sameRequest) {
-        // The machine reads an offer through its message: tie it first.
-        await tieOffer(pool, named.id, message.id);
-        offer = named;
-      } else {
-        // The note names an offer that is lost: its buttons go, for good.
-        await markOfferMessage(pool, { app, messageId: Number(message.id), status: 'gone', deps });
-        return { ok: false, status: 410, error: 'That offer is no longer available.' };
-      }
+  if (!message) return refused(404, 'no_such_offer', 'Nothing to decide here.');
+  const idOf = (v) => (Number.isSafeInteger(Number(v)) && Number(v) > 0 ? Number(v) : null);
+  const named = idOf(offerId) || idOf(message.metadata?.homeroomBot?.offer?.id);
+  let offer = null;
+  if (named) {
+    ({ rows: [offer] } = await pool.query(
+      `SELECT o.id, o.kind, o.status, o.message_id, o.retired_reason, o.expires_at <= NOW() AS expired FROM ${OFFERS_SQL} o
+        WHERE o.id = $1 AND o.app_id = $2 ORDER BY o.store LIMIT 1`,
+      [named, app.id],
+    ));
+    if (offer && offer.message_id != null && Number(offer.message_id) !== Number(message.id)) {
+      return refused(409, 'not_this_message', 'That offer belongs to another message.');
     }
-    if (!offer) return { ok: false, status: 404, error: 'Nothing to decide here.' };
+    if (!offer || offer.message_id == null) {
+      // The note names an offer that is lost: its buttons go, for good.
+      await markOfferMessage(pool, { app, messageId: Number(message.id), status: 'gone', deps });
+      return refused(410, 'gone', 'That offer is no longer available.');
+    }
+  } else {
+    ({ rows: [offer] } = await pool.query(
+      `SELECT o.id, o.kind, o.status, o.message_id, o.retired_reason, o.expires_at <= NOW() AS expired FROM ${OFFERS_SQL} o
+        WHERE o.message_id = $1 AND o.app_id = $2 ORDER BY o.id DESC LIMIT 1`, [Number(message.id), app.id],
+    ));
+    if (!offer) return refused(404, 'no_such_offer', 'Nothing to decide here.');
   }
   // #6211: an overlap's third choice, and only an overlap's.
-  if (choice === 'first' && offer.kind !== 'overlap') return { ok: false, status: 400, error: 'choice must be yes or no' };
-  // 14 days and it is no longer an offer: its buttons go.
-  if (offer.expired && offer.status === 'open') {
-    await markOfferMessage(pool, { app, messageId: Number(messageId), status: 'expired', deps });
-    return { ok: false, status: 410, error: 'That offer has expired.' };
+  if (choice === 'first' && offer.kind !== 'overlap') return refused(400, 'no_such_choice', 'choice must be yes or no');
+  // What it was about moved on (bot-cards.js retireFor): its line says why.
+  if (offer.status === 'retired') {
+    return refused(410, 'retired', 'That offer is no longer needed.', { reason: offer.retired_reason || null });
   }
+  // 14 days and it is no longer an offer: its buttons go.
+  if (offer.status === 'expired' || (offer.expired && offer.status === 'open')) {
+    if (offer.status === 'open') await markOfferMessage(pool, { app, messageId: Number(message.id), status: 'expired', deps });
+    return refused(410, 'expired', 'That offer has expired.');
+  }
+  if (offer.status !== 'open') return refused(409, 'already_decided', 'That was already decided.');
   return workflowModule(deps).tapVoiceOffer({
-    appId: Number(app.id), offerId: Number(offer.id), messageId: Number(messageId), userId: Number(viewer.id), choice,
+    appId: Number(app.id), offerId: Number(offer.id), messageId: Number(message.id), userId: Number(viewer.id), choice,
     ...(Array.isArray(rows) ? { rows } : {}),
   });
 }
@@ -3936,10 +3818,6 @@ module.exports = {
   dropAsks,
   quoteOf,
   offerActions,
-  threadOffer,
-  tieOffer,
-  tieThreadOffer,
-  dropThreadOffer,
   say,
   threadReplyHtml,
   fallbackSuggestions,

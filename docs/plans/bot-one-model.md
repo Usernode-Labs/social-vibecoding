@@ -255,6 +255,49 @@ Built 5 Nov 2026 (migration `bot-cards`, `src/services/bot-cards.js`):
   thread tool draws in message metadata, suggestion prompts, and private
   threads' File it / Post it, which are not offers of the bot's.
 
+### Step 3, built 11 Nov 2026
+
+One offer store, written with its message (migration `bot-cards-retired`):
+
+- A card is written in the same transaction as the message that shows its
+  buttons, and the message's id is set there too: `ws.sendBotMessage` and
+  `homeroom-bot-dm.js sendDm` take a `card` (what it is: kind, args, who it
+  is for; `onInsert` for the caller's own write in that transaction). The
+  callers pass that and nothing more: the voice's replies, an "already
+  works" note's Propose to close, a note about Homeroom itself, a stop's Let
+  it try again (inside the post the look says once, so a retried hand-off
+  writes no second card), an overlap question, Main's offers, a design's
+  plan, a first version's plan, a folded offer and the bring-a-friend
+  nudge. Gone: `newOffer`, `tieOffer`, `threadOffer`, `tieThreadOffer`,
+  `dropThreadOffer`, `settleThreadOffer`, live.post's re-link (#6582) and
+  every link written after the message. A thread card from before whose
+  link was lost is linked by the migration, from the id its message names.
+- A tap names its card: the thread's buttons send `offerId` (from
+  `metadata.homeroomBot.offer.id`), and `decideOffer` takes the card by id
+  and project, then checks it is the tapped message's (`not_this_message`).
+  A client that sends no id is answered from the id its message names; an
+  offer from before the card store, by its message. A card whose buttons
+  are on screen is always found.
+- Buttons retire from the standing (`bot-cards.js retireFor`, one table,
+  `STILL_WORTH`): Propose to close while the request is open and no vote on
+  closing it is; Let it try again while it is stopped; an overlap, a copy,
+  a move or a request to file while nobody is building it; a plan's Build
+  it while the plan waits; Withdraw it while the change can be withdrawn.
+  Work-state's refresh calls it when a row moves (its stage, why or reason
+  changed, or a vote on closing it opened), so a card made a moment before
+  its request's stage catches up is never taken back. It marks the card
+  `retired` with why (`close_vote`, `closed`, `building`, `moved_on`,
+  `superseded`) and empties the buttons on its message, whose words never
+  change. `keep` (card ids) is the posting function's: a newer card of the
+  same kind supersedes the older one. Gone: `retireOverlapOffers` and the
+  plan card updates it covers (a newer plan, a plan that stopped waiting).
+- A refused tap says why in place: the routes answer `{ error, code,
+  reason? }`; the thread's line under an offer (`transcript.tsx
+  BotOfferStatus`, the side panel's too) is drawn from its state and the
+  refusal GroupChat keeps for the message, so it outlives the buttons; in
+  Messages, a line after `.messages-bot-answers` (`bot-question.tsx`,
+  `bot-plan.tsx`), and a retired card's line says why.
+
 ### One change-ask queue
 
 - Every "change my change" records its ask in `homeroom_bot_change_asks`

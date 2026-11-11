@@ -295,6 +295,11 @@
       "id": "bot-quieter-rereads",
       "sha256": "64673847c891220f4327c0f71bf0210b409c01d05e8c73334a70d70143d7d8f2",
       "schemaSha256": "2fd42ca6342c728f882ff6adf25704824e43c2ae881bb26fafc507d3b767bfc9"
+    },
+    {
+      "id": "bot-cards-retired",
+      "sha256": "7ed4a1b49569c9be795f7a439ed51f532392115dc85d494edaf202a624db5563",
+      "schemaSha256": "ace22ab4d2c827ae24f7341cf1a4e765393e09d0a3f03a2f543e887f275f3165"
     }
   ]
 }

@@ -660,7 +660,7 @@ async function storyAppId(pool, metadata, root) {
 
 async function sendDm(pool, {
   bot, userId, content, metadata = null, idempotencyKey = null, objects = null, replyToId = null, withoutCards = null,
-  moment = undefined, threadRootId = undefined, hello = null,
+  moment = undefined, threadRootId = undefined, hello = null, card = null,
 }) {
   if (!bot?.id || !userId) return null;
   // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's news is
@@ -759,20 +759,41 @@ async function sendDm(pool, {
   // chose for their own: owed in the message's own transaction.
   const opens = story === 'live' && !!metadata?.firstVersion && !!metadata?.appSlug;
   let toldOpen = [];
+  const greet = hello?.kind ? async (db) => {
+    const { rows: claimed } = await db.query(CLAIM_HELLO_SQL, [Number(userId), Number(bot.id), String(hello.kind)]);
+    greeted = claimed[0]?.kind === hello.kind;
+    if (!greeted) return hello.content ? null : { refuse: true };
+    return hello.content
+      ? { content: clip(hello.content, conversations.MAX_MESSAGE_LENGTH || 8000), metadata: helloStored ? { [META]: helloStored } : null }
+      : null;
+  } : null;
+  // Step 3 (11 Nov 2026, services/bot-cards.js): an offer's card, written in
+  // the message's own transaction: before the message, its id put in the
+  // message's metadata (`actionId`, what a tap names); after it, the
+  // message's id put on the card. A duplicate (the same key, sent before)
+  // writes none: its card was written with it. `card.onInsert(db, { cardId,
+  // messageId })` is the caller's own write in that transaction.
+  let cardId = null;
+  const withCard = card ? async (db) => {
+    const instead = greet ? await greet(db) : null;
+    if (instead?.refuse) return instead;
+    const made = await require('./bot-cards').insertCard(db, {
+      ...card, place: 'dm', userId, conversationId: opened.conversationId,
+    });
+    cardId = Number(made.id);
+    const base = instead && 'metadata' in instead ? instead.metadata : (stored ? { [META]: stored } : null);
+    const bot0 = base && base[META] && typeof base[META] === 'object' ? base[META] : {};
+    return { ...(instead || {}), metadata: { ...(base || {}), [META]: { ...bot0, actionId: cardId } } };
+  } : null;
   const hooks = {
-    ...(hello?.kind ? {
-      prepare: async (db) => {
-        const { rows: claimed } = await db.query(CLAIM_HELLO_SQL, [Number(userId), Number(bot.id), String(hello.kind)]);
-        greeted = claimed[0]?.kind === hello.kind;
-        if (!greeted) return hello.content ? null : { refuse: true };
-        return hello.content
-          ? { content: clip(hello.content, conversations.MAX_MESSAGE_LENGTH || 8000), metadata: helloStored ? { [META]: helloStored } : null }
-          : null;
-      },
-    } : {}),
-    ...(hello?.kind || mail || opens ? {
+    ...(greet || withCard ? { prepare: withCard || greet } : {}),
+    ...(hello?.kind || mail || opens || card ? {
       afterInsert: async (db, { messageId: id }) => {
         if (greeted) await db.query('UPDATE homeroom_bot_hellos SET message_id = $2 WHERE user_id = $1', [Number(userId), id]);
+        if (cardId) {
+          await db.query('UPDATE bot_cards SET message_id = $2 WHERE id = $1', [cardId, id]);
+          if (typeof card.onInsert === 'function') await card.onInsert(db, { cardId, messageId: id, conversationId: opened.conversationId });
+        }
         if (mail) await require('../workflow/platform.ts').dmMailOwed(db, { userId: Number(userId), messageId: id, mail });
         if (opens) toldOpen = await require('./project-opened').oweTold(db, { appSlug: metadata.appSlug, makerId: userId });
       },
@@ -822,6 +843,7 @@ async function sendDm(pool, {
     duplicate: !!result.duplicate,
     threadRootId: root || null,
     ...(hello?.kind ? { hello: greeted } : {}),
+    ...(cardId ? { cardId } : {}),
   };
 }
 
@@ -2183,6 +2205,7 @@ async function relayIssuePost({
     kind: offerKind, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason, runId,
   }) : null;
   if (offer) Object.assign(metadata, offer.metadata);
+  // Step 3: its card is written with the message (sendDm `card`).
   const started = shown ? null : await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber });
   const sent = await sendDm(pool, {
     bot,
@@ -2201,6 +2224,7 @@ async function relayIssuePost({
     // try, and a request that names who builds it. Its card and the bot's
     // Needs you list still show what it waits on.
     ...(dm.quiet ? { moment: null } : {}),
+    ...(offer ? { card: offer.card } : {}),
   });
   await move.foldedOfferSent(pool, offer, sent);
   if (!sent?.messageId) {
@@ -2439,20 +2463,19 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
   if (plan.complicated === true) return { messageId: null, stop: 'on_request' };
   const name = app.name || app.slug;
   const questions = (plan.questions || []).slice(0, 2);
-  const { rows: [action] } = await pool.query(
-    `INSERT INTO bot_cards (user_id, app_id, kind, title)
-     VALUES ($1, $2, 'build_plan', $3) RETURNING id`,
-    [requester.userId, app.id, clip(`The plan for ${name}`, 200)],
-  );
   // #4488: a complicated change on an existing project: not a first version,
   // with its spec (read on the request, whose card goes under the plan).
   const complicated = plan.complicated === true;
   const planStarted = await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber });
+  // Step 3 (11 Nov 2026): Build it's card, written with the plan's message
+  // (sendDm `card`); it names its request, whose standing retires it once
+  // the plan stops waiting (bot-cards.js retireFor).
   const sent = await sendDm(pool, {
     bot,
     userId: requester.userId,
     content: planCardText({ appName: name, plan: { bullets: plan.bullets, questions, complicated }, issueNumber }),
     idempotencyKey: `hrbot-plan-${runId}`,
+    card: { kind: 'build_plan', appId: app.id, title: clip(`The plan for ${name}`, 200), sourceIssueNumber: Number(issueNumber) },
     metadata: {
       kind: PLAN_KIND, appSlug: app.slug, appName: name, issueNumber: Number(issueNumber),
       // #5582: a complicated plan on an existing project names its request
@@ -2464,7 +2487,7 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
         bullets: plan.bullets, questions,
         ...(complicated ? { complicated: true, ...(plan.spec ? { spec: plan.spec } : {}), ...(plan.card ? { card: plan.card } : {}) } : {}),
       },
-      actionId: Number(action.id), status: 'open',
+      actionId: null, status: 'open',
     },
     ...(complicated ? { objects: cardsFor(PLAN_KIND, {}, app, issueNumber) } : {}),
     // 13 Oct 2026: a plan its maker already decided on the made screen
@@ -2478,23 +2501,19 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
     // askThreadId).
     ...await outsideCardThread(pool, planStarted),
   });
-  if (!sent?.messageId) {
-    await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'not_sent']);
-    return null;
-  }
-  await pool.query(
-    'UPDATE bot_cards SET message_id = $2, conversation_id = $3 WHERE id = $1',
-    [action.id, sent.messageId, sent.conversationId],
-  ).catch(() => {});
+  if (!sent?.messageId) return null;
   if (sent.duplicate) return sent;
   try {
-    // Older plans for it give way to this one, and a question it had is done.
+    // Older plans for it give way to this one: their Build it is retired
+    // (bot-cards.js retireFor: a newer card of the same kind supersedes it),
+    // and one that had already stopped asking reads "Replaced" too. A
+    // question it had is done.
+    const work = require('./work-state');
+    await work.publish(pool, await require('./bot-cards').retireFor(pool, {
+      appId: app.id, issueNumber, keep: [sent.cardId],
+    }));
     for (const card of await planCards(pool, { userId: requester.userId, appId: app.id, issueNumber })) {
       if (Number(card.message_id) === Number(sent.messageId) || card.meta?.status === 'answered' || card.meta?.replaced) continue;
-      await pool.query(
-        'UPDATE bot_cards SET status = \'declined\', decided_at = NOW(), error = \'replaced\' WHERE message_id = $1 AND status = \'open\'',
-        [card.message_id],
-      );
       await setQuestionState(pool, Number(card.message_id), { status: 'closed', replaced: true }, {
         ws, conversationId: card.conversation_id, userId: requester.userId,
       });
@@ -2536,10 +2555,9 @@ async function closePlanCards(pool, runIds, { stopped = false, ws = null, bot = 
     );
     let sender = bot;
     for (const row of rows) {
-      await pool.query(
-        'UPDATE bot_cards SET status = \'declined\', decided_at = NOW(), error = $2 WHERE message_id = $1 AND status = \'open\'',
-        [row.message_id, stopped ? 'stopped' : 'closed'],
-      );
+      // Its Build it card goes with the request's move out of waiting for
+      // its plan (bot-cards.js retireFor, from the standing); the card's
+      // message says how it stopped.
       await setQuestionState(pool, Number(row.message_id), stopped ? { status: 'closed', stopped: true } : { status: 'closed' }, {
         ws, conversationId: row.conversation_id, userId: row.user_id,
       });

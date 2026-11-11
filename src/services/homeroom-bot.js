@@ -5429,7 +5429,7 @@ async function postThreadNote(args) {
 }
 
 async function postThreadNoteNow({
-  pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId = null, metadata = null,
+  pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId = null, metadata = null, card = null,
 }) {
   try {
     if (sessionId) {
@@ -5440,15 +5440,17 @@ async function postThreadNoteNow({
       'INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind) VALUES ($1, $2, $3, $4)',
       [app.id, issueNumber, runId, kind],
     );
-    // #6211: an offer's metadata rides with the note, as a live reply's does:
-    // its buttons are drawn from the message, so the note is what ties them.
+    // #6211: an offer rides with the note, as a live reply's does: its card
+    // is written with the message (step 3, ws.sendBotMessage `card`), whose
+    // metadata its buttons are drawn from.
     const posted = await ws.sendBotMessage(pool, app.id, {
       user: bot, content: require('./homeroom-bot-words').firstPerson(text),
       thread: { type: 'issue', ref: Number(issueNumber) },
       ...(metadata ? { metadata } : {}),
+      ...(card ? { card } : {}),
     });
-    // `messageId` for a caller that ties an offer to it; true for the rest.
-    return posted?.id ? { messageId: Number(posted.id), message: posted } : true;
+    // The message and its card, for a caller that keeps them; true for the rest.
+    return posted?.id ? { messageId: Number(posted.id), message: posted, cardId: posted.cardId || null } : true;
   } catch (err) {
     log.warn('homeroom-bot', 'Could not post a note in the thread', { app: app?.slug, issueNumber, kind, err: err.message });
     return false;
@@ -6576,37 +6578,25 @@ async function runChecksFix(pool, config, {
     }).catch(() => []);
     // #6284: the stop offers Let it try again and Not now under its message,
     // like the bot's other offers in a thread. The buttons are for the
-    // requester; an admin presses the one on the Testing card.
-    let offer = null;
-    let offerFor = null;
+    // requester; an admin presses the one on the Testing card. Step 3: the
+    // card is written with the note (live.post `card`), inside the post the
+    // look says once, so a retried hand-off writes no second card. It names
+    // its request, whose standing retires it once it is no longer stopped.
+    let card = null;
     if (extra.limitStop && failing.length) {
       const dmModule = deps.dm || require('./homeroom-bot-dm');
       const who = typeof dmModule.requesterOf === 'function'
         ? await dmModule.requesterOf(pool, app.id, issueNumber).catch(() => null)
         : null;
-      offerFor = who?.userId ? Number(who.userId) : null;
-      // A thread's offer is one of Homeroom bot's cards (bot_cards, 5 Nov 2026).
-      const { rows: offerRows } = await pool.query(
-        `INSERT INTO bot_cards (place, app_id, kind, args, user_id)
-         VALUES ('thread', $1, 'try_again', $2, $3) RETURNING id`,
-        [app.id, JSON.stringify({ sessionId: Number(session.id) }), offerFor],
-      ).catch(() => ({ rows: [] }));
-      offer = offerRows[0] || null;
+      card = {
+        kind: 'try_again', forUserId: who?.userId ? Number(who.userId) : null,
+        args: { sessionId: Number(session.id), issueNumber: Number(issueNumber) },
+      };
     }
-    const offerMeta = offer ? {
-      homeroomBot: {
-        kind: 'voice',
-        offer: { id: Number(offer.id), kind: 'try_again', status: 'open', forUserId: offerFor },
-        actions: [
-          { id: 'yes', label: 'Let it try again', style: 'primary', offerId: Number(offer.id) },
-          { id: 'no', label: 'Not now', style: 'secondary', offerId: Number(offer.id) },
-        ],
-      },
-    } : null;
     const posted = await postOnce(look, 'followup_person', () => live.post({
       pool, github, ws: deps.ws, app, repo, issueNumber, kind: 'followup_person', runId, text,
       sender: bot, senderId: bot.id, mentions: targets, notifications: deps.notifications || null,
-      metadata: offerMeta,
+      ...(card ? { card } : {}),
       // Said where the group votes too: the checks are the proposal's.
       proposalSessionId: session.id,
       // Red checks a person must look at reach the requester as a stop
@@ -6618,15 +6608,6 @@ async function runChecksFix(pool, config, {
       log.warn('homeroom-bot', 'Checks hand-off post failed', { app: app.slug, issueNumber, err: err.message });
       return null;
     }));
-    // #6284: bind the offer to the message the post made, so a tap decides it
-    // (homeroom-bot-voice.decideOffer finds the offer by its message).
-    if (offer && posted?.postId) {
-      await pool.query(
-        `UPDATE bot_cards o SET chat_message_id = p.thread_message_id
-           FROM homeroom_bot_posts p WHERE o.id = $1 AND o.place = 'thread' AND p.id = $2 AND p.thread_message_id IS NOT NULL`,
-        [offer.id, posted.postId],
-      ).catch(() => {});
-    }
     await live.advanceSeen({
       pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt,
       postedAt: posted?.githubCreatedAt ? [posted.githubCreatedAt] : [], proposalSessionId: session.id,
@@ -7793,7 +7774,9 @@ async function actOnVerdict({
   // #6321: an "already works" note carries Propose to close and Keep it open,
   // for any member (for nobody in particular: bot-voice's tapGuard), unless a
   // vote on closing the request is already open. The tap reads every gate
-  // again (mayor.closeGate). Resolves the stored offer, or null.
+  // again (mayor.closeGate). Resolves the card to write with the note
+  // (step 3: live.post's `card`, written in the note's own transaction), or
+  // null.
   const doneCloseOffer = async () => {
     const { rows: open } = await pool.query(
       `SELECT id FROM issues
@@ -7804,35 +7787,10 @@ async function actOnVerdict({
       return { rows: [{}] };
     });
     if (open.length) return null;
-    return voiceModule(deps).threadOffer(pool, {
-      app, kind: 'close_request', forUserId: null,
+    return {
+      kind: 'close_request', forUserId: null,
       args: { issueNumber, title: issue?.title || null, why: clip(parsed.reason, 500) },
-    });
-  };
-  // The note it went under was posted, or it was not and the offer goes.
-  // #6582: the message id comes from the step's own result, or, for a result
-  // stored before that carried it, from the post row it made. The offer is
-  // dropped only when the post made no message at all, or when the message
-  // names a different offer (a cached post from an earlier attempt).
-  const settleThreadOffer = async (offer, posted) => {
-    if (!offer) return;
-    const voice = voiceModule(deps);
-    let messageId = posted?.messageId ? Number(posted.messageId) : null;
-    if (!messageId && posted?.postId) {
-      const { rows: [row] } = await pool.query(
-        'SELECT thread_message_id FROM homeroom_bot_posts WHERE id = $1', [Number(posted.postId)],
-      ).catch(() => ({ rows: [] }));
-      if (row?.thread_message_id) messageId = Number(row.thread_message_id);
-    }
-    if (!messageId) return voice.dropThreadOffer(pool, offer.id);
-    const { rows: [message] } = await pool.query(
-      'SELECT metadata FROM chat_messages WHERE id = $1', [messageId],
-    ).catch(() => ({ rows: [] }));
-    const named = Number(message?.metadata?.homeroomBot?.offer?.id);
-    if (Number.isSafeInteger(named) && named > 0 && named !== Number(offer.id)) {
-      return voice.dropThreadOffer(pool, offer.id);
-    }
-    await voice.tieThreadOffer(pool, offer.id, messageId);
+    };
   };
   if (!gate.speak) {
     log.info('homeroom-bot', 'Live note not repeated: nobody addressed the bot', {
@@ -7942,24 +7900,24 @@ async function actOnVerdict({
       // chat with the bot offered when the request's news went there (a
       // first version's still does: homeroom-bot-dm.js relayIssuePost).
       const copyOffer = parsed.platform && Number.isSafeInteger(Number(requester?.userId)) && Number(requester.userId) > 0
-        ? await voiceModule(deps).threadOffer(pool, {
-          app, kind: requester.firstVersion ? 'copy_request' : 'move_request', forUserId: Number(requester.userId), args: { issueNumber },
-        }).catch(() => null)
+        ? { kind: requester.firstVersion ? 'copy_request' : 'move_request', forUserId: Number(requester.userId), args: { issueNumber } }
         : null;
       // #6321: a note about Homeroom itself is never `done`, so never both.
-      // #6413: a withdrawn request gets the same close offer.
-      const threadOffer = copyOffer || (parsed.done || withdrawnNote ? await doneCloseOffer() : null);
-      const noteMeta = threadOffer?.metadata
-        ? { kind: 'voice', ...threadOffer.metadata }
+      // #6413: a withdrawn request gets the same close offer. The card is
+      // written with the note (live.post `card`), so its buttons always work.
+      const threadCard = copyOffer || (parsed.done || withdrawnNote ? await doneCloseOffer() : null);
+      const noteMeta = threadCard
+        ? null
         : (suggestActions.length && suggestFor.length
           ? {
             kind: 'note', suggest: { status: 'open', forUserIds: suggestFor },
             actions: suggestActions, othersActions: suggestOthers,
           }
           : null);
-      const posted = await say('person', live.personText({ ...parsed, project }), {
+      await say('person', live.personText({ ...parsed, project }), {
         homeroomText: noteText,
         ...(noteMeta ? { metadata: { homeroomBot: noteMeta } } : {}),
+        ...(threadCard ? { card: threadCard } : {}),
         dm: {
           reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
           ...(parsed.done ? { done: true } : {}),
@@ -7971,7 +7929,6 @@ async function actOnVerdict({
           ...(withdrawnNote ? { withdrawn: true, quiet: true } : {}),
         },
       });
-      await settleThreadOffer(threadOffer, posted);
     }
   } else if (parsed.verdict === 'empty') {
     // #6321: nothing to build because it is already there says that, not
@@ -7991,16 +7948,15 @@ async function actOnVerdict({
         app: app.slug, issueNumber, verdict: parsed.verdict,
       });
     } else {
-      const closeOffer = closeWanted ? await doneCloseOffer() : null;
-      const posted = await say('empty', closeWanted ? live.personText(parsed) : live.emptyText(parsed), {
+      const closeCard = closeWanted ? await doneCloseOffer() : null;
+      await say('empty', closeWanted ? live.personText(parsed) : live.emptyText(parsed), {
         ...(closeWanted ? { homeroomText: noteText } : {}),
-        ...(closeOffer?.metadata ? { metadata: { homeroomBot: { kind: 'voice', ...closeOffer.metadata } } } : {}),
+        ...(closeCard ? { card: closeCard } : {}),
         dm: {
           reason: parsed.reason, ...(parsed.done ? { done: true } : {}),
           ...(withdrawnNote ? { withdrawn: true, quiet: true } : {}), ...quiet,
         },
       });
-      await settleThreadOffer(closeOffer, posted);
     }
   } else if (parsed.verdict === 'ready') {
     // C2.3: a plan a person posted on the request (usePersonPlan).

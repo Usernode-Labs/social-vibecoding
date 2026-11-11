@@ -262,11 +262,13 @@ async function offerOverlap(pool, {
       ...(overlap.otherTitle ? { otherTitle: clip(overlap.otherTitle, TITLE_MAX_CHARS) } : {}),
       ...(requester?.username ? { requester: requester.username } : {}),
     };
-    const voice = deps.voiceSvc || require('./homeroom-bot-voice');
     // With nobody to ask, the note is still said: it is news for the thread.
-    const offer = forUserId
-      ? await voice.threadOffer(pool, { app, kind: 'overlap', forUserId, args }).catch(() => null)
-      : null;
+    // Step 3: its card is written with the note (postThreadNoteNow `card`),
+    // and the pair's claim names it in the same transaction.
+    const card = forUserId ? {
+      kind: 'overlap', forUserId, args,
+      onInsert: (db, { cardId }) => db.query('UPDATE homeroom_bot_overlap_offers SET offer_id = $2 WHERE id = $1', [claim.id, cardId]),
+    } : null;
     const text = overlapText({
       kind: overlap.kind, other, otherTitle: args.otherTitle, why: args.why,
       domain: domain || domainOf(deps), appSlug: app.slug,
@@ -274,24 +276,18 @@ async function offerOverlap(pool, {
     const postNote = (deps.botSvc || require('./homeroom-bot')).postThreadNoteNow;
     const posted = await postNote({
       pool, ws: ws || wsOf(deps), app, issueNumber: n, kind: 'overlap', text, bot,
-      metadata: offer?.metadata ? { homeroomBot: { kind: 'voice', ...offer.metadata } } : null,
+      ...(card ? { card } : {}),
     });
     if (!posted) {
-      if (offer) await voice.dropThreadOffer(pool, offer.id).catch(() => null);
       await pool.query('DELETE FROM homeroom_bot_overlap_offers WHERE id = $1', [claim.id])
         .catch((err) => log.warn('homeroom-bot-overlap', 'Could not give up an overlap note\'s pair', {
           app: app.slug, issueNumber: n, other, err: err.message,
         }));
       return false;
     }
-    if (offer) {
-      if (posted.messageId) await voice.tieThreadOffer(pool, offer.id, posted.messageId).catch(() => null);
-      else await voice.dropThreadOffer(pool, offer.id).catch(() => null);
-      await pool.query('UPDATE homeroom_bot_overlap_offers SET offer_id = $2 WHERE id = $1', [claim.id, offer.id])
-        .catch(() => null);
-    }
+    const cardId = Number(posted?.cardId) || null;
     log.info('homeroom-bot-overlap', 'Offered an overlap to a request\'s requester', {
-      app: app.slug, issueNumber: n, other, kind: overlap.kind, asked: !!offer,
+      app: app.slug, issueNumber: n, other, kind: overlap.kind, asked: !!cardId,
     });
     return true;
   } catch (err) {

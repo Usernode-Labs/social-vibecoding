@@ -1105,10 +1105,13 @@ const DM_TAP = new Map<string, { status: number; error: string }>([
   ['already_decided', { status: 409, error: 'already_decided' }],
   ['wrong_choice', { status: 400, error: 'choice must be yes, no or build' }],
 ]);
-function tapAnswer(out: EventOutcome, refusals: Map<string, { status: number; error: string }>): { ok: boolean; status?: number; error?: string; pending?: boolean } {
+// A refusal names its `code` (the machine's reason) too, for the line the
+// buttons leave behind in the reader's language (step 3, 11 Nov 2026).
+function tapAnswer(out: EventOutcome, refusals: Map<string, { status: number; error: string }>): { ok: boolean; status?: number; error?: string; code?: string; pending?: boolean } {
   if (out.status === 'accepted' || out.status === 'replayed') return { ok: true };
   if (out.status === 'pending') return { ok: true, pending: true };
-  return { ok: false, ...(refusals.get(String(out.reason)) || { status: 409, error: 'That didn\'t work just now.' }) };
+  const known = refusals.get(String(out.reason));
+  return { ok: false, ...(known || { status: 409, error: 'That didn\'t work just now.' }), code: known ? String(out.reason) : 'failed' };
 }
 
 // A tap under one of the voice's offers (routes/chat.js): decided once in

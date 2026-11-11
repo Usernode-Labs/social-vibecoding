@@ -2242,9 +2242,18 @@ async function sendSystemMessage(pool, appId, content, msgType = 'system', metad
  * this too, as that person: the same thread card, and it should not wake the
  * bot either. Its route has already applied the membership and collaborator
  * gates this function skips.
+ *
+ * `card` (step 3, 11 Nov 2026, services/bot-cards.js): an offer with buttons
+ * under the message ({ kind, args, forUserId }). The card is written in the
+ * message's own transaction, before it: its id goes into the metadata (the
+ * offer and each button name it), the message is written, and the card's
+ * chat_message_id is set, all committed together, then the room hears it.
+ * So buttons on screen always have their card. `card.onInsert(db, { cardId,
+ * messageId })` is the caller's own write in that transaction. Resolves
+ * `cardId` too.
  */
 const BOT_MESSAGE_TYPES = new Set(['message', 'spec_share']);
-async function sendBotMessage(pool, appId, { user, content, metadata = null, thread = null, msgType = 'message', attachmentIds = null } = {}) {
+async function sendBotMessage(pool, appId, { user, content, metadata = null, thread = null, msgType = 'message', attachmentIds = null, card = null } = {}) {
   if (!thread || !user || !Number.isInteger(Number(user.id))) return null;
   const text = String(content || '').trim().slice(0, MAX_CHAT_LEN);
   if (!text) return null;
@@ -2279,19 +2288,32 @@ async function sendBotMessage(pool, appId, { user, content, metadata = null, thr
       })),
     };
   }
-  const { rows } = await pool.query(
-    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
-     VALUES ($1, $2, $3, $7, $4, $5, $6)
-     RETURNING id, created_at`,
-    [appId, Number(user.id), text, JSON.stringify(allMetadata), thread.type, thread.ref, kind]
-  );
-  if (attRows.length) {
-    await pool.query(
-      `UPDATE chat_message_attachments SET message_id = $1
-        WHERE id = ANY($2) AND user_id = $3 AND message_id IS NULL`,
-      [rows[0].id, attIds, Number(user.id)]
+  const botCards = require('./bot-cards');
+  const write = async (db) => {
+    const made = card ? await botCards.insertCard(db, { ...card, place: 'thread', appId }) : null;
+    if (made) allMetadata = botCards.withThreadCard(allMetadata, made);
+    const { rows: [row] } = await db.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
+       VALUES ($1, $2, $3, $7, $4, $5, $6)
+       RETURNING id, created_at`,
+      [appId, Number(user.id), text, JSON.stringify(allMetadata), thread.type, thread.ref, kind]
     );
-  }
+    if (made) {
+      await db.query('UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1', [made.id, row.id]);
+      // The caller's own write about the card, committed with it.
+      if (typeof card.onInsert === 'function') await card.onInsert(db, { cardId: Number(made.id), messageId: Number(row.id) });
+    }
+    if (attRows.length) {
+      await db.query(
+        `UPDATE chat_message_attachments SET message_id = $1
+          WHERE id = ANY($2) AND user_id = $3 AND message_id IS NULL`,
+        [row.id, attIds, Number(user.id)]
+      );
+    }
+    return { row, cardId: made ? Number(made.id) : null };
+  };
+  const { row: saved, cardId } = card ? await botCards.inTransaction(pool, write) : await write(pool);
+  const rows = [saved];
   // A reply in a reply thread names its root, as a person's does, so the
   // stream the root is in can draw it (the bot's voice answers there).
   let threadRoot = null;
@@ -2313,13 +2335,13 @@ async function sendBotMessage(pool, appId, { user, content, metadata = null, thr
     username: user.username,
     content: text,
     msgType: kind,
-    ...(attRows.length || metadata ? { metadata: allMetadata } : {}),
+    ...(attRows.length || metadata || cardId ? { metadata: allMetadata } : {}),
     thread,
     ...(threadRoot ? { threadRoot } : {}),
     createdAt: rows[0].created_at,
     postedVia: null,
   }, Number(user.id));
-  return { id: rows[0].id, createdAt: rows[0].created_at };
+  return { id: rows[0].id, createdAt: rows[0].created_at, ...(cardId ? { cardId } : {}) };
 }
 
 /**

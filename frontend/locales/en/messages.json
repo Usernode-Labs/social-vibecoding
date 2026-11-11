@@ -6070,5 +6070,45 @@
   "frame.new.orElse": {
     "text": "Or else",
     "description": "New message when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the label over the one other kind of chat the sheet can start, an agent chat, under the people."
+  },
+  "bot.offer.expired": {
+    "text": "This offer has expired.",
+    "description": "In place of the buttons under an offer from Homeroom bot in a chat with it, once the offer is more than 14 days old and can no longer be chosen."
+  },
+  "bot.offer.retired.closeVote": {
+    "text": "No longer needed: a vote on closing this request is open.",
+    "description": "In place of the buttons under an offer from Homeroom bot in a chat with it, once a vote on closing the request it was about has opened."
+  },
+  "bot.offer.retired.closed": {
+    "text": "No longer needed: this is closed.",
+    "description": "In place of the buttons under an offer from Homeroom bot in a chat with it, once the request or change it was about has been closed."
+  },
+  "bot.offer.retired.building": {
+    "text": "No longer needed: building it has started.",
+    "description": "In place of the buttons under an offer from Homeroom bot in a chat with it, once the request it was about started being built."
+  },
+  "bot.offer.retired.movedOn": {
+    "text": "No longer needed: things have moved on since.",
+    "description": "In place of the buttons under an offer from Homeroom bot in a chat with it, once the request or change it was about moved to a stage where the choice no longer applies."
+  },
+  "bot.offer.retired.superseded": {
+    "text": "No longer needed: a newer message offers this.",
+    "description": "In place of the buttons under an offer from Homeroom bot in a chat with it, once a newer message from the bot offered the same choice again."
+  },
+  "bot.offer.retired.other": {
+    "text": "No longer needed.",
+    "description": "In place of the buttons under an offer from Homeroom bot in a chat with it, once the offer no longer applies, when no more specific reason is known."
+  },
+  "bot.offer.refused.alreadyDecided": {
+    "text": "That was already decided.",
+    "description": "The line under the buttons of an offer from Homeroom bot in a chat with it, when a button was pressed after the offer had already been answered, here or on another device."
+  },
+  "bot.offer.refused.gone": {
+    "text": "This offer is no longer available.",
+    "description": "The line under the buttons of an offer from Homeroom bot in a chat with it, when the offer behind them no longer exists."
+  },
+  "bot.offer.refused.failed": {
+    "text": "That didn’t work just now. Try again in a moment.",
+    "description": "The line under the buttons of an offer from Homeroom bot in a chat with it, when pressing one could not be sent or the server gave no reason of its own."
   }
 }

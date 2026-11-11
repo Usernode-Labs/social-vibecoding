@@ -261,7 +261,9 @@ test('the bring-a-friend nudge, against the real schema', { timeout: 180000 }, a
     const both = await Promise.all([1, 2].map(() => nudges.claim(pool, { userId: sol, appId: runClub.id, deps })));
     assert.equal(both.filter((c) => c.nudgeId).length, 1);
     assert.deepEqual(both.filter((c) => !c.nudgeId), [{ skipped: 'not_due' }]);
-    assert.equal(Number((await one(`SELECT COUNT(*) AS n FROM bot_cards WHERE user_id = $1 AND kind = 'invite_friends'`, [sol])).n), 1);
+    assert.equal(Number((await one('SELECT COUNT(*) AS n FROM invite_nudges WHERE user_id = $1', [sol])).n), 1);
+    // Its card is written with its message (step 3), not by the claim.
+    assert.equal(Number((await one(`SELECT COUNT(*) AS n FROM bot_cards WHERE user_id = $1 AND kind = 'invite_friends'`, [sol])).n), 0);
   });
 
   await t.test('one a week across projects', async () => {
@@ -281,9 +283,9 @@ test('the bring-a-friend nudge, against the real schema', { timeout: 180000 }, a
     const user = { id: uma };
     const deps = { ws: { pushConversationEvent: (ids, event) => { pushed.push({ ids, event }); return 1; } } };
     assert.deepEqual(await mayor.decideOfferTap(pool, {}, { user, actionId: card, choice: 'yes', deps }),
-      { ok: false, status: 400, error: 'choice must be no' }, 'Invite people is the device\'s');
+      { ok: false, status: 400, error: 'choice must be no', code: 'no_such_choice' }, 'Invite people is the device\'s');
     assert.deepEqual(await mayor.decideOfferTap(pool, {}, { user: { id: maker }, actionId: card, choice: 'no', deps }),
-      { ok: false, status: 404, error: 'No such choice' }, 'only theirs');
+      { ok: false, status: 404, error: 'No such choice', code: 'no_such_offer' }, 'only theirs');
     const out = await mayor.decideOfferTap(pool, {}, { user, actionId: card, choice: 'no', deps });
     assert.deepEqual(out, { ok: true, choice: 'no', label: 'Not now' });
     assert.equal((await one('SELECT status FROM bot_cards WHERE id = $1', [card])).status, 'declined');
@@ -300,7 +302,7 @@ test('the bring-a-friend nudge, against the real schema', { timeout: 180000 }, a
     assert.equal((await ids()).has(uma), false);
   });
 
-  await t.test('a chat that refuses the message: nothing sent, its card failed, and not asked again', async () => {
+  await t.test('a chat that refuses the message: nothing sent, no card, and not asked again', async () => {
     const tam = Number((await one('SELECT id FROM users WHERE username = $1', ['tam'])).id);
     const sent = await nudges.nudge(pool, { userId: tam, appId: runClub.id }, steps(), {
       dm: { ...require('../src/services/homeroom-bot-dm'), sendDm: async () => null },
@@ -308,7 +310,7 @@ test('the bring-a-friend nudge, against the real schema', { timeout: 180000 }, a
     assert.deepEqual(sent, { said: 'not_sent' });
     const row = await one('SELECT * FROM invite_nudges WHERE user_id = $1', [tam]);
     assert.equal(row.sent_at, null);
-    assert.equal((await one('SELECT status FROM bot_cards WHERE id = $1', [row.card_id])).status, 'failed');
+    assert.equal(row.card_id, null, 'no card without its message');
     assert.equal((await ids()).has(tam), false);
   });
 });

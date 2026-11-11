@@ -830,22 +830,24 @@ test('a tap under an offer is the person\'s own, from their browser, and members
   const routes = read('src/routes/chat.js');
   const at = routes.indexOf("router.post('/api/apps/:slug/messages/:id/bot-offer'");
   assert.ok(at > 0);
-  const route = routes.slice(at, at + 1400);
+  const route = routes.slice(at, at + 2400);
   assert.match(route, /groupChatWriteLimiter, sameOriginBrowserOnly,\s*communities\.requireAppMembership\(pool\)/);
   // #6211: an overlap note's third choice (build this one first) is accepted too.
   assert.match(route, /if \(choice !== 'yes' && choice !== 'no' && choice !== 'first'\)/);
   assert.match(route, /appAccess\.getAppForUser\(pool, req\.params\.slug, req\.user, 'collab'/);
   assert.match(route, /decideOffer\(pool, config, \{/);
+  // Step 3: the card the buttons are for, by its id.
+  assert.match(route, /app, user: req\.user, messageId: id, offerId, choice, rows,/);
 });
 
 test('the chat draws an offer\'s buttons for the person it is for, and takes them away when it is decided', () => {
   const gc = read('public/js/group-chat.js');
   assert.match(gc, /case 'chat_message_updated': \{/);
-  assert.match(gc, /botOffer: GroupChat\._botOfferView\(kind === 'message' && !deleted \? meta : null\)/);
+  assert.match(gc, /botOffer: GroupChat\._botOfferView\(kind === 'message' && !deleted \? meta : null, msg\.id\)/);
   assert.match(gc, /\/messages\/\$\{Number\(messageId\)\}\/bot-offer/);
   const tx = read('frontend/src/features/group-chat/transcript.tsx');
   assert.match(tx, /msg\.botOffer && msg\.botOffer\.forMe && msg\.botOffer\.status === 'open'/);
-  assert.match(tx, /controller\(\)\?\.decideBotOffer\?\.\(id, choice, many \? picks : undefined\)/);
+  assert.match(tx, /controller\(\)\?\.decideBotOffer\?\.\(id, choice, many \? picks : undefined, offer\.id\)/);
 });
 
 test('the voice\'s module and its tables say what they are for', () => {

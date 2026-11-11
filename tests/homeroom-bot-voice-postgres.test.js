@@ -158,15 +158,15 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
 
   const sent = [];
   const broadcasts = [];
+  // The real write (a card with its message, step 3), with what it wrote kept.
+  const realWs = require('../src/services/ws');
   const ws = {
-    async sendBotMessage(p, appId, { user: from, content, metadata = null, thread }) {
-      const { rows: [row] } = await p.query(
-        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
-         VALUES ($1, $2, $3, 'message', $4, $5, $6) RETURNING id, created_at`,
-        [appId, from.id, content, JSON.stringify(metadata || {}), thread.type, thread.ref],
-      );
-      sent.push({ id: row.id, content, metadata, thread });
-      return { id: row.id, createdAt: row.created_at };
+    async sendBotMessage(p, appId, args) {
+      const out = await realWs.sendBotMessage(p, appId, args);
+      if (!out?.id) return out;
+      const { rows: [row] } = await p.query('SELECT content, metadata FROM chat_messages WHERE id = $1', [out.id]);
+      sent.push({ id: Number(out.id), content: row.content, metadata: row.metadata, thread: args.thread, cardId: out.cardId || null });
+      return out;
     },
     broadcast(appId, frame) { broadcasts.push(frame); },
     async broadcastThreadSummary() {},
@@ -638,75 +638,37 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.ok(broadcasts.some((f) => f.type === 'chat_message_updated' && f.id === sent[0].id));
   });
 
-  await t.test('#6582: a close offer never linked to its note is still decided through the note\'s own id', async () => {
-    sent.length = 0;
-    const offer = await voice.threadOffer(pool, {
-      app, kind: 'close_request', forUserId: null, args: { issueNumber: 12, title: 'Blue header' },
-    });
-    const note = await say(homeroomBot, 'Already works.', { type: 'issue', ref: 12 }, { homeroomBot: offer.metadata });
-    // The link write was lost: the offer is untied, and its note names it.
-    const { rows: [before] } = await pool.query('SELECT chat_message_id FROM bot_cards WHERE id = $1', [offer.id]);
-    assert.equal(before.chat_message_id, null);
-    const tapped = [];
-    const replies = { async tapVoiceOffer(args) { tapped.push(args); return { ok: true }; } };
-    const out = await voice.decideOffer(pool, {}, { app, user: sam, messageId: note, choice: 'yes', deps: { replies } });
-    assert.equal(out.ok, true);
-    assert.deepEqual(tapped, [{ appId: app.id, offerId: offer.id, messageId: note, userId: sam.id, choice: 'yes' }]);
-    const { rows: [after] } = await pool.query('SELECT chat_message_id FROM bot_cards WHERE id = $1', [offer.id]);
-    assert.equal(Number(after.chat_message_id), note, 'tied through the id the note names');
-  });
-
-  await t.test('#6582: an offer named from another project, or made for another request, is refused and the note marked gone', async () => {
-    broadcasts.length = 0;
-    const replies = { async tapVoiceOffer() { throw new Error('never decided'); } };
-    const { rows: [elsewhere] } = await pool.query(
-      `INSERT INTO apps (name, slug, status, created_by, repo_url, view_visibility, collab_visibility)
-       VALUES ('Other', 'other-project', 'running', $1, 'https://github.com/usernode-bot/other', 'public', 'public') RETURNING id`,
-      [evan.id],
-    );
-    // Another project's offer, named by this project's note.
-    const foreign = await voice.threadOffer(pool, { app: { id: elsewhere.id }, kind: 'close_request', args: { issueNumber: 12 } });
-    const foreignNote = await say(homeroomBot, 'Already works.', { type: 'issue', ref: 12 }, { homeroomBot: foreign.metadata });
-    const refused = await voice.decideOffer(pool, {}, { app, user: sam, messageId: foreignNote, choice: 'yes', deps: { replies, ws } });
-    assert.deepEqual([refused.ok, refused.status], [false, 410]);
-    const { rows: [gone] } = await pool.query('SELECT metadata FROM chat_messages WHERE id = $1', [foreignNote]);
-    assert.equal(gone.metadata.homeroomBot.offer.status, 'gone');
-    assert.deepEqual(gone.metadata.homeroomBot.actions, [], 'the buttons go for everybody');
-    assert.ok(broadcasts.some((f) => f.type === 'chat_message_updated' && f.id === foreignNote));
-
-    // This project's offer, but made for another request.
-    const wrongRequest = await voice.threadOffer(pool, { app, kind: 'close_request', args: { issueNumber: 13 } });
-    const otherNote = await say(homeroomBot, 'Already works.', { type: 'issue', ref: 12 }, { homeroomBot: wrongRequest.metadata });
-    const refusedToo = await voice.decideOffer(pool, {}, { app, user: sam, messageId: otherNote, choice: 'yes', deps: { replies, ws } });
-    assert.deepEqual([refusedToo.ok, refusedToo.status], [false, 410]);
-    const { rows: [otherGone] } = await pool.query('SELECT metadata FROM chat_messages WHERE id = $1', [otherNote]);
-    assert.equal(otherGone.metadata.homeroomBot.offer.status, 'gone');
-  });
-
-  await t.test('#6582: a note whose offer row was deleted shows no live buttons', async () => {
-    sent.length = 0;
-    const offer = await voice.threadOffer(pool, { app, kind: 'close_request', args: { issueNumber: 12 } });
-    const note = await say(homeroomBot, 'Already works.', { type: 'issue', ref: 12 }, { homeroomBot: offer.metadata });
-    await pool.query('DELETE FROM bot_cards WHERE id = $1', [offer.id]);
-    const out = await voice.decideOffer(pool, {}, { app, user: sam, messageId: note, choice: 'yes', deps: { replies: {}, ws } });
-    assert.deepEqual([out.ok, out.status], [false, 410]);
-    assert.equal(out.error, 'That offer is no longer available.');
-    const { rows: [row] } = await pool.query('SELECT metadata FROM chat_messages WHERE id = $1', [note]);
-    assert.equal(row.metadata.homeroomBot.offer.status, 'gone');
-    assert.deepEqual(row.metadata.homeroomBot.actions, []);
-  });
-
-  await t.test('#6582: posting a note ties its offer to the message in the same step', async () => {
-    const offer = await voice.threadOffer(pool, { app, kind: 'close_request', forUserId: null, args: { issueNumber: 12 } });
+  // Step 3 (11 Nov 2026): what #6582 fixed after the fact can no longer
+  // happen. A card is written with its note (tests/bot-cards-postgres.test.js
+  // pins the store's side: a tap by id, another message's, another project's).
+  await t.test('#6582, step 3: posting a note writes its card with the message, in the same step', async () => {
     const github = { async createIssueComment() { return { id: 9001, created_at: new Date().toISOString() }; } };
     const out = await require('../src/services/homeroom-bot-live').post({
       pool, github, ws, app, repo: { owner: 'o', repo: 'r' }, issueNumber: 12, kind: 'person', text: 'Already works.',
       sender: homeroomBot, senderId: homeroomBot.id,
-      metadata: { homeroomBot: { kind: 'voice', ...offer.metadata } },
+      card: { kind: 'close_request', forUserId: null, args: { issueNumber: 12 } },
     });
     assert.ok(out.messageId);
-    const { rows: [row] } = await pool.query('SELECT chat_message_id FROM bot_cards WHERE id = $1', [offer.id]);
-    assert.equal(Number(row.chat_message_id), Number(out.messageId));
+    assert.ok(out.cardId);
+    const { rows: [row] } = await pool.query('SELECT chat_message_id, kind, status FROM bot_cards WHERE id = $1', [out.cardId]);
+    assert.deepEqual([Number(row.chat_message_id), row.kind, row.status], [Number(out.messageId), 'close_request', 'open']);
+    const { rows: [note] } = await pool.query('SELECT metadata FROM chat_messages WHERE id = $1', [out.messageId]);
+    assert.equal(note.metadata.homeroomBot.offer.id, out.cardId);
+    assert.ok(note.metadata.hrbotPost, 'the post keeps its own mark beside the card');
+
+    // A tap through the note finds it; with its row deleted, the buttons go.
+    const tapped = [];
+    const replies = { async tapVoiceOffer(args) { tapped.push(args); return { ok: true }; } };
+    const routed = await voice.decideOffer(pool, {}, { app, user: sam, messageId: out.messageId, offerId: out.cardId, choice: 'yes', deps: { replies } });
+    assert.equal(routed.ok, true);
+    assert.deepEqual(tapped.map((a) => a.offerId), [out.cardId]);
+    await pool.query('DELETE FROM bot_cards WHERE id = $1', [out.cardId]);
+    const gone = await voice.decideOffer(pool, {}, { app, user: sam, messageId: out.messageId, choice: 'yes', deps: { replies: {}, ws } });
+    assert.deepEqual([gone.ok, gone.status, gone.code], [false, 410, 'gone']);
+    assert.equal(gone.error, 'That offer is no longer available.');
+    const { rows: [after] } = await pool.query('SELECT metadata FROM chat_messages WHERE id = $1', [out.messageId]);
+    assert.equal(after.metadata.homeroomBot.offer.status, 'gone');
+    assert.deepEqual(after.metadata.homeroomBot.actions, []);
   });
 
   await t.test('a tap on Propose to close reports the vote with the request\'s link', async () => {
@@ -1414,102 +1376,6 @@ test('retireThreadSuggestions closes only older open sets in the same thread', {
   // Nothing to retire, and a thread the voice has no place in: a quiet no-op.
   await voice.retireThreadSuggestions(pool, { appId: app.id, thread: { type: 'chat', ref: null }, keepMessageId: 1, deps: {} });
   await voice.retireThreadSuggestions(pool, { appId: app.id, thread: { type: 'issue', ref: 7 }, keepMessageId: 0, deps: {} });
-});
-
-// #6535: a plan that starts building overtakes an overlap question asked in
-// the same request before it. The question keeps its words and loses its
-// buttons; other offers, a question asked later, and another request's
-// question keep theirs. A plan that is replaced instead closes nothing.
-test('#6535: a plan that starts building closes the overlap question before it', { timeout: 120000 }, async (t) => {
-  const pool = await openDatabase(t);
-  if (!pool) return;
-  const live = require('../src/services/homeroom-bot-live');
-  const { rows: [app] } = await pool.query(
-    "INSERT INTO apps (name, slug) VALUES ('Overlap plan demo', 'overlap-plan-demo') RETURNING id",
-  );
-  const insert = async (ref, meta, { msgType = 'message', content = 'the bot said something' } = {}) => (await pool.query(
-    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata)
-     VALUES ($1, NULL, $2, $3, 'issue', $4, $5) RETURNING id`,
-    [app.id, content, msgType, ref, JSON.stringify(meta)],
-  )).rows[0].id;
-  const card = async (kind) => (await pool.query(
-    `INSERT INTO bot_cards (place, app_id, kind, args) VALUES ('thread', $1, $2, '{}') RETURNING id`,
-    [app.id, kind],
-  )).rows[0].id;
-  const overlapMeta = (id, status = 'open') => ({
-    homeroomBot: {
-      kind: 'voice',
-      offer: { id, kind: 'overlap', status },
-      actions: [
-        { id: 'yes', label: 'Build #6533 first', style: 'primary', type: 'prompt' },
-        { id: 'first', label: 'Build this one first', style: 'secondary', type: 'prompt' },
-        { id: 'no', label: 'Keep separate', style: 'secondary', type: 'prompt' },
-      ],
-    },
-  });
-  const fileItMeta = (id) => ({
-    homeroomBot: {
-      kind: 'voice',
-      offer: { id, kind: 'file_request', status: 'open' },
-      actions: [{ id: 'yes', label: 'File it', style: 'primary', type: 'prompt' }],
-    },
-  });
-  const plan = async (ref) => {
-    const { rows: [run] } = await pool.query(
-      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, $2, 'live', 'ready') RETURNING id`,
-      [app.id, ref],
-    );
-    const row = await insert(ref, { specShare: { sessionId: 1, version: 1, botNote: 'waiting' } }, {
-      msgType: 'spec_share', content: '📋 Plan v1. Nothing is built yet. Waiting for @evan to say Build it.',
-    });
-    await pool.query(
-      `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind, thread_message_id)
-       VALUES ($1, $2, $3, 'plan', $4)`,
-      [app.id, ref, run.id, row],
-    );
-    return { runId: Number(run.id), row: Number(row) };
-  };
-  const metaOf = async (id) => (await pool.query('SELECT metadata FROM chat_messages WHERE id = $1', [id])).rows[0].metadata;
-  const statusOf = async (id) => (await pool.query('SELECT status FROM bot_cards WHERE id = $1', [id])).rows[0].status;
-
-  const oldCard = await card('overlap');
-  const old = await insert(7, overlapMeta(oldCard));
-  const fileCard = await card('file_request');
-  const file = await insert(7, fileItMeta(fileCard));
-  const planned = await plan(7);
-  // Asked after the plan row (higher id): it is not overtaken.
-  const newCard = await card('overlap');
-  const newer = await insert(7, overlapMeta(newCard));
-  // Another request's question, older than this plan's row: untouched.
-  const otherCard = await card('overlap');
-  const elsewhere = await insert(12, overlapMeta(otherCard));
-
-  const frames = [];
-  const ws = { broadcast(appId, frame) { frames.push({ appId, frame }); } };
-  assert.equal(await live.notePlanRows(pool, [planned.runId], 'building', { ws }), 1);
-
-  const closed = await metaOf(old);
-  assert.deepEqual(closed.homeroomBot.actions, [], 'the three buttons go');
-  assert.deepEqual(closed.homeroomBot.othersActions, []);
-  assert.equal(closed.homeroomBot.offer.status, 'expired');
-  assert.equal(await statusOf(oldCard), 'expired', 'a tap from a screen that has not drawn again does nothing');
-  assert.deepEqual((await metaOf(file)).homeroomBot.actions.map((a) => a.id), ['yes'], 'File it keeps its button');
-  assert.equal(await statusOf(fileCard), 'open');
-  assert.equal((await metaOf(newer)).homeroomBot.offer.status, 'open', 'asked after the plan row');
-  assert.deepEqual((await metaOf(newer)).homeroomBot.actions.length, 3);
-  assert.equal((await metaOf(elsewhere)).homeroomBot.offer.status, 'open', 'another request is untouched');
-  assert.equal(await statusOf(otherCard), 'open');
-  assert.deepEqual(frames.filter((f) => f.frame.type === 'chat_message_updated' && f.frame.id === old)
-    .map((f) => f.frame.thread), [{ type: 'issue', ref: 7 }], 'everybody reading hears it once');
-
-  // A plan replaced instead of built leaves the question open.
-  const replacedCard = await card('overlap');
-  const replaced = await insert(7, overlapMeta(replacedCard));
-  const again = await plan(7);
-  assert.equal(await live.notePlanRows(pool, [again.runId], 'replaced', { ws }), 1);
-  assert.equal((await metaOf(replaced)).homeroomBot.offer.status, 'open');
-  assert.equal(await statusOf(replacedCard), 'open');
-  assert.equal((await metaOf(replaced)).homeroomBot.actions.length, 3);
 });
 
 // #6391: the queries say() runs for a thread's two button sets, on the real

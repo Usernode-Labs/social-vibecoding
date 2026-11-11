@@ -3838,9 +3838,9 @@ async function seedStagingBotOverlap(pool) {
 // #6535's shots: the same overlap note on #9115, with its plan now building.
 // The change closes the question's buttons when that happens; nothing here
 // runs a model, so the after copy needs the state stored: an obviously fake
-// plan row under the note, and the note's offer expired as the build path
-// expires it. The before copy has no such seed, so it still shows the open
-// question and its three buttons. Idempotent: the plan row is made once and
+// plan row under the note, and the note's offer retired as the request's
+// move to building retires it. The before copy has no such seed, so it
+// still shows the open question and its three buttons. Idempotent: the plan row is made once and
 // the retirement is a no-op after it. A no-op outside staging.
 async function seedStagingBotOverlapBuilt(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
@@ -3884,10 +3884,14 @@ async function seedStagingBotOverlapBuilt(pool) {
       [appId, smaller, planContent],
     );
     if (!plan) return;
-    await require('../services/homeroom-bot-live').retireOverlapOffers(pool, {
-      appId, issueNumber: smaller, beforeMessageId: Number(plan.id),
-      deps: { ws: { broadcast() {} } },
-    });
+    // Its buttons go as the request's move to building retires them
+    // (bot-cards.js retireFor): a no-op once they have.
+    const { rows: cards } = await pool.query(
+      `SELECT id, kind, place, user_id, chat_message_id, message_id, conversation_id FROM bot_cards
+        WHERE place = 'thread' AND chat_message_id = $1 AND status = 'open'`,
+      [Number(note.id)],
+    );
+    await require('../services/bot-cards').retireCards(pool, cards, 'building');
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot overlap build seeding failed', { message: err.message });
   }

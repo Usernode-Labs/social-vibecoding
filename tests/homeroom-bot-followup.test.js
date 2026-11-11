@@ -1085,7 +1085,7 @@ test('the bot\'s replies in a proposal thread come from its own user, and are ne
   // them, not what kind of row they are.
   const src = read('src/services/homeroom-bot-live.js');
   assert.match(src, /inThread\(own, \{ type: 'session', ref: Number\(proposalSessionId\) \}, null, 'system'\)/);
-  assert.match(src, /ws\.sendBotMessage\(pool, app\.id, \{ user: sender, content, metadata: meta, thread \}\)/);
+  assert.match(src, /ws\.sendBotMessage\(pool, app\.id, \{ user: sender, content, metadata: meta, thread, \.\.\.\(withCard \? \{ card: withCard \} : \{\}\) \}\)/);
   const q = read('src/services/homeroom-bot.js');
   const activity = q.slice(q.indexOf('async function proposalThreadActivityByIssue'), q.indexOf('function latestOf'));
   assert.match(activity, /m\.msg_type = 'message'/);

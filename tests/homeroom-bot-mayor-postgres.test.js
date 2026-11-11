@@ -728,7 +728,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
 
     const before = created.length;
     const foreign = await mayor.decideOfferTap(pool, CONFIG, { user: sam, actionId: action.id, choice: 'yes', deps: { bot, replies } });
-    assert.deepEqual(foreign, { ok: false, status: 404, error: 'No such choice' }, 'only the person it was offered to');
+    assert.deepEqual(foreign, { ok: false, status: 404, error: 'No such choice', code: 'no_such_offer' }, 'only the person it was offered to');
     assert.equal((await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'maybe', deps: { bot, replies } })).status, 400);
 
     const tapped = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'yes', deps: { bot, replies } });
@@ -848,8 +848,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       deps: { chat: scripted(steps), apiKey: 'sk-test', openMcp, sleep: async () => {} },
     });
     const first = await run();
-    // Its process went after the send, before it noted the message.
-    await pool.query('UPDATE bot_cards SET message_id = NULL WHERE message_id = $1', [first.messageId]);
+    // Step 3: the card was written with the message, in one transaction, so
+    // no process can go between them. The retried answer is the same message
+    // (its key), and writes no second card.
     const second = await run();
     assert.equal(second.messageId, first.messageId, 'the same message');
     const { rows } = await pool.query(
