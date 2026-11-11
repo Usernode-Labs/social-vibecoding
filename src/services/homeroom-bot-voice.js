@@ -3498,9 +3498,14 @@ function plainReport(outcome) {
     case 'start_retrying':
     case 'start_failed':
       return mustSay(outcome).join(' ');
-    default:
+    default: {
+      // #6602: a change the bot cannot run on fails the same way every time,
+      // so asking again is no help; the why says so in words already.
+      const cannotRun = /^I can't run on\b/.test(String(outcome.why || ''));
       return [outcome.why ? `I couldn't make that change: ${ownWhy(outcome.why)}.` : 'I couldn\'t make that change.', ...mustSay(outcome),
-        outcome.retrying ? 'I\'ll try once more on my own.' : 'Ask me again here to try again.'].join(' ');
+        outcome.retrying ? 'I\'ll try once more on my own.' : (cannotRun ? null : 'Ask me again here to try again.'),
+      ].filter(Boolean).join(' ');
+    }
   }
 }
 

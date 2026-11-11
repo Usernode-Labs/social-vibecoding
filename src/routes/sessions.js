@@ -10529,6 +10529,10 @@ async function runCodexAttemptLoop({
   resumeThreadId, resolveRuntime, dispatchOnce, retryPredicate,
   sendStatus, waitForStopped, prepareRetry, classifyAttemptStatus,
   containerName, mode = 'build', telemetryComponent = null,
+  // #6602: whose row startCodexAttempt locks and whose turn it is. The
+  // ledger row's user_id stays `userId` (the account whose key pays), so a
+  // turn Homeroom bot runs on somebody else's change names its author here.
+  sessionOwnerId = null,
   // The work item that runs the turn, when workflow work started it: on
   // every attempt's record (startCodexAttempt) and handed to the dispatch
   // (execInWorker's `owner`).
@@ -10629,6 +10633,7 @@ async function runCodexAttemptLoop({
         allowRetryPending: allowRetryPendingForAttempt,
         mode,
         owner,
+        ...(sessionOwnerId ? { sessionOwnerId } : {}),
         telemetryComponent: telemetryComponent
           || (mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build'),
       });
