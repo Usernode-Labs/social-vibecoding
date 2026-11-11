@@ -50,8 +50,13 @@ function home(): any {
 export function addSheetLists(apps: unknown): { yours: any[]; popular: any[] } {
   const H = home();
   const list = Array.isArray(apps) ? apps : [];
-  const yours = H && typeof H.isYours === 'function'
-    ? list.filter((a) => a && !a.demo && !H.isYours(a) && (a.is_member || a.is_collaborator))
+  // ONE PINNED GRID: what Home already has a tile for is everything on it,
+  // a pinned app or a pinned community (Home.onHome), so a community pinned
+  // there is not offered again. The grid's All communities tile opens this
+  // sheet, and "Your other apps" is that list.
+  const onHome = H && typeof H.onHome === 'function' ? H.onHome : H?.isYours;
+  const yours = H && typeof onHome === 'function'
+    ? list.filter((a) => a && !a.demo && !onHome(a) && (a.is_member || a.is_collaborator))
     : [];
   const taken = new Set(yours.map((a) => a.slug));
   const popular = H && typeof H.popularApps === 'function'

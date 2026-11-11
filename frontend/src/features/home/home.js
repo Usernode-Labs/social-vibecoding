@@ -205,7 +205,7 @@ const Home = {
         } else {
           gridStore.set({
             ready: true, view: 'grid', rowTemplate: '', items: [],
-            resultsHeading: null, emptyQuery: null, create: null,
+            resultsHeading: null, emptyQuery: null, create: null, trailing: [],
             // load() has already cleared edit mode; the merge would keep it.
             editing: false,
             notice: {
@@ -221,7 +221,7 @@ const Home = {
         ready: true, view: 'grid', rowTemplate: '', items: [],
         // No Create tile beside a load notice: the notice is the grid's whole
         // answer (offline, or the error card and its Retry) until apps load.
-        resultsHeading: null, emptyQuery: null, create: null,
+        resultsHeading: null, emptyQuery: null, create: null, trailing: [],
         // load() has already cleared edit mode; the merge would keep it.
         editing: false,
         // #1899: the grid draws this as the shared error card
@@ -306,10 +306,13 @@ const Home = {
   // pinned app and, for a collaborator, hides the member pin — exactly the
   // two branches the menu's item passes (line ~3679). The toast and, for a
   // member, the "Remove … from Home?" question come from toggleAdded.
+  //
+  // ONE PINNED GRID: a tile that is on Home for its community comes off by
+  // unpinning the community too (Home.takeOffHome).
   _editRemove(slug) {
     const app = (Home._apps || []).find((a) => a && a.slug === slug);
     if (!app) return;
-    return Home._menuToggleFavorite(app, false);
+    return Home.takeOffHome(app);
   },
 
   // Escape ends edit mode. Wired once, lazily, from render() like the search
@@ -353,6 +356,121 @@ const Home = {
     return !!(app && ((app.is_collaborator && !app.your_apps_hidden) || app.is_favorited));
   },
 
+  // ── ONE PINNED GRID ───────────────────────────────────────────────
+  //
+  // Home had two pinned sections: Pinned apps (this grid, the apps above)
+  // and Pinned communities (GET /api/me/home-pins, a list of its own). A
+  // community and its app are one to one, so they are one grid now: a
+  // community pinned on Home puts its app's tile here, and a tap on any tile
+  // asks which of the two you meant (./pin-chooser.tsx). The pins are read
+  // off ./home-pins-store.ts's `window.HomePinsStore` at call time; with no
+  // store (a test sandbox, signed out) there are none and the grid is
+  // exactly the apps above.
+  _pinsState() {
+    const store = typeof window !== 'undefined' ? window.HomePinsStore : null;
+    const state = store && typeof store.get === 'function' ? store.get() : null;
+    return state && typeof state === 'object' ? state : null;
+  },
+
+  // The pins have been read once (or there is nothing to read). Until then a
+  // community-only tile is simply not drawn yet, and a stored arrangement is
+  // not REPAIRED against the missing tiles (currentLayout): a repair there
+  // would forget where you put them every time the apps answered first.
+  pinsSettled() {
+    const state = Home._pinsState();
+    return !state || !!state.ready;
+  },
+
+  isPinnedCommunity(app) {
+    const state = Home._pinsState();
+    if (!app || !state || !Array.isArray(state.pins)) return false;
+    return state.pins.some((pin) => pin && pin.slug === app.slug);
+  },
+
+  // On Home: an app you keep a tile for, or one whose community is pinned.
+  onHome(app) {
+    return Home.isYours(app) || Home.isPinnedCommunity(app);
+  },
+
+  // The votes its community waits on you for: the blue number on its tile.
+  votesFor(slug) {
+    const owed = Home._pinsState()?.owed;
+    const n = owed && slug ? Number(owed[slug]) : 0;
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  },
+
+  // The tiles Pinned communities ended on, which end the one grid now,
+  // before New project: Needs you while a vote waits on you (the community
+  // scope's `badgeNeeds`, the number a vote cast lowers at once), and All
+  // communities while you are in a community Home has no tile for (it opens
+  // the sheet that lists them, ./add-apps-sheet.tsx). A zero says nothing.
+  trailingTiles() {
+    const tiles = [];
+    if (!window.App?.user) return tiles;
+    const scope = window.CommunityScopeStore?.get?.();
+    const needs = Math.max(0, Number(scope?.badgeNeeds) || 0);
+    if (needs > 0) tiles.push({ kind: 'needs', count: needs });
+    // The communities you are in, as Pinned communities counted them (GET
+    // /api/apps?scope=joined, ./home-pins-store.ts `joined`): any of them
+    // without a tile here is what All communities is for.
+    const joined = Home._pinsState()?.joined;
+    const others = Array.isArray(joined) && joined.some((c) => {
+      if (!c || !c.slug || c.demo) return false;
+      const app = (Home._apps || []).find((a) => a && a.slug === c.slug) || { slug: c.slug };
+      return !Home.onHome(app);
+    });
+    if (others) tiles.push({ kind: 'all', count: 0 });
+    return tiles;
+  },
+
+  // A pin or a vote count landing repaints the grid: the tile a pin adds, the
+  // number on a tile, Needs you. Wired once, from render(), like the search
+  // bar. Only a change to what the grid draws repaints: the community scope
+  // also carries the switcher's open state and its anchor.
+  _pinStoresWired: false,
+  _wirePinStores() {
+    if (Home._pinStoresWired || typeof window === 'undefined') return;
+    const pins = window.HomePinsStore;
+    const scope = window.CommunityScopeStore;
+    if (!pins?.subscribe && !scope?.subscribe) return;
+    Home._pinStoresWired = true;
+    const facts = () => {
+      const p = pins?.get?.() || {};
+      return [p.ready, p.pins, p.owed, p.joined, scope?.get?.()?.badgeNeeds];
+    };
+    let last = facts();
+    const repaint = () => {
+      const next = facts();
+      if (next.every((v, i) => v === last[i])) return;
+      last = next;
+      if (!Home._appsLoaded) return;
+      Home.render();
+    };
+    pins?.subscribe?.(repaint);
+    scope?.subscribe?.(repaint);
+  },
+
+  // Take a tile off the one Pinned grid: both of the pins that can put it
+  // there. The app's pin is the menu's own "Unpin from Home"
+  // (_menuToggleFavorite, which toasts); the community's goes quietly when
+  // the app's toast already speaks for it.
+  takeOffHome(app) {
+    if (!app) return undefined;
+    const jobs = [];
+    const yours = Home.isYours(app);
+    if (Home.isPinnedCommunity(app)) {
+      const unpin = window.UsernodeReact?.homePins?.unpin;
+      if (typeof unpin === 'function') {
+        jobs.push(unpin(app.slug, {
+          unpinned: yours ? '' : message('home:communities.unpinned', { community: app.name || app.slug }),
+          failed: (reason) => message('home:communities.failed', { reason }),
+        }));
+      }
+    }
+    if (yours) jobs.push(Home._menuToggleFavorite(app, false));
+    return Promise.all(jobs);
+  },
+
   // In the community this app belongs to (the server's is_member; see
   // services/communities.js). NOT the same set as isYours, and the
   // difference is the point: "Your apps" is where the shortcuts sit on Home,
@@ -371,20 +489,23 @@ const Home = {
     else location.hash = `#app/${encodeURIComponent(slug)}/dev/hub`;
   },
 
-  // Home's Pinned communities (One Home, #6361), where the communities you
-  // are in live: Home, scrolled to them once they are drawn. `all` opens
-  // the section's All communities too (the ones you are in but have not
-  // pinned), which is what "All communities" anywhere else names now that
-  // the Communities screen's list is gone (features/home/pinned-communities.tsx
-  // listens for SHOW_ALL_COMMUNITIES).
+  // Home's one Pinned grid, where the communities you pinned live beside the
+  // apps (it was Pinned communities, a section of its own, until the two were
+  // merged): Home, scrolled to it once it is drawn. `all` also opens All
+  // communities (the ones you are in that Home has no tile for), which is
+  // what "All communities" anywhere else names now that the Communities
+  // screen's list is gone: the grid's All communities tile opens the same
+  // sheet (features/home/add-apps-sheet.tsx). SHOW_ALL_COMMUNITIES is still
+  // said on `document` for anything that listens.
   SHOW_ALL_COMMUNITIES: 'home:show-all-communities',
   showCommunities({ all = false } = {}) {
     if (typeof App !== 'undefined' && App.navigateHome) App.navigateHome();
     if (all) {
-      try { document.dispatchEvent(new CustomEvent(Home.SHOW_ALL_COMMUNITIES)); } catch (err) { /* the section opens on its own press */ }
+      try { document.dispatchEvent(new CustomEvent(Home.SHOW_ALL_COMMUNITIES)); } catch (err) { /* nothing listens */ }
+      try { window.UsernodeReact?.addAppsSheet?.open?.(); } catch (err) { /* the tile opens it on its own press */ }
     }
     const scroll = () => {
-      const el = document.getElementById('home-communities-section');
+      const el = document.getElementById('home-apps-section');
       if (el && !el.hidden) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
     };
     requestAnimationFrame(() => requestAnimationFrame(scroll));
@@ -419,9 +540,11 @@ const Home = {
   // (ascending), NULLs after. Array.prototype.sort is stable, so
   // returning 0 for two NULLs preserves the server's activity order
   // among un-ordered entries (member apps that were never dragged).
+  // ONE PINNED GRID: "yours" is everything Home keeps a tile for, an app you
+  // pinned or one whose community is pinned (Home.onHome).
   partitionApps(apps) {
-    const yours = (apps || []).filter(Home.isYours);
-    const rest = (apps || []).filter((a) => !Home.isYours(a));
+    const yours = (apps || []).filter(Home.onHome);
+    const rest = (apps || []).filter((a) => !Home.onHome(a));
     yours.sort((x, y) => {
       if (x.favorite_order == null && y.favorite_order == null) return 0;
       if (x.favorite_order == null) return 1;
@@ -759,7 +882,7 @@ const Home = {
     // like anything else (the spec's rule); only the DRAG excludes them,
     // which the recognizer's `:not([data-demo])` selector already handles.
     for (const app of Home._apps || []) {
-      if (app && app.demo && !Home.isYours(app)) ids.push(`app:${app.slug}`);
+      if (app && app.demo && !Home.onHome(app)) ids.push(`app:${app.slug}`);
     }
     return ids;
   },
@@ -821,12 +944,15 @@ const Home = {
     // every few seconds for as long as the home screen was open, each one
     // queued on the server's per-user lock, until the browser's connections
     // were all waiting on them.
-    if (changed && Array.isArray(stored) && stored.length) {
+    // ONE PINNED GRID: not before the pins are read. Until then a tile that
+    // is on Home for its community alone is missing from `present`, and a
+    // repair written now would forget the cell you put it in.
+    if (changed && Array.isArray(stored) && stored.length && Home.pinsSettled()) {
       Home._layouts[String(cols)] = layout;
       const wire = (l) => JSON.stringify(HomeLayout.toWire(l));
       if (wire(layout) !== wire(stored)) Home._persistLayout(cols, layout);
     }
-    if (derived && Home._appsLoaded && Home._layouts && !Home._derivedSaveTried
+    if (derived && Home._appsLoaded && Home._layouts && !Home._derivedSaveTried && Home.pinsSettled()
         && !Home._layoutIsDemo && new URLSearchParams(location.search).get('demo') !== '1'
         && window.App?.user && layout.some((item) => item.type === 'app')) {
       Home._derivedSaveTried = true;
@@ -919,6 +1045,7 @@ const Home = {
     Home._wireSearch();
     Home._wireRowBudget();
     Home._wireEditExit();
+    Home._wirePinStores();
 
     const query = (Home._query || '').trim();
     // EDIT MODE (#4669) is a grid-view state only: a search is a transient
@@ -943,6 +1070,11 @@ const Home = {
     // The trailing "Create an app" tile — null in the search view, which is a
     // transient list of matches rather than the launcher.
     let create = null;
+    // ONE PINNED GRID: Needs you and All communities, placed after the last
+    // tile and before Create (below); none in the search view.
+    let trailing = [];
+    let trailingTiles = [];
+    const trailingCells = [];
 
     if (query) {
       // Active search over YOUR apps: one flat grid of matches. Section
@@ -1019,8 +1151,18 @@ const Home = {
       // the hidden rows instead, and the expander appears for it even when
       // every app already fits: a launcher of exactly eight apps shows two
       // rows and "Show all 8 apps", and the tile ends the expanded grid.
+      //
+      // ONE PINNED GRID: Needs you and All communities come first, straight
+      // after the last tile shown (Home.trailingTiles), and the Create tile
+      // follows THEM. They are never held back: a vote waiting on you is the
+      // one thing on this screen that asks for you, so they may start the
+      // row the Create tile would have gone behind "Show all" for.
+      trailingTiles = editing ? [] : Home.trailingTiles();
+      for (let i = 0; i < trailingTiles.length; i += 1) {
+        trailingCells.push({ ...HomeLayout.trailingCell([...shown, ...trailingCells], cols), w: 1, h: 1 });
+      }
       const createHidden = !editing && !Home._appsExpanded
-        && HomeLayout.createTileCollapsed(shown, cols, rowBound);
+        && HomeLayout.createTileCollapsed([...shown, ...trailingCells], cols, rowBound);
       const collapsed = hiddenRows || createHidden;
       const overflow = collapsed ? [] : HomeLayout.overflowItems(layout);
       const parts = shown.map((it) => Home.gridItemView(it, cols, false));
@@ -1066,13 +1208,16 @@ const Home = {
       // its presence — the locked tile opens the dialog that prints the quota.
       const placed = items.filter((it) => it.placement).map((it) => it.placement);
       const flows = !placed.length || items.some((it) => !it.placement);
+      // The trailing tiles flow when the Create tile would: with no cell to
+      // follow, every one of them goes after the tiles in plain flow.
+      trailing = trailingTiles.map((tile, i) => ({ ...tile, placement: flows ? null : trailingCells[i] }));
       create = {
         enabled: canCreate,
         hint: message(Home.CREATE_DISABLED_HINT),
         heldBack: createHidden,
         placement: createHidden || flows
           ? null
-          : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
+          : { ...HomeLayout.trailingCell([...placed, ...trailingCells], cols), w: 1, h: 1 },
       };
       // A private member makes no apps until they are let in off the
       // waitlist (their Home's waitlist card says so), so no tile at all —
@@ -1092,7 +1237,7 @@ const Home = {
     // only row sizing, exactly as before. Written BEFORE the innerHTML so the
     // first layout of the new children already has its tracks.
     gridStore.set({
-      ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null, create, editing,
+      ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null, create, trailing, editing,
     });
     // ...and, in the same push, the two hosts outside it: "Show all N apps"
     // and the iOS widget-editing strip. The strip renders ABOVE the grid, in
@@ -1166,6 +1311,8 @@ const Home = {
       // derives it per row, and anything it does not say reads as a
       // public community, which draws no mark.
       audience: app.audience === 'invited' || app.audience === 'solo' ? app.audience : 'open',
+      // ONE PINNED GRID: the blue number Pinned communities' tiles wore.
+      votes: Home.votesFor(app.slug),
     };
   },
 
@@ -3748,20 +3895,24 @@ const Home = {
         run: () => window.open(app.repo_url, '_blank', 'noopener'),
       });
     }
+    // ONE PINNED GRID: "Unpin from Home" takes the tile off whatever put it
+    // there, the app's pin or its community's (Home.takeOffHome), so a tile
+    // that is on Home for its community alone offers it too.
+    const onHome = Home.onHome(app);
     if (app.is_collaborator) {
       items.push({
         key: 'favorite',
-        label: app.your_apps_hidden ? message('home:menu.myApps.add') : message('home:menu.myApps.remove'),
-        title: app.your_apps_hidden
-          ? message('home:menu.myApps.showAgainTip')
-          : message('home:menu.myApps.hideTip'),
-        run: () => Home._menuToggleFavorite(app, !!app.your_apps_hidden),
+        label: onHome ? message('home:menu.myApps.remove') : message('home:menu.myApps.add'),
+        title: onHome
+          ? message('home:menu.myApps.hideTip')
+          : message('home:menu.myApps.showAgainTip'),
+        run: () => (onHome ? Home.takeOffHome(app) : Home._menuToggleFavorite(app, true)),
       });
     } else {
       items.push({
         key: 'favorite',
-        label: app.is_favorited ? message('home:menu.myApps.remove') : message('home:menu.myApps.add'),
-        run: () => Home._menuToggleFavorite(app, !app.is_favorited),
+        label: onHome ? message('home:menu.myApps.remove') : message('home:menu.myApps.add'),
+        run: () => (onHome ? Home.takeOffHome(app) : Home._menuToggleFavorite(app, true)),
       });
     }
     // #1374: per-app notification settings, UNGATED on purpose and placed

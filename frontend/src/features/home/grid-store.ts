@@ -94,6 +94,25 @@ export interface HomeAppView {
    * community, which is what most of the grid is.
    */
   audience: 'open' | 'invited' | 'solo';
+  /**
+   * ONE PINNED GRID: the votes its community waits on you for (GET
+   * /api/workshop/counts, through ./home-pins-store.ts), the blue number
+   * Pinned communities' tiles wore. 0 says nothing.
+   */
+  votes: number;
+}
+
+/**
+ * ONE PINNED GRID: the tiles Pinned communities ended on, after the pins and
+ * before New project. `needs` is the way to Needs you while a vote waits on
+ * you (`count`, the community scope's `badgeNeeds`); `all` opens the sheet of
+ * the communities you are in that Home has no tile for. Like the Create tile
+ * they are derived per paint (home.js render), never stored or dragged.
+ */
+export interface TrailingTileView {
+  kind: 'needs' | 'all';
+  count: number;
+  placement: GridPlacement | null;
 }
 
 /**
@@ -158,6 +177,12 @@ export interface HomeGridState {
    */
   create: CreateTileView | null;
   /**
+   * ONE PINNED GRID: Needs you and All communities, between the last tile
+   * and New project. Empty in the search view, in edit mode and before the
+   * first paint.
+   */
+  trailing: TrailingTileView[];
+  /**
    * EDIT MODE (#4669): the launcher is being arranged. The tiles wiggle, each
    * one shows its remove button, and the trailing tile is "Add apps" rather
    * than "New project". False in the search view even while the flag holds —
@@ -176,6 +201,7 @@ export const INITIAL_GRID: HomeGridState = {
   emptyQuery: null,
   notice: null,
   create: null,
+  trailing: [],
   editing: false,
 };
 

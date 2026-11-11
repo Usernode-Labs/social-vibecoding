@@ -33,7 +33,7 @@ test('the walk on Home: three cards, each ringing one place, with Next, and Done
   assert.deepEqual(steps.map((s) => [s.screen, s.target, s.title, s.text]), [
     ['home', '#app-list .app-card[data-slug="sunday-run-club"]', 'Welcome to Homeroom', 'Sunday Run Club lives here, on Home.'],
     ['home', '#platform-tab-ai', 'Homeroom bot', 'It\'s in the Homeroom bot tab. Ask it to make any changes to Sunday Run Club.'],
-    ['home', '#home-communities-section [data-home-community="sunday-run-club"]', 'Communities', 'Sunday Run Club\'s hub is here. Invite people and decide what changes.'],
+    ['home', '#app-list .app-card[data-slug="sunday-run-club"]', 'Communities', 'Tap Sunday Run Club and choose Go to community for its hub. Invite people and decide what changes.'],
   ]);
   assert.deepEqual(homeWalkSteps({ slug: 'sunday-run-club', name: 'Sunday Run Club', example: null }), steps, 'null is no example');
   // A project made from a ready-made starter: its example change, in
@@ -42,7 +42,7 @@ test('the walk on Home: three cards, each ringing one place, with Next, and Done
   assert.deepEqual(best.map((s) => [s.target, s.title, s.text]), [
     ['#app-list .app-card[data-slug="best-eats"]', 'Welcome to Homeroom', 'Best Eats lives here, on Home.'],
     ['#platform-tab-ai', 'Homeroom bot', 'Ask it for changes, like “add a cheap eats tier”.'],
-    ['#home-communities-section [data-home-community="best-eats"]', 'Communities', 'Best Eats\'s hub is here. Invite people and decide what changes.'],
+    ['#app-list .app-card[data-slug="best-eats"]', 'Communities', 'Tap Best Eats and choose Go to community for its hub. Invite people and decide what changes.'],
   ]);
   const plain = homeWalkSteps({ slug: 'best-eats', name: 'Best Eats' });
   assert.deepEqual(best.map(({ text, ...rest }) => rest), plain.map(({ text, ...rest }) => rest), 'only the words change');
@@ -51,10 +51,12 @@ test('the walk on Home: three cards, each ringing one place, with Next, and Done
   assert.equal(homeWalkSteps({ slug: 'best-eats' })[0].text, 'best-eats lives here, on Home.');
   assert.equal(steps[0].target, tileOf('sunday-run-club'), 'the tile in Home\'s own grid, never a Discover card');
   // One Home (#6361): no Communities tab; its community's own tile on Home,
-  // which its maker's membership pinned (one-home-pins.sql).
+  // which its maker's membership pinned (one-home-pins.sql). The one Pinned
+  // grid draws a community and its app as ONE tile, whose tap offers Go to
+  // community, so the third card rings the project's tile too.
   const { communityTileOf } = loadTsx(`${DIR}/tour-steps.ts`);
   assert.equal(steps[2].target, communityTileOf('sunday-run-club'));
-  assert.match(read('frontend/src/features/home/pinned-communities.tsx'), /data-home-community=\{pin\.slug\}/);
+  assert.equal(communityTileOf('sunday-run-club'), tileOf('sunday-run-club'));
   // Nobody is taken anywhere: no step is a tap, each rings its place, and
   // the last one ends it.
   assert.deepEqual(steps.map((s) => [!!s.tap, !!s.ringed, !!s.last]), [[false, true, false], [false, true, false], [false, true, true]]);
@@ -75,7 +77,7 @@ test('a private member\'s walk is the same three cards; no card of any tour says
   const three = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch' });
   const withExample = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch', example: 'add a price range to each place' });
   assert.equal(three.length, 3);
-  assert.equal(three[2].target, '#home-communities-section [data-home-community="best-brunch"]');
+  assert.equal(three[2].target, '#app-list .app-card[data-slug="best-brunch"]');
   assert.equal(three[2].last, true);
   const src = read(`${DIR}/tour-steps.ts`);
   assert.doesNotMatch(src, /home-waitlist-card|walk\.waitlist|privateMember/);
@@ -145,18 +147,19 @@ const idsNamed = (steps) => [...new Set(steps
 
 test('every id the tour points at is one the shell ships', () => {
   const { homeWalkSteps, lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
-  assert.deepEqual(idsNamed(homeWalkSteps({ slug: 'x' })), ['app-list', 'home-communities-section', 'platform-tab-ai']);
-  assert.deepEqual(idsNamed(lookAroundSteps()), ['home-communities-section', 'home-join-section', 'home-new-community', 'platform-tab-ai']);
-  // One Home (#6361): Home's Pinned communities, its New community tile and
-  // Communities to join are React's, one element each, and dapp.json's
-  // checks select the tile by this id.
-  const pinned = read('frontend/src/features/home/pinned-communities.tsx');
-  assert.equal((pinned.match(/<section id="home-communities-section"/g) || []).length, 1);
-  assert.equal((pinned.match(/id="home-new-community"/g) || []).length, 1);
+  assert.deepEqual(idsNamed(homeWalkSteps({ slug: 'x' })), ['app-list', 'platform-tab-ai']);
+  assert.deepEqual(idsNamed(lookAroundSteps()), ['home-apps-section', 'home-create-tile', 'home-join-section', 'platform-tab-ai']);
+  // ONE PINNED GRID: Home's one Pinned section, its New community entry and
+  // Communities to join are React's, and dapp.json's checks select the entry
+  // by this id. The entry is the grid's trailing tile or, while a full last
+  // row holds it back, the compact one on the heading: two drawings with the
+  // one id, exactly one of them on screen (create-tile.tsx).
+  assert.equal((read('frontend/src/features/home/index.tsx').match(/<section id="home-apps-section"/g) || []).length, 1);
+  assert.equal((read('frontend/src/features/home/create-tile.tsx').match(/id="home-create-tile"/g) || []).length, 2);
   // Signed in only: the landing draws the same section, in the same
   // document, without the id.
   assert.equal((read('frontend/src/features/home/communities-to-join.tsx').match(/<section id=\{signedIn \? 'home-join-section' : undefined\}/g) || []).length, 1);
-  assert.ok(read('dapp.json').includes('#home-new-community'));
+  assert.ok(read('dapp.json').includes('#home-create-tile'));
   // Home's own grid, the tile's home (React's; the Discover rail's cards are
   // `.app-card`s too, outside it).
   assert.equal((read('frontend/src/features/home/app-grid.tsx').match(/^\s+id="app-list"$/gm) || []).length, 1);
@@ -174,8 +177,8 @@ test('every id the tour points at is one the shell ships', () => {
 
 test('the AI step points at the bar\'s own tab, the same element on a phone and the rail; the communities steps at Home\'s sections (One Home, #6361)', () => {
   const { homeWalkSteps, lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
-  assert.deepEqual(homeWalkSteps({ slug: 'x' }).slice(1).map((s) => s.target), ['#platform-tab-ai', '#home-communities-section [data-home-community="x"]']);
-  assert.deepEqual(lookAroundSteps().slice(1).map((s) => s.target), ['#home-join-section', '#home-communities-section', '#platform-tab-ai']);
+  assert.deepEqual(homeWalkSteps({ slug: 'x' }).slice(1).map((s) => s.target), ['#platform-tab-ai', '#app-list .app-card[data-slug="x"]']);
+  assert.deepEqual(lookAroundSteps().slice(1).map((s) => s.target), ['#home-join-section', '#home-apps-section', '#platform-tab-ai']);
   // One <a> per tab, its id drawn from its key, inside the one #platform-tabs
   // that app.css lays out as the phone's bottom bar or, from 768px, the rail.
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
@@ -868,9 +871,9 @@ test('"Look around first" has its own four cards on Home, each pointing at one p
   const { lookAroundSteps } = loadTsx(`${DIR}/tour-steps.ts`);
   const steps = lookAroundSteps();
   assert.deepEqual(steps.map((s) => [s.screen, s.target, s.title, s.text]), [
-    ['home', '#home-new-community', 'Make something any time', 'New community starts a community and its app.'],
+    ['home', '#home-create-tile', 'Make something any time', 'New community starts a community and its app.'],
     ['home', '#home-join-section', 'Find a community to join', 'Open any one, pin it, or join it.'],
-    ['home', '#home-communities-section', 'Communities you join show up here', 'Each one has its own hub and discussion.'],
+    ['home', '#home-apps-section', 'Communities you join show up here', 'Each one has its own hub and discussion.'],
     ['home', '#platform-tab-ai', 'Homeroom bot has its own tab', 'It makes apps with you. You can always find it here.'],
   ]);
   // Nobody is taken anywhere: no step is a tap, each rings its place, and
@@ -1026,7 +1029,7 @@ test('each step brings its target into view before ringing it, pressing a reveal
   assert.equal(outOfBand({ left: 16, top: 40, width: 80, height: 100 }, band), true, 'under the top bar');
   assert.equal(outOfBand({ left: 0, top: 0, width: 390, height: 800 }, band), false, 'a whole screen is not scrolled to');
 
-  assert.equal(lookAroundSteps()[0].target, '#home-new-community');
+  assert.equal(lookAroundSteps()[0].target, '#home-create-tile');
   assert.ok(lookAroundSteps().every((step) => step.revealWith === undefined), 'nothing is held back');
   const first = { screen: 'home', target: '#home-create-tile', revealWith: '#home-apps-more-btn' };
 

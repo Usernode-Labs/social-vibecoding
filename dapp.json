@@ -1496,21 +1496,21 @@
       "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"] ~ [data-standings-tab=\"topochain\"]) #challenges-root:not(.hidden) #tc-se-grid"
     },
     {
-      "name": "New project is the last tile of Home's My apps again, and New community stays the last of Pinned communities (#6522; both were One Home's, #6361)",
+      "name": "One Pinned grid: Home's pinned apps and pinned communities are one Pinned section, with no Pinned communities section after it, and its one create entry is New community (#6522, #6361)",
       "path": "/?demo=1&shot=create-enabled",
-      "expectSelector": "#home-body #home-apps-section:not([hidden]):has(#home-create-tile[data-panel-slot=\"create\"][data-create-enabled=\"true\"]) ~ #home-communities-section:not([hidden]) #home-new-community[data-panel-slot=\"create\"][data-create-enabled=\"true\"]:last-child",
+      "expectSelector": "#home-body:not(:has(#home-communities-section)) #home-apps-section:not([hidden]) #home-create-tile[data-panel-slot=\"create\"][data-create-enabled=\"true\"]",
       "expectText": "New community"
     },
     {
-      "name": "The New community tile is present but locked without app quota, still the last of Pinned communities (One Home, #6361)",
+      "name": "The New community entry of the one Pinned grid is present but locked without app quota (One Home, #6361)",
       "path": "/?demo=1&shot=create-disabled",
-      "expectSelector": "#home-communities-section:not([hidden]) #home-new-community[data-panel-slot=\"create\"][data-create-enabled=\"false\"][aria-label^=\"New community. \"]:last-child:not([disabled])",
+      "expectSelector": "#home-apps-section:not([hidden]) #home-create-tile[data-panel-slot=\"create\"][data-create-enabled=\"false\"][aria-label^=\"New community. \"]:not([disabled])",
       "expectText": "New community"
     },
     {
-      "name": "One Home (#6361): Home's last section is Communities to join, after Pinned apps and Pinned communities, and Home draws no Discover lane or continue card",
+      "name": "One Home (#6361): Home's last section is Communities to join, after the one Pinned grid, and Home draws no Discover lane or continue card",
       "path": "/?demo=1",
-      "expectSelector": "#home-body:not(:has(#home-discover-section)):not(:has(#home-continue-card)) #home-apps-section ~ #home-communities-section ~ #home-join-section:not([hidden]) > h2.home-area-label",
+      "expectSelector": "#home-body:not(:has(#home-discover-section)):not(:has(#home-continue-card)) #home-apps-section ~ #home-join-section:not([hidden]) > h2.home-area-label",
       "expectText": "Communities to join"
     },
     {
@@ -1520,10 +1520,10 @@
       "expectText": "Show all"
     },
     {
-      "name": "Each home area is introduced by its own label (#1478; One Home #6361 calls the first Pinned apps)",
+      "name": "Each home area is introduced by its own label (#1478; the first is Pinned, one grid of pinned apps and communities since One Home #6361)",
       "path": "/?demo=1",
       "expectSelector": "#home-body #home-apps-section > h2.home-area-label",
-      "expectText": "Pinned apps"
+      "expectText": "Pinned"
     },
     {
       "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
@@ -3247,9 +3247,9 @@
       "expectText": "Go to community"
     },
     {
-      "name": "#communities, the old Communities screen, opens Home: beside the sidebar's search glyph, Pinned communities offers Needs you with the votes waiting (One Home, #6361; #3051, D)",
+      "name": "#communities, the old Communities screen, opens Home: beside the sidebar's search glyph, the one Pinned grid ends on Needs you with the votes waiting (One Home, #6361; #3051, D)",
       "path": "/?demo=1#communities",
-      "expectSelector": "body:has(#platform-rail-search) #home-screen:not(.hidden) #home-communities-section:not([hidden]) a#home-needs-tile[href=\"#needs\"][data-home-needs]",
+      "expectSelector": "body:has(#platform-rail-search) #home-screen:not(.hidden) #home-apps-section:not([hidden]) #app-list > a#home-needs-tile[href=\"#needs\"][data-home-needs]",
       "expectText": "Needs you"
     },
     {
@@ -3585,7 +3585,7 @@
       "expectSelector": "#settings-section-content [data-settings-section]:not(.hidden)"
     },
     {
-      "name": "Home's Pinned apps section renders for the seeded admin and keeps its saved grid (#6492)",
+      "name": "Home's Pinned section renders for the seeded admin and keeps its saved grid (#6492)",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"
     },
@@ -3704,7 +3704,7 @@
       "expectSelector": ".app-card[data-yours].cursor-grab"
     },
     {
-      "name": "A persisted staging sample appears in expanded Pinned apps",
+      "name": "A persisted staging sample appears in expanded Pinned",
       "path": "/?demo=1&shot=home-apps",
       "expectSelector": ".app-card[data-slug='staging-demo-your-app']"
     },

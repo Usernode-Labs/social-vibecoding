@@ -273,7 +273,7 @@ test('the menu of an own tile on My apps ends with "Edit My apps", which starts 
   Home.openCardMenu('app-0', tile());
   const items = seen[0].items;
   const last = items[items.length - 1];
-  assert.equal(last.label, 'Edit Pinned apps');
+  assert.equal(last.label, 'Edit Pinned');
   assert.equal(Home._editing, false, 'opening the menu starts nothing');
   last.handler(null);
   assert.equal(Home._editing, true);
@@ -290,15 +290,15 @@ test('"Edit My apps" is offered only where there is something to start', () => {
   const labels = () => seen[seen.length - 1].items.map((i) => i.label);
   // A search result, a demo tile, and a plain rect (no tile at all).
   Home.openCardMenu('app-0', tile({ yours: false }));
-  assert.ok(!labels().includes('Edit Pinned apps'), 'not on a search result');
+  assert.ok(!labels().includes('Edit Pinned'), 'not on a search result');
   Home.openCardMenu('app-0', tile({ demo: true }));
-  assert.ok(!labels().includes('Edit Pinned apps'), 'not on a demo tile');
+  assert.ok(!labels().includes('Edit Pinned'), 'not on a demo tile');
   Home.openCardMenu('app-0', { left: 0, top: 0, width: 1, height: 1 });
-  assert.ok(!labels().includes('Edit Pinned apps'), 'not without a tile');
+  assert.ok(!labels().includes('Edit Pinned'), 'not without a tile');
   // Already editing: nothing to start.
   Home._editing = true;
   Home.openCardMenu('app-0', tile());
-  assert.ok(!labels().includes('Edit Pinned apps'), 'not while edit mode is on');
+  assert.ok(!labels().includes('Edit Pinned'), 'not while edit mode is on');
   // And never on the app's own page, which reads menuItemsFor directly: the
   // item is added by openCardMenu, not by the shared list.
   const list = HOME_SRC.slice(HOME_SRC.indexOf('  menuItemsFor(app) {'), HOME_SRC.indexOf('  renderMenuHeaderHtml(app) {'));

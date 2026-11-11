@@ -207,7 +207,8 @@ test('the tab reads its number from tabVotes, and the counts route carries the f
   // tab that said 13 was the bug. (It was the Communities list's Needs you
   // row until One Home, #6361.)
   assert.match(read('frontend/src/features/workshop/community-scope.ts'), /badgeNeeds \+= votesWaiting\(info\[s\]\);/);
-  assert.match(read('frontend/src/features/home/pinned-communities.tsx'), /const \{ badgeNeeds \} = useStoreState\(communityScopeStore\)/);
+  // ONE PINNED GRID: the tile ends the Pinned grid now, counted in home.js.
+  assert.match(read('frontend/src/features/home/home.js'), /const needs = Math\.max\(0, Number\(scope\?\.badgeNeeds\) \|\| 0\);/);
   for (const file of [
     'frontend/src/features/workshop/community-switcher.tsx',
     'frontend/src/features/app-context/app-context-sheet.tsx',

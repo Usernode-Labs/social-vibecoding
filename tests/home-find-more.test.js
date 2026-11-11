@@ -384,13 +384,14 @@ test('index.html stacks the three home areas in order', () => {
   // stored cell, but a tile whose cell is derived from the grid it ends.
   // One Home (#6361): Pinned apps, Pinned communities, Challenges as a
   // sideways row, then Communities to join; Discover's lane went with it.
+  // ONE PINNED GRID: Pinned apps and Pinned communities are one Pinned
+  // section, so Challenges follows it.
   const grid = INDEX.indexOf('id="home-apps-section"');
-  const communities = INDEX.indexOf('id="home-communities-section"');
   const challenges = INDEX.indexOf('id="home-challenges-section"');
   const join = INDEX.indexOf('id="home-join-section"');
   assert.ok(grid > 0, 'the launcher grid is present');
-  assert.ok(communities > grid, 'Pinned communities comes after Pinned apps');
-  assert.ok(challenges > communities, 'Challenges after Pinned communities');
+  assert.equal(INDEX.indexOf('id="home-communities-section"'), -1, 'no Pinned communities section of its own');
+  assert.ok(challenges > grid, 'Challenges after Pinned');
   assert.ok(join > challenges, 'Communities to join last');
   assert.equal(INDEX.indexOf('id="home-discover-section"'), -1, 'no Discover lane on Home');
   assert.equal(INDEX.indexOf('id="home-create-section"'), -1,
@@ -516,7 +517,7 @@ test('the Create tile renders in both states and keeps quota details reachable',
   const on = createHtml(true);
   assert.match(on, /data-create-enabled="true"/);
   assert.match(on, /home-create-btn/, 'the hook the dapp.json create checks select on');
-  assert.match(on, /New project/);
+  assert.match(on, /New community/);
   assert.doesNotMatch(on, /aria-disabled/);
 
   const off = createHtml(false);

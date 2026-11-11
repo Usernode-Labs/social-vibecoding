@@ -248,7 +248,7 @@ is no replay plan to write and nothing to verify locally.
   community** (`invited`) or **Public community** (`open`) — and what it
   owns are **projects**. Use "project" in user-facing copy where the app is
   the thing being built; keep "app" where it is the thing being used (the
-  App tab, Pinned apps).
+  App tab, Open app).
 - **The phone's bar is Home · AI · Messages · You; the desktop sidebar is
   Home, AI, Messages, then Recents and You** (#6019; One Home, #6361). AI is the Homeroom bot's chat, which is not a row of Messages
   and is never drawn on the Messages screen: its page
@@ -290,19 +290,23 @@ is no replay plan to write and nothing to verify locally.
   project's Workshop offers the same three to somebody who has made nothing
   there yet, in Your work's place (`dev-board/workshop/first-change.tsx`).
   **Home is the one page of apps and communities, signed in or out (One
-  Home, #6361).** Its sections are **Pinned apps** (`app_favorites`: a tile
-  opens the app; hidden until the first pin), **Pinned communities**
-  (`home_community_pins`, `services/home-pins.js`, `/api/me/home-pins`,
-  `features/home/pinned-communities.tsx`: a tile opens the hub; its All
-  communities tile shows the ones you are in but have not pinned, its Needs
-  you tile, drawn while a vote waits, opens Needs you, and New community
-  starts a project), Challenges as a sideways row, then **Communities to
-  join** (the public directory: **Featured**, what an admin featured, as
-  its first sideways row, then the rest, more as you scroll,
-  `features/home/communities-to-join.tsx`). The two pins are separate acts
-  and neither joins: you may pin what you have not joined. Joining pins the
-  community (`communities.join`); leaving unpins it and keeps the app's
-  pin. Signed out, the landing is the same Home, its pins kept on the
+  Home, #6361).** Its sections are **Pinned**, one grid of the apps you
+  pinned (`app_favorites`) and the communities you pinned
+  (`home_community_pins`, `services/home-pins.js`, `/api/me/home-pins`):
+  a community and its app are one tile (`Home.onHome` in
+  `features/home/home.js`), wearing the votes its community waits on you
+  for, and a tap asks which you meant, Open app or Go to community
+  (`features/home/pin-chooser.tsx`: a popover under the tile, placed like
+  the vote popover, or the kit's sheet on touch); the grid ends on Needs
+  you (while a vote waits), All communities (the sheet of the ones you are
+  in that have no tile) and New community; then Challenges as a sideways
+  row, then **Communities to join** (the public directory: **Featured**,
+  what an admin featured, as its first sideways row, then the rest, more as
+  you scroll, `features/home/communities-to-join.tsx`). The two pins are
+  separate acts and neither joins: you may pin what you have not joined.
+  Joining pins the community (`communities.join`); leaving unpins it and
+  keeps the app's pin. Taking a tile off Home (its menu's Unpin from Home,
+  or edit mode's −) unpins both. Signed out, the landing is the same Home, its pins kept on the
   device (`features/guest/device-pins.ts`) and moved to the account at
   sign-in (`POST /api/me/home-pins/import`). Who hears about a project's
   votes and merges is `app_stakes` (members who pinned its app or its
@@ -331,7 +335,7 @@ is no replay plan to write and nothing to verify locally.
   (`community_pins`, `services/community-pins.js`,
   `/api/me/community-pins`), apart from Home's: a member's only, four at
   most, gone when they leave, made from a community's row (its pin, or
-  right-click), the hub's ⋯ or a Pinned apps tile dropped on the sidebar
+  right-click), the hub's ⋯ or a Pinned tile dropped on the sidebar
   (`features/nav/pin-actions.ts`), and never one of the five. A project's page wears its community's colour
   (`lib/community-color.ts`: dapp.json's `icon.color`, else read off the
   icon) and is navigated by one list of **places**

@@ -1473,7 +1473,9 @@ test('stored layouts are repaired in place and a full derivation is saved once',
   // have persisted a repair erasing the viewer's widget cells. Nothing on the
   // canvas depends on a second endpoint any more.
   assert.doesNotMatch(cur, /const widgetsReady|hasLayoutRegistry\?\.\(\)/);
-  assert.match(cur, /if \(changed && Array\.isArray\(stored\) && stored\.length\)/,
+  // ONE PINNED GRID: and not before the pins are read, or a repair would
+  // forget the cell of a tile that is on Home for its community alone.
+  assert.match(cur, /if \(changed && Array\.isArray\(stored\) && stored\.length && Home\.pinsSettled\(\)\)/,
     'only a stored width is repaired in place');
 });
 
@@ -1742,9 +1744,11 @@ test('index.html stacks the two section hosts below the grid, in order', () => {
   const grid = INDEX.indexOf('id="app-list"');
   assert.ok(grid > 0, 'the launcher grid is there');
   const at = (id) => INDEX.indexOf(`id="${id}"`);
-  // One Home (#6361): Pinned communities, Challenges, then Communities to
-  // join. Discover's lane is no section of Home's any more.
-  const order = ['home-communities-section', 'home-challenges-section', 'home-join-section'];
+  // One Home (#6361): Challenges, then Communities to join. Discover's lane
+  // is no section of Home's any more, and Pinned communities' tiles are the
+  // grid's own since the one Pinned grid.
+  const order = ['home-challenges-section', 'home-join-section'];
+  assert.equal(at('home-communities-section'), -1, 'no Pinned communities section of its own');
   let prev = grid;
   for (const id of order) {
     const here = at(id);
@@ -1754,7 +1758,7 @@ test('index.html stacks the two section hosts below the grid, in order', () => {
   }
   assert.equal(at('home-discover-section'), -1, 'no Discover lane on Home');
   // Outside the grid, or its wholesale re-render would destroy them.
-  assert.doesNotMatch(INDEX.slice(grid, at('home-communities-section')), /<\/section>[\s\S]*<div id="app-list"/);
+  assert.doesNotMatch(INDEX.slice(grid, at('home-challenges-section')), /<\/section>[\s\S]*<div id="app-list"/);
 
   // The panels' host names the block it is for, which is what the dapp.json
   // checks and the screenshot assertions select on.

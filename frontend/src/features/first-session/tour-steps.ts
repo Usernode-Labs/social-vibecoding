@@ -165,9 +165,13 @@ export function tileOf(slug: string): string {
   return `#app-list .app-card[data-slug="${slug}"]`;
 }
 
-/** Its community's tile in Home's Pinned communities (One Home, #6361), which opens its hub. */
+/**
+ * Its community's tile on Home. Pinned communities had a grid of its own
+ * (One Home, #6361); a community and its app are ONE tile of the Pinned grid
+ * now, whose tap offers both, so this is the project's tile.
+ */
 export function communityTileOf(slug: string): string {
-  return `#home-communities-section [data-home-community="${slug}"]`;
+  return tileOf(slug);
 }
 
 /**
@@ -246,7 +250,9 @@ export function lookAroundSteps(): TourStep[] {
   return [
     {
       screen: 'home',
-      target: '#home-new-community',
+      // The one Pinned grid's New community tile (its compact entry on the
+      // heading while a full last row holds the tile back carries the id too).
+      target: '#home-create-tile',
       ringed: true,
       title: translate('onboarding:firstSession.tour.look.make.title'),
       text: translate('onboarding:firstSession.tour.look.make.text'),
@@ -261,8 +267,9 @@ export function lookAroundSteps(): TourStep[] {
     },
     {
       screen: 'home',
-      // One Home (#6361): no Communities tab; joining pins it here.
-      target: '#home-communities-section',
+      // One Home (#6361): no Communities tab; joining pins it here, on the
+      // one Pinned grid.
+      target: '#home-apps-section',
       ringed: true,
       title: translate('onboarding:firstSession.tour.look.communities.title'),
       text: translate('onboarding:firstSession.tour.look.communities.text'),

@@ -20,8 +20,8 @@
     "description": "Small heading over the app tiles on Home while a search is active. {{count}} is how many of the viewer's apps match."
   },
   "grid.heading": {
-    "text": "Pinned apps",
-    "description": "Heading over the grid of app tiles on the Home screen: the apps this person keeps a tile for. The same name is used in \"Pin to Home\"."
+    "text": "Pinned",
+    "description": "Heading over the grid of tiles on the Home screen: the apps and communities this person keeps a tile for. A tap on a tile asks whether to open the app or its community. The same word as in \"Pin to Home\"."
   },
   "grid.loading": {
     "text": "Loading your apps",
@@ -92,11 +92,11 @@
     "description": "Brief notice when the new arrangement of tiles on Home, after a drag, could not be saved."
   },
   "create.label": {
-    "text": "New project",
+    "text": "New community",
     "description": "Label under the dashed + tile at the end of Home's grid, and on the small dashed-plus New project button beside \"Show all N apps\" when the grid is folded and has no room for the tile: starts a new project (an app and the community that builds it)."
   },
   "create.tip": {
-    "text": "Start a project: an app for you or for a community",
+    "text": "Start a community and its app",
     "description": "Tooltip of the + tile at the end of Home's grid, and of the small New project button beside \"Show all N apps\" that stands in for it there."
   },
   "create.disabledHint": {
@@ -104,7 +104,7 @@
     "description": "Last sentence of the + tile's tooltip when the viewer has used up the number of apps they may create: what pressing it does instead. A slot is room for one app."
   },
   "create.lockedTip": {
-    "text": "New project. View app quota. {{hint}}",
+    "text": "New community. View app quota. {{hint}}",
     "description": "Tooltip and accessible name of the + tile at the end of Home's grid when the viewer cannot create another app right now — and of the small New project button beside \"Show all N apps\" that stands in for it there, in the same state. {{hint}} is one whole sentence saying what pressing it does (\"View your app allowance or request more slots.\")."
   },
   "myApps.added": {
@@ -164,12 +164,12 @@
     "description": "Tooltip of the \"Go to community\" item in an app tile's menu: what the community's hub shows."
   },
   "menu.editMyApps.label": {
-    "text": "Edit Pinned apps",
-    "description": "Last item in the menu of an app tile in the Pinned apps grid on Home: puts the grid into edit mode, where tiles can be moved and removed. \"Edit\" is a verb; \"Pinned apps\" is the name of the section."
+    "text": "Edit Pinned",
+    "description": "Last item in the menu of a tile in the Pinned grid on Home: puts the grid into edit mode, where tiles can be moved and unpinned. \"Edit\" is a verb; \"Pinned\" is the name of the section."
   },
   "menu.editMyApps.tip": {
-    "text": "Move and remove the apps in Pinned apps",
-    "description": "Tooltip of the \"Edit Pinned apps\" item in an app tile's menu on Home. \"Move\" and \"remove\" are verbs."
+    "text": "Move and unpin the tiles in Pinned",
+    "description": "Tooltip of the \"Edit Pinned\" item in a tile's menu on Home. \"Move\" and \"unpin\" are verbs."
   },
   "menu.github.label": {
     "text": "View on GitHub",
@@ -196,11 +196,11 @@
     "description": "Item in an app's menu: takes the app's tile off the viewer's Home. \"Pinned apps\" is the name of that section."
   },
   "menu.myApps.showAgainTip": {
-    "text": "Show this app in Pinned apps again. You keep your builder access either way.",
+    "text": "Show this app in Pinned again. You keep your builder access either way.",
     "description": "Tooltip of \"Pin to Home\" in an app's menu, for someone who builds the app and had hidden its tile."
   },
   "menu.myApps.hideTip": {
-    "text": "Hide this app from Pinned apps. It stays live and you keep your builder access.",
+    "text": "Take this tile off Pinned. The app stays live and you keep your builder access.",
     "description": "Tooltip of \"Unpin from Home\" in an app's menu, for someone who builds the app. \"Live\" means still running for its users."
   },
   "menu.notifications.label": {
@@ -416,12 +416,12 @@
     "description": "Tooltip and accessible name of the \"Done\" button on the widget strip on Home: hides the strip."
   },
   "widget.hint.withTiles": {
-    "text": "Drag tiles to reorder. Drag cards from Pinned apps here to add them.",
-    "description": "Hint under the app tiles in the widget strip on Home. \"Pinned apps\" is the name of the grid below it."
+    "text": "Drag tiles to reorder. Drag tiles from Pinned here to add them.",
+    "description": "Hint under the app tiles in the widget strip on Home. \"Pinned\" is the name of the grid below it."
   },
   "widget.hint.empty": {
-    "text": "Drag a card from Pinned apps here (or use its menu) to add it to the Homeroom widget on your home screen.",
-    "description": "Hint in the widget strip on Home while it holds no apps. \"Pinned apps\" is the name of the grid below; Homeroom is the product's name."
+    "text": "Drag a tile from Pinned here (or use its menu) to add it to the Homeroom widget on your home screen.",
+    "description": "Hint in the widget strip on Home while it holds no apps. \"Pinned\" is the name of the grid below; Homeroom is the product's name."
   },
   "widget.tile.remove": {
     "text": "Remove from widget",
@@ -792,16 +792,16 @@
     "description": "Button beside the Pinned apps heading on Home: puts the grid into edit mode, where tiles can be moved and removed. \"Edit\" is a verb."
   },
   "edit.startLabel": {
-    "text": "Edit Pinned apps",
-    "description": "Accessible name of the Edit button beside the Pinned apps heading on Home. \"Edit\" is a verb; \"Pinned apps\" is the name of the section."
+    "text": "Edit Pinned",
+    "description": "Accessible name of the Edit button beside the Pinned heading on Home. \"Edit\" is a verb; \"Pinned\" is the name of the section."
   },
   "edit.done": {
     "text": "Done",
     "description": "Button beside the Pinned apps heading on Home while the grid is in edit mode: ends edit mode."
   },
   "edit.removeNamed": {
-    "text": "Remove {{app}} from Pinned apps",
-    "description": "Accessible name of the small round remove button on an app tile while the Pinned apps grid on Home is in edit mode. {{app}} is the app's name."
+    "text": "Unpin {{app}} from Home",
+    "description": "Accessible name of the small round remove button on a tile while the Pinned grid on Home is in edit mode. {{app}} is the app's name."
   },
   "edit.addTile": {
     "text": "Add other apps",
@@ -845,7 +845,7 @@
   },
   "communities.all": {
     "text": "All communities",
-    "description": "Tile at the end of Pinned communities on Home. Pressing it also shows the communities the viewer is in but has not pinned; pressing it again hides them."
+    "description": "Tile at the end of the Pinned grid on Home. Opens a sheet of the communities the viewer is in that Home has no tile for, each with a way to pin it."
   },
   "communities.new": {
     "text": "New community",
@@ -881,7 +881,7 @@
   },
   "communities.needs": {
     "text": "Needs you",
-    "description": "Name under the tile in Home's Pinned communities that opens Needs you, the page of every vote and decision waiting on the viewer across their projects. Shown only while something waits."
+    "description": "Name under the tile at the end of the Pinned grid on Home that opens Needs you, the page of every vote and decision waiting on the viewer across their projects. Shown only while something is waiting."
   },
   "communities.needsNamed_one": {
     "text": "Needs you: {{count}} vote waiting on you",
@@ -1262,5 +1262,25 @@
   "frame.challengesGoing_other": {
     "text": "still open",
     "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Plural of frame.challengesGoing_one."
+  },
+  "chooser.label": {
+    "text": "{{name}}: open the app or its community",
+    "description": "Accessible name of the small panel that opens when a tile in the Pinned grid on Home is tapped. It offers Open app and Go to community. {{name}} is the project's name."
+  },
+  "chooser.openApp": {
+    "text": "Open app",
+    "description": "First choice in the panel a tap on a Pinned tile on Home opens: opens the project's app. The same words as the Open app button on a community's hub."
+  },
+  "chooser.community": {
+    "text": "Go to community",
+    "description": "Second choice in the panel a tap on a Pinned tile on Home opens: opens the project's community hub, where its changes are proposed and voted on."
+  },
+  "chooser.communityVotes_one": {
+    "text": "Go to community, {{count}} to vote",
+    "description": "The Go to community choice on a phone's plain list of choices, when the community has votes waiting on the viewer. {{count}} is how many."
+  },
+  "chooser.communityVotes_other": {
+    "text": "Go to community, {{count}} to vote",
+    "description": "The Go to community choice on a phone's plain list of choices, when the community has votes waiting on the viewer. {{count}} is how many."
   }
 }

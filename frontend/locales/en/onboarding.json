@@ -1676,8 +1676,8 @@
     "description": "Third card of the walk on Home, pointing at the project's community tile under Pinned communities on Home, which opens its hub."
   },
   "firstSession.walk.communities.text": {
-    "text": "{{app}}'s hub is here. Invite people and decide what changes.",
-    "description": "Line on the walk's Communities card, which points at the project's community tile on Home: the project's hub page is behind it, where its people are invited and decide together which changes to its app go in. {{app}} is the project's name. \"Invite\" and \"decide\" are verbs."
+    "text": "Tap {{app}} and choose Go to community for its hub. Invite people and decide what changes.",
+    "description": "Third card of the walk on Home, pointing at the project's tile in the Pinned grid on Home: a tap on it offers Open app and Go to community, which opens the hub. {{app}} is the project's name. \"Go to community\" is the words of that choice."
   },
   "firstSession.walk.goToCommunity": {
     "text": "Go to community",
@@ -1752,11 +1752,11 @@
     "description": "Text of the first card of the welcome tour on the Home screen, started from Settings, pointing at Home's Pinned communities. \"change\" is a noun: a change to an app. \"here\" in \"Find yours here\" is that section of Home."
   },
   "tour.step.apps.title": {
-    "text": "Pinned apps",
+    "text": "Pinned",
     "description": "Title of the second card of the welcome tour on the Home screen, started from Settings: points at the section of Home with this heading, the person's own shortcuts to apps."
   },
   "tour.step.apps.body": {
-    "text": "Open the apps you pin here, in one tap. To start your own, select New community.",
+    "text": "Open the apps and communities you pin here. To start your own, select New community.",
     "description": "Text of the second card of the welcome tour on the Home screen, started from Settings, about the Pinned apps section. \"New community\" is the label of the last tile under Pinned communities; write New community as that tile is named."
   },
   "tour.step.appMenu.title": {

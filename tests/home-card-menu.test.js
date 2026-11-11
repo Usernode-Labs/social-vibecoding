@@ -932,7 +932,7 @@ test('widget section: tiles in registry order, each with a remove button', () =>
   assert.doesNotMatch(empty, /widget-tile /);
   // The hint names "Your apps" as the drag source now: the home grid holds
   // that one section (every other app moved to the #apps browse screen).
-  assert.match(empty, /Drag a card from Pinned apps here/);
+  assert.match(empty, /Drag a tile from Pinned here/);
 });
 
 test('widget section: help icon toggles the add-widget instructions', () => {
