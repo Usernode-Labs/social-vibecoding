@@ -185,7 +185,6 @@ function replyWaits(row, { now = new Date() } = {}) {
 }
 // What finished lately, for "is it ready yet?".
 const FINISHED_WITHIN_DAYS = 14;
-const MAX_FINISHED = 3;
 const MAX_REQUESTS = 25;
 // #3771: the bot's account, whose follow-ups run beside a project's other work.
 const BOT_USERNAME = 'homeroom_bot';
@@ -594,8 +593,8 @@ function askOnHeadSql(uk, cs) {
  * (homeroom_bot_change_asks) and the durable turn marker
  * (chat_sessions.active_turn), so nothing new is stored.
  *
- * Read by the Needs you feed (routes/workshop-overview.js
- * OWED_PROPOSALS_WHERE), the AI tab (ai-work.js THREADS_SQL) and the
+ * Read by the stored work state (services/work-state.js, which the Needs
+ * you feed reads as vote_open), the AI tab (ai-work.js THREADS_SQL) and the
  * change's own proposal row (routes/votes.js), so all three agree.
  */
 function updateComingSql(cs) {
@@ -936,23 +935,6 @@ function outcomeOf(row) {
   }
 }
 
-/** The time limits of the steps that have one, in minutes, for this request. */
-function limitsFor(row, { settings, config, botSvc }) {
-  try {
-    const turnSeconds = Number(settings?.turnSeconds) || botSvc.DEFAULTS.turnSeconds;
-    const budgets = botSvc.buildBudgets({ repo_url: row.repo_url }, config || {}, turnSeconds * 1000, {
-      firstVersion: !!row.first_version,
-    });
-    return {
-      reading: Math.round(turnSeconds / 60),
-      plan: Math.round(budgets.specBudgetMs / MINUTE_MS),
-      build: Math.round(budgets.turnBudgetMs / MINUTE_MS),
-      ...(Number(row.review_minutes) > 0 ? { review: Number(row.review_minutes) } : {}),
-    };
-  } catch {
-    return {};
-  }
-}
 
 // #19 (WP3, D5): how long each step usually takes, in minutes, by stage: a
 // fixed range for now, to be read from recent runs later. "How long will it
@@ -1405,94 +1387,6 @@ async function projectsBusy(pool, rows) {
   return out;
 }
 
-/**
- * What the bot is doing on one project's requests right now, for the
- * request page (routes/issues.js): reading a request, or building one. By
- * issue number: Map(n → { what: 'reading' | 'building', since }).
- *
- * The bot's own sessions are never a request's `in_progress` (the issue
- * routes leave synthetic authors out on purpose), so without this a request
- * it was building read "Unassigned" and offered Start work. #4190: Claim is
- * offered beside the bot's work on purpose, and a claim made once the bot is
- * on the request means "I'm working on this too": it does not stop the bot
- * (homeroom-bot.js issueHolders).
- *
- * Read twice over. First the same two reads as projectsBusy, which takes
- * the projects of the rows it is handed that wait: one waiting row names
- * this project. Then the bot's own "live build waiting its turn or under
- * way" (the run homeroom-bot.js classifyIssue and rules/bot-loop.ts
- * READ_CANDIDATES_SQL hold a request for): a build waiting for the project's build slot can wait a
- * whole other build's length, and projectsBusy does not count it, since it
- * is not yet holding the project up. To the request it is the bot's work
- * all the same, so it reads as building, since it began to wait. A request
- * both read and built at once is called building, the longer of the two.
- */
-async function botWorkByIssue(pool, appId) {
-  const id = Number(appId);
-  const out = new Map();
-  if (!Number.isInteger(id) || id <= 0) return out;
-  const busy = await projectsBusy(pool, [{ app_id: id, queue_id: -1, started_at: null }]);
-  for (const b of busy.get(id) || []) {
-    const had = out.get(b.issueNumber);
-    if (had && had.what === 'building') continue;
-    out.set(b.issueNumber, { what: b.what, since: b.since });
-  }
-  const { ABANDONED_LIVE_WINDOW_DAYS } = require('./homeroom-bot');
-  const { rows: builds } = await pool.query(
-    `SELECT DISTINCT ON (r.issue_number) r.issue_number,
-            COALESCE(r.live_build_waiting_at, bs.created_at, r.created_at) AS since
-       FROM homeroom_bot_runs r
-       LEFT JOIN chat_sessions bs ON bs.id = r.build_session_id
-      WHERE r.app_id = $1
-        AND r.mode = 'live' AND r.verdict = 'ready' AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
-        AND (r.live_build_waiting_at IS NOT NULL OR r.build_session_id IS NOT NULL)
-        AND r.created_at > NOW() - make_interval(days => $2)
-      ORDER BY r.issue_number, r.created_at DESC`,
-    [id, ABANDONED_LIVE_WINDOW_DAYS],
-  );
-  for (const b of builds) {
-    const n = Number(b.issue_number);
-    if (out.get(n)?.what === 'building') continue;
-    out.set(n, { what: 'building', since: b.since });
-  }
-  // B8: somebody asked the bot to build it (its page, their chat, Ask for a
-  // change) and it waits for a free builder: it is the bot's already, and
-  // nobody starts it a second time.
-  // B6: and a first version's plan, waiting for its creator's Build it.
-  // The request page's status card says which (`plan`: a plan waits for
-  // whoever asked for it to say Build it).
-  const { rows: asked } = await pool.query(
-    `SELECT issue_number, enqueued_at, FALSE AS plan FROM homeroom_bot_queue
-      WHERE app_id = $1 AND priority = 0 AND started_at IS NULL
-        AND (held_until IS NULL OR held_until <= NOW())
-     UNION ALL
-     SELECT issue_number, awaiting_go_at, TRUE AS plan FROM homeroom_bot_runs
-      WHERE app_id = $1 AND awaiting_go_at IS NOT NULL AND build_ok IS NULL`,
-    [id],
-  );
-  for (const q of asked) {
-    const n = Number(q.issue_number);
-    if (!out.has(n)) out.set(n, { what: 'queued', since: q.enqueued_at, ...(q.plan === true ? { plan: true } : {}) });
-  }
-  // And a request whose build its own limit holds: it starts when one of
-  // its changes on the project is voted in or closed, or (#6156) one of its
-  // builds there finishes (live.heldText).
-  const { rows: held } = await pool.query(
-    `SELECT DISTINCT ON (r.issue_number) r.issue_number, r.created_at, r.cap_suppressed
-       FROM homeroom_bot_runs r
-      WHERE r.app_id = $1 AND r.mode = 'live'
-        AND r.created_at > NOW() - make_interval(days => $2)
-      ORDER BY r.issue_number, r.id DESC`,
-    [id, ABANDONED_LIVE_WINDOW_DAYS],
-  ).catch(() => ({ rows: [] }));
-  for (const h of held) {
-    const n = Number(h.issue_number);
-    if (out.has(n) || !['builds_per_app', 'proposals_per_app', 'proposals_total'].includes(h.cap_suppressed)) continue;
-    out.set(n, { what: 'queued', since: h.created_at, held: true, ...(h.cap_suppressed === 'builds_per_app' ? { turn: true } : {}) });
-  }
-  return out;
-}
-
 // 2026-10-05: what a request held by its project's first version is doing,
 // in the bot's words (its card, the tray, "how far along are you?"), and a
 // ready one whose build is held the same way.
@@ -1650,55 +1544,6 @@ function buildWait(row, {
   return { doing: 'ready to build; its build starts next', waitingFor: { reason: 'next' } };
 }
 
-/**
- * A proposal's facts as the DM reads them: its title, where it stands, its
- * checks in words, the votes for and against and how many it needs, and its
- * link. Null when there is no such proposal.
- */
-async function proposalFacts(pool, sessionId, { domain = null } = {}) {
-  if (!sessionId) return null;
-  const revision = require('./pr-vote-revision');
-  const { rows } = await pool.query(
-    `SELECT cs.id, cs.app_id, a.slug,
-            CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status,
-            cs.check_state, cs.check_phase, cs.checks_progress,
-            cs.test_results, cs.session_title, cs.pr_title, cs.pr_number, cs.promoted_at, cs.created_at,
-            (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'yes'
-                AND ${revision.countedVotePredicateSql('pv', 'cs')}) AS yes,
-            (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'no'
-                AND ${revision.countedVotePredicateSql('pv', 'cs')}) AS no
-       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`,
-    [sessionId],
-  );
-  const s = rows[0];
-  if (!s) return null;
-  let needed = null;
-  // 13 Oct 2026, D1: a project's first version goes live without a vote.
-  const first = s.status === 'promoted'
-    ? await require('./first-version-rule').isFirstVersion(pool, s.id)
-    : false;
-  if (s.status === 'promoted') {
-    try {
-      const governance = require('./governance');
-      const gov = await governance.getGovernance(pool, s.app_id);
-      const electorate = await governance.getElectorate(pool, s.app_id, gov);
-      needed = governance.computeGate(gov, electorate.active, s.yes, s.no, s.promoted_at || s.created_at, undefined, { firstVersion: first }).required;
-    } catch { needed = null; }
-  }
-  const link = links(domain, { slug: s.slug, proposal: s.id, pr: s.pr_number }).proposal;
-  return {
-    proposal: Number(s.id),
-    title: s.session_title || s.pr_title || null,
-    status: first
-      ? 'the project\'s first version: it goes live without a vote once its tests pass'
-      : ({ promoted: 'waiting for approval', merging: 'going live', merged: 'live', closed: 'closed' }[s.status] || s.status),
-    checks: checksWords({ ...s, failed_checks: failedCount(s.test_results) }),
-    yesVotes: s.yes,
-    noVotes: s.no,
-    votesNeeded: Number.isFinite(needed) ? needed : null,
-    ...(link ? { link } : {}),
-  };
-}
 
 /**
  * The first versions the bot is to build for this person whose request is
@@ -1736,52 +1581,20 @@ function setupOf(row, { phase = null } = {}) {
   return { stage: 'setting_up', since: row.app_created_at || row.created_at, doing: `setting up the project${part}` };
 }
 
-/** Pure: whether a `progressFor` entry is in the bot's hands now (IN_FLIGHT_STAGES). */
+/** Pure: whether a stage (stageOf) is in the bot's hands now (IN_FLIGHT_STAGES). */
 function inFlight(item) {
   return !!item && IN_FLIGHT_STAGES.has(item.stage) && !item.waitingOn;
 }
 
-function entry({ row, number = null, title = null, firstVersion, state, proposal = null, limits = {}, domain, now }) {
-  const steps = firstVersion ? FIRST_VERSION_STEPS : REQUEST_STEPS;
-  const step = stepNumber(state.stage, firstVersion);
-  const minutes = minutesSince(state.since, now);
-  const limit = state.limit && Number.isFinite(limits[state.limit]) ? limits[state.limit] : null;
-  const typical = state.waitingOn ? null : typicalMinutes(state.stage, limit);
-  return {
-    project: row.slug,
-    projectName: row.name || row.slug,
-    ...(number ? { number: Number(number) } : {}),
-    title: firstVersion ? 'First version' : (title || null),
-    ...(firstVersion ? { firstVersion: true } : {}),
-    stage: state.stage,
-    step,
-    of: steps.length,
-    stepName: step ? steps[step - 1] : null,
-    // The same for what it is doing: building it, once Build it is tapped.
-    doing: firstVersion && state.stage === 'planning' ? 'building it' : state.doing,
-    busyNow: BUSY_STAGES.has(state.stage) && !state.waitingOn,
-    ...(state.since ? { since: iso(state.since), minutesSoFar: minutes } : {}),
-    ...(limit ? { stepTimeLimitMinutes: limit } : {}),
-    ...(typical ? { typicalMinutes: typical } : {}),
-    ...(state.waitingOn ? { waitingOn: state.waitingOn } : {}),
-    ...(state.waitingFor ? { waitingFor: state.waitingFor } : {}),
-    // #6313: a queued read after a plan that could not be written says so.
-    ...(state.retry ? { retry: state.retry } : {}),
-    ...(proposal ? { proposal } : {}),
-    // WP1 (#10): the request's other builds, beside the one described.
-    ...(row.also_building ? { alsoBuilding: row.also_building } : {}),
-    ...(row.earlier_attempt ? { earlierAttempt: row.earlier_attempt } : {}),
-    links: links(domain, { slug: row.slug, number, proposal: proposal?.proposal }),
-  };
-}
 
 /**
  * Each of the person's requests (requestRows), newest first, beside the
  * stage it is at (stageOf; null when nothing about it is in progress):
- * `{ row, state }`. What progressFor below says of each, and what the
- * activity cards read (homeroom-bot-activity.js catchUpCards) to find the
- * work under way that has no card yet, so the two cannot disagree on what
- * that work is.
+ * `{ row, state }`. What the activity cards read (homeroom-bot-activity.js
+ * catchUpCards) to find the work under way that has no card yet, and a
+ * first version's App tab steps (homeroom-bot-dm.js firstVersionStateOf).
+ * 11 Nov 2026: no surface words a request's status from it any more: where
+ * a request stands is its stored work state (services/work-state.js).
  */
 async function requestStates(pool, { userId, settings = null, now = new Date(), working = 0 }) {
   // #3734: a queue row is the bot's work only on a project it acts on for
@@ -1833,100 +1646,6 @@ async function requestStates(pool, { userId, settings = null, now = new Date(), 
     }
     return { row: s.row, state: s.state };
   });
-}
-
-/**
- * How far along the bot is with everything it does for `userId`, newest
- * first: `rightNow` (in progress, each with its step of the steps above,
- * what it is doing, since when, the step's time limit and links) and
- * `finishedLately` (the last few that came to something). `facts: false`
- * leaves a proposal as its id alone, without its checks and votes (the
- * activity tray draws no more than that, and reads this on every change).
- */
-async function progressFor(pool, { userId, settings = null, config = null, deps = {}, now = new Date(), facts = true }) {
-  const botSvc = deps.botSvc || require('./homeroom-bot');
-  const phases = deps.creationPhase || require('./app-creation-phase');
-  const domain = deps.domain !== undefined ? deps.domain : require('./caddy').USERNODE_DOMAIN;
-  const rightNow = [];
-  const finished = [];
-
-  for (const row of await firstVersionRows(pool, userId)) {
-    const state = setupOf(row, { phase: row.app_status === 'creating' ? await phases.read(pool, row.app_id) : null });
-    if (state.outcome) {
-      finished.push({ project: row.slug, projectName: row.name || row.slug, title: 'First version', outcome: state.outcome, links: links(domain, { slug: row.slug }) });
-    } else {
-      rightNow.push(entry({ row, firstVersion: true, state, domain, now }));
-    }
-  }
-
-  const cutoff = now.getTime() - FINISHED_WITHIN_DAYS * 24 * 60 * MINUTE_MS;
-  for (const { row, state } of await requestStates(pool, {
-    userId, settings, now, working: rightNow.filter((e) => e.busyNow).length,
-  })) {
-    if (state) {
-      const open = row.proposal_session_id && row.proposal_status && row.proposal_status !== 'closed';
-      let proposal = null;
-      if (open) {
-        proposal = facts
-          ? await proposalFacts(pool, Number(row.proposal_session_id), { domain })
-          : { proposal: Number(row.proposal_session_id) };
-      }
-      rightNow.push(entry({
-        row, number: row.issue_number, title: row.issue_title, firstVersion: !!row.first_version, state, proposal,
-        limits: state.limit ? limitsFor(row, { settings, config, botSvc }) : {}, domain, now,
-      }));
-      continue;
-    }
-    const outcome = outcomeOf(row);
-    const when = row.merged_at || row.run_at;
-    if (outcome && when && new Date(when).getTime() >= cutoff && finished.length < MAX_FINISHED) {
-      finished.push({
-        project: row.slug,
-        projectName: row.name || row.slug,
-        number: Number(row.issue_number),
-        title: row.first_version ? 'First version' : (row.issue_title || null),
-        outcome,
-        when: iso(when),
-        links: links(domain, { slug: row.slug, number: row.issue_number, proposal: row.proposal_session_id }),
-      });
-    }
-  }
-  return {
-    botIsOn: settings?.mode !== 'off',
-    rightNow,
-    finishedLately: finished.slice(0, MAX_FINISHED),
-  };
-}
-
-/**
- * Pure: `progressFor`'s answer as a short message in plain words, for the
- * DM to send from the records alone when its model could not answer. At
- * most `max` pieces of work, and how many more there are: #4097, the DM
- * sends it with a card for each one it lists (homeroom-bot-mayor.js
- * recordsAnswer), and a piece listed with no card was a number to decode.
- */
-function progressText(progress, { max = 5 } = {}) {
-  const lines = [];
-  const rightNow = progress?.rightNow || [];
-  for (const item of rightNow.slice(0, max)) {
-    const what = item.number
-      ? `${item.projectName} request #${item.number}${item.title ? ` (${item.title})` : ''}`
-      : `${item.projectName}, its ${String(item.title || 'first version').toLowerCase()}`;
-    const step = item.step ? `step ${item.step} of ${item.of}, ` : '';
-    const time = Number.isInteger(item.minutesSoFar)
-      ? `, for ${item.minutesSoFar < 1 ? 'under a minute' : plural(item.minutesSoFar, 'minute')} so far`
-      : '';
-    lines.push(`- ${what}: ${step}${item.doing}${time}.`);
-  }
-  if (lines.length && rightNow.length > max) lines.push(`- and ${rightNow.length - max} more.`);
-  if (!lines.length) {
-    const done = (progress?.finishedLately || [])[0];
-    return done
-      ? `I'm not working on anything for you right now. Most recently, ${done.projectName}${done.number ? ` request #${done.number}` : ''}: ${done.outcome}.`
-      : 'I\'m not working on anything for you right now.';
-  }
-  const off = progress.botIsOn === false ? '\n\nI\'m switched off right now, so this waits until I\'m back on.' : '';
-  return `Here is where things stand, from my records:\n\n${lines.join('\n')}${off}`;
 }
 
 module.exports = {
@@ -1985,17 +1704,14 @@ module.exports = {
   FIRST_VERSION_BUILD_WAIT,
   firstVersionWait,
   projectsBusy,
-  botWorkByIssue,
   outcomeOf,
   setupOf,
+  firstVersionRows,
   stepNumber,
   checksWords,
   failedCount,
   links,
-  proposalFacts,
   requestStates,
-  progressFor,
-  progressText,
   // #8, #19 (WP3)
   TYPICAL_MINUTES,
   leftOverQueue,

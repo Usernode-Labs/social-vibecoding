@@ -19,6 +19,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { settleWorkStates } = require('./lib/work-states');
 const crypto = require('node:crypto');
 const { Pool } = require('pg');
 
@@ -54,6 +55,7 @@ test('the Communities tab\'s badge against the full PostgreSQL schema', { timeou
   const countsLayer = router.stack.find((l) => l.route?.path === '/api/workshop/counts');
   /** GET /api/workshop/counts as `who` sees it. */
   async function counts(who) {
+    await settleWorkStates(pool);
     let status = 200;
     let body = null;
     await countsLayer.route.stack[0].handle(
@@ -115,6 +117,7 @@ test('the Communities tab\'s badge against the full PostgreSQL schema', { timeou
     assert.equal(c.homeroom.needs, 5, 'the four changes and the decision are still owed');
     assert.equal(c.homeroom.unchosen, true, 'and none of them puts a number on the tab');
     assert.deepEqual(Object.keys(c), ['homeroom'], 'nothing else is counted for a newcomer');
+    await settleWorkStates(pool);
     const feed = overview.shapeNeedsFeed((await pool.query(overview.NEEDS_FEED_SQL,
       [fresh.id, true, false, overview.NEEDS_FEED_MAX])).rows);
     assert.equal(feed.length, 5, 'the items stay in Needs you: only the badge changes');

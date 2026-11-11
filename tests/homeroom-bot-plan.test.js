@@ -518,7 +518,11 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.equal((await dm.firstVersionState(pool, app.id, { viewerId: maya.id })).line, 'plan');
     assert.deepEqual(fv.plan.bullets, PLAN.bullets);
     assert.equal(fv.plan.actionId, (await planMessage(first)).meta.actionId);
-    assert.equal((await progress.botWorkByIssue(pool, app.id)).get(1).what, 'queued', 'nobody else starts it');
+    // Its page's `bot`, read off its stored row (work-state.js botWorkOf).
+    const ws = require('../src/services/work-state');
+    await ws.refresh(pool, [{ appId: app.id, issueNumber: 1 }]);
+    const [row1] = await ws.forItems(pool, [{ appId: app.id, issueNumber: 1 }]);
+    assert.equal(ws.botWorkOf(row1).what, 'queued', 'nobody else starts it');
   });
 
   await t.test('Build it, from any device, builds once, with the choices tapped and the rest suggested', async () => {

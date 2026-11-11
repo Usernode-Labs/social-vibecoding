@@ -453,6 +453,13 @@
     {
       "source": "src/routes/issues.js",
       "kind": "structural-template",
+      "fingerprint": "d1370a75774417b16bfa",
+      "count": 1,
+      "preview": "`SELECT cs.id FROM chat_sessions cs WHERE cs.id = ANY($2::int[]) AND ${OWED_PROPOSALS_WHERE}`"
+    },
+    {
+      "source": "src/routes/issues.js",
+      "kind": "structural-template",
       "fingerprint": "ec077e0c08a5b8a73b7c",
       "count": 1,
       "preview": "`SELECT DISTINCT ON (created_from_issue_number) created_from_issue_number AS n, id FROM chat_sessions WHERE app_id = $1 AND user_id = $2 AND created_from_issue_"
@@ -1459,25 +1466,18 @@
       "preview": "`SELECT p.app_id, p.about_number FROM private_threads p WHERE p.user_id = $1 AND ${planHoldActiveSql('p')}`"
     },
     {
-      "source": "src/services/homeroom-bot-progress.js",
-      "kind": "structural-template",
-      "fingerprint": "eee0d0058ae8c27e0b96",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.app_id, a.slug, CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status, cs.check_state, cs.check_ph"
-    },
-    {
-      "source": "src/services/homeroom-bot-reply-status.js",
-      "kind": "runtime-built-identifier",
-      "fingerprint": "748340c4403e63509b60",
-      "count": 1,
-      "preview": "REQUEST_ROWS_SQL"
-    },
-    {
       "source": "src/services/homeroom-bot-reply-status.js",
       "kind": "runtime-expression",
       "fingerprint": "9f8cd532c33acde0b9cc",
       "count": 1,
       "preview": "place.type === 'chat' ? `SELECT 1 FROM chat_messages m JOIN users u ON u.id = m.user_id WHERE m.app_id = $1 AND m.thread_type = 'message' AND m.thread_ref = $2 "
+    },
+    {
+      "source": "src/services/homeroom-bot-reply-status.js",
+      "kind": "structural-template",
+      "fingerprint": "05f2da355febd1d1a175",
+      "count": 1,
+      "preview": "`SELECT reply.reply_id, reply.reply_at, reply.reply_user_id FROM (SELECT $1::int AS app_id, $2::int AS issue_number) m LEFT JOIN LATERAL ( SELECT created_at FRO"
     },
     {
       "source": "src/services/homeroom-bot-reply-status.js",
@@ -1499,13 +1499,6 @@
       "fingerprint": "c88f14f4f226912f6e1e",
       "count": 1,
       "preview": "`SELECT ${require('../app-access').nonSecretAppColumnList()} FROM apps WHERE id = $1`"
-    },
-    {
-      "source": "src/services/homeroom-bot-track.js",
-      "kind": "runtime-built-identifier",
-      "fingerprint": "748340c4403e63509b60",
-      "count": 1,
-      "preview": "REQUEST_ROWS_SQL"
     },
     {
       "source": "src/services/homeroom-bot-voice.js",
@@ -2306,11 +2299,11 @@
       "preview": "`DELETE FROM ${t.sql} WHERE ${quoteIdent(c.name)} = $1::integer`"
     },
     {
-      "source": "src/services/vote-digest.js",
+      "source": "src/services/work-state.js",
       "kind": "runtime-built-identifier",
-      "fingerprint": "9d1082139d72c4cb203f",
+      "fingerprint": "e07f8fc99a563b8a567b",
       "count": 1,
-      "preview": "PENDING_SQL"
+      "preview": "STANDING_SQL"
     },
     {
       "source": "src/services/work-state.js",
@@ -2318,6 +2311,13 @@
       "fingerprint": "e291c7da7e5ce11b4cf9",
       "count": 1,
       "preview": "REQUEST_FACTS_SQL"
+    },
+    {
+      "source": "src/services/work-state.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "f20155d3c2a832a82323",
+      "count": 1,
+      "preview": "CHANGE_FACTS_SQL"
     },
     {
       "source": "src/services/worker-eviction.js",

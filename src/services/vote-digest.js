@@ -38,8 +38,6 @@
 
 const log = require('./logger');
 const { VOTE_DIGEST_LOCK } = require('./advisory-locks');
-const { firstVersionSql } = require('./first-version-rule');
-const { voteReadySql } = require('./vote-ready');
 
 const INTERVAL_MS = 60 * 60 * 1000;      // swept hourly (the vote-digest clock)
 // 20 rather than 24: the sweep is hourly and a strict 24 would drift a
@@ -94,11 +92,13 @@ const PENDING_SQL = `
            (cs.external_agent IS NOT NULL) AS made_by_agent
       FROM chat_sessions cs
      WHERE cs.status = 'promoted'
-       -- 13 Oct 2026, D1: a project's first version waits on nobody's vote.
-       AND NOT ${firstVersionSql('cs')}
-       -- #6402: and only once its checks passed and it merges cleanly with
-       -- main. A change still being tested is nobody's vote yet.
-       AND ${voteReadySql('cs')}
+       -- 11 Nov 2026: only a change open for votes, as its stored work state
+       -- says (services/work-state.js, the Needs you feed's own test): its
+       -- checks passed and it merges cleanly (#6402), not a first version
+       -- (D1), no update on its way, no merge GitHub holds, no shots still
+       -- being taken. A change still being tested is nobody's vote yet.
+       AND EXISTS (SELECT 1 FROM work_states ws
+                    WHERE ws.item_kind = 'change' AND ws.item_ref = cs.id AND ws.vote_open)
   )
   SELECT s.user_id, COUNT(DISTINCT p.id) AS pending,
          -- The one change, when there is exactly one: the row names it, so a

@@ -5051,7 +5051,10 @@ async function askBotToBuild(pool, { app, user, issueNumber, deps = {}, readAgai
   if (!require('./homeroom-bot-live').isLiveFor(settings, app)) {
     return { ok: false, status: 409, error: 'Homeroom bot does not build on this project.', code: 'not_building' };
   }
-  const busy = (await require('./homeroom-bot-progress').botWorkByIssue(pool, app.id)).get(n);
+  // Where it stands, as its page reads it (services/work-state.js botWorkOf).
+  const workState = require('./work-state');
+  const [standing] = await workState.forItems(pool, [{ appId: app.id, issueNumber: n }]);
+  const busy = workState.botWorkOf(standing);
   if (busy) return { ok: false, status: 409, error: 'Homeroom bot is already on it.', code: 'already_building' };
   // #6399: "Ask Homeroom bot to read this again", offered when the reason its
   // last read handed the request back is one a later release removed

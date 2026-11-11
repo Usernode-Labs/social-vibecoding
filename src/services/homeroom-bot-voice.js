@@ -1166,7 +1166,13 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
     const request = Array.isArray(change.linked_issues) && change.linked_issues.length ? Number(change.linked_issues[0]) : null;
     const counts = await followup.revisionCounts(pool, change.id);
     const asks = await askState(pool, change.id);
-    const busy = await changeBusy(pool, change.id);
+    // 11 Nov 2026: where it stands is its stored work state
+    // (services/work-state.js), the row its page and every list draw: its
+    // stage in their words, its checks, its votes, whether it is open for
+    // votes, and an update on its way.
+    const workState = require('./work-state');
+    const standing = (await workState.forChanges(pool, [change.id]).catch(() => new Map())).get(Number(change.id)) || null;
+    const busy = standing ? standing.change?.update === 'running' : (asks.running || await changeBusy(pool, change.id));
     // #6389: a change somebody else made, and where they made it. There is
     // no Fix it button on one made outside Homeroom: the facts say so, so the
     // model names the tool rather than inventing a button. Whether the bot may
@@ -1182,7 +1188,8 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
     lines.push(`The change${place.type === 'issue' ? ' you built for this request' : ''}: `
       + `${change.pr_number ? `Change #${Number(change.pr_number)}` : 'the change'} `
       + `(its id, for tool arguments only, is ${change.id}), "${clip(change.title, 160)}", ${built}, `
-      + `status ${change.status}${request ? `, for request #${request}` : ''}.`);
+      + `${standing ? `where it stands: ${workState.says(standing, { yours: false })}` : `status ${change.status}`}`
+      + `${request ? `, for request #${request}` : ''}.`);
     if (!own && change.external_agent && Number(change.user_id) === Number(speaker.id)) {
       lines.push(`The person who wrote to you made this change (${author}): answer them as you.`);
     }
@@ -1195,7 +1202,7 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
         lines.push(admitted.ok
           ? `You can update this change for them, on this same change (update_change), paid from ${author}'s week. You have made ${counts.asked} of ${followup.MAX_ASKED_REVISIONS} updates people asked for on it.`
           : `You cannot update this change just now: ${clip(admitted.error, 300)}`);
-        lines.push(busy || asks.running
+        lines.push(busy
           ? `An update of yours on it is running right now${asks.queued ? `, and ${asks.queued} more ask${asks.queued === 1 ? '' : 's'} wait${asks.queued === 1 ? 's' : ''} behind it` : ''}.`
           : asks.queued ? `${asks.queued} ask${asks.queued === 1 ? '' : 's'} wait${asks.queued === 1 ? 's' : ''} for its next update.` : 'Nothing of yours is running on it now.');
       } else {
@@ -1211,13 +1218,21 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
     // On GitHub the change's number is GitHub's own pull request counter, so
     // it is written "PR N"; "#N" is only ever a request there.
     if (repoRef.isGithub(app.repo_url)) lines.push('On this project a change is written as PR N, from GitHub\'s own counter; #N is only ever a request.');
-    if (change.check_state) lines.push(`Its checks: ${change.check_state}.`);
+    const facts = standing?.change || null;
+    if (facts) {
+      const failing = Number(facts.checks?.failing) > 0 ? `, ${facts.checks.failing} failing` : '';
+      lines.push(`Its checks: ${facts.checks?.state || 'not run yet'}${failing}. Its votes this round: ${facts.votes.yes} yes, ${facts.votes.no} no. `
+        + `${facts.voteOpen ? 'It is open for votes now.' : 'It is not open for votes now.'}`
+        + `${facts.update === 'queued' ? ' An update is queued on it.' : ''}`);
+    } else if (change.check_state) {
+      lines.push(`Its checks: ${change.check_state}.`);
+    }
     if (own) {
       lines.push(`You have made ${counts.own} of ${followup.MAX_REVISIONS} fixes on it by yourself, and ${counts.asked} of ${followup.MAX_ASKED_REVISIONS} updates people asked for.`);
       if (counts.own >= followup.MAX_REVISIONS && !counts.openGrant) {
         lines.push('You stopped at your own limit, so you cannot fix it again until the person who asked for it or an admin lets you try once more (let_try_again).');
       }
-      lines.push(busy || asks.running
+      lines.push(busy
         ? `A run on it is going right now${asks.queued ? `, and ${asks.queued} more ask${asks.queued === 1 ? '' : 's'} wait${asks.queued === 1 ? 's' : ''} behind it` : ''}.`
         : asks.queued ? `${asks.queued} ask${asks.queued === 1 ? '' : 's'} wait${asks.queued === 1 ? 's' : ''} for its next update.` : 'Nothing is running on it now.');
     }

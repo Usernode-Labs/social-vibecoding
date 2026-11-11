@@ -9,6 +9,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { settleWorkStates } = require('./lib/work-states');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
@@ -592,6 +593,7 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     await promote(stranger, 'Not my project', '10 minutes');
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [voted, me.id]);
     await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')`, [older, author.id]);
+    await settleWorkStates(pool);
     const { rows } = await pool.query(overview.NEEDS_FEED_SQL, [me.id, false, false, overview.NEEDS_FEED_MAX]);
     const feed = overview.shapeNeedsFeed(rows);
     assert.deepEqual(feed.map((f) => [f.app.slug, f.title]), [
@@ -615,6 +617,7 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     await pool.query('DELETE FROM thread_followers WHERE thread_id = $1 AND user_id = $2', [olderThread, me.id]);
     // Leaving a project takes its cards with it.
     await communities.leave(pool, swap, me.id);
+    await settleWorkStates(pool);
     const after = overview.shapeNeedsFeed((await pool.query(overview.NEEDS_FEED_SQL, [me.id, false, false, 60])).rows);
     assert.deepEqual(after.map((f) => f.title), ['Older change']);
   });
@@ -641,7 +644,7 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     await promote(strict, 'Two to say yes', '2 hours');
     await promote(group, 'Group change', '3 hours');
     const read = async () => overview.shapeNeedsFeed(await overview.withVotesRequired(pool,
-      (await pool.query(overview.NEEDS_FEED_SQL, [me.id, false, false, overview.NEEDS_FEED_MAX])).rows));
+      (await settleWorkStates(pool), await pool.query(overview.NEEDS_FEED_SQL, [me.id, false, false, overview.NEEDS_FEED_MAX])).rows));
     const feed = await read();
     assert.deepEqual(feed.map((f) => [f.title, f.approve === true]), [
       ['Sunday reminder', true], ['Two to say yes', false], ['Group change', false],
@@ -672,6 +675,7 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       [a.id, author.id, title, ago])).rows[0].id;
     const older = await promote(plain, 'Older deciding change', '2 days');
     const newer = await promote(approvers, 'Newer advisory change', '1 hour');
+    await settleWorkStates(pool);
     const rows = (await pool.query(overview.NEEDS_FEED_SQL, [me.id, false, false, overview.NEEDS_FEED_MAX])).rows;
     assert.equal(rows.find((r) => r.id === newer).counts, true, 'the viewer is a member, so their vote is counted');
     await overview.withViewerDecides(pool, rows, me.id);
@@ -704,6 +708,7 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       const discussions = (await pool.query(DISCUSSIONS_SQL, [me.id, isAdmin])).rows.map((r) => r.slug);
       assert.ok(discussions.includes(kept.slug), 'the live app is still a discussion');
       assert.ok(!discussions.includes(suspended.slug), 'the suspended one is not');
+      await settleWorkStates(pool);
       const counted = (await pool.query(overview.COUNTS_SQL, [me.id, isAdmin, isAdmin])).rows;
       const counts = counted.map((r) => r.slug);
       assert.ok(counts.includes(kept.slug) && !counts.includes(suspended.slug), 'no count for a suspended app');
@@ -740,6 +745,7 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
        VALUES ($1, $2, 'promoted', 'Add dark mdoe toggel', 'Add a dark mode toggle', NULL, 'passing')`,
       [theirs.id, author.id]);
 
+    await settleWorkStates(pool);
     const items = (await pool.query(overview.ITEMS_SQL,
       [me.id, false, false, overview.ITEMS_PER_APP, overview.ITEMS_TOTAL])).rows;
     assert.equal(items.find((r) => r.slug === mine.slug && r.section === 'working').title,

@@ -133,6 +133,38 @@ These read `work_states`; their own deciders are deleted:
 - the bell (dm moments)
 - the Workshop (needs-feed, waiting)
 
+### Step 1, built 11 Nov 2026
+
+The standing, finished on the server (the first commit of the one-model
+proposal):
+
+- Each row also stores its `standing` (its change: checks, votes this
+  round, GitHub's hold, shots, an update on its way; what is asked of the
+  requester: an open question, a plan, a vote to close it, a private
+  thread holding it, open cards; the bot's newest post about it; a
+  request's tries, why its build stopped, who shipped it), `vote_open` and,
+  on a request, `lead_change_id`. A change has its own row even when it was
+  built for a request; that row never rings the bell.
+- `vote_open` is the change's stage being `up_for_vote`. `deriveChange`
+  holds a vote for a first version, an update on its way (now `building`,
+  `update_queued`, not `up_for_vote`), a merge GitHub holds, and shots
+  still being taken, so a stage of `up_for_vote` is always a change open
+  for votes. Needs you and the vote digest read `vote_open`.
+- The words exist once: `phrasesOf(item)` maps an item to core catalog
+  phrase ids and ships with every row and push as `words`; the server's
+  English reads the same catalog (push-text.js). The hand-copied table is
+  gone.
+- The bot tab, the activity cards, project chat cards, a request's track,
+  the request page's `standing` (with the viewer's `mine` and `voteOwed`),
+  Homeroom bot's progress, my_work and request_detail, and the voice's
+  facts read the rows. Gone: ai-work's fallback, the chat card's own
+  derivation, progressFor, progressText, proposalFacts, botWorkByIssue,
+  statusOf, and the track's own reads of holds, tries and who shipped it.
+- Left for later: requestStates (with progress.outcomeOf) still drives a
+  first version's App tab steps (homeroom-bot-dm.js firstVersionStateOf)
+  and the activity cards' catch-up keys; the "new proposal" ping still reads
+  the SQL predicate inside the proposal machine's transition.
+
 ## Step 4: posting rules
 
 The request thread keeps:

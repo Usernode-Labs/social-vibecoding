@@ -10,6 +10,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { settleWorkStates } = require('./lib/work-states');
 const crypto = require('node:crypto');
 const { Pool } = require('pg');
 
@@ -320,19 +321,23 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   });
 
   await t.test('my_work is one person\'s: each request\'s state, the proposal\'s votes, what runs now', async () => {
+    // 11 Nov 2026: each request's state is its stored work state, in the
+    // words its screens use (services/work-state.js says), with whose move it
+    // is and its change: the same row its page draws.
     const work = await mayor.myWork(pool, { userId: ada.id, settings, deps: { domain: 'app.test' } });
     const by = new Map(work.requests.map((r) => [`${r.project}#${r.number}`, r]));
-    assert.equal(by.get('seed-swap#3').status, 'step 1 of 6: reading the request to decide whether to ask a question or build it');
+    assert.deepEqual([by.get('seed-swap#3').status, by.get('seed-swap#3').whoseMove], ['Reading it', 'bot']);
     assert.ok(by.get('seed-swap#3').since, 'and since when');
     assert.equal(by.get('seed-swap#3').botBuildsHere, true);
-    assert.equal(by.get('seed-swap#4').status, 'step 1 of 6: waiting for an answer to the question asked');
-    assert.equal(by.get('note-board#5').status, 'step 5 of 6: it\'s waiting for approval');
-    assert.equal(by.get('note-board#5').proposal.proposal, proposal.id);
-    assert.equal(by.get('note-board#5').proposal.yesVotes, 0);
-    assert.equal(by.get('note-board#5').proposal.checks, 'passed');
-    assert.equal(by.get('note-board#5').proposal.link, `https://app.test/#app/note-board/dev/proposals/${proposal.id}`);
-    // #3771: what it waits for, in words: here nothing is ahead of it.
-    assert.equal(by.get('note-board#6').status, 'step 1 of 6: next in line for a free builder');
+    assert.deepEqual([by.get('seed-swap#4').status, by.get('seed-swap#4').whoseMove], ['Waiting for your answer', 'requester']);
+    assert.deepEqual([by.get('note-board#5').status, by.get('note-board#5').whoseMove], ['Up for a vote', 'group']);
+    assert.deepEqual(by.get('note-board#5').change, {
+      id: proposal.id, status: 'promoted', checks: { state: 'passing', phase: null, failing: null },
+      votes: { yes: 0, no: 0 }, openForVotes: true,
+    });
+    assert.equal(by.get('note-board#5').links.proposal, `https://app.test/#app/note-board/dev/proposals/${proposal.id}`);
+    // Waiting its turn: its place in the bot's line on its project.
+    assert.equal(by.get('note-board#6').status, 'Not started yet · Number 1 in line');
     assert.ok(!by.has('sam-shop#9'), 'never somebody else\'s request');
     assert.deepEqual(work.workingOnNow.map((w) => `${w.project}#${w.number}`), ['seed-swap#3'],
       'only what the bot is doing this minute, not what waits on her, the group or the queue');
@@ -355,17 +360,18 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
        VALUES ($1, 3, 'live', 'ready', $2) RETURNING id`,
       [seeds.id, buildSession.id],
     );
+    await settleWorkStates(pool);
     const planning = await mayor.myWork(pool, { userId: ada.id, settings });
-    assert.equal(planning.requests.find((r) => r.project === 'seed-swap' && r.number === 3).status,
-      'step 2 of 6: writing the plan for the build');
+    assert.equal(planning.requests.find((r) => r.project === 'seed-swap' && r.number === 3).status, 'Planning');
     assert.deepEqual(planning.workingOnNow.map((w) => `${w.project}#${w.number}`), ['seed-swap#3']);
     // Its plan is posted: it is building.
     await pool.query(
       `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind) VALUES ($1, 3, $2, 'spec')`,
       [seeds.id, run.id],
     );
+    await settleWorkStates(pool);
     const later = await mayor.myWork(pool, { userId: ada.id, settings });
-    assert.equal(later.requests.find((r) => r.number === 3 && r.project === 'seed-swap').status, 'step 3 of 6: building it');
+    assert.equal(later.requests.find((r) => r.number === 3 && r.project === 'seed-swap').status, 'Building');
 
     // A project the bot is not on: it says so, rather than seeming idle.
     const off = await mayor.myWork(pool, { userId: ada.id, settings: { ...settings, pausedApps: ['note-board'] } });
@@ -1049,7 +1055,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   });
 
   await t.test('#3685: progress reads each stage from the records, with its step, time so far, time limit and links', async () => {
-    const read = () => progressSvc.progressFor(pool, { userId: ada.id, settings, deps: { domain: 'app.test' } });
+    // 11 Nov 2026: progress is the stored work states, in their screens' words.
+    const read = async () => (await settleWorkStates(pool), await mayor.progressOf(pool, { userId: ada.id, settings, deps: { domain: 'app.test' } }));
     // Her answer to its question (passed on above) put #4 first in the
     // queue, and the lane granted it the project's read at once (#3771):
     // Seed swap is building #3, but a build runs on a session of its own and
@@ -1060,24 +1067,21 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const first = await read();
     const by = new Map(first.rightNow.map((e) => [`${e.project}#${e.number}`, e]));
     const building = by.get('seed-swap#3');
-    assert.equal(building.stage, 'building');
-    assert.deepEqual([building.step, building.of, building.stepName], [3, 6, 'Building']);
-    assert.equal(building.stepTimeLimitMinutes, 20, 'a build is stopped at its clock: the most it can take');
-    // #19 (WP3): and how long a build usually takes, never past that clock.
-    assert.deepEqual(building.typicalMinutes, { from: 10, to: 20 });
+    assert.deepEqual([building.stage, building.says, building.whoseMove], ['building', 'Building', 'bot']);
+    // #19 (WP3): and how long a build usually takes.
+    assert.deepEqual(building.typicalMinutes, { from: 10, to: 25 });
     assert.deepEqual(by.get('seed-swap#4').typicalMinutes, { from: 1, to: 3 }, 'a read usually takes a few minutes');
     assert.equal(building.busyNow, true);
     assert.ok(Number.isInteger(building.minutesSoFar));
     assert.deepEqual(building.links, {
       project: 'https://app.test/#app/seed-swap', request: 'https://app.test/#app/seed-swap/dev/issues/3',
     });
-    // #4, granted beside the build, is being read.
-    assert.deepEqual([by.get('seed-swap#4').stage, by.get('seed-swap#4').stepName], ['reading', 'Reading']);
-    assert.equal(by.get('seed-swap#4').doing, 'reading the request to decide whether to ask a question or build it');
-    assert.equal(by.get('seed-swap#4').waitingFor, undefined);
+    // #4, granted beside the build, is being read (her answer, read again).
+    assert.equal(by.get('seed-swap#4').stage, 'reading');
+    assert.match(by.get('seed-swap#4').says, /^Reading it/);
     assert.equal(by.get('seed-swap#4').busyNow, true);
     assert.equal(by.get('note-board#5').waitingOn, 'the group');
-    assert.equal(by.get('note-board#5').proposal.votesNeeded > 0, true, 'and how many votes it needs');
+    assert.equal(by.get('note-board#5').change.openForVotes, true, 'its change is open for votes');
     assert.ok(!first.rightNow.some((e) => e.project === 'sam-shop'), 'never somebody else\'s');
 
     // The proposal's checks, as they run and as they end.
@@ -1087,28 +1091,28 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       [proposal.id],
     );
     const running = (await read()).rightNow.find((e) => e.project === 'note-board' && e.number === 5);
-    assert.equal(running.doing, 'it\'s waiting for approval, and its tests are running: 120 of 338 done, 0 failed so far');
-    assert.equal(running.step, 4);
+    assert.deepEqual([running.stage, running.change.openForVotes, running.change.checks.state], ['checking', false, 'pending']);
+    assert.match(running.says, /^Checking/);
     await pool.query(
       `UPDATE chat_sessions SET check_state = 'failing', check_phase = NULL, checks_progress = NULL,
               test_results = '[{"name": "home", "status": "fail"}, {"name": "list", "status": "pass"}]' WHERE id = $1`,
       [proposal.id],
     );
     const failing = (await read()).rightNow.find((e) => e.project === 'note-board' && e.number === 5);
-    assert.equal(failing.stage, 'checks_failed');
-    assert.equal(failing.doing, 'it\'s waiting for approval, and its tests failed (1 test did not pass)');
+    assert.deepEqual([failing.stage, failing.says, failing.change.checks.failing], ['checking', 'Checking · 1 test failing', 1]);
     // Merged: no longer in progress, and among what finished lately.
     await asKernel((c) => c.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [proposal.id]));
     const merged = await read();
     assert.ok(!merged.rightNow.some((e) => e.project === 'note-board' && e.number === 5));
     const done = merged.finishedLately.find((e) => e.project === 'note-board' && e.number === 5);
-    assert.equal(done.outcome, 'approved and live');
+    assert.equal(done.says, 'Live');
     assert.equal(done.links.proposal, `https://app.test/#app/note-board/dev/proposals/${proposal.id}`);
     await asKernel((c) => c.query(
-      `UPDATE chat_sessions SET status = 'promoted', merged_at = NULL, check_state = 'passing', test_results = '[]'
+      `UPDATE chat_sessions SET status = 'promoted', merged_at = NULL, live_at = NULL, check_state = 'passing', test_results = '[]'
         WHERE id = $1`,
       [proposal.id],
     ));
+    await settleWorkStates(pool);
   });
 
   // Ada's new project, Ear trainer: created with a description two minutes
@@ -1139,8 +1143,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       (req) => {
         const ear = lastToolResult(req, 'progress').rightNow.find((e) => e.project === 'ear-trainer');
         assert.deepEqual(
-          { step: ear.step, of: ear.of, stepName: ear.stepName, doing: ear.doing, minutesSoFar: ear.minutesSoFar, busyNow: ear.busyNow },
-          { step: 1, of: 7, stepName: 'Setting up', doing: 'setting up the project: part 2 of 4, making its code repository', minutesSoFar: 2, busyNow: true },
+          { stage: ear.stage, says: ear.says, minutesSoFar: ear.minutesSoFar, busyNow: ear.busyNow },
+          { stage: 'setting_up', says: 'setting up the project: part 2 of 4, making its code repository', minutesSoFar: 2, busyNow: true },
         );
         assert.equal(ear.links.project, 'https://app.test/#app/ear-trainer');
         return [['reply', {
@@ -1219,7 +1223,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const msg = await read(sent);
     assert.notEqual(msg.content, mayor.BROKEN_TEXT);
     assert.match(msg.content, /^I couldn't put a full answer together just now\. Here is where things stand, from my records:\n\n/);
-    assert.match(msg.content, /\n- Ear trainer, its first version: step 1 of 7, setting up the project: part 2 of 4, making its code repository, for 2 minutes so far\./);
+    assert.match(msg.content, /\n- Ear trainer, its first version: setting up the project: part 2 of 4, making its code repository, for 2 minutes so far\./);
     // #4097: it lists as much as it has cards for, and says how many more.
     const listed = msg.content.split('\n').filter((line) => line.startsWith('- ') && !/^- and \d+ more\.$/.test(line));
     assert.equal(listed.length, mayor.MAX_CARDS);
@@ -1619,11 +1623,12 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   });
 
   await t.test('#3734: once it is queued, its work state and the progress answer both say it is in flight', async () => {
-    const progress = await progressSvc.progressFor(pool, { userId: ada.id, settings, deps: { domain: 'app.test' } });
+    await settleWorkStates(pool);
+    const progress = await mayor.progressOf(pool, { userId: ada.id, settings, deps: { domain: 'app.test' } });
     const said = progress.rightNow.find((e) => e.project === 'note-board' && e.number === 5);
-    assert.equal(said.stage, 'followup_queued');
-    assert.equal(progressSvc.inFlight(said), true);
-    assert.match(said.doing, /^waiting for a free builder to follow up on the newest replies on the change$/);
+    // 11 Nov 2026: an update on its way is not open for votes: the bot's,
+    // waiting its turn.
+    assert.deepEqual([said.stage, said.says, said.whoseMove], ['building', 'Building · An update is on its way', 'bot']);
     // Every screen reads the stored state (services/work-state.js), refreshed
     // here as the platform's triggers and drain refresh it.
     const stored = async () => {
@@ -1631,12 +1636,11 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       return (await workState.forRequests(pool, notes.id, [5])).get(5);
     };
     const shown = await stored();
-    assert.deepEqual([shown.stage, shown.line], ['up_for_vote', { code: 'update_queued' }], 'an update on its way holds the vote');
+    assert.deepEqual([shown.stage, shown.line, shown.voteOpen], ['building', { code: 'update_queued' }, false], 'an update on its way holds the vote');
     assert.equal(shown.sessionId, proposal.id);
     const words = await mayor.myWork(pool, { userId: ada.id, settings });
-    assert.match(words.requests.find((r) => r.project === 'note-board' && r.number === 5).status,
-      /^step 5 of 6: waiting for a free builder to follow up on the newest replies on the change$/,
-      'and the bot\'s list of her work says the same');
+    assert.equal(words.requests.find((r) => r.project === 'note-board' && r.number === 5).status,
+      'Building · An update is on its way', 'and the bot\'s list of her work says the same');
     // Her burst settled: the lane, looking again, grants it (its row
     // started). Running it: both say so.
     await pool.query(`UPDATE chat_messages SET created_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, [settledMessage]);
@@ -1647,8 +1651,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const { rows: [granted] } = await pool.query(
       `SELECT state, data->'look' AS look FROM wf_instances WHERE machine = 'bot-request' AND key = $1`, [`request:${notes.id}:5`]);
     assert.deepEqual([granted.state, granted.look.kind, granted.look.sessionId], ['following_up', 'followUp', proposal.id]);
-    const running = (await progressSvc.progressFor(pool, { userId: ada.id, settings })).rightNow.find((e) => e.project === 'note-board' && e.number === 5);
-    assert.equal(running.stage, 'revising');
+    await settleWorkStates(pool);
+    const running = (await mayor.progressOf(pool, { userId: ada.id, settings })).rightNow.find((e) => e.project === 'note-board' && e.number === 5);
+    assert.deepEqual([running.stage, running.says], ['building', 'Building · Updating the change']);
     const runningState = await stored();
     assert.deepEqual([runningState.stage, runningState.line], ['building', { code: 'revising' }], 'and now it is being updated');
     // A second ask while that runs is still drafted, and sent on Post it.

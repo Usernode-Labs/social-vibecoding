@@ -34,8 +34,13 @@ test('the AI tab names a change\'s own numberless thread by the change', () => {
     change_id: 11720, pr_number: 6002, change_status: 'promoted', change_user: 7, change_title: 'SEC-09',
     promoted_at: '2026-10-29T11:18:00Z', voted: false,
   };
-  // Up for a vote and waiting on other people's: Up next (29 Oct 2026).
-  const { waiting } = arrange([row], 7, new Date('2026-10-29T15:00:00Z'));
+  // Up for a vote and waiting on other people's: Up next (29 Oct 2026). Its
+  // stored work state (services/work-state.js) is the change's own row.
+  const states = new Map([['change:11720', {
+    stage: 'up_for_vote', why: null, reason: null, line: null, whoseMove: 'group', since: '2026-10-29T11:18:00Z',
+    voteOpen: true, requesterId: 7,
+  }]]);
+  const { waiting } = arrange([row], 7, new Date('2026-10-29T15:00:00Z'), null, states);
   assert.equal(waiting.length, 1);
   assert.equal(waiting[0].number, 6002);
   assert.equal(waiting[0].href, '#app/usernode-2d5619/dev/changes/6002');

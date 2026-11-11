@@ -78,29 +78,47 @@ const row = (over = {}) => ({
 });
 const ASK = 'drop the second credit line';
 
+// 11 Nov 2026: the AI tab reads the stored work state alone (its fallback
+// is gone), so each row here is drawn with the state the store derives for
+// it (services/work-state.js deriveChange).
+const { deriveChange } = require('../src/services/work-state');
+const storedOf = (r) => ({
+  ...deriveChange({ status: r.change_status, check_state: r.check_state, promoted_at: r.promoted_at,
+    last_activity_at: r.last_activity_at, update_coming: r.update_coming }, { now: NOW }),
+  requesterId: null,
+});
+const stand = (r, viewer = 7) => standing(r, viewer, NOW, null, storedOf(r));
+
 test('#6282: a change being updated is In progress, never the vote it would owe', () => {
-  const at = '2026-11-04T11:00:00.000Z';
-  const revising = { stage: 'building', why: null, reason: null, line: { code: 'revising' }, since: at };
-  const queued = { stage: 'up_for_vote', why: null, reason: null, line: { code: 'update_queued' }, since: at };
+  const at = '2026-11-04T10:00:00.000Z';
+  const { phrasesOf } = require('../src/services/work-state');
+  const shown = (work) => ({ ...work, words: phrasesOf(work) });
+  const revising = shown({ stage: 'building', why: null, reason: null, line: { code: 'revising' }, since: at });
+  // 11 Nov 2026: an update waiting its turn asks nobody for a vote (it is
+  // not open for votes), so it is the bot's, waiting its turn to update.
+  const queued = shown({ stage: 'building', why: null, reason: null, line: { code: 'update_queued' }, since: at });
   // The viewer (7) still owes the vote the feed would have asked for.
-  assert.deepEqual(standing(row({ update_coming: 'running', update_ask: ASK }), 7, NOW), {
+  assert.deepEqual(stand(row({ update_coming: 'running', update_ask: ASK })), {
     group: 'next', work: revising, at, ask: ASK,
   });
   // A turn with nobody's ask behind it says only that it is updating.
-  assert.deepEqual(standing(row({ update_coming: 'running', update_ask: null }), 7, NOW), { group: 'next', work: revising, at });
+  assert.deepEqual(stand(row({ update_coming: 'running', update_ask: null })), { group: 'next', work: revising, at });
   // An ask waiting its turn is Waiting, Update queued.
-  assert.deepEqual(standing(row({ update_coming: 'queued', update_ask: ASK }), 7, NOW), {
+  assert.deepEqual(stand(row({ update_coming: 'queued', update_ask: ASK })), {
     group: 'waiting', work: queued, at, ask: ASK,
   });
   // With no update coming it is the Needs you feed's again (nothing here).
-  assert.equal(standing(row({ update_coming: null }), 7, NOW), null);
-  // The stored state says the same (services/work-state.js derive).
+  assert.equal(stand(row({ update_coming: null })), null);
+  // Nor is a thread with no stored state listed at all.
+  assert.equal(standing(row({ update_coming: 'running' }), 7, NOW), null);
+  // The stored state of a request says the same (services/work-state.js derive).
   const { derive } = require('../src/services/work-state');
   const facts = { app_id: 1, issue_number: 6250, mode: 'live', verdict: 'ready', build_ok: true, run_at: '2026-11-04T09:00:00Z',
     proposal_session_id: 42, proposal_status: 'promoted', check_state: 'passing', proposal_at: '2026-11-04T10:00:00Z' };
   assert.deepEqual([derive({ ...facts, update_coming: 'running' }).stage, derive({ ...facts, update_coming: 'running' }).line],
     ['building', { code: 'revising' }]);
-  assert.deepEqual(derive({ ...facts, update_coming: 'queued' }).line, { code: 'update_queued' });
+  assert.deepEqual([derive({ ...facts, update_coming: 'queued' }).stage, derive({ ...facts, update_coming: 'queued' }).line],
+    ['building', { code: 'update_queued' }]);
 
   // #6545: a change whose tests failed, with Homeroom bot's fix queued, is
   // Checking, not Up for a vote. Only a running update overrides that.
@@ -110,20 +128,20 @@ test('#6282: a change being updated is In progress, never the vote it would owe'
   assert.deepEqual([waiting.stage, waiting.line], ['checking', { code: 'checks_failing', failing: 4 }]);
   const running = derive({ ...failingFix, update_coming: 'running' });
   assert.deepEqual([running.stage, running.line], ['building', { code: 'revising' }]);
-  // The AI tab's fallback (services/ai-work.js fallbackState) agrees. With no
-  // stored work state, a failing change with a queued update reads Checking.
-  const fallback = standing(row({ check_state: 'failing', update_coming: 'queued' }), 7, NOW);
-  assert.deepEqual([fallback.work.stage, fallback.work.line], ['checking', { code: 'checks_failing' }]);
-  assert.equal(fallback.group, 'waiting');
+  // A change with no request of its own reads the same: a failing change
+  // with a queued update is Checking.
+  const failingChange = stand(row({ check_state: 'failing', update_coming: 'queued' }));
+  assert.deepEqual([failingChange.work.stage, failingChange.work.line], ['checking', { code: 'checks_failing' }]);
+  assert.equal(failingChange.group, 'waiting');
 });
 
 test('#6282: the ask is one line of at most 80 characters', () => {
   const long = 'drop the second credit line and make the first one say what it is for, then reword the note above';
-  const stand = standing(row({ update_coming: 'running', update_ask: long }), 7, NOW);
-  assert.equal(stand.ask.length, 80);
-  assert.ok(stand.ask.endsWith('…'));
+  const listed = stand(row({ update_coming: 'running', update_ask: long }));
+  assert.equal(listed.ask.length, 80);
+  assert.ok(listed.ask.endsWith('…'));
   // Whitespace folds, so the tooltip stays one line.
-  assert.equal(standing(row({ update_coming: 'running', update_ask: '  drop\nthe   second  ' }), 7, NOW).ask,
+  assert.equal(stand(row({ update_coming: 'running', update_ask: '  drop\nthe   second  ' })).ask,
     'drop the second');
 });
 
@@ -131,12 +149,12 @@ test('#6282: it is listed for who would vote and for its own people, not a voter
   const update = { update_coming: 'running', update_ask: ASK };
   const stage = (r) => r && `${r.work.stage}:${r.work.line?.code}`;
   // Its author (7) asked for it: In progress, even having voted.
-  assert.equal(stage(standing(row({ ...update, change_user: 7 }), 7, NOW)), 'building:revising');
-  assert.equal(stage(standing(row({ ...update, change_user: 7, voted: true, my_vote: 'yes' }), 7, NOW)), 'building:revising');
+  assert.equal(stage(stand(row({ ...update, change_user: 7 }))), 'building:revising');
+  assert.equal(stage(stand(row({ ...update, change_user: 7, voted: true, my_vote: 'yes' }))), 'building:revising');
   // Someone who only follows it (own) sees it too.
-  assert.equal(stage(standing(row({ ...update, own: true, voted: true }), 7, NOW)), 'building:revising');
+  assert.equal(stage(stand(row({ ...update, own: true, voted: true }))), 'building:revising');
   // Somebody who already voted and only wrote in the thread gets no row.
-  assert.equal(standing(row({ ...update, voted: true, my_vote: 'yes' }), 7, NOW), null);
+  assert.equal(stand(row({ ...update, voted: true, my_vote: 'yes' })), null);
 });
 
 test('#6282: a more particular stage of the bot\'s still wins', () => {
@@ -166,6 +184,8 @@ test('#6282: an update sorts with the work being fixed, and a queued one with th
   const states = new Map([
     ['garden#1', ws('building', { code: 'fixing' })],
     ['garden#3', ws('reading', { code: 'queued', place: 1 })],
+    ['change:2', { ...ws('building', { code: 'revising' }), since: '2026-11-04T11:00:00Z', requesterId: 9 }],
+    ['change:4', { ...ws('building', { code: 'update_queued' }), since: '2026-11-04T11:00:00Z', requesterId: 9 }],
   ]);
   const lists = arrange([
     owed(2, { update_coming: 'running', update_ask: ASK, last_activity_at: '2026-11-04T11:00:00Z' }),

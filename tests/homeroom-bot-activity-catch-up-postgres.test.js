@@ -38,6 +38,7 @@ const { dmStream } = require('./lib/bot-dm-stream');
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { settleWorkStates } = require('./lib/work-states');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -199,7 +200,9 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
     );
     return rows;
   }
-  const cardOf = async (who, messageId) => (await activity.cardsFor(pool, { user: who, settings })).cards
+  // 11 Nov 2026: a card says where its request stands from the request's
+  // stored work state, read once the drain has run, as its clock does.
+  const cardOf = async (who, messageId) => (await settleWorkStates(pool), await activity.cardsFor(pool, { user: who, settings })).cards
     .find((card) => card.messageId === messageId);
   // A project being made by `who`: its first version is request #1, theirs.
   async function firstVersion(slug, who, label) {
@@ -280,7 +283,7 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
     assert.deepEqual(recorded, [{ kind: 'activity', app_id: plants.id, issue_number: 1 }], 'recorded as the bot\'s news about the request');
 
     const card = await cardOf(asAda, message.id);
-    assert.deepEqual([card.state, card.stage, card.stepName], ['working', 'reading', 'Reading']);
+    assert.deepEqual([card.state, card.stage, card.doing], ['working', 'reading', 'Reading it']);
     assert.equal(card.startedAt, reading.started_at.toISOString(), 'from when the look began, before the card');
 
     assert.deepEqual(await catchUp(asAda), { added: 0 }, 'a second opening adds none');

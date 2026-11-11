@@ -830,7 +830,12 @@ test('the server: a row\'s list is its stored work state, read for the viewer', 
   const ME = 5;
   const open = { state: 'open', own: true, number: 7, request_id: 1, request_state: 'open', request_at: at, created_at: at };
   const ws = (stage, extra = {}) => ({ stage, why: null, reason: null, line: null, since: at, requesterId: null, ...extra });
-  const work = (stage, extra = {}) => ({ stage, why: null, reason: null, line: null, since: at, ...extra });
+  // 11 Nov 2026: each row's words travel with it (services/work-state.js phrasesOf).
+  const { phrasesOf } = require('../src/services/work-state');
+  const work = (stage, extra = {}) => {
+    const w = { stage, why: null, reason: null, line: null, since: at, ...extra };
+    return { ...w, words: phrasesOf(w) };
+  };
   const promoted = { ...open, change_status: 'promoted', change_user: 9, voted: true, my_vote: 'yes', promoted_at: at };
   assert.deepEqual(aiWork.standing(promoted, ME, now, null, ws('up_for_vote')),
     { group: 'waiting', work: work('up_for_vote'), at, myVote: 'yes' }, 'a vote you have given waits on others');
@@ -884,9 +889,10 @@ test('the server: a row\'s list is its stored work state, read for the viewer', 
     { group: 'live', work: work('live'), at, mergedAt: at, changeId: 4 });
   assert.equal(aiWork.standing({ ...live, live_at: '2026-10-01T00:00:00.000Z' }, ME, now, null, ws('live', { since: '2026-10-01T00:00:00.000Z' })), null,
     'a week on, it is history');
-  // With no stored row yet (a read that failed), the change says it.
-  assert.equal(aiWork.standing({ ...promoted, check_state: 'passing', change_id: 4 }, ME, now).work.stage, 'up_for_vote');
-  assert.equal(aiWork.standing(open, ME, now).work.stage, 'reading');
+  // 11 Nov 2026: with no stored row read, nothing is listed: the stored row
+  // is the one source (statesFor makes a missing one first).
+  assert.equal(aiWork.standing({ ...promoted, check_state: 'passing', change_id: 4 }, ME, now), null);
+  assert.equal(aiWork.standing(open, ME, now), null);
   // A decision up for a vote waits for votes; one whose vote is owed is the feed's.
   const decision = { state: 'open', own: true, kind: 'decision', number: null, created_at: at, decision_status: 'open' };
   assert.deepEqual(aiWork.standing({ ...decision, decision_mine: true }, ME, now),

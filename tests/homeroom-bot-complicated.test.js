@@ -915,10 +915,15 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
   await t.test('papote #3: request_detail says the plan waits for Build it, not "building now"', async () => {
     await fresh();
     await waitingRun();
+    // 11 Nov 2026: where it stands is its standing, the row its page draws,
+    // in its requester's words to her and in everyone else's to others; a
+    // look's build says nothing of a build not under way.
+    await require('../src/services/work-state').refresh(pool, [{ appId: app.id, issueNumber: 12 }]);
     const mine = await mayor.requestDetail(pool, { user: maya, project: 'chores', number: 12, settings });
-    assert.equal(mine.recentLooks[0].build, 'not building: its plan is written and waits for them to say Build it, and nothing is built until then');
+    assert.deepEqual([mine.standing.stage, mine.standing.says, mine.standing.waitingOn], ['waiting_for_you', 'Waiting for you to OK the plan', 'them']);
+    assert.equal(mine.recentLooks[0].build, undefined, 'never "building now"');
     const theirs = await mayor.requestDetail(pool, { user: sam, project: 'chores', number: 12, settings });
-    assert.equal(theirs.recentLooks[0].build, 'not building: its plan is written and waits for @maya to say Build it, and nothing is built until then');
+    assert.deepEqual([theirs.standing.says, theirs.standing.waitingOn], ["Waiting for the plan to be OK'd", 'the person who asked for it']);
   });
 
   await t.test('papote #3: what was said to the bot under a plan is not an answer to it, and "@Homeroom bot build it" is Build it', async () => {

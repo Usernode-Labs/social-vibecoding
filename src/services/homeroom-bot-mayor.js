@@ -602,8 +602,8 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '',
     'In this chat you can:',
     '- Say what you are working on for them and how far along it is. For "how far along are you?", "is it ready?"',
-    '  or "what are you doing?", call progress first: for each thing you are doing for them it gives the step you',
-    '  are on (say it, for example "step 4 of 7: building it, 6 minutes so far"), what is happening, since when,',
+    '  or "what are you doing?", call progress first: for each thing you are doing for them it gives where it',
+    '  stands in the words their screens use (says, for example "Building · Reviewing, round 1 of 2"), since when,',
     '  and who it waits on. For the whole list of their requests, call my_work. For ANY question about their',
     '  work, answer only from what these return. Use request_detail for the whole story of one request.',
     // 30 Oct 2026: the same lists the Homeroom bot tab draws, so the answer and the page agree.
@@ -783,7 +783,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'progress',
-      description: 'How far along you are with this person\'s work right now, from your own records. rightNow: each thing in progress (setting up a project for its first version, reading a request, a question waiting for their answer, writing the plan, building, the proposal\'s checks, the group\'s vote) with the step it is on (step and of, and the step\'s name), what is happening, since when and minutesSoFar, typicalMinutes when the step takes a while (how long it usually takes, from and to, in minutes: what to say when they ask how long), the step\'s time limit when it has one (stepTimeLimitMinutes: the most it can take before it is stopped, never the wait), waitingOn (them, or the group; none when it is on you), busyNow when you are doing it this minute, the proposal\'s checks and votes, and links. finishedLately: what came to something in the last two weeks. Empty rightNow means you are doing nothing for them now.',
+      description: 'How far along you are with this person\'s work right now, from the same records their screens draw. rightNow: each thing in progress or waiting on somebody (setting up a project for its first version, reading a request, a question waiting for their answer, writing the plan, building, the change\'s checks, the group\'s vote), each with where it stands in their screens\' own words (says: say it as written), its stage, whose move it is (whoseMove, and waitingOn: them, or the group; none when it is on you), since when and minutesSoFar, typicalMinutes when the step takes a while (how long it usually takes, from and to, in minutes: what to say when they ask how long), busyNow when you are doing it this minute, its change (its checks, its votes, and openForVotes), what it asks of them (asks), what you last said about it (lastSaid), and links. finishedLately: what went live or was closed in the last two weeks. Empty rightNow means you are doing nothing for them now.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
@@ -799,7 +799,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'request_detail',
-      description: 'Your own records of one request: your recent verdicts on it, the open question and its suggested answers, the build, the proposal with its checks and votes, and whether you build on its project. For what the request itself says, use get_request.',
+      description: 'Your own records of one request: where it stands now (standing: in the words its page uses, whose move it is, what it asks of them, what you last said there), your recent looks at it (each look\'s verdict and what became of its build), the open question and its suggested answers, its change with its checks and votes, and whether you build on its project. For what the request itself says, use get_request.',
       parameters: {
         type: 'object',
         properties: {
@@ -1161,168 +1161,221 @@ const PLAIN_REPLY_TOOL = {
 
 // ── What the bot is doing for one person ──────────────────────────────────
 
-/** Pure: one request's state in a few plain words, from its records. */
-function statusOf(row) {
-  const proposal = row.proposal_status || null;
-  // Merged is live once production runs it (chat_sessions.live_at).
-  if (proposal === 'merged' && row.proposal_live_at === null) return 'approved, going live now';
-  if (proposal === 'merged') return 'approved and live';
-  if (proposal === 'merging') return 'approved, being merged now';
-  if (row.started_at) return 'looking at it now';
-  if (row.open_question) return 'waiting for their answer to your question';
-  if (proposal === 'promoted') return 'proposal up for the group\'s vote';
-  // A place in the queue across every project was not when it would start:
-  // per-project and per-person limits decide that (progress.js queuedWait).
-  if (row.enqueued_at) return 'waiting for a free builder';
-  switch (row.verdict) {
-    case 'person': return 'left for the group to decide';
-    case 'empty': return 'nothing to build in it yet';
-    case 'failed': return 'your last look at it failed';
-    case 'ready':
-      // B6: a first version's plan waits for them.
-      if (row.plan_waiting_at && row.build_ok == null) return 'its plan is waiting for them to tap Build it, or to reply with changes';
-      if (row.build_ok !== false) return 'ready; the build is next';
-      if (/^skipped: nobody tapped Build it/.test(String(row.build_error || ''))) return 'its plan waited a week with no Build it; a reply to the plan picks it up again';
-      // WP1: a build that was not needed (skipped) stopped; it did not fail.
-      return /^skipped:/.test(String(row.build_error || '')) ? 'you stopped before building it: it was not needed' : 'you could not build it';
-    case 'question': return 'asked a question, answered; waiting to look again';
-    default: return proposal === 'closed' ? 'its proposal was closed' : 'looked at; nothing new since';
-  }
-}
+// 11 Nov 2026 (docs/plans/bot-one-model.md, step 3): where each of their
+// requests stands is its stored work state (services/work-state.js), the
+// row every screen draws. progress, my_work and request_detail say its
+// stage in the screens' own words (`says`), whose move it is, its change
+// (checks, votes, whether it is open for votes), what is asked of the
+// requester and what the bot last said there, and nothing else: they used
+// to read the bot's records again with rules of their own, and said
+// "looking at it now" of a request its page called up for a vote.
 
 // Where links point: the platform's own domain, as the bot's posts use it.
 function domainOf(deps) {
   return deps.domain !== undefined ? deps.domain : require('./caddy').USERNODE_DOMAIN;
 }
 
-/** `progress` (homeroom-bot-progress.js) for this person, with the DM's own dependencies. */
-async function progressOf(pool, { userId, settings, config = null, deps = {} }) {
-  return progressSvc.progressFor(pool, {
-    userId, settings, config, deps: { botSvc: deps.botSvc, creationPhase: deps.creationPhase, domain: domainOf(deps) },
-  });
-}
-
-/** A progress entry as one line of my_work: "step 4 of 7: building it". */
-function stepLine(entry) {
-  return entry.step ? `step ${entry.step} of ${entry.of}: ${entry.doing}` : entry.doing;
+// How long a step usually takes, by the stage (and line) the bot is at
+// (progress.typicalMinutes keys).
+function typicalStepOf(row) {
+  if (!require('./work-state').busyNow(row)) return null;
+  const code = row.line && row.line.code;
+  if (row.stage === 'reading') return 'reading';
+  if (row.stage === 'planning') return 'planning';
+  if (['reviewing', 'proposing', 'fixing', 'revising', 'starting'].includes(code)) return code;
+  return 'building';
 }
 
 /**
- * Everything the bot knows it is doing for `userId`: the requests recorded
- * as theirs (homeroom_bot_requesters), plus anything of theirs waiting in
- * its queue that it has not looked at yet, and the first versions it is
- * waiting to file. Newest first. What is in progress, and how far along,
- * is `progress`'s (homeroom-bot-progress.js): a build has no queue row, so
- * the queue alone would call a request being built idle. Given the `user`
- * (as a turn has them), `onYourPage` is their Homeroom bot tab's lists.
+ * Pure: one stored work state as the bot's tools tell it: its stage in the
+ * screens' words, whose move it is, since when, its change, what it asks of
+ * its requester, what the bot last said there, and the links.
  */
-async function myWork(pool, { userId, user = null, settings, config = null, deps = {} }) {
-  const bot = botModule(deps);
-  // #3772: what the bot does FOR them. A request of theirs it only read in
-  // the background (shadow triage of a project it does not build on) is not
-  // in their queue and was not its decision, so a status answer listed the
-  // platform's own requests as "reading them, not mine to build". As
-  // `progress` already does (#3734), only a project it acts on has a queue
-  // for them, and only its acted-on ('live') looks are its verdicts.
-  const scope = liveModule(deps).appsScope(settings);
+function standingItem(row, { title = null, firstVersion = false, domain = null, yours = true, now = new Date() } = {}) {
+  const workState = require('./work-state');
+  const slug = row.app?.slug || null;
+  const busy = workState.busyNow(row);
+  const step = typicalStepOf(row);
+  const typical = step ? progressSvc.typicalMinutes(step) : null;
+  const minutes = row.since ? Math.max(0, Math.floor((now.getTime() - Date.parse(row.since)) / 60000)) : null;
+  const change = row.change ? {
+    id: row.change.id,
+    ...(row.change.number ? { number: row.change.number } : {}),
+    status: row.change.status,
+    checks: row.change.checks,
+    votes: row.change.votes,
+    openForVotes: !!row.change.voteOpen,
+    ...(row.change.firstVersion ? { firstVersion: true } : {}),
+    ...(row.change.update ? { update: row.change.update } : {}),
+  } : null;
+  const asks = row.asks || {};
+  const asked = {
+    ...(asks.question ? { question: true } : {}),
+    ...(asks.plan?.waitingGo ? { planWaitsForBuildIt: true } : {}),
+    ...(asks.closeVote ? { closeVote: { yes: asks.closeVote.yes, no: asks.closeVote.no } } : {}),
+    ...(asks.draft ? { planningInPrivateThread: true } : {}),
+  };
+  return {
+    project: slug,
+    projectName: row.app?.name || slug,
+    ...(row.issueNumber ? { number: row.issueNumber } : {}),
+    title: firstVersion ? 'First version' : title,
+    ...(firstVersion ? { firstVersion: true } : {}),
+    stage: row.stage,
+    says: workState.says(row, { yours }),
+    whoseMove: row.whoseMove || null,
+    ...(row.whoseMove === 'requester' ? { waitingOn: yours ? 'them' : 'the person who asked for it' } : {}),
+    ...(row.whoseMove === 'group' ? { waitingOn: 'the group' } : {}),
+    busyNow: busy,
+    ...(row.since ? { since: row.since } : {}),
+    ...(busy && minutes != null ? { minutesSoFar: minutes } : {}),
+    ...(typical ? { typicalMinutes: typical } : {}),
+    ...(change ? { change } : {}),
+    ...(Object.keys(asked).length ? { asks: asked } : {}),
+    ...(row.said ? { lastSaid: { kind: row.said.kind, at: row.said.at, text: row.said.text } } : {}),
+    links: progressSvc.links(domain, { slug, number: row.issueNumber, proposal: change?.id || null, pr: change?.number || null }),
+  };
+}
+
+// What came to something lately is listed for two weeks, the three newest.
+const FINISHED_DAYS = 14;
+const MAX_FINISHED = 3;
+
+/**
+ * Their requests' stored work states, newest first, with their titles:
+ * every request recorded as theirs, and any of theirs waiting in the bot's
+ * queue it has not recorded yet. A row is made first for any that has none.
+ */
+async function theirStandings(pool, userId, { inScope = null } = {}) {
   const { rows: found } = await pool.query(
-    `WITH mine AS (
-       SELECT r.app_id, r.issue_number, r.issue_title, r.first_version, TRUE AS recorded
+    `SELECT mine.app_id, mine.issue_number, mine.issue_title, mine.first_version, mine.recorded, a.slug FROM (
+       SELECT r.app_id, r.issue_number, r.issue_title, r.first_version, TRUE AS recorded, r.created_at AS at
          FROM homeroom_bot_requesters r WHERE r.user_id = $1
-       UNION
-       SELECT q.app_id, q.issue_number, i.title, FALSE, FALSE
+       UNION ALL
+       SELECT q.app_id, q.issue_number, i.title, FALSE, FALSE, q.enqueued_at
          FROM homeroom_bot_queue q
          JOIN issues i ON i.app_id = q.app_id AND i.github_issue_number = q.issue_number
         WHERE i.created_by = $1
           AND NOT EXISTS (SELECT 1 FROM homeroom_bot_requesters r2
                            WHERE r2.app_id = q.app_id AND r2.issue_number = q.issue_number)
-     )
-     SELECT m.app_id, a.slug, a.name, m.issue_number, m.issue_title, m.first_version, m.recorded,
-            q.id AS queue_id, q.started_at, q.enqueued_at,
-            run.verdict, run.created_at AS run_at, run.build_ok, run.build_error, run.awaiting_go_at AS plan_waiting_at,
-            prop.proposal_session_id, cs.status AS proposal_status, cs.live_at AS proposal_live_at,
-            oq.message_id AS open_question
-       FROM mine m
-       JOIN apps a ON a.id = m.app_id
-       LEFT JOIN homeroom_bot_queue q ON q.app_id = m.app_id AND q.issue_number = m.issue_number
-       LEFT JOIN LATERAL (
-         SELECT verdict, created_at, build_ok, build_error, awaiting_go_at FROM homeroom_bot_runs
-          WHERE app_id = m.app_id AND issue_number = m.issue_number AND mode = 'live'
-          ORDER BY id DESC LIMIT 1
-       ) run ON TRUE
-       LEFT JOIN LATERAL (
-         SELECT proposal_session_id FROM homeroom_bot_runs
-          WHERE app_id = m.app_id AND issue_number = m.issue_number AND proposal_session_id IS NOT NULL
-          ORDER BY id DESC LIMIT 1
-       ) prop ON TRUE
-       LEFT JOIN chat_sessions cs ON cs.id = prop.proposal_session_id
-       LEFT JOIN LATERAL (
-         SELECT message_id FROM homeroom_bot_dm_messages
-          WHERE user_id = $1 AND app_id = m.app_id AND issue_number = m.issue_number AND question_status = 'open'
-          ORDER BY created_at DESC LIMIT 1
-       ) oq ON TRUE
-      ORDER BY GREATEST(COALESCE(run.created_at, 'epoch'::timestamptz), COALESCE(q.enqueued_at, 'epoch'::timestamptz)) DESC
-      LIMIT 25`,
+     ) mine
+     JOIN apps a ON a.id = mine.app_id
+     LEFT JOIN work_states ws ON ws.app_id = mine.app_id AND ws.item_kind = 'request' AND ws.item_ref = mine.issue_number
+     -- #6280: a cap on what came to something, never on work under way: a
+     -- request still going (or with no row yet) comes before any that ended.
+     ORDER BY COALESCE(ws.stage IN ('live', 'closed'), FALSE), mine.at DESC
+     LIMIT 60`,
     [userId],
   );
-  const rows = found
-    // Waiting in a queue only on a project it acts on, and a request that
-    // was only ever in the background queue is not theirs to hear about.
-    .map((row) => (liveModule(deps).inScope(scope, row.slug) ? row : { ...row, queue_id: null, started_at: null, enqueued_at: null }))
-    .filter((row) => row.recorded || row.queue_id);
-  // Where each waiting request is in the live queue.
-  const position = new Map();
-  if (!liveModule(deps).scopeIsEmpty(scope) && rows.some((r) => r.queue_id && !r.started_at)) {
-    const { rows: queue } = await pool.query(
-      `SELECT q.id FROM homeroom_bot_queue q JOIN apps a ON a.id = q.app_id
-        WHERE q.started_at IS NULL
-          AND (CASE WHEN $2::boolean THEN NOT (a.slug = ANY($3::text[])) ELSE a.slug = ANY($1::text[]) END)
-        ORDER BY q.priority, q.enqueued_at LIMIT 500`,
-      [scope.slugs, scope.all, scope.except],
-    );
-    queue.forEach((q, i) => position.set(Number(q.id), i + 1));
+  // #3772: what the bot does FOR them. A request of theirs it only read in
+  // the background (its queue on a project it does not act on) is not theirs
+  // to hear about: only one recorded as theirs, or queued where it acts.
+  const keys = found.filter((k) => k.recorded === true || (inScope && inScope(k.slug)));
+  const about = new Map(keys.map((k) => [`${k.app_id}:${k.issue_number}`, k]));
+  const rows = await require('./work-state').forItems(pool, keys.map((k) => ({ appId: k.app_id, issueNumber: k.issue_number })));
+  return rows
+    .map((row) => ({ row, about: about.get(`${row.appId}:${row.issueNumber}`) || {} }))
+    .sort((a, b) => String(b.row.updatedAt || '').localeCompare(String(a.row.updatedAt || '')));
+}
+
+/**
+ * `progress` for this person, from the stored work states: rightNow (what
+ * is under way or waits on somebody), finishedLately (what came to
+ * something in the last two weeks), and the first versions it is still
+ * setting up, which have no request yet.
+ */
+async function progressOf(pool, { userId, settings, deps = {} }) {
+  const domain = domainOf(deps);
+  const now = new Date();
+  const rightNow = [];
+  const finished = [];
+  const phases = deps.creationPhase || require('./app-creation-phase');
+  for (const row of await progressSvc.firstVersionRows(pool, userId)) {
+    const setup = progressSvc.setupOf(row, { phase: row.app_status === 'creating' ? await phases.read(pool, row.app_id).catch(() => null) : null });
+    if (setup.outcome) continue;
+    rightNow.push({
+      project: row.slug, projectName: row.name || row.slug, title: 'First version', firstVersion: true,
+      stage: 'setting_up', says: setup.doing, busyNow: !setup.waitingOn,
+      ...(setup.waitingOn ? { waitingOn: 'them' } : {}),
+      ...(setup.since ? {
+        since: new Date(setup.since).toISOString(),
+        minutesSoFar: Math.max(0, Math.floor((now.getTime() - new Date(setup.since).getTime()) / 60000)),
+      } : {}),
+      typicalMinutes: progressSvc.typicalMinutes('setting_up'),
+      links: progressSvc.links(domain, { slug: row.slug }),
+    });
   }
-  // What is in progress. Without it the list still answers, from the queue.
-  let progress = null;
-  try {
-    progress = await progressOf(pool, { userId, settings, config, deps });
-  } catch (err) {
-    log.warn('homeroom-bot-mayor', 'Could not read the progress of a person\'s work', { userId, err: err.message });
-  }
-  const inProgress = new Map((progress?.rightNow || []).map((e) => [`${e.project}#${e.number || ''}`, e]));
-  const builds = (slug) => liveModule(deps).isLiveFor(settings, { slug });
-  // 5 Nov 2026 (docs/plans/bot-one-model.md, decision 4): where each of
-  // their requests stands is its stored work state, in the words every
-  // screen uses (work-state.js says); the old reading of its records is for
-  // a request with none stored yet.
-  const workState = require('./work-state');
-  const stored = new Map((await workState.forRequester(pool, userId).catch(() => []))
-    .filter((w) => w.kind === 'request').map((w) => [`${w.appId}#${w.ref}`, w]));
-  const requests = [];
-  for (const row of rows) {
-    const now = inProgress.get(`${row.slug}#${Number(row.issue_number)}`);
-    const state = stored.get(`${Number(row.app_id)}#${Number(row.issue_number)}`) || null;
-    const item = {
-      project: row.slug,
-      projectName: row.name || row.slug,
-      number: Number(row.issue_number),
-      title: row.first_version ? 'First version' : (row.issue_title || null),
-      status: now
-        ? stepLine(now)
-        : state ? workState.says(state)
-          : statusOf({ ...row, queue_position: row.queue_id ? position.get(Number(row.queue_id)) : null }),
-      ...(state ? { stage: state.stage } : {}),
-      botBuildsHere: builds(row.slug),
-    };
-    if (now?.since) item.since = now.since;
-    else if (row.started_at) item.since = new Date(row.started_at).toISOString();
-    if (row.run_at) item.lastLooked = new Date(row.run_at).toISOString();
-    if (now?.proposal) {
-      item.proposal = now.proposal;
-    } else if (row.proposal_session_id && row.proposal_status && row.proposal_status !== 'closed') {
-      item.proposal = await progressSvc.proposalFacts(pool, Number(row.proposal_session_id), { domain: domainOf(deps) });
+  const cutoff = now.getTime() - FINISHED_DAYS * 24 * 60 * 60 * 1000;
+  const acts = (slug) => liveModule(deps).isLiveFor(settings, { slug });
+  for (const { row, about } of await theirStandings(pool, userId, { inScope: acts })) {
+    const item = standingItem(row, { title: about.issue_title || null, firstVersion: about.first_version === true, domain, now });
+    if (row.stage === 'live' || row.stage === 'closed') {
+      if (Date.parse(row.since || 0) >= cutoff && finished.length < MAX_FINISHED) finished.push(item);
+    } else {
+      rightNow.push(item);
     }
-    requests.push(item);
+  }
+  return { botIsOn: settings?.mode !== 'off', rightNow, finishedLately: finished };
+}
+
+/** Pure: `progress` as a short message in plain words, from the records alone (#4097: at most `max`, with how many more). */
+function progressText(progress, { max = 5 } = {}) {
+  const lines = [];
+  const rightNow = progress?.rightNow || [];
+  for (const item of rightNow.slice(0, max)) {
+    const what = item.number
+      ? `${item.projectName} request #${item.number}${item.title ? ` (${item.title})` : ''}`
+      : `${item.projectName}, its ${String(item.title || 'first version').toLowerCase()}`;
+    const time = Number.isInteger(item.minutesSoFar)
+      ? `, for ${item.minutesSoFar < 1 ? 'under a minute' : `${item.minutesSoFar} minute${item.minutesSoFar === 1 ? '' : 's'}`} so far`
+      : '';
+    lines.push(`- ${what}: ${item.says}${time}.`);
+  }
+  if (lines.length && rightNow.length > max) lines.push(`- and ${rightNow.length - max} more.`);
+  if (!lines.length) {
+    const done = (progress?.finishedLately || [])[0];
+    return done
+      ? `I'm not working on anything for you right now. Most recently, ${done.projectName}${done.number ? ` request #${done.number}` : ''}: ${done.says}.`
+      : 'I\'m not working on anything for you right now.';
+  }
+  const off = progress.botIsOn === false ? '\n\nI\'m switched off right now, so this waits until I\'m back on.' : '';
+  return `Here is where things stand, from my records:\n\n${lines.join('\n')}${off}`;
+}
+
+/**
+ * Everything the bot knows it is doing for `userId`: each of their
+ * requests' stored work state (theirStandings), newest first, and the first
+ * versions it is waiting to file. Given the `user` (as a turn has them),
+ * `onYourPage` is their Homeroom bot tab's lists.
+ */
+async function myWork(pool, { userId, user = null, settings, config = null, deps = {} }) {
+  const domain = domainOf(deps);
+  const now = new Date();
+  const builds = (slug) => liveModule(deps).isLiveFor(settings, { slug });
+  const requests = [];
+  const workingOnNow = [];
+  for (const { row, about } of (await theirStandings(pool, userId, { inScope: builds })).slice(0, 25)) {
+    const item = standingItem(row, { title: about.issue_title || null, firstVersion: about.first_version === true, domain, now });
+    requests.push({
+      project: item.project,
+      projectName: item.projectName,
+      number: item.number,
+      title: item.title,
+      status: item.says,
+      stage: item.stage,
+      whoseMove: item.whoseMove,
+      ...(item.since ? { since: item.since } : {}),
+      ...(item.change ? { change: item.change } : {}),
+      ...(item.asks ? { asks: item.asks } : {}),
+      botBuildsHere: builds(row.app?.slug),
+      links: item.links,
+    });
+    if (item.busyNow) {
+      workingOnNow.push({
+        project: item.project, projectName: item.projectName, number: item.number, title: item.title,
+        status: item.says, ...(item.since ? { since: item.since } : {}),
+      });
+    }
   }
   const { rows: firsts } = await pool.query(
     `SELECT a.slug, a.name, f.status FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
@@ -1330,13 +1383,6 @@ async function myWork(pool, { userId, user = null, settings, config = null, deps
       ORDER BY f.created_at DESC LIMIT 10`,
     [userId],
   );
-  const workingOnNow = progress
-    ? progress.rightNow.filter((e) => e.busyNow).map((e) => ({
-      project: e.project, projectName: e.projectName, ...(e.number ? { number: e.number } : {}),
-      title: e.title, status: stepLine(e), ...(e.since ? { since: e.since } : {}),
-    }))
-    : (await bot.workingNow(pool, settings, { userId }))
-      .map((w) => ({ project: w.appSlug, projectName: w.appName, number: w.issueNumber, since: w.since }));
   const cap = Number(await dmModule(deps).weeklyCapCents(pool, settings, userId)) || 0;
   const spent = cap > 0 ? await dmModule(deps).weeklySpentCents(pool, userId) : 0;
   // 30 Oct 2026: the Homeroom bot tab's own lists, which a status answer is
@@ -1356,15 +1402,11 @@ async function myWork(pool, { userId, user = null, settings, config = null, deps
     ...(onYourPage ? { onYourPage } : {}),
     workingOnNow,
     requests,
-    firstVersionsNotFiledYet: firsts.map((f) => {
-      const setup = inProgress.get(`${f.slug}#`);
-      return {
-        project: f.slug,
-        projectName: f.name || f.slug,
-        status: setup ? stepLine(setup)
-          : f.status === 'failed' ? 'could not start it' : 'waiting for the project to finish setting up',
-      };
-    }),
+    firstVersionsNotFiledYet: firsts.map((f) => ({
+      project: f.slug,
+      projectName: f.name || f.slug,
+      status: f.status === 'failed' ? 'could not start it' : 'waiting for the project to finish setting up',
+    })),
     atOnce: `You work on up to ${settings?.perPerson || 2} of their requests at a time: up to ${readsAtOnce(settings)} reads per project, and up to ${require('./homeroom-bot').BUILDS_PER_APP} builds per project.`,
     // #3772: said only when they ask, or when little is left; every status
     // answer used to end with it. A share of the week, never an amount: the
@@ -1558,18 +1600,14 @@ async function listChangeFiles(pool, { user, project, change, deps = {} }) {
 }
 
 /**
- * Pure: what became of one look's build, for request_detail, or undefined
- * when the look built nothing. WP1 (#10): a build that waits or runs says
- * so ("building now"), so a second build of a request is never invisible;
- * and a build that was not needed (skipped) stopped, it did not fail.
- *
- * Papote #3 (18 Oct 2026): a plan waiting for its requester's Build it read
- * as "building now", so "status?" on a request whose plan had waited three
- * days for its requester was told the build was still running. `waitingFor`
- * names who the plan waits on: 'them' (whoever is asking), a username, or
- * null when it cannot be named.
+ * Pure: what became of one look's build, for request_detail's history of
+ * its looks, or undefined when the look built nothing or its build has not
+ * come to anything yet: where it stands now is the request's standing,
+ * never a guess from one look (Papote #3, 18 Oct 2026: a plan waiting for
+ * its requester's Build it read as "building now"). A build that was not
+ * needed (skipped) stopped; it did not fail.
  */
-function buildWords(r, { waitingFor = null } = {}) {
+function buildWords(r) {
   const error = clip(r.build_error || 'no reason recorded', 300);
   if (r.verdict !== 'ready') return r.build_ok == null ? undefined : (r.build_ok ? 'built' : `could not build: ${error}`);
   if (r.build_ok === true || r.proposal_session_id) return 'built';
@@ -1578,19 +1616,10 @@ function buildWords(r, { waitingFor = null } = {}) {
       ? `stopped before it was built: ${error.replace(/^skipped:\s*/, '')}`
       : `could not build: ${error}`;
   }
-  if (r.cap_suppressed) return 'held back by a limit, so not built yet';
+  if (r.cap_suppressed) return 'held back by a limit, so not built from this look';
   // A wait a later look replaced (homeroom-bot.js runTriage) was never built.
   if (r.build_error) return `not built: ${error.replace(/^superseded:\s*/, '')}`;
-  if (r.awaiting_go_at && !r.build_session_id) {
-    const who = waitingFor === 'them' ? 'them' : waitingFor ? `@${waitingFor}` : 'the person who asked for it';
-    return `not building: its plan is written and waits for ${who} to say Build it, and nothing is built until then`;
-  }
-  if (r.live_build_waiting_at && !r.build_session_id) {
-    return r.complicated === true && !r.planned
-      ? 'writing the plan its requester checks before anything is built'
-      : 'waiting its turn to be built';
-  }
-  return 'building now';
+  return undefined;
 }
 
 async function requestDetail(pool, { user, project, number, settings = null, deps = {} }) {
@@ -1603,21 +1632,9 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
   // nothing to anybody, and its verdict read as the bot's decision.
   const { rows: runs } = await pool.query(
     `SELECT verdict, question, question_answers, reason, build_note, build_ok, build_error, created_at,
-            proposal_session_id, cap_suppressed, live_build_waiting_at, build_session_id, about_platform,
-            awaiting_go_at, complicated, plan IS NOT NULL AS planned
+            proposal_session_id, cap_suppressed, build_session_id, about_platform
        FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = $2 AND mode = 'live'
       ORDER BY id DESC LIMIT 4`,
-    [app.id, n],
-  );
-  // Who a plan waiting for Build it waits on (buildWords).
-  const requester = runs.some((r) => r.awaiting_go_at)
-    ? await Promise.resolve().then(() => dmModule(deps).requesterOf(pool, app.id, n)).catch(() => null)
-    : null;
-  const waitingFor = requester
-    ? (Number(requester.userId) === Number(user.id) ? 'them' : requester.username || null)
-    : null;
-  const { rows: queue } = await pool.query(
-    'SELECT started_at, enqueued_at FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2',
     [app.id, n],
   );
   const { rows: openQ } = await pool.query(
@@ -1628,7 +1645,11 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
     [user.id, app.id, n],
   );
   const asked = openQ[0]?.metadata?.homeroomBot || null;
-  const sessionId = runs.find((r) => r.proposal_session_id)?.proposal_session_id || null;
+  // Where it stands: its stored work state, as its page draws it, in the
+  // words its requester reads when they are the one asking.
+  const [row] = await require('./work-state').forItems(pool, [{ appId: app.id, issueNumber: n }]);
+  const yours = !row || row.requesterId == null || Number(row.requesterId) === Number(user.id);
+  const standing = row ? standingItem(row, { domain: domainOf(deps), yours }) : null;
   return {
     // For the turn's own checks (runTool takes it off before the model reads).
     appId: Number(app.id),
@@ -1636,7 +1657,18 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
     projectName: app.name || app.slug,
     number: n,
     botBuildsHere: liveModule(deps).isLiveFor(settings, app),
-    queue: queue[0] ? (queue[0].started_at ? 'working on it now' : 'waiting in your queue') : 'not in your queue',
+    ...(standing ? {
+      standing: {
+        stage: standing.stage,
+        says: standing.says,
+        whoseMove: standing.whoseMove,
+        ...(standing.waitingOn ? { waitingOn: standing.waitingOn } : {}),
+        busyNow: standing.busyNow,
+        ...(standing.since ? { since: standing.since } : {}),
+        ...(standing.asks ? { asks: standing.asks } : {}),
+        ...(standing.lastSaid ? { lastSaid: standing.lastSaid } : {}),
+      },
+    } : {}),
     openQuestion: asked ? { question: asked.question || null, suggestedAnswers: asked.answers || [] } : null,
     recentLooks: runs.map((r) => ({
       when: new Date(r.created_at).toISOString(),
@@ -1649,9 +1681,9 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
       // #4239: left because it is about Homeroom itself (offer_move_request).
       aboutHomeroom: r.about_platform ? true : undefined,
       plan: r.build_note ? clip(r.build_note, 800) : undefined,
-      build: buildWords(r, { waitingFor }),
+      build: buildWords(r),
     })),
-    proposal: sessionId ? await progressSvc.proposalFacts(pool, Number(sessionId), { domain: domainOf(deps) }) : null,
+    proposal: standing?.change ? { ...standing.change, links: standing.links } : null,
   };
 }
 
@@ -4025,7 +4057,7 @@ async function runTool(pool, ctx, name, args) {
     }
     switch (name) {
       case 'progress': {
-        ctx.progress = await progressOf(pool, { userId: user.id, settings, config: ctx.config, deps });
+        ctx.progress = await progressOf(pool, { userId: user.id, settings, deps });
         if ((ctx.progress?.rightNow || []).some((e) => e.busyNow)) ctx.workBusy = true;
         return ctx.progress;
       }
@@ -4486,7 +4518,7 @@ async function recordsAnswer(pool, ctx) {
   let progress = ctx.progress;
   if (!progress) {
     try {
-      progress = await progressOf(pool, { userId: ctx.user.id, settings: ctx.settings, config: ctx.config, deps: ctx.deps });
+      progress = await progressOf(pool, { userId: ctx.user.id, settings: ctx.settings, deps: ctx.deps });
     } catch (err) {
       log.warn('homeroom-bot-mayor', 'Could not read the progress of a person\'s work', { userId: ctx.user.id, err: err.message });
       return null;
@@ -4497,7 +4529,7 @@ async function recordsAnswer(pool, ctx) {
     return { kind: 'project', project: e.project };
   }));
   // #4097: it lists what it has cards for, and says how many more.
-  const said = progressSvc.progressText(progress, { max: MAX_CARDS });
+  const said = progressText(progress, { max: MAX_CARDS });
   return { text: `I couldn't put a full answer together just now. ${said}`, cards };
 }
 
@@ -6658,20 +6690,21 @@ async function startRequest(pool, ctx, args) {
   if (open?.status === 'promoted') {
     return { ok: false, code: 'already_built', error: 'You already built it: its proposal is up for the group\'s vote. To change it, use revise_proposal. Nothing was started.' };
   }
+  // Where it stands now, its stored work state, in the screens' words.
   const entryFor = async () => {
-    const p = await progressOf(pool, { userId: user.id, settings, config: ctx.config, deps });
-    return (p.rightNow || []).find((e) => e.project === app.slug && Number(e.number) === n) || null;
+    const [row] = await require('./work-state').forItems(pool, [{ appId: app.id, issueNumber: n }]);
+    return row ? standingItem(row, { domain: domainOf(deps) }) : null;
   };
   const before = await entryFor().catch(() => null);
   if (before?.busyNow) {
     ctx.started = name;
-    return { ok: true, already: `You are on it now: ${before.doing}.` };
+    return { ok: true, already: `You are on it now: ${before.says}.` };
   }
   if (await pendingBuild(pool, app.id, n)) {
     ctx.started = name;
     return {
       ok: true,
-      already: `It is ready and its build is already on its way${before?.doing ? ` (${before.doing})` : ''}, so nothing new was queued: a new look would only start it over.`,
+      already: `It is ready and its build is already on its way${before?.says ? ` (${before.says})` : ''}, so nothing new was queued: a new look would only start it over.`,
     };
   }
   // #6252: the last look, read before the queued one replaces it: a verdict
@@ -6714,7 +6747,7 @@ async function startRequest(pool, ctx, args) {
   return {
     ok: true,
     queued: queued ? 'At the front of your queue.' : 'You are already on it: it is not waiting in the queue.',
-    ...(after ? { status: after.doing, ...(after.step ? { step: `step ${after.step} of ${after.of}` } : {}) } : {}),
+    ...(after ? { status: after.says } : {}),
     ...left,
   };
 }
@@ -7798,7 +7831,8 @@ module.exports = {
   MAX_CALLS_PER_ROUND,
   RATE_LIMIT_WAITS_MS,
   PROGRESS_QUESTION,
-  statusOf,
+  standingItem,
+  progressText,
   buildWords,
   retryPlan,
   retryAct,

@@ -851,6 +851,10 @@
     "text": "Waiting on GitHub",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Going live: the change has the yes it needs, and GitHub held its merge back for a moment (busy, or a refusal nobody has to act on). Homeroom tries again in a few minutes."
   },
+  "work.line.shots": {
+    "text": "Taking the before and after screenshots",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Checking: the change's tests passed, and Homeroom is still taking the before and after screenshots people look at before they vote, so nobody is asked to vote on it yet."
+  },
   "work.line.firstVersion": {
     "text": "First version: it goes live without a vote",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: a project's first version is put live once its tests pass, with no vote."

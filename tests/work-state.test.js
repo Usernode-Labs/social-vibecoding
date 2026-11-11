@@ -25,13 +25,55 @@ test('an approved change whose merge GitHub holds says Waiting to merge', () => 
   assert.equal(ws.lineSays(held), "Waiting for GitHub's checks");
   assert.equal(ws.lineSays({ stage: 'going_live', line: { code: 'github_wait' } }), 'Waiting on GitHub');
   assert.equal(ws.stageSays({ stage: 'going_live' }), 'Going live', 'a plain merge keeps its word');
-  assert.equal(ws.WORDS['work.stage.waitingToMerge'], 'Waiting to merge');
+  // 11 Nov 2026: the mapping exists once, on the server, and ships with the
+  // row as phrase ids of the core catalog (`words`), so the browser says
+  // the same words without a table of its own.
+  assert.deepEqual(ws.phrasesOf(held), {
+    stage: { id: 'core:work.stage.waitingToMerge' },
+    stageOthers: { id: 'core:work.stage.waitingToMerge' },
+    line: { id: 'core:work.line.githubChecks' },
+  });
   const core = JSON.parse(fs.readFileSync(path.join(ROOT, 'frontend/locales/en/core.json'), 'utf8'));
-  assert.equal(core['work.stage.waitingToMerge'].text, ws.WORDS['work.stage.waitingToMerge'],
-    'the server and the browser say the same');
-  const ts = fs.readFileSync(path.join(ROOT, 'frontend/src/lib/work-state.ts'), 'utf8');
-  assert.match(ts, /stage === 'going_live' && \(code === 'github_checks' \|\| code === 'github_wait'\)/);
-  assert.match(ts, /core:work\.stage\.waitingToMerge/);
+  assert.equal(core['work.stage.waitingToMerge'].text, ws.stageSays(held), 'the server reads the catalog\'s words');
+});
+
+// 11 Nov 2026: the words of every stage, why, reason and line are phrase
+// ids that exist in the core catalog, with their values; the English the
+// server says is that catalog's.
+test('every phrase an item can carry is in the core catalog', () => {
+  const core = JSON.parse(fs.readFileSync(path.join(ROOT, 'frontend/locales/en/core.json'), 'utf8'));
+  const has = (phrase) => {
+    const key = phrase.id.replace(/^core:/, '');
+    return !!core[key] || (!!core[`${key}_one`] && !!core[`${key}_other`]);
+  };
+  const items = [
+    ...ws.STAGES.map((stage) => ({ stage })),
+    ...ws.WHYS.map((why) => ({ stage: 'waiting_for_you', why })),
+    ...ws.REASONS.map((reason) => ({ stage: 'stopped', reason })),
+    ...['queued', 'first_version_wait', 'held_builds', 'held_waiting', 'on_hold', 'cooldown', 'reply', 'retry_plan',
+      'starting', 'proposing', 'fixing', 'revising', 'update_queued', 'checks_failing', 'sync_wait', 'conflict_on_yes',
+      'github_checks', 'github_checks_failing', 'github_wait', 'first_version', 'planning_with_you', 'waiting', 'shots']
+      .map((code) => ({ stage: 'building', line: { code } })),
+    { stage: 'reading', line: { code: 'queued', place: 3 } },
+    { stage: 'building', line: { code: 'reviewing', round: 1, of: 2 } },
+    { stage: 'checking', line: { code: 'checks_failing', failing: 2 } },
+    { stage: 'checking', line: { code: 'checks_running', minutes: 4 } },
+    { stage: 'building', line: { code: 'claimed', by: 'ada' } },
+    { stage: 'waiting_for_you', why: 'decide', line: { code: 'reason', text: 'It needs a person.' } },
+  ];
+  for (const item of items) {
+    const words = ws.phrasesOf(item);
+    for (const phrase of [words.stage, words.stageOthers, words.line].filter(Boolean)) {
+      assert.ok(has(phrase), `${phrase.id} is in the catalog`);
+    }
+    assert.ok(ws.says(item), `${JSON.stringify(item)} says something`);
+  }
+  assert.equal(ws.lineSays({ stage: 'reading', line: { code: 'queued', place: 3 } }), 'Number 3 in line');
+  assert.equal(ws.lineSays({ stage: 'checking', line: { code: 'checks_failing', failing: 1 } }), '1 test failing');
+  assert.equal(ws.lineSays({ stage: 'checking', line: { code: 'checks_failing', failing: 2 } }), '2 tests failing');
+  assert.deepEqual(ws.phrasesOf({ stage: 'checking', line: { code: 'checks_failing', failing: 2 } }).line,
+    { id: 'core:work.line.checksFailingCount', values: { count: 2 } });
+  assert.equal(ws.stageSays({ stage: 'waiting_for_you', why: 'plan' }, { yours: false }), core['work.whyOthers.plan'].text);
 });
 
 test('the ten stages, and nothing else, are what a request can be in', () => {
@@ -209,11 +251,14 @@ test('a checking change words its wait: about N min left, or waiting to sync wit
 
 test('the new wait words are the catalog\'s, keyed by the same entries', () => {
   const core = require('../frontend/locales/en/core.json');
-  assert.equal(ws.WORDS['work.line.checksRunning_one'], core['work.line.checksRunning_one'].text);
-  assert.equal(ws.WORDS['work.line.checksRunning_other'], core['work.line.checksRunning_other'].text);
-  assert.equal(ws.WORDS['work.line.syncWait'], core['work.line.syncWait'].text);
-  assert.equal(ws.WORDS['work.stage.syncing'], core['work.stage.syncing'].text);
-  assert.equal(ws.WORDS['work.line.conflictOnYes'], core['work.line.conflictOnYes'].text);
+  assert.equal(ws.lineSays({ line: { code: 'checks_running', minutes: 1 } }),
+    core['work.line.checksRunning_one'].text.replace('{{count}}', '1'));
+  assert.equal(ws.lineSays({ line: { code: 'checks_running', minutes: 5 } }),
+    core['work.line.checksRunning_other'].text.replace('{{count}}', '5'));
+  assert.equal(ws.lineSays({ line: { code: 'sync_wait' } }), core['work.line.syncWait'].text);
+  assert.equal(ws.stageSays({ stage: 'checking', line: { code: 'syncing' } }), core['work.stage.syncing'].text);
+  assert.equal(ws.lineSays({ line: { code: 'conflict_on_yes' } }), core['work.line.conflictOnYes'].text);
+  assert.equal(ws.lineSays({ line: { code: 'shots' } }), core['work.line.shots'].text);
 });
 
 test('#6528: a passing change reads Checking until its before & after shots settle, then rings ready', () => {
@@ -227,7 +272,7 @@ test('#6528: a passing change reads Checking until its before & after shots sett
     shots_detail: { headSha: head, required: true }, shots_updated_at: ago(5), checks_at: ago(5),
   };
   const held = derive({ ...change, ...shooting });
-  assert.deepEqual([held.stage, held.line, held.whoseMove], ['checking', null, 'bot']);
+  assert.deepEqual([held.stage, held.line, held.whoseMove], ['checking', { code: 'shots' }, 'bot']);
   assert.equal(ws.bellOf(held, held), null, 'staying in checking rings nothing');
   const vote = derive({ ...change, ...shooting, shots_state: 'verified' });
   assert.deepEqual([vote.stage, vote.whoseMove], ['up_for_vote', 'group']);

@@ -285,6 +285,11 @@
       "id": "feedback-reports-thread",
       "sha256": "e9d2b9b8a140ceac2577b17f5940b7fec9d96f4aec3f99c5bda3b36ca5dba6e5",
       "schemaSha256": "8a7b5f32fc635f5c938941cc92dd1b66d5d167b88529e1ae688a5316f9f2c7cc"
+    },
+    {
+      "id": "work-state-standing",
+      "sha256": "24a1d11510fd809c002d95f7a0abbd6a6ffbbb1cdf470b168cc5dcfd3560ba38",
+      "schemaSha256": "6ab15343e4f4316fb33002817a304a39a384adb519997db8273475cec8949380"
     }
   ]
 }

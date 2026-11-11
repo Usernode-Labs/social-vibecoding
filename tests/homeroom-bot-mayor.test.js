@@ -19,7 +19,8 @@ test('the prompt keeps the model to the tools, plain words and Homeroom\'s conte
   const prompt = mayor.systemPrompt({ username: 'ada', perPerson: 2, today: new Date('2026-10-02T00:00:00Z') });
   assert.match(prompt, /talking with @ada in a direct message on Homeroom/);
   assert.match(prompt, /or "what are you doing\?", call progress first/);
-  assert.match(prompt, /say it, for example "step 4 of 7: building it, 6 minutes so far"/);
+  // 11 Nov 2026: where it stands, in the words its screens use.
+  assert.match(prompt, /stands in the words their screens use \(says, for example "Building · Reviewing, round 1 of 2"\)/);
   assert.match(prompt, /For the whole list of their requests, call my_work\. For ANY question about their\n  work, answer only from what these return/);
   // #19 (WP3): "how long?" is answered with how long the step usually takes,
   // and its time limit only ever as the most it can take.
@@ -104,11 +105,11 @@ test('the tools: sixteen lookups and actions and a reply, every one closed to ex
   assert.deepEqual(reply.properties.cards.items.properties.kind.enum, ['request', 'proposal', 'project'],
     'a project still being set up has a card too');
   const progress = mayor.TOOLS.find((t) => t.function.name === 'progress').function;
-  assert.match(progress.description, /the step it is on/);
-  assert.match(progress.description, /setting up a project for its first version, reading a request, a question waiting for their answer, writing the plan, building, the proposal's checks, the group's vote/);
+  // 11 Nov 2026: where each stands, in the words its screens use.
+  assert.match(progress.description, /where it stands in their screens' own words \(says: say it as written\)/);
+  assert.match(progress.description, /setting up a project for its first version, reading a request, a question waiting for their answer, writing the plan, building, the change's checks, the group's vote/);
   // #19 (WP3): the typical range is what to say; the limit never is.
   assert.match(progress.description, /typicalMinutes when the step takes a while \(how long it usually takes, from and to, in minutes: what to say when they ask how long\)/);
-  assert.match(progress.description, /stepTimeLimitMinutes: the most it can take before it is stopped, never the wait/);
 });
 
 test('#3733: a failed model request is asked again while that can help, and never past the key', () => {
@@ -197,19 +198,26 @@ test('#3685: which messages ask how their work is going', () => {
   }
 });
 
+// 11 Nov 2026 (docs/plans/bot-one-model.md, step 3): a request's status is
+// its stored work state, in the words its screens use (standingItem), with
+// whose move it is; statusOf, the bot's own reading of its records, is gone.
 test('a request\'s status, in the words the model repeats', () => {
-  assert.equal(mayor.statusOf({ proposal_status: 'merged', started_at: 'x' }), 'approved and live', 'merged wins');
-  assert.equal(mayor.statusOf({ started_at: 'x', open_question: 1 }), 'looking at it now');
-  assert.equal(mayor.statusOf({ open_question: 1, proposal_status: 'promoted' }), 'waiting for their answer to your question');
-  assert.equal(mayor.statusOf({ proposal_status: 'promoted', enqueued_at: 'x' }), 'proposal up for the group\'s vote');
-  // Not its number across every project's queue: what decides when it starts is not that.
-  assert.equal(mayor.statusOf({ enqueued_at: 'x', queue_position: 4 }), 'waiting for a free builder');
-  assert.equal(mayor.statusOf({ verdict: 'ready', build_ok: false }), 'you could not build it');
-  // WP1: a build that was not needed stopped; it did not fail.
-  assert.equal(mayor.statusOf({ verdict: 'ready', build_ok: false, build_error: 'skipped: the request already has a proposal (6190)' }),
-    'you stopped before building it: it was not needed');
-  assert.equal(mayor.statusOf({ verdict: 'person' }), 'left for the group to decide');
-  assert.equal(mayor.statusOf({}), 'looked at; nothing new since');
+  const item = (work) => mayor.standingItem({ app: { slug: 'seeds', name: 'Seeds' }, issueNumber: 3, ...work }, {});
+  assert.equal(item({ stage: 'live', since: '2026-11-01T00:00:00Z' }).says, 'Live');
+  assert.equal(item({ stage: 'waiting_for_you', why: 'question', whoseMove: 'requester' }).says, 'Waiting for your answer');
+  assert.equal(item({ stage: 'waiting_for_you', why: 'question', whoseMove: 'requester' }).waitingOn, 'them');
+  assert.equal(mayor.standingItem({ app: { slug: 's' }, stage: 'waiting_for_you', why: 'plan', whoseMove: 'requester' }, { yours: false }).says,
+    "Waiting for the plan to be OK'd", 'somebody else\'s, in everyone else\'s words');
+  assert.equal(item({ stage: 'up_for_vote', whoseMove: 'group' }).waitingOn, 'the group');
+  assert.equal(item({ stage: 'reading', line: { code: 'queued', place: 4 }, whoseMove: 'bot' }).says, 'Not started yet · Number 4 in line');
+  assert.equal(item({ stage: 'stopped', reason: 'build_failed', whoseMove: 'requester' }).says, "Stopped: the build didn't finish");
+  const busy = item({ stage: 'building', line: null, whoseMove: 'bot', since: new Date(Date.now() - 5 * 60000).toISOString() });
+  assert.deepEqual([busy.says, busy.busyNow, busy.minutesSoFar], ['Building', true, 5]);
+  assert.equal(item({ stage: 'building', line: { code: 'held_builds' }, whoseMove: 'bot' }).busyNow, false, 'held: waiting, not working');
+  const withChange = item({ stage: 'up_for_vote', whoseMove: 'group',
+    change: { id: 9, number: 12, status: 'promoted', checks: { state: 'passing' }, votes: { yes: 1, no: 0 }, voteOpen: true } });
+  assert.deepEqual(withChange.change, { id: 9, number: 12, status: 'promoted', checks: { state: 'passing' }, votes: { yes: 1, no: 0 }, openForVotes: true });
+  assert.equal(mayor.statusOf, undefined, 'no second reading of the records');
 });
 
 test('it hears the send in its own transaction, never into the answer, and files a request the way the route does', () => {
@@ -685,12 +693,13 @@ test('#3768, #3771: the DM can comment on a request and start one, and says what
 // bot said "Nothing broke" beside a card that read "Didn't finish". Its
 // tools showed nothing of a build in progress, and the cards never reached
 // it.
-test('WP1: request_detail says a build is in progress, and a build that was not needed stopped', () => {
+test('WP1: request_detail says what became of each look\'s build, and a build that was not needed stopped', () => {
   const words = (r) => mayor.buildWords({ verdict: 'ready', ...r });
-  assert.equal(words({}), 'building now', 'while build_ok is null, nothing else recorded');
-  assert.equal(words({ build_session_id: 5 }), 'building now');
-  assert.equal(words({ live_build_waiting_at: '2026-10-03T16:45:36Z' }), 'waiting its turn to be built');
-  assert.equal(words({ cap_suppressed: 'proposals_per_app' }), 'held back by a limit, so not built yet');
+  // 11 Nov 2026: a build not finished yet says nothing here: where the
+  // request stands now is its standing (request_detail's `standing`).
+  assert.equal(words({}), undefined, 'while build_ok is null, nothing else recorded');
+  assert.equal(words({ build_session_id: 5 }), undefined);
+  assert.equal(words({ cap_suppressed: 'proposals_per_app' }), 'held back by a limit, so not built from this look');
   assert.equal(words({ build_error: 'superseded: a later verdict on the same issue' }), 'not built: a later verdict on the same issue');
   assert.equal(words({ build_ok: true }), 'built');
   assert.equal(words({ proposal_session_id: 6190 }), 'built');
@@ -702,23 +711,19 @@ test('WP1: request_detail says a build is in progress, and a build that was not 
 });
 
 // Papote #3 (18 Oct 2026): "status?" on a request whose plan had waited
-// three days for its requester's Build it was told "building now".
-test('papote #3: request_detail says a plan waits for Build it, and whom it waits on', () => {
-  const words = (r, opts) => mayor.buildWords({ verdict: 'ready', ...r }, opts);
+// three days for its requester's Build it was told "building now". 11 Nov
+// 2026: a look's build never says where the request stands now; its
+// standing does (waiting_for_you, plan), as its page says it.
+test('papote #3: request_detail never says a plan waiting for Build it is being built', () => {
+  const words = (r) => mayor.buildWords({ verdict: 'ready', ...r });
   const waiting = { awaiting_go_at: '2026-10-15T11:54:25Z', complicated: true, planned: true };
-  assert.equal(words(waiting, { waitingFor: 'them' }),
-    'not building: its plan is written and waits for them to say Build it, and nothing is built until then');
-  assert.equal(words(waiting, { waitingFor: 'snait' }),
-    'not building: its plan is written and waits for @snait to say Build it, and nothing is built until then');
-  assert.equal(words(waiting),
-    'not building: its plan is written and waits for the person who asked for it to say Build it, and nothing is built until then');
+  assert.equal(words(waiting), undefined);
   assert.equal(words({ ...waiting, build_ok: false, build_error: 'skipped: the request was read again' }),
     'stopped before it was built: the request was read again', 'a plan a new look replaced');
-  // A complicated change's plan being drafted waits in the build lane too.
-  assert.equal(words({ complicated: true, planned: false, live_build_waiting_at: '2026-10-18T17:09:00Z' }),
-    'writing the plan its requester checks before anything is built');
-  assert.equal(words({ complicated: true, planned: true, live_build_waiting_at: '2026-10-18T17:09:00Z' }),
-    'waiting its turn to be built', 'and once Build it went ahead, its build waits its turn');
+  assert.equal(words({ complicated: true, planned: false, live_build_waiting_at: '2026-10-18T17:09:00Z' }), undefined);
+  const plan = mayor.standingItem({ app: { slug: 's' }, stage: 'waiting_for_you', why: 'plan', whoseMove: 'requester',
+    asks: { plan: { version: 1, waitingGo: true } } }, {});
+  assert.deepEqual([plan.says, plan.waitingOn, plan.asks], ['Waiting for you to OK the plan', 'them', { planWaitsForBuildIt: true }]);
 });
 
 test('WP1: the model reads what each activity card shows now, beside the card\'s own words', async () => {

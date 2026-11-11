@@ -74,8 +74,14 @@ test('a vote is asked only once the checks pass and it merges cleanly', { timeou
     [app.id, by.id, linked, pr, `Change ${pr}`, extra.checkState ?? 'passing', extra.checkPhase ?? null,
       extra.conflict ?? null, extra.clean ?? null, JSON.stringify(extra.reasons ?? [])])).rows[0];
 
+  // 11 Nov 2026: whether a change is open for votes is its stored work
+  // state (services/work-state.js vote_open), derived again from what the
+  // triggers mark; a write here is read once the drain has run, as the
+  // work-state-drain clock does within seconds.
+  const ws = require('../src/services/work-state');
+  const settle = async () => { while ((await ws.drainDirty(pool)).taken) { /* until none is left */ } };
   // What the four readers say about the change for ada, who would owe it.
-  const feed = async () => (await pool.query(
+  const feed = async () => (await settle(), await pool.query(
     overview.NEEDS_FEED_SQL, [ada.id, false, false, overview.NEEDS_FEED_MAX])).rows
     .filter((r) => Number(r.app_id) === Number(app.id) && r.kind === 'proposal')
     .map((r) => Number(r.id));
@@ -94,6 +100,7 @@ test('a vote is asked only once the checks pass and it merges cleanly', { timeou
     return row ? Number(row.pending) : 0;
   };
   const everywhere = async () => {
+    await settle();
     const [f, c, w, d] = await Promise.all([feed(), counts(), waiting(), digestFor()]);
     return { feed: f, needs: c.needs, owed: c.owed, waiting: w, digest: d };
   };

@@ -1898,7 +1898,7 @@ async function issueHolders(pool, appId) {
   // #4190: a claim made once the bot was already on the request is a person
   // working on it ALONGSIDE the bot, not a hold: the bot keeps going and
   // delivers. "On it" is what the request page shows as the bot's work
-  // (homeroom-bot-progress.js botWorkByIssue): a request somebody asked it to
+  // (work-state.js botWorkOf, off its stored row): a request somebody asked it to
   // build (a priority-0 row), one it has started reading (a started row), and
   // a live build waiting its turn or under way, or a plan waiting for its
   // Build it, measured from when that run's read began. A claim made before
