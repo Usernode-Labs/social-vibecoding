@@ -553,7 +553,10 @@ test('#11 (WP3): a promise to come back later, "the team was told" and "I withdr
 
   assert.deepEqual(await kinds('I\'ve withdrawn the duplicate proposal.'), ['withdrew']);
   assert.deepEqual(await kinds('I closed the second proposal.'), ['withdrew']);
-  assert.deepEqual(await kinds('It has been withdrawn.'), ['withdrew']);
+  // #6566: a passive sentence with no subject name is left alone, as "It has
+  // been closed" is; the proposal named is what makes it a claim.
+  assert.deepEqual(await kinds('It has been withdrawn.'), []);
+  assert.deepEqual(await kinds('The proposal has been withdrawn.'), ['withdrew']);
   assert.deepEqual(await kinds('I\'ve withdrawn the duplicate proposal.', { withdrew: { proposal: 1 } }), []);
   assert.deepEqual(await kinds('Tap Withdraw it below and I\'ll withdraw it.'), [], 'an offer is no withdrawal');
 
@@ -578,7 +581,7 @@ test('#11 (WP3): withdrawing a proposal and telling the team are tools, describe
   const prompt = mayor.systemPrompt({ username: 'ada' });
   assert.match(prompt, /- Withdraw one of your own changes that is still open when the person who asked for its request, or the\n  project's owner, asks you to \(withdraw_proposal\)\. It is withdrawn only once they tap Withdraw it under your\n  message, so ask them to\./);
   assert.match(prompt, /The one exception: a second change for a request that already has one approved\n  or up for a vote is withdrawn straight away, and you say so\./);
-  assert.match(prompt, /\(report_problem\)\. It is filed as a report from them where the team tracks problems, which\n  anyone can read; the last few messages of this chat go only to the team, privately\. Say so\./);
+  assert.match(prompt, /\(report_problem\)\. It is filed as a request from them on Homeroom's requests board, where\n  anyone can read it; the last few messages of this chat go only to the team, privately\. Say so, and give the\n  number the result returns: Filed as #N on Homeroom's requests board\./);
   assert.doesNotMatch(prompt.slice(0, prompt.indexOf('PLATFORM RULES')), /—/);
 
   const withdraw = mayor.TOOLS.find((t) => t.function.name === 'withdraw_proposal').function;
@@ -593,7 +596,7 @@ test('#11 (WP3): withdrawing a proposal and telling the team are tools, describe
   assert.deepEqual(Object.keys(report.parameters.properties).sort(), ['details', 'number', 'project', 'summary']);
   assert.match(report.description, /Call it only when they ask you to tell the team, or say yes when you offer\./);
   assert.match(report.description, /the summary, the details, the request it is about and your records of your work on it are public, and a private project is not named there\./);
-  assert.match(report.description, /The last few messages of this chat go only to the team, privately: say so\./);
+  assert.match(report.description, /The last few messages of this chat go only to the team, privately\. Say so, and give the number the result returns: Filed as #N on Homeroom's requests board\./);
   assert.match(report.description, /Keep anything private out of the summary and details/);
   assert.doesNotMatch(report.description, /last few messages of this chat[^.]*anyone can read/, 'the chat is never said to be public');
   assert.deepEqual(mayor.OFFER_ANSWERS, {
@@ -1178,4 +1181,85 @@ test('#6534: a reply saying pictures are posted is caught unless files were stor
   'stored under a reply in a project thread');
   assert.deepEqual(await kinds('The pictures are in the thread above.'), [],
     'not a claim that they were posted now');
+});
+
+test('#6566: a passive sentence is a claim only when it names what was closed, moved or withdrawn', async () => {
+  const pool = { query: async () => ({ rows: [{ n: 12 }] }) };
+  const ctx = { user: { id: 1 }, appIds: new Set() };
+  const kinds = async (text) => (await mayor.claimProblems(pool, ctx, text)).map((p) => p.kind);
+  // Evan's reply about the phone app: nothing about a request was closed.
+  assert.deepEqual(await kinds('That sounds like the screen stays blank after the app has been closed for a while.'), []);
+  assert.deepEqual(await kinds('It has been closed.'), [], 'no subject, no claim');
+  assert.deepEqual(await kinds('I closed #12.'), ['closed_request']);
+  assert.deepEqual(await kinds('Your request has been closed.'), ['closed_request']);
+  assert.deepEqual(await kinds('It has been moved for a while.'), []);
+  assert.deepEqual(await kinds('Your request has been moved.'), ['moved']);
+  assert.deepEqual(await kinds('The proposal has been withdrawn.'), ['withdrew']);
+  assert.deepEqual(await kinds('The window has been withdrawn from the build.'), [], 'not a proposal');
+});
+
+test('#6566: a sentence wrapped over two lines is dropped whole, never left as a fragment', () => {
+  const wrapped = 'Here is what I found.\nI closed the\nrequest yesterday. The rest is unchanged.';
+  assert.equal(mayor.stripClaims(wrapped, [{ kind: 'closed_request' }]),
+    'I haven\'t closed it. Its group decides that by a vote.\n\nHere is what I found. The rest is unchanged.');
+});
+
+test('#6566: the report\'s own receipt is accepted, and only for the number just filed', async () => {
+  const pool = { query: async () => ({ rows: [] }) };
+  const ctx = { user: { id: 1 }, appIds: new Set(), reported: { number: 6564 } };
+  const kinds = async (text) => (await mayor.claimProblems(pool, ctx, text)).map((p) => p.kind);
+  assert.deepEqual(await kinds('Filed as #6564 on Homeroom\'s requests board, where anyone can read it. The last few messages of this chat went only to the team, privately.'), [],
+    'the true receipt is no filing claim, names no unknown project, and its number is known');
+  assert.ok((await kinds('Filed as #7000 on Homeroom\'s requests board.')).includes('filed'), 'a different number is not accepted');
+  // The receipt sentence is never cut, whatever else is.
+  assert.equal(mayor.stripClaims('Filed as #6564 on Homeroom\'s requests board. I closed the request.',
+    [{ kind: 'closed_request' }], ctx),
+  'I haven\'t closed it. Its group decides that by a vote.\n\nFiled as #6564 on Homeroom\'s requests board.');
+});
+
+test('#6566: report_problem returns the report\'s number and link, with a card, and a repeat files nothing', async () => {
+  const platform = { id: 9, slug: 'usernode-2d5619', name: 'Homeroom', self_hosted: true, view_visibility: 'public' };
+  const pool = {
+    query: async (sql) => {
+      if (/FROM apps/.test(sql)) return { rows: [platform] };
+      if (/conversation_messages/.test(sql)) return { rows: [] };
+      return { rows: [] };
+    },
+  };
+  const filed = [];
+  const feedbackSvc = {
+    recentReports: async () => 0,
+    findRecentReport: async () => null,
+    filePlatformReport: async (...args) => {
+      filed.push(args);
+      return { ok: true, issueNumber: 6564, url: 'https://github.com/usernode-labs/social-vibecoding/issues/6564' };
+    },
+  };
+  const ctx = {
+    user: { id: 7 }, deps: { domain: 'app.test', feedbackSvc }, conversationId: 5,
+    appIds: new Set(), cards: [], config: {},
+  };
+  const result = await mayor.reportProblem(pool, ctx, { summary: 'Blank screen after the app was closed', details: 'It stays blank.' });
+  assert.equal(result.ok, true);
+  assert.equal(result.number, 6564);
+  assert.equal(result.link, 'https://app.test/#app/usernode-2d5619/dev/issues/6564');
+  assert.equal(result.sent, 'Filed as #6564 on Homeroom\'s requests board, where anyone can read it; the last few messages of this chat went only to the team, privately.');
+  assert.deepEqual(ctx.cards, [{ type: 'issue', appId: 9, issueNumber: 6564 }], 'the card opens the report');
+  assert.equal(filed.length, 1);
+
+  // The same problem again in the same thread: the first report, nothing filed.
+  const repeatCtx = {
+    user: { id: 7 }, deps: { domain: 'app.test', feedbackSvc }, conversationId: 5,
+    appIds: new Set(), cards: [], config: {},
+  };
+  feedbackSvc.findRecentReport = async () => ({ number: 6564 });
+  feedbackSvc.recentReports = async () => 3;
+  feedbackSvc.filePlatformReport = async () => { filed.push('again'); return { ok: true, issueNumber: 7000 }; };
+  const again = await mayor.reportProblem(pool, repeatCtx, { summary: 'Blank screen after the app was closed', details: 'It stays blank.' });
+  assert.equal(again.ok, true);
+  assert.equal(again.repeat, true);
+  assert.equal(again.number, 6564);
+  assert.equal(again.sent, 'Already filed as #6564 on Homeroom\'s requests board. Nothing new was filed.');
+  assert.deepEqual(repeatCtx.cards, [{ type: 'issue', appId: 9, issueNumber: 6564 }]);
+  assert.equal(filed.length, 1, 'nothing new was filed');
 });

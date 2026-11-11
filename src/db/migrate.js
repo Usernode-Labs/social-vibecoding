@@ -114,6 +114,10 @@ async function migrate(config) {
   // week, so Live this week has a closed thread to show. Staging has no
   // model, so the bot's reply is stored rather than asked for.
   await seedStagingClosedPrivateThread(pool);
+  // #6566's shots: the bot's reply after it filed a problem report, and its
+  // answer when asked for the link. Staging has no model, so both replies
+  // are stored messages.
+  await seedStagingBotReportReply(pool);
   // #6426's shots: Main Chat shows "Welcome back" after a day away, so the
   // capture member's chat with the bot has a visit old enough to show it.
   await seedStagingMainChatLastVisit(pool);
@@ -211,6 +215,10 @@ async function migrate(config) {
   await seedStagingChecksAdvisoryCard(pool, config);
   await seedStagingExternalAgentProposal(pool, config);
   await seedStagingRestartEligibleMerge(pool, config);
+  // #6563's shots: an approved, tested change whose merge GitHub is holding
+  // while its own required checks finish, so the change page has the Merging
+  // card to show. A fresh copy never meets it: GitHub has to refuse a merge.
+  await seedStagingGithubChecksHold(pool);
   await seedStagingOtherUserProposal(pool, config);
   await seedStagingTopicScrollThreads(pool, config);
   await seedStagingGroupedFollowOns(pool, config);
@@ -2591,6 +2599,107 @@ async function seedStagingClosedPrivateThread(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging closed private thread seeding failed', { message: err.message });
+  }
+}
+
+// #6566 (10 Nov 2026): the Homeroom bot's reply after it files a problem
+// report now gives the report's number and its card, and asking for the
+// link answers with the report already filed. A staging copy has no model,
+// so this writes both replies as stored messages in a private thread about
+// Homeroom, for the shots' member fixture (usernode-capture). Idempotent
+// through the root message's key; strictly a no-op outside staging.
+async function seedStagingBotReportReply(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
+    );
+    const people = await pool.query(
+      `SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')`,
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    if (!member || !bot || member.id === bot.id) return;
+    const low = Math.min(member.id, bot.id);
+    const high = Math.max(member.id, bot.id);
+    const found = await pool.query(
+      'SELECT conversation_id FROM conversation_direct_pairs WHERE user_low_id = $1 AND user_high_id = $2',
+      [low, high],
+    );
+    let conversationId = found.rows[0]?.conversation_id;
+    if (!conversationId) {
+      const created = await pool.query(
+        'INSERT INTO conversations (kind, created_by) VALUES (\'direct\', $1) RETURNING id',
+        [member.id],
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high],
+      );
+    }
+    await pool.query(
+      `INSERT INTO conversation_members (conversation_id, user_id, role, status)
+       VALUES ($1, $2, 'member', 'member'), ($1, $3, 'member', 'member')
+       ON CONFLICT (conversation_id, user_id) DO UPDATE SET status = 'member'`,
+      [conversationId, member.id, bot.id],
+    );
+    const key = 'staging-demo-bot-report-reply';
+    const had = await pool.query(
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3',
+      [conversationId, member.id, key],
+    );
+    let rootId = had.rows[0]?.id;
+    if (!rootId) {
+      const root = await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, created_at)
+         VALUES ($1, $2, 'Staging demo: neither works, I have to kill the app', $3, NOW() - INTERVAL '1 day')
+         RETURNING id`,
+        [conversationId, member.id, key],
+      );
+      rootId = root.rows[0].id;
+      const filed = await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, 'Filed as #6564 on Homeroom''s requests board, where anyone can read it; the last few messages of this chat went only to the team, privately.', $3, NOW() - INTERVAL '1 day')
+         RETURNING id`,
+        [conversationId, bot.id, rootId],
+      );
+      await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, 'can you give me a link to it?', $3, NOW() - INTERVAL '1 day' + INTERVAL '1 minute')`,
+        [conversationId, member.id, rootId],
+      );
+      const again = await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, 'Already filed as #6564 on Homeroom''s requests board. Nothing new was filed.', $3, NOW() - INTERVAL '1 day' + INTERVAL '2 minutes')
+         RETURNING id`,
+        [conversationId, bot.id, rootId],
+      );
+      // The report's card, as the bot's reply carries it: a request on
+      // Homeroom's own board.
+      const platform = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+      const platformId = platform.rows[0]?.id;
+      if (platformId) {
+        for (const messageId of [filed.rows[0].id, again.rows[0].id]) {
+          await pool.query(
+            `INSERT INTO conversation_message_objects (message_id, position, object_type, app_id, object_ref)
+             VALUES ($1, 0, 'github_issue', $2, 6564) ON CONFLICT (message_id, position) DO NOTHING`,
+            [messageId, platformId],
+          );
+        }
+      }
+      await pool.query(
+        `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
+         VALUES ($1, $2, $3, $4, 'idea', 'open')
+         ON CONFLICT (root_message_id) DO NOTHING`,
+        [member.id, conversationId, rootId, platformId || null],
+      );
+    }
+  } catch (err) {
+    log.warn('db', 'Staging bot report reply seeding failed', { message: err.message });
   }
 }
 
@@ -16133,6 +16242,150 @@ async function seedStagingRestartEligibleMerge(pool, config) {
   });
 }
 
+// #6563's shots: an approved, tested change whose merge GitHub is holding
+// while its own required checks finish. It is what puts the Merging card
+// under Votes and Tested on the change's page. A fresh staging copy never
+// meets it, because it comes from GitHub refusing a merge the platform asked
+// for, so the records that refusal writes are seeded here in the shape the
+// machine keeps them: the session's `github_checks` hold reason and its
+// instance's `refused` record with the last try, the next one and when the
+// wait began. Obviously fake (a "[staging fixture]" title and a made-up pull
+// request), idempotent, and strictly a no-op outside staging. Its session id
+// is apart from every other fixture's and in a range no real session can
+// reach.
+async function seedStagingGithubChecksHold(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const SESSION_ID = 999_999_991;
+  const BRANCH = 'staging-fixture/github-checks-hold';
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+    const app = (await tx.query(
+      'SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1'
+    )).rows[0];
+    if (!app) {
+      await tx.query('ROLLBACK');
+      log.warn('db', 'Staging GitHub-checks-hold fixture skipped: self-app row missing');
+      return;
+    }
+    const appId = app.id;
+    await tx.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
+    );
+    const botId = (await tx.query(
+      "SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1",
+    )).rows[0]?.id;
+    if (!botId) {
+      await tx.query('ROLLBACK');
+      return;
+    }
+    // Read before the session insert, so an id another fixture owns is left
+    // alone rather than read as this one.
+    const taken = (await tx.query('SELECT branch_name FROM chat_sessions WHERE id = $1', [SESSION_ID])).rows[0];
+    if (taken && taken.branch_name !== BRANCH) {
+      await tx.query('ROLLBACK');
+      log.warn('db', 'Staging GitHub-checks-hold fixture id is taken', { sessionId: SESSION_ID });
+      return;
+    }
+    const prNumber = 900099;
+    const title = '[staging fixture] A change waiting on GitHub to merge it';
+    // Not a 40-character hex sha on purpose: the preview machine builds every
+    // promoted change with a real head, and this fixture has no branch to
+    // build. Every read that compares it to the row compares the same string.
+    const head = 'staging-fixture-head';
+    if (!taken) {
+      await tx.query(
+        `INSERT INTO chat_sessions
+           (id, app_id, user_id, branch_name, session_title, pr_title, pr_number, pr_url,
+            status, promoted_at, reviewed_head_sha, check_state, check_phase,
+            checks_commit_sha, checks_checked_at, test_results,
+            integration_head_sha, integration_main_sha, integration_merges_clean,
+            merge_conflict_state, behind_main, votes_required, approval_epoch,
+            pr_summary_md, created_at, last_activity_at)
+         VALUES
+           ($1::int, $2::int, $3::int, $4::text, $5::text, $5::text, $6::int,
+            'https://github.com/example/example/pull/' || $6::int,
+            'promoted', NOW() - INTERVAL '2 hours', $7::text, 'passing', 'done',
+            $7::text, NOW() - INTERVAL '2 minutes', '[]'::jsonb,
+            $7::text, $7::text, TRUE, 'clean', 0, 1, 0,
+            'Staging demo: obviously fake. Homeroom built it, its checks passed, and GitHub is still running its own required checks before it merges.',
+            NOW() - INTERVAL '3 hours', NOW() - INTERVAL '2 minutes')`,
+        [SESSION_ID, appId, botId, BRANCH, title, prNumber, head],
+      );
+    } else {
+      // Keep the fixture in the state it is for on every boot where neither
+      // workflow machine holds the row yet: once the proposal machine holds
+      // it, its status and promotion are the machine's to move, and once the
+      // preview machine holds it, the checks' verdict is its own. A seed that
+      // wrote either would be a second writer of a column only src/workflow/
+      // may write. The instance's own record below still resets the wait, so
+      // the times keep counting on a copy that has been up a while.
+      await tx.query(
+        `UPDATE chat_sessions
+            SET status = 'promoted', pr_number = $2, pr_title = $3, pr_url = $4,
+                reviewed_head_sha = $5, check_state = 'passing', check_phase = 'done',
+                checks_commit_sha = $5, checks_checked_at = NOW() - INTERVAL '2 minutes',
+                integration_head_sha = $5, integration_main_sha = $5,
+                integration_merges_clean = TRUE, merge_conflict_state = 'clean', behind_main = 0,
+                integration_block_reasons = '["github_checks"]'::jsonb,
+                votes_required = 1, promoted_at = NOW() - INTERVAL '2 hours',
+                last_activity_at = NOW() - INTERVAL '2 minutes'
+          WHERE id = $1
+            AND NOT wf_holds('proposal', 'session:' || id)
+            AND NOT wf_holds('preview', 'session:' || id)`,
+        [SESSION_ID, prNumber, title, `https://github.com/example/example/pull/${prNumber}`, head],
+      );
+    }
+    await tx.query(
+      `UPDATE chat_sessions
+          SET integration_block_reasons = '["github_checks"]'::jsonb
+        WHERE id = $1`,
+      [SESSION_ID],
+    );
+    // The yeses an approved change has: other members, never the bot itself.
+    await tx.query(
+      `INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch, created_at)
+       SELECT $1::int, u.id, 'yes', 0, NOW() - INTERVAL '1 hour'
+         FROM (SELECT id FROM users
+                WHERE is_synthetic = FALSE AND COALESCE(admin_readonly, FALSE) = FALSE
+                ORDER BY is_admin DESC, id ASC LIMIT 3) u
+       ON CONFLICT (session_id, user_id) DO NOTHING`,
+      [SESSION_ID],
+    );
+    // The refusal the proposal machine wrote when GitHub held the merge: its
+    // instance carries the times the card counts, and is what the merge queue
+    // reads to know it may not ask again until `retryAt`. Ten minutes keeps
+    // it held while the shots are taken, and the queue tries again after.
+    await tx.query("SELECT set_config('app.wf_writer', 'transition', true)");
+    await tx.query(
+      `INSERT INTO wf_instances (machine, key, app_id, state, data, version, machine_version)
+       VALUES ('proposal', $1::text, $2::int, 'in_review', jsonb_build_object(
+                 'sessionId', $3::int, 'appId', $2::int, 'imported', false,
+                 'slot', 'none', 'n', 1, 'attempt', NULL, 'sync', NULL,
+                 'claim', jsonb_build_object('n', 1, 'at', NOW() - INTERVAL '3 minutes'),
+                 'refused', jsonb_build_object(
+                   'head', NULL, 'main', NULL, 'kind', 'blocked', 'checks', 'pending',
+                   'at', NOW() - INTERVAL '2 minutes',
+                   'retryAt', NOW() + INTERVAL '10 minutes',
+                   'since', NOW() - INTERVAL '2 minutes')), 0, 6)
+       ON CONFLICT (machine, key) DO UPDATE
+         SET state = EXCLUDED.state, data = EXCLUDED.data,
+             version = wf_instances.version + 1, machine_version = EXCLUDED.machine_version,
+             updated_at = NOW()`,
+      [`session:${SESSION_ID}`, appId, SESSION_ID],
+    );
+    await tx.query('COMMIT');
+    log.info('db', 'Staging GitHub-checks-hold fixture seeded', { appId, sessionId: SESSION_ID, prNumber });
+  } catch (err) {
+    await tx.query('ROLLBACK');
+    log.warn('db', 'Staging GitHub-checks-hold seeding failed', { message: err.message });
+  } finally {
+    tx.release();
+  }
+}
+
 // Community-voted priority + assigned-person votes on the staging
 // my-open-PR fixture proposal, so a prod-cloned staging preview shows the
 // chips backed by REAL topic_attribute_votes rows — a clear winner, more
@@ -19086,6 +19339,8 @@ module.exports = {
   // shots need, as its own test seam (the fixtures are staging-only).
   seedStagingBotFixesStopped,
   seedStagingBotFixesPlatform,
+  // #6563: the approved change GitHub is holding, the Merging card's shot.
+  seedStagingGithubChecksHold,
   seedStagingBotProjectNotification,
   seedStagingBotAllowanceWarning,
   // #6306: the already-works request (run, note and bell row) the shots need.
