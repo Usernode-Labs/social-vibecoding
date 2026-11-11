@@ -45,19 +45,19 @@ export function OpenRouterSection() {
       <SectionHeading title={<>OpenRouter</>}>
         {t('settings:openrouter.intro')}
       </SectionHeading>
-      <div id="settings-openrouter-included" className="hidden rounded-lg border border-violet-200 dark:border-violet-900 bg-violet-50 dark:bg-violet-950/30 px-3 py-3 mb-3">
-        <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{t('settings:openrouter.included.title')}</div>
-        <div id="settings-openrouter-included-status" className="mt-1 text-xs text-zinc-600 dark:text-zinc-400"></div>
+      <div id="settings-openrouter-included" className="ui-card ui-pad hidden rounded-lg border border-violet-200 dark:border-violet-900 bg-violet-50 dark:bg-violet-950/30 px-3 py-3 mb-3">
+        <div className="ui-row-t text-sm font-medium text-zinc-900 dark:text-zinc-100">{t('settings:openrouter.included.title')}</div>
+        <div id="settings-openrouter-included-status" className="ui-row-s mt-1 text-xs text-zinc-600 dark:text-zinc-400"></div>
       </div>
-      <div id="settings-openrouter-key-display" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-300 mb-2">
+      <div id="settings-openrouter-key-display" className="ui-card ui-pad hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-300 mb-2">
         sk-or-&hellip;<span id="settings-openrouter-key-last4"></span>
       </div>
-      <div id="settings-openrouter-key-info" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs mb-2 text-zinc-600 dark:text-zinc-400"></div>
+      <div id="settings-openrouter-key-info" className="ui-card ui-pad hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs mb-2 text-zinc-600 dark:text-zinc-400"></div>
       <div id="settings-openrouter-personal-controls" onKeyDown={returnKeyHandler({ submit: saveKey })}>
-        <Label className="px-1 pb-1 text-[15px] font-normal text-zinc-500 dark:text-zinc-500" htmlFor="settings-openrouter-key">
+        <Label className="ui-cap px-1 pb-1 text-[15px] font-normal text-zinc-500 dark:text-zinc-500" htmlFor="settings-openrouter-key">
           {t('settings:openrouter.personalKey.label')}
         </Label>
-        <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
+        <div className="ui-card rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
           <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
             {/* Same shape as #settings-api-key above — see the note there. */}
             <PasswordInput id="settings-openrouter-key" placeholder="sk-or-..." autoComplete="off" spellCheck={false} enterKeyHint="done" wrapperClassName="flex-1 min-w-0" className="font-mono" box="card" ring="bare" hint="dim" />
@@ -72,7 +72,7 @@ export function OpenRouterSection() {
           </div>
         </div>
       </div>
-      <div id="settings-openrouter-models-wrap" className="hidden mt-4" onKeyDown={returnKeyHandler()}>
+      <div id="settings-openrouter-models-wrap" className="ui-card ui-fields hidden mt-4" onKeyDown={returnKeyHandler()}>
         <Label className="mb-1" htmlFor="settings-openrouter-model">
           {t('settings:openrouter.model.label')}
         </Label>
@@ -115,8 +115,8 @@ export function OpenRouterSection() {
             ☆
           </button>
         </div>
-        <p id="settings-openrouter-catalog-meta" className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400"></p>
-        <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+        <p id="settings-openrouter-catalog-meta" className="ui-hint mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400"></p>
+        <p className="ui-hint mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
           {t('settings:openrouter.model.favoritesNote')}
         </p>
         <Label className="mt-2 mb-1" htmlFor="settings-openrouter-reasoning">

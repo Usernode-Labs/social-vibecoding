@@ -43,7 +43,7 @@ export interface PrivacySwitchProps {
 export function PrivacySwitch({ id, label, checked, disabled, onChange, describedBy, description }: PrivacySwitchProps) {
   const t = useMessages('settings');
   return (
-    <label className="flex items-start gap-2 cursor-pointer select-none">
+    <label className="ui-row ui-row-sw flex items-start gap-2 cursor-pointer select-none">
       <Switch
         id={id}
         role="switch"
@@ -53,14 +53,14 @@ export function PrivacySwitch({ id, label, checked, disabled, onChange, describe
         aria-describedby={describedBy}
         onChange={onChange}
       />
-      <span className="min-w-0 pt-1">
-        <span className="block text-sm text-zinc-800 dark:text-zinc-200">
+      <span className="ui-row-tx min-w-0 pt-1">
+        <span className="ui-row-t block text-sm text-zinc-800 dark:text-zinc-200">
           {label}
           <span aria-hidden="true" className="ms-2 text-[0.8125rem] text-zinc-500 dark:text-zinc-400">
             {t(checked ? 'settings:privacy.state.on' : 'settings:privacy.state.off')}
           </span>
         </span>
-        {description ? <span id={describedBy} className={`block ${HELP} mt-1 space-y-1`}>{description}</span> : null}
+        {description ? <span id={describedBy} className={`ui-row-s block ${HELP} mt-1 space-y-1`}>{description}</span> : null}
       </span>
     </label>
   );
@@ -108,6 +108,6 @@ export function SaveStatus({ id, saved, error = '' }: { id?: string; saved: bool
   const t = useMessages('settings');
   let className: string | undefined;
   if (error) className = 'text-xs mt-3 text-red-700 dark:text-red-400';
-  else if (saved) className = `${HELP} mt-3`;
+  else if (saved) className = `ui-note ${HELP} mt-3`;
   return <p id={id} role="status" className={className}>{error || (saved ? t('settings:privacy.saved') : null)}</p>;
 }

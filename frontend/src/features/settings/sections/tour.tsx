@@ -52,7 +52,7 @@ export function TourSection() {
         >
           {t('settings:tour.replay')}
         </Button>
-        <p id="settings-tour-hint" className="mt-2 text-xs text-zinc-500 dark:text-zinc-500">
+        <p id="settings-tour-hint" className="ui-note mt-2 text-xs text-zinc-500 dark:text-zinc-500">
           {t('settings:tour.hint')}
         </p>
       </div>

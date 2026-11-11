@@ -46,13 +46,26 @@ const THEME_MODES = ['light', 'dark', 'system'] as const;
 type ThemeMode = (typeof THEME_MODES)[number];
 
 const THEME_SEG_CLASS =
-  'theme-seg flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors';
+  'theme-seg ui-row ui-row-sm flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors';
 
 const THEME_LABELS: Record<ThemeMode, string> = {
   light: 'settings:theme.mode.light',
   dark: 'settings:theme.mode.dark',
   system: 'settings:theme.mode.system',
 };
+
+/**
+ * The radio mark a row wears under one of the frame's looks (looks v2: the
+ * choices are radio rows in a card there). Never drawn by the standard look
+ * (`ui-look-only`, app.css), whose segment says which one is chosen by its own fill.
+ */
+function RadioMark({ on }: { on: boolean }) {
+  return (
+    <span aria-hidden="true" className={on ? 'ui-chk ui-chk-on ui-look-only' : 'ui-chk ui-look-only'}>
+      {on ? <span className="h-2 w-2 rounded-full bg-[color:var(--accent-ink)]" /> : null}
+    </span>
+  );
+}
 
 /**
  * The Light / Dark / System segmented control — App.HeaderMenu's
@@ -107,7 +120,7 @@ function ThemeControl() {
       id="drawer-theme-track"
       role="radiogroup"
       aria-label={t('settings:theme.controlName')}
-      className="relative flex p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium"
+      className="ui-card ui-radios relative flex p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium"
     >
       {THEME_MODES.map((m) => (
         <button
@@ -119,6 +132,7 @@ function ThemeControl() {
           className={mode === m ? `${THEME_SEG_CLASS} theme-seg-active` : THEME_SEG_CLASS}
           onClick={() => choose(m)}
         >
+          <RadioMark on={mode === m} />
           {t(THEME_LABELS[m])}
         </button>
       ))}
@@ -174,7 +188,7 @@ function RailPinnedRow() {
   useWindowEvent('usernode:settings-section', sync);
 
   return (
-    <div className="hidden md:block mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+    <div className="hidden md:block ui-card ui-swrow mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
       <label className="flex items-center gap-2 cursor-pointer select-none">
         <Switch
           id="settings-rail-pinned"

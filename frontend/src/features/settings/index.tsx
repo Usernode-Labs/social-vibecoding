@@ -77,7 +77,7 @@ import { ensureSettings, prefetchSettings, settingsChunkStore } from './facade.j
 // inside the chunk — and a boot listener that only exists once the screen has
 // been opened would never fire.
 import './terms-first-run.js';
-import { SettingsMobileMenu, SettingsNavDesktop, SettingsPageTitle } from './settings-nav';
+import { SettingsFrameCrumb, SettingsMobileMenu, SettingsNavDesktop, SettingsPageTitle } from './settings-nav';
 import { SettingsAccountRows } from './account-rows';
 
 interface SettingsChunkState {
@@ -141,6 +141,22 @@ export function SettingsScreen() {
           and #settings-section-content rises on it with the section inside.
       */}
       <div id="settings-root" className="max-w-5xl mx-auto p-4 md:pt-5 w-full">
+        {/*
+            THE PAGE'S HEAD UNDER A LOOK (looks v2, s56): "Settings" and one
+            sentence, above the two columns. Always in the document and never
+            drawn by the standard look (app.css `.settings-frame-head`), so
+            this prerendered chassis is the same markup whatever the look;
+            the look dresses it through the wear map (frontend/looks/
+            looks.json: head, title, purpose). A <header>, not a <div>: the
+            standard sheet's rules lay out `#settings-root > div`.
+        */}
+        <header className="settings-frame-head">
+          <div className="settings-frame-head-tx">
+            <h1 className="settings-frame-title">{t('settings:screen.title')}</h1>
+            <p className="settings-frame-purpose">{t('settings:frame.head.purpose')}</p>
+          </div>
+        </header>
+        <SettingsFrameCrumb />
         <div className="lg:flex lg:items-start lg:gap-6">
           {/*
               Desktop sidebar menu, from lg (1024px; settings.js
@@ -166,7 +182,7 @@ export function SettingsScreen() {
               <SettingsAccountRows />
               <button
                 id="settings-logout"
-                className="w-full rounded-full bg-red-500/10 px-4 py-2.5 text-[17px] font-semibold text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors disabled:opacity-60 disabled:cursor-default disabled:hover:bg-red-500/10"
+                className="ui-btn ui-btn-bad ui-btn-block w-full rounded-full bg-red-500/10 px-4 py-2.5 text-[17px] font-semibold text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors disabled:opacity-60 disabled:cursor-default disabled:hover:bg-red-500/10"
               >
                 {t('settings:screen.signOut')}
               </button>

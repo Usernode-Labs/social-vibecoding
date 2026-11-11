@@ -77,18 +77,18 @@ export function ProfileSection() {
         <a
           id="settings-profile-card"
           href="#profile?edit"
-          className="flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
+          className="ui-card ui-row flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
         >
           <Avatar user={user} />
-          <span className="flex-1 min-w-0">
-            <span className="block text-[17px] font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+          <span className="ui-row-tx flex-1 min-w-0">
+            <span className="ui-row-t block text-[17px] font-semibold text-zinc-900 dark:text-zinc-100 truncate">
               {displayNameOf(user)}
             </span>
             {handle ? (
-              <span className="block text-[15px] text-zinc-500 dark:text-zinc-400 truncate">{handle}</span>
+              <span className="ui-row-s block text-[15px] text-zinc-500 dark:text-zinc-400 truncate">{handle}</span>
             ) : null}
           </span>
-          <span className="text-[15px] font-medium text-violet-700 dark:text-violet-400 shrink-0">{t('settings:profile.edit')}</span>
+          <span className="ui-link text-[15px] font-medium text-violet-700 dark:text-violet-400 shrink-0">{t('settings:profile.edit')}</span>
           <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden="true" />
         </a>
       </div>

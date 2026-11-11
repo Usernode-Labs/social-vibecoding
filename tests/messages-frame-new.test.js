@@ -72,11 +72,12 @@ test('the product\'s create dialog wears the look: its card is named, and dresse
   assert.ok(at > 0, 'a block of its own in THE FRAME IN THE SHELL');
   const block = css.slice(at, css.indexOf('\n\n', at));
   assert.match(block, /html\[data-skin\]:not\(\[data-skin="brand"\]\) \[data-new-message\] \{[^}]*background: var\(--fr-solid, var\(--fr-ground\)\);/, 'solid under a see-through look');
-  assert.match(block, /\[data-new-message\] h2 \{ font: 700 24px\/1\.15 var\(--fr-f\); letter-spacing: -\.02em; \}/, 'a sheet\'s title');
+  assert.match(block, /\[data-new-message\] h2 \{ font-size: 24px; \}/, 'a sheet\'s title: the look\'s title face at the sheet\'s size');
   assert.match(block, /\[data-new-message\] \[role="tab"\] \{ flex: 1; justify-content: center; \}/, 'the two kinds share the width, as a sheet\'s switch does');
-  // Its switch and its buttons wear the kit's through the map, each as a second wearer.
+  // Its title, its switch and its buttons wear the kit's through the map, each as a second wearer.
   const roots = JSON.parse(read('frontend/looks/looks.json')).wear.roots;
   const wearers = (root) => [root, ...(root.also || [])];
+  assert.ok(wearers(roots.title).some((w) => w.to === '[data-new-message] h2'));
   assert.ok(wearers(roots.tabs).some((w) => w.to === '[data-new-message] [role="tablist"]'));
   assert.ok(wearers(roots.tab).some((w) => w.to === '[data-new-message] [role="tab"]' && w.parts.on === '[aria-selected="true"]'), 'the chosen kind is the tab that is on');
   assert.ok(wearers(roots.btn).some((w) => w.to === '[data-new-message] .ms-auto > button' && w.parts.quiet === '.bg-zinc-100'), 'Cancel is the quiet button, Create group the primary');

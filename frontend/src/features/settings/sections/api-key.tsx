@@ -25,7 +25,7 @@ export function ApiKeySection() {
       {/* The saved key, as the one row of its own card. It shared a card with
           the allowance until the settings restructure lifted the allowance
           into the Usage part at the head of this page. */}
-      <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden mb-3">
+      <div className="ui-card rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden mb-3">
         <div
           id="settings-key-display"
           className="hidden px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 flex items-center gap-3 text-[17px]"
@@ -37,7 +37,7 @@ export function ApiKeySection() {
       <Label className="sr-only" htmlFor="settings-api-key">
         {t('settings:apiKey.fieldLabel')}
       </Label>
-      <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
+      <div className="ui-card rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
         <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
         {/*
             The width moves to the wrapper because the wrapper is what the
@@ -87,7 +87,7 @@ export function ApiKeySection() {
         </Button>
         </div>
       </div>
-      <p className="text-[15px] text-zinc-500 dark:text-zinc-500 mt-3 leading-snug px-1">
+      <p className="ui-note text-[15px] text-zinc-500 dark:text-zinc-500 mt-3 leading-snug px-1">
         {/* QA 2026-09-24 Q34: the spaces on either side of the link are part
             of the one sentence the catalog holds, so "access." cannot run
             into the link, nor the link into "on". */}
