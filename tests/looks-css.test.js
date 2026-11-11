@@ -222,7 +222,7 @@ test('version 2 is written with the kit\'s tokens only, and names no side', () =
   assert.doesNotMatch(body, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/, 'no literal colour: a look could not restyle it');
   const tokens = new Set([...kitSource().slice(0, kitSource().indexOf(V2_MARK)).matchAll(/--([a-z0-9-]+):/g)].map((m) => m[1]));
   for (const m of body.matchAll(/var\(--([a-z0-9-]+)/g)) {
-    assert.ok(tokens.has(m[1]) || ['tc', 'bn', 'solid', 'cr'].includes(m[1]), `--${m[1]} is not one of the kit's tokens (tc, bn and cr, a community's ring, are given by the data; solid is a see-through look's opaque surface, from looks.json)`);
+    assert.ok(tokens.has(m[1]) || ['tc', 'bn', 'solid', 'cr', 'cs'].includes(m[1]), `--${m[1]} is not one of the kit's tokens (tc, bn, cr, a community's ring, and cs, a challenge picture's size, are given by the data; solid is a see-through look's opaque surface, from looks.json)`);
   }
   assert.doesNotMatch(body, /box-shadow:inset -?[1-9]\d*px 0 0/, 'a line on one side is a border, which mirrors; an inset shadow does not');
 });

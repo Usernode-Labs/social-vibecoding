@@ -503,3 +503,16 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 /* ---- v2, the left-overs pass (group A): a piece of the product's own inside a kit page (the reset stops at it: build-looks-css.js), and a community's tile in the ring of its colour ---- */
 .own{display:contents}
 .at.ring .tile{outline:2px solid var(--cr,var(--line));outline-offset:1px}
+/* ---- v2, the left-overs pass: the public directory. A picture card in a grid with its sentence on two lines and its tile on the community's colour; a grid of two or four across, so no card is alone on the last row; the line that ends a list, centred ---- */
+.fcover.tc{background:var(--tc)}
+.fbody .s.two{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.grid>.fcard{min-width:0}
+.grid.c2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.grid.c4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.phone .grid.c4:not(.across){grid-template-columns:repeat(2,minmax(0,1fr))}
+.secnote.end{text-align:center;padding-top:8px}
+/* ---- v2, the left-overs pass: a challenge's picture as a row's lead (its size from the data), and the arrow that ends such a row ---- */
+.cart.sm{width:var(--cs,44px);height:var(--cs,44px);border-radius:12px;font-size:22px;color:var(--mut)}
+.cart.sm img{width:82%;height:82%}
+.row .arr{width:32px;height:32px;border-radius:10px;background:var(--sunk);color:var(--mut);display:grid;place-items:center;flex:none}
+.row .s .bp{display:block}

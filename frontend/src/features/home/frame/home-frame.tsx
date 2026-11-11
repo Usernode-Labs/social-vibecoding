@@ -53,7 +53,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { Btn, Card, CapSub, Count, GroupLink, HCard, Icon, Lead, Mut, Note, PageBody, Pill, Row, Search, Sec, SecNote, ShowAll, Sub, Tile, k } from '@/components/ui/kit';
+import { Btn, Card, CapSub, ChallengeArt, Count, GroupLink, HCard, Icon, Lead, Mut, Note, PageBody, Pill, Row, RowArrow, Search, Sec, SecNote, ShowAll, Sub, Tile, k } from '@/components/ui/kit';
+import { resolveIllustration } from '../../../lib/challenge-illustrations';
 import { useCommunityColor } from '../../../lib/community-color';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -550,6 +551,10 @@ function ToJoin({ query, initialDirectory }: { query: string; initialDirectory: 
 /** The side column: the season's challenges, as Home's own strip names and orders them. */
 function Challenges({ challenges }: { challenges: NonNullable<HomePanelsState['challenges']> }) {
   const t = useMessages('home');
+  const art = (row: { illustration: string | null; illustrationTone: string | null }) => {
+    const found = resolveIllustration(row.illustration, row.illustrationTone);
+    return found ? { src: found.src, tone: found.toneClass } : {};
+  };
   return (
     <Sec
       label={challenges.heading}
@@ -567,11 +572,20 @@ function Challenges({ challenges }: { challenges: NonNullable<HomePanelsState['c
                 event.preventDefault();
                 win()?.HomePanels?.goToChallenge?.(row.eventId, row.id);
               }}
-              lead={row.icon ? <Lead>{row.icon}</Lead> : <Lead icon="trophy" />}
+              // The picture today's Home shows for it (../../leaderboard/challenge-card.tsx
+              // ChallengeTile), and the card's arrow; a done one is the check, as there.
+              lead={row.state === 'done' ? <Lead icon="check" tone="ok" /> : <ChallengeArt {...art(row)} icon={row.icon} />}
               title={row.goal}
-              line={row.stateLabel || undefined}
+              // An open one says its state, then its points on a line of their own:
+              // beside the arrow, in the side column, a pill left the name three lines.
+              line={row.state === 'done' ? (row.stateLabel || undefined) : (
+                <>
+                  {row.stateLabel}
+                  {row.earned || row.reward ? <span className={k('bp')}>{row.earned || row.reward}</span> : null}
+                </>
+              )}
               wrap
-              right={<Pill kind={row.state === 'done' ? 'ok' : ''}>{row.earned || row.reward}</Pill>}
+              right={row.state === 'done' ? <Pill kind="ok">{row.earned || row.reward}</Pill> : <RowArrow />}
             />
           ))}
         </Card>
