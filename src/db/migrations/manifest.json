@@ -292,9 +292,14 @@
       "schemaSha256": "dd501b2988c25744c0d23560c2ab3aa69e8c2ecb8031deab3db75f29cde28428"
     },
     {
+      "id": "app-inferred-categories",
+      "sha256": "4514f6d7424e0356b702bbf9a29ed6e3bfa2667a5511ea217030f4b3f9e71507",
+      "schemaSha256": "ac3199877069149ff6adf3926e80d5b8755b026598b60100c194517ec84b1aaf"
+    },
+    {
       "id": "user-timezone",
       "sha256": "22f84d61daba3c9e9987b4376fb64be9d83da8d8e1716c245601b868bd33d5a8",
-      "schemaSha256": "a212ab522cd7971242cf3d8c0b86ab00f440f30f7aeb261a3251df970c055c4e"
+      "schemaSha256": "ce5ea5e46150163e5b8d39159496043533486aa1651ebfa5a0e723bbcf792e12"
     }
   ]
 }
