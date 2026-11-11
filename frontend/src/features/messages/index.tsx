@@ -1161,6 +1161,8 @@ function ConversationList({ drawer = false }: {
           onNew={() => setFrameNew(true)}
           state={{
             loading: !!snap.loadingList && !snap.listLoaded,
+            // A read with no conversation in hand yet (Try again after a failed one): not an empty tab.
+            reading: !!snap.loadingList && !snap.conversations.length,
             error: snap.error || null,
             onRetry: () => void loadConversations(true),
             offline: !snap.online,

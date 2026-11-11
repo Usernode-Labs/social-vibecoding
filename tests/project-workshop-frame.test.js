@@ -32,7 +32,7 @@ const base = {
     onAll() {}, filtered: false,
     facts: [
       { value: 13, label: 'open items', onClick() {} }, { value: 0, label: 'nobody on them', onClick: null },
-      { value: 7, label: 'waiting on votes', tone: 'wait', sub: '3 on you', onClick() {} },
+      { value: 7, label: 'waiting on votes', tone: 'wait', sub: '3 on you', subAsks: true, onClick() {} },
       { value: '298+', label: 'live this week', tone: 'ok', sub: 'from 168 by this time last week', onClick() {} },
     ],
   },
@@ -72,7 +72,7 @@ test('Overview: All items with See all, then the four figures with their lines, 
   const html = render();
   assert.match(html, /<h2 class="fr-cap">Overview<\/h2><\/div><div class="fr-card"><button type="button" class="fr-row fr-sm fr-headrow"><span class="fr-tx"><span class="fr-t">All items<\/span><\/span><span class="fr-link">See all<\/span><svg[^>]*fr-go[^>]*>.*?<\/svg><\/button><div class="fr-facts fr-f4"><button type="button" class="fr-fact"><span class="fr-v">13<\/span><span class="fr-l">open items<\/span><\/button>/s);
   assert.match(html, /<div class="fr-fact"><div class="fr-v">0<\/div><div class="fr-l">nobody on them<\/div><\/div>/, 'a zero opens nothing');
-  assert.match(html, /<button type="button" class="fr-fact"><span class="fr-v fr-wait">7<\/span><span class="fr-l">waiting on votes<\/span><span class="fr-l fr-sub">3 on you<\/span><\/button>/);
+  assert.match(html, /<button type="button" class="fr-fact"><span class="fr-v fr-wait">7<\/span><span class="fr-l">waiting on votes<\/span><span class="fr-l fr-sub"><span class="fr-acc">3 on you<\/span><\/span><\/button>/);
   assert.match(html, /<span class="fr-v fr-ok">298\+<\/span><span class="fr-l">live this week<\/span><span class="fr-l fr-sub">from 168 by this time last week<\/span>/);
   const filtered = render({ overview: { ...base.overview, filtered: true } });
   assert.match(filtered, /<span class="fr-link">See all<span class="fr-fdot" aria-hidden="true"><\/span><span class="fr-sro"> \(filtered\)<\/span><\/span>/, 'a search or filter waiting on All items shows from here (#2915)');
@@ -83,7 +83,13 @@ test('Overview: All items with See all, then the four figures with their lines, 
 test('Your work is a card of its own in Overview: the bot\'s mark, what is next, the counts with the accent number', () => {
   const html = render();
   const over = html.slice(html.indexOf('>Overview<'), html.indexOf('>What happened<'));
-  assert.match(over, /<\/div><\/div><div class="fr-card"><a class="fr-row" href="#homeroom-bot\?project=homeroom" aria-label="Opens Homeroom bot, showing your work in Homeroom"><span class="fr-tile"[^>]*><img src="\/brand\/homeroom-mark\.png"[^>]*\/><\/span><span class="fr-tx"><span class="fr-t">Your work<\/span><span class="fr-s">Next: Make proposals more visual<\/span><\/span><span class="fr-meta fr-d">Needs you: <b class="fr-acc">8<\/b> · In progress: 5<\/span><svg/);
+  assert.match(over, /<\/div><\/div><div class="fr-card"><a class="fr-row" href="#homeroom-bot\?project=homeroom" aria-label="Opens Homeroom bot, showing your work in Homeroom"><span class="fr-tile"[^>]*><img src="\/brand\/homeroom-mark\.png"[^>]*\/><\/span><span class="fr-tx"><span class="fr-t">Your work<\/span><span class="fr-s">Next: Make proposals more visual<\/span><\/span><span class="fr-meta fr-d">Needs you: <b class="fr-acc">8<\/b> · In progress: 5<\/span><svg[^>]*>.*?<\/svg><\/a><p class="fr-cardnote fr-last fr-p">Needs you: <b class="fr-acc">8<\/b> · In progress: 5<\/p><\/div>/s,
+    'the counts end the row on a desktop and stand under it on a phone, where the row has no room for them');
+  assert.doesNotMatch(render({ work: { ...base.work, words: null } }), /fr-cardnote/, 'no counts, no line for them');
+  // The line under the votes figure asks for the viewer: the accent, as the standard figure draws it.
+  assert.match(over, /<span class="fr-acc">3 on you<\/span>/);
+  assert.doesNotMatch(over, /<span class="fr-acc">from 168/);
+  assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /subAsks: owed > 0,/);
   assert.doesNotMatch(render({ work: null }), />Your work</, 'not for a visitor');
   // A newcomer: the product's own card stands in its place.
   const first = renderComponent(FRAME, 'ProjectWorkshopFrame', { ...base, first: 'FIRST-CHANGE-CARD' }, { cache: false });
@@ -118,6 +124,11 @@ test('beside them: Homeroom bot\'s slots, and who decides in the product\'s own 
   assert.match(side, /<h2 class="fr-cap">Who decides<\/h2><\/div><div class="fr-card"><div class="fr-row fr-wrap fr-all">.*?<span class="fr-t">Goes live when its checks pass and <span><\/span><b>evan or snait<\/b> says yes\.<\/span><\/span><\/div>/s);
   const group = render({ rule: { id: 'project:communityCard.lineShort.members.some', values: { count: 11, total: 41 }, wait: 'Or after a wait, if one approves and nobody objects', onRules() {} } });
   assert.match(group, /<h2 class="fr-cap">Who decides<\/h2><button type="button" class="fr-link">Rules<\/button>.*?<span class="fr-t">Goes live when its checks pass and 11 of the 41 active members approve it\.<\/span><span class="fr-s">Or after a wait, if one approves and nobody objects<\/span>/s);
+  // The approvers the sentence names lead their names as faces, as on the standard line.
+  const faces = render({ rule: { ...base.rule, faces: [{ name: 'evan', color: '#5b7f5a' }, { name: 'snait' }] } });
+  assert.match(faces, /Goes live when its checks pass and <span class="fr-avs"><span class="fr-av" style="--fr-as:20px;--fr-ac:#5b7f5a" aria-hidden="true">e<\/span><span class="fr-av" style="--fr-as:20px" aria-hidden="true">s<\/span><\/span><b>evan or snait<\/b> says yes\./);
+  assert.ok(read('public/css/app.css').includes('html[data-skin] [data-project-frame="workshop-kit"] .fr-row .fr-t > .fr-avs { display: inline-flex;'));
+  assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /faces: line\.names \? line\.names\.map\(\(name\) => \(\{ name, color: swatchFor\(name\) \}\)\) : null,/);
   assert.doesNotMatch(side, /Nobody is on these/);
   assert.doesNotMatch(render({ slots: null }), />Homeroom bot<\/h2>/);
 });

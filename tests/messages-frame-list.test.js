@@ -51,7 +51,8 @@ const OLDER = [
   row('mayor:7', '#4098 · Add support for diagrams', { line: 'Homeroom · No active change', time: '12 Oct', said: ', finished' }),
 ];
 const render = (over) => renderComponent(LIST, 'MessagesFrameList', { ...base, ...over }, { cache: false });
-const titles = (html) => [...html.matchAll(/<span class="fr-t">([^<]+)/g)].map((m) => m[1]);
+// A conversation's name is in the span that is cut short; a fold's words are the title itself.
+const titles = (html) => [...html.matchAll(/<span class="fr-t">(?:<span class="fr-cut">)?([^<]+)/g)].map((m) => m[1]);
 
 test('the list is the kit\'s pane: the head with one sentence and one action, two tabs, the product\'s search under them', () => {
   const html = render();
@@ -69,12 +70,16 @@ test('the list is the kit\'s pane: the head with one sentence and one action, tw
 test('a conversation with something new ends in the blue pill, the others in a grey time; a group says how many are in it', () => {
   const html = render();
   assert.deepEqual(titles(html), ['evan', 'Evan / Lukas / Salah / Drea', 'Bruno'], 'People holds the conversations, in the order the pane hands them');
-  assert.match(html, /<span class="fr-t">Evan \/ Lukas \/ Salah \/ Drea<span class="fr-pill fr-mini" role="img" aria-label="4 members" title="4 members"><svg[^>]*>.*?<\/svg>4<\/span><\/span><span class="fr-s">@evan: going to make some changes<\/span><\/span><span class="fr-pill fr-act" data-kind="act">2 new<\/span>/s,
+  assert.match(html, /<span class="fr-t"><span class="fr-cut">Evan \/ Lukas \/ Salah \/ Drea<\/span><span class="fr-pill fr-mini" role="img" aria-label="4 members" title="4 members"><svg[^>]*>.*?<\/svg>4<\/span><\/span><span class="fr-s">@evan: going to make some changes<\/span><\/span><span class="fr-pill fr-act" data-kind="act">2 new<\/span>/s,
     'the count is the figure after a people glyph, and the words to a screen reader');
-  assert.match(html, /<span class="fr-t">Bruno<\/span><span class="fr-s">test \(edit\)<\/span><\/span><span class="fr-meta" title="7 Nov 2026, 10:02">14 Aug<\/span>/, 'the time carries the whole instant');
+  assert.match(html, /<span class="fr-t"><span class="fr-cut">Bruno<\/span><\/span><span class="fr-s">test \(edit\)<\/span><\/span><span class="fr-meta" title="7 Nov 2026, 10:02">14 Aug<\/span>/, 'the time carries the whole instant');
   assert.equal((html.match(/data-kind="act"/g) || []).length, 1, 'blue only where something waits');
   assert.equal((html.match(/fr-mini/g) || []).length, 1, 'a direct message has no count');
-  assert.match(render({ people: [row('5', 'helper', { tag: 'AI' })] }), /<span class="fr-t">helper<span class="fr-pill fr-mini" data-kind="none">AI<\/span><\/span>/, 'a bot\'s direct message keeps its badge');
+  assert.match(render({ people: [row('5', 'helper', { tag: 'AI' })] }), /<span class="fr-t"><span class="fr-cut">helper<\/span><span class="fr-pill fr-mini" data-kind="none">AI<\/span><\/span>/, 'a bot\'s direct message keeps its badge');
+  // A long group name is what gives way: the count after it keeps its place in the row (visual pass, v2 finding 5).
+  const css = read('public/css/app.css');
+  assert.ok(css.includes('html[data-skin] [data-messages-frame-list] .fr-row .fr-t:has(> .fr-cut) { display: flex; align-items: center; min-width: 0; }'));
+  assert.ok(css.includes('html[data-skin] [data-messages-frame-list] .fr-row .fr-t > .fr-cut { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }'));
 });
 
 test('the open conversation\'s row is lit, and every row is a link to its own address', () => {
@@ -103,7 +108,7 @@ test('pressed, the link stays where it was and the older chats open under it', (
   assert.deepEqual(titles(html), ['Simplify the admin console', 'Hide older chats', 'New Needs you', '#4098 · Add support for diagrams']);
   assert.match(html, /aria-expanded="true" data-inbox-more="agents"/);
   assert.match(html, /<span class="fr-s">Homeroom · 29 Oct<\/span><\/span><span class="fr-pill fr-ok" data-kind="ok">Ready<\/span>/);
-  assert.match(html, /<span class="fr-t">#4098 · Add support for diagrams<span class="sr-only">, finished<\/span><\/span><span class="fr-s">Homeroom · No active change<\/span><\/span><span class="fr-meta" title="7 Nov 2026, 10:02">12 Oct<\/span>/,
+  assert.match(html, /<span class="fr-t"><span class="fr-cut">#4098 · Add support for diagrams<\/span><span class="sr-only">, finished<\/span><\/span><span class="fr-s">Homeroom · No active change<\/span><\/span><span class="fr-meta" title="7 Nov 2026, 10:02">12 Oct<\/span>/,
     'an agent chat with no change says so, ends in its date, and says what it is doing to a screen reader');
 });
 
@@ -134,6 +139,10 @@ test('what the list says when it has nothing to list is the standard list\'s sen
   const failed = render({ ...none, state: { ...state, error: 'Could not load conversations.' } });
   assert.match(failed, /<div class="fr-txt" role="status" data-inbox-failed="">Could not load conversations\. <button type="button" class="fr-link">Try again<\/button><\/div>/);
   assert.doesNotMatch(failed, /Nothing here yet/);
+  // Try again pressed: the read is under way with no conversation in hand, and no tab says it is empty (visual pass, v2 finding 4).
+  const retrying = render({ people: [], state: { ...state, reading: true } });
+  assert.doesNotMatch(retrying, /Nothing here yet|No messages yet/);
+  assert.match(read(PANE), /reading: !!snap\.loadingList && !snap\.conversations\.length,/);
   assert.match(render({ state: { ...state, offline: true } }), /<div class="fr-note fr-wait"><svg[^>]*>.*?<\/svg><div>Offline\. Queued messages retry when you reconnect\.<\/div><\/div>/s);
 });
 

@@ -53,6 +53,8 @@ export interface FrameInboxRow {
 export interface FrameInboxState {
   /** The first read is under way: nothing says "nothing here" yet. */
   loading: boolean;
+  /** A read is under way with nothing to show yet, a retry after a failed one too: no tab says "Nothing here yet." meanwhile. */
+  reading?: boolean;
   /** The read failed, in the store's words. */
   error: string | null;
   onRetry: () => void;
@@ -91,7 +93,8 @@ function InboxRow({ row }: { row: FrameInboxRow }) {
       lead={row.lead}
       title={(
         <>
-          {row.title}
+          {/* The name is what is cut short: the badge and the member count after it are never pushed out of the row (app.css). */}
+          <span className={k('cut')}>{row.title}</span>
           {row.tag ? <Pill mini>{row.tag}</Pill> : null}
           {row.members ? <span className={k('pill', 'mini')} role="img" aria-label={row.members.words} title={row.members.words}><Icon name="users" size={12} />{row.members.count}</span> : null}
           {row.said ? <span className="sr-only">{row.said}</span> : null}
@@ -206,7 +209,7 @@ export function MessagesFrameList({
               <p className={k('txt')}>{t('messages:inbox.empty.body')}</p>
               <div className={k('btnrow')}><Btn kind="quiet" small onClick={state.onStart}>{t('messages:inbox.empty.action')}</Btn></div>
             </Card>
-          ) : has || state.loading || state.error ? null : state.searched !== null ? (
+          ) : has || state.loading || state.reading || state.error ? null : state.searched !== null ? (
             <Card pad><span data-inbox-search-empty="">{t('messages:inbox.searchEmpty', { query: state.searched })}</span></Card>
           ) : (
             <Card pad>{t('messages:frame.inbox.none')}</Card>
