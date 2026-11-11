@@ -1920,7 +1920,8 @@ test('the page listens while it is shown: the socket through app.js, the bot\'s 
   // The page: each read it is asked for is the showing's read again, past
   // the worker's saved copy after the first, keeping the lists on a failure.
   const src = read('frontend/src/features/ai/index.tsx');
-  assert.match(src, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects, botId \}\);/);
+  // #6595: the page open in the column adds its own project to that set.
+  assert.match(src, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects: shownProjects, botId \}\);/);
   assert.match(src, /const init = again \? FRESH : undefined;/);
   assert.match(src, /readJson<AiWork>\(`\/api\/ai\/work\$\{qs\}`, init\)/);
   // A failed read keeps what is drawn (offline test, 2 Nov 2026: and with
@@ -2223,4 +2224,20 @@ test('10 Nov 2026: `#homeroom-bot/new` is the "+" pressed for you, and may name 
   assert.match(thread, /export function startNewThread\(conversationId: number, fresh\?: NewThreadPreset \| null\): void \{\n\s+if \(!conversationId\) return;\n\s+closeThread\(\);\n\s+preset = fresh \|\| null;/, 'the "+" itself clears what an earlier door named');
   assert.match(thread, /const \[project, setProject\] = useState\(\(\) => preset\?\.project \|\| ''\);/);
   assert.match(thread, /const \[builder, setBuilder\] = useState<Builder>\(\(\) => preset\?\.builder \|\| 'homeroom'\);/);
+});
+
+test('#6595: pageProject reads the project off a page route, and only there', () => {
+  const column = loadTsx('frontend/src/features/ai/column.ts');
+  assert.equal(column.pageProject('app/garden/dev/issues/6580'), 'garden');
+  assert.equal(column.pageProject('/app/garden/dev/changes/12'), 'garden');
+  assert.equal(column.pageProject('app/garden?project=x'), 'garden');
+  assert.equal(column.pageProject('homeroom-bot'), null, 'the tab itself');
+  assert.equal(column.pageProject('app'), null);
+  assert.equal(column.pageProject('messages/12'), null);
+  assert.equal(column.pageProject(null), null);
+  // The page open in the column is added to what the lists are re-read for,
+  // so a project that moved there is not missed when it is not listed.
+  const index = read('frontend/src/features/ai/index.tsx');
+  assert.match(index, /column\?\.at === 'page' \? pageProject\(column\.route\)/);
+  assert.match(index, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects: shownProjects, botId \}\)/);
 });
