@@ -33,7 +33,7 @@ export interface YouIdentity {
   chips?: Chip[];
 }
 interface Stat { key: string; value: string; label: string; zero?: boolean }
-interface Day { key: string; label: string; heightPct: number; zero: boolean; today: boolean; peakLabel: string | null }
+interface Day { key: string; label: string; spoken: string; heightPct: number; zero: boolean; today: boolean; peakLabel: string | null }
 interface Activity {
   empty: boolean; canShare?: boolean;
   time?: string | null; apps?: string | null; appsLabel?: string;
@@ -186,7 +186,7 @@ export function YouFrame({ shell, stats, activity, rows, slots, admin, wallet = 
                   {days.length ? (
                     <Bars
                       label={t('profile:activity.chartLabel')}
-                      days={days.map((day) => ({ label: day.label, value: day.zero ? 0 : day.heightPct / 100, text: day.peakLabel, now: day.today }))}
+                      days={days.map((day) => ({ id: day.key, label: day.label, value: day.zero ? 0 : day.heightPct / 100, text: day.peakLabel, now: day.today, spoken: day.spoken }))}
                     />
                   ) : null}
                   <div className={k('foot', 'left')}>{t('profile:activity.note')}</div>
@@ -201,7 +201,7 @@ export function YouFrame({ shell, stats, activity, rows, slots, admin, wallet = 
       {chips.length ? (
         <div className={k('btnrow', 'chips')}>
           {chips.map((chip) => (chip.href
-            ? <a key={chip.key} className={k('pill')} href={chip.href} {...(chip.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}>{chip.label}</a>
+            ? <Pill key={chip.key} href={chip.href} target={chip.external ? '_blank' : undefined}>{chip.label}</Pill>
             : <Pill key={chip.key}>{chip.label}</Pill>))}
         </div>
       ) : null}

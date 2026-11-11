@@ -90,6 +90,8 @@ function Fold({ open, onClick, children, ...data }: { open: boolean; onClick: ()
 function InboxRow({ row }: { row: FrameInboxRow }) {
   return (
     <Row
+      // The list's own key, as the standard row carries it: what the pane finds a row by (index.tsx, #6508).
+      data-inbox-row={row.key}
       href={row.href}
       onClick={row.onClick}
       lead={row.lead}

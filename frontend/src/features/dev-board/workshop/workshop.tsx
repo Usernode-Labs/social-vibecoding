@@ -4108,7 +4108,7 @@ export function DevWorkshop(): ReactNode {
       {frame && !frameTopics && tab === 'status' && !pending ? frameHub() : null}
       {frameWorkshopUp ? frameWorkshop() : null}
       {frameAllUp ? frameAll() : null}
-      {frame && !frameTopics && tab !== 'status' && !frameWorkshopUp && !frameAllUp ? <ProjectFrameHead {...frameHead} title={pageTitle(tab)} purpose={framePurpose} /> : null}
+      {frame && !frameTopics && tab !== 'status' && !frameWorkshopUp && !frameAllUp ? <ProjectFrameHead {...frameHead} title={tab === 'workshop' && weekUp ? weekName(weekUp) : pageTitle(tab)} purpose={framePurpose} /> : null}
       {band}
       {tray}
       {/* Everything but the bar lives in here. It is what carries the

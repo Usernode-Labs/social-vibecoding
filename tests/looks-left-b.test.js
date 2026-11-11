@@ -128,9 +128,12 @@ test('Messages: the Agents tab says how many are working, as the standard headin
 
 test('Messages: under a look the pane keeps its place across a live re-sort and offers Oldest chats', () => {
   const pane = read('frontend/src/features/messages/index.tsx');
-  assert.match(pane, /const FRAME_ROW = '\[data-messages-frame-list\] a\.fr-row\[href\]';/, 'a kit row is told apart by its address');
-  assert.match(pane, /const nodes = frame \? el\.querySelectorAll<HTMLElement>\(FRAME_ROW\) : el\.querySelectorAll<HTMLElement>\('\[data-inbox-row\]'\);\n\s+for \(const node of Array\.from\(nodes\)\) \{\n\s+const key = frame \? node\.getAttribute\('href'\) : node\.dataset\.inboxRow;/, 'one reader for both lists');
-  assert.match(pane, /row = frame\n\s+\? Array\.from\(el\.querySelectorAll\(FRAME_ROW\)\)\.find\(\(node\) => node\.getAttribute\('href'\) === saved\.key\) \|\| null\n\s+: el\.querySelector\(keyedRow\(saved\.key\)\);/, 'and one correction');
+  // Group D: a kit row carries the list's own key (`data-inbox-row`, passed through by the kit's Row), so
+  // one selector reads both lists; a row is no longer told apart by its address.
+  assert.doesNotMatch(pane, /FRAME_ROW|getAttribute\('href'\) === saved\.key/);
+  assert.match(pane, /const nodes = el\.querySelectorAll<HTMLElement>\('\[data-inbox-row\]'\);\n\s+for \(const node of Array\.from\(nodes\)\) \{\n\s+const key = node\.dataset\.inboxRow;/, 'one reader for both lists');
+  assert.match(pane, /row = el\.querySelector\(keyedRow\(saved\.key\)\);/, 'and one correction');
+  assert.match(read('frontend/src/features/messages/frame-list.tsx'), /<Row\n\s+\/\/ [^\n]+\n\s+data-inbox-row=\{row\.key\}/);
   assert.match(pane, /\\u0000\$\{frame \? frameTab : ''\}`;/, 'the other tab is the reader moving the list: the held place is dropped');
   const branch = pane.slice(pane.indexOf('  if (frame) {\n    const me = Number'), pane.indexOf("aria-label={t('messages:inbox.listName')}"));
   assert.match(branch, /ref=\{scrollRef as RefObject<HTMLElement \| null>\}\n\s+onScroll=\{readAnchor\}/, 'the pane is the scroller under a look');

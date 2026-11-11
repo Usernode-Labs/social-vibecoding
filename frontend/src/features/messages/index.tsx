@@ -58,7 +58,7 @@ import { useMessagesDrawer } from './phone-drawer';
 import { messagesBack, messagesDrawerStore } from '../nav-drawer/messages-drawer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
-import { fullTime, UserAvatar, senderName, swatchFor } from './format';
+import { fullTime, initials, UserAvatar, senderName, swatchFor } from './format';
 import { DiscussionRow, MessageRow } from './message-row';
 import { OPEN_HOLD_MS, openHoldDone } from './open-hold';
 import { plainText } from './plain-text';
@@ -749,9 +749,6 @@ function ConversationRowSkeleton() {
  * escaped where `CSS.escape` exists (every browser that draws the shell) and
  * quoted with its own quotes and backslashes escaped where it does not.
  */
-/** A row of the list under a look: the kit's row, a link to its own address (./frame-list.tsx). */
-const FRAME_ROW = '[data-messages-frame-list] a.fr-row[href]';
-
 function keyedRow(key: string): string {
   const escaped = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
     ? CSS.escape(key)
@@ -977,16 +974,16 @@ function ConversationList({ drawer = false }: {
     if (el.scrollTop <= 0) { anchor.current = null; return; }
     const box = el.getBoundingClientRect();
     const rows: MeasuredRow[] = [];
-    // Under a look the rows are the kit's links, told apart by their address.
-    const nodes = frame ? el.querySelectorAll<HTMLElement>(FRAME_ROW) : el.querySelectorAll<HTMLElement>('[data-inbox-row]');
+    // Under a look the rows are the kit's, carrying the same key (./frame-list.tsx).
+    const nodes = el.querySelectorAll<HTMLElement>('[data-inbox-row]');
     for (const node of Array.from(nodes)) {
-      const key = frame ? node.getAttribute('href') : node.dataset.inboxRow;
+      const key = node.dataset.inboxRow;
       if (!key) continue;
       const rect = node.getBoundingClientRect();
       rows.push({ key, top: rect.top - box.top, bottom: rect.bottom - box.top });
     }
     anchor.current = firstRowInView(rows, 0);
-  }, [frame]);
+  }, []);
   // The reader changing the list (a search, a fold, older or archived chats,
   // the other tab under a look) drops the held place: that is them moving the
   // list, not it moving itself.
@@ -1012,9 +1009,7 @@ function ConversationList({ drawer = false }: {
     const box = el.getBoundingClientRect();
     let row: Element | null = null;
     try {
-      row = frame
-        ? Array.from(el.querySelectorAll(FRAME_ROW)).find((node) => node.getAttribute('href') === saved.key) || null
-        : el.querySelector(keyedRow(saved.key));
+      row = el.querySelector(keyedRow(saved.key));
     } catch { row = null; }
     const nowTop = row ? row.getBoundingClientRect().top - box.top : null;
     const delta = scrollCorrection(saved, nowTop, 0);
@@ -1092,7 +1087,7 @@ function ConversationList({ drawer = false }: {
           key: entry.key,
           // A group wears the face of someone in it who is not you (the
           // tour's rows), a direct message the person's own.
-          lead: <KitAv size={40} name={face?.username || name || '?'} src={face?.avatarUrl} color={swatchFor(face?.username || name || '?')} />,
+          lead: <KitAv size={40} name={face?.username || name || '?'} initials={initials(face?.username || name || '?')} src={face?.avatarUrl} color={swatchFor(face?.username || name || '?')} />,
           title: name || '',
           // A group's size, as GroupMemberCount says it; a zero says nothing.
           tag: c.kind === 'direct' && peer?.bot ? t('messages:inbox.aiBadge') : null,

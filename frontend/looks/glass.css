@@ -53,3 +53,4 @@
 .phone .tabbar{margin:0 12px 12px;height:64px;padding:8px;border-top:0;border-radius:28px;background:var(--surface);backdrop-filter:blur(26px) saturate(1.5);-webkit-backdrop-filter:blur(26px) saturate(1.5);box-shadow:inset 0 0 0 1px var(--ring),var(--glow)}
 .tb{border-radius:20px}.tb.on{background:var(--ink);color:var(--ground)}
 .stage{border-radius:24px}.stage .title{font-size:26px}
+.phone .barline{border-bottom:0}

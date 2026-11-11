@@ -362,6 +362,12 @@
           },
           {
             "to": ":is([data-make-rule-sheet],[data-make-more-sheet]) > [role=\"dialog\"] h2:not([id])"
+          },
+          {
+            "to": "[data-ws-bot-slots-body] > h2"
+          },
+          {
+            "to": ":is(.dev-ws-figs-head > h2,[data-topic-signals] > h2)"
           }
         ]
       },
@@ -388,6 +394,12 @@
           },
           {
             "to": "section:is(.messages-bot-card > *)"
+          },
+          {
+            "to": ":is([data-ws-bot-slots-body] .ui-glist,.dev-ws-weekpage > .dev-ws-strip)"
+          },
+          {
+            "to": ":is(.dev-ws-figs-card,[data-topic-signals] > .ui-glist)"
           }
         ]
       },

@@ -111,15 +111,19 @@ export function Tile({ size = 40, src, emoji, color, name = '' }: {
   );
 }
 
-/** A person: their picture, else their first letter on their colour. */
-export function Av({ size = 32, name, src, color }: { size?: number; name: string; src?: string | null; color?: string | null }) {
+/**
+ * A person: their picture, else their first letter on their colour. A list
+ * whose standard face says two letters ("DU" for a deleted user, Messages)
+ * hands them in as `initials`.
+ */
+export function Av({ size = 32, name, src, color, initials }: { size?: number; name: string; src?: string | null; color?: string | null; initials?: string }) {
   const style: Custom = { '--fr-as': `${size}px` };
   if (color) style['--fr-ac'] = color;
   return (
     <span className={k('av')} style={style} aria-hidden="true">
       {src
         ? <img src={src} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
-        : name.replace('@', '').slice(0, 1)}
+        : (initials || name.replace('@', '').slice(0, 1))}
     </span>
   );
 }
@@ -150,18 +154,20 @@ function saysNothing(children: React.ReactNode): boolean {
  * for you), `wait` amber (on others), `ok` green (done), `bad` red, none
  * grey. Zero or empty renders nothing.
  */
-export function Pill({ kind = '', mini, href, onClick, children }: {
+export function Pill({ kind = '', mini, href, target, onClick, children }: {
   kind?: PillKind;
   /** The small one that sits in a row's title, after its words. */
   mini?: boolean;
   /** A pill that is a door (a verified account's page). */
   href?: string;
+  /** Another site: a real link in a new tab. */
+  target?: '_blank';
   onClick?: (event: React.MouseEvent<HTMLElement>) => void;
   children?: React.ReactNode;
 }) {
   if (saysNothing(children)) return null;
   const cls = k('pill', kind, mini && 'mini');
-  if (href) return <a className={cls} data-kind={kind || 'none'} href={href} onClick={onClick}>{children}</a>;
+  if (href) return <a className={cls} data-kind={kind || 'none'} href={href} {...(target ? { target, rel: 'noopener noreferrer' } : undefined)} onClick={onClick}>{children}</a>;
   return <span className={cls} data-kind={kind || 'none'}>{children}</span>;
 }
 
@@ -224,6 +230,9 @@ export interface RowProps {
   glyph?: string;
   glyphTone?: 'acc';
   href?: string;
+  /** A row that opens another site: a real link in a new tab (`rel` is `noopener noreferrer` unless given). */
+  target?: '_blank';
+  rel?: string;
   onClick?: (event: React.MouseEvent<HTMLElement>) => void;
   /** Said to a screen reader where the visible row would be ambiguous. */
   label?: string;
@@ -231,12 +240,22 @@ export interface RowProps {
   pressed?: boolean;
 }
 
+/** The `data-*` attributes a caller hands a kit component, and nothing else it was given. */
+function dataOf(props: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of Object.keys(props)) {
+    if (key.startsWith('data-') && props[key] != null) out[key] = String(props[key]);
+  }
+  return out;
+}
+
 /**
  * THE row. Anything listed is this: picture, name, one line, one status,
  * in that order. A row with an `href` is a link (a door: cmd-click keeps
  * the address); with only `onClick` a button; else plain.
  */
-export function Row({ lead, title, line, right, go, on, sm, wrap, kind, num, numMono, glyph, glyphTone, href, onClick, label, pressed }: RowProps) {
+export function Row({ lead, title, line, right, go, on, sm, wrap, kind, num, numMono, glyph, glyphTone, href, target, rel, onClick, label, pressed, ...rest }: RowProps & Record<`data-${string}`, string | undefined>) {
+  const data = dataOf(rest);
   const cls = k('row', (sm ?? !line) && 'sm', on && 'on', wrap && 'wrap', wrap === 'all' && 'all', kind);
   const body = (
     <>
@@ -251,9 +270,12 @@ export function Row({ lead, title, line, right, go, on, sm, wrap, kind, num, num
       {go ? <Icon name="cr" size={18} className="go" /> : null}
     </>
   );
-  if (href) return <a className={cls} href={href} onClick={onClick} aria-label={label} aria-current={on ? 'page' : undefined}>{body}</a>;
-  if (onClick) return <button type="button" className={cls} onClick={onClick} aria-label={label} aria-pressed={pressed}>{body}</button>;
-  return <div className={cls}>{body}</div>;
+  if (href) {
+    const away = target ? { target, rel: rel || 'noopener noreferrer' } : undefined;
+    return <a className={cls} href={href} {...away} onClick={onClick} aria-label={label} aria-current={on ? 'page' : undefined} {...data}>{body}</a>;
+  }
+  if (onClick) return <button type="button" className={cls} onClick={onClick} aria-label={label} aria-pressed={pressed} {...data}>{body}</button>;
+  return <div className={cls} {...data}>{body}</div>;
 }
 
 /** A group's surface: rows, or any one block. */
@@ -1016,20 +1038,38 @@ export function HCard({ top, end, title, line, more, foot, href, onClick, label 
 /**
  * The week as bars, one a day: how tall each is (`value`, 0 to 1 of the
  * tallest), the words over the one worth naming, the day under it. The
- * chart is a picture to a screen reader; `label` says what it shows.
+ * chart is a picture to a screen reader; `label` says what it shows. Where
+ * the days say themselves (`spoken`: "Monday: 37m"), it is a list of them
+ * instead, as the standard chart is, and a pointer resting on a day reads
+ * the same words.
  */
 export function Bars({ days, label }: {
-  days: Array<{ label: React.ReactNode; value: number; text?: React.ReactNode; now?: boolean }>;
+  days: Array<{ label: React.ReactNode; value: number; text?: React.ReactNode; now?: boolean; spoken?: string; id?: string }>;
   label: string;
 }) {
   const style: Custom | undefined = days.length === 7 ? undefined : { '--fr-bn': days.length };
+  const bar = (day: { value: number }) => (day.value > 0 ? { height: `${Math.max(3, Math.min(100, Math.round(day.value * 100)))}%` } : undefined);
+  if (days.some((day) => day.spoken)) {
+    return (
+      <div className={k('bars')} style={style} role="list" aria-label={label}>
+        {days.map((day, i) => (
+          <div className={k('bcol', day.now && 'now', !(day.value > 0) && 'none')} key={i} role="listitem" title={day.spoken} data-activity-day={day.id}>
+            <span className="sr-only">{day.spoken}</span>
+            <span className={k('bv')} aria-hidden="true">{day.text}</span>
+            <i aria-hidden="true" style={bar(day)} />
+            <span className={k('bl')} aria-hidden="true">{day.label}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
     <div className={k('bars')} style={style} role="img" aria-label={label}>
       {days.map((day, i) => (
         // A day with nothing in it is a baseline in the quiet ink (.none), not a stub of the accent.
         <div className={k('bcol', day.now && 'now', !(day.value > 0) && 'none')} key={i} aria-hidden="true">
           <span className={k('bv')}>{day.text}</span>
-          <i style={day.value > 0 ? { height: `${Math.max(3, Math.min(100, Math.round(day.value * 100)))}%` } : undefined} />
+          <i style={bar(day)} />
           <span className={k('bl')}>{day.label}</span>
         </div>
       ))}

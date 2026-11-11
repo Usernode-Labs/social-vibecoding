@@ -40,7 +40,8 @@ function useChallengesCrumb(up: boolean) {
   useEffect(() => {
     if (!up) return undefined;
     const crumb = [you, here];
-    framePageStore.set({ crumb, onBack: shellBack });
+    // On a phone the bar says You: the page's own title is already "Challenges".
+    framePageStore.set({ crumb, onBack: shellBack, phoneUp: true });
     return () => { if (framePageStore.get().crumb === crumb) framePageStore.set({ crumb: null, onBack: null }); };
   }, [up, you, here]);
 }
