@@ -12,7 +12,7 @@
  */
 import { useEffect, useState, type ReactNode } from 'react';
 
-import { Avs, Btn, Card, CardNote, Facts, Frame, GroupLink, Head, HeadRow, Lead, Meta, Mut, PageBody, Pill, type PillKind, Row, Search, Sec, ShotCard, Shots, ShowAll, Tabs, Tile, Track, k } from '@/components/ui/kit';
+import { Avs, Btn, Card, CardNote, Facts, Frame, GroupLink, Head, HeadRow, Lead, Meta, Mut, PageBody, Pill, Row, Search, Sec, ShotCard, Shots, ShowAll, Tabs, Tile, k } from '@/components/ui/kit';
 import { RichMessage, useMessages } from '../../../../lib/i18n/react';
 import { BOT_AVATAR } from '../../../messages/format';
 
@@ -487,137 +487,111 @@ export function ProjectWorkshopFrame({
   );
 }
 
-/** One of All items' rows: an open request or change, as the page says it. */
-export interface AllItemRow {
-  key: string;
-  title: string;
-  /** "#6204 · Onboarding": the number and the topic. */
-  line: string | null;
-  href: string | null;
-  mine: boolean;
-  /** The word that says where it stands ("Building"), when no pill does. */
-  word?: string | null;
-  /** The one pill: Vote, Reply, On votes. */
-  pill?: { kind: PillKind; label: string } | null;
+/** The board's own filters, as the kit's side column shows them (../../kanban-filters.tsx draws the same state as chips). */
+export interface AllItemsFilters {
+  /** How many filters the dialog holds. */
+  count: number;
+  /** Each active filter, with the key its × clears. */
+  chips: Array<{ key: string; label: string }>;
+  /** Assigned to you and Yours, or null signed out (there is no "you"). */
+  quick: { assignedToMe: boolean; yours: boolean } | null;
+  onOpen: () => void;
+  onDismiss: (key: string) => void;
+  onQuick: (key: 'assignedToMe' | 'yours') => void;
 }
 
-/** A stage of the board: its name, and the items in it, newest first. */
-export interface AllItemsCol { key: string; title: string; items: AllItemRow[] }
-/** A topic of the board (the standard's By category card): who is in it, how many items are open, its channel. */
-export interface AllItemsTopic { key: string; name: string; icon: string; people: number; items: number; href: string }
-
-/** The five-stop line's stop for each of the board's columns. */
-const COL_STOP: Record<string, [number, 'now' | 'wait']> = {
-  issues: [0, 'now'], inprogress: [1, 'now'], inreview: [3, 'wait'], done: [5, 'now'],
-};
-
 /**
- * All items (the tour's s29): the Workshop's own page of every open request
- * and change. The board's columns are the page's tabs; one row per item,
- * with the five-stop line and the word that says where it stands; Show
- * beside them narrows the list to yours.
+ * All items (version 2 of the tour's s29 and s30): the kit's head, tabs and
+ * side column around today's page. The tabs are its two groupings, with the
+ * board's own search at their end; Show (Filters and the two quick filters)
+ * and Order categories stand beside the list. The list itself (a card per
+ * category, or the board by stage) is the product's own, in the content
+ * column under this, wearing the look (app.css): it opens to its lanes,
+ * holds its order across a re-sort and feeds the panel beside it, which a
+ * second drawing would not.
  */
 export function ProjectAllItemsFrame({
-  project, cols, loading, stage, onStage, mine, onMine, query, onQuery, openKey, onOpen, topics = [], ...head
+  project, group, onGroup, query, querySeq, onQuery, filters, sort, ...head
 }: HeadProps & {
   project: string;
-  cols: AllItemsCol[];
-  topics?: AllItemsTopic[];
-  loading: boolean;
-  /** The column shown, or '' for all. */
-  stage: string;
-  onStage: (key: string) => void;
-  mine: boolean;
-  onMine: (mine: boolean) => void;
+  group: 'category' | 'stage';
+  onGroup: (key: 'category' | 'stage') => void;
+  /** The board's search text, and the count that says it was cleared from outside (its chip's ×). */
   query: string;
+  querySeq: number;
   onQuery: (next: string) => void;
-  /** The item open beside the list, as `kind:id`. */
-  openKey: string | null;
-  onOpen: (event: React.MouseEvent<HTMLAnchorElement>, row: AllItemRow) => void;
+  /** Null where the board has no filters to show. */
+  filters: AllItemsFilters | null;
+  /** The order of the categories; null by stage, and where there are none to order. */
+  sort: { key: string; options: Array<{ key: string; label: string }>; onSort: (key: string) => void } | null;
 }) {
   useProjectFrameFlag();
   const t = useMessages('project');
-  const tc = useMessages('changes');
-  const acts = useActs(head);
-  const stops = [tc('changes:track.plan'), tc('changes:track.build'), tc('changes:track.checks'), tc('changes:track.vote'), tc('changes:track.live')] as const;
-  // Done is on the board for what went live; the page counts what is open.
-  const total = cols.filter((col) => col.key !== 'done').reduce((n, col) => n + col.items.length, 0);
-  const q = query.trim().toLowerCase();
-  // All is what is open; what went live is its own tab, as the tour's "Live this week".
-  const shown = cols
-    .filter((col) => (stage ? col.key === stage : col.key !== 'done'))
-    .flatMap((col) => col.items.map((row) => ({ col, row })))
-    .filter(({ row }) => !mine || row.mine)
-    .filter(({ row }) => !q || row.title.toLowerCase().includes(q) || (row.line || '').toLowerCase().includes(q));
-  return (
-    <PageBody
-      data-project-frame="all-kit"
-      title={t('project:workshop.allItems.title')}
-      purpose={t('project:frame.allItems.purpose', { count: total, project })}
-      acts={acts}
-      tabs={(
-        <Tabs
-          tabs={[{ key: '', label: t('project:frame.allItems.all') }, ...cols.map((col) => ({ key: col.key, label: col.title, count: col.items.length }))]}
-          current={stage}
-          onPick={(key) => onStage(key)}
-        />
-      )}
-      side={(
-        <>
-          <Sec label={t('project:frame.allItems.show')}>
-            <Card>
-              <Row lead={<Lead icon={mine ? '' : 'check'} />} title={t('project:frame.allItems.everyone')} on={!mine} pressed={!mine} onClick={() => onMine(false)} sm />
-              <Row lead={<Lead icon={mine ? 'check' : ''} />} title={t('project:frame.allItems.mine')} on={mine} pressed={mine} onClick={() => onMine(true)} sm />
-            </Card>
-          </Sec>
-          {topics.length ? (
-            <Sec label={t('project:places.list.topics')}>
-              <Card>
-                {topics.map((topic) => (
-                  <Row
-                    key={topic.key}
-                    href={topic.href}
-                    lead={topic.icon ? <Lead>{topic.icon}</Lead> : <Lead icon="hash" />}
-                    title={topic.name}
-                    line={t('project:frame.allItems.topicLine', { people: t('project:frame.allItems.people', { count: topic.people }), items: t('project:frame.allItems.items', { count: topic.items }) })}
-                    go
-                  />
+  const [text, setText] = useState(query);
+  // Cleared from outside (the Search chip's ×): the field follows.
+  useEffect(() => { setText(query); }, [querySeq]); // eslint-disable-line react-hooks/exhaustive-deps
+  const type = (next: string) => { setText(next); onQuery(next); };
+  const placeholder = t('project:filters.search.placeholder');
+  const label = t('project:filters.search.label');
+  // Beside the categories only: by stage the board has the page's width, and keeps its own filter chips over it.
+  const side = group === 'category' && (filters || sort) ? (
+    <>
+      {filters ? (
+        <Sec label={t('project:frame.allItems.show')}>
+          <Card>
+            <Row
+              lead={<Lead icon="filter" tone={filters.count > 0 ? 'acc' : undefined} />}
+              title={t('project:filters.button.none')}
+              label={filters.count > 0 ? t('project:filters.button.active', { count: filters.count }) : undefined}
+              right={filters.count > 0 ? <Pill kind="act">{filters.count}</Pill> : undefined}
+              go
+              sm
+              onClick={filters.onOpen}
+            />
+            {filters.chips.length ? (
+              <div className={k('btnrow', 'chips', 'inrow')}>
+                {filters.chips.map((chip) => (
+                  <Btn key={chip.key} small kind="quiet" className="chip" aria-label={t('project:filters.chip.remove', { filter: chip.label })} onClick={() => filters.onDismiss(chip.key)}>
+                    {chip.label}<span aria-hidden="true">×</span>
+                  </Btn>
                 ))}
-              </Card>
-            </Sec>
-          ) : null}
-        </>
-      )}
-    >
-      <Search value={query} onChange={onQuery} placeholder={t('project:frame.allItems.search')} />
-      <Sec label={t('project:frame.allItems.open', { count: shown.length })}>
-        {loading && !cols.length ? <Card pad>{t('project:frame.allItems.loading')}</Card>
-          : !shown.length ? <Card pad>{t('project:frame.allItems.none')}</Card>
-            : (
-              <Card>
-                {shown.map(({ col, row }) => {
-                  const [at, state] = COL_STOP[col.key] || [0, 'now'];
-                  return (
-                    <Row
-                      key={row.key}
-                      href={row.href || undefined}
-                      onClick={row.href ? (event) => onOpen(event as React.MouseEvent<HTMLAnchorElement>, row) : undefined}
-                      title={row.title}
-                      line={row.line || undefined}
-                      right={(
-                        <>
-                          <Track mini at={at} state={state} words={stops} />
-                          {row.pill ? <Pill kind={row.pill.kind}>{row.pill.label}</Pill> : <Meta>{row.word || col.title}</Meta>}
-                        </>
-                      )}
-                      on={!!openKey && openKey === row.key}
-                      go
-                    />
-                  );
-                })}
-              </Card>
-            )}
-      </Sec>
-    </PageBody>
+              </div>
+            ) : null}
+            {filters.quick ? (
+              <>
+                <Row lead={<Lead icon={filters.quick.assignedToMe ? 'check' : 'user'} />} title={t('project:filters.quick.assignedToYou')} on={filters.quick.assignedToMe} pressed={filters.quick.assignedToMe} sm onClick={() => filters.onQuick('assignedToMe')} />
+                <Row lead={<Lead icon={filters.quick.yours ? 'check' : 'user'} />} title={t('project:filters.quick.yours')} on={filters.quick.yours} pressed={filters.quick.yours} sm onClick={() => filters.onQuick('yours')} />
+              </>
+            ) : null}
+          </Card>
+        </Sec>
+      ) : null}
+      {sort ? (
+        <Sec label={t('project:allItems.sort.label')}>
+          <Card>
+            {sort.options.map((option) => (
+              <Row key={option.key} lead={<Lead icon={sort.key === option.key ? 'check' : ''} />} title={option.label} on={sort.key === option.key} pressed={sort.key === option.key} sm onClick={() => sort.onSort(option.key)} />
+            ))}
+          </Card>
+        </Sec>
+      ) : null}
+    </>
+  ) : undefined;
+  return (
+    <Frame data-project-frame="all-items" data-all-group={group}>
+      <div className={k('inner')}>
+        <Head title={t('project:workshop.allItems.title')} purpose={t('project:frame.allItems.purpose', { project })} />
+        <Tabs
+          tabs={[{ key: 'category', label: t('project:allItems.group.category') }, { key: 'stage', label: t('project:allItems.group.stage') }]}
+          current={group}
+          onPick={(key) => onGroup(key === 'stage' ? 'stage' : 'category')}
+          label={t('project:allItems.group.label')}
+          end={<Search flush value={text} onChange={type} placeholder={placeholder} label={label} />}
+        />
+        <Search only="p" value={text} onChange={type} placeholder={placeholder} label={label} />
+        {/* The work column is the product's own list, laid in under this (app.css): the kit draws the column beside it. */}
+        {side ? <div className={k('cols', 'beside')}><div className={k('stack', 'first')}>{side}</div></div> : null}
+      </div>
+    </Frame>
   );
 }

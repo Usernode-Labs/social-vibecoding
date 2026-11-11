@@ -143,5 +143,5 @@ test('the page draws the kit\'s Workshop under a look from what its own Workshop
   assert.match(rule, /id: line\.short,/);
   assert.doesNotMatch(src, /project:frame\.rule\.|project:frame\.workshop\.(where|needsVote|yourVote|yes|noMore|noPassed|needed|review|weeks|unclaimed|all|liveCount)/);
   const css = read('public/css/app.css');
-  assert.match(css, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\], \[data-project-frame="all-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/);
+  assert.match(css, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/);
 });

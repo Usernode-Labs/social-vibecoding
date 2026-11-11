@@ -114,9 +114,10 @@ import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { drawerStore } from '../../nav-drawer/drawer-store';
 import { ProjectPlaces } from './project-places';
 import {
-  ProjectAllItemsFrame, ProjectFrameHead, ProjectHubFrame, ProjectTopicsFrame, ProjectWorkshopFrame, type AllItemRow, type ProjectTab,
+  ProjectAllItemsFrame, ProjectFrameHead, ProjectHubFrame, ProjectTopicsFrame, ProjectWorkshopFrame, type ProjectTab,
 } from './frame/project-frame';
 import { placeRows } from './project-places';
+import { kanbanFiltersStore, type KanbanFiltersState } from '../kanban-filters-store';
 import { ruleSentence } from './community-card';
 import { THIS_WEEK_NEW_MAX, THIS_WEEK_SEEN } from './week-pages';
 import { FirstChangeCard, useFirstChange } from './first-change';
@@ -3129,13 +3130,10 @@ export function DevWorkshop(): ReactNode {
   // #4457: the item whose page is open in the panel beside the list (wide
   // windows only; ./side-panel.tsx), as the kind and id AppView opens.
   const [sideItem, setSideItem] = useState<TopicRef | null>(null);
-  // All items in the kit reads the board's own columns (frameAll, below);
-  // its stage, Show and search box are this page's own state. Here with the
-  // other hooks: the kit's branch sits after the page's early returns.
-  const kanban = useStoreState(devKanbanStore);
-  const [frameStage, setFrameStage] = useState('');
-  const [frameMine, setFrameMine] = useState(false);
-  const [frameQuery, setFrameQuery] = useState('');
+  // All items in the kit shows the board's own search and filters
+  // (frameAll, below). Here with the other hooks: the kit's branch sits
+  // after the page's early returns.
+  const frameFilters = useStoreState<KanbanFiltersState>(kanbanFiltersStore);
   const sideWide = useMediaFlag(WORKSHOP_SIDE_QUERY);
   // Whether the Workshop tab's Your work shows every row or its first
   // WORKSHOP_WORK_FIRST.
@@ -3161,14 +3159,6 @@ export function DevWorkshop(): ReactNode {
   // the prerendered page is unchanged; the publish is the fallback where
   // AppView is not there to ask.
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
-  // The board's columns are published only while its "By stage" pane is up
-  // (app-view.js _rerenderWorkshop). The kit's All items asks for them
-  // itself, from the same bucketing, whenever the Workshop view is republished.
-  const [frameKanban, setFrameKanban] = useState<DevKanbanView | null>(null);
-  useEffect(() => {
-    if (!frame || tab !== 'all') return;
-    try { setFrameKanban(((window as any).AppView?._kanbanView?.() as DevKanbanView | undefined) || null); } catch { setFrameKanban(null); }
-  }, [frame, tab, v]);
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
   // from a door lower down should start at its own head — in the element
@@ -3847,53 +3837,43 @@ export function DevWorkshop(): ReactNode {
     };
   };
   const frameWorkshopUp = frame && !frameTopics && tab === 'workshop' && !weekUp;
-  // ALL ITEMS IN THE KIT (the tour's s29): the board's own columns as rows,
-  // from the same view model the board renders; the stage, Show and the
-  // search box are this page's own state, as the board's filters are its.
+  // ALL ITEMS IN THE KIT (version 2 of the tour's s29): the kit's head,
+  // its two groupings as tabs, the board's own search and filters, and the
+  // categories' order. The list under it is this page's own (the theme
+  // cards, or the board by stage), which app.css lays in the kit's content
+  // column.
   const frameAllUp = frame && !frameTopics && tab === 'all';
-  const frameAll = (): ReactNode => {
-    const board = kanban.cols.length ? kanban : frameKanban || kanban;
-    const cols = board.cols.map((col) => ({
-      key: col.key,
-      title: col.title,
-      items: col.rows.flatMap((row): AllItemRow[] => {
-        if (row.t !== 'card') return [];
-        const b = row.brief;
-        const pill = row.card.pill?.state || null;
-        const asks = pill && /^(vote|reply|decide|question|needs)/i.test(pill.key);
-        return [{
-          key: row.key,
-          title: row.card.title.text || row.card.title.title || '',
-          line: factsLine([b && b.n ? `#${b.n}` : null, b?.category || null]) || null,
-          href: openHref(slug, row.card),
-          mine: !!b?.mine,
-          word: pill && !asks ? pill.label : (b?.kind === 'request' && b.unclaimed ? t('project:frame.allItems.nobody') : null),
-          pill: pill && asks ? { kind: pill.tone === 'ok' || pill.tone === 'done' ? 'ok' : pill.tone === 'bad' || pill.tone === 'blocked' || pill.tone === 'error' ? 'bad' : /wait|on votes/i.test(pill.label) ? 'wait' : 'act', label: pill.label } : null,
-        }];
-      }),
-    }));
-    return (
-      <ProjectAllItemsFrame
-        {...frameHead}
-        project={projectName}
-        cols={cols}
-        topics={v.themes.filter((th) => !th.ungrouped && th.topic).map((th) => ({ key: th.id, name: th.name, icon: th.icon, people: th.people.length, items: th.counts.open + th.counts.underway + th.counts.review, href: placeHref(slug, channelPlace(th.topic!.handle)) }))}
-        loading={!!board.loading && !board.cols.length}
-        stage={frameStage}
-        onStage={setFrameStage}
-        mine={frameMine}
-        onMine={setFrameMine}
-        query={frameQuery}
-        onQuery={setFrameQuery}
-        openKey={sideKey}
-        onOpen={(event, row) => {
-          const ref = board.cols.flatMap((col) => col.rows).find((r) => r.key === row.key);
-          const topic = ref && ref.t === 'card' ? topicRef(ref.card) : null;
-          if (topic) openItem(event, topic);
-        }}
-      />
-    );
-  };
+  const frameAll = (): ReactNode => (
+    <ProjectAllItemsFrame
+      {...frameHead}
+      project={projectName}
+      group={group === 'stage' ? 'stage' : 'category'}
+      onGroup={(key) => { callAppView('_setWorkshopGroup', key); }}
+      query={frameFilters.q}
+      querySeq={frameFilters.seq}
+      // The board reads its search box (AppView._onKanbanSearchInput), which
+      // stays mounted behind the kit's field: the text goes through it.
+      onQuery={(next) => {
+        const box = hostRef.current ? hostRef.current.querySelector<HTMLInputElement>('#dev-kanban-search') : null;
+        if (!box) return;
+        box.value = next;
+        callAppView('_onKanbanSearchInput');
+      }}
+      filters={frameFilters.mounted ? {
+        count: frameFilters.count,
+        chips: frameFilters.chips,
+        quick: frameFilters.quick || null,
+        onOpen: () => { callAppView('_openKanbanFiltersDialog'); },
+        onDismiss: (key) => { callAppView('_dismissKanbanFilter', key); },
+        onQuick: (key) => { callAppView('_toggleKanbanQuickFilter', key); },
+      } : null}
+      sort={group !== 'stage' && themes.length ? {
+        key: sortKey,
+        options: SORTS.map((option) => ({ key: option.key, label: t(option.label) })),
+        onSort: (key) => { if (key !== sortKey) captureThemeTops(); setSortKey(key as SortKey); },
+      } : null}
+    />
+  );
   const frameWorkshop = (): ReactNode => {
     const d = v.dashboard;
     const slots = frameSlots.view && (frameSlots.view.acts || frameSlots.view.slots.length) ? frameSlots.view : null;

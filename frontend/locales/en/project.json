@@ -6527,49 +6527,13 @@
     "text": "Topic",
     "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under a topic's name in the context column, saying the row is the topic the request is filed under."
   },
-  "frame.allItems.purpose_one": {
-    "text": "{{count}} open request or change in {{project}}, newest first.",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title. Singular."
-  },
-  "frame.allItems.purpose_other": {
-    "text": "{{count}} open requests and changes in {{project}}, newest first.",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title. Plural."
-  },
-  "frame.allItems.all": {
-    "text": "All",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The first tab, before one per stage of the board (Requests, Under way, In review, Done): every item."
-  },
-  "frame.allItems.search": {
-    "text": "Search requests, changes or a number",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Placeholder of the search box under the tabs."
-  },
-  "frame.allItems.open_one": {
-    "text": "{{count}} open",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the list: how many items it shows. Singular."
-  },
-  "frame.allItems.open_other": {
-    "text": "{{count}} open",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the list: how many items it shows. Plural."
+  "frame.allItems.purpose": {
+    "text": "Every request and change in {{project}}, grouped by category or by stage.",
+    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title; {{project}} is the project's name."
   },
   "frame.allItems.show": {
     "text": "Show",
     "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the two rows in the side column that choose whose items the list shows."
-  },
-  "frame.allItems.everyone": {
-    "text": "Everyone's",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). First row under Show: every member's items (the default)."
-  },
-  "frame.allItems.mine": {
-    "text": "Only yours",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Second row under Show: only the items the viewer made or asked for."
-  },
-  "frame.allItems.none": {
-    "text": "Nothing matches that.",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Shown in place of the list when the stage, Show and the search box leave nothing."
-  },
-  "frame.allItems.loading": {
-    "text": "Loading…",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Shown in place of the list while the board is being read."
   },
   "frame.topic.follow": {
     "text": "Follow this request",
@@ -6578,29 +6542,5 @@
   "frame.topic.followLine": {
     "text": "Replies and status changes",
     "description": "A request's page under one of the frame's looks: the line under \"Follow this request\", saying what following brings."
-  },
-  "frame.allItems.nobody": {
-    "text": "Nobody on it",
-    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the word at the end of a request's row that nobody has taken yet, where a row otherwise ends in its stage's word."
-  },
-  "frame.allItems.topicLine": {
-    "text": "{{people}} · {{items}}",
-    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The line under a topic's row in the context column: how many people are in it and how many items are open, each a whole phrase, joined by a middle dot."
-  },
-  "frame.allItems.people_one": {
-    "text": "{{count}} person",
-    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many people are involved in the topic. {{count}} is the number."
-  },
-  "frame.allItems.people_other": {
-    "text": "{{count}} people",
-    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many people are involved in the topic. {{count}} is the number."
-  },
-  "frame.allItems.items_one": {
-    "text": "{{count}} item",
-    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many of the topic's items are open. {{count}} is the number."
-  },
-  "frame.allItems.items_other": {
-    "text": "{{count}} items",
-    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many of the topic's items are open. {{count}} is the number."
   }
 }

@@ -419,3 +419,10 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 .phone .row.item .tx{flex:1 1 calc(100% - 40px)}.phone .row.item .t{white-space:normal}
 .phone .row.item .tx~*{margin-top:4px}.phone .row.item .tx+*{margin-left:36px}
 .facts>button.fact,.facts>a.fact{display:flex;flex-direction:column;justify-content:flex-start}
+
+/* ---- v2, a project's pages: All items (its list is the product's, laid under the kit's head; the kit draws the column beside it) ---- */
+.cols.beside{height:0}
+.cols.beside>.stack{grid-column:2}
+.phone .cols.beside{height:auto;margin-bottom:8px}
+.phone .cols.beside>.stack{grid-column:1}
+.btnrow.inrow{padding:0 16px 12px;flex-wrap:wrap}

@@ -172,7 +172,7 @@ test('under a look the project\'s page has the frame\'s page area, and the stand
   assert.match(hand, /html\[data-skin\]\[data-project-frame\] #app-view \{ padding-inline-start: var\(--platform-rail-w, 0px\) !important; padding-inline-end: 0 !important; \}/);
   assert.match(hand, /html\[data-skin\]\[data-project-frame\] #dev-workshop \{ max-width: none; margin: 0; \}/, 'not the standard look\'s 760px column');
   assert.match(hand, /html\[data-skin\] \.dev-ws > \[data-project-frame\] ~ \.dev-ws-placebar \{ display: none; \}/, 'the places are the kit\'s tabs');
-  assert.match(hand, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\], \[data-project-frame="all-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/, 'where the kit draws the whole place');
+  assert.match(hand, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/, 'where the kit draws the whole place');
   // Under the kit's Hub the standard one goes part by part: what asks something of you once stays.
   const kept = hand.match(/html\[data-skin\] \.dev-ws > \[data-project-frame="status"\] ~ \.dev-ws-tabbody > :not\(:is\(([^)]*)\)\) \{ display: none; \}/);
   assert.ok(kept, 'the standard Hub is put away part by part');
@@ -218,7 +218,7 @@ test('a topic\'s channel lights Topics but keeps the product\'s page under the h
   const page = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(page, /page: tab\.startsWith\('c:'\) && !frameTopics \? 'channel' : undefined,/);
   const css = read('public/css/app.css');
-  assert.match(css, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\], \[data-project-frame="all-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/, 'the body is put away for the kit\'s own pages only; a channel is not one');
+  assert.match(css, /html\[data-skin\] \.dev-ws > :is\(\[data-project-frame="topics"\], \[data-project-frame="workshop-kit"\]\) ~ \.dev-ws-tabbody \{ display: none; \}/, 'the body is put away for the kit\'s own pages only; a channel is not one');
   // In a phone browser a channel's tab is a fitted box (`--ws-fit`), the
   // chat's composer on its foot. Under a look the kit's head stands inside
   // that box, taller than the standard one, and the chat under it, holding

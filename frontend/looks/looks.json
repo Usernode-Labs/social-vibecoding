@@ -330,7 +330,10 @@
         "to": ":is(.messages-thread-action,.messages-composer-action)"
       },
       "card": {
-        "to": ":is(.dev-request-ask,.dev-change-pair .dev-change-gate,.dev-request-track > [role=\"group\"],.ui-glist:where(#settings-section-content *),:is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen),[data-sign-in-sheet]) .rounded-2xl.overflow-hidden,#auth-waiting-screen :is([data-waiting-queued],[data-waiting-invite]),#app-menu-homeroom-card)"
+        "to": ":is(.dev-request-ask,.dev-change-pair .dev-change-gate,.dev-request-track > [role=\"group\"],.ui-glist:where(#settings-section-content *),:is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen),[data-sign-in-sheet]) .rounded-2xl.overflow-hidden,#auth-waiting-screen :is([data-waiting-queued],[data-waiting-invite]),#app-menu-homeroom-card,.dev-ws > [data-project-frame=\"all-items\"] ~ .dev-ws-tabbody .dev-ws-theme)"
+      },
+      "cap": {
+        "to": ":is(.dev-ws > [data-project-frame=\"all-items\"] ~ .dev-ws-tabbody [data-ws-themes-head],.dev-ws > [data-project-frame=\"all-items\"] ~ .dev-ws-tabbody .dev-ws-sort > .dev-ws-eyebrow)"
       },
       "title": {
         "to": ":is(.settings-page-title,#first-session-make-title,:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen,#auth-waiting-screen) h1)"

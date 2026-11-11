@@ -184,7 +184,7 @@ test('today\'s header and tab bar stay mounted, unseen, and the screens take the
   // allowance for it: the page's last card ended under the bar. A spacer
   // the bar's height after the page's inner, so each look's own padding
   // stands and the page ends clear of the bar.
-  assert.match(css, /@media \(max-width: 767\.98px\) \{\s*html\[data-frame-chrome\] :is\(\.fr:not\(\.fr-app, \[data-project-frame\]\) > \.fr-inner, \[data-project-frame\]:is\(\[data-project-frame=\"status\"\], \[data-project-frame=\"topics\"\], \[data-project-frame=\"workshop-kit\"\], \[data-project-frame=\"all-kit\"\]\) > \.fr-inner, \.fr-pane > \.fr-scroll\)::after \{ content: ''; display: block; height: var\(--fr-shell-bottom, 0px\); \}/, 'a page and a pane (Messages\' list, the bot\'s) alike; a project page\'s head only where it is the whole page, since a channel\'s body follows it');
+  assert.match(css, /@media \(max-width: 767\.98px\) \{\s*html\[data-frame-chrome\] :is\(\.fr:not\(\.fr-app, \[data-project-frame\]\) > \.fr-inner, \[data-project-frame\]:is\(\[data-project-frame=\"status\"\], \[data-project-frame=\"topics\"\], \[data-project-frame=\"workshop-kit\"\]\) > \.fr-inner, \.fr-pane > \.fr-scroll\)::after \{ content: ''; display: block; height: var\(--fr-shell-bottom, 0px\); \}/, 'a page and a pane (Messages\' list, the bot\'s) alike; a project page\'s head only where it is the whole page, since a channel\'s body follows it');
   const src = read('frontend', 'src', 'features', 'frame', 'frame-app.tsx');
   for (const name of ['--fr-shell-left', '--fr-shell-top', '--fr-shell-bottom']) assert.ok(src.includes(`'${name}'`), `${name} is published`);
   assert.match(src, /root\.setAttribute\('data-frame-chrome', ''\)/);
