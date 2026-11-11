@@ -36,7 +36,6 @@ function stubs({ tab = 'home', screen = 'home-screen', bot = false, messages = 2
     '../workshop/community-scope': { communityScopeStore: fixedStore({ slug, info: INFO, list: Object.keys(INFO) }), goToCommunity() {} },
     '../../lib/visibility-store': { useVisibility: (id, initial) => initial },
     '../../lib/platform-viewer': { whenPlatformViewer: () => () => {} },
-    './frame-sheets': { FrameSheets: () => null, openFrameSheet() {} },
   };
 }
 const chrome = (state) => renderComponent(FRAME_APP, 'FrameChrome', {}, { stubs: stubs(state), cache: false });
@@ -63,6 +62,8 @@ test('the sidebar is the kit\'s: the brand, three places, your recent communitie
   assert.doesNotMatch(side, />Game Corner<\/span><span class="fr-n">/, 'a zero says nothing');
   assert.doesNotMatch(side, />Lobby<\/span><span class="fr-n">/, 'nor the votes of a community you have not taken part in');
   assert.match(side, /<div class="fr-sidefoot"><a class="fr-nv fr-me" href="#profile">/);
+  assert.match(side, /<span class="fr-nm">You<\/span><span data-frame-settings="" role="link" tabindex="0" aria-label="Settings" title="Settings" style="display:contents">/, 'the glyph at the row\'s end opens Settings, as the standard rail\'s cog does');
+  assert.doesNotMatch(side, /data-frame-menu/, 'the kit\'s account menu is gone: today has none');
 });
 
 test('inside a community its row is lit, and no tab is', () => {
@@ -81,13 +82,14 @@ test('the bar says where you are, with search and the bell; the phone\'s tab bar
   const html = chrome({ tab: 'messages' });
   assert.match(html, /<header class="fr-bar">.*?<div class="fr-crumb"><span class="fr-ci fr-here fr-keep">Messages<\/span><\/div><span class="fr-sp"><\/span>/s);
   assert.match(html, /<button type="button" class="fr-ib fr-d" aria-label="[^"]+">/, 'search, on a desktop');
-  assert.match(html, /<button type="button" class="fr-ib" aria-label="Notifications">/);
+  assert.match(html, /<button type="button" class="fr-ib" aria-label="Notifications" aria-haspopup="dialog" data-frame-bell="">/);
   // The Homeroom mark and the menu behind it (the standard header's
   // #platform-mark-btn: the app switcher, About, Invite), kept under every
   // look at the bar's end, after the bell: the same tile and chevron, the
   // same controller, on a desktop and on a phone alike.
-  assert.match(html, /<button type="button" class="fr-ib" aria-label="Notifications">.*?<\/button><button type="button" class="fr-ib fr-markbtn" aria-label="Homeroom menu" aria-expanded="false" data-frame-mark=""><span class="fr-tile" style="--fr-ts:26px;--fr-tc:#0f1116" aria-hidden="true"><img src="\/brand\/homeroom-mark\.png"[^>]*><\/span><svg class="fr-ic"[^>]*>.*?<\/svg><\/button>/s, 'the bell, then the mark, as the standard header orders them');
+  assert.match(html, /<button type="button" class="fr-ib" aria-label="Notifications"[^>]*>.*?<\/button><button type="button" class="fr-ib fr-markbtn" aria-label="Homeroom menu" aria-expanded="false" data-frame-mark=""><span class="fr-tile" style="--fr-ts:26px;--fr-tc:#0f1116" aria-hidden="true"><img src="\/brand\/homeroom-mark\.png"[^>]*><\/span><svg class="fr-ic"[^>]*>.*?<\/svg><\/button>/s, 'the bell, then the mark, as the standard header orders them');
   assert.doesNotMatch(html, /<span class="fr-p"><span class="fr-tile"/, 'the phone bar no longer leads with a second mark: the one at its end is the brand');
+  assert.match(html, /<\/button><a class="fr-p" href="#profile" aria-label="You"><span class="fr-av"/, 'a phone\'s avatar, after the mark, is the way to You');
   const frameSrc = read(FRAME_APP);
   assert.match(frameSrc, /onClick=\{\(\) => \{ \(window as any\)\.AppContext\?\.toggle\?\.\(\); \}\}/, 'the standard header\'s own controller');
   // The menu's desktop popover hangs under whichever mark has a box: the
@@ -133,8 +135,13 @@ test('a press is handed to the shell\'s own control, and a cmd-click keeps the a
   const src = read('frontend', 'src', 'features', 'frame', 'frame-app.tsx');
   assert.match(src, /document\.getElementById\(id\)\?\.click\(\)/);
   assert.match(src, /press\(`platform-tab-\$\{key\}`\)/);
-  assert.match(src, /openFrameSheet\('notifications'\)/, 'the bell opens the kit\'s own sheet');
-  assert.match(src, /openFrameSheet\('menu'\)/, 'and the sliders on the You row the account menu');
+  assert.match(src, /data-frame-bell="" onClick=\{\(\) => \{ \(window as any\)\.NotificationsSheet\?\.toggle\?\.\(\); \}\}/, 'the bell opens the product\'s own sheet, as the standard header\'s bell does');
+  assert.match(read('frontend/src/features/header/platform-header.tsx'), /\(window as any\)\.NotificationsSheet\?\.toggle\?\.\(\);/, 'the same call');
+  assert.match(src, /aria-label=\{t\('core:rail\.search'\)\} onClick=\{\(\) => \{ \(window as any\)\.Home\?\.focusSearch\?\.\(\); \}\}/, 'search lands in Home\'s field, which finds apps and communities');
+  assert.match(src, /function openSettings\(\) \{\s*window\.location\.hash = '#settings';/, 'the You row\'s glyph goes to Settings by its address');
+  assert.match(src, /onClick=\{\(event\) => handing\(event, \(\) => pressTab\('me'\)\)\}/, 'the phone\'s avatar is the You tab\'s press');
+  assert.doesNotMatch(src, /frame-sheets|openFrameSheet|FrameSheets/, 'the chrome has no sheet of its own');
+  assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/frame/frame-sheets.tsx')), 'the kit\'s notifications and account menu sheets are deleted');
   assert.match(src, /press\('back-btn'\)/);
   assert.match(src, /NavLink\?\.isNativeClick\?\.\(event\)/);
   assert.match(src, /goToCommunity\(slug\)/);
@@ -228,6 +235,8 @@ test('the chrome keeps clear of a phone\'s status bar and home strip', () => {
 
 test('the chrome\'s words are catalog text', () => {
   const en = JSON.parse(read('frontend', 'locales', 'en', 'core.json'));
+  assert.deepEqual(Object.keys(en).filter((key) => key.startsWith('frame.menu.')), [], 'the account menu\'s words went with it');
+  assert.deepEqual(Object.keys(JSON.parse(read('frontend', 'locales', 'en', 'notifications.json'))).filter((key) => key.startsWith('frame.')), [], 'and the kit sheet\'s');
   for (const k of ['frame.brand', 'frame.bot', 'frame.navigation', 'tabs.home', 'tabs.ai', 'tabs.messages', 'tabs.me', 'rail.communities', 'rail.allPlain', 'rail.search', 'header.back', 'header.notifications']) {
     assert.ok(en[k] && typeof en[k].text === 'string' && en[k].description, k);
   }
@@ -257,4 +266,45 @@ test('the Homeroom menu wears the look: the kit\'s sheet, its primary button, it
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   for (const hook of ['id="apps-switcher-sheet"', 'id="apps-switcher-title"', 'id="apps-switcher-close"', 'id="switcher-nav"', 'id="app-menu-homeroom-card"', 'id="app-menu-legal"', 'id="app-menu-version"']) assert.ok(sheet.includes(hook), hook);
   assert.ok(read('frontend/src/features/improve/actions.tsx').includes('id="improve-row-feedback"'));
+});
+
+test('the bell\'s sheet is the product\'s own, wearing the look', () => {
+  // Version 2: the sheet keeps everything it has (search, Unread and All,
+  // the groups, what happened, the older weeks); under a look only its
+  // dress changes, by the wear map and one hand-written block.
+  const looks = JSON.parse(read('frontend/looks/looks.json'));
+  assert.ok(looks.wear.roots.card.to.includes('.notifications-card:where(#notifications-sheet *)'), 'each of its cards is the look\'s card');
+  assert.equal(looks.wear.roots.tabs.to, '#notifications-screen-tabs', 'Unread and All are the look\'s tabs');
+  assert.deepEqual(looks.wear.roots.tabs.skip, ['.tabs .end', '.tabs .end .search', '.tabs .end .inp'], 'less the end slot, which the sheet does not have');
+  assert.deepEqual(looks.wear.roots.tab, { to: '#notifications-screen-tabs > [role="tab"]', parts: { on: '[aria-selected="true"]' } }, 'and the one that is on is the one selected');
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('THE BELL\'S SHEET'), css.indexOf('/* looks:begin'));
+  assert.ok(hand.length > 500, 'located the block');
+  const P = 'html\\[data-skin\\]:where\\(:not\\(\\[data-skin="brand"\\]\\)\\) ';
+  const has = (re, why) => assert.match(hand, new RegExp(P + re), why);
+  has('#notifications-sheet \\{[^}]*background: var\\(--fr-solid, var\\(--fr-ground\\)\\);[^}]*color: var\\(--fr-ink\\);[^}]*font-family: var\\(--fr-f\\);', 'the look\'s ground, ink and type');
+  has('#notifications-sheet > div:first-child > h2 \\{ font-size: 24px;', 'the title at the kit sheet\'s size');
+  has('#notifications-search-input \\{[^}]*border-radius: 999px;[^}]*background: var\\(--fr-surface\\);', 'the search as the kit\'s field');
+  has('#notifications-screen-tabs > \\[role="tab"\\] \\{ padding: 0; border-radius: 0; background: none;', 'the tablist\'s own pills are cleared for the look\'s tabs');
+  has('#notifications-screen-mark-all \\{ background: var\\(--fr-sunk\\); color: var\\(--fr-ink\\);', 'Mark all read as the kit\'s quiet button');
+  has('#notifications-sheet :is\\(\\.text-zinc-600, \\.text-zinc-500, \\.text-zinc-400\\) \\{ color: var\\(--fr-mut\\); \\}', 'the small print muted');
+  assert.ok(css.indexOf('THE BELL\'S SHEET') < css.indexOf('/* looks:begin'), 'before the generated section, so a look\'s own tabs and card win');
+  for (const line of hand.split('\n').filter((l) => l.includes('{') && !l.trim().startsWith('@media'))) {
+    assert.match(line, /^\s*html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) /, `only under a look: ${line.slice(0, 80)}`);
+  }
+  assert.doesNotMatch(hand, /#[0-9a-fA-F]{3,8}\b|rgba?\(/, 'no colour of its own');
+  // The hooks those rules read are the sheet's own.
+  const sheet = read('frontend/src/features/notifications/notifications-sheet.tsx');
+  for (const hook of ['notifications-sheet', 'notifications-search-input', 'notifications-screen-tabs', 'notifications-screen-mark-all', 'notifications-sheet-close', 'notifications-card']) assert.ok(sheet.includes(hook), hook);
+});
+
+test('the Homeroom menu is the tour\'s small sheet: its title, Suggest the whole width, the rows as one card', () => {
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('THE HOMEROOM MENU'), css.indexOf('THE BELL\'S SHEET'));
+  assert.match(hand, /#apps-switcher-title \{ font-size: 24px; line-height: 1\.15; font-weight: 700;/);
+  assert.match(hand, /#improve-quick-actions #improve-row-feedback \{ flex: 1 1 0; height: 44px;/, 'the kit button would not stretch: the menu\'s own row does');
+  assert.match(hand, /#switcher-nav > \[id\^="app-menu-row-"\] \{[^}]*background: var\(--fr-surface\);/, 'the rows are the card');
+  assert.match(hand, /#switcher-nav > \[id\^="app-menu-row-"\]:first-child \{ border-start-start-radius: 20px; border-start-end-radius: 20px; \}/);
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  for (const hook of ['app-menu-row-workshop', 'app-menu-row-about', 'app-menu-row-add-homeroom', 'improve-quick-actions']) assert.ok(sheet.includes(hook) || read('frontend/src/features/improve/actions.tsx').includes(hook), hook);
 });

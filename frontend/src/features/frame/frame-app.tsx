@@ -10,10 +10,13 @@
  * IT DRAWS; THE SHELL'S OWN NAVIGATION STILL DECIDES. Today's header and
  * tab bar stay mounted, hidden (app.css "THE FRAME IN THE SHELL"), and
  * keep every behaviour they have: the router's writes, the counts, the
- * sheets they open. The bell and the account menu open the kit's own
- * sheets (./frame-sheets.tsx), fed by the same controllers. This island reads the same stores they read (where you
- * are, what is unread, your recent communities) and a press here is handed
- * to the control it stands for there, so nothing is decided twice.
+ * sheets they open. The bell opens the product's own notifications sheet
+ * and the mark its own "Feedback & info" menu, each wearing the look
+ * (app.css, THE BELL'S SHEET and THE HOMEROOM MENU): the chrome has no
+ * sheet of its own. This island reads the same stores the shell's
+ * navigation reads (where you are, what is unread, your recent
+ * communities) and a press here is handed to the control it stands for
+ * there, so nothing is decided twice.
  *
  * WHERE IT SITS. A fixed layer over the screens, at the tab bar's own
  * level, that takes presses only on its sidebar, bar and tab bar; the page
@@ -45,7 +48,6 @@ import { communityScopeStore, goToCommunity } from '../workshop/community-scope'
 import { swatchFor } from '../messages/format';
 import { appContextStore } from '../app-context/app-context-store.js';
 import { framePageStore } from './frame-page-store';
-import { FrameSheets, openFrameSheet } from './frame-sheets';
 import { GuestFrame } from './guest-chrome';
 import { LookPicker } from './look-picker';
 
@@ -54,6 +56,11 @@ const MARK = '/brand/homeroom-mark.png';
 /** The shell's own control a press here is handed to. */
 function press(id: string) {
   document.getElementById(id)?.click();
+}
+
+/** Settings, by its address, as the standard rail's cog opens it. */
+function openSettings() {
+  window.location.hash = '#settings';
 }
 
 /** Says which tab was pressed, for a kit page that has places of its own to come back from. */
@@ -245,17 +252,18 @@ export function FrameChrome() {
             <span className={k('nm')}>{t('core:rail.allPlain')}</span>
           </a>
           <div className={k('sidefoot')}>
-            {/* You opens your page; the sliders at the row's end open the
-                account menu. One row, as the tour draws it, so the glyph is
-                a control inside the link and its press is taken here. */}
+            {/* You opens your page; the glyph at the row's end opens
+                Settings, as the standard rail's cog does. One row, as the
+                tour draws it, so the glyph is a control inside the link and
+                its press is taken here. */}
             <a
               className={k('nv me', tab === 'me' && !inCommunity && 'on')}
               href="#profile"
               aria-current={tab === 'me' && !inCommunity ? 'page' : undefined}
               onClick={(event) => {
-                if ((event.target as HTMLElement).closest('[data-frame-menu]')) {
+                if ((event.target as HTMLElement).closest('[data-frame-settings]')) {
                   event.preventDefault();
-                  openFrameSheet('menu');
+                  openSettings();
                   return;
                 }
                 handing(event, () => press('platform-tab-me'));
@@ -264,16 +272,17 @@ export function FrameChrome() {
               <Av size={24} name={me || '?'} src={user?.avatar_url} color={swatchFor(me || '?')} />
               <span className={k('nm')}>{t('core:tabs.me')}</span>
               <span
-                data-frame-menu=""
-                role="button"
+                data-frame-settings=""
+                role="link"
                 tabIndex={0}
-                aria-label={t('core:frame.menu.open')}
+                aria-label={t('core:tabs.settings')}
+                title={t('core:tabs.settings')}
                 style={{ display: 'contents' }}
                 onKeyDown={(event) => {
                   if (event.key !== 'Enter' && event.key !== ' ') return;
                   event.preventDefault();
                   event.stopPropagation();
-                  openFrameSheet('menu');
+                  openSettings();
                 }}
               >
                 <Icon name="sliders" size={18} />
@@ -300,13 +309,15 @@ export function FrameChrome() {
               ))}
             </div>
             <span className={k('sp')} />
-            {/* Search is your communities': the page that lists them, with its field. */}
-            <button type="button" className={k('ib d')} aria-label={t('core:rail.search')} onClick={() => goToCommunity(null)}>
+            {/* Search is Home's: its field, which finds your apps and communities (Home.focusSearch). */}
+            <button type="button" className={k('ib d')} aria-label={t('core:rail.search')} onClick={() => { (window as any).Home?.focusSearch?.(); }}>
               <Icon name="search" />
             </button>
-            {/* An admin's look picker (./look-picker.tsx), beside the bell. */}
+            {/* An admin's look picker (./look-picker.tsx), beside the bell. The
+                bell opens the product's own sheet, as the standard header's
+                bell does. */}
             <LookPicker variant="frame" />
-            <button type="button" className={k('ib')} aria-label={t('core:header.notifications')} onClick={() => openFrameSheet('notifications')}>
+            <button type="button" className={k('ib')} aria-label={t('core:header.notifications')} aria-haspopup="dialog" data-frame-bell="" onClick={() => { (window as any).NotificationsSheet?.toggle?.(); }}>
               <Icon name="bell" />
               {unread ? <span className={k('dot')} /> : null}
             </button>
@@ -319,9 +330,10 @@ export function FrameChrome() {
               <Tile size={26} src={MARK} color="#0f1116" name={t('core:frame.brand')} />
               <Icon name="cd" size={16} />
             </button>
-            <button type="button" className={k('p')} aria-label={t('core:frame.menu.open')} onClick={() => openFrameSheet('menu')} style={{ background: 'none', border: 0 }}>
+            {/* A phone's avatar is the way to You, as the tab is. */}
+            <a className={k('p')} href="#profile" aria-label={t('core:tabs.me')} onClick={(event) => handing(event, () => pressTab('me'))}>
               <Av size={28} name={me || '?'} src={user?.avatar_url} color={swatchFor(me || '?')} />
-            </button>
+            </a>
           </header>
           <main className={k('pagearea')} ref={areaRef} />
           <nav className={k('tabbar')} aria-label={t('core:frame.navigation')}>
@@ -332,7 +344,6 @@ export function FrameChrome() {
           </nav>
         </div>
       </Frame>
-      <FrameSheets username={me} />
     </>
   );
 }
