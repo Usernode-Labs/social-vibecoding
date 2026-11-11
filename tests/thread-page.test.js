@@ -24,6 +24,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { withWords } = require('./lib/work-words');
 const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
@@ -283,12 +284,15 @@ test('the bar\'s pill says where the request\'s work stands', () => {
   assert.equal(requestPill(layoutOf([review, { ...review, id: 52 }]), null).key, 'choosing');
   assert.equal(requestPill(layoutOf([{ ...close, target: 7 }]), null).key, 'close');
   assert.equal(requestPill(layoutOf([{ ...review, state: 'underway' }]), null).tone, 'progress');
-  assert.equal(requestPill(layoutOf([]), 'building').key, 'building', 'the bot building it');
-  assert.equal(requestPill(layoutOf([]), 'ready_to_build').key, 'ready_to_build', 'ready, and waiting its turn');
-  assert.equal(requestPill(layoutOf([]), 'ready_to_build').spinner, undefined, 'a waiting build does not turn');
-  assert.equal(requestPill(layoutOf([]), 'ready_to_build').tone, 'neutral', 'the plain tone of Ready for a vote');
+  // 11 Nov 2026 (one model): the request's standing, in the server's words.
+  const building = withWords({ stage: 'building', line: null });
+  const readyToBuild = withWords({ stage: 'building', line: { code: 'queued', place: 2 } });
+  assert.equal(requestPill(layoutOf([]), building).key, 'building', 'the bot building it');
+  assert.equal(requestPill(layoutOf([]), readyToBuild).key, 'ready_to_build', 'ready, and waiting its turn: the server\'s Ready to build');
+  assert.equal(requestPill(layoutOf([]), readyToBuild).spinner, undefined, 'a waiting build does not turn');
+  assert.equal(requestPill(layoutOf([]), readyToBuild).tone, 'neutral', 'the plain tone of Ready for a vote');
   assert.equal(
-    requestPill(layoutOf([{ ...review, state: 'underway', ready: false }]), 'ready_to_build').key,
+    requestPill(layoutOf([{ ...review, state: 'underway', ready: false }]), readyToBuild).key,
     'building',
     'a change underway still wins over a queued build',
   );
@@ -341,8 +345,8 @@ test('#6139: a change that finished building reads as ready, with no spinner, an
   const still = requestPill(layoutOf([ready, building]), null, message);
   assert.equal(still.key, 'building', 'another change is still being built');
   assert.equal(still.spinner, true);
-  assert.equal(requestPill(layoutOf([ready]), 'building').key, 'building', 'the bot is really building for it');
-  assert.equal(requestPill(layoutOf([ready]), 'queued').key, 'ready', 'a build that has not started says nothing');
+  assert.equal(requestPill(layoutOf([ready]), withWords({ stage: 'building' })).key, 'building', 'the bot is really building for it');
+  assert.equal(requestPill(layoutOf([ready]), withWords({ stage: 'reading', line: { code: 'queued' } })).key, 'ready', 'a build that has not started says nothing');
   assert.equal(requestPill(layoutOf([ready, { ...building, id: 53, status: 'promoted', state: 'review' }]), null).key, 'vote', 'one up for a vote still leads');
 
   const [row] = threadRows(payload([ready]), null);

@@ -1,7 +1,7 @@
 import { WorkingDots } from '@/components/ui/chat';
 
 import { useMessages } from '../../lib/i18n/react';
-import { MessageMarkdown, UserAvatar } from './format';
+import { UserAvatar } from './format';
 import type { BotDoing, Typist } from './store';
 
 /*
@@ -36,18 +36,13 @@ import type { BotDoing, Typist } from './store';
  * checked answer appears once, as the bot's message. It used to show the
  * words as they were written, and a failed check then swapped them for a
  * repaired reply under the reader's eyes: a message that is shown must never
- * change. Nothing carries an answer's words here any more (`botDraftText`
- * stays for a stored draft, which no server writes now).
+ * change. Step 4 (11 Nov 2026): nothing carries an answer's words here at
+ * all, and the card has nowhere to draw them (#6405's re-streamed answer and
+ * #6581's cleanup after streaming cannot happen).
  *
- * 4 Nov 2026 (#6302): the words held for a message stay under whatever the
- * card says next. The server names a new doing as each step starts ("Reading
- * request #436") and none while it thinks, which used to drop the answer so
- * far and draw it again as the next round streamed: the card flashed between
- * output and thinking.
- *
- * 6 Nov 2026 (#6405): the draft only grows. A tail the server cut from
- * part-way through is stitched under the words already held, so the card
- * never shrinks and never streams an answer again from its first word.
+ * 4 Nov 2026 (#6302): a step with no name of its own keeps the last one
+ * named (store.ts botTypist), so the card does not flash back to "Thinking"
+ * between rounds.
  */
 
 type Translate = (id: string, values?: Record<string, unknown>) => string;
@@ -73,11 +68,6 @@ const DOING_WORDS: Record<string, string> = {
   writing: 'messages:thread.botWorking.writing',
 };
 
-/** Homeroom bot parity, P1: the answer so far, while the bot writes it, or ''. */
-export function botDraftText(doing: BotDoing | null | undefined): string {
-  return doing?.kind === 'writing' && typeof doing.text === 'string' ? doing.text.trim() : '';
-}
-
 /** What the card says the bot is doing: "Reading request #12", or "Thinking" for nothing (or a kind it does not know). */
 export function botDoingLine(t: Translate, doing: BotDoing | null | undefined): string {
   if (doing?.kind === 'request' && doing.number) return t('messages:thread.botWorking.request', { number: doing.number });
@@ -99,10 +89,6 @@ export function botDoingLine(t: Translate, doing: BotDoing | null | undefined): 
 
 export function BotWorkingCard({ typist }: { typist: Typist }) {
   const t = useMessages('messages');
-  // 4 Nov 2026 (#6302): the words already written, held by the store across
-  // the steps that follow (a read, a wordless "thinking"), so they never
-  // vanish and come back between rounds.
-  const draft = typist.draft || botDraftText(typist.doing);
   return (
     <div className="flex items-start gap-3 px-4 py-1" data-bot-working={typist.doing?.kind || 'thinking'}>
       <UserAvatar user={{ id: 0, username: typist.name, bot: true }} size="md" shape="square" />
@@ -112,11 +98,6 @@ export function BotWorkingCard({ typist }: { typist: Typist }) {
           <span className="min-w-0 truncate" data-bot-working-doing="">{botDoingLine(t, typist.doing)}</span>
           <WorkingDots />
         </div>
-        {draft ? (
-          <div className="mt-1.5 min-w-0 break-words text-[0.9375rem] leading-[1.375rem] text-zinc-900 dark:text-zinc-100" data-bot-working-draft="" aria-live="off">
-            <MessageMarkdown content={draft} />
-          </div>
-        ) : null}
       </div>
     </div>
   );

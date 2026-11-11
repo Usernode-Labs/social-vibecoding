@@ -43,7 +43,13 @@ before editing it.
   (`.claude/settings.json`), on the first prompt of a Codex session once its
   project config has been generated, and in OpenCode through
   `.opencode/plugins/`. When HEAD is behind, it puts a notice in your
-  context; act on it. It is advisory: offline, or in a Homeroom hosted worker
+  context; act on it. The notice covers instructions too: a behind
+  checkout's own `AGENTS.md` and `.agents/skills/` are as old as its code,
+  so read main's copy of a skill (`git show FETCH_HEAD:.agents/skills/<name>/SKILL.md`)
+  before following it, and with the Homeroom web connector connected use
+  `prepare_work` and `submit_work`, never the CLI or its login. It also has
+  you tell the user, once, that syncing their fork (next bullet) fixes this
+  for later sessions; never sync or pull for them unless they ask. It is advisory: offline, or in a Homeroom hosted worker
   (which sets `SOCIAL_VIBECODING_DRIFT_CHECK=off` because the harness fixes
   its base), it stays silent. Silence is therefore not proof the checkout is current: when
   the answer depends on current behavior and you have not seen a verdict,

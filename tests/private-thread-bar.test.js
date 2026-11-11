@@ -25,6 +25,7 @@ const path = require('node:path');
 
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
 const { message } = require('./lib/platform-i18n');
+const { withWords } = require('./lib/work-words');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -250,7 +251,8 @@ test('#6153: once filed, its head says where the request stands, live from its t
   assert.doesNotMatch(building, /Filed as request/, 'the strip, not the snapshot');
 
   // Where the stage has a second line, it follows the word, whole on hover.
-  work = { tracks: [track({ work: { stage: 'building', line: { code: 'reviewing', round: 1, of: 2 } } })] };
+  // 11 Nov 2026: in the words the server sends with it (tests/lib/work-words.js).
+  work = { tracks: [track({ work: withWords({ stage: 'building', line: { code: 'reviewing', round: 1, of: 2 } }) })] };
   assert.match(head(), /data-private-track-state="">Building<\/span><span class="min-w-0 flex-1 truncate" title="Reviewing, round 1 of 2">Reviewing, round 1 of 2<\/span>/);
   // It moves as the track does.
   work = { tracks: [track({ work: { stage: 'up_for_vote' }, step: 'vote', busy: false })] };

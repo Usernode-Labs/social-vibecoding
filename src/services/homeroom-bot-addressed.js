@@ -131,6 +131,24 @@ async function lastNoteText(pool, { appId, issueNumber }) {
 }
 
 /**
+ * Step 5 (11 Nov 2026, docs/plans/bot-one-model.md): whether a note the bot
+ * is about to post says what its last one on the request already says: the
+ * same kind (one of `kinds`) and the same words (sameNote). The bot's
+ * triage notes, its held line, its checks hand-off and its notes on its
+ * change's checks are posted only when that is not so: a verdict, or its
+ * reason, that changed. `wordless`: a note that is never said in the
+ * request's thread (a held line) has no words to compare, so its kind is
+ * its reason. Never throws (lastNoteText reads soft).
+ */
+async function repeatsLastNote(pool, { appId, issueNumber, kinds = [], text = '', wordless = false }) {
+  // Through the module's own export, the seam a test stubs.
+  const prev = await module.exports.lastNoteText(pool, { appId, issueNumber });
+  if (!prev || !kinds.filter(Boolean).includes(prev.kind)) return false;
+  if (prev.text == null) return !!wordless;
+  return sameNote(prev.text, text);
+}
+
+/**
  * #4530: whether the GitHub issue changed since the bot's note in a way its
  * comments do not explain: its updated_at past the note and every comment
  * since it, by more than the moment GitHub takes to stamp a comment
@@ -403,6 +421,7 @@ module.exports = {
   shouldSpeak,
   sameNote,
   lastNoteText,
+  repeatsLastNote,
   waitingOn,
   waitingOnRequest,
   waitingByIssue,

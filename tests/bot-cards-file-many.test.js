@@ -56,5 +56,5 @@ test('#6305: a project\'s thread draws the same rows and sends which are ticked'
   assert.match(transcript, /offer\.kind === 'file_many'/);
   assert.match(transcript, /FileManyRows/);
   assert.match(legacy, /bot\.offer\.rows/);
-  assert.match(legacy, /decideBotOffer\(messageId, choice, rows\)/);
+  assert.match(legacy, /decideBotOffer\(messageId, choice, rows, offerId\)/);
 });

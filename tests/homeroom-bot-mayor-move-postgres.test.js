@@ -413,14 +413,20 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     assert.equal(dmOffers.length, 0);
 
     const voice = require('../src/services/homeroom-bot-voice');
-    const offer = await voice.threadOffer(pool, { app: ears, kind: 'move_request', forUserId: ada.id, args: { issueNumber: 13 } });
-    assert.deepEqual(offer.metadata.actions.map((a) => a.label), ['Move it to Homeroom', 'Keep it here']);
-    const { rows: [note] } = await pool.query(
-      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, metadata)
-       VALUES ($1, $2, $3, 'issue', 13, $4) RETURNING id`,
-      [ears.id, bot.id, 'This is about Homeroom itself rather than Ear trainer.', JSON.stringify({ homeroomBot: { kind: 'voice', ...offer.metadata } })],
-    );
-    await voice.tieThreadOffer(pool, offer.id, note.id);
+    // The note and its card, written together, as ws.sendBotMessage writes
+    // them (step 3; the socket module is stood in for here).
+    const cards = require('../src/services/bot-cards');
+    const { note, offer } = await cards.inTransaction(pool, async (db) => {
+      const made = await cards.insertCard(db, { place: 'thread', appId: ears.id, kind: 'move_request', forUserId: ada.id, args: { issueNumber: 13 } });
+      const { rows: [row] } = await db.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, metadata)
+         VALUES ($1, $2, $3, 'issue', 13, $4) RETURNING id, metadata`,
+        [ears.id, bot.id, 'This is about Homeroom itself rather than Ear trainer.', JSON.stringify(cards.withThreadCard({}, made))],
+      );
+      await db.query('UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1', [made.id, row.id]);
+      return { note: row, offer: { id: Number(made.id) } };
+    });
+    assert.deepEqual(note.metadata.homeroomBot.actions.map((a) => a.label), ['Move it to Homeroom', 'Keep it here']);
     const before = gh.created.length;
     const said = [];
     const sock = {

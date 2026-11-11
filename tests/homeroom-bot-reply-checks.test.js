@@ -160,6 +160,8 @@ test('#6583: a platform report filed in an earlier turn resolves', async () => {
 test('#6583: an unfound number is asked to be looked up', () => {
   const note = mayor.checkNote([{ kind: 'unknown', numbers: [14], said: 'names request #14, which no project of theirs has' }]);
   assert.match(note, /Look the number up with request_detail/);
+  // #6583 (as merged): something filed earlier stays filed, and is not filed again.
+  assert.match(note, /so do not apologise for it or offer to file it again\./);
   assert.doesNotMatch(note, /never name one that does not exist/);
   assert.doesNotMatch(note, /has not been done/);
 });
