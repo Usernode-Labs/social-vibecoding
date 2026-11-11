@@ -27319,6 +27319,29 @@ html[data-skin] [data-standings-rows] > .fr-card > .fr-pad { padding: 0 16px 16p
 html[data-skin][data-you-frame] #profile-screen { padding-inline-start: var(--platform-rail-w, 0px) !important; padding-inline-end: 0 !important; }
 html[data-skin][data-you-frame] #profile-screen > *,
 html[data-skin][data-you-frame] #profile-content { max-width: none; margin: 0; padding: 0; }
+/* Version 2: You has six tabs, more than a phone is wide: the row scrolls
+   sideways there, with no bar of its own. A finished item's number has no
+   room on a phone (the tour hides it there). */
+@media (max-width: 767.98px) {
+  html[data-skin] [data-you-frame] .fr-tabs { overflow-x: auto; scrollbar-width: none; }
+  html[data-skin] [data-you-frame] .fr-tabs::-webkit-scrollbar { display: none; }
+  html[data-skin] [data-you-frame] .fr-row .fr-num { display: none; }
+  html[data-skin] [data-you-frame] .fr-btnrow.fr-chips.fr-p { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-inline-end: -16px; padding-inline-end: 16px; }
+  html[data-skin] [data-you-frame] .fr-btnrow.fr-chips.fr-p::-webkit-scrollbar { display: none; }
+}
+/* A verified account under the head is a door to it: the pill, as a link. */
+html[data-skin] [data-you-frame] a.fr-pill { text-decoration: none; }
+/* The Friends tab's username search is the product's own field and result
+   list (features/friends/friend-search.tsx), wearing the kit's field and
+   card: the same tokens the kit's .inp and .card are drawn with. */
+html[data-skin] [data-you-friends-search] #profile-friend-search { margin-bottom: 0; }
+html[data-skin] [data-you-friends-search] #profile-friend-search-input { min-height: 44px; padding: 0 16px; border: 0; border-radius: 12px; background: var(--fr-surface); color: var(--fr-ink); font: inherit; box-shadow: inset 0 0 0 1px var(--fr-line); }
+html[data-skin] [data-you-friends-search] #profile-friend-search-input::placeholder { color: var(--fr-faint); opacity: 1; }
+html[data-skin] [data-you-friends-search] #profile-friend-search-input:focus { outline: 0; box-shadow: inset 0 0 0 2px var(--fr-acc); }
+html[data-skin] [data-you-friends-search] #profile-friend-search-results { border-radius: 20px; background: var(--fr-surface); color: var(--fr-ink); box-shadow: inset 0 0 0 1px var(--fr-line); }
+html[data-skin] [data-you-friends-search] #profile-friend-search-results > * { border-color: var(--fr-line2); }
+html[data-skin] [data-you-friends] .fr-row .fr-t a,
+html[data-skin] [data-you-friends-sent] .fr-row .fr-t a { color: inherit; text-decoration: none; }
 
 /* A REQUEST'S PAGE (features/dev-board/topic/request-head.tsx). The page
    is the product's; under a look it is laid out as the kit's item page (the
@@ -28081,6 +28104,7 @@ html[data-skin] .fr-rx span.fr-on{background:var(--fr-acc-t);color:var(--fr-acc)
 html[data-skin] .fr-lone{padding:64px 16px;text-align:center;color:var(--fr-mut)}
 html[data-skin] .fr-welcome{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;padding-top:8px}
 html[data-skin] .fr-welcome .fr-tile{margin-bottom:6px}
+html[data-skin] .fr-facts.fr-f1{grid-template-columns:minmax(0,1fr)}
 @media (min-width: 768px){
 html[data-skin][data-skin] .fr-p{display:none!important}
 }
