@@ -55,6 +55,10 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
   // when one is already open, that this save has to wait for it (`pending`).
   const [pending, setPending] = useState<ProposalLink | null>(null);
   const [sent, setSent] = useState<{ link: ProposalLink; replaced: boolean } | null>(null);
+  // #6601: a refused replace (403 only-the-proposer, 409 already-decided) is
+  // said in the editor's own status line, not as a red error, because it is
+  // an answer about the waiting change rather than a failure to save.
+  const [refusal, setRefusal] = useState<{ message: string; href: string | null; decided: boolean } | null>(null);
   // Live pointers, in insertion order: one is a drag, two or more a pinch.
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const [dragging, setDragging] = useState(false);
@@ -163,7 +167,7 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
   };
   const save = async () => {
     if (busy || loading) return;
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setRefusal(null);
     try {
       const encode = async (blob: Blob | null) => {
         if (!blob) return undefined;
@@ -188,6 +192,15 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
         // 409 carries the card already waiting; keep it on screen with the
         // message so the link is one tap away.
         if (data.pending) setPending(data.pending);
+        // #6601: the two refusals a replace can get (403 not_proposer, 409
+        // already decided) are answers about the waiting change, so they are
+        // said in the status line under the buttons. A decided change cannot
+        // be retried, so the main button goes away with it.
+        if (res.status === 403 || res.status === 409) {
+          setRefusal({ message: data.error || t('discover:illustration.saveFailed'),
+            href: data.pending?.href || pending?.href || null, decided: res.status === 409 });
+          return;
+        }
         throw new Error(data.error || t('discover:illustration.saveFailed'));
       }
       // Nothing changed on the app: the caches the editor used to patch here
@@ -333,6 +346,10 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
       </fieldset>
       {loading && !error ? <p role="status" className="text-sm mt-3">{t('discover:illustration.loadingPreview')}</p> : null}
       {error ? <p role="alert" className="text-sm text-red-700 dark:text-red-400 mt-3">{error}</p> : null}
+      {refusal ? <p role="status" data-illustration-refused className="text-sm mt-3 text-zinc-700 dark:text-zinc-300">
+        {refusal.message}
+        {refusal.href ? <> <a href={refusal.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose}>{t('discover:illustration.openProposal')}</a></> : null}
+      </p> : null}
       {sent ? <p role="status" data-illustration-sent className="text-sm mt-3 text-zinc-700 dark:text-zinc-300">
         <RichMessage
           id={sent.replaced ? 'discover:illustration.replaced' : 'discover:illustration.sent'}
@@ -353,7 +370,7 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
         {sent
           ? <Button type="button" className="min-h-[44px] flex-1" onClick={onClose}>{t('core:common.done')}</Button>
           : <>
-            <Button type="button" className="min-h-[44px] flex-1" disabled={loading || busy || (!!pending && !pending.mine)} onClick={() => { void save(); }}>{busy ? t('discover:illustration.pleaseWait') : pending?.mine ? t('discover:illustration.replace') : t('discover:illustration.propose')}</Button>
+            <Button type="button" className="min-h-[44px] flex-1" disabled={loading || busy || refusal?.decided || (!!pending && !pending.mine)} onClick={() => { void save(); }}>{busy ? t('discover:illustration.pleaseWait') : pending?.mine ? t('discover:illustration.replace') : t('discover:illustration.propose')}</Button>
             <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" disabled={busy} onClick={onClose}>{t('core:common.cancel')}</Button>
           </>}
       </div>

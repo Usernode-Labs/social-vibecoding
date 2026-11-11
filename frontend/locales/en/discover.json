@@ -223,6 +223,10 @@
     "text": "Your change to this picture is waiting for the group's vote. Saving replaces it and clears the votes cast on it. <0>Open the proposal</0>",
     "description": "Shown in the featured illustration editor when the viewer's own change to the picture is waiting for the community's vote: what they save now replaces that change in place. The numbered tag is a link to the proposal (noun); \"Open\" is a verb."
   },
+  "illustration.openProposal": {
+    "text": "Open the proposal",
+    "description": "Link beside a refused replace in the featured illustration editor, when the change it was for can still be opened (it was already decided). The proposal is the change that was put to the group's vote."
+  },
   "illustration.replace": {
     "text": "Replace the waiting change",
     "description": "Main button of the featured illustration editor, when the viewer's own change to the picture is already waiting for the group's vote: replaces that waiting change with what is on screen, instead of proposing another."
