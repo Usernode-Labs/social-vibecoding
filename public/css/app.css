@@ -27321,10 +27321,12 @@ html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > [da
 html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > [data-settings-section]:not(.hidden) ~ :is([data-settings-section="email"], [data-settings-section="password"]):not(.hidden):has(> :not(.hidden)) { margin-top: 8px; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > [data-settings-section] { max-width: none; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-section-content .ui-secblurb { margin: 0 0 8px; line-height: 1.45; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-section-content :is(.ui-secblurb, .ui-note) + .ui-cap { margin-top: 16px; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > :is([data-settings-section="linked-accounts"], [data-settings-section="phones"], [data-settings-section="agent-files"], [data-settings-section="language"], [data-settings-section="tour"], [data-settings-section="guide"], [data-settings-section="about"], [data-settings-section="experimental"], [data-settings-section="wallet"], [data-settings-section="usernode"]) > div:first-child > .ui-sechead:first-child { display: none; }
 /* A part's own blocks were ruled off from one another (`mt-6 pt-6
    border-t`): the kit stacks them, no hairline. */
 html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content [data-settings-section] .border-t.pt-6 { margin-top: 24px; padding-top: 0; border-top: 0; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content [data-settings-section] .border-t.pt-5 { margin-top: 24px; padding-top: 0; border-top: 0; }
 
 /* THE CONTROLS INSIDE A SECTION, pattern by pattern.
    A switch is the kit's (the wear map: tog); the native thumb goes, the
@@ -27424,6 +27426,14 @@ html[data-skin]:where(:not([data-skin="brand"])) #settings-root .ui-card:has(> .
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-card.ui-pad .ui-row-t { font-size: 15px; font-weight: 650; color: var(--fr-ink); }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-card.ui-pad .ui-row-s { font-size: 13px; color: var(--fr-mut); }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-root .ui-card.ui-guide { padding: 16px; border: 0; }
+/* The CLI's set-up guide is one card of three numbered steps: the number
+   in the kit's lead tile, each command on the kit's ground with its Copy. */
+html[data-skin]:where(:not([data-skin="brand"])) #settings-root .ui-guide :is(h3, h4) { font-size: 15px; font-weight: 650; color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-root .ui-guide p { font-size: 13px; line-height: 1.45; color: var(--fr-mut); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-root .ui-guide li > span:first-child { width: 40px; height: 40px; border-radius: 12px; background: var(--fr-sunk); color: var(--fr-ink); font-size: 15px; font-weight: 700; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-root .ui-guide .rounded-md.border { border-color: var(--fr-line); border-radius: 12px; background: var(--fr-ground); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-root .ui-guide .rounded-md.border > :first-child { font-family: var(--fr-fm); color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-root .ui-guide .rounded-md.border > button { border-color: var(--fr-line); background: none; color: var(--fr-acc); font-size: 13px; font-weight: 600; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root :is(.ui-card, .ui-glist) + :is(.ui-cap, .ui-card, .ui-glist, h4, h5) { margin-top: 24px; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-root #settings-about-section .drawer-ver-row { min-height: 48px; padding-top: 8px; padding-bottom: 8px; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .drawer-ver-label { flex: 1; min-width: 0; font-size: 15px; color: var(--fr-ink); }
