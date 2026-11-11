@@ -870,7 +870,9 @@ function readDescription(parsed) {
 // the chips' order. `other` is for an app that is none of the five; it is
 // what a new project's dapp.json starts with, a line its group can change
 // by proposal like any other.
-const APP_CATEGORIES = Object.freeze(['games', 'social', 'tools', 'learning', 'creative', 'other']);
+const APP_CATEGORIES = Object.freeze([
+  'games', 'social', 'tools', 'learning', 'creative', 'money', 'health', 'food', 'other',
+]);
 const APP_CATEGORY_SET = new Set(APP_CATEGORIES);
 
 // Normalize `"category": "games"`. Lenient like `visibility` and
@@ -878,6 +880,13 @@ const APP_CATEGORY_SET = new Set(APP_CATEGORIES);
 // (an unknown word, a list, a number) is ignored with a warn and reads as
 // null, which is the same as saying nothing: the app is listed under All
 // types only. Never throws, so a typo never fails a deploy.
+//
+// `other` is a real key the reader keeps, but it means "not chosen": the
+// public directory sorts such an app by the kind it worked out from its name
+// and description (services/app-category.js), so Other keeps only the apps
+// nothing else fits. The client's copy of the list is
+// frontend/src/features/guest/guest-data.ts CATEGORIES, which
+// tests/guest-discover.test.js pins to this one.
 function readCategory(parsed) {
   const raw = parsed?.category;
   if (raw == null) return null;

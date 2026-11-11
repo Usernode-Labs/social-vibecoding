@@ -88,8 +88,17 @@ test('search reads the name and the description; a kind narrows to its apps', ()
 
 test('the kinds are the ones the directory has, in the manifest\'s order, and nothing for Other alone', () => {
   const { presentCategories, CATEGORIES } = loadTsx(DATA);
-  assert.deepEqual([...CATEGORIES], ['games', 'social', 'tools', 'learning', 'creative', 'other']);
+  assert.deepEqual([...CATEGORIES], [
+    'games', 'social', 'tools', 'learning', 'creative', 'money', 'health', 'food', 'other',
+  ]);
   assert.deepEqual(presentCategories(APPS), ['games', 'tools']);
+  assert.deepEqual(
+    presentCategories([
+      { category: 'food' }, { category: 'games' }, { category: 'money' }, { category: 'other' },
+    ]),
+    ['games', 'money', 'food', 'other'],
+    'a chip for every kind with a project, in the platform\'s order'
+  );
   assert.deepEqual(presentCategories([{ category: 'other' }, { category: null }]), []);
   // The same list app-manifest.js accepts, which the server validates against.
   const { APP_CATEGORIES } = require('../src/services/app-manifest');
