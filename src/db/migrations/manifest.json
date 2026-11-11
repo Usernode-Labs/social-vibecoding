@@ -285,6 +285,11 @@
       "id": "feedback-reports-thread",
       "sha256": "e9d2b9b8a140ceac2577b17f5940b7fec9d96f4aec3f99c5bda3b36ca5dba6e5",
       "schemaSha256": "8a7b5f32fc635f5c938941cc92dd1b66d5d167b88529e1ae688a5316f9f2c7cc"
+    },
+    {
+      "id": "user-timezone",
+      "sha256": "22f84d61daba3c9e9987b4376fb64be9d83da8d8e1716c245601b868bd33d5a8",
+      "schemaSha256": "3d3517428344df1cce094b86c36d4a220f652322a1edd53fe5fac519ab38c18b"
     }
   ]
 }

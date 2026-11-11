@@ -1054,6 +1054,9 @@ function authRoutes(config) {
         // it via the iframe JWT `locale` claim and the bridge's
         // usernode.getUserLocale().
         locale: req.user.locale ?? null,
+        // #6479: the IANA zone Settings › Language saved, or null for Auto
+        // (the device's own). Only the shell's time formatters read it.
+        timeZone: req.user.timeZone ?? null,
         // Platform-access gate (onboarding flow alignment). FALSE means
         // the account is waiting to be released off the platform
         // waitlist — the waiting room polls this to know when to let
@@ -1567,6 +1570,48 @@ function authRoutes(config) {
       res.json({ ok: true, locale: normalized });
     } catch (err) {
       log.error('settings', 'Failed to save locale preference', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The time zone a person's times are shown in (request #6479), beside the
+  // language in Settings › Language and saved the same way, on change. Body
+  // { timeZone: string | null }: null (or "") clears it back to "Auto: use
+  // device time zone". Anything else must be a zone this server's Intl knows,
+  // and is stored under the name Intl resolves it to ("asia/tokyo" →
+  // "Asia/Tokyo"). Read back through /api/auth/me.
+  router.post('/api/me/timezone', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { timeZone } = req.body || {};
+
+    let normalized = null;
+    if (timeZone !== null && timeZone !== undefined && timeZone !== '') {
+      if (typeof timeZone !== 'string') {
+        return res.status(400).json({ error: 'timeZone must be a string or null' });
+      }
+      const clean = timeZone.trim();
+      if (clean) {
+        let resolved = null;
+        if (clean.length <= 64) {
+          try {
+            resolved = new Intl.DateTimeFormat('en-US', { timeZone: clean }).resolvedOptions().timeZone || null;
+          } catch {
+            resolved = null;
+          }
+        }
+        if (!resolved) {
+          return res.status(400).json({ error: 'timeZone must be an IANA time zone (e.g. "Europe/Paris")' });
+        }
+        normalized = resolved;
+      }
+    }
+
+    try {
+      await pool.query('UPDATE users SET timezone = $1 WHERE id = $2', [normalized, req.user.id]);
+      log.info('settings', 'Time zone preference saved', { userId: req.user.id, timeZone: normalized });
+      res.json({ ok: true, timeZone: normalized });
+    } catch (err) {
+      log.error('settings', 'Failed to save time zone preference', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

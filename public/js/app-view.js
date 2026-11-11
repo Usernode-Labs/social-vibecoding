@@ -32657,15 +32657,19 @@ function relStamp(iso, now) {
   // Interface language, device region (#6103), as GroupChat._stamp and
   // lib/timestamp.ts read it; the device default where the runtime predates it.
   const locale = PlatformI18n.dateLocale ? PlatformI18n.dateLocale() : undefined;
+  // The zone the account picked (#6479); the device's where none is.
+  const timeZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
+  const zone = timeZone ? { timeZone } : {};
+  const yearOf = (x) => (PlatformI18n.zonedDay ? PlatformI18n.zonedDay(x).year : x.getFullYear());
   const title = date.toLocaleString(locale, {
-    year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    ...zone, year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   });
   const elapsed = ref.getTime() - date.getTime();
   if (elapsed >= REL_FLOOR_MS) {
     return {
-      text: date.toLocaleDateString(locale, date.getFullYear() === ref.getFullYear()
-        ? { month: 'short', day: 'numeric' }
-        : { year: 'numeric', month: 'short', day: 'numeric' }),
+      text: date.toLocaleDateString(locale, yearOf(date) === yearOf(ref)
+        ? { ...zone, month: 'short', day: 'numeric' }
+        : { ...zone, year: 'numeric', month: 'short', day: 'numeric' }),
       title,
     };
   }

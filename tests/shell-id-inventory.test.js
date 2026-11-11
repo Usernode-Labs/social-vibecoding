@@ -1228,6 +1228,12 @@ const ADDED_IDS = {
   'platform-rail-pinned': 'The sidebar\'s Pinned section (role=group), between #platform-tab-messages and #platform-rail-communities, hidden while nothing is pinned. Home\'s drag recognizer drops a My apps tile on it; dapp.json pins the bar order through it.',
   'platform-rail-pinned-label': 'The section\'s "Pinned" heading, which names the group.',
   'platform-rail-search': 'D: the search beside that heading, shown on hover or focus: Home with its search box focused (features/workshop/communities-search.ts; All communities\' search until One Home, #6361). dapp.json selects on it.',
+  // Request #6479: Settings › Language's Time zone list, under the language
+  // (features/settings/sections/language.tsx). It ships with the Auto option
+  // alone; settings.js adds the world's zones after mount.
+  'settings-timezone-section': '#6479: the Time zone block under #settings-language-section.',
+  'settings-timezone': '#6479: the Time zone select. settings.js fills and saves it (POST /api/me/timezone); dapp.json\'s language check selects on it.',
+  'settings-timezone-status': '#6479: the Saved / failed line under the Time zone select.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

@@ -23,6 +23,26 @@
     "text": "Could not load that language. Try again.",
     "description": "Status line under the Language list in Settings when the chosen language's text could not be downloaded."
   },
+  "timezone.title": {
+    "text": "Time zone",
+    "description": "Heading of the Time zone section in Settings, under the Language section, where the person picks the time zone Homeroom shows times in."
+  },
+  "timezone.intro": {
+    "text": "The times Homeroom shows you, on every device you sign in on. Auto follows this device's clock.",
+    "description": "Explanation under the Time zone heading in Settings: the choice is saved to the account, and Auto uses the phone's or computer's own time zone."
+  },
+  "timezone.auto": {
+    "text": "Auto: use device time zone ({{zone}})",
+    "description": "First option in the Time zone list in Settings: follow the phone's or computer's own time zone. {{zone}} is that zone's name, for example \"Europe / Paris\"."
+  },
+  "timezone.saved": {
+    "text": "✓ Saved. Times now show in {{zone}}.",
+    "description": "Status line under the Time zone list in Settings after the choice was saved. {{zone}} is the chosen zone's name, for example \"America / New York\", or the device's zone when Auto was chosen. Keep the check mark."
+  },
+  "timezone.saveFailed": {
+    "text": "Failed to save.",
+    "description": "Status line under the Time zone list in Settings when the choice could not be saved and the server gave no reason."
+  },
   "connectors.title": {
     "text": "Connectors",
     "description": "Heading of the Connectors section in Settings, where a person connects AI chat products (Claude, ChatGPT, Codex) to Homeroom."
@@ -2820,7 +2840,7 @@
     "description": "Not shown on screen. Extra search words for \"Accessibility\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.language": {
-    "text": "locale translate english auto device",
+    "text": "locale translate english auto device time zone timezone clock",
     "description": "Not shown on screen. Extra search words for \"Language\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.alerts": {

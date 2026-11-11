@@ -159,6 +159,84 @@ test('/api/auth/me reports null when unset', async () => {
   assert.equal(j.user.locale, null);
 });
 
+// ── 1b. The time zone beside it (request #6479) ─────────────────────────
+
+const postZone = (body) => fetch(`${base}/api/me/timezone`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body),
+});
+const zoneUpdate = () => calls.find((c) => /UPDATE users SET timezone/.test(c.sql));
+
+test('#6479: POST /api/me/timezone needs a session', async () => {
+  user = null;
+  const r = await postZone({ timeZone: 'Europe/Paris' });
+  assert.equal(r.status, 401);
+});
+
+test('#6479: a known zone is saved under the name Intl resolves it to', async () => {
+  for (const [input, expected] of [
+    ['Europe/Paris', 'Europe/Paris'],
+    ['  America/New_York ', 'America/New_York'],
+    ['asia/tokyo', 'Asia/Tokyo'],
+  ]) {
+    calls = [];
+    const r = await postZone({ timeZone: input });
+    assert.equal(r.status, 200, `expected 200 for ${input}`);
+    assert.deepEqual(await r.json(), { ok: true, timeZone: expected });
+    assert.deepEqual(zoneUpdate().params, [expected, 42]);
+  }
+});
+
+test('#6479: null, empty, whitespace and a missing body clear it back to Auto', async () => {
+  for (const body of [{ timeZone: null }, { timeZone: '' }, { timeZone: '   ' }, {}]) {
+    calls = [];
+    const r = await postZone(body);
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), { ok: true, timeZone: null });
+    assert.deepEqual(zoneUpdate().params, [null, 42]);
+  }
+});
+
+test('#6479: junk, over-long and non-string zones are a 400 that writes nothing', async () => {
+  for (const bad of ['Mars/Olympus_Mons', 'not a zone', 'Europe/' + 'a'.repeat(60), 42, { zone: 'UTC' }, true]) {
+    calls = [];
+    const r = await postZone({ timeZone: bad });
+    assert.equal(r.status, 400, `expected 400 for ${JSON.stringify(bad)}`);
+    assert.equal(zoneUpdate(), undefined);
+  }
+});
+
+test('#6479: /api/auth/me carries the saved zone, null when unset', async () => {
+  let j = await (await fetch(`${base}/api/auth/me`)).json();
+  assert.equal(j.user.timeZone, null);
+  user.timeZone = 'Asia/Tokyo';
+  j = await (await fetch(`${base}/api/auth/me`)).json();
+  assert.equal(j.user.timeZone, 'Asia/Tokyo');
+});
+
+test('#6479: the session middleware reads users.timezone into req.user.timeZone, on both paths', () => {
+  const src = read('src/middleware/auth.js');
+  assert.match(src, /u\.locale, u\.timezone,/);
+  assert.match(src, /timeZone: rows\[0\]\.timezone \|\| null/);
+  assert.match(src, /locale, timezone, has_platform_access FROM users WHERE id = \$1/);
+  assert.match(src, /timeZone: userRow\.timezone \|\| null/);
+  assert.match(read('src/db/migrations/user-timezone.sql'), /ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone/);
+});
+
+test('#6479: Settings › Language renders the Time zone list with Auto alone, and saves it on change', () => {
+  const html = shellMarkup();
+  assert.match(html, /id="settings-timezone-section"/);
+  assert.match(html, /<select[^>]*id="settings-timezone"[^>]*>\s*<option value=""><\/option>\s*<\/select>/);
+  assert.match(html, /id="settings-timezone-status"/);
+  const settings = read('frontend/src/features/settings/settings.js');
+  assert.match(settings, /getElementById\('settings-timezone'\)[\s\S]{0,200}addEventListener\('change', \(e\) => this\._saveTimeZone\(e\.target\.value\)\)/);
+  assert.match(settings, /this\.state\.timeZone = j\.user\?\.timeZone \|\| null/);
+  assert.match(settings, /Intl\.supportedValuesOf\('timeZone'\)/);
+  assert.match(settings, /saveAccountTimeZone\(value \|\| null\)/);
+  assert.equal(message('settings:timezone.title'), 'Time zone');
+});
+
 // ── 2. Iframe-token mint source guards (server.js — guarded code) ───────
 
 test('iframe-token mint selects the locale column alongside the pubkey', () => {
@@ -206,7 +284,8 @@ test('auth middleware selects the column and maps req.user.locale', () => {
   // business — #1281 added session_bridge_enabled there. What matters is
   // that locale is still selected by the by-id lookup and still arrives
   // beside has_platform_access, so the pattern spans whatever sits between.
-  assert.match(mw, /ai_progress_estimate,[\w\s,]*locale, has_platform_access FROM users WHERE id = \$1/);
+  // #6479 put timezone between them; the span allows it.
+  assert.match(mw, /ai_progress_estimate,[\w\s,]*locale,[\w\s,]*has_platform_access FROM users WHERE id = \$1/);
   assert.match(mw, /locale: rows\[0\]\.locale \|\| null/);
   assert.match(mw, /locale: userRow\.locale \|\| null/);
 });

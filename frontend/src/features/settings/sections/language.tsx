@@ -50,6 +50,20 @@ export function LanguageSection() {
         </Select>
         <StatusLine id="settings-locale-status" size="xs" />
       </div>
+      {/* #6479: the zone times are shown in, saved to the account the same
+          way. Only the Auto option is rendered; settings.js names the
+          device's zone in it and adds the world's zones after mount, so the
+          first render is the same everywhere and React never reconciles them
+          away. */}
+      <div id="settings-timezone-section" className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+        <SectionHeading title={t('settings:timezone.title')}>
+          {t('settings:timezone.intro')}
+        </SectionHeading>
+        <Select id="settings-timezone" variant="plain">
+          <option value="" />
+        </Select>
+        <StatusLine id="settings-timezone-status" size="xs" />
+      </div>
     </div>
   );
 }

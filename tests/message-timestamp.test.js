@@ -66,7 +66,7 @@ const LOCALE = dateLocale('en', DEVICE_LANGUAGES);
 // Lift `_stamp(ts, now) { … }` out of the GroupChat object literal. Brace
 // matching rather than a lazy regex: the body contains braces of its own, and
 // a `.*?}` would stop at the first option object.
-function legacyStamp() {
+function legacyStamp(i18n = englishPlatformI18n()) {
   const src = read('public/js/group-chat.js');
   const head = '_stamp(ts, now) {';
   const start = src.indexOf(head);
@@ -78,7 +78,7 @@ function legacyStamp() {
     else if (src[i] === '}') { depth -= 1; if (depth === 0) break; }
   }
   const body = src.slice(start + head.length, i);
-  return vm.runInNewContext(`(function (ts, now) {${body}})`, { PlatformI18n: englishPlatformI18n() });
+  return vm.runInNewContext(`(function (ts, now) {${body}})`, { PlatformI18n: i18n });
 }
 
 const stampLegacy = legacyStamp();
@@ -87,7 +87,7 @@ const stampLegacy = legacyStamp();
 // slice is simpler than `_stamp`'s method lift — but it closes over
 // `REL_FLOOR_MS`, which is the whole point of the copy, so that declaration
 // is evaluated with it rather than substituted for a literal here.
-function legacyRelStamp() {
+function legacyRelStamp(i18n = englishPlatformI18n()) {
   const src = read('public/js/app-view.js');
   const floor = src.match(/^const REL_FLOOR_MS = .*;$/m);
   assert.ok(floor, 'REL_FLOOR_MS must still exist in app-view.js');
@@ -100,7 +100,7 @@ function legacyRelStamp() {
     if (src[i] === '{') depth += 1;
     else if (src[i] === '}') { depth -= 1; if (depth === 0) break; }
   }
-  return vm.runInNewContext(`${floor[0]}\n${src.slice(start, i + 1)}\nrelStamp;`, { PlatformI18n: englishPlatformI18n() });
+  return vm.runInNewContext(`${floor[0]}\n${src.slice(start, i + 1)}\nrelStamp;`, { PlatformI18n: i18n });
 }
 
 const relStampLegacy = legacyRelStamp();
@@ -453,4 +453,61 @@ test('#1808: the topic page keeps no formatter of its own, and draws no Activity
   }
   assert.doesNotMatch(read('frontend/src/features/dev-board/topic/model.ts'), /\bactivity\b/,
     'and the view model no longer carries one');
+});
+
+// ─── #6479: the zone picked in Settings › Language ──────────────────
+
+test('#6479: with a zone picked, every copy writes the time and decides "today" in that zone', () => {
+  // One instance of the zone module, handed to all three copies: the bundle's
+  // through its import, the classic copies through PlatformI18n.
+  const zone = loadTsx('frontend/src/lib/time-zone.ts', { cache: false });
+  const zoned = loadTsx('frontend/src/lib/timestamp.ts', { cache: false, stubs: { './time-zone': zone } });
+  const i18n = { ...englishPlatformI18n(), timeZone: zone.getTimeZone, zonedDay: zone.zonedDay };
+  const chat = legacyStamp(i18n);
+  const card = legacyRelStamp(i18n);
+  // 03:30 UTC on 16 Jun: still the evening of the 15th in New York, midday
+  // of the 16th in Tokyo.
+  const now = new Date(Date.UTC(2026, 5, 16, 3, 30));
+  const evening = new Date(Date.UTC(2026, 5, 15, 14, 0)); // 10 AM the 15th in NY, 11 PM the 15th in Tokyo
+  const timeIn = (when, timeZone) => when.toLocaleTimeString(LOCALE, { timeZone, hour: 'numeric', minute: '2-digit' });
+  const dayIn = (when, timeZone) => when.toLocaleDateString(LOCALE, { timeZone, month: 'short', day: 'numeric' });
+  try {
+    zone.setTimeZone('America/New_York');
+    assert.equal(zone.getTimeZone(), 'America/New_York');
+    const ny = zoned.messageStamp(evening, { now });
+    assert.equal(ny.text, timeIn(evening, 'America/New_York'), 'the 15th is still today in New York');
+    assert.equal(chat(evening, now).text, ny.text, 'GroupChat._stamp agrees');
+    assert.equal(chat(evening, now).title, ny.title);
+
+    zone.setTimeZone('Asia/Tokyo');
+    const tokyo = zoned.messageStamp(evening, { now });
+    assert.equal(tokyo.text, `${dayIn(evening, 'Asia/Tokyo')}, ${timeIn(evening, 'Asia/Tokyo')}`,
+      'in Tokyo the same instant was yesterday, and the time is Tokyo\'s');
+    assert.equal(chat(evening, now).text, tokyo.text, 'GroupChat._stamp agrees');
+    assert.notEqual(tokyo.title, ny.title, 'the unelided title moves with the zone too');
+
+    // The age form past its floor is a date: the 31 Dec 23:30 UTC instant is
+    // already the new year in Tokyo, so it is "this year" there.
+    const nye = new Date(Date.UTC(2025, 11, 31, 23, 30));
+    const later = new Date(Date.UTC(2026, 1, 1, 12, 0));
+    assert.equal(zoned.agoStamp(nye, { now: later }).text, dayIn(nye, 'Asia/Tokyo'));
+    assert.equal(card(nye, later).text, zoned.agoStamp(nye, { now: later }).text, 'relStamp agrees');
+    assert.equal(card(nye, later).title, zoned.agoStamp(nye, { now: later }).title);
+
+    // Auto again: back to the device's zone, exactly the stamps without one.
+    zone.setTimeZone(null);
+    assert.equal(zone.getTimeZone(), undefined);
+    assert.deepEqual(zoned.messageStamp(evening, { now }), messageStamp(evening, { now }));
+    assert.deepEqual({ ...chat(evening, now) }, { ...stampLegacy(evening, now) });
+  } finally {
+    zone.setTimeZone(null);
+  }
+});
+
+test('#6479: a zone this engine does not know falls back to the device, never throws', () => {
+  const zone = loadTsx('frontend/src/lib/time-zone.ts', { cache: false });
+  zone.setTimeZone('Mars/Olympus_Mons');
+  assert.equal(zone.getTimeZone(), undefined);
+  assert.equal(zone.validTimeZone('asia/tokyo'), 'Asia/Tokyo');
+  assert.equal(zone.timeZoneLabel('America/Los_Angeles'), 'America / Los Angeles');
 });

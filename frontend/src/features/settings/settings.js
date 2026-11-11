@@ -827,6 +827,12 @@
       if (localeSelect) {
         localeSelect.addEventListener('change', (e) => this._saveLocale(e.target.value));
       }
+      // #6479: the time zone times are shown in, beside the language and
+      // saved the same way, on change.
+      const zoneSelect = document.getElementById('settings-timezone');
+      if (zoneSelect) {
+        zoneSelect.addEventListener('change', (e) => this._saveTimeZone(e.target.value));
+      }
 
       // #138 "Dev-chat sound & alerts" toggle. Client-only preference
       // (localStorage, default ON) owned by DevAlerts — we just mirror its
@@ -964,6 +970,7 @@
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
         this.state.sessionBridgeEnabled = !!j.user?.sessionBridgeEnabled;
         this.state.locale = j.user?.locale || null;
+        this.state.timeZone = j.user?.timeZone || null;
         // Same payload the CLI-credentials gate needs, so prime its memo
         // rather than let it issue a second /api/auth/me. (It still
         // fetches on its own when it runs first — the two orders both
@@ -2069,6 +2076,43 @@
       }
       select.value = value;
       const status = document.getElementById('settings-locale-status');
+      if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      this._renderTimeZoneSection();
+    },
+
+    // #6479: the Time zone list under the language. The pane renders only
+    // the Auto option; the world's zones are added here once, from the
+    // browser's own list, labelled "Region / City". A saved zone the list
+    // lacks (an older engine) is added too, so the select never reads "Auto"
+    // for a zone that is set.
+    _renderTimeZoneSection() {
+      const select = document.getElementById('settings-timezone');
+      if (!select) return;
+      const i18n = window.PlatformI18n;
+      const label = (zone) => (i18n.timeZoneLabel ? i18n.timeZoneLabel(zone) : zone);
+      const auto = select.options[0];
+      if (auto) auto.textContent = i18n.t('settings:timezone.auto', { zone: label(i18n.deviceTimeZone ? i18n.deviceTimeZone() : '') });
+      if (select.options.length <= 1) {
+        let zones = [];
+        try { zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : []; } catch { zones = []; }
+        const frag = document.createDocumentFragment();
+        for (const zone of [...zones].sort()) {
+          const opt = document.createElement('option');
+          opt.value = zone;
+          opt.textContent = label(zone);
+          frag.appendChild(opt);
+        }
+        select.appendChild(frag);
+      }
+      const value = this.state.timeZone || '';
+      if (value && ![...select.options].some((o) => o.value === value)) {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = label(value);
+        select.appendChild(opt);
+      }
+      select.value = value;
+      const status = document.getElementById('settings-timezone-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
     },
 
@@ -3469,6 +3513,29 @@
         status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
         status.classList.add('text-emerald-700', 'dark:text-emerald-400');
       }
+    },
+
+    async _saveTimeZone(value) {
+      const select = document.getElementById('settings-timezone');
+      const status = document.getElementById('settings-timezone-status');
+      const i18n = window.PlatformI18n;
+      const paint = (text, ok) => {
+        if (!status) return;
+        status.textContent = text;
+        status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+        status.classList.add(...(ok ? ['text-emerald-700', 'dark:text-emerald-400'] : ['text-red-700', 'dark:text-red-400']));
+      };
+      let saved;
+      try {
+        saved = await i18n.saveAccountTimeZone(value || null);
+      } catch (err) {
+        if (select) select.value = this.state.timeZone || '';
+        return paint(err.message || i18n.t('settings:timezone.saveFailed'), false);
+      }
+      this.state.timeZone = saved;
+      if (select) select.value = saved || '';
+      const zone = saved || (i18n.deviceTimeZone ? i18n.deviceTimeZone() : '');
+      paint(i18n.t('settings:timezone.saved', { zone: i18n.timeZoneLabel ? i18n.timeZoneLabel(zone) : zone }), true);
     },
 
     async _saveAiProgressEstimate(enabled) {
