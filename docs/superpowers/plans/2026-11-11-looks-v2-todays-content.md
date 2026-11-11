@@ -106,3 +106,60 @@ section after each merge.
   stack of the first programme (Docker Postgres with a production copy, env files, Playwright)
   lived in a session scratchpad that is gone; it has to be set up again before step 5.
 - Open questions each audit lists at its end stay open until their lane reaches them.
+
+### Lane H, as built (11 Nov 2026)
+
+**Home (s01 to s04), `features/home/frame/home-frame.tsx`.** One kit page: the head ("Home", "Your apps and
+your communities.", no button), the search field, then the tour's 720 + 320 columns.
+
+- *Search.* The kit field writes each change into `#home-search-input` and dispatches `input`, so
+  `Home._wireSearch` and `use-home-query.ts` stay the one owner; Escape clears. `Home._searchField()` (new,
+  `home.js`) returns the kit field under a look, and `Home.focusSearch`, Ctrl+K and `/` use it.
+- *Pinned apps.* `gridStore` tiles with the standard tile's marks (made from, who it is for, still open), a
+  status line and Retry, the tile menu on right-click; Edit, Add other apps, Done and New project under the
+  standard heading's rules; "Show all N apps" (`chromeStore.moreCount`) unfolds the grid in place, which then
+  ends in the New project tile. s03's page (`home-all-apps.tsx`) is deleted.
+- *Pinned communities.* Tiles from `homePinsStore.pins` with `owed`, then Needs you, All communities and New
+  community in the standard order and under its conditions; Edit puts a − on each pin; All communities (and
+  a search, and `home:show-all-communities`) shows the unpinned ones faded with a +. s04's page
+  (`home-all-communities.tsx`) is deleted. `Home.showCommunities` scrolls to `#home-frame-communities`.
+- *Communities to join.* The kind filter, Featured as text cards (a grid of three; a sideways row on a
+  phone), the rest as rows, each with a real Join (`Home.setMembership`), the standard paging, end line,
+  failed + Try again, and empty lines. The line under a name is the standard's (votes, else members).
+- *Next challenges.* The side column, one row per `panelsStore.challenges.rows`; a row's line is
+  `stateLabel` (open question 2: the row view has no description); the one-line note is one card.
+- Gone: the Needs you rows, Live this week, Your week, the season row, picture cards, the challenge cards
+  under the columns, their four reads, and 68 `home:frame.*` ids (`frame.title` stays, `frame.purpose` is new).
+
+**Rulings taken.** App tiles carry no count (question 1: the standard tile has none). Editing Pinned apps
+removes tiles and adds others; **dragging to rearrange is left**: PlatformUI's gesture measures the hidden
+standard grid's four-column cells, and the kit grid is six columns of flow. A hold on a touch screen does
+not open the tile menu either (the hold recogniser is the same gesture); right-click does, and Edit is the
+heading's link. The kit tile's menu has no "Edit My apps" item (it is offered only on `.app-card[data-yours]`).
+
+**Left (question 8).** The waitlist card, the verify card and the iOS widget strip are not drawn under a
+look: they are the standard components, and inside `.fr` the kit's reset would undress them. An account
+they apply to does not see them on Home under a look. They need a wear pass of their own.
+
+**Notifications (s05, s06).** The bar's bell calls `NotificationsSheet.toggle()`: the product's sheet, whole.
+It wears the look by one hand-written block in app.css (THE BELL'S SHEET) and the wear map: `card` gained
+`.notifications-card:where(#notifications-sheet *)`, and two new roots, `tabs` and `tab`, map the kit's tabs
+onto `#notifications-screen-tabs` (so Glass draws its capsule, Workbench its box). Mark all read stays where
+the product has it, in the sheet's head (question 5). `frame-sheets.tsx`, its suite and
+`notifications:frame.*` are deleted.
+
+**The Homeroom menu (s07).** Unchanged in content; drawn closer to the mockup by hand rules after THE
+HOMEROOM MENU: the title at 24px, Suggest an improvement the whole width, the rows as one card. The kit's
+account menu and `core:frame.menu.*` are deleted.
+
+**Chrome.** As ruled: the mark and the look picker stay at the bar's end. The sidebar's You row opens the
+profile and its glyph `#settings`; a phone's avatar is a link to You; the bar's search calls
+`Home.focusSearch()`. The sidebar's pins and the App row's dot (question 9) are not carried over: not ruled,
+and not in the mockup's frame.
+
+**Seen in a browser** (local stack, account with 98 pinned communities and no unread notifications): Home in
+Glass, Paper and Workbench, desktop and phone, light and dark; search, Show all, Edit and All communities
+pressed; the bell's sheet with older notifications open in Glass, Paper, Workbench (desktop, phone, dark);
+the menu in Glass (desktop) and Paper (phone, dark); the chrome's four presses on both widths. Not seen: an
+unread notification's row (the copy has none for this account), a locked or failed app tile, the waitlist
+states.
