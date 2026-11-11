@@ -32,6 +32,7 @@ export const RESERVED_KEYS = new Set([
   'IFRAME_JWT_PUBLIC_KEY',
   'PORT',
   'USERNODE_ENV',
+  'BROWSER_SITE_ISOLATION',
   'USERNODE_MISSING_SECRETS',
   'USERNODE_LLM_PROXY_URL',
   'USERNODE_LLM_PROXY_TOKEN',
@@ -81,6 +82,7 @@ export const PLATFORM_ENV_UNWRITABLE = new Set([
   'PORT',
   'USERNODE_ENV',
   'GIT_SHA',
+  'BROWSER_SITE_ISOLATION',
   // Auth + session crypto.
   //
   // DATA_ENCRYPTION_KEY is the load-bearing one: services/secrets.js

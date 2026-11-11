@@ -91,7 +91,7 @@ test('the pane reads and acts through the account\'s own routes', () => {
   assert.match(AUTH, /if \(!signedOut\) return res\.status\(404\)/);
   // Signing this browser out drops its cookies as logout does, so the
   // reload lands signed out rather than on a cookie that names nothing.
-  assert.match(AUTH, /if \(current\) \{\s+res\.clearCookie\('session'\);/);
+  assert.match(AUTH, /if \(current\) \{\s+clearSessionCookies\(res\);/);
   // The session's id is a digest prefix, never the token, and the phone
   // route is untouched for the mobile app.
   assert.doesNotMatch(AUTH, /res\.json\(\{ (phones|browsers)[^}]*token/);

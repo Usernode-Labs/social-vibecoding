@@ -1,3 +1,4 @@
+const { readSessionCookie, setSessionCookie, clearSessionCookies } = require('../services/browser-session-cookies');
 const appAllowance = require('../services/app-allowance');
 const appLimit = require('../services/app-limit');
 const crypto = require('crypto');
@@ -151,12 +152,7 @@ const SESSION_MINT_PATHS = [
 ];
 
 function createSessionCookie(res, token, expiresAt) {
-  res.cookie('session', token, {
-    httpOnly: true,
-    secure: SECURE_COOKIE,
-    sameSite: 'lax',
-    expires: expiresAt,
-  });
+  setSessionCookie(res, token, expiresAt);
   require('../services/browser-api-cache').setSessionCacheCookie(res, token, expiresAt);
 }
 
@@ -206,7 +202,7 @@ function authRoutes(config) {
   // protocol; every current native mint call remains routed through
   // fetchSessionMint until then.
   router.post(SESSION_MINT_PATHS, async (req, res, next) => {
-    const token = req.cookies?.session;
+    const token = readSessionCookie(req);
     if (!token) return next();
     try {
       const { rows } = await pool.query(
@@ -746,7 +742,7 @@ function authRoutes(config) {
   });
 
   router.post('/api/auth/logout', sameOriginBrowserOnly, async (req, res) => {
-    const token = req.cookies?.session;
+    const token = readSessionCookie(req);
     if (token) {
       try {
         await withTransaction(pool, async (client) => {
@@ -773,8 +769,7 @@ function authRoutes(config) {
         return res.status(500).json({ error: 'Internal server error' });
       }
     }
-    res.clearCookie('session');
-    res.clearCookie(require('../services/browser-api-cache').SCOPE_COOKIE, { path: '/' });
+    clearSessionCookies(res);
     res.json({ ok: true });
   });
 
@@ -1446,7 +1441,7 @@ function authRoutes(config) {
   // which signs that phone out and stops its notifications. Only the
   // signed-in account's own phones: any other id is a 404.
   async function currentNativeCredential(req) {
-    const token = req.cookies?.session;
+    const token = readSessionCookie(req);
     if (!token) return null;
     const { rows } = await pool.query(
       'SELECT native_session_credential_reference FROM sessions WHERE token = $1 AND user_id = $2',
@@ -1494,7 +1489,7 @@ function authRoutes(config) {
     res.set('Cache-Control', 'private, no-store');
     try {
       const browsers = await linkedBrowsers.listLinkedBrowsers(pool, req.user.id, {
-        currentToken: req.cookies?.session || null,
+        currentToken: readSessionCookie(req) || null,
       });
       res.json({ browsers });
     } catch (err) {
@@ -1508,15 +1503,14 @@ function authRoutes(config) {
     const sessionId = req.params.id;
     if (!linkedBrowsers.isBrowserSessionId(sessionId)) return res.status(404).json({ error: 'Not found' });
     try {
-      const currentToken = req.cookies?.session || null;
+      const currentToken = readSessionCookie(req) || null;
       const { signedOut, current } = await linkedBrowsers.signOutBrowser(pool, req.user.id, sessionId, { currentToken });
       if (!signedOut) return res.status(404).json({ error: 'Not found' });
       log.info('settings', 'Browser session signed out', { userId: req.user.id, current });
       // The browser in your hands was signed out with it: drop its cookies
       // as /api/auth/logout does, so the page it reloads to is signed out.
       if (current) {
-        res.clearCookie('session');
-        res.clearCookie(require('../services/browser-api-cache').SCOPE_COOKIE, { path: '/' });
+        clearSessionCookies(res);
       }
       res.json({ ok: true, current });
     } catch (err) {

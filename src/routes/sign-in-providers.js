@@ -1,5 +1,7 @@
 'use strict';
 
+const { readSessionCookie } = require('../services/browser-session-cookies');
+
 /**
  * Apple and Google sign-in (services/sign-in-providers.js has the whole
  * story), and the console screen that sets them up.
@@ -94,7 +96,7 @@ function signInProviderRoutes(config) {
   // The ordinary sign-in routes refuse to mint a session over a live one
   // (routes/auth.js SESSION_MINT_PATHS); these GETs make the same check.
   async function liveSession(req) {
-    const token = req.cookies?.session;
+    const token = readSessionCookie(req);
     if (!token) return false;
     const { rows } = await pool.query(
       'SELECT 1 FROM sessions WHERE token = $1 AND expires_at > NOW() LIMIT 1',

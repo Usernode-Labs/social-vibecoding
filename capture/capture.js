@@ -826,7 +826,8 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
     // path resolve before the first navigation. The fallback URL is the
     // same origin, so the one cookie covers the retry navigation too.
     if (cookie) {
-      await page.setCookie({ name: cookie.name, value: cookie.value, url });
+      await page.setCookie({ name: cookie.name, value: cookie.value, url,
+        ...(cookie.name.startsWith('__Host-') ? { secure: true, httpOnly: true, path: '/' } : {}) });
     }
     try {
       const resp = await page.goto(url, { waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS });

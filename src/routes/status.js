@@ -1,3 +1,4 @@
+const { readSessionCookie } = require('../services/browser-session-cookies');
 const { nativeWebSessionIsLive } = require('../services/web-session-auth');
 const { Router } = require('express');
 const path = require('path');
@@ -104,7 +105,7 @@ function statusRoutes(config) {
   const pool = getPool(config);
 
   async function resolveUser(req) {
-    const token = req.cookies?.session;
+    const token = readSessionCookie(req);
     if (!token) return null;
     try {
       const { rows } = await pool.query(

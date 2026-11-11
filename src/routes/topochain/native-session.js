@@ -1,5 +1,7 @@
 'use strict';
 
+const { readSessionCookie } = require('../../services/browser-session-cookies');
+
 const { Router } = require('express');
 const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
@@ -59,7 +61,7 @@ function nativeSessionRoutes(config) {
   router.post(HANDOFF_PATH, async (req, res) => {
     try {
       const { handoffToken, rawJson } = await protocol.createHandoff({
-        sessionToken: req.cookies?.session,
+        sessionToken: readSessionCookie(req),
         body: req.body,
         appVersion: req.get('Usernode-Native-App-Version'),
         buildNumber: req.get('Usernode-Native-App-Build'),

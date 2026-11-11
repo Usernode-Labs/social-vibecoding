@@ -1,3 +1,4 @@
+const { readSessionCookie } = require('../../services/browser-session-cookies');
 // Topochain v4 — authenticated mobile data surface (SPEC §4.5).
 //
 // Mounted in server.js BEFORE authMiddleware: protocol-2 native session
@@ -2150,7 +2151,7 @@ function topochainMobileRoutes(config) {
     // Claiming a wallet is for adults (#5095).
     requireAdultAttestation(pool, { shape: 'topochain' }),
     async (req, res) => {
-      const sessionToken = req.cookies?.session;
+      const sessionToken = readSessionCookie(req);
       if (!req.user || !sessionToken) return fail(res, 401, 'Unauthenticated.');
 
       const email = walletClaimEmail(req.body?.email);

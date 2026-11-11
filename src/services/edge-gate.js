@@ -1,5 +1,7 @@
 'use strict';
 
+const { readSessionCookie } = require('./browser-session-cookies');
+
 // The app-host gate: who may load an app at its own address, and as whom.
 //
 // Every request to an app host (<slug>.<apps domain>) or a preview host
@@ -683,7 +685,7 @@ async function handleAuthorize(pool, req, res) {
   );
   // The session the code is bound to. A request authenticated some other
   // way (a CLI bearer) has none, and gets no code.
-  const sessionToken = typeof req.cookies?.session === 'string' ? req.cookies.session : '';
+  const sessionToken = readSessionCookie(req) || '';
   if (!app || app.id !== vis.appId || !sessionToken) return res.redirect(302, fallback);
 
   const code = appAccess.mintAccessGrant({

@@ -23,6 +23,19 @@ test('cache hints are distinct non-credential labels with the session cookie lif
   assert.equal(calls[0][2].expires.getTime(), expiry.getTime());
 });
 
+test('HTTPS writes a protected cache hint and retires the host-local legacy hint', () => {
+  const writes = [], clears = [];
+  setSessionCacheCookie({ req: { secure: true },
+    cookie: (...args) => writes.push(args), clearCookie: (...args) => clears.push(args) },
+  'fake-https-session', new Date(Date.now() + 3600e3));
+  assert.equal(writes[0][0], '__Host-usernode_api_scope');
+  assert.equal(writes[0][2].secure, true);
+  assert.equal(writes[0][2].httpOnly, false);
+  assert.equal(writes[0][2].path, '/');
+  assert.equal(writes[0][2].domain, undefined);
+  assert.deepEqual(clears, [['usernode_api_scope', { path: '/' }]]);
+});
+
 test('HTTP representations and 304s retain current cookie authority and cache policy', async t => {
   const rows = new Map([
     ['fake-A', { user_id: 101, username: 'fake-A' }],
@@ -89,4 +102,26 @@ test('HTTP representations and 304s retain current cookie authority and cache po
   assert.equal(cookies[0][2].httpOnly, true, 'the credential remains HttpOnly');
   assert.equal(cookies[1][0], SCOPE_COOKIE);
   assert.equal(cookies[1][1], sessionCacheScope('fake-new-session'));
+
+  // Exercise the real middleware in cutover mode against the same fake rows.
+  // Legacy cookies cannot become authority, even beside a protected one.
+  const previousMode = process.env.BROWSER_SITE_ISOLATION, previousEnv = process.env.NODE_ENV;
+  process.env.BROWSER_SITE_ISOLATION = 'strict';
+  process.env.NODE_ENV = 'production';
+  t.after(() => {
+    if (previousMode === undefined) delete process.env.BROWSER_SITE_ISOLATION;
+    else process.env.BROWSER_SITE_ISOLATION = previousMode;
+    if (previousEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousEnv;
+  });
+  const strictA = await fetch(origin + '/api/private-fixture', {
+    headers: { cookie: 'session=fake-B; __Host-usernode_session=fake-A' },
+  });
+  assert.deepEqual(await strictA.json(), { private: 'FAKE_USER_101' });
+  assert.equal(strictA.headers.get(SCOPE_HEADER), sessionCacheScope('fake-A'));
+  for (const cookie of ['session=fake-A', '__Host-usernode_session=fake-A; __Host-usernode_session=fake-B']) {
+    const denied = await fetch(origin + '/api/private-fixture', { headers: { cookie } });
+    assert.equal(denied.status, 401);
+    assert.equal(denied.headers.get(SCOPE_HEADER), null);
+  }
 });

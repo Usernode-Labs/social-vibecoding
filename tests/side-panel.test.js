@@ -1267,7 +1267,7 @@ test('the shell snapshot really is not written from the panel\'s document', () =
     const ctx = {
       Date, JSON, readApiCacheScope,
       window: { localStorage: { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; }, removeItem: (k) => { delete store[k]; } } },
-      document: { cookie: 'usernode_api_scope=' + 'a'.repeat(64),
+      document: { cookie: '__Host-usernode_api_scope=' + 'a'.repeat(64),
         documentElement: { classList: { contains: (c) => embedded && c === 'in-side-panel' } } },
     };
     vm.createContext(ctx);

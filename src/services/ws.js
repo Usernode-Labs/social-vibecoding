@@ -1,3 +1,4 @@
+const { readSessionCookie } = require('./browser-session-cookies');
 const { nativeWebSessionIsLive } = require('./web-session-auth');
 const http = require('http');
 const { WebSocketServer } = require('ws');
@@ -496,8 +497,7 @@ async function authenticateWs(req, pool, config) {
 
 async function authenticateWsCookie(req, pool) {
   try {
-    const cookies = parseCookies(req.headers.cookie || '');
-    const token = cookies.session;
+    const token = readSessionCookie(req);
     if (!token) return null;
 
     const { rows } = await pool.query(
@@ -563,15 +563,6 @@ async function authenticateWsStagingJwt(req, pool, config) {
   } catch {
     return null;
   }
-}
-
-function parseCookies(header) {
-  const result = {};
-  header.split(';').forEach((pair) => {
-    const [key, ...vals] = pair.trim().split('=');
-    if (key) result[key.trim()] = vals.join('=').trim();
-  });
-  return result;
 }
 
 async function resolveAppForAccess(pool, slug) {
