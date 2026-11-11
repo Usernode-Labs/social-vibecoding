@@ -27064,11 +27064,22 @@ html[data-skin]:not([data-skin="pastel"]) .fr.fr-shell > .fr-side {
     height: var(--platform-safe-bottom, 0px);
     background: inherit;
   }
-  /* Glass and Pastel float their tab bar: it rises with the home strip and
-     the strip under it stays clear. */
+  /* Glass and Pastel float their tab bar: it reaches the foot of the screen
+     and spends the home strip as its own padding, the way #platform-tabs
+     does, so the bar's ground fills the strip and no page shows under it.
+     The pill, its 12px side margins and each look's border-box height are
+     kept; only the bottom grows. */
   html[data-skin="glass"] .fr.fr-shell .fr-tabbar,
   html[data-skin="pastel"] .fr.fr-shell .fr-tabbar {
-    margin-bottom: calc(12px + var(--platform-safe-bottom, 0px));
+    margin-bottom: 0;
+  }
+  html[data-skin="glass"] .fr.fr-shell .fr-tabbar {
+    height: calc(64px + var(--platform-tabs-inset, 0px));
+    padding-bottom: calc(8px + var(--platform-tabs-inset, 0px));
+  }
+  html[data-skin="pastel"] .fr.fr-shell .fr-tabbar {
+    height: calc(62px + var(--platform-tabs-inset, 0px));
+    padding-bottom: calc(6px + var(--platform-tabs-inset, 0px));
   }
   html[data-skin="glass"] .fr.fr-shell .fr-tabbar::after,
   html[data-skin="pastel"] .fr.fr-shell .fr-tabbar::after { content: none; }
