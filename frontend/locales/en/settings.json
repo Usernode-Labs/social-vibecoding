@@ -2020,15 +2020,15 @@
     "description": "Row title in Settings > User guide: the second step for someone new."
   },
   "guide.start.open.body": {
-    "text": "Select an app under Pinned apps on Home. Inside it, select the Homeroom logo to open its menu.",
-    "description": "Paragraph in Settings > User guide. \"Pinned apps\" is the name of a section of the Home screen."
+    "text": "Open a community's hub and select Open app, or select an app under Pinned apps on Home. Inside it, select the Homeroom logo to open its menu.",
+    "description": "Paragraph in Settings > User guide. \"Open app\" is a button on a community's hub; \"Pinned apps\" is the name of a section of the Home screen."
   },
   "guide.start.suggest.title": {
     "text": "Suggest your first improvement",
     "description": "Row title in Settings > User guide: the third step for someone new."
   },
   "guide.start.suggest.body": {
-    "text": "In that menu, select Suggest an improvement. Tap the part of the page you mean and say what should change. It is posted as a request the community can see.",
+    "text": "In that menu, select Suggest an improvement. Tap the part of the page you mean and say what should change. It is posted as a request on the project's Workshop.",
     "description": "Paragraph in Settings > User guide. \"Suggest an improvement\" is the name of the button in the Homeroom menu."
   },
   "guide.places.heading": {
@@ -2040,7 +2040,7 @@
     "description": "Row title in Settings > User guide, about communities."
   },
   "guide.place.communities.body": {
-    "text": "A community is the people behind a project. It shows as Just you, Private community or Public community, depending on who can open it. Yours are on Home, under Pinned communities and All communities. Each has a hub, a Workshop for the work going on, and channels to talk in. Joining a community is what lets you suggest changes, vote and post there.",
+    "text": "A community is the people behind a project. It shows as Just you, Private community or Public community, depending on who can open it. Yours are on Home, under Pinned communities and All communities. Each has a hub, a Workshop for the work going on, and channels to talk in. You need to join a community to suggest changes, vote and post there.",
     "description": "Paragraph in Settings > User guide. \"Just you\", \"Private community\" and \"Public community\" are the names shown on screen for who a community is for. \"Pinned communities\" and \"All communities\" are names shown on the Home screen. \"Workshop\" is the name of a place on a project's page."
   },
   "guide.place.apps.title": {
@@ -2048,7 +2048,7 @@
     "description": "Row title in Settings > User guide, about the Pinned apps section of the home screen. Same words as that section's heading."
   },
   "guide.place.apps.body": {
-    "text": "Pinned apps on Home holds the apps you pin. Select one to open it. To start your own project, select New community: it asks what the app should do and what to call it, then makes it, just for you until you invite people.",
+    "text": "Pinned apps on Home holds the apps you pin and the ones you help build. Select one to open it. To start your own project, select New community: it asks what the app should do and what to call it, then makes it, just for you until you invite people.",
     "description": "Paragraph in Settings > User guide. \"Pinned apps\" is a section of the Home screen; \"New community\" is the tile on Home that starts a project."
   },
   "guide.place.appMenu.title": {
@@ -2064,7 +2064,7 @@
     "description": "Row title in Settings > User guide. Same words as the button in the Homeroom menu."
   },
   "guide.place.suggest.body": {
-    "text": "Select it in the Homeroom menu to ask for a change to the app or to Homeroom itself. Tap the spot on the page you mean and say what should change, or switch to the form. It is posted as a request that members can see, vote on and pick up.",
+    "text": "Select it in the Homeroom menu to ask for a change to the app or to Homeroom itself. Tap the spot on the page you mean and say what should change, or switch to the form. It is posted as a request on the project's Workshop.",
     "description": "Paragraph in Settings > User guide. \"It\" is Suggest an improvement, named by the row title above it. \"The form\" is the written form the button can switch to."
   },
   "guide.place.bot.title": {
@@ -2092,7 +2092,7 @@
     "description": "Row title in Settings > User guide: the first step of how a change goes live."
   },
   "guide.vote.request.body": {
-    "text": "A member asks for a change, with Suggest an improvement or by telling Homeroom bot. The request goes on the project's Workshop, where members can see it, vote on it and pick it up.",
+    "text": "A member asks for a change, with Suggest an improvement or by telling Homeroom bot. The request goes on the project's Workshop, where people can see it.",
     "description": "Paragraph in Settings > User guide. \"Workshop\" is the name of a place on a project's page."
   },
   "guide.vote.build.title": {
@@ -2108,8 +2108,8 @@
     "description": "Row title in Settings > User guide: the second step of how a change goes live."
   },
   "guide.vote.up.body": {
-    "text": "When it is ready, the change goes up for a vote with a preview you can try. If it is waiting on you, it shows under Needs you, on Home and on the project's page.",
-    "description": "Paragraph in Settings > User guide. \"Needs you\" is the name of the list of decisions waiting on the person."
+    "text": "When it is ready, the change goes up for a vote with a preview you can try. If it is waiting on you, it is listed under Needs you.",
+    "description": "Paragraph in Settings > User guide. \"Needs you\" is the name of the list of things waiting on the person."
   },
   "guide.vote.checks.title": {
     "text": "Checks test it",
@@ -2180,7 +2180,7 @@
     "description": "Row title in Settings > User guide: the name of the list of decisions waiting on the person. Same words as on screen."
   },
   "guide.term.needsYou.body": {
-    "text": "Every decision waiting on you, such as a vote. It shows on Home while one waits, and on each project's page.",
+    "text": "Everything waiting on you, such as a vote or a question from Homeroom bot. Home shows a shortcut to it while a vote waits, and each project's page has its own.",
     "description": "Paragraph in Settings > User guide, explaining \"Needs you\"."
   },
   "guide.term.mainChat.title": {
@@ -2224,15 +2224,15 @@
     "description": "Row title in Settings > User guide: a question a person might ask."
   },
   "guide.faq.findApp.body": {
-    "text": "Pinned apps shows only the apps you pin. Open the app's community from Home, under Pinned communities or All communities, and select Open app on its hub. To keep it on Home, choose About this app in its Homeroom menu, then Pin to Home.",
-    "description": "Paragraph in Settings > User guide. \"Pinned apps\", \"Pinned communities\" and \"All communities\" are names on the Home screen; \"Open app\", \"About this app\" and \"Pin to Home\" are the names of buttons."
+    "text": "Pinned apps holds the apps you pin or help build. For any other app, open its community from Home, under Pinned communities or All communities, and select Open app on its hub. To keep it on Home, open the About entry in its Homeroom menu and choose Pin to Home.",
+    "description": "Paragraph in Settings > User guide. \"Pinned apps\", \"Pinned communities\" and \"All communities\" are names on the Home screen; \"Open app\" and \"Pin to Home\" are the names of buttons. \"The About entry\" is the row of the Homeroom menu that tells about the app."
   },
   "guide.faq.suggestion.title": {
     "text": "My suggestion isn't showing",
     "description": "Row title in Settings > User guide: a question a person might ask about a request they posted."
   },
   "guide.faq.suggestion.body": {
-    "text": "Your requests are listed in the Homeroom bot tab. If you were offline, it is kept on this device and sent once you are back online. A private request can be seen only by platform admins.",
+    "text": "Your requests are listed in the Homeroom bot tab. A request is posted only once you are online and send it. A private request can be seen only by platform admins.",
     "description": "Paragraph in Settings > User guide. \"Homeroom bot\" is the name of a tab."
   },
   "guide.faq.whoCan.title": {
@@ -2240,7 +2240,7 @@
     "description": "Row title in Settings > User guide: a question about who may take part in a community."
   },
   "guide.faq.whoCan.body": {
-    "text": "The community's members. Anyone can read a public community, but you join it to take part. A private community is joined by invitation. Which yeses a change needs is the project's own rule.",
+    "text": "You need to be a member of the community, and a project can ask for more: some let only invited people build, and a vote on a public project may need a verified account. Anyone can read a public community. A private community is joined by invitation. Which yeses a change needs is the project's own rule.",
     "description": "Paragraph in Settings > User guide. \"Yeses\" are approving votes."
   },
   "guide.faq.shortcuts.title": {
@@ -2248,7 +2248,7 @@
     "description": "Row title in Settings > User guide."
   },
   "guide.faq.shortcuts.body": {
-    "text": "On a computer, press C on most screens, or inside an app, to comment on what you see: each comment is posted as a request. Press C again to stop. In Settings, press / or Ctrl+K (⌘K on a Mac) to find a setting.",
+    "text": "On a computer, press C on most screens, or inside an app, to comment on what you see. Your comments are posted as requests, each pinned to the spot you chose. Press C again to stop. In Settings, press / or Ctrl+K (⌘K on a Mac) to find a setting.",
     "description": "Paragraph in Settings > User guide. C, /, Ctrl+K and ⌘K are keys; keep them as they are."
   },
   "guide.faq.problem.title": {

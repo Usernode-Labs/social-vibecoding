@@ -86,12 +86,22 @@ test('the words stay true: the tabs as the bar names them, and no rule it did no
   assert.match(message('settings:guide.vote.checks.body'), /can't go live until they pass/);
   // #6513: One Home (#6361) took the Communities tab off the bar, so the
   // guide sends people to Home for communities and Needs you, and Pinned
-  // apps is the apps you pin, not every app of your communities.
+  // apps is the apps you pin or build (Home.isYours), not every app of your
+  // communities.
   assert.doesNotMatch(all, /Communities tab/);
   assert.match(message('settings:guide.place.communities.body'), /Yours are on Home, under Pinned communities and All communities/);
-  assert.match(message('settings:guide.vote.up.body'), /under Needs you, on Home and on the project's page/);
-  assert.match(message('settings:guide.place.apps.body'), /holds the apps you pin/);
+  assert.match(message('settings:guide.vote.up.body'), /listed under Needs you\./);
+  // Home's Needs you tile shows only while a vote waits; the list holds more.
+  assert.match(message('settings:guide.term.needsYou.body'), /Home shows a shortcut to it while a vote waits/);
+  assert.match(message('settings:guide.place.apps.body'), /holds the apps you pin and the ones you help build/);
   assert.doesNotMatch(all, /apps from your communities/);
+  // Codex review: joining pins the community, not its app; a member is
+  // needed to take part but is not always enough; one request can hold
+  // several pinned comments; an offline comment is not sent by itself.
+  assert.match(message('settings:guide.start.open.body'), /hub and select Open app/);
+  assert.match(message('settings:guide.place.communities.body'), /You need to join a community/);
+  assert.match(message('settings:guide.faq.whoCan.body'), /a project can ask for more/);
+  assert.doesNotMatch(all, /each comment is posted as a request|sent once you are back online|About this app/);
   // The names it quotes are the screen's own.
   assert.equal(message('home:communities.heading'), 'Pinned communities');
   assert.equal(message('home:communities.all'), 'All communities');
@@ -99,7 +109,7 @@ test('the words stay true: the tabs as the bar names them, and no rule it did no
   assert.equal(message('home:join.heading'), 'Communities to join');
   assert.equal(message('home:communities.needs'), 'Needs you');
   assert.equal(message('project:communityCard.openApp'), 'Open app');
-  assert.equal(message('agent:appContext.row.aboutThisApp'), 'About this app');
+  assert.match(message('agent:appContext.row.about', { app: 'Run Club' }), /^About Run Club/);
   assert.equal(message('agent:appContext.about.addToMyApps'), 'Pin to Home');
   assert.equal(message('dialogs:feedback.target.platformSub'), 'The platform itself');
   assert.equal(message('messages:store.header.main'), 'Main Chat');
