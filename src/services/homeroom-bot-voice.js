@@ -1835,6 +1835,11 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     attached: [],
     revised: false, recentRevision: false, started: null, commented: null, posted: null, withdrew: null, reported: null,
     workBusy: false, triggerMessage: last.message,
+    // #6583: the bot's own earlier messages here are a record the claim check
+    // may read, and the tools this place offers are the only ones a check
+    // note may name.
+    earlierBotText: messages.filter((m) => Number(m.user_id) === Number(bot.id)).map((m) => String(m.content || '')).join('\n'),
+    toolNames: new Set(tools.map((tool) => tool?.function?.name).filter(Boolean)),
     // #6263: the changes this turn read (get_change) and whether it already
     // reworded one. What is not read is never described.
     readChanges: new Set(), described: false,
@@ -1992,7 +1997,7 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
       t.failures.push(`claims:${problems.map((p) => p.kind).join('+')}`.slice(0, 80));
       msgs.push({
         role: 'user',
-        content: `${mayor.checkNote(problems)}${problems.some((p) => p.kind === 'unread_description') ? UNREAD_DESCRIPTION_NOTE : ''}`,
+        content: `${mayor.checkNote(problems, { tools: ctx.toolNames })}${problems.some((p) => p.kind === 'unread_description') ? UNREAD_DESCRIPTION_NOTE : ''}`,
       });
       ctx.reply = null;
       finalText = '';
@@ -2021,7 +2026,7 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   // Task 2020 follow-up: the words as the reply wrote them, before anything below changes them.
   const asWritten = finalReply?.text ? text : null;
   if (text && ctx.checkedProblems?.length) {
-    text = stripUnreadClaims(mayor.stripClaims(text, ctx.checkedProblems), ctx.checkedProblems);
+    text = stripUnreadClaims(mayor.stripClaims(text, ctx.checkedProblems, ctx), ctx.checkedProblems);
   }
   // A turn that queued a change or made an offer did neither yet.
   if (text && (ctx.revised || ctx.offer)) text = notDoneYet(text);
