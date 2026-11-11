@@ -393,6 +393,9 @@
           },
           {
             "to": "#auth-landing-screen [data-landing-invite=\"dead\"] > h1"
+          },
+          {
+            "to": ":is(#profile-app-slots-sheet,#profile-week-share-sheet,#profile-feedback-sheet) h2"
           }
         ]
       },
@@ -433,6 +436,12 @@
               "block": ":is([data-waiting-look-around],[data-landing-invite-dead-continue])",
               "sm": ":is(#waiting-about-discovery > *)",
               "off": ":disabled"
+            }
+          },
+          {
+            "to": ":is(#profile-week-share-send,#profile-week-share-copy)",
+            "parts": {
+              "quiet": "#profile-week-share-copy"
             }
           }
         ]

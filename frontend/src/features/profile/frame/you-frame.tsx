@@ -15,7 +15,7 @@
  */
 import { useEffect, type MouseEvent, type ReactNode } from 'react';
 
-import { Bars, Btn, Card, Facts, GroupLink, Lead, PageBody, Pill, Row, Sec, Sub, Tabs, k } from '@/components/ui/kit';
+import { Bars, Btn, Card, Cols, Facts, Frame, GroupLink, Lead, PageBody, Pill, Row, Sec, Sub, Tabs, k } from '@/components/ui/kit';
 import { useMessages } from '../../../lib/i18n/react';
 import { useFrameFlag } from '../../frame/frame-flag';
 import { tabAddress, type YouTab } from './you-tabs';
@@ -117,6 +117,36 @@ function weekFigures(activity: Activity, timeLabel: string) {
   const lines: Array<typeof figures> = [];
   for (let i = 0; i < figures.length; i += 2) lines.push(figures.slice(i, i + 2));
   return lines;
+}
+
+/**
+ * You before its data, under a look: the kit's page at its own shape (the
+ * title and its line, a card of rows, the figures beside it), drawn as
+ * blocks in the look's sunk tone. The standard look keeps its own outline
+ * (../profile-view.tsx ProfileSkeleton); the words a screen reader hears
+ * are the same.
+ */
+export function YouLoading() {
+  useFrameFlag('you-frame');
+  const t = useMessages('profile');
+  const row = (i: number) => (
+    <div key={i} className={k('row')}>
+      <span data-sk="tile" />
+      <span className={k('tx')}><span data-sk="line" /><span data-sk="sub" /></span>
+    </div>
+  );
+  return (
+    <Frame data-you-frame="" data-you-loading="" role="status" aria-label={t('profile:screen.loading')}>
+      <div className={`${k('inner')} animate-pulse`} aria-hidden="true">
+        <div className={k('head')}><div className={k('tx')}><span data-sk="title" /><span data-sk="purpose" /></div></div>
+        <div data-sk="tabs" />
+        <Cols side={<><Card pad><span data-sk="figure" /><span data-sk="sub" /></Card><Card pad><span data-sk="line" /><span data-sk="plot" /></Card></>}>
+          <Card>{[0, 1, 2, 3].map(row)}</Card>
+          <Card>{[0, 1].map(row)}</Card>
+        </Cols>
+      </div>
+    </Frame>
+  );
 }
 
 export function YouFrame({ shell, stats, activity, rows, slots, admin, wallet = false, onSlots, onShareWeek }: {
