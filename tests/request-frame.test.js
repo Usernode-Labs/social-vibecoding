@@ -23,6 +23,7 @@ const ROOT = path.join(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(ROOT, ...parts), 'utf8');
 const FRAME = 'frontend/src/features/dev-board/topic/frame/topic-frame.tsx';
 const HEAD = 'frontend/src/features/dev-board/topic/request-head.tsx';
+const CHANGE = 'frontend/src/features/dev-board/topic/change-head.tsx';
 
 test('the page\'s head is the kit\'s: what it is in a small line over the full title, and the page\'s own menu', () => {
   const html = renderComponent(FRAME, 'TopicFrameHead', { title: 'Simplify the admin console', over: 'Request #5998 · Admin console', menu: { key: 'request:5998', label: 'More' } }, { cache: false });
@@ -131,27 +132,83 @@ test('the request page hands its status to the kit\'s card, and the stage lands 
   assert.match(css, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request-status \{ margin-top: 0; max-width: none; padding: 0; background: none; border-radius: 0; \}/);
 });
 
-test('a change\'s page stands the kit\'s status card over its votes and checks, the stop from where the change is', () => {
+test('a change\'s page: Status is a pill under its label, with no five-stop line, and leads the context column over Votes and Tested', () => {
   const { loadTsx } = require('./lib/render-tsx');
-  const { changeStop } = loadTsx('frontend/src/features/dev-board/topic/frame/topic-page.ts', { cache: false });
-  const gate = (done) => ({ done });
-  assert.deepEqual(changeStop({ key: 'live' }, gate(true), gate(true)), { at: 5, state: 'now' });
-  assert.deepEqual(changeStop({ key: 'going_live' }, gate(true), gate(true)), { at: 4, state: 'now' }, 'merged, not yet live: Vote done, Live next');
-  assert.deepEqual(changeStop({ key: 'vote' }, gate(false), gate(true)), { at: 3, state: 'now' }, 'checks passed: the vote is on');
-  assert.deepEqual(changeStop({ key: 'checking' }, gate(false), gate(false)), { at: 2, state: 'now' });
-  assert.deepEqual(changeStop({ key: 'building' }, gate(false), gate(false)), { at: 1, state: 'now' });
-  assert.deepEqual(changeStop(null, gate(false), gate(false)), { at: 2, state: 'now' }, 'nothing said: the checks are what a built change waits on');
-  const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
-  assert.match(src, /\{frame \? \(\s*<div className="dev-change-status">\s*<TopicFrameStatus\s+pill=\{v\.status \? \{ word: v\.status\.label, kind: pillKind\(v\.status, v\.votes\) \} : null\}/);
+  const page = loadTsx('frontend/src/features/dev-board/topic/frame/topic-page.ts', { cache: false });
+  assert.equal(page.changeStop, undefined, 'the five stops are the request page\'s; the standard change page has none');
+  const src = read(CHANGE);
+  assert.doesNotMatch(src, /changeStop|changes:track\./);
+  assert.match(src, /\{frame && v\.status \? \(\s*<div className="dev-change-status">\s*<TopicFrameStatus label=\{t\('project:frame\.topic\.status'\)\} pill=\{\{ word: v\.status\.label, kind: pillKind\(v\.status, v\.votes\) \}\} \/>/);
   assert.match(src, /useSideStack\(frame, `\[data-change-root="\$\{id \?\? ''\}"\] > \[data-image-viewer-scope\]`, \['\.dev-change-status', '\.dev-change-pair'\]\);/);
+  const html = renderComponent(FRAME, 'TopicFrameStatus', { label: 'Status', pill: { word: '✓ Live', kind: 'ok' } }, { cache: false });
+  assert.equal(html, '<section class="fr-sec" data-topic-status=""><div class="fr-sechead"><h2 class="fr-cap">Status</h2></div><div class="fr-card"><div class="fr-status"><div class="fr-btnrow"><span class="fr-pill fr-ok" data-kind="ok">✓ Live</span></div></div></div></section>');
   const css = read('public/css/app.css');
   assert.match(css, /\.dev-request-root > \[data-image-viewer-scope\] > :is\(\.dev-request-status, \.dev-request-track, \.dev-change-status, \.dev-change-pair\) \{[^}]*position: absolute;/);
   // In the 320px context column the Votes and Tested cards lay out as they
   // do on a phone: the figure on one line, the card's buttons on a row of
-  // their own under the bar. "All checks passed" beside Open app wrapped
-  // onto two lines in the standard grid.
+  // their own under the bar.
   const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-change-pair \.dev-change-gate \{ grid-template-columns: minmax\(0, 1fr\); \}/);
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-change-pair \.dev-change-gate-act \{ order: 1; flex-wrap: wrap; margin-top: 10px; \}/);
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-change-pair \.dev-change-gate-figure \{ white-space: nowrap; \}/);
+});
+
+test('Votes and Tested are small groups: each card\'s name is the label over it, its figure the card\'s first line', () => {
+  const src = read(CHANGE);
+  assert.match(src, /\{frame && stick \? <TopicFrameLabel>\{v\.votes\.name\}<\/TopicFrameLabel> : null\}\s*<GateCard which="votes" g=\{v\.votes\} action=\{ballot \? null : voteAction\} id=\{id\} closes=\{closes\} \/>\s*\{frame && stick \? <TopicFrameLabel>\{v\.testing\.name\}<\/TopicFrameLabel> : null\}\s*<GateCard which="testing"/,
+    'the product\'s own cards, as written; only the change\'s own page (stick) gets the labels, a change section on a request\'s page keeps the standard pair');
+  assert.match(src, /\{frame && stick && v\.merge \? <TopicFrameLabel>\{v\.merge\.name\}<\/TopicFrameLabel> : null\}/);
+  assert.equal(renderComponent(FRAME, 'TopicFrameLabel', { children: 'Votes' }, { cache: false }),
+    '<div class="fr fr-topiclabel" data-topic-label=""><div class="fr-sechead"><h2 class="fr-cap">Votes</h2></div></div>');
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
+  const P = 'html\\[data-skin\\]:where\\(:not\\(\\[data-skin="brand"\\]\\)\\) ';
+  assert.match(hand, new RegExp(`${P}\\.dev-change-root \\.dev-change-pair:not\\(\\[data-stuck\\]\\) \\.dev-change-gate-name \\{ display: none; \\}`), 'the name inside is put away; the card keeps it as its accessible name');
+  assert.match(read(CHANGE), /role="group"\s+aria-label=\{shown\.name\}/);
+  assert.match(hand, new RegExp(`${P}\\.dev-change-root \\.dev-change-pair:not\\(\\[data-stuck\\]\\) \\.dev-change-gate\\[data-done="true"\\] \\.dev-change-gate-figure \\{ display: inline-flex; align-items: center; gap: 8px; color: var\\(--fr-ok\\); \\}`), 'done: green, with a check');
+  assert.match(hand, new RegExp(`${P}\\.dev-change-root \\.dev-change-pair\\[data-stuck\\] > \\.fr-topiclabel \\{ display: none; \\}`), 'stuck under the head on a phone it is the standard compact pair');
+});
+
+test('"The change" is a labelled card that starts with who put it up and what built it', () => {
+  const src = read(CHANGE);
+  assert.match(src, /\{frame \? <TopicFrameLabel>\{t\('project:frame\.topic\.theChange'\)\}<\/TopicFrameLabel> : null\}\s*\{frame \? <TopicFrameBy name=\{v\.author\} color=\{swatchFor\(v\.author\)\} line=\{dotLine\(\[v\.time, v\.via\]\)\} title=\{v\.timeTitle\} at=\{v\.at\} \/> : null\}\s*<ChangeDiagram value=\{body\.diagram\} \/>\s*<RequestWords html=\{body\.summaryHtml \|\| ''\} \/>/,
+    'the same author, time and maker the standard head says, which the kit\'s page puts away with the title');
+  const by = renderComponent(FRAME, 'TopicFrameBy', { name: 'snait', color: '#5b7553', line: '10:10 · via Claude Code', title: '6 Nov 2026, 10:10', at: '2026-11-06T10:10:00Z' }, { cache: false });
+  assert.equal(by, '<div class="fr fr-topicby" data-topic-by=""><div class="fr-byline"><span class="fr-av" style="--fr-as:28px;--fr-ac:#5b7553" aria-hidden="true">s</span><b>snait</b><time dateTime="2026-11-06T10:10:00Z" title="6 Nov 2026, 10:10">10:10 · via Claude Code</time></div></div>');
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
+  const P = 'html\\[data-skin\\]:where\\(:not\\(\\[data-skin="brand"\\]\\)\\) ';
+  assert.match(hand, new RegExp(`${P}\\.fr-topicby:has\\(\\+ \\.dev-request-ask\\) \\{ position: relative; z-index: 1; height: 44px; margin-bottom: -44px; \\}`), 'drawn inside the top of the card that follows it');
+  assert.match(hand, new RegExp(`${P}\\.fr-topicby \\+ \\.dev-request-ask \\{ padding-top: 56px; \\}`));
+  const catalog = JSON.parse(read('frontend/locales/en/project.json'));
+  assert.equal(catalog['frame.topic.theChange'].text, 'The change');
+  assert.equal(catalog['frame.topic.status'].text, 'Status');
+});
+
+test('"Ask Homeroom bot privately" is the kit\'s quiet small button under a look, with the product\'s words and press', () => {
+  const src = read('frontend/src/features/dev-board/topic/work-with-bot.tsx');
+  assert.match(src, /const frame = isFrameSkin\(useLiveSkin\(\)\);\s*if \(!slug \|\| !number \|\| number <= 0 \|\| !canWork\(\) \|\| botAtWork\) return null;\s*if \(frame\) \{/, 'the look is read before the early return');
+  assert.match(src, /<Frame className="fr-topicask" data-work-with-bot=\{number\}>\s*<Btn kind="quiet" small disabled=\{busy\}/);
+  assert.equal((src.match(/openThreadAbout\(slug, number, kind, \{ failed: t\('project:topic\.workWithBot\.failed'\) \}\)/g) || []).length, 2, 'the same press');
+  assert.equal((src.match(/voting \? t\('project:topic\.workWithBot\.suggest'\) : t\('project:topic\.workWithBot\.ask'\)/g) || []).length, 2, 'the same words');
+});
+
+test('the discussion is the product\'s stream in one card under its count, what happened as quiet lines; on a phone where it stands leads the page', () => {
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
+  const P = 'html\\[data-skin\\]:where\\(:not\\(\\[data-skin="brand"\\]\\)\\) ';
+  const STREAM = '#dev-topic-thread \\.dev-request > \\.dev-request-sheet #gc-thread-messages:is\\(\\[data-language="request"\\], \\[data-language="change"\\]\\)';
+  assert.match(hand, new RegExp(`${P}${STREAM} \\{ position: relative; margin-top: 56px; padding: 8px 0; overflow: visible; \\}`), 'room over the card for its label, which the card must not clip');
+  assert.match(hand, new RegExp(`${P}${STREAM}:not\\(:has\\(> :not\\(\\.messages-reply-count\\)\\)\\) \\{ padding: 0; background: none; box-shadow: none;`), 'nothing but the count: no empty card');
+  assert.match(hand, new RegExp(`${P}#dev-topic-thread \\.dev-request #gc-thread-messages > \\.messages-reply-count \\{ position: absolute; inset-block-end: 100%; inset-inline-start: 0;`));
+  assert.match(hand, new RegExp(`${P}#dev-topic-thread \\.dev-request #gc-thread-messages > \\.messages-reply-count::after \\{ content: none; \\}`), 'a label has no rule after it');
+  const phone = hand.slice(hand.indexOf('[data-topic-frame-head] > .fr-head { flex-direction: row;'));
+  assert.match(phone, new RegExp(`${P}\\.dev-request-root > \\[data-image-viewer-scope\\] \\{ display: flex; flex-direction: column; \\}`));
+  assert.match(phone, new RegExp(`${P}\\.dev-request-root > \\[data-image-viewer-scope\\] > :is\\(\\.dev-change-status, \\.dev-request-track, \\.dev-request-at\\) \\{ order: -2; margin: 0 0 24px; \\}`));
+  assert.match(phone, new RegExp(`${P}\\.dev-request-root > \\[data-image-viewer-scope\\] > :is\\(\\.dev-change-pair-mark, \\.dev-change-pair\\) \\{ order: -1; \\}`), 'the mark stays just before the pair: it is what says the pair has stuck');
+  // The stream itself is not touched: transcript.tsx draws what it drew.
+  const stream = read('frontend/src/features/group-chat/transcript.tsx');
+  assert.match(stream, /<div className="gc-msg-system dev-request-event" data-msg-id=\{msg\.id \?\? ''\} data-request-event=/);
+  assert.match(stream, /<span className="dev-request-event-glyph" aria-hidden="true">\{glyph\}<\/span>/);
+  assert.match(stream, /<div className="messages-reply-count" data-request-replies=\{count\}>/);
 });

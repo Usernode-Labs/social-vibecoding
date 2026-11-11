@@ -28,24 +28,6 @@ export function frameStop(stage: 'asked' | 'spec' | 'built' | 'voted'): { at: nu
   return { at: 0, state: 'now' };
 }
 
-/**
- * Where a change stands on the five stops. Live is the end; merged and
- * going live is Vote done with Live next; checks passed puts the vote on;
- * a build still under way is Build; else the checks are what it waits on.
- */
-export function changeStop(
-  status: { key: string } | null,
-  votes: { done: boolean },
-  testing: { done: boolean },
-): { at: number; state: 'now' | 'wait' } {
-  const key = status?.key || '';
-  if (key === 'live') return { at: 5, state: 'now' };
-  if (/^(going_live|merging|deploying|delivery_pending|deployment_stalled|delivery_failed)$/.test(key) || (votes.done && testing.done)) return { at: 4, state: 'now' };
-  if (testing.done) return { at: 3, state: 'now' };
-  if (/build|underway|draft|queued|fixing/.test(key)) return { at: 1, state: 'now' };
-  return { at: 2, state: 'now' };
-}
-
 /** The status pill's kind on the kit's card: green once live, amber while on others, blue while it asks for you. */
 export function pillKind(status: { key: string; tone: string }, votes: { tone: string }): 'ok' | 'wait' | 'act' | '' {
   if (status.key === 'live' || status.tone === 'ok') return 'ok';

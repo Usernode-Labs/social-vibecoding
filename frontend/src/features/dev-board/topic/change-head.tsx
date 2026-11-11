@@ -71,9 +71,9 @@ import { IncludedIn, IssueAssociations, ProposalBody, SummaryMore } from './topi
 import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
 import { useFramePage } from '../../frame/frame-page-store';
 import { placeName } from '../workshop/places';
-import { TopicFrameHead, TopicFrameStatus } from './frame/topic-frame';
+import { TopicFrameBy, TopicFrameHead, TopicFrameLabel, TopicFrameStatus } from './frame/topic-frame';
 import { useSideStack } from './frame/side-stack';
-import { changeStop, dotLine, pillKind, topicBack } from './frame/topic-page';
+import { dotLine, pillKind, topicBack } from './frame/topic-page';
 
 function host(id: string): Element | null {
   return typeof document === 'undefined' ? null : document.getElementById(id);
@@ -595,6 +595,9 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
   id: number | null; card: DevCardModel; v: ChangeThreadView; ballot?: boolean; closes?: ClosesRequest[];
 }>(function ChangeGates({ id, card, v, ballot = false, closes = [] }, ref) {
   const { voteAction, testAction, withFix, testingActions, stopped } = gateActions(card, v);
+  // Under one of the frame's looks, on the change's own page, each card's
+  // name is the kit's label over it (app.css puts the name inside away).
+  const frame = isFrameSkin(useLiveSkin());
   const pair = useRef<HTMLDivElement>(null);
   const mark = useRef<HTMLSpanElement>(null);
   const [stick, setStick] = useState(false);
@@ -648,9 +651,12 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
         data-stuck={stick && stuck ? '' : undefined}
         style={stick && give ? { marginBlockEnd: give } : undefined}
       >
+        {frame && stick ? <TopicFrameLabel>{v.votes.name}</TopicFrameLabel> : null}
         <GateCard which="votes" g={v.votes} action={ballot ? null : voteAction} id={id} closes={closes} />
+        {frame && stick ? <TopicFrameLabel>{v.testing.name}</TopicFrameLabel> : null}
         <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix || stopped ? testingActions : null} id={id} />
         {/* #6563: the merge itself, while GitHub holds it or it is under way. */}
+        {frame && stick && v.merge ? <TopicFrameLabel>{v.merge.name}</TopicFrameLabel> : null}
         {v.merge ? <MergeCard g={v.merge} id={id} /> : null}
       </div>
     </>
@@ -677,7 +683,6 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   const trail = v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title');
   useFramePage(frame ? [placeName('workshop'), trail] : null, topicBack);
   useSideStack(frame, `[data-change-root="${id ?? ''}"] > [data-image-viewer-scope]`, ['.dev-change-status', '.dev-change-pair']);
-  const tc = useMessages('changes');
   const images = useInlineImageViewer();
   const thanks = v.thanks && id ? <span className="contents" data-kudos-host={id} data-kudos-face="thread"></span> : null;
   const issues = body.issues || [];
@@ -721,6 +726,12 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           <h1 className="dev-request-title" data-change-title={id ?? ''}>
             <TitleContent t={card.title} />
           </h1>
+          {/* Under a look: "The change" over its card, and who put it up
+              and what built it at the card's top (the head above, which the
+              kit's page puts away with the title). A change with a diagram
+              says them on a line over the diagram. */}
+          {frame ? <TopicFrameLabel>{t('project:frame.topic.theChange')}</TopicFrameLabel> : null}
+          {frame ? <TopicFrameBy name={v.author} color={swatchFor(v.author)} line={dotLine([v.time, v.via])} title={v.timeTitle} at={v.at} /> : null}
           <ChangeDiagram value={body.diagram} />
           <RequestWords html={body.summaryHtml || ''} />
           {body.summaryMore ? <SummaryMore m={body.summaryMore} /> : null}
@@ -751,14 +762,12 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {/* #6019: the requests, other changes and votes in its thread. */}
           {id ? <ThreadItems slug={pageSlug()} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} menuKey={menuKey || null} /> : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
-          {frame ? (
+          {/* Under a look: where it stands, as a pill, leading the context
+              column over Votes and Tested. No five-stop line: the standard
+              page has none for a change. */}
+          {frame && v.status ? (
             <div className="dev-change-status">
-              <TopicFrameStatus
-                pill={v.status ? { word: v.status.label, kind: pillKind(v.status, v.votes) } : null}
-                at={changeStop(v.status, v.votes, v.testing).at}
-                state={changeStop(v.status, v.votes, v.testing).state}
-                words={[tc('changes:track.plan'), tc('changes:track.build'), tc('changes:track.checks'), tc('changes:track.vote'), tc('changes:track.live')]}
-              />
+              <TopicFrameStatus label={t('project:frame.topic.status')} pill={{ word: v.status.label, kind: pillKind(v.status, v.votes) }} />
             </div>
           ) : null}
           {v.codeMissing ? <CodeMissingNotice /> : null}

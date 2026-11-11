@@ -6667,6 +6667,14 @@
     "text": "After the checks pass",
     "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, Line under the approval rule's row: a change is voted on once its automatic checks have passed."
   },
+  "frame.topic.theChange": {
+    "text": "The change",
+    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card that holds the change's summary and who put it up."
+  },
+  "frame.topic.status": {
+    "text": "Status",
+    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card in the context column that says where the request or the change stands."
+  },
   "frame.allItems.purpose_one": {
     "text": "{{count}} open request or change in {{project}}, newest first.",
     "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title. Singular."
