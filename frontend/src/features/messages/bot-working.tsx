@@ -1,7 +1,7 @@
 import { WorkingDots } from '@/components/ui/chat';
 
 import { useMessages } from '../../lib/i18n/react';
-import { MessageMarkdown, UserAvatar } from './format';
+import { UserAvatar } from './format';
 import type { BotDoing, Typist } from './store';
 
 /*
@@ -30,24 +30,19 @@ import type { BotDoing, Typist } from './store';
  * of its own until the store says the bot is typing, so a first render is
  * the empty transcript it always was.
  *
- * Homeroom bot parity, P1: AS IT WRITES. While the model writes its answer,
- * the typing event's `doing` is { kind: 'writing', text } (the newest part
- * of the answer so far, services/homeroom-bot-mayor.js draftWriter), and the
- * card shows those words under "Writing", growing, drawn as the message's
- * own words are. It is a preview: the message the bot sends, checked, takes
- * the card's place as before.
+ * Homeroom bot parity, P1, and #6581 (11 Nov 2026): the card shows the
+ * STEP, never the words. While the model writes its answer the typing
+ * event's `doing` is { kind: 'writing' } and the card says "Writing"; the
+ * checked answer appears once, as the bot's message. It used to show the
+ * words as they were written, and a failed check then swapped them for a
+ * repaired reply under the reader's eyes: a message that is shown must never
+ * change. Step 4 (11 Nov 2026): nothing carries an answer's words here at
+ * all, and the card has nowhere to draw them (#6405's re-streamed answer and
+ * #6581's cleanup after streaming cannot happen).
  *
- * 4 Nov 2026 (#6302): and the words stay under whatever the card says next.
- * The server names a new doing as each step starts ("Reading request #436")
- * and none while it thinks, which used to drop the answer so far and draw it
- * again as the next round streamed: the card flashed between output and
- * thinking. The store now holds the draft on the bot's Typist
- * (store.ts `botTypist`) and this draws it whatever the doing kind is.
- *
- * 6 Nov 2026 (#6405): the draft only grows. A tail the server cut from
- * part-way through is stitched under the words already held, and a rewrite
- * (the correction pass) waits until it has caught up with them, so the card
- * never shrinks and never streams the answer again from its first word.
+ * 4 Nov 2026 (#6302): a step with no name of its own keeps the last one
+ * named (store.ts botTypist), so the card does not flash back to "Thinking"
+ * between rounds.
  */
 
 type Translate = (id: string, values?: Record<string, unknown>) => string;
@@ -73,11 +68,6 @@ const DOING_WORDS: Record<string, string> = {
   writing: 'messages:thread.botWorking.writing',
 };
 
-/** Homeroom bot parity, P1: the answer so far, while the bot writes it, or ''. */
-export function botDraftText(doing: BotDoing | null | undefined): string {
-  return doing?.kind === 'writing' && typeof doing.text === 'string' ? doing.text.trim() : '';
-}
-
 /** What the card says the bot is doing: "Reading request #12", or "Thinking" for nothing (or a kind it does not know). */
 export function botDoingLine(t: Translate, doing: BotDoing | null | undefined): string {
   if (doing?.kind === 'request' && doing.number) return t('messages:thread.botWorking.request', { number: doing.number });
@@ -99,10 +89,6 @@ export function botDoingLine(t: Translate, doing: BotDoing | null | undefined): 
 
 export function BotWorkingCard({ typist }: { typist: Typist }) {
   const t = useMessages('messages');
-  // 4 Nov 2026 (#6302): the words already written, held by the store across
-  // the steps that follow (a read, a wordless "thinking"), so they never
-  // vanish and come back between rounds.
-  const draft = typist.draft || botDraftText(typist.doing);
   return (
     <div className="flex items-start gap-3 px-4 py-1" data-bot-working={typist.doing?.kind || 'thinking'}>
       <UserAvatar user={{ id: 0, username: typist.name, bot: true }} size="md" shape="square" />
@@ -112,11 +98,6 @@ export function BotWorkingCard({ typist }: { typist: Typist }) {
           <span className="min-w-0 truncate" data-bot-working-doing="">{botDoingLine(t, typist.doing)}</span>
           <WorkingDots />
         </div>
-        {draft ? (
-          <div className="mt-1.5 min-w-0 break-words text-[0.9375rem] leading-[1.375rem] text-zinc-900 dark:text-zinc-100" data-bot-working-draft="" aria-live="off">
-            <MessageMarkdown content={draft} />
-          </div>
-        ) : null}
       </div>
     </div>
   );

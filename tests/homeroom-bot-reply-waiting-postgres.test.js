@@ -14,7 +14,6 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
 
-const progress = require('../src/services/homeroom-bot-progress');
 const track = require('../src/services/homeroom-bot-track');
 const ai = require('../src/services/ai-work');
 
@@ -60,16 +59,14 @@ test('#6228: a stored reply reads as waiting to be read, for the track and the b
 
   await t.test('the newest reply after the look is read from the request thread', async () => {
     const { rows: [msg] } = await reply(1);
-    const { rows: [row] } = await pool.query(track.REQUEST_ROWS_SQL, [app.id, [6228]]);
-    assert.equal(Number(row.reply_id), Number(msg.id));
-    assert.equal(Number(row.reply_user_id), Number(evan.id));
-    const state = progress.stageOf(row, { now: new Date() });
-    assert.equal(state.stage, 'reading');
-    assert.equal(state.reply, true);
-    assert.equal(state.waiting, true);
-    // The track draws its stored work state: reading, its line the reply.
+    // The thread's reply line reads the newest reply after the look, and
+    // the request's stored work state: about to read it (`soon`).
+    const replyStatus = require('../src/services/homeroom-bot-reply-status');
+    const read = await replyStatus.readStatus(pool, { appId: app.id, place: { type: 'issue', ref: 6228 } });
+    assert.deepEqual([read.replyId, read.authorId, read.status], [Number(msg.id), Number(evan.id), 'will_read']);
+    // The track draws the same stored work state: reading, its line the reply.
     const tracks = await track.tracksForRequests(pool, { appId: app.id, numbers: [6228] });
-    assert.deepEqual([tracks.get(6228).work.stage, tracks.get(6228).work.line], ['reading', { code: 'reply' }]);
+    assert.deepEqual([tracks.get(6228).work.stage, tracks.get(6228).work.line], ['reading', { code: 'reply', soon: true }]);
   });
 
   // 5 Nov 2026: the bot page reads the request's stored work state
@@ -84,7 +81,7 @@ test('#6228: a stored reply reads as waiting to be read, for the track and the b
 
   await t.test('the stored state says Reading your reply, not Decide', async () => {
     const state = await stored();
-    assert.deepEqual([state.stage, state.line], ['reading', { code: 'reply' }]);
+    assert.deepEqual([state.stage, state.line], ['reading', { code: 'reply', soon: true }]);
     assert.equal(ai.standing(thread(), evan.id, new Date(), null, state, { decides: true }).group, 'next');
   });
 

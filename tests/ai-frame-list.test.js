@@ -78,7 +78,7 @@ test('a picked project narrows the list to it and adds its work in progress, wit
   assert.doesNotMatch(html, />Main Chat<|Game Corner · needs you/, 'the other project and Main Chat step aside');
   assert.match(html, />Homeroom · needs you</);
   const busy = html.slice(html.indexOf('>Homeroom · in progress<'));
-  assert.match(busy, /<span class="fr-t">Fix the close button<\/span><span class="fr-s">Homeroom bot<\/span><\/span><span class="fr-track fr-mini" role="img" aria-label="Build"><span class="fr-st fr-done" aria-hidden="true">Plan<\/span><span class="fr-st fr-now" aria-hidden="true">Build<\/span><span class="fr-st" aria-hidden="true">Checks<\/span>/,
+  assert.match(busy, /<span class="fr-t">Fix the close button<\/span><span class="fr-s">Building<\/span><\/span><span class="fr-track fr-mini" role="img" aria-label="Build"><span class="fr-st fr-done" aria-hidden="true">Plan<\/span><span class="fr-st fr-now" aria-hidden="true">Build<\/span><span class="fr-st" aria-hidden="true">Checks<\/span>/,
     'Plan done, Build under way, the rest to come');
   assert.doesNotMatch(busy, /Daily streaks/, 'another project\'s work is not listed');
 });

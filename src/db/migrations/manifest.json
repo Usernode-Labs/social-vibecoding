@@ -285,6 +285,51 @@
       "id": "feedback-reports-thread",
       "sha256": "e9d2b9b8a140ceac2577b17f5940b7fec9d96f4aec3f99c5bda3b36ca5dba6e5",
       "schemaSha256": "8a7b5f32fc635f5c938941cc92dd1b66d5d167b88529e1ae688a5316f9f2c7cc"
+    },
+    {
+      "id": "card-preview-loops",
+      "sha256": "a9ba17ce7df04ba5b43c8fc899b5f605dc37a4f2016b9500b7c9099d45fb0ed6",
+      "schemaSha256": "dd501b2988c25744c0d23560c2ab3aa69e8c2ecb8031deab3db75f29cde28428"
+    },
+    {
+      "id": "app-inferred-categories",
+      "sha256": "4514f6d7424e0356b702bbf9a29ed6e3bfa2667a5511ea217030f4b3f9e71507",
+      "schemaSha256": "ac3199877069149ff6adf3926e80d5b8755b026598b60100c194517ec84b1aaf"
+    },
+    {
+      "id": "work-state-votes",
+      "sha256": "35fe59fc0cc0a553f996638dfef0e6cfc949196053cf57883ca86e212abe8123",
+      "schemaSha256": "5b0a205d5965ba2fd2434cc0e45865f319d27d99b640b1607f42bce395663dc7"
+    },
+    {
+      "id": "work-state-standing",
+      "sha256": "24a1d11510fd809c002d95f7a0abbd6a6ffbbb1cdf470b168cc5dcfd3560ba38",
+      "schemaSha256": "82eed2549cb6a50586885282e97d3fd0ccbee694292ba5a3e623a90b3be5e4fc"
+    },
+    {
+      "id": "bot-quieter-rereads",
+      "sha256": "64673847c891220f4327c0f71bf0210b409c01d05e8c73334a70d70143d7d8f2",
+      "schemaSha256": "f55bc2de36305ca9f00f80eb6ec90bb35dd6d44b425d2907958efa7424cd3b42"
+    },
+    {
+      "id": "bot-cards-retired",
+      "sha256": "7ed4a1b49569c9be795f7a439ed51f532392115dc85d494edaf202a624db5563",
+      "schemaSha256": "618e6025c33fa9aa37fd8b303683d4984544a8b21be5c0d75597f8e103f2a1ad"
+    },
+    {
+      "id": "bot-posts",
+      "sha256": "a2f9eb96bd1cb019c7b420f4963041a7c3a03d45b46a1f797a9623ca170e28d6",
+      "schemaSha256": "d3be46fad177b29d979708a1df21329579deb42e18dc2858797298d5459e3d64"
+    },
+    {
+      "id": "work-state-backfill-and-indexes",
+      "sha256": "33513d01944cb62b790adf11e7851ad7f41d5723b989be9aabd5b7ad4a811b93",
+      "schemaSha256": "5492b9572cb99e244e6831633b77d4fcf2a4e5f3bcaad742fddf86e8c3d62ff0"
+    },
+    {
+      "id": "bot-posts-claims",
+      "sha256": "9306ae1ef3220c20e6b4ba4e2fb204f0f73df60ebd0888e306becf9cd7d1c411",
+      "schemaSha256": "b087bda2528bee618c65b04f787a4fd73c40356fc9e9671323035297f1810104"
     }
   ]
 }

@@ -463,6 +463,35 @@ function screenMarkup(html) {
 }
 
 /**
+ * Pure (#6407): the versions a design draws side by side on its after side:
+ * each `[data-variant]` label, and which one carries `data-chosen`. A design
+ * that draws one screen has no labels, so nothing is said about a choice.
+ */
+function designVariants(html) {
+  const labels = [];
+  let chosen = null;
+  for (const m of String(html || '').matchAll(/<[a-z][\w-]*\b[^>]*\bdata-variant\s*=\s*"([^"]*)"[^>]*>/gi)) {
+    const label = visibleText(m[1]);
+    if (!label || labels.includes(label)) continue;
+    labels.push(label);
+    if (/\bdata-chosen\b/i.test(m[0])) chosen = label;
+  }
+  return { labels, chosen };
+}
+
+/** Pure (#6407): the plan's sentence naming the versions a design draws, and which one is chosen. */
+function variantsSentence(variants) {
+  const labels = variants?.labels || [];
+  if (labels.length < 2) return null;
+  const named = labels.map((label) => `"${label}"`).join(' and ');
+  if (variants.chosen) {
+    return `This design draws ${labels.length} versions side by side: ${named}. Build "${variants.chosen}", the chosen one; `
+      + 'the others are there to compare.';
+  }
+  return `This design draws ${labels.length} versions side by side: ${named}. It does not say which one to build yet.`;
+}
+
+/**
  * Pure: the plan a design posts with. A design that began as a capture
  * shows version 1 and `version` side by side. 1 Nov 2026 (threads, one
  * loop: C2.1): one that did not (a screen drawn from words, the code or a
@@ -475,6 +504,10 @@ function planHtml({ design, title, notes, before = null, after, version }) {
   const height = Math.min(PLAN_MAX_HEIGHT, Math.max(phone ? 844 : 800, design.height));
   const where = design.route ? `${design.title} (${design.route})` : design.title;
   const said = notes ? `<p>${escapeHtml(notes).replace(/\n+/g, '</p><p>')}</p>` : '';
+  // #6407: a board that draws several versions says which one is chosen, so
+  // the choice is in the plan's own words and not only on the drawing.
+  const variants = variantsSentence(designVariants(after));
+  const chosenLine = variants ? `<p>${escapeHtml(variants)}</p>` : '';
   const captured = typeof before === 'string' && before.trim().length > 0;
   const empty = '<div style="min-height:100%;display:flex;align-items:center;justify-content:center;'
     + 'font:15px/1.4 system-ui,sans-serif;color:#71717a;padding:24px;text-align:center">'
@@ -485,6 +518,7 @@ function planHtml({ design, title, notes, before = null, after, version }) {
     captured
       ? `<p>A design for ${escapeHtml(design.title)}, made in a private design thread with Homeroom bot.</p>`
       : `<p>A design for a new screen, ${escapeHtml(design.title)}, made in a private thread with Homeroom bot.</p>`,
+    chosenLine,
     '<section data-spec-tab="user">',
     '<figure data-screens>',
     `<ol data-changes><li data-change="1" data-steps="${escapeHtml(where)}">${escapeHtml(notes ? notes.split('\n')[0] : title)}</li></ol>`,
@@ -504,6 +538,7 @@ function planHtml({ design, title, notes, before = null, after, version }) {
         + ` mockup drawn with ${design.surface === 'new' ? 'Homeroom\'s own' : 'the project\'s'} stylesheets. Build it in`
         + ' the project\'s own code and components, as a screen of its own, and keep its words, its layout and what it'
         + ' shows. Scripts the design used for its interactive states are left out of this plan.</p>',
+    chosenLine,
     '</section>',
     '</article>',
   ].join('\n');
@@ -892,6 +927,7 @@ module.exports = {
   pinFor,
   screenMarkup,
   visibleText,
+  designVariants,
   planGap,
   planReadout,
   planHtml,

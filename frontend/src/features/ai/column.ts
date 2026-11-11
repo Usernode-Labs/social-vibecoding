@@ -58,6 +58,12 @@ export function columnKey(column: Column): string | null {
   return 'new';
 }
 
+/** Pure: the project a page route belongs to (`app/<slug>/…`), else null. */
+export function pageProject(route: string | null | undefined): string | null {
+  const match = /^app\/([a-z0-9][a-z0-9-]{0,254})(?:\/|$)/.exec(String(route || '').split('?')[0].replace(/^\/+/, ''));
+  return match ? match[1] : null;
+}
+
 /** Pure: where a row of the lists goes: its private thread, else its page. */
 export function rowColumn(row: { rootId?: number | null; href?: string | null }): Column {
   if (row.rootId) return { at: 'thread', rootId: row.rootId };

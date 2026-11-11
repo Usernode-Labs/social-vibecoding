@@ -484,6 +484,10 @@ test('close-issue: takes the issue number as payload and POSTs a close', () => {
   assert.match(src, /useDialog<number \| string>\('closeIssue'/);
   assert.match(src, /\/issues`/);
   assert.match(src, /reasonRef\.current\.value = ''/, 'the reason field is cleared on both open and close');
+  // #6595: the view it was proposed from re-reads at once, not only after the
+  // broadcast or a reload.
+  assert.match(src, /_liveRefresh[\s\S]{0,200}?\('issue', null, \{ appSlug: appData\.slug, issueNumber: target \}\)/);
+  assert.match(dialog('reopen-issue.tsx'), /_liveRefresh[\s\S]{0,200}?\('issue', null, \{ appSlug: appData\.slug, issueNumber: target \}\)/);
 });
 
 test('import-pr: loads candidates on open, imports the selected one', () => {

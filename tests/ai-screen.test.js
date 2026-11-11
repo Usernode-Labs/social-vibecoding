@@ -40,6 +40,7 @@ const path = require('node:path');
 
 const { loadTsx } = require('./lib/render-tsx');
 const { message } = require('./lib/platform-i18n');
+const { withWords } = require('./lib/work-words');
 
 const MODEL = 'frontend/src/features/ai/model.ts';
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
@@ -89,7 +90,8 @@ const thread = (threadId, number, what, extra = {}) => {
   return {
     threadId, number, kind: 'work', title: `T${threadId}`, app, change: null,
     href: `#app/garden/dev/issues/${number}`, group: 'waiting', at: null,
-    work: { why: null, reason: null, line: null, since: null, ...(WORK[what] || { stage: what }), ...(given || {}) },
+    // 11 Nov 2026: with the words the server sends with it (tests/lib/work-words.js).
+    work: withWords({ why: null, reason: null, line: null, since: null, ...(WORK[what] || { stage: what }), ...(given || {}) }),
     ...rest,
   };
 };
@@ -622,7 +624,8 @@ test('each In progress and Waiting row says its stage and its second line, in th
     'Garden club · #7 · Building · Updating the change',
     'Garden club · #7 · Reading it',
     'Garden club · #7 · Reading it · Reading your reply',
-    'Garden club · #7 · Building', 'Garden club · #7 · Building',
+    'Garden club · #7 · Building · Homeroom bot is building it',
+    'Garden club · #7 · Building · You\'re building it',
     'Garden club · #7 · Building · snait is building it',
   ], 'a claim with no change yet names who has it');
   const waits = (what, extra = {}) => thread(1, 7, what, extra);
@@ -667,9 +670,9 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
     row('building', { by: 'someone' }), row('vote'), row('checking'), row('queued'), row('build_queued'),
     row('held'), row('held_turn'), row('on_hold'), row('not_picked_up'), row('build_stopped'),
   ].map((r) => words(shortWords(r))), [
-    'Going live', 'Homeroom bot', 'You', 'snait', 'Building', 'Up for a vote', 'Checking', 'Not started yet', 'Ready to build',
+    'Going live', 'Building', 'Building', 'Building', 'Building', 'Up for a vote', 'Checking', 'Not started yet', 'Ready to build',
     'Ready to build', 'Ready to build', 'Not started yet', 'Not started yet', 'Stopped: the build didn\'t finish',
-  ], 'the stage, in the words every screen uses; who is building it where that is the news');
+  ], 'the stage, in the words every screen uses');
   // Handed back by the bot: Needs Reply, Restart build and Retry the fix,
   // each saying its stage.
   const work = {
@@ -830,7 +833,12 @@ test('the server: a row\'s list is its stored work state, read for the viewer', 
   const ME = 5;
   const open = { state: 'open', own: true, number: 7, request_id: 1, request_state: 'open', request_at: at, created_at: at };
   const ws = (stage, extra = {}) => ({ stage, why: null, reason: null, line: null, since: at, requesterId: null, ...extra });
-  const work = (stage, extra = {}) => ({ stage, why: null, reason: null, line: null, since: at, ...extra });
+  // 11 Nov 2026: each row's words travel with it (services/work-state.js phrasesOf).
+  const { phrasesOf } = require('../src/services/work-state');
+  const work = (stage, extra = {}) => {
+    const w = { stage, why: null, reason: null, line: null, since: at, ...extra };
+    return { ...w, words: phrasesOf(w) };
+  };
   const promoted = { ...open, change_status: 'promoted', change_user: 9, voted: true, my_vote: 'yes', promoted_at: at };
   assert.deepEqual(aiWork.standing(promoted, ME, now, null, ws('up_for_vote')),
     { group: 'waiting', work: work('up_for_vote'), at, myVote: 'yes' }, 'a vote you have given waits on others');
@@ -884,9 +892,10 @@ test('the server: a row\'s list is its stored work state, read for the viewer', 
     { group: 'live', work: work('live'), at, mergedAt: at, changeId: 4 });
   assert.equal(aiWork.standing({ ...live, live_at: '2026-10-01T00:00:00.000Z' }, ME, now, null, ws('live', { since: '2026-10-01T00:00:00.000Z' })), null,
     'a week on, it is history');
-  // With no stored row yet (a read that failed), the change says it.
-  assert.equal(aiWork.standing({ ...promoted, check_state: 'passing', change_id: 4 }, ME, now).work.stage, 'up_for_vote');
-  assert.equal(aiWork.standing(open, ME, now).work.stage, 'reading');
+  // 11 Nov 2026: with no stored row read, nothing is listed: the stored row
+  // is the one source (statesFor makes a missing one first).
+  assert.equal(aiWork.standing({ ...promoted, check_state: 'passing', change_id: 4 }, ME, now), null);
+  assert.equal(aiWork.standing(open, ME, now), null);
   // A decision up for a vote waits for votes; one whose vote is owed is the feed's.
   const decision = { state: 'open', own: true, kind: 'decision', number: null, created_at: at, decision_status: 'open' };
   assert.deepEqual(aiWork.standing({ ...decision, decision_mine: true }, ME, now),
@@ -1920,7 +1929,11 @@ test('the page listens while it is shown: the socket through app.js, the bot\'s 
   // The page: each read it is asked for is the showing's read again, past
   // the worker's saved copy after the first, keeping the lists on a failure.
   const src = read('frontend/src/features/ai/index.tsx');
-  assert.match(src, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects, botId \}\);/);
+  // #6595: the page open in the column adds its own project to that set.
+  // 11 Nov 2026: and a work_state push is drawn in place first (applyWorkState).
+  assert.match(src, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects: shownProjects, botId \}, applyPush\);/);
+  assert.match(src, /setWork\(\(now\) => applyWorkState\(now, null, push\)\.work\);\s+setNeeds\(\(now\) => applyWorkState\(null, now, push\)\.needs\);/);
+  assert.match(live, /if \(isWorkStatePush\(event\)\) latest\.current\.apply\?\.\(event\);/);
   assert.match(src, /const init = again \? FRESH : undefined;/);
   assert.match(src, /readJson<AiWork>\(`\/api\/ai\/work\$\{qs\}`, init\)/);
   // A failed read keeps what is drawn (offline test, 2 Nov 2026: and with
@@ -2223,4 +2236,44 @@ test('10 Nov 2026: `#homeroom-bot/new` is the "+" pressed for you, and may name 
   assert.match(thread, /export function startNewThread\(conversationId: number, fresh\?: NewThreadPreset \| null\): void \{\n\s+if \(!conversationId\) return;\n\s+closeThread\(\);\n\s+preset = fresh \|\| null;/, 'the "+" itself clears what an earlier door named');
   assert.match(thread, /const \[project, setProject\] = useState\(\(\) => preset\?\.project \|\| ''\);/);
   assert.match(thread, /const \[builder, setBuilder\] = useState<Builder>\(\(\) => preset\?\.builder \|\| 'homeroom'\);/);
+});
+
+test('#6595: pageProject reads the project off a page route, and only there', () => {
+  const column = loadTsx('frontend/src/features/ai/column.ts');
+  assert.equal(column.pageProject('app/garden/dev/issues/6580'), 'garden');
+  assert.equal(column.pageProject('/app/garden/dev/changes/12'), 'garden');
+  assert.equal(column.pageProject('app/garden?project=x'), 'garden');
+  assert.equal(column.pageProject('homeroom-bot'), null, 'the tab itself');
+  assert.equal(column.pageProject('app'), null);
+  assert.equal(column.pageProject('messages/12'), null);
+  assert.equal(column.pageProject(null), null);
+  // The page open in the column is added to what the lists are re-read for,
+  // so a project that moved there is not missed when it is not listed.
+  const index = read('frontend/src/features/ai/index.tsx');
+  assert.match(index, /column\?\.at === 'page' \? pageProject\(column\.route\)/);
+  assert.match(index, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects: shownProjects, botId \}, applyPush\)/);
+});
+
+// #6600: after Homeroom bot took over the person's change and its last try
+// failed, the row says so and offers Ask again, not Fix it.
+test('#6600: a takeover that failed says the bot could not fix it, with Ask again', () => {
+  const { needsYou } = loadTsx(MODEL);
+  const work = {
+    private: [],
+    needs: [thread(7, 410, 'fixing', {
+      group: 'needs', kind: 'change', title: 'Show the reason', fixYours: true, botFixFailed: true,
+      work: { stage: 'checking', line: { code: 'bot_fix_failed' } },
+    })],
+    next: [], waiting: [], live: [],
+  };
+  const [row] = needsYou(null, work);
+  assert.equal(row.key, 'bot_fix_failed:7');
+  assert.equal(message(row.pill.id), 'Ask again');
+  assert.equal(words(row.sub), "Garden club · #410 · Homeroom bot couldn't fix it");
+  assert.equal(message(row.why.id), "Homeroom bot couldn't fix it. Ask it again, or fix it yourself");
+  assert.equal(row.href, '#app/garden/dev/issues/410', 'the change, where the bot can be asked again');
+  // On GitHub the change's number is written PR, not #.
+  const onGithub = { ...app, changesOnGithub: true };
+  const [pr] = needsYou(null, { ...work, needs: [{ ...work.needs[0], app: onGithub }] });
+  assert.equal(words(pr.sub), "Garden club · PR 410 · Homeroom bot couldn't fix it");
 });

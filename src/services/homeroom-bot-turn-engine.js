@@ -18,7 +18,8 @@
 //   2. decide whether it is the last (isLast, by default rounds >= limit);
 //   3. ask the profile what this round offers (offer: tools, tool choice, a
 //      note said before it, the request's own options), and ask the model;
-//   4. an answer with no calls goes to onWords, which keeps going or stops;
+//   4. an answer with no calls goes to onWords, which keeps going or stops
+//      (it may be async: the design bot checks words against the records);
 //   5. calls are kept as the assistant's message, each run through `call`,
 //      and each result kept as a tool message, cut as the profile cuts it;
 //   6. afterCalls may stop the turn.
@@ -60,7 +61,7 @@ async function runRound(state, profile, override = null) {
   const calls = profile.normalize(res?.toolCalls, state.rounds, profile.ids);
   if (!calls.length) {
     const onWords = offered.onWords || profile.onWords;
-    return onWords(res, round) === 'stop';
+    return (await onWords(res, round)) === 'stop';
   }
   if (typeof profile.onCalls === 'function' && profile.onCalls(res, calls, round) === 'stop') return true;
   profile.messages.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
@@ -73,7 +74,7 @@ async function runRound(state, profile, override = null) {
     });
   }
   const afterCalls = override && 'afterCalls' in override ? override.afterCalls : profile.afterCalls;
-  return typeof afterCalls === 'function' ? afterCalls(round) === 'stop' : false;
+  return typeof afterCalls === 'function' ? (await afterCalls(round)) === 'stop' : false;
 }
 
 /** The turn's rounds, until the profile has its answer, a hook stops it, or the limit is reached. */

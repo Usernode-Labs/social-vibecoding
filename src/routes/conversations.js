@@ -234,7 +234,18 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       // The staging demo's offers are fixtures: there is nothing to decide.
       if (isDemo(req)) return res.json({ ok: true, choice, demo: true });
       const out = await require('../services/homeroom-bot-mayor').decideOfferTap(pool, config, { user: req.user, actionId, choice, answers });
-      if (!out.ok) return res.status(out.status || 400).json({ error: out.error });
+      // Every tap as answered (events BOT_OFFER_TAP): rollout health counts the 404s and 410s.
+      void require('../services/events').recordBotOfferTap(pool, {
+        surface: 'chat', status: out.ok ? 200 : out.status || 400, userId: req.user?.id ?? null,
+      });
+      // Step 3: a refusal names its code (the line under the buttons, in the
+      // reader's language: messages.json bot.offer.refused.*), and a retired
+      // card why.
+      if (!out.ok) {
+        return res.status(out.status || 400).json({
+          error: out.error, code: out.code || null, ...(out.reason ? { reason: out.reason } : {}),
+        });
+      }
       return res.json(out);
     } catch (err) {
       log.error('conversations', 'homeroom bot action failed', { err: err.message, userId: req.user?.id });
@@ -258,6 +269,10 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       if (isDemo(req)) return res.json({ ok: true, demo: true });
       const out = await require('../services/homeroom-bot-cards').decide(pool, config, {
         user: req.user, messageId: req.params.messageId, action: req.body?.action, value: req.body?.value,
+      });
+      // Every tap as answered (events BOT_OFFER_TAP): rollout health counts the 404s and 410s.
+      void require('../services/events').recordBotOfferTap(pool, {
+        surface: 'card', status: out.ok ? 200 : out.status || 400, userId: req.user.id,
       });
       if (!out.ok) return res.status(out.status || 400).json({ error: out.error || 'That did not work' });
       return res.json(out);

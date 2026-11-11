@@ -227,12 +227,18 @@ test('the live list is gone: an app is left alone by pausing it', () => {
 
 // ── Posting ──────────────────────────────────────────────────────────────
 
+// Step 4 (11 Nov 2026): a post is claimed by its key in bot_posts
+// (services/bot-post.js) before anything is sent, and the request's row in
+// homeroom_bot_posts is written once it is said.
 function postHarness({ claimed = true, githubFails = false } = {}) {
   const calls = { queries: [], comments: [], messages: [] };
   const pool = {
     async query(sql, params) {
       calls.queries.push({ sql: String(sql), params });
-      if (/INSERT INTO homeroom_bot_posts/.test(sql)) return { rows: claimed ? [{ id: 55 }] : [] };
+      if (/INSERT INTO bot_posts/.test(sql)) {
+        return { rows: [claimed ? { id: 55, fresh: true, outcome: 'pending' } : { id: 55, fresh: false, outcome: 'refused' }] };
+      }
+      if (/INSERT INTO homeroom_bot_posts/.test(sql)) return { rows: [{ id: 66 }] };
       return { rows: [] };
     },
   };
@@ -259,49 +265,67 @@ function postHarness({ claimed = true, githubFails = false } = {}) {
 test('a post goes to both surfaces, scoped to the issue, and is recorded', async () => {
   const h = postHarness();
   const out = await live.post({ ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900, text: 'Which feed?' });
-  assert.deepEqual(out, { postId: 55, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true, messageId: 777 });
+  assert.deepEqual(out, { postId: 66, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true, messageId: 777 });
   assert.deepEqual(h.calls.comments, [{ owner: 'usernode-bot', repo: 'rss-reader', n: 12, body: 'Which feed?' }]);
   assert.deepEqual(h.calls.messages[0].thread, { type: 'issue', ref: 12 });
   assert.equal(h.calls.messages[0].msgType, 'system');
-  // A run's post first looks for one of its own a restart cut short.
-  assert.match(h.calls.queries[0].sql, /WHERE run_id = \$1 AND kind = \$2 AND pending IS TRUE/);
-  const insert = h.calls.queries[1];
-  assert.match(insert.sql, /ON CONFLICT \(app_id, issue_number\) WHERE kind = 'looking' DO NOTHING/,
-    'then its row is written, before anything is sent: for "looking" the insert is the claim');
-  assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, \$4, TRUE\)/, 'pending until it has gone out');
-  assert.match(h.calls.queries.at(-1).sql, /pending = NULL/, 'and said once it has');
-  assert.ok(h.calls.queries.some((q) => /UPDATE homeroom_bot_posts SET github_comment_id/.test(q.sql) && q.params[1] === 1234 && q.params[2] === 777));
+  // Its key is claimed before anything is sent: what it is, about this
+  // request, in this run.
+  const claim = h.calls.queries.find((q) => /INSERT INTO bot_posts/.test(q.sql));
+  assert.equal(h.calls.queries.indexOf(claim), 0, 'claimed first');
+  assert.equal(claim.params[0], `question:request:${APP.id}-12:run-900`);
+  assert.match(claim.sql, /ON CONFLICT \(said_key\) DO UPDATE SET asked = bot_posts\.asked \+ 1/);
+  // What went out is recorded on it as it goes, then the request's row, then said.
+  assert.ok(h.calls.queries.some((q) => /UPDATE bot_posts\s+SET chat_message_id/.test(q.sql) && q.params[3] === 1234));
+  const projected = h.calls.queries.find((q) => /INSERT INTO homeroom_bot_posts/.test(q.sql));
+  assert.deepEqual(projected.params.slice(3), ['question', 1234, 777]);
+  const settled = h.calls.queries.at(-1);
+  assert.match(settled.sql, /SET outcome = \$2/);
+  assert.deepEqual(settled.params.slice(0, 2), [55, 'said']);
 });
 
 test('a post a restart cut short is finished, its comment found on the issue rather than made twice', async () => {
   const h = postHarness();
   const at = '2026-10-14T10:00:00Z';
+  const pending = (id, more = {}) => ({ id, fresh: false, outcome: 'pending', github_comment_id: null, chat_message_id: null, created_at: at, ...more });
+  // Its claim lapsed with the restart: this ask takes the row over.
+  const takeOver = /SET claimed_at = NOW\(\), claimed_by = \$2/;
   h.pool.query = async (sql, params) => {
     h.calls.queries.push({ sql: String(sql), params });
-    if (/pending IS TRUE/.test(sql)) return { rows: [{ id: 41, github_comment_id: null, thread_message_id: null, created_at: at }] };
+    if (/INSERT INTO bot_posts/.test(sql)) return { rows: [pending(41, { request_post_id: 61 })] };
+    if (takeOver.test(sql)) return { rows: [pending(41, { request_post_id: 61 })] };
     return { rows: [] };
   };
   h.github.fetchIssueComments = async () => ({ comments: [{ id: 990, body: 'Which feed?', createdAt: '2026-10-14T10:00:01Z' }] });
   const out = await live.post({ ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900, text: 'Which feed?' });
-  assert.equal(out.postId, 41, 'its row is taken up');
+  assert.equal(out.postId, 61, 'its row is taken up');
   assert.deepEqual(h.calls.comments, [], 'the comment it made before the restart is not made again');
   assert.ok(!h.calls.queries.some((q) => /INSERT INTO homeroom_bot_posts/.test(q.sql)));
   assert.equal(h.calls.messages.length, 1, 'what had not gone out goes now');
-  const end = h.calls.queries.at(-1);
-  assert.match(end.sql, /pending = NULL/);
-  assert.deepEqual(end.params.slice(0, 3), [41, 990, 777]);
+  const again = h.calls.queries.find((q) => /UPDATE homeroom_bot_posts/.test(q.sql));
+  assert.match(again.sql, /pending = NULL/);
+  assert.deepEqual(again.params.slice(0, 3), [61, 990, 777]);
   // One whose comment had not gone out yet is commented now.
   const h2 = postHarness();
-  h2.pool.query = async (sql) => (/pending IS TRUE/.test(sql) ? { rows: [{ id: 42, github_comment_id: null, thread_message_id: null, created_at: at }] } : { rows: [] });
+  h2.pool.query = async (sql) => (/INSERT INTO bot_posts/.test(sql) || takeOver.test(sql) ? { rows: [pending(42)] } : { rows: [] });
   h2.github.fetchIssueComments = async () => ({ comments: [] });
   await live.post({ ...h2, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900, text: 'Which feed?' });
   assert.equal(h2.calls.comments.length, 1);
+  // One another pass is saying now (its claim held): nothing is sent here.
+  const h3 = postHarness();
+  h3.pool.query = async (sql) => (/INSERT INTO bot_posts/.test(sql) ? { rows: [pending(43)] } : { rows: [] });
+  const busy = await live.post({ ...h3, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900, text: 'Which feed?' });
+  assert.deepEqual([busy.again, busy.busy], [true, true]);
+  assert.deepEqual([h3.calls.comments.length, h3.calls.messages.length], [0, 0]);
+  await assert.rejects(live.post({ ...h3, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900, text: 'Which feed?', strict: true }),
+    (err) => err.code === 'post_busy', 'a durable caller is told, and its retry finds it said');
 });
 
 test('"looking" is posted once per issue: a second claim sends nothing', async () => {
   const h = postHarness({ claimed: false });
   const out = await live.post({ ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'looking', text: live.lookingText() });
-  assert.equal(out, null);
+  assert.equal(out.again, true, 'its key is the request\'s, said once');
+  assert.equal(h.calls.queries[0].params[0], `looking:request:${APP.id}-12:once`);
   assert.deepEqual(h.calls.comments, []);
   assert.deepEqual(h.calls.messages, []);
   assert.match(read('src/db/schema.sql'),
@@ -343,7 +367,7 @@ test('a change on its request page is said once, on the request, tagged with the
   const [m] = h.calls.messages;
   assert.deepEqual(m.thread, { type: 'issue', ref: 12 });
   assert.deepEqual(m.metadata.aboutChange, { sessionId: 12428 }, 'the kept copy says which change it is about');
-  assert.equal(m.metadata.hrbotPost, '55');
+  assert.equal(m.metadata.hrbotPost, 'post-55', 'its post\'s mark');
   assert.equal(out.thread, true);
 });
 
@@ -438,7 +462,7 @@ test('a post that names the poster: @handle in the thread only, and one mention 
     ...h, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900,
     text: 'Which feed? @alice said the sports one.', mention: 'evan', senderId: 77, notifications,
   });
-  assert.deepEqual(out, { postId: 55, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true, messageId: 777 });
+  assert.deepEqual(out, { postId: 66, githubCreatedAt: '2026-09-25T17:00:05Z', github: true, thread: true, messageId: 777 });
   assert.equal(h.calls.messages[0].content, '@evan Which feed? @alice said the sports one.', 'named in the thread');
   assert.equal(h.calls.comments[0].body, 'Which feed? @alice said the sports one.',
     'never on GitHub: a platform username there would notify whoever owns it (#723)');
@@ -1478,4 +1502,31 @@ test('#3426: a request with a screenshot tells each bot turn to look at it, and 
   assert.ok(live.specPrompt(args).includes(note), 'and the spec');
   assert.match(BOT_SRC, /seed, live\.screenshotNote\(seed\)\.join\('\\n'\)\.trim\(\), triagePrompt\(\)/, 'and the triage');
   assert.ok(!live.buildPrompt({ seed: 'Issue #3', buildNote: 'x' }).includes('Download each one'));
+});
+
+test('#6407: a build from a posted plan is told whose plan, which version, and to say where it departed', () => {
+  const fromPlan = { sessionId: 44, version: 3, author: 'evan', variant: 'With date headings' };
+  const lines = live.fromPlanLines(fromPlan).join('\n');
+  assert.match(lines, /This SPEC is @evan's plan, version 3, posted on the request/);
+  assert.match(lines, /build only "With date headings"/);
+  assert.match(lines, /Where what you build departs from the plan, say where and why/);
+  assert.ok(live.buildPrompt({ seed: 'Issue #6351', buildNote: 'x', fromPlan }).includes('build only "With date headings"'));
+  assert.ok(!live.buildPrompt({ seed: 'Issue #1', buildNote: 'x' }).includes('This SPEC is'), 'nothing said without a plan');
+  assert.deepEqual(live.fromPlanLines(null), []);
+  assert.match(live.buildDescriptionLines(null, fromPlan).join('\n'), /opens by naming that plan/);
+  assert.ok(!live.buildDescriptionLines(null).join('\n').includes('opens by naming that plan'));
+});
+
+test('#6407: withPlanLine names the plan once, and leaves one that already does alone', () => {
+  const fromPlan = { sessionId: 44, version: 3, author: 'evan' };
+  assert.equal(
+    live.withPlanLine('History is one list per project.', fromPlan),
+    "Built from @evan's plan (version 3). History is one list per project.",
+  );
+  assert.equal(
+    live.withPlanLine("Built from @evan's plan, version 3. It follows the plan.", fromPlan),
+    "Built from @evan's plan, version 3. It follows the plan.",
+  );
+  assert.equal(live.withPlanLine('', fromPlan), '');
+  assert.equal(live.withPlanLine('Some words.', null), 'Some words.');
 });

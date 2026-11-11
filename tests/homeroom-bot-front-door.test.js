@@ -185,11 +185,12 @@ test('B8: filing, against the full PostgreSQL schema', { timeout: 180000 }, asyn
     await until(async () => (await pool.query(
       'SELECT started_at FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 12', [plantPal.id],
     )).rows[0]?.started_at != null, 'its read granted');
-    const work = await require('../src/services/homeroom-bot-progress').botWorkByIssue(pool, plantPal.id);
-    assert.equal(work.get(12).what, 'reading', 'the bot has it, and reads it');
-    // Followed in her tray: the request's stored work state is hers, and reads it.
+    // Followed in her tray: the request's stored work state is hers, and reads
+    // it; its page's `bot` is read off the same row (work-state.js botWorkOf).
     const ws = require('../src/services/work-state');
     await ws.refresh(pool, [{ appId: plantPal.id, issueNumber: 12 }]);
+    const [row12] = await ws.forItems(pool, [{ appId: plantPal.id, issueNumber: 12 }]);
+    assert.equal(ws.botWorkOf(row12).what, 'reading', 'the bot has it, and reads it');
     const tracked = (await ws.forRequester(pool, maya.id)).find((s) => s.kind === 'request' && s.ref === 12);
     assert.ok(tracked, 'her request has a stored work state');
     assert.deepEqual([tracked.appId, tracked.stage], [plantPal.id, 'reading']);
@@ -218,8 +219,10 @@ test('B8: filing, against the full PostgreSQL schema', { timeout: 180000 }, asyn
     const { rows: [mine] } = await pool.query('SELECT user_id FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = 20', [plantPal.id]);
     assert.equal(mine.user_id, maya.id, 'nobody was recorded for it, so it is hers now');
     // Plant Pal's one read is #12's: #20 waits its turn.
-    const work = await require('../src/services/homeroom-bot-progress').botWorkByIssue(pool, plantPal.id);
-    assert.equal(work.get(20).what, 'queued', 'waiting for a builder, it is the bot\'s already');
+    const ws = require('../src/services/work-state');
+    await ws.refresh(pool, [{ appId: plantPal.id, issueNumber: 20 }]);
+    const [row20] = await ws.forItems(pool, [{ appId: plantPal.id, issueNumber: 20 }]);
+    assert.equal(ws.botWorkOf(row20).what, 'queued', 'waiting for a builder, it is the bot\'s already');
     const again = await dm.askBotToBuild(pool, { app: live, user: maya, issueNumber: 20 });
     assert.deepEqual([again.ok, again.status, again.code], [false, 409, 'already_building']);
     assert.deepEqual([...(await dm.askersOf(pool, plantPal.id, [20, 21]))], [[20, { username: 'maya', userId: maya.id }]]);

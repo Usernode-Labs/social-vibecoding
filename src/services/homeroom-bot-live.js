@@ -498,143 +498,17 @@ function heldKind(cap) {
   return `held_${cap}`;
 }
 
-/** The kind of the bot's newest post on this issue, or null. */
-async function lastPostKind(pool, appId, issueNumber) {
-  const { rows } = await pool.query(
-    `SELECT kind FROM homeroom_bot_posts
-      WHERE app_id = $1 AND issue_number = $2
-      ORDER BY created_at DESC, id DESC
-      LIMIT 1`,
-    [appId, issueNumber],
-  );
-  return rows[0]?.kind || null;
-}
-
-// #6313: "I couldn't finish building this: something went wrong during the
-// build. Reply here and I'll try again." was posted five times in 28 minutes
-// on one request (#6306). A failure line the bot's last post in the request's
-// thread already says is not said again: that post is updated with how many
-// tries it has been, and nobody is told again (no new post, no GitHub
-// comment, no DM, no mention notification). The same words mean the same
-// failure; different words (a different cause) are news and go out normally.
-const FAILURE_TRIES_MARK = /\s*\(Tried \d+ times\.\)$/;
-
-async function updateRepeatedBuildFailure(pool, ws, { appId, issueNumber, content }) {
-  const want = String(content || '').trim();
-  if (!want) return null;
-  const { rows } = await pool.query(
-    `SELECT p.id AS post_id, m.id AS message_id, m.content, m.metadata,
-            m.thread_type, m.thread_ref
-       FROM homeroom_bot_posts p
-       JOIN chat_messages m ON m.id = p.thread_message_id
-      WHERE p.app_id = $1 AND p.issue_number = $2 AND p.kind = 'build_failed'
-        AND m.deleted_at IS NULL
-      ORDER BY p.created_at DESC, p.id DESC
-      LIMIT 1`, [appId, issueNumber]);
-  const last = rows[0];
-  if (!last) return null;
-  // Who the post tagged is not part of the failure: the handles are put on
-  // the same text, and a different tagger does not make it new news.
-  const said = String(last.content || '')
-    .replace(/^(?:@[A-Za-z0-9_.-]+\s+)+/, '')
-    .replace(FAILURE_TRIES_MARK, '')
-    .trim();
-  if (said !== want) return null;
-  const metadata = last.metadata && typeof last.metadata === 'object' && !Array.isArray(last.metadata) ? last.metadata : {};
-  const bot = metadata.homeroomBot && typeof metadata.homeroomBot === 'object' ? metadata.homeroomBot : {};
-  const tries = (Number(bot.tries) || 1) + 1;
-  const next = `${want} (Tried ${tries} times.)`;
-  const nextMeta = { ...metadata, homeroomBot: { ...bot, tries } };
-  await pool.query(
-    'UPDATE chat_messages SET content = $2, metadata = $3, edited_at = NOW() WHERE id = $1',
-    [Number(last.message_id), next, JSON.stringify(nextMeta)],
-  );
-  try {
-    if (ws && typeof ws.broadcast === 'function') {
-      ws.broadcast(Number(appId), {
-        type: 'chat_edit',
-        messageId: Number(last.message_id),
-        content: next,
-        editedAt: new Date().toISOString(),
-        thread: { type: last.thread_type || 'issue', ref: Number(last.thread_ref || issueNumber) },
-      });
-    }
-  } catch { /* the next read draws it */ }
-  log.info('homeroom-bot', 'A repeated build failure updated its one post instead of saying it again', {
-    appId, issueNumber, messageId: Number(last.message_id), tries,
-  });
-  return { repeated: true, id: Number(last.post_id), threadMessageId: Number(last.message_id) };
-}
-
-// 5 Nov 2026 (docs/plans/bot-one-model.md, step 4, decision 6): what the
-// bot says in a request's thread, and nothing else. Its question or plan
-// (`question`, `person` and `empty` ask its requester something; `plan` and
-// `spec` are the plan), the change built and up for a vote (`proposal`), one
-// failure post (FAILURE_KINDS, updated in place, replaceFailurePost), live
-// (`live`), and its answer to somebody who wrote to it there (`going_ahead`,
-// `held_by_person`, homeroom-bot-holds.js sayHeld). Where the work stands
-// otherwise is the request's stage, on its page (services/work-state.js):
-// "looking at this now" and the like go nowhere. Another kind is still
-// recorded, and still a GitHub comment on a project hosted there.
-const FAILURE_KINDS = new Set(['build_failed', 'followup_failed', 'followup_person', 'blocked']);
-const THREAD_KINDS = new Set([
-  'question', 'person', 'empty', 'plan', 'spec', 'proposal', ...FAILURE_KINDS, 'live', 'going_ahead', 'held_by_person',
-]);
-
-/** Pure: whether a post of this kind is said in the request's thread. */
-function saidInThread(kind) {
-  return THREAD_KINDS.has(String(kind || ''));
-}
-
-/**
- * Decision 6: a failure, when the bot's last post in the request's thread
- * was a failure too, takes that post's place: its message gets the new
- * words and metadata (an offer to try again included), and the room hears
- * both (chat_edit, chat_message_updated). The same words again
- * are updateRepeatedBuildFailure's, before this. Resolves { id } of the
- * message, or null when there is no such post to replace (it is then
- * posted as new). `postId` is this post's own row, left out of the look.
- */
-async function replaceFailurePost(pool, ws, { appId, issueNumber, postId, content, metadata }) {
-  const { rows: [last] } = await pool.query(
-    `SELECT p.kind, m.id AS message_id
-       FROM homeroom_bot_posts p
-       JOIN chat_messages m ON m.id = p.thread_message_id AND m.deleted_at IS NULL
-      WHERE p.app_id = $1 AND p.issue_number = $2 AND p.id <> $3 AND p.thread_message_id IS NOT NULL
-      ORDER BY p.id DESC
-      LIMIT 1`,
-    [appId, issueNumber, postId],
-  );
-  if (!last || !FAILURE_KINDS.has(last.kind)) return null;
-  const text = String(content || '').trim();
-  if (!text) return null;
-  const { rows: [updated] } = await pool.query(
-    `UPDATE chat_messages SET content = $2, metadata = $3::jsonb, edited_at = NOW()
-      WHERE id = $1 AND deleted_at IS NULL
-      RETURNING id, edited_at, thread_type, thread_ref`,
-    [Number(last.message_id), text, JSON.stringify(metadata || {})],
-  );
-  if (!updated) return null;
-  try {
-    if (ws && typeof ws.broadcast === 'function') {
-      ws.broadcast(Number(appId), {
-        type: 'chat_edit',
-        messageId: Number(updated.id),
-        content: text,
-        editedAt: updated.edited_at,
-        thread: { type: updated.thread_type || 'issue', ref: Number(updated.thread_ref || issueNumber) },
-      });
-      ws.broadcast(Number(appId), {
-        type: 'chat_message_updated', id: Number(updated.id), metadata: metadata || {},
-        thread: { type: updated.thread_type || 'issue', ref: Number(updated.thread_ref || issueNumber) },
-      });
-    }
-  } catch { /* the next read draws it */ }
-  log.info('homeroom-bot', 'A failure took the place of the request\'s last failure post', {
-    appId, issueNumber, messageId: Number(updated.id), was: last.kind,
-  });
-  return { id: Number(updated.id) };
-}
+// Step 4 (11 Nov 2026, docs/plans/bot-one-model.md, decision 6 as amended):
+// what the bot says in a request's thread is services/bot-post.js RULES, the
+// one table for every place: its question or plan, the change built and up
+// for a vote, a failure note, live, and its answers when somebody spoke to
+// it there. Where the work stands otherwise is the request's stage, on its
+// page (services/work-state.js). Another kind is still recorded, and still
+// a GitHub comment on a project hosted there. A failure note is never
+// edited: a new failure is a new note, said only when its words differ from
+// the thread's last failure note or somebody wrote since (#6313: the same
+// failure five times in 28 minutes is said once; #6581: words on screen
+// never change), and the newer note retires the older one's buttons.
 
 // #4367: by its pull request's number once it has one.
 function proposalLink(domain, appSlug, sessionId, prNumber = null) {
@@ -903,12 +777,14 @@ function teeProgress(progress, onProgress) {
 // `platformStyles` says whose stylesheet its screens draw with. The markdown
 // wording below stays the spec for every other case.
 /** The plan as the spec reads it: for a first version, a first sketch, with what its creator approved apart. Pure. */
-function specPlanLines(buildNote, firstVersion = false) {
+function specPlanLines(buildNote, firstVersion = false, fromPlan = null) {
+  const variant = fromPlanLines(fromPlan).filter((line) => line.includes('more than one version'));
   if (!firstVersion) {
     return [
       'You are the Homeroom bot. Your triage of this request concluded it is ready to build, with this plan:',
       '',
       clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
+      ...variant,
     ];
   }
   const { sketch, approved } = splitApprovedPlan(buildNote);
@@ -917,6 +793,7 @@ function specPlanLines(buildNote, firstVersion = false) {
     'FIRST VERSION, and this is the triage\'s plan for it, a first sketch written before anyone looked closely:',
     '',
     clipSketch(sketch, 4000) || '(no plan recorded: work from the request itself)',
+    ...variant,
     ...(approved ? [
       '',
       'WHAT ITS CREATOR APPROVED, below, binds the spec as the request does: never contradict it.',
@@ -926,6 +803,26 @@ function specPlanLines(buildNote, firstVersion = false) {
       '',
       approved,
     ] : []),
+  ];
+}
+
+/**
+ * #6407 (6 Nov 2026): what a build is told of the plan a person posted on
+ * the request it is built from, when the triage read one as marked: whose
+ * plan and which version, which version of its after screen to build, and
+ * that it must say where it departed and why. Empty for no plan. Pure.
+ */
+function fromPlanLines(fromPlan) {
+  if (!fromPlan || !(Number(fromPlan.sessionId) > 0)) return [];
+  const whose = fromPlan.author ? `@${fromPlan.author}'s plan` : 'the plan posted on the request';
+  const version = Number(fromPlan.version) > 0 ? `, version ${Number(fromPlan.version)},` : '';
+  return [
+    '',
+    `This SPEC is ${whose}${version} posted on the request. Build to it.`,
+    ...(fromPlan.variant ? [
+      `Its after side draws more than one version: build only "${fromPlan.variant}"; the others are there to compare.`,
+    ] : []),
+    'Where what you build departs from the plan, say where and why.',
   ];
 }
 
@@ -1513,7 +1410,7 @@ function buildDescription({ text, spec = null }) {
  * Best-effort: a proposal that cannot be named or described still goes up,
  * under the fallback name. Resolves { title, description }; never throws.
  */
-async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = '', model = null, checkedFirst = false }) {
+async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = '', model = null, checkedFirst = false, fromPlan = null }) {
   const title = proposalTitle(spec);
   if (title) {
     try {
@@ -1536,6 +1433,9 @@ async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = 
   const credited = built.description && askedBy ? creditedDescription(built.description, askedBy) : built.description;
   // #4488: and a complicated change says its plan was checked with them.
   const description = credited && checkedFirst ? checkedDescription(credited, askedBy) : credited;
+  // #6407: a change built from a person's plan names that plan first, and
+  // says where it departed when the model left that out.
+  const proposalDescription = withPlanLine(description, fromPlan);
   if (ccOutput) {
     try {
       await pool.query(
@@ -1543,7 +1443,7 @@ async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = 
          VALUES ($1, 'system', $2, $3)`,
         [Number(sessionId), 'Homeroom bot finished building', JSON.stringify({
           ccOutput,
-          ...(description ? { proposalDescription: description } : {}),
+          ...(proposalDescription ? { proposalDescription } : {}),
           ccOutcome: 'success',
           agentBackend: 'codex_openrouter',
           agentModel: model || null,
@@ -1555,7 +1455,7 @@ async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = 
       });
     }
   }
-  return { title, description };
+  return { title, description: proposalDescription };
 }
 
 /**
@@ -1731,11 +1631,9 @@ function specCard({
 
 // Papote #3 (18 Oct 2026): what a plan's row on its request says once it
 // stops waiting for Build it (notePlanRows), after its title.
-const PLAN_ROW_ENDINGS = Object.freeze({
-  building: '. I\'m building it now.',
-  replaced: '. A newer plan replaced it.',
-  stopped: '. It stopped waiting for Build it.',
-});
+// What became of a plan its row says (specShare.botNote, which the thread's
+// plan card draws: transcript.tsx). The row's words stay as they were shown.
+const PLAN_ROW_NOTES = Object.freeze(['building', 'replaced', 'stopped']);
 
 /**
  * Papote #3 (18 Oct 2026): what became of plans shown on their requests'
@@ -1744,22 +1642,23 @@ const PLAN_ROW_ENDINGS = Object.freeze({
  * the request again, 'stopped' when it stopped waiting otherwise (a merge,
  * a week with no answer). Request #3 on Papote showed four rows each still
  * "Waiting for @snait to say Build it" under four plans. Only a row still
- * waiting changes; everybody reading is told (chat_message_updated). Never
+ * waiting changes, and only its status: step 4 (11 Nov 2026), a message's
+ * words never change once shown, so its card says what became of it from
+ * its metadata. Everybody reading is told (chat_message_updated). Never
  * throws; resolves how many rows changed.
  */
 async function notePlanRows(pool, runIds, note, { ws = null } = {}) {
   const ids = [...new Set((runIds || []).map(Number).filter((id) => Number.isInteger(id) && id > 0))];
-  if (!ids.length || !PLAN_ROW_ENDINGS[note]) return 0;
+  if (!ids.length || !PLAN_ROW_NOTES.includes(note)) return 0;
   try {
     const { rows } = await pool.query(
       `UPDATE chat_messages m
-          SET metadata = jsonb_set(m.metadata, '{specShare,botNote}', to_jsonb($2::text)),
-              content = regexp_replace(m.content, '\\.(?: Nothing is built yet\\.)? Waiting for [^\\n]*$', $3)
+          SET metadata = jsonb_set(m.metadata, '{specShare,botNote}', to_jsonb($2::text))
          FROM homeroom_bot_posts p
         WHERE p.run_id = ANY($1::int[]) AND p.kind = 'plan' AND m.id = p.thread_message_id
           AND m.metadata->'specShare'->>'botNote' = 'waiting'
         RETURNING m.id, m.app_id, m.thread_type, m.thread_ref, m.metadata`,
-      [ids, note, PLAN_ROW_ENDINGS[note]],
+      [ids, note],
     );
     const sock = ws || require('./ws');
     for (const row of rows) {
@@ -1769,83 +1668,12 @@ async function notePlanRows(pool, runIds, note, { ws = null } = {}) {
         thread: { type: row.thread_type, ref: Number(row.thread_ref) },
       });
     }
-    // #6535: once its plan stops waiting and starts building, an overlap
-    // question asked before that point has been overtaken: its buttons go.
-    if (note === 'building') {
-      for (const row of rows) {
-        if (row.thread_type !== 'issue') continue;
-        await retireOverlapOffers(pool, {
-          appId: Number(row.app_id), issueNumber: Number(row.thread_ref),
-          beforeMessageId: Number(row.id), deps: { ws },
-        });
-      }
-    }
+    // #6535: an overlap question asked before its build started goes with
+    // the request's move to building (bot-cards.js retireFor, from its
+    // standing), not here.
     return rows.length;
   } catch (err) {
     log.warn('homeroom-bot-live', 'Could not say what became of a plan on its request', { runs: ids, note, err: err.message });
-    return 0;
-  }
-}
-
-/**
- * #6535: once a request's plan stops waiting and starts building, an open
- * "This overlaps #N" question asked before that point is no longer a choice
- * worth making: the build has gone ahead. Its message keeps its words and
- * its card, and loses its three buttons, as an answered offer does; the
- * row behind it is expired so a tap from a screen that has not drawn again
- * records nothing. Nothing is posted on either request and no ordering is
- * recorded. Never throws; resolves how many questions closed.
- */
-async function retireOverlapOffers(pool, { appId, issueNumber, beforeMessageId, deps = {} } = {}) {
-  const app = Number(appId);
-  const issue = Number(issueNumber);
-  const before = Number(beforeMessageId);
-  if (!Number.isSafeInteger(app) || app <= 0
-    || !Number.isSafeInteger(issue) || issue <= 0
-    || !Number.isSafeInteger(before) || before <= 0) return 0;
-  try {
-    const { rows } = await pool.query(
-      `UPDATE chat_messages
-          SET metadata = jsonb_set(
-                jsonb_set(
-                  jsonb_set(metadata, '{homeroomBot,offer,status}', '"expired"'::jsonb, true),
-                  '{homeroomBot,actions}', '[]'::jsonb, true),
-                '{homeroomBot,othersActions}', '[]'::jsonb, true)
-        WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2 AND id < $3
-          AND metadata->'homeroomBot'->'offer'->>'kind' = 'overlap'
-          AND metadata->'homeroomBot'->'offer'->>'status' = 'open'
-        RETURNING id, metadata, thread_type, thread_ref,
-                  metadata->'homeroomBot'->'offer'->>'id' AS offer_id`,
-      [app, issue, before],
-    );
-    const offerIds = [...new Set(rows
-      .map((row) => Number(row.offer_id))
-      .filter((id) => Number.isSafeInteger(id) && id > 0))];
-    if (offerIds.length) {
-      await pool.query(
-        `UPDATE bot_cards SET status = 'expired'
-          WHERE place = 'thread' AND id = ANY($1::int[]) AND status = 'open'`,
-        [offerIds],
-      );
-      await pool.query(
-        `UPDATE homeroom_bot_voice_offers SET status = 'expired'
-          WHERE id = ANY($1::int[]) AND status = 'open'`,
-        [offerIds],
-      );
-    }
-    const sock = deps.ws || require('./ws');
-    for (const row of rows) {
-      if (typeof sock?.broadcast !== 'function') break;
-      sock.broadcast(app, {
-        type: 'chat_message_updated', id: Number(row.id), metadata: row.metadata,
-        thread: { type: row.thread_type, ref: Number(row.thread_ref) },
-      });
-    }
-    return rows.length;
-  } catch (err) {
-    log.warn('homeroom-bot-live', 'Could not close an overlap question once its build started', {
-      appId: app, issueNumber: issue, beforeMessageId: before, err: err.message,
-    });
     return 0;
   }
 }
@@ -1890,10 +1718,13 @@ async function postSpecOnProposal({ pool, ws, app, bot, sessionId, version, spec
     }
   }
   const card = specCard({ sessionId, version, spec, bot, proposed: true, revised });
-  return ws.sendBotMessage(pool, app.id, {
-    user: bot, content: card.content, metadata: card.metadata,
-    thread: { type: 'session', ref: Number(sessionId) }, msgType: card.msgType,
-  });
+  // Step 4: one post (bot-post.js), once per version of the plan.
+  const out = await require('./bot-post').post(pool, {
+    place: { type: 'session', ref: Number(sessionId) }, appId: app.id, kind: 'spec', words: card.content,
+    author: bot, metadata: card.metadata, msgType: card.msgType, sessionId,
+    subject: require('./bot-post').changeSubject(sessionId), version: `v${Number(version)}`, record: false,
+  }, { ws });
+  return out.outcome === 'said' ? out.message : null;
 }
 
 /**
@@ -2235,18 +2066,6 @@ async function commentMadeSince(github, repo, issueNumber, text, since, { strict
   }
 }
 
-// The thread message a post of `postId` made before a restart (or before a
-// failure after its row was written, its broadcast's), found by the post's
-// mark on it: the row's own id was never kept, and the post must not be
-// said twice in the thread.
-async function threadMessageOf(pool, app, issueNumber, postId) {
-  const { rows } = await pool.query(
-    `SELECT id FROM chat_messages
-      WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2 AND metadata->>'hrbotPost' = $3
-      ORDER BY id LIMIT 1`, [app.id, issueNumber, String(postId)]);
-  return rows[0] ? { id: rows[0].id } : null;
-}
-
 // 1 Nov 2026 (one page per thread): whether a change lives on its request's
 // page. The rule threads.requestHome uses, without the viewer check: a
 // request leads the thread (its number is a request in that thread), so the
@@ -2274,12 +2093,32 @@ async function changeOnRequestPage(pool, appId, sessionId) {
   }
 }
 
+/**
+ * A post about request `issueNumber`: its GitHub comment, its requester's
+ * chat (a first version's news only, homeroom-bot-dm.js relayIssuePost),
+ * its message in the request's thread and, for a change with no request
+ * page, a copy on the change. Step 4 (11 Nov 2026): one post, keyed in
+ * bot_posts by services/bot-post.js (`kind:request:<app>-<n>:<version>`,
+ * the version the run's, `version`, or once per request for "looking").
+ * Asked for again (a retry, a restart, a second pass), it is said once: a
+ * post that went out says nothing, one another pass is saying now says
+ * nothing here (`busy`; thrown to a `strict` caller, whose retry finds it
+ * said), and one a restart caught going out sends only what its row has
+ * not recorded ("looking" is never taken up: once, ever). A copy on the
+ * change is its own post, keyed by this one. The request's thread hears it
+ * only when bot-post.js RULES has the bot say that kind there; a failure
+ * note whose words the thread's last failure note already says, with
+ * nobody writing since, says nothing anywhere (`repeated`), and a new one
+ * retires the older one's buttons. Words once shown are never rewritten.
+ */
 async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
   proposalSessionId = null, sender = null, threadMessage = null, dm = null, untag = null, onlyProposal = false,
-  skipIssueThread = false, skipGithub = false, homeroomText = null, strict = false, takeUpPending = false,
+  skipIssueThread = false, skipGithub = false, homeroomText = null, strict = false, version = null,
+  card = null, requestPostId = null,
 }) {
+  const botPost = require('./bot-post');
   // Homeroom bot parity (P4, P5): the request moved; its batch's roll-up and
   // its build notes are read again shortly (homeroom-bot-batches.js).
   require('./homeroom-bot-batches').noteRequestChanged(pool, app?.id, issueNumber);
@@ -2294,7 +2133,8 @@ async function post({
   // then hears only milestones) are left out, and the post is recorded,
   // and relayed to the requester's DM when it carries `dm`, as before.
   const noComment = proposalOnly || !!skipGithub;
-  const noIssueThread = proposalOnly || !!skipIssueThread || !saidInThread(kind);
+  const placeRefused = !botPost.allowed('issue', kind);
+  const noIssueThread = proposalOnly || !!skipIssueThread || placeRefused;
   // #6229: a change built for a request has no page of its own (1 Nov 2026),
   // so the request's page is where its note is read. It is said once there,
   // tagged with the change, rather than twice (the request's copy and the
@@ -2311,65 +2151,111 @@ async function post({
   // messages from it, drawn as its bubbles. `msgType` then no longer picks
   // the row's kind: the proposal link is a message whose `metadata.vote`
   // the chat hangs the vote card on. Without one, the old system line.
-  const inThread = (content, thread, meta = metadata, kindOfRow = msgType) => (sender
-    ? ws.sendBotMessage(pool, app.id, { user: sender, content, metadata: meta, thread })
-    : ws.sendSystemMessage(pool, app.id, content, kindOfRow, meta, thread));
-  // A post of this run's that a restart cut short (its durable build says it
-  // again): its row is taken up, and what of it went out already is not sent
-  // twice. The row is pending until the post has gone out, so the build's
-  // "said once" (homeroom-bot.js runPosted) never counts a post half sent.
-  // ("looking" is claimed by its insert, once per issue, and is not taken up.)
-  // A durable caller (`strict`) is told the lookup failed: taken for "none",
-  // its retry would insert a second post and say again what went out.
-  // `takeUpPending` (a post of no run's, written pending by the workflow
-  // machine that decided it: a held request's answer, bot-voice's
-  // voice.post): that row is taken up the same way.
-  const had = runId && kind !== 'looking' ? (await pool.query(
-    `SELECT id, github_comment_id, thread_message_id, created_at FROM homeroom_bot_posts
-      WHERE run_id = $1 AND kind = $2 AND pending IS TRUE ORDER BY id DESC LIMIT 1`,
-    [runId, kind],
-  ).catch((err) => {
-    if (strict) throw err;
-    return { rows: [] };
-  })).rows[0] || null : takeUpPending && kind !== 'looking' ? (await pool.query(
-    `SELECT id, github_comment_id, thread_message_id, created_at FROM homeroom_bot_posts
-      WHERE app_id = $1 AND issue_number = $2 AND kind = $3 AND run_id IS NULL AND pending IS TRUE ORDER BY id DESC LIMIT 1`,
-    [app.id, issueNumber, kind],
-  )).rows[0] || null : null;
-  // #6313: the same failure, already said as the bot's last post in the
-  // request's thread, updates that post and tells nobody again.
-  if (!had && kind === 'build_failed' && !noIssueThread) {
-    const repeated = await updateRepeatedBuildFailure(pool, ws, {
-      appId: app.id, issueNumber, content: homeroomText || firstPerson(text),
-    }).catch((err) => {
-      log.warn('homeroom-bot', 'Could not check the request\'s last failure line (posting again)', {
-        app: app.slug, issueNumber, err: err.message,
-      });
-      return null;
+  // Step 3 (11 Nov 2026): `card` ({ kind, args, forUserId }), an offer under
+  // the note in the request's thread, is written with that message
+  // (ws.sendBotMessage), so its buttons always have their card. Step 4: and
+  // the post's record names the message in the same transaction.
+  const inThread = (content, thread, meta = metadata, kindOfRow = msgType, withCard = null, onInsert = null) => (sender
+    ? ws.sendBotMessage(pool, app.id, {
+      user: sender, content, metadata: meta, thread, ...(withCard ? { card: withCard } : {}), ...(onInsert ? { onInsert } : {}),
+    })
+    : ws.sendSystemMessage(pool, app.id, content, kindOfRow, meta, thread, onInsert ? { onInsert } : {}));
+  // In Homeroom the note is the bot's own bubble, so it says it in the first
+  // person (homeroom-bot-words.js); GitHub keeps it as written. A note whose
+  // Homeroom words differ from GitHub's by more than the voice (a change by
+  // its title, a person by their name) brings them as `homeroomText`.
+  const own = homeroomText || firstPerson(text);
+  // The post's key. A durable caller (`strict`) is told a claim that
+  // failed: taken for "none", its retry would say again what went out.
+  const subject = botPost.requestSubject(app.id, issueNumber);
+  const keyVersion = version != null ? String(version)
+    : kind === 'looking' ? 'once' : runId ? `run-${Number(runId)}` : botPost.freshVersion();
+  const postKey = botPost.keyOf({ kind, subject, version: keyVersion });
+  const claimed = await botPost.claim(pool, {
+    key: postKey, kind, subject, version: keyVersion,
+    place: { type: 'issue', ref: Number(issueNumber) }, appId: app.id, issueNumber, sessionId: proposalSessionId, runId,
+    digest: botPost.digestOf(own),
+  }, {
+    strict, takeUp: kind !== 'looking',
+    // A run's post, or a durable caller's (strict), is that work's own: its
+    // next attempt after a crash takes a claim the last one left at once.
+    durable: !!strict || Number(runId) > 0,
+  });
+  const had = claimed.fresh ? null : claimed.row;
+  if (had && (had.outcome !== 'pending' || !claimed.held)) {
+    // Said before; or being said now by another pass (its claim held), or
+    // a "looking" a pass began: not said here. A durable caller is told,
+    // and its retry finds it said.
+    const busy = had.outcome === 'pending';
+    log.info('homeroom-bot', busy ? 'Being said by another pass: not said here' : 'Said before: not said again', {
+      app: app.slug, issueNumber, kind, was: had.outcome,
     });
-    if (repeated) return repeated;
+    if (busy && strict && kind !== 'looking') {
+      throw Object.assign(new Error(`The ${kind} post on request #${issueNumber} is being said by another pass`), { code: 'post_busy' });
+    }
+    return {
+      again: true, ...(busy ? { busy: true } : {}),
+      postId: Number(had.request_post_id) || null, githubCreatedAt: had.github_created_at || null,
+      github: had.github_comment_id != null, thread: had.chat_message_id != null,
+      messageId: Number(had.chat_message_id) || null,
+    };
   }
-  let postId = had ? had.id : null;
-  if (!postId) {
-    const { rows } = await pool.query(
-      `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind, pending)
-       VALUES ($1, $2, $3, $4, TRUE)
-       ON CONFLICT (app_id, issue_number) WHERE kind = 'looking' DO NOTHING
-       RETURNING id`,
-      [app.id, issueNumber, runId, kind],
-    );
-    if (!rows.length) return null;
-    postId = rows[0].id;
+  // The request's record from before this release, when the post is one
+  // (its row, taken up; or `requestPostId`, a held answer's pending row).
+  const priorPostId = Number(had?.request_post_id) || Number(requestPostId) || null;
+  try {
+    return await sayClaimedPost({
+      pool, github, ws, app, repo, issueNumber, kind, runId, text, msgType, metadata, senderId, notifications,
+      proposalSessionId, sender, threadMessage, dm, card, strict, botPost, proposalOnly, noComment, placeRefused,
+      noIssueThread, onRequestPage, tagged, inThread, own, claimed, had, postKey, priorPostId,
+    });
+  } catch (err) {
+    // Left pending with what went out recorded, its claim let go: the
+    // retry takes it up at once and says only the rest.
+    await botPost.release(pool, claimed);
+    // Its claim lapsed while it was said, and another pass took it over
+    // (its thread message rolled back): that pass says it.
+    if (err?.code === 'post_claim_lost' && !strict) {
+      log.info('homeroom-bot', 'Taken over by another pass while it was said: not said here', { app: app.slug, issueNumber, kind });
+      return { again: true, busy: true, postId: null, githubCreatedAt: null, github: false, thread: false, messageId: null };
+    }
+    throw err;
   }
-  let comment = had?.github_comment_id ? { id: had.github_comment_id } : null;
-  let message = had?.thread_message_id ? { id: had.thread_message_id } : null;
+}
+
+/** The rest of post(), for a post this ask holds the claim of. */
+async function sayClaimedPost({
+  pool, github, ws, app, repo, issueNumber, kind, runId, text, msgType, metadata, senderId, notifications,
+  proposalSessionId, sender, threadMessage, dm, card, strict, botPost, proposalOnly, noComment, placeRefused,
+  noIssueThread, onRequestPage, tagged, inThread, own, claimed, had, postKey, priorPostId,
+}) {
+  // The failure rule: the same words as the thread's last failure note,
+  // with nobody writing since, tell nobody anything (no post, no GitHub
+  // comment, no DM, no mention): the request's status already shows it.
+  let olderFailure = null;
+  if (!had && !noIssueThread && botPost.isFailure('issue', kind)) {
+    const judged = await botPost.failureRepeats(pool, {
+      appId: app.id, place: { type: 'issue', ref: Number(issueNumber) }, digest: botPost.digestOf(own),
+      botId: sender?.id ?? null, postId: claimed.id,
+    });
+    if (judged.repeat) {
+      await botPost.settle(pool, claimed.id, 'repeat', { why: 'same_words', strict });
+      log.info('homeroom-bot', 'A failure note not said again: the last one says the same and nobody wrote since', {
+        app: app.slug, issueNumber, kind, messageId: Number(judged.last.chat_message_id),
+      });
+      return { repeated: true, id: claimed.id, threadMessageId: Number(judged.last.chat_message_id), messageId: Number(judged.last.chat_message_id) };
+    }
+    olderFailure = judged.last;
+  }
+  let comment = had?.github_comment_id ? { id: had.github_comment_id, created_at: had.github_created_at || null } : null;
+  let message = had?.chat_message_id ? { id: Number(had.chat_message_id) } : null;
   // `strict` (a durable caller that retries: the merge-followups machine's
   // bot.announceLive work): what could not be said is thrown at the end,
   // with the post left pending, so the retry takes the row up and says only
   // what is missing.
   const failed = [];
   // Its thread message went out before the restart: so did what it tagged.
-  let messageSentBefore = !!message;
+  const messageSentBefore = !!message;
   if (!noComment && !comment) {
     // Made before the restart, its answer lost with it: found on the issue.
     if (had) comment = await commentMadeSince(github, repo, issueNumber, text, had.created_at, { strict });
@@ -2383,7 +2269,7 @@ async function post({
       }
     }
     if (comment?.id != null) {
-      await pool.query('UPDATE homeroom_bot_posts SET github_comment_id = $2 WHERE id = $1', [postId, comment.id]).catch(() => {});
+      await botPost.mark(pool, claimed.id, { githubCommentId: comment.id, githubCreatedAt: comment.created_at || null });
     }
   }
   // #3624: the same news, in the requester's DM with the bot, when they
@@ -2394,12 +2280,17 @@ async function post({
   // does not when the DM reached them (it rang there; a tag would ring
   // twice) or they blocked the bot. It does when the DM came to nothing
   // (they left the bot's DM, it was refused, the relay failed), so the news
-  // still reaches them, once.
+  // still reaches them, once. Its key is the post's, so a retry sends none.
   if (dm && sender) {
     const dmSvc = require('./homeroom-bot-dm');
     let told = null;
     try {
-      told = await dmSvc.relayIssuePost({ pool, ws, app, issueNumber, kind, runId, postId, bot: sender, dm });
+      // A post from before this release (its homeroom_bot_posts row, taken
+      // up) keeps the key its relay was sent by then.
+      const relayKey = priorPostId ? `hrbot-post-${priorPostId}` : claimed.id ? `bot-post-${claimed.id}` : null;
+      told = await dmSvc.relayIssuePost({
+        pool, ws, app, issueNumber, kind, runId, postKey: relayKey, bot: sender, dm,
+      });
     } catch (err) {
       log.warn('homeroom-bot', 'DM relay failed (post kept)', { app: app.slug, issueNumber, kind, err: err.message });
     }
@@ -2417,66 +2308,53 @@ async function post({
   // platform username is never written as an @mention (#723: it would
   // notify whoever owns that handle there), and GitHub already notifies the
   // author of an issue opened there about comments on it.
-  // In Homeroom the note is the bot's own bubble, so it says it in the first
-  // person (homeroom-bot-words.js); GitHub keeps it as written. A note whose
-  // Homeroom words differ from GitHub's by more than the voice (a change by
-  // its title, a person by their name) brings them as `homeroomText`.
-  const own = homeroomText || firstPerson(text);
   const threadText = handles ? `${handles} ${own}` : own;
-  // Taken up again: the message it may have made before (its mark says).
-  if (!noIssueThread && !message && had) {
-    message = await threadMessageOf(pool, app, issueNumber, postId).catch((err) => {
-      if (strict) throw err;
-      return null;
-    });
-    if (message) messageSentBefore = true;
-  }
+  let cardId = null;
   if (!noIssueThread && !message) {
-    // The post's mark on its message, so a retry finds it (threadMessageOf).
+    // The post's mark on its message (routes/chat.js folds a change's twin
+    // of it), and its record names the message in the message's own
+    // transaction, so a retry finds it.
     const marked = (meta) => ({
       ...(meta || {}),
       ...(onRequestPage ? { aboutChange: { sessionId: Number(proposalSessionId) } } : {}),
-      hrbotPost: String(postId),
+      ...(claimed.id ? { hrbotPost: `post-${claimed.id}` } : {}),
     });
+    const onInsert = botPost.onInsertOf(claimed, postKey);
     try {
-      // Decision 6: one failure post, updated in place. Nobody is tagged or
-      // told again for it: its requester's bell rang from its stage.
-      const replaced = FAILURE_KINDS.has(kind) && sender && !threadMessage
-        ? await replaceFailurePost(pool, ws, {
-          appId: app.id, issueNumber, postId, content: threadText, metadata: marked(metadata),
-        })
-        : null;
-      if (replaced) messageSentBefore = true;
       // A spec is a card in the thread (its full text is on GitHub, and one
       // click away from the card), not a wall of markdown in a chat bubble.
-      message = replaced || (threadMessage && sender
+      message = threadMessage && sender
         ? await ws.sendBotMessage(pool, app.id, {
           user: sender, content: handles ? `${handles} ${firstPerson(threadMessage.content)}` : firstPerson(threadMessage.content),
           metadata: marked(threadMessage.metadata),
           thread: { type: 'issue', ref: issueNumber }, msgType: threadMessage.msgType,
+          ...(onInsert ? { onInsert } : {}),
         })
-        : await inThread(threadText, { type: 'issue', ref: issueNumber }, marked(metadata)));
+        : await inThread(threadText, { type: 'issue', ref: issueNumber }, marked(metadata), msgType, card, onInsert);
     } catch (err) {
+      // Its claim lapsed meanwhile and another pass took it over: the
+      // message rolled back, and that pass says the post.
+      if (err?.code === 'post_claim_lost') throw err;
       log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
       failed.push(`the thread message (${err.message})`);
     }
+    if (message?.id != null) await botPost.mark(pool, claimed.id, { chatMessageId: message.id });
+    cardId = Number(message?.cardId) || null;
     if (message?.id != null) {
-      await pool.query('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', [postId, message.id]).catch(() => {});
-    }
-    // A newer word from the bot in the request's discussion retires the
-    // suggested replies on its older messages there (homeroom-bot-voice.js),
-    // as a newer word in its own chat does.
-    if (message?.id != null && !messageSentBefore) {
+      // A newer word from the bot in the request's discussion retires the
+      // suggested replies on its older messages there (homeroom-bot-voice.js),
+      // as a newer word in its own chat does.
       await require('./homeroom-bot-voice').retireThreadSuggestions(pool, {
         appId: app.id, thread: { type: 'issue', ref: issueNumber }, keepMessageId: Number(message.id), deps: { ws },
       });
-    }
-    // #6535: the card that says its plan is building also overtakes an
-    // overlap question the bot asked in this thread before it.
-    if (message?.id != null && threadMessage?.metadata?.specShare?.botNote === 'building') {
-      await retireOverlapOffers(pool, {
-        appId: app.id, issueNumber, beforeMessageId: Number(message.id), deps: { ws },
-      });
+      // A newer failure note supersedes the older one: its card the older
+      // cards of its kind, and the older note's buttons (bot-cards.js
+      // retireFor).
+      if (botPost.isFailure('issue', kind) && (cardId || olderFailure)) {
+        await botPost.retireOlder(pool, {
+          appId: app.id, issueNumber, cardId, messageIds: olderFailure ? [olderFailure.chat_message_id] : [],
+        });
+      }
     }
   }
   // A system message fires no mention notifications of its own, so the
@@ -2503,29 +2381,40 @@ async function post({
   let proposalMessage = null;
   // #6229: the change's page is the request's, so the request's copy above
   // is the whole post. Only a change with no request gets the second one.
-  if (proposalSessionId && !onRequestPage) {
-    try {
-      proposalMessage = await inThread(own, { type: 'session', ref: Number(proposalSessionId) }, null, 'system');
-    } catch (err) {
+  // It is its own post (bot-post.js), keyed by this one's row, so a retry
+  // of this one never says it twice; best effort (`soft`), as before.
+  if (proposalSessionId && !onRequestPage && !messageSentBefore) {
+    const copy = await botPost.post(pool, {
+      place: { type: 'session', ref: Number(proposalSessionId) }, appId: app.id, kind, words: own,
+      ...(sender ? { author: sender } : {}), sessionId: Number(proposalSessionId),
+      subject: botPost.changeSubject(proposalSessionId),
+      version: claimed.id ? `copy-of-${claimed.id}` : null, record: false, soft: true,
+      durable: !!strict || Number(runId) > 0,
+    }, { ws }).catch((err) => {
       log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
-    }
+      return null;
+    });
+    if (copy?.messageId && (copy.outcome === 'said' || copy.outcome === 'again')) proposalMessage = { id: copy.messageId };
   }
   if (strict && failed.length) {
-    // What did go out is recorded once more (its own write may have failed),
-    // the post left pending, so the retry says only the rest.
-    await pool.query(
-      `UPDATE homeroom_bot_posts SET github_comment_id = COALESCE($2, github_comment_id),
-              thread_message_id = COALESCE($3, thread_message_id)
-        WHERE id = $1`,
-      [postId, comment?.id ?? null, message?.id ?? null],
-    ).catch(() => {});
+    // What did go out is recorded on the post (above), the post left
+    // pending, so the retry says only the rest.
     throw new Error(`Could not post the ${kind} note on request #${issueNumber}: ${failed.join(', ')}`);
   }
-  await pool.query(
-    `UPDATE homeroom_bot_posts SET github_comment_id = $2, thread_message_id = $3, pending = NULL
-      WHERE id = $1`,
-    [postId, comment?.id ?? null, (message || (proposalOnly ? proposalMessage : null))?.id ?? null],
-  ).catch(() => {});
+  const shown = message || (proposalOnly ? proposalMessage : null);
+  // Said on the change alone: its place is the change's thread, where its
+  // message is, so the request's failure rule never reads it as the
+  // request's own note.
+  if (!message && proposalOnly && proposalMessage?.id != null) await botPost.markPlace(pool, claimed.id, proposalMessage.id);
+  // The request's record of it (homeroom_bot_posts, which its readers
+  // know), then the post said: or refused in the thread, recorded.
+  const postId = await botPost.project(pool, {
+    requestPostId: priorPostId, appId: app.id, issueNumber, runId, kind,
+    githubCommentId: comment?.id ?? null, threadMessageId: shown?.id ?? null,
+  }, { strict });
+  await botPost.settle(pool, claimed.id, shown ? 'said' : 'refused', {
+    why: shown ? null : placeRefused ? 'not_in_place' : 'not_in_thread', requestPostId: postId, strict,
+  });
   log.info('homeroom-bot', 'Posted on issue', {
     app: app.slug, issueNumber, kind, github: !!comment, thread: !!message,
     ...(tagged.length ? { mentioned: tagged, notified } : {}),
@@ -2533,48 +2422,43 @@ async function post({
   });
   return {
     postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!(message || proposalMessage),
-    // #6311: the note's message in the request's thread, for an offer that
-    // was written before it (a platform verdict's copy offer).
-    messageId: (message || (proposalOnly ? proposalMessage : null))?.id ?? null,
+    // The note's message in the request's thread, and the card written with it.
+    messageId: shown?.id ?? null,
+    ...(cardId ? { cardId } : {}),
   };
 }
 
 /**
  * One message from the bot in a proposal's own discussion, recorded like
- * every post (homeroom_bot_posts) but said nowhere else: no GitHub comment
- * and nothing in the issue's thread. For news that is the proposal's alone,
- * such as a revision that fixed its failing checks. Never throws on the
- * send; resolves { postId, thread }.
+ * every post but said nowhere else: no GitHub comment and nothing in the
+ * issue's thread. For news that is the proposal's alone, such as a
+ * revision that fixed its failing checks. Step 4: one post (bot-post.js),
+ * keyed by `version` when its caller names one (a look's, a run's, the
+ * message it answers), so a retry says it once, and a failure note on the
+ * change's checks only when it says something new. Never throws on the
+ * send (`soft`: a send that fails is `failed`, one another pass is saying
+ * `busy`, as every caller treats a note here as best effort); resolves
+ * { postId, thread, outcome }.
  */
-async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId }) {
-  const { rows } = await pool.query(
-    `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id`,
-    [app.id, issueNumber, runId, kind],
-  );
-  const postId = rows[0]?.id ?? null;
-  let message = null;
-  try {
-    message = await ws.sendBotMessage(pool, app.id, {
-      user: bot, content: firstPerson(text), thread: { type: 'session', ref: Number(sessionId) },
-    });
-  } catch (err) {
-    log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
-  }
-  if (postId && message?.id) {
-    await pool.query('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', [postId, message.id])
-      .catch(() => {});
-  }
-  if (message?.id) {
+async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId, version = null }) {
+  const out = await require('./bot-post').post(pool, {
+    place: { type: 'session', ref: Number(sessionId) }, appId: app.id, kind, words: firstPerson(text), author: bot,
+    issueNumber, sessionId, runId,
+    subject: require('./bot-post').changeSubject(sessionId),
+    version: version != null ? version : runId ? `run-${Number(runId)}` : null,
+    soft: true,
+    // Keyed by the look, run or message its durable work says it for.
+    durable: version != null || Number(runId) > 0,
+  }, { ws });
+  if (out.outcome === 'said') {
     // A newer word from the bot in the change's discussion retires the
     // suggested replies on its older messages there.
     await require('./homeroom-bot-voice').retireThreadSuggestions(pool, {
-      appId: app.id, thread: { type: 'session', ref: Number(sessionId) }, keepMessageId: Number(message.id), deps: { ws },
+      appId: app.id, thread: { type: 'session', ref: Number(sessionId) }, keepMessageId: Number(out.messageId), deps: { ws },
     });
   }
-  log.info('homeroom-bot', 'Posted on its proposal', { app: app.slug, issueNumber, kind, sessionId, thread: !!message });
-  return { postId, thread: !!message };
+  log.info('homeroom-bot', 'Posted on its proposal', { app: app.slug, issueNumber, kind, sessionId, outcome: out.outcome });
+  return { postId: out.id, thread: out.outcome === 'said', outcome: out.outcome, messageId: out.messageId || null };
 }
 
 /**
@@ -2603,14 +2487,13 @@ async function announceLive(pool, { session, deps = {}, strict = false } = {}) {
     );
     const run = rows[0];
     if (!run) return null;
-    // Said once: a post still pending (cut short, or a part of it failed)
+    // Said once: its key is the run's (bot-post.js). A post that went out is
+    // not said again; one still pending (cut short, or a part of it failed)
     // is taken up again by post(), which sends only what is missing.
-    const { rows: said } = await pool.query(
-      `SELECT 1 FROM homeroom_bot_posts
-        WHERE app_id = $1 AND issue_number = $2 AND run_id = $3 AND kind = 'live' AND pending IS NOT TRUE LIMIT 1`,
-      [run.app_id, run.issue_number, run.run_id],
-    );
-    if (said.length) return null;
+    const done = await require('./bot-post').saidFor(pool, require('./bot-post').keyOf({
+      kind: 'live', subject: require('./bot-post').requestSubject(run.app_id, run.issue_number), version: `run-${Number(run.run_id)}`,
+    }));
+    if (done && done.outcome !== 'pending') return null;
     const { rows: bots } = await pool.query(
       'SELECT id, username FROM users WHERE username = $1 AND is_synthetic = TRUE',
       [BOT_USERNAME],
@@ -2841,7 +2724,7 @@ function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null })
 // reads it. The language rule it ends with is the change's one wording rule
 // (localeRule): a description is for the group, so it reads English unless
 // a DM context is carrying the requester's locale.
-function buildDescriptionLines(locale = null) {
+function buildDescriptionLines(locale = null, fromPlan = null) {
   return [
     '',
     'After the summary the rules above ask for, end your final message with a description of the change for the',
@@ -2854,8 +2737,29 @@ function buildDescriptionLines(locale = null) {
     '',
     'Write it from what that person would notice, not from what you edited. No file names, code, commit hashes or',
     'test results: those belong in the summary above it. No em dashes: use a comma, a colon or a full stop.',
+    ...(fromPlan && Number(fromPlan.sessionId) > 0 ? [
+      '',
+      'This change is built from a plan a person posted. Its description opens by naming that plan, its version, and',
+      'the version of the plan\'s screen it built, then says either that it follows the plan as drawn, or where it',
+      'departs from the plan and why.',
+    ] : []),
     `${localeRule(locale)} Skip the block only if you changed nothing.`,
   ];
+}
+
+/**
+ * #6407: a description built from a person's plan always names that plan,
+ * even when the model left it out: "Built from @evan's plan (version 3)."
+ * goes first. A description that already names the plan is left alone. Pure.
+ */
+function withPlanLine(description, fromPlan) {
+  const text = String(description || '').trim();
+  if (!text || !fromPlan || !(Number(fromPlan.sessionId) > 0)) return description;
+  const first = text.split(/\n\s*\n/)[0] || text;
+  if (/\bplan\b/i.test(first)) return description;
+  const whose = fromPlan.author ? `@${fromPlan.author}'s plan` : 'the plan posted on the request';
+  const version = Number(fromPlan.version) > 0 ? ` (version ${Number(fromPlan.version)})` : '';
+  return `Built from ${whose}${version}. ${text}`;
 }
 
 // #4487: the bot's proposals get before/after shots on the exact builds, as
@@ -3563,6 +3467,9 @@ function buildPrompt({
   // Run five, item 8: the spec's screens, already written into the
   // repository (services/spec-screens-start.js startFromScreens), or null.
   startingScreens = null,
+  // #6407: the plan a person posted that this build is built from, and the
+  // version of its after screen the triage named, or null.
+  fromPlan = null,
 }) {
   const on = (t) => firstVersion && Array.isArray(tweaks) && tweaks.includes(t);
   const oneLook = reviewed && on('one_look');
@@ -3602,6 +3509,7 @@ function buildPrompt({
     '',
     planNoteText(buildNote, firstVersion),
     ...specBlock,
+    ...fromPlanLines(fromPlan),
     ...((on('starter_inline') || on('one_go')) && starterSnapshot ? starterLines(starterSnapshot, { claudeMdLoaded }) : []),
     ...(firstVersion ? firstVersionDesignLines(starter, { oneLook }) : []),
     ...(firstVersion ? startingScreensLines(startingScreens) : []),
@@ -3627,7 +3535,7 @@ function buildPrompt({
     // #3737: the same design guidance the dev chat builds with (#2817).
     getDesignGuidance({ readsImages }),
     ...(firstVersion ? [] : buildVisibleChangesLines(locale)),
-    ...buildDescriptionLines(locale),
+    ...buildDescriptionLines(locale, fromPlan),
   ].join('\n');
 }
 
@@ -3778,6 +3686,29 @@ async function stampSessionModel(pool, session, model) {
     return true;
   } catch (err) {
     log.warn('homeroom-bot', 'Could not set the session\'s model', { sessionId: session.id, err: err.message });
+    return false;
+  }
+}
+
+/**
+ * #6602: make a session run on `backend` for one turn. A turn runs on the
+ * backend its session carries (agent-turn resolveCodexRuntimeContext reads
+ * session.agent_backend, and startCodexAttempt locks the ROW and refuses one
+ * that is not codex_openrouter), so updating a change its author made in
+ * Claude Code needs the row written, not just the object. Writes both, and
+ * resolves true when the session is on `backend` afterwards. Best-effort: a
+ * failed write is logged and answers false, so the caller can say plainly
+ * that it cannot run instead of dispatching into a refusal.
+ */
+async function stampSessionBackend(pool, session, backend) {
+  if (!session || !backend) return false;
+  if (session.agent_backend === backend) return true;
+  try {
+    await pool.query('UPDATE chat_sessions SET agent_backend = $2 WHERE id = $1', [session.id, backend]);
+    session.agent_backend = backend;
+    return true;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not set the session\'s backend', { sessionId: session.id, err: err.message });
     return false;
   }
 }
@@ -4802,6 +4733,9 @@ async function buildAndPropose({
   // starts from that change's head (session-lifecycle.ensureSessionBranch)
   // and the request's page links them.
   fromSessionId = null,
+  // #6407: the plan a person posted that this build is built from (with the
+  // version of its after screen the triage named), or null.
+  fromPlan = null,
   // #6423: the change touching the same files this one is built on top of
   // (`{ sessionId, branch }`): its branch is this change's base, and it
   // waits for it the way a stacked import does.
@@ -5220,6 +5154,7 @@ async function buildAndPropose({
     tweaks: buildTweaks,
     starterSnapshot, claudeMdLoaded,
     startingScreens,
+    fromPlan,
   });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
@@ -5528,7 +5463,7 @@ async function buildAndPropose({
   await steps.once('prepared', async () => {
     await prepareProposal({
       pool, bot, sessionId: session.id, spec: spec.ok ? spec.specMd : null,
-      buildText: result.lastResultText, model, checkedFirst,
+      buildText: result.lastResultText, model, checkedFirst, fromPlan,
     });
     return true;
   });
@@ -5882,21 +5817,23 @@ async function unlinkDocOnlyProposals(pool, deps = {}) {
  * names its change's own thread, as AGENTS.md requires.
  */
 async function sayOwnVersionProposed(pool, { app, ws, originalId, originalNumber, newId, newNumber, author }) {
-  const send = (ws && ws.sendSystemMessage) || require('./ws').sendSystemMessage;
+  // Step 4: Homeroom's two lines, each one post (bot-post.js), said once
+  // for the pair of changes.
+  const botPost = require('./bot-post');
   const from = author ? `@${author}'s change` : 'a person\'s change';
-  await send(pool, app.id,
+  const say = (sessionId, kind, words, version) => botPost.post(pool, {
+    place: { type: 'session', ref: Number(sessionId) }, appId: app.id, kind, words, sessionId,
+    subject: botPost.changeSubject(sessionId), version, record: false,
+  }, { ws: ws || require('./ws') }).catch(() => null);
+  await say(originalId, 'own_version',
     `Homeroom bot made its own version of this change${newNumber ? `, change #${newNumber}` : ''}. Votes on this one do not carry over to it. This one closes if that one goes live.`,
-    'system', null, { type: 'session', ref: Number(originalId) }).catch(() => {});
-  await send(pool, app.id,
+    `by-${Number(newId)}`);
+  await say(newId, 'made_from',
     `Made from ${from}${originalNumber ? ` #${originalNumber}` : ''}. Votes on that one do not carry over.`,
-    'system', null, { type: 'session', ref: Number(newId) }).catch(() => {});
+    `of-${Number(originalId)}`);
 }
 
 module.exports = {
-  FAILURE_KINDS,
-  THREAD_KINDS,
-  saidInThread,
-  replaceFailurePost,
   BOT_STOP_KEY,
   stopOnClock,
   botStopOf,
@@ -5939,8 +5876,6 @@ module.exports = {
   retryCommentText,
   heldText,
   heldKind,
-  lastPostKind,
-  _updateRepeatedBuildFailure: updateRepeatedBuildFailure,
   proposalLink,
   tagsPoster,
   issuePoster,
@@ -5973,6 +5908,8 @@ module.exports = {
   startingScreensLines,
   buildVisibleChangesLines,
   buildDescriptionLines,
+  fromPlanLines,
+  withPlanLine,
   localeRule,
   clockLines,
   BUILD_SOFT_BUDGET_MS,
@@ -6027,6 +5964,7 @@ module.exports = {
   turnFailureReason,
   failureDetail,
   stampSessionModel,
+  stampSessionBackend,
   draftSpec,
   fillSavedScreens,
   FIRST_VERSION_SCREENS_FIRST,
@@ -6069,8 +6007,7 @@ module.exports = {
   blockedText,
   shareSpecVersion,
   notePlanRows,
-  PLAN_ROW_ENDINGS,
-  retireOverlapOffers,
+  PLAN_ROW_NOTES,
   postSpecOnProposal,
   revisedSpecCommentText,
   postRevisedSpecComment,

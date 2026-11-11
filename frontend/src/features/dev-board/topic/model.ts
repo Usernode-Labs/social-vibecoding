@@ -584,6 +584,12 @@ export interface RequestView {
   /** The page is drawn from the board's older row: the track card keeps its
       place, hidden, until the board's reload lands (polish board #12). */
   trackPending?: boolean;
+  /**
+   * 11 Nov 2026 (one model): where the request stands, as the server stored
+   * and worded it (services/work-state.js, `issue.standing`), read by
+   * ../../../lib/work-state.ts normalizeWorkState. Null when the row has none.
+   */
+  standing?: unknown;
 }
 
 /** The card under the request: where it stands, and the one next step. */
@@ -596,6 +602,12 @@ export interface RequestStatusView {
   note: string | null;
   /** The claim's lapse, in small words. */
   fine: string | null;
+  /**
+   * 11 Nov 2026 (one model): the standing's own words, when the sentence is
+   * the standing's (its stage as this viewer reads it, and its second line),
+   * so the card says what every other screen says. Null otherwise.
+   */
+  words?: { stage: { id: string; values?: Record<string, string | number> }; line: { id: string; values?: Record<string, string | number> } | null } | null;
   /** The one action for this viewer, or null. */
   action: { label: string; title?: string; disabled?: boolean; act?: { fn: string; args?: unknown[] }; href?: string } | null;
   /** A closed request: the words that say so, and no stepper. */
@@ -741,6 +753,13 @@ export interface ChangeGateView {
  */
 export type ChangeMergeView = ChangeGateView & {
   wait?: { triedAt: string | null; retryAt: string | null; since: string | null } | null;
+  /**
+   * #6593: which hold this card is about, so the card knows whether the
+   * tries are news. `github_checks` is GitHub still building and scanning
+   * the release images: Homeroom's own tries say nothing a reader needs, so
+   * the card leaves them out. `github_wait` (busy or refused) keeps them.
+   */
+  hold?: 'github_checks' | 'github_wait' | 'failing' | 'merging';
 };
 
 /** #4455: what a change's page says about the change itself, as the thread's root post. */

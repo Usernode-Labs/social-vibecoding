@@ -118,12 +118,14 @@ test('B7: the button, the status, the step and ⋯ on a project that is just you
   assert.equal(message('changes:page.steps.label.yourApproval'), 'Your approval');
   assert.equal(message('changes:page.steps.label.vote'), 'Vote');
   // B10a: the change page's eyebrow and the card's meta line say it the same way.
+  // #6594: both read the change through _promotedWords, which keeps these
+  // waiting words until its votes are in and then says Approved.
   AppView.appData = { slug: 'plant-pal', audience: 'solo' };
   assert.equal(AppView._waitingWords(change()), 'Waiting for your approval');
   AppView.appData = { slug: 'plant-pal', audience: 'open' };
   assert.equal(AppView._waitingWords(change()), 'Waiting for approval');
-  assert.match(SRC, /: item\.status === 'promoted' \? AppView\._waitingWords\(item\)/);
-  assert.match(SRC, /\(item\.status === 'promoted' \? AppView\._waitingWords\(item\) : item\.status\)/);
+  assert.match(SRC, /: item\.status === 'promoted' \? AppView\._promotedWords\(item\)/);
+  assert.match(SRC, /\(item\.status === 'promoted' \? AppView\._promotedWords\(item\) : item\.status\)/);
 });
 
 // The pair `_cardVoteButtonSpecs` hands a solo change: the Yes carries

@@ -179,7 +179,6 @@ const {
 // the whole list, so the board pays for it once and not per card.
 const { resolveIssueProposalRefs } = require('../services/issue-proposal-ref');
 const threadsService = require('../services/threads');
-const { botWorkByIssue } = require('../services/homeroom-bot-progress');
 const MAX_CLOSE_REASON_LENGTH = 2000;
 // #556: cap for author-edited issue titles (rename route below). Matches
 // the feedback form's optional title input; far below GitHub's own limit.
@@ -202,18 +201,48 @@ function issueBodyWithScreenshots(description, screenshotIds, domain) {
   return description ? `${description}${embed}` : embed.replace(/^\n+/, '');
 }
 
-// What the Homeroom bot is reading or building among an app's requests, by
-// issue number, for each row's `bot` field ({ what, since }, or null). The
-// bot's own sessions never count as `in_progress` (synthetic authors are
-// left out below), so this is the only way a request it is building says
-// so. Best effort: a list is not worth failing over it.
-async function botWorkFor(pool, appId) {
+// 11 Nov 2026 (docs/plans/bot-one-model.md, step 3): where each request
+// stands is its stored work state (services/work-state.js), the same row
+// every screen draws and Homeroom bot says of it. Each request in a payload
+// carries it as `standing`, with what is only the viewer's: `mine` (they
+// asked for it, or it is their project) and `voteOwed` (its change is open
+// for votes and they owe a vote on it, by the Needs you feed's own test,
+// routes/workshop-overview.js OWED_PROPOSALS_WHERE). Made first for a
+// request with none yet. Best effort: a list is not worth failing over it.
+async function standingsFor(pool, { app, numbers, viewer, askers = null }) {
+  const workState = require('../services/work-state');
+  const out = new Map();
+  const list = [...new Set((numbers || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!app || !list.length) return out;
   try {
-    return await botWorkByIssue(pool, appId);
+    await workState.ensure(pool, list.map((n) => ({ appId: app.id, issueNumber: n })));
+    const rows = await workState.forRequests(pool, app.id, list);
+    const open = [...rows.values()].filter((r) => r.voteOpen && r.change?.id).map((r) => Number(r.change.id));
+    let owed = new Set();
+    if (open.length && viewer?.id) {
+      const { OWED_PROPOSALS_WHERE } = require('./workshop-overview');
+      const { rows: found } = await pool.query(
+        `SELECT cs.id FROM chat_sessions cs WHERE cs.id = ANY($2::int[]) AND ${OWED_PROPOSALS_WHERE}`,
+        [viewer.id, open],
+      );
+      owed = new Set(found.map((r) => Number(r.id)));
+    }
+    const owner = viewer?.id && Number(app.created_by) === Number(viewer.id);
+    for (const [n, row] of rows) {
+      const asker = askers?.get(n);
+      const mine = !!viewer?.id && (Number(row.requesterId) === Number(viewer.id)
+        || (asker && Number(asker.userId) === Number(viewer.id)) || !!owner);
+      // What is asked of its requester (their chat's question, a plan they
+      // are drafting, their cards) is theirs alone: anybody else reads only
+      // that something is asked, and nobody's id (work-state.js publicOf).
+      out.set(n, workState.forViewer(row, {
+        mine, voteOwed: !!(row.change && owed.has(Number(row.change.id))), viewerId: viewer?.id ?? null,
+      }));
+    }
   } catch (err) {
-    log.warn('issues', 'Failed to read the Homeroom bot\'s work', { message: err.message });
-    return new Map();
+    log.warn('issues', 'Failed to read where requests stand', { message: err.message });
   }
+  return out;
 }
 
 // #132: should this issue kind get a GitHub twin on the app's repo?
@@ -473,6 +502,15 @@ function stagingMockIssues(repoUrl) {
     mk(9115, 'Staging demo: a plan row opens Main Chat',
       'Staging demo: obviously fake. One piece of the larger request.\n\n'
       + '**Source:** Homeroom user (usernode-capture)', 30),
+    // #6581: the request whose build failed twice, with a reply under its
+    // first failure note (seedStagingBotFailureNotes in src/db/migrate.js
+    // stores the thread). A staging copy has no GitHub to read the request
+    // from, so its page's own fetch finds it here, and only the after copy
+    // has it: the change keeps the first note and posts the second below.
+    mk(9116, 'Staging demo: a request whose build failed twice',
+      'Staging demo: obviously fake. Its build failed, so the bot said so, '
+      + 'and it failed again after somebody replied.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 3),
   ];
 }
 
@@ -527,6 +565,20 @@ function stagingMockBotWork() {
   return { what: 'building', since: new Date(Date.now() - 20 * 60 * 1000).toISOString() };
 }
 
+// Its standing, in the shape a stored row has (services/work-state.js
+// shapeOf: its words included), for the same mock request: the bot is
+// building it, its second try. Written nowhere.
+function stagingMockStanding(app, number) {
+  const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const workState = require('../services/work-state');
+  return workState.forViewer(workState.shapeOf({
+    appId: app.id, app: { slug: app.slug, name: app.name || app.slug }, kind: 'request', ref: number,
+    issueNumber: number, sessionId: null, stage: 'building', why: null, reason: null, line: null, whoseMove: 'bot',
+    since, updatedAt: since, voteOpen: false, leadChangeId: null,
+    standing: { change: null, said: null, tries: 2, tryStarts: [] },
+  }), { mine: false, voteOwed: false });
+}
+
 // Staging-only mock GOVERNANCE proposals (DB-issue shaped) for the
 // Proposals-tab vote panel, so the dynamic threshold + visibility-window
 // countdown is exercisable on a prod-cloned staging DB via ?demo=1. Distinct
@@ -570,11 +622,17 @@ function stagingMockGovernance() {
       { required: 2, windowEndsAt: hoursAhead(36) }),
     // #2086: an open featured-illustration proposal, so the card's preview
     // (proposed image beside the current one) is reviewable via ?demo=1 on
-    // an empty staging DB. The image is a shipped static asset rather than
-    // an app-illustrations id, which the empty DB could not serve.
+    // an empty staging DB. The images are shipped static assets rather than
+    // app-illustrations ids, which the empty DB could not serve. It also
+    // proposes an animated preview, a made-up "Sample recipe helper" loop
+    // (public/illustrations/card-previews/), whose first frame is the
+    // proposed picture, so the vote's loop player is reviewable too.
     mk(9100077, 'featured_illustration', '[Mock] Change the featured illustration',
       {
-        proposed: { url: '/icons/v3/icon-512.png', darkUrl: null, zoom: 1.2, x: 10, y: -5, tint: 'teal' },
+        proposed: {
+          url: '/illustrations/card-previews/sample.png', darkUrl: null, zoom: 1, x: 0, y: 0, tint: 'yellow',
+          preview: { url: '/illustrations/card-previews/sample.mp4', type: 'video/mp4' },
+        },
         current: { url: '/icons/v3/icon-192.png', darkUrl: null, zoom: 1, x: 0, y: 0 },
         remove: false,
       }, 5, 1, 0,
@@ -2485,10 +2543,10 @@ function issueRoutes(config) {
       const addressedBy = await resolveIssueProposalRefs(
         pool, app.id, (result.issues || []).map((i) => i.number), req.user.id
       );
-      const botByNumber = await botWorkFor(pool, app.id);
       // 16 Oct 2026: where the bot's work on each request is
       // (homeroom-bot-track.js): an open request's page draws from this
-      // list, so its track card travels with it, as `bot` does.
+      // list, so its track card travels with it. 11 Nov 2026: both read the
+      // request's stored work state, which travels as `standing`.
       const trackSvc = require('../services/homeroom-bot-track');
       const tracks = await trackSvc.tracksForRequests(pool, { appId: app.id, numbers: (result.issues || []).map((i) => i.number) });
       // B8: who each request the bot is on is being built for, and whether
@@ -2497,8 +2555,18 @@ function issueRoutes(config) {
       const botDm = require('../services/homeroom-bot-dm');
       // Papote #3: and of each track waiting on its requester, which names
       // them to everybody else (homeroom-bot-track.js forViewer).
-      const waitingTracks = [...tracks].filter(([, track]) => track?.waitingOn === 'you').map(([n]) => n);
-      const askers = await botDm.askersOf(pool, app.id, [...botByNumber.keys(), ...waitingTracks]);
+      const listed = (result.issues || []).map((i) => i.number);
+      const askers = await botDm.askersOf(pool, app.id, listed);
+      // Staging's mock requests are written nowhere: they carry their own.
+      const mocked = IS_STAGING
+        ? new Set([...stagingMockIssues(app.repo_url), ...stagingMockClosedIssues(app.repo_url)].map((i) => Number(i.number)))
+        : new Set();
+      const standings = await standingsFor(pool, { app, numbers: listed.filter((n) => !mocked.has(Number(n))), viewer: req.user, askers });
+      const botByNumber = new Map();
+      for (const [n, standing] of standings) {
+        const work = require('../services/work-state').botWorkOf(standing);
+        if (work) botByNumber.set(n, work);
+      }
       const botAsked = (n) => {
         const work = botByNumber.get(n);
         if (!work) return null;
@@ -2549,6 +2617,10 @@ function issueRoutes(config) {
           // ({ what, since }), or null. Its own field, like `headless`: the
           // bot is never `in_progress`.
           bot: botAsked(issue.number),
+          // 11 Nov 2026: where it stands (services/work-state.js), the one
+          // source its status card draws, with the viewer's own `mine` and
+          // `voteOwed`.
+          standing: standings.get(issue.number) || null,
           track: trackSvc.forViewer(tracks.get(issue.number) || null, askers.get(issue.number), req.user.id),
           // #4530: the bot's note there that nobody has answered yet
           // ({ kind: 'question' | 'person' | 'empty', messageId }), or null.
@@ -2736,8 +2808,10 @@ function issueRoutes(config) {
         // marks, and only where no real bot work claimed the number.
         for (const issue of issues) {
           if (issue.number === 900018 && !issue.bot) issue.bot = stagingMockBotWork();
-          // And its track, as its own page shows it (homeroom-bot-track.js).
+          // And its track, as its own page shows it (homeroom-bot-track.js),
+          // and its standing, in the shape every real row has.
           if (issue.number === 900018 && !issue.track) issue.track = trackSvc.demoRequestTrack(app, 900018, issue.title);
+          if (issue.number === 900018 && !issue.standing) issue.standing = stagingMockStanding(app, 900018);
         }
         // #4530: and one it asked a question on that nobody has answered:
         // 900001, where its door is drawn (?demo=1&bot=1). Its card offers
@@ -2972,12 +3046,18 @@ function issueRoutes(config) {
       // The Homeroom bot's work, as the list carries it, for an OPEN issue:
       // a request it is building is not one to claim, opened from wherever.
       // A closed issue has nothing being built on it.
+      // 11 Nov 2026: where it stands (services/work-state.js), as the list
+      // carries it: `standing`, and `bot` read off the same row.
+      const askerRows = await require('../services/homeroom-bot-dm').askersOf(pool, app.id, [number]);
+      let standing = issue === mock ? null
+        : (await standingsFor(pool, { app, numbers: [number], viewer: req.user, askers: askerRows })).get(number) || null;
+      if (!standing && mock && number === 900018) standing = stagingMockStanding(app, number);
       let bot = null;
       if (issue.state !== 'closed') {
-        bot = (await botWorkFor(pool, app.id)).get(number) || null;
+        bot = require('../services/work-state').botWorkOf(standing);
         // B8: and who it is being built for, as the list says.
         if (bot) {
-          const asker = (await require('../services/homeroom-bot-dm').askersOf(pool, app.id, [number])).get(number);
+          const asker = askerRows.get(number);
           if (asker) bot = { ...bot, askedBy: asker.username, mine: asker.userId === req.user.id };
         }
         if (!bot && mock && number === 900018) bot = stagingMockBotWork();
@@ -2989,10 +3069,7 @@ function issueRoutes(config) {
       let track = (await trackSvc.tracksForRequests(pool, { appId: app.id, numbers: [number] })).get(number) || null;
       if (!track && mock && number === 900018) track = trackSvc.demoRequestTrack(app, number, issue.title);
       // Papote #3: a track waiting on its requester names them to anybody else.
-      if (track?.waitingOn === 'you') {
-        const asker = (await require('../services/homeroom-bot-dm').askersOf(pool, app.id, [number])).get(number);
-        track = trackSvc.forViewer(track, asker, req.user.id);
-      }
+      if (track?.waitingOn === 'you') track = trackSvc.forViewer(track, askerRows.get(number), req.user.id);
       // #4530: and its unanswered note there, as the list says it.
       const botAwaits = issue.state !== 'closed' && !bot && issue !== mock
         ? (await require('../services/homeroom-bot-dm').botWaitingByIssue(pool, app.id, [issue])).get(number) || null
@@ -3043,6 +3120,7 @@ function issueRoutes(config) {
           bot,
           botAwaits,
           botHold,
+          standing,
           track,
           myPrSessionId: null,
           addressed_by: addressed,
@@ -3654,6 +3732,8 @@ function issueRoutes(config) {
 
 module.exports = {
   issueRoutes,
+  // 11 Nov 2026: each request's standing, as its payload carries it.
+  standingsFor,
   creatorFromSourceLine,
   shouldCreateGithubTwin,
   issueBodyWithScreenshots,

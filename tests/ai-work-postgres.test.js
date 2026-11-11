@@ -22,6 +22,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { settleWorkStates } = require('./lib/work-states');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const express = require('express');
@@ -138,14 +139,18 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const work = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
   // 5 Nov 2026: each row says its stored work state's stage (services/work-state.js).
   const titles = (list) => list.map((r) => `${r.title}:${r.work.stage}`);
-  assert.deepEqual(titles(work.next), ['Digest:going_live', 'Calendar:building'], 'hers only, being worked on, soonest first');
+  assert.deepEqual(titles(work.next), ['Filters:going_live', 'Digest:going_live', 'Calendar:building'],
+    'hers, being worked on, soonest first');
   assert.equal(work.next.find((r) => r.title === 'Calendar').by, 'bot', 'Homeroom bot is building it');
   assert.ok(!work.next.some((r) => r.title === 'Print view'), 'a posted plan is not a change being built');
-  // Up next: hers waiting on other people's votes first, then the requests nobody has picked up.
-  assert.equal(titles(work.waiting)[0], 'Filters:up_for_vote');
-  assert.equal(work.waiting[0].myVote, 'yes');
-  assert.equal(titles(work.waiting)[1], 'Check pending:checking', 'its checks have not passed: it says checks, not votes');
-  assert.deepEqual(titles(work.waiting).slice(2).sort(), ['Print view:reading', 'Tags:reading'].sort());
+  // Waiting: a change still waiting on its checks first, then the requests
+  // nobody has picked up.
+  // #6594: Filters has the yes its rule needs, so it is going live (In
+  // progress), not waiting to be voted on; Check pending is approved too and
+  // its line says what it waits on.
+  assert.equal(titles(work.waiting)[0], 'Check pending:checking', 'its checks have not passed: it says checks, not votes');
+  assert.deepEqual(work.waiting[0].work.line, { code: 'approved_checking' }, 'approved, and waiting on its own checks');
+  assert.deepEqual(titles(work.waiting).slice(1).sort(), ['Print view:reading', 'Tags:reading'].sort());
   assert.deepEqual(work.waiting.find((r) => r.title === 'Tags').work.line, { code: 'waiting' }, 'nobody has started on it');
   assert.deepEqual(work.needs, [], 'no plan of the bot\'s waits for her');
   assert.deepEqual(titles(work.live), ['Badges:live']);
@@ -168,7 +173,8 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const onGitHost = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot } });
   assert.equal(onGitHost.next[0].app.changesOnGithub, false, 'Homeroom\'s git host');
   await pool.query(`UPDATE apps SET repo_url = NULL WHERE id = $1`, [app.id]);
-  assert.equal(work.next[0].href, '#app/aw-seeds/dev/issues/6', 'a request\'s thread opens on its page');
+  assert.equal(work.next.find((r) => r.title === 'Digest').href, '#app/aw-seeds/dev/issues/6',
+    'a request\'s thread opens on its page');
 
   // 30 Oct 2026: a decision up for the group's vote has nothing to build. Hers
   // waits for votes; one she voted on and follows says how she voted; one
@@ -275,7 +281,7 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
      VALUES ($1, $2, 'me too', 'issue', 32)`, [app.id, ada.id]);
   const withFacts = await aiWork.workFor(pool, { user: { id: ada.id }, deps: { bot, settings: { mode: 'live' } } });
   const fact = (title) => withFacts.waiting.find((r) => r.title === title);
-  assert.deepEqual([fact('Held 30').work.stage, fact('Held 30').work.line], ['building', { code: 'held_waiting' }],
+  assert.deepEqual([fact('Held 30').work.stage, fact('Held 30').work.line], ['building', { code: 'held_waiting', position: 1 }],
     'ready to build, held for a vote slot');
   assert.deepEqual([fact('Queued for a read').work.stage, fact('Queued for a read').work.line], ['reading', { code: 'queued', place: 1 }],
     'its place in the project\'s line, from the bot\'s queue');
@@ -290,7 +296,9 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   assert.ok(page.needsYou.some((r) => r.number === 2 && r.says === 'waits for their vote'), 'Bob\'s change, by her request\'s number');
   assert.ok(page.needsYou.some((r) => r.title === 'Rename to Seed Shop' && r.says === 'waits for their vote'), 'and the decision she owes');
   assert.ok(page.inProgress.some((r) => r.title === 'Sound toggle' && r.says === 'Building · aw_bob is building it'));
-  assert.ok(page.waiting.some((r) => r.title === 'Filters' && r.says === 'Up for a vote; they voted Yes'));
+  // #6594: Filters has the yes its rule needs, so the bot's answer puts it
+  // in progress, going live, not among the votes she is waiting on.
+  assert.ok(page.inProgress.some((r) => r.title === 'Filters' && r.says === 'Going live'));
   assert.deepEqual(page.liveThisWeek.map((r) => r.title), ['Badges']);
   assert.equal(page.counts.inProgress, page.inProgress.length);
 
@@ -314,6 +322,7 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const later = await change(app, 43, bob, 42, 'promoted', { promotedAt: new Date(Date.now() - 3600000), checkState: 'passing' });
   await pool.query('UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1', [earlier.id]);
   const workshop = require('../src/routes/workshop-overview');
+  await settleWorkStates(pool);
   const feed = await workshop.needsFeedFor(pool, { user: { id: ada.id }, inThreads: true });
   const pair = feed.filter((item) => item.kind === 'proposal' && [41, 43].includes(item.number));
   assert.deepEqual(pair.map((item) => item.number), [43, 41], 'the vote that opened later comes first');
@@ -443,7 +452,9 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   const mergedRow = [...withGathered.next, ...withGathered.waiting].find((r) => r.threadId === Number(held.thread_id));
   assert.equal(mergedRow.requests, 2, 'one row for the thread, with its count');
   assert.equal(mergedRow.title, 'Water at dawn', 'called by its change');
-  assert.equal(withGathered.waiting.filter((r) => Number(r.threadId) === Number(held.thread_id)).length, 1, 'not one row per request');
+  // #6594: its yes is the one it needs, so it is going live (in progress)
+  // rather than waiting; either way it is one row for the thread.
+  assert.equal([...withGathered.next, ...withGathered.waiting].filter((r) => Number(r.threadId) === Number(held.thread_id)).length, 1, 'not one row per request');
 
   // The route: signed in only.
   const httpApp = express();
@@ -621,8 +632,10 @@ test('#6282: a change with an update on its way is Updating, then Update queued'
   const app = await one(
     `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
      VALUES ('Updates', 'uw-updates', 'running', $1, 'public', 'public') RETURNING id, slug`, [bob.id]);
+  // Both accepted today, so the project has two voters: bob's own yes is one
+  // of two and does not merge the change.
   for (const u of [ada, bob]) {
-    await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')`, [app.id, u.id]);
+    await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status, accepted_at) VALUES ($1, $2, 'member', NOW())`, [app.id, u.id]);
   }
   await pool.query(`INSERT INTO requests (app_id, number, title, created_by) VALUES ($1, 1, 'Bigger buttons', $2)`, [app.id, ada.id]);
   const change = await one(
@@ -648,9 +661,10 @@ test('#6282: a change with an update on its way is Updating, then Update queued'
   // ada still owes the vote: none of these lists is where it stands (the
   // Needs you feed asks for it).
   assert.deepEqual(await what(ada), []);
-  // An ask waits its turn: Waiting, Update queued, with what was asked.
+  // An ask waits its turn: Waiting, Update queued, with what was asked
+  // (11 Nov 2026: the bot's, waiting its turn; not open for votes).
   const queued = await ask('queued');
-  assert.deepEqual(await what(ada), ['up_for_vote:update_queued']);
+  assert.deepEqual(await what(ada), ['building:update_queued']);
   const [queuedRow] = await all(ada);
   assert.equal(queuedRow.group, 'waiting');
   assert.equal(queuedRow.ask, 'drop the second credit line');
@@ -667,10 +681,96 @@ test('#6282: a change with an update on its way is Updating, then Update queued'
   assert.deepEqual([running.work.stage, running.work.line], ['building', { code: 'revising' }]);
   assert.equal(running.ask, undefined);
   await pool.query(`UPDATE chat_sessions SET active_turn = NULL WHERE id = $1`, [change.id]);
-  // Its author sees the update instead of waiting on the vote.
+  // Proposing is never its author's yes: until bob taps his own, he owes the
+  // vote like ada, and the Needs you feed asks for it.
+  assert.deepEqual(await what(bob), []);
+  // Once he has said yes (one of the two votes the project needs), his
+  // change is listed as up for a vote, and he sees the update instead of
+  // waiting on the vote: an ask queued holds it as the bot's, waiting its
+  // turn (11 Nov 2026: not open for votes while it comes).
+  await pool.query(`INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [change.id, bob.id]);
   assert.deepEqual(await what(bob), ['up_for_vote']);
   const second = await ask('queued');
-  assert.deepEqual(await what(bob), ['up_for_vote:update_queued']);
+  assert.deepEqual(await what(bob), ['building:update_queued']);
   await pool.query(`UPDATE homeroom_bot_change_asks SET status = 'done', done_at = NOW() WHERE id = $1`, [second.id]);
   assert.deepEqual(await what(bob), ['up_for_vote']);
+});
+
+test('#6600: a takeover holds the person\'s own change while it runs, and says when it failed', { timeout: 120000 }, async (t) => {
+  let Pool;
+  try { ({ Pool } = require('pg')); } catch { return t.skip('pg is not installed'); }
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 3000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    return t.skip(`PostgreSQL unavailable: ${err.message}`);
+  }
+  const crypto = require('node:crypto');
+  const name = `ai_work_takeover_${crypto.randomBytes(6).toString('hex')}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN);
+  url.pathname = `/${name}`;
+  const pool = new Pool({ connectionString: String(url), max: 6 });
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP DATABASE ${name}`);
+    await admin.end();
+  });
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  require('../src/db/pool').getPool = () => pool;
+  const aiWork = require('../src/services/ai-work');
+  const workState = require('../src/services/work-state');
+
+  const one = async (sql, params) => (await pool.query(sql, params)).rows[0];
+  const user = (username, synthetic = false) => one(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ($1, 'x', $2) RETURNING id, username`, [username, synthetic]);
+  const ada = await user('tw_ada');
+  const bot = await user('homeroom-bot-tw', true);
+  const app = await one(
+    `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+     VALUES ('Takeover', 'tw-takeover', 'running', $1, 'public', 'public') RETURNING id, slug`, [ada.id]);
+  await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')`, [app.id, ada.id]);
+  // Her own change, built in Claude Code, its checks failing: Needs you, Fix it.
+  // It answers no request, so it is its own work state (CHANGE_FACTS_SQL).
+  const change = await one(
+    `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, pr_number, pr_title, check_state, promoted_at,
+                                last_activity_at, external_agent)
+     VALUES ($1, $2, 'promoted', ARRAY[]::int[], 6580, 'Show the reason', 'failing', NOW() - INTERVAL '10 minutes',
+             NOW() - INTERVAL '10 minutes', 'claude-code')
+     RETURNING id`, [app.id, ada.id]);
+  const deps = { bot, liveSvc: { isStaging: () => false }, settings: { mode: 'live' } };
+  const all = async () => {
+    await workState.refresh(pool, [{ sessionId: change.id }]);
+    const work = await aiWork.workFor(pool, { user: { id: ada.id }, deps });
+    return [...work.needs, ...work.next, ...work.waiting]
+      .filter((r) => r.change && Number(r.change.id) === Number(change.id));
+  };
+  const lines = async () => (await all()).map((r) => `${r.group}:${r.work.stage}:${r.work.line?.code || ''}:${r.fixYours ? 'fixYours' : ''}:${r.botFixFailed ? 'botFixFailed' : ''}`);
+
+  assert.deepEqual(await lines(), ['needs:checking:checks_failing:fixYours:'], 'her own failing change asks her to fix it');
+
+  // A takeover starts: its running look is the update on its way.
+  const look = await one(
+    `INSERT INTO homeroom_bot_looks (user_id, app_id, session_id, question, kind, state)
+     VALUES ($1, $2, $3, 'An update its author asked for', 'update', 'running') RETURNING id`,
+    [ada.id, app.id, change.id]);
+  assert.deepEqual(await lines(), ['next:building:fixing::'], 'the bot is fixing it, so it asks nothing of her');
+  const [running] = await all();
+  assert.deepEqual(running.work.line, { code: 'fixing' });
+
+  // Its last attempt failed: back in Needs you, saying the bot could not.
+  await pool.query(
+    `UPDATE homeroom_bot_looks SET state = 'failed', error = 'the failing check is still failing', ended_at = NOW()
+      WHERE id = $1`, [look.id]);
+  const failed = await all();
+  assert.deepEqual(failed.map((r) => [r.group, r.fixYours, r.botFixFailed]), [['needs', true, true]]);
+  assert.deepEqual(failed[0].work.line, { code: 'bot_fix_failed' });
+
+  // Once its checks run again, the usual failing words come back.
+  await pool.query(`UPDATE chat_sessions SET checks_checked_at = NOW() + INTERVAL '1 second' WHERE id = $1`, [change.id]);
+  const after = await all();
+  assert.deepEqual(after.map((r) => [r.group, r.fixYours, !!r.botFixFailed, r.work.line]),
+    [['needs', true, false, { code: 'checks_failing' }]]);
 });

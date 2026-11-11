@@ -14,6 +14,11 @@ const GroupChat = {
   // answers them on this project at all (it offers "Make this a request").
   _botCards: new Map(),
   _botHere: false,
+  // Step 3 (11 Nov 2026): a tap under one of Homeroom bot's offers that was
+  // refused, by message id → { code, reason }, so the line that says why
+  // outlives the buttons the refusal takes away (transcript.tsx
+  // BotOfferStatus). This device's, until it leaves the chat.
+  _offerRefusals: new Map(),
   // While a card of theirs is still going, the cards are read again now and
   // then (_followBotCards): the timer, or null.
   _botCardsTimer: null,
@@ -422,6 +427,7 @@ const GroupChat = {
     // B9: another project's cards and door are not this one's.
     GroupChat._botCards = new Map();
     GroupChat._botHere = false;
+    GroupChat._offerRefusals = new Map();
     GroupChat.activeThread = null;
     GroupChat.oldestMessageId = null;
     GroupChat.hasMore = true;
@@ -1417,7 +1423,7 @@ const GroupChat = {
       // 10 October: Homeroom bot's offer in a thread (homeroom-bot-voice.js),
       // with its buttons for the person it was offered to. Only that
       // metadata, which a person's post cannot set.
-      botOffer: GroupChat._botOfferView(kind === 'message' && !deleted ? meta : null),
+      botOffer: GroupChat._botOfferView(kind === 'message' && !deleted ? meta : null, msg.id),
       // 3 Nov 2026: the suggested replies under the bot's message in a
       // request's or a change's discussion, for the people it names.
       botSuggest: GroupChat._botSuggestView(kind === 'message' && !deleted ? meta : null),
@@ -1448,12 +1454,17 @@ const GroupChat = {
   // taps one, for everybody else only a record that it was offered. #6321:
   // Propose to close offered to nobody in particular, under an "already
   // works" note, is any signed-in viewer's who can take part here; the
-  // server asks a non-member to join first.
-  _botOfferView(meta) {
+  // server asks a non-member to join first. Step 3 (11 Nov 2026): `id` is
+  // its card's, which a tap sends; `retired` why its buttons went when what
+  // it was about moved on (bot-cards.js retireFor); `refused` a tap of this
+  // device's the server refused, and why.
+  _botOfferView(meta, messageId) {
     const bot = meta && meta.homeroomBot;
     if (!bot || bot.kind !== 'voice' || !bot.offer || typeof bot.offer !== 'object') return null;
-    const status = ['open', 'deciding', 'done', 'declined', 'failed'].includes(bot.offer.status) ? bot.offer.status : null;
+    const status = ['open', 'deciding', 'done', 'declined', 'failed', 'gone', 'expired', 'retired'].includes(bot.offer.status) ? bot.offer.status : null;
     if (!status) return null;
+    const offerId = Number(bot.offer.id);
+    const refused = messageId != null ? GroupChat._offerRefusals.get(Number(messageId)) : null;
     const me = window.App && App.user ? Number(App.user.id) : null;
     const actions = (Array.isArray(bot.actions) ? bot.actions : [])
       // #6211: an overlap note also offers `first` (build this one first).
@@ -1467,6 +1478,9 @@ const GroupChat = {
       forMe: !!me && (anyMember ? !GroupChat._readOnly() : Number(bot.offer.forUserId) === me),
       actions,
       kind: typeof bot.offer.kind === 'string' ? bot.offer.kind : '',
+      ...(Number.isSafeInteger(offerId) && offerId > 0 ? { id: offerId } : {}),
+      ...(status === 'retired' && typeof bot.offer.retired === 'string' ? { retired: bot.offer.retired.slice(0, 40) } : {}),
+      ...(refused ? { refused } : {}),
       ...(rows ? { rows } : {}),
     };
   },
@@ -1517,21 +1531,48 @@ const GroupChat = {
     GroupChat.send(text, thread);
   },
 
-  // Yes or No under one of Homeroom bot's offers. The buttons go when the
-  // room hears it was decided (`chat_message_updated`); a refusal is said.
-  async decideBotOffer(messageId, choice, rows) {
+  // Yes or No under one of Homeroom bot's offers, for its card (`offerId`,
+  // step 3: the buttons name it). The buttons go when the room hears it was
+  // decided (`chat_message_updated`); #6582: a refusal is said in place, not
+  // toasted away: its code is kept for the message (_offerRefusals), so the
+  // line under it (transcript.tsx BotOfferStatus) says why in the reader's
+  // language even after the buttons have gone.
+  async decideBotOffer(messageId, choice, rows, offerId) {
     const slug = GroupChat.appSlug;
-    if (!slug || !messageId || (choice !== 'yes' && choice !== 'no' && choice !== 'first')) return;
+    if (!slug || !messageId || (choice !== 'yes' && choice !== 'no' && choice !== 'first')) return { ok: false, code: null };
+    const id = Number(offerId);
+    const refuse = (code, reason) => {
+      GroupChat._offerRefusals.set(Number(messageId), { code, ...(reason ? { reason: String(reason).slice(0, 40) } : {}) });
+      GroupChat._refreshOffer(messageId);
+      return { ok: false, code };
+    };
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/${Number(messageId)}/bot-offer`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ choice, ...(Array.isArray(rows) ? { rows } : {}) }),
+        body: JSON.stringify({
+          choice, ...(Number.isSafeInteger(id) && id > 0 ? { offerId: id } : {}), ...(Array.isArray(rows) ? { rows } : {}),
+        }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok && !data.said && window.PlatformUI) PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('chat:group.botOffer.failed'));
+      if (res.ok) {
+        if (GroupChat._offerRefusals.delete(Number(messageId))) GroupChat._refreshOffer(messageId);
+        return { ok: true, code: null };
+      }
+      // A `said` line already tells the room what happened: the buttons say nothing more.
+      if (data.said) return { ok: false, code: null };
+      return refuse(typeof data.code === 'string' && data.code ? data.code : 'failed', data.reason);
     } catch {
-      if (window.PlatformUI) PlatformUI.toast(PlatformI18n.t('chat:group.botOffer.failed'));
+      return refuse('failed');
     }
+  },
+
+  // The offer under one message drawn again from what this device knows
+  // (its metadata and a refusal kept for it).
+  _refreshOffer(messageId) {
+    let msg = null;
+    GroupChat._eachCopy(Number(messageId), (m) => { if (!msg) msg = m; });
+    if (!msg) return;
+    GroupChat._react()?.patchTranscriptMessage(Number(messageId), { botOffer: GroupChat._messageView(msg).botOffer });
   },
 
   // A message's metadata changed for everybody (`chat_message_updated`): an

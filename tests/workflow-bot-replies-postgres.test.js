@@ -274,16 +274,22 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
     const place = { type: 'issue', ref: 75 };
     const key = `place:${app.id}:issue:75`;
     const payload = { appId: app.id, place, kind: 'going_ahead', text: 'Taking it up.', mentionId: 4242, mention: null, mentions: ['ada'] };
+    // Step 4: its post is claimed by its key with the decision (bot_posts,
+    // services/bot-post.js), and said by the work (homeroom-bot-holds.js
+    // sayHeld takes it up by that key).
     let seenPending = null;
     work.answer.set(voice.WORK.post, async () => {
-      seenPending = (await pool.query(`SELECT pending FROM homeroom_bot_posts WHERE app_id = $1 AND issue_number = 75`, [app.id])).rows[0]?.pending;
+      seenPending = (await pool.query(
+        `SELECT outcome, said_key FROM bot_posts WHERE app_id = $1 AND issue_number = 75`, [app.id])).rows[0] || null;
       return { postId: 1 };
     });
     await send('bot-voice', key, 'HeldAnswer', payload, { kind: 'system' });
     await send('bot-voice', key, 'HeldAnswer', payload, { kind: 'system' });
-    assert.equal(seenPending, true, 'written with the decision, before it is said');
+    assert.deepEqual(seenPending, { outcome: 'pending', said_key: `going_ahead:request:${app.id}-75:mention-4242` },
+      'claimed with the decision, before it is said');
     assert.equal(calls(voice.WORK.post).length, 1, 'once per mention');
-    assert.equal((await pool.query(`SELECT COUNT(*)::int AS n FROM homeroom_bot_posts WHERE app_id = $1 AND issue_number = 75`, [app.id])).rows[0].n, 1);
+    assert.equal(calls(voice.WORK.post)[0].input.mentionId, 4242, 'its work knows the mention its key names');
+    assert.equal((await pool.query(`SELECT COUNT(*)::int AS n FROM bot_posts WHERE app_id = $1 AND issue_number = 75`, [app.id])).rows[0].n, 1);
   });
 
   // ── bot-dm ─────────────────────────────────────────────────────────

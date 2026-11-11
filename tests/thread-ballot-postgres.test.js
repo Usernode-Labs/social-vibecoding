@@ -13,14 +13,16 @@
 //      was filed on (their merge closes that request, which supersedes it),
 //      and its pass closes them, and only them (closeThreadChanges).
 //   3. Needs you owes a ballot ONCE, on its oldest change's row, with its
-//      choices; not to anyone who voted in it or proposed one of it; the
-//      close vote in it is not owed on its own; the counts agree.
+//      choices; not to anyone who voted in it (proposing one of it is no
+//      vote, 11 Nov 2026); the close vote in it is not owed on its own; the
+//      counts agree.
 //   4. Homeroom bot's open questions are owed, in the feed and the counts.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/thread-ballot-postgres.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { settleWorkStates } = require('./lib/work-states');
 const crypto = require('node:crypto');
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -79,9 +81,10 @@ test('ballots, rivals and close votes against the full PostgreSQL schema', { tim
   });
 
   const feedFor = async (viewer) => overview.shapeNeedsFeed(
-    (await pool.query(overview.NEEDS_FEED_SQL, [viewer.id, false, false, overview.NEEDS_FEED_MAX])).rows)
+    (await settleWorkStates(pool), await pool.query(overview.NEEDS_FEED_SQL, [viewer.id, false, false, overview.NEEDS_FEED_MAX])).rows)
     .filter((i) => i.app.slug === app.slug);
   const needsFor = async (viewer) => {
+    await settleWorkStates(pool);
     const row = (await pool.query(overview.COUNTS_SQL, [viewer.id, false, false])).rows.find((r) => r.slug === app.slug);
     return row ? Number(row.needs) : 0;
   };
@@ -108,9 +111,11 @@ test('ballots, rivals and close votes against the full PostgreSQL schema', { tim
     assert.equal(await needsFor(ada), 2, 'the counts agree: the ballot and the other change');
   });
 
-  await t.test('a member who picked, or proposed one of it, owes the ballot no more', async () => {
-    assert.ok(!(await feedFor(bob)).some((i) => i.kind === 'ballot'), 'proposing is a pick');
-    assert.ok(!(await feedFor(dan)).some((i) => i.kind === 'ballot'), 'proposing to close is too');
+  await t.test('a member who picked owes the ballot no more; proposing one of it is not a pick', async () => {
+    // 11 Nov 2026: proposing is never a yes (governance-rules.ts), so it is
+    // no pick either: the ballot asks its proposers too.
+    assert.ok((await feedFor(bob)).some((i) => i.kind === 'ballot'), 'proposing a change is not a pick');
+    assert.ok((await feedFor(dan)).some((i) => i.kind === 'ballot'), 'nor is proposing to close');
     await pool.query(
       `INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) SELECT id, $2, 'yes', approval_epoch FROM chat_sessions WHERE id = $1`,
       [b.id, ada.id]);
@@ -134,6 +139,7 @@ test('ballots, rivals and close votes against the full PostgreSQL schema', { tim
     const question = (await feedFor(ada)).find((i) => i.kind === 'question');
     assert.deepEqual([question.id, question.title, question.number, question.author], [msg.id, 'Newest first?', 7, 'tb_bot']);
     assert.equal(await needsFor(ada), 3);
+    await settleWorkStates(pool);
     const owed = (await pool.query(overview.COUNTS_SQL, [ada.id, false, false])).rows.find((r) => r.slug === app.slug).owed;
     assert.ok(owed.includes(`question:${msg.id}`), 'under a key the seen record takes');
     await pool.query(`UPDATE homeroom_bot_dm_messages SET question_status = 'answered' WHERE message_id = $1`, [msg.id]);
