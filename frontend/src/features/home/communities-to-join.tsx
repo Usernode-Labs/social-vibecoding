@@ -141,8 +141,8 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
       {failed ? (
         // #6354 review: a request that failed must say so and offer to try
         // again, rather than leaving the loading placeholders up forever.
-        <div className="flex flex-col items-center gap-3 px-2 py-6" data-home-join-failed="">
-          <p className="text-center text-[14px] text-zinc-500 dark:text-zinc-400">{t('home:join.failed')}</p>
+        <div className="flex flex-col items-start gap-3 px-1 py-6" data-home-join-failed="">
+          <p className="text-[14px] text-zinc-500 dark:text-zinc-400">{t('home:join.failed')}</p>
           {onRetry ? (
             <Button type="button" variant="pill" size="sm" className="min-h-11 px-5 py-0 un-touch-target"
               data-home-join-retry="" onClick={onRetry}>

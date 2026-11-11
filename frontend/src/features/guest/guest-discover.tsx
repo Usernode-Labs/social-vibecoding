@@ -435,30 +435,20 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
         ) : null}
       </div>
 
-      {failed ? (
-        <div className="flex flex-col items-center gap-3 px-4 py-6">
-          <p className="text-center text-[15px] text-zinc-500 dark:text-zinc-400">{t('auth:guest.loadFailed')}</p>
-          {onRetry ? (
-            <button
-              type="button"
-              data-guest-retry=""
-              className="min-h-11 self-center rounded-full bg-white px-5 text-[15px] font-semibold text-zinc-900 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-              onClick={onRetry}
-            >
-              {t('auth:guest.retry')}
-            </button>
-          ) : null}
-        </div>
-      ) : (
-        <div className="px-1">
-          <CommunitiesToJoin
-            apps={apps}
-            exclude={EMPTY}
-            signedIn={false}
-            query={q}
-          />
-        </div>
-      )}
+      {/* The section draws the failure itself, under its own heading, so a
+          visitor and a member get the same line and the same Retry (#6609
+          review): this used to replace the whole section, which left the
+          placeholders up forever on one side. */}
+      <div className="px-1">
+        <CommunitiesToJoin
+          apps={apps}
+          failed={failed}
+          exclude={EMPTY}
+          signedIn={false}
+          query={q}
+          onRetry={onRetry}
+        />
+      </div>
     </div>
   );
 }
