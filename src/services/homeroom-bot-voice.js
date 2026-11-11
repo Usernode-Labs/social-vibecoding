@@ -2037,11 +2037,26 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   }
   // Only beside those words unchanged: a cut claim, a "not done yet" or the
   // fallback line would leave the copy saying what the words no longer do.
-  const html = threadReplyHtml({ finalReply, text, asWritten, checkedProblems: ctx.checkedProblems, offer: ctx.offer });
+  let html = threadReplyHtml({ finalReply, text, asWritten, checkedProblems: ctx.checkedProblems, offer: ctx.offer });
+  let suggestions = finalReply?.suggestions;
+  let othersSuggestions = finalReply?.suggestionsForOthers;
+  let offer = ctx.offer;
+  // #6600: a takeover the bot queued in this turn can already have failed
+  // before the reply is posted (a worker that could not start, say). The
+  // reply must say what happened, not that the work is queued.
+  if (ctx.takeoverId) {
+    const look = await takeoverModule(deps).loadUpdate(pool, ctx.takeoverId).catch(() => null);
+    if (look && look.state === 'failed') {
+      text = takeoverFailedReply(look.error);
+      html = null;
+      suggestions = null;
+      othersSuggestions = null;
+      offer = null;
+    }
+  }
   const posted = await say(pool, {
     app, place, bot, text, answer: addressed.map((a) => ({ message: a.message, username: a.speaker.username, userId: a.speaker.id })),
-    offer: ctx.offer, suggestions: finalReply?.suggestions,
-    othersSuggestions: finalReply?.suggestionsForOthers, html, mark, gallery: ctx.gallery, deps,
+    offer, suggestions, othersSuggestions, html, mark, gallery: ctx.gallery, deps,
     attachments: ctx.attached || [],
   });
   return { outcome: record.outcome === 'fallback' ? 'fallback' : 'replied', messageId: posted?.id || null };
@@ -3437,6 +3452,16 @@ function notDoneYet(text) {
 }
 
 /**
+ * Pure (#6600): what a turn says when the takeover it queued has already
+ * failed by the time its reply is posted. It says what happened, never that
+ * the work is queued, and offers no buttons for it.
+ */
+function takeoverFailedReply(error) {
+  const why = String(error || 'it did not finish').replace(/[.\s]+$/, '');
+  return `I tried that just now and it didn't work: ${why}. Nothing was changed. You can ask me again, or fix it yourself.`;
+}
+
+/**
  * Pure: what a follow-up's result must say, whoever words it. One note per
  * update: that its earlier votes were cleared is the platform's line in the
  * change's discussion (routes/votes.js reconcileNativeReviewedHead), so it
@@ -3835,6 +3860,7 @@ module.exports = {
   plainReport,
   withoutInternals,
   notDoneYet,
+  takeoverFailedReply,
   reportFollowUp,
   sayReport,
   voiceSummary,

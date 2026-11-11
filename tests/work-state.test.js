@@ -317,3 +317,37 @@ test('a request waiting for its project\'s first version says so', () => {
   assert.equal(reading.stage, 'reading');
   assert.notDeepEqual(reading.line, { code: 'first_version_wait' });
 });
+
+// #6600: a takeover Homeroom bot runs on a change is that change's update,
+// and one whose last attempt failed says so.
+test('#6600: a takeover running says the bot is fixing it, and a failed one says it could not', () => {
+  const failing = { stage: 'checking', since: '2026-11-11T17:00:00.000Z', line: { code: 'checks_failing', failing: 3 } };
+  const running = ws.withUpdate(failing, { coming: 'running' });
+  assert.deepEqual([running.stage, running.line], ['building', { code: 'fixing' }]);
+  assert.equal(ws.lineSays(running), 'Fixing what its tests found');
+  // A vote it would have asked for is held as an update, as any running one.
+  const vote = { stage: 'up_for_vote', since: '2026-11-11T17:00:00.000Z', line: null };
+  assert.deepEqual(ws.withUpdate(vote, { coming: 'running' }).line, { code: 'revising' });
+  // Anything else is left as it is.
+  assert.equal(ws.withUpdate({ stage: 'going_live' }, { coming: 'running' }).stage, 'going_live');
+  // A queued update holds only a vote (#6545).
+  assert.deepEqual(ws.withUpdate(vote, { coming: 'queued' }).line, { code: 'update_queued' });
+  assert.deepEqual(ws.withUpdate(failing, { coming: 'queued' }).line, { code: 'checks_failing', failing: 3 });
+  // Its last attempt failed: the change keeps its stage, its line saying so.
+  const failed = ws.withUpdate(failing, { failed: 'the failing check is still failing' });
+  assert.deepEqual([failed.stage, failed.line], ['checking', { code: 'bot_fix_failed' }]);
+  assert.equal(ws.says(failed), "Checking · Homeroom bot couldn't fix it");
+  // A running one wins over an older failure, and a passing change is untouched.
+  assert.deepEqual(ws.withUpdate(failing, { coming: 'running', failed: 'x' }).line, { code: 'fixing' });
+  assert.equal(ws.withUpdate({ stage: 'up_for_vote', line: null }, { failed: 'x' }).line, null);
+  // The stored state of a request's own change reads the same through derive.
+  const held = derive({
+    proposal_status: 'promoted', proposal_at: ago(20), check_state: 'failing',
+    update_failed: 'the failing check is still failing',
+  });
+  assert.deepEqual([held.stage, held.line], ['checking', { code: 'bot_fix_failed' }]);
+  const lc = derive({
+    lc_status: 'promoted', lc_promoted_at: ago(20), lc_check_state: 'failing', lc_update_failed: 'it did not finish',
+  });
+  assert.deepEqual([lc.stage, lc.line], ['checking', { code: 'bot_fix_failed' }]);
+});
