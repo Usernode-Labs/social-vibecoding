@@ -27030,6 +27030,17 @@ html[data-frame-chrome] body { isolation: isolate; }
 html[data-skin] .fr.fr-shell.fr-shell-under > .fr-side { visibility: hidden; }
 html[data-skin] .fr.fr-shell:not(.fr-shell-under) > .fr-colm { background: none; box-shadow: none; }
 
+/* PAPER'S SHEET HAS AN EDGE. The look's page column is a white sheet with
+   10px of ground after it and under it and 22px corners (paper.css
+   .colm), painted by the copy behind the screens. A screen scrolls over
+   it to the window's own edge, so a long list ran past the sheet's foot
+   and round its corners. From 768px each screen drawn in the frame is cut
+   to the sheet: 10px off its end and its foot, the sheet's corners at the
+   foot, starting where the sidebar ends. */
+@media (min-width: 768px) {
+  html[data-skin="paper"][data-frame-chrome] :is([data-frame-page], #ai-screen[data-frame-list]) { clip-path: inset(0 10px 10px var(--platform-rail-w, 0px) round 0 0 22px 22px); }
+}
+
 /* THE PHONE'S SAFE AREA. A look's bar sits at y=0 and its tab bar at the
    window's foot, so on a phone with a notch the bar was under the status
    bar and the tab bar under the home strip. Each now grows around the
@@ -27113,6 +27124,7 @@ html[data-skin] [data-home-frame] > .fr-inner { container: fr-home / inline-size
 }
 @container fr-home (max-width: 559.98px) {
   html[data-skin] [data-home-frame] .fr-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  html[data-skin] [data-home-frame] .fr-grid.fr-c4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* HOME UNDER A LOOK: THE PRODUCT'S OWN PIECES (features/home/frame/
