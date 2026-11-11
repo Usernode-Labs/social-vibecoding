@@ -340,6 +340,43 @@ test('governance-proposal machine against the full PostgreSQL schema', { timeout
     assert.match((await lines(remove)).at(-1), /Featured illustration removed by group vote/);
   });
 
+  await t.test('#6601 the proposer revises a waiting illustration in place: votes cleared, gate re-read, thread says so', async () => {
+    const hex = (ch) => ch.repeat(32);
+    const [author, voter, voter2, stranger] = [await user(), await user(), await user(), await user()];
+    const a = await app({ approvals: 2, members: [author, voter, voter2] });
+    const proposed = { url: `/app-illustrations/${hex('d')}`, zoom: 1, x: 0, y: 0 };
+    const revised = { url: `/app-illustrations/${hex('e')}`, zoom: 1.5, x: 2, y: -3 };
+    const ill = await issue(a, author, 'featured_illustration', { proposed, current: null, remove: false });
+    await pool.query(
+      `INSERT INTO app_illustration_proposals (issue_id, app_id, id, content_type, data)
+       VALUES ($1, $2, $3, 'image/png', $4)`, [ill.id, a.id, hex('d'), Buffer.from('old-picture')]);
+    await file(ill);
+    await vote(ill, voter, 'up');
+    assert.equal((await inst(ill)).state, 'open');
+    // What the replace route has already committed: the new record, the new
+    // bytes and no votes. The event re-evaluates the gate from the empty tally.
+    await pool.query('DELETE FROM issue_votes WHERE issue_id = $1', [ill.id]);
+    await pool.query(`UPDATE issues SET payload = $2::jsonb WHERE id = $1`,
+      [ill.id, JSON.stringify({ proposed: revised, current: null, remove: false })]);
+    await pool.query('DELETE FROM app_illustration_proposals WHERE issue_id = $1', [ill.id]);
+    await pool.query(
+      `INSERT INTO app_illustration_proposals (issue_id, app_id, id, content_type, data)
+       VALUES ($1, $2, $3, 'image/png', $4)`, [ill.id, a.id, hex('e'), Buffer.from('new-picture')]);
+    const notAuthor = await send(ill, 'Revise', { userId: stranger.id, username: stranger.username }, { actor: `user:${stranger.id}` });
+    const byAuthor = await send(ill, 'Revise', { userId: author.id, username: author.username }, { actor: `user:${author.id}` });
+    await rt.drain();
+    assert.equal((await event(notAuthor)).reason, 'not_author');
+    assert.equal((await event(byAuthor)).result, 'accepted');
+    assert.equal((await inst(ill)).state, 'open');
+    assert.match((await lines(ill)).at(-1), /changed the proposed picture\. Votes cast before the change were cleared\./);
+    // The gate starts again from zero, and the new record is what applies.
+    await vote(ill, voter, 'up');
+    await vote(ill, voter2, 'up');
+    assert.equal((await inst(ill)).state, 'applied');
+    assert.deepEqual((await pool.query('SELECT featured_illustration FROM apps WHERE id = $1', [a.id])).rows[0].featured_illustration, revised);
+    assert.equal((await pool.query('SELECT data FROM app_illustrations WHERE app_id = $1', [a.id])).rows[0].data.toString(), 'new-picture');
+  });
+
   await t.test('a platform variable a vote sets goes through the platform-env store, with no rebuild', async () => {
     const platformApp = await app({ selfHosted: true });
     const v = await issue(platformApp, await user(), 'secret_change',

@@ -21709,10 +21709,23 @@ const AppView = {
     return true;
   },
 
+  // #6601: open the Featured illustration editor on this app's waiting
+  // card-picture change (the bridge publishes the React editor). The board
+  // and the vote's page re-read once it closes: a replace keeps the same
+  // change but swaps its pictures and clears its votes.
+  _editWaitingIllustration() {
+    const open = window.UsernodeReact?.illustrationEditor?.open;
+    if (!open) return;
+    open(AppView.appData, () => {
+      AppView._loadDevFeed();
+      AppView._renderTopicHead();
+    });
+  },
+
   // #6440: the ⋯ on a governance vote's own page (topic/governance-head.tsx).
   // Everything a person can do with the vote that is not the vote itself:
   // its link, and — for the person who proposed it, while it is open —
-  // Withdraw.
+  // Edit proposal (a card-picture vote only) and Withdraw.
   _govDecisionMenu(row) {
     if (!row) return [];
     const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
@@ -21731,6 +21744,14 @@ const AppView = {
     ];
     const mine = !!(App.user && row.created_by === App.user.id);
     if (mine && row.status === 'open') {
+      if (row.kind === 'featured_illustration') {
+        items.push({
+          label: PlatformI18n.t('changes:governance.menu.edit'),
+          icon: 'edit',
+          title: PlatformI18n.t('changes:governance.menu.editTitle'),
+          act: () => AppView._editWaitingIllustration(),
+        });
+      }
       items.push({
         label: PlatformI18n.t('changes:governance.menu.withdraw'),
         icon: 'withdraw',
@@ -21884,6 +21905,16 @@ const AppView = {
     // mine: the viewer created this governance proposal, so they may
     // withdraw it (creator-scoped POST /api/issues/:id/close).
     if (!ro && !!(App.user && issue.created_by === App.user.id)) {
+      // #6601: a card-picture vote's author may replace its pictures while
+      // it waits, instead of withdrawing it and uploading everything again.
+      if (isIllustration && issue.status === 'open') {
+        menu.push({
+          label: PlatformI18n.t('changes:governance.menu.edit'),
+          icon: 'edit',
+          title: PlatformI18n.t('changes:governance.menu.editTitle'),
+          act: () => AppView._editWaitingIllustration(),
+        });
+      }
       menu.push({
         label: PlatformI18n.t('changes:governance.menu.withdraw'),
         icon: 'withdraw',

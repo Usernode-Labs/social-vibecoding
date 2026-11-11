@@ -67,6 +67,7 @@ const EVENTS = {
   Evaluate: () => ({}),
   AdminApply: person,
   Withdraw: person,
+  Revise: person,
   TargetClosed: (p: any) => {
     const cause = p?.cause?.kind === 'pr-merge'
       ? { kind: 'pr-merge' as const, prNumber: int(p.cause.prNumber, 'prNumber') }
@@ -460,13 +461,15 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
     // started by a message to the campaign machine, not campaign.run work.
     // 7: a merge's follow-ups file and supersede a close proposal by
     // message. During a rollout an older Pod leaves the instances a newer
-    // version wrote alone.
-    version: 7,
+    // version wrote alone. 8: the proposer can replace a waiting
+    // featured-illustration change in place (Revise).
+    version: 8,
     events: EVENTS,
     create: ['Filed'],
-    // What web appends: a proposal filed, a vote, a withdrawal, an admin's apply, and
-    // the admin console's Re-check now and Retry follow-up.
-    web: ['Filed', 'VoteCast', 'Evaluate', 'AdminApply', 'Withdraw', 'RetryFollowup'],
+    // What web appends: a proposal filed, a vote, a withdrawal, a replacement
+    // of a waiting illustration, an admin's apply, and the admin console's
+    // Re-check now and Retry follow-up.
+    web: ['Filed', 'VoteCast', 'Evaluate', 'AdminApply', 'Withdraw', 'Revise', 'RetryFollowup'],
     terminal: ['applied', 'refused', 'withdrawn', 'superseded'],
     decode: (row) => ({ name: row.state, data: row.data } as GovState),
     facts: (tx, state, event, ctx) => {
@@ -483,6 +486,11 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
       Evaluate: (e) => (e.source.kind === 'timer' || e.source.kind === 'admin' ? ok() : reject('internal_only')),
       AdminApply: (e) => (e.source.kind === 'admin' && user(e) ? ok() : reject('admin_only')),
       Withdraw: (e, f) => (user(e) && f.issue?.createdBy === e.payload.userId ? ok() : reject('not_author')),
+      // #6601: only the proposition's author replaces their waiting change,
+      // the same rule Withdraw uses. The route has already written the new
+      // record and cleared the votes; this re-evaluates the gate and says so.
+      Revise: (e, f) => (e.source.kind === 'route' && user(e) && f.issue?.createdBy === e.payload.userId
+        ? ok() : reject('not_author')),
       TargetClosed: (e) => (e.source.kind === 'system' || e.source.kind === 'route' || fromMerge(e) ? ok() : reject('internal_only')),
       RetryFollowup: (e) => (e.source.kind === 'admin' ? ok() : reject('admin_only')),
       Delivered: (e) => (e.source.kind === 'message' && e.source.from.machine === DELIVERY ? ok() : reject('internal_only')),
@@ -530,6 +538,17 @@ export function governanceProposal(deps: MachineDeps): Machine<GovState, Facts> 
           to: (s, e, f, ctx) => close('withdrawn', f.issue!, e, ctx,
             { withdrawnAt: ctx.now.toISOString(), withdrawnBy: e.payload.username },
             { writes: [chat(e, f.issue!, `${e.payload.username} withdrew their proposal: "${f.issue!.title}"`, governanceThread(f.issue!))] }),
+        }),
+        // #6601: the proposer swapped the waiting picture. The route has
+        // already written the new record and deleted the old votes; the gate
+        // is re-evaluated from the empty tally and the thread hears it.
+        Revise: watchingOutside({
+          guard: (s, e, f) => (f.issue!.kind === 'featured_illustration' ? ok() : reject('not_revisable')),
+          to: (s, e, f, ctx) => decide(s as any, e, f, ctx, timing, f.gate!, {
+            writes: [chat(e, f.issue!, `${e.payload.username} changed the proposed picture. `
+              + 'Votes cast before the change were cleared.', governanceThread(f.issue!))],
+            push: [boardMoved(issueUpdate(f.issue!, 'updated'))],
+          }),
         }),
         TargetClosed: watchingOutside({
           guard: (s, e, f) => (f.issue!.kind === 'close_issue' && Number(f.issue!.payload.issueNumber) === e.payload.issueNumber

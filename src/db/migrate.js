@@ -312,6 +312,10 @@ async function migrate(config) {
   // seeded there) and AFTER seedStagingReadonlyDevTab (its live domain hangs
   // off that app).
   await seedStagingCustomDomains(pool);
+  // #6601: the shots' own waiting card-picture vote, whose proposer is the
+  // capture member, so Edit proposal and Replace the waiting change are
+  // reachable on a fresh staging copy. Obviously fake, idempotent.
+  await seedStagingWaitingIllustration(pool);
   await seedStagingPublicApiContributors(pool);
   await seedStagingVisuals(pool);
   // Must run AFTER seedStagingVisuals: it owns the gallery demo app this
@@ -9504,6 +9508,57 @@ async function seedStagingCustomDomains(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging custom-domain fixtures skipped', { err: err.message });
+  }
+}
+
+// #6601's shots: a waiting card-picture change on a project the capture
+// member owns, so the vote's ⋯ menu offers Edit proposal and the editor
+// opens on that waiting record with "Replace the waiting change". The
+// picture bytes wait in app_illustration_proposals under the urls the card
+// previews, exactly as a real proposal carries them. A fresh staging copy
+// has no such vote (the feature is new), and this is the only place it is
+// made. Obviously fake, idempotent, staging only.
+async function seedStagingWaitingIllustration(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const capture = (await pool.query("SELECT id, username FROM users WHERE username = 'usernode-capture'")).rows[0];
+    if (!capture) return;
+    // The browse-card fixture's real PNG, so /app-illustrations/<id> decodes.
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAAAg0lEQVR42r3NuRGAMAwEQNdFbXRAIVRHAyQwDmB4/MjS3QUbb5qn7VBKymxddl2YM1l4ZZLwmdHDb0YNSxktrGWUsJXBw14GDS0ZLLRmkHAkC4ejWSj0ZO7Qm7nCSDYcRrOhEJGZQ1RmCpFZN0RnzZCRVUNWVgyZ2S9kZ69Qkd2hKstOLPva44BQr+EAAAAASUVORK5CYII=',
+      'base64'
+    );
+    const lightId = 'fed66010000000000000000000000a01';
+    const darkId = 'fed66010000000000000000000000a02';
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, view_visibility, created_by)
+       VALUES (900160, 'Staging demo waiting picture', 'staging-demo-waiting-picture', 'running', 'public', $1)
+       ON CONFLICT DO NOTHING`, [capture.id]
+    );
+    const app = (await pool.query("SELECT id FROM apps WHERE slug = 'staging-demo-waiting-picture'")).rows[0];
+    if (!app) return;
+    const proposed = {
+      url: `/app-illustrations/${lightId}`, darkUrl: `/app-illustrations/${darkId}`,
+      zoom: 1.2, x: 5, y: -3, tint: 'teal',
+    };
+    await pool.query(
+      `INSERT INTO issues (id, app_id, title, description, kind, payload, created_by, status)
+       VALUES (9076601, $1, 'Change the featured illustration', $2, 'featured_illustration', $3::jsonb, $4, 'open')
+       ON CONFLICT DO NOTHING`,
+      [app.id,
+        `${capture.username} proposed changing the featured illustration on the project's Discover card. `
+          + 'It applies when the group votes it in.',
+        JSON.stringify({ proposed, current: null, remove: false }), capture.id]
+    );
+    await pool.query(
+      `INSERT INTO app_illustration_proposals
+         (issue_id, app_id, id, content_type, data, dark_id, dark_content_type, dark_data)
+       VALUES (9076601, $1, $2, 'image/png', $3, $4, 'image/png', $3)
+       ON CONFLICT DO NOTHING`, [app.id, lightId, png, darkId]
+    );
+    log.info('db', 'Staging waiting-illustration fixture seeded', { appId: app.id });
+  } catch (err) {
+    log.warn('db', 'Staging waiting-illustration fixture skipped', { err: err.message });
   }
 }
 

@@ -13,7 +13,7 @@ import {
 
 type Art = NonNullable<DiscoverTileView['illustration']>;
 /** The governance card a save opened, or the one already waiting (#2086). */
-type ProposalLink = { id: number; href: string };
+type ProposalLink = { id: number; href: string; mine?: boolean; proposed?: Art | null };
 /**
  * The card colour rides INSIDE the framing state, not beside it, and that is
  * what makes every existing action behave the way it already did: a gesture
@@ -54,7 +54,7 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
   // group votes on, so the editor tells the user where it went (`sent`) and,
   // when one is already open, that this save has to wait for it (`pending`).
   const [pending, setPending] = useState<ProposalLink | null>(null);
-  const [sent, setSent] = useState<ProposalLink | null>(null);
+  const [sent, setSent] = useState<{ link: ProposalLink; replaced: boolean } | null>(null);
   // Live pointers, in insertion order: one is a drag, two or more a pinch.
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const [dragging, setDragging] = useState(false);
@@ -65,8 +65,14 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || t('discover:illustration.loadFailed'));
       if (controller.signal.aborted) return;
-      setArt(data.illustration ? { ...data.illustration, ...clampFrame(data.illustration) } : null);
-      setPending(data.pending || null); setLoading(false);
+      const waiting = data.pending || null;
+      // #6601: your own waiting change opens the editor on ITS record, so a
+      // replace can swap one picture and keep the rest, and Save replaces it
+      // instead of waiting. Someone else's waiting change keeps today's view
+      // (what the card wears, Save disabled).
+      const shown = waiting?.mine ? (waiting.proposed ?? null) : (data.illustration || null);
+      setArt(shown ? { ...shown, ...clampFrame(shown) } : null);
+      setPending(waiting); setLoading(false);
     }).catch(err => { if (!controller.signal.aborted) setError(err.message); });
     return () => { controller.abort(); generation.current++; };
   }, [endpoint]);
@@ -167,9 +173,13 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
         return btoa(binary);
       };
       const framing = art ? { ...clampFrame(art), ...(art.tint ? { tint: art.tint } : null) } : null;
-      const res = await fetch(endpoint, { method: art ? 'PUT' : 'DELETE',
+      // #6601: when it is your own change that is waiting, Save replaces it
+      // in place (and Use app icon replaces it with a removal) rather than
+      // being refused.
+      const replace = !!pending?.mine;
+      const res = await fetch(replace && !art ? `${endpoint}?replace=1` : endpoint, { method: art ? 'PUT' : 'DELETE',
         headers: { 'Content-Type': 'application/octet-stream' },
-        body: art ? JSON.stringify({ ...framing, light: await encode(pendingBlob.current),
+        body: art ? JSON.stringify({ ...framing, ...(replace ? { replace: true } : {}), light: await encode(pendingBlob.current),
           dark: art.darkUrl ? await encode(pendingDark.current) : null,
           ...(pendingPreview.current === undefined ? {}
             : { preview: pendingPreview.current ? await encode(pendingPreview.current) : null }) }) : undefined });
@@ -184,7 +194,7 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
       // are patched by the illustration_changed broadcast when the vote
       // applies it. Removing an illustration the app never had opens nothing.
       if (!data.proposal) { close.current(); return; }
-      setSent(data.proposal);
+      setSent({ link: data.proposal, replaced: data.replaced === true });
     } catch (err) { setError((err as Error).message); }
     finally { setBusy(false); }
   };
@@ -325,8 +335,13 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
       {error ? <p role="alert" className="text-sm text-red-700 dark:text-red-400 mt-3">{error}</p> : null}
       {sent ? <p role="status" data-illustration-sent className="text-sm mt-3 text-zinc-700 dark:text-zinc-300">
         <RichMessage
-          id="discover:illustration.sent"
-          components={[<a href={sent.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose} />]}
+          id={sent.replaced ? 'discover:illustration.replaced' : 'discover:illustration.sent'}
+          components={[<a href={sent.link.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose} />]}
+        />
+      </p> : pending?.mine ? <p role="status" data-illustration-pending className="text-sm mt-3 text-zinc-700 dark:text-zinc-300">
+        <RichMessage
+          id="discover:illustration.pendingMine"
+          components={[<a href={pending.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose} />]}
         />
       </p> : pending ? <p role="status" data-illustration-pending className="text-sm mt-3 text-zinc-700 dark:text-zinc-300">
         <RichMessage
@@ -338,7 +353,7 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
         {sent
           ? <Button type="button" className="min-h-[44px] flex-1" onClick={onClose}>{t('core:common.done')}</Button>
           : <>
-            <Button type="button" className="min-h-[44px] flex-1" disabled={loading || busy || !!pending} onClick={() => { void save(); }}>{busy ? t('discover:illustration.pleaseWait') : t('discover:illustration.propose')}</Button>
+            <Button type="button" className="min-h-[44px] flex-1" disabled={loading || busy || (!!pending && !pending.mine)} onClick={() => { void save(); }}>{busy ? t('discover:illustration.pleaseWait') : pending?.mine ? t('discover:illustration.replace') : t('discover:illustration.propose')}</Button>
             <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" disabled={busy} onClick={onClose}>{t('core:common.cancel')}</Button>
           </>}
       </div>

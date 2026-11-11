@@ -4022,11 +4022,14 @@ function registerTools(server, ctx) {
     const proposalOut = (p) => (p && typeof p === 'object' && Number.isInteger(p.id) ? {
       id: p.id,
       url: typeof p.href === 'string' && p.href.startsWith('#') ? `${origin}/${p.href}` : null,
+      ...(typeof p.mine === 'boolean' ? { mine: p.mine } : {}),
+      ...(p.proposed !== undefined ? { proposed: framingOut(p.proposed) } : {}),
     } : null);
     // The route's refusals in its own words, with a code for each.
     const illustrationRefusal = (result) => {
       const b = result.body && typeof result.body === 'object' ? result.body : {};
       const message = typeof b.error === 'string' && b.error.trim() ? clip(b.error.trim(), 500) : `Homeroom returned HTTP ${result.status}.`;
+      if (result.status === 403 && b.code === 'not_proposer') return toolError('not_proposer', `${message} Nothing was changed.`);
       if (result.status === 403 && b.code !== 'join_required') return toolError('managers_only', `${message} Nothing was changed.`);
       if (result.status === 409) {
         return toolError('conflict', `${message} Nothing was changed.`, b.pending ? { pending: proposalOut(b.pending) } : {});
@@ -4056,15 +4059,17 @@ function registerTools(server, ctx) {
         slug: s,
         illustration: framingOut(b.illustration),
         pending,
-        nextStep: pending
-          ? 'A change to this picture is already up for the group\'s vote: another can be proposed once it settles.'
-          : 'To propose a new picture, send it with prepare_upload (kind "screenshot") and call propose_featured_illustration.',
+        nextStep: pending && pending.mine
+          ? 'This change is yours and still waiting: to swap the picture, call propose_featured_illustration again with replacePending: true. A field you leave out keeps what the waiting change has, and votes already cast are cleared.'
+          : pending
+            ? 'A change to this picture is already up for the group\'s vote: another can be proposed once it settles.'
+            : 'To propose a new picture, send it with prepare_upload (kind "screenshot") and call propose_featured_illustration.',
       });
     });
 
     server.registerTool('propose_featured_illustration', {
-      title: 'Featured illustration: propose a new card picture',
-      description: `Propose a new picture for a project's card in Discover, Home's Discover rail and the signed-out landing, as its Featured illustration editor's Save does. It does not change the card: it opens a vote in the project's group, and the picture changes when the vote passes; \`proposal\` links to it. Send each picture first with prepare_upload (kind "screenshot"), then pass the uploadIds here: \`lightUploadId\` for the light theme, and \`darkUploadId\` for the dark one, or null to drop the dark picture. Each must be a PNG or JPEG under 1 MB; a square about 1024 px, with its subject centred, fits every card (the landing crops it to 16:10 around the centre). Leave out a picture to keep the one the card has. \`zoom\` (0.5 to 3), \`x\` and \`y\` (-100 to 100) frame it, and keep the card's current framing when left out (1, 0, 0 for a card with none); \`tint\` is the card colour, one of ${ILLUSTRATION_TONES.join(', ')}. \`previewUploadId\` adds the card's animated preview, a short silent loop of the real app that plays over the picture when somebody points at the card (or, on a phone, for the card most in view): send it with prepare_upload (kind "video"), an MP4 or WebM of 5 to 8 seconds, 16:10, at most 1.5 MB, showing only demo content; null drops the card's loop, and leaving it out keeps it. Only the project's creator, its admins and full platform admins may propose one, and only one change can wait for a vote at a time.`,
+      title: 'Featured illustration: propose or replace a card picture',
+      description: `Propose a new picture for a project's card in Discover, Home's Discover rail and the signed-out landing, as its Featured illustration editor's Save does. It does not change the card: it opens a vote in the project's group, and the picture changes when the vote passes; \`proposal\` links to it. Send each picture first with prepare_upload (kind "screenshot"), then pass the uploadIds here: \`lightUploadId\` for the light theme, and \`darkUploadId\` for the dark one, or null to drop the dark picture. Each must be a PNG or JPEG under 1 MB; a square about 1024 px, with its subject centred, fits every card (the landing crops it to 16:10 around the centre). Leave out a picture to keep the one the card has (or, with \`replacePending: true\`, the one the waiting change has). \`zoom\` (0.5 to 3), \`x\` and \`y\` (-100 to 100) frame it, and keep the current framing when left out (1, 0, 0 for a card with none); \`tint\` is the card colour, one of ${ILLUSTRATION_TONES.join(', ')}. \`previewUploadId\` adds the card's animated preview, a short silent loop of the real app that plays over the picture when somebody points at the card (or, on a phone, for the card most in view): send it with prepare_upload (kind "video"), an MP4 or WebM of 5 to 8 seconds, 16:10, at most 1.5 MB, showing only demo content; null drops the card's loop, and leaving it out keeps it. Only the project's creator, its admins and full platform admins may propose one, and only one change can wait for a vote at a time. The person who proposed the waiting change can swap it with \`replacePending: true\`: every field left out keeps what the waiting change has, the change keeps its page and number, and votes already cast on the old picture are cleared. Anyone else asking to replace it is refused.`,
       inputSchema: {
         slug: z.string().min(1).max(100),
         lightUploadId: z.number().int().positive().optional().describe('The uploadId prepare_upload (kind "screenshot") answered with for the light picture.'),
@@ -4074,10 +4079,11 @@ function registerTools(server, ctx) {
         y: z.number().min(-100).max(100).optional(),
         tint: z.enum(ILLUSTRATION_TONES).optional().describe('The card colour behind the picture.'),
         previewUploadId: z.number().int().positive().nullable().optional().describe('The uploadId prepare_upload (kind "video") answered with for the card\'s preview loop, or null to drop the loop the card has.'),
+        replacePending: z.boolean().optional().describe('Replace your own change that is already waiting for the vote, instead of opening a new one. Votes already cast are cleared.'),
       },
-      outputSchema: { slug: z.string(), proposal: z.any(), nextStep: z.string() },
+      outputSchema: { slug: z.string(), proposal: z.any(), replaced: z.boolean(), nextStep: z.string() },
       annotations: writeAnnotations,
-    }, async ({ slug, lightUploadId, darkUploadId, zoom, x, y, tint, previewUploadId }) => {
+    }, async ({ slug, lightUploadId, darkUploadId, zoom, x, y, tint, previewUploadId, replacePending }) => {
       const guard = scopeGuard(WRITE_SCOPE);
       if (guard) return guard;
       const s = String(slug || '').trim();
@@ -4087,6 +4093,15 @@ function registerTools(server, ctx) {
       }
       if (lightUploadId != null && darkUploadId != null && lightUploadId === darkUploadId) {
         return toolError('invalid_request', 'lightUploadId and darkUploadId name the same upload: send each picture with its own prepare_upload command. Nothing was changed.');
+      }
+      // A replace reads first: the waiting change's own record is the base a
+      // field left out keeps, and `mine` says whether this caller may do it.
+      let waiting = null;
+      let read = null;
+      if (replacePending) {
+        read = await callPlatform(baseUrl, accessToken, 'GET', illustrationPath(s));
+        if (!read.ok) return illustrationRefusal(read);
+        waiting = read.body && read.body.pending && typeof read.body.pending === 'object' ? read.body.pending : null;
       }
       // Each picture, read back for its owner and held to the editor's limit.
       const picture = async (uploadId, field) => {
@@ -4102,6 +4117,7 @@ function registerTools(server, ctx) {
         return { ok: true, base64: data.toString('base64') };
       };
       const body = {};
+      if (replacePending) body.replace = true;
       if (lightUploadId != null) {
         const light = await picture(lightUploadId, 'lightUploadId');
         if (!light.ok) return toolError(light.code, `${light.message} Nothing was changed.`);
@@ -4123,12 +4139,18 @@ function registerTools(server, ctx) {
         }
         body.preview = taken.data.toString('base64');
       }
-      // Framing the call leaves out keeps the card's own, as the editor does.
+      // Framing the call leaves out keeps the waiting change's own when
+      // replacing, and the card's own otherwise, as the editor does.
       let current = null;
       if (zoom === undefined || x === undefined || y === undefined) {
-        const read = await callPlatform(baseUrl, accessToken, 'GET', illustrationPath(s));
-        if (!read.ok) return illustrationRefusal(read);
-        current = read.body && read.body.illustration && typeof read.body.illustration === 'object' ? read.body.illustration : null;
+        if (replacePending) {
+          current = waiting && waiting.mine && waiting.proposed && typeof waiting.proposed === 'object' ? waiting.proposed
+            : (read && read.body && read.body.illustration && typeof read.body.illustration === 'object' ? read.body.illustration : null);
+        } else {
+          const read = await callPlatform(baseUrl, accessToken, 'GET', illustrationPath(s));
+          if (!read.ok) return illustrationRefusal(read);
+          current = read.body && read.body.illustration && typeof read.body.illustration === 'object' ? read.body.illustration : null;
+        }
       }
       const kept = (value, key, fallback) => (value !== undefined ? value
         : (current && typeof current[key] === 'number' ? current[key] : fallback));
@@ -4137,17 +4159,30 @@ function registerTools(server, ctx) {
       body.y = kept(y, 'y', 0);
       if (tint !== undefined) body.tint = tint;
       const r = await callPlatform(baseUrl, accessToken, 'PUT', illustrationPath(s), Buffer.from(JSON.stringify(body), 'utf8'));
-      if (!r.ok) return illustrationRefusal(r);
-      // Proposed, so the uploads are done with. Their pictures now travel in
-      // the proposal; the unlinked copies are swept with every other one.
+      if (!r.ok) {
+        // The one save that could replace has to say so: point the caller at
+        // replacePending rather than leave them to withdraw by hand.
+        if (replacePending === undefined && r.status === 409 && r.body?.pending?.mine) {
+          return toolError('conflict', `${r.body.error || 'A change to this picture is already waiting for the group\'s vote.'} Pass replacePending: true to replace your waiting change. Nothing was changed.`,
+            r.body.pending ? { pending: proposalOut(r.body.pending) } : {});
+        }
+        return illustrationRefusal(r);
+      }
+      // The call succeeded, so the uploads are done with. Their pictures now
+      // travel in the proposal; the unlinked copies are swept with every
+      // other one. A refused call leaves them usable for a retry.
       const used = [lightUploadId, darkUploadId, previewUploadId].filter((id) => id != null);
       if (used.length) await connectorUploads.consumeUploads(pool, { userId: user.id, uploadIds: used });
+      const replaced = r.body?.replaced === true;
       return toolResult({
         slug: s,
         proposal: proposalOut(r.body && r.body.proposal),
+        replaced,
         // Proposing is never its author's yes (governance-rules.ts), so say
         // where theirs is cast, as submit_work does.
-        nextStep: 'Up for the project\'s vote: the card keeps its current picture until the vote passes. Proposing it is not a vote: tell the user their own yes counts once they tap Yes on it on Homeroom. Share `proposal` with the group; get_featured_illustration shows it as pending meanwhile.',
+        nextStep: replaced
+          ? 'The waiting change now carries the new picture, and the votes cast on the old one were cleared: the group votes again. Tell the user it was replaced, not that the picture has changed yet.'
+          : 'Up for the project\'s vote: the card keeps its current picture until the vote passes. Proposing it is not a vote: tell the user their own yes counts once they tap Yes on it on Homeroom. Share `proposal` with the group; get_featured_illustration shows it as pending meanwhile.',
       });
     });
   }
