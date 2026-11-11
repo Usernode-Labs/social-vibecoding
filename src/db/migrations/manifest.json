@@ -287,9 +287,14 @@
       "schemaSha256": "8a7b5f32fc635f5c938941cc92dd1b66d5d167b88529e1ae688a5316f9f2c7cc"
     },
     {
+      "id": "card-preview-loops",
+      "sha256": "a9ba17ce7df04ba5b43c8fc899b5f605dc37a4f2016b9500b7c9099d45fb0ed6",
+      "schemaSha256": "dd501b2988c25744c0d23560c2ab3aa69e8c2ecb8031deab3db75f29cde28428"
+    },
+    {
       "id": "user-timezone",
       "sha256": "22f84d61daba3c9e9987b4376fb64be9d83da8d8e1716c245601b868bd33d5a8",
-      "schemaSha256": "3d3517428344df1cce094b86c36d4a220f652322a1edd53fe5fac519ab38c18b"
+      "schemaSha256": "a212ab522cd7971242cf3d8c0b86ab00f440f30f7aeb261a3251df970c055c4e"
     }
   ]
 }
