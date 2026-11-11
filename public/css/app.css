@@ -27101,14 +27101,22 @@ html[data-skin]:not([data-skin="pastel"]) .fr.fr-shell > .fr-side {
    corner and top line for the kit's one line between two panes. */
 html[data-skin] .fr.fr-pane,
 html[data-skin] .fr.fr-pane > .fr-scroll { overflow: visible; }
-/* Main Chat is the list's first row here, so the phone's bar that asks
-   for it over the tab bar is not drawn twice. */
-html[data-skin] #ai-screen[data-frame-list] .ai-askbar,
+/* Version 2: the phone's Ask Homeroom bot bar stays over the tab bar, as
+   on the standard page, wearing the kit's composer (looks.json wear); its
+   words start a little in, as the mockup's do. The room it keeps after the
+   list's last row is the bar's own sticky margin. */
+html[data-skin] #ai-screen[data-frame-list] .ai-askbar { padding: 0 12px 8px; }
+html[data-skin] #ai-screen[data-frame-list] .ai-askbar-card { flex-direction: row; align-items: center; margin: 0; padding-inline-start: 20px; }
+html[data-skin] #ai-screen[data-frame-list] .ai-askbar-text { font-size: 15px; padding: 0; color: var(--fr-faint); }
 html[data-skin] #ai-screen[data-frame-list] .ai-askbar-gap { display: none; }
+/* A private thread's ⋯ in its row (the product's ThreadDoneMenu): its menu
+   reads the Messages surface tokens, which are declared where a chat is
+   drawn, so they are given here from the kit's. */
+html[data-skin] #ai-screen[data-frame-list] .fr-rowx { --messages-surface: var(--fr-surface); --messages-surface-2: var(--fr-sunk); --messages-hair: var(--fr-line); }
 /* With nothing open beside it (#6425: Main opens from its row) the list is
-   a page of one column: the kit's 720px, not the whole width. */
+   a page of one column: the kit's narrow page (784px), not the whole width. */
 @media (min-width: 768px) {
-  html[data-skin] #ai-screen[data-frame-list]:not([data-ai-open]) > .fr-pane > .fr-scroll { max-width: 720px; }
+  html[data-skin] #ai-screen[data-frame-list]:not([data-ai-open]) > .fr-pane > .fr-scroll { max-width: 784px; margin-inline: auto; }
   html[data-skin] #ai-screen[data-frame-list] { --ai-main-w: max(360px, calc(var(--platform-usable-w) - 520px)); }
   html[data-skin] #ai-screen[data-frame-list] .ai-main-pane { top: var(--fr-shell-top); background: none; border-top: 0; border-inline-start: 1px solid var(--fr-line); border-radius: 0; }
   html[data-skin] #ai-screen[data-frame-list] #ai-main-divider { display: none; }
@@ -28239,6 +28247,25 @@ html[data-skin] .fr-at .fr-st.fr-bad{color:var(--fr-bad)}
 html[data-skin] .fr-at .fr-st.fr-wait{color:var(--fr-wait)}
 html[data-skin] .fr-at .fr-link{font-size:12px}
 html[data-skin] .fr-door{color:inherit;text-decoration:none}
+html[data-skin] .fr-botpage .fr-tabs,html[data-skin]:where(:not([data-skin="brand"])) .fr-botpage #notifications-screen-tabs{margin-top:-8px;overflow-x:auto;scrollbar-width:none}
+html[data-skin] .fr-botpage .fr-search{margin-bottom:16px}
+html[data-skin] .fr-tab>.fr-ic,html[data-skin]:where(:not([data-skin="brand"])) #notifications-screen-tabs > [role="tab"]>.fr-ic{margin-inline-start:-4px}
+html[data-skin] .fr-card.fr-main .fr-row{min-height:52px;width:100%}
+html[data-skin] .fr-rowx{display:flex;align-items:center;min-width:0;padding-inline-end:8px}
+html[data-skin] .fr-rowx>.fr-row,html[data-skin]:where(:not([data-skin="brand"])) .fr-rowx>.ui-lrow:where(#settings-section-content *){flex:1;padding-inline-end:4px}
+html[data-skin] .fr-list .fr-row,html[data-skin]:where(:not([data-skin="brand"])) .fr-list .ui-lrow:where(#settings-section-content *){position:relative;width:100%}
+html[data-skin] .fr-list .fr-row .fr-t,html[data-skin]:where(:not([data-skin="brand"])) .fr-list .ui-lrow:where(#settings-section-content *) .ui-lrow-t{text-align:start}
+html[data-skin] .fr-list .fr-row .fr-s,html[data-skin]:where(:not([data-skin="brand"])) .fr-list .ui-lrow:where(#settings-section-content *) .ui-lrow-s{text-align:start}
+html[data-skin] .fr-list h3.fr-t{margin:0}
+html[data-skin] .fr-row .fr-new,html[data-skin]:where(:not([data-skin="brand"])) .ui-lrow:where(#settings-section-content *) .fr-new{position:absolute;inset-inline-start:5px;top:50%;width:6px;height:6px;margin-top:-3px;border-radius:50%;background:var(--fr-acc)}
+html[data-skin] .fr-list .fr-row.fr-fresh .fr-t{font-weight:700}
+html[data-skin] .fr-list .fr-row.fr-plain .fr-t{font-weight:400;color:var(--fr-mut)}
+html[data-skin] .fr-list .fr-row.fr-more:disabled{opacity:.6}
+html[data-skin] .fr-rule{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--fr-mut)}
+html[data-skin] .fr-rule::after{content:"";flex:1;height:1px;background:var(--fr-line)}
+html[data-skin] .fr-list .fr-rule{padding-block:8px 2px;padding-inline:52px 16px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+html[data-skin] .fr-list .fr-txt{margin:0;padding:10px 16px;font-size:14px;line-height:1.45;color:var(--fr-mut)}
+html[data-skin] .fr-list .fr-txt .fr-link{font-size:14px}
 @media (min-width: 768px){
 html[data-skin][data-skin] .fr-p{display:none!important}
 }
@@ -28293,6 +28320,8 @@ html[data-skin][data-skin] .fr-hrow.fr-even{grid-auto-columns:240px;overflow-x:a
 html[data-skin][data-skin] .fr-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 html[data-skin][data-skin] .fr-shots.fr-s3{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:200px;overflow-x:auto}
 html[data-skin][data-skin] .fr-grid.fr-across{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:240px;overflow-x:auto;margin-inline-end:-16px;padding-inline-end:16px;scrollbar-width:none}
+html[data-skin][data-skin] .fr-botpage .fr-head{flex-direction:row;gap:12px}
+html[data-skin][data-skin] .fr-botpage .fr-head .fr-acts{width:auto}
 }
 html[data-skin]:where(:not([data-skin="brand"])) body{--fr-ground:var(--home-ground)}
 /* ── THE GLASS LOOK (data-skin="glass") ── */

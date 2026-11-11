@@ -921,20 +921,27 @@ export function AiScreen(): ReactNode {
         <AiFrameList
           heroLine={heroLine}
           main={{ lit: lit === 'main', unread, open: openMain }}
+          query={searchOpen ? query : ''}
+          onQuery={setQuery}
+          searchOpen={searchOpen}
+          onSearch={setSearchOpen}
+          searchRef={searchRef}
           lit={lit}
           ready={!!work && !!needs}
+          failed={failed}
+          onRetry={() => setMoved((n) => n + 1)}
           rows={rows}
+          owed={owed}
           progress={progress}
           waiting={waiting}
           live={live}
           openRow={openRow}
           openThread={openThread}
+          onDone={(rootId) => { setDoneRoots((had) => new Set([...had, rootId])); setMoved((n) => n + 1); }}
           picked={picked}
           onPick={pick}
           appFor={appFor}
           onNew={() => { openBlank(); if (botId) startNewThread(botId); }}
-          query={query}
-          onQuery={setQuery}
           history={history}
           historyKind={historyKind}
           onHistoryKind={pickKind}
