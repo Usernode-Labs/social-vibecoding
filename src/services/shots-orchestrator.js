@@ -82,6 +82,9 @@ function platformFault(error, { now = Date.now() } = {}) {
     return { kind: 'github_rate_limited', retryAt: now + Math.min(MAX_PLATFORM_RETRY_WAIT_MS, waitMs) };
   }
   if (error.code === 'shots_agent_failed') return { kind: 'agent_exit' };
+  // #6598: GitHub did not answer when the worker tried to start. Taken again
+  // once, a few minutes on, by the recovery sweep.
+  if (error.code === 'github_unavailable') return { kind: 'github_unavailable', retryAt: now + 5 * 60_000 };
   if (state.PLATFORM_FAULT_KINDS.has(error.shotsPlatformFault)) return { kind: error.shotsPlatformFault };
   if (worker.isRetryableBootstrapError(error)) return { kind: 'worker_bootstrap' };
   return null;

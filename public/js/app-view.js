@@ -25853,8 +25853,14 @@ const AppView = {
         detail: (retrying
           ? (shots.failureCode === 'shots_run_interrupted'
             ? PlatformI18n.t('changes:badge.reason.shots.retryingDetail')
-            : PlatformI18n.t('changes:badge.reason.shots.retryingFaultDetail'))
-          : notStarted ? AppView._shotsNotStartedReason(shots) : shots.failureReason)
+            : shots.failureCode === 'github_unavailable'
+              ? PlatformI18n.t('changes:badge.reason.shots.retryingGithubDetail')
+              : PlatformI18n.t('changes:badge.reason.shots.retryingFaultDetail'))
+          : notStarted ? AppView._shotsNotStartedReason(shots)
+            // #6598: never quote GitHub's own error page here.
+            : shots.state === 'failed' && shots.failureCode === 'github_unavailable'
+              ? PlatformI18n.t('changes:shots.sentence.githubDown')
+              : shots.failureReason)
           || (enforced
             ? PlatformI18n.t('changes:badge.reason.shots.enforcedDetail')
             : PlatformI18n.t('changes:badge.reason.shots.missingDetail')),
@@ -26766,6 +26772,14 @@ const AppView = {
       return t('changes:shots.sentence.taking');
     }
     if (state === 'failed') {
+      // #6598: GitHub did not answer when the shots run tried to start. Its
+      // own error page is never shown; the line says what happened and what
+      // Homeroom does next.
+      if (e.failureCode === 'github_unavailable') {
+        return e.automaticRetryPending === true
+          ? t('changes:shots.sentence.retryingGithub')
+          : t('changes:shots.sentence.githubDown');
+      }
       if (e.failureCode === 'shots_change_failed') {
         return e.failureReason
           ? t('changes:shots.sentence.changeFailedBecause', { reason: quoted(e.failureReason) })

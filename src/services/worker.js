@@ -2956,6 +2956,42 @@ function isRetryableBootstrapError(err) {
   return _messageHasPrefix(err, BOOTSTRAP_RETRYABLE_PREFIXES);
 }
 
+// #6598: before a worker starts, Homeroom asks GitHub whether the repository
+// is public. A short GitHub outage (a 5xx, a timeout, a dropped connection)
+// used to end the whole turn. Ask again after about 2, 8 and 30 seconds before
+// giving up, so most blips pass without anyone noticing.
+const GITHUB_START_RETRY_DELAYS_MS = Object.freeze([2000, 8000, 30000]);
+let _githubStartRetryDelaysMs = GITHUB_START_RETRY_DELAYS_MS;
+
+// Tests set these to 0 so the retries run at once.
+function _setGithubStartRetryDelaysForTests(delays) {
+  _githubStartRetryDelaysMs = Array.isArray(delays) ? delays.slice() : GITHUB_START_RETRY_DELAYS_MS;
+}
+
+async function _checkRepoPublicWithRetry(repoOwner, repoName) {
+  let privacy = await github.checkRepoPublic(repoOwner, repoName);
+  for (let attempt = 0; !privacy.ok && privacy.transient && attempt < _githubStartRetryDelaysMs.length; attempt += 1) {
+    const delayMs = _githubStartRetryDelaysMs[attempt];
+    log.warn('worker', 'GitHub did not answer the start check; trying again', {
+      owner: repoOwner, repo: repoName, attempt: attempt + 1,
+    });
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, delayMs + Math.floor(Math.random() * 250)));
+    // eslint-disable-next-line no-await-in-loop
+    privacy = await github.checkRepoPublic(repoOwner, repoName);
+  }
+  return privacy;
+}
+
+// True for a start failure another try might get past: GitHub did not answer
+// at all, its hourly budget is used up, or the worker's own cold start failed
+// transiently. A private or missing repository is not.
+function isTransientStartError(err) {
+  if (!err || typeof err !== 'object') return false;
+  return err.code === 'github_unavailable' || err.code === 'github_rate_limited'
+    || isRetryableBootstrapError(err);
+}
+
 // Attach bootstrap diagnostics to a rejection WITHOUT widening what gets
 // serialized: both properties are non-enumerable, so the route layer's
 // `log.error('sessions', 'Chat error', { message, stack })` and the
@@ -3021,7 +3057,7 @@ async function _bootstrapWarmContainer(sessionId, {
   // GitHub after import; this catches that case before we waste a
   // container slot. Imports that pre-date the public-only enforcement are
   // caught here as well.
-  const privacy = await github.checkRepoPublic(repoOwner, repoName);
+  const privacy = await _checkRepoPublicWithRetry(repoOwner, repoName);
   if (!privacy.ok && privacy.code === 'rate_limited') {
     // GitHub refused the check because Homeroom's hourly budget is used up.
     // This message reaches people as it is (a dev chat's turn error, a
@@ -3035,6 +3071,17 @@ async function _bootstrapWarmContainer(sessionId, {
     // When it resets, for a caller that tries again then (the before &
     // after shots' recovery sweep).
     if (privacy.retryAfterSeconds > 0) err.retryAfterMs = privacy.retryAfterSeconds * 1000;
+    throw err;
+  }
+  if (!privacy.ok && privacy.transient) {
+    // The retries above ran out and GitHub still did not answer. Say that in
+    // plain words — GitHub's own error page told a person nothing — and tag it
+    // so a caller knows a later try is worth making.
+    const err = new Error(
+      `GitHub didn't answer when Homeroom tried to start working on ${repoOwner}/${repoName}, so nothing was changed. Try again in a few minutes.`
+    );
+    err.code = 'github_unavailable';
+    err.startTransient = true;
     throw err;
   }
   if (!privacy.ok) {
@@ -6305,6 +6352,8 @@ module.exports = {
   // "the coding agent ran and failed" — the two need very different copy.
   isBootstrapError,
   isRetryableBootstrapError,
+  isTransientStartError,
+  _setGithubStartRetryDelaysForTests,
   execInWorker,
   stopTurn,
   stopTurnByJournal,

@@ -621,6 +621,10 @@ test('a platform fault is read off the error, and GitHub\'s limit waits for its 
     { kind: 'github_rate_limited', retryAt: now + 15 * 60_000 });
   assert.deepEqual(fault({ code: 'github_rate_limited', retryAfterMs: 5 * 3600_000 }),
     { kind: 'github_rate_limited', retryAt: now + 65 * 60_000 }, 'never more than the hour and a little');
+  // #6598: GitHub did not answer when the shots run tried to start. Taken
+  // again once, a few minutes on, by the recovery sweep.
+  assert.deepEqual(fault({ code: 'github_unavailable' }),
+    { kind: 'github_unavailable', retryAt: now + 5 * 60_000 });
 
   for (const error of [
     null,
