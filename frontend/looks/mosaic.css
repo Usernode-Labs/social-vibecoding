@@ -66,3 +66,4 @@
 .phone .tabbar{background:color-mix(in srgb,var(--ground) 80%,transparent);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-top:1px solid var(--line)}
 .tb{font-weight:700}.tb.on{background:var(--ink);color:var(--solid)}
 .stage{border-radius:22px}
+.phone .barline{border-bottom:0}

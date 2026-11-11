@@ -117,12 +117,8 @@ export function PublicProfileCard({
             <Row
               key={link.key}
               href={link.href}
-              // Another site: a new tab, as the standard card's chip opens it. A modified click is the browser's.
-              onClick={(event) => {
-                if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
-                event.preventDefault();
-                window.open(link.href, '_blank', 'noopener,noreferrer');
-              }}
+              // Another site: a real link in a new tab, as the standard card's chip is.
+              target="_blank"
               lead={<Av size={32} name={link.key === 'github' ? 'G' : 'X'} />}
               title={link.key === 'github' ? t('profile:frame.public.github') : t('profile:frame.public.x')}
               line={link.key === 'github' ? String(profile.links?.github || '') : `@${String(profile.links?.x || '').replace(/^@/, '')}`}

@@ -1,7 +1,7 @@
 import { openReport } from '../dialogs/report';
 import {
   Fragment, createContext, memo, useDeferredValue, useCallback, useContext, useEffect, useMemo, useRef, useState,
-  type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode,
+  type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -58,7 +58,7 @@ import { useMessagesDrawer } from './phone-drawer';
 import { messagesBack, messagesDrawerStore } from '../nav-drawer/messages-drawer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
-import { fullTime, UserAvatar, senderName, swatchFor } from './format';
+import { fullTime, initials, UserAvatar, senderName, swatchFor } from './format';
 import { DiscussionRow, MessageRow } from './message-row';
 import { OPEN_HOLD_MS, openHoldDone } from './open-hold';
 import { plainText } from './plain-text';
@@ -138,6 +138,7 @@ import { NewMessageSheet } from './frame-new';
 import { MessagesFrameList, type FrameInboxRow, type FrameInboxTab } from './frame-list';
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
+import { notificationsStore } from '../notifications/notifications-store.js';
 import { SessionRow, sessionRowState, type SessionRowView } from '../improve/session-row';
 import { INBOX_QUERY_MAX, INBOX_SECTIONS, agentAsksForYou, buildInbox, savedInboxQuery, shownInSection, type AppDiscussion, type InboxSection } from './inbox';
 import { useSidebarRows } from '../nav/sidebar-rows';
@@ -815,6 +816,9 @@ function ConversationList({ drawer = false }: {
     sessions?: SessionRowView[];
     otherSessions?: SessionRowView[];
   };
+  // A change in flight with news not seen yet: the standard row reads this
+  // itself (features/improve/session-row.tsx); the kit row is told.
+  const { sessionUnreadIds } = useStoreState(notificationsStore) as { sessionUnreadIds: number[] };
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
   // A change started from an agent session (#2779) is that conversation's:
@@ -970,7 +974,9 @@ function ConversationList({ drawer = false }: {
     if (el.scrollTop <= 0) { anchor.current = null; return; }
     const box = el.getBoundingClientRect();
     const rows: MeasuredRow[] = [];
-    for (const node of Array.from(el.querySelectorAll<HTMLElement>('[data-inbox-row]'))) {
+    // Under a look the rows are the kit's, carrying the same key (./frame-list.tsx).
+    const nodes = el.querySelectorAll<HTMLElement>('[data-inbox-row]');
+    for (const node of Array.from(nodes)) {
       const key = node.dataset.inboxRow;
       if (!key) continue;
       const rect = node.getBoundingClientRect();
@@ -978,9 +984,10 @@ function ConversationList({ drawer = false }: {
     }
     anchor.current = firstRowInView(rows, 0);
   }, []);
-  // The reader changing the list (a search, a fold, older or archived chats)
-  // drops the held place: that is them moving the list, not it moving itself.
-  const listShape = `${deferredQuery}\u0000${snap.folded.join(',')}\u0000${agentsExpanded}\u0000${archivedOpen}`;
+  // The reader changing the list (a search, a fold, older or archived chats,
+  // the other tab under a look) drops the held place: that is them moving the
+  // list, not it moving itself.
+  const listShape = `${deferredQuery}\u0000${snap.folded.join(',')}\u0000${agentsExpanded}\u0000${archivedOpen}\u0000${frame ? frameTab : ''}`;
   const lastShape = useRef(listShape);
   useIsomorphicLayoutEffect(() => {
     if (lastShape.current === listShape) return;
@@ -1080,7 +1087,7 @@ function ConversationList({ drawer = false }: {
           key: entry.key,
           // A group wears the face of someone in it who is not you (the
           // tour's rows), a direct message the person's own.
-          lead: <KitAv size={40} name={face?.username || name || '?'} src={face?.avatarUrl} color={swatchFor(face?.username || name || '?')} />,
+          lead: <KitAv size={40} name={face?.username || name || '?'} initials={initials(face?.username || name || '?')} src={face?.avatarUrl} color={swatchFor(face?.username || name || '?')} />,
           title: name || '',
           // A group's size, as GroupMemberCount says it; a zero says nothing.
           tag: c.kind === 'direct' && peer?.bot ? t('messages:inbox.aiBadge') : null,
@@ -1120,6 +1127,7 @@ function ConversationList({ drawer = false }: {
           title: sn.title,
           line: dotText([caption, stamp.text]),
           status: { text: state.label, kind: state.kind },
+          unseen: sessionUnreadIds.includes(sn.id) ? { said: translate('agent:menu.row.unread'), session: sn.id } : null,
           active,
           href: sn.href,
           onClick: () => {},
@@ -1138,7 +1146,15 @@ function ConversationList({ drawer = false }: {
     // rule but for the fold of the section, which a tab does not have.
     const archive = mounted && !!agentChatsShown && !searching && (!fold.older || agentsExpanded);
     return (
-      <section className={`messages-list-pane ${specBeside ? 'hidden' : drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label={t('core:tabs.messages')} data-frame-list="">
+      <section
+        className={`messages-list-pane ${specBeside ? 'hidden' : drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`}
+        aria-label={t('core:tabs.messages')}
+        data-frame-list=""
+        // Under a look the pane itself scrolls: it keeps its place across a
+        // live re-sort and offers "Oldest chats", as the standard scroller does.
+        ref={scrollRef as RefObject<HTMLElement | null>}
+        onScroll={readAnchor}
+      >
         <MessagesFrameList
           people={rowsOf(peopleEntries)}
           agents={rowsOf(fold.shown)}
@@ -1154,6 +1170,7 @@ function ConversationList({ drawer = false }: {
             onRetry: readArchived,
           } : null}
           unread={unreadFromPeople}
+          working={asides.agents.text}
           tab={frameTab}
           onTab={setFrameTab}
           query={query}
@@ -1181,6 +1198,7 @@ function ConversationList({ drawer = false }: {
             onClose={() => setFrameNew(false)}
           />
         ) : null}
+        <InboxToEnd scroller={scrollRef} />
       </section>
     );
   }

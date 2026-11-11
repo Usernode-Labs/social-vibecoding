@@ -45,6 +45,8 @@ export interface FrameInboxRow {
   fresh?: string | null;
   /** Where an agent's work stands, as one word; drawn when nothing is new. */
   status?: { text: string; kind: PillKind } | null;
+  /** A change in flight with news not seen yet (the standard row's dot): the words a screen reader hears, and the session it marks. */
+  unseen?: { said: string; session: number | string } | null;
   active: boolean;
   href: string;
   onClick: (event: MouseEvent<HTMLElement>) => void;
@@ -88,6 +90,8 @@ function Fold({ open, onClick, children, ...data }: { open: boolean; onClick: ()
 function InboxRow({ row }: { row: FrameInboxRow }) {
   return (
     <Row
+      // The list's own key, as the standard row carries it: what the pane finds a row by (index.tsx, #6508).
+      data-inbox-row={row.key}
       href={row.href}
       onClick={row.onClick}
       lead={row.lead}
@@ -103,14 +107,20 @@ function InboxRow({ row }: { row: FrameInboxRow }) {
       line={row.line || undefined}
       right={row.fresh
         ? <Pill kind="act">{row.fresh}</Pill>
-        : row.status ? <Pill kind={row.status.kind}>{row.status.text}</Pill> : row.time ? <span className={k('meta')} title={row.timeTitle || undefined}>{row.time}</span> : null}
+        : row.status ? (
+          <>
+            <Pill kind={row.status.kind}>{row.status.text}</Pill>
+            {/* News not seen yet: the standard row's dot, after its state (features/improve/session-row.tsx). */}
+            {row.unseen ? <span role="img" aria-label={row.unseen.said} data-inbox-unseen="" data-session-unread={row.unseen.session} /> : null}
+          </>
+        ) : row.time ? <span className={k('meta')} title={row.timeTitle || undefined}>{row.time}</span> : null}
       on={row.active}
     />
   );
 }
 
 export function MessagesFrameList({
-  people, agents, older = 0, olderRows = [], olderOpen = false, onOlder, archive = null, unread = 0, tab, onTab, query, onQuery, onNew, state,
+  people, agents, older = 0, olderRows = [], olderOpen = false, onOlder, archive = null, unread = 0, working = null, tab, onTab, query, onQuery, onNew, state,
 }: {
   people: FrameInboxRow[];
   /** Agents, as the standard list shows it: this week's chats, the open one, and any that asks for you. */
@@ -124,6 +134,8 @@ export function MessagesFrameList({
   archive?: FrameInboxArchive | null;
   /** Messages from people not read yet: the People tab's count. */
   unread?: number;
+  /** Agents at work, as the standard heading says it ("2 working"); null when none is. */
+  working?: string | null;
   tab: FrameInboxTab;
   onTab: (next: FrameInboxTab) => void;
   query: string;
@@ -149,7 +161,8 @@ export function MessagesFrameList({
         <Tabs
           tabs={[
             { key: 'people', label: t('messages:inbox.section.people'), count: unread },
-            { key: 'agents', label: t('messages:inbox.section.agents') },
+            // "2 working" is not a count that asks for you: a small grey word after the name, as on the standard heading.
+            { key: 'agents', label: working ? <>{t('messages:inbox.section.agents')}<Pill mini>{working}</Pill></> : t('messages:inbox.section.agents') },
           ]}
           current={tab}
           onPick={(key) => onTab(key as FrameInboxTab)}

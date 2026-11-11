@@ -79,28 +79,51 @@ export function Tile({ size = 40, src, emoji, color, name = '' }: {
   color?: string | null;
   name?: string;
 }) {
+  // A picture that has not arrived yet, or never does: `seen` is the address
+  // that loaded, `lost` the one that failed (then the emoji or letter stands in).
+  const [seen, setSeen] = React.useState<string | null>(null);
+  const [lost, setLost] = React.useState<string | null>(null);
+  const picture = src && lost !== src ? src : null;
   const style: Custom = { '--fr-ts': `${size}px` };
   // A picture or an emoji with no colour of its own sits on white, as the
-  // launcher's tiles do: many icons are drawn on transparency.
-  style['--fr-tc'] = color || '#fff';
+  // launcher's tiles do: many icons are drawn on transparency. Until the
+  // picture is there the tile is the look's sunk tone, not a blank white
+  // square (the brightest thing in a dark look's row).
+  style['--fr-tc'] = color || (picture && seen !== picture ? 'var(--fr-sunk)' : '#fff');
   return (
     <span className={k('tile')} style={style} aria-hidden="true">
-      {src
-        ? <img src={src} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      {picture
+        ? (
+          <img
+            src={picture}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            // A picture already in the cache is complete before React listens for its load.
+            ref={(img) => { if (img && img.complete && img.naturalWidth > 0 && seen !== picture) setSeen(picture); }}
+            onLoad={() => setSeen(picture)}
+            onError={() => setLost(picture)}
+          />
+        )
         : (emoji || name.slice(0, 1).toUpperCase())}
     </span>
   );
 }
 
-/** A person: their picture, else their first letter on their colour. */
-export function Av({ size = 32, name, src, color }: { size?: number; name: string; src?: string | null; color?: string | null }) {
+/**
+ * A person: their picture, else their first letter on their colour. A list
+ * whose standard face says two letters ("DU" for a deleted user, Messages)
+ * hands them in as `initials`.
+ */
+export function Av({ size = 32, name, src, color, initials }: { size?: number; name: string; src?: string | null; color?: string | null; initials?: string }) {
   const style: Custom = { '--fr-as': `${size}px` };
   if (color) style['--fr-ac'] = color;
   return (
     <span className={k('av')} style={style} aria-hidden="true">
       {src
         ? <img src={src} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
-        : name.replace('@', '').slice(0, 1)}
+        : (initials || name.replace('@', '').slice(0, 1))}
     </span>
   );
 }
@@ -131,18 +154,20 @@ function saysNothing(children: React.ReactNode): boolean {
  * for you), `wait` amber (on others), `ok` green (done), `bad` red, none
  * grey. Zero or empty renders nothing.
  */
-export function Pill({ kind = '', mini, href, onClick, children }: {
+export function Pill({ kind = '', mini, href, target, onClick, children }: {
   kind?: PillKind;
   /** The small one that sits in a row's title, after its words. */
   mini?: boolean;
   /** A pill that is a door (a verified account's page). */
   href?: string;
+  /** Another site: a real link in a new tab. */
+  target?: '_blank';
   onClick?: (event: React.MouseEvent<HTMLElement>) => void;
   children?: React.ReactNode;
 }) {
   if (saysNothing(children)) return null;
   const cls = k('pill', kind, mini && 'mini');
-  if (href) return <a className={cls} data-kind={kind || 'none'} href={href} onClick={onClick}>{children}</a>;
+  if (href) return <a className={cls} data-kind={kind || 'none'} href={href} {...(target ? { target, rel: 'noopener noreferrer' } : undefined)} onClick={onClick}>{children}</a>;
   return <span className={cls} data-kind={kind || 'none'}>{children}</span>;
 }
 
@@ -205,6 +230,9 @@ export interface RowProps {
   glyph?: string;
   glyphTone?: 'acc';
   href?: string;
+  /** A row that opens another site: a real link in a new tab (`rel` is `noopener noreferrer` unless given). */
+  target?: '_blank';
+  rel?: string;
   onClick?: (event: React.MouseEvent<HTMLElement>) => void;
   /** Said to a screen reader where the visible row would be ambiguous. */
   label?: string;
@@ -212,12 +240,22 @@ export interface RowProps {
   pressed?: boolean;
 }
 
+/** The `data-*` attributes a caller hands a kit component, and nothing else it was given. */
+function dataOf(props: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of Object.keys(props)) {
+    if (key.startsWith('data-') && props[key] != null) out[key] = String(props[key]);
+  }
+  return out;
+}
+
 /**
  * THE row. Anything listed is this: picture, name, one line, one status,
  * in that order. A row with an `href` is a link (a door: cmd-click keeps
  * the address); with only `onClick` a button; else plain.
  */
-export function Row({ lead, title, line, right, go, on, sm, wrap, kind, num, numMono, glyph, glyphTone, href, onClick, label, pressed }: RowProps) {
+export function Row({ lead, title, line, right, go, on, sm, wrap, kind, num, numMono, glyph, glyphTone, href, target, rel, onClick, label, pressed, ...rest }: RowProps & Record<`data-${string}`, string | undefined>) {
+  const data = dataOf(rest);
   const cls = k('row', (sm ?? !line) && 'sm', on && 'on', wrap && 'wrap', wrap === 'all' && 'all', kind);
   const body = (
     <>
@@ -232,9 +270,12 @@ export function Row({ lead, title, line, right, go, on, sm, wrap, kind, num, num
       {go ? <Icon name="cr" size={18} className="go" /> : null}
     </>
   );
-  if (href) return <a className={cls} href={href} onClick={onClick} aria-label={label} aria-current={on ? 'page' : undefined}>{body}</a>;
-  if (onClick) return <button type="button" className={cls} onClick={onClick} aria-label={label} aria-pressed={pressed}>{body}</button>;
-  return <div className={cls}>{body}</div>;
+  if (href) {
+    const away = target ? { target, rel: rel || 'noopener noreferrer' } : undefined;
+    return <a className={cls} href={href} {...away} onClick={onClick} aria-label={label} aria-current={on ? 'page' : undefined} {...data}>{body}</a>;
+  }
+  if (onClick) return <button type="button" className={cls} onClick={onClick} aria-label={label} aria-pressed={pressed} {...data}>{body}</button>;
+  return <div className={cls} {...data}>{body}</div>;
 }
 
 /** A group's surface: rows, or any one block. */
@@ -604,11 +645,49 @@ export function ChallengeCard({ href, onClick, art, icon, title, line, state, la
 }
 
 /**
+ * A challenge's picture in a row's lead: its illustration on its tone, as
+ * the standard challenge card draws it, else its emoji, else the trophy.
+ * Shared by Home's Next challenges and the Challenges page's open rows.
+ * `tone` is the product's own tone class (lib/challenge-illustrations
+ * resolveIllustration().toneClass), which sets --tint-art in both themes;
+ * the caller resolves the picture, since the kit reads no data.
+ */
+export function ChallengeArt({ src, tone, icon, size = 44 }: {
+  src?: string | null;
+  tone?: string | null;
+  /** The challenge's emoji, drawn when it has no illustration (or the picture fails). */
+  icon?: string | null;
+  size?: number;
+}) {
+  const [lost, setLost] = React.useState<string | null>(null);
+  const style: Custom = { '--fr-cs': `${size}px` };
+  if (src && lost !== src) {
+    return (
+      <span className={`${k('cart', 'sm')}${tone ? ` ${tone}` : ''}`} style={{ ...style, background: 'var(--tint-art)' }} aria-hidden="true">
+        <img src={src} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setLost(src)} />
+      </span>
+    );
+  }
+  return <span className={k('cart', 'sm')} style={style} aria-hidden="true">{icon || <Icon name="trophy" size={Math.round(size * 0.45)} />}</span>;
+}
+
+/** The arrow that ends a row which opens a page of its own (a challenge), as the standard card's. */
+export function RowArrow() {
+  return <span className={k('arr')} aria-hidden="true"><Icon name="right" size={16} /></span>;
+}
+
+/**
  * A community as a picture card (Featured on Home): its illustration, or
  * its tile large on the cover; its name, one sentence, who is there, and
  * the row's one word.
  */
-export function PicCard({ href, onClick, cover, darkCover, tile, title, line, meta, word, badge, flag }: {
+export function PicCard({ href, onClick, cover, darkCover, tile, color, title, line, two, meta, word, end, badge, flag, label, ...data }: {
+  /** With no picture: the colour the tile stands on (the community's own). */
+  color?: string | null;
+  /** The sentence may take two lines (a directory's card). */
+  two?: boolean;
+  /** Said to a screen reader in place of the card's text. */
+  label?: string;
   /** On the cover's lower corner: who is there (a people glyph and a number, with its words for a screen reader). */
   badge?: React.ReactNode;
   /** On the cover's upper corner: "New". */
@@ -622,10 +701,16 @@ export function PicCard({ href, onClick, cover, darkCover, tile, title, line, me
   line?: React.ReactNode;
   meta?: React.ReactNode;
   word?: React.ReactNode;
-}) {
-  return (
-    <a className={k('card', 'fcard')} href={href} onClick={onClick}>
-      <span className={k('fcover')}>
+  /**
+   * A control of the card's own at its foot, beside `meta` (Join on a
+   * member's Home). A button may not sit inside a link, so the card is then
+   * a group: its picture and words are the door, the foot stands under it.
+   */
+  end?: React.ReactNode;
+} & Record<`data-${string}`, string | undefined>) {
+  const face = (
+    <>
+      <span className={k('fcover', !cover && color ? 'tc' : '')} style={!cover && color ? { '--fr-tc': color } as Custom : undefined}>
         {cover ? <img src={cover} alt="" loading="lazy" className={k('sun')} /> : tile}
         {cover && darkCover ? <img src={darkCover} alt="" loading="lazy" className={k('moon')} /> : null}
         {flag ? <span className={k('pill', 'new')}>{flag}</span> : null}
@@ -633,11 +718,20 @@ export function PicCard({ href, onClick, cover, darkCover, tile, title, line, me
       </span>
       <span className={k('fbody')}>
         <span className={k('t')}>{title}</span>
-        {line ? <span className={k('s')}>{line}</span> : null}
-        {meta || word ? <span className={k('fm')}>{meta}{word ? <span className={k('btn', 'quiet', 'sm')}>{word}</span> : null}</span> : null}
+        {line ? <span className={k('s', two && 'two')}>{line}</span> : null}
+        {!end && (meta || word) ? <span className={k('fm')}>{meta}{word ? <span className={k('btn', 'quiet', 'sm')}>{word}</span> : null}</span> : null}
       </span>
-    </a>
+    </>
   );
+  if (end) {
+    return (
+      <div className={k('card', 'fcard')} {...data}>
+        <a className={k('fdoor')} href={href} onClick={onClick} aria-label={label}>{face}</a>
+        <div className={k('fm')}><span className={k('fmt')}>{meta}</span>{end}</div>
+      </div>
+    );
+  }
+  return <a className={k('card', 'fcard')} href={href} onClick={onClick} aria-label={label} {...data}>{face}</a>;
 }
 
 /**
@@ -843,9 +937,9 @@ export function Mut({ children }: { children?: React.ReactNode }) {
 }
 
 /** One grey sentence under a group's card: what the group does not say itself. */
-export function SecNote({ children }: { children?: React.ReactNode }) {
+export function SecNote({ end, children, ...data }: { /** The line that ends a list, centred under it. */ end?: boolean; children?: React.ReactNode } & Record<`data-${string}`, string | undefined>) {
   if (saysNothing(children)) return null;
-  return <p className={k('secnote')}>{children}</p>;
+  return <p className={k('secnote', end && 'end')} {...data}>{children}</p>;
 }
 
 /** A label inside a group, over one part of it ("Featured" over its cards). */
@@ -959,20 +1053,38 @@ export function HCard({ top, end, title, line, more, foot, href, onClick, label 
 /**
  * The week as bars, one a day: how tall each is (`value`, 0 to 1 of the
  * tallest), the words over the one worth naming, the day under it. The
- * chart is a picture to a screen reader; `label` says what it shows.
+ * chart is a picture to a screen reader; `label` says what it shows. Where
+ * the days say themselves (`spoken`: "Monday: 37m"), it is a list of them
+ * instead, as the standard chart is, and a pointer resting on a day reads
+ * the same words.
  */
 export function Bars({ days, label }: {
-  days: Array<{ label: React.ReactNode; value: number; text?: React.ReactNode; now?: boolean }>;
+  days: Array<{ label: React.ReactNode; value: number; text?: React.ReactNode; now?: boolean; spoken?: string; id?: string }>;
   label: string;
 }) {
   const style: Custom | undefined = days.length === 7 ? undefined : { '--fr-bn': days.length };
+  const bar = (day: { value: number }) => (day.value > 0 ? { height: `${Math.max(3, Math.min(100, Math.round(day.value * 100)))}%` } : undefined);
+  if (days.some((day) => day.spoken)) {
+    return (
+      <div className={k('bars')} style={style} role="list" aria-label={label}>
+        {days.map((day, i) => (
+          <div className={k('bcol', day.now && 'now', !(day.value > 0) && 'none')} key={i} role="listitem" title={day.spoken} data-activity-day={day.id}>
+            <span className={k('sro')}>{day.spoken}</span>
+            <span className={k('bv')} aria-hidden="true">{day.text}</span>
+            <i aria-hidden="true" style={bar(day)} />
+            <span className={k('bl')} aria-hidden="true">{day.label}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
     <div className={k('bars')} style={style} role="img" aria-label={label}>
       {days.map((day, i) => (
         // A day with nothing in it is a baseline in the quiet ink (.none), not a stub of the accent.
         <div className={k('bcol', day.now && 'now', !(day.value > 0) && 'none')} key={i} aria-hidden="true">
           <span className={k('bv')}>{day.text}</span>
-          <i style={day.value > 0 ? { height: `${Math.max(3, Math.min(100, Math.round(day.value * 100)))}%` } : undefined} />
+          <i style={bar(day)} />
           <span className={k('bl')}>{day.label}</span>
         </div>
       ))}

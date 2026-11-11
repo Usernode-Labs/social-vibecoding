@@ -47,7 +47,7 @@ const imports = (over = {}) => renderComponent(FRAME, 'ImportFrame', {
 }, { cache: false });
 
 test('from Create, Make and the made screen sit in the frame\'s page area, not over its sidebar and bar', () => {
-  const rule = hand.match(/html\[data-skin\]\[data-frame-chrome\] \.platform-kb-surface\.platform-under-header \{([^}]*)\}/);
+  const rule = hand.match(/html\[data-skin\]\[data-frame-chrome\] :is\(\.platform-kb-surface, \[data-first-session-made\]\)\.platform-under-header \{([^}]*)\}/);
   assert.ok(rule, 'only while the frame\'s chrome is up');
   assert.match(rule[1], /top: var\(--fr-shell-top, 0px\);/);
   assert.match(rule[1], /bottom: 0;\s+padding-bottom: var\(--fr-shell-bottom, 0px\);/, 'to the foot, the tab bar\'s height kept clear inside: the bar is see-through');

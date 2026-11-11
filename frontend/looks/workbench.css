@@ -80,3 +80,4 @@
 .tb{font-size:10.5px;gap:3px;border-radius:8px}.tb svg.ic{width:20px;height:20px}
 .cols>.stack+.stack .row .tx,.pane .row .tx,.sheet .row .tx,.solo .row .tx{display:block}
 .stage{border-radius:10px;padding:16px}.stage .title{font-size:20px}
+.phone .barline{background:var(--surface)}

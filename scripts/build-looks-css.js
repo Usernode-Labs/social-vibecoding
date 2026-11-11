@@ -78,6 +78,11 @@ function mapSelector(raw, id) {
   // `.hr *` is the kit's reset: kept, inside a frame root.
   sel = sel.replace(/^\.fr /, '\u0000');
   sel = renameClasses(sel).replace('\u0000', '.fr ');
+  // The reset stops at a piece of the product's own drawn inside a kit page
+  // (class fr-own: Home's waitlist and verify cards, its widget strip, the
+  // standard grid while Pinned apps is arranged), whose utilities carry its
+  // margins and padding. :where() keeps the reset's weight what it was.
+  sel = sel.replace(/^\.fr \*/, '.fr *:where(:not(.fr-own,.fr-own *))');
   const head = `${flag(id)}${media ? '[data-skin]' : ''}${dark ? '.dark' : ''}`;
   return { media, selector: `${head} ${sel}` };
 }

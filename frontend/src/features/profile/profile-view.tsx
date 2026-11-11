@@ -47,7 +47,7 @@ import { WeekShareSheet } from './week-share-sheet';
 import { appSlotsLine, useAppAllowance } from '../dialogs/app-allowance';
 import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 import { useVisibility } from '../../lib/visibility-store';
-import { YouFrame, type YouShell } from './frame/you-frame';
+import { YouFrame, YouLoading, type YouShell } from './frame/you-frame';
 import { YouFriends } from './frame/you-friends';
 import { YouHistory } from './frame/you-history';
 import type { YouTab } from './frame/you-tabs';
@@ -467,7 +467,8 @@ export function ProfileRoot(): ReactNode {
   const view = buildProfileView(state);
 
   if (view.kind === 'empty') return null;
-  if (view.kind === 'loading') return <ProfileSkeleton />;
+  // Under a look the page waits at the kit's shape (./frame/you-frame.tsx).
+  if (view.kind === 'loading') return frame ? <YouLoading /> : <ProfileSkeleton />;
   // signedOut is checked BEFORE error — see buildProfileView. A lapsed session
   // is a normal state, and the connection-error copy blames the network for it.
   if (view.kind === 'signedOut') {

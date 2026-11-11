@@ -13,17 +13,68 @@
  * member's card ends in Join and says its votes or members; a visitor's
  * card is its picture, name and sentence, with how many people used it
  * lately (#6433: no button, the whole card opens the project's page).
+ *
+ * A visitor's directory (`picture`) is picture cards from first to last, as
+ * the standard landing's is: the community's illustration (its dark twin
+ * in a dark theme), else its icon on its own colour, with "New" and the
+ * people count on the cover. Featured is as many across as leaves no card
+ * alone on its last row (`across`), where the count allows it.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { Btn, Card, CapSub, HCard, Note, Row, Sec, SecNote, Tile, k } from '@/components/ui/kit';
+import { Btn, Card, CapSub, HCard, Note, PicCard, Row, Sec, SecNote, Tile, k } from '@/components/ui/kit';
+import { useCommunityColor } from '../../../lib/community-color';
 import { useMessages } from '../../../lib/i18n/react';
 import { featuredApps, presentCategories, type GuestApp } from '../../guest/guest-data';
 import { JOIN_PAGE, joinOrder, scrollParent } from '../communities-to-join';
 import { matchesQuery } from '../use-home-query';
 
+/**
+ * How many cards across a grid of `count`, on a desktop: three, unless that
+ * leaves one card alone on the last row (four, seven, ten featured) or a
+ * hole beside two; then four or two, whichever closes the row.
+ */
+export function across(count: number): 2 | 3 | 4 {
+  if (count === 2) return 2;
+  if (count < 4 || count % 3 !== 1) return 3;
+  if (count % 4 !== 1) return 4;
+  return count % 2 === 0 ? 2 : 3;
+}
+
+/** A community as a visitor's picture card. A component, for the colour it reads off the icon. */
+function PictureCard({ app, to, flag, badge, meta, end }: {
+  app: GuestApp;
+  to: { href: string; onClick: (event: React.MouseEvent<HTMLElement>) => void; label?: string };
+  flag?: React.ReactNode;
+  badge?: React.ReactNode;
+  /** A member's card ends in a foot: how many are there or what is up for a vote, and Join. */
+  meta?: React.ReactNode;
+  end?: React.ReactNode;
+}) {
+  const color = useCommunityColor({ color: app.icon_color, iconUrl: app.icon_url, iconEmoji: app.icon_emoji, key: app.slug });
+  return (
+    <PicCard
+      href={to.href}
+      onClick={to.onClick}
+      label={to.label}
+      data-home-join-card={app.slug}
+      cover={app.illustration_url || null}
+      darkCover={app.illustration_dark_url || null}
+      color={color}
+      tile={<Tile size={64} name={app.name || app.slug} src={app.icon_url} emoji={app.icon_emoji} color={app.icon_color} />}
+      flag={flag}
+      badge={badge}
+      title={app.name || app.slug}
+      line={app.description || undefined}
+      two
+      meta={meta}
+      end={end}
+    />
+  );
+}
+
 /** `initialKind` seeds the one state a render test cannot reach through a press. */
-export function ToJoinView({ apps, failed, onRetry, exclude, query, heading, id, title, link, cardEnd, cardLine, rowEnd, rowLine, initialKind = null }: {
+export function ToJoinView({ apps, failed, onRetry, exclude, query, heading, id, title, link, picture, cardEnd, cardLine, rowEnd, rowLine, initialKind = null }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** The directory could not be read: say so, with a way to try again. */
@@ -38,6 +89,8 @@ export function ToJoinView({ apps, failed, onRetry, exclude, query, heading, id,
   title: (app: GuestApp) => React.ReactNode;
   /** The whole card or row is the door (a visitor's, which holds no button). `label` is what a screen reader hears for it. */
   link?: (app: GuestApp) => { href: string; onClick: (event: React.MouseEvent<HTMLElement>) => void; label?: string };
+  /** A visitor's directory: every community a picture card, with these on its cover ("New", the people count). Needs `link`. */
+  picture?: (app: GuestApp) => { flag?: React.ReactNode; badge?: React.ReactNode; meta?: React.ReactNode; end?: React.ReactNode };
   /** At the end of a card's first line, and of a row: Join, or how many people. */
   cardEnd: (app: GuestApp) => React.ReactNode;
   rowEnd: (app: GuestApp) => React.ReactNode;
@@ -85,6 +138,8 @@ export function ToJoinView({ apps, failed, onRetry, exclude, query, heading, id,
   if (query && !list.length) return null;
 
   const door = (app: GuestApp) => { const to = link?.(app); return to ? { href: to.href, onClick: to.onClick, label: to.label } : {}; };
+  const pictures = !!picture && !!link;
+  const wide = (count: number) => { const n = across(count); return n === 3 ? '' : `c${n}`; };
   const face = (app: GuestApp, size: number) => <Tile size={size} name={app.name || app.slug} src={app.icon_url} emoji={app.icon_emoji} color={app.icon_color} />;
 
   return (
@@ -104,11 +159,17 @@ export function ToJoinView({ apps, failed, onRetry, exclude, query, heading, id,
       {featured.length ? (
         <>
           <CapSub>{t('home:join.featured')}</CapSub>
-          <div className={k('grid', 'across')} data-home-join-featured="">
-            {featured.map((app) => (
-              <HCard key={app.slug} top={face(app, 44)} end={cardEnd(app)} title={title(app)} line={cardLine ? cardLine(app) : undefined} more={app.description || undefined} {...door(app)} />
-            ))}
-          </div>
+          {pictures ? (
+            <div className={k('grid', wide(featured.length))} data-home-join-featured="">
+              {featured.map((app) => <PictureCard key={app.slug} app={app} to={link!(app)} {...picture!(app)} />)}
+            </div>
+          ) : (
+            <div className={k('grid', 'across', wide(featured.length))} data-home-join-featured="">
+              {featured.map((app) => (
+                <HCard key={app.slug} top={face(app, 44)} end={cardEnd(app)} title={title(app)} line={cardLine ? cardLine(app) : undefined} more={app.description || undefined} {...door(app)} />
+              ))}
+            </div>
+          )}
         </>
       ) : null}
       {failed ? (
@@ -125,11 +186,18 @@ export function ToJoinView({ apps, failed, onRetry, exclude, query, heading, id,
       ) : list.length ? (
         <>
           {kind && featured.length ? <CapSub>{t('home:join.more')}</CapSub> : null}
-          <Card>
-            {list.slice(0, shown).map((app) => (
-              <Row key={app.slug} lead={face(app, 40)} title={title(app)} line={rowLine(app) || undefined} right={rowEnd(app)} {...door(app)} />
-            ))}
-          </Card>
+          {pictures ? (
+            <div className={k('grid')} data-home-join-rest="">
+              {list.slice(0, shown).map((app) => <PictureCard key={app.slug} app={app} to={link!(app)} {...picture!(app)} />)}
+            </div>
+          ) : (
+            <Card>
+              {/* One size of row down the list, with or without a line under the name. */}
+              {list.slice(0, shown).map((app) => (
+                <Row key={app.slug} sm={false} lead={face(app, 40)} title={title(app)} line={rowLine(app) || undefined} right={rowEnd(app)} {...door(app)} />
+              ))}
+            </Card>
+          )}
         </>
       ) : featured.length ? null : (
         <SecNote>{!pool.length && !kind && !query ? t('home:join.empty') : t('home:join.allJoined')}</SecNote>
@@ -140,7 +208,8 @@ export function ToJoinView({ apps, failed, onRetry, exclude, query, heading, id,
           <div ref={sentinel} data-home-join-more="" style={{ height: 1 }} />
         </>
       ) : list.length > JOIN_PAGE ? (
-        <SecNote>{kind ? t('home:join.endKind') : t('home:join.end')}</SecNote>
+        // Centred under the list, where the standard section says it.
+        <SecNote end data-home-join-end="">{kind ? t('home:join.endKind') : t('home:join.end')}</SecNote>
       ) : null}
     </Sec>
   );

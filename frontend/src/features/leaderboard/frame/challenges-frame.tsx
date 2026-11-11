@@ -14,16 +14,87 @@
  * ../topochain-standings.tsx, ../event-bar.tsx) with another face. A
  * challenge's own page is still the pane's.
  */
-import { Fragment } from 'react';
+import { Fragment, useEffect } from 'react';
 import type * as React from 'react';
-import { Btn, Card, Cols, Frame, Head, Lead, Meta, Note, PageBody, Pill, Row, Sec, Tabs, k } from '@/components/ui/kit';
+import { Btn, Card, ChallengeArt, Cols, Frame, Head, Lead, Meta, Note, PageBody, Pill, Row, RowArrow, Sec, Tabs, k } from '@/components/ui/kit';
+import { resolveIllustration } from '../../../lib/challenge-illustrations';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { useFrameFlag } from '../../frame/frame-flag';
+import { framePageStore } from '../../frame/frame-page-store';
+
+/**
+ * Where the bar says these two tabs are: You, then Challenges (the tour's
+ * s53 to s55; the page is reached from You's Rewards row). The way back is
+ * the shell's own back, pressed as the frame's bar presses it, so it goes
+ * where the standard header's arrow goes.
+ */
+const shellBack = () => { document.getElementById('back-btn')?.click(); };
+function useChallengesCrumb(up: boolean) {
+  const t = useMessages('leaderboard');
+  const tc = useMessages('core');
+  const you = tc('core:tabs.me');
+  const here = t('leaderboard:tabs.challenges');
+  // The two tabs are two panes, each mounted behind the other: the one going
+  // down takes back only what it published itself, so it never clears the
+  // crumb the other has just put up.
+  useEffect(() => {
+    if (!up) return undefined;
+    const crumb = [you, here];
+    // On a phone the bar says You: the page's own title is already "Challenges".
+    framePageStore.set({ crumb, onBack: shellBack, phoneUp: true });
+    return () => { if (framePageStore.get().crumb === crumb) framePageStore.set({ crumb: null, onBack: null }); };
+  }, [up, you, here]);
+}
 
 /** A challenge as the pane's card has it: `goal` is its name ("Use apps for 10 minutes"), `label` its kind ("Weekly"). */
 interface CardLike {
   key: string; idx: number; done: boolean; label: string; goal: string; reward: string | null;
   stateLabel: string; earned: string | null;
+  /** The picture and the rail of an open challenge, as the standard card has them (../challenge-card.tsx). */
+  illustration?: string | null; illustrationTone?: string | null; icon?: string | null;
+  state?: 'new' | 'progress' | 'done'; fill?: number | null; counted?: boolean;
+}
+
+/**
+ * An open challenge (version 2: today's content in the first tour's row).
+ * The standard card's picture leads the row: the kit's shared
+ * <ChallengeArt/>, the one Home's Next challenges draws, so the two pages
+ * show one picture. Its name and its rail (the state in words, and a bar
+ * when the challenge is counted; the kit's `rail`) are the row's two lines,
+ * the points its one pill, and the kit's arrow ends it.
+ */
+function OpenChallenge({ card, onOpen }: { card: CardLike; onOpen: (idx: number) => void }) {
+  const t = useMessages('leaderboard');
+  const art = resolveIllustration(card.illustration, card.illustrationTone);
+  const name = card.goal || card.label;
+  const state = card.state || 'new';
+  const pct = card.fill == null ? null : Math.round(Math.max(0, Math.min(card.fill, 1)) * 100);
+  const bar = !!card.counted && state !== 'done' && pct != null;
+  return (
+    <button type="button" className={k('row', 'wrap')} data-challenge-open="" onClick={() => onOpen(card.idx)}>
+      <ChallengeArt src={art?.src} tone={art?.toneClass} icon={card.icon} size={48} />
+      <span className={k('tx')}>
+        <span className={k('t')}>{name}</span>
+        {card.stateLabel ? (
+          <span
+            className={k('rail')}
+            data-state={state}
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={pct == null ? undefined : pct}
+            aria-valuetext={card.stateLabel}
+            aria-label={name ? t('leaderboard:challenges.state.named', { challenge: name, state: card.stateLabel }) : card.stateLabel}
+          >
+            {bar ? <i style={{ width: `${Math.max(pct || 0, 6)}%` }} /> : null}
+            <span>{card.stateLabel}</span>
+          </span>
+        ) : null}
+      </span>
+      {card.reward ? <Pill>{card.reward}</Pill> : null}
+      <RowArrow />
+    </button>
+  );
 }
 
 export type FrameToken =
@@ -63,6 +134,7 @@ export function ChallengesFrame({ up = true, tabs, onTab, state = 'cards', error
   standing: FrameStanding | null;
 }) {
   useFrameFlag('challenges-frame', up);
+  useChallengesCrumb(up);
   const t = useMessages('leaderboard');
   const counts = progress ? { done: progress.done, count: progress.total } : null;
   return (
@@ -129,7 +201,7 @@ export function ChallengesFrame({ up = true, tabs, onTab, state = 'cards', error
             {group.cards.map((card) => (card.done ? (
               <Row key={card.key} sm lead={<Lead icon="check" tone="ok" />} title={card.goal || card.label} right={<Meta tone="ok">{card.earned || card.reward}</Meta>} onClick={() => onOpen(card.idx)} />
             ) : (
-              <Row key={card.key} wrap lead={<Lead icon="trophy" tone="acc" />} title={card.goal || card.label} line={card.stateLabel || undefined} right={<Pill>{card.reward}</Pill>} go onClick={() => onOpen(card.idx)} sm={false} />
+              <OpenChallenge key={card.key} card={card} onOpen={onOpen} />
             )))}
           </Card>
         </Sec>
@@ -151,6 +223,7 @@ export function StandingsFrameHead({ up = true, tabs, onTab }: {
   onTab: (key: string) => void;
 }) {
   useFrameFlag('standings-frame', up);
+  useChallengesCrumb(up);
   const t = useMessages('leaderboard');
   return (
     <Frame data-standings-frame="">

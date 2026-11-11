@@ -180,6 +180,23 @@ export function FrameChrome() {
   // it, so the kit shows this line on a phone only).
   const botHead = useStoreState(botDrawerStore);
   const crumbLine = botHead.on && botHead.level === 1 ? botHead.sub : '';
+  // WHERE THAT LINE DOES NOT FIT beside the bar's buttons (an admin has the
+  // look disc there too), it is not cut: it moves under the bar's first row,
+  // across the bar's whole width, where it may wrap. The line in the crumb
+  // stays in the document at no height, as the measure of whether it fits.
+  const lineRef = useRef<HTMLSpanElement | null>(null);
+  const [lineUnder, setLineUnder] = useState(false);
+  useLayoutEffect(() => {
+    const el = lineRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') { setLineUnder(false); return undefined; }
+    const read = () => setLineUnder(el.scrollWidth > el.clientWidth + 1);
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [crumbLine, title]);
+  // The crumb a phone keeps: the last, or the one before it where the page's own title says the last (framePageStore's phoneUp).
+  const kept = page.crumb && page.phoneUp && crumbs.length > 1 ? crumbs.length - 2 : crumbs.length - 1;
   // THE SIDEBAR FOLDS AS THE STANDARD ONE DOES: the same fact (navStore's
   // railOpen), turned over by the standard header's own toggle
   // (../nav/sidebar-toggle.tsx), which this bar's button presses. Folded,
@@ -347,13 +364,13 @@ export function FrameChrome() {
               {crumbs.map(({ word, lead }, i) => (
                 <Fragment key={`${i}:${word}`}>
                   {i > 0 ? <Icon name="cr" size={14} /> : null}
-                  <span className={k('ci', i === crumbs.length - 1 && 'here keep')}>
+                  <span className={k('ci', i === crumbs.length - 1 && 'here', i === kept && 'keep')}>
                     {lead}
                     {/* The words are a box of their own, so a long name is
                         cut with an ellipsis before the bar's buttons. */}
                     <span className={k('cw')}>
                       <span className={k('cn')}>{word}</span>
-                      {i === crumbs.length - 1 && crumbLine ? <span className={k('cs p')} data-frame-crumb-line="">{crumbLine}</span> : null}
+                      {i === crumbs.length - 1 && crumbLine ? <span ref={lineRef} className={k('cs p', lineUnder && 'off')} data-frame-crumb-line="" aria-hidden={lineUnder ? 'true' : undefined}>{crumbLine}</span> : null}
                     </span>
                   </span>
                 </Fragment>
@@ -393,6 +410,7 @@ export function FrameChrome() {
               <Av size={28} name={me || '?'} src={user?.avatar_url} color={swatchFor(me || '?')} />
             </a>
           </header>
+          {lineUnder && crumbLine ? <div className={k('barline')} data-frame-crumb-line="under">{crumbLine}</div> : null}
           <main className={k('pagearea')} ref={areaRef} />
           <nav className={k('tabbar')} aria-label={t('core:frame.navigation')}>
             {tb('home', 'home', t('core:tabs.home'), 0, '#home')}
