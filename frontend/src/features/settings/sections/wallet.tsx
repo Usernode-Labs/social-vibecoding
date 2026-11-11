@@ -28,7 +28,10 @@ export function WalletSection() {
           </Button>
         </div>
         {/* Linking: show QR */}
-        <div id="wallet-linking" className="hidden text-center">
+        {/* `ui-card` and `ui-walletkey` below draw nothing in the standard
+            look: under a look the QR's block and the linked key's line are
+            the kit's card (looks.json "wear"; app.css, SETTINGS). */}
+        <div id="wallet-linking" className="ui-card hidden text-center">
           <div id="wallet-qr-canvas" className="inline-block rounded-lg bg-white p-2">
           </div>
           <p id="wallet-link-timer" className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
@@ -42,7 +45,7 @@ export function WalletSection() {
         </div>
         {/* Linked: show pubkey + unlink */}
         <div id="wallet-linked" className="hidden">
-          <div className="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2">
+          <div className="ui-card ui-walletkey flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2">
             <span className="text-xs text-emerald-700 font-bold dark:text-emerald-400">
               &#x2713;
             </span>

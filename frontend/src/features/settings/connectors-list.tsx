@@ -77,7 +77,7 @@ export function ToolConnectionsView({ connections }: { connections: ConnectionVi
           trailing={(
             <button
               type="button"
-              className="inline-flex min-h-[44px] shrink-0 items-center rounded-full bg-red-500/10 px-4 text-[0.9375rem] font-medium text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors"
+              className="ui-btn-sm inline-flex min-h-[44px] shrink-0 items-center rounded-full bg-red-500/10 px-4 text-[0.9375rem] font-medium text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors"
               onClick={(e) => controller()?._disconnectConnector?.(connection.id, e.currentTarget)}
             >
               {t('settings:connectors.list.disconnect')}

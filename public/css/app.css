@@ -27515,9 +27515,6 @@ html[data-skin]:not([data-skin="brand"]) :is(.rf-feed-note, .rf-capped) { color:
 }
 @media (max-width: 1023.98px) {
   html[data-skin]:where(:not([data-skin="brand"])) #settings-root:has(#settings-section-content:not(.hidden)) > .settings-frame-head { display: none; }
-/* A mark that only one of the frame's looks draws (a radio row's mark in
-   Appearance and Accessibility): the standard look has none. */
-.ui-look-only { display: none; }
 }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-sidebar-col.settings-side-sheet { background: none; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; border: 0; border-radius: 0; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content.settings-sheet { margin-top: 0; margin-bottom: 0; padding: 0; background: none; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; border-radius: 0; border-top: 0; }
@@ -27796,6 +27793,102 @@ html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #connectors-list details > div pre { padding: 12px; border: 1px solid var(--fr-line); border-radius: 12px; background: var(--fr-ground); font-family: var(--fr-fm); font-size: 12px; line-height: 1.5; color: var(--fr-ink); }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #connectors-list details > div span.font-mono { font-family: var(--fr-fm); font-size: 12px; color: var(--fr-mut); }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #connectors-list details > div label { font-size: 13px; font-weight: 650; }
+
+/* WHAT WAS LEFT AFTER THE FIX PASS (11 Nov 2026).
+   THE LIST STAYS IN VIEW on a desktop while a long section scrolls, as the
+   standard look's does (`#settings-sidebar-col`, "THE SECTION LIST IS A
+   SHEET TOO"): it sticks 16px under the bar once the head has scrolled
+   away, and when it is taller than the window it scrolls on its own. A
+   scroller cuts what is drawn outside it, so the column is 8px larger on
+   every side and takes them back as margins: each card keeps its shadow. */
+@media (min-width: 1024px) {
+  html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-sidebar-col { position: sticky; top: 16px; align-self: flex-start; box-sizing: border-box; flex-basis: 376px; width: 376px; max-height: calc(100dvh - var(--platform-header-h, 0px) - 16px); margin: -8px; padding: 8px 8px 24px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+}
+/* A FIELD INSIDE A CARD HAS AN EDGE in Pastel and in Paper. Pastel's field
+   has no ring and Paper's is a 10% line on white, so inside a card the
+   field could not be told from the card (Language, the Look menu). Pastel
+   says what it does on a white sheet (`.sheet .inp`: the sunk fill), and
+   that is taken here with a hairline; Paper keeps its white field and gets
+   a ring that shows. Said here and not in the looks' own files: it is this
+   screen that puts a field in a card. */
+html[data-skin="pastel"] #settings-screen #settings-root #settings-section-content :is(.ui-card, .ui-fields) :is(input, select, textarea):not([type="checkbox"], [type="radio"], [type="file"], [type="range"], [type="hidden"]):not(:focus) { background: var(--fr-sunk); box-shadow: inset 0 0 0 1px var(--fr-line); }
+html[data-skin="paper"] #settings-screen #settings-root #settings-section-content :is(.ui-card, .ui-fields) :is(input, select, textarea):not([type="checkbox"], [type="radio"], [type="file"], [type="range"], [type="hidden"]):not(:focus) { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fr-ink) 22%, transparent); }
+/* IN PAPER A QUIET BUTTON INSIDE A CARD IS THE WHITE ONE (paper.css:
+   `.card .btn.quiet, .card .btn.line`). The wear map repeats a rule for the
+   wearers of one component at a time, so that rule reaches this screen's
+   cards holding the kit's own button and never this screen's own buttons:
+   Upload, Change, Revoke and the rest stood sunk on a sunk card, a pill
+   nobody could see, in light and in dark. Said here for this screen. */
+html[data-skin="paper"] #settings-screen #settings-root :is(.ui-card, .ui-glist) :is(.ui-btn, :is(button, a, label):is(.bg-white, .bg-zinc-100, .border:is(.rounded, .rounded-md, .rounded-lg, .rounded-full))):is(.bg-white, .bg-zinc-100, .border, .ui-btn-quiet, .ui-btn-line):not(.border-red-400, .ui-btn-bad, .bg-violet-600, .ui-lrow, .ui-row, [role="radio"], .ui-plain) { background: var(--fr-surface); box-shadow: none; }
+/* WITH THE KEYS UP ON A PHONE THE TAB BAR GOES, as the standard look's does
+   (`html.un-kb #platform-tabs`, `html.platform-kb-open #platform-tabs`).
+   The frame's bar stayed: with "Find a setting" focused it rode on the
+   keyboard, or showed half of itself over the keys' edge. The frame
+   measures its page area, so the room comes back to the page by itself. */
+@media (max-width: 767.98px) {
+  html[data-skin]:is(.un-kb, .platform-kb-open):has(#settings-screen:not(.hidden)) .fr.fr-shell .fr-tabbar { display: none; }
+}
+
+/* HOMEROOM WALLET (sections/wallet.tsx; shown where wallet linking is on).
+   The page's note, then one of three: the button; the QR in a card with its
+   time left and Cancel under it (the code keeps its white ground, which a
+   phone's camera needs); the linked key as one row of a card, in the mono
+   face behind the look's own tick. */
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #wallet-linking.ui-card { padding: 24px 16px 16px; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #wallet-qr-canvas { border-radius: 12px; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #wallet-link-timer { margin: 12px 0 0; padding: 0; font-size: 13px; line-height: 1.45; color: var(--fr-mut); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #wallet-link-cancel { margin-top: 8px; font-size: 13px; text-decoration: none; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-walletkey { gap: 12px; min-height: 48px; padding: 8px 16px; border: 0; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-walletkey > span:first-child { font-size: 15px; color: var(--fr-ok); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #wallet-pubkey-display { font-family: var(--fr-fm); font-size: 13px; color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #wallet-status { padding: 0 4px; font-size: 13px; line-height: 1.45; }
+/* HOMEROOM APP (sections/usernode.tsx, usernode-ui.tsx; the phone app's own
+   settings). Each part is a label and its note over one card
+   (`.ui-unbody`, a neutral wrapper) holding the part's own nodes in the
+   kit's type and tokens: a status row (the name in the row's type, its
+   state at the end in the look's ok or waiting ink behind a dot of the
+   same), a switch at the end of its row, notes in the muted 13px, build
+   and error words in the mono face, a notice as a tinted box, the buttons
+   the kit's small ones on one wrapping line, a widget's lines, and the
+   help's questions as sunk boxes. */
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 8px 16px 16px; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > *, html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div > :is(button, a) { margin: 0; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > :is(button, a):not(.ui-unrow) { align-self: flex-start; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div:has(> :is(button, a).border) { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div:empty { display: none; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div:has(> :is(button, a).border) > p { flex: 1 0 100%; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unrow { gap: 12px; min-height: 40px; padding: 0; border-radius: 0; background: none; font-size: 15px; line-height: 1.45; color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section button.ui-unrow { cursor: pointer; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unrow > span:nth-child(2) { font-weight: 650; color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unrow > span:nth-child(3) { font-size: 13px; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unrow > span:nth-child(4) { font-size: 15px; color: var(--fr-faint); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section :is(.bg-emerald-500, .bg-amber-500) { flex: none; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .bg-emerald-500 { background: var(--fr-ok); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .bg-amber-500 { background: var(--fr-wait); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .text-emerald-700 { color: var(--fr-ok); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section :is(.text-amber-800, p.text-amber-800) { color: var(--fr-wait); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody p { margin: 0; padding: 0; font-size: 13px; line-height: 1.45; color: var(--fr-mut); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody p.text-amber-800 { color: var(--fr-wait); font-weight: 600; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody p.font-mono { font-family: var(--fr-fm); font-size: 12px; color: var(--fr-mut); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div.rounded-md.border { padding: 12px; border: 0; border-radius: 12px; background: var(--fr-sunk); font-size: 13px; line-height: 1.45; color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div.rounded-md.border.border-amber-300 { background: var(--fr-wait-t); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div.rounded-md.border.border-emerald-300 { background: var(--fr-ok-t); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div.rounded-md.border > p { color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div.rounded-md.border > :is(button, a) { margin-top: 12px; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > label:has(> .un-switch) { flex-direction: row-reverse; justify-content: space-between; gap: 12px; min-height: 40px; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > label:has(> .un-switch) > span { font-size: 15px; line-height: 1.45; font-weight: 650; color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section #settings-widget-icon-entries { display: flex; flex-direction: column; gap: 4px; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section #settings-widget-icon-entries > div { margin: 0; gap: 12px; font-size: 13px; line-height: 1.45; color: var(--fr-mut); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section #settings-widget-icon-entries > div > span:nth-child(2) { color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody > div.mt-3 > div:first-child { margin: 8px 0; font-size: 13px; font-weight: 650; color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody details { margin: 0 0 8px; padding: 12px 16px; border: 0; border-radius: 12px; background: var(--fr-sunk); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody details:last-child { margin-bottom: 0; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody details > summary { font-size: 15px; font-weight: 650; color: var(--fr-ink); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section .ui-unbody details > p { margin-top: 8px; }
+/* While the page reads the app, or when it could not (no part, so no card): the words stand as a note, the failure in the look's bad ink. */
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section #settings-usernode-error > p { margin: 0 0 4px; padding: 0 4px; font-size: 13px; line-height: 1.45; color: var(--fr-mut); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section #settings-usernode-error > p.text-red-700 { font-size: 15px; font-weight: 650; color: var(--fr-bad); }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-usernode-section #settings-usernode-error > p.font-mono { font-family: var(--fr-fm); font-size: 12px; }
 
 /* MAKE, AND THE MADE SCREEN AFTER IT (features/first-session/make.tsx,
    made.tsx), opened from Create. The standard look lays them under the

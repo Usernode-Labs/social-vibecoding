@@ -33,7 +33,7 @@ const section = (name) => read('frontend/src/features/settings/sections', name);
 
 test('on a wide window the list of sections comes first at 360px, the open section after it at 680px', () => {
   assert.match(settings, new RegExp(`@media \\(min-width: 1024px\\) \\{\\s+${ANY} #settings-root \\{ max-width: 1136px; padding: 32px 32px 48px; \\}`));
-  assert.match(settings, new RegExp(`${ANY} #settings-sidebar-col \\{ order: 1; flex: 0 0 360px; width: 360px; position: static; height: auto; overflow: visible; padding: 0; \\}`), 'the list is part of the page: not a sheet that scrolls on its own');
+  assert.match(settings, new RegExp(`${ANY} #settings-sidebar-col \\{ order: 1; flex: 0 0 360px; width: 360px; position: static; height: auto; overflow: visible; padding: 0; \\}`), 'the list is a column of the page, with no sheet of its own (it sticks: see below)');
   assert.match(settings, new RegExp(`${ANY} #settings-content-col \\{ order: 2; flex: 0 1 680px; \\}`));
   assert.match(settings, new RegExp(`${ANY} #settings-sidebar-col\\.settings-side-sheet \\{ background: none; box-shadow: none;`), 'the list\'s sheet is put away');
   assert.match(settings, new RegExp(`${ANY} #settings-section-content\\.settings-sheet \\{ margin-top: 0; margin-bottom: 0; padding: 0; background: none; box-shadow: none;[^}]*border-radius: 0; border-top: 0; \\}`), 'and the section\'s, with its top hairline and the negative margin that ran its last rows under the phone\'s tab bar');
@@ -266,6 +266,69 @@ test('the small pieces: Legal as rows, the version row centred, the look\'s chec
   assert.match(settings, new RegExp(`${IN}#settings-mobile-menu-host \\.settings-menu-row \\{ gap: 12px; padding-inline: 16px; \\}`));
   assert.deepEqual(roots.av, { to: '#settings-profile-card > span[aria-hidden]:is(#settings-root *)' }, 'the profile row\'s letter wears the kit\'s avatar');
   assert.match(section('profile.tsx'), /style=\{\{ '--fr-ac': swatchFor\(user\?\.username \|\| '\?'\) \} as React\.CSSProperties\}/, 'on the colour the frame\'s bar draws the person in');
+});
+
+test('the list stays in view on a desktop while a long section scrolls, and scrolls on its own when it is taller than the window', () => {
+  const rule = settings.match(new RegExp(`@media \\(min-width: 1024px\\) \\{\\s+${IN}#settings-sidebar-col \\{([^}]*)\\}`));
+  assert.ok(rule, 'said with the screen and the root, so it outranks the column\'s own rule above');
+  assert.match(rule[1], /position: sticky; top: 16px; align-self: flex-start;/, 'as the standard look\'s list does');
+  assert.match(rule[1], /max-height: calc\(100dvh - var\(--platform-header-h, 0px\) - 16px\);/);
+  assert.match(rule[1], /overflow-y: auto; overscroll-behavior: contain;/);
+  assert.match(rule[1], /flex-basis: 376px; width: 376px;[^}]*margin: -8px; padding: 8px 8px 24px;/, '8px larger on every side, taken back as margins: a scroller cuts shadows, and the cards keep theirs');
+});
+
+test('a field inside a card has an edge in Pastel and in Paper, said for this screen and not in the looks\' own files', () => {
+  const FIELD = ':is\\(input, select, textarea\\):not\\(\\[type="checkbox"\\], \\[type="radio"\\], \\[type="file"\\], \\[type="range"\\], \\[type="hidden"\\]\\):not\\(:focus\\)';
+  const AT = '#settings-screen #settings-root #settings-section-content :is\\(\\.ui-card, \\.ui-fields\\) ';
+  assert.match(settings, new RegExp(`html\\[data-skin="pastel"\\] ${AT}${FIELD} \\{ background: var\\(--fr-sunk\\); box-shadow: inset 0 0 0 1px var\\(--fr-line\\); \\}`), 'Pastel: what it does on a white sheet');
+  assert.match(settings, new RegExp(`html\\[data-skin="paper"\\] ${AT}${FIELD} \\{ box-shadow: inset 0 0 0 1px color-mix\\(in srgb, var\\(--fr-ink\\) 22%, transparent\\); \\}`), 'Paper: a ring that shows on its white field');
+  for (const look of ['pastel', 'paper']) assert.doesNotMatch(read('frontend/looks', `${look}.css`), /settings/, `${look}.css is not touched`);
+});
+
+test('in Paper a quiet button inside one of this screen\'s cards is the white one, as the look says of its own', () => {
+  assert.match(read('frontend/looks/paper.css'), /\.card \.btn\.quiet,\.card \.btn\.line\{background:var\(--surface\);box-shadow:none\}/, 'the look\'s own rule');
+  assert.match(settings, /html\[data-skin="paper"\] #settings-screen #settings-root :is\(\.ui-card, \.ui-glist\) :is\(\.ui-btn, :is\(button, a, label\):is\(\.bg-white, \.bg-zinc-100, \.border:is\(\.rounded, \.rounded-md, \.rounded-lg, \.rounded-full\)\)\):is\(\.bg-white, \.bg-zinc-100, \.border, \.ui-btn-quiet, \.ui-btn-line\):not\(\.border-red-400, \.ui-btn-bad, \.bg-violet-600, \.ui-lrow, \.ui-row, \[role="radio"\], \.ui-plain\) \{ background: var\(--fr-surface\); box-shadow: none; \}/);
+});
+
+test('with the keys up on a phone the frame\'s tab bar goes while Settings is open, as the standard look\'s does', () => {
+  assert.match(css, /html\.un-kb #platform-tabs \{\s+display: none;/, 'the standard look\'s own');
+  assert.match(settings, /@media \(max-width: 767\.98px\) \{\s+html\[data-skin\]:is\(\.un-kb, \.platform-kb-open\):has\(#settings-screen:not\(\.hidden\)\) \.fr\.fr-shell \.fr-tabbar \{ display: none; \}/);
+});
+
+test('Disconnect in a tool\'s card is the small bad button', () => {
+  const src = read('frontend/src/features/settings/connectors-list.tsx');
+  assert.match(src, /className="ui-btn-sm inline-flex min-h-\[44px\] shrink-0 items-center rounded-full bg-red-500\/10 px-4 /, 'small by name: none of its own classes says so');
+  const btn = roots.btn.also.find((w) => /#settings-root/.test(w.to));
+  assert.match(btn.parts.sm, /\.ui-btn-sm/);
+  assert.match(btn.parts.bad, /\.bg-red-500\\\/10/, 'and bad by its own fill');
+});
+
+test('Homeroom Wallet wears the look: the QR in a card, the linked key one row of a card', () => {
+  const src = section('wallet.tsx');
+  assert.match(src, /<div id="wallet-linking" className="ui-card hidden text-center">/, 'the id and `hidden` settings.js toggles are kept');
+  assert.match(src, /<div className="ui-card ui-walletkey flex items-center gap-2 rounded-lg bg-zinc-100 /);
+  for (const id of ['wallet-section', 'wallet-unlinked', 'wallet-link-btn', 'wallet-qr-canvas', 'wallet-link-timer', 'wallet-link-cancel', 'wallet-linked', 'wallet-pubkey-display', 'wallet-status']) assert.ok(src.includes(`id="${id}"`), id);
+  assert.match(settings, new RegExp(`${IN}#wallet-linking\\.ui-card \\{ padding: 24px 16px 16px; \\}`));
+  assert.match(settings, new RegExp(`${IN}\\.ui-walletkey \\{ gap: 12px; min-height: 48px; padding: 8px 16px; border: 0; \\}`));
+  assert.match(settings, new RegExp(`${IN}\\.ui-walletkey > span:first-child \\{ font-size: 15px; color: var\\(--fr-ok\\); \\}`));
+  assert.match(settings, new RegExp(`${IN}#wallet-pubkey-display \\{ font-family: var\\(--fr-fm\\);`));
+  assert.doesNotMatch(settings, /#wallet-qr-canvas \{[^}]*background/, 'the code keeps its white ground');
+});
+
+test('the Homeroom app page: each part is a label over one card, a neutral wrapper round the part\'s own nodes', () => {
+  const src = section('usernode-ui.tsx');
+  assert.match(src, /<SectionHeading title=\{title\}>\{description \|\| undefined\}<\/SectionHeading>[\s\S]*?<div className="ui-card ui-unbody">\{children\}<\/div>\s*<\/div>/);
+  assert.match(src, /const ROW_BASE = 'ui-unrow flex items-center gap-2 mt-1 text-sm w-full text-start';/);
+  assert.doesNotMatch(src, /isFrameSkin|useLiveSkin|useSkin/, 'one markup for both looks');
+  const U = `${IN}#settings-usernode-section `;
+  assert.match(settings, new RegExp(`${U}\\.ui-unbody \\{ display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 8px 16px 16px; \\}`));
+  assert.match(settings, new RegExp(`${U}\\.ui-unrow \\{ gap: 12px; min-height: 40px;`));
+  assert.match(settings, new RegExp(`${U}\\.bg-emerald-500 \\{ background: var\\(--fr-ok\\); \\}`), 'a state\'s dot is the look\'s');
+  assert.match(settings, new RegExp(`${U}\\.bg-amber-500 \\{ background: var\\(--fr-wait\\); \\}`));
+  assert.match(settings, new RegExp(`${U}\\.ui-unbody > label:has\\(> \\.un-switch\\) \\{ flex-direction: row-reverse; justify-content: space-between;`), 'a switch at the end of its row');
+  assert.match(settings, new RegExp(`${U}\\.ui-unbody > div\\.rounded-md\\.border\\.border-amber-300 \\{ background: var\\(--fr-wait-t\\); \\}`), 'a notice is a tinted box');
+  assert.match(settings, new RegExp(`${U}\\.ui-unbody details \\{ margin: 0 0 8px; padding: 12px 16px; border: 0; border-radius: 12px; background: var\\(--fr-sunk\\); \\}`));
+  assert.doesNotMatch(css.replace(settings, ''), /\.ui-(unbody|unrow|walletkey)/, 'the standard look says nothing for these names');
 });
 
 test('no rule here paints a literal colour or blurs the page', () => {

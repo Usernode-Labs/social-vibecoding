@@ -80,7 +80,12 @@ export function UnSection(
   return (
     <div id={id} className="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-800">
       <SectionHeading title={title}>{description || undefined}</SectionHeading>
-      {children}
+      {/* A neutral wrapper round the part's own rows, notes and buttons. The
+          standard look draws nothing for it (no class of its own has a rule
+          there, and a block with no padding or border lets its children's
+          margins through); under a look it is the part's card (app.css,
+          SETTINGS: `.ui-unbody`). */}
+      <div className="ui-card ui-unbody">{children}</div>
     </div>
   );
 }
@@ -96,7 +101,8 @@ export function UnP({ note }: { note: UnNote }): ReactNode {
   return <p className={NOTE_CLASS[note.tone || 'muted']}>{note.text}</p>;
 }
 
-const ROW_BASE = 'flex items-center gap-2 mt-1 text-sm w-full text-start';
+// `ui-unrow` draws nothing in the standard look: it names the row for a look (app.css, SETTINGS).
+const ROW_BASE = 'ui-unrow flex items-center gap-2 mt-1 text-sm w-full text-start';
 const ROW_TAP = ' rounded-md -mx-1 px-1 py-1 transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800';
 
 export function UnRow({ row }: { row: UnStatusRow }): ReactNode {
