@@ -218,3 +218,68 @@ pressed; the bell's sheet with older notifications open in Glass, Paper, Workben
 the menu in Glass (desktop) and Paper (phone, dark); the chrome's four presses on both widths. Not seen: an
 unread notification's row (the copy has none for this account), a locked or failed app tile, the waitlist
 states.
+
+### Lane B, as built (11 Nov 2026)
+
+**The shared row model first** (`features/ai/lines.ts`, `useAiLines`). The `Line` objects `AiLists` built inline
+moved there whole, with the chips' projects (`ranked`, `rail`, `past`, `toggle`), what a search keeps, the fresh
+counts, the counts over each list, `heads`, `nothingHere` and `noMatches`. A glyph is a name (`Glyph`); each face
+has its own icon for it (`GLYPHS` in `lists.tsx`, `ICON` in `frame-list.tsx`). The standard list renders the same
+markup; `tests/ai-screen.test.js` changed only where it read the moved lines out of `lists.tsx` (four reads now
+name `lines.ts`, and the "works" glyph is pinned as a name plus the standard face's icon map).
+
+**s08, s09, s14, the lists** (`features/ai/frame-list.tsx`, rewritten). The head: the bot's tile, the title, the
+counts sentence, and two round buttons (search, which opens the field under the head and Escape closes; the +).
+The projects as tabs: All, the rail's projects, "N more" opening the product's `ProjectPicker`. Main Chat as one
+small row in its own card. Then four groups of one card each, in the standard order: Needs you, Waiting & in
+progress (with "Not moving · N" as its last row, opening its rows in place), Live this week (with the older-tab
+reload note), History (its kinds as small buttons inside the card, months as rows, "Earlier months" last). A row
+is one line: glyph (accent when it asks for you), the number in mono from 768px, the title (with "· N requests"),
+then a blue pill or grey words; a private row ends in the product's ⋯ (`ThreadDoneMenu`, Mark done); on a phone a
+second line where it is news. Folding is `groupRows`, so the lit row and a new row are never folded away; Needs
+you holds its order under the pointer (`holdOrder`). The loading line, the failed note with Try again, "nothing
+of yours in <project>", and "No threads match" are the standard's. With one project picked the lists are
+narrowed, project names are not repeated, and Main Chat stays. The phone's Ask Homeroom bot bar is back over the
+tab bar, wearing the kit's composer. Alone, the list is the kit's narrow page (784px, centred). Gone: the group
+per project, the five-stop line on rows, second lines on a desktop, the labelled New thread button, the count on
+All, and all fifteen `messages:frame.bot.*` ids.
+
+**s10 Main Chat.** The kit head got the standard head's lock before "Only you can see this chat". The
+conversation is the product's, worn, as before.
+
+**s11 a request in the column.** Only the pane, as assigned: the shell's side-panel head beside the bot page is
+dressed as the kit's open-item head (68px, 32px gutter, 40px tile, 17px name over the 13px line, the ⋯ and × as
+round buttons). On a phone, a request opened from the lists keeps the standard page's pair of chips (Homeroom
+bot, Workshop) at its top: `#gc-thread-back` is shown again there when it holds the pair, as small quiet buttons.
+
+**s12 a private thread.** Already the product's pane, worn. Its row in the list is lit together with its ⋯, and
+the ⋯ menu is dressed (it sits inside `.fr`, whose reset had undressed it).
+
+**s13 New thread.** As ruled, the product's pane in the column (the whole screen on a phone), with today's
+content. The five starts are rows in one card (the list wears the kit's card through `looks.json`; the rows and
+their 40px glyph tile are hand rules in app.css), the two chips are small quiet buttons.
+
+Rulings taken:
+
+- **Project tabs toggle like the standard chips** (audit question 7): several may be picked, All means none, and
+  a tab carries its count of new threads. Closest to today, and what the address (`?project=`) already carries.
+- **Day dividers and the "Earlier" line stay** inside a project's rows (Needs you, Waiting & in progress), as
+  small caps with a rule. The mockup's sample has none, but the standard list has had them since 6 Nov and #6262.
+- The fresh pill beside "Needs you · N" and on a project's name, and the dot before a new row, are kept.
+- The loading state is the standard's spoken words ("Loading…") as a grey line, not skeleton bars (the kit has none).
+- A request's back chips show on a phone only when the page has the pair; a page with the one chip keeps the
+  bar's arrow alone, as every kit page does.
+
+Left, and why:
+
+- **Main Chat's request cards and the bot's bulleted lines** (s10) are the product's own drawing, not the kit's
+  rows in one card and small event lines. Wearing them means adding the ref cards to the wear map's `card` and
+  `row`; the `row` root is Settings' (lane S), so it was left for after the merge.
+- **The lock as a private thread's head lead** (s12): the product's head has no lead, and the lock is already
+  before its line.
+- **The "N more" picker and the chips' pickers** open the product's own menus and sheets, not the kit's sheet.
+- The order inside a request's page in the column (Status first) is lane T's.
+- In Paper, the list beside an open item runs past the page card's rounded bottom edge (it did before this lane).
+- Not seen in a browser: a new (unread) Needs you row with the Earlier line, the failed and loading notes, the
+  older-tab reload note, and a project in a community the person left (History). They are pinned in
+  `tests/ai-frame-list.test.js` from fixtures instead.
