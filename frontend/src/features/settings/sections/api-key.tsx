@@ -37,7 +37,7 @@ export function ApiKeySection() {
       <Label className="sr-only" htmlFor="settings-api-key">
         {t('settings:apiKey.fieldLabel')}
       </Label>
-      <div className="ui-card rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
+      <div className="ui-card ui-keyrow rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
         <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
         {/*
             The width moves to the wrapper because the wrapper is what the
@@ -73,7 +73,7 @@ export function ApiKeySection() {
             settings.js still finds both by getElementById and binds their
             clicks — same tags, same ids, same class strings.
         */}
-        <Button id="settings-save" layout="shrink" variant="pillAccent" size="pill">
+        <Button id="settings-save" layout="shrink" variant="pillAccent" size="pill" className="ui-btn-sm">
           {t('core:common.save')}
         </Button>
         <Button
@@ -82,6 +82,7 @@ export function ApiKeySection() {
           variant="pillDanger"
           size="pill"
           ink="dangerTint"
+          className="ui-btn-sm"
         >
           {t('settings:apiKey.remove')}
         </Button>

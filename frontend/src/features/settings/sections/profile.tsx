@@ -1,3 +1,4 @@
+import type * as React from 'react';
 import { useCallback, useState } from 'react';
 
 import { SectionHeading } from '@/components/ui/field';
@@ -6,6 +7,7 @@ import { ChevronRightIcon } from '@/components/ui/icons';
 import { useMessages } from '../../../lib/i18n/react';
 import { useIsomorphicLayoutEffect, useWindowEvent } from '../../../lib/legacy-dom';
 import { displayNameOf, initialOf } from '../../profile/profile-store.js';
+import { swatchFor } from '../../messages/format';
 
 /**
  * The Profile part — the head of the Account page.
@@ -50,6 +52,10 @@ function Avatar({ user }: { user: ProfileUser | null }) {
     <span
       aria-hidden="true"
       className="w-11 h-11 text-lg rounded-full shrink-0 flex items-center justify-center font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
+      // The person's own colour, the one the frame's bar draws them in. A
+      // custom property the standard look never reads: under a look the
+      // letter wears the kit's avatar (looks.json, "wear": av).
+      style={{ '--fr-ac': swatchFor(user?.username || '?') } as React.CSSProperties}
     >
       {initialOf(user)}
     </span>

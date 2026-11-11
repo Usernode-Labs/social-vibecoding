@@ -358,7 +358,9 @@ export function ConnectorsSection() {
               account's connection, and never mints a token or contacts a
               chat product. Secondary by design — Copy stays the section's
               one filled accent button, so this one uses the neutral fill the
-              profile screen's Preview and Copy public link use.
+              profile screen's Preview and Copy public link use. `ui-btn-sm`
+              draws nothing here: under a look it is the kit's small button,
+              the size Copy beside it already is (looks.json, "wear").
           */}
           <Button
             id="connector-url-test"
@@ -366,7 +368,7 @@ export function ConnectorsSection() {
             variant="neutral"
             ink="neutral"
             layout="shrink"
-            className="w-full sm:w-auto min-h-[44px] sm:min-h-[36px]"
+            className="ui-btn-sm w-full sm:w-auto min-h-[44px] sm:min-h-[36px]"
           >
             {t('settings:connectors.test.button')}
           </Button>
