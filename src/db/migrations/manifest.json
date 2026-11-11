@@ -300,6 +300,16 @@
       "id": "work-state-votes",
       "sha256": "35fe59fc0cc0a553f996638dfef0e6cfc949196053cf57883ca86e212abe8123",
       "schemaSha256": "5b0a205d5965ba2fd2434cc0e45865f319d27d99b640b1607f42bce395663dc7"
+    },
+    {
+      "id": "change-request-claims-confirm",
+      "sha256": "25c5edefb2193a3337feaca7da640ef8b285b166b20b808da4dd32fda9b0c618",
+      "schemaSha256": "c46cb42f4d6ab80a6bf7a770fc8de15eb56e62822578f8aa3eda1cde226df8bf"
+    },
+    {
+      "id": "requests-filer-from-twin",
+      "sha256": "c2c7b8469376599c5b83f74a3916b4f6386f6467f555453b629f5be62b6e9542",
+      "schemaSha256": "f966937cbbab7a96893595f3ecec437c64efe251087ac6987d211aa87dc943dd"
     }
   ]
 }

@@ -538,10 +538,14 @@ SELECT 'change', cs.id::bigint, cs.pr_number,
        -- Homeroom bot built, the requester it was built for.
        (SELECT COALESCE(jsonb_agg(jsonb_build_object(
                  'number', c.n, 'title', r.title, 'by', COALESCE(ru.username, r.author_login),
-                 'filerId', r.created_by, 'builtFor', c.n = cs.created_from_issue_number) ORDER BY c.n), '[]'::jsonb)
+                 'filerId', r.created_by, 'builtFor', c.n = cs.created_from_issue_number,
+                 'closed', r.state = 'closed', 'filerSynthetic', COALESCE(ru.is_synthetic, FALSE),
+                 'confirmedByFiler', cc.confirmed_at IS NOT NULL,
+                 'disputed', cc.disputed_at IS NOT NULL) ORDER BY c.n), '[]'::jsonb)
           FROM (SELECT DISTINCT unnest(COALESCE(cs.linked_issues, '{}'::int[])) AS n) c
           LEFT JOIN requests r ON r.app_id = cs.app_id AND r.number = c.n
           LEFT JOIN users ru ON ru.id = r.created_by
+          LEFT JOIN change_request_claims cc ON cc.session_id = cs.id AND cc.request_number = c.n
          WHERE c.n > 0) AS closes_requests,
        CASE WHEN COALESCE(cu.is_synthetic, FALSE)
             THEN (SELECT r2.created_by FROM requests r2
@@ -604,12 +608,17 @@ SELECT f.thread_type, f.thread_ref, f.id, f.content, f.created_at, u.username, u
  * #6225: the requests a change closes, as its Votes card lists them: each
  * one's number, title and filer, and whether its requester has agreed to it.
  * A request counts as confirmed when the change was built for it, whoever
- * filed it, or when its filer is the change's author — and for a change
+ * filed it, when its filer is the change's author — and for a change
  * Homeroom bot built, the person it was built for counts as its author
- * (`builtForUserId`). `rows` is ITEMS_SQL's `closes_requests`: `filerId`
- * never leaves the server. Ascending, without duplicates. Pure.
+ * (`builtForUserId`) — or when its filer pressed Confirm (#6606).
+ * `rows` is ITEMS_SQL's `closes_requests`: `filerId` never leaves the server.
+ * `closed`, `disputed`, `waiting` and `canConfirm` are what the card's line
+ * says after the filer's standing (#6606): a closed request says so; a
+ * disputed one says its filer does not agree; only a request with a person
+ * who could still answer is "waiting", and only that person may confirm it.
+ * Ascending, without duplicates. Pure.
  */
-function closesRequests(rows, builtForUserId) {
+function closesRequests(rows, builtForUserId, viewerId = null) {
   const seen = new Set();
   const out = [];
   for (const row of Array.isArray(rows) ? rows : []) {
@@ -619,11 +628,24 @@ function closesRequests(rows, builtForUserId) {
     seen.add(number);
     const filerId = row.filerId == null ? null : Number(row.filerId);
     const author = builtForUserId == null ? null : Number(builtForUserId);
+    const confirmed = row.builtFor === true
+      || row.confirmedByFiler === true
+      || (filerId != null && author != null && filerId === author);
+    // A request with no filer at all — an imported one, or one Homeroom bot
+    // filed on its own — has nobody who could answer, so nothing is asked.
+    const someone = row.filerSynthetic !== true && filerId != null;
+    const closed = row.closed === true;
+    const disputed = !confirmed && !closed && row.disputed === true;
+    const waiting = !confirmed && !closed && !disputed && someone;
     out.push({
       number,
       title: row.title == null ? null : String(row.title),
       by: row.by == null ? null : String(row.by),
-      confirmed: row.builtFor === true || (filerId != null && author != null && filerId === author),
+      confirmed,
+      closed,
+      disputed,
+      waiting,
+      canConfirm: waiting && viewerId != null && filerId !== null && filerId === Number(viewerId),
     });
   }
   return out.sort((a, b) => a.number - b.number);
@@ -681,7 +703,7 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
       item.closes = Array.isArray(row.closes) ? row.closes.map(Number).filter((n) => n > 0) : [];
       // #6225: the same list with each request's title and filer, and whether
       // its requester agreed to be closed by this change (votes card).
-      item.closesRequests = closesRequests(row.closes_requests, row.built_for_user_id);
+      item.closesRequests = closesRequests(row.closes_requests, row.built_for_user_id, viewerId);
       // 1 Nov 2026 (C2.3): the plan it was built from (a person's on the
       // request, or the bot's own its requester approved), which the
       // request's page draws with it (request-head.tsx plansByChange).
@@ -828,6 +850,7 @@ const ELSEWHERE_SQL = `
 SELECT cs.id, cs.pr_number, COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed_pr_title, ''), NULLIF(cs.session_title, '')) AS title,
        cs.pr_summary_md, cs.user_id AS builder_id, rq.created_by AS requester_id,
        (c.disputed_at IS NOT NULL) AS disputed,
+       (c.confirmed_at IS NOT NULL) AS confirmed,
        t.number AS home, n.number AS request
   FROM chat_sessions cs
   JOIN threads t ON t.id = cs.thread_id
@@ -873,6 +896,7 @@ async function changesElsewhere(db, { thread, numbers, viewerId = null }) {
     const builderId = row.builder_id == null ? null : Number(row.builder_id);
     const mine = viewerId != null && requesterId != null && requesterId === Number(viewerId);
     const disputed = row.disputed === true;
+    const confirmed = row.confirmed === true;
     out.push({
       id: Number(row.id),
       number: row.pr_number == null ? null : Number(row.pr_number),
@@ -881,10 +905,12 @@ async function changesElsewhere(db, { thread, numbers, viewerId = null }) {
       on: Number(row.home),
       request: Number(row.request),
       disputed,
+      confirmed,
       mine,
       // Only the requester is asked, and not when the change is their own:
-      // the notice still shows, but there is nothing to answer.
-      ask: mine && requesterId !== builderId && !disputed,
+      // the notice still shows, but there is nothing to answer. One answer
+      // per claim: a dispute or a confirmation stops the ask (#6606).
+      ask: mine && requesterId !== builderId && !disputed && !confirmed,
     });
   }
   return out;

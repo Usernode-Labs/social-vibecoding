@@ -337,6 +337,8 @@ test('D4: a change for this request on another request\'s page is a card that na
   assert.match(html, /Pin it/, 'the change\'s title');
   assert.match(html, /Pin one message\./, 'its one-line summary');
   assert.match(html, /data-thread-elsewhere-dispute="91"[^>]*>This doesn(?:'|&#x27;)t close it<\/button>/, 'the requester can answer it');
+  assert.match(html, /data-thread-elsewhere-confirm="91"[^>]*>Confirm<\/button>/, '#6606: the filer can also confirm it');
+  assert.match(read(`${TOPIC}/thread-changes.tsx`), /confirm-closing/, 'through the confirm route');
   const answered = renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
     slug: 'club',
     data: thread([{ ...request, number: 11 }], {
@@ -346,6 +348,17 @@ test('D4: a change for this request on another request\'s page is a card that na
   });
   assert.doesNotMatch(answered, />This doesn(?:'|&#x27;)t close it<\/button>/, 'no button once answered');
   assert.match(answered, /You said this doesn(?:'|&#x27;)t close it/, 'the requester reads their answer back');
+  const confirmed = renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+    slug: 'club',
+    data: thread([{ ...request, number: 11 }], {
+      elsewhere: [{ ...elsewhere[0], ask: false, confirmed: true }],
+    }),
+    number: 11, changes: [], close: null, onChanged: () => {},
+  });
+  assert.doesNotMatch(confirmed, /data-thread-elsewhere-confirm=/, 'no Confirm once answered');
+  assert.match(confirmed, /You confirmed this closes it/, '#6606: the filer reads their answer back');
+  assert.equal(message('project:topic.thread.page.claimConfirm'), 'Confirm');
+  assert.equal(message('project:topic.thread.page.claimConfirmed'), 'You confirmed this closes it');
   assert.equal(message('project:topic.thread.page.claimsUnnumbered'), '<0>A change</0> says it closes this');
   assert.equal(message('project:topic.thread.page.claimNotConfirmed'), '(not confirmed)');
 });
@@ -454,14 +467,14 @@ function drawGate(props = {}) {
   }
 }
 
-const closesOf = (list) => list.map(([number, title, by, confirmed]) => ({ number, title, by, confirmed }));
+const closesOf = (list) => list.map(([number, title, by, confirmed, extra]) => ({ number, title, by, confirmed, ...(extra || {}) }));
 
 test('#6225: the Votes card lists every request the change will close, marking the unconfirmed', () => {
   const html = drawGate({
     closes: closesOf([
       [10, 'Phone navigation opens the wrong tab', 'evan', true],
       [11, 'Back arrow skips a page', 'evan', true],
-      [12, 'Sidebar rows too tight', 'mara', false],
+      [12, 'Sidebar rows too tight', 'mara', false, { waiting: true }],
     ]),
   });
   assert.match(html, /data-change-vote-closes="3"/);
@@ -469,11 +482,30 @@ test('#6225: the Votes card lists every request the change will close, marking t
   assert.equal((html.match(/data-change-vote-closes-on=/g) || []).length, 3, 'one line each');
   assert.match(html, /data-change-vote-closes-on="10" data-confirmed="true"/);
   assert.match(html, /data-change-vote-closes-on="12" data-confirmed="false"/, 'a request nobody agreed to');
-  assert.equal((html.match(/not confirmed by its requester/g) || []).length, 1, 'said only of the unconfirmed one');
+  assert.equal((html.match(/waiting for whoever filed it to agree this closes it/g) || []).length, 1, 'said only of the one waiting');
   assert.match(html, /href="#app\/club\/dev\/issues\/10"/, 'each number opens that request\'s page');
   assert.match(html, /Phone navigation opens the wrong tab · evan/, 'its title and who filed it');
   assert.ok(html.indexOf('data-change-vote-fact="tally"') < html.indexOf('data-change-vote-closes='), 'under the tally');
   assert.doesNotMatch(html, /data-change-vote-closes-more=/, 'three need no fold');
+});
+
+test('#6606: a closes line says where its filer stands, and asks only the one who can answer', () => {
+  const waiting = drawGate({ closes: closesOf([[12, 'Sidebar rows too tight', 'mara', false, { waiting: true, canConfirm: true }]]) });
+  assert.match(waiting, /waiting for whoever filed it to agree this closes it/);
+  assert.match(waiting, /data-change-vote-closes-confirm="12"[^>]*>Confirm<\/button>/, 'the filer may press Confirm');
+
+  const voter = drawGate({ closes: closesOf([[12, 'Sidebar rows too tight', 'mara', false, { waiting: true }]]) });
+  assert.doesNotMatch(voter, /data-change-vote-closes-confirm=/, 'a voter reads it, and is not asked');
+
+  const nobody = drawGate({ closes: closesOf([[12, 'Old import', 'mara', false]]) });
+  assert.doesNotMatch(nobody, /waiting for whoever/, 'nobody could confirm it, so nothing is asked');
+
+  const closed = drawGate({ closes: closesOf([[12, 'Fix the badge', 'kim', false, { closed: true }]]) });
+  assert.match(closed, /already closed/, 'a closed request says so');
+
+  const disputed = drawGate({ closes: closesOf([[12, 'Fix the badge', 'kim', false, { disputed: true }]]) });
+  assert.match(disputed, /its filer says this doesn(?:'|&#x27;)t close it/);
+  assert.equal(message('project:topic.change.gate.closesConfirm'), 'Confirm');
 });
 
 test('#6225: one request reads "Closes 1 request", and past five the rest fold behind a tap', () => {

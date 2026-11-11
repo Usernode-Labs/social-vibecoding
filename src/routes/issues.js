@@ -1529,6 +1529,32 @@ function issueRoutes(config) {
       }
     });
 
+  // #6606: the request's filer agrees the change closes it. Same gate,
+  // validation and view-access read as not-closing above; the service keeps
+  // "one answer per claim" and refuses the change's own author.
+  router.post('/api/apps/:slug/issues/:number/changes/:sessionId/confirm-closing', issueKindLimiter, sameOriginBrowserOnly,
+    communities.requireAppMembership(pool), async (req, res) => {
+      try {
+        const n = Number(req.params.number);
+        const sessionId = Number(req.params.sessionId);
+        if (!Number.isSafeInteger(n) || n <= 0 || !Number.isSafeInteger(sessionId) || sessionId <= 0) {
+          return res.status(400).json({ error: 'Invalid request or change' });
+        }
+        const app = await appAccess.getAppForUser(
+          pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS,
+        );
+        if (!app) return res.status(404).json({ error: 'App not found' });
+        const out = await require('../services/change-claims').confirm(pool, {
+          appId: app.id, requestNumber: n, sessionId, userId: req.user.id, username: req.user.username,
+        });
+        if (!out.ok) return res.status(out.status || 400).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
+        return res.json({ ok: true, confirmed: true });
+      } catch (err) {
+        log.error('issues', 'Confirming a change\'s claim failed', { message: err.message, slug: req.params.slug });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
   router.post('/api/apps/:slug/issues', issueKindLimiter, communities.requireAppMembership(pool), async (req, res) => {
     let { title, description, kind = 'general', payload = {} } = req.body || {};
 
@@ -1900,6 +1926,11 @@ function issueRoutes(config) {
           const ghIssue = await github.createIssue(parsed.owner, parsed.repo, {
             title,
             body: description || '',
+            // #6606: the request's filer is the account that filed it, so a
+            // change saying it closes this one can be confirmed (or not) by
+            // them. Without it `requests.created_by` was empty for every
+            // request filed through the connector.
+            createdBy: req.user.id,
           });
           if (!Number.isInteger(ghIssue?.number) || ghIssue.number <= 0) {
             throw new Error('GitHub returned an invalid issue number');

@@ -2952,8 +2952,8 @@
     "description": "A number a change says it would close, on its Votes card, when no request in this project has that number. <0></0> is the number as a link, and {{number}} that number."
   },
   "topic.change.gate.closesUnconfirmed": {
-    "text": "not confirmed by its requester",
-    "description": "End of a line naming a request a change will close, on its Votes card, when the person who filed that request has not agreed to it: the change was neither built for that request nor made by that person."
+    "text": "waiting for whoever filed it to agree this closes it",
+    "description": "End of a line naming a request a change will close, on its Votes card, when Homeroom knows a person who filed that request and could still answer. It says what confirming means, in words: that person has not yet agreed the change closes their request."
   },
   "topic.change.gate.closesMore_one": {
     "text": "{{count}} more",
@@ -6261,7 +6261,7 @@
   },
   "topic.thread.page.claimDisputeFailed": {
     "text": "Couldn't save that. Try again.",
-    "description": "Error line under the \"This doesn't close it\" button when recording the requester's answer failed."
+    "description": "Error line under the Confirm and \"This doesn't close it\" buttons when recording the requester's answer failed."
   },
   "topic.thread.page.alsoCloses": {
     "text": "Also closes <0>{{numbers}}</0>",
@@ -6826,5 +6826,25 @@
   "frame.allItems.items_other": {
     "text": "{{count}} items",
     "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many of the topic's items are open. {{count}} is the number."
+  },
+  "topic.change.gate.closesClosed": {
+    "text": "already closed",
+    "description": "End of a line naming a request a change will close, on its Votes card, when that request is already closed, so nothing is waiting on anybody."
+  },
+  "topic.change.gate.closesDisputed": {
+    "text": "its filer says this doesn't close it",
+    "description": "End of a line naming a request a change will close, on its Votes card, when the person who filed that request pressed \"This doesn't close it\"."
+  },
+  "topic.change.gate.closesConfirm": {
+    "text": "Confirm",
+    "description": "Small button at the end of a line naming a request a change will close, on its Votes card. Only the person who filed that request sees it; pressing it records that they agree the change closes their request."
+  },
+  "topic.thread.page.claimConfirm": {
+    "text": "Confirm",
+    "description": "Button on the card for a change that says it closes the viewer's request. Only the request's filer sees it. Pressing it records their agreement and posts a line in the change's discussion; it unlinks nothing."
+  },
+  "topic.thread.page.claimConfirmed": {
+    "text": "You confirmed this closes it",
+    "description": "Line in place of the Confirm and \"This doesn't close it\" buttons on the card for a change that says it closes the viewer's request, after the filer pressed Confirm. Shown only to the filer."
   }
 }

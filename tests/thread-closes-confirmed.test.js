@@ -25,7 +25,7 @@ const row = (number, extra = {}) => ({ number, title: `Request ${number}`, by: '
 
 test('#6225: the request a change was built for is confirmed, whoever filed it', () => {
   assert.deepEqual(closesRequests([row(10, { builtFor: true, filerId: 99 })], 7), [
-    { number: 10, title: 'Request 10', by: 'someone', confirmed: true },
+    { number: 10, title: 'Request 10', by: 'someone', confirmed: true, closed: false, disputed: false, waiting: false, canConfirm: false },
   ]);
 });
 
@@ -45,7 +45,7 @@ test('#6225: a change Homeroom bot built is its requester\'s, so that person\'s 
 
 test('#6225: a number with no request row shows no title or filer, and is unconfirmed', () => {
   const out = closesRequests([row(10, { title: null, by: null, filerId: null })], 7);
-  assert.deepEqual(out, [{ number: 10, title: null, by: null, confirmed: false }]);
+  assert.deepEqual(out, [{ number: 10, title: null, by: null, confirmed: false, closed: false, disputed: false, waiting: false, canConfirm: false }]);
   assert.equal(closesRequests([row(10, { title: null, by: null, filerId: null, builtFor: true })], 7)[0].confirmed, true,
     'unless it is the request the change was built for');
 });
@@ -62,4 +62,45 @@ test('#6225: with no author to compare against, only the built-for request is co
   const out = closesRequests([row(10, { builtFor: true }), row(11, { filerId: 7 })], null);
   assert.equal(out.find((r) => r.number === 10).confirmed, true);
   assert.equal(out.find((r) => r.number === 11).confirmed, false);
+});
+
+// #6606: the requester's agreement, recorded, and what the card's line says
+// when nobody could give one.
+
+test('#6606: a claim its filer confirmed is confirmed, and asks nothing more', () => {
+  const out = closesRequests([row(10, { filerId: 8, confirmedByFiler: true })], 7);
+  assert.equal(out[0].confirmed, true);
+  assert.equal(out[0].waiting, false);
+  assert.equal(out[0].disputed, false);
+  assert.equal(out[0].canConfirm, false);
+});
+
+test('#6606: a closed request says so, and a disputed one says its filer disagrees', () => {
+  const out = closesRequests([
+    row(10, { filerId: 8, closed: true }),
+    row(11, { filerId: 8, disputed: true }),
+  ], 7);
+  const closed = out.find((r) => r.number === 10);
+  assert.deepEqual({ confirmed: closed.confirmed, closed: closed.closed, waiting: closed.waiting, disputed: closed.disputed },
+    { confirmed: false, closed: true, waiting: false, disputed: false });
+  const disputed = out.find((r) => r.number === 11);
+  assert.deepEqual({ waiting: disputed.waiting, disputed: disputed.disputed, canConfirm: disputed.canConfirm },
+    { waiting: false, disputed: true, canConfirm: false });
+});
+
+test('#6606: with no filer, or a bot one, nobody is asked and nobody may confirm', () => {
+  for (const extra of [{ filerId: null }, { filerId: 8, filerSynthetic: true }]) {
+    const out = closesRequests([row(10, extra)], 7, 8);
+    assert.equal(out[0].waiting, false, 'nobody to wait for');
+    assert.equal(out[0].canConfirm, false, 'and no Confirm');
+  }
+});
+
+test('#6606: only the filer sees Confirm, and only while the request waits', () => {
+  const mine = closesRequests([row(10, { filerId: 8 })], 7, 8);
+  assert.deepEqual({ waiting: mine[0].waiting, canConfirm: mine[0].canConfirm }, { waiting: true, canConfirm: true });
+  const other = closesRequests([row(10, { filerId: 8 })], 7, 9);
+  assert.equal(other[0].waiting, true, 'a voter still sees it is waiting');
+  assert.equal(other[0].canConfirm, false, 'but cannot press Confirm');
+  assert.equal(closesRequests([row(10, { filerId: 8 })], 7)[0].canConfirm, false, 'and a signed-out reader cannot either');
 });
