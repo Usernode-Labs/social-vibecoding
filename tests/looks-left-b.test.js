@@ -141,3 +141,23 @@ test('Messages: under a look the pane keeps its place across a live re-sort and 
   assert.ok(hand.includes('html[data-skin] .messages-list-pane[data-frame-list] > [data-inbox-to-end] { position: sticky; bottom: 0; height: 0; }'), 'the button stays at the pane\'s foot');
   assert.match(hand, /\[data-inbox-to-end\] > div \{ bottom: calc\(var\(--fr-shell-bottom, 0px\) \+ 12px\) !important; \}/, 'over the look\'s own tab bar on a phone');
 });
+
+// ── All items (what lane P left) ───────────────────────────────────────
+test('All items: a category\'s figures read on one line, its counts are the kit\'s pills, and By stage keeps its chips as the kit\'s', () => {
+  const hand = block('/* What lane P left of a category\'s card', '/* WHO DECIDES (project-frame.tsx');
+  const AT = 'html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody';
+  assert.ok(hand.includes(`${AT} .dev-ws-stat { display: inline-flex; align-items: baseline; gap: 5px; white-space: nowrap; }`), 'the figure, then its word (the mockup\'s "7 people | 7 items")');
+  assert.ok(hand.includes(`${AT} .dev-ws-theme-people b { display: inline; }`));
+  assert.ok(hand.includes(`${AT} .dev-ws-cnt > .dev-ws-dot { display: none; }`), 'a pill says its tone itself');
+  assert.ok(hand.includes(`${AT} .dev-ws-cnt-review { background: var(--fr-wait-t); color: var(--fr-wait); }`));
+  assert.ok(hand.includes(`${AT} .dev-ws-cnt-shipped { background: var(--fr-ok-t); color: var(--fr-ok); }`));
+  assert.match(hand, /\[data-all-group="stage"\] ~ \.dev-ws-tabbody \.dev-ws-allbar :is\(#dev-kanban-filters-btn, \[data-quick-filter\]\) \{\n\s+height: 32px; padding: 0 14px; border: 0; border-radius: 999px;\n\s+background: var\(--fr-sunk\); color: var\(--fr-ink\);/, 'the chips over the board are the kit\'s small quiet buttons');
+  assert.match(hand, /:is\(#dev-kanban-filters-btn, \[data-quick-filter\]\)\[aria-pressed="true"\] \{ background: var\(--fr-lit\);/, 'the pressed one is lit');
+  for (const line of rules(hand)) assert.doesNotMatch(line, /#[0-9a-f]{3,8}\b(?![\w-])|rgba?\(/i, 'kit tokens only');
+  // By stage has no side column because today's page has none: the three chips are all it has over the board.
+  const frame = read('frontend/src/features/dev-board/workshop/frame/project-frame.tsx');
+  assert.match(frame, /data-all-group=/);
+  // "re-drafting categories…" is said in the label over the categories, which wears the kit's label.
+  assert.ok(wearers('cap').some((to) => to.includes('.dev-ws-sort > .dev-ws-eyebrow')), 'the eyebrow that says it wears the kit\'s label');
+  assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /v\.meta\.source === 'ai' \? t\('project:allItems\.grouping\.redrafting'\) : t\('project:allItems\.grouping\.drafting'\)/);
+});

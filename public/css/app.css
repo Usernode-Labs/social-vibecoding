@@ -27329,6 +27329,31 @@ html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .de
 html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-theme-foot .dev-ws-link { font-weight: 600; }
 html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-theme-body { border-top-color: var(--fr-line2); }
 html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-foot-note { color: var(--fr-mut); }
+/* What lane P left of a category's card, checked against the mockup (s29):
+   its two figures read on one line each, the figure then its word ("7
+   people | 7 items"), not the figure over the word; a count is the kit's
+   pill in its own tone (in review waits, live this week is done) with no
+   dot of its own. While the categories are drafted again the label over
+   them says so in the label's own type, the words after the count quieter
+   (the product's eyebrow, worn as the kit's label: looks.json). */
+html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-theme-people { align-items: baseline; gap: 12px; }
+html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-stat { display: inline-flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-stat + .dev-ws-stat { padding-inline-start: 12px; }
+html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-theme-people b { display: inline; }
+html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-cnt { font-weight: 600; }
+html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-cnt > .dev-ws-dot { display: none; }
+html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-cnt b { color: inherit; font-weight: 700; }
+html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-cnt-review { background: var(--fr-wait-t); color: var(--fr-wait); }
+html[data-skin] .dev-ws > [data-project-frame="all-items"] ~ .dev-ws-tabbody .dev-ws-cnt-shipped { background: var(--fr-ok-t); color: var(--fr-ok); }
+/* By stage the three filter chips stay over the board (the standard page
+   has them there and nowhere else): they are the kit's small quiet buttons,
+   the pressed one the lit one. */
+html[data-skin]:where(:not([data-skin="brand"])) .dev-ws > [data-project-frame="all-items"][data-all-group="stage"] ~ .dev-ws-tabbody .dev-ws-allbar :is(#dev-kanban-filters-btn, [data-quick-filter]) {
+  height: 32px; padding: 0 14px; border: 0; border-radius: 999px;
+  background: var(--fr-sunk); color: var(--fr-ink); box-shadow: none;
+  font: 650 13px/1 var(--fr-f);
+}
+html[data-skin]:where(:not([data-skin="brand"])) .dev-ws > [data-project-frame="all-items"][data-all-group="stage"] ~ .dev-ws-tabbody .dev-ws-allbar :is(#dev-kanban-filters-btn, [data-quick-filter])[aria-pressed="true"] { background: var(--fr-lit); color: var(--fr-solid, var(--fr-surface)); }
 /* WHO DECIDES (project-frame.tsx ProjectWorkshopFrame): the faces of the
    people the sentence names stand in its line, before their names, as the
    standard line draws them. */
