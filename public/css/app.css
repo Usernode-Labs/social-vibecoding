@@ -27172,6 +27172,20 @@ html[data-skin] .dev-ws > :is([data-project-frame="topics"], [data-project-frame
    look the chat takes the room the head leaves (its stream scrolls inside
    it either way), and the composer stays on the box's foot. */
 html[data-skin] .dev-ws > [data-project-frame] ~ .dev-ws-tabbody > .dev-ws-discussion { min-height: 0; }
+/* #GENERAL under a look (version 2 of the tour's s31): the room in the
+   kit's content column and, beside it, This channel (its members and Mute:
+   channel-head.tsx draws the kit's group there under a look). On a phone
+   the group stays over the room, where the line was. A reply thread open
+   beside the room takes the width back, as the standard page lays it out. */
+html[data-skin] .dev-ws-channel-head.fr { display: block; margin: 0 0 16px; padding: 0; }
+@media (min-width: 768px) {
+  html[data-skin] .dev-ws > [data-project-frame="discussion"] ~ .dev-ws-tabbody > .dev-ws-general-channel:not(.dev-ws-discussion-threaded, :has(.messages-reply-pane)) {
+    display: grid; grid-template-columns: minmax(0, 720px) 320px; grid-template-rows: minmax(0, 1fr); column-gap: 32px; max-width: none;
+  }
+  html[data-skin] .dev-ws > [data-project-frame="discussion"] ~ .dev-ws-tabbody > .dev-ws-general-channel:not(.dev-ws-discussion-threaded, :has(.messages-reply-pane)) > .dev-ws-channel-head { grid-column: 2; grid-row: 1; align-self: start; margin: 0; }
+  html[data-skin] .dev-ws > [data-project-frame="discussion"] ~ .dev-ws-tabbody > .dev-ws-general-channel:not(.dev-ws-discussion-threaded, :has(.messages-reply-pane)) > :not(.dev-ws-channel-head) { grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; }
+  html[data-skin] .dev-ws > [data-project-frame="discussion"] ~ .dev-ws-tabbody > .dev-ws-general-channel { max-width: none; }
+}
 /* Under the kit's Hub the standard Hub is put away part by part, not
    whole: the cards that ask something of you once and that the kit has no
    form for yet stay, in the kit's content column under it. They are what a
@@ -27217,8 +27231,13 @@ html[data-skin] .dev-ws:not([data-ws-tab="needs"]) > [data-project-frame] ~ .dev
    holds everything above it to a centred 760px. The kit's head is the
    page's, at the page's width. */
 html[data-skin] #dev-workshop.dev-ws-on-needs > .dev-ws[data-ws-tab="needs"] > [data-project-frame] { max-width: none; margin-inline: 0; }
+/* Workbench's page is wider and its margin narrower (frontend/looks/workbench.css .inner): a place's own body keeps to the head's edges. */
+html[data-skin="workbench"] .dev-ws > [data-project-frame] ~ .dev-ws-tabbody { max-width: 1240px; padding: 0 28px 40px; }
 @media (max-width: 767.98px) {
   html[data-skin] .dev-ws > [data-project-frame] ~ .dev-ws-tabbody { padding: 0 16px 32px; }
+}
+@media (max-width: 767.98px) {
+  html[data-skin="workbench"] .dev-ws > [data-project-frame] ~ .dev-ws-tabbody { padding: 0 12px 28px; }
 }
 
 /* SETTINGS (features/settings/index.tsx), all its sections at once. The
@@ -27421,6 +27440,11 @@ html[data-skin]:where(:not([data-skin="brand"])) .messages-composer-action { bac
 html[data-skin]:where(:not([data-skin="brand"])) .dev-ws-discussion { font: 15px/1.45 var(--fr-f); color: var(--fr-ink); }
 html[data-skin] .fr-post.gc-msg .gc-msg-content { font-size: inherit; color: inherit; }
 html[data-skin] .fr-post.gc-msg { padding: 8px 0; }
+/* A quoted reply in a project's channel is the kit's quote (kit.css .quote):
+   the accent's line, the author in the accent, no plate. */
+html[data-skin] .fr-post .gc-quoted { margin: 6px 0 4px; padding-block: 2px; padding-inline: 9px 0; border-inline-start: 3px solid var(--fr-acc); border-radius: 0; background: none; }
+html[data-skin] .fr-post .gc-quoted-author { font-size: 13px; font-weight: 650; color: var(--fr-acc); }
+html[data-skin] .fr-post .gc-quoted-snippet { font-size: 13px; color: var(--fr-mut); }
 html[data-skin] .fr-post.gc-msg:has(+ .fr-postmore) { padding-bottom: 0; }
 html[data-skin] .fr-post.fr-postmore { padding-block: 1px; }
 html[data-skin] .fr-post.fr-postmore:not(:has(+ .fr-postmore)) { padding-bottom: 8px; }

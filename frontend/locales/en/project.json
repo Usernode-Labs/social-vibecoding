@@ -6491,6 +6491,14 @@
     "text": "Where {{project}} talks.",
     "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under a channel's title."
   },
+  "frame.place.general": {
+    "text": "Where everyone in {{project}} talks.",
+    "description": "A project's #general channel when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title: what the channel is for, as the standard page's line says it."
+  },
+  "frame.channel.this": {
+    "text": "This channel",
+    "description": "A project's #general channel when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The small label over the card beside the conversation that says how many members the channel reaches and holds its Mute button."
+  },
   "frame.topics.purpose": {
     "text": "Each topic is a channel and a category of work.",
     "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title."

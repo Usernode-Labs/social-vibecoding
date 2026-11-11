@@ -226,3 +226,28 @@ test('a topic\'s channel lights Topics but keeps the product\'s page under the h
   // the head leaves, its stream scrolling inside it either way.
   assert.match(css, /html\[data-skin\] \.dev-ws > \[data-project-frame\] ~ \.dev-ws-tabbody > \.dev-ws-discussion \{ min-height: 0; \}/);
 });
+
+test('#general under a look: what it is for under the title, the room in the content column, This channel beside it', () => {
+  const page = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(page, /: tab === 'discussion' \? t\('project:frame\.place\.general', \{ project: projectName \}\)\s+: t\('project:frame\.place\.channel', \{ project: projectName \}\);/, 'a topic\'s channel keeps its own sentence');
+  const catalog = JSON.parse(read('frontend/locales/en/project.json'));
+  assert.equal(catalog['frame.place.general'].text, `${catalog['places.generalHead.about'].text}.`, 'the standard line\'s own words, as a sentence');
+  // The line over the room is the kit's group under a look, from the one
+  // owner of the mute state (no second copy is mounted).
+  const head = read('frontend/src/features/dev-board/workshop/channel-head.tsx');
+  assert.match(head, /const frame = isFrameSkin\(useLiveSkin\(\)\);/);
+  const kit = head.slice(head.indexOf('if (frame) {'), head.indexOf('  return (\n    <div className="dev-ws-channel-head" data-ws-channel-head="general">'));
+  assert.match(kit, /<div className="fr dev-ws-channel-head" data-ws-channel-head="general" data-frame-side="">\s+<Sec label=\{t\('project:frame\.channel\.this'\)\}>/);
+  assert.match(kit, /title=\{members > 0 \? t\('project:places\.generalHead\.members', \{ count: members \}\) : about\}/);
+  assert.match(kit, /<Btn\s+small\s+kind="line"\s+icon="bell"\s+data-ws-channel-mute=\{muted \? 'on' : 'off'\}\s+aria-pressed=\{muted\}\s+disabled=\{busy\}/);
+  assert.match(kit, /onClick=\{\(\) => \{ void toggle\(\); \}\}/, 'the same write');
+  assert.equal((head.match(/useState<boolean \| null>\(known\)/g) || []).length, 1);
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
+  const grid = 'html[data-skin] .dev-ws > [data-project-frame="discussion"] ~ .dev-ws-tabbody > .dev-ws-general-channel:not(.dev-ws-discussion-threaded, :has(.messages-reply-pane))';
+  assert.ok(hand.includes(`${grid} {\n    display: grid; grid-template-columns: minmax(0, 720px) 320px; grid-template-rows: minmax(0, 1fr); column-gap: 32px; max-width: none;`), 'the kit\'s two columns; a reply thread beside the room takes the width back');
+  assert.ok(hand.includes(`${grid} > .dev-ws-channel-head { grid-column: 2; grid-row: 1; align-self: start; margin: 0; }`));
+  assert.ok(hand.includes(`${grid} > :not(.dev-ws-channel-head) { grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; }`));
+  assert.ok(hand.indexOf(`${grid} {`) > hand.indexOf('@media (min-width: 768px) {\n  html[data-skin] .dev-ws > [data-project-frame="discussion"]') - 1, 'on a phone the group stays over the room');
+  assert.match(hand, /html\[data-skin\] \.fr-post \.gc-quoted \{[^}]*border-inline-start: 3px solid var\(--fr-acc\); border-radius: 0; background: none; \}/, 'a quoted reply wears the kit\'s quote');
+});

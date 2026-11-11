@@ -4095,7 +4095,8 @@ export function DevWorkshop(): ReactNode {
   const framePurpose = tab === 'workshop' || tab === 'all' || tab === 'bot' || tab === 'plan'
     ? t('project:frame.place.workshop', { project: projectName })
     : tab === 'needs' ? t('project:frame.place.needs', { project: projectName })
-      : t('project:frame.place.channel', { project: projectName });
+      : tab === 'discussion' ? t('project:frame.place.general', { project: projectName })
+        : t('project:frame.place.channel', { project: projectName });
 
   return (
     <div
