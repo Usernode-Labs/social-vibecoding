@@ -102,8 +102,8 @@ export function deepLinkTitle(
   return t('auth:deepLinkSignIn.page');
 }
 
-/** One word of the bar for a gated address: a message id and its values. */
-export type GatePlaceWord = { id: string; values?: Record<string, string | number> };
+/** One word of the bar for a gated address: a message id and its values, or a name as it is written (`@evan`). */
+export type GatePlaceWord = { id: string; values?: Record<string, string | number>; text?: string };
 
 /**
  * What the frame's bar says while a members' address is gated (under a
@@ -132,6 +132,12 @@ export function gatePlaceWords(target: string): { head: GatePlaceWord | null; tr
   const head = parts[0] || '';
   if (head === 'leaderboard') {
     return { head: !parts[1] || parts[1] === 'challenges' ? { id: 'leaderboard:tabs.challenges' } : null, trail: [] };
+  }
+  if ((head === 'profile' || head === 'me') && parts[1]) {
+    // Somebody's profile, not You: the bar keeps the name it had (guest-chrome.tsx readProfile).
+    let name = '';
+    try { name = decodeURIComponent(parts[1]); } catch { name = ''; }
+    return { head: name ? { id: '', text: `@${name}` } : null, trail: [] };
   }
   if (head !== 'app') {
     const id = Object.prototype.hasOwnProperty.call(HEAD_WORD, head) ? HEAD_WORD[head] : null;
@@ -162,7 +168,7 @@ export function GatePlace({ target }: { target: string }) {
   const tc = useMessages('core');
   const tp = useMessages('project');
   const tl = useMessages('leaderboard');
-  const say = (word: GatePlaceWord) => (word.id.startsWith('project:') ? tp : word.id.startsWith('leaderboard:') ? tl : tc)(word.id, word.values);
+  const say = (word: GatePlaceWord) => word.text ?? (word.id.startsWith('project:') ? tp : word.id.startsWith('leaderboard:') ? tl : tc)(word.id, word.values);
   const { head, trail } = gatePlaceWords(target);
   return (
     <>

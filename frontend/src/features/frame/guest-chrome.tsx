@@ -93,6 +93,26 @@ function readWaiting(root: HTMLElement): GuestBar {
 /** A stand-alone screen's own way back: the shared disc, or "more ways"'s plain link. */
 const SOLO_BACK = '[data-auth-back], :scope > a[href="#landing"]';
 
+/**
+ * A profile opened with no account, or by one still in line (the tour's
+ * o26): the bar names it, and for a visitor carries the landing's two ways
+ * in, which the profile screen has no buttons of its own for.
+ */
+function readProfile(words: { signIn: string; signUp: string }): GuestBar {
+  let name = '';
+  try { name = decodeURIComponent((location.hash.replace(/^#/, '').split('?')[0].split('/')[1] || '')); } catch { name = ''; }
+  const who = sessionName();
+  return {
+    back: false,
+    crumb: name ? `@${name}` : '',
+    actions: who ? [] : [
+      { key: 'signin', label: words.signIn, primary: false, pressed: null },
+      { key: 'signup', label: words.signUp, primary: true, pressed: null },
+    ],
+    who,
+  };
+}
+
 /** Any other anonymous screen: a way back, and the brand. */
 function readSolo(root: HTMLElement): GuestBar {
   return { back: !!root.querySelector(SOLO_BACK), crumb: '', actions: [] };
@@ -102,9 +122,17 @@ const same = (a: GuestBar, b: GuestBar) => a.back === b.back && a.crumb === b.cr
   && a.actions.every((x, i) => x.label === b.actions[i].label && x.primary === b.actions[i].primary && x.pressed === b.actions[i].pressed);
 
 /** The bar of the screen with that id, followed as the screen changes it. */
-function useGuestBar(id: string): GuestBar {
+function useGuestBar(id: string, words: { signIn: string; signUp: string }): GuestBar {
   const [bar, setBar] = useState<GuestBar>(EMPTY);
+  const { signIn, signUp } = words;
   useEffect(() => {
+    if (id === PROFILE) {
+      // The profile's name is the address's: followed as it changes.
+      const read = () => { const next = readProfile({ signIn, signUp }); setBar((prev) => (same(prev, next) ? prev : next)); };
+      read();
+      window.addEventListener('hashchange', read);
+      return () => window.removeEventListener('hashchange', read);
+    }
     const root = document.getElementById(id);
     if (!root) return undefined;
     const read = () => {
@@ -126,7 +154,7 @@ function useGuestBar(id: string): GuestBar {
     mo.observe(root, { childList: true });
     if (watched) mo.observe(watched, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'hidden', 'aria-pressed'] });
     return () => mo.disconnect();
-  }, [id]);
+  }, [id, signIn, signUp]);
   return bar;
 }
 
@@ -137,6 +165,9 @@ function pressIn(id: string, selector: string, nth = 0) {
 }
 
 const SCREENS = ['auth-landing-screen', 'auth-login-screen', 'auth-register-screen', 'auth-waitlist-screen', 'auth-more-screen', 'auth-waiting-screen'] as const;
+/** The one member's screen a visitor reaches: somebody's profile, which answers with one line. */
+const PROFILE = 'profile-screen';
+type GuestScreen = (typeof SCREENS)[number] | typeof PROFILE;
 
 /** Mounted by the shell beside FrameApp: nothing on the first render, nothing under the standard look. */
 export function GuestFrame() {
@@ -146,12 +177,25 @@ export function GuestFrame() {
     useVisibility(SCREENS[0], false), useVisibility(SCREENS[1], false), useVisibility(SCREENS[2], false),
     useVisibility(SCREENS[3], false), useVisibility(SCREENS[4], false), useVisibility(SCREENS[5], false),
   ];
+  // A profile's address with nobody let in: no anonymous screen is up, and
+  // the member's chrome has no viewer to draw for (./frame-app.tsx).
+  const profile = useVisibility(PROFILE, false);
   const at = up.indexOf(true);
-  return isFrameSkin(skin) && at > -1 ? <GuestChrome screen={SCREENS[at]} /> : null;
+  if (!isFrameSkin(skin)) return null;
+  if (at > -1) return <GuestChrome screen={SCREENS[at]} />;
+  return profile ? <GuestChrome screen={PROFILE} /> : null;
 }
 
-function GuestChrome({ screen }: { screen: (typeof SCREENS)[number] }) {
-  const bar = useGuestBar(screen);
+/** The landing's sign-in sheet over the page asked for, which a sign-in then lands on (AuthScreens.showSignInFor). */
+function signInHere() {
+  const screens = (window as any).AuthScreens;
+  if (screens?.showSignInFor) screens.showSignInFor(location.hash);
+  else location.hash = '#login';
+}
+
+function GuestChrome({ screen }: { screen: GuestScreen }) {
+  const ta = useMessages('auth');
+  const bar = useGuestBar(screen, { signIn: ta('auth:guest.header.signIn'), signUp: ta('auth:guest.header.signUp') });
   // The page area, published for the screen to lay itself out by.
   const areaRef = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
@@ -181,7 +225,10 @@ function GuestChrome({ screen }: { screen: (typeof SCREENS)[number] }) {
       bar={bar}
       areaRef={areaRef}
       onBack={() => pressIn(screen, screen === 'auth-landing-screen' ? '#landing-back-btn' : SOLO_BACK)}
-      onAction={(action) => (action.key === 'logout' ? pressIn(screen, '#waiting-logout') : pressIn(screen, '[data-landing-actions] button', Number(action.key)))}
+      onAction={(action) => (action.key === 'logout' ? pressIn(screen, '#waiting-logout')
+        : action.key === 'signin' ? signInHere()
+          : action.key === 'signup' ? (location.hash = '#landing')
+            : pressIn(screen, '[data-landing-actions] button', Number(action.key)))}
     />
   );
 }

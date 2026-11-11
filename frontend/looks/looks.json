@@ -340,6 +340,9 @@
           },
           {
             "to": "#auth-waiting-screen [data-waiting-invite] > h2"
+          },
+          {
+            "to": "#auth-landing-screen [data-landing-invite=\"dead\"] > img + div"
           }
         ]
       },

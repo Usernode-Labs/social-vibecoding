@@ -66,7 +66,7 @@ test('it is up for a visitor only: under a look, while an anonymous screen is, a
   assert.equal(renderComponent(CHROME, 'GuestFrame', {}, { cache: false, stubs: { '../../lib/visibility-store': { useVisibility: (id, initial) => initial } } }), '');
   assert.match(src, /const SCREENS = \['auth-landing-screen', 'auth-login-screen', 'auth-register-screen', 'auth-waitlist-screen', 'auth-more-screen', 'auth-waiting-screen'\] as const;/,
     'the anonymous shell\'s six screens: an account still in line has no member\'s chrome to be shown');
-  assert.match(src, /return isFrameSkin\(skin\) && at > -1 \? <GuestChrome screen=\{SCREENS\[at\]\} \/> : null;/);
+  assert.match(src, /if \(!isFrameSkin\(skin\)\) return null;\s*if \(at > -1\) return <GuestChrome screen=\{SCREENS\[at\]\} \/>;\s*return profile \? <GuestChrome screen=\{PROFILE\} \/> : null;/, 'an anonymous screen first; else a profile opened with nobody let in');
   assert.match(read('frontend/src/features/frame/frame-app.tsx'), /return on \? <FrameChrome \/> : <GuestFrame \/>;/, 'one or the other, never both');
   assert.match(src, /root\.setAttribute\('data-frame-chrome', 'guest'\);/, 'app.css knows which chrome is up');
 });
@@ -219,4 +219,41 @@ test('version 2: in the waiting room Look around goes last and the invite card\'
   const room = read('frontend/src/features/auth/waiting.tsx');
   assert.match(room, /className="mx-auto flex min-h-full w-full max-w-sm flex-col /, 'the room\'s column is a flex column, which `order` needs');
   assert.match(room, /<form\s+data-waiting-invite=""[\s\S]*?<h2 className="[^"]*">\{t\('auth:waiting\.invite\.title'\)\}<\/h2>/);
+});
+
+test('a profile opened signed out: the bar names it and holds the two ways in, and the page is its one line', () => {
+  // The tour's o26. Today a visitor's #profile/<name> answers "This profile
+  // is unavailable." under the member's chrome; under a look it is the
+  // guest's bar, since the frame's own chrome needs somebody let in.
+  const html = view({ crumb: '@evan', actions: [{ key: 'signin', label: 'Sign in', primary: false, pressed: null }, { key: 'signup', label: 'Sign up', primary: true, pressed: null }] });
+  assert.match(html, /<header class="fr-bar"><div class="fr-crumb"><span class="fr-ci fr-here fr-keep">@evan<\/span><\/div><span class="fr-sp"><\/span><button type="button" class="fr-btn fr-line fr-sm">Sign in<\/button><span class="fr-d"><button type="button" class="fr-btn fr-sm">Sign up<\/button><\/span><\/header>/);
+  const src = read(CHROME);
+  assert.match(src, /const profile = useVisibility\(PROFILE, false\);/, 'one more hook, every render');
+  assert.match(src, /const PROFILE = 'profile-screen';/);
+  assert.match(src, /crumb: name \? `@\$\{name\}` : '',\s*actions: who \? \[\] : \[/, 'an account still in line is signed in already: its name, no ways in');
+  assert.match(src, /if \(screens\?\.showSignInFor\) screens\.showSignInFor\(location\.hash\);/, 'Sign in is the landing\'s sheet over the page asked for, which signing in lands on');
+  assert.match(src, /action\.key === 'signup' \? \(location\.hash = '#landing'\)/, 'Sign up is the landing, where the way in for somebody new is');
+  assert.match(read('public/js/auth-screens.js'), /showSignInFor\(fullHash\) \{/);
+  const profile = read('frontend/src/features/profile/profile-view.tsx');
+  assert.match(profile, /if \(frame\) return <div className=\{k\('lone'\)\} data-profile-unavailable="">\{t\('profile:public\.unavailable'\)\}<\/div>;/, 'the kit\'s lone line');
+  assert.ok(profile.indexOf("data-profile-unavailable") < profile.indexOf('className="text-sm text-zinc-500 py-12 text-center'), 'ahead of the standard line, which stands under the standard look');
+  const css = read('public/css/app.css');
+  assert.match(css, /html\[data-frame-chrome="guest"\]:has\(:is\(#auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waitlist-screen, #auth-more-screen, #auth-waiting-screen\):not\(\.hidden\)\) #profile-screen \{ display: none; \}/, 'not under the landing its Sign in brings up');
+});
+
+test('a dead invite link is a stand-alone page: the welcome over the title, what to do, one button across the column', () => {
+  // The tour's o27, every reason a link can be dead for. The section's
+  // nodes are the product's; the picture is not drawn.
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('/* A dead invite link'), css.indexOf('/* THE WAITING ROOM'));
+  assert.ok(hand.length > 0);
+  assert.match(hand, /\[data-landing-invite="dead"\] \{ flex-grow: 0; align-items: stretch; justify-content: flex-start; max-width: 504px; margin-inline: auto; padding: 64px 32px 48px; text-align: start; \}/, 'the stand-alone column');
+  assert.match(hand, /\[data-landing-invite="dead"\] > img \{ display: none; \}/);
+  assert.match(hand, /\[data-landing-invite-dead-continue\] \{[^}]*width: 100%; height: 44px;[^}]*background: var\(--fr-acc\); color: var\(--fr-acc-ink\);/);
+  const looks = JSON.parse(read('frontend/looks/looks.json'));
+  assert.ok(looks.wear.roots.cap.also.map((w) => w.to).includes('#auth-landing-screen [data-landing-invite="dead"] > img + div'), '"Welcome to Homeroom" is the kit\'s label');
+  const card = read('frontend/src/features/auth/invite-card.tsx');
+  assert.match(card, /<section data-landing-invite="dead" className="[^"]*flex grow flex-col[^"]*">/);
+  assert.match(card, /<div className=\{`mt-4 \$\{SMALL_CAPS\}`\}>\{t\('auth:story\.welcome'\)\}<\/div>\s*<h1 data-landing-invite-dead-title=""/);
+  assert.match(card, /<a href="\/" data-landing-invite-dead-continue="" className=\{primaryClass\}>/);
 });

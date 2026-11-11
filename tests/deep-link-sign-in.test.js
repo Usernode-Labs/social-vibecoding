@@ -131,6 +131,8 @@ test('under a look the bar names the place a gated link was for, in the product\
   assert.deepEqual(said('#chat/12'), ['Messages']);
   assert.deepEqual(said('#homeroom-bot/main'), ['Homeroom bot']);
   assert.deepEqual(said('#profile'), ['You']);
+  assert.deepEqual(gatePlaceWords('#profile/evan').head, { id: '', text: '@evan' }, 'somebody\'s profile keeps its name, not You');
+  assert.equal(renderToHtml(createElement(lib().GatePlace, { target: '#profile/evan' })), '<span hidden="" data-guest-place="head">@evan</span>');
   assert.deepEqual(said('#settings/account'), ['Settings']);
   assert.deepEqual(said('#leaderboard'), ['Challenges']);
   assert.deepEqual(said('#leaderboard/challenges/3/9'), ['Challenges']);

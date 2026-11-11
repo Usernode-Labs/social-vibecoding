@@ -405,3 +405,87 @@ Left, and why:
 - Not seen in a browser: a new (unread) Needs you row with the Earlier line, the failed and loading notes, the
   older-tab reload note, and a project in a community the person left (History). They are pinned in
   `tests/ai-frame-list.test.js` from fixtures instead.
+
+### Lane G, as built (11 Nov 2026)
+
+Signed out (o01 to o27) and the waitlist (w01 to w14), on `redesign/skins-v2-g`, cut from `5f6faf062`.
+
+- **Members' addresses opened signed out (o12 to o15, o17, o22 to o25).** As ruled, they behave as in the
+  standard look: the sign-in sheet opens by itself over the outline of a page. The first tour's page
+  (`guest/frame/gated-frame.tsx`), its suite and its 28 catalog entries are gone. Under a look the outline
+  (`DeepLinkBackdrop`) starts under the frame's bar, on the look's ground, drawn with the kit's surface in
+  place of the blur (app.css, A MEMBERS' ADDRESS OPENED BY A VISITOR), and the bar names the place:
+  `gatePlaceWords` (`auth/deep-link-sign-in.tsx`) gives Messages, Homeroom bot, You, Settings or Challenges in
+  the brand's place, or after the brand a project's Workshop (Needs you), then "Request #N" or "Change #N".
+  The landing renders those words unseen in its own header under a look (`GatePlace`), which the bar already
+  reads (`guest-chrome.tsx` `readLanding`, `trail`).
+- **The landing (o01 to o03) and an account in line looking around (w03),** `guest/frame/landing-frame.tsx`.
+  The head is the welcome over the headline, its sentence and the one button (Join the waitlist, or Sign up);
+  the three points are one card in the side column, first on a phone; then the search (kept on the history
+  entry, as the standard page keeps it), this device's Pinned apps (a tile opens the app, its corner unpins)
+  and Pinned communities, and Communities. Communities is drawn by the one view Home has for it under a look,
+  lifted out of `home-frame.tsx` into `home/frame/to-join.tsx` (`ToJoinView`): the kinds, Featured as cards,
+  the rest as rows, the standard paging and lines. A visitor's card has no button: tile, "New", how many
+  people used it lately, name, sentence, and the whole card or row is the link. w03 is the same page under
+  Home's title and sentence, the search under the head, with "You're on the waitlist" (the standard card's
+  sentence and "Your spot on the waitlist") as the side column. Gone: Try an app first, Try an app now, Look,
+  Homeroom today, With an account as a labelled group, and 14 `auth:frame.landing.*` entries.
+- **A public project's page (o20, o21, w12, w13),** `guest/frame/project-frame.tsx`: the icon, the name,
+  "Public community", the sentence and the facts line by the standard band's minimums; Try it, Join, Pin,
+  Share. Each change up for a vote is a card (before and after, name, sentence, the share of yeses, the
+  tally, Vote or "once you're in"). Beside the Hub: the picture (the illustration and its dark twin, else the
+  icon on the community's colour), What's happening, People and From the chat; on a phone the picture and
+  What's happening lead and People and the chat come last. Beside the Workshop: Requests. The guest banner
+  and `auth:frame.project.guest` are gone. The bar names the tab after the project when it is not the Hub.
+- **The sign-in sheet (o04 to o06).** Under a look the first step, the phone step and the password step are
+  laid out as the kit's sheet by a branch of the sheet's own render (`kitSteps`, a hoisted function after
+  the standard render, called inside the sheet's own shell): the field's card, the other ways as rows in one
+  card under "or", the primary button, the terms as the foot, the Email code | Password switch as the look's
+  tabs. Fields, ids, refs, handlers and every `data-sign-in-*` hook are the sheet's own. The other steps
+  keep wearing the look.
+- **The stand-alone pages (o07 to o11) and the waiting room (w01, w02; w04 to w09 and w14 are sent to it by
+  the router).** CSS only, no node or id moved: a form is `display: contents` in its column and `order`
+  places what it holds (app.css, "Version 2 (11 Nov 2026) lays each stand-alone page out"). Title, fields in
+  a card, the other ways as rows, the primary button last, the terms. In the waiting room Look around goes
+  last and the invite card's title is the label over it.
+- **A profile signed out (o26):** the guest's bar comes up for `#profile/<name>` with nobody let in, naming
+  it, with Sign in (the landing's sheet over that address) and Sign up (the landing); the page is the kit's
+  lone line. **A dead invite link (o27):** the landing's own section laid out as a stand-alone page.
+
+Rulings taken:
+
+- **One drawing of Communities, Home's.** o01 to o03 draw Featured as the kit's text cards and the rest as
+  rows, as the signed-in Home does under a look and as w03's mockup does; o01's mockup drew picture cards
+  with covers. The owner's ruling for this lane was to reuse Home's sections; a visitor therefore sees no
+  cover pictures on the landing under a look.
+- **The switch wins over "Use a password"** (audit question 6): from the bar's Sign in and from Join the
+  waitlist the product puts Email code | Password on the first step, so there is no such row; an invite's
+  sheet, which has no switch, keeps its own ways (a phone number, email) as rows and its "Already on
+  Homeroom?" line in the foot.
+- **One layout for o20 and w12** (question 3): What's happening stands beside the page for both.
+- **Today's chrome for an account in line** (question 1, as ruled): the guest's bar; no sidebar, no tab bar.
+- **Homeroom's own project signed out** (question 2): it is not in the public directory on this copy, so a
+  visitor gets the sheet (o22 to o25) and a waiting account, which is never asked to sign in, gets the
+  landing; the code's one rule for both is untouched.
+- **The phone's bar keeps one way in** (question 4), as before: Sign up is the page's own button there.
+- A search with no match shows nothing under the field, as the standard page does (the first tour's "No
+  communities match that." is gone with its entry).
+
+Left, and why:
+
+- **A gated address's sheet opens on the email step when Apple and Google are not known yet** (it did on the
+  local copy, where the options were injected late): that step is not one of the three laid out as the
+  kit's sheet, so it wears the look as before. `code`, `phone-code`, `forgot`, `username`, `account` and
+  `link` likewise (question 5).
+- **The rows of a stand-alone page are drawn by hand** (the kit's surface and hairline, 20px corners), not
+  through the wear map: the `row` root is Settings', and a row there is a link inside a wrapper. Under
+  Workbench their corners are rounder than the look's cards. The reset view's heading is given the kit
+  title's size by hand for the same reason (a second wearer of `title` changes a selector lane S's suite
+  pins).
+- **`display: contents` on the forms**: an old Safari (before 16) drops such a form from the accessibility
+  tree.
+- **Not seen with a real account in line** (none can be made on the local copy without mail): w03's side
+  column and head, w12 and w13's "once you're in" words, and the account's name in the bar are held by
+  render tests; the waiting room's layout was seen signed out, by calling `AuthScreens.showWaiting()`.
+- A change's before and after pictures did not load on the local copy (its storage answers 500), so the vote
+  card's pictures were seen as empty frames with their captions.
