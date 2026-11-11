@@ -209,7 +209,14 @@ let directory: Promise<GuestApp[] | null> | null = null;
 export function readDirectory(refresh = false): Promise<GuestApp[] | null> {
   if (refresh) directory = null;
   if (!directory) {
-    directory = fetch('/api/public/apps?include_wallets=0', { credentials: 'same-origin' })
+    // An answer the server never sends ends as a failed read, not as loading
+    // placeholders left up for good (#6609 review): to the section, a held
+    // request and one that failed are the same, and it has a Retry.
+    const init: RequestInit = { credentials: 'same-origin' };
+    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+      init.signal = AbortSignal.timeout(8000);
+    }
+    directory = fetch('/api/public/apps?include_wallets=0', init)
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => (Array.isArray(body?.apps) ? body.apps as GuestApp[] : null))
       .catch(() => null)

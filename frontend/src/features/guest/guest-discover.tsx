@@ -272,7 +272,7 @@ export function Card({ app, eager, featured = false }: {
           slug={app.slug}
           data-guest-card-link=""
           aria-label={people >= MIN_PEOPLE ? t('auth:guest.card.peopleLabel', { name: app.name, count: people }) : undefined}
-          className="block truncate text-[15px] font-[650] leading-5 text-zinc-900 outline-none -my-3 py-3 after:absolute after:inset-0 after:z-[1] after:rounded-[20px] after:content-[''] dark:text-zinc-100"
+          className="line-clamp-2 break-words text-[15px] font-[650] leading-5 text-zinc-900 outline-none -my-3 py-3 after:absolute after:inset-0 after:z-[1] after:rounded-[20px] after:content-[''] dark:text-zinc-100"
         >
           {app.name}
         </ProjectLink>
