@@ -126,8 +126,10 @@ test('#6282: a change being updated is In progress, never the vote it would owe'
     queue_id: 9, enqueued_at: '2026-11-04T11:30:00Z', queue_reason: 'checks_failing' };
   const waiting = derive({ ...failingFix, update_coming: 'queued' });
   assert.deepEqual([waiting.stage, waiting.line], ['checking', { code: 'checks_failing', failing: 4 }]);
+  // #6600: a running update on failing checks says the bot is fixing them,
+  // the words its own fix already uses.
   const running = derive({ ...failingFix, update_coming: 'running' });
-  assert.deepEqual([running.stage, running.line], ['building', { code: 'revising' }]);
+  assert.deepEqual([running.stage, running.line], ['building', { code: 'fixing' }]);
   // A change with no request of its own reads the same: a failing change
   // with a queued update is Checking.
   const failingChange = stand(row({ check_state: 'failing', update_coming: 'queued' }));
@@ -296,4 +298,34 @@ test('#6282: the Votes card offers no button while it is held', () => {
   assert.doesNotMatch(html(true), /dev-vote-btn/);
   assert.match(html(true), /An update is coming/);
   assert.match(html(false), /dev-vote-btn/);
+});
+
+// #6600: a takeover Homeroom bot runs on a change is an update on its way,
+// read from its own record; one whose last attempt failed is not.
+test('#6600: a takeover is an update on its way, and a failed one says the bot could not fix it', () => {
+  // The window is the takeover's own (homeroom-bot-takeover.js STALE_UPDATE_MS).
+  const takeover = read('src/services/homeroom-bot-takeover.js');
+  const hours = Number(takeover.match(/const STALE_UPDATE_MS = (\d+) \* 60 \* 60 \* 1000;/)[1]);
+  assert.equal(progress.UPDATE_LOOK_HOURS, hours);
+  const coming = progress.updateComingSql('cs');
+  assert.match(coming, /FROM homeroom_bot_looks/);
+  assert.match(coming, /kind = 'update' AND bl\.state = 'running'/);
+  assert.match(coming, /make_interval\(hours => 3\)/);
+  const failed = progress.updateFailedSql('cs');
+  assert.match(failed, /kind = 'update'/);
+  assert.match(failed, /bl\.state = 'failed'/);
+  assert.match(failed, /bl\.ended_at > COALESCE\(cs\.checks_checked_at, cs\.promoted_at\)/);
+  assert.match(failed, /NOT EXISTS \(SELECT 1 FROM homeroom_bot_looks run/);
+
+  const at = '2026-11-04T11:00:00.000Z';
+  // Its own failing change, whose fix the bot is running: In progress, the
+  // bot fixing it, and no Fix it.
+  const fixing = { stage: 'building', why: null, reason: null, line: { code: 'fixing' }, since: at };
+  assert.deepEqual(standing(row({ check_state: 'failing', update_coming: 'running', change_user: 7 }), 7, NOW),
+    { group: 'next', work: fixing, at });
+  // Its last attempt failed: Needs you, saying so, with Ask again.
+  const failedState = { stage: 'checking', why: null, reason: null, line: { code: 'bot_fix_failed' }, since: at };
+  assert.deepEqual(standing(row({ check_state: 'failing', needs_fix: true, update_failed: 'the failing check is still failing', change_user: 7 }), 7, NOW), {
+    group: 'needs', work: failedState, at: '2026-11-04T11:00:00.000Z', fixYours: true, botFixFailed: true,
+  });
 });

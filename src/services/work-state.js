@@ -362,6 +362,37 @@ function derive(row, opts = {}) {
   return out;
 }
 
+/**
+ * Pure (#6600): how an update on its way, or a takeover whose last attempt
+ * failed, changes a change's state. `coming` is 'running' | 'queued' | null
+ * (homeroom-bot-progress.js updateComingSql) and `failed` is why its newest
+ * takeover look failed, if it did (updateFailedSql).
+ *
+ * A running update holds a vote and a checking change as Building, as #6282
+ * did; a takeover on a change whose checks failed says "Fixing what its
+ * tests found", the words a fix of the bot's own already uses. A queued one
+ * holds only a vote (#6545). A takeover whose last attempt failed leaves its
+ * change Checking, its line saying Homeroom bot could not fix it.
+ */
+function withUpdate(change, { coming = null, failed = null } = {}) {
+  if (!change) return change;
+  const failing = change.stage === 'checking'
+    && (change.line?.code === 'checks_failing' || change.line?.code === 'github_checks_failing');
+  if (coming === 'running') {
+    if (change.stage === 'checking' || change.stage === 'up_for_vote') {
+      return state('building', { since: change.since, line: { code: failing ? 'fixing' : 'revising' } });
+    }
+    return change;
+  }
+  if (coming === 'queued' && change.stage === 'up_for_vote') {
+    return state('up_for_vote', { since: change.since, line: { code: 'update_queued' } });
+  }
+  if (!coming && failed && failing) {
+    return { ...change, line: { code: 'bot_fix_failed' } };
+  }
+  return change;
+}
+
 function deriveFacts(row, { now = new Date() } = {}) {
   const status = row.proposal_status || null;
   // Its change is live (REQUEST_RECORD_COLUMNS reads a merged change that is
@@ -370,8 +401,11 @@ function deriveFacts(row, { now = new Date() } = {}) {
   // The bot's own step for it, when it has one.
   const step = progress.stageOf(row, { now });
   let out = step ? fromStage(step, row, now) : null;
-  // An update on its way holds the vote it would otherwise ask for (#6282).
-  if (status === 'promoted' && out) out = withUpdate(out, row.update_coming);
+  // An update on its way holds the vote it would otherwise ask for (#6282),
+  // or says the bot is fixing its failing checks (#6600). #6545: a queued one
+  // holds only a vote; a change still checking (a fix waiting its turn) stays
+  // Checking until the update starts.
+  if (status === 'promoted' && out) out = withUpdate(out, { coming: row.update_coming, failed: row.update_failed });
   // A private thread of the requester's holds it for their plan: nothing
   // queued overtakes that until a change is up (1 Nov 2026).
   if (row.awaiting_plan === true && !status && (!out || out.stage === 'reading')) {
@@ -408,7 +442,7 @@ function deriveFacts(row, { now = new Date() } = {}) {
       promoted_at: row.lc_promoted_at, merged_at: row.lc_merged_at, live_at: row.lc_live_at,
       last_activity_at: row.lc_last_activity_at, created_at: row.lc_created_at,
       // #6282: an update on its way holds its vote too.
-      update_coming: row.lc_update_coming,
+      update_coming: row.lc_update_coming, update_failed: row.lc_update_failed,
     }, { now });
     // Somebody is building it: who, as a claim says it.
     if ((row.lc_status === 'active' || row.lc_status === 'paused') && row.lc_by) {
@@ -496,7 +530,7 @@ function deriveChange(row, { now = new Date() } = {}) {
   }
   if (status === 'merging') return state('going_live', { since: row.promoted_at });
   if (status === 'closed' || status === 'archived') return state('closed', { since: row.last_activity_at || row.promoted_at });
-  if (status === 'promoted') return withUpdate(promotedChange(row, now), row.update_coming);
+  if (status === 'promoted') return withUpdate(promotedChange(row, now), { coming: row.update_coming, failed: row.update_failed });
   void now;
   return state('building', { since: row.last_activity_at || row.created_at, whoseMove: 'builder' });
 }
@@ -632,7 +666,7 @@ const READY = new Set(['queued', 'held_builds', 'held_waiting']);
 // The second lines that need no value, by code (work.line.<camel>).
 const PLAIN_LINES = new Set([
   'queued', 'first_version_wait', 'held_builds', 'held_waiting', 'on_hold', 'cooldown', 'reply', 'retry_plan',
-  'starting', 'proposing', 'fixing', 'revising', 'update_queued', 'checks_failing', 'sync_wait', 'conflict_on_yes',
+  'starting', 'proposing', 'fixing', 'revising', 'update_queued', 'checks_failing', 'bot_fix_failed', 'sync_wait', 'conflict_on_yes',
   'github_checks', 'github_checks_failing', 'github_wait', 'first_version', 'planning_with_you', 'waiting', 'shots',
   'approved_checking',
 ]);
@@ -802,6 +836,7 @@ const REQUEST_FACTS_SQL = `
          lc.integration_merges_clean AS lc_integration_merges_clean, lc.integration_block_reasons AS lc_integration_block_reasons,
          lc.promoted_at AS lc_promoted_at, lc.merged_at AS lc_merged_at, lc.live_at AS lc_live_at,
          lc.last_activity_at AS lc_last_activity_at, lc.created_at AS lc_created_at, lc.update_coming AS lc_update_coming,
+         lc.update_failed AS lc_update_failed,
          lc.username AS lc_by, q.priority AS queue_priority,
          -- #5323: a ready request's place among the project's builds waiting to start.
          CASE WHEN run.live_build_waiting_at IS NOT NULL AND run.build_session_id IS NULL THEN (
@@ -856,7 +891,8 @@ const REQUEST_FACTS_SQL = `
              c.merge_conflict_state, c.integration_merges_clean, c.integration_block_reasons, c.promoted_at, c.merged_at, c.live_at,
              c.last_activity_at, c.created_at,
              (SELECT u.username FROM users u WHERE u.id = c.user_id AND u.is_synthetic IS NOT TRUE) AS username,
-             CASE WHEN c.status = 'promoted' THEN ${progress.updateComingSql('c')} END AS update_coming
+             CASE WHEN c.status = 'promoted' THEN ${progress.updateComingSql('c')} END AS update_coming,
+             CASE WHEN c.status = 'promoted' THEN ${progress.updateFailedSql('c')} END AS update_failed
         FROM chat_sessions c
        WHERE c.app_id = it.app_id AND it.issue_number = ANY(c.linked_issues)
          AND c.is_headless = FALSE
@@ -888,6 +924,7 @@ const CHANGE_FACTS_SQL = `
          CASE WHEN cs.check_state IN ('failing', 'error') THEN ${FAILED_CHECKS_SQL('cs')} END AS failed_checks,
          ${firstVersionSql('cs')} AS first_version,
          CASE WHEN cs.status = 'promoted' THEN ${progress.updateComingSql('cs')} END AS update_coming,
+         CASE WHEN cs.status = 'promoted' THEN ${progress.updateFailedSql('cs')} END AS update_failed,
          (SELECT COUNT(*) FILTER (WHERE pv.vote = 'yes') FROM pr_votes pv
            WHERE pv.session_id = cs.id AND ${currentVotePredicateSql('pv', 'cs')})::int AS votes_yes,
          (SELECT COUNT(*) FILTER (WHERE pv.vote = 'no') FROM pr_votes pv
@@ -2047,6 +2084,7 @@ module.exports = {
   fromStage,
   derive,
   deriveChange,
+  withUpdate,
   voteOpenOf,
   shotsHeld,
   changeStandingOf,
