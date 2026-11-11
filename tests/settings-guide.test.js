@@ -102,6 +102,9 @@ test('the words stay true: the tabs as the bar names them, and no rule it did no
   assert.match(message('settings:guide.place.communities.body'), /You need to join a community/);
   assert.match(message('settings:guide.faq.whoCan.body'), /a project can ask for more/);
   assert.doesNotMatch(all, /each comment is posted as a request|sent once you are back online|About this app/);
+  // An invite link alone leaves a project Just you: it is private once someone joins.
+  assert.match(message('settings:guide.term.justYou.body'), /someone you invite joins/);
+  assert.doesNotMatch(all, /Inviting someone makes it/);
   // The names it quotes are the screen's own.
   assert.equal(message('home:communities.heading'), 'Pinned communities');
   assert.equal(message('home:communities.all'), 'All communities');

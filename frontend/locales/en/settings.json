@@ -2196,7 +2196,7 @@
     "description": "Row title in Settings > User guide: the name shown for a project only its maker is in. Same words as on screen."
   },
   "guide.term.justYou.body": {
-    "text": "A project only you are in. Inviting someone makes it a Private community.",
+    "text": "A project only you are in. Once someone you invite joins, it becomes a Private community.",
     "description": "Paragraph in Settings > User guide, explaining \"Just you\". \"Private community\" is a name shown on screen."
   },
   "guide.term.private.title": {
