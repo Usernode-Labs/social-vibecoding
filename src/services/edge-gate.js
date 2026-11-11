@@ -260,16 +260,20 @@ function isTopLevelNavigation(headers, method) {
 }
 
 // A request that may be a person's navigation, and so may start a sign-in
-// hop with its state: a top-level visit, or a read from a browser that
-// sends no Fetch Metadata at all (an old one's visit). A fetch, an asset, a
-// frame or a WebSocket never sets the state cookie, so polling in one tab,
-// or a sibling app's <img>, cannot overwrite the state of a hop in flight;
-// their trip to the apex carries no state and gets no code, which a
-// request that is not a visit could not have used anyway.
+// hop with its state: a top-level visit, a frame's navigation (a private
+// app in Homeroom's frame whose door cookie ran out signs in again inside
+// the frame), or a read from a browser that sends no Fetch Metadata at all
+// (an old one's visit). A fetch, an asset or a WebSocket never sets the
+// state cookie, so polling in one tab, or a sibling app's <img>, cannot
+// overwrite the state of a hop in flight; their trip to the apex carries no
+// state and gets no code, which a request that is not a visit could not
+// have used anyway. A sibling app can frame one to restart a hop, which
+// costs the other hop one retry and grants nothing: the code still only
+// works in the browser holding its state.
 function mayStartHop(headers, method) {
   if (!SAFE_METHODS.has(method) || isWebSocketUpgrade(headers)) return false;
   const dest = header(headers, 'sec-fetch-dest').toLowerCase();
-  return dest === 'document' || dest === '';
+  return dest === 'document' || dest === 'iframe' || dest === '';
 }
 
 function selfOrigins(host) {

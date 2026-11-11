@@ -499,6 +499,7 @@ test('starting the hop sets a fresh state cookie and sends only its SHA-256 to t
     ['a private app’s visit', { host: PRIV_HOST, uri: '/scores?week=2', dest: 'document' }],
     ['a door-only cookie’s visit', { host: PRIV_HOST, uri: '/scores?week=2', dest: 'document', cookie: doorCookie(MEMBER_ID, PRIV_HOST, PRIV_APP_ID) }],
     ['a private preview’s visit', { host: `privapp--s42.${DOMAIN}`, uri: '/scores?week=2', dest: 'document' }],
+    ['a private app in Homeroom’s frame', { host: PRIV_HOST, uri: '/scores?week=2', dest: 'iframe' }],
     ['an old browser’s visit (no Fetch Metadata)', { host: PRIV_HOST, uri: '/scores?week=2' }],
   ];
   const seen = new Set();
@@ -529,8 +530,8 @@ test('starting the hop sets a fresh state cookie and sends only its SHA-256 to t
   assert.notEqual(new URL(again.headers.location).searchParams.get('state'), STATE);
 });
 
-test('a fetch, an asset, a frame or a WebSocket never sets the state; its trip to the apex names none', async () => {
-  for (const dest of ['empty', 'script', 'image', 'iframe']) {
+test('a fetch, an asset or a WebSocket never sets the state; its trip to the apex names none', async () => {
+  for (const dest of ['empty', 'script', 'image']) {
     const r = await gate({ host: PRIV_HOST, dest });
     assert.ok(isAuthorize(r.headers.location), dest);
     assert.equal(stateSet(r), undefined, dest);
