@@ -301,9 +301,34 @@ test('version 2 dresses nothing of the product\'s own that it did not dress befo
   assert.ok(worn.length > 0 && worn.length < 20, `a handful only (${worn.length})`);
   for (const sel of worn) assert.match(sel, /\.fr-[\w-]+/, `"${sel}" would dress the product's markup with no kit element in it`);
   assert.doesNotMatch(css, /messages-|dev-request|dev-change|auth-waiting/, 'no conversation, request or waiting-room node is named');
-  // The event line is not worn yet: the request page's own lines would
-  // change under every look. The lane that redraws that page adds the root.
-  assert.equal(looks.config.wear.roots.evt, undefined);
+});
+
+test('an item\'s page keeps the product\'s discussion and dresses it: the stream a card, its count a section\'s label, what happened an event line', () => {
+  // Lane T of version 2 (a request's and a change's page). P0 left the
+  // event line out of the map on purpose; the lane that redraws the page
+  // adds it, with the stream's card and its label.
+  const roots = looks.config.wear.roots;
+  assert.deepEqual(roots.evt, { to: '#dev-topic-thread #gc-thread-messages .dev-request-event', parts: { ei: '.dev-request-event-glyph' } },
+    'two ids: the standard look\'s rule for the line names both, and a worn rule must outweigh it');
+  assert.equal(looks.wornSelector('html[data-skin] .fr-evt .fr-ei'), 'html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event .dev-request-event-glyph');
+  assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-evt b'), 'html[data-skin="workbench"] #dev-topic-thread #gc-thread-messages .dev-request-event b');
+  // The stream wears the card as a second wearer, a selector of its own:
+  // inside the first's :is() its two ids would lift every other card.
+  assert.doesNotMatch(roots.card.to, /gc-thread-messages/);
+  assert.deepEqual(roots.card.also, [{ to: '#dev-topic-thread .dev-request #gc-thread-messages:is([data-language="request"],[data-language="change"])' }]);
+  const card = looks.wornSelector('html[data-skin] .fr-card');
+  assert.equal(card, `html[data-skin]:where(:not([data-skin="brand"])) ${roots.card.to},html[data-skin]:where(:not([data-skin="brand"])) ${roots.card.also[0].to}`);
+  assert.equal(looks.wornSelector('html[data-skin] .fr-card.fr-pad'), null, 'a state neither wearer carries is still left out');
+  // The line that counts the replies is the section's label: the kit's
+  // .cap, and .sechead .cap for the looks that draw a section's label
+  // larger (Today, Playground). The section head's own box is not worn.
+  assert.equal(looks.wornSelector('html[data-skin="paper"] .fr-cap').split(',')[0], 'html[data-skin="paper"] #dev-topic-thread .dev-request .messages-reply-count');
+  assert.equal(looks.wornSelector('html[data-skin="today"] .fr-sechead .fr-cap', '.sechead .cap'), 'html[data-skin="today"] #dev-topic-thread .dev-request #gc-thread-messages .messages-reply-count');
+  assert.equal(looks.wornSelector('html[data-skin] .fr-sechead', '.sechead'), null);
+  assert.equal(looks.wornSelector('html[data-skin] .fr-cap.fr-over'), null);
+  const css = section();
+  assert.ok(css.includes('html[data-skin="today"] .fr-sechead .fr-cap,html[data-skin="today"] #dev-topic-thread .dev-request #gc-thread-messages .messages-reply-count{font-size:22px;'));
+  assert.ok(css.includes(',html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--fr-mut);min-width:0}'));
 });
 
 // ── The committed section ────────────────────────────────────────────────
@@ -329,7 +354,7 @@ test('the section sits just before the New look\'s block, which stays last', () 
 });
 
 // The product's classes looks.json "wear" names: the only ones the section may carry.
-const WORN = new Set(Object.values(looks.config.wear.roots).flatMap((root) => [root.to, ...Object.values(root.parts || {})])
+const WORN = new Set(Object.values(looks.config.wear.roots).flatMap((root) => [root.to, ...(root.also || []).flatMap((w) => [w.to, ...Object.values(w.parts || {})]), ...Object.values(root.parts || {})])
   .flatMap((sel) => sel.match(/\.[a-zA-Z][\w-]*/g) || []));
 
 // A rule's selectors: split at the commas outside every bracket (a worn

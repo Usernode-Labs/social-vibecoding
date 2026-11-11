@@ -6667,17 +6667,17 @@
     "text": "After the checks pass",
     "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, Line under the approval rule's row: a change is voted on once its automatic checks have passed."
   },
-  "frame.topic.about": {
-    "text": "About",
-    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who asked and under which topic."
+  "frame.topic.theRequest": {
+    "text": "The request",
+    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card that holds the request in the asker's own words."
   },
-  "frame.topic.asked": {
-    "text": "Asked {{when}}",
-    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under the asker's name in the context column; {{when}} is a short date or time, such as '28 Oct, 10:24'."
+  "frame.topic.theChange": {
+    "text": "The change",
+    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card that holds the change's summary and who put it up."
   },
-  "frame.topic.topic": {
-    "text": "Topic",
-    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under a topic's name in the context column, saying the row is the topic the request is filed under."
+  "frame.topic.status": {
+    "text": "Status",
+    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card in the context column that says where the request or the change stands."
   },
   "frame.allItems.purpose_one": {
     "text": "{{count}} open request or change in {{project}}, newest first.",
@@ -6722,14 +6722,6 @@
   "frame.allItems.loading": {
     "text": "Loading…",
     "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Shown in place of the list while the board is being read."
-  },
-  "frame.topic.follow": {
-    "text": "Follow this request",
-    "description": "A request's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Title of the row in the About column whose switch turns notifications for this request on or off."
-  },
-  "frame.topic.followLine": {
-    "text": "Replies and status changes",
-    "description": "A request's page under one of the frame's looks: the line under \"Follow this request\", saying what following brings."
   },
   "frame.allItems.nobody": {
     "text": "Nobody on it",
