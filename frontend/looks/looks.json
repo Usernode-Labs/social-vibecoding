@@ -296,7 +296,7 @@
     }
   },
   "wear": {
-    "note": "What the product's own markup wears. A conversation is drawn by the product's renderer, not by kit components, so for each kit component named here (roots) every kit rule that mentions it is repeated for the product's class (to), with the component's inner classes swapped for the product's (parts: a kit class, or a state the kit writes as a class, to a product selector). skip lists tour selectors left out. A part only counts inside a rule that names its root. The composer's field is not worn: the kit draws a placeholder's words, not a field (app.css, THE FRAME IN THE SHELL). The stand-alone pages a visitor signs in on (features/auth: sign-in, register, the waitlist form, more ways) are the product's own forms and wear the title, the card and the button; their one accent-filled control is the primary button, a white or grey pill a quiet one. Settings' own grouped lists (@/components/ui/grouped-list, named ui-glist and ui-lrow) wear the card and the row inside #settings-section-content, scoped with :where() inside the compound so a rule naming the row twice (.row+.row) stays one selector. Edit profile (features/profile/profile-edit-sheet.tsx) is the product's dialog: its title, group labels, groups and Save wear the title, the cap, the card and the button; its rows are dressed by hand in app.css, since a field row is a label over its box, not the kit's one-line row. The bell's sheet (#notifications-sheet) stays the product's and wears the card on each of its cards and the look's tabs on its Unread and All (a tab that is on is the one aria-selected). An item's page (a request, a change: features/dev-board/topic) keeps the product's own discussion: the stream wears the card (\"also\": a second wearer written as a selector of its own, since it needs two ids to outweigh the standard look's rule and :is() would lift every other wearer with it), the line that counts the replies wears a section's label (cap, and sechead for the looks that draw a section's label larger; the section head's own box is skipped, the stream is not one), and a line of what happened wears the event (evt).",
+    "note": "What the product's own markup wears. A conversation is drawn by the product's renderer, not by kit components, so for each kit component named here (roots) every kit rule that mentions it is repeated for the product's class (to), with the component's inner classes swapped for the product's (parts: a kit class, or a state the kit writes as a class, to a product selector). skip lists tour selectors left out. A part only counts inside a rule that names its root. The composer's field is not worn: the kit draws a placeholder's words, not a field (app.css, THE FRAME IN THE SHELL). The stand-alone pages a visitor signs in on (features/auth: sign-in, register, the waitlist form, more ways) are the product's own forms and wear the title, the card and the button; their one accent-filled control is the primary button, a white or grey pill a quiet one. Settings' own grouped lists (@/components/ui/grouped-list, named ui-glist and ui-lrow) wear the card and the row inside #settings-section-content, scoped with :where() inside the compound so a rule naming the row twice (.row+.row) stays one selector. Edit profile (features/profile/profile-edit-sheet.tsx) is the product's dialog: its title, group labels, groups and Save wear the title, the cap, the card and the button; its rows are dressed by hand in app.css, since a field row is a label over its box, not the kit's one-line row. The bell's sheet (#notifications-sheet) stays the product's and wears the card on each of its cards and the look's tabs on its Unread and All (a tab that is on is the one aria-selected). An item's page (a request, a change: features/dev-board/topic) keeps the product's own discussion: the stream wears the card (\"also\": a second wearer written as a selector of its own, since it needs two ids to outweigh the standard look's rule and :is() would lift every other wearer with it), the line that counts the replies wears a section's label (cap, and sechead for the looks that draw a section's label larger; the section head's own box is skipped, the stream is not one), and a line of what happened wears the event (evt). New message's own dialog (features/messages/create-dialog.tsx, the tour's s16) is the product's: its card is lifted out of its root when shown, so it is named by an attribute of its own ([data-new-message]), and its Direct and Group switch and its two buttons wear the look's tabs and the button; the rest is dressed by hand in app.css. In a reply thread's pane the line that counts the replies wears the day's label.",
     "roots": {
       "post": {
         "to": ".messages-message",
@@ -310,7 +310,12 @@
         ]
       },
       "day": {
-        "to": ".messages-day"
+        "to": ".messages-day",
+        "also": [
+          {
+            "to": ".messages-reply-pane > .messages-thread-scroll > .messages-reply-count"
+          }
+        ]
       },
       "dhead": {
         "to": ".messages-thread-header",
@@ -355,7 +360,15 @@
         "to": ":is(:is(#auth-login-screen,#auth-register-screen,#auth-waitlist-screen,#auth-more-screen) :is(button,a):is(.bg-violet-600,.rounded-full:is(.bg-white,.bg-zinc-100)):not([data-auth-back]),[data-sign-in-sheet] [role=\"dialog\"] button.bg-violet-600,[data-public-profile-frame] button:is(.bg-violet-600,.bg-zinc-100),#improve-row-feedback,#profile-edit-save)",
         "parts": {
           "quiet": ":is(.bg-white,.bg-zinc-100)"
-        }
+        },
+        "also": [
+          {
+            "to": "[data-new-message] .ms-auto > button",
+            "parts": {
+              "quiet": ".bg-zinc-100"
+            }
+          }
+        ]
       },
       "row": {
         "to": ".ui-lrow:where(#settings-section-content *)",
@@ -372,13 +385,26 @@
           ".tabs .end",
           ".tabs .end .search",
           ".tabs .end .inp"
+        ],
+        "also": [
+          {
+            "to": "[data-new-message] [role=\"tablist\"]"
+          }
         ]
       },
       "tab": {
         "to": "#notifications-screen-tabs > [role=\"tab\"]",
         "parts": {
           "on": "[aria-selected=\"true\"]"
-        }
+        },
+        "also": [
+          {
+            "to": "[data-new-message] [role=\"tab\"]",
+            "parts": {
+              "on": "[aria-selected=\"true\"]"
+            }
+          }
+        ]
       },
       "evt": {
         "to": "#dev-topic-thread #gc-thread-messages .dev-request-event",

@@ -147,9 +147,10 @@ test('a kit rule for a worn component also names the product\'s own markup for i
     'the kit is any look\'s, and the New look ("brand") is not one: its conversations keep the standard markup\'s rules');
   assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-post .fr-when'), 'html[data-skin="workbench"] .messages-message .messages-message-head time');
   assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-post'), 'html[data-skin="workbench"] .messages-message');
-  assert.equal(looks.wornSelector('html[data-skin] .fr-day::before'), 'html[data-skin]:where(:not([data-skin="brand"])) .messages-day::before');
+  // (The day's label has a second wearer, the count of a reply thread's replies: lane M, tests/messages-frame-stream.test.js.)
+  assert.equal(looks.wornSelector('html[data-skin] .fr-day::before').split(',')[0], 'html[data-skin]:where(:not([data-skin="brand"])) .messages-day::before');
   assert.equal(looks.wornSelector('html[data-skin][data-skin] .fr-dhead'), 'html[data-skin][data-skin]:where(:not([data-skin="brand"])) .messages-thread-header', 'a phone rule keeps its weight');
-  assert.equal(looks.wornSelector('html[data-skin].dark .fr-day'), 'html[data-skin].dark:where(:not([data-skin="brand"])) .messages-day');
+  assert.equal(looks.wornSelector('html[data-skin].dark .fr-day').split(',')[0], 'html[data-skin].dark:where(:not([data-skin="brand"])) .messages-day');
   assert.equal(looks.wornSelector('html[data-skin="brandkit"] .fr-dhead .fr-t'), 'html[data-skin="brandkit"] .messages-thread-header .messages-thread-name');
   assert.equal(looks.wornSelector('html[data-skin="playground"].dark .fr-composer .fr-send.fr-go'), 'html[data-skin="playground"].dark .messages-composer-card .messages-send:not(:disabled)',
     'a state the kit writes as a class is the product\'s own state');
@@ -460,5 +461,7 @@ test('a worn rule that could match nothing is left out', () => {
   }
   assert.ok(seen > 100, `the worn rules are there (${seen})`);
   const btn = looks.config.wear.roots.btn;
-  assert.ok(text.includes(`${btn.to}${btn.parts.quiet}{background:var(--fr-sunk)`), 'a state the map names is kept: the quiet button');
+  // The rule may go on to a second wearer of the button ("also") before its declarations.
+  const quiet = text.indexOf(`${btn.to}${btn.parts.quiet}`);
+  assert.ok(quiet > -1 && text.slice(text.indexOf('{', quiet), text.indexOf('}', quiet)).startsWith('{background:var(--fr-sunk)'), 'a state the map names is kept: the quiet button');
 });

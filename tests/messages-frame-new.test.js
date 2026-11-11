@@ -63,3 +63,26 @@ test('the rows are the pane\'s own choices, and a press hands over to the produc
   assert.match(pane, /function startNew\(choice: NewChoice\) \{[^}]*if \(choice === 'agent'\) void startAgentSession\(\{ entry: 'messages' \}\);\s+else openDialog\('messagesCreate', choice\);/,
     'an agent chat starts; a direct message or a group is the product\'s create dialog, on that tab');
 });
+
+test('the product\'s create dialog wears the look: its card is named, and dressed from the look\'s tokens', () => {
+  const dialog = read('frontend/src/features/messages/create-dialog.tsx');
+  assert.match(dialog, /<DialogCard size="md" data-new-message="">/, 'the card is lifted out of its root when shown, so it carries its own name');
+  const css = read('public/css/app.css');
+  const at = css.indexOf('/* NEW MESSAGE\'S DIALOG');
+  assert.ok(at > 0, 'a block of its own in THE FRAME IN THE SHELL');
+  const block = css.slice(at, css.indexOf('\n\n', at));
+  assert.match(block, /html\[data-skin\]:not\(\[data-skin="brand"\]\) \[data-new-message\] \{[^}]*background: var\(--fr-solid, var\(--fr-ground\)\);/, 'solid under a see-through look');
+  assert.match(block, /\[data-new-message\] h2 \{ font: 700 24px\/1\.15 var\(--fr-f\); letter-spacing: -\.02em; \}/, 'a sheet\'s title');
+  assert.match(block, /\[data-new-message\] \[role="tab"\] \{ flex: 1; justify-content: center; \}/, 'the two kinds share the width, as a sheet\'s switch does');
+  // Its switch and its buttons wear the kit's through the map, each as a second wearer.
+  const roots = JSON.parse(read('frontend/looks/looks.json')).wear.roots;
+  const wearers = (root) => [root, ...(root.also || [])];
+  assert.ok(wearers(roots.tabs).some((w) => w.to === '[data-new-message] [role="tablist"]'));
+  assert.ok(wearers(roots.tab).some((w) => w.to === '[data-new-message] [role="tab"]' && w.parts.on === '[aria-selected="true"]'), 'the chosen kind is the tab that is on');
+  assert.ok(wearers(roots.btn).some((w) => w.to === '[data-new-message] .ms-auto > button' && w.parts.quiet === '.bg-zinc-100'), 'Cancel is the quiet button, Create group the primary');
+  const worn = css.slice(css.indexOf('/* looks:begin'));
+  assert.ok(worn.includes('html[data-skin]:where(:not([data-skin="brand"])) [data-new-message] [role="tab"][aria-selected="true"]'), 'compiled into the looks section');
+  assert.match(block, /\[data-new-message\] input \{[^}]*box-shadow: inset 0 0 0 1px var\(--fr-line\);/);
+  assert.doesNotMatch(block, /#[0-9a-fA-F]{3,8}\b|rgba?\(/, 'no colour of its own');
+  assert.doesNotMatch(block, /-(left|right)\b/, 'logical sides only');
+});
