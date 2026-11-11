@@ -568,6 +568,10 @@ const UPDATE_QUEUED_DAYS = 7; // = homeroom-bot.js sweepStrandedAsks' window
 // MAX_TURN_MS). A turn marker older than this is one whose process died
 // without releasing it, and it is no update on its way.
 const UPDATE_TURN_HOURS = 6; // = src/workflow/turn/machine.ts MAX_TURN_MS
+// #6600: a takeover's own record (homeroom_bot_looks kind 'update') is an
+// update on its way too. One this old is stale: homeroom-bot-takeover.js
+// clearStale fails it when the next update starts.
+const UPDATE_LOOK_HOURS = 3; // = homeroom-bot-takeover.js STALE_UPDATE_MS
 
 /**
  * #6348: an ask holds the vote only while its change is still on the version
@@ -607,12 +611,38 @@ function updateComingSql(cs) {
                   WHERE uk.session_id = ${cs}.id AND uk.status = 'taken'
                     AND uk.taken_at > NOW() - make_interval(hours => ${UPDATE_TAKEN_HOURS})
                     AND ${askOnHeadSql('uk', cs)})
+      -- #6600: a takeover Homeroom bot is running on the change (its ask is
+      -- taken as the look starts, but its own row says so whenever it runs).
+      OR EXISTS (SELECT 1 FROM homeroom_bot_looks bl
+                  WHERE bl.session_id = ${cs}.id AND bl.kind = 'update' AND bl.state = 'running'
+                    AND bl.created_at > NOW() - make_interval(hours => ${UPDATE_LOOK_HOURS}))
       THEN 'running'
     WHEN EXISTS (SELECT 1 FROM homeroom_bot_change_asks uk
                   WHERE uk.session_id = ${cs}.id AND uk.status = 'queued'
                     AND uk.created_at > NOW() - make_interval(days => ${UPDATE_QUEUED_DAYS})
                     AND ${askOnHeadSql('uk', cs)})
       THEN 'queued' END)`;
+}
+
+/**
+ * #6600: why a takeover's last attempt on a change (`cs`, a chat_sessions
+ * alias) failed, as `$`-free SQL: the newest kind 'update' look when it is
+ * failed, nothing newer is running, and its end is after the change's last
+ * verdict (so a new push or another takeover clears it). NULL when no
+ * takeover took the change over, its newest one succeeded, one is running,
+ * or the change has been checked since. Reads the bot's own records.
+ */
+function updateFailedSql(cs) {
+  return `(SELECT COALESCE(bl.error, 'it did not finish')
+             FROM homeroom_bot_looks bl
+            WHERE bl.session_id = ${cs}.id AND bl.kind = 'update'
+              AND bl.id = (SELECT MAX(b2.id) FROM homeroom_bot_looks b2
+                            WHERE b2.session_id = ${cs}.id AND b2.kind = 'update')
+              AND bl.state = 'failed'
+              AND bl.ended_at IS NOT NULL
+              AND bl.ended_at > COALESCE(${cs}.checks_checked_at, ${cs}.promoted_at)
+              AND NOT EXISTS (SELECT 1 FROM homeroom_bot_looks run
+                               WHERE run.session_id = ${cs}.id AND run.kind = 'update' AND run.state = 'running'))`;
 }
 
 /**
@@ -1962,8 +1992,11 @@ module.exports = {
   UPDATE_QUEUED_DAYS,
   // #6348: a turn marker older than a turn can run is not an update coming.
   UPDATE_TURN_HOURS,
+  // #6600: a takeover's running look, and why its last attempt failed.
+  UPDATE_LOOK_HOURS,
   askOnHeadSql,
   updateComingSql,
+  updateFailedSql,
   updateAskSql,
   inFlight,
   stageOf,

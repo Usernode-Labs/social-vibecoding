@@ -202,6 +202,93 @@ test('#6139: the line under a change says whether it is still being built or fin
   assert.equal(message('project:topic.thread.page.ready'), 'Built, and its checks pass. Its votes open once it is put up for a vote.');
 });
 
+// #6599: a built draft of yours says its votes open once it is put up for a
+// vote, and used to offer no way to do it: the only door was the old session
+// view's Submit for review. Its card carries the call now (POST
+// /api/sessions/:id/promote, the same one), and so does its ⋯.
+test('#6599: a built draft of yours puts itself up for a vote from its card', () => {
+  const underway = { ...review(91, 6581), status: 'active', state: 'underway' };
+  const draw = (item) => renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+    slug: 'club', data: thread([request, item]), number: 10, changes: [item], close: null, onChanged: () => {},
+  });
+  const signedIn = (readOnly = false, fn) => {
+    globalThis.window = {
+      App: { user: { id: 7, username: 'evan' } },
+      AppView: { readOnly },
+      addEventListener() {},
+      removeEventListener() {},
+      dispatchEvent() {},
+    };
+    try { return fn(); } finally { delete globalThis.window; }
+  };
+  const mine = signedIn(false, () => draw({ ...underway, ready: true, mine: true }));
+  assert.match(mine, /data-thread-change-propose="91"/);
+  assert.match(mine, /Put it up for a vote/);
+  assert.ok(mine.includes(message('project:topic.thread.page.readyMine')), 'the shorter line under it');
+  assert.equal(message('project:topic.thread.page.readyMine'), 'Built, and its checks pass.');
+  assert.ok(!mine.includes(message('project:topic.thread.page.ready')), 'the waiting sentence is replaced, not repeated');
+  assert.ok(!mine.includes('data-thread-change-propose-error'), 'nothing is said until it is pressed');
+
+  const theirs = signedIn(false, () => draw({ ...underway, ready: true, mine: false }));
+  assert.ok(!theirs.includes('data-thread-change-propose'), 'not theirs to propose: the sentence alone');
+  assert.ok(theirs.includes(message('project:topic.thread.page.ready')));
+
+  const readOnly = signedIn(true, () => draw({ ...underway, ready: true, mine: true }));
+  assert.ok(!readOnly.includes('data-thread-change-propose'), 'a read-only view offers no action');
+
+  const guest = draw({ ...underway, ready: true, mine: true });
+  assert.ok(!guest.includes('data-thread-change-propose'), 'signed out, no action');
+
+  const building = signedIn(false, () => draw({ ...underway, ready: false, mine: true }));
+  assert.ok(!building.includes('data-thread-change-propose'), 'still being built: nothing to put up');
+  assert.ok(building.includes(message('project:topic.thread.page.underway')));
+
+  const promoted = signedIn(false, () => draw({ ...review(91, 6581), mine: true }));
+  assert.ok(!promoted.includes('data-thread-change-propose'), 'up for a vote: its Vote card, not the button');
+
+  // The ⋯ offers the same action, from the hook its line is drawn with; the
+  // card's own button calls the same thing from its own instance.
+  const src = read(`${TOPIC}/thread-changes.tsx`);
+  assert.match(src, /useThreadMenu\(propose\.can \? key : null, 'propose', propose\.can/, 'the row goes on the change\'s own ⋯');
+  assert.match(src, /\{ label: t\('project:topic\.thread\.page\.proposeAction'\), icon: 'default', act: propose\.propose \}/);
+  assert.match(src, /const propose = useProposeChange\(item, onChanged\);\s*useInView/, 'the line and its ⋯ draw from one hook');
+  assert.match(src, /<ChangeMenu item=\{item\} view=\{view\} propose=\{propose\} \/>/);
+});
+
+test('#6599: pressing it is the old Submit for review, and a refusal keeps Homeroom\'s own sentence', async () => {
+  const { proposeChange } = loadTsx(`${TOPIC}/thread-changes.tsx`);
+  const calls = [];
+  const events = [];
+  let answer = { ok: true, json: async () => ({ ok: true }) };
+  const realFetch = globalThis.fetch;
+  globalThis.window = { dispatchEvent: (e) => events.push(e) };
+  globalThis.fetch = async (url, init) => { calls.push({ url, init }); return answer; };
+  try {
+    assert.equal(await proposeChange(91), null);
+    assert.equal(calls[0].url, '/api/sessions/91/promote');
+    assert.equal(calls[0].init.method, 'POST');
+    assert.equal(calls[0].init.credentials, 'same-origin');
+    assert.deepEqual(events.map((e) => [e.type, e.detail]), [['change-detail-refresh', 91]], 'its section reads again');
+
+    answer = { ok: false, status: 409, json: async () => ({ error: 'proposal_not_ready', message: 'Nothing has been submitted to this change yet, so there is nothing to put up for review.' }) };
+    assert.equal(await proposeChange(91), 'Nothing has been submitted to this change yet, so there is nothing to put up for review.');
+
+    answer = { ok: false, status: 409, json: async () => ({ error: 'session_state_changed' }) };
+    assert.equal(await proposeChange(91), message('project:topic.thread.page.proposeFailed'));
+    assert.equal(message('project:topic.thread.page.proposeFailed'), 'Could not put this change up for the vote.');
+    assert.equal(events.length, 1, 'a refusal asks nothing to be redrawn');
+
+    answer = { ok: false, status: 404, json: async () => ({ error: 'Active session not found' }) };
+    assert.equal(await proposeChange(91), 'Active session not found', 'a sentence the server wrote is shown as it is');
+
+    answer = { ok: false, status: 500, json: async () => { throw new Error('not json'); } };
+    assert.equal(await proposeChange(91), message('project:topic.thread.page.proposeFailed'), 'a body that is not JSON falls back');
+  } finally {
+    globalThis.fetch = realFetch;
+    delete globalThis.window;
+  }
+});
+
 test('#6139: an open request page reads its thread again when a change underway has news, once for a burst', async () => {
   const { rereadOnChangeNews } = loadTsx(`${TOPIC}/change-detail-refresh.ts`);
   const target = new EventTarget();

@@ -116,6 +116,7 @@ const LINE_WORDS: Record<string, string> = {
   revising: 'core:work.line.revising',
   update_queued: 'core:work.line.updateQueued',
   checks_failing: 'core:work.line.checksFailing',
+  bot_fix_failed: 'core:work.line.botFixFailed',
   approved_checking: 'core:work.line.approvedChecking',
   sync_wait: 'core:work.line.syncWait',
   conflict_on_yes: 'core:work.line.conflictOnYes',

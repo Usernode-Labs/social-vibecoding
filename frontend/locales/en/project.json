@@ -6211,6 +6211,22 @@
     "text": "Built, and its checks pass. Its votes open once it is put up for a vote.",
     "description": "Line under a change on a request's page, where its Votes and Testing cards will be: the change has finished building and its checks pass, and nothing happens until it is put up for a vote."
   },
+  "topic.thread.page.readyMine": {
+    "text": "Built, and its checks pass.",
+    "description": "Line under the Put it up for a vote button on a change's card on a request's page: the viewer's own change has finished building and its checks pass."
+  },
+  "topic.thread.page.proposeAction": {
+    "text": "Put it up for a vote",
+    "description": "Button on a change's card on a request's page, and its row in the card's ⋯ menu: puts the viewer's own built change up for the group to vote on."
+  },
+  "topic.thread.page.proposing": {
+    "text": "Proposing…",
+    "description": "Label of the Put it up for a vote button while the change is being put up for a vote."
+  },
+  "topic.thread.page.proposeFailed": {
+    "text": "Could not put this change up for the vote.",
+    "description": "Said under the Put it up for a vote button when Homeroom refused without a sentence of its own to show why."
+  },
   "topic.thread.page.rowBy": {
     "text": "{{by}} · #{{number}}",
     "description": "Second line of one competing change's row on a request's page, under the request: its changes and its vote to close: who built it and the change's number."

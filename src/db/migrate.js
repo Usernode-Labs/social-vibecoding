@@ -172,6 +172,8 @@ async function migrate(config) {
   // Homeroom), so Needs you has the row that says what it waits on, its page
   // the Votes card and the bot's plain reply.
   await seedStagingOwnChangeWaitingOnFix(pool);
+  // #6599's shots: the capture member's own built draft, ready to put up for a vote.
+  await seedStagingReadyDraftChange(pool);
   // #6225's shots: a change of the capture member's up for a vote that
   // closes three requests, one of them filed by someone else, so the Votes
   // card's "Closes N requests" list (and one unconfirmed request) has a state
@@ -3229,6 +3231,81 @@ async function seedStagingOwnChangeWaitingOnFix(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging own-change waiting-on-fix seeding failed', { message: err.message });
+  }
+}
+
+
+// #6599 (11 Nov 2026): a built draft of the shots' member fixture
+// (usernode-capture), its checks passing and nothing working on it, on its
+// request's page, so the card's Put it up for a vote has a state to show. A
+// fresh staging copy cannot reach it: a draft comes from a coding agent's
+// build, and nothing there builds or runs checks. Obviously fake, idempotent,
+// and strictly a no-op outside staging.
+async function seedStagingReadyDraftChange(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const SESSION_ID = 999_999_990;
+  try {
+    const people = await pool.query(
+      "SELECT id FROM users WHERE username = 'usernode-capture'",
+    );
+    const member = people.rows[0];
+    if (!member) return;
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by)
+       VALUES (900099, 'Staging demo: a built draft', 'staging-demo-ready-draft',
+               'running', 'members', 'public', $1)
+       ON CONFLICT (id) DO NOTHING`,
+      [member.id],
+    );
+    const appId = (await pool.query('SELECT id FROM apps WHERE id = 900099')).rows[0]?.id;
+    if (!appId) return;
+    await pool.query(
+      `INSERT INTO community_members (community_id, user_id)
+       SELECT community_id, $1 FROM apps WHERE id = $2 AND community_id IS NOT NULL
+       ON CONFLICT DO NOTHING`,
+      [member.id, appId],
+    );
+    // A request number staging's mock issue list knows (routes/issues.js
+    // stagingMockIssues): a fresh copy has no GitHub to read, and a page it
+    // cannot load bounces to the board, so the card would have no page.
+    const number = 900001;
+    const title = 'Staging demo: say how long a build may take';
+    // The thread is found by the request's own number, so its page is where
+    // the card is drawn.
+    const thread = await pool.query(
+      `INSERT INTO threads (app_id, number, kind, title, created_at)
+       SELECT $1::int, $2::int, 'work', $3::text, NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM threads WHERE app_id = $1::int AND number = $2::int AND kind = 'work')
+        RETURNING id`,
+      [appId, number, title],
+    );
+    const threadId = thread.rows[0]?.id || (await pool.query(
+      "SELECT id FROM threads WHERE app_id = $1 AND number = $2 AND kind = 'work'", [appId, number],
+    )).rows[0]?.id || null;
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, thread_id, created_at, updated_at)
+       SELECT $1::int, $2::int, $3::text, 'Staging demo: obviously fake.', $4::int, $5::int,
+              NOW() - INTERVAL '4 days', NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1::int AND number = $2::int)`,
+      [appId, number, title, member.id, threadId],
+    );
+    // Built, checks passing on its current head, nothing working on it:
+    // services/threads.js CHANGE_READY_SQL reads exactly these.
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, session_title, pr_title, pr_number, status, linked_issues,
+          created_from_issue_number, thread_id, external_agent, check_state, check_phase,
+          checks_commit_sha, mergeability, integration_merges_clean, merge_conflict_state,
+          votes_required, approval_epoch, requires_explicit_approval, created_at, last_activity_at)
+       SELECT $1::int, $2::int, $3::int, 'staging-fixture/ready-draft', $4::text, $4::text,
+              900141, 'active', ARRAY[$5::int]::int[], $5::int, $6::int,
+              'claude-code', 'passing', 'done', repeat('a', 40), 'clean', TRUE, 'clean', 1, 0, TRUE,
+              NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE id = $1::int)`,
+      [SESSION_ID, appId, member.id, title, number, threadId],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging ready-draft seeding failed', { message: err.message });
   }
 }
 
@@ -19513,6 +19590,8 @@ module.exports = {
   // #6284: the stopped-fix change the Testing card and Homeroom bot page
   // shots need, as its own test seam (the fixtures are staging-only).
   seedStagingBotFixesStopped,
+  // #6599: the ready draft the thread card's Put it up for a vote has to show.
+  seedStagingReadyDraftChange,
   seedStagingBotFixesPlatform,
   // #6563: the approved change GitHub is holding, the Merging card's shot.
   seedStagingGithubChecksHold,
