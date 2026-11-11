@@ -918,6 +918,8 @@ test('a typing event carries only the kinds of work the screen words, and what t
   assert.equal(dm.typingDoing({ kind: 'request' }), null, 'a request is named by its number');
   assert.deepEqual(dm.typingDoing({ kind: 'code', project: 'x'.repeat(200) }).project.length, 61, 'a short name');
   assert.deepEqual(dm.typingDoing({ kind: 'code', project: '' }), { kind: 'code' });
+  // #6581: the answer's words are never shown while it is written.
+  assert.deepEqual(dm.typingDoing({ kind: 'writing' }), { kind: 'writing' });
   assert.equal(dm.typingDoing({ kind: 'Reading request #12' }), null, 'never words');
   assert.equal(dm.typingDoing(null), null);
   // A person's typing route never says what anybody is doing.

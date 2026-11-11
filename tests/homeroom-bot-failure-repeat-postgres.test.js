@@ -12,6 +12,10 @@
 // 5 Nov 2026 (docs/plans/bot-one-model.md, decision 6): a failure that says
 // something different takes the same post's place too (replaceFailurePost):
 // the request's thread holds one failure post.
+// 11 Nov 2026 (#6581): words already on screen stay. A note that says
+// something different, or that somebody has replied under, is left intact
+// and the new failure is posted below it as a new note; only the same words,
+// with no reply under them, may be written over the note in place.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/homeroom-bot-failure-repeat-postgres.test.js
 
@@ -61,11 +65,11 @@ test('a repeated build failure updates its one post instead of saying it again',
   const broadcasts = [];
   const ws = {
     broadcast(appId, frame) { broadcasts.push({ appId, frame }); },
-    async sendBotMessage(_pool, _appId, { content, thread }) {
+    async sendBotMessage(_pool, _appId, { content, thread, metadata }) {
       return one(
-        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref)
-         VALUES ($1, $2, $3, 'message', $4, $5) RETURNING id`,
-        [app.id, bot.id, content, thread.type, thread.ref]);
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata)
+         VALUES ($1, $2, $3, 'message', $4, $5, $6::jsonb) RETURNING id`,
+        [app.id, bot.id, content, thread.type, thread.ref, JSON.stringify(metadata || {})]);
     },
   };
   let comments = 0;
@@ -77,10 +81,19 @@ test('a repeated build failure updates its one post instead of saying it again',
     pool, github, ws, app, repo: { owner: 'acme', repo: 'repeat' }, issueNumber: 42,
     kind: 'build_failed', text, sender: bot, senderId: bot.id,
   });
+  const sayKind = (kind, text) => live.post({
+    pool, github, ws, app, repo: { owner: 'acme', repo: 'repeat' }, issueNumber: 42,
+    kind, text, sender: bot, senderId: bot.id,
+  });
   const posts = async () => (await pool.query(
     'SELECT id, thread_message_id FROM homeroom_bot_posts ORDER BY id')).rows;
   const messages = async () => (await pool.query(
     'SELECT id, content, metadata FROM chat_messages ORDER BY id')).rows;
+  // Somebody answers in the thread: the words a reply was written against.
+  const replyUnder = () => one(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref)
+     VALUES ($1, $2, 'Has it finished?', 'message', 'issue', 42) RETURNING id`,
+    [app.id, owner.id]);
 
   // The first failure says itself, once.
   const first = await say(PLAN);
@@ -115,8 +128,8 @@ test('a repeated build failure updates its one post instead of saying it again',
   assert.equal(afterThree[0].content,
     'I couldn\'t finish writing the plan for this. I\'m trying again. (Tried 3 times.)');
 
-  // A failure that says something different is news: on GitHub a comment of
-  // its own, and in the thread the same post, saying it now.
+  // #6581: a failure that says something different is a new note below the
+  // old one. The old note's words stay, and so do any replies under it.
   broadcasts.length = 0;
   const third = await say(TIME);
   assert.equal(third.thread, true);
@@ -124,10 +137,52 @@ test('a repeated build failure updates its one post instead of saying it again',
   const rows = await posts();
   assert.equal(rows.length, 2, 'recorded as its own post');
   const afterOther = await messages();
-  assert.equal(afterOther.length, 1, 'still one failure message in the thread');
-  assert.equal(Number(rows[1].thread_message_id), afterOther[0].id, 'the new post is that message');
-  assert.match(afterOther[0].content, /^I couldn't finish building this: the build took longer than I'm allowed\./);
-  assert.equal(afterOther[0].metadata.hrbotPost, String(rows[1].id), 'marked as the new post, for a retry to find');
-  assert.deepEqual(broadcasts.map((b) => b.frame.type), ['chat_edit', 'chat_message_updated'],
-    'everybody reading hears the new words and its metadata');
+  assert.equal(afterOther.length, 2, 'a new note below, never a rewrite of the old words');
+  assert.equal(Number(rows[1].thread_message_id), afterOther[1].id, 'the new post is a new message');
+  assert.notEqual(afterOther[1].id, afterOther[0].id);
+  assert.equal(afterOther[0].content,
+    'I couldn\'t finish writing the plan for this. I\'m trying again. (Tried 3 times.)',
+    'the earlier note is untouched');
+  assert.match(afterOther[1].content, /^I couldn't finish building this: the build took longer than I'm allowed\./);
+  assert.equal(afterOther[1].metadata.hrbotPost, String(rows[1].id), 'marked as the new post, for a retry to find');
+  assert.deepEqual(broadcasts.map((b) => b.frame.type), [],
+    'nothing on screen was edited: the new note simply arrived');
+
+  // #6581: once somebody has replied under a failure note, the same words
+  // go below it too, rather than changing what they answered.
+  await replyUnder();
+  const again = await say(TIME);
+  assert.equal(again.thread, true);
+  const afterReply = await messages();
+  assert.equal(afterReply.length, 4, 'a new note below the reply');
+  assert.equal(afterReply[1].content, afterOther[1].content, 'the note they answered is unchanged');
+  assert.match(afterReply[3].content, /^I couldn't finish building this: the build took longer than I'm allowed\./);
+
+  // #6581: the same rule for the other failure kinds. With no reply under
+  // it, the same words update that note in place; after a reply, a new one.
+  const blockedBefore = (await posts()).length;
+  await sayKind('blocked', 'I can\'t build it as written.');
+  const blocked = (await posts()).slice(blockedBefore);
+  assert.equal(blocked.length, 1);
+  const blockedMessage = (await messages()).at(-1);
+  broadcasts.length = 0;
+  await sayKind('blocked', 'I can\'t build it as written.');
+  const blockedAgain = (await messages()).at(-1);
+  assert.equal(blockedAgain.id, blockedMessage.id, 'the same words, nobody replied: the one note stays');
+  assert.deepEqual(broadcasts.map((b) => b.frame.type), ['chat_edit', 'chat_message_updated']);
+  await replyUnder();
+  await sayKind('blocked', 'I can\'t build it as written.');
+  const blockedNew = (await messages()).at(-1);
+  assert.notEqual(blockedNew.id, blockedMessage.id, 'a reply under it: the new words go below');
+  assert.equal(blockedNew.content, 'I can\'t build it as written.');
+
+  // #6581: the same for a repeated build failure: nobody replied, the one
+  // note counts its tries; once somebody replied under it, the same words
+  // are a new note below, never a count written over what they answered.
+  const beforeSame = (await messages()).length;
+  await say(TIME);
+  const sameAfterReply = (await messages()).at(-1);
+  assert.equal((await messages()).length, beforeSame + 1, 'a new note below the reply');
+  assert.match(sameAfterReply.content, /^I couldn't finish building this: the build took longer than I'm allowed\./);
+  assert.doesNotMatch(sameAfterReply.content, /Tried \d+ times/);
 });
