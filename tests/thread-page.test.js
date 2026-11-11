@@ -134,8 +134,10 @@ test('the request, change and decision pages draw it', () => {
   // own rows (Mute, its moves) in the page's ⋯ (./thread-page-menu.test.js).
   assert.match(head, /<ThreadChanges slug=\{slug\} data=\{threadRead\.data\} number=\{r\.number\} changes=\{layout\.changes\} close=\{layout\.close\} plans=\{plans\} onChanged=\{threadRead\.reread\} \/>/);
   assert.match(head, /<ThreadItems slug=\{slug\} number=\{r\.number\} here=\{here\} payload=\{threadRead\.data\} items=\{layout\.listed\} onChanged=\{threadRead\.reread\} menuKey=\{menuKey\} \/>/);
+  // #6608: the list reads the project the page was painted for, not the app
+  // the viewer has since moved to (pageSlug is only the fallback).
   assert.match(read('frontend/src/features/dev-board/topic/change-head.tsx'),
-    /<ThreadItems slug=\{pageSlug\(\)\} number=\{threadNumber\} asChange=\{threadAsChange\} here=\{\{ type: 'change', id \}\} menuKey=\{menuKey \|\| null\} \/>/);
+    /<ThreadItems slug=\{slug\} number=\{threadNumber\} asChange=\{threadAsChange\} here=\{\{ type: 'change', id \}\} menuKey=\{menuKey \|\| null\} \/>/);
   const topic = read('frontend/src/features/dev-board/topic/topic-head.tsx');
   assert.match(topic, /threadNumber=\{Number\(session\?\.pr_number\) \|\| Number\(linkedIssues\[0\]\) \|\| null\} threadAsChange=\{Number\(session\?\.pr_number\) > 0\}/,
     'a change\'s page reads its own thread by its pull request, else its first request\'s');

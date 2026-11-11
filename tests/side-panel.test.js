@@ -710,7 +710,7 @@ test('the panel never runs an app: the running one is asked for nothing, another
 
 // ── 5. The panel's own document ──────────────────────────────────────────
 
-function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?panel=1', navigation = false, nested = false } = {}) {
+function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?panel=1', navigation = false, nested = false, captureHead = false } = {}) {
   let url = new URL(href);
   const listeners = {};
   const docListeners = {};
@@ -755,6 +755,9 @@ function panelWindow({ href = 'https://homeroom.test/app/notes-ab12/workshop?pan
             leave: (route) => reports.push(['leave', route]),
             back: () => reports.push(['back']),
             takeBootHint: () => ({ proposalHint: true }),
+            // #6608: only when a test reads the head reports, so the existing
+            // assertions on `reports.at(-1)` are unchanged.
+            ...(captureHead ? { head: (route, head) => reports.push(['head', route, head]) } : {}),
           },
         },
       },
@@ -1759,7 +1762,7 @@ test('beside the bot page the column\'s heading carries the page\'s own status p
   // document: the full page and the Workshop's side panel are the top
   // document, where the page keeps its own bar and publishes nothing.
   assert.match(HEAD, /if \(!isEmbeddedPanel\(\)\) return undefined;/);
-  assert.match(HEAD, /panelHeadStore\.set\(\{ kind: head\.kind, pill, menuKey: head\.menuKey \}\);/);
+  assert.match(HEAD, /panelHeadStore\.set\(\{ kind: head\.kind, pill, menuKey: head\.menuKey, route: route \|\| null \}\);/);
   assert.match(HEAD, /return \(\) => \{ panelHeadStore\.set\(null\); \};/, 'and takes it back when the page goes');
   // The heading draws the page's own pill, only while it is THAT page's.
   assert.match(SRC, /const pill = head && head\.pill && samePage\(head\.route, route\) \? head\.pill : null;/);
@@ -1796,6 +1799,42 @@ test('beside the bot page the column\'s heading carries the page\'s own status p
   assert.doesNotMatch(renderToHtml(createElement(api.SidePanelIsland, {})), /data-side-panel-status/,
     'one page\'s pill never shows on the next');
   api._resetForTests();
+});
+
+test('a page\'s status pill is reported only for the route it was published on (#6608)', async () => {
+  api.panelHeadStore.set(null);
+  const p = panelWindow({ href: 'https://homeroom.test/app/a/dev/changes/12?panel=1', captureHead: true });
+  try {
+    p.boot();
+    await tick();
+    const own = { kind: 'change', pill: PILL_BUILDING, menuKey: 'detail:proposal:12', route: 'app/a/dev/changes/12' };
+    api.panelHeadStore.set(own);
+    await tick();
+    assert.deepEqual(p.reports.at(-1), ['head', 'app/a/dev/changes/12', own], 'the page\'s own head is reported');
+
+    // The viewer switches the panel to another project's change. No head for
+    // the new route yet: the top document gets none, not the old page's.
+    p.win.history.replaceState(null, '', '/app/b/dev/changes/44?panel=1');
+    await tick();
+    assert.deepEqual(p.reports.at(-1), ['head', 'app/b/dev/changes/44', null]);
+
+    // A bar still mounted from the page the viewer left publishes again after
+    // the route changed. It carries the route it was DRAWN for, so `flush`
+    // still reports none for the new route instead of adopting its pill.
+    api.panelHeadStore.set({ ...own, pill: { ...PILL_BUILDING, key: 'going', label: 'Going live' } });
+    await tick();
+    assert.deepEqual(p.reports.at(-1), ['head', 'app/b/dev/changes/44', null],
+      'a late publish for the old page never becomes the new page\'s pill');
+
+    // The new page publishes its own head: that is the one reported.
+    const next = { kind: 'change', pill: PILL_BUILDING, menuKey: 'detail:proposal:44', route: 'app/b/dev/changes/44' };
+    api.panelHeadStore.set(next);
+    await tick();
+    assert.deepEqual(p.reports.at(-1), ['head', 'app/b/dev/changes/44', next]);
+  } finally {
+    api.panelHeadStore.set(null);
+    delete globalThis.document;
+  }
 });
 
 test('the column\'s ⋯ lists the page\'s rows after its own, and runs them in the page (#6431)', () => {
