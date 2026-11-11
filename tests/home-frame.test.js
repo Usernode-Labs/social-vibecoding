@@ -70,7 +70,13 @@ test('HomeScreen mounts the kit page only after mount, for a signed-in viewer un
     'only for a viewer the member APIs answer: the landing and the waiting room keep the standard body');
   assert.match(src, /const frame = isFrameSkin\(skin\) && viewer;/, 'never on the first render: useSkin answers standard until mounted');
   assert.match(src, /data-frame-page=\{frame \? '' : undefined\}/, 'the scroller says a kit page is in it');
-  assert.match(src, /\{frame \? <HomeFrame \/> : null\}/);
+  // The four standard pieces the kit page does not redraw are handed in,
+  // each drawn in one place at a time (the left-overs pass): the grid while
+  // Pinned apps is arranged, the widget strip, the waitlist and verify cards.
+  assert.match(src, /\{frame \? \(\s*<HomeFrame[\s\S]*?grid=\{grid\.editing \? <AppGrid \/> : null\}\s*widgets=\{<WidgetStrip \/>\}\s*waitlist=\{<WaitlistCard \/>\}\s*verify=\{<VerifyCard \/>\}\s*\/>\s*\) : null\}/);
+  assert.match(src, /\{frame \? null : <WidgetStrip \/>\}/);
+  assert.match(src, /\{frame && grid\.editing \? null : <AppGrid \/>\}/);
+  assert.match(src, /\{frame \? null : <WaitlistCard \/>\}\s*(\{\/\*[\s\S]*?\*\/\}\s*)?\{frame \? null : <VerifyCard \/>\}/);
   assert.match(src, /id="home-apps-section"/, 'the standard body is still there, mounted beside it');
   assert.match(read('public', 'css', 'app.css'), /html\[data-skin\] \[data-frame-page\] > :not\(\.fr\) \{ display: none !important; \}/,
     'and app.css hides the standard body while the kit page is up');
@@ -96,7 +102,8 @@ test('the page is the kit\'s: the head with one fixed sentence, the search field
   // Kit classes only: a utility class beside a look's rule would break one of the nine.
   const classes = [...html.matchAll(/class="([^"]*)"/g)].flatMap((m) => m[1].split(/\s+/)).filter(Boolean);
   assert.ok(classes.length > 10);
-  for (const c of classes) assert.match(c, /^fr(-|$)/, `${c} is not a kit class`);
+  // (One class is the data's, not a utility: a challenge picture's tone, home-tone-*, which gives its ground in both themes.)
+  for (const c of classes) assert.match(c, /^fr(-|$)|^home-tone-[a-z]+$/, `${c} is not a kit class`);
 });
 
 test('what the first tour invented is gone: no Needs you rows, Live this week, Your week, season, picture cards or pages', () => {
@@ -131,9 +138,15 @@ test('Pinned apps: the launcher\'s tiles, Edit, and the row that unfolds the gri
   const few = render({}, homeStubs({ apps: [app('game-corner', 'Game Corner'), app('viatales', 'ViaTales')], moreCount: 94 }));
   const g = group(few, 'home-frame-apps');
   assert.match(g, /<h2 class="fr-cap">Pinned apps<\/h2><button type="button" class="fr-link">Edit<\/button><\/div>/);
-  assert.match(g, /<div class="fr-card"><div class="fr-tiles"><div class="fr-at" title="Game Corner\. Hold or right-click for app actions"><a class="fr-atl" href="\/app\/game-corner">/);
+  assert.match(g, /<div class="fr-card"><div class="fr-tiles"><div class="fr-at" title="Game Corner\. Hold or right-click for app actions" data-slug="game-corner" data-home-frame-tile="yours"><a class="fr-atl" href="\/app\/game-corner">/);
   assert.match(g, /<span class="fr-tile" style="--fr-ts:52px;--fr-tc:#fff" aria-hidden="true">G<\/span><span class="fr-nm">Game Corner<\/span>/);
   assert.equal(count(g, /class="fr-at"/g), 2);
+  // A hold opens the tile's menu too, by home.js's own recogniser, and the
+  // menu of a tile of your own ends in Edit Pinned apps (home.js reads the mark).
+  assert.match(SRC, /return home\(\)\?\._wireCardLongPressMenu\?\.\(el\)|const unwire = home\(\)\?\._wireCardLongPressMenu\?\.\(el\);/);
+  assert.match(SRC, /if \(N\._cardPointerType === 'touch'\) \{ if \(!N\._menu\) N\.openCardMenu\(app\.slug, event\.currentTarget\); return; \}/, 'a phone\'s contextmenu during the hold does not open it twice');
+  assert.match(SRC, /if \(N\?\._suppressClick\) \{ N\._suppressClick = false; event\.preventDefault\(\); return; \}/, 'the press that ends a hold does not open the app');
+  assert.match(read('frontend', 'src', 'features', 'home', 'home.js'), /anchorEl\.closest\('\.app-card\[data-yours\]:not\(\[data-demo\]\), \[data-home-frame-tile="yours"\]'\)/);
   assert.doesNotMatch(g, /class="fr-n"/, 'an app tile carries no count: the standard tile has none');
   assert.match(g, /<\/div><button type="button" class="fr-row fr-sm fr-showall"><span class="fr-tx"><span class="fr-t">Show all 94 apps<\/span><\/span><svg class="fr-ic fr-go"/, 'the row that ends the card, from the chrome store\'s count');
   assert.match(SRC, /N\._appsExpanded = true;\s*N\.render\(\);/, 'pressing it is apps-more.tsx\'s own press: Home unfolds its grid');
@@ -174,8 +187,8 @@ test('an app tile says what the standard tile says: who it is for, where it came
   assert.match(g, /<span class="fr-tag fr-r" role="img" title="Just you" aria-label="Just you">/);
   assert.match(g, /<span class="fr-live" role="img" title="Still open" aria-label="Still open"><\/span>/);
   assert.match(g, /<span class="fr-tag fr-l" role="img" title="Made from Origin" aria-label="Made from Origin">.*?<span class="fr-tag fr-r" role="img" title="Private community"/s);
-  assert.match(g, /<div class="fr-at" title="Broken[^"]*"><span class="fr-atl">.*?<\/span><span class="fr-st fr-bad" title="boot failed">Error<\/span><button type="button" class="fr-link" aria-label="Retry Broken">Retry<\/button><\/div>/s, 'it cannot open: no door, its status, and Retry');
-  assert.match(g, /<div class="fr-at fr-dim" title="Making[^"]*"><span class="fr-atl">.*?<span class="fr-st fr-wait">Spinning up\.\.\.<\/span><\/div>/s);
+  assert.match(g, /<div class="fr-at" title="Broken[^"]*" data-slug="broken" data-home-frame-tile="yours"><span class="fr-atl">.*?<\/span><span class="fr-st fr-bad" title="boot failed">Error<\/span><button type="button" class="fr-link" aria-label="Retry Broken">Retry<\/button><\/div>/s, 'it cannot open: no door, its status, and Retry');
+  assert.match(g, /<div class="fr-at fr-dim" title="Making[^"]*" data-slug="making" data-home-frame-tile="yours"><span class="fr-atl">.*?<span class="fr-st fr-wait">Spinning up\.\.\.<\/span><\/div>/s);
   assert.match(SRC, /N\.openCardMenu\(app\.slug, event\.currentTarget\)/, 'a right-click opens the tile\'s own menu');
 });
 
@@ -196,7 +209,7 @@ test('Pinned communities are tiles: the pins with what is owed, then Needs you, 
   }));
   const g = group(html, 'home-frame-communities');
   assert.match(g, /<h2 class="fr-cap">Pinned communities<\/h2><button type="button" class="fr-link" aria-label="Edit Pinned communities">Edit<\/button>/);
-  assert.match(g, /<div class="fr-card"><div class="fr-tiles"><div class="fr-at"><a class="fr-atl" href="\/app\/pourover\/workshop\?ws=status"><span class="fr-tile"[^>]*>P<\/span><span class="fr-n">1<\/span><span class="fr-nm">Pourover Coffee<\/span><\/a><\/div>/, 'a tile, with the votes waiting there');
+  assert.match(g, /<div class="fr-card"><div class="fr-tiles"><div class="fr-at fr-ring" style="--fr-cr:#[0-9a-f]{6}"><a class="fr-atl" href="\/app\/pourover\/workshop\?ws=status"><span class="fr-tile"[^>]*>P<\/span><span class="fr-n">1<\/span><span class="fr-nm">Pourover Coffee<\/span><\/a><\/div>/, 'a tile in the ring of its colour, as the standard tile, with the votes waiting there');
   assert.doesNotMatch(g, /class="fr-row/, 'no rows: today\'s Home draws communities as tiles');
   assert.doesNotMatch(g, /Other One/, 'a community you are in and have not pinned stays out until All communities is pressed');
   assert.match(g, /<a class="fr-atl" id="home-frame-needs-tile" href="#needs" aria-label="Needs you: 7 votes waiting on you"><span class="fr-lead fr-acc"[^>]*>.*?<\/span><span class="fr-n">7<\/span><span class="fr-nm">Needs you<\/span><\/a>/s);
@@ -214,7 +227,7 @@ test('Pinned communities are tiles: the pins with what is owed, then Needs you, 
 
 test('a search finds a community you have not pinned, faded, with a + to pin it', () => {
   const g = group(render({}, homeStubs({ query: 'oth', pins: [pin('a', 'Alpha')], joined: [joined('a', 'Alpha'), joined('other', 'Other One')], needs: 3 })), 'home-frame-communities');
-  assert.match(g, /<div class="fr-at fr-dim"><a class="fr-atl" href="\/app\/other\/workshop\?ws=status">.*?<span class="fr-nm">Other One<\/span><\/a><button type="button" class="fr-corner" aria-label="Pin Other One to Home">/s);
+  assert.match(g, /<div class="fr-at fr-dim fr-ring" style="--fr-cr:#[0-9a-f]{6}"><a class="fr-atl" href="\/app\/other\/workshop\?ws=status">.*?<span class="fr-nm">Other One<\/span><\/a><button type="button" class="fr-corner" aria-label="Pin Other One to Home">/s);
   assert.doesNotMatch(g, /Alpha|home-frame-needs-tile|home-frame-new-community|>Edit</, 'only what matches; the section\'s own tiles and Edit wait for the search to end');
 });
 
@@ -229,7 +242,7 @@ test('Communities to join: the kind filter, Featured as cards, then the rest as 
   const html = render({ initialDirectory: dir }, homeStubs({ pins: [pin('mine', 'Mine')] }));
   const g = group(html, 'home-frame-to-join');
   assert.match(g, /<h2 class="fr-cap">Communities to join<\/h2><\/div><div class="fr-btnrow fr-chips" role="group" aria-label="[^"]+"><button type="button" class="fr-btn fr-sm" aria-pressed="true" data-home-join-kind="all">All<\/button><button type="button" class="fr-btn fr-quiet fr-sm" aria-pressed="false" data-home-join-kind="games">Games<\/button>/);
-  assert.match(g, /<h3 class="fr-cap fr-sub">Featured<\/h3><div class="fr-grid fr-across" data-home-join-featured=""><div class="fr-card fr-pad fr-hcard"><span class="fr-hc-top"><span class="fr-tile" style="--fr-ts:44px;--fr-tc:#fff" aria-hidden="true">🌙<\/span><button type="button" class="fr-btn fr-sm" data-home-join="moon" aria-label="Join Moon">Join<\/button><\/span><span class="fr-t2"><a class="fr-door" href="\/app\/moon\/workshop\?ws=status">Moon<\/a><\/span><span class="fr-s2">4 members<\/span><\/div>/, 'in their featured order: the tile and Join, the name as the door, the standard line');
+  assert.match(g, /<h3 class="fr-cap fr-sub">Featured<\/h3><div class="fr-grid fr-across fr-c2" data-home-join-featured=""><div class="fr-card fr-pad fr-hcard"><span class="fr-hc-top"><span class="fr-tile" style="--fr-ts:44px;--fr-tc:#fff" aria-hidden="true">🌙<\/span><button type="button" class="fr-btn fr-sm" data-home-join="moon" aria-label="Join Moon">Join<\/button><\/span><span class="fr-t2"><a class="fr-door" href="\/app\/moon\/workshop\?ws=status">Moon<\/a><\/span><span class="fr-s2">4 members<\/span><\/div>/, 'in their featured order: the tile and Join, the name as the door, the standard line');
   assert.match(g, /<span class="fr-t2"><a class="fr-door" href="\/app\/star\/workshop\?ws=status">Star<\/a><\/span><span class="fr-s2">9 members<\/span><span class="fr-s2 fr-two">Twelve small games\.<\/span>/);
   assert.match(g, /<div class="fr-card"><div class="fr-row"><span class="fr-tile"[^>]*>P<\/span><span class="fr-tx"><span class="fr-t"><a class="fr-door" href="\/app\/plain\/workshop\?ws=status">Plain<\/a><\/span><span class="fr-s">3 members<\/span><\/span><button type="button" class="fr-btn fr-sm" data-home-join="plain" aria-label="Join Plain">Join<\/button><\/div>/);
   assert.match(g, /<span class="fr-s">2 up for a vote<\/span>/, 'votes when a change waits, else members: the standard footer\'s rule');
@@ -251,8 +264,12 @@ test('Communities to join: the kind filter, Featured as cards, then the rest as 
 
 test('Next challenges is the side column: Home\'s own strip as rows', () => {
   const html = render({}, homeStubs({ challenges: CHALLENGES }));
-  assert.match(html, /<\/div><div class="fr-stack"><section class="fr-sec" id="home-frame-challenges"><div class="fr-sechead"><h2 class="fr-cap">Next challenges<\/h2><a class="fr-link" href="#leaderboard\/challenges">See all<\/a><\/div><div class="fr-card"><a class="fr-row fr-wrap" href="#leaderboard\/challenges\/7\/31"><span class="fr-lead" aria-hidden="true"><svg.*?<\/svg><\/span><span class="fr-tx"><span class="fr-t">Use apps for 10 minutes<\/span><span class="fr-s">Started<\/span><\/span><span class="fr-pill" data-kind="none">1,000 pts<\/span><\/a>/s);
-  assert.match(html, /<a class="fr-row fr-wrap" href="#leaderboard\/challenges"><span class="fr-lead">🏆<\/span>.*?<span class="fr-pill fr-ok" data-kind="ok">500 pts<\/span><\/a>/s, 'a done one: what it earned, in green; no event, so the list');
+  // An open one: the picture today's Home shows for it (its illustration on
+  // its tone, the kit's ChallengeArt), its state, its points on a line of
+  // their own, and the card's arrow.
+  assert.match(html, /<\/div><div class="fr-stack"><section class="fr-sec" id="home-frame-challenges"><div class="fr-sechead"><h2 class="fr-cap">Next challenges<\/h2><a class="fr-link" href="#leaderboard\/challenges">See all<\/a><\/div><div class="fr-card"><a class="fr-row fr-wrap" href="#leaderboard\/challenges\/7\/31"><span class="fr-cart fr-sm home-tone-mint" style="--fr-cs:44px;background:var\(--tint-art\)" aria-hidden="true"><img src="\/illustrations\/challenges\/make-a-proposal\.svg" alt="" loading="lazy" decoding="async" draggable="false"\/><\/span><span class="fr-tx"><span class="fr-t">Use apps for 10 minutes<\/span><span class="fr-s">Started<span class="fr-bp">1,000 pts<\/span><\/span><\/span><span class="fr-arr" aria-hidden="true"><svg.*?<\/svg><\/span><\/a>/s);
+  assert.match(html, /<a class="fr-row fr-wrap" href="#leaderboard\/challenges"><span class="fr-lead fr-ok" aria-hidden="true"><svg.*?<\/svg><\/span>.*?<span class="fr-pill fr-ok" data-kind="ok">500 pts<\/span><\/a>/s, 'a done one: the check and what it earned, in green, as the standard card; no event, so the list');
+  assert.match(SRC, /resolveIllustration\(row\.illustration, row\.illustrationTone\)/, 'the picture is resolved as the standard tile resolves it');
   assert.match(SRC, /win\(\)\?\.HomePanels\?\.goToChallenge\?\.\(row\.eventId, row\.id\)/, 'a row opens its challenge, as the standard card does');
   const none = render({}, homeStubs({ challenges: { ...CHALLENGES, mode: 'none', heading: 'Challenges', seeAll: false, rows: [], note: { title: 'No challenges right now', text: 'New ones will show up here.' } } }));
   assert.match(none, /<h2 class="fr-cap">Challenges<\/h2><\/div><div class="fr-card fr-text"><div class="fr-sub15"><b>No challenges right now<\/b><\/div><span class="fr-mut">New ones will show up here\.<\/span><\/div>/, 'nothing open: the standard note, as one card');

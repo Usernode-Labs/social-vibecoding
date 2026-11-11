@@ -81,7 +81,16 @@ test('beside the look, one press flips light and dark', () => {
   // A look is judged in both: the toggle sits with the picker, between it
   // and the bell, and says which one is on.
   const light = view({ variant: 'frame', skin: 'glass', dark: false, onDark() {} });
-  assert.match(light, /<\/label><button type="button" class="fr-ib" aria-pressed="false" aria-label="Dark" title="Dark" data-look-theme="frame"><svg[^>]*>.*?<\/svg><\/button>$/s);
+  assert.match(light, /<\/label><button type="button" class="fr-ib fr-d" aria-pressed="false" aria-label="Dark" title="Dark" data-look-theme="frame"><svg[^>]*>.*?<\/svg><\/button><span class="fr-lookfold fr-p" data-look-fold="">/s);
+  // On a phone the two are one disc (the pair is the kit's "desktop only",
+  // the disc its "phone only"), so the bar's title has room; its small menu,
+  // closed until pressed, holds Look and Theme.
+  assert.match(light, /^<label class="fr-ib fr-look fr-d" title="Look" data-look-picker="frame">/);
+  assert.match(light, /<span class="fr-lookfold fr-p" data-look-fold=""><button type="button" class="fr-ib" aria-haspopup="true" aria-expanded="false" aria-label="Look and theme" title="Look and theme"><svg[^>]*>.*?<\/svg><\/button><\/span>$/s);
+  const picker = read('frontend/src/features/frame/look-picker.tsx');
+  assert.match(picker, /data-look-fold-look=""[\s\S]*?<select aria-label=\{t\('settings:experimental\.look\.label'\)\} value=\{value\}/, 'the menu\'s Look row is the system\'s own menu of looks');
+  assert.match(picker, /data-look-fold-theme="" onClick=\{onDark\}/, 'and its Theme row flips light and dark');
+  assert.doesNotMatch(view({ variant: 'shell', skin: 'standard', dark: false, onDark() {} }), /fr-lookfold/, 'the standard header keeps its two');
   const dark = view({ variant: 'shell', skin: 'standard', dark: true, onDark() {} });
   assert.match(dark, /<\/label><button type="button" class="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target [^"]*" aria-pressed="true" aria-label="Dark" title="Dark" data-look-theme="shell">/);
   // The glyph is where a press goes: the moon while it is light, the sun while it is dark.

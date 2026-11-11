@@ -59,28 +59,30 @@ test('first in the column: the points and how many are done, over one bar', () =
 test('what can still be earned is rows that open the challenge, each ending in its points as a pill', () => {
   const html = render();
   // Version 2, today's content: the row holds what the standard card holds, the name over the rail that says where it stands.
-  assert.match(html, /<h2 class="fr-cap">Next challenges<\/h2><\/div><div class="fr-card"><button type="button" class="fr-row fr-wrap" data-challenge-open=""><span class="fr-lead fr-acc" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Build for your community<\/span><span class="fr-rail" data-state="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuetext="Started" aria-label="Build for your community: Started"><span>Started<\/span><\/span><\/span><span class="fr-pill" data-kind="none">1,000 pts<\/span><svg/s);
+  assert.match(html, /<h2 class="fr-cap">Next challenges<\/h2><\/div><div class="fr-card"><button type="button" class="fr-row fr-wrap" data-challenge-open=""><span class="fr-cart fr-sm"[^>]*>.*?<\/span><span class="fr-tx"><span class="fr-t">Build for your community<\/span><span class="fr-rail" data-state="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuetext="Started" aria-label="Build for your community: Started"><span>Started<\/span><\/span><\/span><span class="fr-pill" data-kind="none">1,000 pts<\/span><span class="fr-arr"/s);
   assert.match(html, /<span class="fr-t">Send useful feedback<\/span><span class="fr-rail" data-state="progress"[^>]*><span>0\/4 counted this week<\/span><\/span><\/span><span class="fr-pill" data-kind="none">Up to 1,000 pts<\/span>/, 'its name, then where it stands, never its kind in capitals');
   assert.doesNotMatch(html, /WEEKLY/);
   // The wrapping row: beside the points pill a phone cut the name to "Use apps for 10 min…".
   assert.doesNotMatch(html, /<button type="button" class="fr-row"><span class="fr-lead fr-acc"/, 'no open challenge is a one-line row');
 });
 
-test('an open challenge keeps today\'s picture and rail: the art on its tone, a bar when the challenge is counted', () => {
+test('an open challenge keeps today\'s picture and rail: the kit\'s shared picture, a bar when the challenge is counted', () => {
   const html = render({ groups: [{ key: 'next', heading: 'Next challenges', cards: [
     card(0, 'Try three apps', { illustration: 'try-three-apps', state: 'progress', stateLabel: '1/3 apps', fill: 1 / 3, counted: true }),
     card(1, 'Send feedback', { illustration: 'try-three-apps', state: 'new', stateLabel: '0/4 counted this week', fill: 0, counted: true }),
     card(2, 'Use apps for 10 minutes', { illustration: 'no such art', state: 'progress', stateLabel: 'Started', fill: 0.5, counted: false }),
   ] }] });
-  assert.match(html, /<span class="fr-cart" style="background:#e2f2e8" aria-hidden="true"><img src="\/illustrations\/challenges\/try-three-apps\.svg" alt="" draggable="false" loading="lazy"\/><\/span><span class="fr-tx"><span class="fr-t">Try three apps<\/span>/, 'the registry\'s picture on its tone leads the row');
+  assert.match(html, /<span class="fr-cart fr-sm home-tone-mint" style="--fr-cs:48px;background:var\(--tint-art\)" aria-hidden="true"><img src="\/illustrations\/challenges\/try-three-apps\.svg"[^>]*\/><\/span><span class="fr-tx"><span class="fr-t">Try three apps<\/span>/, 'the registry\'s picture on its tone leads the row, drawn by the kit\'s ChallengeArt as on Home');
   assert.match(html, /aria-valuenow="33" aria-valuetext="1\/3 apps" aria-label="Try three apps: 1\/3 apps"><i style="width:33%"><\/i><span>1\/3 apps<\/span>/, 'a counted challenge draws its bar');
   assert.match(html, /<span class="fr-rail" data-state="new"[^>]*aria-valuenow="0"[^>]*><i style="width:6%"><\/i><span>0\/4 counted this week<\/span>/, 'from zero the bar is its stub');
-  assert.match(html, /<span class="fr-lead fr-acc" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Use apps for 10 minutes<\/span><span class="fr-rail" data-state="progress"[^>]*aria-valuenow="50"[^>]*><span>Started<\/span>/s, 'no picture: the trophy; not counted: words alone, no bar');
+  assert.match(html, /<span class="fr-cart fr-sm" style="--fr-cs:48px" aria-hidden="true"><svg.*?<\/svg><\/span><span class="fr-tx"><span class="fr-t">Use apps for 10 minutes<\/span><span class="fr-rail" data-state="progress"[^>]*aria-valuenow="50"[^>]*><span>Started<\/span>/s, 'no picture: the trophy; not counted: words alone, no bar');
+  assert.match(html, /<span class="fr-arr" aria-hidden="true">/, 'the kit\'s arrow ends the row');
   const src = read(FRAME);
-  assert.match(src, /import \{ TONE_FILL, resolveIllustration \} from '\.\.\/\.\.\/\.\.\/lib\/challenge-illustrations';/, 'the standard card\'s own registry');
+  assert.match(src, /<ChallengeArt src=\{art\?\.src\} tone=\{art\?\.toneClass\} icon=\{card\.icon\} size=\{48\} \/>/, 'one picture for Home and Challenges');
+  assert.match(src, /const art = resolveIllustration\(card\.illustration, card\.illustrationTone\);/, 'the standard card\'s own registry');
   const css = read('public/css/app.css');
-  assert.ok(css.includes('html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] > .fr-cart { width: 56px; height: 56px; border-radius: 14px; }'));
-  assert.ok(css.includes('html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] .fr-rail { grid-column: 2 / span 2; grid-row: 2; margin-top: 0; }'), 'on a phone the rail has the second line whole');
+  assert.ok(css.includes('html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] .fr-rail { grid-column: 2; grid-row: 2; margin-top: 0; }'), 'on a phone the rail has a line of its own');
+  assert.ok(css.includes('html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] > .fr-pill { grid-column: 2; grid-row: 3; justify-self: start; }'), 'and the points the next, so the name is whole');
 });
 
 test('what is done is short rows with a green check and the points earned in green', () => {

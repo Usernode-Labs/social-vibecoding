@@ -216,6 +216,12 @@ export function LandingFrame({ apps, failed, onRetry, waitlist, waiting = null, 
             onClick: (event) => openProject(event, app.slug),
             label: people(app) >= MIN_PEOPLE ? t('auth:guest.card.peopleLabel', { name: app.name, count: people(app) }) : undefined,
           })}
+          // A visitor's cards are pictures, as on the standard landing: "New"
+          // and the people count sit on the cover.
+          picture={(app) => ({
+            flag: isNew(app) ? t('auth:guest.card.new') : undefined,
+            badge: people(app) >= MIN_PEOPLE ? <><Icon name="users" size={14} />{people(app).toLocaleString()}</> : undefined,
+          })}
           cardEnd={says}
           rowEnd={says}
           rowLine={(app) => app.description || undefined}

@@ -14,10 +14,10 @@
  * ../topochain-standings.tsx, ../event-bar.tsx) with another face. A
  * challenge's own page is still the pane's.
  */
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect } from 'react';
 import type * as React from 'react';
-import { Btn, Card, Cols, Frame, Head, Icon, Lead, Meta, Note, PageBody, Pill, Row, Sec, Tabs, k } from '@/components/ui/kit';
-import { TONE_FILL, resolveIllustration } from '../../../lib/challenge-illustrations';
+import { Btn, Card, ChallengeArt, Cols, Frame, Head, Lead, Meta, Note, PageBody, Pill, Row, RowArrow, Sec, Tabs, k } from '@/components/ui/kit';
+import { resolveIllustration } from '../../../lib/challenge-illustrations';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { useFrameFlag } from '../../frame/frame-flag';
 import { framePageStore } from '../../frame/frame-page-store';
@@ -50,22 +50,20 @@ interface CardLike {
   key: string; idx: number; done: boolean; label: string; goal: string; reward: string | null;
   stateLabel: string; earned: string | null;
   /** The picture and the rail of an open challenge, as the standard card has them (../challenge-card.tsx). */
-  illustration?: string | null; illustrationTone?: string | null;
+  illustration?: string | null; illustrationTone?: string | null; icon?: string | null;
   state?: 'new' | 'progress' | 'done'; fill?: number | null; counted?: boolean;
 }
 
 /**
  * An open challenge (version 2: today's content in the first tour's row).
- * The standard card's picture on its tone leads the row, its name and its
- * rail (the state in words, and a bar when the challenge is counted) are the
- * row's two lines, the points its one pill. The picture and the rail are the
- * kit's own (`cart`, `rail`: the kit's challenge card draws with them), sized
- * for a row by app.css (CHALLENGES). No picture, or one that failed to
- * load: the trophy, as before.
+ * The standard card's picture leads the row: the kit's shared
+ * <ChallengeArt/>, the one Home's Next challenges draws, so the two pages
+ * show one picture. Its name and its rail (the state in words, and a bar
+ * when the challenge is counted; the kit's `rail`) are the row's two lines,
+ * the points its one pill, and the kit's arrow ends it.
  */
 function OpenChallenge({ card, onOpen }: { card: CardLike; onOpen: (idx: number) => void }) {
   const t = useMessages('leaderboard');
-  const [failed, setFailed] = useState<string | null>(null);
   const art = resolveIllustration(card.illustration, card.illustrationTone);
   const name = card.goal || card.label;
   const state = card.state || 'new';
@@ -73,11 +71,7 @@ function OpenChallenge({ card, onOpen }: { card: CardLike; onOpen: (idx: number)
   const bar = !!card.counted && state !== 'done' && pct != null;
   return (
     <button type="button" className={k('row', 'wrap')} data-challenge-open="" onClick={() => onOpen(card.idx)}>
-      {art && failed !== art.src ? (
-        <span className={k('cart')} style={{ background: TONE_FILL[art.tone] }} aria-hidden="true">
-          <img src={art.src} alt="" draggable={false} loading="lazy" onError={() => setFailed(art.src)} />
-        </span>
-      ) : <Lead icon="trophy" tone="acc" />}
+      <ChallengeArt src={art?.src} tone={art?.toneClass} icon={card.icon} size={48} />
       <span className={k('tx')}>
         <span className={k('t')}>{name}</span>
         {card.stateLabel ? (
@@ -97,7 +91,7 @@ function OpenChallenge({ card, onOpen }: { card: CardLike; onOpen: (idx: number)
         ) : null}
       </span>
       {card.reward ? <Pill>{card.reward}</Pill> : null}
-      <Icon name="cr" size={18} className="go" />
+      <RowArrow />
     </button>
   );
 }
