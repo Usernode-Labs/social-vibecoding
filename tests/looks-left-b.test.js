@@ -91,3 +91,53 @@ test('Standings: the first read, a failed read and a board with no table are the
   assert.match(pane, /if \(!view \|\| view\.state === 'loading'\) return <StandingsSkeleton \/>;/);
   assert.match(pane, /<div id="tc-lb-drill">/);
 });
+
+// ── Messages' list (what lane M left) ──────────────────────────────────
+const LIST = 'frontend/src/features/messages/frame-list.tsx';
+const inboxRow = (key, title, over) => ({
+  key, lead: null, title, line: 'Homeroom · Ready', time: null, timeTitle: null, fresh: null, status: null, active: false,
+  href: `#messages/${key}`, onClick() {}, ...over,
+});
+const inbox = (over) => renderComponent(LIST, 'MessagesFrameList', {
+  people: [inboxRow('4', 'evan', { time: '4d ago' })],
+  agents: [
+    inboxRow('s1', 'Simplify the admin console', { status: { text: 'Ready', kind: 'ok' }, unseen: { said: 'Unread', session: 5616 } }),
+    inboxRow('s2', 'Sign-in: one way in', { status: { text: 'Ready', kind: 'ok' } }),
+  ],
+  tab: 'agents', onTab() {}, query: '', onQuery() {}, onNew() {},
+  state: { loading: false, error: null, onRetry() {}, offline: false, empty: false, onStart() {}, searched: null },
+  ...over,
+}, { cache: false });
+
+test('Messages: a change in flight with news not seen yet ends in the dot the standard row ends in', () => {
+  const html = inbox();
+  assert.match(html, /<span class="fr-pill fr-ok" data-kind="ok">Ready<\/span><span role="img" aria-label="Unread" data-inbox-unseen="" data-session-unread="5616"><\/span>/, 'after its state, said in words, with the notifications store\'s own hook');
+  assert.equal((html.match(/data-inbox-unseen/g) || []).length, 1, 'only the row that has news');
+  const pane = read('frontend/src/features/messages/index.tsx');
+  assert.match(pane, /const \{ sessionUnreadIds \} = useStoreState\(notificationsStore\) as \{ sessionUnreadIds: number\[\] \};/, 'read from the store the standard row reads');
+  assert.match(pane, /unseen: sessionUnreadIds\.includes\(sn\.id\) \? \{ said: translate\('agent:menu\.row\.unread'\), session: sn\.id \} : null,/, 'in the standard row\'s words');
+  assert.ok(css.includes('html[data-skin] [data-messages-frame-list] [data-inbox-unseen] { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--fr-acc); }'));
+});
+
+test('Messages: the Agents tab says how many are working, as the standard heading does; none working says nothing', () => {
+  assert.match(inbox({ working: '2 working' }), /<button type="button" class="fr-tab fr-on" aria-pressed="true">Agents<span class="fr-pill fr-mini" data-kind="none">2 working<\/span><\/button>/, 'a small grey word, not a count that asks for you');
+  assert.match(inbox(), /<button type="button" class="fr-tab fr-on" aria-pressed="true">Agents<\/button>/);
+  const pane = read('frontend/src/features/messages/index.tsx');
+  assert.match(pane, /working=\{asides\.agents\.text\}/, 'the standard heading\'s own aside');
+});
+
+test('Messages: under a look the pane keeps its place across a live re-sort and offers Oldest chats', () => {
+  const pane = read('frontend/src/features/messages/index.tsx');
+  assert.match(pane, /const FRAME_ROW = '\[data-messages-frame-list\] a\.fr-row\[href\]';/, 'a kit row is told apart by its address');
+  assert.match(pane, /const nodes = frame \? el\.querySelectorAll<HTMLElement>\(FRAME_ROW\) : el\.querySelectorAll<HTMLElement>\('\[data-inbox-row\]'\);\n\s+for \(const node of Array\.from\(nodes\)\) \{\n\s+const key = frame \? node\.getAttribute\('href'\) : node\.dataset\.inboxRow;/, 'one reader for both lists');
+  assert.match(pane, /row = frame\n\s+\? Array\.from\(el\.querySelectorAll\(FRAME_ROW\)\)\.find\(\(node\) => node\.getAttribute\('href'\) === saved\.key\) \|\| null\n\s+: el\.querySelector\(keyedRow\(saved\.key\)\);/, 'and one correction');
+  assert.match(pane, /\\u0000\$\{frame \? frameTab : ''\}`;/, 'the other tab is the reader moving the list: the held place is dropped');
+  const branch = pane.slice(pane.indexOf('  if (frame) {\n    const me = Number'), pane.indexOf("aria-label={t('messages:inbox.listName')}"));
+  assert.match(branch, /ref=\{scrollRef as RefObject<HTMLElement \| null>\}\n\s+onScroll=\{readAnchor\}/, 'the pane is the scroller under a look');
+  assert.match(branch, /<InboxToEnd scroller=\{scrollRef\} \/>\n\s+<\/section>/, 'Oldest chats is the product\'s own button');
+  assert.equal((pane.match(/<InboxToEnd scroller=\{scrollRef\} \/>/g) || []).length, 2, 'once in each list');
+  const hand = block('/* MESSAGES\' LIST, WHAT LANE M LEFT', '/* NEW MESSAGE\'S DIALOG');
+  assert.ok(hand.includes('html[data-skin] .messages-list-pane[data-frame-list] { overflow-anchor: none; }'), 'the browser\'s own anchoring is off, as on the standard scroller');
+  assert.ok(hand.includes('html[data-skin] .messages-list-pane[data-frame-list] > [data-inbox-to-end] { position: sticky; bottom: 0; height: 0; }'), 'the button stays at the pane\'s foot');
+  assert.match(hand, /\[data-inbox-to-end\] > div \{ bottom: calc\(var\(--fr-shell-bottom, 0px\) \+ 12px\) !important; \}/, 'over the look\'s own tab bar on a phone');
+});

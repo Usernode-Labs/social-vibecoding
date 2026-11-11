@@ -27916,6 +27916,28 @@ html[data-skin] [data-standings-cols] #tc-lb-disclaimer { margin: 0; padding-inl
   html[data-skin][data-standings-frame] #leaderboard-event-bar { padding-inline: 16px; }
 }
 
+/* An open challenge is a row holding what today's card holds (challenges-
+   frame.tsx OpenChallenge): the picture on its tone, the name over the rail
+   that says where it stands, the points, the chevron. The picture and the
+   rail are the kit's challenge card's own parts at a row's size. On a
+   phone the name and the points share the first line and the rail has the
+   whole second one, so neither is cut. */
+html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] { width: 100%; min-height: 80px; padding-block: 12px; text-align: start; }
+html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] > .fr-cart { width: 56px; height: 56px; border-radius: 14px; }
+html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] > .fr-cart img { width: 44px; height: 44px; }
+html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] .fr-rail { display: block; margin-top: 6px; }
+html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] .fr-rail[data-state="new"] > span { color: var(--fr-mut); }
+@media (max-width: 767.98px) {
+  html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto 18px; column-gap: 12px; row-gap: 6px; align-items: center; }
+  html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] > .fr-tx { display: contents; }
+  html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] > :is(.fr-cart, .fr-lead) { grid-column: 1; grid-row: 1 / span 2; align-self: start; }
+  html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] > .fr-cart { width: 48px; height: 48px; border-radius: 12px; }
+  html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] > .fr-cart img { width: 38px; height: 38px; }
+  html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] .fr-t { grid-column: 2; grid-row: 1; }
+  html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] > .fr-pill { grid-column: 3; grid-row: 1; align-self: start; }
+  html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] .fr-rail { grid-column: 2 / span 2; grid-row: 2; margin-top: 0; }
+  html[data-skin] [data-challenges-frame] .fr-row[data-challenge-open] > .fr-go { grid-column: 4; grid-row: 1 / span 2; }
+}
 /* THE YOU TAB (features/profile/frame/you-frame.tsx). The kit's page is
    drawn inside the profile's own hosts, which the standard look holds in a
    padded, centred column. While it is up it says so on <html>
@@ -28438,6 +28460,24 @@ html[data-skin]:where(:not([data-skin="brand"])) .messages-layout:has(> [data-fr
   html[data-skin]:where(:not([data-skin="brand"])) .messages-layout:has(> [data-frame-list]) > .messages-reply-pane > .messages-thread-header { padding: 8px 16px; }
 }
 
+/* MESSAGES' LIST, WHAT LANE M LEFT (features/messages/frame-list.tsx,
+   index.tsx ConversationList). Under a look the pane itself scrolls, so it
+   is the one that keeps its place across a live re-sort (./list-place.ts;
+   the browser's own anchoring is off here as on the standard scroller,
+   which dragged the list with a row that had moved), and "Oldest chats"
+   (./inbox-to-end.tsx) stays at its foot: the product's own button as the
+   kit's small quiet one, over the phone's tab bar. A change in flight with
+   news not seen yet ends in the accent's dot, as the standard row does. */
+html[data-skin] .messages-list-pane[data-frame-list] { overflow-anchor: none; }
+html[data-skin] .messages-list-pane[data-frame-list] > [data-inbox-to-end] { position: sticky; bottom: 0; height: 0; }
+html[data-skin] .messages-list-pane[data-frame-list] > [data-inbox-to-end] > div { bottom: calc(var(--fr-shell-bottom, 0px) + 12px) !important; }
+html[data-skin]:where(:not([data-skin="brand"])) .messages-list-pane[data-frame-list] > [data-inbox-to-end] button {
+  height: 32px; padding-inline: 10px 14px; border-radius: 999px;
+  background: var(--fr-solid, var(--fr-surface)); color: var(--fr-ink);
+  box-shadow: var(--fr-soft, 0 0 0 0 transparent), inset 0 0 0 1px var(--fr-line);
+  font-family: var(--fr-f); font-size: 13px; font-weight: 650;
+}
+html[data-skin] [data-messages-frame-list] [data-inbox-unseen] { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--fr-acc); }
 /* NEW MESSAGE'S DIALOG (features/messages/create-dialog.tsx; the tour's
    s16). The kit's sheet offers the three kinds; Direct message and Group
    chat hand over to this, the product's own dialog, dressed: its title, its

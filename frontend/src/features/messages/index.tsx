@@ -1,7 +1,7 @@
 import { openReport } from '../dialogs/report';
 import {
   Fragment, createContext, memo, useDeferredValue, useCallback, useContext, useEffect, useMemo, useRef, useState,
-  type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode,
+  type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -138,6 +138,7 @@ import { NewMessageSheet } from './frame-new';
 import { MessagesFrameList, type FrameInboxRow, type FrameInboxTab } from './frame-list';
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
+import { notificationsStore } from '../notifications/notifications-store.js';
 import { SessionRow, sessionRowState, type SessionRowView } from '../improve/session-row';
 import { INBOX_QUERY_MAX, INBOX_SECTIONS, agentAsksForYou, buildInbox, savedInboxQuery, shownInSection, type AppDiscussion, type InboxSection } from './inbox';
 import { useSidebarRows } from '../nav/sidebar-rows';
@@ -748,6 +749,9 @@ function ConversationRowSkeleton() {
  * escaped where `CSS.escape` exists (every browser that draws the shell) and
  * quoted with its own quotes and backslashes escaped where it does not.
  */
+/** A row of the list under a look: the kit's row, a link to its own address (./frame-list.tsx). */
+const FRAME_ROW = '[data-messages-frame-list] a.fr-row[href]';
+
 function keyedRow(key: string): string {
   const escaped = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
     ? CSS.escape(key)
@@ -815,6 +819,9 @@ function ConversationList({ drawer = false }: {
     sessions?: SessionRowView[];
     otherSessions?: SessionRowView[];
   };
+  // A change in flight with news not seen yet: the standard row reads this
+  // itself (features/improve/session-row.tsx); the kit row is told.
+  const { sessionUnreadIds } = useStoreState(notificationsStore) as { sessionUnreadIds: number[] };
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
   // A change started from an agent session (#2779) is that conversation's:
@@ -970,17 +977,20 @@ function ConversationList({ drawer = false }: {
     if (el.scrollTop <= 0) { anchor.current = null; return; }
     const box = el.getBoundingClientRect();
     const rows: MeasuredRow[] = [];
-    for (const node of Array.from(el.querySelectorAll<HTMLElement>('[data-inbox-row]'))) {
-      const key = node.dataset.inboxRow;
+    // Under a look the rows are the kit's links, told apart by their address.
+    const nodes = frame ? el.querySelectorAll<HTMLElement>(FRAME_ROW) : el.querySelectorAll<HTMLElement>('[data-inbox-row]');
+    for (const node of Array.from(nodes)) {
+      const key = frame ? node.getAttribute('href') : node.dataset.inboxRow;
       if (!key) continue;
       const rect = node.getBoundingClientRect();
       rows.push({ key, top: rect.top - box.top, bottom: rect.bottom - box.top });
     }
     anchor.current = firstRowInView(rows, 0);
-  }, []);
-  // The reader changing the list (a search, a fold, older or archived chats)
-  // drops the held place: that is them moving the list, not it moving itself.
-  const listShape = `${deferredQuery}\u0000${snap.folded.join(',')}\u0000${agentsExpanded}\u0000${archivedOpen}`;
+  }, [frame]);
+  // The reader changing the list (a search, a fold, older or archived chats,
+  // the other tab under a look) drops the held place: that is them moving the
+  // list, not it moving itself.
+  const listShape = `${deferredQuery}\u0000${snap.folded.join(',')}\u0000${agentsExpanded}\u0000${archivedOpen}\u0000${frame ? frameTab : ''}`;
   const lastShape = useRef(listShape);
   useIsomorphicLayoutEffect(() => {
     if (lastShape.current === listShape) return;
@@ -1002,7 +1012,9 @@ function ConversationList({ drawer = false }: {
     const box = el.getBoundingClientRect();
     let row: Element | null = null;
     try {
-      row = el.querySelector(keyedRow(saved.key));
+      row = frame
+        ? Array.from(el.querySelectorAll(FRAME_ROW)).find((node) => node.getAttribute('href') === saved.key) || null
+        : el.querySelector(keyedRow(saved.key));
     } catch { row = null; }
     const nowTop = row ? row.getBoundingClientRect().top - box.top : null;
     const delta = scrollCorrection(saved, nowTop, 0);
@@ -1120,6 +1132,7 @@ function ConversationList({ drawer = false }: {
           title: sn.title,
           line: dotText([caption, stamp.text]),
           status: { text: state.label, kind: state.kind },
+          unseen: sessionUnreadIds.includes(sn.id) ? { said: translate('agent:menu.row.unread'), session: sn.id } : null,
           active,
           href: sn.href,
           onClick: () => {},
@@ -1138,7 +1151,15 @@ function ConversationList({ drawer = false }: {
     // rule but for the fold of the section, which a tab does not have.
     const archive = mounted && !!agentChatsShown && !searching && (!fold.older || agentsExpanded);
     return (
-      <section className={`messages-list-pane ${specBeside ? 'hidden' : drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label={t('core:tabs.messages')} data-frame-list="">
+      <section
+        className={`messages-list-pane ${specBeside ? 'hidden' : drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`}
+        aria-label={t('core:tabs.messages')}
+        data-frame-list=""
+        // Under a look the pane itself scrolls: it keeps its place across a
+        // live re-sort and offers "Oldest chats", as the standard scroller does.
+        ref={scrollRef as RefObject<HTMLElement | null>}
+        onScroll={readAnchor}
+      >
         <MessagesFrameList
           people={rowsOf(peopleEntries)}
           agents={rowsOf(fold.shown)}
@@ -1154,6 +1175,7 @@ function ConversationList({ drawer = false }: {
             onRetry: readArchived,
           } : null}
           unread={unreadFromPeople}
+          working={asides.agents.text}
           tab={frameTab}
           onTab={setFrameTab}
           query={query}
@@ -1181,6 +1203,7 @@ function ConversationList({ drawer = false }: {
             onClose={() => setFrameNew(false)}
           />
         ) : null}
+        <InboxToEnd scroller={scrollRef} />
       </section>
     );
   }
