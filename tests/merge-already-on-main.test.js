@@ -10,7 +10,9 @@
 // four minutes for days while the card said "Waiting on GitHub".
 //
 // What this pins, without a database:
-//   - native-merge flags that refusal as already on main;
+//   - native-merge flags that refusal as already on main, and only when main
+//     on the host is still the main it merged against: a main that moved in
+//     between is refused as main moving, to be tried again (Codex review);
 //   - routes/votes.js attemptMerge answers it as its own outcome, never a
 //     refusal to retry;
 //   - the proposal machine closes the change, saying why, and tells the queue.
@@ -19,15 +21,96 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 
-const ROOT = path.join(__dirname, '..');
-const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+// native-merge's collaborators, stubbed through the require cache: the mirror
+// says the merge changes nothing, and the host's main is read again.
+async function squashNoOp({ hostMain }) {
+  const ids = {
+    logger: require.resolve('../src/services/logger'),
+    gitHost: require.resolve('../src/services/git-host'),
+    repoMirror: require.resolve('../src/services/repo-mirror'),
+    appNumbers: require.resolve('../src/services/app-numbers'),
+    codeHostWrite: require.resolve('../src/services/code-host-write'),
+    requests: require.resolve('../src/services/requests'),
+    subject: require.resolve('../src/services/native-merge'),
+  };
+  const orig = {};
+  for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
+  // Anything first loaded while the stubs stand is dropped afterwards, so no
+  // module keeps a stub (code-missing reads git-host when it loads).
+  const before = new Set(Object.keys(require.cache));
+  const reads = [];
+  const updates = [];
+  stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
+  stub(ids.codeHostWrite, { requireCodeHostWrite() {} });
+  stub(ids.requests, { async appFor() { return { id: 7, slug: 'gas-lock-07613b' }; } });
+  stub(ids.appNumbers, {
+    getPool: () => ({
+      async query(sql) {
+        if (/^\s*SELECT/.test(sql)) {
+          return { rows: [{ number: 15, title: 'Chip', body: '', head_branch: 'dev/x', base_branch: 'main', draft: false,
+            state: 'open', merged: false, merge_commit_sha: null, merged_head_sha: null }] };
+        }
+        updates.push(sql);
+        return { rows: [] };
+      },
+    }),
+  });
+  stub(ids.repoMirror, {
+    async ensureMirror() { return '/mirror'; },
+    async resolveBranch(dir, name) { return name === 'main' ? SHA('f') : SHA('9'); },
+    async mergeTree() { return { clean: true, tree: SHA('7'), conflicts: [] }; },
+    async treeOf() { return SHA('7'); },
+  });
+  stub(ids.gitHost, {
+    async readRef(repo, ref) { reads.push([repo, ref]); if (hostMain instanceof Error) throw hostMain; return hostMain; },
+    defaultAuthor: () => ({ name: 'Homeroom', email: 'h@example.test' }),
+    async git() { throw new Error('no commit is made for a merge that changes nothing'); },
+    async casUpdateRef() { throw new Error('main is never moved for a merge that changes nothing'); },
+  });
+  delete require.cache[ids.subject];
+  try {
+    const { squashMerge } = require(ids.subject);
+    let err = null;
+    try {
+      await squashMerge({ owner: 'apps', repo: 'gas-lock-07613b', number: 15, pinnedSha: SHA('9') });
+    } catch (e) { err = e; }
+    return { err, reads, updates };
+  } finally {
+    for (const id of Object.keys(require.cache)) if (!before.has(id)) delete require.cache[id];
+    for (const [k, id] of Object.entries(ids)) {
+      if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
+    }
+  }
+}
 
-test('native-merge flags a merge that changes nothing on main as already on main', () => {
-  const src = read('src/services/native-merge.js');
-  assert.match(src, /'Pull Request is not mergeable: it changes nothing on main', 405\);\s*e\.alreadyOnMain = true;\s*throw e;/);
+test('native-merge: a merge that changes nothing, main unchanged on the host: flagged as already on main', async () => {
+  const { err, reads, updates } = await squashNoOp({ hostMain: SHA('f') });
+  assert.ok(err, 'refused');
+  assert.equal(err.status, 405);
+  assert.equal(err.alreadyOnMain, true);
+  assert.match(err.message, /changes nothing on main/);
+  assert.deepEqual(reads, [[{ owner: 'apps', name: 'gas-lock-07613b' }, 'main']], 'main read again on the host');
+  assert.deepEqual(updates, [], 'nothing recorded as merged');
+});
+
+test('native-merge: main moved on the host since the mirror was read: refused as main moving, never already on main', async () => {
+  const { err } = await squashNoOp({ hostMain: SHA('e') });
+  assert.ok(err, 'refused');
+  assert.equal(err.alreadyOnMain, undefined, 'not closed for good');
+  assert.match(err.message, /^Base branch was modified/);
+  const { refusalKind } = require('../src/routes/votes');
+  assert.equal(refusalKind(err, { state: 'open', merged: false, mergeable: true, mergeable_state: 'clean' }), 'base_moved',
+    'the machine asks once more against the new main');
+});
+
+test('native-merge: main that cannot be read again, or is gone: never flagged as already on main', async () => {
+  const unreadable = new Error('ls-remote failed');
+  const a = await squashNoOp({ hostMain: unreadable });
+  assert.equal(a.err, unreadable, 'thrown, for the work to be tried again');
+  const b = await squashNoOp({ hostMain: null });
+  assert.ok(b.err);
+  assert.equal(b.err.alreadyOnMain, undefined);
 });
 
 // ── attemptMerge ───────────────────────────────────────────────────────
