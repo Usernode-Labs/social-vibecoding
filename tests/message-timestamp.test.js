@@ -565,7 +565,7 @@ test('#6479: day words and day groups elsewhere read the picked zone too', () =>
 
 test('#6479: the notification sheet\'s Today / Yesterday sections are the picked zone\'s days', () => {
   const zone = loadTsx('frontend/src/lib/time-zone.ts', { cache: false });
-  const { groupOlderByTime } = loadTsx('frontend/src/features/notifications/notifications-sheet.tsx', { cache: false, stubs: { '../../lib/time-zone': zone } });
+  const { groupOlderByTime, splitToday } = loadTsx('frontend/src/features/notifications/notifications-sheet.tsx', { cache: false, stubs: { '../../lib/time-zone': zone } });
   const row = (id, iso) => ({ id, createdAtMs: Date.parse(iso), kind: 'mention', appSlug: null, actor: { username: `p${id}` } });
   const now = new Date('2026-11-11T03:00:00Z');
   try {
@@ -578,6 +578,12 @@ test('#6479: the notification sheet\'s Today / Yesterday sections are the picked
     assert.equal(groupOlderByTime([row(1, '2026-11-10T23:30:00Z')], (id) => id, now)[0].key, 'today');
     zone.setTimeZone('Europe/London');
     assert.equal(groupOlderByTime([row(1, '2026-11-10T23:30:00Z')], (id) => id, now)[0].key, 'yesterday');
+    // The All tab's Today / Earlier split reads the same days.
+    zone.setTimeZone('Asia/Tokyo');
+    const item = { at: Date.parse('2026-11-10T23:30:00Z') };
+    assert.equal(splitToday([item], now).today.length, 1, 'Today in Tokyo');
+    zone.setTimeZone('Europe/London');
+    assert.equal(splitToday([item], now).earlier.length, 1, 'Earlier in London');
   } finally {
     zone.setTimeZone(null);
   }

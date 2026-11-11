@@ -227,11 +227,16 @@ function kit(): any {
   return (typeof window !== 'undefined' ? (window as any).PlatformUI : null) || null;
 }
 
-/** Local-midnight boundary — rows at or after it are "Today". */
-function startOfToday(): number {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
+/**
+ * The All tab's Today / Earlier split: a row is Today when it fell on
+ * today's calendar day (or later) in the zone picked in Settings › Language
+ * (#6479), else the device's, as the Unread sections (groupOlderByTime) read it.
+ */
+export function splitToday<T extends { at: number }>(entries: readonly T[], now: Date = new Date(Date.now())): { today: T[]; earlier: T[] } {
+  const today: T[] = [];
+  const earlier: T[] = [];
+  for (const entry of entries) (daysAgo(entry.at, now) <= 0 ? today : earlier).push(entry);
+  return { today, earlier };
 }
 
 /**
@@ -1759,11 +1764,9 @@ export function NotificationsSheetView() {
   // its row stays until the sheet closes) and the pending invites, every one
   // of which the bell's number holds too.
   const needsCount = unreadNow.filter((view) => view.needsYou).length + (snap.invites || []).length;
-  const boundary = startOfToday();
   const entries: Entry[] = shown.map((view) => (
     { type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
-  const today = entries.filter((entry) => entry.at >= boundary);
-  const earlier = entries.filter((entry) => entry.at < boundary);
+  const { today, earlier } = splitToday(entries);
   // #5405: the query narrows what the open tab already drew — the same
   // `entries`. Whitespace-only is no query
   // at all. While it is active the headings, the pinned sections and the
