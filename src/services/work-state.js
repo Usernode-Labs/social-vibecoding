@@ -135,6 +135,17 @@ function checksLine(row, now) {
   return { code: 'checks_running', minutes: Math.max(1, Math.ceil(remaining / 60000)) };
 }
 
+/**
+ * Pure (#6616): whether a change's votes are in. The one predicate every
+ * reader of `votes_in` shares — services/work-state.js's stages and the
+ * Needs you feed's `authorGateMet` — so the list that leaves a vote to the
+ * feed and the feed that keeps the row can never disagree. A missing answer
+ * (a failed gate read) is false: the row stays a Vote.
+ */
+function votesIn(row) {
+  return row?.votes_in === true;
+}
+
 /** The stage word plus the two lines a checking change can carry (#6402). */
 function checkingState(row, since, now) {
   // #6531: what a conflicting change waits on decides where it shows and
@@ -147,7 +158,7 @@ function checkingState(row, since, now) {
   if (stand === 'author') return state('checking', { since, line: { code: 'sync_wait' } });
   // #6594: its votes are in, so its checks are what it waits on now, not a
   // vote it no longer needs.
-  if (row.votes_in === true) return state('checking', { since, line: { code: 'approved_checking' } });
+  if (votesIn(row)) return state('checking', { since, line: { code: 'approved_checking' } });
   const line = checksLine(row, now);
   return state('checking', { since, ...(line ? { line } : {}) });
 }
@@ -261,7 +272,7 @@ function fromStage(s, row, now = new Date()) {
         if (hold) return state(hold.stage, { since, line: { code: hold.code } });
       }
       // #6594: its votes are in; it is being merged, not voted on.
-      if (row.votes_in === true) return state('going_live', { since });
+      if (votesIn(row)) return state('going_live', { since });
       return upForVote(row, since);
     case 'merging':
       return state('going_live', { since: row.merged_at || since });
@@ -431,7 +442,7 @@ function deriveChange(row, { now = new Date() } = {}) {
     const hold = githubHold(row);
     if (hold) return state(hold.stage, { since: row.promoted_at, line: { code: hold.code } });
     // #6594: its votes are in; it is being merged, not voted on.
-    if (row.votes_in === true) return state('going_live', { since: row.promoted_at });
+    if (votesIn(row)) return state('going_live', { since: row.promoted_at });
     return upForVote(row, row.promoted_at);
   }
   void now;
@@ -1340,6 +1351,8 @@ module.exports = {
   LIVE_DAYS,
   WORDS,
   APPROVED_SQL,
+  attachVotes,
+  votesIn,
   stageSays,
   lineSays,
   says,

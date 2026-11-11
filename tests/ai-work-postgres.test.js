@@ -769,3 +769,128 @@ test('#6600: a takeover holds the person\'s own change while it runs, and says w
   assert.deepEqual(after.map((r) => [r.group, r.fixYours, !!r.botFixFailed, r.work.line]),
     [['needs', true, false, { code: 'checks_failing' }]]);
 });
+
+test('#6616: an approvers-only gate keeps the author\'s change in Needs you, and no list falls between', { timeout: 120000 }, async (t) => {
+  let Pool;
+  try { ({ Pool } = require('pg')); } catch { return t.skip('pg is not installed'); }
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 3000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    return t.skip(`PostgreSQL unavailable: ${err.message}`);
+  }
+  const crypto = require('node:crypto');
+  const name = `needs_feed_approvers_${crypto.randomBytes(6).toString('hex')}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN);
+  url.pathname = `/${name}`;
+  const pool = new Pool({ connectionString: String(url), max: 6 });
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP DATABASE ${name}`);
+    await admin.end();
+  });
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  require('../src/db/pool').getPool = () => pool;
+  const aiWork = require('../src/services/ai-work');
+  const workState = require('../src/services/work-state');
+  const governance = require('../src/services/governance');
+  const overview = require('../src/routes/workshop-overview');
+
+  const one = async (sql, params) => (await pool.query(sql, params)).rows[0];
+  const user = (username) => one(
+    `INSERT INTO users (username, password, has_platform_access) VALUES ($1, 'x', TRUE) RETURNING id, username`, [username]);
+  const evan = await user('nf_evan');
+  const kempis = await user('nf_kempis');
+  const mira = await user('nf_mira');
+  const inserted = await one(
+    `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+     VALUES ('Needs feed approvers', 'nf-approvers', 'running', $1, 'public', 'public') RETURNING id`, [evan.id]);
+  const app = await one('SELECT * FROM apps WHERE id = $1', [inserted.id]);
+  for (const u of [evan, kempis, mira]) {
+    await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [app.community_id, u.id]);
+    await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')
+                      ON CONFLICT DO NOTHING`, [app.id, u.id]);
+  }
+  // The rule from #6586: approvers only, and one approval merges.
+  await pool.query(`UPDATE apps SET approver_policy = 'invited', approvals_required = 1 WHERE id = $1`, [app.id]);
+  await pool.query(`INSERT INTO app_approvers (app_id, user_id, status) VALUES ($1, $2, 'member')`, [app.id, mira.id]);
+  governance.invalidateGovernance(app.id);
+
+  const request = (number, by, title) => one(
+    `INSERT INTO requests (app_id, number, title, created_by, state) VALUES ($1, $2, $3, $4, 'open')
+     RETURNING id, thread_id`, [app.id, number, title, by.id]);
+  const change = (pr, by, issue, checkState = 'passing') => one(
+    `INSERT INTO chat_sessions (app_id, user_id, pr_number, linked_issues, status, shared_at, promoted_at, check_state)
+     VALUES ($1, $2, $3, $4, 'promoted', NOW(), NOW(), $5) RETURNING id`,
+    [app.id, by.id, pr, [issue], checkState]);
+  const vote = (sessionId, userId) => pool.query(
+    `INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch) VALUES ($1, $2, 'yes', 0)`, [sessionId, userId]);
+
+  // Evan's own change, with only kempis's yes: kempis is not an approver.
+  await request(1, evan, 'Freshness notice');
+  const own = await change(6586, evan, 1);
+  // A change of mira's that evan owes a vote on.
+  await request(2, evan, 'Show a plan');
+  const other = await change(6587, mira, 2);
+  // Evan's own change with the approver's yes, but failing checks: it waits
+  // on his fix, not on the feed.
+  await request(3, evan, 'Fix the tests');
+  const approved = await change(6588, evan, 3, 'failing');
+  // Kempis's change evan already voted on: not owed any more.
+  await request(4, evan, 'Voted already');
+  const voted = await change(6589, kempis, 4);
+
+  await vote(own.id, kempis.id);
+  await vote(approved.id, mira.id);
+  await vote(voted.id, evan.id);
+  await workState.refresh(pool, [own.id, other.id, approved.id, voted.id].map((id) => ({ sessionId: id })));
+
+  const stored = (id) => one(
+    'SELECT stage, line FROM work_states WHERE session_id = $1 ORDER BY item_kind LIMIT 1', [id]);
+  assert.equal((await stored(own.id)).stage, 'up_for_vote',
+    'a non-approver\'s yes is not the vote being in');
+
+  const feed = (inThreads) => overview.needsFeedFor(pool, { user: { id: evan.id }, inThreads });
+  const proposalIds = (items) => items.filter((item) => item.kind === 'proposal').map((item) => item.id);
+  const before = await feed(true);
+  assert.ok(proposalIds(before).includes(own.id), 'the author\'s change with only a non-approver yes is a Vote row');
+  assert.ok(proposalIds(await feed(false)).includes(own.id), 'and in the unfiltered feed too');
+  const ownRow = before.find((item) => item.id === own.id);
+  assert.equal(ownRow.waitingOn, undefined, 'it is a Vote row, not a waiting-on-fix row');
+
+  // Nothing falls between the lists (#6616): whatever /api/ai/work leaves to
+  // the feed's Vote row is in this viewer's Needs you.
+  const work = await aiWork.workFor(pool, { user: { id: evan.id } });
+  const listed = new Set([...work.needs, ...work.next, ...work.waiting, ...work.live]
+    .map((row) => Number(row.change && row.change.id)).filter((id) => id > 0));
+  const owed = (await pool.query(
+    `WITH mine AS (${aiWork.threadsInSql('$1')})
+     SELECT cs.id
+       FROM chat_sessions cs
+       JOIN mine ON mine.thread_id = cs.thread_id
+       JOIN work_states w ON w.session_id = cs.id
+      WHERE cs.app_id = $2 AND cs.status = 'promoted'
+        AND w.stage = 'up_for_vote'
+        AND COALESCE(w.line->>'code', '') NOT IN ('update_queued', 'revising', 'fixing')
+        AND NOT EXISTS (SELECT 1 FROM pr_votes v
+                         WHERE v.session_id = cs.id AND v.user_id = $1
+                           AND v.approval_epoch IS NOT DISTINCT FROM cs.approval_epoch)`,
+    [evan.id, app.id])).rows.map((row) => Number(row.id));
+  assert.deepEqual(owed.sort((a, b) => a - b), [other.id, own.id].sort((a, b) => a - b),
+    'the two changes whose vote evan owes');
+  const feedIds = new Set(proposalIds(before));
+  for (const id of owed) {
+    assert.ok(!listed.has(id), `change ${id} is left to the feed, so no other list holds it`);
+    assert.ok(feedIds.has(id), `change ${id} is in the viewer's Needs you feed`);
+  }
+
+  // The approver's yes really is the vote being in: it leaves the feed.
+  await vote(own.id, mira.id);
+  await workState.refresh(pool, [{ sessionId: own.id }]);
+  assert.equal((await stored(own.id)).stage, 'going_live', 'approved, so it is being merged');
+  assert.ok(!proposalIds(await feed(true)).includes(own.id), 'and it leaves Needs you');
+});

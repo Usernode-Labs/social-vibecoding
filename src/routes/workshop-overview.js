@@ -85,7 +85,7 @@ const { governanceKindsSql } = require('../services/governance-kinds');
 const { threadsInSql } = require('../services/ai-work');
 const { updateComingSql } = require('../services/homeroom-bot-progress');
 const { voteReadySql, awaitingYesSql } = require('../services/vote-ready');
-const { APPROVED_SQL } = require('../services/work-state');
+const { APPROVED_SQL, attachVotes, votesIn } = require('../services/work-state');
 const communities = require('../services/communities');
 const governance = require('../services/governance');
 const codeMissing = require('../services/code-missing');
@@ -788,13 +788,16 @@ async function owedByCommunity(pool, userId, { showSelfHosted = false, isAdmin =
  * works it out for the change's card: the project's governance and
  * electorate, then the merge gate over the counted votes. One read per
  * project, and only for those rows; a project whose read fails is left
- * without one. Resolves the rows. Exported for tests.
+ * without one. Read by the B7 `approve` flag on a `solo` row; an author's own
+ * change asks the governed gate through `votes_in` instead (#6616). Resolves
+ * the rows. Exported for tests.
  */
 async function withVotesRequired(pool, rows, viewerId = null) {
   const byApp = new Map();
   for (const row of rows) {
-    // #6389: a row that is the viewer's own change needs the same count, so
-    // a met vote can be told from one still owed.
+    // #6389, #6616: a row that is the viewer's own change also carries the
+    // count; its gate now reads `votes_in`, and the B7 `approve` flag on a
+    // solo row reads this. Kept so that flag's answer is unchanged.
     const authors = viewerId != null && row.kind === 'proposal'
       && Number(row.author_id) === Number(viewerId);
     if (row.solo !== true && !authors) continue;
@@ -816,20 +819,17 @@ async function withVotesRequired(pool, rows, viewerId = null) {
 }
 
 /**
- * #6389: whether a change the viewer made has the votes it needs, so the row
- * is waiting on their fix rather than on a Vote. The same facts the change's
- * Votes card reads: the gate's Yes count, and, where an explicit approval is
- * flagged, a Yes from another member. First for a change a coding agent
- * submitted; every change since proposing stopped being a yes.
+ * #6389, #6616: whether a change the viewer made has the votes it needs, so
+ * the row is waiting on their fix rather than on a Vote. It asks the same
+ * gate the merge takes (`votes_in`, #6594: approvers, rules, the member floor
+ * and explicit approval), never a raw count of yes votes — under an
+ * approvers-only rule (#6616) a non-approver's Yes is not the vote being in.
+ * A row whose gate could not be read has no `votes_in`, and stays a Vote.
  */
 function authorGateMet(row, viewerId) {
   if (row.kind !== 'proposal') return false;
   if (viewerId == null || Number(row.author_id) !== Number(viewerId)) return false;
-  const needed = parseInt(row.votes_required, 10);
-  if (!Number.isFinite(needed)) return false;
-  if ((Number(row.yes) || 0) < needed) return false;
-  if (row.requires_explicit_approval && (Number(row.other_yes) || 0) < 1) return false;
-  return true;
+  return votesIn(row);
 }
 
 /**
@@ -1138,6 +1138,12 @@ async function needsFeedFor(pool, { user, showSelfHosted = false, inThreads = fa
   await withPictures(pool, rows, { shotsPresent, viewer: user });
   await withViewerDecides(pool, rows, user.id);
   const voted = await withVotesRequired(pool, rows, user.id);
+  // #6616: whether each of the viewer's own changes has its votes in, from
+  // the same governed gate the stored work state and the merge read. Only
+  // their own proposal rows pay for a read; everybody else's change can never
+  // be dropped by authorGateMet.
+  await attachVotes(pool, voted, (row) => (row.kind === 'proposal'
+    && Number(row.author_id) === Number(user.id) ? { id: Number(row.id), prefix: '' } : null), new Date());
   // #6389: a row that is the viewer's own change says what it waits on once
   // its vote is in, and leaves Needs you when nothing is left for them to
   // fix (only testing is running).

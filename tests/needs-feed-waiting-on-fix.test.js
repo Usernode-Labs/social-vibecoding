@@ -5,6 +5,10 @@
 // it waits on instead of Vote. First for a change a coding agent submitted;
 // every change since proposing stopped being its author's yes (11 Nov 2026).
 //
+// #6616: "the votes are in" is the change's own governed gate (`votes_in`),
+// never a raw count of yes votes. Under an approvers-only rule a
+// non-approver's Yes does not count, so the author still owes the vote.
+//
 // Run with: node --test tests/needs-feed-waiting-on-fix.test.js
 
 const test = require('node:test');
@@ -14,7 +18,7 @@ const overview = require('../src/routes/workshop-overview');
 
 const row = (over = {}) => ({
   kind: 'proposal', id: 6358, app_id: 1, author_id: 42, external_agent: 'claude-code',
-  yes: 1, votes_required: 1, other_yes: 1, requires_explicit_approval: false,
+  yes: 1, votes_required: 1, other_yes: 1, requires_explicit_approval: false, votes_in: true,
   check_state: 'passing', mergeability: 'clean', integration_merges_clean: true,
   merge_conflict_state: null, ...over,
 });
@@ -29,16 +33,29 @@ test('#6389: waitingOnFix names tests failing, then a conflict, once the vote is
 });
 
 test('#6389: while the gate is not met the row is still a Vote', () => {
-  assert.equal(overview.waitingOnFix(row({ yes: 0, check_state: 'failing' }), 42), null);
+  assert.equal(overview.waitingOnFix(row({ votes_in: false, check_state: 'failing' }), 42), null);
   assert.equal(overview.waitingOnFix(row({ check_state: 'failing' }), 7), null, 'somebody else\'s change');
   assert.deepEqual(overview.waitingOnFix(row({ external_agent: null, check_state: 'failing' }), 42), ['checks'],
     'one made on Homeroom waits on its fix the same way');
 });
 
+test('#6616: a raw yes count never stands in for the gate', () => {
+  // One counted yes, enough votes on paper, but the approvers-only gate says
+  // the vote is not in: the row stays a Vote.
+  const approversOnly = row({ yes: 1, votes_required: 1, other_yes: 1, votes_in: false });
+  assert.equal(overview.authorGateMet(approversOnly, 42), false);
+  assert.equal(overview.waitingOnFix(approversOnly, 42), null);
+  // And the gate alone is enough, whatever the arithmetic says.
+  assert.equal(overview.authorGateMet(row({ yes: 0, votes_required: 1 }), 42), true);
+  assert.equal(overview.authorGateMet(row({ votes_in: false }), 42), false, 'a failed read leaves it a Vote');
+  assert.equal(overview.authorGateMet(row(), 7), false, 'somebody else\'s change');
+  assert.equal(overview.authorGateMet(row({ kind: 'question' }), 42), false);
+});
+
 test('#6389: an explicit approval needs a Yes from another member', () => {
-  const flagged = row({ requires_explicit_approval: true, other_yes: 0, check_state: 'failing' });
+  const flagged = row({ requires_explicit_approval: true, other_yes: 0, votes_in: false, check_state: 'failing' });
   assert.equal(overview.waitingOnFix(flagged, 42), null, 'its author\'s own Yes is not the member Yes');
-  assert.deepEqual(overview.waitingOnFix({ ...flagged, other_yes: 1 }, 42), ['checks']);
+  assert.deepEqual(overview.waitingOnFix({ ...flagged, votes_in: true }, 42), ['checks']);
 });
 
 test('#6389: with its votes in and nothing left to fix, the row leaves Needs you', () => {
