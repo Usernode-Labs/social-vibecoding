@@ -97,10 +97,13 @@ export type GuestSort = (typeof SORTS)[number];
 
 /**
  * The kinds of app, in app-manifest.js APP_CATEGORIES order (the same list
- * Discover's type chips use, features/apps/browse.js CATEGORIES). Only the
- * kinds some app in the directory has get a chip (presentCategories).
+ * the kind chips use, features/home/communities-to-join.tsx; tests/
+ * guest-discover.test.js pins the two together). Only the kinds some app in
+ * the directory has get a chip (presentCategories).
  */
-export const CATEGORIES = ['games', 'social', 'tools', 'learning', 'creative', 'other'] as const;
+export const CATEGORIES = [
+  'games', 'social', 'tools', 'learning', 'creative', 'money', 'health', 'food', 'other',
+] as const;
 
 /** How many people built it: the directory's contributors, counted. */
 export function buildersOf(app: GuestApp): number {
