@@ -2075,8 +2075,11 @@ async function changeOnRequestPage(pool, appId, sessionId) {
  * bot_posts by services/bot-post.js (`kind:request:<app>-<n>:<version>`,
  * the version the run's, `version`, or once per request for "looking").
  * Asked for again (a retry, a restart, a second pass), it is said once: a
- * post that went out says nothing, and one a restart caught going out
- * sends only what its row has not recorded. The request's thread hears it
+ * post that went out says nothing, one another pass is saying now says
+ * nothing here (`busy`; thrown to a `strict` caller, whose retry finds it
+ * said), and one a restart caught going out sends only what its row has
+ * not recorded ("looking" is never taken up: once, ever). A copy on the
+ * change is its own post, keyed by this one. The request's thread hears it
  * only when bot-post.js RULES has the bot say that kind there; a failure
  * note whose words the thread's last failure note already says, with
  * nobody writing since, says nothing anywhere (`repeated`), and a new one
@@ -2087,7 +2090,7 @@ async function post({
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
   proposalSessionId = null, sender = null, threadMessage = null, dm = null, untag = null, onlyProposal = false,
   skipIssueThread = false, skipGithub = false, homeroomText = null, strict = false, version = null,
-  card = null,
+  card = null, requestPostId = null,
 }) {
   const botPost = require('./bot-post');
   // Homeroom bot parity (P4, P5): the request moved; its batch's roll-up and
@@ -2141,20 +2144,65 @@ async function post({
   const subject = botPost.requestSubject(app.id, issueNumber);
   const keyVersion = version != null ? String(version)
     : kind === 'looking' ? 'once' : runId ? `run-${Number(runId)}` : botPost.freshVersion();
+  const postKey = botPost.keyOf({ kind, subject, version: keyVersion });
   const claimed = await botPost.claim(pool, {
-    key: botPost.keyOf({ kind, subject, version: keyVersion }), kind, subject, version: keyVersion,
+    key: postKey, kind, subject, version: keyVersion,
     place: { type: 'issue', ref: Number(issueNumber) }, appId: app.id, issueNumber, sessionId: proposalSessionId, runId,
     digest: botPost.digestOf(own),
-  }, { strict });
+  }, {
+    strict, takeUp: kind !== 'looking',
+    // A run's post, or a durable caller's (strict), is that work's own: its
+    // next attempt after a crash takes a claim the last one left at once.
+    durable: !!strict || Number(runId) > 0,
+  });
   const had = claimed.fresh ? null : claimed.row;
-  if (had && had.outcome !== 'pending') {
-    log.info('homeroom-bot', 'Said before: not said again', { app: app.slug, issueNumber, kind, was: had.outcome });
+  if (had && (had.outcome !== 'pending' || !claimed.held)) {
+    // Said before; or being said now by another pass (its claim held), or
+    // a "looking" a pass began: not said here. A durable caller is told,
+    // and its retry finds it said.
+    const busy = had.outcome === 'pending';
+    log.info('homeroom-bot', busy ? 'Being said by another pass: not said here' : 'Said before: not said again', {
+      app: app.slug, issueNumber, kind, was: had.outcome,
+    });
+    if (busy && strict && kind !== 'looking') {
+      throw Object.assign(new Error(`The ${kind} post on request #${issueNumber} is being said by another pass`), { code: 'post_busy' });
+    }
     return {
-      again: true, postId: Number(had.request_post_id) || null, githubCreatedAt: had.github_created_at || null,
+      again: true, ...(busy ? { busy: true } : {}),
+      postId: Number(had.request_post_id) || null, githubCreatedAt: had.github_created_at || null,
       github: had.github_comment_id != null, thread: had.chat_message_id != null,
       messageId: Number(had.chat_message_id) || null,
     };
   }
+  // The request's record from before this release, when the post is one
+  // (its row, taken up; or `requestPostId`, a held answer's pending row).
+  const priorPostId = Number(had?.request_post_id) || Number(requestPostId) || null;
+  try {
+    return await sayClaimedPost({
+      pool, github, ws, app, repo, issueNumber, kind, runId, text, msgType, metadata, senderId, notifications,
+      proposalSessionId, sender, threadMessage, dm, card, strict, botPost, proposalOnly, noComment, placeRefused,
+      noIssueThread, onRequestPage, tagged, inThread, own, claimed, had, postKey, priorPostId,
+    });
+  } catch (err) {
+    // Left pending with what went out recorded, its claim let go: the
+    // retry takes it up at once and says only the rest.
+    await botPost.release(pool, claimed);
+    // Its claim lapsed while it was said, and another pass took it over
+    // (its thread message rolled back): that pass says it.
+    if (err?.code === 'post_claim_lost' && !strict) {
+      log.info('homeroom-bot', 'Taken over by another pass while it was said: not said here', { app: app.slug, issueNumber, kind });
+      return { again: true, busy: true, postId: null, githubCreatedAt: null, github: false, thread: false, messageId: null };
+    }
+    throw err;
+  }
+}
+
+/** The rest of post(), for a post this ask holds the claim of. */
+async function sayClaimedPost({
+  pool, github, ws, app, repo, issueNumber, kind, runId, text, msgType, metadata, senderId, notifications,
+  proposalSessionId, sender, threadMessage, dm, card, strict, botPost, proposalOnly, noComment, placeRefused,
+  noIssueThread, onRequestPage, tagged, inThread, own, claimed, had, postKey, priorPostId,
+}) {
   // The failure rule: the same words as the thread's last failure note,
   // with nobody writing since, tell nobody anything (no post, no GitHub
   // comment, no DM, no mention): the request's status already shows it.
@@ -2211,8 +2259,11 @@ async function post({
     const dmSvc = require('./homeroom-bot-dm');
     let told = null;
     try {
+      // A post from before this release (its homeroom_bot_posts row, taken
+      // up) keeps the key its relay was sent by then.
+      const relayKey = priorPostId ? `hrbot-post-${priorPostId}` : claimed.id ? `bot-post-${claimed.id}` : null;
       told = await dmSvc.relayIssuePost({
-        pool, ws, app, issueNumber, kind, runId, postKey: claimed.id ? `bot-post-${claimed.id}` : null, bot: sender, dm,
+        pool, ws, app, issueNumber, kind, runId, postKey: relayKey, bot: sender, dm,
       });
     } catch (err) {
       log.warn('homeroom-bot', 'DM relay failed (post kept)', { app: app.slug, issueNumber, kind, err: err.message });
@@ -2242,9 +2293,7 @@ async function post({
       ...(onRequestPage ? { aboutChange: { sessionId: Number(proposalSessionId) } } : {}),
       ...(claimed.id ? { hrbotPost: `post-${claimed.id}` } : {}),
     });
-    const onInsert = claimed.id
-      ? (tx, { messageId }) => tx.query('UPDATE bot_posts SET chat_message_id = $2 WHERE id = $1', [claimed.id, messageId])
-      : null;
+    const onInsert = botPost.onInsertOf(claimed, postKey);
     try {
       // A spec is a card in the thread (its full text is on GitHub, and one
       // click away from the card), not a wall of markdown in a chat bubble.
@@ -2257,6 +2306,9 @@ async function post({
         })
         : await inThread(threadText, { type: 'issue', ref: issueNumber }, marked(metadata), msgType, card, onInsert);
     } catch (err) {
+      // Its claim lapsed meanwhile and another pass took it over: the
+      // message rolled back, and that pass says the post.
+      if (err?.code === 'post_claim_lost') throw err;
       log.warn('homeroom-bot', 'Thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
       failed.push(`the thread message (${err.message})`);
     }
@@ -2303,12 +2355,20 @@ async function post({
   let proposalMessage = null;
   // #6229: the change's page is the request's, so the request's copy above
   // is the whole post. Only a change with no request gets the second one.
+  // It is its own post (bot-post.js), keyed by this one's row, so a retry
+  // of this one never says it twice; best effort (`soft`), as before.
   if (proposalSessionId && !onRequestPage && !messageSentBefore) {
-    try {
-      proposalMessage = await inThread(own, { type: 'session', ref: Number(proposalSessionId) }, null, 'system');
-    } catch (err) {
+    const copy = await botPost.post(pool, {
+      place: { type: 'session', ref: Number(proposalSessionId) }, appId: app.id, kind, words: own,
+      ...(sender ? { author: sender } : {}), sessionId: Number(proposalSessionId),
+      subject: botPost.changeSubject(proposalSessionId),
+      version: claimed.id ? `copy-of-${claimed.id}` : null, record: false, soft: true,
+      durable: !!strict || Number(runId) > 0,
+    }, { ws }).catch((err) => {
       log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
-    }
+      return null;
+    });
+    if (copy?.messageId && (copy.outcome === 'said' || copy.outcome === 'again')) proposalMessage = { id: copy.messageId };
   }
   if (strict && failed.length) {
     // What did go out is recorded on the post (above), the post left
@@ -2316,11 +2376,14 @@ async function post({
     throw new Error(`Could not post the ${kind} note on request #${issueNumber}: ${failed.join(', ')}`);
   }
   const shown = message || (proposalOnly ? proposalMessage : null);
-  if (!message && proposalOnly && proposalMessage?.id != null) await botPost.mark(pool, claimed.id, { chatMessageId: proposalMessage.id });
+  // Said on the change alone: its place is the change's thread, where its
+  // message is, so the request's failure rule never reads it as the
+  // request's own note.
+  if (!message && proposalOnly && proposalMessage?.id != null) await botPost.markPlace(pool, claimed.id, proposalMessage.id);
   // The request's record of it (homeroom_bot_posts, which its readers
   // know), then the post said: or refused in the thread, recorded.
   const postId = await botPost.project(pool, {
-    requestPostId: had?.request_post_id, appId: app.id, issueNumber, runId, kind,
+    requestPostId: priorPostId, appId: app.id, issueNumber, runId, kind,
     githubCommentId: comment?.id ?? null, threadMessageId: shown?.id ?? null,
   }, { strict });
   await botPost.settle(pool, claimed.id, shown ? 'said' : 'refused', {
@@ -2347,7 +2410,9 @@ async function post({
  * keyed by `version` when its caller names one (a look's, a run's, the
  * message it answers), so a retry says it once, and a failure note on the
  * change's checks only when it says something new. Never throws on the
- * send; resolves { postId, thread, outcome }.
+ * send (`soft`: a send that fails is `failed`, one another pass is saying
+ * `busy`, as every caller treats a note here as best effort); resolves
+ * { postId, thread, outcome }.
  */
 async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId, version = null }) {
   const out = await require('./bot-post').post(pool, {
@@ -2355,6 +2420,9 @@ async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, 
     issueNumber, sessionId, runId,
     subject: require('./bot-post').changeSubject(sessionId),
     version: version != null ? version : runId ? `run-${Number(runId)}` : null,
+    soft: true,
+    // Keyed by the look, run or message its durable work says it for.
+    durable: version != null || Number(runId) > 0,
   }, { ws });
   if (out.outcome === 'said') {
     // A newer word from the bot in the change's discussion retires the

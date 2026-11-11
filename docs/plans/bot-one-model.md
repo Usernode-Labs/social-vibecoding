@@ -202,10 +202,19 @@ One posting function, append-only (`src/services/bot-post.js`, migration
   `bot_posts` (`said_key` unique) before anything is sent, so a post asked
   for twice (a retry, a restart, two passes at once) is said once; one a
   restart caught going out is `pending`, and the retry sends only what its
-  row has not recorded. The message is written with its record
-  (`ws.sendBotMessage` / `sendSystemMessage` `onInsert`). Outcomes: `said`,
-  `refused`, `repeat`, `pending`. `homeroom_bot_posts` stays as the
-  request's projection its readers use, written once a post is said.
+  row has not recorded. The ask that claims a post holds the claim while it
+  says it (migration `bot-posts-claims`: `claimed_at`, `claimed_by`); a
+  second ask meanwhile says nothing (`busy`), and a pending post is taken
+  over only once its claim has lapsed, by one conditional UPDATE (a durable
+  work's own post, keyed by its run, look or turn, is taken over at once by
+  that work's next attempt after a crash, as before claims). A send
+  that fails throws, its claim let go, so the caller's retry says it (the
+  voice's replies, a "tell me when"); only best-effort callers (the
+  change's notes, `live.post`'s copy on a change) pass `soft`. The message
+  is written with its record (`ws.sendBotMessage` / `sendSystemMessage`
+  `onInsert`, and `sendDm`'s `afterInsert`). Outcomes: `said`, `refused`,
+  `repeat`, `pending`. `homeroom_bot_posts` stays as the request's
+  projection its readers use, written once a post is said.
 - One rule table per place (`RULES`) replaces THREAD_KINDS, with no bypass:
   `live.post`, the thread notes (`postThreadNote`), the change's notes
   (`live.postOnProposal`), the voice's replies and its pointer to another
@@ -219,9 +228,10 @@ One posting function, append-only (`src/services/bot-post.js`, migration
   (`homeroom-bot-dm.js sendDm`, keyed by its idempotency key), and refuses
   request news, recorded.
 - Failure notes as amended: the same words as the place's last failure
-  note, with nobody writing since and nothing else said there since, are a
-  `repeat` (no message, no GitHub comment, no DM, no mention); anything new
-  is a new note, and the older note's buttons retire
+  note (its newest by message), with nobody writing since (there, or in a
+  reply thread under a message there since) and nothing else said there
+  since, are a `repeat` (no message, no GitHub comment, no DM, no
+  mention); anything new is a new note, and the older note's buttons retire
   (`bot-cards.js retireFor` `messageIds`). A change's notes on its checks
   are failure notes in its thread.
 - Words shown never change: a plan's row keeps its words and only its

@@ -173,6 +173,23 @@ test('a failure note is said once, a new one only when it says something new, an
   assert.equal(afterProposal.thread, true);
   assert.equal((await messages()).length, beforeSame + 1);
 
+  // A reply UNDER the failure note (its reply thread, where people answer
+  // it and the voice answers them) is a reply since, too: the same words
+  // are then a new note. The bot's own answer there is nobody replying.
+  const FIX = 'Homeroom bot couldn\'t fix the checks.';
+  await sayKind('followup_failed', FIX);
+  const fixNote = (await messages()).at(-1);
+  const under = (userId, content) => pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref)
+     VALUES ($1, $2, $3, 'message', 'message', $4)`, [app.id, userId, content, fixNote.id]);
+  await under(bot.id, 'I\'m looking at it again.');
+  assert.equal((await sayKind('followup_failed', FIX)).repeated, true, 'the bot\'s answer under it is not a reply');
+  await under(owner.id, 'Try again please.');
+  const afterUnder = await sayKind('followup_failed', FIX);
+  assert.equal(afterUnder.thread, true, 'a person replied under the note: a new note');
+  assert.notEqual((await messages()).at(-1).id, fixNote.id);
+  assert.equal(afterUnder.messageId, (await messages()).at(-1).id);
+
   // Said once by its key: the same run asking again says nothing, and its
   // GitHub stamp comes back for the run to mark as seen.
   const run = await one(

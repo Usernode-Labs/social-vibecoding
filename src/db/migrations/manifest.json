@@ -310,6 +310,11 @@
       "id": "work-state-backfill-and-indexes",
       "sha256": "33513d01944cb62b790adf11e7851ad7f41d5723b989be9aabd5b7ad4a811b93",
       "schemaSha256": "26984e82d1fe504887acf25516600c10391ea8004055398f7997543861eda787"
+    },
+    {
+      "id": "bot-posts-claims",
+      "sha256": "9306ae1ef3220c20e6b4ba4e2fb204f0f73df60ebd0888e306becf9cd7d1c411",
+      "schemaSha256": "c3d8a4c43f3bb266d04599e15c235c16d5408dd61ae4505e81cb3c514368cd7a"
     }
   ]
 }

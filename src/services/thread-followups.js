@@ -174,7 +174,9 @@ async function usernameOf(pool, userId) {
  * message in that thread; in a project's chat or a reply thread it is a
  * message in the reply thread under the ask; in a DM it is a message there.
  * Everyone but a DM rings the person's bell as any mention does.
- * Resolves the message's id, or null.
+ * Resolves the message's id, or null. A line that could not be sent throws
+ * (bot-post.js post, its row left pending), so the work that fired it is
+ * retried and tells it then.
  */
 async function deliver(pool, row, text, { deps = {} } = {}) {
   const body = saying(text);

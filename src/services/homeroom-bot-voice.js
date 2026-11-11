@@ -1055,14 +1055,25 @@ function replyKey(app, place, turnKey) {
  * The reply a turn (`turnKey`) already posted, by its key (bot-post.js),
  * with what it read through (its message's turn); null when it posted none.
  * Its offer, if it has one, was written with it (say).
+ *
+ * For one release after step 4 (11 Nov 2026), a turn retried across it may
+ * have posted its reply before keys: its message's turn mark (which every
+ * reply still carries) is read too, read-only, when its key names none.
+ * Remove TURN_MARK_SQL in the release after.
  */
+const TURN_MARK_SQL = `
+  SELECT id, metadata FROM chat_messages
+   WHERE app_id = $1 AND user_id = $2 AND metadata->'homeroomBot'->'turn'->>'key' = $3
+     AND created_at > NOW() - INTERVAL '2 days'
+   ORDER BY id LIMIT 1`;
 async function replyOf(pool, { app, place, bot, turnKey }) {
-  const { rows: [m] } = await pool.query(
+  const { rows: [keyed] } = await pool.query(
     `SELECT m.id, m.metadata FROM bot_posts p
        JOIN chat_messages m ON m.id = p.chat_message_id
       WHERE p.said_key = $1 AND p.app_id = $2 AND m.user_id = $3`,
     [replyKey(app, place, turnKey), app.id, bot.id],
   );
+  const m = keyed || (await pool.query(TURN_MARK_SQL, [app.id, bot.id, String(turnKey)])).rows[0];
   if (!m) return null;
   return { id: Number(m.id), through: Number(m.metadata?.homeroomBot?.turn?.through) || null };
 }
@@ -2930,8 +2941,10 @@ async function say(pool, {
   };
   // Step 4 (11 Nov 2026): one post (bot-post.js). `mark`, the work item it
   // is said for ({ key, through }), is its key: a retry after a restart
-  // finds it said and says it again nowhere. Its words are written once,
-  // whole: nothing of them was shown while the model wrote.
+  // finds it said and says it again nowhere. A send that fails throws, its
+  // post left pending, so the work (the turn, a report, an act) is retried
+  // and says it then. Its words are written once, whole: nothing of them
+  // was shown while the model wrote.
   const botPost = require('./bot-post');
   const out = await botPost.post(pool, {
     place: thread, appId: app.id, kind: 'reply', words: text, author: bot, metadata,
@@ -2941,6 +2954,9 @@ async function say(pool, {
     ...(offer ? { card: { kind: offer.kind, args: offer.args || {}, forUserId: offer.forUserId || null } } : {}),
     // The voice's reply is the conversation, not a request's record.
     record: false,
+    // Its mark is its work's (a turn, a report, an act), run one attempt at
+    // a time: the next attempt takes a claim the last one left at once.
+    durable: !!mark,
   }, { ws });
   if (out.outcome === 'again' && out.messageId) return { id: out.messageId, again: true };
   if (out.outcome !== 'said') return null;

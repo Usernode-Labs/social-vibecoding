@@ -79,15 +79,36 @@ function botPostsFake({ failClaim = () => false } = {}) {
       if (failClaim()) throw new Error('connection reset');
       const had = keys.get(params[0]);
       if (had) return { rows: [{ ...had, fresh: false }] };
-      const row = { id: nextId++, said_key: params[0], outcome: 'pending', github_comment_id: null, chat_message_id: null, request_post_id: null, created_at: new Date() };
+      const row = {
+        id: nextId++, said_key: params[0], outcome: 'pending', github_comment_id: null, chat_message_id: null, request_post_id: null,
+        created_at: new Date(), claimed_at: new Date(), claimed_by: params[11],
+      };
       keys.set(params[0], row);
       byId.set(row.id, row);
       return { rows: [{ ...row, fresh: true }] };
     }
-    if (/FROM bot_posts WHERE said_key = \$1/.test(sql)) return { rows: keys.has(params[0]) ? [keys.get(params[0])] : [] };
-    if (/UPDATE bot_posts SET chat_message_id = \$2 WHERE id = \$1/.test(sql)) {
-      byId.get(params[0]).chat_message_id = params[1];
+    // A pending post's claim: taken over once it lapsed (or never had one),
+    // let go when its send failed.
+    if (/SET claimed_at = NOW\(\), claimed_by = \$2/.test(sql)) {
+      const row = byId.get(params[0]) || [...keys.values()].find((r) => r.id === params[0]);
+      const lapsed = row && row.outcome === 'pending' && (!row.claimed_at || Date.now() - row.claimed_at.getTime() > params[2] * 1000);
+      if (!lapsed) return { rows: [] };
+      Object.assign(row, { claimed_at: new Date(), claimed_by: params[1] });
+      byId.set(row.id, row);
+      return { rows: [row] };
+    }
+    if (/UPDATE bot_posts SET claimed_at = NULL/.test(sql)) {
+      const row = byId.get(params[0]);
+      if (row && row.outcome === 'pending' && row.claimed_by === params[1]) row.claimed_at = null;
       return { rows: [] };
+    }
+    if (/FROM bot_posts WHERE said_key = \$1/.test(sql)) return { rows: keys.has(params[0]) ? [keys.get(params[0])] : [] };
+    // The message named on its record, in its transaction, by the claim's holder.
+    if (/UPDATE bot_posts SET chat_message_id = \$2\s+WHERE id = \$1 AND chat_message_id IS NULL/.test(sql)) {
+      const row = byId.get(params[0]);
+      if (row.chat_message_id != null || (params[2] != null && row.claimed_by !== params[2])) return { rows: [], rowCount: 0 };
+      row.chat_message_id = params[1];
+      return { rows: [], rowCount: 1 };
     }
     if (/UPDATE bot_posts\s+SET chat_message_id = COALESCE/.test(sql)) {
       const row = byId.get(params[0]);

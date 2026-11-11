@@ -14,11 +14,19 @@
 //
 // and that key is claimed in bot_posts before anything is sent (claim). A
 // post asked for twice (a retry, a restart, two passes at once) is said
-// once: the second ask finds the row and says nothing. A post a restart
-// caught going out is `pending`, and the retry sends only what its row has
-// not recorded. This replaced six ways of saying once (homeroom_bot_posts'
-// pending take-up, a look's once for posts, runPosted, the voice's turn mark
-// read back, and the two failure rewrites).
+// once: the second ask finds the row and says nothing. The ask that claims
+// it holds the claim while it says it (claimed_at, claimed_by); a second
+// ask while it is held says nothing (`busy`), and a `pending` row is taken
+// over only once its claim has lapsed (a crash left it), by one conditional
+// UPDATE, so of two asks only one says it. A durable work's own post (a
+// run's, a look's, a turn's, a held answer's: `durable`) is taken over at
+// once by that work asked again, as before claims: its runtime runs one
+// attempt of it at a time, so an attempt still holding it is gone. The
+// retry sends only what its row has not recorded. A send that fails lets go of the claim and throws,
+// so the caller's retry says it (`soft` callers are told `failed`). This
+// replaced six ways of saying once (homeroom_bot_posts' pending take-up, a
+// look's once for posts, runPosted, the voice's turn mark read back, and
+// the two failure rewrites).
 //
 // The place decides what may be said there (RULES, one table): in a
 // request's thread only its question or plan, "built it, up for a vote", a
@@ -29,15 +37,17 @@
 //
 // Failure notes are never edited. A new failure is a new note, said only
 // when its words differ from the place's last failure note, or somebody has
-// written there since it, or the bot said something else there since; a
+// written there since it (in the place, or in a reply thread under a
+// message there since), or the bot said something else there since; a
 // repeat says nothing at all (outcome `repeat`: the status card already
 // shows it), and a newer failure note retires the older one's buttons
 // (bot-cards.js retireFor).
 //
 // The message itself is written with its record: ws.sendBotMessage's and
 // sendSystemMessage's `onInsert` name the message on the post's row in the
-// message's own transaction, and a person's chat with the bot is recorded
-// by homeroom-bot-dm.js sendDm (its DM transport) the same way. A request's
+// message's own transaction (and roll the message back if the claim was
+// lost meanwhile), and a person's chat with the bot is recorded by
+// homeroom-bot-dm.js sendDm (its DM transport) the same way. A request's
 // posts are projected into homeroom_bot_posts once said, for the readers of
 // that table (the standing's `said`, the notes `addressed` reads).
 
@@ -173,13 +183,53 @@ function digestOf(text) {
 
 // ── The record ───────────────────────────────────────────────────────────
 
+// How long an ask holds a post's claim while it says it. A pending post
+// whose claim is older was left by a pass that is gone (a crash, a restart)
+// and is taken over; one younger is being said now by another pass. A
+// post's sends (its message, a GitHub comment, a DM) take seconds; a durable
+// caller's retries (15 s, doubling) outlast it.
+const CLAIM_LEASE_SECONDS = 180;
+
 const CLAIM_SQL = `
   INSERT INTO bot_posts (said_key, kind, subject, version, place_type, app_id, place_ref, issue_number, session_id,
-                         run_id, words_digest)
-  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                         run_id, words_digest, claimed_at, claimed_by, claim_durable)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), $12, $13)
   ON CONFLICT (said_key) DO UPDATE SET asked = bot_posts.asked + 1
   RETURNING id, outcome, (xmax = 0) AS fresh, chat_message_id, conversation_message_id, github_comment_id,
             github_created_at, request_post_id, created_at`;
+
+// A pending post whose claim has lapsed (or that never had one: a row from
+// before claims, or one the bot-voice machine wrote with its decision),
+// taken over by this ask: one UPDATE, so of two asks only one gets it. A
+// durable work's claim is taken over at once by that work asked again
+// ($4: the asker is durable work too, and the key names that work).
+const TAKE_OVER_SQL = `
+  UPDATE bot_posts
+     SET claimed_at = NOW(), claimed_by = $2, claim_durable = $4
+   WHERE id = $1 AND outcome = 'pending'
+     AND (claimed_at IS NULL OR claimed_at < NOW() - make_interval(secs => $3) OR ($4 AND claim_durable))
+  RETURNING id, outcome, chat_message_id, conversation_message_id, github_comment_id, github_created_at,
+            request_post_id, created_at`;
+
+// A claim let go (its send failed), so the retry takes the post up at once.
+const RELEASE_SQL = `
+  UPDATE bot_posts SET claimed_at = NULL
+   WHERE id = $1 AND outcome = 'pending' AND claimed_by = $2`;
+
+// The post's message, named on its record in the message's own transaction,
+// by the ask that still holds its claim (else the message rolls back).
+const RECORD_MESSAGE_SQL = `
+  UPDATE bot_posts SET chat_message_id = $2
+   WHERE id = $1 AND chat_message_id IS NULL AND ($3::text IS NULL OR claimed_by = $3::text)`;
+
+// A post whose message is on another thread than the one it was claimed
+// for (live.post's answer said on the change alone): its place is where its
+// message is, so the failure rule reads each thread's own notes.
+const MARK_PLACE_SQL = `
+  UPDATE bot_posts p
+     SET chat_message_id = COALESCE(p.chat_message_id, m.id), place_type = m.thread_type, place_ref = m.thread_ref
+    FROM chat_messages m
+   WHERE p.id = $1 AND m.id = $2 AND m.thread_type IS NOT NULL AND m.thread_ref IS NOT NULL`;
 
 const MARK_SQL = `
   UPDATE bot_posts
@@ -196,21 +246,30 @@ const SETTLE_SQL = `
    WHERE id = $1`;
 
 // What a place's bot said last as a note (NOTE_FAMILIES' kinds), still
-// shown: the failure rule's "the last failure note", when it is one.
+// shown: the failure rule's "the last failure note", when it is one. The
+// last by its message, which is the order people read them in (rows copied
+// from before keys were written in no particular order).
 const LAST_NOTE_SQL = `
   SELECT p.id, p.kind, p.chat_message_id, p.words_digest
     FROM bot_posts p
     JOIN chat_messages m ON m.id = p.chat_message_id AND m.deleted_at IS NULL
    WHERE p.app_id = $1 AND p.place_type = $2 AND p.place_ref = $3 AND p.outcome = 'said'
      AND p.kind = ANY($4::text[]) AND p.id <> $5
-   ORDER BY p.id DESC LIMIT 1`;
+   ORDER BY p.chat_message_id DESC LIMIT 1`;
 
-// Whether anybody but the bot has written in the thread since `messageId`.
+// Whether a person (anybody but the bot, and no other bot account) has
+// written since `messageId`: in the thread itself, or in a reply thread
+// under one of its messages from that one on (a reply under the failure
+// note itself, "try again", is where the voice answers too).
 const REPLIED_SINCE_SQL = `
   SELECT 1 FROM chat_messages r
-   WHERE r.app_id = $1 AND r.id > $2 AND r.deleted_at IS NULL
-     AND r.thread_type = $3 AND r.thread_ref = $4
+   WHERE r.app_id = $1 AND r.deleted_at IS NULL
      AND r.user_id IS NOT NULL AND ($5::int IS NULL OR r.user_id <> $5::int)
+     AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = r.user_id AND u.is_synthetic IS TRUE)
+     AND ((r.thread_type = $3 AND r.thread_ref = $4 AND r.id > $2)
+       OR (r.thread_type = 'message' AND r.thread_ref IN (
+             SELECT root.id FROM chat_messages root
+              WHERE root.app_id = $1 AND root.thread_type = $3 AND root.thread_ref = $4 AND root.id >= $2)))
    LIMIT 1`;
 
 const PROJECT_SQL = `
@@ -229,28 +288,77 @@ const SAID_SQL = `
     FROM bot_posts WHERE said_key = $1`;
 
 /**
- * Claim a post's key. Resolves { id, fresh, row }: `fresh` for a key asked
- * for the first time, else `row` is what the first ask recorded (its
- * outcome, its message, its GitHub comment). With nothing recorded (a
- * database that answered no row) it is fresh and unrecorded (`id` null).
- * `strict` (a durable caller, which retries): a failed claim throws, so the
- * retry claims it; otherwise it is said unrecorded, as before keys.
+ * Claim a post's key. Resolves { id, fresh, held, row, token }: `fresh` for
+ * a key asked for the first time, else `row` is what the first ask recorded
+ * (its outcome, its message, its GitHub comment). `held`: this ask holds
+ * the claim and says the post (a fresh key, or a pending one whose claim
+ * had lapsed, taken over); a pending post another pass holds is not held
+ * (`busy`: it is being said now). `durable` (the key names the durable
+ * work asking, which its runtime runs one attempt at a time): a claim an
+ * earlier attempt of it holds is taken over at once. `takeUp: false` (a
+ * post said at most once, ever: "looking"): a pending row is never taken
+ * over. With nothing
+ * recorded (a database that answered no row) it is fresh, held and
+ * unrecorded (`id` null). `strict` (a durable caller, which retries): a
+ * failed claim throws, so the retry claims it; otherwise it is said
+ * unrecorded, as before keys.
  */
-async function claim(db, spec, { strict = false } = {}) {
+async function claim(db, spec, { strict = false, takeUp = true, durable = false } = {}) {
   const place = spec.place || {};
+  const token = crypto.randomUUID();
   try {
     const { rows: [row] = [] } = await db.query(CLAIM_SQL, [
       spec.key, String(spec.kind), String(spec.subject), String(spec.version), String(place.type || 'none'),
       positive(spec.appId), place.ref == null || !Number.isFinite(Number(place.ref)) ? null : Number(place.ref),
-      positive(spec.issueNumber), positive(spec.sessionId), positive(spec.runId), spec.digest || null,
+      positive(spec.issueNumber), positive(spec.sessionId), positive(spec.runId), spec.digest || null, token, !!durable,
     ]);
-    if (!row) return { id: null, fresh: true, row: null };
-    return { id: Number(row.id), fresh: row.fresh === true || row.fresh === 't', row };
+    if (!row) return { id: null, fresh: true, held: true, row: null, token: null };
+    const id = Number(row.id);
+    if (row.fresh === true || row.fresh === 't') return { id, fresh: true, held: true, row, token };
+    if (row.outcome !== 'pending' || !takeUp) return { id, fresh: false, held: false, row, token: null };
+    const { rows: [taken] = [] } = await db.query(TAKE_OVER_SQL, [id, token, CLAIM_LEASE_SECONDS, !!durable]);
+    return taken
+      ? { id, fresh: false, held: true, row: { ...row, ...taken }, token }
+      : { id, fresh: false, held: false, row, token: null };
   } catch (err) {
     if (strict) throw err;
     log.warn('bot-post', 'Could not claim a post\'s key (saying it unrecorded)', { key: spec.key, err: err.message });
-    return { id: null, fresh: true, row: null };
+    return { id: null, fresh: true, held: true, row: null, token: null };
   }
+}
+
+/** Let go of a claim this ask holds on a pending post (its send failed), so a retry takes it up at once. Never throws. */
+async function release(db, claimed) {
+  if (!claimed?.id || !claimed.token) return;
+  await db.query(RELEASE_SQL, [claimed.id, claimed.token])
+    .catch((err) => log.warn('bot-post', 'Could not let go of a post\'s claim (it lapses)', { id: claimed.id, err: err.message }));
+}
+
+/** Pure: the error for a post another pass is saying now (`busy`), or took over meanwhile. */
+function busyError(key, why = 'post_busy') {
+  return Object.assign(new Error(`The post ${key} is being said by another pass`), { code: why });
+}
+
+/**
+ * The `onInsert` that names a claimed post's message on its record, in the
+ * message's own transaction (ws.sendBotMessage, sendSystemMessage), or null
+ * for an unrecorded post. A claim lost meanwhile (it lapsed, and another
+ * pass took the post over) throws `post_claim_lost`, which rolls the
+ * message back: the other pass says it.
+ */
+function onInsertOf(claimed, key = null) {
+  if (!claimed?.id) return null;
+  return async (tx, { messageId }) => {
+    const res = await tx.query(RECORD_MESSAGE_SQL, [claimed.id, messageId, claimed.token || null]);
+    if (res && res.rowCount === 0) throw busyError(key || `#${claimed.id}`, 'post_claim_lost');
+  };
+}
+
+/** Name a post's message, said on another thread than it was claimed for, and the post's place as that thread. Never throws. */
+async function markPlace(db, id, messageId) {
+  if (!id || !positive(messageId)) return;
+  await db.query(MARK_PLACE_SQL, [id, positive(messageId)])
+    .catch((err) => log.warn('bot-post', 'Could not record where a post was said', { id, err: err.message }));
 }
 
 /** Record what of a post has gone out (its message, its GitHub comment), as it goes. */
@@ -366,13 +474,23 @@ async function retireOlder(db, { appId, issueNumber = null, sessionId = null, ca
  *   issueNumber, sessionId, runId: what it is about (a request's post is
  *              projected into homeroom_bot_posts once said);
  *   mentions   usernames whose bell it rings (never parsed from the words);
- *   strict     a durable caller's: what could not be done throws.
+ *   strict     a durable caller's: a claim, record or projection that could
+ *              not be written throws too;
+ *   durable    the key names the durable work saying it (a run, a look, a
+ *              turn: one attempt at a time), whose next attempt takes over
+ *              at once a claim an earlier one left (claim);
+ *   soft       a fire-and-forget caller's (live.postOnProposal, and
+ *              live.post's copy on a change): a send that fails is answered
+ *              `failed`, and a post another pass is saying `busy`, rather
+ *              than thrown.
  * `deps`: { ws, notifications, dm }.
  *
  * Resolves { outcome, id, messageId, cardId, createdAt, again }: `said`,
  * `refused` (the place's rules), `repeat` (the failure rule) or `again`
- * (the key was said, or refused, before: nothing is said). Throws only when
- * `strict`.
+ * (the key was said, or refused, before: nothing is said). A send that
+ * fails throws (unless `soft`), with the post left pending and its claim
+ * let go, so the caller's retry says it; so does a post another pass is
+ * saying now (`post_busy`), whose retry finds it said.
  */
 async function post(db, spec, deps = {}) {
   const place = spec.place || {};
@@ -385,10 +503,11 @@ async function post(db, spec, deps = {}) {
   const words = String(spec.words || '').trim();
   const digest = digestOf(words);
   const strict = !!spec.strict;
+  const soft = !!spec.soft && !strict;
   if (place.type === 'dm') return postDm(db, { ...spec, kind, key, words }, deps);
   const thread = place.type && place.ref != null ? { type: String(place.type), ref: Number(place.ref) } : null;
   if (!thread || !words || !positive(spec.appId)) return { outcome: 'refused', id: null, messageId: null, why: 'nothing_to_say' };
-  const claimed = await claim(db, { ...spec, key, kind, subject, version, digest, place: thread }, { strict });
+  const claimed = await claim(db, { ...spec, key, kind, subject, version, digest, place: thread }, { strict, durable: !!spec.durable });
   const had = claimed.fresh ? null : claimed.row;
   if (had && had.outcome !== 'pending') {
     return {
@@ -396,6 +515,25 @@ async function post(db, spec, deps = {}) {
       messageId: positive(had.chat_message_id), githubCreatedAt: had.github_created_at || null,
     };
   }
+  // Pending, and another pass holds its claim: it is being said now.
+  if (!claimed.held) return busy(spec, { key, kind, thread, id: claimed.id, soft });
+  try {
+    return await sayClaimed(db, { spec, kind, key, words, digest, strict, soft, thread, claimed, had }, deps);
+  } catch (err) {
+    await release(db, claimed);
+    throw err;
+  }
+}
+
+/** A post another pass holds (or took over meanwhile): `busy` to a soft caller, thrown to any other, whose retry finds it said. */
+function busy(spec, { key, kind, thread, id, soft, why = 'post_busy' }) {
+  log.info('bot-post', 'Not said here: another pass is saying it', { appId: spec.appId, place: thread, kind, key, why });
+  if (soft) return { outcome: 'busy', id, messageId: null, busy: true };
+  throw busyError(key, why);
+}
+
+/** The rest of post(), for a post this ask holds the claim of. */
+async function sayClaimed(db, { spec, kind, key, words, digest, strict, soft, thread, claimed, had }, deps) {
   const projectIt = (messageId) => project(db, {
     requestPostId: had?.request_post_id, appId: spec.appId, issueNumber: spec.issueNumber, runId: spec.runId, kind,
     threadMessageId: messageId,
@@ -430,9 +568,7 @@ async function post(db, spec, deps = {}) {
     olderFailure = judged.last;
   }
   const ws = deps.ws || require('./ws');
-  const onInsert = claimed.id
-    ? (tx, { messageId }) => tx.query('UPDATE bot_posts SET chat_message_id = $2 WHERE id = $1', [claimed.id, messageId])
-    : null;
+  const onInsert = onInsertOf(claimed, key);
   let sent = null;
   try {
     sent = spec.author
@@ -445,12 +581,20 @@ async function post(db, spec, deps = {}) {
       : await ws.sendSystemMessage(db, Number(spec.appId), words, spec.msgType || 'system', spec.metadata || null, thread,
         onInsert ? { onInsert } : {});
   } catch (err) {
-    if (strict) throw err;
+    // Its claim lapsed while it was said, and another pass took it over:
+    // the message rolled back, and that pass says it.
+    if (err?.code === 'post_claim_lost') return busy(spec, { key, kind, thread, id: claimed.id, soft, why: err.code });
     log.warn('bot-post', 'Could not say a post', { appId: spec.appId, place: thread, kind, err: err.message });
+    // Left pending, its claim let go: the caller's retry says it.
+    if (!soft) throw err;
+    await release(db, claimed);
     return { outcome: 'failed', id: claimed.id, messageId: null, error: err.message };
   }
   const messageId = positive(sent?.id);
   if (!messageId) {
+    // Nothing to send after all (the transport refused it): left pending
+    // for an ask that can.
+    await release(db, claimed);
     if (strict) throw new Error(`Could not say the ${kind} post in its thread`);
     return { outcome: 'failed', id: claimed.id, messageId: null };
   }
@@ -489,8 +633,9 @@ async function post(db, spec, deps = {}) {
 
 /**
  * A post in a person's chat with the bot: homeroom-bot-dm.js sendDm, its
- * DM transport, which keys and records it in the message's transaction
- * (recordDm). The key is its idempotency key.
+ * DM transport, which keys it and records it in the message's own
+ * transaction (recordDm, from conversations.sendMessage's afterInsert). The
+ * key is its idempotency key, which also says it once.
  */
 async function postDm(db, spec, deps = {}) {
   const dm = deps.dm || require('./homeroom-bot-dm');
@@ -515,11 +660,13 @@ const RECORD_DM_SQL = `
 
 /**
  * Record a message in a person's chat with the bot (homeroom-bot-dm.js
- * sendDm), in its transaction when `db` is the message's: keyed by its
- * idempotency key in that conversation (or its message), `refused` for
- * request news the chat does not hear. Never throws.
+ * sendDm): keyed by its idempotency key in that conversation (or its
+ * message), `refused` for request news the chat does not hear. `strict`
+ * (written in the message's own transaction, which `db` is): a failure
+ * throws, so the message and its record commit together or not at all;
+ * otherwise (a duplicate's ask, a refusal) it never throws.
  */
-async function recordDm(db, { userId, conversationId = null, kind = 'dm', key = null, messageId = null, words = '', appId = null, issueNumber = null, outcome = 'said' }) {
+async function recordDm(db, { userId, conversationId = null, kind = 'dm', key = null, messageId = null, words = '', appId = null, issueNumber = null, outcome = 'said' }, { strict = false } = {}) {
   const subject = `dm:${Number(userId) || 0}`;
   const version = key ? `key-${key}` : positive(messageId) ? `msg-${positive(messageId)}` : freshVersion();
   try {
@@ -528,6 +675,7 @@ async function recordDm(db, { userId, conversationId = null, kind = 'dm', key = 
       positive(appId), positive(issueNumber), positive(messageId), digestOf(words), outcome,
     ]);
   } catch (err) {
+    if (strict) throw err;
     log.warn('bot-post', 'Could not record a message in a chat with the bot', { userId, kind, err: err.message });
   }
 }
@@ -582,7 +730,11 @@ module.exports = {
   freshVersion,
   wordsOf,
   digestOf,
+  CLAIM_LEASE_SECONDS,
   claim,
+  release,
+  onInsertOf,
+  markPlace,
   mark,
   settle,
   saidFor,

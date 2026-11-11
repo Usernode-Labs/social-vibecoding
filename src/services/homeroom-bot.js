@@ -5430,6 +5430,8 @@ async function postThreadNote({
     const out = await require('./bot-post').post(pool, {
       place: { type: 'issue', ref: Number(issueNumber) }, appId: app.id, kind, author: bot,
       words: require('./homeroom-bot-words').firstPerson(text), metadata, card, issueNumber, runId, version: at,
+      // Keyed by its run or look, whose next attempt takes it up at once.
+      durable: at != null,
     }, { ws });
     if (out.outcome === 'again' || out.outcome === 'repeat') return true;
     if (out.outcome !== 'said') return false;

@@ -1104,7 +1104,9 @@ test('the bot\'s replies in a proposal thread come from its own user, and are ne
   // #3288: its posts are ordinary messages now, so the guard is who wrote
   // them, not what kind of row they are.
   const src = read('src/services/homeroom-bot-live.js');
-  assert.match(src, /inThread\(own, \{ type: 'session', ref: Number\(proposalSessionId\) \}, null, 'system'\)/);
+  // Step 4's review: the copy on the change is its own post (bot-post.js),
+  // from the bot's user.
+  assert.match(src, /place: \{ type: 'session', ref: Number\(proposalSessionId\) \}, appId: app\.id, kind, words: own,\n\s+\.\.\.\(sender \? \{ author: sender \} : \{\}\),/);
   assert.match(src, /ws\.sendBotMessage\(pool, app\.id, \{\n\s+user: sender, content, metadata: meta, thread, \.\.\.\(withCard \? \{ card: withCard \} : \{\}\), \.\.\.\(onInsert \? \{ onInsert \} : \{\}\),/);
   const q = read('src/services/homeroom-bot.js');
   const activity = q.slice(q.indexOf('async function proposalThreadActivityByIssue'), q.indexOf('function latestOf'));

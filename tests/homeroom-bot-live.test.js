@@ -288,9 +288,12 @@ test('a post a restart cut short is finished, its comment found on the issue rat
   const h = postHarness();
   const at = '2026-10-14T10:00:00Z';
   const pending = (id, more = {}) => ({ id, fresh: false, outcome: 'pending', github_comment_id: null, chat_message_id: null, created_at: at, ...more });
+  // Its claim lapsed with the restart: this ask takes the row over.
+  const takeOver = /SET claimed_at = NOW\(\), claimed_by = \$2/;
   h.pool.query = async (sql, params) => {
     h.calls.queries.push({ sql: String(sql), params });
     if (/INSERT INTO bot_posts/.test(sql)) return { rows: [pending(41, { request_post_id: 61 })] };
+    if (takeOver.test(sql)) return { rows: [pending(41, { request_post_id: 61 })] };
     return { rows: [] };
   };
   h.github.fetchIssueComments = async () => ({ comments: [{ id: 990, body: 'Which feed?', createdAt: '2026-10-14T10:00:01Z' }] });
@@ -304,10 +307,18 @@ test('a post a restart cut short is finished, its comment found on the issue rat
   assert.deepEqual(again.params.slice(0, 3), [61, 990, 777]);
   // One whose comment had not gone out yet is commented now.
   const h2 = postHarness();
-  h2.pool.query = async (sql) => (/INSERT INTO bot_posts/.test(sql) ? { rows: [pending(42)] } : { rows: [] });
+  h2.pool.query = async (sql) => (/INSERT INTO bot_posts/.test(sql) || takeOver.test(sql) ? { rows: [pending(42)] } : { rows: [] });
   h2.github.fetchIssueComments = async () => ({ comments: [] });
   await live.post({ ...h2, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900, text: 'Which feed?' });
   assert.equal(h2.calls.comments.length, 1);
+  // One another pass is saying now (its claim held): nothing is sent here.
+  const h3 = postHarness();
+  h3.pool.query = async (sql) => (/INSERT INTO bot_posts/.test(sql) ? { rows: [pending(43)] } : { rows: [] });
+  const busy = await live.post({ ...h3, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900, text: 'Which feed?' });
+  assert.deepEqual([busy.again, busy.busy], [true, true]);
+  assert.deepEqual([h3.calls.comments.length, h3.calls.messages.length], [0, 0]);
+  await assert.rejects(live.post({ ...h3, app: APP, repo: REPO, issueNumber: 12, kind: 'question', runId: 900, text: 'Which feed?', strict: true }),
+    (err) => err.code === 'post_busy', 'a durable caller is told, and its retry finds it said');
 });
 
 test('"looking" is posted once per issue: a second claim sends nothing', async () => {

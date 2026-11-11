@@ -666,12 +666,14 @@ async function sendDm(pool, {
   // Step 4 (11 Nov 2026): this is the bot's posting function's transport for
   // a person's chat with it (services/bot-post.js): every message, and every
   // one its rules refuse, is recorded there, keyed by its idempotency key in
-  // this chat (which also says it once).
-  const record = (outcome, messageId = null, conversationId = null) => require('./bot-post').recordDm(pool, {
+  // this chat (which also says it once). A message sent is recorded in its
+  // own transaction (afterInsert, below: the two commit together); a
+  // duplicate's ask, and a refusal, after.
+  const record = (outcome, messageId = null, conversationId = null, db = pool, strict = false) => require('./bot-post').recordDm(db, {
     userId, conversationId, kind: postKind || metadata?.kind || 'dm', key: conversations.normalizeIdempotencyKey(idempotencyKey),
     messageId, words: content, outcome,
     appId: null, issueNumber: Number(metadata?.issueNumber) || null,
-  });
+  }, { strict });
   // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's news is
   // not a message. It is said on the request's own page (its question or
   // plan, built and up for a vote, a failure note, live), and
@@ -795,19 +797,21 @@ async function sendDm(pool, {
     const bot0 = base && base[META] && typeof base[META] === 'object' ? base[META] : {};
     return { ...(instead || {}), metadata: { ...(base || {}), [META]: { ...bot0, actionId: cardId } } };
   } : null;
+  let recorded = false;
   const hooks = {
     ...(greet || withCard ? { prepare: withCard || greet } : {}),
-    ...(hello?.kind || mail || opens || card ? {
-      afterInsert: async (db, { messageId: id }) => {
-        if (greeted) await db.query('UPDATE homeroom_bot_hellos SET message_id = $2 WHERE user_id = $1', [Number(userId), id]);
-        if (cardId) {
-          await db.query('UPDATE bot_cards SET message_id = $2 WHERE id = $1', [cardId, id]);
-          if (typeof card.onInsert === 'function') await card.onInsert(db, { cardId, messageId: id, conversationId: opened.conversationId });
-        }
-        if (mail) await require('../workflow/platform.ts').dmMailOwed(db, { userId: Number(userId), messageId: id, mail });
-        if (opens) toldOpen = await require('./project-opened').oweTold(db, { appSlug: metadata.appSlug, makerId: userId });
-      },
-    } : {}),
+    afterInsert: async (db, { messageId: id }) => {
+      if (greeted) await db.query('UPDATE homeroom_bot_hellos SET message_id = $2 WHERE user_id = $1', [Number(userId), id]);
+      if (cardId) {
+        await db.query('UPDATE bot_cards SET message_id = $2 WHERE id = $1', [cardId, id]);
+        if (typeof card.onInsert === 'function') await card.onInsert(db, { cardId, messageId: id, conversationId: opened.conversationId });
+      }
+      if (mail) await require('../workflow/platform.ts').dmMailOwed(db, { userId: Number(userId), messageId: id, mail });
+      if (opens) toldOpen = await require('./project-opened').oweTold(db, { appSlug: metadata.appSlug, makerId: userId });
+      // Its record (services/bot-post.js), committed with it.
+      await record('said', id, opened.conversationId, db, true);
+      recorded = true;
+    },
   };
   const send = (withCards) => conversations.sendMessage(pool, { id: bot.id }, opened.conversationId,
     withCards.length
@@ -830,7 +834,8 @@ async function sendDm(pool, {
     return null;
   }
   const messageId = result.messageId ?? result.message?.id ?? null;
-  await record('said', messageId, opened.conversationId);
+  // A duplicate (its key sent before) wrote nothing: it is asked again.
+  if (!recorded) await record('said', messageId, opened.conversationId);
   // #4396: after the commit, the bells of the members its "live" told
   // (their notices, phone pushes and emails are owed in the message's own
   // transaction: afterInsert).

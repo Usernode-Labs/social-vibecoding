@@ -83,6 +83,8 @@ function db(rows = {}) {
       const s = String(sql);
       queries.push({ s, params });
       if (/INSERT INTO bot_posts/.test(s)) return { rows: [rows.claim || { id: 5, fresh: true, outcome: 'pending' }] };
+      // A pending post's lapsed claim, taken over (or held by another pass).
+      if (/SET claimed_at = NOW\(\), claimed_by = \$2/.test(s)) return { rows: rows.held ? [] : [rows.claim || {}] };
       if (/FROM bot_posts p\s+JOIN chat_messages m/.test(s)) return { rows: rows.last ? [rows.last] : [] };
       if (/SELECT 1 FROM chat_messages r/.test(s)) return { rows: rows.replied ? [{}] : [] };
       if (/INSERT INTO homeroom_bot_posts/.test(s)) return { rows: [{ id: 80 }] };
@@ -168,6 +170,68 @@ test('post: the same failure words with nobody writing since say nothing; new wo
   assert.equal((await botPost.post(after, spec, { ws: ws4 })).outcome, 'said');
 });
 
+test('post: a send that fails throws, its claim let go, so the caller\'s retry says it; a soft caller is told `failed`', async () => {
+  const spec = { place: { type: 'issue', ref: 12 }, appId: 3, kind: 'reply', words: 'Here is the answer.', author: BOT, issueNumber: 12, version: 'turn-a' };
+  const down = { async sendBotMessage() { throw new Error('room down'); } };
+  const d = db();
+  await assert.rejects(botPost.post(d, spec, { ws: down }), /room down/, 'the voice, a follow-up: their work is retried');
+  const released = d.queries.filter((q) => /SET claimed_at = NULL/.test(q.s));
+  assert.equal(released.length, 1, 'its claim let go, so the retry takes it up at once');
+  assert.deepEqual(settled(d), [], 'left pending: never settled as said');
+  const soft = db();
+  const out = await botPost.post(soft, { ...spec, soft: true }, { ws: down });
+  assert.deepEqual([out.outcome, out.error], ['failed', 'room down']);
+  assert.equal(soft.queries.filter((q) => /SET claimed_at = NULL/.test(q.s)).length, 1);
+});
+
+test('post: a pending post another pass is saying is not said again here: thrown, or `busy` to a soft caller', async () => {
+  const spec = { place: { type: 'issue', ref: 12 }, appId: 3, kind: 'question', words: 'Which one?', author: BOT, issueNumber: 12, version: 'run-9' };
+  const claim = { id: 5, fresh: false, outcome: 'pending', chat_message_id: null };
+  const ws = wsSent();
+  await assert.rejects(botPost.post(db({ claim, held: true }), spec, { ws }), (err) => err.code === 'post_busy');
+  const soft = await botPost.post(db({ claim, held: true }), { ...spec, soft: true }, { ws });
+  assert.deepEqual([soft.outcome, soft.busy], ['busy', true]);
+  assert.equal(ws.sent.length, 0, 'nothing sent');
+  // Its claim lapsed (a crash): taken over, by one conditional UPDATE, and said.
+  const lapsed = db({ claim });
+  const up = await botPost.post(lapsed, spec, { ws });
+  assert.equal(up.outcome, 'said');
+  const take = lapsed.queries.find((q) => /SET claimed_at = NOW\(\), claimed_by = \$2/.test(q.s));
+  assert.match(take.s, /outcome = 'pending'\s+AND \(claimed_at IS NULL OR claimed_at < NOW\(\) - make_interval\(secs => \$3\) OR \(\$4 AND claim_durable\)\)/);
+  assert.deepEqual([take.params[0], take.params[2], take.params[3]], [5, botPost.CLAIM_LEASE_SECONDS, false],
+    'only once its claim lapsed: no durable work of its own asks');
+  assert.equal(take.params[1], lapsed.queries[0].params[11], 'under the token its ask claimed with');
+});
+
+test('post: a message written after its claim was lost rolls back, and the pass that took it over says it', async () => {
+  const spec = { place: { type: 'issue', ref: 12 }, appId: 3, kind: 'question', words: 'Which one?', author: BOT, issueNumber: 12, version: 'run-9' };
+  // The room runs the record in the message's transaction; the record
+  // finds the claim another pass's now.
+  const tx = { async query() { return { rowCount: 0, rows: [] }; } };
+  const ws = { async sendBotMessage(_db, _app, msg) { await msg.onInsert(tx, { messageId: 41 }); return { id: 41 }; } };
+  await assert.rejects(botPost.post(db(), spec, { ws }), (err) => err.code === 'post_claim_lost');
+  const soft = await botPost.post(db(), { ...spec, soft: true }, { ws });
+  assert.equal(soft.outcome, 'busy');
+  // The record it writes names the message only for the claim's holder.
+  const recorded = [];
+  const ok = { async query(sql, params) { recorded.push({ sql, params }); return { rowCount: 1, rows: [] }; } };
+  const ws2 = { async sendBotMessage(_db, _app, msg) { await msg.onInsert(ok, { messageId: 42 }); return { id: 42 }; } };
+  const d = db();
+  assert.equal((await botPost.post(d, spec, { ws: ws2 })).outcome, 'said');
+  assert.match(recorded[0].sql, /chat_message_id IS NULL AND \(\$3::text IS NULL OR claimed_by = \$3::text\)/);
+  assert.deepEqual(recorded[0].params, [5, 42, d.queries[0].params[11]]);
+});
+
+test('the failure rule reads the last note by its message, and a reply under any message since it', () => {
+  const src = read('src/services/bot-post.js');
+  const last = src.slice(src.indexOf('const LAST_NOTE_SQL'), src.indexOf('const REPLIED_SINCE_SQL'));
+  assert.match(last, /ORDER BY p\.chat_message_id DESC LIMIT 1/);
+  const replied = src.slice(src.indexOf('const REPLIED_SINCE_SQL'), src.indexOf('const PROJECT_SQL'));
+  assert.match(replied, /r\.thread_type = 'message' AND r\.thread_ref IN \(/);
+  assert.match(replied, /root\.thread_type = \$3 AND root\.thread_ref = \$4 AND root\.id >= \$2/);
+  assert.match(replied, /u\.is_synthetic IS TRUE/, 'a bot\'s message is nobody replying');
+});
+
 test('post: a database that answers nothing, or fails, still says it (unrecorded), unless the caller is strict', async () => {
   const ws = wsSent();
   const silent = { async query() { return { rows: [] }; } };
@@ -223,10 +287,15 @@ test('the six ways of saying once, and the failure rewrites, are gone', () => {
     "look.once('handOffRepeat'"]) {
     assert.ok(!bot.includes(gone), `homeroom-bot.js still has ${gone}`);
   }
-  // The voice's reply is found by its key, not by scanning for its mark.
+  // The voice's reply is found by its key. Its mark is read only when the
+  // key names none, for a turn retried across the release (two days, one
+  // release: TURN_MARK_SQL).
   const voice = read('src/services/homeroom-bot-voice.js');
-  assert.doesNotMatch(voice, /WHERE app_id = \$1 AND user_id = \$2 AND metadata->'homeroomBot'->'turn'->>'key' = \$3/);
   assert.match(voice, /FROM bot_posts p\s+JOIN chat_messages m ON m\.id = p\.chat_message_id/);
+  const marks = voice.match(/metadata->'homeroomBot'->'turn'->>'key' = \$3/g) || [];
+  assert.equal(marks.length, 1, 'one read of the mark');
+  assert.match(voice, /const TURN_MARK_SQL = `[^`]*->>'key' = \$3\s+AND created_at > NOW\(\) - INTERVAL '2 days'/);
+  assert.match(voice, /const m = keyed \|\| \(await pool\.query\(TURN_MARK_SQL, /);
   // A held answer is claimed in bot_posts, never a pending projection row.
   const machine = read('src/workflow/bot-voice/machine.ts');
   assert.doesNotMatch(machine, /INSERT INTO homeroom_bot_posts/);

@@ -163,4 +163,252 @@ test('the posting function against the full schema', { timeout: 120000 }, async 
     });
     assert.equal(again.again, true, 'said before the release: not said again');
   });
+
+  // ── Step 4's review (11 Nov 2026) ─────────────────────────────────────
+
+  await t.test('two asks at once say a post once: the second finds its claim held; a lapsed claim is taken over', async () => {
+    const spec = {
+      place: { type: 'issue', ref: 30 }, appId: app.id, kind: 'question', words: 'Which size?', author: bot,
+      issueNumber: 30, version: 'run-2',
+    };
+    const key = `question:request:${app.id}-30:run-2`;
+    // The first ask holds the claim while its message is being written.
+    let entered;
+    const sending = new Promise((resolve) => { entered = resolve; });
+    let open;
+    const gate = new Promise((resolve) => { open = resolve; });
+    const slow = { ...ws, async sendBotMessage(db, appId, msg) { entered(); await gate; return ws.sendBotMessage(db, appId, msg); } };
+    const first = botPost.post(pool, spec, { ws: slow });
+    await sending;
+    const held = await row(key);
+    assert.equal(held.outcome, 'pending');
+    assert.ok(held.claimed_at && held.claimed_by, 'held while it is said');
+    await assert.rejects(botPost.post(pool, spec, { ws }), (err) => err.code === 'post_busy', 'a durable caller is told, and retries');
+    const soft = await botPost.post(pool, { ...spec, soft: true }, { ws });
+    assert.equal(soft.outcome, 'busy');
+    open();
+    const said = await first;
+    assert.equal(said.outcome, 'said');
+    const n = await one(`SELECT COUNT(*)::int AS n FROM chat_messages WHERE thread_type = 'issue' AND thread_ref = 30`);
+    assert.equal(n.n, 1, 'said once');
+    assert.equal((await botPost.post(pool, spec, { ws })).outcome, 'again', 'and the retry finds it said');
+
+    // A pending post a crash left: once its claim has lapsed, the next ask
+    // takes it over (one conditional UPDATE) and says it; before, it waits.
+    const crashed = { ...spec, place: { type: 'issue', ref: 33 }, issueNumber: 33, version: 'run-3' };
+    const crashedKey = `question:request:${app.id}-33:run-3`;
+    const left = await botPost.claim(pool, {
+      key: crashedKey, kind: 'question', subject: `request:${app.id}-33`, version: 'run-3',
+      place: { type: 'issue', ref: 33 }, appId: app.id, issueNumber: 33,
+    });
+    assert.equal(left.held, true);
+    await assert.rejects(botPost.post(pool, crashed, { ws }), (err) => err.code === 'post_busy');
+    await pool.query(`UPDATE bot_posts SET claimed_at = NOW() - INTERVAL '10 minutes' WHERE said_key = $1`, [crashedKey]);
+    const taken = await botPost.post(pool, crashed, { ws });
+    assert.equal(taken.outcome, 'said');
+    assert.notEqual((await row(crashedKey)).claimed_by, left.token, 'under the new ask\'s claim');
+    // Two asks taking one lapsed claim over: exactly one gets it.
+    await pool.query(`UPDATE bot_posts SET outcome = 'pending', claimed_at = NOW() - INTERVAL '10 minutes' WHERE said_key = $1`, [crashedKey]);
+    const claimSpec = {
+      key: crashedKey, kind: 'question', subject: `request:${app.id}-33`, version: 'run-3',
+      place: { type: 'issue', ref: 33 }, appId: app.id, issueNumber: 33,
+    };
+    const both = await Promise.all([botPost.claim(pool, claimSpec), botPost.claim(pool, claimSpec)]);
+    assert.deepEqual(both.map((c) => c.held).sort(), [false, true]);
+
+    // A durable work's own post (keyed by its run): its next attempt after
+    // a crash takes the claim its last one left at once, as before claims
+    // (its runtime runs one attempt at a time); anybody else waits.
+    const runSpec = { ...spec, place: { type: 'issue', ref: 43 }, issueNumber: 43, version: 'run-4', durable: true };
+    const runKey = `question:request:${app.id}-43:run-4`;
+    await botPost.claim(pool, {
+      key: runKey, kind: 'question', subject: `request:${app.id}-43`, version: 'run-4',
+      place: { type: 'issue', ref: 43 }, appId: app.id, issueNumber: 43,
+    }, { durable: true });
+    assert.equal((await row(runKey)).claim_durable, true);
+    await assert.rejects(botPost.post(pool, { ...runSpec, durable: false }, { ws }), (err) => err.code === 'post_busy');
+    assert.equal((await botPost.post(pool, runSpec, { ws })).outcome, 'said', 'its own work, asked again, says it');
+  });
+
+  await t.test('a send that fails leaves its post pending, its claim let go: the retry says it, once', async () => {
+    const spec = {
+      place: { type: 'issue', ref: 31 }, appId: app.id, kind: 'reply', words: 'Here it is.', author: bot,
+      issueNumber: 31, version: 'turn-b', record: false,
+    };
+    const key = `reply:request:${app.id}-31:turn-b`;
+    const down = { ...ws, async sendBotMessage() { throw new Error('room down'); } };
+    await assert.rejects(botPost.post(pool, spec, { ws: down }), /room down/);
+    const left = await row(key);
+    assert.deepEqual([left.outcome, left.chat_message_id, left.claimed_at], ['pending', null, null]);
+    const out = await botPost.post(pool, spec, { ws });
+    assert.equal(out.outcome, 'said');
+    const n = await one(`SELECT COUNT(*)::int AS n FROM chat_messages WHERE thread_type = 'issue' AND thread_ref = 31`);
+    assert.equal(n.n, 1);
+
+    // The voice's say keeps its work's retry: a failed send throws, and the
+    // retried turn says it once, found by its key after.
+    const voice = require('../src/services/homeroom-bot-voice');
+    const place = { type: 'issue', ref: 32 };
+    await assert.rejects(voice.say(pool, {
+      app, place, bot, text: 'Yes, it does.', answer: [], mark: { key: 'turn-32' }, suggest: false, deps: { ws: down },
+    }), /room down/);
+    assert.equal(await voice.replyOf(pool, { app, place, bot, turnKey: 'turn-32' }), null, 'nothing said yet');
+    const sent = await voice.say(pool, {
+      app, place, bot, text: 'Yes, it does.', answer: [], mark: { key: 'turn-32' }, suggest: false, deps: { ws },
+    });
+    assert.ok(sent?.id);
+    assert.equal((await voice.replyOf(pool, { app, place, bot, turnKey: 'turn-32' })).id, sent.id);
+    // A turn retried across the release posted its reply before keys: its
+    // mark is read when the key names none (for one release).
+    const before = await one(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
+       VALUES ($1, $2, 'Said before keys.', 'message', $3, 'issue', 34) RETURNING id`,
+      [app.id, bot.id, JSON.stringify({ homeroomBot: { kind: 'voice', turn: { key: 'turn-old', through: 7 } } })]);
+    assert.deepEqual(await voice.replyOf(pool, { app, place: { type: 'issue', ref: 34 }, bot, turnKey: 'turn-old' }),
+      { id: before.id, through: 7 });
+  });
+
+  await t.test('"looking" is said at most once, ever: a second ask never takes its row up', async () => {
+    const live = require('../src/services/homeroom-bot-live');
+    let comments = 0;
+    const github = { async createIssueComment() { comments += 1; return { id: 7000 + comments }; } };
+    // A pass began it and is gone (or is still saying it).
+    await botPost.claim(pool, {
+      key: `looking:request:${app.id}-35:once`, kind: 'looking', subject: `request:${app.id}-35`, version: 'once',
+      place: { type: 'issue', ref: 35 }, appId: app.id, issueNumber: 35,
+    });
+    await pool.query(`UPDATE bot_posts SET claimed_at = NOW() - INTERVAL '1 day' WHERE said_key = $1`, [`looking:request:${app.id}-35:once`]);
+    const out = await live.post({
+      pool, github, ws, app, repo: { owner: 'a', repo: 'b' }, issueNumber: 35, kind: 'looking', text: live.lookingText(), sender: bot,
+    });
+    assert.equal(out.again, true);
+    assert.equal(comments, 0, 'no second comment');
+  });
+
+  await t.test('a post from before the release keeps its DM relay\'s key, and its copy on a change is said once', async () => {
+    const live = require('../src/services/homeroom-bot-live');
+    const dm = require('../src/services/homeroom-bot-dm');
+    const relayed = [];
+    const relay = dm.relayIssuePost;
+    dm.relayIssuePost = async (args) => { relayed.push(args.postKey); return null; };
+    t.after(() => { dm.relayIssuePost = relay; });
+    const run = await one(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, verdict, mode) VALUES ($1, 36, 'ready', 'live') RETURNING id`, [app.id]);
+    const before = await one(
+      `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind, pending) VALUES ($1, 36, $2, 'question', TRUE) RETURNING id`,
+      [app.id, run.id]);
+    await pool.query(fs.readFileSync(path.join(__dirname, '..', 'src/db/migrations/bot-posts.sql'), 'utf8'));
+    const github = { async createIssueComment() { return { id: 7100 }; } };
+    const out = await live.post({
+      pool, github, ws, app, repo: { owner: 'a', repo: 'b' }, issueNumber: 36, kind: 'question', runId: run.id,
+      text: 'Which colour?', sender: bot, dm: { question: 'Which colour?' },
+    });
+    assert.equal(out.thread, true);
+    assert.deepEqual(relayed, [`hrbot-post-${before.id}`], 'the key its relay was sent by before the release');
+    const projected = await one('SELECT pending FROM homeroom_bot_posts WHERE id = $1', [before.id]);
+    assert.equal(projected.pending, null, 'the row from before, finished');
+    relayed.length = 0;
+    await live.post({
+      pool, github, ws, app, repo: { owner: 'a', repo: 'b' }, issueNumber: 37, kind: 'question', runId: run.id,
+      text: 'Which size?', sender: bot, dm: { question: 'Which size?' },
+    });
+    assert.match(relayed[0], /^bot-post-\d+$/, 'a post of this release relays by its own');
+
+    // A copy on a change (no request page of its own) is its own post: a
+    // strict retry, after a GitHub comment failed, never says it twice.
+    let down = true;
+    const flaky = {
+      async createIssueComment() { if (down) throw Object.assign(new Error('GitHub is down'), { status: 502 }); return { id: 7200 }; },
+      async listIssueComments() { return []; },
+    };
+    const announce = () => live.post({
+      pool, github: flaky, ws, app, repo: { owner: 'a', repo: 'b' }, issueNumber: 38, kind: 'live', runId: run.id,
+      text: 'It\'s live.', sender: bot, proposalSessionId: 601, skipIssueThread: true, strict: true,
+    });
+    await assert.rejects(announce(), /GitHub is down/);
+    down = false;
+    const done = await announce();
+    assert.equal(done.github, true);
+    const copies = await one(`SELECT COUNT(*)::int AS n FROM chat_messages WHERE thread_type = 'session' AND thread_ref = 601`);
+    assert.equal(copies.n, 1, 'the copy on the change, once');
+
+    // Said on the change alone: its place is the change's thread.
+    const only = await live.post({
+      pool, github, ws, app, repo: { owner: 'a', repo: 'b' }, issueNumber: 39, kind: 'followup_failed', runId: run.id,
+      text: 'Homeroom bot couldn\'t do it.', sender: bot, proposalSessionId: 602, onlyProposal: true,
+    });
+    assert.ok(only.messageId);
+    const placed = await row(`followup_failed:request:${app.id}-39:run-${run.id}`);
+    assert.deepEqual([placed.place_type, Number(placed.place_ref), placed.chat_message_id], ['session', 602, only.messageId]);
+  });
+
+  await t.test('the last failure note is the newest message; the review\'s migration places and digests the posts from before', async () => {
+    const live = require('../src/services/homeroom-bot-live');
+    const words = 'I couldn\'t finish building this.';
+    const note = async (content) => one(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref) VALUES ($1, $2, $3, 'message', 'issue', 41) RETURNING id`,
+      [app.id, bot.id, content]);
+    // Copied from before in no particular order: the newer message has the
+    // older row.
+    const older = await note('I couldn\'t finish writing the plan.');
+    const newer = await note(words);
+    const insert = (key, messageId, digest) => pool.query(
+      `INSERT INTO bot_posts (said_key, kind, subject, version, place_type, app_id, place_ref, issue_number, chat_message_id,
+                              words_digest, outcome)
+       VALUES ($1, 'build_failed', $2, $1, 'issue', $3, 41, 41, $4, $5, 'said')`,
+      [key, `request:${app.id}-41`, app.id, messageId, digest]);
+    await insert('old-a', newer.id, null);
+    await insert('old-b', older.id, botPost.digestOf('I couldn\'t finish writing the plan.'));
+    // A note said on a change, copied as the request's.
+    const onChange = await one(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref) VALUES ($1, $2, 'On the change.', 'message', 'session', 603) RETURNING id`,
+      [app.id, bot.id]);
+    await pool.query(
+      `INSERT INTO bot_posts (said_key, kind, subject, version, place_type, app_id, place_ref, issue_number, chat_message_id, outcome)
+       VALUES ('old-c', 'followup_failed', $1, 'old-c', 'issue', $2, 41, 41, $3, 'said')`,
+      [`request:${app.id}-41`, app.id, onChange.id]);
+    await pool.query(fs.readFileSync(path.join(__dirname, '..', 'src/db/migrations/bot-posts-claims.sql'), 'utf8'));
+    assert.equal((await row('old-a')).words_digest, botPost.digestOf(words), 'digested as digestOf does');
+    const moved = await row('old-c');
+    assert.deepEqual([moved.place_type, Number(moved.place_ref)], ['session', 603], 'placed where its message is');
+    // So the same failure after the release is a repeat of the newest note.
+    const again = await live.post({
+      pool, github: { async createIssueComment() { throw new Error('not said'); } }, ws, app, repo: { owner: 'a', repo: 'b' },
+      issueNumber: 41, kind: 'build_failed', text: 'Homeroom bot couldn\'t finish building this.', sender: bot,
+    });
+    assert.equal(again.repeated, true);
+    assert.equal(again.messageId, newer.id);
+  });
+
+  await t.test('a message in a person\'s chat with the bot is recorded in its own transaction', async () => {
+    const dm = require('../src/services/homeroom-bot-dm');
+    const ada = await one(`INSERT INTO users (username, password, has_platform_access) VALUES ('bp_ada', 'x', TRUE) RETURNING id`);
+    const sent = await dm.sendDm(pool, { bot, userId: ada.id, content: 'Hello there.', idempotencyKey: 'hello-ada-1', postKind: 'reply' });
+    assert.ok(sent?.messageId);
+    const said = await row(`reply:dm:${ada.id}:key-hello-ada-1`);
+    assert.deepEqual([said.outcome, Number(said.conversation_message_id), said.asked], ['said', Number(sent.messageId), 1]);
+    const twice = await dm.sendDm(pool, { bot, userId: ada.id, content: 'Hello there.', idempotencyKey: 'hello-ada-1', postKind: 'reply' });
+    assert.equal(twice.duplicate, true);
+    assert.equal((await row(`reply:dm:${ada.id}:key-hello-ada-1`)).asked, 2, 'its duplicate asked again, after');
+  });
+
+  await t.test('a held answer decided before the release is keyed by its row, which it finishes: counted once', async () => {
+    const holds = require('../src/services/homeroom-bot-holds');
+    await pool.query(`UPDATE apps SET repo_url = 'https://github.com/a/b' WHERE id = $1`, [app.id]);
+    const before = await one(
+      `INSERT INTO homeroom_bot_posts (app_id, issue_number, kind, pending) VALUES ($1, 42, 'going_ahead', TRUE) RETURNING id`, [app.id]);
+    let fail = true;
+    const github = { async createIssueComment() { if (fail) throw Object.assign(new Error('GitHub is down'), { status: 502 }); return { id: 7300 }; }, async listIssueComments() { return []; } };
+    const deps = { github, ws, botSvc: { parseRepo: () => ({ owner: 'a', repo: 'b' }) } };
+    const input = { appId: app.id, issueNumber: 42, kind: 'going_ahead', text: 'Homeroom bot is taking this up now, as asked.' };
+    await assert.rejects(holds.sayHeld(pool, { ...input, deps }), /GitHub is down/);
+    fail = false;
+    await holds.sayHeld(pool, { ...input, deps });
+    const rows = (await pool.query(`SELECT id, pending FROM homeroom_bot_posts WHERE app_id = $1 AND issue_number = 42`, [app.id])).rows;
+    assert.deepEqual(rows.map((r) => [r.id, r.pending]), [[before.id, null]], 'one row, finished');
+    const said = await row(`going_ahead:request:${app.id}-42:post-${before.id}`);
+    assert.deepEqual([said.outcome, said.request_post_id], ['said', before.id]);
+    const n = await one(`SELECT COUNT(*)::int AS n FROM chat_messages WHERE thread_type = 'issue' AND thread_ref = 42`);
+    assert.equal(n.n, 1, 'said once across the retry');
+  });
 });
