@@ -5351,6 +5351,53 @@ const AppView = {
   // remaining height with the composer pinned to the bottom.
   _devTopic: null, // { kind: 'issue'|'proposal'|'gov', id } while open
 
+  // #6608: what the topic head was last really painted for — the kind, the
+  // id and the project's slug. It is how a repaint tells "this topic closed
+  // or merged away mid-view" (keep the last render readable) from "the route
+  // now names a different topic that is not loaded yet" (never show the
+  // previous change's body under the new heading).
+  _paintedTopic: null,
+
+  // #6608: the route this document is on, as the panel's head store reports
+  // it (`App._currentRoute`, else the hash without '#' and query, else a
+  // clean app path). A head published for one route is never taken for
+  // another's.
+  _topicRoute() {
+    const current = typeof App !== 'undefined' && App ? App._currentRoute : '';
+    const raw = current || (typeof location !== 'undefined' ? (location.hash || '') : '');
+    const route = String(raw || '').replace(/^#/, '').split('?')[0];
+    if (route) return route;
+    const path = typeof location !== 'undefined' ? String(location.pathname || '') : '';
+    return /^\/app\/./.test(path) ? path.replace(/^\/+/, '').replace(/\/+$/, '') : '';
+  },
+
+  // #6608: the route names a different topic whose row is not in hand yet.
+  // Drop the previous page whole — its body, its votes, its events and its
+  // stream — rather than leaving it under the new heading for the seconds a
+  // cross-project read takes. A topic that is still on screen and only left
+  // the lists (closed or merged mid-view) keeps its last render, and a topic
+  // whose row IS in hand paints on the very next line, so nothing is cleared
+  // for either.
+  _clearTopicHeadBody() {
+    const t = AppView._devTopic;
+    if (!t) return;
+    const slug = (AppView.appData && AppView.appData.slug) || null;
+    const painted = AppView._paintedTopic;
+    if (painted && painted.kind === t.kind && painted.id === t.id
+        && painted.slug === slug) return;
+    if (AppView._findTopicItem()) return;
+    const react = AppView._reactDevBoard();
+    if (react) react.publishTopicHead?.({ card: null, body: null, item: null, loading: true });
+    // The previous thread's stream goes with the body: the same pair
+    // `mountThread` runs before a remount (GroupChat.renderThread).
+    if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) {
+      const prev = document.getElementById('gc-thread-messages');
+      if (prev) GroupChat._react?.()?.unmountTranscript?.(prev);
+      GroupChat.unmountThread();
+    }
+    AppView._paintedTopic = null;
+  },
+
   // #1036: the address of the app's dev page — what every "← Back" in a
   // dev sub-view (topic, general chat) points at as a real anchor, so a
   // cmd-click opens the dev page in a new tab instead of leaving this
@@ -5370,6 +5417,7 @@ const AppView = {
       const pending = { kind: 'proposal', id: null, pr: ref.pr };
       AppView._devTopic = pending;
       AppView._reactDevBoard()?.mountTopicSubView(content);
+      AppView._clearTopicHeadBody();
       const id = await AppView._sessionIdForChange(ref.pr);
       if (AppView._devTopic !== pending || !document.getElementById('dev-topic-thread')) return;
       if (!id) {
@@ -5392,6 +5440,7 @@ const AppView = {
       const asked = ref.pr ? { kind: ref.kind, id: ref.id, pr: ref.pr } : { kind: ref.kind, id: ref.id };
       AppView._devTopic = asked;
       AppView._reactDevBoard()?.mountTopicSubView(content);
+      AppView._clearTopicHeadBody();
       const home = await AppView._requestHomeOf(ref.id);
       if (AppView._devTopic !== asked) return;
       if (home) {
@@ -5412,6 +5461,7 @@ const AppView = {
       const asked = { kind: 'gov', id: ref.id };
       AppView._devTopic = asked;
       AppView._reactDevBoard()?.mountTopicSubView(content);
+      AppView._clearTopicHeadBody();
       const closeHome = await AppView._closeVoteHomeOf(ref.id);
       if (AppView._devTopic !== asked) return;
       if (closeHome) {
@@ -5478,6 +5528,9 @@ const AppView = {
     // scrolls with the page and carries the NavLink-guarded click; the header
     // draws no arrow on this route. See features/dev-board/topic-frame.tsx.
     AppView._reactDevBoard()?.mountTopicSubView(content);
+    // #6608: a different topic that is not loaded yet drops the previous
+    // page now, rather than after this project's reads land.
+    AppView._clearTopicHeadBody();
 
     // THE APP'S RECORD MAY NOT BE HERE — the #2879 case, on a topic page. A
     // failed or superseded GET /api/apps/<slug> leaves AppView.appData empty
@@ -6157,8 +6210,15 @@ const AppView = {
     const changePage = t.kind === 'session' || t.kind === 'proposal';
     const head = document.getElementById('gc-thread-head');
     if (!head) return;
-    // Closed / merged away mid-view: keep the last render readable.
-    if (!item) return;
+    // #6608: no row for this topic. If it is the topic already painted (it
+    // closed or merged away mid-view), keep the last render readable. If the
+    // route now names a DIFFERENT topic that is not loaded yet, clear it —
+    // otherwise the previous change's title, votes, events and stream stay
+    // under the new heading until this project's reads land.
+    if (!item) {
+      AppView._clearTopicHeadBody();
+      return;
+    }
     // #4455: every topic's head, a change's included, is the thread panel's
     // `#gc-thread-head` (thread-shell.tsx), mounted per paint below.
 
@@ -6199,9 +6259,22 @@ const AppView = {
       // #6440: a governance vote's page is the thread layout a request's is,
       // and its head draws the row itself (governance-head.tsx), so the page
       // publishes the row and no card.
+      // #6608: the head names the project it was painted for and the route
+      // it was published on, so a late publish from a page the panel has
+      // left can never take on the new route's pill or thread list.
+      const slug = (AppView.appData && AppView.appData.slug) || null;
+      const route = AppView._topicRoute();
       react.publishTopicHead(t.kind === 'gov'
-        ? { card: null, body: { decision: item }, item: null }
-        : { card, body, item: t.kind === 'session' || t.kind === 'proposal' ? item : null });
+        ? { card: null, body: { decision: item }, item: null, slug, route, loading: false }
+        : {
+          card,
+          body,
+          item: t.kind === 'session' || t.kind === 'proposal' ? item : null,
+          slug,
+          route,
+          loading: false,
+        });
+      AppView._paintedTopic = { kind: t.kind, id: t.id, slug };
     }
     // The Explore pills read `aiEnabledStore` now, so the DOM pass that used
     // to dim them per paint is gone; this refreshes the one fact they read.
@@ -10246,6 +10319,10 @@ const AppView = {
     AppView._editingSessionTitle = null;
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
     AppView._devTopic = { kind, id };
+    // #6608: switching the panel to another project's change must not leave
+    // the previous change's body, votes, events or stream under the new
+    // heading while this project's reads are in flight.
+    AppView._clearTopicHeadBody();
     AppView._devTopicInPanel = true;
     AppView._followPanelAddress(kind, id);
     if (kind === 'proposal' || kind === 'session') window.Notifications?.markProposalSeen?.(id);
@@ -10291,7 +10368,7 @@ const AppView = {
     if (kind && id && (!t || t.kind !== kind || t.id !== id)) return;
     AppView._devTopicInPanel = false;
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
-    if (typeof App === 'undefined' || App.currentSubTab !== 'topic') AppView._devTopic = null;
+    if (typeof App === 'undefined' || App.currentSubTab !== 'topic') { AppView._devTopic = null; AppView._paintedTopic = null; }
   },
 
   // ── Full-screen general chat sub-view ───────────────────────────────
