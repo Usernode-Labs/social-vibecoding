@@ -2777,6 +2777,18 @@ function mergedRowSelect() {
            rv.pr_number as revert_pr_number,
            rv.pr_url    as revert_pr_url,
            rv.status    as revert_status,
+           -- #6593: the integration record and the held-merge times, so the
+           -- change page's own read carries what its Merging card and its
+           -- step list read (the page re-renders from this read, and a read
+           -- without them replaced the board row's copy with nothing).
+           cs.integration_measured_at, cs.integration_head_sha, cs.integration_main_sha,
+           cs.integration_base_sha, cs.integration_behind_by, cs.integration_ahead_by,
+           cs.integration_merges_clean, cs.integration_conflict_paths,
+           cs.integration_merged_tree, cs.integration_checks_base_current,
+           cs.integration_block_reasons, cs.integration_error,
+           ${require('../services/integration').HELD_UNTIL_SQL} AS merge_held_until,
+           ${require('../services/integration').HELD_AT_SQL} AS merge_held_at,
+           ${require('../services/integration').HELD_SINCE_SQL} AS merge_held_since,
            -- An admin's force merge (services/merge-requirements.js
            -- FORCE_SQL): the change page reads its own row from here, so its
            -- Votes card can say the force skips the vote, and the force an
@@ -5362,6 +5374,28 @@ function voteRoutes(config) {
           app_main_check_confirming: mainCheck.confirming,
           app_main_check_failing_test: mainCheck.failingTest,
         });
+      }
+
+      // #6593: while GitHub's required checks hold the merge, the page's own
+      // read carries them and, when GitHub lets Homeroom read them, how many
+      // of the required checks are done. Always written on a promoted row, so
+      // a response merged into the board's held row replaces a stale value
+      // rather than leaving one behind.
+      if (proposal && (proposal.status === 'promoted' || proposal.status === 'merging')) {
+        const integrationSvc = require('../services/integration');
+        proposal.integration = integrationSvc.readIntegration(proposal);
+        proposal.integration.githubChecks = null;
+        const held = proposal.integration.blockReasons;
+        // Failed checks are the failing card's to say; no read is made for
+        // them, even when a still-running reason is recorded beside them.
+        if (proposal.status === 'promoted'
+          && held.indexOf('github_checks') !== -1 && held.indexOf('github_checks_failing') === -1) {
+          proposal.integration.githubChecks = await require('../services/github-checks-progress')
+            .readProgress({
+              repoUrl: gatedApp.repo_url,
+              headSha: proposal.integration.headSha || proposal.reviewed_head_sha,
+            });
+        }
       }
 
       // Staging demo mode (?demo=1): the mock merged/promoted rows aren't in

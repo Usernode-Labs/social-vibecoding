@@ -7895,7 +7895,7 @@ const AppView = {
       return {
         name: PlatformI18n.t('changes:page.merge.name'),
         figure: PlatformI18n.t('changes:page.merge.figure.merging'),
-        tone: 'muted', done: false, segments: moving,
+        tone: 'muted', done: false, segments: moving, hold: 'merging',
         label: PlatformI18n.t('changes:page.merge.label.merging'),
         note: [], wait: null,
       };
@@ -7915,11 +7915,25 @@ const AppView = {
       return {
         name: PlatformI18n.t('changes:page.merge.name'),
         figure: PlatformI18n.t('changes:page.merge.figure.failing'),
-        tone: 'bad', done: false,
+        tone: 'bad', done: false, hold: 'failing',
         segments: [{ weight: 1, pct: 100, state: 'bad' }],
         label: PlatformI18n.t('changes:page.merge.label.failing'),
         note: [PlatformI18n.t('changes:page.merge.note.failing')],
       };
+    }
+    // #6593: GitHub's required checks are building and scanning the release
+    // images, which takes a few minutes and is not a failed attempt. The
+    // count is drawn only when the server could read it (`githubChecks`), so
+    // the card never guesses a number.
+    const note = [PlatformI18n.t(waiting
+      ? 'changes:page.merge.note.githubChecks'
+      : 'changes:page.merge.note.githubWait')];
+    const progress = waiting ? integration.githubChecks : null;
+    if (progress && Number.isInteger(progress.total) && progress.total > 0
+      && Number.isInteger(progress.done) && progress.done >= 0 && progress.done <= progress.total) {
+      note.push(PlatformI18n.t('changes:page.merge.note.githubChecksProgress', {
+        done: progress.done, total: progress.total,
+      }));
     }
     return {
       name: PlatformI18n.t('changes:page.merge.name'),
@@ -7927,12 +7941,11 @@ const AppView = {
         ? 'changes:page.merge.figure.githubChecks'
         : 'changes:page.merge.figure.githubWait'),
       tone: 'muted', done: false, segments: moving,
+      hold: waiting ? 'github_checks' : 'github_wait',
       label: PlatformI18n.t(waiting
         ? 'changes:page.merge.label.githubChecks'
         : 'changes:page.merge.label.githubWait'),
-      note: [PlatformI18n.t(waiting
-        ? 'changes:page.merge.note.githubChecks'
-        : 'changes:page.merge.note.githubWait')],
+      note,
       wait,
     };
   },
@@ -25635,13 +25648,15 @@ const AppView = {
     // #6546: GitHub's required checks held it back: still running, or failed
     // and being run again on today's main (amber, Homeroom acts), or failed
     // again after that (its author's to fix).
+    // #6593: while they are still running, the tooltip says what GitHub is
+    // doing and roughly how long it takes, not when Homeroom asks again:
+    // those tries are bookkeeping, and naming one made a normal wait read as
+    // a failed attempt.
     if (served.includes('github_checks')) {
       out.push({
         key: 'github_checks',
         label: PlatformI18n.t('changes:badge.reason.githubChecks.label'),
-        detail: heldSoon
-          ? PlatformI18n.t('changes:badge.reason.githubChecks.detailSoon')
-          : PlatformI18n.t('changes:badge.reason.githubChecks.detail', { time: heldTime }),
+        detail: PlatformI18n.t('changes:badge.reason.githubChecks.detail'),
         waiting: true,
       });
     }
