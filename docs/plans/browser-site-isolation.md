@@ -2,8 +2,13 @@
 
 Status: implementation and local validation; deployment acceptance is separate.
 
-The app domain will be selected later. This change prepares the cutover and
-leaves it disabled. It is not a declaration that deployment isolation is complete.
+Target layout: the platform stays on `onhomeroom.com` (`app.onhomeroom.com`),
+production apps move to `onhomeroom.app`, and previews get a registrable
+domain of their own (to be registered). Three ICANN sites, not one: the
+Public Suffix List's private section would give each app its own site, but it
+holds only in browsers that already ship an entry, and the list's maintainers
+decline projects of our size. This change prepares the cutover and leaves it
+disabled. It is not a declaration that deployment isolation is complete.
 The strict cutover in this change targets Kubernetes. The stock Compose edge
 still routes one wildcard site and captures production over private HTTP;
 startup refuses strict mode there until that edge and capture transport are
@@ -13,8 +18,12 @@ migrated. Ordinary Compose and plain HTTP development remain in legacy mode.
 
 The platform keeps authentication, OAuth callbacks and its API on its canonical
 host. Generated apps and previews belong on a different HTTPS site, determined
-with the Public Suffix List, including private suffixes. Changing only the
-subdomain does not establish that boundary. Custom app domains must obey the
+with the ICANN section of the Public Suffix List only: different ICANN
+registrable domains are different sites in every browser, whatever copy of the
+list it ships, while a private entry separates sites only where it has already
+shipped. Changing only the subdomain does not establish that boundary. Strict
+startup probes the hosts `caddy.js` actually builds (a production app and a
+preview), not the configured domain alone. Custom app domains must obey the
 same rule. App identities remain scoped tokens; the platform session must never
 be forwarded to an app.
 
@@ -22,7 +31,29 @@ The session and cache-partition cookies use host-only `__Host-` names, `Secure`,
 `/`, and no Domain attribute. The session is HttpOnly; the cache partition label
 is readable but grants no authentication. HTTPS clients read only the protected
 cache label, with no fallback to the old name. Plain HTTP development retains
-unprefixed cookies.
+unprefixed cookies. The sign-up, OAuth, phone, invite and invite-tracking
+cookies take `__Host-` names on HTTPS now, independently of strict mode: no
+host on the shared site can plant one. The native handoff cookie keeps its
+name until native clients read the protected one, like the session.
+
+## Request hardening that needs no layout change
+
+These ship with this change, in every mode, and protect browsers on today's
+shared site too:
+
+- WebSocket handshakes accept the session cookie only from the platform's
+  own pages (Fetch Metadata, else Origin). Handshakes with neither header
+  come from clients that are not browsers and pass.
+- Every write that carries the session cookie must come from the platform's
+  own pages, whatever route it reaches (`sameOriginCookieWrites`, mounted
+  ahead of every router; the anonymous `/api/public/` tier excepted). Writes
+  with neither Origin nor Fetch Metadata are logged once per shape and still
+  pass, until the native inventory shows no client depends on that.
+- The shell document may be framed only by the platform itself (and, for a
+  preview of Homeroom, by the production platform).
+- Preview frames get the production app frame's sandbox before every
+  navigation, so unreviewed code cannot navigate the Homeroom tab.
+- App-host sign-in codes are bound to the browser that started the hop.
 
 ## Delivery and cutover
 
@@ -41,11 +72,17 @@ unprefixed cookies.
    Android currently construct `session` when restoring a web session. They
    must install and inspect the protected cookie on HTTPS, clear both names
    at sign-out, and handle the one-time browser reauthentication below.
-4. Choose and provision the separate app domain: DNS, wildcard TLS, shared
-   assets, gate, preview and custom-domain routes, network policy and ingress.
-   Inventory and retire old app/preview routes on the platform site, including
-   old captures and custom domains. A configuration check cannot prove their
-   absence. Do not leave an alias serving untrusted content on the old site.
+4. Provision `onhomeroom.app` for production apps and a previews domain: DNS
+   at a provider cert-manager can drive (wildcards need DNS-01), wildcard TLS,
+   shared assets, gate, preview and custom-domain routes, network policy and
+   ingress, the iOS App-Bound Domains list, and the token relay for private
+   apps in shell frames (the gate's Lax cookie is not sent to a cross-site
+   frame). Previews may move after apps: strict mode needs only both off the
+   platform's site. Inventory and retire old app/preview routes on the
+   platform site, including old captures and custom domains. A configuration
+   check cannot prove their absence. Do not leave an alias serving untrusted
+   content on the old site. `git.onhomeroom.com` and the marketing apex stay
+   on the platform's site, so the request hardening above stays necessary.
 5. Enable strict isolation only after those prerequisites. Startup must refuse
    an invalid mode or a same-site app domain. Custom-domain admission and
    resolution must refuse the platform site. Do not automatically trust a

@@ -375,14 +375,15 @@ const { USERNODE_DOMAIN, USERNODE_APPS_DOMAIN } = require('./caddy');
 // The single-use sign-in code the apex /__access/authorize route mints from
 // a real platform session (services/edge-gate.js handleAuthorize); the
 // app-host gate trades it for the per-host cookie. One minute, one host,
-// one app, one user, one platform session (`sid`), and a `jti` the gate
-// redeems exactly once (TTL lives with the signer).
+// one app, one user, one platform session (`sid`), one browser (`state`,
+// the hop's state cookie's SHA-256), and a `jti` the gate redeems exactly
+// once (TTL lives with the signer).
 //
 // Signed with EDGE_JWT_SECRET — its own authority, never handed to any
 // container — and carries a `pur` claim the gate re-checks, so a code
 // can't be replayed as the longer-lived access cookie.
-function mintAccessGrant({ uid, appId, host, sid }) {
-  return platformJwt.signEdgeGrant({ uid, appId, host, sid });
+function mintAccessGrant({ uid, appId, host, sid, state }) {
+  return platformJwt.signEdgeGrant({ uid, appId, host, sid, state });
 }
 
 // Map a request host to its app slug. Handles production hosts

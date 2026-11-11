@@ -1,4 +1,5 @@
 const { readSessionCookie } = require('./browser-session-cookies');
+const { isSameOriginBrowserRequest } = require('../middleware/same-site-browser');
 const { nativeWebSessionIsLive } = require('./web-session-auth');
 const http = require('http');
 const { WebSocketServer } = require('ws');
@@ -489,7 +490,14 @@ function attach(server, config) {
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 async function authenticateWs(req, pool, config) {
-  const viaCookie = await authenticateWsCookie(req, pool);
+  // Browsers attach the Lax session cookie to every same-site handshake, and
+  // WebSockets have no CORS: without this check any page on a sibling host
+  // (an app, a preview) could open these sockets as the visitor, read their
+  // events and post as them. The cookie counts only on a handshake the
+  // Homeroom page itself opened, by the same rule as cookie writes
+  // (middleware/same-site-browser.js). A client that is not a browser sends
+  // neither Origin nor Sec-Fetch-Site and rides nobody's cookie, so it passes.
+  const viaCookie = isSameOriginBrowserRequest(req) ? await authenticateWsCookie(req, pool) : null;
   if (viaCookie) return viaCookie;
   if (!IS_STAGING) return null;
   return authenticateWsStagingJwt(req, pool, config);

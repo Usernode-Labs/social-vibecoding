@@ -141,15 +141,24 @@ export function useNativeSignInProviders(options: WaitlistOptions | null): SignI
 
 // The way back from a provider (routes/sign-in-providers.js) leaves its
 // outcome in a short-lived cookie the page can read, never in the URL. Read
-// once and cleared, so a reload does not reopen the sheet.
-const PROVIDER_RESULT_COOKIE = 'hr_oauth_result';
+// once and cleared, so a reload does not reopen the sheet. Over HTTPS it is
+// the `__Host-` name, which only this host can set; the bare name is
+// plain-HTTP development's, and is never read over HTTPS, where an app on a
+// sibling host could have planted it (lib/api-cache-identity.ts decides the
+// cache label's name the same way). Clearing a `__Host-` cookie takes Secure.
+const PROVIDER_RESULT_COOKIE = '__Host-hr_oauth_result';
+const DEV_PROVIDER_RESULT_COOKIE = 'hr_oauth_result';
 const PROVIDER_RESULT_RE = /^(username|error-[a-z_]{1,40})$/;
 
-export function takeProviderResult(): SignInResume | null {
-  if (typeof document === 'undefined') return null;
-  const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${PROVIDER_RESULT_COOKIE}=([^;]*)`));
+export function takeProviderResult(
+  doc: Pick<Document, 'cookie'> | undefined = typeof document !== 'undefined' ? document : undefined,
+  secure = typeof location === 'undefined' || location.protocol !== 'http:',
+): SignInResume | null {
+  if (!doc) return null;
+  const name = secure ? PROVIDER_RESULT_COOKIE : DEV_PROVIDER_RESULT_COOKIE;
+  const match = doc.cookie.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
   if (!match) return null;
-  document.cookie = `${PROVIDER_RESULT_COOKIE}=; Max-Age=0; path=/`;
+  doc.cookie = `${name}=; Max-Age=0; path=/${secure ? '; Secure' : ''}`;
   let value = '';
   try { value = decodeURIComponent(match[1]); } catch { return null; }
   return PROVIDER_RESULT_RE.test(value) ? (value as SignInResume) : null;

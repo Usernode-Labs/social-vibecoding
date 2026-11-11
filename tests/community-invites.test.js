@@ -253,7 +253,7 @@ test('signing UP from an invite page follows the link server-side; signing IN is
   // Dropping it follows nothing: it clears the cookie and records the
   // sign-in, and never reaches redeem().
   const drop = src.slice(src.indexOf('async function dropCarried'), src.indexOf('module.exports'));
-  assert.match(drop, /clearInviteCookie\(res\);/);
+  assert.match(drop, /clearInviteCookie\(req, res\);/);
   assert.match(drop, /noteInviteSignedIn\(pool, \{ token, userId, carried: true \}\)/);
   assert.doesNotMatch(drop, /redeem\(/);
   assert.match(src, /httpOnly: true,\s+sameSite: 'lax',/);

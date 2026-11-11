@@ -70,7 +70,14 @@ test('the app never sees the carrier or the gate’s cookies', () => {
   assert.equal(strip('a=1; __Host-usernode_access=x; b=2'), 'a=1; b=2');
   assert.equal(strip('__Host-usernode_access=x; __Host-usernode_anon=1'), '');
   assert.equal(strip('__usernode_access=x'), '');
+  // The sign-in hop's state (services/edge-gate.js): with it, the app could
+  // plant a sign-in code of its own choosing.
+  assert.equal(strip('a=1; __Host-usernode_state=s; b=2'), 'a=1; b=2');
+  assert.equal(strip('__usernode_state=s'), '');
   assert.equal(strip('keep=1; usernode_access=2'), 'keep=1; usernode_access=2');
+  // The custom-domain site strips the same cookies, with the same rule.
+  const custom = CADDYFILE.slice(CADDYFILE.indexOf('https:// {'));
+  assert.equal(custom.match(/header_up Cookie `([^`]+)` ""/)[1], m[1]);
 });
 
 // ── The real thing, when a caddy binary is at hand ─────────────────────
@@ -83,6 +90,13 @@ function listen(server) {
 
 test('run for real: identity in, spoofs and gate cookies out', { skip: !CADDY_BIN && 'set CADDY_BIN to run Caddy' }, async (t) => {
   const fakeGate = http.createServer((req, res) => {
+    // The redirect that starts the sign-in hop: forward_auth returns it as
+    // it is, Set-Cookie and all.
+    if (req.headers['x-forwarded-uri'] === '/hop') {
+      res.writeHead(302, { location: 'https://apex.example/__access/authorize?state=S',
+        'set-cookie': ['__Host-usernode_state=v; Max-Age=300; Path=/; HttpOnly; Secure; SameSite=Lax', 'other=1; Path=/'] });
+      return res.end();
+    }
     const h = { 'content-type': 'text/plain' };
     if (/__Host-usernode_access=good/.test(req.headers.cookie || '')) h['X-Usernode-Identity'] = 'IDENT';
     res.writeHead(200, h); res.end('ok');
@@ -124,6 +138,18 @@ test('run for real: identity in, spoofs and gate cookies out', { skip: !CADDY_BI
 
   assert.deepEqual(await get({ cookie: 'a=1; __Host-usernode_access=good; b=2' }),
     { token: 'IDENT', identity: null, cookie: 'a=1; b=2' });
+  assert.deepEqual(await get({ cookie: 'a=1; __Host-usernode_state=s; b=2' }),
+    { token: null, identity: null, cookie: 'a=1; b=2' }, 'the hop’s state never reaches the app');
+  const hop = await new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: '/hop', headers: { host: 'app.example' } }, (res) => {
+      res.resume(); res.on('end', () => resolve(res));
+    }).on('error', reject);
+  });
+  assert.equal(hop.statusCode, 302);
+  assert.equal(hop.headers.location, 'https://apex.example/__access/authorize?state=S');
+  assert.deepEqual(hop.headers['set-cookie'],
+    ['__Host-usernode_state=v; Max-Age=300; Path=/; HttpOnly; Secure; SameSite=Lax', 'other=1; Path=/'],
+    'every Set-Cookie of a refusal reaches the browser');
   assert.deepEqual(await get({ 'x-usernode-token': 'OWN', cookie: 'z=9' }),
     { token: 'OWN', identity: null, cookie: 'z=9' }, 'the app’s own token is untouched');
   assert.deepEqual(await get({ 'x-usernode-identity': 'SPOOF' }),

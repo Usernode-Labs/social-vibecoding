@@ -1,4 +1,4 @@
-const { readSessionCookie, setSessionCookie, clearSessionCookies } = require('../services/browser-session-cookies');
+const { readSessionCookie, setSessionCookie, clearSessionCookies, protectedCookieName } = require('../services/browser-session-cookies');
 const appAllowance = require('../services/app-allowance');
 const appLimit = require('../services/app-limit');
 const crypto = require('crypto');
@@ -109,7 +109,12 @@ function roleFields(isAdmin, adminReadonly) {
 // Previously this was `NODE_ENV !== 'development'`, which silently dropped the
 // cookie on any dev box reached over LAN HTTP (mobile testing) because
 // NODE_ENV was usually unset => secure=true => browser refuses cookie on HTTP.
-const SECURE_COOKIE = process.env.NODE_ENV === 'production';
+// Read per call, so the signup cookie's writer and reader always agree.
+const secureCookie = () => process.env.NODE_ENV === 'production';
+// The email code's signup continuation, spent by set-password. Secure, it is
+// `__Host-usernode_signup` (browser-session-cookies.js protectedCookieName),
+// so it is Path=/ and an app on a sibling host cannot plant one; the bare
+// name is plain-HTTP development's only, and never read in production.
 const SIGNUP_COOKIE = 'usernode_signup';
 
 // Ordinary credential exchanges may only mint a session from a signed-out
@@ -170,23 +175,26 @@ async function createSession(queryable, userId, req = null) {
   return { token, expiresAt };
 }
 
+function signupCookieName() {
+  return protectedCookieName(SIGNUP_COOKIE, secureCookie());
+}
+
+// The clear repeats the attributes: a browser drops a `__Host-` cookie only
+// for a Set-Cookie that is itself Secure, Path=/ and without a Domain.
+function signupCookieOptions() {
+  return { httpOnly: true, secure: secureCookie(), sameSite: 'lax', path: '/' };
+}
+
 function createSignupCookie(res, token, expiresAt) {
-  res.cookie(SIGNUP_COOKIE, token, {
-    httpOnly: true,
-    secure: SECURE_COOKIE,
-    sameSite: 'lax',
-    path: '/api/auth/otp',
-    expires: expiresAt,
-  });
+  res.cookie(signupCookieName(), token, { ...signupCookieOptions(), expires: expiresAt });
 }
 
 function clearSignupCookie(res) {
-  res.clearCookie(SIGNUP_COOKIE, {
-    httpOnly: true,
-    secure: SECURE_COOKIE,
-    sameSite: 'lax',
-    path: '/api/auth/otp',
-  });
+  res.clearCookie(signupCookieName(), signupCookieOptions());
+}
+
+function readSignupCookie(req) {
+  return req.cookies?.[signupCookieName()];
 }
 
 function authRoutes(config) {
@@ -538,7 +546,7 @@ function authRoutes(config) {
   router.get('/api/auth/username-available', usernameCheckLimiter, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
-      const userId = await emailSignup.pendingUsernameChoice(pool, req.cookies?.[SIGNUP_COOKIE]);
+      const userId = await emailSignup.pendingUsernameChoice(pool, readSignupCookie(req));
       if (!userId) return res.status(401).json({ error: 'Your signup session expired. Request a new code.', code: 'invalid_signup_session' });
       const check = usernames.validateUsername(typeof req.query.username === 'string' ? req.query.username : '');
       if (!check.ok) return res.json({ ok: true, available: false, error: check.error });
@@ -565,7 +573,7 @@ function authRoutes(config) {
     }
     try {
       const completed = await emailSignup.completePassword(pool, {
-        signupToken: req.cookies?.[SIGNUP_COOKIE],
+        signupToken: readSignupCookie(req),
         password,
         // The handle the set-password step asks a new account for (QA
         // 2026-09-24 Q12). Required since #3575 for an account that has
@@ -2299,4 +2307,5 @@ function authRoutes(config) {
 
 // Apple and Google sign-in (routes/sign-in-providers.js) mints the same
 // session, with the same cookie, and answers with the same role fields.
-module.exports = { authRoutes, createSession, createSessionCookie, roleFields };
+module.exports = { authRoutes, createSession, createSessionCookie, roleFields,
+  createSignupCookie, clearSignupCookie, readSignupCookie };

@@ -59,6 +59,18 @@ test.before(async () => {
       res.writeHead(302, { location: 'https://apex.example/__access/authorize?x=1', 'set-cookie': ['__Host-usernode_access=new; Path=/; Secure; HttpOnly'], 'x-secret': 'never relayed' });
       return res.end();
     }
+    // The sign-in callback's success, as src/services/edge-gate.js answers
+    // it: the access cookie set, and the anonymous marker, the guest hint
+    // and the hop's state cleared, in one redirect.
+    if (uri.startsWith('/__usernode_access')) {
+      res.writeHead(302, { location: '/__usernode_access?check=access&next=%2F', 'referrer-policy': 'no-referrer', 'set-cookie': [
+        '__Host-usernode_access=new; Max-Age=43200; Path=/; HttpOnly; Secure; SameSite=Lax',
+        '__Host-usernode_anon=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax',
+        '__Host-usernode_guest=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax',
+        '__Host-usernode_state=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax',
+      ] });
+      return res.end();
+    }
     const headers = { 'content-type': 'text/plain' };
     if (uri.startsWith('/bad-upstream')) headers['x-usernode-upstream'] = 'Bad_Name';
     else if (uri.startsWith('/dead')) headers['x-usernode-upstream'] = 'app-dead';
@@ -156,8 +168,10 @@ test('it asks the platform the way Caddy forward_auth does, and says it is the K
 
 test('an allowed request reaches the app with the identity, and without the gate’s cookies', async () => {
   const r = await through('/ident', {
-    headers: { cookie: 'app=1; __Host-usernode_access=secret; __Host-usernode_anon=1; theme=dark' },
+    headers: { cookie: 'app=1; __Host-usernode_access=secret; __Host-usernode_anon=1; __Host-usernode_state=hop; theme=dark' },
   });
+  assert.equal(asked[0].headers.cookie, 'app=1; __Host-usernode_access=secret; __Host-usernode_anon=1; __Host-usernode_state=hop; theme=dark',
+    'the decision sees them all');
   assert.equal(r.status, 200);
   assert.equal(r.json.headers['x-usernode-token'], 'IDENT');
   assert.equal(r.json.headers['x-usernode-identity'], undefined);
@@ -229,6 +243,20 @@ test('a refusal is the visitor’s answer, and only its safe headers travel', as
   const denied = await through('/deny');
   assert.equal(denied.status, 404);
   assert.equal(denied.text, 'Not found');
+});
+
+test('the sign-in hop’s redirects carry every cookie they set', async () => {
+  const r = await through('/__usernode_access?code=c&next=%2F', { headers: { cookie: '__Host-usernode_state=hop' } });
+  assert.equal(r.status, 302);
+  assert.equal(r.headers.location, '/__usernode_access?check=access&next=%2F');
+  assert.equal(r.headers['referrer-policy'], 'no-referrer');
+  assert.deepEqual(r.headers['set-cookie'].map((c) => c.split('=')[0]),
+    ['__Host-usernode_access', '__Host-usernode_anon', '__Host-usernode_guest', '__Host-usernode_state']);
+  assert.equal(asked[0].headers.cookie, '__Host-usernode_state=hop', 'the callback’s decision sees the state');
+  assert.deepEqual(appRequests, [], 'and the app never sees the callback');
+  assert.equal(require('../scripts/app-gate').anonymousRead({
+    method: 'GET', url: '/app.js', headers: { cookie: '__Host-usernode_state=hop' },
+  }), false, 'a request that carries the state is always asked');
 });
 
 test('an invalid Service name is never dialled', async () => {

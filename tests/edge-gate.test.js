@@ -10,6 +10,10 @@
 //     traded for an HttpOnly, host-only, SameSite=Lax cookie; replayed,
 //     expired, wrong-host, wrong-app, non-viewer and signed-out codes are
 //     refused; `next` can never leave the host;
+//   * the code works only in the browser that started its hop (the state
+//     cookie whose SHA-256 it carries), so nobody can plant a code of their
+//     own in another person's browser (login CSRF), and a tab whose state
+//     another tab overwrote lands on its page instead of looping;
 //   * identity reaches the app only on requests the app's own page made or
 //     a person made by navigating, never on a sibling app's requests, and
 //     never on a preview;
@@ -239,12 +243,26 @@ function edgeToken(pur, claims, opts = {}) {
 const accessCookie = (uid, host, appId, { sid = SID, ...opts } = {}) =>
   `__usernode_access=${edgeToken('edge:cookie', { uid, appId, host, ...(sid ? { sid } : {}) }, opts)}`;
 const doorCookie = (uid, host, appId) => accessCookie(uid, host, appId, { sid: null });
-const code = (uid, host, appId, { sid = SID, expiresIn = '1m', ...opts } = {}) =>
-  edgeToken('edge:grant', { uid, appId, host, ...(sid ? { sid } : {}) }, { expiresIn, ...opts });
-const callback = (host, c, next = '/deep/link') =>
-  gate({ host, uri: `/__usernode_access?code=${encodeURIComponent(c)}&next=${encodeURIComponent(next)}` });
+// The sign-in hop's state: the value the gate put in this browser's cookie,
+// and the SHA-256 the code carries.
+const STATE_VALUE = crypto.randomBytes(32).toString('base64url');
+const digest = (v) => crypto.createHash('sha256').update(v).digest('base64url');
+const STATE = digest(STATE_VALUE);
+const stateCookie = (value = STATE_VALUE) => `__usernode_state=${value}`;
+const code = (uid, host, appId, { sid = SID, state = STATE, expiresIn = '1m', ...opts } = {}) =>
+  edgeToken('edge:grant', { uid, appId, host, ...(sid ? { sid } : {}), ...(state ? { state } : {}) }, { expiresIn, ...opts });
+// The callback as the browser that started the hop makes it: with its state.
+const callback = (host, c, next = '/deep/link', { cookie = stateCookie() } = {}) =>
+  gate({ host, uri: `/__usernode_access?code=${encodeURIComponent(c)}&next=${encodeURIComponent(next)}`, cookie });
 
 const setCookies = (r) => (r.headers['set-cookie'] || []);
+// The access cookie a response set, if any: a sign-in.
+const accessSet = (r) => setCookies(r).find((v) => v.startsWith('__usernode_access='));
+// The state cookie a response set (`value`) or cleared (''), if any.
+const stateSet = (r) => {
+  const v = setCookies(r).find((c) => c.startsWith('__usernode_state='));
+  return v === undefined ? undefined : /^__usernode_state=([^;]*)/.exec(v)[1];
+};
 const identityOf = (r) => r.headers['x-usernode-identity'];
 // A guest token for the public app (P15): who a visitor with no person is.
 const guestOf = (r) => identityOf(r)
@@ -419,11 +437,12 @@ test('a valid code works once: cookie set, code gone from the address', async ()
   assert.equal(claims.exp - claims.iat, 12 * 60 * 60);
   assert.equal(r.headers['referrer-policy'], 'no-referrer');
 
-  // The same code again: refused, no cookie, never another hop.
+  // The same code again, even with its state: refused, no sign-in, never
+  // another hop.
   const replay = await callback(PRIV_HOST, c, '/deep/link?x=1');
   assert.equal(replay.status, 302);
   assert.equal(replay.headers.location, `${chromeless('privapp')}?path=/deep/link?x=1`);
-  assert.equal(setCookies(replay).length, 0);
+  assert.equal(accessSet(replay), undefined);
 });
 
 test('the check step: on to the page if the cookie stuck, on with the loop marker if not', async () => {
@@ -456,20 +475,178 @@ test('expired, wrong-host, wrong-app, session-less or jti-less codes are refused
     const r = await callback(PRIV_HOST, c);
     assert.equal(r.status, 302, label);
     assert.ok(!isAuthorize(r.headers.location), `${label}: never loops back into the hop`);
-    assert.equal(setCookies(r).length, 0, `${label}: no cookie`);
+    assert.equal(accessSet(r), undefined, `${label}: no sign-in`);
   }
 });
 
 test('a non-viewer’s code is refused, and does not spend anything', async () => {
   const c = code(OUTSIDER_ID, PRIV_HOST, PRIV_APP_ID);
   const r = await callback(PRIV_HOST, c);
-  assert.equal(setCookies(r).length, 0);
+  assert.equal(accessSet(r), undefined);
   assert.equal(state.redeemed.size, 0, 'the jti is only recorded for a code that passed everything else');
 });
 
 test('a code whose platform session ended is refused', async () => {
   const c = code(MEMBER_ID, PRIV_HOST, PRIV_APP_ID, { sid: OTHER_SID });
-  assert.equal(setCookies(await callback(PRIV_HOST, c)).length, 0);
+  assert.equal(accessSet(await callback(PRIV_HOST, c)), undefined);
+});
+
+// ── The callback: a code works only in the browser that started its hop ──
+
+test('starting the hop sets a fresh state cookie and sends only its SHA-256 to the apex', async () => {
+  const starts = [
+    ['a public app’s visit', { host: PUB_HOST, uri: '/scores?week=2', dest: 'document' }],
+    ['a private app’s visit', { host: PRIV_HOST, uri: '/scores?week=2', dest: 'document' }],
+    ['a door-only cookie’s visit', { host: PRIV_HOST, uri: '/scores?week=2', dest: 'document', cookie: doorCookie(MEMBER_ID, PRIV_HOST, PRIV_APP_ID) }],
+    ['a private preview’s visit', { host: `privapp--s42.${DOMAIN}`, uri: '/scores?week=2', dest: 'document' }],
+    ['an old browser’s visit (no Fetch Metadata)', { host: PRIV_HOST, uri: '/scores?week=2' }],
+  ];
+  const seen = new Set();
+  for (const [label, req] of starts) {
+    const r = await gate(req);
+    assert.ok(isAuthorize(r.headers.location), label);
+    const set = setCookies(r).find((v) => v.startsWith('__usernode_state='));
+    assert.ok(set, `${label}: sets the state cookie`);
+    assert.match(set, /; Max-Age=300;/, `${label}: five minutes`);
+    assert.match(set, /; HttpOnly/, label);
+    assert.match(set, /; SameSite=Lax/, label);
+    assert.match(set, /; Path=\//, label);
+    assert.doesNotMatch(set, /Domain=/i, `${label}: host-only`);
+    const value = stateSet(r);
+    assert.match(value, /^[A-Za-z0-9_-]{43}$/, `${label}: 256 random bits`);
+    const loc = new URL(r.headers.location);
+    assert.equal(loc.searchParams.get('state'), digest(value), `${label}: the address carries the SHA-256`);
+    assert.ok(!r.headers.location.includes(value), `${label}: never the cookie’s value`);
+    assert.equal(loc.searchParams.get('next'), '/scores?week=2', label);
+    assert.equal(r.headers['referrer-policy'], 'no-referrer', label);
+    seen.add(value);
+  }
+  assert.equal(seen.size, starts.length, 'a fresh value every time');
+  // Even when the browser already holds one (which the app’s own code could
+  // have planted): never reused.
+  const again = await gate({ host: PUB_HOST, dest: 'document', cookie: stateCookie() });
+  assert.notEqual(stateSet(again), STATE_VALUE);
+  assert.notEqual(new URL(again.headers.location).searchParams.get('state'), STATE);
+});
+
+test('a fetch, an asset, a frame or a WebSocket never sets the state; its trip to the apex names none', async () => {
+  for (const dest of ['empty', 'script', 'image', 'iframe']) {
+    const r = await gate({ host: PRIV_HOST, dest });
+    assert.ok(isAuthorize(r.headers.location), dest);
+    assert.equal(stateSet(r), undefined, dest);
+    assert.equal(new URL(r.headers.location).searchParams.get('state'), null, dest);
+  }
+  const ws = await gate({ host: `privapp--s42.${DOMAIN}`, ws: true });
+  assert.equal(stateSet(ws), undefined, 'a WebSocket');
+});
+
+test('in production the state cookie is __Host- and Secure', async () => {
+  const saved = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+  try {
+    const r = await gate({ host: PUB_HOST, dest: 'document' });
+    const set = setCookies(r).find((v) => v.startsWith('__Host-usernode_state='));
+    assert.ok(set, setCookies(r).join(' | '));
+    assert.match(set, /; Secure/);
+    assert.match(set, /; HttpOnly/);
+    assert.match(set, /; Path=\//);
+    assert.doesNotMatch(set, /Domain=/i);
+  } finally {
+    if (saved === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = saved;
+  }
+});
+
+test('a matching state signs in and clears the state cookie', async () => {
+  const r = await callback(PRIV_HOST, code(MEMBER_ID, PRIV_HOST, PRIV_APP_ID), '/a');
+  assert.equal(r.headers.location, `/__usernode_access?check=access&next=${encodeURIComponent('/a')}`);
+  assert.ok(accessSet(r));
+  assert.equal(stateSet(r), '', 'the state is used up');
+  assert.match(setCookies(r).find((v) => v.startsWith('__usernode_state=')), /Expires=Thu, 01 Jan 1970/);
+  assert.equal(state.redeemed.size, 1);
+});
+
+test('a code without a state claim is refused the way any bad code is, and not spent', async () => {
+  const r = await callback(PRIV_HOST, code(MEMBER_ID, PRIV_HOST, PRIV_APP_ID, { state: null }), '/a');
+  assert.equal(r.status, 302);
+  assert.equal(r.headers.location, `${chromeless('privapp')}?path=/a`);
+  assert.deepEqual(setCookies(r), []);
+  assert.equal(state.redeemed.size, 0);
+  // Nor one whose claim is not a SHA-256.
+  const odd = await callback(PRIV_HOST, code(MEMBER_ID, PRIV_HOST, PRIV_APP_ID, { state: 'x' }), '/a');
+  assert.equal(odd.headers.location, `${chromeless('privapp')}?path=/a`);
+  assert.equal(state.redeemed.size, 0);
+});
+
+test('login CSRF: a code from somebody else’s hop opens nothing in this browser', async () => {
+  // The attacker runs the hop with their own session (they are a member
+  // too) and keeps the code instead of following it.
+  apexUser = { id: MEMBER_ID, username: `u${MEMBER_ID}` };
+  const start = await gate({ host: PUB_HOST, uri: '/', dest: 'document' });
+  const theirs = await authorize(Object.fromEntries(new URL(start.headers.location).searchParams));
+  const planted = new URL(theirs.headers.location).searchParams.get('code');
+  assert.ok(platformJwt.verifyEdgeGrant(planted).state);
+
+  // The victim's browser holds no state at all, or the state of a hop of
+  // its own.
+  for (const [label, cookie] of [['no state', ''], ['its own hop’s state', stateCookie()]]) {
+    const r = await callback(PUB_HOST, planted, '/feed', { cookie });
+    assert.equal(r.status, 302, label);
+    assert.equal(r.headers.location, '/feed?__ua=1', `${label}: on to the page, never round the hop`);
+    assert.equal(accessSet(r), undefined, `${label}: not signed in as anybody`);
+    assert.equal(stateSet(r), undefined, `${label}: another hop’s state is left alone`);
+    assert.equal(state.redeemed.size, 0, `${label}: and the code is not spent`);
+  }
+  // A malformed cookie is no better.
+  const junk = await callback(PUB_HOST, planted, '/feed', { cookie: stateCookie('short') });
+  assert.equal(accessSet(junk), undefined);
+  // Only the browser that started that hop can use the code.
+  const own = await callback(PUB_HOST, planted, '/feed', { cookie: stateCookie(stateSet(start)) });
+  assert.ok(accessSet(own));
+});
+
+test('two tabs racing: the overwritten tab is refused, lands on its page, and never loops', async () => {
+  // Tab A starts a hop, then tab B starts one and overwrites A's state.
+  apexUser = { id: MEMBER_ID, username: `u${MEMBER_ID}` };
+  const hop = async (host) => {
+    const start = await gate({ host, uri: '/page', dest: 'document' });
+    const back = await authorize(Object.fromEntries(new URL(start.headers.location).searchParams));
+    return { value: stateSet(start), code: new URL(back.headers.location).searchParams.get('code') };
+  };
+  for (const [host, appId, withoutCookie] of [
+    [PUB_HOST, PUB_APP_ID, 200],
+    [PRIV_HOST, PRIV_APP_ID, 302],
+  ]) {
+    resetState();
+    const a = await hop(host);
+    const b = await hop(host);
+    const held = stateCookie(b.value);
+    // B finishes first: signed in, and the state is cleared.
+    const bDone = await callback(host, b.code, '/page', { cookie: held });
+    assert.ok(accessSet(bDone));
+    // A arrives with no state left: refused, on to its page with the marker,
+    // where B's cookie signs it in.
+    const aLate = await callback(host, a.code, '/page', { cookie: '' });
+    assert.equal(aLate.headers.location, '/page?__ua=1');
+    const access = `__usernode_access=${/__usernode_access=([^;]+)/.exec(accessSet(bDone))[1]}`;
+    const landed = await gate({ host, uri: '/page?__ua=1', dest: 'document', cookie: access });
+    assert.equal(landed.status, 200, `${host}: signed in through the other tab`);
+    assert.equal(platformJwt.verifyAppIdentityToken(identityOf(landed), { appId }).id, MEMBER_ID);
+
+    // A arrives while B's hop is still in flight: refused, B's state left
+    // alone, and with no cookie yet the marked page is where an unsigned
+    // visitor goes, never the hop again.
+    resetState();
+    const c1 = await hop(host);
+    const c2 = await hop(host);
+    const early = await callback(host, c1.code, '/page', { cookie: stateCookie(c2.value) });
+    assert.equal(early.headers.location, '/page?__ua=1');
+    assert.equal(stateSet(early), undefined, 'the other tab’s state is kept');
+    const marked = await gate({ host, uri: '/page?__ua=1', dest: 'document' });
+    assert.equal(marked.status, withoutCookie);
+    if (marked.status === 302) assert.equal(marked.headers.location, chromeless('privapp'));
+    assert.ok(accessSet(await callback(host, c2.code, '/page', { cookie: stateCookie(c2.value) })),
+      'and the other tab still signs in');
+  }
 });
 
 test('next never leaves the host', async () => {
@@ -693,7 +870,7 @@ test('a pending claim or an unknown host is 404 at the gate and at the apex hop:
   apexUser = { id: MEMBER_ID, username: `u${MEMBER_ID}` };
   assert.equal((await authorize({ host: CUSTOM_PENDING_HOST, next: '/' })).status, 404);
   assert.equal((await authorize({ host: 'nobody.example.com', next: '/' })).status, 404);
-  const ok = await authorize({ host: CUSTOM_PUB_HOST, next: '/scores' });
+  const ok = await authorize({ host: CUSTOM_PUB_HOST, next: '/scores', state: STATE });
   assert.equal(ok.status, 302);
   const loc = new URL(ok.headers.location);
   assert.equal(loc.host, CUSTOM_PUB_HOST, 'back to the custom host, with a code bound to it');
@@ -709,9 +886,9 @@ test('a pending claim or an unknown host is 404 at the gate and at the apex hop:
 
 // ── The apex hop ───────────────────────────────────────────────────────
 
-test('authorize: a signed-in viewer goes back with a code bound to host, app, user and session', async () => {
+test('authorize: a signed-in viewer goes back with a code bound to host, app, user, session and browser', async () => {
   apexUser = { id: MEMBER_ID, username: `u${MEMBER_ID}` };
-  const r = await authorize({ host: PRIV_HOST, next: '/a?b=1' });
+  const r = await authorize({ host: PRIV_HOST, next: '/a?b=1', state: STATE });
   assert.equal(r.status, 302);
   assert.equal(r.headers['cache-control'], 'no-store');
   assert.equal(r.headers['referrer-policy'], 'no-referrer');
@@ -719,15 +896,37 @@ test('authorize: a signed-in viewer goes back with a code bound to host, app, us
   assert.equal(loc.origin, `https://${PRIV_HOST}`);
   assert.equal(loc.pathname, '/__usernode_access');
   assert.equal(loc.searchParams.get('next'), '/a?b=1');
+  assert.equal(loc.searchParams.get('state'), null, 'the state rides inside the code, nowhere else');
   const claims = platformJwt.verifyEdgeGrant(loc.searchParams.get('code'));
-  assert.deepEqual([claims.uid, claims.appId, claims.host, claims.sid], [MEMBER_ID, PRIV_APP_ID, PRIV_HOST, SID]);
+  assert.deepEqual([claims.uid, claims.appId, claims.host, claims.sid, claims.state],
+    [MEMBER_ID, PRIV_APP_ID, PRIV_HOST, SID, STATE]);
   assert.match(claims.jti, /^[0-9a-f]{32}$/);
   assert.equal(claims.exp - claims.iat, 60, 'one minute');
 
-  // And that code is good, once, at the gate.
+  // And that code is good, once, at the gate, in the browser holding the state.
   const first = await callback(PRIV_HOST, loc.searchParams.get('code'), '/a?b=1');
   assert.equal(first.headers.location, `/__usernode_access?check=access&next=${encodeURIComponent('/a?b=1')}`);
-  assert.ok(setCookies(first).length);
+  assert.ok(accessSet(first));
+});
+
+test('authorize: a hop that names no well-formed state gets no code', async () => {
+  apexUser = { id: MEMBER_ID, username: `u${MEMBER_ID}` };
+  for (const [label, query] of [
+    ['no state', { host: PRIV_HOST, next: '/x' }],
+    ['not a SHA-256', { host: PRIV_HOST, next: '/x', state: 'abc' }],
+    ['too long', { host: PRIV_HOST, next: '/x', state: `${STATE}A` }],
+    ['not base64url', { host: PRIV_HOST, next: '/x', state: `${STATE.slice(0, 42)}=` }],
+  ]) {
+    const r = await authorize(query);
+    assert.equal(r.status, 302, label);
+    assert.equal(r.headers.location, `${chromeless('privapp')}?path=/x`, `${label}: the no-code fallback`);
+  }
+  const preview = await authorize({ host: `privapp--s42.${DOMAIN}`, next: '/x' });
+  assert.equal(preview.headers.location, `https://${DOMAIN}/`, 'a preview’s fallback too');
+  // A repeated parameter is not a state either.
+  const twice = await request(`/__access/authorize?host=${PRIV_HOST}&next=%2Fx&state=${STATE}&state=${STATE}`,
+    { Cookie: `session=${SESSION_TOKEN}` });
+  assert.equal(twice.headers.location, `${chromeless('privapp')}?path=/x`);
 });
 
 test('authorize: a signed-in person who may not view a private app gets no code', async () => {
@@ -756,7 +955,7 @@ test('authorize: signed out keeps today’s behaviour, except a public app answe
 
 test('authorize: next is sanitised and unknown hosts are 404', async () => {
   apexUser = { id: MEMBER_ID, username: `u${MEMBER_ID}` };
-  const r = await authorize({ host: PRIV_HOST, next: '//evil.com' });
+  const r = await authorize({ host: PRIV_HOST, next: '//evil.com', state: STATE });
   assert.equal(new URL(r.headers.location).searchParams.get('next'), '/');
   assert.equal((await authorize({ host: 'evil.example.com', next: '/' })).status, 404);
   assert.equal((await authorize({ host: DOMAIN, next: '/' })).status, 404, 'never the platform itself');
@@ -770,20 +969,28 @@ test('cookie names carry the __Host- prefix in production', () => {
   try {
     assert.deepEqual(edgeGate.cookieNames(), {
       access: '__Host-usernode_access', anon: '__Host-usernode_anon', guest: '__Host-usernode_guest',
+      state: '__Host-usernode_state',
     });
   } finally {
     if (saved === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = saved;
   }
-  assert.deepEqual(edgeGate.cookieNames(), { access: '__usernode_access', anon: '__usernode_anon', guest: '__usernode_guest' });
+  assert.deepEqual(edgeGate.cookieNames(),
+    { access: '__usernode_access', anon: '__usernode_anon', guest: '__usernode_guest', state: '__usernode_state' });
 });
 
 test('stripGateCookies removes only the gate’s cookies, in either spelling', () => {
   assert.equal(edgeGate.stripGateCookies('a=1; __Host-usernode_access=x; b=2'), 'a=1; b=2');
   assert.equal(edgeGate.stripGateCookies('__usernode_access=x; __Host-usernode_anon=1'), '');
+  assert.equal(edgeGate.stripGateCookies('a=1; __Host-usernode_state=s; __usernode_state=t; b=2'), 'a=1; b=2', 'the hop’s state too');
   assert.equal(edgeGate.stripGateCookies('usernode_access=keep; x__usernode_access=keep'), 'usernode_access=keep; x__usernode_access=keep');
+  assert.equal(edgeGate.stripGateCookies('__Host-usernode_guest=1'), '__Host-usernode_guest=1', 'the bridge reads the hint');
   assert.equal(edgeGate.stripGateCookies(undefined), '');
   // The proxy carries its own copy (it reads no platform module); keep them one.
-  assert.equal(require('../scripts/app-gate').stripGateCookies('a=1; __Host-usernode_access=x'), 'a=1');
+  const proxy = require('../scripts/app-gate');
+  for (const cookie of ['a=1; __Host-usernode_access=x', 'a=1; __Host-usernode_state=s', 'a=1; __usernode_state=s; __usernode_anon=1']) {
+    assert.equal(proxy.stripGateCookies(cookie), edgeGate.stripGateCookies(cookie), cookie);
+    assert.equal(proxy.stripGateCookies(cookie), 'a=1', cookie);
+  }
 });
 
 test('the capture fixture name is the one services/visuals.js signs as', () => {
@@ -795,6 +1002,9 @@ test('the sign-in code is one minute and the anon answer too', () => {
   assert.equal(platformJwt.EDGE_GRANT_TTL_S, 60);
   assert.equal(platformJwt.EDGE_ANON_TTL_S, 60);
   assert.equal(edgeGate.ANON_TTL_S, 600);
+  assert.equal(edgeGate.STATE_TTL_S, 300, 'a hop’s state: five minutes');
+  assert.equal(edgeGate.ACCOUNT_STATE_TTL_S, 1800, 'one that signs up or in first: half an hour');
+  assert.equal(edgeGate.hopStateDigest(STATE_VALUE), STATE);
 });
 
 test('the platform’s auth middleware lets the apex hop answer a signed-out visitor itself', async () => {

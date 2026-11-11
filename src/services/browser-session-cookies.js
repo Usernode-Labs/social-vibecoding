@@ -21,6 +21,24 @@ function scopeCookieName(env = process.env, secure = env.NODE_ENV === 'productio
   return secure ? '__Host-usernode_api_scope' : 'usernode_api_scope';
 }
 
+// A cookie that carries a token or a sign-in binder is named `__Host-` when
+// it is Secure. A browser accepts that name only when it is Secure, Path=/
+// and has no Domain, so an app on a sibling host (<slug>.onhomeroom.com)
+// cannot plant one for the platform to read. Plain-HTTP development keeps the
+// bare name, which a browser refuses with the prefix. A reader makes the same
+// decision as its writer and never falls back to the bare name: that is the
+// cookie a sibling host can plant.
+function protectedCookieName(base, secure) {
+  return secure ? `__Host-${base}` : base;
+}
+
+// Secure for a cookie whose writer decides by the request (an invite's):
+// always in production, else when the request reached the proxy over HTTPS.
+function requestCookieSecure(req, env = process.env) {
+  if (env.NODE_ENV === 'production' || req?.secure === true) return true;
+  return String(req?.headers?.['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+}
+
 function sessionCookieOptions(expires, env = process.env) {
   return { httpOnly: true, secure: env.NODE_ENV === 'production',
     sameSite: 'lax', path: '/', ...(expires ? { expires: new Date(expires) } : {}) };
@@ -60,4 +78,5 @@ function clearSessionCookies(res) {
 }
 
 module.exports = { isolationMode, sessionCookieName, scopeCookieName,
-  sessionCookieOptions, setSessionCookie, readSessionCookie, clearSessionCookies };
+  sessionCookieOptions, setSessionCookie, readSessionCookie, clearSessionCookies,
+  protectedCookieName, requestCookieSecure };

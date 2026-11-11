@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { browserSite, appHostIsIsolated, validateBrowserSiteIsolation } = require('../src/services/browser-site-isolation');
+const { browserSite, appHostIsIsolated, generatedHosts, validateBrowserSiteIsolation } = require('../src/services/browser-site-isolation');
 const { isolationMode, sessionCookieName, scopeCookieName, readSessionCookie,
   sessionCookieOptions, setSessionCookie, clearSessionCookies } = require('../src/services/browser-session-cookies');
 
@@ -31,17 +31,33 @@ test('strict configuration requires different browser sites, not just different 
   }
 });
 
-test('site comparison follows ICANN and private public suffixes, including international names', () => {
+test('site comparison follows the ICANN suffixes only, including international names', () => {
   assert.equal(browserSite('APP.Example.CO.UK.'), 'example.co.uk');
   assert.equal(appHostIsIsolated('apps.example.co.uk', 'platform.example.co.uk'), false);
   assert.equal(appHostIsIsolated('apps.example.co.uk', 'platform.other.co.uk'), true);
-  assert.equal(appHostIsIsolated('app.tenant.github.io', 'platform.tenant.github.io'), false);
-  assert.equal(appHostIsIsolated('app.tenant.github.io', 'platform.other.github.io'), true);
   assert.equal(browserSite('app.bücher.de'), 'xn--bcher-kva.de');
-  for (const host of ['github.io', 'co.uk', 'bad..example.com', '-bad.example.com',
+  // A private entry (github.io) separates sites only in browsers that ship
+  // it, so the check never counts on one: under the ICANN section these
+  // hosts share github.io, and only a different ICANN domain isolates.
+  assert.equal(browserSite('app.tenant.github.io'), 'github.io');
+  assert.equal(appHostIsIsolated('app.tenant.github.io', 'platform.other.github.io'), false);
+  assert.equal(appHostIsIsolated('app.tenant.github.io', 'platform.example.com'), true);
+  assert.throws(() => validateBrowserSiteIsolation({ ...strict,
+    USERNODE_DOMAIN: 'platform.tenant.github.io', USERNODE_APPS_DOMAIN: 'apps.github.io' }),
+  /different registrable site/, 'a private suffix never satisfies strict mode');
+  for (const host of ['co.uk', 'bad..example.com', '-bad.example.com', 'localhost', 'x.test',
     'x.example.com/path', 'x.example.com\\path', 'x.example.com?x', ' x.example.com']) {
     assert.equal(browserSite(host), null, host);
   }
+});
+
+test('strict mode probes the app and preview hosts caddy.js actually builds', () => {
+  const caddy = require('../src/services/caddy');
+  const hosts = generatedHosts({ USERNODE_DOMAIN: caddy.USERNODE_DOMAIN, USERNODE_APPS_DOMAIN: caddy.USERNODE_APPS_DOMAIN });
+  assert.equal(hosts.app, caddy.productionHostname('probe'));
+  assert.equal(hosts.preview, caddy.stagingHostname('probe', 's1'));
+  assert.deepEqual(generatedHosts(strict), { platform: 'app.platform.example.com', apps: 'apps.example.net',
+    app: 'probe.apps.example.net', preview: 'probe--s1.apps.example.net' });
 });
 
 test('protected session authority ignores legacy cookies and refuses duplicate names', () => {
@@ -108,4 +124,17 @@ test('strict custom-domain admission and cached resolution refuse the platform s
 test('invalid strict deployment stops configuration loading before other boot work', t => {
   environment(t, { ...strict, USERNODE_APPS_DOMAIN: 'apps.example.com' });
   assert.throws(() => require('../src/config').load(), /different registrable site/);
+});
+
+test('the shell document may be framed only by the platform itself', () => {
+  const { applyShellDocumentHeaders, shellFrameAncestors } = require('../src/services/static-cache');
+  // A preview of Homeroom inherits production's USERNODE_DOMAIN, so the
+  // production shell that frames it stays allowed; nothing else does.
+  assert.equal(shellFrameAncestors({ USERNODE_DOMAIN: 'app.onhomeroom.com' }), "frame-ancestors 'self' https://app.onhomeroom.com");
+  assert.equal(shellFrameAncestors({}), "frame-ancestors 'self'");
+  assert.equal(shellFrameAncestors({ USERNODE_DOMAIN: "x'; script-src *" }), "frame-ancestors 'self'");
+  const headers = new Map();
+  applyShellDocumentHeaders({ setHeader: (k, v) => headers.set(k, v) }, __filename, { USERNODE_DOMAIN: 'app.onhomeroom.com' });
+  assert.equal(headers.get('Content-Security-Policy'), "frame-ancestors 'self' https://app.onhomeroom.com",
+    'set on every shell document, a checkout without a build id included');
 });
