@@ -200,7 +200,15 @@ async function deliver(pool, row, text, { deps = {} } = {}) {
     : row.place_type === 'session' ? { type: 'session', ref: Number(row.place_ref) }
       : { type: 'message', ref: Number(row.place_ref) };
   if (!thread.ref) return null;
-  const sent = await ws.sendBotMessage(pool, app.id, { user: bot, content: body, thread });
+  // Step 4: one post (bot-post.js), once per follow-up: an answer to the
+  // person who asked to be told.
+  const out = await require('./bot-post').post(pool, {
+    place: thread, appId: app.id, kind: 'followup_told', words: body, author: bot,
+    ...(thread.type === 'issue' ? { issueNumber: thread.ref } : {}),
+    version: `followup-${Number(row.id)}`, record: false,
+  }, { ws });
+  if (out.outcome === 'again') return out.messageId ? Number(out.messageId) : null;
+  const sent = out.outcome === 'said' ? { id: out.messageId } : null;
   if (!sent?.id) return null;
   const username = await usernameOf(pool, row.user_id);
   try {

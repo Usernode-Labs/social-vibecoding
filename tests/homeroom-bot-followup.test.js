@@ -323,25 +323,43 @@ const insertOf = (h) => h.calls.queries.find((q) => /INSERT INTO homeroom_bot_ru
 // saved, then the work is lost, as a release does to a running process)
 // right after `crashAfter` is kept, and the next attempt resumes from what
 // was saved, against the database as the first attempt left it.
-async function attempts(t, h, crashAfter, between = null, { lastStep = false } = {}) {
+async function attempts(t, h, crashAfter, between = null, { lastStep = false, lostAfterPost = false } = {}) {
   const durableSteps = require('../src/services/durable-steps');
   const { StepsStopped } = require('../src/workflow/kernel/steps.ts');
   const realPost = live.post;
   const realSeen = live.advanceSeen;
   t.after(() => { live.post = realPost; live.advanceSeen = realSeen; });
-  live.post = async (args) => { h.calls.posts.push(args); return { githubCreatedAt: '2026-09-26T12:05:00Z' }; };
+  // Step 4: a post is said once by its key (services/bot-post.js): its kind
+  // for its run, or the version its caller names (the look's). A post with
+  // neither is said fresh.
+  const said = new Map();
+  let crashed = false;
+  live.post = async (args) => {
+    const key = args.runId || args.version ? `${args.kind}:${args.runId || ''}:${args.version || ''}` : null;
+    if (key && said.has(key)) return { ...said.get(key), again: true };
+    h.calls.posts.push(args);
+    const out = { githubCreatedAt: '2026-09-26T12:05:00Z' };
+    if (key) said.set(key, out);
+    // `lostAfterPost`: the process is replaced the moment the post went out,
+    // before anything after it was kept.
+    if (lostAfterPost && !crashed) {
+      crashed = true;
+      throw new StepsStopped('the process was replaced');
+    }
+    return out;
+  };
   live.advanceSeen = async (args) => { h.calls.seen.push(args); return { advanced: true }; };
   // A durable turn reads the branch's head before it starts (its observe).
   h.deps.github.getBranchSha = async () => OLD_HEAD;
   let saved = null;
-  let crashed = false;
   const attempt = (from) => {
     const steps = durableSteps.durable({
       resumeFrom: from,
       checkpoint: async (v) => {
+        if (process.env.S4_PROBE) console.error('CKPT', Object.keys(v).join(','), 'posts', h.calls.posts.length);
         saved = v;
         const hit = typeof crashAfter === 'function' ? crashAfter(v) : Object.prototype.hasOwnProperty.call(v, crashAfter);
-        if (!crashed && hit) {
+        if (!crashed && !lostAfterPost && hit) {
           crashed = true;
           throw new StepsStopped('the process was replaced');
         }
@@ -427,7 +445,9 @@ test('a follow-up resumed after its own debit crossed the bot\'s cap still posts
 
 test('a follow-up resumed after it posted does not post again', async (t) => {
   const h = harness({ proposalThread: [{ author: 'sam', body: 'Why zinc-950?', createdAt: '2026-09-26T11:20:00Z' }] });
-  await attempts(t, h, (v) => Object.keys(v).some((k) => k.startsWith('post:')), null, { lastStep: true });
+  // Lost the moment its post went out: the resumed attempt asks for the
+  // same post again, by the same key (bot-post.js), and nothing is said twice.
+  await attempts(t, h, null, null, { lastStep: true, lostAfterPost: true });
   assert.equal(h.calls.posts.length, 1, 'posted once, across both attempts');
 });
 
@@ -1085,7 +1105,7 @@ test('the bot\'s replies in a proposal thread come from its own user, and are ne
   // them, not what kind of row they are.
   const src = read('src/services/homeroom-bot-live.js');
   assert.match(src, /inThread\(own, \{ type: 'session', ref: Number\(proposalSessionId\) \}, null, 'system'\)/);
-  assert.match(src, /ws\.sendBotMessage\(pool, app\.id, \{ user: sender, content, metadata: meta, thread, \.\.\.\(withCard \? \{ card: withCard \} : \{\}\) \}\)/);
+  assert.match(src, /ws\.sendBotMessage\(pool, app\.id, \{\n\s+user: sender, content, metadata: meta, thread, \.\.\.\(withCard \? \{ card: withCard \} : \{\}\), \.\.\.\(onInsert \? \{ onInsert \} : \{\}\),/);
   const q = read('src/services/homeroom-bot.js');
   const activity = q.slice(q.indexOf('async function proposalThreadActivityByIssue'), q.indexOf('function latestOf'));
   assert.match(activity, /m\.msg_type = 'message'/);

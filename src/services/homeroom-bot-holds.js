@@ -204,14 +204,27 @@ async function recentMentions(pool, appId, numbers, { windowHours = MENTION_WIND
 }
 
 /** The bot's answers so far on `numbers`, oldest first. */
+// The answers the bot gave on these requests, and those decided and still
+// going out (bot_posts pending: the bot-voice machine claims one with its
+// decision), oldest first.
 async function answers(pool, appId, numbers) {
   const { rows } = await pool.query(
-    `SELECT issue_number, kind, created_at FROM homeroom_bot_posts
-      WHERE app_id = $1 AND issue_number = ANY($2::int[]) AND kind = ANY($3::text[])
+    `SELECT issue_number, kind, created_at FROM (
+       SELECT issue_number, kind, created_at, id FROM homeroom_bot_posts
+        WHERE app_id = $1 AND issue_number = ANY($2::int[]) AND kind = ANY($3::text[])
+       UNION ALL
+       SELECT issue_number, kind, created_at, id FROM bot_posts
+        WHERE app_id = $1 AND issue_number = ANY($2::int[]) AND kind = ANY($3::text[]) AND outcome = 'pending'
+     ) a
       ORDER BY created_at, id`,
     [appId, numbers, [LEAVING_KIND, GOING_KIND]],
   );
   return rows;
+}
+
+/** Pure: the version of a held answer's key (bot-post.js): its mention's. */
+function heldVersion(mentionId) {
+  return `mention-${Number(mentionId)}`;
 }
 
 /** The people among `names` who asked the bot to stop tagging them on this request. */
@@ -286,12 +299,13 @@ async function answerMentions(pool, { app, repo, github, bot, holders, deps = {}
 
 /**
  * Say the answer to a mention on a held request (the request's bot-voice
- * machine's `voice.post` work): its post, written pending when the answer
- * was decided, taken up and said strictly (homeroom-bot-live.js post), so a
- * retry says only what had not gone out. Throws on a failure a retry can
- * cure. Resolves { postId } or { skipped }.
+ * machine's `voice.post` work): its post, claimed pending when the answer
+ * was decided (bot_posts, keyed `held:<mention>:<kind>`), taken up and said
+ * strictly (homeroom-bot-live.js post), so a retry says only what had not
+ * gone out. Throws on a failure a retry can cure. Resolves { postId } or
+ * { skipped }.
  */
-async function sayHeld(pool, { appId, issueNumber, kind, text, mention = null, mentions = [], deps = {} }) {
+async function sayHeld(pool, { appId, issueNumber, kind, text, mention = null, mentions = [], mentionId = null, deps = {} }) {
   const { rows: [app] } = await pool.query('SELECT * FROM apps WHERE id = $1', [Number(appId)]);
   if (!app) return { skipped: 'gone' };
   const repo = (deps.botSvc || require('./homeroom-bot')).parseRepo(app.repo_url);
@@ -301,7 +315,7 @@ async function sayHeld(pool, { appId, issueNumber, kind, text, mention = null, m
   const out = await live.post({
     pool, github: deps.github || require('./github'), ws: deps.ws || require('./ws'), app, repo, issueNumber: Number(issueNumber),
     kind, text, sender: bot, senderId: bot.id, mention, mentions, notifications: deps.notifications || null,
-    strict: true, takeUpPending: true,
+    strict: true, ...(Number(mentionId) > 0 ? { version: heldVersion(mentionId) } : {}),
   });
   return { postId: out?.postId ?? null };
 }
@@ -417,6 +431,7 @@ async function tellTaken(pool, { app, bot, holders, deps = {} }) {
 }
 
 module.exports = {
+  heldVersion,
   LEAVING_KIND,
   GOING_KIND,
   MENTION_WINDOW_HOURS,

@@ -20,10 +20,14 @@ Agreed with Evan on 5 Nov 2026:
 4. One stage vocabulary everywhere (below).
 5. The work state is stored, written when it changes; one push carries it.
 6. In a request's thread the bot posts only: its question or plan; "built it,
-   up for a vote"; one failure post, updated in place; and "live". Nothing
-   else is a message: no relays into Main Chat, no private-thread milestone
-   lines, no channel chips. The first-version line in a project's channel
-   stays.
+   up for a vote"; a failure note; and "live" (and its answers when somebody
+   speaks to it there). Nothing else is a message: no relays into Main Chat,
+   no private-thread milestone lines, no channel chips. The first-version
+   line in a project's channel stays. Amended by Evan, 11 Nov 2026: failure
+   notes are never edited. A new failure is a new note, said only when its
+   words differ from the last failure note in that place or somebody has
+   replied since; a repeat posts nothing (the status card already shows
+   it); a newer note retires the older note's buttons.
 7. The bell is derived from stage changes: needs you, ready to vote, stopped,
    live.
 8. Main Chat holds only the conversation.
@@ -170,8 +174,12 @@ proposal):
 The request thread keeps:
 - the bot's question or plan;
 - "built it, up for a vote";
-- one failure post, edited in place;
-- "live".
+- a failure note, never edited (decision 6 as amended, 11 Nov 2026): a new
+  failure is a new note only when its words differ from the last failure
+  note there or somebody has replied since; a repeat posts nothing; a newer
+  note retires the older one's buttons;
+- "live";
+- its answers when somebody speaks to it there.
 
 These go:
 - DM relays of request news (`relayIssuePost`);
@@ -181,6 +189,58 @@ These go:
 - duplicate change-thread copies.
 
 The first-version line in a project's channel stays.
+
+### Step 4, built 11 Nov 2026
+
+One posting function, append-only (`src/services/bot-post.js`, migration
+`bot-posts`):
+
+- Every word the bot says to people is one post, keyed by what it is:
+  `kind:subject:version` (`build_failed:request:3-12:run-40`,
+  `checks_retry:change:6564:look-3`, `reply:place:3:issue:12:turn-<key>`,
+  `going_ahead:request:3-75:mention-4242`). The key is claimed in
+  `bot_posts` (`said_key` unique) before anything is sent, so a post asked
+  for twice (a retry, a restart, two passes at once) is said once; one a
+  restart caught going out is `pending`, and the retry sends only what its
+  row has not recorded. The message is written with its record
+  (`ws.sendBotMessage` / `sendSystemMessage` `onInsert`). Outcomes: `said`,
+  `refused`, `repeat`, `pending`. `homeroom_bot_posts` stays as the
+  request's projection its readers use, written once a post is said.
+- One rule table per place (`RULES`) replaces THREAD_KINDS, with no bypass:
+  `live.post`, the thread notes (`postThreadNote`), the change's notes
+  (`live.postOnProposal`), the voice's replies and its pointer to another
+  request, a held request's answer, a newer plan taken up, a person's change
+  claiming a request, a "tell me when" kept, the plan card on a change,
+  the bot's own version of a change, and the move's lines all say through
+  it. What a place does not hear is recorded as `refused`. A request's
+  thread hears the families above; a build's note on another change it
+  builds beside or on top of (#6423, #6428) is part of its plan. A person's
+  chat with the bot records each message through its transport
+  (`homeroom-bot-dm.js sendDm`, keyed by its idempotency key), and refuses
+  request news, recorded.
+- Failure notes as amended: the same words as the place's last failure
+  note, with nobody writing since and nothing else said there since, are a
+  `repeat` (no message, no GitHub comment, no DM, no mention); anything new
+  is a new note, and the older note's buttons retire
+  (`bot-cards.js retireFor` `messageIds`). A change's notes on its checks
+  are failure notes in its thread.
+- Words shown never change: a plan's row keeps its words and only its
+  status moves (`notePlanRows`, the boot backfill); no bot UPDATE of a
+  message's content remains (`tests/bot-post.test.js` pins it). Nothing
+  streams an answer's words: the working card names the step, and the
+  answer appears once, whole.
+- Gone: `updateRepeatedBuildFailure`, `replaceFailurePost`,
+  `FAILURE_TRIES_MARK` and the "(Tried N times.)" rewrite, THREAD_KINDS,
+  `saidInThread`, `threadMessageOf`, `takeUpPending` and the pending
+  projection rows (the held answer is claimed in `bot_posts`), `runPosted`,
+  `postOnce`, the looks' once for notes and waits, the voice's reply found
+  by scanning for its turn mark, the step 5 hand-off and checks-note repeat
+  reads (the failure rule says it), `PLAN_ROW_ENDINGS`, and the dead
+  streaming code (`draftTail`, `MAX_DRAFT_*`, the typing event's words,
+  `botDraftText`, the working card's draft and its stitching).
+- `duplicateNotes(pool, { since })`: the notes on requests said or asked
+  for more than once (per request and kind, past the first, and every ask
+  for a key already said), the admin's re-read numbers' "Notes said twice".
 
 ## Step 2: one tool registry, one card store, one change-ask queue
 

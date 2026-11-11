@@ -263,7 +263,7 @@ async function offerOverlap(pool, {
       ...(requester?.username ? { requester: requester.username } : {}),
     };
     // With nobody to ask, the note is still said: it is news for the thread.
-    // Step 3: its card is written with the note (postThreadNoteNow `card`),
+    // Step 3: its card is written with the note (postThreadNote `card`),
     // and the pair's claim names it in the same transaction.
     const card = forUserId ? {
       kind: 'overlap', forUserId, args,
@@ -273,9 +273,11 @@ async function offerOverlap(pool, {
       kind: overlap.kind, other, otherTitle: args.otherTitle, why: args.why,
       domain: domain || domainOf(deps), appSlug: app.slug,
     });
-    const postNote = (deps.botSvc || require('./homeroom-bot')).postThreadNoteNow;
+    const postNote = (deps.botSvc || require('./homeroom-bot')).postThreadNote;
     const posted = await postNote({
       pool, ws: ws || wsOf(deps), app, issueNumber: n, kind: 'overlap', text, bot,
+      // Said once per pair (bot-post.js keys it by the pair's claim).
+      version: `pair-${Number(claim.id)}`,
       ...(card ? { card } : {}),
     });
     if (!posted) {

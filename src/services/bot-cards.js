@@ -334,16 +334,36 @@ async function retireCards(db, cards, reason) {
  * that STILL_WORTH no longer keeps is retired, with why. `keep` (card ids,
  * for the posting function: a newer note supersedes an older one) retires
  * every other open card of the kept cards' kinds about the item, as
- * 'superseded'. The item is a request (`appId`, `issueNumber`), or a change
- * (`sessionId`) for its cards that name no request. Resolves the pushes
- * that tell everybody reading, to publish once `db`'s transaction commits.
+ * 'superseded'. `messageIds` (step 4, the posting function's: the older
+ * notes a newer one takes the place of, bot-post.js) retires every open
+ * card on those messages, whatever its kind, as 'superseded' too: a newer
+ * failure note leaves the older one's buttons behind as a line. The item is
+ * a request (`appId`, `issueNumber`), or a change (`sessionId`) for its
+ * cards that name no request. Resolves the pushes that tell everybody
+ * reading, to publish once `db`'s transaction commits.
  */
-async function retireFor(db, { appId = null, issueNumber = null, sessionId = null, standing = null, prev = null, keep = null } = {}) {
+async function retireFor(db, {
+  appId = null, issueNumber = null, sessionId = null, standing = null, prev = null, keep = null, messageIds = null,
+} = {}) {
   const kept = new Set((Array.isArray(keep) ? keep : []).map(Number).filter((id) => id > 0));
+  const older = (Array.isArray(messageIds) ? messageIds : []).map(Number).filter((id) => Number.isSafeInteger(id) && id > 0);
   const judge = standing && moved(prev, standing);
-  if (!judge && !kept.size) return [];
+  if (!judge && !kept.size && !older.length) return [];
   const cards = await openCardsOf(db, { appId, issueNumber, sessionId });
+  if (older.length) {
+    // The older notes' own cards, about this item or not (a card that names
+    // no request sits on a request's note too).
+    const { rows: onThem } = await db.query(
+      `SELECT c.id, c.kind, c.place, c.user_id, c.chat_message_id, c.message_id, c.conversation_id
+         FROM bot_cards c
+        WHERE c.status = 'open' AND c.place = 'thread' AND c.chat_message_id = ANY($1::int[])
+        ORDER BY c.id`,
+      [older],
+    );
+    for (const card of onThem) if (!cards.some((c) => Number(c.id) === Number(card.id))) cards.push(card);
+  }
   if (!cards.length) return [];
+  const olderSet = new Set(older);
   const byReason = new Map();
   const add = (reason, card) => {
     if (!byReason.has(reason)) byReason.set(reason, []);
@@ -358,7 +378,7 @@ async function retireFor(db, { appId = null, issueNumber = null, sessionId = nul
     if (kept.has(Number(card.id))) continue;
     const reason = judge ? retireReason(card.kind, standing) : null;
     if (reason) add(reason, card);
-    else if (superseding.has(card.kind)) add('superseded', card);
+    else if (superseding.has(card.kind) || olderSet.has(Number(card.chat_message_id))) add('superseded', card);
   }
   const pushes = [];
   for (const [reason, list] of byReason) pushes.push(...await retireCards(db, list, reason));

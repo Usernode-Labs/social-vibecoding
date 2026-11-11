@@ -714,6 +714,9 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.match(sent[sent.length - 1].content, /Filed as request \[#14\]\(https:\/\/[^)]*\/dev\/issues\/14\)/);
     // Settled, and its process went before its line: the retry says it, once.
     const lines = sent.length;
+    // Step 4: its line is one post, keyed by the act (bot-post.js); a line
+    // never said has no key and no message.
+    await pool.query(`DELETE FROM bot_posts WHERE said_key LIKE 'reply:%:turn-offer:cut:said'`);
     await pool.query(`DELETE FROM chat_messages WHERE metadata->'homeroomBot'->'turn'->>'key' = 'offer:cut:said'`);
     sent.length = 0;
     assert.deepEqual(await voice.actOnOffer(pool, {}, { offerId: o.id, userId: sam.id, choice: 'yes', key: 'offer:cut', deps: { ws, chatSvc } }),

@@ -562,16 +562,14 @@ async function backfillFiledDraftCards(pool) {
 // request #3 on Papote showed four. What became of each plan is written on
 // its row from now on (homeroom-bot-live.js notePlanRows); a row from
 // before is told here, once. Only a row still reading 'waiting' whose plan
-// no longer waits changes, so it is a no-op after its first run.
+// no longer waits changes, so it is a no-op after its first run. Step 4
+// (11 Nov 2026): its status only; the words shown stay.
 async function backfillPlanRows(pool) {
-  const endings = require('../services/homeroom-bot-live').PLAN_ROW_ENDINGS;
   let result;
   try {
     result = await pool.query(
       `UPDATE chat_messages m
-          SET metadata = jsonb_set(m.metadata, '{specShare,botNote}', to_jsonb(s.note)),
-              content = regexp_replace(m.content, '\\.(?: Nothing is built yet\\.)? Waiting for [^\\n]*$',
-                CASE s.note WHEN 'building' THEN $1 WHEN 'replaced' THEN $2 ELSE $3 END)
+          SET metadata = jsonb_set(m.metadata, '{specShare,botNote}', to_jsonb(s.note))
          FROM (SELECT p.thread_message_id AS id,
                       CASE WHEN r.plan->'chosen' IS NOT NULL THEN 'building'
                            WHEN r.build_error = 'skipped: the request was read again'
@@ -581,7 +579,6 @@ async function backfillPlanRows(pool) {
                  JOIN homeroom_bot_runs r ON r.id = p.run_id
                 WHERE p.kind = 'plan' AND p.thread_message_id IS NOT NULL AND r.awaiting_go_at IS NULL) s
         WHERE m.id = s.id AND m.metadata->'specShare'->>'botNote' = 'waiting'`,
-      [endings.building, endings.replaced, endings.stopped],
     );
   } catch (err) {
     log.warn('db', 'Plan-row backfill skipped (query failed)', { err: err.message });
@@ -2284,7 +2281,7 @@ async function seedStagingBotAlreadyWorks(pool) {
        RETURNING id`,
       [
         appId, botId,
-        `Already works: ${reason} Anyone in the project can Propose to close it, or reply here if something is missing.`,
+        `Already works: ${reason} Anyone in the project can tap Propose to close below to start a vote, or reply here if something is missing.`,
         number,
         JSON.stringify({ stagingDemo: 'already-works-note', homeroomBot: { kind: 'note' } }),
       ],
@@ -2320,11 +2317,11 @@ async function seedStagingBotAlreadyWorks(pool) {
         [userId, appId, noteId, botId, detail],
       );
     }
-    // #6321: the note as it is written now, with Propose to close and Keep it
-    // open under it for any member. A copy that already has the older note is
-    // brought up to it, so the after copy shows the state either way. A row
-    // nobody decides with until a person taps; idempotent by the offer tied
-    // to the note.
+    // #6321: the note with Propose to close and Keep it open under it for
+    // any member. A copy that already has the note gets its buttons, so the
+    // after copy shows the state either way (its words stay as written). A
+    // row nobody decides with until a person taps; idempotent by the offer
+    // tied to the note.
     if (noteId != null) {
       const tied = await pool.query(
         `SELECT 1 FROM bot_cards WHERE place = 'thread' AND chat_message_id = $1
@@ -2337,9 +2334,10 @@ async function seedStagingBotAlreadyWorks(pool) {
           [appId, JSON.stringify({ issueNumber: number, title, why: reason }), noteId],
         );
         const offerId = Number(offer.id);
-        await pool.query('UPDATE chat_messages SET content = $2, metadata = $3 WHERE id = $1', [
+        // Its buttons only: a message's words never change once written
+        // (step 4, 11 Nov 2026), so the note is written with these words.
+        await pool.query('UPDATE chat_messages SET metadata = $2 WHERE id = $1', [
           noteId,
-          `Already works: ${reason} Anyone in the project can tap Propose to close below to start a vote, or reply here if something is missing.`,
           JSON.stringify({
             stagingDemo: 'already-works-note',
             homeroomBot: {

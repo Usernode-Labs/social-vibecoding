@@ -201,7 +201,10 @@ test('step 5: reads per request, why it read by week, Main Chat repairs and dead
   });
   assert.deepEqual(r.byWeek[2], { week: '2026-10-26', reads: 0, why: {}, taps: 3, notFound: 0, gone: 0, surfaces: { card: { taps: 3, notFound: 0, gone: 0 } } });
   assert.deepEqual(r.claimRepair, { recovered: 2, turns: 30, rate: 2 / 30 }, 'the Main Chat answers of the same week');
-  assert.equal(r.duplicateNotes, null, 'counted once posts carry their said-once keys (step 4)');
+  assert.equal(r.duplicateNotes, null, 'not counted: no count was read');
+  // Step 4: counted from the posts' said-once keys (bot-post.js duplicateNotes).
+  assert.equal(health.shapeRereads({ ...REREAD_ROWS, duplicates: 4 }).duplicateNotes, 4);
+  assert.equal(health.shapeRereads({ ...REREAD_ROWS, duplicates: 0 }).duplicateNotes, 0);
   const empty = health.shapeHealth({}).rereads;
   assert.deepEqual([empty.reads, empty.requests, empty.perRequest, empty.byWeek, empty.claimRepair.rate], [0, 0, null, [], null]);
 });
@@ -259,7 +262,7 @@ test('step 5: every tap on an offer or a card is recorded as its route answered 
     /recordBotOfferTap\(pool, \{\n\s+surface: 'card', status: out\.ok \? 200 : out\.status \|\| 400,/);
 });
 
-test('step 5: the panel says the re-read numbers, and that notes said twice are not counted yet', () => {
+test('step 5: the panel says the re-read numbers, and how many notes were said twice', () => {
   const { renderToHtml, createElement } = require('./lib/render-tsx');
   const { RolloutHealth, rereadRows, weekLabel } = loadPanel();
   const h = health.shapeHealth({ ...rows(), rereads: REREAD_ROWS });
@@ -279,8 +282,12 @@ test('step 5: the panel says the re-read numbers, and that notes said twice are 
   assert.match(byKey.repair.lines[0], /^2 of 30 answers in the last 7 days were asked again before they were sent/);
   assert.equal(byKey.taps.value, '4 of 15');
   assert.equal(byKey.taps.lines[0], 'Week of 9 Nov: 1 found nothing to do (404), 3 found the offer gone (410), of 15 taps.');
-  assert.equal(byKey.notes.value, '–');
-  assert.match(byKey.notes.lines[0], /^Not counted yet/);
+  assert.equal(byKey.notes.value, '–', 'none read');
+  assert.match(byKey.notes.lines[0], /^Could not be counted just now/);
+  const counted = Object.fromEntries(rereadRows(health.shapeHealth({ ...rows(), rereads: { ...REREAD_ROWS, duplicates: 3 } }).rereads)
+    .map((r) => [r.key, r]));
+  assert.equal(counted.notes.value, '3');
+  assert.equal(counted.notes.lines[0], 'Notes on requests said, or asked for, more than once in the last 7 days.');
   for (const r of Object.values(byKey)) assert.ok(!/—/.test(`${r.label}${r.value}${r.lines.join('')}`), r.key);
 
   const html = renderToHtml(createElement(RolloutHealth, { health: h, failures: [] }));

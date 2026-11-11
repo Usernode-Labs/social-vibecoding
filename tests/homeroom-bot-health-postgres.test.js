@@ -235,6 +235,24 @@ test('step 5: the re-read numbers against the full PostgreSQL schema', { timeout
   await tap('card', 200);
   await tap('thread', 410, 24 * 15);
   await tap('chat', 404, 24 * 50);
+  // Step 4: the bot's posts on requests by their said-once keys
+  // (bot-post.js). Request 1's build failed three times this week: said,
+  // not said again (a repeat), and said once more, asked for twice: three
+  // past the first. Request 2's question was said once, its answer twice
+  // (answers are not notes); request 1's older failure is out of the window.
+  const post = (key, kind, n, { outcome = 'said', asked = 1, hoursAgo = 1, place = 'issue' } = {}) => pool.query(
+    `INSERT INTO bot_posts (said_key, kind, subject, version, place_type, app_id, place_ref, issue_number, outcome, asked, created_at)
+     VALUES ($1, $2, $3, $1, $4, $5, $6::int, $6::int, $7, $8, NOW() - make_interval(hours => $9))`,
+    [key, kind, `request:${app}-${n}`, place, app, n, outcome, asked, hoursAgo],
+  );
+  await post('a', 'build_failed', 1);
+  await post('b', 'build_failed', 1, { outcome: 'repeat' });
+  await post('c', 'build_failed', 1, { asked: 2 });
+  await post('d', 'question', 2);
+  await post('e', 'reply', 2);
+  await post('f', 'reply', 2);
+  await post('g', 'build_failed', 1, { hoursAgo: 24 * 9 });
+  await post('h', 'question', 2, { outcome: 'refused' });
 
   const { rereads: r } = await health.rolloutHealth(pool, { botUsername: BOT_USERNAME });
   assert.deepEqual([r.reads, r.requests, r.perRequest], [3, 2, 1.5],
@@ -248,5 +266,7 @@ test('step 5: the re-read numbers against the full PostgreSQL schema', { timeout
   assert.deepEqual(sum('why'), { 'changed:discussion': 2, new: 1, 'changed:voice': 1 }, 'four weeks of reads, by why');
   assert.deepEqual([sum('taps'), sum('notFound'), sum('gone')], [5, 1, 2], 'four weeks of taps; older ones are not counted');
   assert.ok(r.byWeek.every((w) => /^\d{4}-\d{2}-\d{2}$/.test(w.week)));
-  assert.equal(r.duplicateNotes, null);
+  assert.equal(r.duplicateNotes, 3, 'notes on a request said or asked for more than once this week');
+  assert.equal(await require('../src/services/bot-post').duplicateNotes(pool, { since: new Date(Date.now() - 10 * 86400 * 1000) }), 4,
+    'a longer window takes the older failure in');
 });

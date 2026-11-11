@@ -296,8 +296,8 @@ async function run(t, h, item = ITEM) {
   t.after(() => {
     live.post = realPost; live.advanceSeen = realSeen; live.postOnProposal = realOnProposal; live.mentionTargets = realTargets;
   });
-  live.post = async (args) => { h.calls.posts.push(args); return { githubCreatedAt: '2026-10-01T12:05:00Z' }; };
-  live.postOnProposal = async (args) => { h.calls.onProposal.push(args); return { postId: 1, thread: true }; };
+  live.post = async (args) => { h.calls.posts.push(args); return h.postResult || { githubCreatedAt: '2026-10-01T12:05:00Z' }; };
+  live.postOnProposal = async (args) => { h.calls.onProposal.push(args); return { postId: 1, thread: true, outcome: 'said' }; };
   live.advanceSeen = async (args) => { h.calls.seen.push(args); return { advanced: true }; };
   live.mentionTargets = async () => ['ada'];
   // As its request's look (bot-request's bot.look) runs it: what the look
@@ -884,27 +884,29 @@ test('step 5: a fix round, a sync, a hand-off and a retry each record that they 
   assert.match(src, /recordFailure\(code, \{ proposalSessionId: session\.id, lookKind: 'fix', \.\.\.spent \}, \{ infra: true \}\)/);
 });
 
-test('step 5: a checks note or a hand-off that says what the last note said is not said again', async (t) => {
-  const { firstPerson } = require('../src/services/homeroom-bot-words');
-  const synced = followup.checksSyncedText({ failingCount: 1 });
-  const same = harness({ fixSync: { synced: true, why: null, sha: NEW_HEAD }, lastNote: { kind: 'checks_synced', content: firstPerson(synced) } });
+// Step 4 (11 Nov 2026): whether a checks note or a hand-off says something
+// new is the posting function's failure rule (services/bot-post.js,
+// tests/homeroom-bot-failure-repeat-postgres.test.js): each goes to it keyed,
+// and nothing here reads the last note first.
+test('step 4: a checks note and a hand-off go to the posting function, which says only what is new', async (t) => {
+  const same = harness({ fixSync: { synced: true, why: null, sha: NEW_HEAD } });
   assert.equal((await run(t, same)).acted, 'checks_synced');
-  assert.deepEqual(same.calls.onProposal, [], 'the same line, said already');
-  const before = harness({ fixSync: { synced: true, why: null, sha: NEW_HEAD }, lastNote: { kind: 'checks_revise', content: firstPerson(synced) } });
-  await run(t, before);
-  assert.deepEqual(before.calls.onProposal.map((p) => p.kind), ['checks_synced'], 'after another note, it is news');
+  assert.deepEqual(same.calls.onProposal.map((p) => p.kind), ['checks_synced']);
+  assert.match(String(same.calls.onProposal[0].version), /^(run-\d+|look-\d+)-1$/, 'keyed: said once across the look\'s attempts');
+  assert.ok(!same.calls.queries.some((q) => /SELECT p\.kind, m\.content/.test(q.s)), 'no read of the last note beside it');
 
-  const stopped = firstPerson(followup.stoppedHandOffText({ failingCount: 1, tries: followup.MAX_REVISIONS }));
-  const person = harness({ revisions: followup.MAX_REVISIONS, lastNote: { kind: 'followup_person', content: `@ada ${stopped}` } });
+  const person = harness({ revisions: followup.MAX_REVISIONS });
+  person.postResult = { repeated: true, messageId: 12 };
   const out = await run(t, person);
-  assert.equal(out.acted, 'checks_person_unchanged');
-  assert.equal(person.calls.posts.length, 0, 'no post, no tag, no chat relay');
-  assert.ok(!person.calls.queries.some((q) => /INSERT INTO bot_cards/.test(q.s)), 'and no second Let it try again');
+  assert.equal(out.acted, 'checks_person_unchanged', 'the posting function found it said already');
+  assert.equal(person.calls.posts.length, 1);
+  assert.equal(person.calls.posts[0].kind, 'followup_person');
+  assert.equal(person.calls.seen.length, 0, 'nothing new to mark as seen');
   assert.equal(kindOfRun(person), 'hand_off', 'its run is still recorded');
   assert.deepEqual(person.look.out.fix, { outcome: 'looked' }, 'and the round still ended');
-  const other = harness({ revisions: followup.MAX_REVISIONS, lastNote: { kind: 'followup_person', content: 'Something else went wrong with this change entirely.' } });
-  await run(t, other);
-  assert.equal(other.calls.posts.length, 1, 'other words are news');
+  const said = harness({ revisions: followup.MAX_REVISIONS });
+  assert.equal((await run(t, said)).acted, 'checks_person');
+  assert.equal(said.calls.seen.length, 1);
 });
 
 function kindOfRun(h) {

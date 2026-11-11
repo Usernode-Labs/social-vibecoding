@@ -252,6 +252,23 @@ async function othersInvolved(pool, { app, repo, issueNumber, authorId, authorLo
  * POST /api/apps/:slug/issues, kind close_issue). Resolves { ok, id } or
  * { ok: false, code } (already_proposed, join_required).
  */
+/**
+ * Homeroom's line in a request's (or a proposal's) thread naming what a
+ * person did: one post (bot-post.js RULES' `line` family), said once by its
+ * `version`, with no author. Never throws.
+ */
+async function movedLine(pool, { app, thread, kind, words, version, deps = {} }) {
+  const botPost = require('./bot-post');
+  await botPost.post(pool, {
+    place: thread, appId: app.id, kind, words, version,
+    ...(thread.type === 'issue' ? { issueNumber: thread.ref } : {}),
+    subject: thread.type === 'issue' ? botPost.requestSubject(app.id, thread.ref) : botPost.placeSubject(app.id, thread),
+    record: false,
+  }, { ws: deps.ws || require('./ws') }).catch((err) => log.warn('homeroom-bot-move', 'Could not say a line in the thread', {
+    app: app.slug, thread, kind, err: err.message,
+  }));
+}
+
 async function proposeClose(pool, { app, user, issueNumber, issueTitle, reason, deps = {} }) {
   const ws = deps.ws || require('./ws');
   const n = Number(issueNumber);
@@ -271,8 +288,9 @@ async function proposeClose(pool, { app, user, issueNumber, issueTitle, reason, 
   );
   const id = Number(row.id);
   const said = `${user.username} proposed closing issue #${n}: "${title}"`;
-  await ws.sendSystemMessage(pool, app.id, said, 'system', null, { type: 'governance', ref: id }).catch(() => {});
-  await ws.sendSystemMessage(pool, app.id, said, 'system', null, { type: 'issue', ref: n }).catch(() => {});
+  // Step 4: Homeroom's lines, each one post (bot-post.js), once per proposal.
+  await movedLine(pool, { app, thread: { type: 'governance', ref: id }, kind: 'close_proposed', words: said, version: `close-${id}`, deps });
+  await movedLine(pool, { app, thread: { type: 'issue', ref: n }, kind: 'close_proposed', words: said, version: `close-${id}`, deps });
   try {
     const workflow = deps.workflow || require('../workflow/platform.ts');
     await workflow.fileProposal(id, app.id);
@@ -305,8 +323,10 @@ async function closeNow(pool, { app, repo, issueNumber, user, newNumber, deps = 
     [app.id, n],
   ).catch(() => {});
   await require('./work-state').touched(pool, [{ appId: app.id, issueNumber: n }]);
-  await ws.sendSystemMessage(pool, app.id, `${user.username} moved this request to Homeroom as #${newNumber} and closed it here`,
-    'system', null, { type: 'issue', ref: n }).catch(() => {});
+  await movedLine(pool, {
+    app, thread: { type: 'issue', ref: n }, kind: 'moved', version: `to-${Number(newNumber)}`, deps,
+    words: `${user.username} moved this request to Homeroom as #${newNumber} and closed it here`,
+  });
   try {
     ws.pushIssueUpdate?.({ action: 'github_synced', appSlug: app.slug, appId: app.id, source: 'moved' });
   } catch {}
@@ -495,10 +515,10 @@ async function copyToHomeroom(pool, config, {
   // A retry of the same ask finds the copy (fileRequest's fileKey) and does
   // not leave a second link on the original.
   if (!filed.again) {
-    const ws = deps.ws || require('./ws');
-    await ws.sendSystemMessage(pool, app.id,
-      `Also filed on Homeroom's own board as request #${filed.issueNumber}: ${link}. This request stays open here.`,
-      'system', null, { type: 'issue', ref: n }).catch(() => {});
+    await movedLine(pool, {
+      app, thread: { type: 'issue', ref: n }, kind: 'copied', version: `to-${Number(filed.issueNumber)}`, deps,
+      words: `Also filed on Homeroom's own board as request #${filed.issueNumber}: ${link}. This request stays open here.`,
+    });
     try {
       await github.createIssueComment(gate.repo.owner, gate.repo.repo, n,
         `Also on Homeroom's own board as request #${filed.issueNumber}: ${link}\n\nThis request stays open here.`);

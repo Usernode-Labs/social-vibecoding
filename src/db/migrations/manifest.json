@@ -300,6 +300,11 @@
       "id": "bot-cards-retired",
       "sha256": "7ed4a1b49569c9be795f7a439ed51f532392115dc85d494edaf202a624db5563",
       "schemaSha256": "ace22ab4d2c827ae24f7341cf1a4e765393e09d0a3f03a2f543e887f275f3165"
+    },
+    {
+      "id": "bot-posts",
+      "sha256": "a2f9eb96bd1cb019c7b420f4963041a7c3a03d45b46a1f797a9623ca170e28d6",
+      "schemaSha256": "483dd2f33cbb39a9161ef437a12b1b918c8072ea10b2da1599f846b279e24d87"
     }
   ]
 }

@@ -660,12 +660,21 @@ async function storyAppId(pool, metadata, root) {
 
 async function sendDm(pool, {
   bot, userId, content, metadata = null, idempotencyKey = null, objects = null, replyToId = null, withoutCards = null,
-  moment = undefined, threadRootId = undefined, hello = null, card = null,
+  moment = undefined, threadRootId = undefined, hello = null, card = null, postKind = null,
 }) {
   if (!bot?.id || !userId) return null;
+  // Step 4 (11 Nov 2026): this is the bot's posting function's transport for
+  // a person's chat with it (services/bot-post.js): every message, and every
+  // one its rules refuse, is recorded there, keyed by its idempotency key in
+  // this chat (which also says it once).
+  const record = (outcome, messageId = null, conversationId = null) => require('./bot-post').recordDm(pool, {
+    userId, conversationId, kind: postKind || metadata?.kind || 'dm', key: conversations.normalizeIdempotencyKey(idempotencyKey),
+    messageId, words: content, outcome,
+    appId: null, issueNumber: Number(metadata?.issueNumber) || null,
+  });
   // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's news is
   // not a message. It is said on the request's own page (its question or
-  // plan, built and up for a vote, one failure updated in place, live), and
+  // plan, built and up for a vote, a failure note, live), and
   // its requester's bell rings from its stage (services/work-state.js).
   // Nothing about it goes into Main Chat, a request card's thread or a
   // private thread. A first version's news is the exception: it has no
@@ -674,6 +683,7 @@ async function sendDm(pool, {
     log.info('homeroom-bot-dm', 'A request\'s news is said on its page, not sent', {
       userId, kind: metadata?.kind || null, issueNumber: metadata?.issueNumber || null,
     });
+    await record('refused');
     return null;
   }
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, userId);
@@ -820,6 +830,7 @@ async function sendDm(pool, {
     return null;
   }
   const messageId = result.messageId ?? result.message?.id ?? null;
+  await record('said', messageId, opened.conversationId);
   // #4396: after the commit, the bells of the members its "live" told
   // (their notices, phone pushes and emails are owed in the message's own
   // transaction: afterInsert).
@@ -887,41 +898,13 @@ const typingSends = new Map();
 // (frontend/locales/en/messages.json `thread.botWorking.*`), as the agent
 // session's activity line does from a tool's name. No `doing` is "Thinking".
 // A person's typing event (routes/conversations.js) never carries one.
-// Homeroom bot parity, P1: 'writing' carries the answer as it is written
-// (homeroom-bot-mayor.js draftWriter), its own words and the only `text`
-// a typing event has: the newest MAX_DRAFT_CHARS of it, so the event fits
-// the bus between servers (ws-bus.js: 8000 bytes, or it becomes a nudge to
-// reload) and the card stays a card. The message sent takes its place.
+// 'writing': the model is writing its answer (homeroom-bot-mayor.js
+// draftWriter). #6581, step 4 (11 Nov 2026): no words travel with it, ever:
+// the card says "Writing", and the answer appears once, whole, as the
+// bot's message, so nothing shown is ever replaced or wiped.
 // 'looking': a helper sent to look into a project's code (P3, look_into).
 const DOING_KINDS = Object.freeze(['progress', 'request', 'code', 'drawing', 'capturing', 'designing', 'drafting', 'writing', 'looking']);
 const MAX_DOING_PROJECT = 60;
-const MAX_DRAFT_CHARS = 1800;
-const MAX_DRAFT_BYTES = 5600;
-
-/**
- * Pure: the end of an answer being written, as a typing event carries it:
- * '…' and the newest words when it is long, and where that tail starts in
- * the whole answer (`from`; 0 when nothing was cut), so the screen can stitch
- * the tail under the words it already holds instead of sliding them (#6405).
- */
-function draftTail(text) {
-  let out = String(text || '').replace(/\r/g, '').trim();
-  if (!out) return { text: '', from: 0 };
-  // `from` travels beside the text, so the byte budget leaves room for it.
-  const fits = (value) => Buffer.byteLength(JSON.stringify(value), 'utf8') <= MAX_DRAFT_BYTES - 16;
-  if (out.length <= MAX_DRAFT_CHARS && fits(out)) return { text: out, from: 0 };
-  let keep = MAX_DRAFT_CHARS;
-  let tail = out.slice(-keep);
-  while (keep > 100 && !fits(`… ${tail}`)) {
-    keep = Math.floor(keep * 0.8);
-    tail = out.slice(-keep);
-  }
-  // From a word, not the middle of one.
-  const space = tail.search(/\s/);
-  if (space > 0 && space < 40) tail = tail.slice(space + 1);
-  const words = tail.trimStart();
-  return { text: `… ${words}`, from: out.length - words.length };
-}
 
 /** Pure: `what` as a typing event carries it ({ kind, number?, project? }), or null for "thinking". */
 function typingDoing(what) {
@@ -939,13 +922,7 @@ function typingDoing(what) {
     const page = typeof what.page === 'string' ? clip(what.page.replace(/\s+/g, ' ').trim(), MAX_DOING_PROJECT) : '';
     return page ? { kind: 'capturing', page } : { kind: 'capturing' };
   }
-  if (what.kind === 'writing') {
-    // #6581: no words are carried any more, so a bare `writing` says "Writing".
-    if (typeof what.text !== 'string') return { kind: 'writing' };
-    const tail = draftTail(what.text);
-    // `from` only when the text was cut, so a whole answer keeps its own start.
-    return tail.text ? { kind: 'writing', text: tail.text, ...(tail.from > 0 ? { from: tail.from } : {}) } : null;
-  }
+  // 'writing' and the rest: the kind alone, never words.
   return { kind: what.kind };
 }
 
@@ -2015,7 +1992,7 @@ async function cardShown(pool, userId, appId, issueNumber) {
 const MOVES_CHAT_CARD = new Set(['spec', 'build_failed', 'blocked', 'person', 'empty']);
 
 async function relayIssuePost({
-  pool, ws = null, app, issueNumber, kind, runId = null, postId = null, bot, dm, ready = false, key = null, strict = false,
+  pool, ws = null, app, issueNumber, kind, runId = null, postKey = null, bot, dm, ready = false, key = null, strict = false,
 }) {
   if (MOVES_CHAT_CARD.has(kind) && app?.id) {
     await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber });
@@ -2095,7 +2072,7 @@ async function relayIssuePost({
     // One story: in the request's thread, a quiet line.
     const line = shown ? await stepLine(pool, {
       bot, userId: requester.userId, app, issueNumber, context, content, card: shown, step: kind,
-      key: postId ? `hrbot-post-${postId}` : key,
+      key: postKey || key,
       actions: kind === 'spec' && !dm.retry ? [readPlanAction(app.slug, issueNumber)] : null,
     }) : null;
     log.info('homeroom-bot-dm', line ? 'A quiet line in the request\'s thread' : 'On the card, not a message', { app: app.slug, issueNumber, kind });
@@ -2213,7 +2190,7 @@ async function relayIssuePost({
     content,
     withoutCards: dmText(kind, { ...dm, sessionId: null }, context),
     metadata,
-    idempotencyKey: sendKey || (postId ? `hrbot-post-${postId}` : null),
+    idempotencyKey: sendKey || postKey || null,
     // B7: a ready card's Try it is its way to the change; it carries no card.
     objects: dm.card ? [] : cardsFor(kind, dm, app, issueNumber).filter((c) => !(shown && c.type === 'issue')),
     // #3707: news about a request they started here points back at it.
@@ -6587,9 +6564,6 @@ module.exports = {
   startTyping,
   whileTyping,
   typingDoing,
-  draftTail,
-  MAX_DRAFT_CHARS,
-  MAX_DRAFT_BYTES,
   DOING_KINDS,
   recordRequester,
   requesterOf,

@@ -87,7 +87,7 @@ function watchFor(h) {
  * figures as shapeHealth reads them). Weeks newest first, only those with
  * something in them. Pure.
  */
-function shapeRereads({ reads = {}, why = [], taps = [] } = {}, chat = {}, days = DAYS) {
+function shapeRereads({ reads = {}, why = [], taps = [], duplicates = null } = {}, chat = {}, days = DAYS) {
   const readCount = int(reads.reads);
   const requests = int(reads.requests);
   const kinds = reads.kinds && typeof reads.kinds === 'object' && !Array.isArray(reads.kinds) ? reads.kinds : {};
@@ -128,8 +128,10 @@ function shapeRereads({ reads = {}, why = [], taps = [] } = {}, chat = {}, days 
     // Main Chat answers that were repaired: a request that failed or a claim
     // caught, and asked again (homeroom_bot_dm_turns), of all of them.
     claimRepair: { recovered, turns: chatTurns, rate: share(recovered, chatTurns) },
-    // Step 4 counts these from its said-once keys (kind:subject:version).
-    duplicateNotes: null,
+    // Step 4 (11 Nov 2026): notes on requests said, or asked for, more than
+    // once over the window, from their said-once keys (bot-post.js
+    // duplicateNotes: kind:subject:version); null when it could not count.
+    duplicateNotes: duplicates == null || !Number.isFinite(Number(duplicates)) ? null : int(duplicates),
   };
 }
 
@@ -345,7 +347,8 @@ async function rolloutHealth(pool, { botUsername, days = DAYS, failSoft = true }
       return all ? [] : {};
     }
   };
-  const [proposals, questions, turns, chat, cards, reads, why, taps] = await Promise.all([
+  const since = new Date(Date.now() - days * 86400 * 1000);
+  const [proposals, questions, turns, chat, cards, reads, why, taps, duplicates] = await Promise.all([
     read('proposals', () => pool.query(PROPOSALS_SQL, [botUsername, days])),
     read('questions', () => pool.query(QUESTIONS_SQL, [days])),
     read('turns', () => pool.query(TURNS_SQL, [days])),
@@ -354,8 +357,10 @@ async function rolloutHealth(pool, { botUsername, days = DAYS, failSoft = true }
     read('reads', () => pool.query(READS_SQL, [days]), { soft: true }),
     read('read_why', () => pool.query(READ_WHY_SQL, [WEEKS]), { all: true, soft: true }),
     read('offer_taps', () => pool.query(OFFER_TAPS_SQL, [WEEKS]), { all: true, soft: true }),
+    // Soft by its own hand (null when it cannot count).
+    require('./bot-post').duplicateNotes(pool, { since }),
   ]);
-  return shapeHealth({ proposals, questions, turns, chat, cards, rereads: { reads, why, taps } }, days);
+  return shapeHealth({ proposals, questions, turns, chat, cards, rereads: { reads, why, taps, duplicates } }, days);
 }
 
 module.exports = {

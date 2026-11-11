@@ -2188,15 +2188,23 @@ async function getReactionsForMessages(pool, messageIds, viewerId = null) {
 // panel (services/app-notices.js, read from `events`). A call with no thread
 // is refused here rather than trusted to the callers.
 // db/migrate.js clearAutomatedChannelLines removes the lines written before.
-async function sendSystemMessage(pool, appId, content, msgType = 'system', metadata = null, thread = null) {
+async function sendSystemMessage(pool, appId, content, msgType = 'system', metadata = null, thread = null, { onInsert = null } = {}) {
   if (!thread) return null;
-  const { rows } = await pool.query(
-    `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, created_at`,
-    // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
-    [appId, content, msgType, JSON.stringify(metadata || {}), thread.type, thread.ref]
-  );
+  // Step 4 (11 Nov 2026): `onInsert(db, { messageId })`, the caller's own
+  // write about the line (services/bot-post.js: the post's record names its
+  // message), committed with it.
+  const write = async (db) => {
+    const { rows: inserted } = await db.query(
+      `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, created_at`,
+      // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
+      [appId, content, msgType, JSON.stringify(metadata || {}), thread.type, thread.ref]
+    );
+    if (inserted[0] && typeof onInsert === 'function') await onInsert(db, { messageId: Number(inserted[0].id) });
+    return inserted;
+  };
+  const rows = typeof onInsert === 'function' ? await require('./bot-cards').inTransaction(pool, write) : await write(pool);
 
   broadcast(appId, {
     type: 'chat',
@@ -2251,9 +2259,14 @@ async function sendSystemMessage(pool, appId, content, msgType = 'system', metad
  * So buttons on screen always have their card. `card.onInsert(db, { cardId,
  * messageId })` is the caller's own write in that transaction. Resolves
  * `cardId` too.
+ *
+ * `onInsert(db, { messageId, cardId })` (step 4, 11 Nov 2026): the caller's
+ * own write about the message, with or without a card, in the same
+ * transaction (services/bot-post.js: the post's record names its message,
+ * so a retry never says it again).
  */
 const BOT_MESSAGE_TYPES = new Set(['message', 'spec_share']);
-async function sendBotMessage(pool, appId, { user, content, metadata = null, thread = null, msgType = 'message', attachmentIds = null, card = null } = {}) {
+async function sendBotMessage(pool, appId, { user, content, metadata = null, thread = null, msgType = 'message', attachmentIds = null, card = null, onInsert = null } = {}) {
   if (!thread || !user || !Number.isInteger(Number(user.id))) return null;
   const text = String(content || '').trim().slice(0, MAX_CHAT_LEN);
   if (!text) return null;
@@ -2310,9 +2323,10 @@ async function sendBotMessage(pool, appId, { user, content, metadata = null, thr
         [row.id, attIds, Number(user.id)]
       );
     }
+    if (typeof onInsert === 'function') await onInsert(db, { messageId: Number(row.id), cardId: made ? Number(made.id) : null });
     return { row, cardId: made ? Number(made.id) : null };
   };
-  const { row: saved, cardId } = card ? await botCards.inTransaction(pool, write) : await write(pool);
+  const { row: saved, cardId } = card || typeof onInsert === 'function' ? await botCards.inTransaction(pool, write) : await write(pool);
   const rows = [saved];
   // A reply in a reply thread names its root, as a person's does, so the
   // stream the root is in can draw it (the bot's voice answers there).

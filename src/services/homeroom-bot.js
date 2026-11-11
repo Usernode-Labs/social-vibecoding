@@ -73,21 +73,6 @@ const helperModelSetting = require('./helper-model');
 // module for what each build runs.
 function buildRuns() { return require('./build-runs'); }
 
-/** Whether the run has said `kind` on its request (homeroom_bot_posts): a post is never said twice. */
-async function runPosted(pool, runId, kind) {
-  if (!runId) return false;
-  try {
-    // A post still going out when a restart came is not said yet (live.post).
-    const { rows } = await pool.query(
-      'SELECT 1 FROM homeroom_bot_posts WHERE run_id = $1 AND kind = $2 AND pending IS NOT TRUE LIMIT 1',
-      [Number(runId), String(kind)],
-    );
-    return rows.length > 0;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Debit the bot's allowance for a build's spend, once per build: a restart
  * that brings the build back here does not debit it again (the step is kept
@@ -5375,17 +5360,12 @@ const WAIT_NOTE_WINDOW_HOURS = 6;
  * #4610: say in the change's thread why the bot's answer waits, instead of
  * waiting silently. Only on the bot's own change while it is up for a vote,
  * and only while a person's message is the newest word in its thread, so it
- * is said once per message waited on: the note itself is the bot's word, and
- * the next pass that waits finds it there. `why` is a key of
- * followup.WAIT_WORDS. Never throws; resolves whether it said it.
+ * is said once per message waited on: its key is that message's
+ * (bot-post.js), and the note itself is the bot's word, which the next pass
+ * that waits finds there. `why` is a key of followup.WAIT_WORDS. Never
+ * throws; resolves whether it said it.
  */
-async function noteFollowUpWait(pool, opts) {
-  // Said once per look, across its attempts.
-  const look = currentLook();
-  return look ? look.once(`wait:${opts?.why}`, () => noteFollowUpWaitNow(pool, opts)) : noteFollowUpWaitNow(pool, opts);
-}
-
-async function noteFollowUpWaitNow(pool, { app, issueNumber, bot, why, sessionId = null, ws = null }) {
+async function noteFollowUpWait(pool, { app, issueNumber, bot, why, sessionId = null, ws = null }) {
   const text = followup.waitText(why);
   if (!text || !app || !bot?.id) return false;
   try {
@@ -5393,7 +5373,7 @@ async function noteFollowUpWaitNow(pool, { app, issueNumber, bot, why, sessionId
       : await live.openBotProposal(pool, bot.id, app.id, issueNumber);
     if (!open || open.status !== 'promoted') return false;
     const { rows } = await pool.query(
-      `SELECT (u.is_synthetic IS TRUE) AS by_bot,
+      `SELECT m.id, (u.is_synthetic IS TRUE) AS by_bot,
               (m.created_at > NOW() - make_interval(hours => $3)) AS recent
          FROM chat_messages m
          LEFT JOIN users u ON u.id = m.user_id
@@ -5405,9 +5385,11 @@ async function noteFollowUpWaitNow(pool, { app, issueNumber, bot, why, sessionId
     );
     const last = rows[0];
     if (!last || last.by_bot || !last.recent) return false;
-    await live.postOnProposal({
+    const out = await live.postOnProposal({
       pool, ws: ws || liveDeps().ws, app, issueNumber, kind: 'followup_wait', text, bot, sessionId: Number(open.id),
+      version: `after-${Number(last.id) || 0}-${why}`,
     });
+    if (out.outcome !== 'said') return false;
     log.info('homeroom-bot', 'Said why its answer on its change waits', { app: app.slug, issueNumber, sessionId: open.id, why });
     return true;
   } catch (err) {
@@ -5416,41 +5398,43 @@ async function noteFollowUpWaitNow(pool, { app, issueNumber, bot, why, sessionId
   }
 }
 
+/** The version a post inside the look under way says once by (bot-post.js): the look's, or none outside one. */
+function lookVersion() {
+  const look = currentLook();
+  return look?.steps?.active ? `look-${Number(look.n) || 0}` : null;
+}
+
 /**
  * #4610: a short line from the bot in the thread a person wrote in: the
  * change's own (`sessionId`), else the request's. Homeroom only, never a
  * GitHub comment: a comment moves the issue's updated_at, which reads as new
- * activity and would start another look. Never throws.
+ * activity and would start another look. Step 4 (11 Nov 2026): one post
+ * (bot-post.js), keyed by its run, the `version` its caller names, or the
+ * look under way, so it is said once across the look's attempts; the
+ * request's thread hears it only when its rules have the bot say that
+ * there. Never throws; resolves the message and its card, true for a post
+ * said before, or false.
  */
-async function postThreadNote(args) {
-  // Said once per look, across its attempts (trace L20).
-  const look = currentLook();
-  return look ? look.once(`note:${args?.kind}`, () => postThreadNoteNow(args)) : postThreadNoteNow(args);
-}
-
-async function postThreadNoteNow({
-  pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId = null, metadata = null, card = null,
+async function postThreadNote({
+  pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId = null, metadata = null, card = null, version = null,
 }) {
   try {
+    const at = version != null ? String(version) : runId ? `run-${Number(runId)}` : lookVersion();
     if (sessionId) {
-      await live.postOnProposal({ pool, ws, app, issueNumber, runId, kind, text, bot, sessionId: Number(sessionId) });
-      return true;
+      const out = await live.postOnProposal({ pool, ws, app, issueNumber, runId, kind, text, bot, sessionId: Number(sessionId), version: at });
+      return out.outcome === 'said' || out.outcome === 'again' || out.outcome === 'repeat';
     }
-    await pool.query(
-      'INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind) VALUES ($1, $2, $3, $4)',
-      [app.id, issueNumber, runId, kind],
-    );
     // #6211: an offer rides with the note, as a live reply's does: its card
     // is written with the message (step 3, ws.sendBotMessage `card`), whose
     // metadata its buttons are drawn from.
-    const posted = await ws.sendBotMessage(pool, app.id, {
-      user: bot, content: require('./homeroom-bot-words').firstPerson(text),
-      thread: { type: 'issue', ref: Number(issueNumber) },
-      ...(metadata ? { metadata } : {}),
-      ...(card ? { card } : {}),
-    });
-    // The message and its card, for a caller that keeps them; true for the rest.
-    return posted?.id ? { messageId: Number(posted.id), message: posted, cardId: posted.cardId || null } : true;
+    const out = await require('./bot-post').post(pool, {
+      place: { type: 'issue', ref: Number(issueNumber) }, appId: app.id, kind, author: bot,
+      words: require('./homeroom-bot-words').firstPerson(text), metadata, card, issueNumber, runId, version: at,
+    }, { ws });
+    if (out.outcome === 'again' || out.outcome === 'repeat') return true;
+    if (out.outcome !== 'said') return false;
+    // The message and its card, for a caller that keeps them.
+    return { messageId: Number(out.messageId), message: out.message, cardId: out.cardId || null };
   } catch (err) {
     log.warn('homeroom-bot', 'Could not post a note in the thread', { app: app?.slug, issueNumber, kind, err: err.message });
     return false;
@@ -5892,10 +5876,11 @@ async function runFollowUp(pool, config, {
         pool, github, app, repo, issueNumber, issue, botLogin, bot, proposalSessionId: session.id,
       }).catch(() => []);
     }
-    // Once across the look's attempts: a post a lost attempt made is not
-    // made again (live.post takes up only a pending one), and its stamp is kept.
-    const posted = await postOnce(look, kind, () => live.post({
+    // Once across the look's attempts: its key is the run's (bot-post.js),
+    // so a post a lost attempt made is not made again, and its stamp is kept.
+    const posted = await live.post({
       pool, github, ws: deps.ws, app, repo, issueNumber, kind, runId, text, sender: bot, senderId: bot.id,
+      ...(runId ? {} : { version: lookVersion() }),
       mentions: live.tagsPoster(kind) ? targets : [], notifications: deps.notifications || null,
       // Answered where it was asked: the proposal's thread too, when that
       // is where somebody wrote, and there alone when nobody wrote anywhere
@@ -5910,7 +5895,7 @@ async function runFollowUp(pool, config, {
         skipGithub: kind !== 'followup_revise' && !others.some((r) => r.via === 'github'),
       } : {}),
       ...extra,
-    }));
+    });
     if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);
   };
 
@@ -6380,19 +6365,27 @@ async function runChecksFix(pool, config, {
   // How the fix its change asked for came out, for bot-change: the round
   // looked at the head (its run records it), or it was not taken.
   const roundEnded = () => { look.out.fix = { outcome: 'looked' }; };
-  // A note on its change, once across the look's attempts. Step 5: and only
-  // when it says something new: the same kind and words as the bot's last
-  // note on the request are not said again (addressed.repeatsLastNote).
-  const note = (kind, args) => look.once(`note:${kind}`, async () => {
-    const words = require('./homeroom-bot-words').firstPerson(args.text);
-    if (await addressedMod().repeatsLastNote(pool, { appId: app.id, issueNumber, kinds: [kind], text: words })) {
-      log.info('homeroom-bot', 'Checks note not repeated: the last note said the same', { app: app.slug, issueNumber, kind });
-      return false;
-    }
-    await live.postOnProposal({ pool, ws: deps.ws, app, issueNumber, kind, bot, sessionId: session.id, ...args })
-      .catch((err) => log.warn('homeroom-bot', 'Checks note failed', { app: app.slug, issueNumber, kind, err: err.message }));
-    return true;
-  });
+  // A note on its change, once across the look's attempts: keyed by its
+  // run, else the look and how many of its kind came before it here
+  // (bot-post.js). Step 4: a note on its checks is a failure note on the
+  // change, said only when it says something new (the failure rule: the
+  // same words as the thread's last one, with nobody writing since, are not
+  // said again).
+  const noted = new Map();
+  const note = async (kind, args) => {
+    const i = (noted.get(kind) || 0) + 1;
+    noted.set(kind, i);
+    const at = args.runId ? `run-${Number(args.runId)}` : look?.steps?.active ? `look-${Number(look.n) || 0}` : null;
+    const out = await live.postOnProposal({
+      pool, ws: deps.ws, app, issueNumber, kind, bot, sessionId: session.id, ...args,
+      ...(at ? { version: `${at}-${i}` } : {}),
+    }).catch((err) => {
+      log.warn('homeroom-bot', 'Checks note failed', { app: app.slug, issueNumber, kind, err: err.message });
+      return null;
+    });
+    if (out?.outcome === 'repeat') log.info('homeroom-bot', 'Checks note not repeated: the last note said the same', { app: app.slug, issueNumber, kind });
+    return out?.outcome === 'said';
+  };
   // #3654: what the fix turn read, recorded beside the run it produces.
   let snapshot = null;
   const recordSnapshot = (id) => (snapshot && id
@@ -6561,26 +6554,14 @@ async function runChecksFix(pool, config, {
     const text = extra.limitStop && failing.length
       ? followup.stoppedHandOffText({ failingCount: failing.length, tries })
       : followup.checksPersonText({ why, prNumber, failingCount: failing.length, broken });
-    // Step 5 (11 Nov 2026): a hand-off that says what the bot's last note on
-    // the request already says is not said again (no post, tag or chat
-    // relay). Decided once across the look's attempts.
-    const repeated = await look.once('handOffRepeat', () => addressedMod().repeatsLastNote(pool, {
-      appId: app.id, issueNumber, kinds: ['followup_person'], text: require('./homeroom-bot-words').firstPerson(text),
-    }));
-    if (repeated) {
-      log.info('homeroom-bot', 'Checks hand-off not repeated: the last note said the same', {
-        app: app.slug, issueNumber, sessionId: session.id, head, runId,
-      });
-      return { ran: true, verdict, runId, acted: 'checks_person_unchanged' };
-    }
     const targets = await live.mentionTargets({
       pool, github, app, repo, issueNumber, issue, botLogin, bot, proposalSessionId: session.id,
     }).catch(() => []);
     // #6284: the stop offers Let it try again and Not now under its message,
     // like the bot's other offers in a thread. The buttons are for the
     // requester; an admin presses the one on the Testing card. Step 3: the
-    // card is written with the note (live.post `card`), inside the post the
-    // look says once, so a retried hand-off writes no second card. It names
+    // card is written with the note (live.post `card`), inside the post its
+    // key says once, so a retried hand-off writes no second card. It names
     // its request, whose standing retires it once it is no longer stopped.
     let card = null;
     if (extra.limitStop && failing.length) {
@@ -6593,9 +6574,14 @@ async function runChecksFix(pool, config, {
         args: { sessionId: Number(session.id), issueNumber: Number(issueNumber) },
       };
     }
-    const posted = await postOnce(look, 'followup_person', () => live.post({
+    // Step 4: a failure note, said once by its key and only when it says
+    // something new (bot-post.js, the failure rule: the same words as the
+    // request's last failure note, with nobody writing since, tell nobody
+    // anything: no post, tag or chat relay).
+    const posted = await live.post({
       pool, github, ws: deps.ws, app, repo, issueNumber, kind: 'followup_person', runId, text,
       sender: bot, senderId: bot.id, mentions: targets, notifications: deps.notifications || null,
+      ...(runId ? {} : { version: look?.steps?.active ? `look-${Number(look.n) || 0}` : null }),
       ...(card ? { card } : {}),
       // Said where the group votes too: the checks are the proposal's.
       proposalSessionId: session.id,
@@ -6607,7 +6593,13 @@ async function runChecksFix(pool, config, {
     }).catch((err) => {
       log.warn('homeroom-bot', 'Checks hand-off post failed', { app: app.slug, issueNumber, err: err.message });
       return null;
-    }));
+    });
+    if (posted?.repeated) {
+      log.info('homeroom-bot', 'Checks hand-off not repeated: the last note said the same', {
+        app: app.slug, issueNumber, sessionId: session.id, head, runId,
+      });
+      return { ran: true, verdict, runId, acted: 'checks_person_unchanged' };
+    }
     await live.advanceSeen({
       pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt,
       postedAt: posted?.githubCreatedAt ? [posted.githubCreatedAt] : [], proposalSessionId: session.id,
@@ -6943,11 +6935,12 @@ function liveSayer({
   };
   return async (kind, text, extra = {}) => {
     const mentions = live.tagsPoster(kind) ? await targetsOnce() : [];
-    // Inside a look, once across its attempts (postOnce).
-    const posted = await postOnce(currentLook(), kind, () => live.post({
+    // Once across the look's attempts: its key is the run's (bot-post.js),
+    // and a post said before resolves what it said (its GitHub stamp).
+    const posted = await live.post({
       pool, github, ws, app, repo, issueNumber, kind, runId, text, mentions, senderId: bot.id, sender: bot,
-      notifications, ...extra,
-    }));
+      notifications, ...(runId ? {} : { version: lookVersion() }), ...extra,
+    });
     if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);
     return posted;
   };
@@ -7092,12 +7085,9 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
     ).catch(() => {});
     // The vote-card metadata the promote route's own activity rows carry,
     // so the issue's thread shows the live proposal card, not only a link.
-    // Said once per run: a restart after it was said, before the run was
-    // recorded, finishes the build without saying it again.
-    if (await runPosted(pool, runId, 'proposal')) {
-      log.info('homeroom-bot', 'The proposal was said before a restart; not saying it again', { app: app.slug, issueNumber, runId });
-      return 'proposed';
-    }
+    // Said once per run (its key, bot-post.js): a restart after it was said,
+    // before the run was recorded, finishes the build without saying it
+    // again, or what follows it.
     const link = live.proposalLink(domain, app.slug, built.sessionId, built.prNumber);
     // Homeroom names the change by its title, over its vote card; GitHub links it.
     const { rows: [named] = [] } = await pool.query(
@@ -7105,11 +7095,15 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
          FROM chat_sessions WHERE id = $1`,
       [built.sessionId],
     ).catch(() => ({ rows: [] }));
-    await say('proposal', live.proposalText({ link, docOnly: built.docOnly === true }), {
+    const said = await say('proposal', live.proposalText({ link, docOnly: built.docOnly === true }), {
       homeroomText: live.proposalHomeroomText({ title: named?.title || null, docOnly: built.docOnly === true }),
       msgType: 'vote', metadata: { vote: { sessionId: built.sessionId, prNumber: built.prNumber } },
       dm: { link, prNumber: built.prNumber, sessionId: built.sessionId },
     });
+    if (said?.again) {
+      log.info('homeroom-bot', 'The proposal was said before a restart; not saying it again', { app: app.slug, issueNumber, runId });
+      return 'proposed';
+    }
     // And the spec on the proposal itself, where the group votes.
     if (built.specMd && built.specVersion) {
       await live.postSpecOnProposal({
@@ -7130,10 +7124,9 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
   }
   if (built.blocked) {
     // Impossible as written, which only reading the code showed: said on
-    // the issue like a question, so a reply sends it round again.
-    if (!await runPosted(pool, runId, 'blocked')) {
-      await say('blocked', live.blockedText(built.blocked), { dm: { reason: built.blocked } });
-    }
+    // the issue like a question, so a reply sends it round again. Once per
+    // run (its key).
+    await say('blocked', live.blockedText(built.blocked), { dm: { reason: built.blocked } });
     return 'blocked';
   }
   if (built.waitingToPush) {
@@ -7151,20 +7144,17 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
     log.warn('homeroom-bot', 'Live build finished and waits for its upload', {
       app: app.slug, issueNumber, sessionId: built.sessionId || null, error: built.error,
     });
-    if (!await runPosted(pool, runId, 'build_failed')) {
-      await say('build_failed', live.buildFailedText(built.error, { firstVersion, retrying: retriesItself(built.error) }),
-        { dm: { reason: built.error, retrying: retriesItself(built.error) } });
-    }
+    await say('build_failed', live.buildFailedText(built.error, { firstVersion, retrying: retriesItself(built.error) }),
+      { dm: { reason: built.error, retrying: retriesItself(built.error) } });
     return 'waiting_to_push';
   }
   log.warn('homeroom-bot', 'Live build did not become a proposal', {
     app: app.slug, issueNumber, sessionId: built.sessionId || null, error: built.error,
   });
-  // Said once per run, whatever brought the build here again.
-  if (!await runPosted(pool, runId, 'build_failed')) {
-    await say('build_failed', live.buildFailedText(built.error, { firstVersion, retrying: retriesItself(built.error) }),
-      { dm: { reason: built.error, retrying: retriesItself(built.error) } });
-  }
+  // Said once per run, whatever brought the build here again (its key), and
+  // only when it says something new (bot-post.js, the failure rule).
+  await say('build_failed', live.buildFailedText(built.error, { firstVersion, retrying: retriesItself(built.error) }),
+    { dm: { reason: built.error, retrying: retriesItself(built.error) } });
   return 'build_failed';
 }
 
@@ -8636,8 +8626,9 @@ async function planBeforeBuilding({
   });
   const asker = await Promise.resolve().then(() => dmSvc.requesterOf(pool, app.id, issueNumber)).catch(() => null);
   const told = sent?.messageId ? asker : null;
-  // Said once per run (a restart after it does not say it again).
-  if (!(await runPosted(pool, runId, 'plan'))) await say('plan', live.planCommentText({ spec: drafted.specMd, questions }), {
+  // Said once per run: its key is the run's (bot-post.js), so a restart
+  // after it says nothing again.
+  await say('plan', live.planCommentText({ spec: drafted.specMd, questions }), {
     threadMessage: shown.spec
       ? live.specCard({
         // #6280: it is posted because the plan now WAITS for Build it, never
@@ -9040,26 +9031,22 @@ async function buildLive({
   // its requester approved (#4488) was posted when they were asked.
   const onSpec = async ({ sessionId, version, specMd }) => {
     if (version) await live.shareSpecVersion(pool, sessionId, version);
-    // Said once per run: a build asked for again from its kept plan (a build
-    // from before builds were durable: requeueLegacyBuilds) has it on the
-    // issue already.
-    if (await runPosted(pool, runId, 'spec')) {
-      log.info('homeroom-bot', 'The plan was said before a restart; not saying it again', { app: app.slug, issueNumber, runId, sessionId });
-    } else {
-      // #4488: a plan its requester said Build it to is on the request
-      // already: a short note says so, and no second card. 1 Nov 2026
-      // (C2.3): so is a plan a person posted there that it builds from.
-      const asker = checkFirst && !fromPlan
-        ? await require('./homeroom-bot-dm').requesterOf(pool, app.id, issueNumber).catch(() => null)
-        : null;
-      await say('spec', fromPlan ? live.fromPlanCommentText(fromPlan) : live.specCommentText(specMd, { approved: checkFirst }), {
-        threadMessage: version && !checkFirst && !fromPlan ? live.specCard({ sessionId, version, spec: specMd, bot }) : null,
-        ...(fromPlan ? { homeroomText: live.fromPlanHomeroomText(fromPlan) }
-          : checkFirst ? { homeroomText: live.approvedBuildHomeroomText({ requester: asker?.username || null }) } : {}),
-        // The plan in a line, for the quiet line in the request's thread.
-        dm: { building: true, plan: live.specTitle(specMd) || null },
-      });
-    }
+    // Said once per run (its key, bot-post.js): a build asked for again
+    // from its kept plan (a build from before builds were durable:
+    // requeueLegacyBuilds) has it on the issue already, and says nothing.
+    // #4488: a plan its requester said Build it to is on the request
+    // already: a short note says so, and no second card. 1 Nov 2026
+    // (C2.3): so is a plan a person posted there that it builds from.
+    const asker = checkFirst && !fromPlan
+      ? await require('./homeroom-bot-dm').requesterOf(pool, app.id, issueNumber).catch(() => null)
+      : null;
+    await say('spec', fromPlan ? live.fromPlanCommentText(fromPlan) : live.specCommentText(specMd, { approved: checkFirst }), {
+      threadMessage: version && !checkFirst && !fromPlan ? live.specCard({ sessionId, version, spec: specMd, bot }) : null,
+      ...(fromPlan ? { homeroomText: live.fromPlanHomeroomText(fromPlan) }
+        : checkFirst ? { homeroomText: live.approvedBuildHomeroomText({ requester: asker?.username || null }) } : {}),
+      // The plan in a line, for the quiet line in the request's thread.
+      dm: { building: true, plan: live.specTitle(specMd) || null },
+    });
     // WP1 (#2): what the run has seen moves past its own plan comment now,
     // not only once the build is announced. The request is held while it is
     // built (classifyIssue), but a build can end without that last step (it
@@ -9339,7 +9326,7 @@ async function buildLive({
     acted = 'skipped';
   } else {
     // Once: a restart after it was said does not say it again (and each post
-    // is also guarded on the posts table: runPosted).
+    // is keyed by its run too: bot-post.js).
     acted = await steps.once('announced', () => announceBuilt({
       pool, ws, app, bot, issueNumber, runId, built, say, domain: deps.domain, firstVersion,
     }));
@@ -11084,18 +11071,6 @@ const { isAppendOnly } = require('../workflow/rules/append-only-files.ts');
 const lookStore = new AsyncLocalStorage();
 function currentLook() { return lookStore.getStore() || null; }
 
-// A post of the bot's, once across its look's attempts (no look: as it
-// is). live.post takes up only a pending row for (run, kind), so a post that
-// went out before a restart would go out again; what the step keeps is what
-// its callers read back: whether it posted, and its GitHub stamp.
-async function postOnce(look, kind, post) {
-  if (!look?.steps?.active) return post();
-  return look.once(`post:${kind}`, async () => {
-    const p = await post();
-    return p ? { githubCreatedAt: p.githubCreatedAt || null, postId: p.postId ?? null, messageId: p.messageId ?? null, posted: true } : null;
-  });
-}
-
 function newLook({ steps, owner = null, n = 0, key = null, lastRead = null, readInterrupted = null, sessionId = null, onSession = null } = {}) {
   const counts = new Map();
   const out = { queue: null, owe: [], build: null, fix: null, lastRead: undefined, spentRetry: undefined, carried: null };
@@ -11397,9 +11372,12 @@ async function startBuild(config, pool, { appId, issueNumber, runId, replyTo, pe
         });
         return { decision: null };
       });
+    // Said once per run (its key, bot-post.js), and only where the request's
+    // thread has the bot say it: a build's own news is its stage there, so
+    // the note is recorded (step 4, decision 6).
     const note = overlapNote(decision);
-    if (note && !(await runPosted(pool, Number(runId), note.kind))) {
-      await postThreadNoteNow({
+    if (note) {
+      await postThreadNote({
         pool, ws: deps.ws || liveDeps().ws, app, issueNumber: Number(issueNumber), runId: Number(runId), kind: note.kind, text: note.text, bot,
       });
     }
@@ -11702,7 +11680,6 @@ module.exports = {
   recordLostLiveBuild,
   liveBuildInput,
   liveBuildNonce,
-  runPosted,
   // #4662: put a live run back in line with its kept plan, markdown and HTML.
   liveSayer,
   announceBuilt,
@@ -11761,7 +11738,7 @@ module.exports = {
   capRoomFor,
   slotHolders,
   // #6211: a note in a request's thread, which an overlap's choice is tied to.
-  postThreadNoteNow,
+  postThreadNote,
   slotCounts,
   SLOT_HOLDERS_SQL,
   simulateCaps,

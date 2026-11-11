@@ -878,6 +878,9 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     );
     return row.id;
   };
+  // Step 4 (11 Nov 2026): a plan's row keeps the words it was shown with;
+  // what became of it is its status (specShare.botNote), which its card draws.
+  const PLAN_SHOWN = '📋 Plan v1: Leaderboard. Nothing is built yet. Waiting for @maya to say Build it.';
   const rowOf = async (id) => (await pool.query(
     `SELECT content, metadata->'specShare'->>'botNote' AS note FROM chat_messages WHERE id = $1`, [id],
   )).rows[0];
@@ -903,7 +906,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     assert.match(after.build_note, /Approved by the person who asked for it, who said Build it under this plan and its spec:/);
     assert.deepEqual(await queued(), [], 'no new look was queued');
     // Its row on the request says it is being built (live.notePlanRows).
-    assert.deepEqual(await rowOf(row), { content: "📋 Plan v1: Leaderboard. I'm building it now.", note: 'building' });
+    assert.deepEqual(await rowOf(row), { content: PLAN_SHOWN, note: 'building' }, 'its status, never its words (step 4)');
     // Asked again while that build waits its turn: nothing new is queued, as a new look would replace it.
     const again = await mayor.startRequest(pool, ctx(maya), { project: 'chores', number: 12 });
     assert.equal(again.ok, true);
@@ -987,7 +990,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
       [null, false, 'skipped: somebody asked to change the plan']);
     assert.deepEqual(await queued(), [{ priority: 0, reason: 'plan_change' }], 'read again next');
     assert.equal((await planMessage(run)).meta.status, 'closed', 'a card sent before gives way');
-    assert.deepEqual(await rowOf(row), { content: '📋 Plan v1: Leaderboard. A newer plan replaced it.', note: 'replaced' });
+    assert.deepEqual(await rowOf(row), { content: PLAN_SHOWN, note: 'replaced' });
     const none = await mayor.replanRequest(pool, ctx(maya), { project: 'chores', number: 12 });
     assert.match(none.error, /^No plan of yours waits for Build it on it/);
   });
@@ -1009,7 +1012,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     const merged = await waitingRun();
     const mergedRow = await planRow(merged);
     await bot.retireWaitingPlans(pool, { appId: app.id, issueNumber: 12, why: 'merged', deps: { ws } });
-    assert.deepEqual(await rowOf(mergedRow), { content: '📋 Plan v1: Leaderboard. It stopped waiting for Build it.', note: 'stopped' });
+    assert.deepEqual(await rowOf(mergedRow), { content: PLAN_SHOWN, note: 'stopped' });
     assert.equal(await live.notePlanRows(pool, [read, merged], 'building', { ws }), 0, 'a row no longer waiting stays as it is');
     assert.equal(await live.notePlanRows(pool, [read], 'nonsense', { ws }), 0);
   });
@@ -1028,11 +1031,11 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     const aWeek = await runWith("build_ok = FALSE, build_error = 'skipped: nobody tapped Build it within a week'");
     const stillWaiting = await planRow(await waitingRun());
     assert.equal(await backfillPlanRows(pool), 4);
-    assert.deepEqual(await rowOf(readAgain), { content: '📋 Plan v1: Leaderboard. A newer plan replaced it.', note: 'replaced' });
+    assert.deepEqual(await rowOf(readAgain), { content: PLAN_SHOWN, note: 'replaced' }, 'its words as shown');
     assert.equal((await rowOf(changed)).note, 'replaced');
-    assert.deepEqual(await rowOf(wentAhead), { content: "📋 Plan v1: Leaderboard. I'm building it now.", note: 'building' });
+    assert.deepEqual(await rowOf(wentAhead), { content: PLAN_SHOWN, note: 'building' });
     assert.equal((await rowOf(aWeek)).note, 'stopped');
-    assert.deepEqual(await rowOf(stillWaiting), { content: '📋 Plan v1: Leaderboard. Nothing is built yet. Waiting for @maya to say Build it.', note: 'waiting' });
+    assert.deepEqual(await rowOf(stillWaiting), { content: PLAN_SHOWN, note: 'waiting' });
     assert.equal(await backfillPlanRows(pool), 0, 'once');
   });
 });

@@ -249,7 +249,7 @@ export function rereadRows(r: Rereads): RereadRow[] {
       key: 'notes',
       label: 'Notes said twice per request',
       value: r.duplicateNotes == null ? '–' : String(r.duplicateNotes),
-      lines: [r.duplicateNotes == null ? 'Not counted yet: its posts do not carry the keys to count them by.' : `In the last ${r.days} days.`],
+      lines: [r.duplicateNotes == null ? 'Could not be counted just now.' : `Notes on requests said, or asked for, more than once in the last ${r.days} days.`],
     },
   ];
 }

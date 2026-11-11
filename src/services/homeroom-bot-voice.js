@@ -1045,17 +1045,23 @@ async function newestIn(pool, { app, place }) {
   return Number(rows[0]?.id) || 0;
 }
 
+/** Pure: the key a turn's reply is said once by (bot-post.js). */
+function replyKey(app, place, turnKey) {
+  const botPost = require('./bot-post');
+  return botPost.keyOf({ kind: 'reply', subject: botPost.placeSubject(app.id, place), version: `turn-${turnKey}` });
+}
+
 /**
- * The reply a turn (`turnKey`) already posted, by its mark, with what it
- * read through; null when it posted none. Its offer, if it has one, was
- * written with it (say).
+ * The reply a turn (`turnKey`) already posted, by its key (bot-post.js),
+ * with what it read through (its message's turn); null when it posted none.
+ * Its offer, if it has one, was written with it (say).
  */
 async function replyOf(pool, { app, place, bot, turnKey }) {
   const { rows: [m] } = await pool.query(
-    `SELECT id, metadata FROM chat_messages
-      WHERE app_id = $1 AND user_id = $2 AND metadata->'homeroomBot'->'turn'->>'key' = $3
-      ORDER BY id LIMIT 1`,
-    [app.id, bot.id, String(turnKey)],
+    `SELECT m.id, m.metadata FROM bot_posts p
+       JOIN chat_messages m ON m.id = p.chat_message_id
+      WHERE p.said_key = $1 AND p.app_id = $2 AND m.user_id = $3`,
+    [replyKey(app, place, turnKey), app.id, bot.id],
   );
   if (!m) return null;
   return { id: Number(m.id), through: Number(m.metadata?.homeroomBot?.turn?.through) || null };
@@ -2864,12 +2870,6 @@ async function say(pool, {
     ? (newest ? { type: 'message', ref: Number(newest.message.id) } : null)
     : threadOf(place);
   if (!thread) return null;
-  // `mark`: the work item it is said for ({ key, through }). Said once: a
-  // retry after a restart finds it and says it again nowhere.
-  if (mark) {
-    const had = await replyOf(pool, { app, place, bot, turnKey: mark.key });
-    if (had) return { id: had.id, again: true };
-  }
   // #6391: a request's or a change's discussion always ends in buttons. The
   // people it answered see one set; the other members see the second one.
   // An offer keeps its own Yes/No instead, and a caller that says
@@ -2928,12 +2928,23 @@ async function say(pool, {
     },
     ...(newest && place.type !== 'chat' && place.type !== 'category' ? { quote: quoteOf(newest.message, newest.username) } : {}),
   };
-  const sent = await ws.sendBotMessage(pool, app.id, {
-    user: bot, content: text, metadata, thread,
-    attachmentIds: attachments.map((a) => a.id).filter(Boolean),
+  // Step 4 (11 Nov 2026): one post (bot-post.js). `mark`, the work item it
+  // is said for ({ key, through }), is its key: a retry after a restart
+  // finds it said and says it again nowhere. Its words are written once,
+  // whole: nothing of them was shown while the model wrote.
+  const botPost = require('./bot-post');
+  const out = await botPost.post(pool, {
+    place: thread, appId: app.id, kind: 'reply', words: text, author: bot, metadata,
+    subject: botPost.placeSubject(app.id, place), version: mark ? `turn-${mark.key}` : null,
+    ...(place.type === 'issue' ? { issueNumber: Number(place.ref) } : {}),
+    attachments: attachments.map((a) => a.id).filter(Boolean),
     ...(offer ? { card: { kind: offer.kind, args: offer.args || {}, forUserId: offer.forUserId || null } } : {}),
-  });
-  if (!sent?.id) return null;
+    // The voice's reply is the conversation, not a request's record.
+    record: false,
+  }, { ws });
+  if (out.outcome === 'again' && out.messageId) return { id: out.messageId, again: true };
+  if (out.outcome !== 'said') return null;
+  const sent = { ...(out.message || {}), id: out.messageId, ...(out.cardId ? { cardId: out.cardId } : {}) };
   // A newer word from the bot in this thread retires the suggested replies
   // on its older messages there, as a newer word in its chat does.
   await retireThreadSuggestions(pool, { appId: app.id, thread, keepMessageId: Number(sent.id), deps });
@@ -3097,12 +3108,14 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, rows = n
     }
     const overlap = require('./homeroom-bot-overlap');
     const mayor = mayorModule(deps);
-    const sayInOther = async (kind) => botModule(deps).postThreadNoteNow({
+    const sayInOther = async (kind) => botModule(deps).postThreadNote({
       pool, ws: wsModule(deps), app, issueNumber: other, kind, text: overlap.linkText({
         kind: args.overlap, choice, from: args.issueNumber, requester: user.username,
         domain: domainOf(deps), appSlug: app.slug,
       }),
       bot,
+      // Once per offer (bot-post.js keys it by the offer).
+      version: `offer-${Number(offer.id)}`,
     });
     // Duplicate: the same close vote a request page opens, with this request
     // as its subject. It closes only if the group votes for it.

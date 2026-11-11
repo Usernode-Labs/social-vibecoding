@@ -947,15 +947,14 @@ test('the bot\'s typing is a card with its face, its name and what it is doing; 
   assert.match(drawing, /data-bot-working="drawing"/);
   assert.match(drawing, />Drawing the screen</);
 
-  // 4 Nov 2026 (#6302): the answer so far is drawn under the doing line,
-  // whatever the doing kind is, so it no longer vanishes between rounds.
+  // Step 4 (11 Nov 2026, #6581): the card draws the step and never words:
+  // the answer appears once, as the bot's message, so nothing shown changes.
   const held = renderToHtml(createElement(card.BotWorkingCard, {
     typist: { ...bot, doing: { kind: 'drawing' }, draft: 'The answer so far.' },
   }));
   assert.match(held, /data-bot-working="drawing"/);
   assert.match(held, />Drawing the screen</);
-  assert.match(held, /data-bot-working-draft=""/);
-  assert.match(held, /The answer so far\./);
+  assert.doesNotMatch(held, /data-bot-working-draft|The answer so far/);
 
   const t = catalog;
   assert.equal(card.botDoingLine(t, null), 'Thinking');
