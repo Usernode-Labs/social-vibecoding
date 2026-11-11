@@ -158,7 +158,8 @@ test('a kit rule for a worn component also names the product\'s own markup for i
 test('a class the map does not name stays the kit\'s, and a rule for anything else is not repeated', () => {
   assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-post .fr-av'), 'html[data-skin="workbench"] .messages-message .fr-av', 'the avatar in a message is the kit\'s own');
   assert.equal(looks.wornSelector('html[data-skin] .fr-tile .fr-t'), null, 'a tile is drawn by the kit: nothing to repeat');
-  assert.equal(looks.wornSelector('html[data-skin] .fr-row+.fr-row'), 'html[data-skin]:where(:not([data-skin="brand"])) :is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *)+:is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *)', 'Settings\' rows wear the row, the scope inside each compound');
+  // Each wearer of a root is a selector of its own: Settings' rows first, then the review stage's help rows (lane K).
+  assert.deepEqual(looks.wornSelector('html[data-skin] .fr-row+.fr-row').split(',html'), ['html[data-skin]:where(:not([data-skin="brand"])) :is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *)+:is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *)', '[data-skin]:where(:not([data-skin="brand"])) .rf-help-row+.rf-help-row'], 'Settings\' rows wear the row, the scope inside each compound');
   assert.equal(looks.wornSelector('html[data-skin] .fr-status .fr-txt'), null, 'a part only counts inside its own component');
   assert.equal(looks.wornSelector('html[data-skin] .fr-post .fr-txt b'), null, 'left out by name: a bold word a person wrote is not an accent');
 });
@@ -478,5 +479,5 @@ test('a worn rule that could match nothing is left out', () => {
   // The quiet button, for the first wearer by its own part and for Settings' buttons by theirs, one rule.
   const quiet = text.split('\n').find((rule) => rule.includes(`${btn.to}${btn.parts.quiet},`) && rule.includes('{background:var(--fr-sunk)'));
   assert.ok(quiet, 'a state the map names is kept: the quiet button');
-  for (const wearer of btn.also || []) assert.ok(quiet.includes(`${wearer.to}${wearer.parts.quiet}{`), 'and each second wearer\'s, by its own part');
+  for (const wearer of btn.also || []) assert.ok(quiet.includes(`${wearer.to}${wearer.parts.quiet},`) || quiet.includes(`${wearer.to}${wearer.parts.quiet}{`), 'and each further wearer\'s, by its own part');
 });

@@ -115,7 +115,9 @@ test('the wear map dresses Settings\' own markup, inside #settings-root and nowh
   assert.equal(roots.pill.to, `.ui-pill${S}`);
   assert.equal(roots.fields.to, `.ui-fields${S}`);
   // One selector for a rule that names the row twice, outranking the standard sheet's own rules.
-  assert.ok(css.includes(`html[data-skin] .fr-row+.fr-row,${WORN} :is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *)+:is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *){border-top:1px solid var(--fr-line2)}`));
+  // (A further wearer of the row, the review stage's help rows, follows it as a selector of its own.)
+  const between = css.split('\n').find((rule) => rule.startsWith(`html[data-skin] .fr-row+.fr-row,${WORN} :is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *)+:is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *)`));
+  assert.ok(between && between.endsWith('{border-top:1px solid var(--fr-line2)}'));
   assert.ok(css.includes(`${WORN} :is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *):is([aria-current="page"],.ui-row-on){background:var(--fr-lit-t)}`), 'the open page is lit');
   assert.ok(css.includes(`${WORN} .un-switch:is(#settings-root *):checked{background:var(--fr-acc);box-shadow:none}`));
   assert.ok(css.includes(`${WORN} .ui-search:is(#settings-root *) .settings-filter{background:var(--fr-surface);border-radius:999px;padding:0 16px}`));

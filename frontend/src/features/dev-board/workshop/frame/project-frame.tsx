@@ -4,7 +4,7 @@
  * same control every page with more than one view uses, and the Hub is
  * groups of the standard row. For you, Recently live and Topics sit in the
  * content column; who is here, how a change goes live and the app in the
- * context column. One primary button: Ask for a change.
+ * context column.
  *
  * Presentational. The page (../workshop.tsx) hands in what its own Hub
  * reads, already as words, with the presses its own cards make. Nothing is
@@ -24,8 +24,6 @@ interface HeadProps {
   /** What the page is when it is not the lit tab's own: a topic's channel lights Topics but is drawn by the product below the head. */
   page?: string;
   onTab: (key: string) => void;
-  /** Ask for a change; null for someone who may not ask (a visitor). */
-  onAsk?: (() => void) | null;
   onInvite?: (() => void) | null;
   /** Join, for someone signed in who is not a member yet: the page's primary button until they are. */
   onJoin?: (() => void) | null;
@@ -49,35 +47,21 @@ function useProjectFrameFlag(): void {
   }, []);
 }
 
-/** Needs you's head keeps the buttons it had (its page is drawn by the product); nothing at all for someone who has none. */
-function useActs({ onAsk, onInvite, onJoin }: Pick<HeadProps, 'onAsk' | 'onInvite' | 'onJoin'>): ReactNode {
-  const t = useMessages('project');
-  if (!onAsk && !onInvite && !onJoin) return undefined;
-  return (
-    <>
-      {onInvite ? <Btn kind="line" icon="users" onClick={onInvite}>{t('project:frame.invite')}</Btn> : null}
-      {onJoin
-        ? <Btn icon="plus" onClick={onJoin}>{t('project:communityCard.join.button')}</Btn>
-        : onAsk ? <Btn icon="plus" onClick={onAsk}>{t('project:frame.ask')}</Btn> : null}
-    </>
-  );
-}
-
 const PlaceTabs = ({ tabs, tab, onTab }: Pick<HeadProps, 'tabs' | 'tab' | 'onTab'>) => (
   <Tabs tabs={tabs} current={tab} onPick={(key) => onTab(key)} />
 );
 
 /**
- * The head of a place that is not yet drawn in the kit: its title, its
- * sentence, the project's places. The place's own body follows it.
+ * The head of a place whose body is the product's own (Needs you's review
+ * stage, a channel, a week's page): its title, its sentence, the project's
+ * places. No buttons: of a project's pages only the Hub's head has any.
  */
 export function ProjectFrameHead({ title, purpose, ...head }: HeadProps & { title: string; purpose?: string | null }) {
   useProjectFrameFlag();
-  const acts = useActs(head);
   return (
     <Frame data-project-frame={head.page || head.tab}>
       <div className={k('inner')}>
-        <Head title={title} purpose={purpose || undefined} acts={acts} />
+        <Head title={title} purpose={purpose || undefined} />
         <PlaceTabs {...head} />
       </div>
     </Frame>

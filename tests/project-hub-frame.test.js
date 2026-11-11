@@ -141,8 +141,9 @@ test('the page draws the kit\'s Hub under a look, from what its own Hub reads', 
   assert.match(hub, /t\('project:hub\.recent\.byGoing', \{ who: row\.who \}\)/);
   assert.match(hub, /faces: active\.map\(\(person\) => \(\{ name: person\.username, color: swatchFor\(person\.username\) \}\)\)/);
   assert.doesNotMatch(hub, /frameRule|frameWork|project:frame\.hub\.(builtBy|saidBy|members|openApp)/);
-  // Needs you is another lane's page and keeps its head as it was; no other place's head has buttons.
-  assert.match(src, /<ProjectFrameHead \{\.\.\.frameHead\} onAsk=\{tab === 'needs' \? askChange : null\} onInvite=\{tab === 'needs' \? inviteHere : null\} onJoin=\{tab === 'needs' \? joinHere : null\}/);
+  // No place's head but the Hub's has buttons: Needs you's lost Invite and Ask for a change with the rest (lane K).
+  assert.match(src, /<ProjectFrameHead \{\.\.\.frameHead\} title=\{pageTitle\(tab\)\} purpose=\{framePurpose\} \/>/);
+  assert.doesNotMatch(src, /askChange|onAsk=/);
 });
 
 test('Topics is the places list\'s own rows: the topics, and the channels beside them, each by its name', () => {

@@ -6463,14 +6463,6 @@
     "text": "No longer needed. Voting has ended.",
     "description": "Line under the Votes card on a governance vote's page once something else settled what it was about, so the vote no longer applies."
   },
-  "frame.ask": {
-    "text": "Ask for a change",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The page's one primary button: opens the form that sends a request to the project."
-  },
-  "frame.invite": {
-    "text": "Invite",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The page's second button: opens the invite link for this community."
-  },
   "frame.hub.people": {
     "text": "People",
     "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who is active and who the community is for."

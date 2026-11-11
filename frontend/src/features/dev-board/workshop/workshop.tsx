@@ -3810,7 +3810,6 @@ export function DevWorkshop(): ReactNode {
     if (key === tabRef.current) scrollToHead(hostRef.current);
     else openTab(key as TabKey);
   };
-  const askChange = canPost ? () => { (window as any).App?.openFeedbackModal?.({ fromDev: true, intent: 'issue' }); } : null;
   const inviteHere = community?.is_member ? () => { openInviteLinks(); } : null;
   // Join, for someone signed in who is not in yet: the hero's own Join
   // (lib/join-required.ts offerJoin asks, joins and re-reads the hub).
@@ -4107,7 +4106,7 @@ export function DevWorkshop(): ReactNode {
       {frame && !frameTopics && tab === 'status' && !pending ? frameHub() : null}
       {frameWorkshopUp ? frameWorkshop() : null}
       {frameAllUp ? frameAll() : null}
-      {frame && !frameTopics && tab !== 'status' && !frameWorkshopUp && !frameAllUp ? <ProjectFrameHead {...frameHead} onAsk={tab === 'needs' ? askChange : null} onInvite={tab === 'needs' ? inviteHere : null} onJoin={tab === 'needs' ? joinHere : null} title={pageTitle(tab)} purpose={framePurpose} /> : null}
+      {frame && !frameTopics && tab !== 'status' && !frameWorkshopUp && !frameAllUp ? <ProjectFrameHead {...frameHead} title={pageTitle(tab)} purpose={framePurpose} /> : null}
       {band}
       {tray}
       {/* Everything but the bar lives in here. It is what carries the
