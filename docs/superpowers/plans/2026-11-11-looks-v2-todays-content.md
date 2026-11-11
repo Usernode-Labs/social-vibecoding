@@ -106,3 +106,59 @@ section after each merge.
   stack of the first programme (Docker Postgres with a production copy, env files, Playwright)
   lived in a session scratchpad that is gone; it has to be set up again before step 5.
 - Open questions each audit lists at its end stay open until their lane reaches them.
+
+### Lane Y, as built (11 Nov 2026)
+
+What each step draws under a look now:
+
+- **s44, s45 You, Overview** (`features/profile/frame/you-frame.tsx`): the `@handle` as the title (a display
+  name, when one is set, on the 13px line under it), "Building since… · Changes live in N apps", Edit profile as
+  a `line` button; six tabs; the work column is the bio (when set), the verified accounts as pills that open
+  them, then Your work, Rewards, Account (Friends, App slots), Settings (Profile, Notifications, Settings with
+  the wallet line in the native app) and Admin; the side column is In numbers and This week (up to four
+  figures, the seven bars, the note, Share; the empty sentence when the week is empty).
+- **s46 to s48 Changes, Requests, Votes** (`frame/you-history.tsx`): the bot's History for that kind, read
+  with `useHistory`, by month then by project, one line each (glyph, number, title, how it ended), "Earlier
+  months" as the last row; the projects to narrow to in the side column, small buttons over the list on a
+  phone. One project picked is read from the server.
+- **s49 Friends** (`frame/you-friends.tsx`): the product's own username search wearing the kit's field, who
+  asked (Decline, Accept) and your friends in one group, the privacy line, Sent requests in the side column.
+- **s50 Edit profile**: the product's dialog, dressed. Its title, group labels, groups and Save wear the kit's
+  through `looks.json` (a new `cap` root, and `card`, `title`, `btn` extended); its rows are dressed by hand
+  in app.css ("EDIT PROFILE"). Nothing is rebuilt.
+- **s51, s52 public profiles** (`public-profile-card.tsx`): the picture in the head, the name, the handle, the
+  friend button and Message, About with the bio alone, Report user, Verified in the side column. The page takes
+  the frame's page area (`data-person-frame`). The preview inside Edit profile keeps the standard card.
+- **s53, s54 Challenges** and **s55 Standings** (`features/leaderboard/frame/challenges-frame.tsx`): as the
+  audit lists. Standings draws two frame roots (head and tabs; the two columns) with the screen's own picker
+  ordered between them by app.css, wearing the kit's field; the Event card reads `eventBarStore`.
+
+Rulings taken:
+
+- **Tab addresses**: `#profile` is the Overview, `#profile?tab=changes|requests|votes|friends` the others
+  (`frame/you-tabs.ts`). `Profile.open` reads it on every entry; a tab press replaces the address (Back leaves
+  the page, and a step Back from a row's page returns to its tab). The store's `tab` is ignored by the
+  standard page.
+- Under a look the Your work rows open the tabs, and `Profile.showFriends()` (so `#profile?friends` and every
+  caller) picks the Friends tab. `#homeroom-bot/history?kind=…` is untouched and still opens the bot page.
+- **Feedback** is a tab that opens the product's "Your feedback" card; it is never the lit tab.
+- You's head has no picture (the mockup has none; the bar shows it). The bio is kept, over the pills, since
+  the standard card shows it and the mockup's person had none on that page.
+- A public profile's title is the display name, or the bare username, with `@username` under it always, as
+  the standard card says the two.
+- The Notifications line keeps the catalog's words ("here and in each app").
+- A member with no season history gets no picker and no Event card (one column), as on the standard page.
+- Standings' "You" line is drawn when the board's view has it, as the standard page does.
+- Six tabs are wider than a phone: the row scrolls sideways there (a hand rule in app.css, not a kit change).
+
+Left, and why:
+
+- The This week bars are one picture to a screen reader (the kit's `Bars`); the standard chart also says each
+  day. It needs a per-day `spoken` on `Bars` (a kit change).
+- Verified pills and a public profile's Verified rows open the other site with `window.open` on a plain
+  click, since the kit's `Row` has no `target`.
+- Standings' states other than the table (loading skeleton, error, private, no entries, the disclaimer) and a
+  row's details are still the pane's standard markup inside the kit column. A challenge's own page is not the
+  kit's.
+- The bar's crumb on Challenges and Standings is the shell's ("Challenges", "Standings"), not "You › Challenges".
+- The loading skeleton of You before its data is the standard one.
