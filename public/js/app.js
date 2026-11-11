@@ -3619,25 +3619,25 @@ const App = {
             window.UsernodeReact?.messages?.handleEvent?.(data);
             break;
           case 'homeroom_bot_work_changed':
-            // #3692: the Homeroom bot started or finished work for this
-            // person. The tracks a request's thread and the chat draw
-            // (React, features/messages/bot-work.tsx) are read again under
-            // the viewer's own session; nothing here writes the DOM.
-            window.dispatchEvent(new CustomEvent('homeroom-bot-work-changed'));
-            break;
           case 'work_state':
-            // 5 Nov 2026: a request's or a change's stage moved
-            // (services/work-state.js). Same event as above, and the burst
-            // also names the item whose stage moved, so a request or a
-            // change open on screen re-reads itself wherever it is shown
-            // (#6595). `dev: false`: the Workshop's own refresh is told
-            // nothing by a work state.
+            // #3692: the Homeroom bot started or finished work for this
+            // person; 5 Nov 2026: or a request's or a change's stage moved
+            // (services/work-state.js). The tracks a request's thread and
+            // the chat draw (React, features/messages/bot-work.tsx) are read
+            // again under the viewer's own session; nothing here writes the
+            // DOM. The Homeroom bot tab hears the same push (features/ai/live.ts).
             window.dispatchEvent(new CustomEvent('homeroom-bot-work-changed'));
-            App._liveRefresh('work', data.item?.sessionId ?? null, {
-              appSlug: data.appSlug,
-              issueNumber: data.item?.issueNumber,
-              dev: false,
-            });
+            // #6595: a work state also names the item whose stage moved, so
+            // a request or a change open on screen re-reads itself wherever
+            // it is shown. `dev: false`: the Workshop's own refresh is told
+            // nothing by a work state.
+            if (data.type === 'work_state') {
+              App._liveRefresh('work', data.item?.sessionId ?? null, {
+                appSlug: data.appSlug,
+                issueNumber: data.item?.issueNumber,
+                dev: false,
+              });
+            }
             break;
           case 'app_version_changed':
             // A new build of an app is live: its pills, its open change, and
