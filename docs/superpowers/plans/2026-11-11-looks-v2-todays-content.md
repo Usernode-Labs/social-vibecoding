@@ -275,3 +275,68 @@ card scrolling under the frosted composer left the composer half drawn in captur
 again after any repaint), and the shell blurs no scrolling plane anyway. A capture of a long
 discussion taken before it settles can still show the composer half drawn; two seconds later
 it is whole.
+### Lane P, as built (11 Nov)
+
+A project's pages under a look (`features/dev-board/workshop/frame/project-frame.tsx`, fed by the frame
+closures of `workshop.tsx`). Needs you (s26) is untouched: its head keeps Invite and Ask for a change until
+lane K takes the page.
+
+- **Hub (s23, s24, s36).** The head is the hero's: tile, name, description, Open app (not on Homeroom's own
+  page), Invite, Join; the hero's own ⋯ still stands at its end. For you: Needs you while any vote is owed
+  (the pill for the unseen ones, "N skipped" otherwise, "Join to vote on these." for a non-member), else the
+  quiet line with the requests nobody has picked up as its link; Workshop for anyone signed in; Discussion
+  #general with its last line, the time never cut. Recently live is three picture cards (the project's tile
+  where a change has no picture; the app itself before anything went live). The side column is People alone,
+  with this week's faces, first on a phone. A phone also lists the topics (six, then Show N more). Gone: Ask
+  for a change, the Your work row, Recently live as rows, the three-topic group, How a change goes live, The app.
+- **Topics (s25).** The places list's own rows (`placeRows`): the topics in the work column, the channels
+  beside them, each by its name with its unread count. Gone: Propose a topic, About topics, the lines.
+- **Workshop (s27, s28, s37).** Overview: All items with See all (and the dot when a filter waits there) and
+  the four figures with their lines, each opening what it counts; then the Your work card, or the product's
+  first-change card for a newcomer. What happened: Mark all seen, this week's rows (new, You, Going live, a
+  stuck merge, Build it), All of this week, the weeks before, Earlier weeks or when the project started.
+  Beside them Homeroom bot's slots and Who decides. An admin's private requests stay under What happened.
+  Gone: the head's buttons, the ballot, Recently live, the four week rows, Nobody is on these.
+- **#general (s31).** The product's sentence under the title, the room in the content column and This
+  channel beside it (members and Mute), drawn by `channel-head.tsx` from its one state. A reply thread
+  beside the room takes the width back. A quoted reply in a project's channel wears the kit's quote.
+- **All items (s29, s30).** The kit draws the head, the two groupings as tabs with the board's search at
+  their end, and the side column (Show: Filters with its count and the active chips, Assigned to you, Yours;
+  Order categories). The list is the product's own, laid in the kit's content column and wearing the look
+  (wear map: `card` for a category's card, a new `cap` root for its two labels; hand rules for its inside).
+  By stage the board has the page's width and keeps its filter chips over the columns. s30 needs nothing of
+  its own: the Workshop's votes figure already routes.
+
+Rulings taken:
+
+- **Who decides** says the product's short sentence (`communityCard.lineShort.*`: "Goes live when its checks
+  pass and evan or snait says yes.") with the wait as its line. The mockup's shorter form has no catalog id.
+- **All items' categories are worn, not redrawn.** A second drawing would lose the lanes a card opens to,
+  the order held across a re-sort (`themesRef`) and the panel's lit row. So a card keeps the product's
+  parts (number over label, the chips, the faces' roster) in the kit's card.
+- **The kit's search drives the board's own box**, which stays mounted behind it (`#dev-kanban-search`,
+  `AppView._onKanbanSearchInput`), so comments and `#` are searched as on the standard page.
+- **By stage has no side column**: the board takes the width, and the product's chip row stays over it.
+- The second quick filter keeps the product's word, "Yours".
+- Two labels are new words, both layout labels of the first tour: "This channel" (`frame.channel.this`) and
+  #general's sentence as a sentence (`frame.place.general`, the standard line plus its full stop).
+- No project page head but the Hub's (and Needs you's, see above) has buttons.
+
+Left, and why:
+
+- **What happened's item rows were not seen in a browser**: this copy of the database has no rows since the
+  last visit on the projects tried. They are pinned by the suite only.
+- **Topics still has no address** under a look (a reload lands on the Hub), and Propose a topic is reachable
+  from Settings & rules only, as on the standard page.
+- **A week's page, the bot's slots page and a topic's channel** are the standard bodies under the kit's head.
+- **A place's own body is 32px from the page's edge** in every look but Workbench; Paper (40px) and Today
+  (36px) set their head a few pixels further in.
+- On a phone the channel's fitted box runs under the tab bar while the "changes are paused" banner is up
+  (the box is measured without the banner); it does so before this lane's change too.
+
+Learned:
+
+- The scratchpad is shared by every lane's agent: keep scripts and logs in a folder of your own.
+- `Btn` prefixes its `className` (`className="chip"`, not `k('chip')`).
+- A v2 kit rule may not restate an old selector or use an old bare name (`tests/looks-css.test.js`): the
+  picture card is `.shotc` inside `.shots.cards`.
