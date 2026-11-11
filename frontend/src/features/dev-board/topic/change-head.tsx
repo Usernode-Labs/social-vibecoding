@@ -72,6 +72,7 @@ import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
 import { useFramePage } from '../../frame/frame-page-store';
 import { placeName } from '../workshop/places';
 import { TopicFrameBy, TopicFrameHead, TopicFrameLabel, TopicFrameStatus } from './frame/topic-frame';
+import { liveTally } from '../card/fold';
 import { useSideStack } from './frame/side-stack';
 import { dotLine, pillKind, topicBack } from './frame/topic-page';
 
@@ -763,11 +764,12 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {id ? <ThreadItems slug={pageSlug()} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} menuKey={menuKey || null} /> : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
           {/* Under a look: where it stands, as a pill, leading the context
-              column over Votes and Tested. No five-stop line: the standard
-              page has none for a change. */}
+              column over Votes and Tested, with its final counted vote
+              beside the word once live, as the standard bar's pill has it.
+              No five-stop line: the standard page has none for a change. */}
           {frame && v.status ? (
             <div className="dev-change-status">
-              <TopicFrameStatus label={t('project:frame.topic.status')} pill={{ word: v.status.label, kind: pillKind(v.status, v.votes) }} />
+              <TopicFrameStatus label={t('project:frame.topic.status')} pill={{ word: dotLine([v.status.label, liveTally(v.status)?.text]), kind: pillKind(v.status, v.votes) }} />
             </div>
           ) : null}
           {v.codeMissing ? <CodeMissingNotice /> : null}

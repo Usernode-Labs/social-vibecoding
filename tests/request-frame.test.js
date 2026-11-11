@@ -51,7 +51,7 @@ test('under a look the request\'s page says its trail to the bar, wears the kit\
   assert.match(src, /const frame = isFrameSkin\(useLiveSkin\(\)\);/);
   assert.match(src, /useFramePage\(frame \? \[placeName\('workshop'\), kicker\] : null, topicBack\);/, 'the Workshop, then the request; the arrow is the page\'s own way back');
   assert.match(src, /if \(frame\) return <TopicFrameHead /, 'in the bar\'s place');
-  assert.match(src, /useSideStack\(frame, `\[data-request-root="\$\{r\.number\}"\] > \[data-image-viewer-scope\]`/, 'what stands in the context column is stacked beside the words by measured heights');
+  assert.match(src, /useSideStack\(frame, `\[data-request-root="\$\{r\.number\}"\] > \[data-image-viewer-scope\]`, \['\.dev-request-track', '\.dev-request-at'\]\);/, 'what stands in the context column (Status) is stacked beside the words by measured heights; the sentence and its action stay in the words');
   // The page's own lines stay as written.
   assert.match(src, /<div className="dev-request-track" data-request-track=\{r\.trackPending \? 'pending' : track\.work\.stage\} inert=\{!!r\.trackPending\}>/);
   assert.match(src, /<header className="messages-thread-header">/);
@@ -73,7 +73,7 @@ test('the side column is laid beside the words from measured heights, a look\'s 
   const css = read('public/css/app.css');
   const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request \{[^}]*max-width: 1136px;/);
-  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request-root > \[data-image-viewer-scope\] > :is\(\.dev-request-status, \.dev-request-track, \.dev-change-status, \.dev-change-pair\) \{[^}]*position: absolute; top: var\(--fr-side-top, 0px\); inset-inline-end: 0; width: 320px;/);
+  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request-root > \[data-image-viewer-scope\] > :is\(\.dev-request-track, \.dev-request-at, \.dev-change-status, \.dev-change-pair\) \{[^}]*position: absolute; top: var\(--fr-side-top, 0px\); inset-inline-end: 0; width: 320px;/);
   assert.match(hand, /\.dev-request-root > \[data-image-viewer-scope\] \{ position: relative; min-height: var\(--fr-side-h, 0px\); padding-inline-end: var\(--fr-side-w, 352px\); \}/);
   assert.match(hand, /#gc-thread-messages \{ box-sizing: border-box; width: calc\(100% - var\(--fr-side-w, 352px\)\); max-width: calc\(100% - var\(--fr-side-w, 352px\)\); margin-inline: 0; margin-bottom: var\(--fr-side-tail, 0px\); \}/);
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) #gc-thread-back \{ display: none; \}/, 'the bar has the way back');
@@ -84,11 +84,10 @@ test('the side column is laid beside the words from measured heights, a look\'s 
   const looks = JSON.parse(read('frontend/looks/looks.json'));
   assert.match(looks.wear.roots.card.to, /^:is\(\.dev-request-ask,/, 'with whatever else wears the card (a visitor\'s forms, tests/guest-chrome.test.js)');
   // The cards the product keeps in the context column wear it too: a
-  // change's Votes and Tested, and Homeroom bot's track card on a request
-  // it is building. Beside the kit's status card in the look's surface,
-  // their white stood out as a second surface.
+  // change's Votes and Tested. Homeroom bot's progress card is no longer
+  // worn: under a look the page draws the kit's Status in its place.
   assert.ok(looks.wear.roots.card.to.includes('.dev-change-pair .dev-change-gate'));
-  assert.ok(looks.wear.roots.card.to.includes('.dev-request-track > [role="group"]'));
+  assert.doesNotMatch(looks.wear.roots.card.to, /dev-request-track/);
 });
 
 test('a change\'s page does the same: its title in the kit\'s head, its trail, its votes and checks in the context column', () => {
@@ -100,36 +99,78 @@ test('a change\'s page does the same: its title in the kit\'s head, its trail, i
   assert.match(src, /<header className="messages-thread-header">/, 'the standard head stays as written');
 });
 
-test('under a look the status is the kit\'s card: the stage as a pill, the five-stop line, one sentence, the one action', () => {
+test('where a request stands is said in two places, each once: the sentence and its action after the request, the pill and five stops in the context column', () => {
   const words = ['Plan', 'Build', 'Checks', 'Vote', 'Live'];
-  const html = renderComponent(FRAME, 'TopicFrameStatus', {
-    label: 'Where this request is', pill: { word: 'Asked', kind: 'act' }, at: 0, state: 'now', words,
-    say: 'Nobody is on this yet.', fine: 'Claimed 3 days ago; the claim lapses tomorrow.', action: { label: 'Work on this with Homeroom bot', onClick() {} },
+  // In the words' column: the sentence with its first sentence in bold, the
+  // claim's small words, the one action. No label, no pill, no line.
+  const main = renderComponent(FRAME, 'TopicFrameStatus', {
+    big: true, say: 'Waiting for you to decide. It is a product decision.', lead: 'Waiting for you to decide.',
+    fine: 'Claimed 3 days ago; the claim lapses tomorrow.', action: { label: 'Go ahead', act: 'workOnIssueWithBot', onClick() {} },
   }, { cache: false });
-  assert.match(html, /^<section class="fr-sec" data-topic-status=""><div class="fr-sechead"><h2 class="fr-cap">Where this request is<\/h2><\/div><div class="fr-card"><div class="fr-status"><div class="fr-btnrow"><span class="fr-pill fr-act" data-kind="act">Asked<\/span><\/div><span class="fr-track" role="img" aria-label="Plan"><span class="fr-st fr-now" aria-hidden="true">Plan<\/span><span class="fr-st" aria-hidden="true">Build<\/span>/);
-  assert.match(html, /<p class="fr-txt">Nobody is on this yet\.<\/p><p class="fr-fine">Claimed 3 days ago; the claim lapses tomorrow\.<\/p><div class="fr-btnrow"><button type="button" class="fr-btn dev-request-primary">Work on this with Homeroom bot<\/button><\/div><\/div><\/div><\/section>$/);
-  const closed = renderComponent(FRAME, 'TopicFrameStatus', { pill: null, at: null, words, say: 'Closed as done.', fine: null, action: null }, { cache: false });
-  assert.doesNotMatch(closed, /fr-track|fr-pill|fr-btn|fr-sechead/, 'closed: the sentence alone; and no label on the page, where the card stands at the words\' top');
-  assert.match(closed, /^<section class="fr-sec" data-topic-status=""><div class="fr-card">/);
-  assert.match(renderComponent(FRAME, 'TopicFrameStatus', { label: 'L', pill: null, at: 1, state: 'wait', words, say: null, fine: null, action: { label: 'Open', href: '#x' } }, { cache: false }),
-    /<span class="fr-st fr-done" aria-hidden="true">Plan<\/span><span class="fr-st fr-wait" aria-hidden="true">Build<\/span>.*<a class="fr-btn dev-request-primary" href="#x">Open<\/a>/s);
+  assert.equal(main, '<section class="fr-sec" data-topic-status=""><div class="fr-card"><div class="fr-status"><p class="fr-sub15"><b>Waiting for you to decide.</b> It is a product decision.</p><p class="fr-fine">Claimed 3 days ago; the claim lapses tomorrow.</p><div class="fr-btnrow"><button type="button" class="fr-btn dev-request-primary" data-act="workOnIssueWithBot">Go ahead</button></div></div></div></section>');
+  assert.match(renderComponent(FRAME, 'TopicFrameStatus', { big: true, say: 'Closed as done.', lead: 'Something else.' }, { cache: false }), /<p class="fr-sub15">Closed as done\.<\/p>/, 'a lead that does not start the line is not said in bold');
+  assert.match(renderComponent(FRAME, 'TopicFrameStatus', { big: true, say: 'Open it.', action: { label: 'Open', href: '#x' } }, { cache: false }), /<a class="fr-btn dev-request-primary" href="#x">Open<\/a>/);
+  // In the context column: the label, the pill, the five stops, one grey line.
+  const side = renderComponent(FRAME, 'TopicFrameStatus', { label: 'Status', pill: { word: 'Asked', kind: 'act' }, at: 1, state: 'wait', words }, { cache: false });
+  assert.equal(side, '<section class="fr-sec" data-topic-status=""><div class="fr-sechead"><h2 class="fr-cap">Status</h2></div><div class="fr-card"><div class="fr-status"><div class="fr-btnrow"><span class="fr-pill fr-act" data-kind="act">Asked</span></div><span class="fr-track" role="img" aria-label="Build"><span class="fr-st fr-done" aria-hidden="true">Plan</span><span class="fr-st fr-wait" aria-hidden="true">Build</span><span class="fr-st" aria-hidden="true">Checks</span><span class="fr-st" aria-hidden="true">Vote</span><span class="fr-st" aria-hidden="true">Live</span></span></div></div></section>');
+  const stops = renderComponent(FRAME, 'TopicFrameStatus', { label: 'Status', pill: { word: 'Waiting for you to decide', kind: 'wait' }, stops: ['wait', '', '', '', ''], words, say: 'Homeroom bot: it is a product decision.' }, { cache: false });
+  assert.match(stops, /<span class="fr-pill fr-wait" data-kind="wait">Waiting for you to decide<\/span><\/div><span class="fr-track" role="img" aria-label="Plan"><span class="fr-st fr-wait" aria-hidden="true">Plan<\/span><span class="fr-st" aria-hidden="true">Build<\/span>.*<p class="fr-txt">Homeroom bot: it is a product decision\.<\/p>/s);
 });
 
-test('the request page hands its status to the kit\'s card, and the stage lands on the five stops', () => {
+test('the request page: the status host keeps its place in the words with the kit\'s card inside; the stage lands on the five stops', () => {
   const src = read(HEAD);
   assert.match(src, /function RequestStatus\(\{ s, specs, tracked = false, frame = false \}/);
   assert.match(src, /<RequestStatus s=\{r\.status\} specs=\{specs\} tracked=\{!!track\} frame=\{frame\} \/>/);
-  assert.match(src, /if \(frame\) \{\s*const stop = s\.closed \|\| tracked \? null : frameStop\(stage\);\s*return \(\s*<div className="dev-request-status" role="group" aria-label=\{t\('project:topic\.request\.status\.label'\)\} data-request-stage=\{stage\}>\s*<TopicFrameStatus/, 'the same host, so the side column measures it as before; no line while the bot\'s track card says the steps');
+  assert.match(src, /if \(frame\) \{[^}]*const words = s\.closed \|\| say \|\| null;\s*return \(\s*<div className="dev-request-status" role="group" aria-label=\{t\('project:topic\.request\.status\.label'\)\} data-request-stage=\{stage\}>\s*\{words \|\| s\.fine \|\| a \? \(\s*<TopicFrameStatus\s+big\s+say=\{words\}\s+lead=\{s\.closed \? null : firstSentence\(s\.lead\)\}/, 'the same host and the same sentence the standard card says');
+  assert.match(src, /action=\{a \? \{ label: a\.label, title: a\.title, disabled: a\.disabled, href: a\.href, act: a\.act\?\.fn, onClick: \(\) => \{ if \(a\.act\) call\(a\.act\.fn, a\.act\.args \|\| \[\]\); \} \} : null\}/, 'the same action, pressed the same way');
   const { loadTsx } = require('./lib/render-tsx');
-  const { frameStop } = loadTsx('frontend/src/features/dev-board/topic/frame/topic-page.ts', { cache: false });
-  assert.deepEqual(frameStop('asked'), { at: 0, state: 'now' }, 'asked: the plan is being made');
-  assert.deepEqual(frameStop('spec'), { at: 1, state: 'wait' }, 'a plan is ready: the build waits');
-  assert.deepEqual(frameStop('built'), { at: 1, state: 'now' });
-  assert.deepEqual(frameStop('voted'), { at: 5, state: 'now' }, 'live: every stop done');
+  const page = loadTsx('frontend/src/features/dev-board/topic/frame/topic-page.ts', { cache: false });
+  assert.deepEqual(page.frameStop('asked'), { at: 0, state: 'now' }, 'asked: the plan is being made');
+  assert.deepEqual(page.frameStop('spec'), { at: 1, state: 'wait' }, 'a plan is ready: the build waits');
+  assert.deepEqual(page.frameStop('built'), { at: 1, state: 'now' });
+  assert.deepEqual(page.frameStop('voted'), { at: 5, state: 'now' }, 'live: every stop done');
+  assert.equal(page.firstSentence('Waiting for you to decide. It is a product decision.'), 'Waiting for you to decide.');
+  assert.equal(page.firstSentence('Nobody is working on this yet.'), 'Nobody is working on this yet.', 'one sentence: all of it');
+  assert.equal(page.firstSentence('Plan v1.2 is ready! Build it below.'), 'Plan v1.2 is ready!');
+  assert.equal(page.firstSentence(null), '');
+  assert.equal(page.threadPillKind({ key: 'live', tone: 'ok' }), 'ok');
+  assert.equal(page.threadPillKind({ key: 'vote', tone: 'neutral' }), 'act', 'a vote asks for you');
+  assert.equal(page.threadPillKind({ key: 'building', tone: 'progress' }), 'wait');
+  assert.equal(page.threadPillKind({ key: 'ready', tone: 'neutral' }), '');
   const looks = JSON.parse(read('frontend/looks/looks.json'));
   assert.doesNotMatch(looks.wear.roots.card.to, /dev-request-status/, 'the card inside wears the look; the host is bare');
   const css = read('public/css/app.css');
-  assert.match(css, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request-status \{ margin-top: 0; max-width: none; padding: 0; background: none; border-radius: 0; \}/);
+  assert.match(css, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-request-status \{ margin-top: 16px; max-width: none; padding: 0; background: none; border-radius: 0; \}/);
+});
+
+test('the context column\'s Status: Homeroom bot\'s track drawn as the kit\'s card in the progress card\'s own host; else the stage; else the pill the standard bar wears', () => {
+  const src = read(HEAD);
+  assert.match(src, /\{track && !working && frame \? \(\s*<div className="dev-request-track" data-request-track=\{r\.trackPending \? 'pending' : track\.work\.stage\} inert=\{!!r\.trackPending\}>\s*<TopicTrackStatus track=\{track\} label=\{t\('project:frame\.topic\.status'\)\} links=\{trackLinks\(track, \{ request: false \}\)\} \/>/,
+    'the same host, holding its place the same way (trackPending, the board\'s row)');
+  assert.match(src, /\{track && !working && !frame \? \(/, 'the standard look keeps the product\'s card, as written');
+  assert.match(src, /\{frame && !\(track && !working\) && !r\.status\.closed && \(!working \|\| pill\) \? \(\s*<div className="dev-request-at" data-request-at=/);
+  assert.match(src, /\? <TopicFrameStatus label=\{t\('project:frame\.topic\.status'\)\} pill=\{pill \? \{ word: pill\.label, kind: threadPillKind\(pill\) \} : null\} \/>\s*: <RequestAt s=\{r\.status\} specs=\{specs\} label=\{t\('project:frame\.topic\.status'\)\} \/>/);
+  const TRACK = 'frontend/src/features/dev-board/topic/frame/topic-track.tsx';
+  const track = read(TRACK);
+  assert.match(track, /import \{ TrackPictures, stepLooks, trackClock, trackDetail, trackEyebrow, trackLook, trackPlace \} from '\.\.\/\.\.\/\.\.\/messages\/bot-track';/, 'read through the product card\'s own helpers, not worded anew');
+  const { loadTsx } = require('./lib/render-tsx');
+  const { trackPillKind, trackStops } = loadTsx(TRACK, { cache: false });
+  const need = { work: { stage: 'waiting_for_you', why: 'decision' }, step: 'plan', busy: false, doneBy: null };
+  assert.equal(trackPillKind(need), 'wait');
+  assert.deepEqual(trackStops(need), ['wait', '', '', '', ''], 'the step it is on is amber while the work waits');
+  const live = { work: { stage: 'live' }, step: 'live', busy: false, doneBy: null };
+  assert.equal(trackPillKind(live), 'ok');
+  assert.deepEqual(trackStops(live), ['live', 'live', 'live', 'live', 'live']);
+  const vote = { work: { stage: 'up_for_vote' }, step: 'vote', busy: false, doneBy: null };
+  assert.equal(trackPillKind(vote), 'act');
+  assert.deepEqual(trackStops(vote), ['done', 'done', 'done', 'now', '']);
+});
+
+test('"The request" is a labelled card that starts with who asked and when', () => {
+  const src = read(HEAD);
+  assert.match(src, /\{frame \? <TopicFrameLabel>\{t\('project:frame\.topic\.theRequest'\)\}<\/TopicFrameLabel> : null\}\s*\{frame \? <TopicFrameBy name=\{r\.asker\} color=\{swatchFor\(r\.asker\)\} line=\{r\.askedTime \|\| null\} title=\{r\.askedTitle\} at=\{r\.askedAt\} \/> : null\}\s*\{editing \? <RequestEditor r=\{r\} onClose=\{\(\) => setEditing\(false\)\} \/> : \(/,
+    'the asker and the time the standard head says, which the kit\'s page puts away with the title');
+  assert.equal(JSON.parse(read('frontend/locales/en/project.json'))['frame.topic.theRequest'].text, 'The request');
 });
 
 test('a change\'s page: Status is a pill under its label, with no five-stop line, and leads the context column over Votes and Tested', () => {
@@ -138,12 +179,12 @@ test('a change\'s page: Status is a pill under its label, with no five-stop line
   assert.equal(page.changeStop, undefined, 'the five stops are the request page\'s; the standard change page has none');
   const src = read(CHANGE);
   assert.doesNotMatch(src, /changeStop|changes:track\./);
-  assert.match(src, /\{frame && v\.status \? \(\s*<div className="dev-change-status">\s*<TopicFrameStatus label=\{t\('project:frame\.topic\.status'\)\} pill=\{\{ word: v\.status\.label, kind: pillKind\(v\.status, v\.votes\) \}\} \/>/);
+  assert.match(src, /\{frame && v\.status \? \(\s*<div className="dev-change-status">\s*<TopicFrameStatus label=\{t\('project:frame\.topic\.status'\)\} pill=\{\{ word: dotLine\(\[v\.status\.label, liveTally\(v\.status\)\?\.text\]\), kind: pillKind\(v\.status, v\.votes\) \}\} \/>/, 'the word and, once live, its final counted vote: what the standard bar\'s pill says');
   assert.match(src, /useSideStack\(frame, `\[data-change-root="\$\{id \?\? ''\}"\] > \[data-image-viewer-scope\]`, \['\.dev-change-status', '\.dev-change-pair'\]\);/);
   const html = renderComponent(FRAME, 'TopicFrameStatus', { label: 'Status', pill: { word: '✓ Live', kind: 'ok' } }, { cache: false });
   assert.equal(html, '<section class="fr-sec" data-topic-status=""><div class="fr-sechead"><h2 class="fr-cap">Status</h2></div><div class="fr-card"><div class="fr-status"><div class="fr-btnrow"><span class="fr-pill fr-ok" data-kind="ok">✓ Live</span></div></div></div></section>');
   const css = read('public/css/app.css');
-  assert.match(css, /\.dev-request-root > \[data-image-viewer-scope\] > :is\(\.dev-request-status, \.dev-request-track, \.dev-change-status, \.dev-change-pair\) \{[^}]*position: absolute;/);
+  assert.match(css, /\.dev-request-root > \[data-image-viewer-scope\] > :is\(\.dev-request-track, \.dev-request-at, \.dev-change-status, \.dev-change-pair\) \{[^}]*position: absolute;/);
   // In the 320px context column the Votes and Tested cards lay out as they
   // do on a phone: the figure on one line, the card's buttons on a row of
   // their own under the bar.
