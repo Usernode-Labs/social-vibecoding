@@ -346,7 +346,8 @@ const TOOLS = Object.freeze([
         + 'stylesheets in, so use their classes and never copy CSS from them. A plan shows the screen without its '
         + 'scripts, so write every row, label and state it must show into the markup; use a script only for an '
         + 'interactive state the plan does not need. One write_screen a turn: grow it with edit_design. It becomes the '
-        + 'next version when you reply. Say in `note`, in a few words, what it is.',
+        + 'next version when you reply. When you draw versions side by side, give each column data-variant="its label", '
+        + 'and put data-chosen on the one they picked. Say in `note`, in a few words, what it is.',
       parameters: {
         type: 'object',
         properties: {
