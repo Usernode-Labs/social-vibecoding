@@ -5997,6 +5997,30 @@ const AppView = {
     }
   },
 
+  // #6604: the project-level vote context a change page used to inherit from
+  // the board's /promoted answer, now carried by its own read. Merged into
+  // the context _loadDevData builds, never replacing a fresher board value
+  // with nothing (a field the answer omits keeps what is there).
+  _applyVoteContext(ctx) {
+    if (!ctx || typeof ctx !== 'object') return;
+    const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+    if (ctx.slug && ctx.slug !== slug) return;
+    const cur = AppView._proposalsCtx || {};
+    const next = { ...cur };
+    const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+    if (num(ctx.majority) != null) next.majority = Math.max(1, num(ctx.majority));
+    if (num(ctx.activeUsers) != null) next.activeUsers = Math.max(0, num(ctx.activeUsers));
+    if (typeof ctx.locked === 'boolean') next.locked = ctx.locked;
+    if (ctx.approverPolicy) next.approverPolicy = ctx.approverPolicy;
+    if (ctx.approvalsRequired !== undefined) next.approvalsRequired = ctx.approvalsRequired;
+    if (typeof ctx.isAppAdmin === 'boolean') next.isAppAdmin = ctx.isAppAdmin;
+    AppView._proposalsCtx = next;
+    if (AppView.voteState) {
+      if (next.majority != null) AppView.voteState.majority = next.majority;
+      if (next.activeUsers != null) AppView.voteState.activeUsers = next.activeUsers;
+    }
+  },
+
   _findItem(kind, id) {    const t = { kind, id };
     // The one-shot caches are keyed differently (`_topicIssue` carries its
     // own slug; proposal and governance ids are global and the caches are
@@ -6120,6 +6144,10 @@ const AppView = {
       AppView._overlayPendingVote(row);
       AppView._topicProposal = row;
       AppView._putCachedRow('proposal', row);
+      // #6604: this read is a change page's ONLY read (the board is not
+      // loaded behind it), so the project-level vote context the board's
+      // /promoted answer carries comes with it.
+      AppView._applyVoteContext(data.context);
       // Keep the inline vote/kudos controls in sync so the discussion
       // thread's activity row renders its tally + per-viewer state, just
       // like a row loaded via the list (loadMoreMerged does the same).

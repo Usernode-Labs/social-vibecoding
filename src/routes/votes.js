@@ -5179,7 +5179,7 @@ function voteRoutes(config) {
       // topic view (my_vote resolves to null for them). `repo_url` for
       // whether its code is on the git host (services/code-missing.js).
       const gatedApp = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, locked, repo_url`
       );
       if (!gatedApp) return res.status(404).json({ error: 'App not found' });
 
@@ -5220,6 +5220,28 @@ function voteRoutes(config) {
         // #4452: how long testing usually takes here, for the change page's
         // one testing bar and its time left (services/checks-estimate.js).
         proposal.checks_estimate = await require('../services/checks-estimate').forApp(pool, gatedApp.id);
+        // #6604: the page's before/after, for a change with no verified
+        // shots yet (services/visuals.js). The board's /promoted rows carry
+        // this aggregate; a change page opened by its own read alone needs it
+        // here, or its legacy "All N screens" card disappeared.
+        {
+          const { rows: [vis] } = await pool.query(
+            `SELECT jsonb_object_agg(
+                      sv.kind || '_' || sv.capture_index || '_' || sv.media,
+                      jsonb_build_object(
+                        'id', sv.id,
+                        'path', sv.captured_path,
+                        'viewport', sv.captured_viewport,
+                        'commit', sv.commit_hash,
+                        'scenarioId', sv.scenario_id,
+                        'scenarioFingerprint', sv.scenario_fingerprint,
+                        'fellBack', sv.before_fell_back))
+               FROM session_visuals sv WHERE sv.session_id = $1`,
+            [proposal.id]
+          ).catch(() => ({ rows: [{ jsonb_object_agg: null }] }));
+          proposal.visuals = require('../services/visuals')
+            .shapeAgg(vis && vis.jsonb_object_agg, visualHeadForSession(proposal));
+        }
         // #6234: Homeroom bot fixing its own change's failing checks, for the
         // Testing card (services/homeroom-bot-progress.js changeBotFix);
         // null for any change of a person's.
@@ -5406,6 +5428,7 @@ function voteRoutes(config) {
       // owns or that is shared), so the demo generators answer them the same
       // way; a 404 in the network log is a console error, which fails every
       // declared check on the route.
+      let demoRow = false;
       if (!proposal && IS_STAGING && req.query.demo === '1') {
         const sessionMocks = require('./sessions');
         proposal = stagingMockMerged(req.user).find((m) => m.id === id)
@@ -5414,9 +5437,39 @@ function voteRoutes(config) {
           || sessionMocks.stagingMockSharedSessions().find((m) => m.id === id)
           || sessionMocks.stagingMockOwnSessions(req.user?.id, config.selfAppSlug).find((m) => m.id === id)
           || null;
+        demoRow = !!proposal;
       }
 
       if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+      // #6604: a change's page draws from THIS read alone now — the board is
+      // not loaded behind it in the side panel or on its own page — so a
+      // staging ?demo=1 row must carry the same derived merge fields the
+      // board's list rows do. The list derives them for every row
+      // (GET .../promoted); one resolved from the generators above skipped
+      // that pass, so its steps sheet had no gates and its merge step read as
+      // if there were none.
+      if (demoRow) {
+        const freshnessSvc = require('../services/proposal-freshness');
+        const integrationSvc = require('../services/integration');
+        const requirementsSvc = require('../services/merge-requirements');
+        const mainCheck = await require('../services/main-watch').mergePause(pool, gatedApp.id);
+        proposal.freshness = proposal.freshness || freshnessSvc.readFreshness(proposal);
+        proposal.checks_on_head = sessionChecksOnHead(proposal);
+        proposal.integration = proposal.integration || integrationSvc.readIntegration(proposal);
+        proposal.shotsEnforced = !!config.shots?.enforce
+          && !!(proposal.shots_detail && typeof proposal.shots_detail === 'object');
+        proposal.mergeRequirements = requirementsSvc.readRequirements({
+          ...proposal,
+          shotsEnforced: proposal.shotsEnforced,
+          app_main_check_state: mainCheck.state,
+          app_main_check_sha: mainCheck.sha,
+          app_main_check_resumed_sha: mainCheck.resumedSha,
+          app_main_check_paused: mainCheck.paused,
+          app_main_check_paused_sha: mainCheck.pausedSha,
+          app_main_check_confirming: mainCheck.confirming,
+          app_main_check_failing_test: mainCheck.failingTest,
+        });
+      }
       if (IS_STAGING && req.query.demo === '1' && proposal.checks_estimate == null) {
         proposal = { ...proposal, checks_estimate: require('../services/checks-estimate').DEMO_ESTIMATE };
       }
@@ -5458,7 +5511,32 @@ function voteRoutes(config) {
       }
       // `?results=failing`: the proposal page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).
-      res.json({ proposal: listTestResults.forItem(req, proposal) });
+      // #6604: the change's page draws from this read alone now — the board
+      // is not loaded behind it — so the project-level vote context the
+      // board's /promoted answer carries rides along here too. Without it the
+      // Votes card lost its "any of N members" line and an admin lost the
+      // admin-merge affordance on a change opened cold or in the side panel.
+      let context = null;
+      try {
+        const { active: activeUsers, majority } = await getActiveUserStats(pool, gatedApp.id);
+        const gov = await require('../services/governance').getGovernance(pool, gatedApp.id);
+        context = {
+          slug: req.params.slug,
+          majority,
+          activeUsers,
+          // Same demo override /promoted applies (see its comment): a
+          // prod-cloned staging app is locked, and ?demo=1 exists to review
+          // states a lock would suppress.
+          locked: !!gatedApp.locked && !(IS_STAGING && req.query.demo === '1'),
+          approverPolicy: gov.approverPolicy,
+          approvalsRequired: gov.approvalsRequired,
+          isAppAdmin: await appAdmins.isAppAdmin(pool, gatedApp.id, req.user?.id),
+        };
+      } catch (err) {
+        // Best-effort: the page still draws from the proposal row.
+        log.warn('votes', 'Could not read the vote context', { message: err.message });
+      }
+      res.json({ proposal: listTestResults.forItem(req, proposal), context });
     } catch (err) {
       log.error('votes', 'Failed to get proposal by id', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
