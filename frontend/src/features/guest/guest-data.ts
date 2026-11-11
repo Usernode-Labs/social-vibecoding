@@ -181,6 +181,13 @@ export const MIN_BUILDERS = 5;
  * picture it is a figure beside others, not a claim on its own.
  */
 export const MIN_PEOPLE = 5;
+
+/** A project made in the last 30 days wears "New" on its card. */
+const NEW_FOR_MS = 30 * 24 * 60 * 60 * 1000;
+export function isNew(app: GuestApp, now = Date.now()): boolean {
+  const t = app.created_at ? Date.parse(app.created_at) : NaN;
+  return Number.isFinite(t) && now - t < NEW_FOR_MS;
+}
 /** "Updated …" reaches this far back; older says nothing. */
 export const UPDATED_WITHIN_MS = 30 * 24 * 60 * 60 * 1000;
 

@@ -2277,6 +2277,7 @@ export function LandingScreen() {
               failed={appsFailed && !apps}
               waitlist={NEW_ACCOUNTS_WAIT}
               waiting={waitingGuest ? { email: sessionEmail() } : null}
+              welcomeEmail={releaseEmail}
               onStart={() => setSheet('start')}
               onOpenInside={(app) => { void live.current.openLandingApp(app); }}
               onRetry={() => { st.appsReady = live.current.loadLandingApps(); }}
