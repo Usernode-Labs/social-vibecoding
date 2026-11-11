@@ -10917,6 +10917,61 @@ const AppView = {
     return entry.done;
   },
 
+  // #6595: a request or a change open on screen re-reads itself when a live
+  // burst about its project arrives, wherever it is shown — the Workshop's
+  // side panel, the Homeroom bot tab's column, the platform side panel's own
+  // document, or the item's full page. `refreshDevData` already re-reads the
+  // Workshop's topic sub-view, and even there it does not read the thread
+  // that draws a close vote's card; this is the one entry every surface goes
+  // through, routed by what is SHOWN (AppView._devTopic), never by
+  // App.currentApp.
+  //
+  // `live` names what the burst was about: { kinds, ids, numbers, slugs,
+  // unnamed, devRead }. `devRead` is true when refreshDevData already
+  // re-read the topic's own row, so the row is not fetched twice.
+  //
+  // Returns true when what is shown was one of those things (whether or not
+  // a read was needed), so the flush knows the burst reached a surface.
+  refreshShownTopic(live) {
+    if (!live) return false;
+    const t = AppView._devTopic;
+    if (!t) return false;
+    const onPage = typeof App !== 'undefined' && App.currentTab === 'dev' && App.currentSubTab === 'topic';
+    if (!AppView._devTopicInPanel && !onPage) return false;
+    const slug = (AppView.appData && AppView.appData.slug) || null;
+    const slugs = live.slugs;
+    if (!slug || !slugs || typeof slugs.has !== 'function' || !slugs.has(slug)) return false;
+    const id = Number(t.id);
+    if (!Number.isFinite(id)) return false;
+    const liveReads = typeof window !== 'undefined' && window.UsernodeReact
+      && window.UsernodeReact.liveReads;
+    const threadRead = (path) => {
+      if (liveReads && typeof liveReads.resync === 'function') liveReads.resync('thread', path);
+    };
+    const enc = encodeURIComponent(slug);
+    if (t.kind === 'issue') {
+      // An event that named another request is not this one; one that named
+      // no request at all re-reads it, and nothing repaints if it did not move.
+      const numbers = live.numbers;
+      if (numbers && numbers.size && !numbers.has(id) && !live.unnamed) return false;
+      if (!live.devRead) AppView._refreshOpenRequestRow();
+      threadRead(`/api/apps/${enc}/threads/${id}`);
+      return true;
+    }
+    if (t.kind === 'proposal' || t.kind === 'session') {
+      // Same rule by session id: another change's event is skipped unless the
+      // burst also carried one that named no row.
+      const ids = live.ids;
+      if (ids && ids.size && !ids.has(id) && !live.unnamed) return false;
+      // The flush's own loop tells every change page by its id; when this one
+      // was not named, tell it here so its page re-reads.
+      if (!ids || !ids.has(id)) AppView._tellChangePage(id);
+      threadRead(`/api/apps/${enc}/threads/change/${id}`);
+      return true;
+    }
+    return false;
+  },
+
   // #6001: a release finished for `slug`. A change it carries that is open —
   // its Votes card moves from "It's going live." to "It's live." — re-reads
   // its own row, because the live event names the app, not the change.
@@ -24781,6 +24836,12 @@ const AppView = {
         AppView._repaintCards();
         if (document.getElementById('gc-thread-head')) AppView._renderTopicHead();
       }
+      // #6595: the view this was claimed from re-reads at once. The
+      // optimistic patch above is the board's row; a side panel or the bot
+      // tab's column reads its own, and waits on the broadcast otherwise.
+      if (typeof App !== 'undefined' && App._liveRefresh) {
+        App._liveRefresh('issue', null, { appSlug: slug, issueNumber });
+      }
     } catch (err) {
       PlatformUI.toast(PlatformI18n.t('changes:issue.claim.failedWith', { error: err.message }));
     }
@@ -24821,6 +24882,11 @@ const AppView = {
         }
         AppView._repaintCards();
         if (document.getElementById('gc-thread-head')) AppView._renderTopicHead();
+      }
+      // #6595: as markIssueInProgress — the view this was released from
+      // re-reads at once, not only the board's cached row.
+      if (typeof App !== 'undefined' && App._liveRefresh) {
+        App._liveRefresh('issue', null, { appSlug: slug, issueNumber });
       }
     } catch (err) {
       PlatformUI.toast(PlatformI18n.t('changes:issue.claim.clearFailedWith', { error: err.message }));
@@ -29236,6 +29302,13 @@ const AppView = {
       // toast — the refreshed card's tally / countdown pill says it all.
 
       AppView.refreshDevData('vote');
+      // #6595: the view this vote came from re-reads itself at once — the
+      // side panel or the bot tab's column, where refreshDevData does
+      // nothing, and the request's thread beside the row. The burst gathers
+      // this with the vote_update broadcast, so the board still reads once.
+      if (typeof App !== 'undefined' && App._liveRefresh) {
+        App._liveRefresh('vote', null, { appSlug: AppView.appData && AppView.appData.slug, issueNumber: targetN });
+      }
       // Voting clears this proposal's nudge server-side; re-pull so the
       // unread badge drops it. Never optimistic — only on an ok response.
       window.Notifications?.refresh?.();
