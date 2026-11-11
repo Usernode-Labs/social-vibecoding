@@ -106,3 +106,59 @@ section after each merge.
   stack of the first programme (Docker Postgres with a production copy, env files, Playwright)
   lived in a session scratchpad that is gone; it has to be set up again before step 5.
 - Open questions each audit lists at its end stay open until their lane reaches them.
+
+### Lane T, as built (11 Nov)
+
+A request and a change (s32 to s35) and the running app (s38), on `redesign/skins-v2-t`
+(`5a04e2738` to `92561bff2`). The pages are still the product's (`features/dev-board/topic/
+request-head.tsx`, `change-head.tsx`); what a look changes is added beside their own lines.
+
+- **The head (s32 to s35):** "Request #5998" (or "Change #6369") is a small line over the full
+  title, with the page's ⋯. About and the Follow switch are gone with their hook, their five
+  catalog entries and their rules; following stays a row of ⋯.
+- **A change's page (s34, s35):** "The change" is a labelled card starting with who put it up,
+  when and what built it. The context column is Status (the pill alone, with its counted vote
+  once live), Votes and Tested: the product's own cards, each card's name the kit's label over
+  it. "Ask Homeroom bot privately" is the kit's quiet small button.
+- **A request's page (s32, s33):** "The request" is a labelled card starting with who asked and
+  when. After it, in the words: the sentence (first sentence bold), the claim's small words and
+  the one action. In the context column, under Status: the pill, the five stops and one line,
+  drawn by the kit from Homeroom bot's own track when it has one (`topic/frame/topic-track.tsx`,
+  through `bot-track.tsx`'s helpers), else the stage, else (a change built for it) the pill the
+  standard bar wears beside the number.
+- **The discussion (both pages)** is the product's stream, dressed by the wear map: its count
+  is the section's label, the stream one card, what happened the kit's event line (`evt`, with
+  `cap` and `sechead` for the label, and a second wearer of `card`: `"also"`, new in
+  `scripts/build-looks-css.js`).
+- **On a phone** where it stands leads the page, then the words; the head stays over the page.
+- **A running app (s38):** on a desktop the bar says the project and "App" and carries Suggest.
+
+Rulings taken (each the option closest to today's product):
+
+- **Who asked** (audit c, question 1) is kept, as the by-line at the top of "The request".
+- **The topic** (question 2) is kept on the small line over the title ("Request #5998 · topic").
+- **A request with no bot track** (question 3) keeps the kit's five stops (`frameStop`), since
+  one line for progress is drawn the same wherever a request appears; the standard page draws
+  four of its own (Asked, Spec, Built, Voted in).
+- **A change inside a request's page** (question 4) keeps the standard section.
+- **A running app on a phone** (question 5) is not changed: the app has the whole screen.
+- **Suggest** (question 6) follows the standard header's rule, so the frame's bar has it on a
+  project's pages as well as beside its app. One condition (`onApp`) limits it to the app.
+- **On a phone the head keeps two lines of title**, as the standard bar does: it stays over the
+  page while it scrolls, and a full four-line title there would take a third of the screen.
+- **What happened is said with the product's emoji**, drawn small and grey: the icons of the
+  mockup would need the stream itself redrawn (transcript.tsx, not this lane's).
+- **A page with nothing in its context column** (a closed request) is one column.
+
+Left: the standard change section on a request's page (its Votes and Tested stay in the words'
+column, in the standard pair); a spec card, the plan card and "Before and after" keep the
+standard look's surfaces inside the kit's column; s38's back arrow (the standard header shows
+none beside a running app on a desktop, so neither does the bar).
+
+Seen in a browser on the local copy, which does open a change's own page now
+(`/app/usernode-2d5619/dev/changes/6369`): the request and the change on a desktop in Glass,
+Paper (light and dark), Workbench (light and dark) and Today, and on a phone in Glass and
+Paper; the running app's bar in Glass and Workbench dark (the app itself does not load here).
+A capture taken while the stream is pinned to its foot can show the Glass composer half drawn;
+it is whole after any repaint (a headless capture's artifact, seen before this lane's work too
+on other pinned pages).
