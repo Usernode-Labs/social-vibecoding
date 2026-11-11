@@ -268,9 +268,12 @@ function lookBlock(id) {
     const [l, d] = look.ground;
     const lightRoot = `${flag(id)}:not(.dark):not([data-app-tone="dark"])`;
     const darkRoot = `${flag(id)}.dark:not([data-app-tone="light"])`;
-    out.push(`${lightRoot} body:has(#platform-tabs){--home-ground:${l};--un-zoom-bg:${l};background:${l}}`);
+    // --fr-page is the page's whole ground for an overlay that must paint
+    // it again over the screens (Make): this look's is the flat colour;
+    // a look without one leaves it unset and the wallpaper is read instead.
+    out.push(`${lightRoot} body:has(#platform-tabs){--home-ground:${l};--un-zoom-bg:${l};--fr-page:${l};background:${l}}`);
     out.push(`${lightRoot} body::before{background:${l}}`);
-    out.push(`${darkRoot} body:has(#platform-tabs){--home-ground:${d};--un-zoom-bg:${d};background:${d}}`);
+    out.push(`${darkRoot} body:has(#platform-tabs){--home-ground:${d};--un-zoom-bg:${d};--fr-page:${d};background:${d}}`);
     out.push(`${darkRoot} body::before{background:${d}}`);
   }
   if (look.opaque) {

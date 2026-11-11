@@ -416,7 +416,7 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 .at>span.atl{cursor:default}
 .at.dim .lead{opacity:.5}
 .at .corner.un{left:calc(50% - 36px);background:var(--ink);color:var(--surface);font-size:15px;font-weight:600;line-height:1}
-.at .tag{position:absolute;top:36px;width:20px;height:20px;border-radius:50%;background:var(--surface);color:var(--mut);display:grid;place-items:center;box-shadow:0 0 0 1px var(--line)}
+.at .tag{position:absolute;top:36px;width:20px;height:20px;border-radius:50%;background:var(--solid,var(--surface));color:var(--mut);display:grid;place-items:center;box-shadow:0 0 0 1px var(--line)}
 .at .tag.l{left:calc(50% - 32px)}.at .tag.r{left:calc(50% + 12px)}
 .at .live{position:absolute;top:-3px;left:calc(50% - 30px);width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 2px var(--surface)}
 .at .st{font-size:11px;font-weight:500;color:var(--mut)}.at .st.bad{color:var(--bad)}.at .st.wait{color:var(--wait)}
@@ -438,9 +438,11 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 .fdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--acc);margin-left:6px;vertical-align:1px}
 .row .t .tlink{color:inherit;text-decoration:none}
 .row.item .pill,.row.item .btn,.row.week .pill{flex:none}
-.phone .row.item{flex-wrap:wrap;padding-top:8px;padding-bottom:8px}
-.phone .row.item .tx{flex:1 1 calc(100% - 40px)}.phone .row.item .t{white-space:normal}
-.phone .row.item .tx~*{margin-top:4px}.phone .row.item .tx+*{margin-left:36px}
+/* An item row on a phone: the title takes the line and what ends the row goes under it (the Workshop's "What happened").
+   Not in a compact list (.list: Homeroom bot's), whose rows stay one line each as the standard list's do. */
+.phone .row.item:not(.list .row){flex-wrap:wrap;padding-top:8px;padding-bottom:8px}
+.phone .row.item:not(.list .row) .tx{flex:1 1 calc(100% - 40px)}.phone .row.item:not(.list .row) .t{white-space:normal}
+.phone .row.item:not(.list .row) .tx~*{margin-top:4px}.phone .row.item:not(.list .row) .tx+*{margin-left:36px}
 .facts>button.fact,.facts>a.fact{display:flex;flex-direction:column;justify-content:flex-start}
 
 /* ---- v2, a project's pages: All items (its list is the product's, laid under the kit's head; the kit draws the column beside it) ---- */
@@ -485,3 +487,16 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 .cardnote.last{border-bottom:0;border-top:1px solid var(--line2)}
 .cover:has(>img){position:relative}
 .cover>img{position:absolute;top:0;left:0}
+/* ---- v2, the chrome (the fix pass): a long place name is cut before the bar's buttons, a phone's line under it ---- */
+.crumb .ci>.tile{flex:none}
+.crumb .cw{display:flex;flex-direction:column;justify-content:center;min-width:0}
+.crumb .cn,.crumb .cs{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3}
+.crumb .cs{font:500 12px/1.3 var(--f);color:var(--mut)}
+/* ---- v2, the page (the fix pass): the work column's last groups after the side column on a phone ---- */
+.stack.tail:empty{display:none}
+.phone .cols.mix>.stack{display:contents}
+.phone .cols.mix>.stack>.tail{order:1}
+/* ---- v2, Homeroom bot (the fix pass): the counts under the title break evenly, never one number alone on a line ---- */
+.botpage .purpose{text-wrap:balance}
+/* ---- v2, the week's bars (the fix pass): a day with nothing in it is a baseline, as the standard chart draws it ---- */
+.bcol.none i{height:2px;min-height:0;border-radius:1px;background:var(--faint)}

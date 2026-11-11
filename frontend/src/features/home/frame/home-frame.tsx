@@ -571,10 +571,12 @@ export function HomeFrame({ initialDirectory = null }: { initialDirectory?: Gues
       purpose={t('home:frame.purpose')}
       tabs={<HomeSearch />}
       side={side}
+      // On a phone the challenges come before the directory, as on the
+      // standard page: the directory has no end to scroll past.
+      tail={<ToJoin query={query} initialDirectory={initialDirectory} />}
     >
       <PinnedApps />
       <PinnedCommunities query={query} />
-      <ToJoin query={query} initialDirectory={initialDirectory} />
     </PageBody>
   );
 }

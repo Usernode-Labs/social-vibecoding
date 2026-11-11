@@ -97,6 +97,11 @@ test('under the guest\'s chrome the anonymous screens sit in its page area, thei
   assert.match(block, /top: var\(--fr-shell-top, 0px\);[^}]*inset-inline-start: var\(--fr-shell-left, 0px\);[^}]*background: none;/);
   assert.match(block, /html\[data-frame-chrome="guest"\] #landing-header,\s*html\[data-frame-chrome="guest"\] \[data-auth-back\],\s*html\[data-frame-chrome="guest"\] #auth-more-screen > a\[href="#landing"\] \{ display: none; \}/);
   assert.match(block, /html\[data-skin\] \.fr\.fr-app\.fr-shell\[data-frame-app="guest"\] \{ z-index: 41; \}/, 'over the anonymous screens (40), under their sheets and the install strip (45)');
+  // The sign-in sheet lives inside the screen that opened it (40), so the
+  // chrome at 41 stayed lit over the sheet's dimming: while one is up the
+  // chrome goes under the screens and is dimmed with the page.
+  assert.match(block, /html\[data-frame-chrome="guest"\]:has\(\[data-sign-in-sheet\]\) \.fr\.fr-app\.fr-shell\[data-frame-app="guest"\] \{ z-index: 39; \}/);
+  assert.match(read('frontend/src/features/auth/sign-in-sheet.tsx'), /<div data-sign-in-sheet=\{step\}[^>]*className="fixed inset-0 z-50">/, 'the node the rule reads is there only while the sheet is');
 });
 
 test('a stand-alone page is the kit\'s one column: the product\'s own form, wearing the title, the card and the button', () => {
