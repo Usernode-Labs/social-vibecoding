@@ -1053,7 +1053,7 @@ export function AiScreen(): ReactNode {
                 <KitTile name={t('messages:store.header.main')} src={BOT_AVATAR} />
                 <div className={kit('tx')}>
                   <div className={kit('t')} id="ai-main-title">{t('messages:store.header.main')}</div>
-                  <div className={kit('s')}>{t('messages:ai.main.sub')}</div>
+                  <div className={kit('s')}><span className={kit('inl')}><KitIcon name="lock" size={13} />{t('messages:ai.main.sub')}</span></div>
                 </div>
                 <button type="button" className={kit('ib')} data-ai-main-close="" aria-label={t('messages:ai.main.close')} onClick={closeColumn}>
                   <KitIcon name="x" size={18} />

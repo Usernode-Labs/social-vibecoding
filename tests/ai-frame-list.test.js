@@ -211,3 +211,41 @@ test('what the first tour invented is gone: its words left the catalog, and the 
     assert.match(list, new RegExp(`'messages:${id.replace(/\./g, '\\.')}'`), id);
   }
 });
+
+test('s10: Main Chat\'s head in the column is the kit\'s, with the standard head\'s lock before its line', () => {
+  const src = read('frontend', 'src', 'features', 'ai', 'index.tsx');
+  assert.match(src, /<div className=\{kit\('dhead'\)\}>/, 'the open item\'s head is the kit\'s');
+  assert.match(src, /<div className=\{kit\('s'\)\}><span className=\{kit\('inl'\)\}><KitIcon name="lock" size=\{13\} \/>\{t\('messages:ai\.main\.sub'\)\}<\/span><\/div>/);
+  assert.match(src, /<button type="button" className=\{kit\('ib'\)\} data-ai-main-close="" aria-label=\{t\('messages:ai\.main\.close'\)\} onClick=\{closeColumn\}>/);
+  assert.match(src, /<div className=\{kit\('t'\)\} id="ai-main-title">/, 'the id the standard head has');
+});
+
+test('s11: a request in the column stands under the kit\'s open-item head; on a phone its page keeps the two back chips', () => {
+  const css = read('public', 'css', 'app.css');
+  const panel = 'html\\[data-skin\\] body:has\\(#ai-screen\\[data-frame-list\\]:not\\(\\.hidden\\)\\) ';
+  assert.match(css, new RegExp(`${panel}\\.side-panel-head \\{ min-height: 68px; gap: 12px; padding-block: 8px; padding-inline: 32px; background: none; border-bottom: 1px solid var\\(--fr-line\\); \\}`));
+  assert.match(css, new RegExp(`${panel}\\.side-panel-place > \\.app-icon-tile \\{ width: 40px; height: 40px; border-radius: 12px; \\}`));
+  assert.match(css, new RegExp(`${panel}\\.side-panel-place-title \\{ font-size: 17px;`));
+  assert.match(css, new RegExp(`${panel}\\.side-panel-ai-close \\{ width: 36px; height: 36px; border-radius: 50%;`));
+  assert.match(css, /@media \(max-width: 767px\) \{\s*html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) #gc-thread-back:has\(> \.dev-topic-backs\) \{ display: flex;/,
+    'the pair of chips (Homeroom bot, Workshop) is shown; a page with one chip keeps the bar\'s arrow alone');
+  assert.match(read('frontend/src/features/dev-board/topic/topic-back.tsx'), /<div className="dev-topic-backs">/);
+});
+
+test('s12: a row with a ⋯ is lit as one, and a rule with words is the kit\'s', () => {
+  const kit = read('frontend', 'looks', 'kit.css');
+  assert.match(kit, /\.rowx:has\(>\.row\.on\)\{background:var\(--lit-t\)\}\.rowx>\.row\.on\{background:none\}/);
+  assert.match(kit, /\.rule\{display:flex;align-items:center;gap:12px;font-size:12px;color:var\(--mut\)\}\n\.rule::after\{content:"";flex:1;height:1px;background:var\(--line\)\}/);
+});
+
+test('s13: New thread stays the product\'s pane in the column, wearing the kit: the starts are rows in one card', () => {
+  const pane = read('frontend', 'src', 'features', 'messages', 'new-thread.tsx');
+  assert.match(pane, /<aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label=\{t\('messages:newThread\.title'\)\} data-bot-new-thread-pane=""/, 'not a sheet: the column, as today');
+  const looks = JSON.parse(read('frontend', 'looks', 'looks.json'));
+  assert.match(looks.wear.roots.card.to, /\.messages-starts-list:where\(#ai-screen\[data-frame-list\] \*\)/, 'the starts\' list wears the kit\'s card');
+  const css = read('public', 'css', 'app.css');
+  const at = 'html\\[data-skin\\] #ai-screen\\[data-frame-list\\] \\[data-bot-new-thread-pane\\] ';
+  assert.match(css, new RegExp(`${at}\\.messages-start \\{ display: flex; gap: 12px; min-height: 60px; padding: 8px 16px; border-radius: 0; background: none; box-shadow: none;`));
+  assert.match(css, new RegExp(`${at}\\.messages-start \\+ \\.messages-start \\{ border-top: 1px solid var\\(--fr-line2\\); \\}`));
+  assert.match(css, new RegExp(`${at}\\.messages-project-chip \\{ height: 32px;[^}]*background: var\\(--fr-sunk\\);`), 'the project chip and the who-works-on-it chip as small quiet buttons');
+});
