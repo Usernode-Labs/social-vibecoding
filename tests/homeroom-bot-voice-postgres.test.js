@@ -251,8 +251,11 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     const out = await turn(place, model, { through: id - 1 });
     assert.equal(out.outcome, 'replied');
     assert.equal(model.seen.length, 2, 'its first answer was refused and it was asked again');
-    assert.ok(model.seen[1].messages.some((m) => /read it with get_change, or say you cannot see it/i.test(String(m.content || ''))),
+    // get_change is not offered here, so the note does not name it (#6583).
+    assert.ok(model.seen[1].messages.some((m) => /without reading it in this reply\. Leave out what it says, or say you cannot see it\./i.test(String(m.content || ''))),
       'the retry note says what to do');
+    const note = model.seen[1].messages.find((m) => /Homeroom check, not from them/.test(String(m.content || '')));
+    assert.ok(note && !/get_change/.test(note.content), 'and it names no tool this place lacks');
     assert.equal(sent.length, 1);
     assert.doesNotMatch(sent[0].content, /earlier wording/, 'the claim it could not check was never posted');
     assert.match(sent[0].content, /cannot see the change's description from here/);

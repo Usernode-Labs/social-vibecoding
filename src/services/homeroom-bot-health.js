@@ -16,7 +16,7 @@
 //   turns      its triage and build turns that failed.
 //   chat       its DM answers that the model could not write, the ones that
 //              said something the turn had not done (caught and redone,
-//              homeroom-bot-mayor.js claimProblems), and the ones nothing
+//              reply-claims.js checkReply), and the ones nothing
 //              could answer at all.
 //
 // No new tables, and never a person's words: counts, durations and codes.

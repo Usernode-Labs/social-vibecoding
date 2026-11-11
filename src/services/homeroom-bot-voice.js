@@ -65,6 +65,8 @@ const { isStandIn, lastRoundNote, standInNote, readingDoneNote } = require('./ho
 const turnEngine = require('./homeroom-bot-turn-engine');
 // Task 2020 follow-up: a reply laid out, as the bot's chat sends one.
 const replyHtml = require('./homeroom-bot-html');
+// The one reply checker every surface runs (Homeroom bot one model, step 2).
+const claims = require('./reply-claims');
 // #6534: pictures and files the bot may put under its reply in a thread.
 const threadPictures = require('./homeroom-bot-thread-tools/pictures');
 const threadAttachments = require('./homeroom-bot-thread-attachments');
@@ -220,34 +222,9 @@ function untrustedText(value, max) {
   return text ? `<untrusted-content>${text}</untrusted-content>` : null;
 }
 
-// #6263: a reply that says what a change's description contains, or that it
-// is an earlier version, without having read it this turn: "That's the
-// earlier wording, from before the update." was said about text the bot had
-// never read and could not read. Read as it would be sent.
-const UNREAD_DESCRIPTION_RE = new RegExp(
-  String.raw`\b(?:the\s+(?:change'?s?\s+)?|its\s+)?description\s+(?:still\s+)?(?:says?|said|reads?|describes?|described|is|was)\b`
-  + String.raw`|\bearlier\s+(?:wording|version|text)\b`,
-  'i',
-);
-const UNREAD_DESCRIPTION_NOTE = ' You described a change\'s description without reading it in this reply. Read it with get_change, or say you cannot see it.';
-
-/** Pure: the claims a reply makes about a description it did not read this turn. */
-function unreadDescriptionClaims(said, ctx) {
-  const read = ctx?.readChanges;
-  const readCount = read instanceof Set ? read.size : (Array.isArray(read) ? read.length : 0);
-  if (!said || readCount > 0) return [];
-  if (!UNREAD_DESCRIPTION_RE.test(String(said))) return [];
-  return [{ kind: 'unread_description', said: 'describes what a change\'s description says without reading it in this turn' }];
-}
-
-/** Pure: `text` less every sentence that describes a description it did not read. */
-function stripUnreadClaims(text, problems) {
-  if (!problems?.some((p) => p.kind === 'unread_description')) return text;
-  return String(text || '').split('\n').map((line) => line
-    .split(/(?<=[.!?])\s+/)
-    .filter((sentence) => !UNREAD_DESCRIPTION_RE.test(sentence))
-    .join(' ')).join('\n').trim();
-}
+// #6263: a reply that describes a change's description it did not read this
+// turn is one of the shared reply checker's claims (reply-claims.js
+// unread_description), held to the changes the turn read (ctx.readChanges).
 
 // ── Places ───────────────────────────────────────────────────────────────
 
@@ -1814,11 +1791,6 @@ async function scopedPlatformCall(pool, platform, app, name, args) {
  * The model's turn in a place: context, tools, the claims check, one reply
  * (or nothing). Resolves { outcome, messageId }.
  */
-async function claimsFor(pool, ctx, said) {
-  const mayor = mayorModule(ctx.deps);
-  return [...await mayor.claimProblems(pool, ctx, said), ...unreadDescriptionClaims(said, ctx)];
-}
-
 async function converse(pool, cfg, { app, place, bot, settings, messages, fresh, addressed, deps, record, mark = null }) {
   const mayor = mayorModule(deps);
   const last = addressed[addressed.length - 1];
@@ -1848,12 +1820,15 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     cards: [], appIds: new Set([Number(app.id)]), offer: null, reply: null, quiet: false,
     // #6534: the files this turn stored for its reply, in send order.
     attached: [],
-    revised: false, recentRevision: false, started: null, commented: null, posted: null, withdrew: null, reported: null,
+    revised: false, recentRevision: false, started: null, withdrew: null, reported: null,
     workBusy: false, triggerMessage: last.message,
-    // #6583: the bot's own earlier messages here are a record the claim check
-    // may read, and the tools this place offers are the only ones a check
-    // note may name.
-    earlierBotText: messages.filter((m) => Number(m.user_id) === Number(bot.id)).map((m) => String(m.content || '')).join('\n'),
+    // #6583: the platform's own posts here (a plan, a build's news, a
+    // filing) are a record the claim check may read; the voice's earlier
+    // replies, the model's own words, are not. The tools this place offers
+    // are the only ones a repair note may name.
+    earlierBotText: messages
+      .filter((m) => Number(m.user_id) === Number(bot.id) && m.metadata?.homeroomBot?.kind !== 'voice')
+      .map((m) => String(m.content || '')).join('\n'),
     toolNames: new Set(tools.map((tool) => tool?.function?.name).filter(Boolean)),
     // #6263: the changes this turn read (get_change) and whether it already
     // reworded one. What is not read is never described.
@@ -1877,6 +1852,8 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   // The turn a tool's own model calls count toward (homeroom-bot-already-done.js).
   ctx.turn = t;
   let finalText = '';
+  // The repair pass's answer, once one ran (#6583).
+  let repaired = '';
   try {
     if (t.apiKey === undefined) t.apiKey = await mayor.botKey(pool, cfg, bot.id).catch(() => null);
     if (!t.apiKey) {
@@ -1965,7 +1942,10 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
       },
       call: async (call, name, args) => {
         record.tools.push(name.slice(0, 40));
-        return runTool(pool, ctx, name, args, { platform });
+        const result = await runTool(pool, ctx, name, args, { platform });
+        // #6581, #6307: the requests and projects a tool returned are real.
+        claims.noteTool(ctx, result);
+        return result;
       },
       afterCalls: ({ rounds }) => {
         // A stand-in refused by its reply tool is the tool's to say; either
@@ -2007,13 +1987,10 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     const said = (ctx.reply || ctx.pendingReply)?.text ?? finalText;
     // Task 2020 follow-up: what its laid-out copy says is checked as its words are.
     const shown = (ctx.reply || ctx.pendingReply)?.html || null;
-    const problems = said && !ctx.quiet ? await claimsFor(pool, ctx, replyHtml.withHtmlWords(said, shown)) : [];
+    const problems = said && !ctx.quiet ? await claims.checkReply(pool, ctx, replyHtml.withHtmlWords(said, shown)) : [];
     if (problems.length) {
       t.failures.push(`claims:${problems.map((p) => p.kind).join('+')}`.slice(0, 80));
-      msgs.push({
-        role: 'user',
-        content: `${mayor.checkNote(problems, { tools: ctx.toolNames })}${problems.some((p) => p.kind === 'unread_description') ? UNREAD_DESCRIPTION_NOTE : ''}`,
-      });
+      msgs.push({ role: 'user', content: claims.repairNote(problems, { tools: ctx.toolNames }) });
       ctx.reply = null;
       finalText = '';
       turnRounds.limit = turnRounds.rounds + 2;
@@ -2021,9 +1998,12 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
       // has to describe.
       ctx.reads = 0;
       try { await runRounds(); } catch { /* the first answer, checked below, still goes */ }
+      // The repair pass's own answer, if it gave one: what a cut that would
+      // leave nothing sends instead (lastWords, below).
+      repaired = (ctx.reply || ctx.pendingReply)?.text ?? finalText ?? '';
       if (!ctx.reply && !ctx.pendingReply && !finalText) ctx.reply = { text: said, ...(shown ? { html: shown } : {}) };
       const again = ctx.reply || ctx.pendingReply;
-      ctx.checkedProblems = await claimsFor(pool, ctx, replyHtml.withHtmlWords(again?.text ?? finalText, again?.html));
+      ctx.checkedProblems = await claims.checkReply(pool, ctx, replyHtml.withHtmlWords(again?.text ?? finalText, again?.html));
     }
   } catch (err) {
     record.error = mayor.codeOf(err);
@@ -2037,11 +2017,18 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   }
   if (ctx.quiet) return { outcome: 'quiet' };
   const finalReply = ctx.reply || ctx.pendingReply || null;
-  let text = clip(withoutEmDashes(mayor.cleanReply(finalReply?.text || finalText)), MAX_REPLY_CHARS);
+  let text = clip(withoutEmDashes(claims.cleanReply(finalReply?.text || finalText)), MAX_REPLY_CHARS);
   // Task 2020 follow-up: the words as the reply wrote them, before anything below changes them.
   const asWritten = finalReply?.text ? text : null;
+  // What is still shown false is cut, and nothing is said in its place. A
+  // cut that leaves nothing sends the repair pass's own answer, when it gave
+  // one, less only what is certainly false (reply-claims.js lastWords),
+  // rather than the fixed line below.
   if (text && ctx.checkedProblems?.length) {
-    text = stripUnreadClaims(mayor.stripClaims(text, ctx.checkedProblems, ctx), ctx.checkedProblems);
+    const kept = claims.cut(text, ctx.checkedProblems, ctx);
+    text = kept || (repaired
+      ? claims.lastWords(clip(withoutEmDashes(claims.cleanReply(repaired)), MAX_REPLY_CHARS), ctx.checkedProblems, ctx)
+      : '');
   }
   // A turn that queued a change or made an offer did neither yet.
   if (text && (ctx.revised || ctx.offer)) text = notDoneYet(text);
@@ -3567,8 +3554,12 @@ async function sayReport(pool, config, { appId, place, sessionId, runTag, asks: 
   const mark = { key: `report:${runTag}:${placeKey(appId, place)}` };
   const had = await replyOf(pool, { app, place, bot, turnKey: mark.key });
   if (had) return { id: had.id, again: true };
+  // The plain report is a template that says what was done: it goes through
+  // the reply check as the model's words do (reply-claims.js checkedNote).
   const text = await composeReport(pool, cfg, { app, session: session || { id: sessionId }, bot, asks, outcome, deps })
-    .catch(() => null) || plainReport(outcome);
+    .catch(() => null)
+    || await claims.checkedNote(pool, reportTurn({ app, session: session || { id: sessionId }, bot, asks, outcome, place, deps }), plainReport(outcome))
+    || plainReport(outcome);
   const answer = [];
   for (const ask of asks) {
     if (!ask.message_id) continue;
@@ -3591,6 +3582,22 @@ async function sayReport(pool, config, { appId, place, sessionId, runTag, asks: 
     }
   }
   return posted;
+}
+
+/**
+ * The turn a follow-up's report is checked as (reply-claims.js): what the
+ * follow-up did is what this turn did. The asker is who it is said to.
+ */
+function reportTurn({ app, session, bot, asks = [], outcome = {}, place = null, deps = {} }) {
+  const revisedNow = outcome.action === 'revise' && !!outcome.moved;
+  const asker = asks.find((a) => Number(a?.asker_id) > 0);
+  return {
+    user: { id: asker ? Number(asker.asker_id) : Number(bot?.id) || null }, bot, deps, app,
+    appIds: new Set(app?.id ? [Number(app.id)] : []),
+    place: place || (session?.id ? { type: 'session', ref: Number(session.id) } : null),
+    change: session?.id ? { id: Number(session.id) } : null,
+    revised: revisedNow, recentRevision: revisedNow, described: !!outcome.descriptionReworded,
+  };
 }
 
 /** The voice's words for a follow-up's facts: one short model turn, forced to reply. Null when it cannot. */
@@ -3640,8 +3647,15 @@ async function composeReport(pool, cfg, { app, session, bot, asks, outcome, deps
     });
     const call = (res.toolCalls || [])[0];
     const text = call ? String(mayor.parseArgs(call.function?.arguments).text || '') : String(res.content || '');
-    // What it says of the agent's workings anyway is taken out.
-    const clean = clip(withoutEmDashes(withoutInternals(mayor.cleanReply(text))), MAX_REPLY_CHARS);
+    // What it says of the agent's workings anyway is taken out, and what it
+    // says was done that is shown false is cut (#6583): the report is
+    // checked as any reply is.
+    let clean = clip(withoutEmDashes(withoutInternals(claims.cleanReply(text))), MAX_REPLY_CHARS);
+    if (clean) {
+      const turn = reportTurn({ app, session, bot, asks, outcome, deps });
+      const problems = await claims.checkReply(pool, turn, clean).catch(() => []);
+      if (problems.length) clean = claims.cut(clean, problems, turn);
+    }
     if (!clean) return null;
     // Whatever it left out that it must say is added.
     const missing = mustSay(outcome).filter((line) => !clean.toLowerCase().includes(line.split(',')[0].toLowerCase().slice(0, 20)));
@@ -3821,9 +3835,6 @@ module.exports = {
   toolsFor,
   runTool,
   scopedPlatformCall,
-  unreadDescriptionClaims,
-  stripUnreadClaims,
-  UNREAD_DESCRIPTION_RE,
   changeGate,
   changeRow,
   factsFor,

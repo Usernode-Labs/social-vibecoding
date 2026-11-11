@@ -503,30 +503,36 @@ test('#6384: a request\'s thread reads a posted plan by the version it is asked 
 });
 
 test('#6263: a reply never says what a description contains unless it read it this turn', () => {
+  // The shared reply check's unread_description claim (reply-claims.js),
+  // held to the changes the voice's turn read (ctx.readChanges).
+  const claims = require('../src/services/reply-claims');
+  const kinds = (text, readChanges) => claims.check(claims.mentions(text), { turn: { readChanges } }).map((p) => p.kind);
   const said = 'That\'s the earlier wording, from before the update.';
-  assert.deepEqual(voice.unreadDescriptionClaims(said, { readChanges: new Set() }),
-    [{ kind: 'unread_description', said: 'describes what a change\'s description says without reading it in this turn' }]);
-  assert.deepEqual(voice.unreadDescriptionClaims('The description says it adds a toggle.', { readChanges: new Set() }).map((p) => p.kind),
-    ['unread_description']);
-  assert.deepEqual(voice.unreadDescriptionClaims(said, { readChanges: new Set([7]) }), [],
-    'it read the change this turn, so quoting it is allowed');
-  assert.deepEqual(voice.unreadDescriptionClaims('Done: the header is blue now.', { readChanges: new Set() }), []);
-  assert.equal(voice.stripUnreadClaims(`It says a lot. ${said}`, [{ kind: 'unread_description' }]), 'It says a lot.');
+  assert.deepEqual(kinds(said, new Set()), ['unread_description']);
+  assert.deepEqual(claims.check(claims.mentions(said), { turn: { readChanges: new Set() } })[0].said,
+    'describes what a change\'s description says without reading it in this turn');
+  assert.deepEqual(kinds('The description says it adds a toggle.', new Set()), ['unread_description']);
+  assert.deepEqual(kinds(said, new Set([7])), [], 'it read the change this turn, so quoting it is allowed');
+  assert.deepEqual(kinds('Done: the header is blue now.', new Set()), []);
+  assert.deepEqual(kinds(said, undefined), [], 'a surface that does not track its reads is not held to them');
+  assert.equal(claims.cut(`It says a lot. ${said}`, [{ kind: 'unread_description' }]), 'It says a lot.');
+  const note = claims.repairNote([{ kind: 'unread_description', said: 'x' }], { tools: new Set(['reply', 'get_change']) });
+  assert.match(note, /You described a change's description without reading it in this reply\. Read it with get_change, or say you cannot see it\./);
 });
 
 test('#6376: the thread voice keeps a sentence about Monday', async () => {
-  const mayor = require('../src/services/homeroom-bot-mayor');
+  const claims = require('../src/services/reply-claims');
   const text = 'I tried to start it, and it did not start: the building time for this week is used up. It will start this request on Monday when it resets.';
-  const problems = await mayor.claimProblems({ query: async () => ({ rows: [] }) }, { user: { id: 1 }, appIds: new Set(), offer: null }, text);
+  const problems = await claims.checkReply({ query: async () => ({ rows: [] }) }, { user: { id: 1 }, appIds: new Set(), offer: null }, text);
   assert.deepEqual(problems, [], 'Monday is a day, not a project');
-  assert.equal(voice.stripUnreadClaims(mayor.stripClaims(text, problems), problems), text);
-  // A made-up project is still cut; the sentence about when it starts stays.
+  assert.equal(claims.cut(text, problems), text);
+  // A made-up project is still cut; the sentence about when it starts stays,
+  // and nothing is said in the cut one's place.
   const madeUp = 'The draft for Community Components is ready. It will start this request on Monday when it resets.';
-  const found = await mayor.claimProblems({ query: async () => ({ rows: [] }) },
+  const found = await claims.checkReply({ query: async () => ({ rows: [] }) },
     { user: { id: 1 }, appIds: new Set(), offer: null, knownProjects: new Set(['community tier lists']) }, madeUp);
   assert.deepEqual(found.map((p) => p.kind), ['unknown_project']);
-  assert.equal(voice.stripUnreadClaims(mayor.stripClaims(madeUp, found), found),
-    'It will start this request on Monday when it resets.\n\n(I can\'t find a project called "Community Components".)');
+  assert.equal(claims.cut(madeUp, found), 'It will start this request on Monday when it resets.');
 });
 
 test('the prompt says where it is, lists only what it can do, and holds it to what it did', () => {

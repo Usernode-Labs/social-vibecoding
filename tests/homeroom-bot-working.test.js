@@ -181,14 +181,18 @@ test('Main Chat: Evan\'s "Drawing it now…" with no draw_screen goes back, as w
   assert.deepEqual(replied.doings, [{ kind: 'drawing' }], 'and the card says it is drawing');
   assert.equal(replied.sent.length, 0, 'nothing of its own is said: the designer answers');
 
-  // Still claimed after the second pass: cut, and said plainly.
+  // Still claimed after the second pass, and by the plain answer after it:
+  // cut, with no fixed "I haven't…" line in its place. Nothing true is left,
+  // so the last resort answers; a cut is no model that failed, so it is
+  // never said as one, or asked again later.
   const stubborn = mayorTurn([
     { calls: [call('reply', { text: EVANS_SECOND })] },
     { calls: [call('reply', { text: EVANS_SECOND })] },
   ]);
   await stubborn.run;
   assert.equal(stubborn.sent.length, 1);
-  assert.equal(stubborn.sent[0].content, 'I haven\'t drawn it yet. Ask me to draw it and I\'ll start on it.');
+  assert.equal(stubborn.sent[0].content, mayor.BROKEN_TEXT);
+  assert.doesNotMatch(stubborn.sent[0].content, /Drawing it now|I haven't/);
 });
 
 test('what counts as saying a screen is being drawn', () => {
@@ -200,7 +204,7 @@ test('what counts as saying a screen is being drawn', () => {
     'Rendering the list as cards would fit the rest of the app better.'];
   for (const text of not) assert.ok(!mayor.DRAWING_CLAIM.test(text), text);
   const cut = mayor.stripClaims(`${EVANS_SECOND} It will match the rest of the app closely.`, [{ kind: 'drawing' }]);
-  assert.equal(cut, 'I haven\'t drawn it yet. Ask me to draw it and I\'ll start on it.\n\nIt will match the rest of the app closely.');
+  assert.equal(cut, 'It will match the rest of the app closely.', 'cut, with no line in its place');
 });
 
 test('#6307: a second pass replaces the first pass\'s words, so one reply is sent', async () => {
@@ -684,17 +688,27 @@ test('#6142: an entry page as the prompt shows it', () => {
 
 test('why words do not end a design turn yet', () => {
   const why = (text, opts = {}) => designBot.notDrawnYet(text, { mayor, ...opts });
+  // What words claim is the shared reply check's (reply-claims.js): a
+  // drawing, or a change to the design, that this turn did not make.
+  const claims = require('../src/services/reply-claims');
+  const claimed = (text, turn = {}) => claims.check(claims.mentions(text), { turn: { design: true, ...turn } }).map((p) => p.kind);
+  assert.deepEqual(claimed(EVANS_SECOND), ['drawing']);
+  assert.deepEqual(claimed('I\'ve changed the header to blue.'), ['design_done']);
+  assert.deepEqual(claimed('I just changed the header to blue.'), ['design_done']);
+  assert.deepEqual(claimed(EVANS_SECOND, { drew: true }), [], 'it did draw');
+  assert.deepEqual(claimed('In version 2 I made the header blue. Want it darker?'), [], 'a version before');
+  assert.deepEqual(claims.check(claims.mentions('I\'ve changed the header to blue.'), { turn: {} }), [],
+    'outside a design thread it is no design claim');
   assert.equal(why(EVANS_FIRST), 'preamble');
-  assert.equal(why(EVANS_SECOND), 'claimed');
-  assert.equal(why('I\'ve changed the header to blue.'), 'claimed');
+  assert.equal(why(EVANS_SECOND), 'preamble', 'by its shape, words that only say what comes next');
+  assert.equal(why('I\'ve changed the header to blue.'), null, 'a claim, not a shape');
   assert.equal(why('Shall I draw it?'), 'asked');
   assert.equal(why('Here is what I would put on it: the keys, the score.', { handoff: true }), 'handoff');
   assert.equal(why('Which project is it for?', { handoff: true }), null, 'a real question');
   assert.equal(why(EVANS_SECOND, { changed: true }), null, 'it did draw');
   assert.equal(why('Want me to post it?', { offered: true }), null, 'an offer is under it');
   assert.equal(why('The header uses the kit\'s title style.'), null);
-  // A thread with a screen already: talk about it is not a claim or a stall.
-  assert.equal(why('I just changed the header to blue.'), 'claimed');
+  // A thread with a screen already: talk about it is not a stall.
   assert.equal(why('In version 2 I made the header blue. Want it darker?', { drawnBefore: true }), null, 'a version before');
   assert.equal(why('Want me to make the title bigger?', { drawnBefore: true }), null, 'a suggestion, once there is a screen');
   assert.equal(why('Want me to start that now?', { drawnBefore: true, handoff: true }), 'asked', 'handed a screen to draw');
@@ -733,11 +747,12 @@ test('#6151: asked "will you build this now?" on a filed design, the reply sent 
   assert.deepEqual(turn.recorded[0].failures, ['d1:not_built']);
   assert.equal(turn.versions.length, 0, 'it builds nothing itself, and draws nothing it was not asked to');
 
-  // Told twice and still saying so, it says that Homeroom bot builds it.
+  // Told twice and still saying so, the sentence that says so is cut, and
+  // the rest of the reply goes as written (#6583: nothing replaces it).
   const stubborn = filedTurn([reply(CANT_BUILD)]);
   await stubborn.run;
   assert.equal(stubborn.seen.length, 1 + mayor.MAX_PREAMBLE_NUDGES);
-  assert.equal(stubborn.sent[0].content, 'Homeroom bot builds request #14 from this design\'s plan. Where it stands shows on the request.');
+  assert.equal(stubborn.sent[0].content, 'If you want anything changed before it\'s built, tell me and I\'ll adjust the design first.');
   assert.doesNotMatch(stubborn.sent[0].content, /can't build/i);
   assert.deepEqual(stubborn.recorded[0].failures, ['d1:not_built', 'd2:not_built', 'end:not_built']);
 
@@ -758,14 +773,22 @@ test('#6151: asked "will you build this now?" on a filed design, the reply sent 
 });
 
 test('#6151: what counts as saying a filed design will not be built', () => {
+  // The reply check's not_built claim (reply-claims.js), on a filed design
+  // Homeroom bot builds.
+  const claims = require('../src/services/reply-claims');
+  const filedTurnFacts = { design: true, filedDesign: { number: 14 }, designBuilds: true };
+  const notBuilt = (text, turn = filedTurnFacts) => claims.check(claims.mentions(text), { turn }).some((p) => p.kind === 'not_built');
   for (const text of [CANT_BUILD, 'I cannot build that.', 'It won’t be built until someone starts it.', 'Someone on the project needs to start it.',
     'A member has to build it.', 'That happens on the project\'s side.', 'I\'m not able to start building it.']) {
-    assert.equal(designBot.saysNotBuilt(text), true, text);
+    assert.equal(claims.NOT_BUILT.test(text), true, text);
+    assert.equal(notBuilt(text), true, text);
   }
   for (const text of ['Homeroom bot builds it from version 4: it is building now.', 'I can\'t make that button red: the kit has no red.',
     'I can\'t draw a chart, but I can draw the table.', 'Want me to make the title bigger?']) {
-    assert.equal(designBot.saysNotBuilt(text), false, text);
+    assert.equal(claims.NOT_BUILT.test(text), false, text);
   }
+  assert.equal(notBuilt(CANT_BUILD, { ...filedTurnFacts, designBuilds: false }), false, 'where a person must decide, it is the truth');
+  assert.equal(notBuilt(CANT_BUILD, { design: true }), false, 'a design not filed');
 });
 
 // ── 4. What it is doing, by tool ─────────────────────────────────────────

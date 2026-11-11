@@ -1863,13 +1863,17 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(seen.length, 2);
     assert.equal(created.length, before, 'and nothing was filed');
     const { rows: [row] } = await pool.query('SELECT failures FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1');
-    assert.deepEqual(row.failures, ['claims:filed+started+unknown']);
-    // Said again: cut, and said plainly.
+    // Step 2 (one reply checker): "I'll look at it now" names no request and
+    // none of its own is in the records yet, so it cannot be shown false and
+    // stays; the filing and the unknown number are what is caught.
+    assert.deepEqual(row.failures, ['claims:filed+unknown']);
+    // Said again, and by the plain answer after it: cut, with no "(I can't
+    // find…)" line in its place. Nothing true is left, so the chat's last
+    // resort answers; a cut is never said as a model that failed.
     const stubborn = await turn('file it', scripted([
       [['reply', { text: 'Filed: **Note board** request #99: Note colours.' }]],
     ]));
-    assert.equal((await read(stubborn)).content,
-      '(I can\'t find request #99 on your projects.)');
+    assert.equal((await read(stubborn)).content, mayor.BROKEN_TEXT);
     // A true answer passes untouched, in one pass.
     const fine = [];
     await turn('what is #5?', scripted([[['reply', { text: 'Request #5 is Pin notes, up for a vote.' }]]], fine));
@@ -1915,8 +1919,6 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       /^They are not a member of Sam shop/);
     assert.match((await mayor.commentOnRequest(pool, ctx(), { project: 'note-board', number: 999, comment: 'a b' })).error,
       /^Note board has no request #999\./);
-    assert.match((await mayor.commentOnRequest(pool, ctx({ commented: 'x' }), { project: 'note-board', number: 6, comment: 'a b' })).error,
-      /^One comment per turn\.$/);
     assert.equal(threadPosts.length, 1);
   });
 
@@ -2381,10 +2383,12 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     ], seen));
     assert.equal(seen.length, 2);
     assert.equal((await read(fixed)).content, 'I can\'t look into that myself from here. You can vote No on the extra one, or I can tell the team.');
+    // Still promised after the second pass: the promise is cut, and nothing
+    // is said in its place (step 2: no fixed line).
     const stubborn = await turn('why are there two proposals?', scripted([
       [['reply', { text: 'Good question. I\'ll look into it.' }]],
     ]));
-    assert.equal((await read(stubborn)).content, 'I can\'t look into that myself from here.');
+    assert.equal((await read(stubborn)).content, 'Good question.');
   });
 
   await t.test('#4097: Filed on a project the bot does not build on leads with the request\'s line, its card said once', async () => {
@@ -2758,6 +2762,44 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.deepEqual((await mayor.claimProblems(pool, otherCtx, 'Your report is #987654.')).map((p) => p.kind), ['unknown'],
       'a number nobody filed is still cut');
     await pool.query('DELETE FROM feedback_reports WHERE user_id = $1', [ada.id]);
+  });
+
+  await t.test('Step 2: the reply check reads server notes, cards and work states, never the bot\'s own chat words', async () => {
+    const claims = require('../src/services/reply-claims');
+    const ctx = () => ({ user: ada, bot, appIds: new Set([notes.id]), conversationId: opened.conversationId, deps: {} });
+    const kinds = async (text) => (await claims.checkReply(pool, ctx(), text)).map((p) => p.kind);
+    // A model reply saying it filed something is no record of a filing.
+    await conversations.sendMessage(pool, bot, opened.conversationId, { content: 'Filed it as request #8801.' },
+      { metadata: { homeroomBot: { kind: 'chat' } }, notify: false });
+    assert.ok((await kinds('Filed it as request #8801.')).includes('filed'), 'its own words back nothing');
+    // The ack of a tap that filed it is.
+    await conversations.sendMessage(pool, bot, opened.conversationId, { content: '**Note board** · request #8801: Pins\n\nFiled.' },
+      { metadata: { homeroomBot: { kind: 'filed', appSlug: 'note-board', issueNumber: 8801 } }, notify: false });
+    assert.ok(!(await kinds('Filed it as request #8801.')).includes('filed'), 'the server note backs it');
+
+    // A request moved to Homeroom's board: by its original number, or its new one.
+    await pool.query(
+      `INSERT INTO bot_cards (user_id, conversation_id, app_id, kind, title, status, source_issue_number, issue_number)
+       VALUES ($1, $2, $3, 'move_request', 'x', 'done', 8802, 9902)`,
+      [ada.id, opened.conversationId, notes.id],
+    );
+    assert.ok(!(await kinds('Request #8802 was moved.')).includes('moved_status'));
+    assert.ok(!(await kinds('#9902 was moved.')).includes('moved_status'));
+    assert.ok((await kinds('Request #8803 was moved.')).includes('moved_status'), 'no card moved it');
+
+    // Work under way, from the stored work state.
+    for (const [n, stage] of [[8804, 'building'], [8805, 'stopped']]) {
+      await pool.query(
+        `INSERT INTO work_states (app_id, item_kind, item_ref, issue_number, stage, reason)
+         VALUES ($1, 'request', $2, $2, $3, $4) ON CONFLICT DO NOTHING`,
+        [notes.id, n, stage, stage === 'stopped' ? 'build_failed' : null],
+      );
+    }
+    assert.ok(!(await kinds('I\'m building #8804 now.')).includes('started'));
+    assert.ok((await kinds('I\'m building #8805 now.')).includes('started'), 'a stopped build is not being built');
+    assert.ok(!(await kinds('I\'m building #8806 now.')).includes('started'), 'no stored state: it cannot be shown false');
+    await pool.query('DELETE FROM work_states WHERE app_id = $1 AND item_ref = ANY($2::int[])', [notes.id, [8804, 8805]]);
+    await pool.query('DELETE FROM bot_cards WHERE source_issue_number = 8802');
   });
 
 });
