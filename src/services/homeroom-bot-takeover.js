@@ -259,6 +259,19 @@ async function clearStale(pool, sessionId) {
 }
 
 /**
+ * #6600: the change's stored work state, again, so the AI tab, its page and
+ * every other surface read a takeover as soon as it starts, ends or fails.
+ * Best effort: an error is logged and the run continues.
+ */
+async function refreshWorkState(pool, sessionId, deps = {}) {
+  try {
+    await (deps.workState || require('./work-state')).refresh(pool, [{ sessionId: Number(sessionId) }]);
+  } catch (err) {
+    log.warn('homeroom-bot-takeover', 'Could not refresh the change\'s work state', { sessionId, err: err.message });
+  }
+}
+
+/**
  * The update's row, written before it runs: { id } for a new one, or
  * { busy: true, id } when one on this change is running (it starts the next
  * when it ends). The row's user_id is the change's author, whose week pays.
@@ -299,6 +312,8 @@ async function start(pool, { app, change, askedBy = null, deps = {} }) {
     const row = await startRow(pool, { app, change, askedBy });
     if (row.busy) return { busy: true, id: row.id };
     await (deps.requestRun || requestRun)(pool, { id: row.id, appId: Number(app.id), userId: Number(change.user_id) });
+    // #6600: the change reads as the bot's work now, not as "Fix it".
+    await refreshWorkState(pool, change.id, deps);
     return { started: true, id: row.id };
   } catch (err) {
     log.warn('homeroom-bot-takeover', 'Could not start an update', { sessionId: change?.id, err: err.message });
@@ -332,11 +347,15 @@ async function queue(pool, ctx, { change, instruction, gate: admitted }) {
   }
   ctx.revised = true;
   ctx.workBusy = true;
+  // #6600: the reply is posted after this ask, and may have lost the race to
+  // the update's own failure (voice checks it before saying it is queued).
+  ctx.takeoverId = started.id || null;
   require('./bot-work-changed').noteWorkChanged(user.id, deps);
   const tool = toolOf(change);
   const author = change.author_username ? `@${change.author_username}` : 'its author';
   return {
     ok: true,
+    updateId: started.id || null,
     change: voice.changeRef(change),
     queued: started.busy
       ? 'An update to this change is running now. This one is queued right behind it: you make it as soon as that finishes.'
@@ -682,6 +701,9 @@ async function runUpdateWork(ctx, { pool, config, deps = {} }, row, given = null
     : { ok: false, error: now?.error || 'it did not finish' };
   const tagOut = out;
   await steps.once('report', () => report(pool, config, { row: now || row, out: tagOut, runTag, deps }));
+  // #6600: its end, and its asks finished, are what the change's list and
+  // page read next (the taken ask holds it until this point). Best effort.
+  await refreshWorkState(pool, row.session_id, deps);
   await steps.once('next', () => startNext(pool, { row: now || row, deps }));
   return { state: now?.state || 'gone' };
 }
@@ -693,6 +715,9 @@ async function updateFailed(ctx, { pool, config, deps = {} }, row) {
   const out = { ok: false, error: 'it did not finish' };
   const now = await finishRow(pool, id, out);
   await report(pool, config, { row: now || row, out, runTag, deps });
+  // #6600: the change says the bot could not fix it until it is checked
+  // again, once its asks are finished.
+  await refreshWorkState(pool, row.session_id, deps);
   await startNext(pool, { row: now || row, deps });
   return { state: now?.state || 'gone' };
 }

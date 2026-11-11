@@ -249,6 +249,29 @@ test('update_change on a connector draft records the ask with no request and sta
   assert.equal(runs.length, 1);
   assert.equal(runs[0].userId, EVAN.id);
   assert.equal(ctx.revised, true);
+  // #6600: the reply may have lost the race to this update's own failure.
+  assert.equal(out.updateId, 301);
+  assert.equal(ctx.takeoverId, 301);
+});
+
+test('#6600: a takeover refreshes the change\'s work state when it starts and ends', async () => {
+  const calls = [];
+  const workState = { refresh: async (_pool, items) => { calls.push(items); return []; } };
+  // It starts.
+  const pool = queuePool();
+  const ctx = askCtx(pool, EVAN, draft());
+  ctx.deps.workState = workState;
+  await voice.runTool(pool, ctx, 'update_change', {
+    instruction: 'Reword the two reminder emails and give the stop page one button.',
+  });
+  assert.deepEqual(calls, [[{ sessionId: 13112 }]], 'the change reads as the bot\'s work at once');
+  // It ends.
+  const done = runPool();
+  const deps = { ...runDeps(done, { reply: REVISED }), workState };
+  await takeover.runUpdateWork({ steps: () => fakeSteps() }, { pool: done, config: {}, deps }, {
+    id: 301, app_id: APP.id, session_id: 13112, user_id: EVAN.id, kind: 'update', state: 'running',
+  });
+  assert.deepEqual(calls.at(-1), [{ sessionId: 13112 }], 'and says what came of it when it ends');
 });
 
 test('an admin\'s ask is recorded as theirs and paid by the author; one on a change already updating waits for it', async () => {

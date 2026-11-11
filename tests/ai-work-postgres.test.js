@@ -690,3 +690,82 @@ test('#6282: a change with an update on its way is Updating, then Update queued'
   await pool.query(`UPDATE homeroom_bot_change_asks SET status = 'done', done_at = NOW() WHERE id = $1`, [second.id]);
   assert.deepEqual(await what(bob), ['up_for_vote']);
 });
+
+test('#6600: a takeover holds the person\'s own change while it runs, and says when it failed', { timeout: 120000 }, async (t) => {
+  let Pool;
+  try { ({ Pool } = require('pg')); } catch { return t.skip('pg is not installed'); }
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 3000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    return t.skip(`PostgreSQL unavailable: ${err.message}`);
+  }
+  const crypto = require('node:crypto');
+  const name = `ai_work_takeover_${crypto.randomBytes(6).toString('hex')}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN);
+  url.pathname = `/${name}`;
+  const pool = new Pool({ connectionString: String(url), max: 6 });
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP DATABASE ${name}`);
+    await admin.end();
+  });
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  require('../src/db/pool').getPool = () => pool;
+  const aiWork = require('../src/services/ai-work');
+  const workState = require('../src/services/work-state');
+
+  const one = async (sql, params) => (await pool.query(sql, params)).rows[0];
+  const user = (username, synthetic = false) => one(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ($1, 'x', $2) RETURNING id, username`, [username, synthetic]);
+  const ada = await user('tw_ada');
+  const bot = await user('homeroom-bot-tw', true);
+  const app = await one(
+    `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+     VALUES ('Takeover', 'tw-takeover', 'running', $1, 'public', 'public') RETURNING id, slug`, [ada.id]);
+  await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')`, [app.id, ada.id]);
+  // Her own change, built in Claude Code, its checks failing: Needs you, Fix it.
+  // It answers no request, so it is its own work state (CHANGE_FACTS_SQL).
+  const change = await one(
+    `INSERT INTO chat_sessions (app_id, user_id, status, linked_issues, pr_number, pr_title, check_state, promoted_at,
+                                last_activity_at, external_agent)
+     VALUES ($1, $2, 'promoted', ARRAY[]::int[], 6580, 'Show the reason', 'failing', NOW() - INTERVAL '10 minutes',
+             NOW() - INTERVAL '10 minutes', 'claude-code')
+     RETURNING id`, [app.id, ada.id]);
+  const deps = { bot, liveSvc: { isStaging: () => false }, settings: { mode: 'live' } };
+  const all = async () => {
+    await workState.refresh(pool, [{ sessionId: change.id }]);
+    const work = await aiWork.workFor(pool, { user: { id: ada.id }, deps });
+    return [...work.needs, ...work.next, ...work.waiting]
+      .filter((r) => r.change && Number(r.change.id) === Number(change.id));
+  };
+  const lines = async () => (await all()).map((r) => `${r.group}:${r.work.stage}:${r.work.line?.code || ''}:${r.fixYours ? 'fixYours' : ''}:${r.botFixFailed ? 'botFixFailed' : ''}`);
+
+  assert.deepEqual(await lines(), ['needs:checking:checks_failing:fixYours:'], 'her own failing change asks her to fix it');
+
+  // A takeover starts: its running look is the update on its way.
+  const look = await one(
+    `INSERT INTO homeroom_bot_looks (user_id, app_id, session_id, question, kind, state)
+     VALUES ($1, $2, $3, 'An update its author asked for', 'update', 'running') RETURNING id`,
+    [ada.id, app.id, change.id]);
+  assert.deepEqual(await lines(), ['next:building:fixing::'], 'the bot is fixing it, so it asks nothing of her');
+  const [running] = await all();
+  assert.deepEqual(running.work.line, { code: 'fixing' });
+
+  // Its last attempt failed: back in Needs you, saying the bot could not.
+  await pool.query(
+    `UPDATE homeroom_bot_looks SET state = 'failed', error = 'the failing check is still failing', ended_at = NOW()
+      WHERE id = $1`, [look.id]);
+  const failed = await all();
+  assert.deepEqual(failed.map((r) => [r.group, r.fixYours, r.botFixFailed]), [['needs', true, true]]);
+  assert.deepEqual(failed[0].work.line, { code: 'bot_fix_failed' });
+
+  // Once its checks run again, the usual failing words come back.
+  await pool.query(`UPDATE chat_sessions SET checks_checked_at = NOW() + INTERVAL '1 second' WHERE id = $1`, [change.id]);
+  const after = await all();
+  assert.deepEqual(after.map((r) => [r.group, r.fixYours, !!r.botFixFailed, r.work.line]),
+    [['needs', true, false, { code: 'checks_failing' }]]);
+});
