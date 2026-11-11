@@ -396,6 +396,123 @@ test('an update runs one build turn on the change\'s own branch, settles the pus
     takeover.handBackLine({ tool: 'Claude Code', sha: NEW }), 'the hand-back survives the report\'s clean-up');
 });
 
+// ── #6602: a change its author made in another coding tool ──────────────
+
+// The change's session as it really is: made in Claude Code, so it carries
+// that backend, and it belongs to its author. Every write the turn makes to
+// `agent_backend` is recorded.
+function claudeCodePool() {
+  const pool = runPool();
+  const base = pool.query.bind(pool);
+  pool.backendWrites = [];
+  pool.query = async (sql, params = []) => {
+    const s = String(sql);
+    if (/SELECT cs\.\*, a\.slug AS app_slug/.test(s)) {
+      return {
+        rows: [{
+          ...draft(), user_id: EVAN.id, agent_backend: 'claude_code', agent_model: 'anthropic/claude-opus-5-5',
+          agent_config_version: 1, agent_thread_id: null, app_slug: APP.slug, app_name: APP.name, repo_url: APP.repo_url,
+        }],
+      };
+    }
+    if (/UPDATE chat_sessions SET agent_backend/.test(s)) { pool.backendWrites.push(params); return { rows: [] }; }
+    return base(sql, params);
+  };
+  return pool;
+}
+
+// The update's turn, through the REAL followup.runFollowUpTurn, with only the
+// pieces around it faked: the worker, the durable turn, and the dispatch loop
+// (which asks the runtime resolver, as it really does).
+function realTurnDeps(pool, { reply = REVISED, seen = [], loops = [], reports = [], runtime = true } = {}) {
+  return {
+    settings: LIVE,
+    bot: BOT,
+    live: { ...live, isLiveFor: () => true },
+    dm: { overWeeklyAllowance: async () => false },
+    limits: { checkBudget: async () => ({}) },
+    managedOpenRouter: { usesIncludedKey: async () => false },
+    github: { getBranchSha: async () => OLD },
+    followup,
+    proposalUpdate: { settleLandedHead: async () => ({ tail: 'paused', rebuilding: false }) },
+    voice: { ...voice, reportFollowUp: async (_p, _c, args) => { reports.push(args); return 1; } },
+    sessionTaken: async () => false,
+    worker: {
+      async ensureWorkerImage() {},
+      async ensureWorker() { return 'usernode-worker-13112'; },
+      async execInWorker() { throw new Error('no worker runs in this test'); },
+    },
+    durableTurn: { runTurn: async (_st, _key, spec) => ({ routed: await spec.dispatch({}), stopped: false }) },
+    sessions: {
+      async runCodexAttemptLoop(args) {
+        loops.push(args);
+        const ctx = await args.resolveRuntime();
+        if (!ctx) return null; // A session this turn has no runtime for.
+        return { result: { pushOk: true, sha: NEW, ahead: 1, lastResultText: reply } };
+      },
+    },
+    agentTurn: {
+      // What resolveCodexRuntimeContext opens with: no runtime for a session
+      // that is not on codex_openrouter.
+      async resolveCodexRuntimeContext({ session }) {
+        seen.push(session.agent_backend);
+        if (!runtime || session.agent_backend !== 'codex_openrouter') return null;
+        return { agentBackend: 'codex_openrouter', agentConfigVersion: 1 };
+      },
+    },
+  };
+}
+
+const UPDATE_ROW = { id: 301, app_id: APP.id, session_id: 13112, user_id: EVAN.id, asked_by: EVAN.id, kind: 'update', state: 'running' };
+const runCtx = () => ({ steps: () => fakeSteps(), kind: 'look.run', key: 'run', workId: 9, signal: null });
+
+test('a takeover of a change made in Claude Code runs the turn on the bot\'s backend, then puts the author\'s back', async () => {
+  const pool = claudeCodePool();
+  const seen = [];
+  const loops = [];
+  const reports = [];
+  const deps = realTurnDeps(pool, { seen, loops, reports });
+  const out = await takeover.runUpdateWork(runCtx(), { pool, config: {}, deps }, UPDATE_ROW);
+  assert.equal(out.state, 'done');
+  // The runtime resolver saw the bot's backend, not the author's, so it resolved one.
+  assert.deepEqual(seen, ['codex_openrouter']);
+  // The dispatch names the session's real owner, so its row lock finds the row;
+  // the model is still called with the bot's own key.
+  assert.equal(loops.length, 1);
+  assert.equal(loops[0].sessionOwnerId, EVAN.id);
+  assert.equal(loops[0].userId, BOT.id);
+  // The row is stamped for the turn, then put back: the change still says it
+  // was made in Claude Code.
+  assert.deepEqual(pool.backendWrites, [[13112, 'codex_openrouter'], [13112, 'claude_code']]);
+  // It ends as the update it is, never as an answer that could not be read.
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].outcome.action, 'revise');
+  assert.equal(reports[0].outcome.moved, true);
+  assert.equal(pool.state.finished[7], true, 'counted as an update people asked for');
+  assert.match(voice.plainReport(reports[0].outcome), /^Done: Reworded the two reminder emails/);
+});
+
+test('a takeover whose turn has no runtime for the change says so in words, and still puts the backend back', async () => {
+  const pool = claudeCodePool();
+  const seen = [];
+  const loops = [];
+  const reports = [];
+  // The dispatch loop resolves nothing at all: a null, never an empty answer.
+  const deps = realTurnDeps(pool, { seen, loops, reports, runtime: false });
+  const out = await takeover.runUpdateWork(runCtx(), { pool, config: {}, deps }, UPDATE_ROW);
+  assert.equal(out.state, 'failed');
+  assert.equal(loops.length, 1, 'the dispatch was still asked');
+  assert.deepEqual(pool.backendWrites, [[13112, 'codex_openrouter'], [13112, 'claude_code']]);
+  assert.equal(pool.state.finished[3], 'I can\'t run on a change made in Claude Code yet');
+  assert.equal(reports[0].outcome.action, 'failed');
+  assert.equal(reports[0].outcome.why, 'I can\'t run on a change made in Claude Code yet');
+  const said = voice.plainReport(reports[0].outcome);
+  assert.match(said, /I can't run on a change made in Claude Code yet/);
+  assert.match(said, /The change is as it was\./);
+  assert.doesNotMatch(said, /Ask me again here to try again/, 'asking again would fail the same way');
+  assert.doesNotMatch(said, /could not be read/);
+});
+
 test('an update that moved nothing, or whose save was refused, is said as a failure and settles nothing', async () => {
   for (const variant of [{ sha: OLD }, { pushOk: false, sha: null }]) {
     const pool = runPool();

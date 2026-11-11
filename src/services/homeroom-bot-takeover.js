@@ -555,6 +555,14 @@ async function updateOnce(pool, config, { row, steps, runTag, signal = null, dep
   if (turn.routed?.error) {
     const code = String(turn.routed.error);
     log.warn('homeroom-bot-takeover', 'An update\'s turn failed', { sessionId: change.id, err: clip(code, 300) });
+    // #6602: a change the bot has no runtime for is said as that, in words,
+    // never as an answer that could not be read.
+    if (code === 'backend_unsupported') {
+      return {
+        ok: false, code: 'backend_unsupported', costUsd, model,
+        error: `I can't run on a change made in ${tool || 'another coding tool'} yet`,
+      };
+    }
     return {
       ok: false, code: code === 'session_busy' ? 'busy' : 'failed', costUsd, model,
       error: code === 'session_busy' ? 'somebody else started working on the change just then' : 'the platform failed while it worked on it',
