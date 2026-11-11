@@ -549,21 +549,18 @@ test('while the directory loads, placeholders; when it cannot be read, a line an
   const loading = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: null }));
   assert.match(loading, /aria-busy="true"/);
   assert.doesNotMatch(loading, /data-guest-card=/);
-  // The failure is drawn by the shared section, under its own heading, so a
-  // visitor and a member get the same line and the same Try again (#6609
-  // review).
   const failed = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: null, failed: true }));
-  assert.ok(text(failed).includes(message('home:join.failed')));
+  assert.ok(text(failed).includes(message('auth:guest.loadFailed')));
   // Without a way to read again, only the sentence.
-  assert.doesNotMatch(failed, /data-home-join-retry=/);
+  assert.doesNotMatch(failed, /data-guest-retry=/);
   // With one, the button under it says so (#6007).
   const retried = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: null, failed: true, onRetry() {} }));
-  assert.ok(text(retried).includes(message('home:join.failed')));
-  const button = retried.match(/<button[^>]*data-home-join-retry=""[^>]*>([\s\S]*?)<\/button>/);
+  assert.ok(text(retried).includes(message('auth:guest.loadFailed')));
+  const button = retried.match(/<button[^>]*data-guest-retry=""[^>]*>([\s\S]*?)<\/button>/);
   assert.ok(button, 'a Try again button under the failure line');
-  assert.equal(text(button[1]).join(' '), message('home:join.retry'));
+  assert.equal(text(button[1]).join(' '), message('auth:guest.retry'));
   // And nothing to press when it did not fail.
-  assert.doesNotMatch(renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ onRetry() {} })), /data-home-join-retry=/);
+  assert.doesNotMatch(renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ onRetry() {} })), /data-guest-retry=/);
 });
 
 // ─── guest-project.tsx ────────────────────────────────────────────
