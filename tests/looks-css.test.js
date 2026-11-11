@@ -184,7 +184,7 @@ test('a class the map does not name stays the kit\'s, and a rule for anything el
   assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-post .fr-av'), 'html[data-skin="workbench"] .messages-message .fr-av', 'the avatar in a message is the kit\'s own');
   assert.equal(looks.wornSelector('html[data-skin] .fr-tile .fr-t'), null, 'a tile is drawn by the kit: nothing to repeat');
   // Each wearer of a root is a selector of its own: Settings' rows first, then the review stage's help rows (lane K).
-  assert.deepEqual(looks.wornSelector('html[data-skin] .fr-row+.fr-row').split(',html'), ['html[data-skin]:where(:not([data-skin="brand"])) :is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *)+:is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *)', '[data-skin]:where(:not([data-skin="brand"])) .rf-help-row+.rf-help-row'], 'Settings\' rows wear the row, the scope inside each compound');
+  assert.deepEqual(looks.wornSelector('html[data-skin] .fr-row+.fr-row').split(',html'), ['html[data-skin]:where(:not([data-skin="brand"])) :is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *)+:is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *)', '[data-skin]:where(:not([data-skin="brand"])) .rf-help-row+.rf-help-row', '[data-skin]:where(:not([data-skin="brand"])) .messages-object-card:is(.messages-message *)+.messages-object-card:is(.messages-message *)'], 'Settings\' rows wear the row, the scope inside each compound');
   assert.equal(looks.wornSelector('html[data-skin] .fr-status .fr-txt'), null, 'a part only counts inside its own component');
   assert.equal(looks.wornSelector('html[data-skin] .fr-post .fr-txt b'), null, 'left out by name: a bold word a person wrote is not an accent');
 });
@@ -337,7 +337,7 @@ test('version 2 dresses nothing of the product\'s own that it did not dress befo
   // places a kit element inside or beside a worn one, and they stay a handful.
   const SETTINGS = /#settings-root|#settings-section-content|\.settings-(frame|page|filter)/;
   const elsewhere = worn.filter((sel) => !SETTINGS.test(sel));
-  assert.ok(worn.length > 0 && elsewhere.length < 62, `a handful only outside Settings (${elsewhere.length} of ${worn.length})`);
+  assert.ok(worn.length > 0 && elsewhere.length < 92, `a handful only outside Settings (${elsewhere.length} of ${worn.length})`);
   for (const sel of elsewhere) assert.match(sel, /\.fr-[\w-]+/, `"${sel}" would dress the product's markup with no kit element in it`);
   // The waiting room does wear version 2's button, field and link since the
   // fix pass (looks.json names its controls by their own hooks:
@@ -345,7 +345,12 @@ test('version 2 dresses nothing of the product\'s own that it did not dress befo
   // its nodes ARE named here; what holds for them is the line above: each
   // such rule needs a kit element, and the room has none, so none of them
   // draws there. A conversation's and a request's nodes stay unnamed.
-  assert.doesNotMatch(css, /messages-|dev-request|dev-change/, 'no conversation or request node is named');
+  // Since the left-overs pass a conversation's cards and the bot's news
+  // lines wear the row, the card and the event line (the owner asked for
+  // the tour's s10), so those four nodes are named too, under the same
+  // condition; no other conversation or request node is.
+  const BOT_WEAR = /\.messages-object-card:is\(\.messages-message \*\)|:is\(\.messages-object-list,\.messages-attachment\):is\(\.messages-message \*\)|section:is\(\.messages-bot-card > \*\)|:is\(button:is\(\.messages-bot-news > \*\),div:is\(\.messages-bot-settled-run > \*\)\)/g;
+  assert.doesNotMatch(css.replace(BOT_WEAR, ''), /messages-|dev-request|dev-change/, 'no other conversation or request node is named');
   assert.match(css, /data-waiting-|waiting-about-save/, 'the waiting room\'s controls are named, by their own hooks');
 });
 
@@ -354,10 +359,11 @@ test('an item\'s page keeps the product\'s discussion and dresses it: the stream
   // event line out of the map on purpose; the lane that redraws the page
   // adds it, with the stream's card and its label.
   const roots = looks.config.wear.roots;
-  assert.deepEqual(roots.evt, { to: '#dev-topic-thread #gc-thread-messages .dev-request-event', parts: { ei: '.dev-request-event-glyph' } },
+  // (The bot's news lines in a conversation are a further wearer, after it.)
+  assert.deepEqual({ to: roots.evt.to, parts: roots.evt.parts }, { to: '#dev-topic-thread #gc-thread-messages .dev-request-event', parts: { ei: '.dev-request-event-glyph' } },
     'two ids: the standard look\'s rule for the line names both, and a worn rule must outweigh it');
-  assert.equal(looks.wornSelector('html[data-skin] .fr-evt .fr-ei'), 'html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event .dev-request-event-glyph');
-  assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-evt b'), 'html[data-skin="workbench"] #dev-topic-thread #gc-thread-messages .dev-request-event b');
+  assert.equal(looks.wornSelector('html[data-skin] .fr-evt .fr-ei').split(',html')[0], 'html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event .dev-request-event-glyph');
+  assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-evt b').split(',html')[0], 'html[data-skin="workbench"] #dev-topic-thread #gc-thread-messages .dev-request-event b');
   // The stream wears the card as a second wearer, a selector of its own:
   // inside the first's :is() its two ids would lift every other card.
   assert.doesNotMatch(roots.card.to, /gc-thread-messages/);
@@ -376,7 +382,8 @@ test('an item\'s page keeps the product\'s discussion and dresses it: the stream
   assert.equal(looks.wornSelector('html[data-skin] .fr-cap.fr-over'), null);
   const css = section();
   assert.ok(css.includes('html[data-skin="today"] .fr-sechead .fr-cap,html[data-skin="today"] #dev-topic-thread .dev-request #gc-thread-messages .messages-reply-count{font-size:22px;'));
-  assert.ok(css.includes(',html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--fr-mut);min-width:0}'));
+  assert.ok(css.includes(',html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event,'), 'and the bot\'s news lines after it');
+  assert.ok(css.includes(':is(button:is(.messages-bot-news > *),div:is(.messages-bot-settled-run > *)){display:flex;align-items:center;gap:12px;font-size:13px;color:var(--fr-mut);min-width:0}'));
 });
 
 // ── The committed section ────────────────────────────────────────────────
