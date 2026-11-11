@@ -1017,3 +1017,43 @@ Needs group A (shared files, not changed here):
 - The frame's hand rules: `@media (max-width: 767.98px) { html[data-skin]:is(.un-kb, .platform-kb-open)
   .fr.fr-shell .fr-tabbar { display: none; } }`, for every page (Messages' composer, the bot, #general, a
   request's reply box all keep the bar on the keys today). With it, Settings' scoped copy can go.
+
+**The standard look against the base (`2fe96b8af`), the whole product.** The base was built in a scratch
+worktree and served beside the branch on the same database and account; a script (kept in the session's
+scratch folder: `cmp.mjs`, `domsnap.js`, `report.mjs`) opened each page on both at the same moment with
+`?skin=standard`, desktop (1440) and phone (390, 2x), light and dark, and compared (a) the pixels of the
+window and of a 2,600px-tall window, and (b) every drawn element's box and whole computed style (all
+properties of the element and of its `::before` and `::after`, about 200,000 elements over the run).
+Sixty-two pages and states: the fifty-three of the brief's list (Settings section by section, the two
+gated pages in every state, signed out) and nine Settings states a default load does not show (an editor
+open, a confirm step, a tool's guided set-up, the model block, and every `hidden` node of every section
+shown at once).
+
+- **One regression, mine, fixed**: the wrapper first put round a Homeroom app part's nodes (above).
+- **Nothing else differs.** 207 of the 248 comparisons are the same pixels. The others differ by: the port
+  in the MCP address (two servers); and small spots (a few to a few hundred pixels) on a scaled picture, an
+  emoji, an icon in the sidebar or the header, a count over an icon, each drawn by the same element in the
+  same box with the same computed style on both builds. Comparing the branch with itself, and the base with
+  itself, gives the same spots: which of two renderings a load gets does not depend on the build.
+- **The two differences seen before and never explained are that**: the Privacy switches' part comes out in
+  one of two renderings one pixel apart (three levels of 255, at a fractional offset), and three loads of
+  each build gave both renderings on each build (base against base differs, branch against base is equal,
+  as the pairs fall). Linked devices on a phone is the same pixels in light and dark.
+- **The neutral wrappers and names draw nothing**: Settings' list wrappers (`div.ui-card`, six on a
+  desktop), `ui-swrow`, `ui-onecard`, `ui-fields`, Privacy's `ui-card` round its switches and the auth
+  pages' `.auth-ways` are the only nodes the branch has and the base has not; each computes to a plain block
+  (no background, border, shadow, padding or margin; `.auth-ways` a negative top margin that takes back the
+  form's gap), every other node keeps its box and style, and the pixels are the same, also with every
+  hidden node of Settings shown. Privacy's "Texts need a verified phone number" line moved out of the
+  switches' group to stand after it (same place, same pixels).
+- One sub-perceptual thing was run to ground and is not a rule's doing: with AI usage's hidden parts shown
+  on a desktop, about forty edge pixels of three rounded boxes differ by one level of 255 between the two
+  builds. No computed property differs anywhere up the tree; taking the wrapper out, or putting it into the
+  base, changes nothing; and the branch's stylesheet with every look rule removed gives the base's picture
+  while the base's with them removed gives the branch's. On a phone the same state is the same pixels.
+- **The declared checks.** `tests/dapp-selectors-resolve.test.js`, `tests/shell-id-inventory.test.js` and
+  `tests/shell-script-order.test.js`: 30 tests, all pass (they hold every id and `data-*` a declared selector
+  anchors on against the shipped markup, the id inventory against its baseline, and the script order). They
+  do not run a check in a browser, so every one of dapp.json's 732 checks was also asked of the live page on
+  both builds (its selector and its text, signed in as the capture account): 463 are found on both, 269 on
+  neither (demo fixtures this local copy does not have), none on one build only.
