@@ -77,8 +77,10 @@ test('every native-kit modal, sheet, alert and menu wears the look by one rule',
   const b = css.indexOf('/* YOU\'S DIALOGS', a);
   assert.ok(a > 0 && b > a);
   const hand = css.slice(a, b);
-  assert.match(hand, new RegExp(`${LOOK.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} :is\\(\\.un-modal, \\.un-sheet, \\.un-alert, \\.un-popover\\) \\{[^}]*--un-sheet-bg: var\\(--fr-solid, var\\(--fr-ground\\)\\);[^}]*--dc-sheet-solid: var\\(--fr-solid, var\\(--fr-ground\\)\\);[^}]*background-color: var\\(--fr-solid, var\\(--fr-ground\\)\\);[^}]*color: var\\(--fr-ink\\); font-family: var\\(--fr-f\\);`));
+  assert.match(hand, new RegExp(`${LOOK.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} :is\\(\\.un-modal, \\.un-sheet, \\.un-alert, \\.un-popover\\) \\{[^}]*--un-sheet-bg: var\\(--fr-solid, var\\(--fr-ground\\)\\);[^}]*background-color: var\\(--fr-solid, var\\(--fr-ground\\)\\);[^}]*color: var\\(--fr-ink\\); font-family: var\\(--fr-f\\);`));
   assert.ok(hand.includes(`${LOOK} .un-modal { --un-modal-radius: 24px; box-shadow: var(--fr-sh), inset 0 0 0 1px var(--fr-line); }`));
+  assert.ok(hand.includes(`${LOOK} .un-modal:has(#feedback-form),\n${LOOK} .un-modal .feedback-actions { background-color: var(--fr-solid, var(--fr-ground)); }`), 'the feedback form and its sticky foot');
+  assert.doesNotMatch(hand, /--dc-/, 'the shell\'s plane tokens are declared once per theme, never here');
   assert.ok(hand.includes(`${LOOK} .un-alert-btn.un-destructive { color: var(--fr-bad); }`));
   assert.ok(hand.includes(`${LOOK} .un-popover-item:is(:hover, :focus-visible):not(:disabled) { background: var(--fr-sunk); }`));
   assert.doesNotMatch(hand, /--un-modal-padding|\bwidth:/, 'padding and width stay each dialog\'s own');
@@ -128,7 +130,7 @@ test('a week\'s page, the bot\'s slots, a topic\'s channel, a challenge\'s page 
 });
 
 test('smaller pieces: Edit profile\'s cards and preview, the New message dialog\'s foot, Messages\' rows by their key', () => {
-  assert.ok(css.includes('html[data-skin][data-skin]:not([data-skin="brand"]) #profile-edit-sheet .un-group { box-shadow: inset 0 0 0 1px var(--fr-line); }'));
+  assert.ok(css.includes('html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet section > .un-group { box-shadow: inset 0 0 0 1px var(--fr-line); }'));
   assert.ok(css.includes('html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet #public-profile-card { border-radius: 20px; background: var(--fr-surface); box-shadow: inset 0 0 0 1px var(--fr-line); color: var(--fr-ink); }'));
   assert.ok(css.includes('html[data-skin]:not([data-skin="brand"]) [data-new-message] .border-t { flex-wrap: wrap; row-gap: 12px; }'));
   assert.ok(css.includes('html[data-skin]:not([data-skin="brand"]) [data-new-message] .border-t > button { flex: none; white-space: nowrap; }'));

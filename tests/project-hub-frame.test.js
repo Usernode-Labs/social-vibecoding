@@ -142,7 +142,7 @@ test('the page draws the kit\'s Hub under a look, from what its own Hub reads', 
   assert.match(hub, /faces: active\.map\(\(person\) => \(\{ name: person\.username, color: swatchFor\(person\.username\) \}\)\)/);
   assert.doesNotMatch(hub, /frameRule|frameWork|project:frame\.hub\.(builtBy|saidBy|members|openApp)/);
   // No place's head but the Hub's has buttons: Needs you's lost Invite and Ask for a change with the rest (lane K).
-  assert.match(src, /<ProjectFrameHead \{\.\.\.frameHead\} title=\{pageTitle\(tab\)\} purpose=\{framePurpose\} \/>/);
+  assert.match(src, /<ProjectFrameHead \{\.\.\.frameHead\} title=\{tab === 'workshop' && weekUp \? weekName\(weekUp\) : pageTitle\(tab\)\} purpose=\{framePurpose\} \/>/);
   assert.doesNotMatch(src, /askChange|onAsk=/);
 });
 

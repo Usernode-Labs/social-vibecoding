@@ -87,12 +87,12 @@ test('the standard look keeps its sides', () => {
 });
 
 test('a face under a look is the kit\'s avatar in the person\'s own colour; the bot\'s is the Homeroom tile', () => {
-  assert.match(face({ user: ADA, size: 'md', shape: 'square' }), /^<span class="fr-av" style="--fr-as:32px;--fr-ac:#[0-9a-f]{6}" aria-hidden="true">a<\/span>$/);
+  assert.match(face({ user: ADA, size: 'md', shape: 'square' }), /^<span class="fr-av" style="--fr-as:32px;--fr-ac:#[0-9a-f]{6}" aria-hidden="true">A<\/span>$/, 'the initials the standard face says (format.tsx initials)');
   assert.match(face({ user: ADA, size: 'lg' }), /--fr-as:40px/);
   assert.match(face({ user: ADA, size: 'sm' }), /--fr-as:24px/);
   assert.match(face({ user: { ...ADA, avatarUrl: '/u/8.png' } }), /^<span class="fr-av"[^>]*><img src="\/u\/8\.png"/);
   assert.match(face({ user: BOT }), /^<span class="fr-tile" style="--fr-ts:32px;[^"]*" aria-hidden="true"><img src="\/brand\/homeroom-mark\.png"/);
-  assert.match(face({ user: null, title: 'Design review' }), /^<span class="fr-av"[^>]*>D<\/span>$/, 'no person: the title\'s letter');
+  assert.match(face({ user: null, title: 'Design review' }), /^<span class="fr-av"[^>]*>DR<\/span>$/, 'no person: the title\'s initials, as the standard face');
   // The standard look's own, untouched.
   assert.match(face({ user: ADA, size: 'md', shape: 'square' }, 'standard'), /^<span aria-hidden="true" class="w-9 h-9 text-xs rounded-xl text-white font-bold/);
 });

@@ -69,7 +69,7 @@ test('six tabs, each with an address; Feedback is the door to the product\'s own
 
 test('the work column: the verified accounts, then the standard page\'s groups in its order', () => {
   const { main } = columns(render({ admin: true }));
-  assert.match(main, /<div class="fr-btnrow fr-chips"><a class="fr-pill" href="https:\/\/github\.com\/lingash25" target="_blank" rel="noopener noreferrer">Verified GitHub · lingash25<\/a><\/div>/);
+  assert.match(main, /<div class="fr-btnrow fr-chips"><a class="fr-pill" data-kind="none" href="https:\/\/github\.com\/lingash25" target="_blank" rel="noopener noreferrer">Verified GitHub · lingash25<\/a><\/div>/);
   assert.deepEqual([...main.matchAll(/<h2 class="fr-cap">([^<]+)<\/h2>/g)].map((m) => m[1]), ['Your work', 'Rewards', 'Account', 'Settings', 'Admin']);
   const rows = [...main.matchAll(/<a class="fr-row" href="([^"]+)"[^>]*><span class="fr-lead" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">([^<]+)<\/span><span class="fr-s">([^<]+)<\/span>/gs)].map((m) => [m[1], m[2], m[3]]);
   assert.deepEqual(rows, [
@@ -94,10 +94,10 @@ test('the side column: the figures (a zero says nothing), then This week with it
   const { side } = columns(render());
   assert.match(side, /<h2 class="fr-cap">In numbers<\/h2><\/div><div class="fr-card"><div class="fr-facts fr-f2"><div class="fr-fact"><div class="fr-v">974<\/div><div class="fr-l">live<\/div><\/div><div class="fr-fact"><div class="fr-v">8<\/div><div class="fr-l">challenges<\/div><\/div><\/div><\/div>/);
   assert.doesNotMatch(side, />kudos</);
-  assert.match(side, /<h2 class="fr-cap">This week<\/h2><button type="button" class="fr-link">Share<\/button><\/div><div class="fr-card"><div class="fr-facts fr-f2 fr-inset">.*?1h 18m.*?time in apps.*?8.*?apps opened.*?<\/div><div class="fr-facts fr-f2 fr-inset">.*?56.*?changes live.*?2.*?challenges done.*?<\/div><div class="fr-bars" role="img" aria-label="Time in apps each day">/s);
+  assert.match(side, /<h2 class="fr-cap">This week<\/h2><button type="button" class="fr-link">Share<\/button><\/div><div class="fr-card"><div class="fr-facts fr-f2 fr-inset">.*?1h 18m.*?time in apps.*?8.*?apps opened.*?<\/div><div class="fr-facts fr-f2 fr-inset">.*?56.*?changes live.*?2.*?challenges done.*?<\/div><div class="fr-bars" role="(?:img|list)" aria-label="Time in apps each day">/s);
   assert.equal((side.match(/class="fr-bcol/g) || []).length, 7, 'one bar a day');
-  assert.match(side, /<div class="fr-bcol" aria-hidden="true"><span class="fr-bv">37m<\/span><i style="height:100%"><\/i><span class="fr-bl">Sun<\/span><\/div>/, 'the busiest day says its time');
-  assert.match(side, /<div class="fr-bcol fr-now" aria-hidden="true">.*?<span class="fr-bl">Wed<\/span>/s, 'today is marked');
+  assert.match(side, /<div class="fr-bcol"[^>]*>(?:<span class="fr-sro">[^<]*<\/span>)?<span class="fr-bv"[^>]*>37m<\/span><i[^>]* style="height:100%"><\/i><span class="fr-bl"[^>]*>Sun<\/span><\/div>/, 'the busiest day says its time');
+  assert.match(side, /<div class="fr-bcol fr-now"[^>]*>.*?<span class="fr-bl"[^>]*>Wed<\/span>/s, 'today is marked');
   assert.match(side, /<div class="fr-foot fr-left">Last 7 days, by UTC day\. Only time inside apps counts\.<\/div><\/div>/);
   assert.doesNotMatch(columns(render({ stats: [{ key: 'merged', value: '0', label: 'live', zero: true }] })).side, /In numbers/);
   const empty = columns(render({ activity: { empty: true } })).side;

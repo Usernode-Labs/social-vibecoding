@@ -28267,9 +28267,8 @@ html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet .text-red-700 { col
    from on the sheet's ground: the one-row cards, Username and Account
    email, read as bare lines). The preview of the public page ("What's on
    it") is a card too: it was painted in the sheet's own colour. */
-html[data-skin][data-skin]:not([data-skin="brand"]) #profile-edit-sheet .un-group { box-shadow: inset 0 0 0 1px var(--fr-line); }
+html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet section > .un-group { box-shadow: inset 0 0 0 1px var(--fr-line); }
 html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet #public-profile-card { border-radius: 20px; background: var(--fr-surface); box-shadow: inset 0 0 0 1px var(--fr-line); color: var(--fr-ink); }
-html[data-skin="workbench"] #profile-edit-sheet #public-profile-card { border-radius: 10px; }
 html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet .text-emerald-700 { color: var(--fr-ok); }
 html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet .un-group-row .rounded-full.text-emerald-700 { align-items: center; height: 24px; padding: 0 10px; background: var(--fr-ok-t); font-size: 12px; font-weight: 700; }
 html[data-skin]:not([data-skin="brand"]) #profile-edit-sheet :is(input, textarea).bg-transparent { color: var(--fr-ink); font-size: 15px; }
@@ -28349,23 +28348,24 @@ html[data-skin="workbench"] .un-action-btn { min-height: 44px; font-size: 15px; 
    .un-popover; the action sheet is dressed above). Each is the product's
    own dialog in the kit's shell, so the shell wears the look once for all
    of them: the look's solid ground, its ink and type, the kit sheet's
-   corner, shadow and edge. The shell's own colour tokens are pointed at
-   the look's here, so what a dialog paints with them inside (a sticky
-   foot, a hairline, a muted line, the accent) follows without a rule per
-   dialog. Padding and width stay each dialog's own: rows inside reach to
+   corner, shadow and edge. The native kit's own colour tokens are pointed
+   at the look's here, so what a dialog paints with them inside (a
+   hairline, a muted line, the accent) follows without a rule per dialog. Padding and width stay each dialog's own: rows inside reach to
    the padding by its measure (the feedback form's sticky foot). The three
    You dialogs under this block and the notifications sheet keep their
    closer fit. */
 html[data-skin]:where(:not([data-skin="brand"])) :is(.un-modal, .un-sheet, .un-alert, .un-popover) {
   --un-sheet-bg: var(--fr-solid, var(--fr-ground)); --un-popover-bg: var(--fr-solid, var(--fr-ground));
-  --dc-sheet: var(--fr-solid, var(--fr-ground)); --dc-sheet-solid: var(--fr-solid, var(--fr-ground));
-  --dc-sheet-fill: var(--fr-solid, var(--fr-ground)); --dc-float-fill: var(--fr-solid, var(--fr-ground));
   --un-hairline: var(--fr-line); --un-muted: var(--fr-mut); --un-surface: var(--fr-sunk); --un-accent: var(--fr-acc);
   background-color: var(--fr-solid, var(--fr-ground));
   backdrop-filter: none; -webkit-backdrop-filter: none;
   color: var(--fr-ink); font-family: var(--fr-f);
 }
 html[data-skin]:where(:not([data-skin="brand"])) .un-sheet::after { background-color: var(--fr-solid, var(--fr-ground)); backdrop-filter: none; -webkit-backdrop-filter: none; }
+/* The feedback form names its own plane for the modal and for its sticky
+   foot (ids, which outweigh the rule above): both are the look's ground. */
+html[data-skin]:where(:not([data-skin="brand"])) .un-modal:has(#feedback-form),
+html[data-skin]:where(:not([data-skin="brand"])) .un-modal .feedback-actions { background-color: var(--fr-solid, var(--fr-ground)); }
 html[data-skin]:where(:not([data-skin="brand"])) .un-modal { --un-modal-radius: 24px; box-shadow: var(--fr-sh), inset 0 0 0 1px var(--fr-line); }
 html[data-skin]:where(:not([data-skin="brand"])) .un-sheet { border-radius: 24px 24px 0 0; box-shadow: var(--fr-sh), inset 0 1px 0 var(--fr-line); }
 html[data-skin]:where(:not([data-skin="brand"])) .un-sheet-grabber { background: var(--fr-line); }

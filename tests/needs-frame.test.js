@@ -26,7 +26,7 @@ const wearer = (name, piece) => wearers(name).find((w) => w.to.includes(piece));
 
 test('the place\'s head is the kit\'s title, sentence and places, with no button', () => {
   const page = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(page, /<ProjectFrameHead \{\.\.\.frameHead\} title=\{pageTitle\(tab\)\} purpose=\{framePurpose\} \/>/);
+  assert.match(page, /<ProjectFrameHead \{\.\.\.frameHead\} title=\{tab === 'workshop' && weekUp \? weekName\(weekUp\) : pageTitle\(tab\)\} purpose=\{framePurpose\} \/>/);
   assert.match(page, /: tab === 'needs' \? t\('project:frame\.place\.needs', \{ project: projectName \}\)/);
   assert.match(page, /\{ key: 'needs', label: t\('project:places\.list\.needsYou'\), count: owed \}/, 'the tab counts the votes owed');
   const frame = read('frontend/src/features/dev-board/workshop/frame/project-frame.tsx');

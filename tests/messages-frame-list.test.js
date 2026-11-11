@@ -84,7 +84,7 @@ test('a conversation with something new ends in the blue pill, the others in a g
 
 test('the open conversation\'s row is lit, and every row is a link to its own address', () => {
   const html = render();
-  assert.match(html, /<a class="fr-row fr-on" href="#messages\/4" aria-current="page">/);
+  assert.match(html, /<a class="fr-row fr-on" href="#messages\/4" aria-current="page" data-inbox-row="[^"]+">/);
   assert.equal((html.match(/<a class="fr-row/g) || []).length, 3);
   assert.equal((html.match(/class="fr-row fr-on"/g) || []).length, 1);
 });

@@ -106,10 +106,10 @@ test('the page is the kit\'s: the head with one fixed sentence, the search field
   for (const c of classes) assert.match(c, /^fr(-|$)|^home-tone-[a-z]+$/, `${c} is not a kit class`);
 });
 
-test('what the first tour invented is gone: no Needs you rows, Live this week, Your week, season, picture cards or pages', () => {
+test('what the first tour invented is gone: no Needs you rows, Live this week, Your week, season, Featured strip or pages', () => {
   const html = render({ initialDirectory: [{ slug: 'star', name: 'Star', featured: true, illustration_url: '/i/9' }] }, homeStubs({ apps: [app('a', 'Alpha')], pins: [pin('p', 'Pourover')], owed: { p: 2 }, needs: 2, challenges: CHALLENGES }));
   for (const id of ['home-frame-needs"', 'home-frame-live', 'home-frame-week', 'home-frame-featured']) assert.doesNotMatch(html, new RegExp(`id="${id}`), id);
-  assert.doesNotMatch(html, /Live this week|Your week|Season|Make a project|Browse all|fr-fcard|fr-ccard|fr-facts/);
+  assert.doesNotMatch(html, /Live this week|Your week|Season|Make a project|Browse all|fr-ccard|fr-facts/);
   for (const gone of ['needs-feed', 'bot-questions', 'live-feed', '/api/workshop/counts', 'MyStanding', 'HomeAllApps', 'HomeAllCommunities', 'useFramePage', 'APPS_SHOWN', 'JOIN_SHOWN', 'fetch(']) {
     assert.ok(!SRC.includes(gone), `${gone} is no longer read`);
   }
@@ -231,7 +231,8 @@ test('a search finds a community you have not pinned, faded, with a + to pin it'
   assert.doesNotMatch(g, /Alpha|home-frame-needs-tile|home-frame-new-community|>Edit</, 'only what matches; the section\'s own tiles and Edit wait for the search to end');
 });
 
-test('Communities to join: the kind filter, Featured as cards, then the rest as rows, each with a real Join', () => {
+// Group D (left-overs): a member's directory is picture cards with their line and Join, as the standard Home draws them.
+test('Communities to join: the kind filter, Featured first, every one a picture card with its line and a real Join', () => {
   const dir = [
     { slug: 'plain', name: 'Plain', member_count: 3, description: 'A plain one.', category: 'games' },
     { slug: 'busy', name: 'Busy', member_count: 30, open_votes: 2, category: 'social' },
@@ -242,13 +243,14 @@ test('Communities to join: the kind filter, Featured as cards, then the rest as 
   const html = render({ initialDirectory: dir }, homeStubs({ pins: [pin('mine', 'Mine')] }));
   const g = group(html, 'home-frame-to-join');
   assert.match(g, /<h2 class="fr-cap">Communities to join<\/h2><\/div><div class="fr-btnrow fr-chips" role="group" aria-label="[^"]+"><button type="button" class="fr-btn fr-sm" aria-pressed="true" data-home-join-kind="all">All<\/button><button type="button" class="fr-btn fr-quiet fr-sm" aria-pressed="false" data-home-join-kind="games">Games<\/button>/);
-  assert.match(g, /<h3 class="fr-cap fr-sub">Featured<\/h3><div class="fr-grid fr-across fr-c2" data-home-join-featured=""><div class="fr-card fr-pad fr-hcard"><span class="fr-hc-top"><span class="fr-tile" style="--fr-ts:44px;--fr-tc:#fff" aria-hidden="true">🌙<\/span><button type="button" class="fr-btn fr-sm" data-home-join="moon" aria-label="Join Moon">Join<\/button><\/span><span class="fr-t2"><a class="fr-door" href="\/app\/moon\/workshop\?ws=status">Moon<\/a><\/span><span class="fr-s2">4 members<\/span><\/div>/, 'in their featured order: the tile and Join, the name as the door, the standard line');
-  assert.match(g, /<span class="fr-t2"><a class="fr-door" href="\/app\/star\/workshop\?ws=status">Star<\/a><\/span><span class="fr-s2">9 members<\/span><span class="fr-s2 fr-two">Twelve small games\.<\/span>/);
-  assert.match(g, /<div class="fr-card"><div class="fr-row"><span class="fr-tile"[^>]*>P<\/span><span class="fr-tx"><span class="fr-t"><a class="fr-door" href="\/app\/plain\/workshop\?ws=status">Plain<\/a><\/span><span class="fr-s">3 members<\/span><\/span><button type="button" class="fr-btn fr-sm" data-home-join="plain" aria-label="Join Plain">Join<\/button><\/div>/);
-  assert.match(g, /<span class="fr-s">2 up for a vote<\/span>/, 'votes when a change waits, else members: the standard footer\'s rule');
+  assert.match(g, /<h3 class="fr-cap fr-sub">Featured<\/h3><div class="fr-grid fr-c2" data-home-join-featured=""><div class="fr-card fr-fcard" data-home-join-card="moon"><a class="fr-fdoor" href="\/app\/moon\/workshop\?ws=status"><span class="fr-fcover[^>]*>.*?🌙.*?<span class="fr-t">Moon<\/span><\/span><\/a><div class="fr-fm"><span class="fr-fmt">4 members<\/span><button type="button" class="fr-btn fr-sm" data-home-join="moon" aria-label="Join Moon">Join<\/button><\/div><\/div>/s, 'in their featured order: the picture or the tile on the community\'s colour as the door, then the standard line and Join beside it, never inside the link');
+  assert.match(g, /<span class="fr-t">Star<\/span><span class="fr-s fr-two">Twelve small games\.<\/span><\/span><\/a><div class="fr-fm"><span class="fr-fmt">9 members<\/span>/);
+  assert.match(g, /<div class="fr-grid" data-home-join-rest=""><div class="fr-card fr-fcard" data-home-join-card="[a-z]+">/, 'the rest follow as the same cards');
+  assert.match(g, /<span class="fr-fmt">3 members<\/span><button type="button" class="fr-btn fr-sm" data-home-join="plain" aria-label="Join Plain">Join<\/button>/);
+  assert.match(g, /<span class="fr-fmt">2 up for a vote<\/span>/, 'votes when a change waits, else members: the standard footer\'s rule');
   assert.doesNotMatch(g, /Mine/, 'what is already on this Home is left out');
   assert.equal(count(g, />Moon</g), 1, 'a featured community is not listed twice');
-  assert.doesNotMatch(g, /fr-fcard|Browse all|Public community/, 'no picture cards, no Browse all');
+  assert.doesNotMatch(g, /fr-hcard|Browse all|Public community/, 'no text cards, no Browse all');
   assert.match(SRC, /void win\(\)\?\.Home\?\.setMembership\?\.\(app\.slug, true\)/, 'Join is Home.setMembership, which joins and pins');
   // The list itself is drawn by ./to-join.tsx, the one drawing Home shares with the landing (looks v2, lane G).
   const JOIN = read('frontend/src/features/home/frame/to-join.tsx');
@@ -259,7 +261,7 @@ test('Communities to join: the kind filter, Featured as cards, then the rest as 
   assert.match(JOIN, /t\('home:join\.empty'\) : t\('home:join\.allJoined'\)/);
   const searched = group(render({ initialDirectory: dir }, homeStubs({ query: 'star' })), 'home-frame-to-join');
   assert.doesNotMatch(searched, /Featured|fr-chips/, 'a search leaves Featured and the filter out: its matches are the list');
-  assert.match(searched, /<span class="fr-t"><a class="fr-door" href="\/app\/star\/workshop\?ws=status">Star<\/a>/);
+  assert.match(searched, /<a class="fr-fdoor" href="\/app\/star\/workshop\?ws=status">.*?<span class="fr-t">Star<\/span>/s);
 });
 
 test('Next challenges is the side column: Home\'s own strip as rows', () => {

@@ -1154,9 +1154,10 @@ frame files. Captures: `skins-tour-v2/local/caps/ld-b-*.png` (before) and `ld-a-
 **Every native-kit shell wears the look (app.css, "EVERY MODAL, SHEET, ALERT AND MENU OF THE NATIVE KIT").**
 One rule for `.un-modal`, `.un-sheet`, `.un-alert` and `.un-popover`: the look's solid ground, ink and type,
 the kit sheet's corner (24px, Workbench 12px), shadow and edge, and the shell's own colour tokens
-(`--un-sheet-bg`, `--un-popover-bg`, `--dc-sheet`, `--dc-sheet-solid`, `--un-hairline`, `--un-muted`,
-`--un-accent`) pointed at the look's, so what a dialog paints with them inside (the feedback form's sticky
-foot) follows. An alert's answers are in the accent, a destructive one in the look's red; a menu's rows are
+(`--un-sheet-bg`, `--un-popover-bg`, `--un-hairline`, `--un-muted`, `--un-accent`) pointed at the look's, so
+what a dialog paints with them inside follows. The shell's plane tokens (`--dc-sheet…`) are not redeclared
+(two suites hold them to one declaration a theme); the feedback form and its sticky foot, which name that
+plane by id, are given the look's ground by name. An alert's answers are in the accent, a destructive one in the look's red; a menu's rows are
 the kit's small rows. Padding and width stay each dialog's own. The action sheet (group B) and the three You
 dialogs keep their rules, which come after and weigh more. Seen: Invite to community, Who can see & change
 it, a confirm, the feedback dialog, members and approvals, Share, Topics, in Glass, Paper and Workbench dark
