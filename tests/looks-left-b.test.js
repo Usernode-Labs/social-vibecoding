@@ -161,3 +161,46 @@ test('All items: a category\'s figures read on one line, its counts are the kit\
   assert.ok(wearers('cap').some((to) => to.includes('.dev-ws-sort > .dev-ws-eyebrow')), 'the eyebrow that says it wears the kit\'s label');
   assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /v\.meta\.source === 'ai' \? t\('project:allItems\.grouping\.redrafting'\) : t\('project:allItems\.grouping\.drafting'\)/);
 });
+
+// ── A request's and a change's page on a phone (v3, s32 to s35) ────────
+test('a request and a change: what scrolls fades out under the pinned head, and on a phone Jump to latest stands clear of the labels', () => {
+  const hand = block('/* A REQUEST\'S AND A CHANGE\'S PAGE UNDER ITS HEAD', '/* THE BOARD IS THE STRIP');
+  assert.ok(hand.includes('html[data-skin] #dev-topic-thread .dev-request #gc-thread-scroll { -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 16px); mask-image: linear-gradient(to bottom, transparent 0, black 16px); }'), 'the head is over the page at every width');
+  assert.match(hand, /@media \(max-width: 767\.98px\) \{\n\s+html\[data-skin\] #dev-topic-thread \.dev-request :has\(> \[data-jump-latest\]\) \{ justify-content: flex-end; padding-inline: 16px; \}/, 'the disc at the row\'s end, on a phone');
+  assert.ok(hand.includes(`${LOOK} :is(#dev-topic-thread, .messages-screen) [data-jump-latest] { background: var(--fr-solid, var(--fr-surface)); color: var(--fr-ink);`), 'and it is the kit\'s round button');
+  assert.ok(hand.includes('html[data-skin="paper"] .dev-change-pair .dev-change-gate-act .gc-vote-btn { background: var(--fr-surface); }'));
+  // The standard page opens at the end of the discussion too: where the page opens is not the look's to change.
+  assert.doesNotMatch(read('frontend/src/features/dev-board/topic/frame/topic-frame.tsx'), /scrollTop|scrollTo\(/);
+});
+
+// ── A project's pages ───────────────────────────────────────────────────
+test('a place\'s own body starts where its look\'s page does', () => {
+  assert.match(css, /@media \(min-width: 768px\) \{\n\s+html\[data-skin="paper"\] \.dev-ws > \[data-project-frame\] ~ \.dev-ws-tabbody \{ padding-inline: 40px; \}\n\s+html\[data-skin="today"\] \.dev-ws > \[data-project-frame\] ~ \.dev-ws-tabbody \{ padding-inline: 36px; \}\n\}/);
+  const kit = (look) => read('frontend/looks', `${look}.css`);
+  assert.match(kit('paper'), /\.inner\{padding:36px 40px 48px\}/, 'Paper\'s page is 40px in');
+  assert.match(kit('today'), /\.inner\{padding:20px 36px 56px\}/, 'Today\'s is 36px');
+});
+
+// ── Challenges and Standings ────────────────────────────────────────────
+test('Challenges and Standings say "You, Challenges" to the bar, and go back the way the shell\'s arrow goes', () => {
+  const frame = read('frontend/src/features/leaderboard/frame/challenges-frame.tsx');
+  assert.match(frame, /const shellBack = \(\) => \{ document\.getElementById\('back-btn'\)\?\.click\(\); \};/);
+  assert.match(frame, /const crumb = \[you, here\];\n\s+framePageStore\.set\(\{ crumb, onBack: shellBack \}\);\n\s+return \(\) => \{ if \(framePageStore\.get\(\)\.crumb === crumb\) framePageStore\.set\(\{ crumb: null, onBack: null \}\); \};/, 'a pane going down takes back only its own crumb: the two tabs are two panes');
+  assert.equal((frame.match(/useChallengesCrumb\(up\);/g) || []).length, 2, 'both tabs, while each is the one on show');
+  assert.match(frame, /const you = tc\('core:tabs\.me'\);\n\s+const here = t\('leaderboard:tabs\.challenges'\);/, 'words the product already has');
+});
+
+// ── Make's sheets, You's tabs ───────────────────────────────────────────
+test('Make\'s two sheets are the kit\'s sheet where they stand; You\'s six tabs fade out at the row\'s end on a phone', () => {
+  const hand = block('/* MAKE\'S TWO SHEETS', '/* MAKE AND IMPORT IN THE KIT');
+  const S = `${LOOK} :is([data-make-rule-sheet], [data-make-more-sheet]) > [role="dialog"]`;
+  assert.match(hand, /> \[role="dialog"\] \{\n\s+padding-inline: 24px; border-radius: 24px 24px 0 0;\n\s+background: var\(--fr-solid, var\(--fr-ground\)\); color: var\(--fr-ink\); font-family: var\(--fr-f\);/);
+  assert.ok(hand.includes(`${S} [data-who-preset][aria-checked="true"] { box-shadow: inset 0 0 0 2px var(--fr-acc); }`), 'the picked preset has the accent\'s ring');
+  assert.ok(hand.includes(`${S} [data-make-rule-done] { height: 44px; padding: 0 20px; background: var(--fr-acc); color: var(--fr-acc-ink); font: 650 15px/1 var(--fr-f); }`), 'Done is the kit\'s button');
+  assert.ok(wearers('title').includes(':is([data-make-rule-sheet],[data-make-more-sheet]) > [role="dialog"] h2[id]'));
+  assert.ok(wearers('cap').includes(':is([data-make-rule-sheet],[data-make-more-sheet]) > [role="dialog"] h2:not([id])'));
+  for (const line of rules(hand)) assert.doesNotMatch(line, /#[0-9a-f]{3,8}\b(?![\w-])|rgba?\(/i, 'kit tokens only');
+  for (const file of ['frontend/src/features/first-session/more-sheet.tsx']) assert.doesNotMatch(read(file), /isFrameSkin|useLiveSkin/, 'the sheet does not branch on the look');
+  assert.ok(css.includes('html[data-skin]:not([dir="rtl"]) [data-you-frame] .fr-tabs { -webkit-mask-image: linear-gradient(to right, black calc(100% - 28px), transparent);'));
+  assert.ok(css.includes('html[data-skin][dir="rtl"] [data-you-frame] .fr-tabs { -webkit-mask-image: linear-gradient(to left, black calc(100% - 28px), transparent);'));
+});

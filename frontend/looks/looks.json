@@ -359,6 +359,9 @@
           },
           {
             "to": "form[data-waiting-about=\"ask\"] > h2"
+          },
+          {
+            "to": ":is([data-make-rule-sheet],[data-make-more-sheet]) > [role=\"dialog\"] h2:not([id])"
           }
         ]
       },
@@ -396,6 +399,9 @@
           },
           {
             "to": ":is(#profile-app-slots-sheet,#profile-week-share-sheet,#profile-feedback-sheet) h2"
+          },
+          {
+            "to": ":is([data-make-rule-sheet],[data-make-more-sheet]) > [role=\"dialog\"] h2[id]"
           }
         ]
       },

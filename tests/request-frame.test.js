@@ -247,9 +247,15 @@ test('the discussion is the product\'s stream in one card under its count, what 
   assert.match(phone, new RegExp(`${P}\\.dev-request-root > \\[data-image-viewer-scope\\] \\{ display: flex; flex-direction: column; \\}`));
   assert.match(phone, new RegExp(`${P}\\.dev-request-root > \\[data-image-viewer-scope\\] > :is\\(\\.dev-change-status, \\.dev-request-track, \\.dev-request-at\\) \\{ order: -2; margin: 0 0 24px; \\}`));
   assert.match(phone, new RegExp(`${P}\\.dev-request-root > \\[data-image-viewer-scope\\] > :is\\(\\.dev-change-pair-mark, \\.dev-change-pair\\) \\{ order: -1; \\}`), 'the mark stays just before the pair: it is what says the pair has stuck');
-  // The stream itself is not touched: transcript.tsx draws what it drew.
+  // The stream is the product's: transcript.tsx draws what it drew, but for a line's glyph, which under a look is the kit's icon.
   const stream = read('frontend/src/features/group-chat/transcript.tsx');
   assert.match(stream, /<div className="gc-msg-system dev-request-event" data-msg-id=\{msg\.id \?\? ''\} data-request-event=/);
-  assert.match(stream, /<span className="dev-request-event-glyph" aria-hidden="true">\{glyph\}<\/span>/);
+  assert.match(stream, /<span className="dev-request-event-glyph" aria-hidden="true">\{drawn\(glyph\)\}<\/span>/);
+  assert.match(stream, /<span className="dev-request-event-glyph" aria-hidden="true">\{drawn\(line\.glyph\)\}<\/span>/);
+  assert.match(stream, /const EVENT_ICONS: Record<string, string> = \{ '📋': 'file', '✋': 'hand', '👀': 'eye', '✅': 'check', '🗳️': 'vote', '🎉': 'rocket' \};/, 'each emoji a line names has an icon of the kit\'s');
+  assert.match(stream, /return \(glyph\) => \(frame && EVENT_ICONS\[glyph\] \? <KitIcon name=\{EVENT_ICONS\[glyph\]\} size=\{16\} \/> : glyph\);/, 'the standard look, and a glyph with no icon, keep the emoji');
+  assert.equal((stream.match(/const drawn = useEventGlyph\(\);/g) || []).length, 2, 'the look is read once per line, at the top of each of the two lines');
+  assert.ok(stream.indexOf('const drawn = useEventGlyph();\n  const line = changeLine(msg);\n  if (!line) return null;') > 0, 'before the line a change\'s event may return on');
+  assert.match(hand, new RegExp(`${P}#dev-topic-thread #gc-thread-messages \\.dev-request-event \\.dev-request-event-glyph:not\\(:has\\(> svg\\)\\) \\{ font-size: 14px; filter: grayscale\\(1\\); opacity: \\.7; \\}`), 'only an emoji is drawn small and grey');
   assert.match(stream, /<div className="messages-reply-count" data-request-replies=\{count\}>/);
 });

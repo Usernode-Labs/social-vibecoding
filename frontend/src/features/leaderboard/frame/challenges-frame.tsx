@@ -14,12 +14,36 @@
  * ../topochain-standings.tsx, ../event-bar.tsx) with another face. A
  * challenge's own page is still the pane's.
  */
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import type * as React from 'react';
 import { Btn, Card, Cols, Frame, Head, Icon, Lead, Meta, Note, PageBody, Pill, Row, Sec, Tabs, k } from '@/components/ui/kit';
 import { TONE_FILL, resolveIllustration } from '../../../lib/challenge-illustrations';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { useFrameFlag } from '../../frame/frame-flag';
+import { framePageStore } from '../../frame/frame-page-store';
+
+/**
+ * Where the bar says these two tabs are: You, then Challenges (the tour's
+ * s53 to s55; the page is reached from You's Rewards row). The way back is
+ * the shell's own back, pressed as the frame's bar presses it, so it goes
+ * where the standard header's arrow goes.
+ */
+const shellBack = () => { document.getElementById('back-btn')?.click(); };
+function useChallengesCrumb(up: boolean) {
+  const t = useMessages('leaderboard');
+  const tc = useMessages('core');
+  const you = tc('core:tabs.me');
+  const here = t('leaderboard:tabs.challenges');
+  // The two tabs are two panes, each mounted behind the other: the one going
+  // down takes back only what it published itself, so it never clears the
+  // crumb the other has just put up.
+  useEffect(() => {
+    if (!up) return undefined;
+    const crumb = [you, here];
+    framePageStore.set({ crumb, onBack: shellBack });
+    return () => { if (framePageStore.get().crumb === crumb) framePageStore.set({ crumb: null, onBack: null }); };
+  }, [up, you, here]);
+}
 
 /** A challenge as the pane's card has it: `goal` is its name ("Use apps for 10 minutes"), `label` its kind ("Weekly"). */
 interface CardLike {
@@ -115,6 +139,7 @@ export function ChallengesFrame({ up = true, tabs, onTab, state = 'cards', error
   standing: FrameStanding | null;
 }) {
   useFrameFlag('challenges-frame', up);
+  useChallengesCrumb(up);
   const t = useMessages('leaderboard');
   const counts = progress ? { done: progress.done, count: progress.total } : null;
   return (
@@ -203,6 +228,7 @@ export function StandingsFrameHead({ up = true, tabs, onTab }: {
   onTab: (key: string) => void;
 }) {
   useFrameFlag('standings-frame', up);
+  useChallengesCrumb(up);
   const t = useMessages('leaderboard');
   return (
     <Frame data-standings-frame="">
