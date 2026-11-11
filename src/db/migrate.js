@@ -118,6 +118,10 @@ async function migrate(config) {
   // answer when asked for the link. Staging has no model, so both replies
   // are stored messages.
   await seedStagingBotReportReply(pool);
+  // #6581's shots: a request whose build failed twice, with a reply under the
+  // first failure note. The change keeps that note and posts the second note
+  // below it. Staging runs no build, so the thread is seeded.
+  await seedStagingBotFailureNotes(pool);
   // #6426's shots: Main Chat shows "Welcome back" after a day away, so the
   // capture member's chat with the bot has a visit old enough to show it.
   await seedStagingMainChatLastVisit(pool);
@@ -2700,6 +2704,75 @@ async function seedStagingBotReportReply(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging bot report reply seeding failed', { message: err.message });
+  }
+}
+
+// #6581 (11 Nov 2026): a failure note with new words, or one somebody has
+// replied under, stays as it was posted and the new note goes below it. A
+// staging copy runs no build, so this seeds the after state for the shots:
+// a request whose build failed twice, with the shots' member fixture
+// (usernode-capture) answering under the first note. Obviously fake,
+// idempotent by request number and its stagingDemo marks, and a no-op
+// outside staging. Nothing here is a signal the bot decides on.
+async function seedStagingBotFailureNotes(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
+    );
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query(
+      `SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')`,
+    );
+    const appId = apps.rows[0]?.id;
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    if (!appId || !member || !bot || member.id === bot.id) return;
+    const number = 9116;
+    const title = 'Staging demo: a request whose build failed twice';
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, $3, 'Staging demo: obviously fake. Its build failed, so the bot said so.', $4, NOW() - INTERVAL '3 hours', NOW() - INTERVAL '3 hours'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [appId, number, title, member.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+       VALUES ($1, $2, $3, $4) ON CONFLICT (app_id, issue_number) DO NOTHING`,
+      [appId, number, member.id, title],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, error, created_at)
+       SELECT $1, $2, 'live', 'failed', 'Staging demo: the build took longer than it is allowed.', NOW() - INTERVAL '2 hours'
+        WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs
+                           WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = 'failed')`,
+      [appId, number],
+    );
+    const note = async (mark, userId, content, minutesAgo) => pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+       SELECT $1, $2, $3, 'message', 'issue', $4, $5, NOW() - ($6::int * INTERVAL '1 minute')
+        WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                           WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $4
+                             AND metadata->>'stagingDemo' = $7)`,
+      [appId, userId, content, number, JSON.stringify({ stagingDemo: mark }), minutesAgo, mark],
+    );
+    await note(
+      'failure-note-1', bot.id,
+      'I couldn\'t finish building this: something went wrong during the build. Reply here and it will try again.',
+      120,
+    );
+    await note('failure-reply', member.id, 'Staging demo: could it be the deployment step?', 90);
+    // What the change does: a failure that says something different is a new
+    // note below the one that was answered, never a rewrite of it.
+    await note(
+      'failure-note-2', bot.id,
+      'I couldn\'t finish building this: the build took longer than it\'s allowed. Reply here and it will try again.',
+      30,
+    );
+  } catch (err) {
+    log.warn('db', 'Staging bot failure notes seeding failed', { message: err.message });
   }
 }
 
