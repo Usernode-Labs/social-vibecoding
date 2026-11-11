@@ -66,6 +66,7 @@ import { TopicBack } from './topic-back';
 import { saveIssueBody } from './topic-head';
 import { OwnAgentLink } from './own-agent-link';
 import { requestMenuKey, useThreadMenu } from './thread-menu';
+import { holdTopInView, isVotesInViewAsked } from './votes-in-view';
 import { usePanelHead } from '../../side-panel/head-store';
 import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
 import { useFramePage } from '../../frame/frame-page-store';
@@ -572,8 +573,24 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // #6387: the row says a change addresses this request, so while its thread
   // is still being read the page holds the change section's place instead of
   // drawing a status card that may contradict it ("needs 1 more yes" while a
-  // check has failed) and swapping it out a moment later.
-  const holding = !r.status.closed && !!r.status.changeExpected && threadRead.loading;
+  // check has failed) and swapping it out a moment later. #6604: the same
+  // hold covers a request with no change yet — the plan card waits for the
+  // thread, so the panel does not draw the plan and then replace it with a
+  // change's line.
+  const holding = !r.status.closed && threadRead.loading;
+  // #6604: a thread opens at its top and stays there while its change's
+  // pieces fill in below, unless a door asked for the Votes card — the
+  // change's own, or the request's vote to close.
+  const topHeld = useRef<number | null>(null);
+  useEffect(() => {
+    if (topHeld.current === r.number) return undefined;
+    topHeld.current = r.number;
+    if (isVotesInViewAsked(r.number)) return undefined;
+    const closeId = layout.close ? layout.close.id : null;
+    if (closeId != null && isVotesInViewAsked(`close:${closeId}`)) return undefined;
+    if (typeof document === 'undefined') return undefined;
+    return holdTopInView(document.getElementById('gc-thread-scroll'));
+  }, [r.number, layout.close?.id]);
   // Once a change is built for it (or a vote to close it is open), the
   // change's own cards say where it stands, so the steps and the bot's track
   // give way to them; a closed request still says how it ended. A change

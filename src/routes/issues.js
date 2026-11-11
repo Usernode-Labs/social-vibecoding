@@ -246,6 +246,50 @@ function shouldCreateGithubTwin(kind) {
 // them naturally. Strictly a no-op in production.
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
+// Staging: the [Mock] rows carry no topic_attribute_votes, so a few get a
+// synthetic priority / assignee / category summary. BOTH the board's list and
+// a request opened by its own number apply it, so the chips read the same
+// whichever way the page was reached (#6604).
+function stagingMockAttrs(viewer) {
+  return new Map([
+      // Clear leader on all fields; the viewer is their own assignee.
+      [900001, {
+        priority: { top: 'high', count: 3, myValue: null },
+        assignee: { top: viewer, count: 2, myValue: viewer },
+        // #504: a clear category leader (count 3) so the chip + colour
+        // and the category filter dropdown are reviewable.
+        category: { top: 'bug', count: 3, myValue: null },
+      }],
+      // A tie (count 1 vs 1) — the earlier-suggested value wins the chip.
+      [900003, {
+        priority: { top: 'low', count: 1, myValue: null },
+        assignee: { top: 'staging-demo-user', count: 1, myValue: null },
+        category: { top: 'docs', count: 1, myValue: null },
+      }],
+      // #489: a third assignee whose first letter (M) differs from the
+      // others (S), so the deterministic initial-avatar colouring is
+      // reviewable across several visibly-distinct avatars on the board.
+      [900006, {
+        priority: { top: 'medium', count: 2, myValue: null },
+        assignee: { top: 'maya-builder', count: 3, myValue: null },
+        // A second, distinct category leader so the filter has choices.
+        category: { top: 'feature', count: 2, myValue: null },
+      }],
+      // #780: a CUSTOM category leader, matching one of the two demo
+      // entries listCategories() appends in staging — so the custom chip
+      // colour, and narrowing the board by a custom category in the
+      // filter bar, are both reviewable in a preview.
+      [900007, {
+        priority: { top: 'high', count: 1, myValue: null },
+        assignee: { top: 'staging-demo-user', count: 1, myValue: null },
+        category: { top: 'staging-demo-perf', count: 2, myValue: null },
+      }],
+      // 900002 deliberately left untouched → muted "Set priority" /
+      // "Unassigned" / "Set category"; opening its assignee dropdown
+      // pre-fills the viewer's own username.
+    ]);
+}
+
 // Whether requests can be read and written here. Requests are Homeroom's
 // own rows (services/requests.js) since GitHub suspended the account that
 // filed them, so always, except on a staging copy without GitHub, which keeps
@@ -2791,43 +2835,7 @@ function issueRoutes(config) {
         // 900002 stays untouched (Unassigned) so opening ITS dropdown shows
         // the name box PRE-FILLED with the viewer's username.
         const viewer = (req.user && req.user.username) || 'staging-tester';
-        const mockAttrs = new Map([
-          // Clear leader on all fields; the viewer is their own assignee.
-          [900001, {
-            priority: { top: 'high', count: 3, myValue: null },
-            assignee: { top: viewer, count: 2, myValue: viewer },
-            // #504: a clear category leader (count 3) so the chip + colour
-            // and the category filter dropdown are reviewable.
-            category: { top: 'bug', count: 3, myValue: null },
-          }],
-          // A tie (count 1 vs 1) — the earlier-suggested value wins the chip.
-          [900003, {
-            priority: { top: 'low', count: 1, myValue: null },
-            assignee: { top: 'staging-demo-user', count: 1, myValue: null },
-            category: { top: 'docs', count: 1, myValue: null },
-          }],
-          // #489: a third assignee whose first letter (M) differs from the
-          // others (S), so the deterministic initial-avatar colouring is
-          // reviewable across several visibly-distinct avatars on the board.
-          [900006, {
-            priority: { top: 'medium', count: 2, myValue: null },
-            assignee: { top: 'maya-builder', count: 3, myValue: null },
-            // A second, distinct category leader so the filter has choices.
-            category: { top: 'feature', count: 2, myValue: null },
-          }],
-          // #780: a CUSTOM category leader, matching one of the two demo
-          // entries listCategories() appends in staging — so the custom chip
-          // colour, and narrowing the board by a custom category in the
-          // filter bar, are both reviewable in a preview.
-          [900007, {
-            priority: { top: 'high', count: 1, myValue: null },
-            assignee: { top: 'staging-demo-user', count: 1, myValue: null },
-            category: { top: 'staging-demo-perf', count: 2, myValue: null },
-          }],
-          // 900002 deliberately left untouched → muted "Set priority" /
-          // "Unassigned" / "Set category"; opening its assignee dropdown
-          // pre-fills the viewer's own username.
-        ]);
+        const mockAttrs = stagingMockAttrs(viewer);
         for (const issue of issues) {
           const m = mockAttrs.get(issue.number);
           if (m && (!issue.priority || !issue.priority.top) && (!issue.assignee || !issue.assignee.top)) {
@@ -2978,6 +2986,17 @@ function issueRoutes(config) {
       const attrs = (await topicAttrs.summarizeForTargets(
         pool, app.id, 'issue', [number], req.user.id
       )).get(number) || topicAttrs.emptySummary();
+      // #6604: the page reads this row on its own now, without the board's
+      // list, so the same staging [Mock] chips the list seeds are applied
+      // here — a request opened by number shows its category and priority.
+      if (IS_STAGING) {
+        const m = stagingMockAttrs((req.user && req.user.username) || 'staging-tester').get(number);
+        if (m && (!attrs.priority || !attrs.priority.top) && (!attrs.assignee || !attrs.assignee.top)) {
+          attrs.priority = m.priority;
+          attrs.assignee = m.assignee;
+          attrs.category = m.category;
+        }
+      }
       // #2431: for a CLOSED issue this is the whole answer to "what closed
       // this?" — the merged change that linked it. Same resolver the list
       // uses, so both pages name the same proposal.

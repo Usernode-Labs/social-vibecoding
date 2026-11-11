@@ -1,18 +1,17 @@
-// Fast open for topic pages (#4524): a request, proposal or governance page
-// opened from a notification, a message card or any other link draws as soon
-// as ITS OWN item has loaded, instead of waiting for the project's whole
-// board. Covers the app-view.js changes:
-//   1. _renderTopicSubView starts the board load UNAWAITED and mounts an
-//      issue's / governance thread for the ref alone, before any item is
-//      known.
-//   2. The page paints from whichever resolves the item first — the
-//      same-app lists (already loaded), an on-demand cache, or the item's
-//      own single fetch — and the board's arrival repaints the head from
-//      its list row.
+// Fast open for topic pages (#4524, #6604): a request, proposal or
+// governance page opened from a notification, a message card or any other
+// link draws as soon as ITS OWN item has loaded, instead of waiting for the
+// project's whole board — and it does not load the board at all.
+// Covers the app-view.js changes:
+//   1. _renderTopicSubView mounts an issue's / governance thread for the ref
+//      alone, before any item is known, and starts the thread's own read in
+//      the same tick as the item read. No _loadDevData runs.
+//   2. The page paints from the same-app lists (already loaded), an on-demand
+//      cache, or the item's own single fetch; the item read then refreshes the
+//      head, rather than a board load.
 //   3. The lists answer only for the app _devDataSlug names, so another
 //      app's row #30 is never painted under this app's name.
-//   4. The board failing no longer sinks a page the item can paint; both
-//      missing still falls back to the board, only after both settle.
+//   4. A missing item still falls back to the board, after its read settles.
 //   5. `topic_load` records success, failure (not_found) and cancel.
 //
 // app-view.js is a plain browser script; we load its source into a vm
@@ -144,8 +143,8 @@ function makeAppView({ board = null, fetchImpl } = {}) {
 
 const ISSUE = { kind: 'issue', id: 30 };
 
-async function tick(n = 4) {
-  for (let i = 0; i < n; i += 1) await Promise.resolve();
+async function tick(n = 6) {
+  for (let i = 0; i < n; i += 1) await new Promise((resolve) => setImmediate(resolve));
 }
 
 test('an issue head paints once its single fetch answers, board still pending', async () => {
@@ -176,13 +175,14 @@ test('an issue head paints once its single fetch answers, board still pending', 
     'topic_load records success at the first paint',
   );
 
-  // The board's arrival repaints the head from its list row.
+  // The board's arrival no longer repaints the head: a thread page does not
+  // load the board at all (#6604). The item read is what paints it.
   h.AppView._ghIssues = [{ number: 30, title: 'Issue 30 of demo', state: 'open' }];
   h.AppView._devDataSlug = 'demo';
   board.resolve(true);
   await tick();
-  assert.equal(h.heads.length, 2, 'the board landing repaints the head');
-  assert.equal(h.heads[1].title, 'Issue 30 of demo', 'from the list row, not the single-item row');
+  assert.equal(h.heads.length, 1, 'the board landing repaints nothing');
+  assert.equal(h.heads[0].title, 'Issue 30', 'the page keeps the row its own read painted');
 });
 
 test('another app\'s row #30 is never painted under this app\'s name', async () => {
@@ -208,27 +208,37 @@ test('another app\'s row #30 is never painted under this app\'s name', async () 
   assert.deepEqual(h.switchTabCalls, []);
 });
 
-test('a board that already holds the item paints at once and buys no second fetch', async () => {
+test('a board that already holds the item paints at once, then refreshes from its own read', async () => {
   const board = deferred();
+  const item = deferred();
   const h = makeAppView({
     board,
-    fetchImpl: (url) => {
-      assert.fail(`no request should be needed, got ${url}`);
-    },
+    fetchImpl: (url) => (
+      /\/github-issues\/30$/.test(url)
+        ? item.promise.then(() => ({ ok: true, json: async () => ({ issue: { number: 30, title: 'Issue 30 (read now)', state: 'open' } }) }))
+        : Promise.resolve({ ok: false, status: 404, json: async () => ({}) })
+    ),
   });
   h.AppView._ghIssues = [{ number: 30, title: 'Issue 30 of demo', state: 'open' }];
   h.AppView._devDataSlug = 'demo';
 
-  await h.AppView._renderTopicSubView(makeEl('content'), ISSUE);
+  const running = h.AppView._renderTopicSubView(makeEl('content'), ISSUE);
   assert.equal(h.heads.length, 1, 'painted straight from the loaded lists');
+  assert.equal(h.heads[0].title, 'Issue 30 of demo');
   assert.deepEqual(h.switchTabCalls, []);
+
+  item.resolve();
+  await running;
+  await tick();
+  assert.equal(h.heads.length, 2, 'the item read refreshes the head in place');
+  assert.equal(h.heads[1].title, 'Issue 30 (read now)', 'from the page\'s own read, not the list copy');
 
   board.resolve(true);
   await tick();
-  assert.equal(h.heads.length, 2, 'the board refresh still repaints in place');
+  assert.equal(h.heads.length, 2, 'the board landing repaints nothing');
 });
 
-test('both sources missing: the board fallback waits for BOTH to settle', async () => {
+test('a missing item falls back without waiting for a board load', async () => {
   const board = deferred();
   const h = makeAppView({
     board,
@@ -239,18 +249,15 @@ test('both sources missing: the board fallback waits for BOTH to settle', async 
     ),
   });
 
-  const running = h.AppView._renderTopicSubView(makeEl('content'), ISSUE);
-  await tick();
-  assert.deepEqual(h.switchTabCalls, [], 'the item has settled but the board has not — no fallback yet');
-
-  board.resolve(true);
-  await running;
-  assert.deepEqual(h.switchTabCalls, [['dev']], 'fell back only once both had settled');
+  await h.AppView._renderTopicSubView(makeEl('content'), ISSUE);
+  assert.deepEqual(h.switchTabCalls, [['dev']], 'fell back once the item read settled');
   assert.deepEqual(
     h.telemetry.outcomes.map((o) => o.code), ['failure'],
     'topic_load records the failure',
   );
   assert.equal(h.telemetry.outcomes[0].errorCode, 'not_found');
+  // Board deliberately unresolved: the fallback never waited on it.
+  assert.equal(board.promise instanceof Promise, true);
 });
 
 test('the board failing does not sink a page the item can paint', async () => {

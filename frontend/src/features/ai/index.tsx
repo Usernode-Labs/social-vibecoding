@@ -574,9 +574,14 @@ export function AiScreen(): ReactNode {
   // the lists says so. The server keeps the cursor (POST threads/read), so
   // the next read agrees.
   const [seenThreads, setSeenThreads] = useState<ReadonlySet<number>>(() => new Set());
-  const markThreadRead = (threadId: number | null | undefined, app: AiApp | null): void => {
+  const markThreadRead = (threadId: number | null | undefined, app: AiApp | null, rootId?: number | null): void => {
     if (!threadId) return;
     setSeenThreads((had) => (had.has(threadId) ? had : new Set([...had, threadId])));
+    // #6604: only a PRIVATE thread is marked read from here. A request's or
+    // a change's page marks its own thread when its group chat mounts
+    // (group-chat.js _noteThreadRead), so posting from both sent the same
+    // read twice on every open.
+    if (!rootId) return;
     if (!app?.slug || typeof window === 'undefined') return;
     void fetch(`/api/apps/${encodeURIComponent(app.slug)}/threads/read${demoQuery()}`, {
       method: 'POST',
@@ -727,7 +732,7 @@ export function AiScreen(): ReactNode {
     if (openPublic(href, app, title)) underPanel();
   };
   const openRow = (row: WorkRow) => {
-    markThreadRead(row.threadId, row.app);
+    markThreadRead(row.threadId, row.app, row.rootId);
     if (row.rootId) {
       openPrivate(row.rootId);
       return;
@@ -735,7 +740,7 @@ export function AiScreen(): ReactNode {
     openPage(row.href, row.app, row.title, aboutRow(row));
   };
   const openThread = (th: AiThread) => {
-    markThreadRead(th.threadId, th.app);
+    markThreadRead(th.threadId, th.app, th.rootId);
     // #6153: a request filed from a private thread opens that thread, where
     // its design and its story are, rather than the request's page.
     if (th.rootId) {

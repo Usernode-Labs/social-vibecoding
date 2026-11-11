@@ -5351,6 +5351,42 @@ const AppView = {
   // remaining height with the composer pinned to the bottom.
   _devTopic: null, // { kind: 'issue'|'proposal'|'gov', id } while open
 
+  // #6604: while another thread is being opened, the one on screen stays up
+  // (marked `aria-busy`) until the new one has its item and its own read, or
+  // TOPIC_SWAP_CAP_MS passes. Without it the panel emptied, then painted its
+  // change line over a skeleton, then its cards — three heights, so the page
+  // scrolled by itself.
+  TOPIC_SWAP_CAP_MS: 1500,
+  _topicSwap: null,
+  _holdTopicSwap(content, ref, previous) {
+    AppView._topicSwap = null;
+    if (!previous || !previous.id) return;
+    if (previous.kind === ref.kind && Number(previous.id) === Number(ref.id)) return;
+    let slot = null;
+    try { slot = document.getElementById('dev-topic-thread'); } catch (_) { slot = null; }
+    // Nothing of the previous thread is on screen: no hold needed.
+    if (!slot || !slot.firstElementChild) return;
+    const hold = { content, slot, timer: null };
+    hold.timer = setTimeout(() => AppView._releaseTopicSwap(hold.content), AppView.TOPIC_SWAP_CAP_MS);
+    AppView._topicSwap = hold;
+    try { slot.setAttribute('aria-busy', 'true'); } catch (_) { /* detached */ }
+  },
+  // Let go of the held thread. The sub-view is mounted BEFORE this (its hosts
+  // must exist for the thread); what the hold delays is the head being
+  // published, which happens at the first paint.
+  _releaseTopicSwap() {
+    const hold = AppView._topicSwap;
+    if (!hold) return;
+    AppView._topicSwap = null;
+    clearTimeout(hold.timer);
+    try { hold.slot.removeAttribute('aria-busy'); } catch (_) { /* detached */ }
+  },
+  // Let go of a held thread without painting it: the page it was for missed,
+  // or the viewer left before it had content.
+  _dropTopicSwap() {
+    AppView._releaseTopicSwap();
+  },
+
   // #1036: the address of the app's dev page — what every "← Back" in a
   // dev sub-view (topic, general chat) points at as a real anchor, so a
   // cmd-click opens the dev page in a new tab instead of leaving this
@@ -5363,6 +5399,9 @@ const AppView = {
   },
 
   async _renderTopicSubView(content, ref) {
+    // #6604: what was on screen before this page, so a thread the reader was
+    // already on can stay up until the next one has content.
+    const previousTopic = AppView._devTopic;
     // #4367: `dev/changes/<N>` names a change by its pull request's number.
     // Look up the session it is, with the page's skeleton up; a number this
     // app has no change for is the same miss as a bad session id.
@@ -5477,7 +5516,12 @@ const AppView = {
     // the topic head (#2916, features/dev-board/topic/topic-back.tsx), which
     // scrolls with the page and carries the NavLink-guarded click; the header
     // draws no arrow on this route. See features/dev-board/topic-frame.tsx.
+    // #6604: the thread already on screen stays up until this one has its
+    // item and its own read (or 1.5 s), so the panel is not emptied and
+    // refilled in stages. The sub-view mounts first — its hosts have to exist
+    // for the thread — and the first paint publishes the new head.
     AppView._reactDevBoard()?.mountTopicSubView(content);
+    AppView._holdTopicSwap(content, ref, previousTopic);
 
     // THE APP'S RECORD MAY NOT BE HERE — the #2879 case, on a topic page. A
     // failed or superseded GET /api/apps/<slug> leaves AppView.appData empty
@@ -5508,18 +5552,20 @@ const AppView = {
       return;
     }
 
-    // ── Fast open (#4524): the page draws when ITS OWN item is in hand ──
+    // ── Fast open (#4524, #6604): the page draws when ITS OWN item is in
+    // hand, and the board is NOT loaded behind it ──
     //
-    // The board load used to gate everything here: _loadDevData ran to
-    // completion before the topic even looked for its item, and on an app
-    // this browser had not opened recently the slowest board read (a cold
-    // /github-issues) gated the page for seconds. Now the board load runs
-    // on UNAWAITED, and the page paints from whichever resolves the item
-    // first — the board (which may already hold it, same app) or the
-    // item's own single fetch, started in the same instant. Board details
-    // that come from the lists ("in progress", headless) can appear a
-    // moment later, when the board settles and the head repaints from its
-    // row. Nothing here changes what the page shows once loaded.
+    // The board load used to gate everything here, then (#4524) ran on
+    // UNAWAITED beside the item read. Unawaited was still a whole board —
+    // nine reads, about 1 MB — competing with the two reads the page needs,
+    // and in the side panel it is what made an open take seconds on a busy
+    // server (#6604). A thread page now asks for its item, its own row and
+    // its thread, and nothing else; the board loads when the Workshop itself
+    // is shown (AppView._loadDevFeed).
+    //
+    // The item's single fetch starts at once. A row the board already holds
+    // paints immediately and the item read refreshes the head; a cold open
+    // paints from the item read alone.
     const appSlug = AppView.appData && AppView.appData.slug;
     const attemptId = window.UITelemetry?.attempt?.('topic_load', {
       screen: 'app_detail', appSlug, timeoutMs: 12_000, abandonOnHide: true,
@@ -5539,7 +5585,6 @@ const AppView = {
     };
     let painted = false;
     let concluded = false;
-    let boardDone = false;
     let itemDone = false;
     let ok = false;
     let finish;
@@ -5550,19 +5595,32 @@ const AppView = {
     // "Only you can see this change" notice reads the row's status.
     let threadMounted = ref.kind === 'issue' || ref.kind === 'gov';
     if (threadMounted) AppView._mountTopicThread();
+    // #6604: an issue's thread read starts in the same tick as the item
+    // read, so the two go out together instead of one after the other.
+    if (ref.kind === 'issue' && appSlug) {
+      try {
+        window.UsernodeReact?.devBoard?.prefetchThread?.(appSlug, ref.id);
+      } catch (_) { /* the mounted thread reads it itself */ }
+    }
     // Paint at most once: from the same-app lists or an on-demand cache if
     // they already resolve the item, otherwise from the single fetch.
-    const paint = () => {
+    // `fresh` says the row was read for this page rather than left over
+    // from the board.
+    const paint = (fresh) => {
       if (painted || concluded) return true;
       if (!live()) {
         concluded = true;
         cancelAttempt();
+        AppView._dropTopicSwap();
         finish();
         return true;
       }
       const item = AppView._findTopicItem();
       if (!item) return false;
       painted = true;
+      AppView._releaseTopicSwap(content);
+      const shown = AppView._devTopic;
+      if (shown) shown.rowFresh = !!fresh;
       // #2605: a link that asked for this change's Build panel predates the
       // move, and the panel is the dev session's own page now. Checked here,
       // once the item has resolved, because whether the change HAS a build
@@ -5587,6 +5645,14 @@ const AppView = {
         AppView._mountTopicThread();
       }
       AppView._renderTopicHead();
+      // #6604: the thread shell creates #gc-thread-head as it mounts, and on
+      // a fast item read that can be a frame after this paint. Publish the
+      // head once the slot is there rather than waiting for a live event.
+      if (!document.getElementById('gc-thread-head')) {
+        const again = () => { if (live()) AppView._renderTopicHead(); };
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(again);
+        else setTimeout(again, 0);
+      }
       note('success');
       finish();
       return true;
@@ -5597,6 +5663,7 @@ const AppView = {
     const onMiss = () => {
       concluded = true;
       note('failure', { errorCode: 'not_found' });
+      AppView._dropTopicSwap();
       // Missing ref (an issue GitHub no longer serves, archived session, bad
       // link, or a proposal that genuinely doesn't exist / is inaccessible)
       // — fall back to the card list.
@@ -5620,10 +5687,11 @@ const AppView = {
     };
     const settle = () => {
       if (painted || concluded) return;
-      if (!boardDone || !itemDone) return;
+      if (!itemDone) return;
       if (!live()) {
         concluded = true;
         cancelAttempt();
+        AppView._dropTopicSwap();
         finish();
         return;
       }
@@ -5632,51 +5700,31 @@ const AppView = {
     };
     // The Completed list is keyset-paginated, so a merged proposal beyond
     // the first page (deep link, shared URL, or one paged-in then lost when
-    // _loadDevData reset _merged) won't be in any cached list, and a CLOSED
-    // issue is not in _ghIssues's open list. The single fetch answers both —
-    // and since the page no longer waits for the board, it is also what
-    // paints a cold open. The fetchers are best-effort and swallow their own
-    // errors, so a rejection here is not expected; treat it as a miss all
-    // the same.
+    // a board load reset _merged) won't be in any cached list, and a CLOSED
+    // issue is not in _ghIssues's open list. The single fetch answers both,
+    // and is what paints a cold open.
     //
     // A page painted from a list row the board read BEFORE is drawn from an
-    // old copy (polish board #12): what moves in it — where Homeroom bot's
-    // work stands, the request's track card — waits for the board's reload
-    // below, rather than saying "Its checks are running" until it lands.
-    // `rowFresh` is false only for that paint; every other page is drawn
-    // from a read made for it.
-    const topic = AppView._devTopic;
-    if (topic) topic.rowFresh = false;
-    if (paint()) {
+    // old copy (polish board #12): the item read then refreshes the head, so
+    // what moves in it — where Homeroom bot's work stands, the request's
+    // track card — arrives a moment later rather than never.
+    // `rowFresh` is false only for that first paint.
+    if (AppView._boardListsCurrent() && AppView._findTopicItem()) paint(false);
+    // One read for this item, always: it refreshes a row the lists answered
+    // with and is what paints a cold open.
+    Promise.resolve(AppView._fetchTopicItem(ref)).then((row) => {
+      ok = !!row;
       itemDone = true;
-    } else {
-      if (topic) topic.rowFresh = true;
-      AppView._fetchTopicItem(ref).finally(() => {
-        itemDone = true;
-        paint();
-        settle();
-      });
-    }
-    AppView._loadDevData().then((loaded) => {
-      ok = loaded;
-      boardDone = true;
-      if (painted) {
-        // The board's list row carries what the single-item row cannot
-        // (who is working on an open request, the checks badge): repaint
-        // from it now that the board is in. A page held back for it repaints
-        // either way: a failed reload leaves the row there is.
-        const held = !!topic && topic.rowFresh === false;
-        if (topic) topic.rowFresh = true;
-        if ((ok || held) && live()) AppView._renderTopicHead();
-        return;
+      if (!painted) {
+        paint(true);
+      } else if (ok && live()) {
+        const shown = AppView._devTopic;
+        if (shown) shown.rowFresh = true;
+        AppView._renderTopicHead();
       }
-      if (concluded) return;
-      paint();
       settle();
     }, () => {
-      boardDone = true;
-      if (concluded || painted) return;
-      paint();
+      itemDone = true;
       settle();
     });
     // Resolves after the first paint or the fallback, so openTopic's
@@ -5921,8 +5969,35 @@ const AppView = {
    * PLACE, where there is no `_devTopic` and must not be one: opening a
    * card inline is not navigation.
    */
-  _findItem(kind, id) {
-    const t = { kind, id };
+  // #6604: the page's own item read is the row it draws from. _findItem
+  // prefers the list caches, so replace the copy a current list still holds;
+  // otherwise the head would repaint the board's older row a moment later.
+  _putCachedRow(kind, row) {
+    if (!row) return;
+    const put = (list, match) => {
+      if (!Array.isArray(list)) return;
+      const i = list.findIndex(match);
+      if (i >= 0) list[i] = row;
+    };
+    if (kind === 'issue') {
+      if (!AppView._boardListsCurrent()) return;
+      put(AppView._ghIssues, (x) => x && Number(x.number) === Number(row.number));
+      return;
+    }
+    if (kind === 'proposal') {
+      for (const list of [AppView._proposals, AppView._mySessions, AppView._sharedSessions, AppView._merged]) {
+        put(list, (x) => x && Number(x.id) === Number(row.id));
+      }
+      return;
+    }
+    if (kind === 'gov') {
+      for (const list of [AppView._govProposals, AppView._merged]) {
+        put(list, (x) => x && Number(x.id) === Number(row.id));
+      }
+    }
+  },
+
+  _findItem(kind, id) {    const t = { kind, id };
     // The one-shot caches are keyed differently (`_topicIssue` carries its
     // own slug; proposal and governance ids are global and the caches are
     // cleared per topic), so they need no guard here — only the LIST caches
@@ -6044,6 +6119,7 @@ const AppView = {
       if (!row) return null;
       AppView._overlayPendingVote(row);
       AppView._topicProposal = row;
+      AppView._putCachedRow('proposal', row);
       // Keep the inline vote/kudos controls in sync so the discussion
       // thread's activity row renders its tally + per-viewer state, just
       // like a row loaded via the list (loadMoreMerged does the same).
@@ -6089,6 +6165,7 @@ const AppView = {
       const row = data.proposal || null;
       if (!row) return null;
       AppView._topicGov = row;
+      AppView._putCachedRow('gov', row);
       return row;
     } catch {
       return null;
@@ -6110,20 +6187,36 @@ const AppView = {
   async _fetchIssueByNumber(number) {
     if (!AppView.appData || !number) return null;
     const slug = AppView.appData.slug;
+    // #6604: a topic open and a live burst ask for the same request at the
+    // same moment; one read answers both, instead of two going out.
+    const key = `${slug}:${number}`;
+    const reads = AppView._issueRowReads || (AppView._issueRowReads = new Map());
+    const running = reads.get(key);
+    if (running) return running;
+    const read = (async () => {
+      try {
+        const res = await fetch(`/api/apps/${slug}/github-issues/${number}${AppView._demoQS()}`);
+        if (!res.ok) return null;
+        const data = await res.json();
+        const row = data.issue || null;
+        if (!row || row.number !== number) return null;
+        if (!AppView.appData || AppView.appData.slug !== slug) return null;
+        AppView._topicIssue = row;
+        AppView._topicIssueSlug = slug;
+        AppView._putCachedRow('issue', row);
+        return row;
+      } catch {
+        return null;
+      }
+    })();
+    reads.set(key, read);
     try {
-      const res = await fetch(`/api/apps/${slug}/github-issues/${number}${AppView._demoQS()}`);
-      if (!res.ok) return null;
-      const data = await res.json();
-      const row = data.issue || null;
-      if (!row || row.number !== number) return null;
-      if (!AppView.appData || AppView.appData.slug !== slug) return null;
-      AppView._topicIssue = row;
-      AppView._topicIssueSlug = slug;
-      return row;
-    } catch {
-      return null;
+      return await read;
+    } finally {
+      if (reads.get(key) === read) reads.delete(key);
     }
   },
+  _issueRowReads: null,
 
   // #665/#2327: pure predicate behind _renderTopicHead's repaint guard.
   // A live refresh must not remount whichever inline title editor is open
@@ -10154,12 +10247,61 @@ const AppView = {
     } else {
       AppView._devTopicAsked = null;
     }
+    // #6604: the item and the thread read start TOGETHER, before anything on
+    // screen is replaced, so a slow server is paid once rather than twice in
+    // a row. `known` is a row already in hand (the board's lists), which the
+    // panel has always painted from without a read.
+    const slugForReads = (AppView.appData && AppView.appData.slug) || App.currentApp;
+    const known = AppView._findItem(kind, id);
     AppView._topicProposal = null;
     AppView._topicGov = null;
     AppView._topicIssue = null;
     AppView._topicIssueSlug = null;
     AppView._editingIssueTitle = null;
     AppView._editingSessionTitle = null;
+    // A row that was in hand stays in hand through the clear above.
+    if (known) {
+      if (kind === 'issue') {
+        AppView._topicIssue = known;
+        AppView._topicIssueSlug = slugForReads;
+      } else if (kind === 'proposal' || kind === 'session') {
+        AppView._topicProposal = known;
+      } else {
+        AppView._topicGov = known;
+      }
+    }
+    const itemRead = known ? Promise.resolve(known) : (async () => {
+      if (kind === 'gov') return AppView._fetchGovProposalById(id);
+      if (kind === 'issue') return AppView._fetchIssueByNumber(id);
+      return AppView._fetchProposalById(id);
+    })();
+    let threadRead = null;
+    if (kind === 'issue' && slugForReads) {
+      try {
+        threadRead = window.UsernodeReact?.devBoard?.prefetchThread?.(slugForReads, id) || null;
+      } catch (_) { threadRead = null; }
+    }
+    // Keep the thread the reader was on until the new one has content (or
+    // TOPIC_SWAP_CAP_MS), so the panel is not emptied and refilled in stages.
+    const previous = AppView._devTopic;
+    let slot = null;
+    try { slot = document.getElementById('dev-topic-thread'); } catch (_) { slot = null; }
+    const held = !!AppView._devTopicInPanel && !!previous && !!slot && !!slot.firstElementChild
+      && (previous.kind !== kind || Number(previous.id) !== Number(id));
+    let timedOut = false;
+    if (held) {
+      try { slot.setAttribute('aria-busy', 'true'); } catch (_) { /* detached */ }
+      timedOut = !(await Promise.race([
+        Promise.all([
+          Promise.resolve(itemRead).catch(() => null),
+          Promise.resolve(threadRead).catch(() => null),
+        ]).then(() => true),
+        new Promise((resolve) => setTimeout(() => resolve(false), AppView.TOPIC_SWAP_CAP_MS)),
+      ]));
+      try { slot.removeAttribute('aria-busy'); } catch (_) { /* detached */ }
+    } else {
+      await itemRead;
+    }
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
     AppView._devTopic = { kind, id };
     AppView._devTopicInPanel = true;
@@ -10184,11 +10326,17 @@ const AppView = {
       threadMounted = true;
       AppView._mountTopicThread();
     }
-    if (!AppView._findTopicItem()) {
-      if (kind === 'gov') await AppView._fetchGovProposalById(id);
-      else if (kind === 'issue') await AppView._fetchIssueByNumber(id);
-      else await AppView._fetchProposalById(id);
+    // The cap passed with the item still on the wire: mount now (the thread
+    // keeps its place) and paint when the read lands.
+    if (timedOut && !AppView._findTopicItem()) {
+      Promise.resolve(itemRead).then(() => {
+        if (!current()) return;
+        if (!threadMounted) { threadMounted = true; AppView._mountTopicThread(); }
+        AppView._renderTopicHead();
+      });
+      return;
     }
+    await itemRead;
     if (!current() || !AppView._findTopicItem()) return;
     if (!threadMounted) AppView._mountTopicThread();
     AppView._renderTopicHead();
@@ -10802,33 +10950,21 @@ const AppView = {
     }
     if (App.currentSubTab === 'topic') {
       if (live) return AppView._refreshTopicLive(live);
-      // Refresh the header card / roster in place; the mounted thread
-      // is left alone (it receives live messages directly). The roster's
-      // cache entry is dropped HERE rather than in `_renderTopicHead`,
-      // which repaints far more often than the data changes — a vote
-      // arriving over the WS is a refresh, a repaint is not.
-      // Only a VOTE invalidates the roster. Every other refresh (a checks
-      // phase event, a sync-status change) used to delete it too, so the
-      // head republished with `roster: {phase: 'loading'}` — "Loading
-      // votes…" — and then again when the roster refetch landed: two paints
-      // per event, the first one blank. The roster now stays on screen until
-      // a vote actually moves it.
-      if (kind === 'vote' && AppView._devTopic) AppView._invalidateVoteRoster(AppView._devTopic.id);
-      // #2782: re-read the roster now rather than after the whole board load
-      // below (seven requests, GitHub issues among them) — it is the one part
-      // of the page a vote changes, and it has its own endpoint.
-      if (kind === 'vote' && AppView._devTopic && AppView._devTopic.kind === 'proposal') {
-        const open = AppView._findTopicItem();
-        if (open && ['promoted', 'merging'].includes(open.status)) AppView._loadVoteRoster(open.id);
+      // #6604: a direct caller ('vote', 'tryAgain', 'recheck') re-reads what
+      // is SHOWN — this change's row, or this issue's / decision's own row —
+      // instead of reloading the whole board behind one thread. The roster
+      // rules below are _refreshTopicLive's own for a change page.
+      const shown = AppView._devTopic;
+      if (shown && (shown.kind === 'proposal' || shown.kind === 'session')) {
+        // A vote is the one refresh that revalidates the roster; it is left
+        // on screen while it is re-read, never blanked (#1715).
+        if (kind === 'vote') AppView._invalidateVoteRoster(shown.id);
+        return AppView._refreshTopicLive({
+          kinds: new Set([kind === 'vote' ? 'vote' : 'other']),
+          ids: new Set([Number(shown.id)]),
+        });
       }
-      // _refreshTopicOnDemandRow between the two: _loadDevData refreshes the
-      // lists, and a topic the lists do not hold would otherwise repaint
-      // from a snapshot frozen when the page opened. It no-ops for every
-      // topic the lists do cover.
-      return AppView._loadDevData(opts)
-        .then(() => AppView._refreshTopicOnDemandRow())
-        .then(() => AppView._renderTopicHead())
-        .then(() => { AppView._refreshOpenChangeFromBoard(); });
+      return Promise.resolve(AppView._refreshTopicOwnRow()).then(() => true);
     }
     if (App.currentSubTab !== 'forum') return undefined;
     const parts = live ? AppView._partsForLive(live) : null;
@@ -10946,6 +11082,13 @@ const AppView = {
         let row = null;
         do {
           entry.queued = false;
+          // #6604: a burst that lands while the page's own open read is in
+          // flight queues ONE read after it (the loop), rather than joining a
+          // snapshot taken before the event.
+          const running = AppView._issueRowReads && AppView._issueRowReads.get(key);
+          if (running) {
+            try { await running; } catch (_) { /* best-effort, null on failure */ }
+          }
           row = await AppView._fetchIssueByNumber(id);
         } while (entry.queued);
         // The panel closed, or moved to another item, while the fetch was in
@@ -10968,6 +11111,21 @@ const AppView = {
     })();
     AppView._requestRowRefresh = entry;
     return entry.done;
+  },
+
+  // #6604: the one read a topic that is not a change needs when its own live
+  // burst arrives — the request's row, or the decision's — in place of the
+  // board load that used to answer for it.
+  async _refreshTopicOwnRow() {
+    const t = AppView._devTopic;
+    if (!t) return false;
+    if (t.kind === 'issue') return AppView._refreshOpenRequestRow();
+    if (t.kind === 'gov') {
+      const row = await AppView._fetchGovProposalById(t.id);
+      if (row && AppView._devTopic === t) AppView._renderTopicHead();
+      return !!row;
+    }
+    return false;
   },
 
   // #6595: a request or a change open on screen re-reads itself when a live
@@ -10999,7 +11157,15 @@ const AppView = {
     const liveReads = typeof window !== 'undefined' && window.UsernodeReact
       && window.UsernodeReact.liveReads;
     const threadRead = (path) => {
-      if (liveReads && typeof liveReads.resync === 'function') liveReads.resync('thread', path);
+      if (!liveReads || typeof liveReads.resync !== 'function') return;
+      // #6604: one burst asks for a path once, however many surfaces it
+      // reached (the topic sub-view and this flush both run).
+      const seen = live.resynced;
+      if (seen && typeof seen.has === 'function') {
+        if (seen.has(path)) return;
+        seen.add(path);
+      }
+      liveReads.resync('thread', path);
     };
     const enc = encodeURIComponent(slug);
     if (t.kind === 'issue') {
@@ -11082,10 +11248,10 @@ const AppView = {
     const changePage = t.kind === 'proposal' || t.kind === 'session';
     if (live.ids && !live.ids.has(id)) return true;
     if (!changePage) {
-      // An issue or governance page: the board load is what refreshes it.
-      await AppView._loadDevData();
-      await AppView._refreshTopicOnDemandRow();
-      AppView._renderTopicHead();
+      // #6604: an issue or governance page re-reads ITS OWN row, not the
+      // board. The board is nine reads and about 1 MB; a live burst that
+      // lands while somebody reads one request paid for all of it.
+      await AppView._refreshTopicOwnRow();
       return true;
     }
     const open = AppView._findTopicItem();
@@ -11677,12 +11843,28 @@ const AppView = {
 
   prefetchDevData(slug) {
     if (!slug || AppView.appData?.slug !== slug) return;
+    // #6604: a document showing one thread (the side panel, a topic's own
+    // page) does not need the board, and loading it there fired nine reads
+    // beside the two that matter. The Workshop loads it when it is shown.
+    if (typeof App !== 'undefined' && (App.embeddedPanel || AppView._routeShowsThread())) return;
     // Already loaded for this app — the caches are warm and re-fetching here
     // would be a request nobody is waiting for.
     if (AppView._devDataReady) return;
     try {
       Promise.resolve(AppView._loadDevData()).catch(() => {});
     } catch (err) { /* never let a preload break an app open */ }
+  },
+
+  // Is the address on screen a thread's own page (`#app/<slug>/dev/issues/…`
+  // and its siblings)? The side panel's document is one of these.
+  _routeShowsThread() {
+    let route = '';
+    try {
+      route = location.hash
+        ? location.hash.replace(/^#/, '').split('?')[0]
+        : location.pathname.replace(/^\/+/, '');
+    } catch (_) { return false; }
+    return /\/dev\/(issues|changes|proposals|sessions|gov)\//.test(route);
   },
 
   // Fetch + cache everything the dev surfaces render from (the same

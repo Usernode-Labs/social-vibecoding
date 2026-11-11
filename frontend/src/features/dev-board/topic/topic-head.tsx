@@ -783,7 +783,58 @@ export function changeDetailPath(item: any): string {
  * service worker's saved copy, and re-reads the vote roster for every viewer,
  * because whatever moved the row while this page was not hearing about it
  * may have moved the votes too.
+ *
+ * #6604: one read answers every caller asking for the same row (a thread's
+ * prefetch and the page that draws it), a row read less than 10 s ago answers
+ * a non-fresh ask without a request, and the roster starts ALONGSIDE the row
+ * rather than after it — it is a second endpoint the Votes card waits on.
  */
+export const CHANGE_ROW_TTL_MS = 10_000;
+
+const changeReads = new Map<string, Promise<any>>();
+const prefetchedChanges = new Map<string, { at: number; promise: Promise<any> }>();
+
+/** Start a change's own read before its page mounts (thread-items.tsx). */
+export function prefetchChangeDetail(item: any): void {
+  if (!item || item.id == null) return;
+  const url = changeDetailPath(item);
+  const hit = prefetchedChanges.get(url);
+  if (hit && Date.now() - hit.at < CHANGE_ROW_TTL_MS) return;
+  const review = [
+    'promoted', 'merging', 'merged',
+  ].includes(item.status) && (window as any).AppView?.appData?.slug;
+  try {
+    prefetchedChanges.set(url, { at: Date.now(), promise: readChangeRow(item, review, null, false) });
+  } catch { /* the page reads it itself */ }
+}
+
+/** Take the prefetched read for `url`, once. */
+function takePrefetchedChange(url: string): Promise<any> | null {
+  const hit = prefetchedChanges.get(url);
+  if (!hit) return null;
+  prefetchedChanges.delete(url);
+  return Date.now() - hit.at < CHANGE_ROW_TTL_MS ? hit.promise : null;
+}
+
+/**
+ * One read of a change's row. `signal` is null for a prefetch (nothing to
+ * abort); it is the caller's own for a page. Not cached: several surfaces may
+ * join it while it is in flight, but once it settles the next ask is a new
+ * read unless a prefetched answer is waiting.
+ */
+function readChangeRow(item: any, review: boolean, signal: AbortSignal | null, fresh: boolean): Promise<any> {
+  const av = (window as any).AppView;
+  const url = changeDetailPath(item);
+  const demo = av?._demoQS?.() ? '&demo=1' : '';
+  const init: RequestInit = fresh ? { ...FRESH, signal } : { signal };
+  return fetch(`${url}?results=failing${demo}`, init)
+    .then(async (response) => {
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || translate('project:topic.change.refreshFailed'));
+      return review ? payload.proposal : payload.session;
+    });
+}
+
 export async function readChangeDetail(item: any, owner: boolean, signal: AbortSignal, { fresh = false } = {}) {
   const id = item.id;
   const av = (window as any).AppView;
@@ -792,14 +843,25 @@ export async function readChangeDetail(item: any, owner: boolean, signal: AbortS
   // The short form: passing checks are counted, and their fold reads the
   // names when opened (AppView._loadCheckNames, _readTopicRow).
   const demo = av?._demoQS?.() ? '&demo=1' : '';
-  const response = await fetch(`${url}?results=failing${demo}`, fresh ? { ...FRESH, signal } : { signal });
-  const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || translate('project:topic.change.refreshFailed'));
-  const session = review ? payload.proposal : payload.session;
-  if (review && !signal.aborted) {
-    if (owner || fresh) av._invalidateVoteRoster(id);
-    await av._loadVoteRoster(id, { fresh });
+  const fetchUrl = `${url}?results=failing${demo}`;
+  const key = `${fetchUrl}|${fresh ? 'fresh' : 'cached'}`;
+  // #6604: an answer another surface already started — the thread's prefetch
+  // — is this page's read, and one read in flight answers every caller.
+  let read = !fresh ? takePrefetchedChange(url) : null;
+  if (!read) read = changeReads.get(key) || null;
+  if (!read) {
+    read = readChangeRow(item, review, signal, fresh);
+    changeReads.set(key, read);
+    read.catch(() => {}).then(() => { if (changeReads.get(key) === read) changeReads.delete(key); });
+    if (review) {
+      // The roster is read ALONGSIDE the row, not after it: it is a second
+      // endpoint the Votes card waits on.
+      if (owner || fresh) av._invalidateVoteRoster(id);
+      Promise.resolve(av._loadVoteRoster(id, { fresh })).catch(() => {});
+    }
   }
+  const session = await read;
+  if (signal.aborted) throw new Error(translate('project:topic.change.refreshFailed'));
   return session;
 }
 
