@@ -3561,7 +3561,7 @@ function runDmTurn(pool, config, { bot, user, settings, conversationId, message,
 async function answerLater(pool, config, { bot, user, conversationId, message, deps = {} }, attempt) {
   const dm = dmModule(deps);
   const settings = await botModule(deps).readSettings(pool);
-  if (!dm.hasBot(settings, user)) return null;
+  if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, settings, user))) return null;
   log.info('homeroom-bot-mayor', 'Asking a DM answer again', { userId: user.id, messageId: message.id, attempt });
   // 31 Oct 2026: a later try reads the thread the message was written in, as
   // its first try did (answerUserMessage); it used to read the main chat.

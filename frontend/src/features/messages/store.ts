@@ -2077,6 +2077,17 @@ export async function answerBotQuestion(question: ConversationMessage, answer: s
  */
 export async function tapBotAction(message: ConversationMessage, action: HomeroomBotAction): Promise<void> {
   if (action.type === 'open') {
+    // #6632: Verify, under the bot's "I work for verified accounts": the
+    // verify sheet with the bot's wording; Settings where there is no sheet.
+    if (action.id === 'verify_account') {
+      const ask = (window as unknown as { UsernodeReact?: { verifyIdentity?: { askForBot?: (signals?: string[]) => Promise<boolean> } } })
+        .UsernodeReact?.verifyIdentity?.askForBot;
+      if (typeof ask === 'function') {
+        const signals = (message.metadata?.homeroomBot as { signals?: string[] } | undefined)?.signals;
+        void ask(Array.isArray(signals) ? signals : undefined);
+        return;
+      }
+    }
     openAppTarget(action.target);
     return;
   }

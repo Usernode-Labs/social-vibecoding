@@ -98,6 +98,13 @@ interface Settings {
   continueReads?: boolean;
   // #4449: whether a first version's members can watch it take shape (Live).
   liveBuildStream?: boolean;
+  // #6632: who the bot works for: everyone who is let in, or verified
+  // accounts only, with the signals that count, whether members let in
+  // before the rule keep the bot, and when the rule was switched on.
+  worksFor?: 'everyone' | 'verified';
+  verifiedSignals?: string[];
+  verifiedGrandfather?: boolean;
+  verifiedSince?: string | null;
   // When it went on for everyone: older requests nobody has touched since
   // are left alone.
   everyoneSince?: string | null;
@@ -1404,6 +1411,9 @@ interface Form {
   voiceChat: boolean;
   continueReads: boolean;
   liveBuildStream: boolean;
+  worksFor: 'everyone' | 'verified';
+  verifiedSignals: string[];
+  verifiedGrandfather: boolean;
   shadowBuildPlatform: boolean;
   buildConcurrency: string;
   liveAtOnce: string;
@@ -1435,6 +1445,9 @@ const FIELD_LABEL: Record<FormKey, string> = {
   voiceChat: 'answering in chats',
   continueReads: 'continuing its last read',
   liveBuildStream: 'Live while a first version builds',
+  worksFor: 'who it works for',
+  verifiedSignals: 'what counts as verified',
+  verifiedGrandfather: 'earlier members keeping the bot',
   shadowBuildPlatform: 'side builds of Homeroom',
   buildConcurrency: 'shadow builds at once',
   liveAtOnce: 'live requests at once',
@@ -1446,6 +1459,17 @@ const FIELD_LABEL: Record<FormKey, string> = {
   turnTokens: 'the token warning',
   batchSize: 'issues per app',
 };
+
+// #6632: the signals an admin can tick for "Verified accounts only", in the
+// order the card lists them (services/homeroom-bot-verified.js SIGNALS).
+export const BOT_SIGNALS: readonly { key: string; label: string; how: string }[] = [
+  { key: 'phone', label: 'Phone', how: 'an SMS code' },
+  { key: 'x', label: 'X', how: 'linked in Settings' },
+  { key: 'github', label: 'GitHub', how: 'linked in Settings' },
+  { key: 'zkpassport', label: 'zkPassport', how: 'a proof from the mobile app' },
+  { key: 'oauth', label: 'Google or Apple sign-in', how: 'signed in with one' },
+  { key: 'email', label: 'Confirmed email', how: 'a confirmed address' },
+];
 
 /** The form as the saved settings fill it. Pure. */
 export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
@@ -1467,6 +1491,9 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
     voiceChat: s.voiceChat !== false,
     continueReads: s.continueReads !== false,
     liveBuildStream: s.liveBuildStream !== false,
+    worksFor: s.worksFor === 'verified' ? 'verified' : 'everyone',
+    verifiedSignals: Array.isArray(s.verifiedSignals) ? [...s.verifiedSignals] : ['phone', 'x', 'github'],
+    verifiedGrandfather: s.verifiedGrandfather !== false,
     shadowBuildPlatform: !!s.shadowBuildPlatform,
     buildConcurrency: String(s.buildConcurrency ?? 2),
     liveAtOnce: String(s.liveAtOnce ?? 12),
@@ -1484,7 +1511,7 @@ export function savedForm(p: Pick<Payload, 'settings' | 'bot'>): Form {
 }
 
 // The list is a set: the order a person ticked them in is not a change.
-const SET_FIELDS: FormKey[] = ['pausedApps'];
+const SET_FIELDS: FormKey[] = ['pausedApps', 'verifiedSignals'];
 function sameField(key: FormKey, a: unknown, b: unknown): boolean {
   if (SET_FIELDS.includes(key)) return JSON.stringify([...(a as string[])].sort()) === JSON.stringify([...(b as string[])].sort());
   if (key === 'appCaps') return JSON.stringify(appCapsCanon(a as Form['appCaps'])) === JSON.stringify(appCapsCanon(b as Form['appCaps']));
@@ -1554,8 +1581,20 @@ export function buildPatch(form: Form, saved: Form, dirty: FormKey[]): { patch: 
     errors.push(`${what}: enter a dollar amount${zero}.`);
     return null;
   };
+  // #6632: verified accounts only with nothing ticked would lock the bot
+  // for everyone but admins; the route refuses it too.
+  if (form.worksFor === 'verified' && !form.verifiedSignals.length
+      && (dirty.includes('worksFor') || dirty.includes('verifiedSignals'))) {
+    return { patch: {}, error: 'Tick at least one signal that counts as verified.' };
+  }
   for (const key of dirty) {
     if (key === 'mode') patch.mode = form.mode;
+    else if (key === 'worksFor') patch.worksFor = form.worksFor;
+    else if (key === 'verifiedSignals') {
+      // An emptied list is not sent while the rule is off: it is what the
+      // next "Verified accounts only" starts from, and the route keeps one.
+      if (form.verifiedSignals.length) patch.verifiedSignals = BOT_SIGNALS.map((s) => s.key).filter((k) => form.verifiedSignals.includes(k));
+    } else if (key === 'verifiedGrandfather') patch.verifiedGrandfather = form.verifiedGrandfather;
     else if (key === 'pausedApps') patch.pausedApps = [...new Set(form.pausedApps.filter(Boolean))];
     else if (key === 'dmChat' || key === 'continueReads' || key === 'liveBuildStream' || key === 'shadowBuildPlatform'
       || key === 'voiceSession' || key === 'voiceIssue' || key === 'voiceChat') patch[key] = form[key];
@@ -2399,6 +2438,62 @@ function HomeroomBotSection() {
                   : ''}
                 It brings each of their requests&apos; questions (with answers to tap) and its progress to their DM, can file a
                 new request when they tap File it, and builds a project they create from a description.
+              </p>
+            </div>
+
+            <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bot-works-for">
+              <div className={AdminUI.cardHeader}>
+                <h3 className={AdminUI.cardTitle}>Who Homeroom bot works for</h3>
+                <span className={AdminUI.cardDescription}>Admins always have it.</span>
+              </div>
+              {([
+                ['everyone', 'admin-homeroom-bot-works-for-everyone', 'Everyone who is let in'],
+                ['verified', 'admin-homeroom-bot-works-for-verified', 'Verified accounts only'],
+              ] as const).map(([value, id, label]) => (
+                <label key={value} className="flex items-center gap-2 mt-3 text-sm" htmlFor={id}>
+                  <input
+                    id={id} type="radio" name="admin-homeroom-bot-works-for"
+                    className="h-4 w-4 border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                    checked={form.worksFor === value}
+                    disabled={!canWrite}
+                    onChange={() => setField('worksFor', value)}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+              {form.worksFor === 'verified' ? (
+                <div className="mt-3 ms-6" id="admin-homeroom-bot-verified-signals">
+                  <p className={AdminUI.muted}>Any one ticked signal is enough.</p>
+                  {BOT_SIGNALS.map((signal) => (
+                    <label key={signal.key} className="flex items-center gap-2 mt-2 text-sm" htmlFor={`admin-homeroom-bot-signal-${signal.key}`}>
+                      <input
+                        id={`admin-homeroom-bot-signal-${signal.key}`} type="checkbox"
+                        className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                        checked={form.verifiedSignals.includes(signal.key)}
+                        disabled={!canWrite}
+                        onChange={(e) => setField('verifiedSignals', e.target.checked
+                          ? [...form.verifiedSignals.filter((k) => k !== signal.key), signal.key]
+                          : form.verifiedSignals.filter((k) => k !== signal.key))}
+                      />
+                      <span>{signal.label} <span className={AdminUI.muted}>({signal.how})</span></span>
+                    </label>
+                  ))}
+                  <label className="flex items-center gap-2 mt-4 text-sm" htmlFor="admin-homeroom-bot-verified-grandfather">
+                    <input
+                      id="admin-homeroom-bot-verified-grandfather" type="checkbox"
+                      className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                      checked={form.verifiedGrandfather}
+                      disabled={!canWrite}
+                      onChange={(e) => setField('verifiedGrandfather', e.target.checked)}
+                    />
+                    <span>Members let in before this was switched on keep the bot</span>
+                  </label>
+                </div>
+              ) : null}
+              <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-works-for-note">
+                {form.worksFor === 'verified'
+                  ? `${payload?.settings?.verifiedSince ? `Switched on ${new Date(payload.settings.verifiedSince).toLocaleDateString()}. ` : ''}Anybody else is asked to verify when they write to it, press Build it, start a thread or describe a new project, and it does not start their requests by itself. A verified member can still press Build it on those, from their own week.`
+                  : 'Identity plays no part: an account that is let in has the bot. Choose verified accounts to ask for a phone number, a linked X or GitHub account or another signal first.'}
               </p>
             </div>
 

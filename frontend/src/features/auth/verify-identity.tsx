@@ -9,7 +9,12 @@
  *     ../dev-board/workshop/community-card.tsx, whose route answers
  *     identity_required too);
  *   - running out of AI credits ("Verify my account" on the out-of-credits
- *     card, public/js/credit-options.js).
+ *     card, public/js/credit-options.js);
+ *   - #6632: asking Homeroom bot for something while it works for verified
+ *     accounts only (BOT_COPY; ../../lib/bot-verify-required.ts opens it for
+ *     a press the server refused with `bot_verify_required`). That rule is
+ *     the bot's own, with its own list of what counts, which the sheet
+ *     names; the phone is offered only when it is on that list.
  *
  * Closing the sheet, or its "Not now", records here that the person was
  * asked (ASKED_KEY, kept like the Home card's own dismissal), and only then
@@ -74,6 +79,34 @@ export const CREDITS_COPY: VerifyCopyIds = {
   reason: 'auth:verify.credits.reason',
 };
 
+/** #6632: Homeroom bot works for verified accounts. `{{signals}}` is what counts, as a list. */
+export const BOT_COPY: VerifyCopyIds = {
+  title: 'auth:verify.bot.title',
+  lead: 'auth:verify.bot.lead',
+  reason: 'auth:verify.bot.reason',
+};
+
+/** The signals an admin can tick for the bot's rule, and each one's name in a sentence. */
+const BOT_SIGNAL_IDS: Record<string, string> = {
+  phone: 'auth:verify.bot.signal.phone',
+  x: 'auth:verify.bot.signal.x',
+  github: 'auth:verify.bot.signal.github',
+  zkpassport: 'auth:verify.bot.signal.zkpassport',
+  oauth: 'auth:verify.bot.signal.oauth',
+  email: 'auth:verify.bot.signal.email',
+};
+
+/** "a phone number, X or GitHub", in the page's language. */
+export function botSignalList(signals: readonly string[], t: (id: string) => string): string {
+  const names = signals.filter((signal) => BOT_SIGNAL_IDS[signal]).map((signal) => t(BOT_SIGNAL_IDS[signal]));
+  try {
+    const lang = (typeof document !== 'undefined' && document.documentElement.lang) || undefined;
+    return new Intl.ListFormat(lang, { style: 'long', type: 'disjunction' }).format(names);
+  } catch {
+    return names.join(', ');
+  }
+}
+
 /** This device: the person was asked at a public step and closed it. Home's card shows after that. */
 export const ASKED_KEY = 'usernode:verify-asked';
 export const ASKED_EVENT = 'usernode:verify-asked';
@@ -94,9 +127,11 @@ export function identityNeededHere(): boolean {
   return app?.user?.identityNeeded === true;
 }
 
-export function VerifyIdentityBody({ phoneOffered, copy: given, className = 'px-4 pb-5', onVerified, onSettings, onNotNow }: {
+export function VerifyIdentityBody({ phoneOffered, copy: given, className = 'px-4 pb-5', linkId, onVerified, onSettings, onNotNow }: {
   phoneOffered: boolean;
   copy?: VerifyCopy;
+  /** The line that sends them to Settings, instead of "Link both GitHub and X"; null for none. */
+  linkId?: string | null;
   className?: string;
   onVerified: () => void;
   onSettings: () => void;
@@ -116,11 +151,13 @@ export function VerifyIdentityBody({ phoneOffered, copy: given, className = 'px-
           <p className="mt-1 text-[15px] leading-snug text-zinc-500 dark:text-zinc-400">{copy.reason}</p>
         </section>
       )}
-      <p className="mt-3 text-center text-[14px] text-zinc-500 dark:text-zinc-400">
-        <RichMessage id={phoneOffered ? 'auth:verify.linkAccountsInstead' : 'auth:verify.linkAccounts'} components={[
-        <a href="#settings/linked-accounts" data-verify-identity-settings="" onClick={() => onSettings()} className="font-medium text-violet-700 dark:text-violet-400 hover:underline" />,
-        ]} />
-      </p>
+      {linkId === null ? null : (
+        <p className="mt-3 text-center text-[14px] text-zinc-500 dark:text-zinc-400">
+          <RichMessage id={linkId || (phoneOffered ? 'auth:verify.linkAccountsInstead' : 'auth:verify.linkAccounts')} components={[
+          <a href="#settings/linked-accounts" data-verify-identity-settings="" onClick={() => onSettings()} className="font-medium text-violet-700 dark:text-violet-400 hover:underline" />,
+          ]} />
+        </p>
+      )}
       {onNotNow ? (
         <div className="mt-1 flex justify-center">
           <button type="button" data-verify-identity-not-now="" className={QUIET} onClick={() => onNotNow()}>{t('auth:verify.notNow')}</button>
@@ -131,8 +168,10 @@ export function VerifyIdentityBody({ phoneOffered, copy: given, className = 'px-
 }
 
 /** The sheet's contents, once the options say whether phone sign-in is offered. */
-function VerifySheet({ copy, onVerified, onSettings, onNotNow }: {
+function VerifySheet({ copy, botSignals, onVerified, onSettings, onNotNow }: {
   copy: VerifyCopyIds;
+  /** #6632: the bot's rule, with what counts for it; the phone and the Settings line follow the list. */
+  botSignals?: readonly string[];
   onVerified: () => void;
   onSettings: () => void;
   onNotNow?: () => void;
@@ -145,6 +184,21 @@ function VerifySheet({ copy, onVerified, onSettings, onNotNow }: {
     return () => { live = false; };
   }, []);
   if (phoneOffered === null) return null;
+  if (botSignals) {
+    const params = { signals: botSignalList(botSignals, t) };
+    const phone = phoneOffered && botSignals.includes('phone');
+    const linkable = botSignals.includes('x') || botSignals.includes('github');
+    return (
+      <VerifyIdentityBody
+        phoneOffered={phone}
+        copy={{ title: t(copy.title), lead: t(copy.lead, params), reason: t(copy.reason, params) }}
+        linkId={linkable ? (phone ? 'auth:verify.bot.linkAccountInstead' : 'auth:verify.bot.linkAccount') : null}
+        onVerified={onVerified}
+        onSettings={onSettings}
+        onNotNow={onNotNow}
+      />
+    );
+  }
   return <VerifyIdentityBody phoneOffered={phoneOffered} copy={{ title: t(copy.title), lead: t(copy.lead), reason: t(copy.reason) }} onVerified={onVerified} onSettings={onSettings} onNotNow={onNotNow} />;
 }
 
@@ -160,7 +214,7 @@ let open: Promise<VerifyOutcome> | null = null;
  * the open one's outcome. `notNow` adds a "Not now". Closed or "Not now",
  * the person has been asked: Home's card follows up.
  */
-export function openVerifySheet({ copy = VOTE_COPY, notNow = false }: { copy?: VerifyCopyIds; notNow?: boolean } = {}): Promise<VerifyOutcome> {
+export function openVerifySheet({ copy = VOTE_COPY, notNow = false, botSignals }: { copy?: VerifyCopyIds; notNow?: boolean; botSignals?: readonly string[] } = {}): Promise<VerifyOutcome> {
   if (open) return open;
   const kit = (typeof window !== 'undefined' ? (window as unknown as { PlatformUI?: SheetKit }).PlatformUI : null);
   if (!kit || typeof kit.sheet !== 'function' || typeof document === 'undefined') return Promise.resolve('unavailable');
@@ -182,6 +236,7 @@ export function openVerifySheet({ copy = VOTE_COPY, notNow = false }: { copy?: V
     mountLegacyPortal(panel, (
       <VerifySheet
         copy={copy}
+        botSignals={botSignals}
         onVerified={() => leave('verified')}
         onSettings={() => leave('settings')}
         onNotNow={notNow ? () => leave('not-now') : undefined}
@@ -244,10 +299,34 @@ export function askToVerifyForCredits(): Promise<boolean> {
   });
 }
 
+/**
+ * #6632: Homeroom bot works for verified accounts only, and this one is not
+ * yet (../../lib/bot-verify-required.ts, and the Verify button under the
+ * bot's own reply). `signals` is what counts, from the refusal or from the
+ * account (`homeroomBotVerify`). Resolves true once a phone is linked, when
+ * the phone counts: the shell's copy of the account then says the bot is
+ * theirs, and the caller sends the press again.
+ */
+export function askToVerifyForBot(signals?: readonly string[]): Promise<boolean> {
+  const w = window as unknown as { App?: { user?: Record<string, any> | null; saveSessionSnapshot?: (user: unknown) => void } };
+  const known = Array.isArray(signals) && signals.length ? signals : w.App?.user?.homeroomBotVerify?.signals;
+  const list: readonly string[] = Array.isArray(known) && known.length ? known : ['phone', 'x', 'github'];
+  return openVerifySheet({ copy: BOT_COPY, botSignals: list }).then((outcome) => {
+    if (outcome !== 'verified') return false;
+    noteVerified();
+    if (w.App?.user) {
+      w.App.user.homeroomBotDm = true;
+      w.App.user.homeroomBotVerify = null;
+      try { w.App.saveSessionSnapshot?.(w.App.user); } catch { /* the next boot reads the server */ }
+    }
+    return true;
+  });
+}
+
 if (typeof window !== 'undefined') {
   const host = window as unknown as { UsernodeReact?: Record<string, unknown> };
   const bridge = (host.UsernodeReact ||= {});
-  bridge.verifyIdentity = { ask: askToVerifyIdentity, askForPublic: askToVerifyForPublic, askForCredits: askToVerifyForCredits };
+  bridge.verifyIdentity = { ask: askToVerifyIdentity, askForPublic: askToVerifyForPublic, askForCredits: askToVerifyForCredits, askForBot: askToVerifyForBot };
 }
 
 // `?shot=verify-public`: "Verify to make it public" for the before/after

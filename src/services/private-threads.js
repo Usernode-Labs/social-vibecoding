@@ -268,6 +268,9 @@ async function startThread(pool, { user, project = null, kind = 'any', deps = {}
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
   if (!user?.id || user.isSynthetic) return { ok: false, status: 403, error: 'forbidden' };
   const changeKind = Object.prototype.hasOwnProperty.call(CHANGE_KINDS, kind) ? kind : 'any';
+  // #6632: a new thread is the bot working for them.
+  const locked = await require('./homeroom-bot-verified').refusalFor(pool, user, { botSvc: deps.botSvc });
+  if (locked) return locked;
   let app = null;
   if (project) {
     app = await mayor.findApp(pool, String(project));
@@ -387,6 +390,9 @@ async function startAbout(pool, { user, app, kind, number, deps = {} }) {
   const dm = deps.dm || require('./homeroom-bot-dm');
   if (!user?.id || user.isSynthetic) return { ok: false, status: 403, error: 'forbidden' };
   if (!ABOUT_KINDS.includes(kind)) return { ok: false, status: 422, error: 'kind must be request or change' };
+  // #6632: a new thread is the bot working for them.
+  const locked = await require('./homeroom-bot-verified').refusalFor(pool, user, { botSvc: deps.botSvc });
+  if (locked) return locked;
   const name = app?.name || app?.slug || 'This project';
   const about = await aboutTarget(pool, { app, kind, number });
   if (!about) {

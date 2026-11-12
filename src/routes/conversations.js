@@ -244,6 +244,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       if (!out.ok) {
         return res.status(out.status || 400).json({
           error: out.error, code: out.code || null, ...(out.reason ? { reason: out.reason } : {}),
+          ...(out.signals ? { signals: out.signals } : {}),
         });
       }
       return res.json(out);

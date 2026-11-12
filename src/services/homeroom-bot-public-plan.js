@@ -145,6 +145,11 @@ async function buildPlan(pool, { app, issueNumber, user, runId = null, answers =
   if (await planChanging(pool, app.id, issueNumber, run.awaiting_go_at)) return { ok: false, status: 409, error: 'plan_changing' };
   const dmSvc = deps.dm || dm();
   const botSvc = deps.botSvc || bot();
+  // #6632: Build it is the bot building for whoever pressed it, the
+  // requester or anybody else: with the bot for verified accounts only, an
+  // unverified press is refused with its own code, and nothing is decided.
+  const locked = await require('./homeroom-bot-verified').refusalFor(pool, user, { botSvc });
+  if (locked) return locked;
   const picks = (Array.isArray(answers) ? answers : []).slice(0, 2).map((a) => (typeof a === 'string' ? a : null));
   const requester = await dmSvc.requesterOf(pool, app.id, issueNumber).catch(() => null);
   const mine = !!requester && Number(requester.userId) === Number(user.id);

@@ -51,6 +51,7 @@ const repoRef = require('./repo-ref');
 // Newcomer run five: a first version's stages, as they happen.
 const timeline = require('./first-version-timeline');
 const notifyCopy = require('./homeroom-bot-notify-copy');
+const botVerified = require('./homeroom-bot-verified');
 
 const BOT_USERNAME = 'homeroom_bot';
 const META = conversations.BOT_METADATA_KEY;
@@ -115,14 +116,44 @@ function settingsModule() {
  */
 function hasBot(settings, person) {
   if (!settings || !person?.username) return false;
-  return !person.isSynthetic && !!(person.hasPlatformAccess || person.isAdmin || person.privateMember);
+  if (person.isSynthetic || !(person.hasPlatformAccess || person.isAdmin || person.privateMember)) return false;
+  // #6632: with the bot for verified accounts only, an admin, or somebody
+  // the rule was read for and passes (`botVerified`, withVerified below).
+  // Somebody it was never read for does not have the bot: the closed side.
+  if (!botVerified.ruleOn(settings)) return true;
+  return !!person.isAdmin || person.botVerified === true;
+}
+
+/**
+ * #6632: `person` with the verified-accounts rule read for them
+ * (`botVerified`), which hasBot then decides from. With the rule off (or
+ * for an admin, or one already read) it is the same person and nothing is
+ * read. `db` is a pool or a transaction's connection.
+ */
+async function withVerified(db, settings, person) {
+  if (!person || !botVerified.ruleOn(settings) || person.isAdmin || typeof person.botVerified === 'boolean') return person;
+  return { ...person, botVerified: !(await botVerified.verifyRequired(db, settings, person)) };
+}
+
+/** hasBot, with the verified-accounts rule read first: what every caller with a database asks. */
+async function botWorksFor(db, settings, person) {
+  return hasBot(settings, await withVerified(db, settings, person));
+}
+
+/**
+ * #6632: whether the verified-accounts rule alone keeps the bot from this
+ * person, for the places that ask them to verify instead of staying quiet.
+ * False with the rule off, whoever they are.
+ */
+async function verifyRequired(db, settings, person) {
+  return botVerified.verifyRequired(db, settings, person);
 }
 
 /** Whether this signed-in person builds through the bot's DM (the create dialog asks). */
 async function isEnabledFor(pool, user) {
   if (!user || user.isSynthetic) return false;
   const settings = await settingsModule().readSettings(pool);
-  return hasBot(settings, user);
+  return botWorksFor(pool, settings, user);
 }
 
 /**
@@ -168,7 +199,7 @@ const PROJECT_ORIGINS = Object.freeze(['import', 'fork', 'blank']);
 async function noteProjectMade(pool, { app, user, origin }) {
   if (!app?.id || !user?.id || !PROJECT_ORIGINS.includes(origin)) return false;
   const settings = await settingsModule().readSettings(pool);
-  if (!hasBot(settings, user)) return false;
+  if (!(await botWorksFor(pool, settings, user))) return false;
   const { rowCount } = await pool.query(
     `INSERT INTO homeroom_bot_dm_projects (app_id, user_id, origin) VALUES ($1, $2, $3)
      ON CONFLICT (app_id) DO NOTHING`,
@@ -1342,7 +1373,7 @@ function overAllowanceText({ line = null, appName, group = false }) {
  */
 async function noteOverAllowance(pool, { settings, requester, payer = null, app, issueNumber, bot }) {
   const who = payer || requester;
-  if (!who || !hasBot(settings, who)) return null;
+  if (!who || !(await botWorksFor(pool, settings, who))) return null;
   const { rows } = await pool.query(
     `SELECT (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS members
        FROM apps a WHERE a.id = $1`,
@@ -1419,7 +1450,7 @@ async function notePausedForWeek(pool, { settings, bot, userId, apps = [] }) {
     'SELECT u.id AS user_id, u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
     [userId],
   );
-  if (!rows[0] || !hasBot(settings, requesterFrom(rows[0]))) return null;
+  if (!rows[0] || !(await botWorksFor(pool, settings, requesterFrom(rows[0])))) return null;
   const names = (Array.isArray(apps) ? apps : []).map((a) => a?.name || a?.slug).filter(Boolean).slice(0, 3);
   return sendDm(pool, {
     bot,
@@ -1866,7 +1897,7 @@ async function closeOpenQuestions(pool, { userId, appId, issueNumber, ws = null 
 async function dmRecipient(pool, appId, issueNumber) {
   const settings = await settingsModule().readSettings(pool);
   const requester = await requesterOf(pool, appId, issueNumber);
-  return requester && hasBot(settings, requester)
+  return requester && (await botWorksFor(pool, settings, requester))
     ? { userId: requester.userId, username: requester.username }
     : null;
 }
@@ -2030,7 +2061,7 @@ async function relayIssuePost({
     ? require('./homeroom-bot-move').noteMoveOffer(pool, runId, outcome) : null);
   const settings = await settingsModule().readSettings(pool);
   const requester = await requesterOf(pool, app.id, issueNumber);
-  if (!requester || !hasBot(settings, requester)) {
+  if (!requester || !(await botWorksFor(pool, settings, requester))) {
     await noteMove(requester ? 'no_bot' : 'no_requester');
     return null;
   }
@@ -2447,7 +2478,7 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
   // #4175: nobody to send it to is said apart from a send that failed: the
   // first stops its run at once, the second is tried again.
   if (!requester) return { messageId: null, stop: 'no_requester' };
-  if (!hasBot(settings, requester)) return { messageId: null, stop: 'no_bot' };
+  if (!(await botWorksFor(pool, settings, requester))) return { messageId: null, stop: 'no_bot' };
   // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a complicated change's
   // plan is asked on its request's page, where it is posted; no card goes to
   // the requester's chat with the bot, so nothing is tried and retried here
@@ -2594,6 +2625,10 @@ async function closePlanCards(pool, runIds, { stopped = false, ws = null, bot = 
 // never put to its maker, so goAhead writes them as the plan's own lines.
 async function decidePlanTap(pool, { user, action, choice, answers = [], deps = {}, planShown = true, claimKey = null }) {
   if (choice !== 'build') return { ok: false, status: 400, error: 'choice must be build' };
+  // #6632: Build it is the bot building for them. Checked before the card
+  // is claimed, so the press can be sent again once they verify.
+  const ruleSettings = await settingsModule().readSettings(pool);
+  if (await verifyRequired(pool, ruleSettings, user)) return botVerified.refusal(ruleSettings);
   const { rows: [card] } = await pool.query(
     'SELECT run_id, conversation_id FROM homeroom_bot_dm_messages WHERE message_id = $1 AND user_id = $2 AND kind = $3',
     [action.message_id, user.id, PLAN_KIND],
@@ -3746,7 +3781,7 @@ async function noteChangeStopped(pool, sessionId, { why = 'preview', deps = {}, 
     // read as "no bot" and the line taken for said.
     const settings = await settingsModule().readSettings(pool, { strict });
     const requester = await requesterOf(pool, run.id, Number(run.issue_number));
-    if (!requester || !hasBot(settings, requester)) return null;
+    if (!requester || !(await botWorksFor(pool, settings, requester))) return null;
     const bot = deps.bot || await botAccount(pool);
     if (!bot) return null;
     const context = {
@@ -3836,7 +3871,7 @@ async function noteNeedsLook(pool, { sessionId = null, runId = null, why = 'chec
     const settings = await settingsModule().readSettings(pool);
     const issueNumber = Number(run.issue_number);
     const requester = await requesterOf(pool, run.id, issueNumber);
-    if (!requester || !hasBot(settings, requester)) return null;
+    if (!requester || !(await botWorksFor(pool, settings, requester))) return null;
     const bot = deps.bot || await botAccount(pool);
     if (!bot) return null;
     const context = {
@@ -4032,7 +4067,7 @@ async function noteProposalMerged(pool, session, { deps = {} } = {}) {
   const finish = (saidIn) => finishRequestThreads(pool, {
     app: { id: run.app_id, slug: run.slug, name: run.name }, issueNumber: run.issue_number, how: 'live', saidIn, deps,
   });
-  if (!requester || !hasBot(settings, requester)) { await finish(null); return null; }
+  if (!requester || !(await botWorksFor(pool, settings, requester))) { await finish(null); return null; }
   const bot = await botAccount(pool);
   if (!bot) return null;
   await closeOpenQuestions(pool, { userId: requester.userId, appId: run.app_id, issueNumber: run.issue_number });
@@ -4130,6 +4165,15 @@ const HELP_TEXT = [
 // work for are the accounts Homeroom has not let in yet (hasBot).
 const NOT_ENABLED_TEXT = 'I\'m not taking requests from your account yet. I will as soon as Homeroom lets '
   + 'your account in.';
+
+// #6632: what somebody the verified-accounts rule keeps the bot from is
+// told, with a Verify button under it (messages' store opens the verify
+// sheet for `verify_account`; its target is where an older client goes).
+// One fixed reply, no model.
+const VERIFY_TEXT = 'I work for verified accounts. Verify yours and I\'ll pick up from here.';
+const VERIFY_ACTION = Object.freeze({
+  id: 'verify_account', label: 'Verify', style: 'primary', type: 'open', target: '#settings/linked-accounts',
+});
 
 /** Whether this conversation is the person's direct conversation with the bot. */
 async function isBotDirect(pool, conversationId, botId, userId) {
@@ -4749,8 +4793,18 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
   const settings = await settingsModule().readSettings(pool);
   // B5: words that are one of its open prompts settle those buttons.
   await settlePrompt(pool, { botId: bot.id, userId: user.id, conversationId, content: message.content });
-  if (!hasBot(settings, user)) {
+  const person = await withVerified(pool, settings, user);
+  if (!hasBot(settings, person)) {
     const hour = Math.floor(Date.now() / (NOT_ENABLED_KEY_HOURS * 3600 * 1000));
+    // #6632: let in, and held only by the verified-accounts rule: the fixed
+    // reply that says so, once a day, with Verify. No model is asked.
+    if (hasBot({ ...settings, worksFor: 'everyone' }, user)) {
+      return sendDm(pool, {
+        bot, userId: user.id, replyToId: message.id, content: VERIFY_TEXT, idempotencyKey: `hrbot-verify-${user.id}-${hour}`,
+        metadata: { kind: 'verify', actions: [{ ...VERIFY_ACTION }], status: 'open', signals: botVerified.signalsOf(settings) },
+        moment: 'reply',
+      });
+    }
     return sendDm(pool, {
       bot, userId: user.id, replyToId: message.id, content: NOT_ENABLED_TEXT, idempotencyKey: `hrbot-notyet-${user.id}-${hour}`,
       moment: 'reply',
@@ -5024,7 +5078,7 @@ async function noteRequestFiled(pool, { app, user, issueNumber, title = null, as
     const n = Number(issueNumber);
     if (!app?.id || !user?.id || user.isSynthetic || !Number.isInteger(n) || n <= 0) return null;
     const settings = await settingsModule().readSettings(pool);
-    if (!hasBot(settings, user)) return null;
+    if (!(await botWorksFor(pool, settings, user))) return null;
     await pool.query(
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, asked_text)
        VALUES ($1, $2, $3, $4, $5)
@@ -5066,7 +5120,7 @@ async function botDoorFor(pool, app, user) {
   try {
     if (!app?.slug || !user?.id || user.isSynthetic) return null;
     const settings = await settingsModule().readSettings(pool);
-    if (!hasBot(settings, user) || !require('./homeroom-bot-live').isLiveFor(settings, app)) return null;
+    if (!(await botWorksFor(pool, settings, user)) || !require('./homeroom-bot-live').isLiveFor(settings, app)) return null;
     return { typicalMinutes: await typicalMinutes(pool) };
   } catch (err) {
     log.warn('homeroom-bot-dm', 'Could not read whether the bot builds here', { app: app?.slug, err: err.message });
@@ -5125,7 +5179,12 @@ async function askBotToBuild(pool, { app, user, issueNumber, deps = {}, readAgai
   if (!Number.isInteger(n) || n <= 0) return { ok: false, status: 400, error: 'Invalid request number' };
   if (!app?.id || !user?.id || user.isSynthetic) return { ok: false, status: 403, error: 'forbidden' };
   const settings = await settingsModule().readSettings(pool);
-  if (!hasBot(settings, user)) return { ok: false, status: 403, error: 'Homeroom bot is not on for you yet.' };
+  if (!(await botWorksFor(pool, settings, user))) {
+    // #6632: let in but not verified is its own refusal, which the client
+    // opens the verify sheet for and then sends the press again.
+    if (hasBot({ ...settings, worksFor: 'everyone' }, user)) return botVerified.refusal(settings);
+    return { ok: false, status: 403, error: 'Homeroom bot is not on for you yet.' };
+  }
   if (!require('./homeroom-bot-live').isLiveFor(settings, app)) {
     return { ok: false, status: 409, error: 'Homeroom bot does not build on this project.', code: 'not_building' };
   }
@@ -5295,10 +5354,10 @@ async function greetJoiner(pool, { user, app, strict = false }) {
       'SELECT id, username, is_synthetic, (has_platform_access OR private_member_since IS NOT NULL) AS has_platform_access, is_admin FROM users WHERE id = $1', [user.id],
     );
     const person = rows[0];
-    if (!person || !hasBot(settings, {
-      username: person.username, isSynthetic: !!person.is_synthetic,
+    if (!person || !(await botWorksFor(pool, settings, {
+      id: person.id, username: person.username, isSynthetic: !!person.is_synthetic,
       hasPlatformAccess: !!person.has_platform_access, isAdmin: !!person.is_admin,
-    })) return null;
+    }))) return null;
     const bot = await botAccount(pool);
     if (!bot) return null;
     const name = app.name || app.slug;
@@ -5356,10 +5415,10 @@ async function greetTourFinisher(pool, { userId, strict = false }) {
          FROM users WHERE id = $1 AND anonymised_at IS NULL`, [userId],
     );
     const person = rows[0];
-    if (!person || !hasBot(settings, {
-      username: person.username, isSynthetic: !!person.is_synthetic,
+    if (!person || !(await botWorksFor(pool, settings, {
+      id: person.id, username: person.username, isSynthetic: !!person.is_synthetic,
       hasPlatformAccess: !!person.has_platform_access, isAdmin: !!person.is_admin,
-    })) return null;
+    }))) return null;
     const bot = await botAccount(pool);
     if (!bot) return null;
     // The message is the hello alone: sent only when it is theirs to have
@@ -5430,10 +5489,10 @@ async function greetReadyMadeMaker(pool, { userId, app, strict = false }) {
          FROM users WHERE id = $1 AND anonymised_at IS NULL`, [userId],
     );
     const person = rows[0];
-    if (!person || !hasBot(settings, {
-      username: person.username, isSynthetic: !!person.is_synthetic,
+    if (!person || !(await botWorksFor(pool, settings, {
+      id: person.id, username: person.username, isSynthetic: !!person.is_synthetic,
       hasPlatformAccess: !!person.has_platform_access, isAdmin: !!person.is_admin,
-    })) return null;
+    }))) return null;
     const bot = await botAccount(pool);
     if (!bot) return null;
     const name = app.name || app.slug;
@@ -5743,7 +5802,7 @@ async function recordFirstVersion(db, pool, config, { app, user, brief, design =
   // Read on the caller's transaction connection, never another from the pool
   // while it holds one (a full pool would wait on itself).
   const settings = await settingsModule().readSettings(db);
-  const botBuilds = hasBot(settings, user);
+  const botBuilds = await botWorksFor(db, settings, user);
   const { rows } = await db.query(
     `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds)
      VALUES ($1, $2, $3, $4)
@@ -5864,7 +5923,7 @@ async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = f
   const text = normalizeBrief(brief);
   if (!text || !app?.id || !user?.id) return null;
   const settings = await settingsModule().readSettings(pool);
-  const bot = hasBot(settings, user) ? await settingsModule().ensureBotUser(pool, config) : null;
+  const bot = (await botWorksFor(pool, settings, user)) ? await settingsModule().ensureBotUser(pool, config) : null;
   await pool.query(
     `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds)
      VALUES ($1, $2, $3, $4)
@@ -6637,7 +6696,11 @@ module.exports = {
   MIN_BRIEF_CHARS,
   HELP_TEXT,
   NOT_ENABLED_TEXT,
+  VERIFY_TEXT,
   hasBot,
+  withVerified,
+  botWorksFor,
+  verifyRequired,
   isEnabledFor,
   botAccount,
   PROJECT_ORIGINS,

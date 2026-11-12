@@ -1000,10 +1000,21 @@ function authRoutes(config) {
     // #3624: whether this person builds through the Homeroom bot's DM
     // (everyone with platform access). The create dialog asks for a longer
     // description when it is true. Unreadable means false.
+    // #6632: with the bot for verified accounts only, somebody let in but
+    // not verified has `homeroomBotDm` false and `homeroomBotVerify` naming
+    // the signals that count, so the screens can ask them to verify without
+    // a round trip. Null for everybody else.
     let homeroomBotDm = false;
+    let homeroomBotVerify = null;
     try {
       const settings = await require('../services/homeroom-bot').readSettings(pool);
-      homeroomBotDm = !req.user.isSynthetic && require('../services/homeroom-bot-dm').hasBot(settings, req.user);
+      const botDm = require('../services/homeroom-bot-dm');
+      if (!req.user.isSynthetic) {
+        homeroomBotDm = await botDm.botWorksFor(pool, settings, req.user);
+        if (!homeroomBotDm && botDm.hasBot({ ...settings, worksFor: 'everyone' }, req.user)) {
+          homeroomBotVerify = { signals: require('../services/homeroom-bot-verified').signalsOf(settings) };
+        }
+      }
     } catch {}
     res.json({
       user: {
@@ -1023,6 +1034,7 @@ function authRoutes(config) {
         canAdminWrite: !!req.user.canAdminWrite,
         role: !req.user.isAdmin ? 'user' : (req.user.adminReadonly ? 'view_admin' : 'admin'),
         homeroomBotDm,
+        homeroomBotVerify,
         // Derived per-user app-creation affordance. Kept for the home-screen
         // treatment; the numbers below explain that state in the create
         // dialog. A null used/remaining value means the count query was not
