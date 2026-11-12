@@ -95,7 +95,22 @@ async function squashMerge({ owner, repo, number, pinnedSha = null }) {
     throw e;
   }
   if (merged.tree === await repoMirror.treeOf(dir, base)) {
-    throw refusal('Pull Request is not mergeable: it changes nothing on main', 405);
+    // Everything in it is on main already (request 6549: PR #15 of Gas &
+    // Lock, synced onto main after #14 merged the same work, so the sync
+    // kept main's side of every file). Asking again can never merge it, so
+    // it carries its own flag: the merge path closes the change instead of
+    // retrying it every few minutes as "Waiting on GitHub". That close is
+    // for good, so it is only said of main as it stands on the host now: if
+    // main moved since the mirror was read (a revert of the same work, say),
+    // it is refused as main moving, and the attempt is made again against
+    // the new main. A main that cannot be read throws, to be tried again.
+    const now = await gitHost.readRef({ owner, name: repo }, row.base_branch);
+    if (now && String(now).toLowerCase() !== String(base).toLowerCase()) {
+      throw refusal('Base branch was modified. Review and try the merge again.', 405);
+    }
+    const e = refusal('Pull Request is not mergeable: it changes nothing on main', 405);
+    if (now) e.alreadyOnMain = true;
+    throw e;
   }
 
   const author = gitHost.defaultAuthor();
