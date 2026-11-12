@@ -36,7 +36,7 @@ test('the head: what Homeroom is, one sentence, and the one primary button', () 
   const html = render();
   assert.match(html, /^<div class="fr" data-landing-frame=""><div class="fr-inner"><div class="fr-head"><div class="fr-tx"><h1 class="fr-title">On Homeroom, communities make apps together\.<\/h1><p class="fr-purpose">Look around and try what we&#x27;re making\.<\/p><\/div>/);
   assert.match(html, /<div class="fr-acts"><button type="button" class="fr-btn fr-line"><svg[^>]*>.*?<\/svg>Try an app first<\/button><button type="button" class="fr-btn" data-landing-frame-join="">Join the waitlist<\/button><\/div>/s);
-  assert.match(render({ waitlist: false }), /data-landing-frame-join="">Sign up<\/button>/, 'where accounts open at once, the button says so');
+  assert.match(render({ waitlist: false }), /data-landing-frame-join="">Create account<\/button>/, 'where accounts open at once, the button says so');
 });
 
 test('the kinds of community are the page\'s tabs, the same control as everywhere', () => {

@@ -461,7 +461,9 @@ const PERSON_FACTS = `
         AND d.created_at <= COALESCE(LEAST(a.release_link_followed_at, a.release_code_asked_at,
           (SELECT MIN(d2.created_at) FROM mail_deliveries d2
             WHERE d2.recipient = a.email AND d2.kind = 'otp' AND d2.created_at >= a.released_at)), NOW())) AS mail_sends_before_follow,
-    ${SIGNUP_METHOD_SQL} AS signup_method`;
+    ${SIGNUP_METHOD_SQL} AS signup_method,
+    EXISTS (SELECT 1 FROM events oe
+             WHERE oe.user_id = u.id AND oe.event_type = 'open_signup_let_in') AS open_signup`;
 
 const PERSON_JOINS = `
     LEFT JOIN LATERAL (
@@ -939,6 +941,18 @@ function cohortSources(people) {
     || String(a.from || '').localeCompare(String(b.from || '')));
 }
 
+// How somebody came in. An account let in at once because the waitlist was
+// off when it signed up (#6633, services/waitlist.js admitIfOpen marks it)
+// is 'open_signup': neither admitted by hand nor an activation code, a
+// wallet or a direct grant, which is what an account with access and no
+// admit of its own was taken for before.
+function doorOf(row) {
+  if (row.door && row.door !== 'code_wallet_or_grant') return row.door;
+  if (row.released_at) return 'admitted';
+  if (row.open_signup === true) return 'open_signup';
+  return row.door || null;
+}
+
 function firstMilePerson(row, now) {
   const mile = firstMileSteps(row, now);
   const mail = mailEngagement(row);
@@ -949,7 +963,7 @@ function firstMilePerson(row, now) {
     // with, which Admin › Waitlist already shows to admins.
     name: row.username || row.email || null,
     hasAccount: row.user_id != null,
-    door: row.door || (row.released_at ? 'admitted' : null),
+    door: doorOf(row),
     mail: mail.tracked ? { opened: mail.opened, clicked: mail.clicked } : null,
     ...cameInFacts(row),
     ...mile,
@@ -1891,7 +1905,8 @@ async function person(pool, { userId, now = new Date() } = {}) {
     // own page, which mail (admit or reminder) led in, how the account signed up, and the
     // invite link when one brought them.
     cameIn: {
-      door: row.invite_id != null ? 'invite_link' : (row.released_at ? 'admitted' : null),
+      door: row.invite_id != null ? 'invite_link'
+        : (row.released_at ? 'admitted' : (row.open_signup === true ? 'open_signup' : null)),
       ...cameInFacts(row),
     },
     firstMile: mile,
