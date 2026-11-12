@@ -2,8 +2,30 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { SectionHeading } from '@/components/ui/field';
 import { useMessages } from '../../../lib/i18n/react';
+import { agoStamp } from '../../../lib/timestamp';
 
-type BlockedApp = { slug: string; name: string };
+type BlockedApp = { slug: string; name: string; created_at?: string | null };
+
+/**
+ * One blocked app (#6512): its name, when it was blocked, and Unblock. The
+ * date is the product's card form (`agoStamp`: "3d ago", a date from a week
+ * on) with the full stamp on hover, and is left out for a row with no stamp.
+ */
+export function BlockedAppRow({ app, busy, onUnblock }: {
+  app: BlockedApp;
+  busy: string | null;
+  onUnblock: (app: BlockedApp) => void;
+}) {
+  const t = useMessages('settings');
+  const when = agoStamp(app.created_at);
+  return <div className="flex items-center justify-between gap-3 rounded-lg bg-zinc-500/5 p-3">
+    <div className="min-w-0">
+      <span className="block break-words">{app.name}</span>
+      {when.text ? <time data-role="blocked-at" dateTime={app.created_at ?? undefined} title={when.title} className="mt-0.5 block text-[13px] text-zinc-500 dark:text-zinc-400">{t('settings:blockedApps.blockedAt', { when: when.text })}</time> : null}
+    </div>
+    <Button type="button" layout="shrink" disabled={!!busy} onClick={() => onUnblock(app)}>{busy === app.slug ? t('settings:blockedApps.unblocking') : t('settings:blockedApps.unblock')}</Button>
+  </div>;
+}
 function BlockedAppsList() {
   const t = useMessages('settings');
   const host = useRef<HTMLDivElement>(null);
@@ -48,10 +70,7 @@ function BlockedAppsList() {
   return <div ref={host} className="mt-4 space-y-3">
     {apps === null && !error ? <p className="text-sm text-zinc-500">{t('settings:blockedApps.loading')}</p> : null}
     {apps?.length === 0 ? <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('settings:blockedApps.empty')}</p> : null}
-    {apps?.map(app => <div key={app.slug} className="flex items-center justify-between gap-3 rounded-lg bg-zinc-500/5 p-3">
-      <span className="min-w-0 break-words">{app.name}</span>
-      <Button type="button" layout="shrink" disabled={!!busy} onClick={() => void unblock(app)}>{busy === app.slug ? t('settings:blockedApps.unblocking') : t('settings:blockedApps.unblock')}</Button>
-    </div>)}
+    {apps?.map(app => <BlockedAppRow key={app.slug} app={app} busy={busy} onUnblock={row => void unblock(row)} />)}
     {error ? <div role="alert"><p className="text-sm text-red-700 dark:text-red-400">{error}</p><Button type="button" onClick={() => refresh.current()}>{t('core:common.retry')}</Button></div> : null}
   </div>;
 }

@@ -1971,6 +1971,18 @@
     "text": "Revoke",
     "description": "Red button beside a permission of an app in Settings > App device permissions: takes that permission away from the app."
   },
+  "appPermissions.note.camera": {
+    "text": "Lets this app use your camera while it is open, once your browser allows it too.",
+    "description": "Small grey line under the Camera permission of an app in Settings > App device permissions: says plainly what this permission lets the app do. Shown on revoked rows too, so it describes the permission rather than what the app can do right now; the browser must also allow the camera."
+  },
+  "appPermissions.note.microphone": {
+    "text": "Lets this app hear you and the sounds around you while it is open, once your browser allows it too.",
+    "description": "Small grey line under the Microphone permission of an app in Settings > App device permissions: says plainly what this permission lets the app do. Shown on revoked rows too, so it describes the permission rather than what the app can do right now; the browser must also allow the microphone."
+  },
+  "appPermissions.note.screen": {
+    "text": "Each time it asks, your browser lets you choose a screen, window or tab. The app sees only what you choose, until you stop sharing.",
+    "description": "Small grey line under the Screen sharing permission of an app in Settings > App device permissions. The browser shows its own picker every time the app asks to share, and the app sees only the screen, window or tab the person picks there."
+  },
   "blockedApps.title": {
     "text": "Blocked apps",
     "description": "Heading of the section in Settings that lists the apps this person has blocked."
@@ -2002,6 +2014,10 @@
   "blockedApps.unblockFailed": {
     "text": "Could not unblock this app.",
     "description": "Error in Settings > Blocked apps when removing a block failed and the server gave no reason."
+  },
+  "blockedApps.blockedAt": {
+    "text": "Blocked {{when}}",
+    "description": "Small grey line under an app's name in Settings > Blocked apps saying when the person blocked it. {{when}} is either how long ago (\"3d ago\", \"just now\") or, after a week, a date such as \"Jun 16\"."
   },
   "tour.title": {
     "text": "Welcome tour",
