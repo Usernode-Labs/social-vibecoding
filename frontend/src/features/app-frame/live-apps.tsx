@@ -79,6 +79,16 @@ export function closeLiveApp(slug: string): boolean {
 }
 
 /**
+ * Whether `slug` has a live frame right now, read once rather than
+ * subscribed: for a click handler that asks at the moment it runs. #6512:
+ * revoking a device permission closes the app when it is open, because a
+ * frame keeps what its `allow` delegated until the frame goes.
+ */
+export function isLiveApp(slug: string): boolean {
+  return !!slug && liveAppSlugs(appFrameStore.get()).includes(slug);
+}
+
+/**
  * The dot itself. Decorative to assistive tech — the owning control adds
  * liveAppLabel() to its own name — and `title` for a pointer that hovers it.
  */
