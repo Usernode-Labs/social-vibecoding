@@ -422,7 +422,10 @@ async function published(demoFlag, payloadOverride) {
   await Settings._loadConnectors();
   const last = states[states.length - 1];
   const tool = (key) => last.tools.find((entry) => entry.key === key);
-  return { Settings, nodes, states, last, tool };
+  // `payload` is what the panel actually read. The demo fixtures date their
+  // rows from Date.now() at call time, so a second call to demoConnectorState()
+  // can land a second later and give an expectation the panel never rendered.
+  return { Settings, nodes, states, last, tool, payload };
 }
 
 test('?demo=1 sorts its two connections onto Claude and ChatGPT, in page order', async () => {
@@ -459,11 +462,11 @@ test('the name decides the card: Anthropic, Codex and OpenAI', async () => {
 });
 
 test('connectors-attention: the expired row is on its card, and only live rows count', async () => {
-  const { tool, nodes, Settings } = await published('connectors-attention');
+  const { tool, nodes, Settings, payload } = await published('connectors-attention');
   assert.equal(tool('claude').status, 'working');
   assert.equal(tool('chatgpt').status, 'attention');
   const [row] = tool('chatgpt').connections;
-  assert.equal(row.detail, message('settings:connectors.row.expired', { when: new Date(demoConnectorState('connectors-attention').connectors[1].expired_at).toLocaleString() }));
+  assert.equal(row.detail, message('settings:connectors.row.expired', { when: new Date(payload.connectors[1].expired_at).toLocaleString() }));
   assert.equal(row.reconnect, false, 'no ChatGPT step signs in again, so no Reconnect');
   assert.equal(tool('claude').connections[0].reconnect, false, 'a live row has none either');
   assert.equal(row.capabilities, message('settings:connectors.capabilities.expiredReadWrite'));
@@ -497,11 +500,11 @@ function reconnectDom() {
 }
 
 test('connectors-reconnect: an expired Claude row offers Reconnect and says so', async () => {
-  const { tool } = await published('connectors-reconnect');
+  const { tool, payload } = await published('connectors-reconnect');
   assert.equal(tool('claude').status, 'attention');
   const [row] = tool('claude').connections;
   assert.equal(row.reconnect, true);
-  const fixture = demoConnectorState('connectors-reconnect').connectors[0];
+  const fixture = payload.connectors[0];
   assert.equal(row.detail, message('settings:connectors.row.expiredReconnect', { when: new Date(fixture.expired_at).toLocaleString() }));
 });
 
