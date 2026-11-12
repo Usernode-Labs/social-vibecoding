@@ -1,11 +1,11 @@
 /* K · Sunrise. The wallpaper's own peach, pink and lavender become the accent: one gradient for the main button and for "here". A deep ink sidebar anchors it. */
-.hr{--surface:#fff;--sunk:#f1eff5;--ink:#17182f;--mut:#5c5d7c;--faint:#9192ad;--line:rgba(23,24,47,.1);--line2:rgba(23,24,47,.065);
-  --acc:#2563eb;--acc-ink:#fff;--acc-t:#e0eaff;--lit:#17182f;--lit-t:#fbe6ea;--grad:linear-gradient(100deg,#ffb59c 0%,#ff93bb 52%,#bda2ff 100%);--gradt:linear-gradient(100deg,rgba(255,181,156,.3),rgba(255,147,187,.26) 52%,rgba(189,162,255,.3));
-  --nav:#17182f;--soft:0 1px 0 rgba(23,24,47,.04),0 16px 32px -24px rgba(23,24,47,.45);
+.hr{--surface:#fff;--sunk:#f1eff5;--ink:#17182f;--mut:#53546f;--faint:#6b6c8a;--line:rgba(23,24,47,.1);--line2:rgba(23,24,47,.065);
+  --acc:#1f5ae0;--acc-ink:#fff;--acc-t:#e0eaff;--lit:#17182f;--lit-t:#fbe6ea;--grad:linear-gradient(100deg,#ffb59c 0%,#ff93bb 52%,#bda2ff 100%);--gradt:linear-gradient(100deg,rgba(255,181,156,.3),rgba(255,147,187,.26) 52%,rgba(189,162,255,.3));
+  --nav:#17182f;--soft:0 1px 2px rgba(23,24,47,.05),0 14px 30px -22px rgba(23,24,47,.36);--glow:0 10px 20px -14px rgba(240,96,140,.75);
   --f:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",sans-serif;font-family:var(--f)}
-.hr.dark{--surface:#1a1b36;--sunk:#25274a;--ink:#f2f2fb;--mut:#adafcf;--faint:#787a9c;--line:rgba(255,255,255,.11);--line2:rgba(255,255,255,.07);
+.hr.dark{--surface:#1a1b36;--sunk:#25274a;--ink:#f2f2fb;--mut:#b3b5d3;--faint:#9092b4;--line:rgba(255,255,255,.11);--line2:rgba(255,255,255,.07);
   --acc:#7fa8ff;--acc-ink:#07112c;--acc-t:#182a55;--lit:#f2f2fb;--lit-t:#3a2238;--gradt:linear-gradient(100deg,rgba(255,181,156,.2),rgba(255,147,187,.18) 52%,rgba(189,162,255,.22));
-  --nav:#0b0c1c;--soft:0 16px 32px -24px rgba(0,0,0,.9)}
+  --nav:#0b0c1c;--soft:inset 0 1px 0 rgba(255,255,255,.06),0 16px 32px -24px rgba(0,0,0,.9);--glow:0 10px 22px -16px rgba(255,147,187,.55)}
 .app{grid-template-columns:244px minmax(0,1fr)}
 .side{background:var(--nav);border-right:0;color:#fff;padding:14px 10px 10px}
 .dark .side{border-right:1px solid var(--line)}
@@ -15,14 +15,14 @@
 .nv .ic{color:inherit}
 .side .nv.all .nm{color:inherit;opacity:.7}
 .nv.on{background:var(--grad);color:#17182f;font-weight:700}.nv.on .ic{color:#17182f}
-.side .cap{color:rgba(255,255,255,.5);font-size:12px;font-weight:700;letter-spacing:.06em}
+.side .cap{color:rgba(255,255,255,.5);font-size:12px;font-weight:700;letter-spacing:.02em}
 .side .n{background:#fff;color:#17182f}.nv.on .n{background:#17182f;color:#fff}
 .sidefoot{border-top:1px solid rgba(255,255,255,.14)}
 .bar{height:60px;border-bottom:0;padding:0 32px}
 .banner{margin:0 32px;border:0;border-radius:14px;background:var(--gradt);color:var(--ink)}
 .phone .banner{margin:0 12px}
 .inner{padding:16px 32px 48px}
-.title{font-size:36px;font-weight:800;letter-spacing:-.035em;line-height:1.08}
+.title{font-size:36px;font-weight:800;letter-spacing:-.03em;line-height:1.1}
 .phone .title{font-size:28px}
 .purpose{font-size:16px;margin-top:10px}
 .tabs{gap:26px}
@@ -32,8 +32,8 @@
 .row .t{font-weight:700}
 .row.on{background:var(--gradt)}
 .lead{border-radius:12px}
-.btn{background:var(--grad);color:#17182f;font-weight:700;box-shadow:0 12px 22px -14px rgba(255,120,160,.9)}
-.btn.quiet{background:var(--sunk);color:var(--ink);box-shadow:none}.btn.line{background:none;color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
+.btn{background:var(--grad);color:#17182f;font-weight:700;box-shadow:var(--glow)}
+.btn.quiet{background:var(--sunk);color:var(--ink);box-shadow:none}.btn.line{background:var(--surface);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line),0 1px 2px rgba(23,24,47,.05)}
 .btn.ok{background:var(--ok);color:#fff;box-shadow:none}.dark .btn.ok{color:#04150c}.btn.bad{background:var(--bad-t);color:var(--bad);box-shadow:none}
 .btn.sm{box-shadow:none}.btn.quiet.sm{background:var(--sunk)}
 .fact .v{font-size:28px;font-weight:800;letter-spacing:-.03em}
@@ -50,5 +50,19 @@
 .solo .title{font-size:36px}
 .phone .tabbar{background:var(--nav);border-top:0}
 .tb{color:rgba(255,255,255,.8);font-weight:600}.tb.on{background:var(--grad);color:#17182f}
-.tb .n{box-shadow:0 0 0 2px var(--nav)}
+.tb .n{top:-4px;left:calc(50% + 7px);min-width:18px;height:18px;padding:0 5px;box-shadow:0 0 0 2px var(--nav)}
+.tb.on .n{background:#17182f;color:#fff;box-shadow:none}
 .noside .bar .brand{font-weight:800}
+
+/* polish pass */
+.tog{background:rgba(23,24,47,.16);box-shadow:none}.dark .tog{background:rgba(255,255,255,.2)}
+.tog.on{background:var(--acc)}.dark .tog.on{background:var(--acc)}
+.composer{box-shadow:inset 0 0 0 1px var(--line2),var(--soft)}
+/* (in the page: the product's own two-tab switches that wear the tabs keep their last tab whole) */
+.phone .inner .tabs{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 40px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 40px),transparent)}
+.phone .ib{width:40px;height:40px}.phone .ib .dot{top:7px;right:7px}
+.phone .btn.sm{height:36px;padding:0 14px}
+.phone .tb.on{border-radius:14px}
+.row.on{box-shadow:inset 3px 0 0 #ff93bb}
+.bar .btn:not(.quiet):not(.line){background:var(--ink);color:var(--surface);box-shadow:none}
+.phone .barline{border-bottom:0}

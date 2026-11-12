@@ -1021,23 +1021,11 @@
   },
   "frame.numbers": {
     "text": "In numbers",
-    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the strip of figures at the top (changes live, challenges done and the like)."
-  },
-  "frame.pair": {
-    "text": "{{first}} · {{second}}",
-    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Joins two short facts about the person on the one line under their handle, such as 'Building since April 2026' and 'Verified GitHub · name'."
-  },
-  "frame.week.time": {
-    "text": "{{time}} in apps",
-    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row under This week: how long the person spent inside apps in the last seven days; {{time}} is already a short duration such as '25m' or '2h 10m'."
-  },
-  "frame.week.apps": {
-    "text": "{{count}} {{label}}",
-    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row under This week: how many apps the person opened in the last seven days; {{label}} is already the counted words, such as 'apps opened'."
+    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the card of figures in the side column (changes live, challenges done and the like)."
   },
   "frame.public.about": {
     "text": "About",
-    "description": "Someone's public profile when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card with the person's picture, name, handle and bio."
+    "description": "Someone's public profile when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card holding the person's bio."
   },
   "frame.public.verified": {
     "text": "Verified",
@@ -1051,8 +1039,24 @@
     "text": "X",
     "description": "Someone's public profile when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row in the Verified group: the person's X account, which opens it."
   },
-  "frame.copy": {
-    "text": "Copy",
-    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The small button at the end of the \"Copy public link\" row in the Public page group; pressing it copies the link to your public profile."
+  "frame.tab.label": {
+    "text": "Parts of your page",
+    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Said to a screen reader for the row of tabs under the person's handle (Overview, Changes, Requests, Feedback, Votes, Friends)."
+  },
+  "frame.tab.overview": {
+    "text": "Overview",
+    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The first tab: the page of the person's work, rewards, account and settings rows, with their figures and this week's chart."
+  },
+  "frame.tab.feedback": {
+    "text": "Feedback",
+    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The tab that opens the list of feedback the person has sent, with each report's status."
+  },
+  "frame.projects": {
+    "text": "Projects",
+    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On the Changes, Requests and Votes tabs: small label over the list of the person's projects, where picking one narrows the list of finished work to it."
+  },
+  "frame.allProjects": {
+    "text": "All projects",
+    "description": "The You tab when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On the Changes, Requests and Votes tabs: the first choice in the list of projects, which shows finished work from every project."
   }
 }

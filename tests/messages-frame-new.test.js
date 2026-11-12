@@ -1,8 +1,9 @@
 // New message in the one frame (frontend/src/features/messages/frame-new
-// .tsx), as the 2026-11-06 screen tour draws it (s16): the standard sheet
-// over the inbox, one field, the people as rows, and one button that names
-// what happens. One person is a direct message; more make a group, named
-// after the people in it (a name can be changed from the group's own menu).
+// .tsx), version 2 of the screen tour's s16: the kit's sheet over the inbox
+// holding what the standard "+" offers and nothing else. Three kinds of
+// conversation, each with its one line; a press hands over to the product
+// (an agent chat starts; a direct message or a group opens the product's
+// own create dialog on that tab, which wears the look).
 //
 // Run with: node --test tests/messages-frame-new.test.js
 
@@ -12,85 +13,77 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { renderComponent, loadTsx } = require('./lib/render-tsx');
+const { renderComponent } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(ROOT, ...parts), 'utf8');
 const SHEET = 'frontend/src/features/messages/frame-new.tsx';
+const PANE = 'frontend/src/features/messages/index.tsx';
 
-const EVAN = { id: 8, username: 'evan', avatarUrl: null };
-const BRUNO = { id: 9, username: 'Bruno', avatarUrl: null };
-const LUKAS = { id: 10, username: 'Lukas', avatarUrl: '/u/10.png' };
-const base = {
-  query: '', onQuery() {}, picked: [], people: [EVAN, BRUNO, LUKAS], searching: false, onToggle() {}, onUnpick() {},
-  busy: false, error: '', onStart() {}, onClose() {}, blocked: null, onBlocked() {}, onUnblock() {},
-};
-const stubs = { './store': { createDirect() {}, createGroup() {}, setUserBlocked() {}, useMessagesSnapshot: () => ({ conversations: [] }) }, './api': { searchUsers: async () => [], listBlocks: async () => [] } };
-const render = (over) => renderComponent(SHEET, 'NewMessageSheetView', { ...base, ...over }, { cache: false, stubs });
+const CHOICES = [
+  { key: 'agent', label: 'messages:inbox.new.agent.label', hint: 'messages:inbox.new.agent.hint' },
+  { key: 'direct', label: 'messages:inbox.new.direct.label', hint: 'messages:inbox.new.direct.hint' },
+  { key: 'group', label: 'messages:inbox.new.group.label', hint: 'messages:inbox.new.group.hint' },
+];
+const render = (over) => renderComponent(SHEET, 'NewMessageSheet', { choices: CHOICES, onPick() {}, onClose() {}, ...over }, { cache: false });
 
-test('it is the standard sheet: the title, one sentence, one field, the people, one button', () => {
+test('it is the kit\'s sheet: the product\'s title and sentence, then three rows in one card', () => {
   const html = render();
   assert.match(html, /^<div class="fr fr-ovhost"><div class="fr-ov"><div class="fr-sheet" role="dialog" aria-modal="true"/);
-  assert.match(html, /<h2 class="fr-title" id="[^"]+">New message<\/h2><p class="fr-purpose">One person is a direct message\. Add more to make a group\.<\/p>/);
-  assert.match(html, /<div class="fr-card"><div class="fr-fields"><div class="fr-field"><label for="([^"]+)">To<\/label><div class="fr-inp"><svg[^>]*>.*?<\/svg><input id="\1" class="fr-v" type="text" autoComplete="off" placeholder="Search by username" autofocus="" value=""\/><\/div><\/div><\/div><\/div>/s);
-  assert.match(html, /<h2 class="fr-cap">People you talk to<\/h2>/);
-  assert.deepEqual([...html.matchAll(/<span class="fr-t">([^<]+)<\/span>/g)].map((m) => m[1]), ['evan', 'Bruno', 'Lukas']);
-  assert.match(html, /<button type="button" class="fr-btn fr-block fr-off" disabled=""><svg[^>]*>.*?<\/svg>Start chat<\/button>/s, 'nothing to start until somebody is picked');
+  assert.match(html, /<h2 class="fr-title" id="[^"]+">New message<\/h2><p class="fr-purpose">Start a new conversation<\/p>/);
+  assert.deepEqual([...html.matchAll(/<span class="fr-t">([^<]+)<\/span><span class="fr-s">([^<]+)<\/span>/g)].map((m) => [m[1], m[2]]), [
+    ['Agent chat', 'Plan and build a change with a coding agent'],
+    ['Direct message', 'Talk to one person'],
+    ['Group chat', 'Bring a few people together'],
+  ], 'the standard menu\'s three choices, in its order and words');
+  assert.equal((html.match(/<div class="fr-card">/g) || []).length, 1);
+  assert.equal((html.match(/<button type="button" class="fr-row">/g) || []).length, 3, 'each a button');
+  assert.equal((html.match(/<span class="fr-lead" aria-hidden="true"><svg/g) || []).length, 3, 'each with its glyph');
   const classes = [...html.matchAll(/class="([^"]*)"/g)].flatMap((m) => m[1].split(/\s+/)).filter(Boolean);
   for (const c of classes) assert.match(c, /^fr(-|$)/, `${c} is not a kit class`);
 });
 
-test('a picked person is in the field and their row is lit; the button is ready', () => {
-  const html = render({ picked: [EVAN], query: 'br' });
-  assert.match(html, /<div class="fr-inp fr-val"><svg[^>]*>.*?<\/svg><span>evan<\/span><input id="[^"]+" class="fr-v" type="text" autoComplete="off" placeholder="" autofocus="" value="br"\/>/s,
-    'the field reads as the tour\'s: the names, then what is being typed');
-  assert.match(html, /<button type="button" class="fr-row fr-sm fr-on" aria-pressed="true"><span class="fr-av"[^>]*>e<\/span><span class="fr-tx"><span class="fr-t">evan<\/span><\/span><\/button>/);
-  assert.match(html, /<button type="button" class="fr-row fr-sm" aria-pressed="false"><span class="fr-av"[^>]*>B<\/span>/);
-  assert.match(html, /<button type="button" class="fr-btn fr-block"><svg/);
-  assert.match(html, /<h2 class="fr-cap">People<\/h2>/, 'while searching the group is what was found');
-});
-
-test('it says when it is searching, when nobody matches, and what went wrong', () => {
-  assert.match(render({ query: 'zz', people: [], searching: true }), /<div class="fr-card fr-pad">Searching…<\/div>/);
-  assert.match(render({ query: 'zz', people: [] }), /<div class="fr-card fr-pad">No matching people\.<\/div>/);
-  assert.doesNotMatch(render({ people: [] }), /fr-cap/, 'nobody talked to yet: no empty group');
-  assert.match(render({ query: 'zz', people: [], picked: [EVAN] }), /<span class="fr-t">evan<\/span>.*<div class="fr-card fr-pad">No matching people\.<\/div>/s,
-    'with somebody picked already, a search that finds nobody still says so');
-  assert.match(render({ error: 'That person cannot be messaged.' }), /<div class="fr-note fr-bad"[^>]*><svg[^>]*>.*?<\/svg><div>That person cannot be messaged\.<\/div><\/div>/s);
-  assert.match(render({ busy: true, picked: [EVAN] }), /class="fr-btn fr-block fr-off" disabled=""/);
-});
-
-test('blocked people stay reachable from the sheet\'s foot', () => {
-  assert.match(render(), /<div class="fr-foot"><button type="button" class="fr-link">Blocked people<\/button><\/div>/);
-  const open = render({ blocked: [BRUNO] });
-  assert.match(open, /<h2 class="fr-cap">Blocked people<\/h2>.*?<span class="fr-t">Bruno<\/span>.*?<button type="button" class="fr-btn fr-quiet fr-sm">Unblock<\/button>/s);
-  assert.match(render({ blocked: [] }), /<div class="fr-card fr-pad">Nobody is blocked\.<\/div>/);
-});
-
-test('one person starts a direct message, more a group named after the people in it', () => {
-  const { groupTitle } = loadTsx(SHEET, { stubs, cache: false });
-  assert.equal(groupTitle('snait', [EVAN, BRUNO]), 'snait / evan / Bruno');
-  assert.equal(groupTitle('', [EVAN, BRUNO]), 'evan / Bruno');
-  const many = Array.from({ length: 30 }, (_, i) => ({ id: 100 + i, username: `person_number_${i}` }));
-  assert.ok(groupTitle('snait', many).length <= 80, 'within the 80 characters a group\'s name may have');
-  assert.match(groupTitle('snait', many), /…$/);
+test('what the first tour put in the sheet is gone: no field, no people, no Start chat, no blocked list', () => {
+  const html = render();
+  assert.doesNotMatch(html, /<input|fr-field|fr-btnrow|fr-foot|fr-cap/);
+  assert.doesNotMatch(html, /Start chat|People you talk to|Blocked people|Or else|Search by username/);
   const src = read(SHEET);
-  assert.match(src, /picked\.length === 1\s*\? await createDirect\(picked\[0\]\.id\)\s*: await createGroup\(groupTitle\(/);
+  assert.doesNotMatch(src, /createDirect|createGroup|listBlocks|searchUsers|setUserBlocked|groupTitle|useState|useEffect/, 'nothing is picked, searched or created here');
+  assert.doesNotMatch(src, /messages:frame\.new\./);
+  const catalog = JSON.parse(read('frontend/locales/en/messages.json'));
+  assert.deepEqual(Object.keys(catalog).filter((id) => id.startsWith('frame.new.')), [], 'its catalog entries went with it');
+  assert.match(src, /title=\{t\('messages:create\.title'\)\}\s+purpose=\{t\('messages:inbox\.new\.menuName'\)\}/, 'the product\'s own title and menu name');
 });
 
-test('under a look New message opens the sheet, in place of the standard dialog', () => {
-  const pane = read('frontend/src/features/messages/index.tsx');
+test('the rows are the pane\'s own choices, and a press hands over to the product\'s own start', () => {
+  const pane = read(PANE);
   assert.match(pane, /onNew=\{\(\) => setFrameNew\(true\)\}/);
-  assert.match(pane, /\{frameNew \? <NewMessageSheet known=\{known\} onClose=\{\(\) => setFrameNew\(false\)\} \/> : null\}/);
-  assert.match(pane, /const person = c\.kind === 'direct' && !c\.homeroomBot \? directPerson\(c\) : null;/, 'its people: those already talked to, the bot left out');
+  assert.match(pane, /<NewMessageSheet\s+choices=\{NEW_CHOICES\}\s+onPick=\{\(choice\) => \{ setFrameNew\(false\); window\.setTimeout\(\(\) => startNew\(choice\), 0\); \}\}\s+onClose=\{\(\) => setFrameNew\(false\)\}\s+\/>/,
+    'the sheet goes first, so the focus it hands back lands before the product\'s dialog takes it');
+  assert.match(pane, /function startNew\(choice: NewChoice\) \{[^}]*if \(choice === 'agent'\) void startAgentSession\(\{ entry: 'messages' \}\);\s+else openDialog\('messagesCreate', choice\);/,
+    'an agent chat starts; a direct message or a group is the product\'s create dialog, on that tab');
 });
 
-test('an agent chat, the other kind the standard dialog starts, is a row under the people until somebody is picked', () => {
-  const html = render({ onAgent() {} });
-  assert.match(html, /<h2 class="fr-cap">Or else<\/h2><\/div><div class="fr-card"><button type="button" class="fr-row"><span class="fr-lead" aria-hidden="true">.*?<\/span><span class="fr-tx"><span class="fr-t">Agent chat<\/span><span class="fr-s">Plan and build a change with a coding agent<\/span><\/span><svg class="fr-ic fr-go"/s);
-  assert.doesNotMatch(render({ onAgent() {}, picked: [EVAN] }), /Agent chat/, 'a picked person means a message');
-  assert.doesNotMatch(render({ onAgent() {}, query: 'ev' }), /Agent chat/, 'nor while searching');
-  assert.doesNotMatch(render(), /Agent chat/, 'nothing without the entry');
-  const src = read(SHEET);
-  assert.match(src, /onAgent=\{\(\) => \{ onClose\(\); void startAgentSession\(\{ entry: 'messages' \}\); \}\}/, 'the same start the standard dialog makes');
+test('the product\'s create dialog wears the look: its card is named, and dressed from the look\'s tokens', () => {
+  const dialog = read('frontend/src/features/messages/create-dialog.tsx');
+  assert.match(dialog, /<DialogCard size="md" data-new-message="">/, 'the card is lifted out of its root when shown, so it carries its own name');
+  const css = read('public/css/app.css');
+  const at = css.indexOf('/* NEW MESSAGE\'S DIALOG');
+  assert.ok(at > 0, 'a block of its own in THE FRAME IN THE SHELL');
+  const block = css.slice(at, css.indexOf('\n\n', at));
+  assert.match(block, /html\[data-skin\]:not\(\[data-skin="brand"\]\) \[data-new-message\] \{[^}]*background: var\(--fr-solid, var\(--fr-ground\)\);/, 'solid under a see-through look');
+  assert.match(block, /\[data-new-message\] h2 \{ font-size: 24px; \}/, 'a sheet\'s title: the look\'s title face at the sheet\'s size');
+  assert.match(block, /\[data-new-message\] \[role="tab"\] \{ flex: 1; justify-content: center; \}/, 'the two kinds share the width, as a sheet\'s switch does');
+  // Its title, its switch and its buttons wear the kit's through the map, each as a second wearer.
+  const roots = JSON.parse(read('frontend/looks/looks.json')).wear.roots;
+  const wearers = (root) => [root, ...(root.also || [])];
+  assert.ok(wearers(roots.title).some((w) => w.to === '[data-new-message] h2'));
+  assert.ok(wearers(roots.tabs).some((w) => w.to === '[data-new-message] [role="tablist"]'));
+  assert.ok(wearers(roots.tab).some((w) => w.to === '[data-new-message] [role="tab"]' && w.parts.on === '[aria-selected="true"]'), 'the chosen kind is the tab that is on');
+  assert.ok(wearers(roots.btn).some((w) => w.to === '[data-new-message] .ms-auto > button' && w.parts.quiet === '.bg-zinc-100'), 'Cancel is the quiet button, Create group the primary');
+  const worn = css.slice(css.indexOf('/* looks:begin'));
+  assert.ok(worn.includes('html[data-skin]:where(:not([data-skin="brand"])) [data-new-message] [role="tab"][aria-selected="true"]'), 'compiled into the looks section');
+  assert.match(block, /\[data-new-message\] input \{[^}]*box-shadow: inset 0 0 0 1px var\(--fr-line\);/);
+  assert.doesNotMatch(block, /#[0-9a-fA-F]{3,8}\b|rgba?\(/, 'no colour of its own');
+  assert.doesNotMatch(block, /-(left|right)\b/, 'logical sides only');
 });

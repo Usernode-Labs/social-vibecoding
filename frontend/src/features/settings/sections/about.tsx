@@ -127,7 +127,7 @@ function PlatformVersionRow() {
 }
 
 /** Every row reads as a link; the accent, because each is something to do. */
-const LEGAL_LINK = 'text-sm font-medium text-violet-700 hover:underline dark:text-violet-400';
+const LEGAL_LINK = 'ui-link text-sm font-medium text-violet-700 hover:underline dark:text-violet-400';
 
 /**
  * The terms and Homeroom's privacy notice (#5094, #5106), under the versions:
@@ -158,7 +158,7 @@ function LegalLinks() {
   return (
     <div id="settings-about-legal" className="mt-6">
       <SectionHeading title={t('settings:about.legal.title')} />
-      <div className="flex flex-col items-start gap-2 px-4">
+      <div className="ui-card ui-links flex flex-col items-start gap-2 px-4">
         <button id="settings-about-terms" type="button" className={LEGAL_LINK} onClick={openTerms}>
           {t('settings:about.legal.terms')}
         </button>
@@ -197,6 +197,8 @@ export function AboutSection() {
           {t('settings:about.intro')}
         </SectionHeading>
 
+        {/* A neutral wrapper (looks v2): the version rows are one card under a look. */}
+        <div className="ui-card">
         <AppVersionRow />
 
         <PlatformVersionRow />
@@ -205,6 +207,7 @@ export function AboutSection() {
             0.4.0/1223. Independent of the platform commit above and never the
             open app's. Hidden outside the mobile app. */}
         <NativeAppVersionRow />
+        </div>
       </div>
 
       <LegalLinks />

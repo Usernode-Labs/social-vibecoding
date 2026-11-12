@@ -903,7 +903,7 @@ test('the nav components render what the module shapes, and nothing else', () =>
   assert.match(nav.slice(0, 1200), /'font-medium text-zinc-600 dark:text-zinc-300/,
     'the other rows stay at the lighter weight');
   assert.doesNotMatch(nav.slice(0, 1200), /violet/, 'the action accent no longer marks where you are');
-  assert.match(navTsx, /className=\{item\.className\}/,
+  assert.match(navTsx, /className=\{`ui-row ui-row-sm \$\{item\.className\}`\}/,
     'the component renders that string rather than recomputing it');
 
   // Section links on desktop, a LIST on mobile. dapp.json selects on
@@ -945,7 +945,7 @@ test('UX audit: the section list is the pane\'s sheet, and scrolls on its own', 
     /id="settings-sidebar-col" class="hidden lg:block lg:w-56 shrink-0 dc-lift dc-lift-session settings-side-sheet"/,
     'the column wears the pane\'s own lift, after the width classes the breakpoint test reads');
   assert.match(navTsx,
-    /className="sticky top-0 z-10 -mt-2\.5 pt-2\.5 pb-3 bg-\[color:var\(--dc-sheet-solid\)\]"/,
+    /className="ui-search sticky top-0 z-10 -mt-2\.5 pt-2\.5 pb-3 bg-\[color:var\(--dc-sheet-solid\)\]"/,
     '"Find a setting" is held at the sheet\'s top, on an opaque plane');
   const css = read('public/css/app.css');
   const block = css.slice(css.indexOf('#settings-sidebar-col {'));
@@ -2084,7 +2084,7 @@ test('the credential list renders its three host states', () => {
   // empty line would mismatch on hydration — a console error on #settings, and
   // a console error on any route fails proposal checks.
   assert.equal(cliRows({ phase: 'idle', tokens: [] }), '');
-  assert.equal(shellMarkup().includes('<div id="cli-tokens-list" class="space-y-2"></div>'),
+  assert.equal(shellMarkup().includes('<div id="cli-tokens-list" class="ui-card space-y-2"></div>'),
     true, 'and the prerendered document agrees');
   // Loading is the bare text node the module used to write with textContent.
   assert.match(cliRows({ phase: 'loading', tokens: [] }), /Loading credentials…/);
@@ -2190,7 +2190,7 @@ test('the permissions list renders its host states, and idle draws nothing', () 
   // `idle` is the PRERENDER state: the shipped host is an empty div, and a
   // first render that drew a line would mismatch on hydration.
   assert.equal(grantRows({ phase: 'idle', grants: [] }), '');
-  assert.equal(shellMarkup().includes('<div id="llm-grants-list" class="space-y-2"></div>'),
+  assert.equal(shellMarkup().includes('<div id="llm-grants-list" class="ui-card space-y-2"></div>'),
     true, 'and the prerendered document agrees');
   assert.match(grantRows({ phase: 'loading', grants: [] }), /Loading…/);
   assert.match(grantRows({ phase: 'error', grants: [] }), /Failed to load app permissions\./);

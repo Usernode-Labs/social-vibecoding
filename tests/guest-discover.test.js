@@ -732,8 +732,9 @@ test('the short story heads Discover: welcome, headline, one line, what an accou
   assert.equal(newAccountsWait({}), true, 'an older server');
   assert.equal(newAccountsWait({ waitlist_enabled: true }), true);
   assert.equal(newAccountsWait({ waitlist_enabled: false }), false, 'only an explicit off');
-  // The frames and the email step read the same switch.
-  assert.equal([...read(LANDING).matchAll(/waitlist=\{accountsWait\}/g)].length, 3);
+  // The frame and the email step read the same switch (two readers here: the
+  // landing's frame and the story; the gated frame is gone with looks v2).
+  assert.equal([...read(LANDING).matchAll(/waitlist=\{accountsWait\}/g)].length, 2);
   assert.match(read('frontend/src/features/auth/login.tsx'), /const accountsWait = newAccountsWait\(useWaitlistOptions\(\)\);/);
   assert.match(read('frontend/src/features/auth/login.tsx'), /\{accountsWait \? t\('auth:login\.otp\.lead'\) : t\('auth:login\.otp\.leadOpen'\)\}/);
   assert.doesNotMatch(message('auth:login.otp.leadOpen'), /waitlist/i);

@@ -261,3 +261,276 @@
 .pane .head .acts .btn{height:36px;padding:0 16px;font-size:14px}
 
 .nv.all .nm{color:var(--mut)}
+
+/* ==== version 2 (11 Nov 2026): what today's content needs of the kit ====
+   Additions only. Every rule below names a class, or a pairing of classes, that no page drew before it, so what was
+   drawn stays as it was. Taken from the version 2 mockups' own extra rules (tour-v2 kit.py KIT_CSS and
+   screens_a … screens_g), their group prefixes dropped. Kit tokens only; add after the last line, never above. */
+
+/* ---- v2: the page, its head, its tabs ---- */
+.inner.narrow{max-width:784px}
+.cols.flip{grid-template-columns:360px minmax(0,680px)}
+.phone .cols.flip{grid-template-columns:minmax(0,1fr)}
+.head>.tile,.head>.av,.head>.lead{margin-top:2px}
+.cap.over{margin-bottom:8px}
+.cap.sub{padding:4px 4px 0}
+.sub13{font-size:13px;color:var(--mut);margin-top:4px}
+.sub15{font-size:15px;line-height:1.45}.sub15 b{font-weight:650}
+.sub22{font-size:22px;font-weight:700;letter-spacing:-.02em}
+.mut{color:var(--mut);font-weight:500}
+.acc{color:var(--acc)}
+.secnote{font-size:13px;color:var(--mut);padding:0 4px}
+.secnote .link{font-size:13px}.secnote b{color:var(--ink);font-weight:650}
+.inl{display:inline-flex;align-items:center;gap:4px}
+.link.bad{color:var(--bad)}.link.off{opacity:.45}
+.ib.more{background:var(--sunk)}
+.tabs.flush{margin:0}
+.tabs.seg{margin:0;width:100%}.tabs.seg .tab{flex:1;justify-content:center}
+.tabs .end{margin-left:auto;display:flex;align-items:center;gap:8px;flex:none}
+.tabs .end .search{margin-bottom:0}
+.tabs .end .inp{min-height:32px;width:240px;padding:0 12px}
+.phone .tabs .end{display:none}
+.search.flush{margin-bottom:0}
+
+/* ---- v2: rows ---- */
+.row.wrap.all{align-items:flex-start;padding-top:12px;padding-bottom:12px}
+.row.wrap.all .t,.row.wrap.all .s{white-space:normal;overflow:visible}
+.row.wrap.all .s{display:block;-webkit-line-clamp:none;line-height:1.45;margin-top:2px}
+.row.wrap.all .tog,.row.wrap.all .chk{margin-top:2px}
+.row.showall{justify-content:center}.row.showall .tx{flex:none}.row.showall .t{color:var(--acc);font-size:13px;font-weight:600}.row.showall .go{color:var(--acc)}
+.tiles+.row{border-top:1px solid var(--line2)}
+.row.headrow .link{flex:none;white-space:nowrap}
+.row.week .t{font-weight:700}
+.row.item .t{font-weight:500}.row.item.on .t{font-weight:650}
+.row.act .t{color:var(--acc);font-weight:600}
+.row.proj{min-height:40px}.row.proj .t{font-size:13px;font-weight:650}
+.row.month .t{font-size:13px;font-weight:700;color:var(--ink)}
+.row .meta.ok{color:var(--ok);font-weight:650}
+.row .s.ok{color:var(--ok);white-space:normal}
+.row .ei{width:24px;height:24px;display:grid;place-items:center;flex:none;color:var(--mut)}.row .ei.acc{color:var(--acc)}
+.row .num{width:52px;flex:none;font-size:13px;color:var(--faint);font-variant-numeric:tabular-nums;white-space:nowrap}
+.row .num.mono{width:56px;font:12px var(--fm);color:var(--mut)}
+.pill.mini{height:20px;padding:0 8px;margin-left:8px;vertical-align:1px;font-weight:600}
+
+/* ---- v2: a compact list in a card (one line each, no hairlines) ---- */
+.list{padding:4px 0 8px}
+.list .row+.row{border-top:0}
+.list .row.sm{min-height:40px;padding-top:4px;padding-bottom:4px}
+.phone .list .row.sm{min-height:44px}
+.list .row.proj{min-height:36px;padding-top:10px}.list .row.proj .t{color:var(--mut)}
+.list .row.on .t{color:var(--lit);font-weight:650}
+.list .row.more{padding-left:52px}
+.list .row.more .t{color:var(--acc);font-size:13px;font-weight:600}.list .row.more .ic{color:var(--acc)}
+.list .btnrow{padding:12px 16px 4px}
+
+/* ---- v2: tiles ---- */
+.tiles.t8{grid-template-columns:repeat(8,minmax(0,1fr))}
+.inner.narrow .tiles.t8{grid-template-columns:repeat(6,minmax(0,1fr))}
+.phone .tiles.t8,.phone .inner.narrow .tiles.t8{grid-template-columns:repeat(4,minmax(0,1fr))}
+.at>.atl{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0;max-width:100%;color:inherit;text-decoration:none}
+.at.dim .tile,.at.dim .nm{opacity:.5}
+.at .corner{position:absolute;top:-6px;left:calc(50% + 14px);width:22px;height:22px;border-radius:50%;background:var(--surface);color:var(--acc);display:grid;place-items:center;box-shadow:0 0 0 1px var(--line)}
+.at.lit .lead{background:var(--lit-t);color:var(--lit)}
+.lead.dash{background:transparent;border:1.5px dashed var(--faint);color:var(--mut)}
+
+/* ---- v2: numbers, the week's bars, progress ---- */
+button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text-decoration:none}
+.fact>span{display:block}
+.fact .l.sub{font-size:12px;color:var(--faint);white-space:normal}
+.facts+.row,.row+.facts,.facts+.facts,.facts+.bars{border-top:1px solid var(--line2)}
+.facts.inset .fact{padding:12px 16px}.facts.inset .fact+.fact{border-left:0}.facts.inset+.facts.inset{border-top:0}
+.facts.inset .fact .v{font-size:18px;white-space:nowrap}
+.bars{display:grid;grid-template-columns:repeat(var(--bn,7),1fr);gap:8px;height:120px;padding:16px 16px 8px;align-items:end}
+.bcol{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px;height:100%;font-size:12px;color:var(--mut)}
+.bcol i{display:block;width:70%;border-radius:4px 4px 0 0;background:var(--acc);min-height:3px}
+.bcol .bv{font-size:11px;min-height:14px}.bcol.now .bl{color:var(--ink);font-weight:700}
+.foot.left{text-align:left;padding:4px 16px 16px;font-size:12px}
+.prog{height:6px;border-radius:3px;background:var(--sunk);overflow:hidden}
+.prog i{display:block;height:100%;border-radius:3px;background:var(--lit)}
+.prog.done i{background:var(--ok)}
+.prog.meter{margin:8px 0}
+
+/* ---- v2: cards side by side, a grid of cards, pictures ---- */
+.hrow.even{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:12px;padding:0;overflow:visible}
+.phone .hrow.even{grid-auto-columns:240px;overflow-x:auto;margin-right:-16px}
+.hcard{display:flex;flex-direction:column;gap:6px}
+.hc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.t2{font-weight:650}.s2{font-size:13px;color:var(--mut)}.s2.two{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.grid.g2{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.phone .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.grid+.cap.sub,.grid+.grid{margin-top:12px}
+.card.press{width:100%;text-align:left;color:inherit;font:inherit}
+.card.on{box-shadow:inset 0 0 0 2px var(--acc)}
+.card.text{padding:16px;display:flex;flex-direction:column;gap:8px}.card.text .txt{font-size:13px;color:var(--mut);line-height:1.5}
+.cardcap{font-size:13px;font-weight:650;padding:12px 16px 0}
+.cardnote{font-size:13px;color:var(--mut);padding:14px 16px;border-bottom:1px solid var(--line2)}
+.fcover:has(>.pill){position:relative}
+.fcover .pill{position:absolute;left:8px;bottom:8px;background:var(--surface);color:var(--ink)}
+.fcover .pill.new{bottom:auto;top:8px}
+.cover{aspect-ratio:16/10;border-radius:20px;background:var(--tc,var(--sunk));display:grid;place-items:center;font-size:64px;line-height:1;box-shadow:inset 0 0 0 1px var(--line);overflow:hidden}
+.cover img{width:100%;height:100%;object-fit:cover;display:block}
+.phone .shots.s3{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:200px;overflow-x:auto}
+
+/* ---- v2: buttons in a row, fields ---- */
+.btnrow.chips{padding:0 0 4px}
+.btnrow.even .btn{flex:1}
+.btn.chip{gap:6px}
+.field label.lab{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.count{font-size:13px;color:var(--mut);font-weight:500;font-variant-numeric:tabular-nums}
+.fieldrow{display:flex;align-items:center;gap:8px;min-width:0}
+.fieldrow .inp{flex:1}
+.fieldrow.wrap{flex-wrap:wrap}.fieldrow.wrap .inp{min-width:160px}
+.inp>textarea.v{flex:1;min-width:0;min-height:64px;border:0;outline:0;background:none;font:inherit;line-height:1.45;color:var(--ink);resize:none}
+.inp>textarea.v::placeholder{color:var(--faint);opacity:1}
+.inp>select.v{flex:1;min-width:0;min-height:44px;margin-right:-26px;padding-right:26px;border:0;outline:0;background:none;font:inherit;color:var(--ink);appearance:none;-webkit-appearance:none}
+.inp.sel{color:var(--mut)}.inp.sel .ic{pointer-events:none}
+.mono.ink{font-size:13px;color:var(--ink)}
+.bullets{padding:4px 16px 12px 34px;font-size:14px;line-height:1.6}
+
+/* ---- v2: a thread's small parts ---- */
+.thread.flat{padding:0}
+.byline{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--mut);padding:16px 16px 0}.byline b{color:var(--ink);font-weight:650;font-size:15px}
+.links{display:flex;gap:16px;padding:0 16px 16px;font-size:13px;font-weight:600;color:var(--mut)}
+.quote{border-left:3px solid var(--acc);padding:2px 0 2px 9px;margin:6px 0 4px;font-size:13px;line-height:1.45;color:var(--mut)}
+.quote i{display:block;font-style:normal;color:var(--acc);font-weight:650}
+.rx{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.rx span{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:999px;background:var(--sunk);font-size:13px;font-weight:600;color:var(--mut)}
+.rx span.on{background:var(--acc-t);color:var(--acc)}
+.lone{padding:64px 16px;text-align:center;color:var(--mut)}
+.welcome{display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;padding-top:8px}.welcome .tile{margin-bottom:6px}
+
+/* ---- v2, lane Y: You, Challenges, Standings ---- */
+.facts.f1{grid-template-columns:minmax(0,1fr)}
+.sub15.mut b{color:var(--ink);font-weight:650}
+.card.progress{display:flex;flex-direction:column;gap:10px}
+.line13{font-size:13px;color:var(--mut);padding:0 4px;justify-content:space-between}
+.line13 .link{font-size:13px}
+.row.th{min-height:40px}
+.row.th .num,.row.th .t,.row.th .meta{font-size:13px;font-weight:500;color:var(--mut)}
+.row.rk .num,.row.th .num{width:44px}
+.row.rk .num{font-size:15px;color:var(--mut)}
+.row .meta.ink{color:var(--ink);font-size:15px;font-variant-numeric:tabular-nums}
+.row.you .t{font-variant-numeric:tabular-nums}
+/* ---- v2, lane H (Home): what a launcher tile says besides its name, and Featured as a sideways row on a phone ---- */
+.at>span.atl{cursor:default}
+.at.dim .lead{opacity:.5}
+.at .corner.un{left:calc(50% - 36px);background:var(--ink);color:var(--surface);font-size:15px;font-weight:600;line-height:1}
+.at .tag{position:absolute;top:36px;width:20px;height:20px;border-radius:50%;background:var(--solid,var(--surface));color:var(--mut);display:grid;place-items:center;box-shadow:0 0 0 1px var(--line)}
+.at .tag.l{left:calc(50% - 32px)}.at .tag.r{left:calc(50% + 12px)}
+.at .live{position:absolute;top:-3px;left:calc(50% - 30px);width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 2px var(--surface)}
+.at .st{font-size:11px;font-weight:500;color:var(--mut)}.at .st.bad{color:var(--bad)}.at .st.wait{color:var(--wait)}
+.at .link{font-size:12px}
+.door{color:inherit;text-decoration:none}
+.phone .grid.across{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:240px;overflow-x:auto;margin-right:-16px;padding-right:16px;scrollbar-width:none}
+/* ---- v2, a project's pages: a change as a picture card ---- */
+.shots.cards{background:none;border-bottom:0}
+.shotc{display:block;min-width:0;color:inherit;font:inherit;text-decoration:none;text-align:left}
+.shotc .cap2{display:block}.shotc .cap2+.cap2{margin-top:2px}
+.pic.img{padding:0;overflow:hidden;display:grid;place-items:center}
+.pic.img img{width:100%;height:100%;object-fit:cover;object-position:top;display:block}
+.row .s:has(>.aft){display:flex;min-width:0}
+.row .s>.cut{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .s>.aft{flex:none;white-space:pre}
+
+/* ---- v2, a project's pages: the Workshop ---- */
+.sro{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.fdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--acc);margin-left:6px;vertical-align:1px}
+.row .t .tlink{color:inherit;text-decoration:none}
+.row.item .pill,.row.item .btn,.row.week .pill{flex:none}
+/* An item row on a phone: the title takes the line and what ends the row goes under it (the Workshop's "What happened").
+   Not in a compact list (.list: Homeroom bot's), whose rows stay one line each as the standard list's do. */
+.phone .row.item:not(.list .row){flex-wrap:wrap;padding-top:8px;padding-bottom:8px}
+.phone .row.item:not(.list .row) .tx{flex:1 1 calc(100% - 40px)}.phone .row.item:not(.list .row) .t{white-space:normal}
+.phone .row.item:not(.list .row) .tx~*{margin-top:4px}.phone .row.item:not(.list .row) .tx+*{margin-left:36px}
+.facts>button.fact,.facts>a.fact{display:flex;flex-direction:column;justify-content:flex-start}
+
+/* ---- v2, a project's pages: All items (its list is the product's, laid under the kit's head; the kit draws the column beside it) ---- */
+.cols.beside{height:0}
+.cols.beside>.stack{grid-column:2}
+.phone .cols.beside{height:auto;margin-bottom:8px}
+.phone .cols.beside>.stack{grid-column:1}
+.btnrow.inrow{padding:0 16px 12px;flex-wrap:wrap}
+/* ---- v2, lane B (Homeroom bot): the lists' head on a phone, Main Chat's card, a row's ⋯, what is new, a rule with words ---- */
+.phone .botpage .head{flex-direction:row;gap:12px}
+.phone .botpage .head .acts{width:auto}
+.botpage .tabs{margin-top:-8px;overflow-x:auto;scrollbar-width:none}
+.botpage .search{margin-bottom:16px}
+.tab>.ic{margin-left:-4px}
+.card.main .row{min-height:52px;width:100%}
+.rowx{display:flex;align-items:center;min-width:0;padding-right:8px}
+.rowx>.row{flex:1;padding-right:4px}
+.list .row{position:relative;width:100%}
+.list .row .t{text-align:left}
+.list .row .s{text-align:left}
+.list h3.t{margin:0}
+.row .new{position:absolute;left:5px;top:50%;width:6px;height:6px;margin-top:-3px;border-radius:50%;background:var(--acc)}
+.list .row.fresh .t{font-weight:700}
+.list .row.plain .t{font-weight:400;color:var(--mut)}
+.list .row.more:disabled{opacity:.6}
+.rule{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--mut)}
+.rule::after{content:"";flex:1;height:1px;background:var(--line)}
+.list .rule{padding:8px 16px 2px 52px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.list .txt{margin:0;padding:10px 16px;font-size:14px;line-height:1.45;color:var(--mut)}
+.list .txt .link{font-size:14px}
+.rowx:has(>.row.on){background:var(--lit-t)}.rowx>.row.on{background:none}
+/* ---- v2, lane G (signed out): a change up for a vote as a visitor reads it, a project's picture in both themes, the facts under a sentence ---- */
+.ballot.visit{gap:10px}
+.ballot.visit h3{margin:0}
+.ballot .sum{margin:4px 0 0;font-size:13px;color:var(--mut);line-height:1.45}
+.ballot.visit .line1 .btn,.ballot .later{margin-left:auto}
+.ballot .later{font-weight:600}
+.purpose .sub13{display:block}
+.cover img.moon{display:none}
+.dark .cover img.moon{display:block}
+.dark .cover img.sun:has(+ img.moon){display:none}
+.cardnote.last{border-bottom:0;border-top:1px solid var(--line2)}
+.cover:has(>img){position:relative}
+.cover>img{position:absolute;top:0;left:0}
+/* ---- v2, the chrome (the fix pass): a long place name is cut before the bar's buttons, a phone's line under it ---- */
+.crumb .ci>.tile{flex:none}
+.crumb .cw{display:flex;flex-direction:column;justify-content:center;min-width:0}
+.crumb .cn,.crumb .cs{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3}
+.crumb .cs{font:500 12px/1.3 var(--f);color:var(--mut)}
+/* ---- v2, the page (the fix pass): the work column's last groups after the side column on a phone ---- */
+.stack.tail:empty{display:none}
+.phone .cols.mix>.stack{display:contents}
+.phone .cols.mix>.stack>.tail{order:1}
+/* ---- v2, Homeroom bot (the fix pass): the counts under the title break evenly, never one number alone on a line ---- */
+.botpage .purpose{text-wrap:balance}
+/* ---- v2, the week's bars (the fix pass): a day with nothing in it is a baseline, as the standard chart draws it ---- */
+.bcol.none i{height:2px;min-height:0;border-radius:1px;background:var(--faint)}
+/* ---- v2, the left-overs pass (group A): a piece of the product's own inside a kit page (the reset stops at it: build-looks-css.js), and a community's tile in the ring of its colour ---- */
+.own{display:contents}
+.at.ring .tile{outline:2px solid var(--cr,var(--line));outline-offset:1px}
+/* ---- v2, the left-overs pass: the public directory. A picture card in a grid with its sentence on two lines and its tile on the community's colour; a grid of two or four across, so no card is alone on the last row; the line that ends a list, centred ---- */
+.fcover.tc{background:var(--tc)}
+.fbody .s.two{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.grid>.fcard{min-width:0}
+.grid.c2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.grid.c4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.phone .grid.c4:not(.across){grid-template-columns:repeat(2,minmax(0,1fr))}
+.secnote.end{text-align:center;padding-top:8px}
+/* ---- v2, the left-overs pass: a challenge's picture as a row's lead (its size from the data), and the arrow that ends such a row ---- */
+.cart.sm{width:var(--cs,44px);height:var(--cs,44px);border-radius:12px;font-size:22px;color:var(--mut)}
+.cart.sm img{width:82%;height:82%}
+.row .arr{width:32px;height:32px;border-radius:10px;background:var(--sunk);color:var(--mut);display:grid;place-items:center;flex:none}
+.row .s .bp{display:block}
+/* ---- v2, the left-overs pass: the chrome. On a phone an admin's look picker and theme button are one disc with a small menu, so the bar's title has room ---- */
+.lookfold{position:relative;display:inline-flex;flex:none}
+.lookmenu{position:absolute;top:calc(100% + 8px);right:0;z-index:5;width:224px;padding:4px;border-radius:16px;background:var(--solid,var(--surface));box-shadow:0 0 0 1px var(--line),var(--sh);display:flex;flex-direction:column}
+.lookrow{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;padding:0 12px;border-radius:12px;font-size:15px;font-weight:550;color:var(--ink);position:relative;width:100%;text-align:left}
+.lookrow .v{color:var(--mut);font-weight:500}
+.lookrow select{position:absolute;top:0;left:0;width:100%;height:100%;opacity:0}
+/* left-overs D: a phone's bar says the crumb it keeps in the ink (it may not be the last: .here), and a line
+   under the title that does not fit beside the bar's buttons stands under the bar's first row, where it wraps; .sro is said to a screen reader and not drawn */
+.phone .crumb>.keep{color:var(--ink)}
+.sro{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+.crumb .cs.off{height:0}
+.barline{display:none}
+.phone .barline{display:block;flex:none;padding:0 12px 8px;font:500 12px/1.35 var(--f);color:var(--mut);border-bottom:1px solid var(--line)}
+.phone .bar:has(+.barline){border-bottom-color:transparent}
+/* left-overs D: a picture card with a control of its own (Join) is a group: the door over a foot */
+.fcard .fdoor{display:flex;flex-direction:column;flex:1;min-width:0;color:inherit;text-decoration:none}
+.fcard>.fm{margin:0;padding:0 12px 12px;font-size:13px;color:var(--mut)}
+.fcard>.fm .fmt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -460,10 +460,12 @@
     // the stored choice lands on <html> before app.css, whose rules read
     // it, is applied, so a look never flashes in after first paint.
     //   'homeroom:skin'  → 'brand'  the new look (light mode only)
-    //                    → 'glass', 'brandkit', 'workbench', 'paper',
-    //                      'pastel', 'mosaic', 'sunrise', 'today',
-    //                      'playground'  the nine looks of the one frame
+    //                    → 'glass', 'paper', 'pastel', 'mosaic',
+    //                      'sunrise'  the five looks of the one frame
     //                      (light and dark; an admin's preview)
+    //                    → anything else, a retired look's id among them
+    //                      ('brandkit', 'workbench', 'today', 'playground',
+    //                      gone 12 Nov 2026), reads as the standard look
     //                    → key removed for the standard look (the default)
     // Kept on the DEVICE: there is nothing to save or fail. app.css scopes
     // every rule of a look to html[data-skin="<look>"]. Every storage access
@@ -477,10 +479,10 @@
     // parameter out of the address, so a reload keeps what was picked.
     window.Skin = (function () {
       const SKIN_KEY = 'homeroom:skin';
-      // 'brand' is New look; the nine after it are the looks of the one
+      // 'brand' is New look; the five after it are the looks of the one
       // frame (the 2026-11-06 screen tour), in the tour's order. The same
       // list, less 'brand', is FRAME_SKINS in src/lib/skin.ts.
-      const SKINS = ['brand', 'glass', 'brandkit', 'workbench', 'paper', 'pastel', 'mosaic', 'sunrise', 'today', 'playground'];
+      const SKINS = ['brand', 'glass', 'paper', 'pastel', 'mosaic', 'sunrise'];
       const _listeners = [];
 
       let pinned = null;

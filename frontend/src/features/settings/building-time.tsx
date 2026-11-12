@@ -113,7 +113,7 @@ export function BuildingTimeView({ week, reset, showAll = false }: {
 
   return (
     <div className="mb-3" data-building-time="">
-      <div className="px-1 pb-1 text-[15px] text-zinc-500 dark:text-zinc-500">
+      <div className="ui-cap px-1 pb-1 text-[15px] text-zinc-500 dark:text-zinc-500">
         {t('settings:usage.buildingTime.title')}
       </div>
       <GroupedList className="mx-0">
@@ -154,7 +154,7 @@ export function BuildingTimeView({ week, reset, showAll = false }: {
             subtitle={r.asked ? t('settings:usage.buildingTime.askedFor', { app: r.app.name }) : r.app.name}
             titleClassName="line-clamp-2 whitespace-normal [overflow-wrap:anywhere]"
             chevron={false}
-            trailing={<span className="shrink-0 tabular-nums text-[0.9375rem] text-zinc-500 dark:text-zinc-400">{pct(r.share)}</span>}
+            trailing={<span className="ui-row-meta shrink-0 tabular-nums text-[0.9375rem] text-zinc-500 dark:text-zinc-400">{pct(r.share)}</span>}
           />
         ))}
         {folded ? (
@@ -174,17 +174,17 @@ export function BuildingTimeView({ week, reset, showAll = false }: {
           <ListRow
             title={t('settings:usage.buildingTime.others')}
             chevron={false}
-            trailing={<span className="shrink-0 tabular-nums text-[0.9375rem] text-zinc-500 dark:text-zinc-400">{pct(week.otherShare)}</span>}
+            trailing={<span className="ui-row-meta shrink-0 tabular-nums text-[0.9375rem] text-zinc-500 dark:text-zinc-400">{pct(week.otherShare)}</span>}
           />
         ) : null}
       </GroupedList>
-      <p className="mt-1.5 px-1 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
+      <p className="ui-note mt-1.5 px-1 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
         {week.limited
           ? t('settings:usage.buildingTime.explainLimited')
           : t('settings:usage.buildingTime.explainUnlimited')}
       </p>
       {week.demo ? (
-        <p className="mt-1 px-1 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-building-time-demo="">
+        <p className="ui-note mt-1 px-1 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-building-time-demo="">
           {t('settings:usage.buildingTime.demo')}
         </p>
       ) : null}

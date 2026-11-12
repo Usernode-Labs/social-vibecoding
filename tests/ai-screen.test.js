@@ -199,10 +199,10 @@ test('each section groups its rows by project, and a project shows its first few
   assert.match(lists, /aria-hidden=\{open \? undefined : true\}\s+inert=\{!open\}/, 'the folded rest is out of reach until it opens');
   assert.match(lists, /\{g\.app \? <SmallTile app=\{g\.app\} size="head" \/> : <LockIcon className="h-4 w-4 shrink-0" aria-hidden="true" \/>\}/);
   assert.equal(message('messages:ai.short.private'), 'Only you', 'the heading over private ideas in no project');
-  assert.match(lists, /right: row\.pill \? say\(row\.pill\)! : row\.app \? t\('messages:ai\.short\.private'\) : '',/,
+  assert.match(read('frontend/src/features/ai/lines.ts'), /right: row\.pill \? say\(row\.pill\)! : row\.app \? t\('messages:ai\.short\.private'\) : '',/,
     'B07: a private idea under that heading does not say Only you again on its row');
   // One project picked: its chip names it, so its name is not said again.
-  assert.match(lists, /const heads = picked\.length !== 1;/);
+  assert.match(read('frontend/src/features/ai/lines.ts'), /const heads = picked\.length !== 1;/);
 });
 
 // #6245 (4 Nov 2026, Evan): pressing a row past a project's first five slid
@@ -735,8 +735,9 @@ test('#6306: a request the bot found already works says so, and offers Confirm i
   ], 'the bot\'s own reason, where it gave one');
   assert.equal(rows[0].href, '#app/garden/dev/issues/410', 'the row opens the request, where Propose to close lives');
   // The glyph is a check, not the raised hand a decision gets.
-  const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /if \(kind === 'works'\) return <CheckIcon className=\{G\} \/>;/);
+  // The row's glyph is a name both faces draw (./lines.ts); the standard list's icon for it is the check.
+  assert.match(read('frontend/src/features/ai/lines.ts'), /if \(kind === 'works'\) return 'check';/);
+  assert.match(read('frontend/src/features/ai/lists.tsx'), /chat: ChatIcon, play: PlayIcon, hand: HandRaisedIcon, check: CheckIcon,/);
 });
 
 test('#6306: the chat names already-done requests as working, not as decisions', () => {
@@ -2004,8 +2005,8 @@ test('one column state: where each row goes, the row it lights, its address and 
   assert.match(src, /showAddress\(withFilter\(columnAddress\(columnShown\), \{ projects: filterRef\.current\.picked, kind: filterRef\.current\.historyKind \}\)\);/);
   assert.match(src, /showAddress\(withFilter\(window\.location\.hash, \{ projects: next\.picked, kind: next\.historyKind \}\)\);/);
   assert.equal((src.match(/showAddress\(/g) || []).length, 3, 'the column\'s writer and the filter\'s, besides its definition');
-  assert.match(read('frontend/src/features/ai/lists.tsx'), /lit: !!lit && rowKey\(row\) === lit,/);
-  assert.match(read('frontend/src/features/ai/lists.tsx'), /lit: !!lit && rowKey\(th\) === lit,/);
+  assert.match(read('frontend/src/features/ai/lines.ts'), /lit: !!lit && rowKey\(row\) === lit,/);
+  assert.match(read('frontend/src/features/ai/lines.ts'), /lit: !!lit && rowKey\(th\) === lit,/);
 });
 
 test('#6218: the row whose page is open beside the list is lit, and Main Chat is not', () => {

@@ -40,7 +40,13 @@ export function AgentFilesSection() {
         <SectionHeading title={t('settings:agentFiles.title')}>
           {t('settings:agentFiles.intro')}
         </SectionHeading>
-        <div className="mb-4">
+        {/* `ui-card ui-filecard` on each kind's block (looks v2, s63) draws
+            nothing in the standard look. Under a look the block is one card:
+            the kind's name, its empty line or its files under it, and Upload
+            at the end of the first row, placed by the stylesheet's grid
+            (app.css, SETTINGS). No node is moved: the button settings.js
+            binds stays where it is in the markup. */}
+        <div className="ui-card ui-filecard mb-4">
           <div className="flex items-center justify-between mb-1.5">
             <h4 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
               {t('settings:agentFiles.instructions.heading')}
@@ -52,14 +58,14 @@ export function AgentFilesSection() {
               {t('settings:agentFiles.instructions.upload')}
             </button>
           </div>
-          <div id="agent-files-instructions-list" className="space-y-1.5">
+          <div id="agent-files-instructions-list" className="ui-card space-y-1.5">
             <AgentFilesList
               kind="instruction"
               empty={t('settings:agentFiles.instructions.empty')}
             />
           </div>
         </div>
-        <div className="mb-2">
+        <div className="ui-card ui-filecard mb-2">
           <div className="flex items-center justify-between mb-1.5">
             <h4 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
               {t('settings:agentFiles.skills.heading')}
@@ -71,7 +77,7 @@ export function AgentFilesSection() {
               {t('settings:agentFiles.skills.upload')}
             </button>
           </div>
-          <div id="agent-files-skills-list" className="space-y-1.5">
+          <div id="agent-files-skills-list" className="ui-card space-y-1.5">
             <AgentFilesList
               kind="skill"
               empty={t('settings:agentFiles.skills.empty')}
@@ -95,7 +101,7 @@ export function AgentFilesSection() {
         */}
         <div
           id="agent-files-form"
-          className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 mt-2 text-xs"
+          className="ui-card ui-fields hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 mt-2 text-xs"
           onKeyDown={returnKeyHandler({ submit: saveAgentFile })}
         >
           <div id="agent-files-form-title" className="font-medium text-zinc-700 dark:text-zinc-300 mb-2">

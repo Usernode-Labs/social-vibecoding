@@ -18,11 +18,13 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 
 /**
  * The looks of the one frame, in the order the 2026-11-06 screen tour gives
- * them: every one draws the same frame (title, one sentence, one action,
+ * them (five of its nine: Brand kit, Workbench, Today and Playground were
+ * retired on 12 Nov 2026, and a device that had stored one of them reads as
+ * the standard look, here and in the head): every one draws the same frame (title, one sentence, one action,
  * labelled groups of one row) with its own tokens, typeface and a few rules
  * in app.css ("THE FRAME'S LOOKS"). The head's SKINS is 'brand' and these.
  */
-export const FRAME_SKINS = ['glass', 'brandkit', 'workbench', 'paper', 'pastel', 'mosaic', 'sunrise', 'today', 'playground'] as const;
+export const FRAME_SKINS = ['glass', 'paper', 'pastel', 'mosaic', 'sunrise'] as const;
 export type FrameSkin = typeof FRAME_SKINS[number];
 export type Skin = 'standard' | 'brand' | FrameSkin;
 

@@ -23,7 +23,7 @@ export function AppAiSection() {
         <SectionHeading title={t('settings:grants.title')} blurbClassName="dark:text-zinc-400">
           {t('settings:grants.intro')}
         </SectionHeading>
-        <div id="llm-grants-list" className="space-y-2">
+        <div id="llm-grants-list" className="ui-card space-y-2">
           <GrantsList />
         </div>
         <StatusLine id="llm-grants-status" />

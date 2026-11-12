@@ -786,7 +786,7 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
-      // New look (an experiment) and the Look menu (the frame's nine looks,
+      // New look (an experiment) and the Look menu (the frame's five looks,
       // an admin's preview), both kept on the device by the head's
       // window.Skin: the change is the save, and the look applies at once.
       // They are exclusive (one data-skin on <html>), so each change

@@ -18,9 +18,9 @@ export function BlockedAppRow({ app, busy, onUnblock }: {
 }) {
   const t = useMessages('settings');
   const when = agoStamp(app.created_at);
-  return <div className="flex items-center justify-between gap-3 rounded-lg bg-zinc-500/5 p-3">
-    <div className="min-w-0">
-      <span className="block break-words">{app.name}</span>
+  return <div className="ui-row flex items-center justify-between gap-3 rounded-lg bg-zinc-500/5 p-3">
+    <div className="ui-row-tx min-w-0">
+      <span className="ui-row-t block break-words">{app.name}</span>
       {when.text ? <time data-role="blocked-at" dateTime={app.created_at ?? undefined} title={when.title} className="mt-0.5 block text-[13px] text-zinc-500 dark:text-zinc-400">{t('settings:blockedApps.blockedAt', { when: when.text })}</time> : null}
     </div>
     <Button type="button" layout="shrink" disabled={!!busy} onClick={() => onUnblock(app)}>{busy === app.slug ? t('settings:blockedApps.unblocking') : t('settings:blockedApps.unblock')}</Button>
@@ -67,7 +67,7 @@ function BlockedAppsList() {
     } catch (err) { setError((err as Error).message); }
     finally { setBusy(null); }
   }
-  return <div ref={host} className="mt-4 space-y-3">
+  return <div ref={host} className="ui-card mt-4 space-y-3">
     {apps === null && !error ? <p className="text-sm text-zinc-500">{t('settings:blockedApps.loading')}</p> : null}
     {apps?.length === 0 ? <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('settings:blockedApps.empty')}</p> : null}
     {apps?.map(app => <BlockedAppRow key={app.slug} app={app} busy={busy} onUnblock={row => void unblock(row)} />)}

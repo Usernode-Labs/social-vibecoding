@@ -1599,32 +1599,45 @@ export function LoginScreen() {
               {t('auth:login.submit')}
             </Button>
             <TermsNotice verb="signing in" />
+            {/*
+                The rest of board 2's action group: `gap: 10px` under the 16 the
+                form's own `gap-4` already draws between the card and the primary
+                button. Three separately-hidden wrappers rather than one flex
+                column, because #forgot-link-wrap and #otp-link-wrap are ids the
+                inventory resolves and each carries its own `hidden`.
+
+                `.auth-ways` is a neutral wrapper that holds the two inside the
+                form, as its last child (11 Nov 2026). It draws nothing here:
+                `-mt-4` takes back the one `gap-4` the form would put before
+                it, so each line stands 10px under the one before, exactly
+                where it stood as the form's next sibling. It is there for
+                the looks (app.css, "Version 2 lays each stand-alone page
+                out"), which show these two ways over the Sign in button:
+                `order` places a form's own children, so the form keeps its
+                box, where it used to be `display: contents`, which an older
+                Safari drops from the accessibility tree with its role.
+            */}
+            <div className="auth-ways -mt-4">
+              <p id="forgot-link-wrap" className={hiddenLast(!base, 'mt-2.5')}>
+                <a
+                  id="forgot-password-link"
+                  href={`#${RECOVERY_ROUTE}`}
+                  className={PILL_LINK}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    openRecovery();
+                  }}
+                >
+                  {t('auth:login.forgot')}
+                </a>
+              </p>
+              <p id="otp-link-wrap" className={hiddenLast(!base, 'mt-2.5')}>
+                <a id="otp-link" href="#signup" className={PILL_LINK}>
+                  {t('auth:login.withEmailCode')}
+                </a>
+              </p>
+            </div>
           </form>
-          {/*
-              The rest of board 2's action group: `gap: 10px` under the 16 the
-              form's own `gap-4` already draws between the card and the primary
-              button. Three separately-hidden wrappers rather than one flex
-              column, because #forgot-link-wrap and #otp-link-wrap are ids the
-              inventory resolves and each carries its own `hidden`.
-          */}
-          <p id="forgot-link-wrap" className={hiddenLast(!base, 'mt-2.5')}>
-            <a
-              id="forgot-password-link"
-              href={`#${RECOVERY_ROUTE}`}
-              className={PILL_LINK}
-              onClick={(e) => {
-                e.preventDefault();
-                openRecovery();
-              }}
-            >
-              {t('auth:login.forgot')}
-            </a>
-          </p>
-          <p id="otp-link-wrap" className={hiddenLast(!base, 'mt-2.5')}>
-            <a id="otp-link" href="#signup" className={PILL_LINK}>
-              {t('auth:login.withEmailCode')}
-            </a>
-          </p>
           {/*
               #2979: the password step no longer ends on a tertiary line — the
               "Have an activation code? Register" foot pin (#register-link)

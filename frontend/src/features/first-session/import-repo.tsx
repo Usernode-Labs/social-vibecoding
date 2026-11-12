@@ -34,6 +34,7 @@ import { SpinnerArcIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { normalizeRepositoryUrl } from '../dialogs/repository-url';
+import { ImportFrame } from './frame/make-frame';
 
 /** What a repo's dapp.json already says, as the check reads it. */
 export interface RepoManifest {
@@ -127,9 +128,15 @@ type CheckState = 'idle' | 'checking' | 'ok' | 'error';
  * place. `submit` posts the import (the make screen's own request) and
  * answers an error to show, or null once it has handed the project on.
  */
-export function ImportForm({ className, header, submit, onDescribe, allowance, blocked = false }: {
+export function ImportForm({ className, header, submit, onDescribe, allowance, blocked = false, frame = null }: {
   className: string;
   header: ReactNode;
+  /**
+   * Under one of the frame's looks, from Create: the form is drawn in the
+   * kit (./frame/make-frame.tsx ImportFrame, the tour's s43), with the
+   * title and Import it in its head. Same state, same request.
+   */
+  frame?: { motion: string; title: string; line: string; onClose: (() => void) | null } | null;
   /** At the allowance's limit: Import it is pale (the make screen's rule). */
   blocked?: boolean;
   submit: (answers: { repoUrl: string; name: string; manifest: RepoManifest }) => Promise<string | null>;
@@ -197,6 +204,59 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
   }, [busy, state, name, url, manifest, submit]);
 
   const note = state === 'ok' ? repoNote(manifest, unread) : null;
+  // THE KIT'S FORM (looks v2, s43). The fields are the same two, with the
+  // same ids and what each key does; only the drawing differs.
+  if (frame) {
+    return (
+      <ImportFrame
+        motion={frame.motion}
+        title={frame.title}
+        line={frame.line}
+        onClose={frame.onClose}
+        onSubmit={() => { void go(); }}
+        onDescribe={onDescribe}
+        busy={busy}
+        off={busy || blocked}
+        url={{
+          boxRef: urlRef,
+          value: url,
+          onChange: (next) => {
+            setUrl(next);
+            // A new address is an unchecked one.
+            setState('idle'); setStatus(''); setManifest(null); setUnread(false);
+            setMissing(null); setError(null);
+          },
+          onBlur: () => setUrl((typed) => normalizeRepositoryUrl(typed)),
+          onKeyDown: (e) => {
+            if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+            e.preventDefault();
+            if (state === 'ok') nameRef.current?.focus({ preventScroll: true });
+            else void check();
+          },
+        }}
+        check={{
+          label: state === 'ok' ? t('onboarding:firstSession.import.recheck') : t('onboarding:firstSession.import.check'),
+          off: state === 'checking',
+          onPress: () => { void check(); },
+        }}
+        status={{
+          state,
+          tone: state === 'error' || missing === 'repo' ? 'bad' : state === 'ok' ? 'ok' : undefined,
+          text: missing === 'repo' && state !== 'error' ? t('onboarding:firstSession.import.needed.repo') : (status || t('onboarding:firstSession.import.inviteBot')),
+          spinner: state === 'checking' ? <SpinnerArcIcon className="inline-block h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" /> : null,
+        }}
+        name={{
+          boxRef: nameRef,
+          value: name,
+          onChange: (next) => { setName(next); setMissing(null); setError(null); },
+          needed: missing === 'name' ? t('onboarding:firstSession.import.needed.name') : null,
+        }}
+        note={note}
+        allowance={allowance}
+        error={error}
+      />
+    );
+  }
   return (
     <form data-make-import="" className={className} onSubmit={(e) => { e.preventDefault(); void go(); }}>
       {header}
