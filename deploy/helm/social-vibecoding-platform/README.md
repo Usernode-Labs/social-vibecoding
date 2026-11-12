@@ -372,6 +372,14 @@ and the infrastructure should redirect old addresses nothing serves any more
 to the new domain. Clear `legacyAppsDomain` once no preview is left on the old
 domain.
 
+To give previews a domain of their own, set `config.previewsDomain`
+(`USERNODE_PREVIEWS_DOMAIN`): previews are then served at
+`<slug>--s<sessionId>.<previewsDomain>`, and only previews are recognized
+there. Startup refuses a previews domain on the same registrable site as the
+platform or the apps, since its purpose is to keep a preview's unreviewed code
+away from both. A preview moves on its next build and keeps serving on the apps
+domain until then. The wildcard certificate must cover the previews domain too.
+
 Before & after shots are on by default. The chart always injects
 `SHOTS_ENABLED=true`; in an incident, set `platform.shotsEnabled: false`
 (formerly `platform.visualEvidenceV2Enabled`) and sync Argo CD to stop

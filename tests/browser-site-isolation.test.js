@@ -57,7 +57,7 @@ test('strict mode probes the app and preview hosts caddy.js actually builds', ()
   assert.equal(hosts.app, caddy.productionHostname('probe'));
   assert.equal(hosts.preview, caddy.stagingHostname('probe', 's1'));
   assert.deepEqual(generatedHosts(strict), { platform: 'app.platform.example.com', apps: 'apps.example.net',
-    app: 'probe.apps.example.net', preview: 'probe--s1.apps.example.net' });
+    previews: 'apps.example.net', app: 'probe.apps.example.net', preview: 'probe--s1.apps.example.net' });
 });
 
 test('protected session authority ignores legacy cookies and refuses duplicate names', () => {

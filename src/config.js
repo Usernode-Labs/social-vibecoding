@@ -265,6 +265,7 @@ function load() {
   // starting roles. An explicit invalid setting must never downgrade silently.
   const browserSiteIsolation = require('./services/browser-site-isolation').validateBrowserSiteIsolation();
   require('./services/apps-domain-move').validateLegacyAppsDomain();
+  require('./services/previews-domain').validatePreviewsDomain();
   const staging = IS_STAGING();
   const appRuntime = process.env.APP_RUNTIME || 'docker';
 
@@ -689,6 +690,9 @@ function load() {
       appDomain: process.env.USERNODE_APPS_DOMAIN || process.env.USERNODE_DOMAIN || 'apps.example.invalid',
       // While apps move off it (services/apps-domain-move.js); '' otherwise.
       legacyAppDomain: require('./services/apps-domain-move').legacyAppsDomain(),
+      // Previews' own domain (services/previews-domain.js); '' keeps them on
+      // appDomain.
+      previewDomain: require('./services/previews-domain').previewsDomain(),
       platformDomain: process.env.USERNODE_DOMAIN || 'apps.example.invalid',
       // The app-host gate (#3657; services/kubernetes.js, scripts/app-gate.js):
       // `on` routes every app and preview through a platform-owned check,

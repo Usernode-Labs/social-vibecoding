@@ -28,13 +28,15 @@ function appHostIsIsolated(host, platformHost) {
 
 // The hosts this deployment generates, in the shape src/services/caddy.js
 // builds them (productionHostname, stagingHostname). Previews live on the
-// apps domain until they get a domain of their own; when that happens the
-// builders and this function change together, which
-// tests/browser-site-isolation.test.js holds by comparing them.
+// apps domain unless they have a domain of their own
+// (services/previews-domain.js); the builders and this function change
+// together, which tests/browser-site-isolation.test.js holds by comparing
+// them.
 function generatedHosts(env = process.env) {
   const platform = env.USERNODE_DOMAIN;
   const apps = env.USERNODE_APPS_DOMAIN || platform;
-  return { platform, apps, app: `probe.${apps}`, preview: `probe--s1.${apps}` };
+  const previews = require('./previews-domain').previewsDomain(env) || apps;
+  return { platform, apps, previews, app: `probe.${apps}`, preview: `probe--s1.${previews}` };
 }
 
 function validateBrowserSiteIsolation(env = process.env) {

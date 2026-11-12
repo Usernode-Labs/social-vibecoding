@@ -28,8 +28,9 @@ const ASK_AGAIN_MS = 20000;
 // The path a waking page asks the platform to wake a preview at.
 const WAKE_PATH = '/__preview_wake';
 
-// A Homeroom preview host: `<slug>--s<sessionId>` under the apps domain
-// (caddy.js stagingHostname, app-access.js parseAppHost).
+// A Homeroom preview host: `<slug>--s<sessionId>` under the previews domain,
+// or the apps domain when previews have none (caddy.js stagingHostname,
+// app-access.js parseAppHost).
 const PREVIEW_LABEL_RE = /^[a-z0-9-]+?--s\d+(?:--[a-z0-9]+)?$/;
 
 function previewHost(rawHost, appsDomain) {

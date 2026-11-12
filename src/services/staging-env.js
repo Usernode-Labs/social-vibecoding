@@ -79,8 +79,11 @@ const VALUE_EXEMPT = new Set(['USERNODE_APP_ID', 'USERNODE_APP_SLUG', 'USERNODE_
 // the configured receiver and its chain binding for device-cache isolation.
 // Keeping them here makes a change invalidate the existing env fingerprint,
 // so old previews are rebuilt instead of retaining the previous receiver.
+// A self-preview builds its projects' preview addresses the way production
+// routes them (preview-projects-client.js appUrl), so it needs the previews
+// domain too.
 const INHERITED_KEYS = [
-  'USERNODE_DOMAIN', 'USERNODE_APPS_DOMAIN', 'USERNODE_PLATFORM_REPO',
+  'USERNODE_DOMAIN', 'USERNODE_APPS_DOMAIN', 'USERNODE_PREVIEWS_DOMAIN', 'USERNODE_PLATFORM_REPO',
   'STAKING_OBSERVABILITY_URL', 'NATIVE_SESSION_V2_TESTNET_CHAIN_ID',
 ];
 
