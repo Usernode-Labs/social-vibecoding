@@ -381,6 +381,28 @@ guests. Nothing turns it on: write the app so a guest can look around.
 - Platform services (AI, file storage, the user directory) refuse guest
   tokens with `account_required`.
 
+### Search engines: one address per page
+
+A public app's pages are crawled at its own address, and every distinct URL
+is a candidate page. One app's reader put 12,000 `?c=<chapter>` URLs into
+the index; another's saved view state (`?s=<blob>`) made a new "page" per
+visitor.
+
+- **A page reached by a paging, filter or state query parameter carries a
+  canonical without it**: `<link rel="canonical" href="https://<host>/<path>">`,
+  or the same as a `Link: <...>; rel="canonical"` response header (the
+  scaffold's page handler sends that header). Pages that are parts of one
+  thing (chapters, result pages) name the thing's own page, and add
+  `<meta name="robots" content="noindex, follow">` when they should not be
+  listed at all.
+- **Never put per-visitor state in a URL a crawler can follow.** Keep it in
+  the fragment (`#...`), in `localStorage`, or on the server.
+- **API routes are never pages.** The platform marks `/api/*` and its own
+  paths `noindex` at the edge; do not link to them from pages, and send
+  `X-Robots-Tag: noindex` on any other route that returns data, not a page.
+- Do not block these URLs in `robots.txt`: a blocked URL is never read, so
+  its canonical or `noindex` is never seen.
+
 ## Database
 
 - Each app gets its own Postgres DB. Schema is applied idempotently

@@ -1148,6 +1148,20 @@ app.get('/shell/release.json', (_req, res, next) => {
 // and kept running pre-fix code across redeploys — fixes appeared to have
 // no effect ("same as before"). setHeaders runs as `send` streams the file,
 // so it reliably overrides send's default `max-age=0`. 304s still apply.
+// The shell's front page has one address for a search engine, whatever query
+// string a link carries (`/?report=app` was listed as a duplicate): the
+// canonical goes out as a Link header, so the document itself is unchanged.
+app.use((req, res, next) => {
+  const link = require('./src/services/search-robots').shellCanonicalLink({
+    method: req.method,
+    path: req.path,
+    origin: require('./src/routes/community-invites').requestOrigin(req),
+    staging: process.env.USERNODE_ENV === 'staging',
+  });
+  if (link) res.setHeader('Link', link);
+  next();
+});
+
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, filePath) {
     const cc = shellAssetCacheControl(filePath);
