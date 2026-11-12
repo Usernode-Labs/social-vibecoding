@@ -96,7 +96,7 @@
     {
       "source": "src/middleware/auth.js",
       "kind": "structural-template",
-      "fingerprint": "54be5fab71b82118b2a5",
+      "fingerprint": "e7e559129f486b033b07",
       "count": 1,
       "preview": "`SELECT s.user_id, s.expires_at, s.created_at, s.last_seen_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_e"
     },
