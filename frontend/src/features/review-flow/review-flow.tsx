@@ -50,6 +50,7 @@
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { reducedMotion } from '../../lib/reduced-motion';
 
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { ChatIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlayIcon, SparklesIcon } from '@/components/ui/icons';
@@ -122,10 +123,6 @@ export function pageRoom(cssMax: number, top: number, viewH: number, wide: boole
 }
 /** The change page is never wider than this (app.css `.rf-page`). */
 const COLUMN = 520;
-
-function reducedMotion(): boolean {
-  try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
-}
 
 function shape(visuals: unknown, shots: unknown) {
   const out = callAppView('_workshopVisuals', visuals, shots);

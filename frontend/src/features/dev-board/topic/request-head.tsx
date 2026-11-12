@@ -27,6 +27,7 @@
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { reducedMotion } from '../../../lib/reduced-motion';
 import type { FormEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -175,10 +176,6 @@ export function sentences(parts: readonly (string | null | undefined | false)[])
 /** The curve the sheets move on, and how long the fold takes to open. */
 const FOLD_MS = 240;
 const FOLD_EASE = 'cubic-bezier(.32, .72, 0, 1)';
-
-function reducedMotion(): boolean {
-  return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-}
 
 /**
  * The request's words, set apart as a quote and folded at four lines. "Show

@@ -183,6 +183,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { reducedMotion } from '../../lib/reduced-motion';
 
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { AppleIcon, ChevronLeftIcon, GoogleIcon, SpinnerArcIcon, XIcon } from '@/components/ui/icons';
@@ -446,12 +447,9 @@ function keyboardUp(): boolean {
   return root.contains(KB_OPEN_CLASS) || root.contains('un-kb');
 }
 
+/** The device's reduced motion, or Settings › Accessibility › Reduce motion (#6510). */
 export function prefersReducedMotion(): boolean {
-  try {
-    return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  } catch {
-    return false;
-  }
+  return reducedMotion();
 }
 
 /** A name's length on the profile (routes/profile.js MAX_DISPLAY_NAME). */

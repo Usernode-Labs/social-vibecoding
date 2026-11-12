@@ -64,6 +64,7 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { reducedMotion } from '../../lib/reduced-motion';
 
 import {
   ChatIcon,
@@ -648,11 +649,7 @@ export function shownBox(laidOut: Box, transform: string): Box {
 
 /** Reduced motion asks for none; unreadable answers that motion is welcome. */
 function motionWelcome(): boolean {
-  try {
-    return !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  } catch (_) {
-    return true;
-  }
+  return !reducedMotion();
 }
 
 /** A press slides only where a slide can show: a placed, drawn marker, with motion welcome. */

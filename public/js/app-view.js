@@ -2334,8 +2334,14 @@ const AppView = {
   // goes inert on its own.
   _launchRetry: null,
 
+  // The device's reduced motion, or Settings › Accessibility › Reduce motion
+  // (#6510): the head module's one answer, with the media query alone where
+  // that module is absent.
   _reduceMotion() {
     try {
+      if (window.Display && typeof window.Display.reducedMotion === 'function') {
+        return window.Display.reducedMotion();
+      }
       return !!(window.matchMedia
         && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     } catch { return false; }
@@ -24487,8 +24493,7 @@ const AppView = {
    */
   _scrollToLandedCard(el) {
     if (!el) return;
-    const reduced = typeof matchMedia === 'function'
-      && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduced = AppView._reduceMotion();
     if (typeof el.scrollIntoView === 'function') {
       el.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
     }

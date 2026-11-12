@@ -1471,6 +1471,14 @@
     "text": "Darker text and clearer lines, in light and dark.",
     "description": "Explanation under the High contrast switch in Settings > Accessibility."
   },
+  "accessibility.motion.label": {
+    "text": "Reduce motion",
+    "description": "Label of a switch in Settings > Accessibility: turns off most animations, slides and moving effects across Homeroom."
+  },
+  "accessibility.motion.description": {
+    "text": "Turns off most animations, slides and moving effects, so screens change in place. When this is off, Homeroom follows your device's own reduce motion setting.",
+    "description": "Explanation under the Reduce motion switch in Settings > Accessibility."
+  },
   "accessibility.previews.label": {
     "text": "Play previews on project cards",
     "description": "Label of a switch in Settings, Accessibility: whether project cards play their short, silent preview clips."
@@ -2832,7 +2840,7 @@
     "description": "Not shown on screen. Extra search words for \"Developer console\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.accessibility": {
-    "text": "text size font bigger larger zoom read contrast high normal accessible vision",
+    "text": "text size font bigger larger zoom read contrast high normal accessible vision motion animation reduce",
     "description": "Not shown on screen. Extra search words for \"Accessibility\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.language": {

@@ -1089,9 +1089,25 @@
   var platform = detectPlatform();
   document.documentElement.classList.add('un-' + platform);
 
+  // The device's reduced motion, or the Homeroom shell's own Reduce motion
+  // setting (#6510), which its head module writes as data-motion="reduce" on
+  // <html>. Kept current: either can change while the page is open. An app's
+  // document never carries the attribute, so there it is the media query
+  // alone, as before.
   var prefersReducedMotion = false;
+  function readReducedMotion() {
+    try {
+      prefersReducedMotion = document.documentElement.getAttribute('data-motion') === 'reduce'
+        || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch (e) { /* ignore */ }
+  }
+  readReducedMotion();
   try {
-    prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', readReducedMotion);
+  } catch (e) { /* ignore */ }
+  try {
+    new MutationObserver(readReducedMotion)
+      .observe(document.documentElement, { attributes: true, attributeFilter: ['data-motion'] });
   } catch (e) { /* ignore */ }
 
   // Haptic tick for threshold crossings (arm/disarm cues). navigator.vibrate
