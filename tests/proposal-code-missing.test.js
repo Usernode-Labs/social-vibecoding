@@ -621,7 +621,7 @@ test('the lists carry it: the board\'s proposals, a proposal\'s page and the Com
   assert.match(promoted, /for \(const row of rows\) row\.code_missing = missing\.has\(Number\(row\.id\)\);/);
   assert.match(promoted, /head: row\.code_missing \? null : visualHeadForSession\(row\),/);
   const byId = src.slice(src.indexOf("router.get('/api/apps/:slug/proposals/:id'"), src.indexOf("router.post('/api/sessions/:id/undo'"));
-  assert.match(byId, /'view', `\$\{appAccess\.ACCESS_COLUMNS\}, repo_url`/);
+  assert.match(byId, /'view', `\$\{appAccess\.ACCESS_COLUMNS\}, locked, repo_url`/);
   assert.match(byId, /proposal\.code_missing = await codeMissing\.forSession\(pool, \{\s*\.\.\.proposal, app_id: gatedApp\.id, repo_url: gatedApp\.repo_url,/);
   // A vote is recorded and says it cannot go live, from what is known (no
   // git read in front of the answer); an admin's force merge is refused.

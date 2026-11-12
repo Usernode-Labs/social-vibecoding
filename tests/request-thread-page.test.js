@@ -535,7 +535,10 @@ test('#6387 the row says a change is expected, so the page can hold its place', 
 
 test('#6387 the page holds the change section\'s place while its thread loads', () => {
   const head = fs.readFileSync(path.join(__dirname, '..', HEAD), 'utf8');
-  assert.match(head, /const holding = !r\.status\.closed && !!r\.status\.changeExpected && threadRead\.loading;/);
+  // #6604: the hold covers every open request now, not only one whose row
+  // says a change is expected: the plan card waits for the thread, so it is
+  // not drawn and then replaced by a change's line.
+  assert.match(head, /const holding = !r\.status\.closed && threadRead\.loading;/);
   // The held place counts as a working section, so the status card, the plan
   // and the bot's track give way to it as they do once it has loaded.
   assert.match(head, /const working = layout\.changes\.length > 0 \|\| \(!!layout\.close && layout\.close\.status === 'open'\) \|\| holding;/);

@@ -66,6 +66,7 @@ import { DevKanban } from './card/dev-kanban';
 import type { DevKanbanView, DevWorkshopView } from './card/model';
 import { DevWorkshop, withoutSavedVotes } from './workshop/workshop';
 import { TopicHead } from './topic/topic-head';
+import { prefetchThread } from './topic/thread-items';
 import { topicHeadStore, type TopicHeadState } from './topic/topic-store';
 import { publishRequestThread } from './topic/request-model';
 import { askVotesInView } from './topic/votes-in-view';
@@ -121,6 +122,11 @@ export interface DevBoardBridge {
   publishKanban(view: DevKanbanView): void;
   mountTopicHead(host: Element | null): void;
   publishTopicHead(state: TopicHeadState): void;
+  /**
+   * #6604: start a thread's own read when its page opens, in the same tick
+   * as app-view.js's item read, rather than after the root post has painted.
+   */
+  prefetchThread(slug: string | null, number: number | null): Promise<unknown> | null;
   /** #4453: a request's stream, as `GroupChat.renderThread` publishes it — for its spec cards. */
   publishRequestThread(number: number, rows: TranscriptMessage[]): void;
   mountAutoSessionModal(host: Element | null, view: AutoSessionModalView): void;
@@ -205,6 +211,7 @@ llmConsentModalStore.setFlush(flushSync);
 permissionConsentModalStore.setFlush(flushSync);
 
 export const devBoardBridge: DevBoardBridge = {
+  prefetchThread,
   mountBoard(host, options) {
     // Seed before the first render so a cold `?view=kanban` deep link paints
     // kanban immediately rather than list-then-kanban.
