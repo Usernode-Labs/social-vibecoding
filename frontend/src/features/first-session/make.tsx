@@ -1,4 +1,5 @@
 import { SpeakButton } from '../dictation/speak-button';
+import { reducedMotion } from '../../lib/reduced-motion';
 /**
  * "What do you want to make?": the first thing an account made from the
  * signed-out story is asked (../auth/story.tsx sets the session's
@@ -523,7 +524,7 @@ export function MakeScreen({
           scroller.scrollHeight - scroller.clientHeight)
         : reveal;
       if (top === Math.round(scroller.scrollTop)) return;
-      const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      const still = reducedMotion();
       scroller.scrollTo({ top, behavior: still ? 'auto' : 'smooth' });
     });
     return () => cancelAnimationFrame(raf);
@@ -549,7 +550,7 @@ export function MakeScreen({
     if (!close || leavingRef.current) return;
     leavingRef.current = true;
     const root = rootRef.current;
-    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const still = reducedMotion();
     if (still || !root) { close(); return; }
     let done = false;
     const gone = () => {

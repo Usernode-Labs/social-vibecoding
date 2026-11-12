@@ -33,7 +33,10 @@ const DDL = `
     -- chooseFirstUsername stamps it (QA 2026-09-24 Q12's handle choice).
     updated_at TIMESTAMPTZ,
     -- "Are you 18 or older?" answered yes (#5095); the wallet claim waits for it.
-    adult_attested_at TIMESTAMPTZ
+    adult_attested_at TIMESTAMPTZ,
+    -- The session-mint boundary asks whether the cookie's session is live the
+    -- way middleware/auth.js does, which includes "not synthetic" (#6619).
+    is_synthetic BOOLEAN NOT NULL DEFAULT FALSE
   );
   CREATE UNIQUE INDEX users_email_lower_unique
     ON users (lower(email)) WHERE email IS NOT NULL;

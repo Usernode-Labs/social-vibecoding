@@ -1158,6 +1158,13 @@ html.un-android .un-toast.un-in {
     transition: none;
   }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .un-toast { transition: opacity 180ms ease; }
+:where(html[data-motion="reduce"]) .un-modal,
+:where(html[data-motion="reduce"]) .un-alert { transition: opacity var(--un-dialog-fade-duration) ease; }
+:where(html[data-motion="reduce"]) .un-sheet,
+:where(html[data-motion="reduce"]) .un-action-sheet,
+:where(html[data-motion="reduce"]) .un-panel { transition: none; }
 
 /* ── Nav bars ──────────────────────────────────────────────────────────
    .un-navbar: fixed blurred compact bar; unNative.attachNavBar() toggles
@@ -1356,6 +1363,9 @@ html.un-desktop[data-un-vt="pop"]::view-transition-new(root) {
     animation: none;
   }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+html[data-un-vt]:where([data-motion="reduce"])::view-transition-old(root),
+html[data-un-vt]:where([data-motion="reduce"])::view-transition-new(root) { animation: none; }
 
 /* ── Safe areas ────────────────────────────────────────────────────────
    Opt-in helpers for fixed bars on pages that set viewport-fit=cover.

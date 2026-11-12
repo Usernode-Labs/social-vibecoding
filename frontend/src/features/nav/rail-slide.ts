@@ -20,6 +20,7 @@
  */
 
 import { flushSync } from 'react-dom';
+import { reducedMotion } from '../../lib/reduced-motion';
 
 import { navStore } from './nav-store.js';
 import { dirSign } from '../../lib/i18n/direction';
@@ -65,7 +66,7 @@ export function slideRail(commit: () => void): void {
   const still = !bar
     || typeof bar.animate !== 'function'
     || !window.matchMedia?.('(min-width: 768px)').matches
-    || window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    || reducedMotion()
     || bar.classList.contains('hidden');
   if (still) {
     commit();

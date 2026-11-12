@@ -2334,8 +2334,14 @@ const AppView = {
   // goes inert on its own.
   _launchRetry: null,
 
+  // The device's reduced motion, or Settings › Accessibility › Reduce motion
+  // (#6510): the head module's one answer, with the media query alone where
+  // that module is absent.
   _reduceMotion() {
     try {
+      if (window.Display && typeof window.Display.reducedMotion === 'function') {
+        return window.Display.reducedMotion();
+      }
       return !!(window.matchMedia
         && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     } catch { return false; }
@@ -5448,13 +5454,37 @@ const AppView = {
     const react = AppView._reactDevBoard();
     if (react) react.publishTopicHead?.({ card: null, body: null, item: null, loading: true });
     // The previous thread's stream goes with the body: the same pair
-    // `mountThread` runs before a remount (GroupChat.renderThread).
-    if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) {
+    // `mountThread` runs before a remount (GroupChat.renderThread). A thread
+    // that is already this topic's own is not the previous one, and stays: a
+    // request's or a decision's is mounted on its ref alone, before its row
+    // is in hand (_renderTopicSubView), and the paint that follows the row
+    // does not mount it again. Dropped here by a repaint in that gap, the
+    // page drew its head and no replies at all.
+    if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread
+        && !AppView._topicThreadIsOpen(t, slug)) {
       const prev = document.getElementById('gc-thread-messages');
       if (prev) GroupChat._react?.()?.unmountTranscript?.(prev);
       GroupChat.unmountThread();
     }
     AppView._paintedTopic = null;
+  },
+
+  // The thread each kind of topic page mounts (_mountTopicThread). A shared
+  // in-flight dev session uses the same 'session' namespace as a promoted
+  // proposal: the thread key is the chat_sessions id either way, which is
+  // what makes comments carry over when the session is later promoted.
+  _TOPIC_THREAD_TYPES: new Map([
+    ['issue', 'issue'], ['proposal', 'session'], ['gov', 'governance'], ['session', 'session'],
+  ]),
+
+  // Whether the thread open in the group chat is topic `t`'s own, in project
+  // `slug`: the same kind of thread, on the same id, in the same project.
+  _topicThreadIsOpen(t, slug) {
+    if (typeof GroupChat === 'undefined' || !t || !slug) return false;
+    const open = GroupChat.activeThread;
+    if (!open || GroupChat.appSlug !== slug) return false;
+    return open.type === AppView._TOPIC_THREAD_TYPES.get(t.kind)
+      && Number(open.ref) === Number(t.id);
   },
 
   // #1036: the address of the app's dev page — what every "← Back" in a
@@ -10261,18 +10291,13 @@ const AppView = {
       });
       return;
     }
-    // 'session' (a shared in-flight dev session) uses the same 'session'
-    // thread namespace as promoted proposals — the thread key is the
-    // chat_sessions id either way, which is exactly what makes comments
-    // carry over when the session is later promoted.
-    const typeMap = { issue: 'issue', proposal: 'session', gov: 'governance', session: 'session' };
     // Every topic thread — including merged proposals — mounts with a live,
     // editable composer. Merging settles the vote, not the conversation:
     // people keep posting follow-ups after a proposal lands. The WS handler
     // accepts session-thread posts on merged sessions (existence-only gate),
     // so there is no read-only lock or "voting closed" notice here.
     GroupChat.mountThread({
-      type: typeMap[t.kind],
+      type: AppView._TOPIC_THREAD_TYPES.get(t.kind),
       ref: t.id,
       container: slot,
       fullHeight: true,
@@ -24487,8 +24512,7 @@ const AppView = {
    */
   _scrollToLandedCard(el) {
     if (!el) return;
-    const reduced = typeof matchMedia === 'function'
-      && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduced = AppView._reduceMotion();
     if (typeof el.scrollIntoView === 'function') {
       el.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
     }

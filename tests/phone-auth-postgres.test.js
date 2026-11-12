@@ -44,7 +44,12 @@ const DDL = `
     needs_username_choice BOOLEAN NOT NULL DEFAULT FALSE,
     needs_communities_choice BOOLEAN NOT NULL DEFAULT FALSE,
     getting_started_gate BOOLEAN NOT NULL DEFAULT FALSE,
-    updated_at TIMESTAMPTZ
+    updated_at TIMESTAMPTZ,
+    -- The session-mint boundary asks whether the cookie's session is live the
+    -- way middleware/auth.js does: not synthetic, native authority not
+    -- revoked (#6619). These columns and the two tables below are what that
+    -- question reads.
+    is_synthetic BOOLEAN NOT NULL DEFAULT FALSE
   );
   CREATE UNIQUE INDEX users_email_lower_unique
     ON users (lower(email)) WHERE email IS NOT NULL;
@@ -62,6 +67,21 @@ const DDL = `
     -- #5974: what Settings › Linked devices names a browser row by, and when it was last used
     user_agent_class TEXT,
     last_seen_at TIMESTAMPTZ
+  );
+  CREATE TABLE mobile_auth_tokens (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash VARCHAR(64) NOT NULL UNIQUE,
+    ability VARCHAR(20) NOT NULL CHECK (ability = 'session'),
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE TABLE native_session_credentials (
+    credential_reference VARCHAR(47) PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    mobile_auth_token_id BIGINT REFERENCES mobile_auth_tokens(id),
+    state TEXT,
+    expires_at TIMESTAMPTZ
   );
   CREATE TABLE oauth_signup_sessions (
     token_hash  VARCHAR(64) PRIMARY KEY CHECK (token_hash ~ '^[0-9a-f]{64}$'),

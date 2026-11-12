@@ -43,6 +43,7 @@
  */
 
 import { Fragment, memo, useCallback, useEffect, useId, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from 'react';
+import { reducedMotion } from '../../../lib/reduced-motion';
 
 import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/ui/grouped-list';
@@ -832,7 +833,7 @@ function useThemeReorderMotion(listRef: { current: HTMLElement | null }, themes:
   const capture = () => {
     const list = listRef.current;
     if (!list || typeof window === 'undefined'
-      || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) return;
+      || reducedMotion()) return;
     const tops = new Map<string, number>();
     list.querySelectorAll<HTMLElement>(':scope > [data-ws-theme]').forEach((el) => {
       tops.set(el.dataset.wsTheme || '', el.getBoundingClientRect().top);

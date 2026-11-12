@@ -32,6 +32,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { reducedMotion } from '../../lib/reduced-motion';
 import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
@@ -44,10 +45,6 @@ import { PlaysOut, PresetTiles, type Viewer } from './parts';
 
 /** The sheet's slide, each way (`duration-200` below). */
 export const SHEET_SLIDE_MS = 200;
-
-function reducedMotion(): boolean {
-  try { return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
-}
 
 /** A mouse, not a finger: only there does the ⓘ's tip open on hover (#5266). */
 function hasHover(): boolean {

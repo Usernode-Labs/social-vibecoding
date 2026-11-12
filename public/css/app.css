@@ -1391,6 +1391,8 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 @media (prefers-reduced-motion: reduce) {
   .msgx-bar-emoji:hover { transform: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .msgx-bar-emoji:hover { transform: none; }
 
 /* The ⋯ menu and the picker hang off the pill: below it, or above when the
    row is near the foot of the transcript (placementFor). */
@@ -1554,6 +1556,8 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 }
 @keyframes msgx-sheet-in { from { transform: translateY(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .msgx-sheet { animation: none; } }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .msgx-sheet { animation: none; }
 .msgx-sheet-grabber { align-self: center; width: 36px; height: 5px; border-radius: 3px; background: var(--border); }
 .msgx-sheet-preview {
   overflow: hidden;
@@ -2002,6 +2006,8 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 @media (prefers-reduced-motion: reduce) {
   .messages-composer-card { transition: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .messages-composer-card { transition: none; }
 .messages-composer-disabled { padding: 14px 16px; color: var(--text-muted); font-size: 15px; text-align: center; }
 /* QA 2026-09-24 Q2: a direct request the other person has not accepted yet.
    Before the opening message, one muted line over the card says what it will
@@ -2075,6 +2081,8 @@ form.agent-session-composer:focus-within {
 @media (prefers-reduced-motion: reduce) {
   .agent-session-composer { transition: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .agent-session-composer { transition: none; }
 /* #2882's reset (WebKit's native textarea box and tap flash) and #2387's
    Firefox fix: preflight's `:-moz-focusring { outline: auto }` loads later
    at one class's specificity, so the second class here is what keeps Gecko
@@ -2101,6 +2109,8 @@ form.agent-session-composer:focus-within {
 @media (prefers-reduced-motion: reduce) {
   .agent-session-typing-dot { animation: none; opacity: 0.6; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .agent-session-typing-dot { animation: none; opacity: 0.6; }
 .messages-composer-action {
   display: inline-flex;
   align-items: center;
@@ -2590,6 +2600,8 @@ form.agent-session-composer:focus-within {
 @media (prefers-reduced-motion: reduce) {
   .messages-message-focus { animation: none; background: var(--accent-tint); }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .messages-message-focus { animation: none; background: var(--accent-tint); }
 
 /* A linked page stops short of the present (#2387). #6148: scrolling down
    reads the newer pages in, so the row holds the "Loading…" line, or the
@@ -3289,6 +3301,9 @@ html.un-ios.in-native-webview[data-un-vt="pop"]::view-transition-new(root) {
     animation: none;
   }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+html.un-ios.in-native-webview[data-un-vt]:where([data-motion="reduce"])::view-transition-old(root),
+html.un-ios.in-native-webview[data-un-vt]:where([data-motion="reduce"])::view-transition-new(root) { animation: none; }
 
 /* ── The top bar does not travel with the page ────────────────────────────
    Switching apps from the header chip animates `::view-transition-*(root)`,
@@ -4544,6 +4559,8 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
 @media (prefers-reduced-motion: reduce) {
   .landing-rail-track { animation: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .landing-rail-track { animation: none; }
 
 /* ── App cards ─────────────────────────────────────────── */
 
@@ -5198,6 +5215,8 @@ html.first-paint-reserved #home-challenges-section.home-section-pending {
 @media (prefers-reduced-motion: reduce) {
   .home-grid-cell { transition: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .home-grid-cell { transition: none; }
 
 /* ── The live displacement preview ──────────────────────────
    While something hovers a target, the items it WOULD push move to the cells
@@ -5246,6 +5265,8 @@ html.first-paint-reserved #home-challenges-section.home-section-pending {
      tween goes. */
   .home-item-displaced { transition: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .home-item-displaced { transition: none; }
 
 /* Tiles sit ABOVE the overlay. Without this the overlay's cells would paint
    over the icons they are supposed to sit behind. */
@@ -5484,6 +5505,8 @@ html.first-paint-reserved #home-challenges-section.home-section-pending {
     animation: none;
   }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) #app-list[data-editing] > .app-card > .relative { animation: none; }
 
 /* ── Phone density ──────────────────────────────────────────
    Below 640px the grid is 4 columns with a tighter tile, so the cell is 8px
@@ -6326,6 +6349,8 @@ html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 
 @media (prefers-reduced-motion: reduce) {
   .dc-status-spinner-arc { animation: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dc-status-spinner-arc { animation: none; }
 
 /* Completed state — explicit green check so a glance at the chat tells
    the user which steps finished. Kept at the same box dimensions as
@@ -8632,6 +8657,8 @@ span.gc-vote-btn-icon { cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   .gc-vote-count-dot-ping { animation: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .gc-vote-count-dot-ping { animation: none; }
 .gc-vote-count-dot-core {
   position: relative;
   border-radius: 9999px;
@@ -9841,6 +9868,8 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
 @media (prefers-reduced-motion: reduce) {
   .dc-card { transition: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dc-card { transition: none; }
 
 .dc-card-row {
   display: flex;
@@ -10018,6 +10047,8 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
 @media (prefers-reduced-motion: reduce) {
   .work-cog-spinning { animation: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .work-cog-spinning { animation: none; }
 
 /* ── Textarea auto-resize ──────────────────────────────── */
 
@@ -10567,6 +10598,11 @@ html.un-kb #settings-content-col > .settings-sheet {
   .notifications-stack [data-notif-swipe],
   .notifications-stack [data-notif-swipe] > * { transition: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .notifications-stack > .notifications-row-slot,
+:where(html[data-motion="reduce"]) .notifications-stack > .notifications-row-slot > *,
+:where(html[data-motion="reduce"]) .notifications-stack [data-notif-swipe],
+:where(html[data-motion="reduce"]) .notifications-stack [data-notif-swipe] > * { transition: none; }
 
 /* ── The dev area on the ladder, and the shared composer card ───────────
    The board column is the STRIP and a topic or the Discussion is the SHEET
@@ -10991,6 +11027,10 @@ html .un-backdrop.platform-backdrop-dim {
 @media (max-width: 767px) and (pointer: coarse) and (prefers-reduced-motion: reduce) {
   [data-dialog-sheet] [data-modal-backdrop] > div { transition: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+@media (max-width: 767px) and (pointer: coarse) {
+  :where(html[data-motion="reduce"]) [data-dialog-sheet] [data-modal-backdrop] > div { transition: none; }
+}
 
 /* THE COMMENT SHEET (#4554): the comment box on a phone, a slide-up sheet of
    its own (features/comment-pin/comment-pin.tsx renders it with the same
@@ -11004,6 +11044,8 @@ html .un-backdrop.platform-backdrop-dim {
 @media (prefers-reduced-motion: reduce) {
   .comment-sheet-in { animation: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .comment-sheet-in { animation: none; }
 
 /* THE VIEW PICTURE'S ENTRANCE (#4665): while the first view picture is
    drawn, comment mode leaves the live page on show, and when the picture
@@ -11052,6 +11094,11 @@ html .un-backdrop.platform-backdrop-dim {
   .comment-shot-label-in,
   .comment-bar-in { animation: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .comment-shot-in,
+:where(html[data-motion="reduce"]) .comment-shot-ground-in,
+:where(html[data-motion="reduce"]) .comment-shot-label-in,
+:where(html[data-motion="reduce"]) .comment-bar-in { animation: none; }
 /* The sheet's grabber, the same handle the feedback sheet's carries — the
    component renders it only on a phone, so no media query here. */
 .comment-sheet-grabber {
@@ -11120,6 +11167,8 @@ html.platform-kb-open #comment-pin-box.comment-sheet {
 @media (prefers-reduced-motion: reduce) {
   .comment-small-in { animation: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .comment-small-in { animation: none; }
 /* THE PAPERCLIP'S POPOVER (#4127): Photo and Video, in the vote popover's
    frame (.dev-vote-pop / .messages-new-pop: same radius, surface, hairline
    and shadow) and the "+" menu's rows. Absolute under the paperclip rather
@@ -13682,6 +13731,10 @@ html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: 
     transition: none;
   }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .app-launch-cover,
+:where(html[data-motion="reduce"]) #app-iframe,
+:where(html[data-motion="reduce"]) #app-viewer-frame { transition: none; }
 
 /* ── Dev-chat "Run on" runner controls (#907) ─────────────────────────────
    The selector + chip that appear in the composer's status row when a
@@ -15246,6 +15299,8 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 @media (prefers-reduced-motion: reduce) {
   .dev-topic-acc > .dev-topic-details > .dev-topic-details-summary::after { transition: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-topic-acc > .dev-topic-details > .dev-topic-details-summary::after { transition: none; }
 
 /* The card at full width: the title is not clamped, and the facts line may
    hold every chip (the head shows the unset ones as "Set priority"). */
@@ -15491,6 +15546,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 @media (prefers-reduced-motion: reduce) {
   .dev-ledger-build-seg.is-now { animation: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-ledger-build-seg.is-now { animation: none; }
 /* Inside the image step: the buildpack lifecycle phases on their own row,
    indented, with the running phase's last log line under them in mono. */
 .dev-ledger-build-phases {
@@ -15517,6 +15574,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 @media (prefers-reduced-motion: reduce) {
   .dev-ledger-build-step.is-now { animation: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-ledger-build-step.is-now { animation: none; }
 .dev-ledger-progress-busy {
   background: color-mix(in srgb, currentColor 18%, transparent);
   animation: dev-ledger-progress-pulse 1.4s ease-in-out infinite;
@@ -15528,6 +15587,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 @media (prefers-reduced-motion: reduce) {
   .dev-ledger-progress-busy { animation: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-ledger-progress-busy { animation: none; }
 
 .dev-ledger-roster { color: var(--text-primary); }
 .dev-ledger-yes { color: var(--state-ok); font-weight: 600; }
@@ -15814,6 +15875,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .shots-view:has(.shots-change[data-shots-n="2"]:hover) .shots-stage [data-shots-n="2"],
 .shots-view:has(.shots-change[data-shots-n="3"]:hover) .shots-stage [data-shots-n="3"] { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .shots-box, .shots-mark { transition: none; } }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .shots-box,
+:where(html[data-motion="reduce"]) .shots-mark { transition: none; }
 
 /* Under the screen: only the changes on it, numbered as their outlines. */
 .shots-view-notes { display: grid; gap: 10px; align-content: start; padding: 12px; }
@@ -16179,6 +16243,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 .dev-step-toggle[aria-expanded="true"] .dev-step-chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .dev-step-chev { transition: none; } }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-step-chev { transition: none; }
 /* The run, open: a row per stage — its name, its bar, its count. */
 .dev-step-run {
   display: grid; grid-template-columns: 5.5rem minmax(0, 1fr) auto; gap: 7px 10px; align-items: center;
@@ -16202,6 +16268,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-step-run-track > .is-fail { background: var(--state-blocked); }
 .dev-step-run-track.is-busy { animation: dev-ledger-progress-pulse 1.4s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .dev-step-run-track.is-busy { animation: none; } }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-step-run-track.is-busy { animation: none; }
 .dev-step-run > .dev-ledger-fails { grid-column: 1 / -1; margin: 2px 0 0; }
 .dev-step-run-note { grid-column: 1 / -1; margin: 0; font-size: 12px; color: var(--text-muted); }
 @media (max-width: 520px) {
@@ -16475,6 +16543,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 @media (prefers-reduced-motion: reduce) {
   .dev-request-more .dev-ws-reveal-chev { transition: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-request-more .dev-ws-reveal-chev { transition: none; }
 
 /* #4481 and #4482: a request's screenshots (dev-board/topic/request-shots.ts).
    With the experimental C switch on, the blocks that hold one leave the fold
@@ -16594,6 +16664,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 @media (prefers-reduced-motion: reduce) {
   .pin-shot-layer { transition: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .pin-shot-layer { transition: none; }
 
 /* A request's track card drawn from the board's older row keeps its place
    unseen until the fresh row says where the work is (request-head.tsx
@@ -16924,6 +16996,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 @media (prefers-reduced-motion: reduce) {
   .dev-change-bar-fill { transition: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-change-bar-fill { transition: none; }
 
 /* The cards' buttons at Messages' size: Preview a neutral pill, the
    re-run the accent one; Vote is the card's own picker button. */
@@ -17737,6 +17811,8 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
       height .26s cubic-bezier(.32, .72, 0, 1);
   }
 }
+/* Reduce motion setting (#6510): none of the motion above, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-ws-tab-marker[data-ws-marker-slide] { transition: none; }
 
 /* ── Needs you: one question, the whole screen ───────────────
    SIZED FROM THE VIEWPORT, not from its ancestors — and that is the second
@@ -17839,6 +17915,8 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 @media (prefers-reduced-motion: no-preference) {
   .dev-ws-needs-scroll { scroll-behavior: smooth; }
 }
+/* Reduce motion setting (#6510): none of the motion above, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-ws-needs-scroll { scroll-behavior: auto; }
 /* ── The item: a card of the page's own ───────────────────────────────
    ONE CARD, IN THE PAGE'S SCHEME, in the light theme and the dark alike,
    like the hub's and the Workshop's grouped cards are: the plane colour
@@ -19046,6 +19124,12 @@ button.dev-ws-recent-card {
   .dev-ws-item[data-ws-swipe]:not([data-ws-swiping]) { transition: transform .26s cubic-bezier(.2, .8, .2, 1); }
   .dev-ws-item[data-ws-swipe]:not([data-ws-swiping]) > .dev-ws-swipe-hint { transition: opacity .2s ease; }
 }
+/* Reduce motion setting (#6510): none of the motion above, when Settings asks for it. */
+@media (max-width: 699.98px) {
+  :where(html[data-motion="reduce"]) .dev-ws-item[data-ws-swipe] { transform: none; }
+  :where(html[data-motion="reduce"]) .dev-ws-item[data-ws-swipe]:not([data-ws-swiping]) { transition: none; }
+  :where(html[data-motion="reduce"]) .dev-ws-item[data-ws-swipe]:not([data-ws-swiping]) > .dev-ws-swipe-hint { transition: none; }
+}
 
 /* ── The picture: the two stills, cropped to what changed ──────────────
    The view is the box the still is placed in; the still keeps its natural
@@ -19414,6 +19498,11 @@ button.dev-ws-recent-card {
     animation-timing-function: ease-in; animation-fill-mode: both;
   }
 }
+/* Reduce motion setting (#6510): none of the motion above, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-ws-sheet-modal > .dev-ws-scrim { animation: none; }
+:where(html[data-motion="reduce"]) .dev-ws-sheet-modal > .dev-ws-sheet-card { animation: none; }
+:where(html[data-motion="reduce"]) .dev-ws-sheet-modal[data-ws-leaving] > .dev-ws-scrim { animation: none; }
+:where(html[data-motion="reduce"]) .dev-ws-sheet-modal[data-ws-leaving] > .dev-ws-sheet-card { animation: none; }
 @keyframes dev-ws-sheet-up { from { transform: translateY(100%); } to { transform: none; } }
 @keyframes dev-ws-sheet-down { from { transform: none; } to { transform: translateY(100%); } }
 @keyframes dev-ws-scrim-in { from { opacity: 0; } to { opacity: 1; } }
@@ -19524,6 +19613,8 @@ button.dev-ws-recent-card {
 @media (prefers-reduced-motion: no-preference) {
   .dev-ws-join-pop { animation: dev-ws-join-pop-in .18s ease-out both; transform-origin: calc(100% - 32px) 0; }
 }
+/* Reduce motion setting (#6510): none of the motion above, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-ws-join-pop { animation: none; }
 @keyframes dev-ws-join-pop-in { from { opacity: 0; transform: translateY(-4px) scale(.96); } to { opacity: 1; transform: none; } }
 
 /* ── The project card (features/guest/project-card.tsx) ────────────────
@@ -20067,6 +20158,11 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   .dev-ws-tray, .dev-ws-tray-scrim { animation: none; }
   .dev-ws-tray-root.is-closing .dev-ws-tray, .dev-ws-tray-root.is-closing .dev-ws-tray-scrim { animation: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-ws-tray,
+:where(html[data-motion="reduce"]) .dev-ws-tray-scrim { animation: none; }
+:where(html[data-motion="reduce"]) .dev-ws-tray-root.is-closing .dev-ws-tray,
+:where(html[data-motion="reduce"]) .dev-ws-tray-root.is-closing .dev-ws-tray-scrim { animation: none; }
 
 /* ── THE PHONE'S COMMUNITY HEADER (features/nav-drawer/) ──────────────
    Evan's design (18 Oct 2026). Under 768px a community's page drew its
@@ -20564,6 +20660,9 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
   .messages-start,
   .messages-project-chip { transition: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .messages-start,
+:where(html[data-motion="reduce"]) .messages-project-chip { transition: none; }
 /* WHO WORKS ON IT (10 Nov 2026, thread-builder.tsx). The second chip in the
    row above is the project chip's own class, tinted in the accent once the
    person's own Claude Code or ChatGPT is picked. Then the send is not a send:
@@ -20865,6 +20964,8 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 @media (prefers-reduced-motion: reduce) {
   .dev-ws-ask-pending { animation: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-ws-ask-pending { animation: none; }
 .dev-ws-ask-failed { color: var(--state-blocked); background: var(--state-blocked-bg); }
 /* THE COMPOSER is the dev session's (`.dc-card`), padded evenly so its
    resting line sits on its own middle — `.dc-card`'s 14-over-10 is for a
@@ -21956,6 +22057,8 @@ span.dev-ws-dash-cell[data-ws-dash-open]:focus-visible { outline: 2px solid var(
 .dev-ws-chev { width: 16px; height: 16px; color: var(--text-muted); flex-shrink: 0; transition: transform .18s ease; }
 .dev-ws-theme-open > .dev-ws-theme-head .dev-ws-chev, .dev-ws-row-open > .dev-ws-chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .dev-ws-chev { transition: none; } }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-ws-chev { transition: none; }
 
 .dev-ws-faces-wrap { position: relative; display: inline-flex; }
 .dev-ws-faces { display: flex; border: 0; background: transparent; padding: 2px; margin: -2px; border-radius: 999px; cursor: pointer; }
@@ -22247,6 +22350,8 @@ button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-o
 @keyframes dev-fold-bottom { from { transform: translateY(0); } to { transform: translateY(2px); } }
 @keyframes dev-fold-bar { from { transform: scaleY(0); } to { transform: scaleY(1); } }
 @media (prefers-reduced-motion: reduce) { .dev-fold-mark path { animation: none; } }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-fold-mark path { animation: none; }
 
 .dev-ws-new {
   margin-inline-start: 6px; font-size: 10px; font-weight: 700; color: var(--accent); background: var(--accent-tint);
@@ -23708,6 +23813,9 @@ html[data-side-strip="left"] #platform-header {
       transition: none;
     }
   }
+  /* Reduce motion setting (#6510): the same, when Settings asks for it. */
+  html[data-side-strip]:where([data-motion="reduce"]) .platform-side-strip-frost,
+  html[data-side-strip]:where([data-motion="reduce"]) .platform-side-strip-frost[data-out] { transition: none; }
   /* Not while the header is away (chromeless): its top is the header's foot. */
   html[data-side-strip] body:has(#platform-header.hidden) .platform-side-strip-frost {
     display: none;
@@ -24055,6 +24163,11 @@ html.un-kb #platform-parked {
   .platform-parked-enter, .platform-parked-leave,
   .platform-parked-enter > *, .platform-parked-leave > * { animation: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .platform-parked-enter,
+:where(html[data-motion="reduce"]) .platform-parked-leave,
+:where(html[data-motion="reduce"]) .platform-parked-enter > *,
+:where(html[data-motion="reduce"]) .platform-parked-leave > * { animation: none; }
 
 /* ── THE APP YOU CLOSED, ON ITS WAY INTO RESUME (#3618) ──────────────
    frontend/src/features/nav/resume-motion.ts carries the argument: a
@@ -24098,6 +24211,8 @@ html.un-kb #platform-parked {
 @media (prefers-reduced-motion: reduce) {
   .resume-ghost { display: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .resume-ghost { display: none; }
 
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -24242,6 +24357,8 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
 @media (prefers-reduced-motion: reduce) {
   .platform-sidebar-toggle { transition: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .platform-sidebar-toggle { transition: none; }
 
 @media (min-width: 768px) {
   /* THE BAND AT THE FOOT GOES AWAY ENTIRELY. What a screen has to clear
@@ -24958,6 +25075,8 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   @media (prefers-reduced-motion: reduce) {
     .platform-rail-pin-ghost { transform: translate(-50%, -50%); }
   }
+  /* Reduce motion setting (#6510): the same, when Settings asks for it. */
+  :where(html[data-motion="reduce"]) .platform-rail-pin-ghost { transform: translate(-50%, -50%); }
 
   /* ── YOU AT THE FOOT, SETTINGS AT THE END OF YOUR ROW ── */
   .platform-tabs::after {
@@ -25433,6 +25552,8 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
 }
 .messages-section-name + .messages-section-chevron { margin-inline-start: auto; }
 @media (prefers-reduced-motion: reduce) { .messages-section-chevron { transition: none; } }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .messages-section-chevron { transition: none; }
 /* A SECTION'S ROWS ARE A CARD: the grouped list's shape (@/components/ui/
    grouped-list.tsx), spelled here because these rows are app.css's. The same
    plane colour, the same 20px radius and the same inset hairline in the
@@ -25610,6 +25731,10 @@ html.dark .messages-inbox-change-tile {
   body:has(#platform-tabs.platform-tabs-peek) .platform-parked { animation: none; }
   .platform-tabs.platform-tabs-peek { transition: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .platform-tabs.platform-tabs-peek,
+:where(html[data-motion="reduce"]) body:has(#platform-tabs.platform-tabs-peek) .platform-parked { animation: none; }
+:where(html[data-motion="reduce"]) .platform-tabs.platform-tabs-peek { transition: none; }
 
 /* ── #platform-side-panel — THE PANEL BESIDE A RUNNING APP ───────────────
    On a desktop-width window, while an app runs on its App tab, the pages
@@ -25799,6 +25924,8 @@ html.side-panel-resizing * {
 @media (prefers-reduced-motion: reduce) {
   .side-panel-divider::after { transition: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .side-panel-divider::after { transition: none; }
 
 .side-panel-head {
   /* Back · title · Expand · Close, in the header's own disc controls. */
@@ -25928,6 +26055,8 @@ html.un-kb body:has(#ai-screen:not(.hidden)) .side-panel { bottom: var(--un-kb-i
 @media (prefers-reduced-motion: reduce) {
   .side-panel-frame { transition: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .side-panel-frame { transition: none; }
 
 @media (max-width: 1023.98px) {
   /* Below the breakpoint the panel is not drawn at all, and the rules below
@@ -26044,6 +26173,8 @@ html.in-side-panel body {
   background: currentColor; transition: width .3s ease;
 }
 @media (prefers-reduced-motion: reduce) { .checks-chip-bar-fill { transition: none; } }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .checks-chip-bar-fill { transition: none; }
 /* #4628: the run's early phase — the preview build and the checks'
    preparation, before the run knows how many checks it will run — shows
    the same bar pulsing, with nothing to fill it yet. The pulse is the
@@ -26055,6 +26186,8 @@ html.in-side-panel body {
 @media (prefers-reduced-motion: reduce) {
   .checks-chip-bar-busy { animation: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .checks-chip-bar-busy { animation: none; }
 /* A change's vote (#4486): the card's own status bar with its own words
    ("0 of 1 approval"), as long as its words plus the 56px the thin bar it
    replaced took, then the card's Vote button. #4718: the pair takes a line
@@ -26798,6 +26931,28 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
   .rf-lens { animation: none; }
   .rf-claim { animation: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .rf-sheet,
+:where(html[data-motion="reduce"]) .rf-scrim,
+:where(html[data-motion="reduce"]) .rf-seam,
+:where(html[data-motion="reduce"]) .rf-cap,
+:where(html[data-motion="reduce"]) .rf-switch,
+:where(html[data-motion="reduce"]) .rf-knob,
+:where(html[data-motion="reduce"]) .rf-knob-icon,
+:where(html[data-motion="reduce"]) .rf-pair-thumb,
+:where(html[data-motion="reduce"]) .rf-pair-mark,
+:where(html[data-motion="reduce"]) .rf-morph,
+:where(html[data-motion="reduce"]) .rf-morph-in,
+:where(html[data-motion="reduce"]) .rf-why,
+:where(html[data-motion="reduce"]) .rf-tile,
+:where(html[data-motion="reduce"]) .rf-picto,
+:where(html[data-motion="reduce"]) .rf-gbar,
+:where(html[data-motion="reduce"]) .rf-veil-box,
+:where(html[data-motion="reduce"]) .rf-bar-toggle svg,
+:where(html[data-motion="reduce"]) .rf-desc,
+:where(html[data-motion="reduce"]) .rf-desc-dim { transition: none; }
+:where(html[data-motion="reduce"]) .rf-lens { animation: none; }
+:where(html[data-motion="reduce"]) .rf-claim { animation: none; }
 
 /* From 768px the change page is a panel inside the pane. It is as tall as
    what it holds, up to its room, and past it the stage scrolls inside it.
@@ -26842,6 +26997,9 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 @media (prefers-reduced-motion: reduce) {
   .rf-ill-play .rf-ill-sage, .rf-ill-play .rf-ill-gain { animation: none; }
 }
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .rf-ill-play .rf-ill-sage,
+:where(html[data-motion="reduce"]) .rf-ill-play .rf-ill-gain { animation: none; }
 
 /* New Needs you (an experiment), the title shot's plates: real pixels of the
    changed area and 16px of its surroundings, flat (no shadow, no card of

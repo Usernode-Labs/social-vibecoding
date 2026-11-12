@@ -24,6 +24,8 @@
  * is guarded: storage can be missing or throw.
  */
 
+import { reducedMotion } from './reduced-motion';
+
 export const HOVER_DELAY_MS = 150;
 export const PHONE_MAX_SECONDS = 5;
 /** How long scrolling must have stopped before a phone picks a card. */
@@ -70,7 +72,7 @@ function matches(query: string): boolean {
 /** Whether a preview may play at all right now: the setting, reduced motion and Data Saver. */
 export function previewsAllowed(): boolean {
   if (!previewsOn()) return false;
-  if (matches('(prefers-reduced-motion: reduce)')) return false;
+  if (reducedMotion()) return false;
   try {
     const connection = (navigator as unknown as { connection?: { saveData?: boolean } }).connection;
     if (connection && connection.saveData) return false;
