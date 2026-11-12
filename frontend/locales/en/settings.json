@@ -9,7 +9,11 @@
   },
   "language.auto": {
     "text": "Auto: use device language",
-    "description": "First option in the Language list in Settings: follow the language of the phone or browser instead of a fixed choice."
+    "description": "First option in the Language list in Settings: follow the language of the phone or browser instead of a fixed choice. Shown only for a moment, until the page knows which language that is."
+  },
+  "language.autoCurrently": {
+    "text": "Auto (currently: {{language}})",
+    "description": "First option in the Language list in Settings: follow the language of the phone or browser instead of a fixed choice. {{language}} is the language that gives on this device, in its own name (for example \"English\" or \"Español\"), or English when Homeroom is not available in the device's language."
   },
   "language.saved": {
     "text": "✓ Saved",
