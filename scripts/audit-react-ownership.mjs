@@ -370,6 +370,7 @@ const OWNED = [
   // the section reads itself), both one React tree in the section host.
   { sel: '#admin-section-content', when: '#admin/homeroom-bot' }, // features/admin/admin-homeroom-bot.tsx (+ admin-homeroom-bench.tsx and its /benchmark/… places, admin-bot-configs.tsx as /configs, admin-homeroom-bot-calls.tsx as /calls)
   { sel: '#admin-section-content', when: '#admin/small-changes' }, // features/admin/admin-small-changes.tsx
+  { sel: '#admin-section-content', when: '#admin/approvals' }, // features/admin/admin-approvals.tsx (#6643)
   // The programme console's screens convert one at a time (#1120 slice 24).
   // The host is #admin-topo-content, not the section host: admin-topochain.js
   // still owns the shell around it and recreates that node on every screen
@@ -425,7 +426,7 @@ const ROUTES = [
   // on the demo proposal whose testing is part way through.
   '?demo=1#app/usernode-2d5619/dev/proposals/9000026',
   '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/email-templates', '#admin/sms', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/incidents', '#admin/apps', '#admin/rollover', '#admin/staging-reap', '#admin/templates', '#admin/workflows',
-  '#admin/model-costs', '#admin/reports', '#admin/welcome-dm', '#admin/sign-in', '#admin/test-accounts', '#admin/access-review', '#admin/compliance', '#admin/homeroom-bot', '#admin/homeroom-bot/settings', '#admin/homeroom-bot/benchmark', '#admin/small-changes',
+  '#admin/model-costs', '#admin/reports', '#admin/welcome-dm', '#admin/sign-in', '#admin/test-accounts', '#admin/access-review', '#admin/compliance', '#admin/approvals', '#admin/homeroom-bot', '#admin/homeroom-bot/settings', '#admin/homeroom-bot/benchmark', '#admin/small-changes',
   // Its Configurations (once Bot configurations, #admin/bot-configs) and Calls tabs.
   '#admin/homeroom-bot/configs', '#admin/homeroom-bot/calls',
   // The Benchmark's own places, in the same host (`when: '#admin/homeroom-bot'`

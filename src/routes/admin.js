@@ -1709,6 +1709,20 @@ function adminRoutes(config) {
     }
   });
 
+  // #6643: changes held for an admin (services/release-holds.js): the ones
+  // still waiting, oldest first, and what became of the ones before.
+  // Read-only, so it stays on the plain adminMiddleware gate: an admin
+  // answers a hold by voting on the change itself. `note` is the reason an
+  // admin wrote with their No, served as JSON data for admins.
+  router.get('/api/admin/release-holds', async (req, res) => {
+    try {
+      res.json(await require('../services/release-holds').listForAdmin(pool, { viewerId: req.user?.id ?? null }));
+    } catch (err) {
+      log.error('admin', 'Read release holds failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // The watch-only small-change tag (services/small-change.js): its latest
   // verdicts with their proposal, and the last week's totals. Read-only, so
   // it stays on the plain adminMiddleware gate. `reason` is model-written

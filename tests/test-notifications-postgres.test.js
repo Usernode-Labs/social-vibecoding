@@ -115,7 +115,7 @@ test('test notifications against the full PostgreSQL schema', { timeout: 180000 
     assert.deepEqual(out.sent.map((s) => s.kind), testNotifications.KIND_NAMES.filter((k) => !parked.includes(k)));
     assert.equal(out.project, app.slug);
     assert.equal(out.registrations, 1);
-    const adminOnly = new Set(['openrouter_key_review', 'platform_limit', 'platform_incident']);
+    const adminOnly = new Set(['openrouter_key_review', 'platform_limit', 'platform_incident', 'release_hold']);
     for (const s of out.sent) assert.equal(s.listed, !adminOnly.has(s.kind), `${s.kind} respects the recipient's role`);
     // The trigger queued one push for each kind with a push category, and
     // none for the bell-only kinds (every category was turned on first).

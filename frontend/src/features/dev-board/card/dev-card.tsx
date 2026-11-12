@@ -51,7 +51,8 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
-import { Bars3Icon, CheckIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, Glyph, PencilSquareIcon, XIcon } from '@/components/ui/icons';
+import { Alert } from '@/components/ui/alert';
+import { Bars3Icon, CheckIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, Glyph, PencilSquareIcon, WarningTriangleIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
@@ -71,6 +72,7 @@ import type {
   ChecksProgress,
   DevCardModel,
   ExtraSpec,
+  HoldSpec,
   MetaPart,
   PreviewSpec,
   RailSpec,
@@ -1336,6 +1338,8 @@ function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }
     if (x.open && !was) setOpen(true);
   }, [x.open]);
   return (
+    <>
+    {x.hold ? <HoldWarning hold={x.hold} /> : null}
     <details
       className="mt-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 overflow-hidden"
       open={open}
@@ -1390,6 +1394,36 @@ function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }
         ))}
       </ol>
     </details>
+    </>
+  );
+}
+
+// #6643: a change held for an admin's approval. Above the steps and never
+// folded away: the collapsed line says whose turn it is, and this says why
+// an admin is in the way at all. Amber, the "a person has to act" tone the
+// steps' own waiting mark uses.
+function HoldWarning({ hold }: { hold: HoldSpec }): ReactNode {
+  return (
+    <Alert
+      variant="notice"
+      density="compact"
+      className="mt-1.5 text-[0.72rem] leading-snug"
+      role="note"
+      data-release-hold={hold.other ? 'other' : '1'}
+    >
+      <p className="m-0 flex items-center gap-1.5 font-semibold" data-release-hold-title>
+        <WarningTriangleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <span>{hold.title}</span>
+      </p>
+      {hold.reasons.length
+        ? (
+          <ul className="list-none m-0 mt-1 p-0">
+            {hold.reasons.map((reason) => <li key={reason} data-release-hold-reason>{reason}</li>)}
+          </ul>
+        )
+        : null}
+      <p className="m-0 mt-1 text-[0.68rem] opacity-80">{hold.asked}</p>
+    </Alert>
   );
 }
 

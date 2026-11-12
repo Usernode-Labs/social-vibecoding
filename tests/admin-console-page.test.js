@@ -129,6 +129,8 @@ test('the console island imports every admin module, console first', () => {
     // #5133: Access review, who holds admin rights and the quarterly review.
     'admin-access-review',
     'admin-analytics',
+    // #6643: Approvals, the changes held until an admin votes yes.
+    'admin-approvals',
     // Apps & usage: every app's members, contributors and activity.
     'admin-apps-usage',
     // Bot configurations is the Homeroom bot's Configurations tab now,

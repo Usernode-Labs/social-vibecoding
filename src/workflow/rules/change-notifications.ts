@@ -159,7 +159,7 @@ export const BOT_REQUESTERS_SQL = `SELECT q.user_id
 // back it, or to revive it once it is live or closed, and a digest that
 // named it alone has nothing left to count. "Ready to try" (change_ready) is
 // settled apart, because a change that went live makes it news.
-export const DECIDED_ASK_KINDS: readonly string[] = Object.freeze(['pr_proposed', 'stale_pr', 'revision_recheck', 'vote_digest']);
+export const DECIDED_ASK_KINDS: readonly string[] = Object.freeze(['pr_proposed', 'stale_pr', 'revision_recheck', 'vote_digest', 'release_hold']);
 
 /**
  * "Waiting for your approval" digests that no longer count anything
