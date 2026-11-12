@@ -181,8 +181,13 @@ function mountTopicThread({ devTopic, item, readOnly = false }) {
   const end = appViewJs.indexOf('\n  // Open a topic full-screen.', start);
   const method = appViewJs.slice(start, end).trim().replace(/,$/, '');
   const calls = [];
+  // The thread each kind of topic mounts, read from the module itself.
+  const threadTypes = vm.runInNewContext(
+    appViewJs.match(/\n {2}_TOPIC_THREAD_TYPES: (new Map\(\[[\s\S]*?\]\)),\n/)[1],
+  );
   const AppView = {
     _devTopic: devTopic,
+    _TOPIC_THREAD_TYPES: threadTypes,
     appData: { slug: 'tic-tac', name: 'Tic Tac' },
     readOnly,
     _findTopicItem: () => item,
