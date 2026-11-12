@@ -128,7 +128,7 @@
       "key": "CONTENT_REVIEW_MODE",
       "group": "Platform",
       "default": "advisory",
-      "description": "The Content rules check on every proposal (#2722): a model reads the proposal's diff against the conventions' Content rules section. off: no row. advisory (default): a flag shows on the checks but does not stop the merge. blocking: a flag fails the checks, so the proposal cannot merge until the content is fixed. Fails open on any error."
+      "description": "The Content rules check on every proposal (#2722): a model reads the diff against the conventions' Content rules section. off: no row. advisory (default): a flag shows on the checks but does not stop the merge. blocking: a flag fails the checks, so it cannot merge until the content is fixed. admin (#6642): the checks pass, but it merges only once an admin votes yes. Fails open on any error."
     },
     {
       "key": "TOKEN_ORDER_CHECK_MODE",

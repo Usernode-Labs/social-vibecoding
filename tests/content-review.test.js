@@ -102,6 +102,27 @@ test('a flag is advisory by default and names the category and file', async () =
   assert.equal(classifyTests(LOADS, 1, { extraRows: [out.row] }).state, 'passing', 'advisory never closes the gate');
 });
 
+test('in admin mode a flag passes the checks and holds the reviewed head for an admin (#6642)', async () => {
+  const { adminHold } = require('../src/services/content-review');
+  const diff = 'diff --git a/game.js b/game.js\n+const gun = drawGun();\n';
+  const { deps } = fakeDeps({ diff, files: filesOf('game.js'), review: { verdict: 'flag', category: 'Violence', file: 'game.js', reason: 'A gun.' } });
+  const out = await run({ deps }, { mode: 'admin' });
+  assert.equal(out.row.status, 'fail');
+  assert.equal(out.row.advisory, true, 'the flag never fails the checks');
+  assert.equal(classifyTests(LOADS, 1, { extraRows: [out.row] }).state, 'passing');
+  const head = out.row.reviewedSha;
+  assert.ok(head, 'a flag is stored with the commit it was reviewed on');
+  const hold = adminHold([LOADS[0], out.row], head.toUpperCase(), 'admin');
+  assert.match(hold.reason, /^Flagged: Violence in game\.js\. A gun\./);
+  // Only that commit, only in admin mode, only a real flag.
+  assert.equal(adminHold([out.row], 'f'.repeat(40), 'admin'), null, 'a new head waits on its own review');
+  assert.equal(adminHold([out.row], head, 'advisory'), null);
+  assert.equal(adminHold([out.row], head, 'blocking'), null);
+  assert.equal(adminHold([{ ...out.row, status: 'pass' }], head, 'admin'), null);
+  assert.equal(adminHold([{ ...out.row, reviewedSha: undefined }], head, 'admin'), null, 'a row that was not reviewed holds nothing');
+  assert.equal(adminHold(null, head, 'admin'), null);
+});
+
 test('in blocking mode a flag fails the checks', async () => {
   const diff = 'diff --git a/game.js b/game.js\n+const gun = drawGun();\n';
   const { deps } = fakeDeps({ diff, files: filesOf('game.js'), review: { verdict: 'flag', category: 'Violence', file: 'game.js', reason: 'A gun.' } });
