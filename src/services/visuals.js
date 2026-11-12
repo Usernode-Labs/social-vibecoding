@@ -2111,7 +2111,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
           [beforeSessionToken, captureUser.id, new Date(Date.now() + CAPTURE_AUTH_TTL_MS)]
         );
-        beforeCookie = `session=${beforeSessionToken}`;
+        beforeCookie = `${require('./browser-session-cookies').sessionCookieName()}=${beforeSessionToken}`;
       } catch (err) {
         beforeSessionToken = '';
         log.warn('visuals', 'Capture session-cookie mint failed — "before" unauthenticated', {

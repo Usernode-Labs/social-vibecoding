@@ -251,14 +251,10 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
  * tall (`py-3`) with `-my-3` taking the padding back out of the card, so a
  * finger has a real target while the card looks exactly as it did.
  */
-export function Card({ app, eager, featured = false, footer }: {
+export function Card({ app, eager, featured = false }: {
   app: GuestApp;
   eager: boolean;
   featured?: boolean;
-  /** One Home (#6361): a row under the words, raised over the card's link so
-      its buttons (the signed-in Join) take their own taps. A visitor's card
-      has no footer row (#6433). */
-  footer?: ReactNode;
 }) {
   const t = useMessages('auth');
   const people = app.active_users || 0;
@@ -276,7 +272,7 @@ export function Card({ app, eager, featured = false, footer }: {
           slug={app.slug}
           data-guest-card-link=""
           aria-label={people >= MIN_PEOPLE ? t('auth:guest.card.peopleLabel', { name: app.name, count: people }) : undefined}
-          className="block truncate text-[15px] font-[650] leading-5 text-zinc-900 outline-none -my-3 py-3 after:absolute after:inset-0 after:z-[1] after:rounded-[20px] after:content-[''] dark:text-zinc-100"
+          className="line-clamp-2 break-words text-[15px] font-[650] leading-5 text-zinc-900 outline-none -my-3 py-3 after:absolute after:inset-0 after:z-[1] after:rounded-[20px] after:content-[''] dark:text-zinc-100"
         >
           {app.name}
         </ProjectLink>
@@ -288,7 +284,6 @@ export function Card({ app, eager, featured = false, footer }: {
             {app.description}
           </span>
         ) : null}
-        {footer ? <span className="relative z-[2] mt-2.5 flex items-center gap-2" data-guest-card-footer="">{footer}</span> : null}
       </span>
     </article>
   );
@@ -327,7 +322,7 @@ export function TryLink({ app, className, onOpenInside, inside = false, children
   );
 }
 
-export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, onIntent, onOpenInside }: {
+export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, onOpenInside }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** The directory could not be read. */
@@ -341,8 +336,6 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
    * app opens for it, signed in, and joining waits until it is let in.
    */
   signedIn?: boolean;
-  /** ONE HOME (#6361): Join on a card asks to sign up, titled for the project. */
-  onIntent?: (intent: { kind: 'join'; app: GuestApp }) => void;
   /** Open an app in the landing's own viewer (TryLink). */
   onOpenInside?: (app: GuestApp) => void;
 }) {
@@ -457,13 +450,13 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
           ) : null}
         </div>
       ) : (
+        // The visitor's cards are the signed-in Home's, from one path (#6609).
         <div className="px-1">
           <CommunitiesToJoin
             apps={apps}
             exclude={EMPTY}
             signedIn={false}
             query={q}
-            onJoin={(app) => { onIntent?.({ kind: 'join', app }); }}
           />
         </div>
       )}

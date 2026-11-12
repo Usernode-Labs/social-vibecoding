@@ -167,7 +167,7 @@ test('a change built for a request lives on the request\'s page', { timeout: 180
     assert.ok(!page.items.some((i) => i.type === 'change'), 'it is not in #11\'s thread');
     assert.deepEqual(page.elsewhere, [{
       id: Number(pin.id), number: 12, title: 'Pin it', summary: null, on: 10, request: 11,
-      disputed: false, confirmed: false, mine: true, ask: true,
+      disputed: false, confirmed: false, mine: true, closed: false, stays: false, ask: true,
     }]);
     const first = await threads.threadPage(pool, { thread: await threads.threadForNumber(pool, { appId: app.id, number: 10 }), viewerId: ana.id });
     assert.deepEqual(first.elsewhere, [], 'the first request\'s page has it in its own thread');

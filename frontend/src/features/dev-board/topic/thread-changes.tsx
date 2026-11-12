@@ -605,6 +605,43 @@ function AlsoCloses({ item, request }: { item: ThreadItem; request: number }): R
 }
 
 /**
+ * #6605: a change that is not live yet and closes only requests that are
+ * already closed says so under its title, so it does not read as that
+ * request's open work. The numbers link to their pages.
+ */
+function AlreadyClosed({ item }: { item: ThreadItem }): ReactNode {
+  const t = useMessages('project');
+  const list = Array.isArray(item.closesRequests) ? item.closesRequests : [];
+  if (!list.length) return null;
+  if (item.state === 'merged' || item.status === 'merging' || item.status === 'merged') return null;
+  if (!list.every((r) => r.closed === true)) return null;
+  const slug = appView()?.appData?.slug || '';
+  const numbers = list.map((r) => Number(r.number)).filter((n) => Number.isInteger(n) && n > 0).sort((a, b) => a - b);
+  if (!numbers.length) return null;
+  const linkClass = 'font-semibold text-violet-700 hover:underline dark:text-violet-300';
+  const parts: ReactNode[] = numbers.map((n) => (
+    <a
+      key={`c${n}`}
+      href={slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${n}` : `#${n}`}
+      className={linkClass}
+      data-thread-change-closed-on={n}
+    >
+      {`#${n}`}
+    </a>
+  ));
+  const locale = i18n.language || 'en';
+  return (
+    <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-closed={item.id}>
+      <RichMessage
+        id="project:topic.thread.page.alreadyClosed"
+        values={{ count: numbers.length, numbers: numberText(numbers, locale) }}
+        components={[<Joined key="closed" parts={joinParts(parts, locale)} />]}
+      />
+    </p>
+  );
+}
+
+/**
  * #6387: the change section's shape while the request's thread is still being
  * read (./request-head.tsx `holding`): its line — the small-caps kicker and
  * its status pill — its title, then its Votes and Testing cards. The loaded
@@ -677,6 +714,7 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
   const threadRequests = useContext(ThreadRequests);
   return (
     <>
+      <AlreadyClosed item={item} />
       <AlsoCloses item={item} request={request} />
       <ClosesOf item={item} requests={threadRequests} />
       {summary ? <div className="dev-thread-change-summary" data-thread-change-summary={item.id}><RequestWords html={summary} /></div> : null}
@@ -842,6 +880,16 @@ export function Elsewhere({ list, slug = null, onChanged }: {
               <a href={href} className="hover:underline" onClick={keep}>{e.title || t('project:topic.thread.item.changeUnnumbered')}</a>
             </p>
             {e.summary ? <p className="mt-0.5 truncate text-[13px] text-zinc-500 dark:text-zinc-400">{e.summary}</p> : null}
+            {e.closed ? (
+              <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-elsewhere-closed={e.id}>
+                {t('project:topic.thread.page.claimClosed', { number: e.request })}
+              </p>
+            ) : null}
+            {e.stays ? (
+              <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-elsewhere-stays={e.id}>
+                {t('project:topic.thread.page.claimStays', { on: e.on })}
+              </p>
+            ) : null}
             {e.ask ? (
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <Button

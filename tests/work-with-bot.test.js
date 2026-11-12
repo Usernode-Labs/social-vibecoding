@@ -291,7 +291,7 @@ test('a change gets the quiet version: under its cards, on its request\'s page a
   // platform's is not the bot at work.
   assert.match(changes, /function changeBotAtWork\(item: ThreadItem, view: ChangeView \| null\): boolean \{\s*if \(item\.byBot && item\.state === 'underway' && !item\.ready\) return true;\s*const fix = view\?\.v\.testing\.botFix;\s*return fix === 'fixing' \|\| fix === 'queued';\s*\}/);
   const page = read('frontend/src/features/dev-board/topic/change-head.tsx');
-  assert.match(page, /\{v\.shots \? <ShotsCard s=\{v\.shots\} \/> : null\}\s*\{\/\*[^*]*\*\/\}\s*<WorkWithBotButton\s+slug=\{pageSlug\(\)\}\s+number=\{v\.number\}\s+voting=\{!!v\.votes\.facts\?\.length\}\s+botAtWork=\{v\.testing\.botFix === 'fixing' \|\| v\.testing\.botFix === 'queued'\}\s*\/>/,
+  assert.match(page, /\{v\.shots \? <ShotsCard s=\{v\.shots\} \/> : null\}\s*\{\/\*[^*]*\*\/\}\s*<WorkWithBotButton\s+slug=\{slug\}\s+number=\{v\.number\}\s+voting=\{!!v\.votes\.facts\?\.length\}\s+botAtWork=\{v\.testing\.botFix === 'fixing' \|\| v\.testing\.botFix === 'queued'\}\s*\/>/,
     'the last of the change page\'s root post, under its cards, with the same two signals');
 });
 

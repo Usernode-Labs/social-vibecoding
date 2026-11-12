@@ -1549,7 +1549,7 @@
     {
       "name": "#apps, Discover's old address, opens Home on its Communities to join (One Home, #6361: the directory is Home's)",
       "path": "/#apps",
-      "expectSelector": "#home-screen:not(.hidden) #home-body #home-join-section:not([hidden]) > h2.home-area-label",
+      "expectSelector": "#home-screen:not(.hidden) #home-body #home-join-section:not([hidden]):not(:has([data-home-join],[data-guest-card-footer])) > h2.home-area-label",
       "expectText": "Communities to join"
     },
     {

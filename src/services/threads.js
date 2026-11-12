@@ -851,6 +851,9 @@ SELECT cs.id, cs.pr_number, COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.proposed
        cs.pr_summary_md, cs.user_id AS builder_id, rq.created_by AS requester_id,
        (c.disputed_at IS NOT NULL) AS disputed,
        (c.confirmed_at IS NOT NULL) AS confirmed,
+       rq.state = 'closed' AS request_closed, cs.status,
+       (n.number = cs.linked_issues[array_lower(cs.linked_issues, 1)]) AS first,
+       EXISTS (SELECT 1 FROM pr_votes v WHERE v.session_id = cs.id) AS has_votes,
        t.number AS home, n.number AS request
   FROM chat_sessions cs
   JOIN threads t ON t.id = cs.thread_id
@@ -897,6 +900,15 @@ async function changesElsewhere(db, { thread, numbers, viewerId = null }) {
     const mine = viewerId != null && requesterId != null && requesterId === Number(viewerId);
     const disputed = row.disputed === true;
     const confirmed = row.confirmed === true;
+    // #6605: a request that is already closed is not open work; and when the
+    // change belongs in this request's thread but stayed because people have
+    // voted on it, say why rather than only where it is. Votes are what the
+    // line names, so it is shown only when there are some: a gather still
+    // being arranged kept the change away for a reason the line would
+    // misreport.
+    const live = row.status !== 'merging' && row.status !== 'merged';
+    const closed = row.request_closed === true && live;
+    const stays = row.first === true && live && row.has_votes === true;
     out.push({
       id: Number(row.id),
       number: row.pr_number == null ? null : Number(row.pr_number),
@@ -907,10 +919,13 @@ async function changesElsewhere(db, { thread, numbers, viewerId = null }) {
       disputed,
       confirmed,
       mine,
+      closed,
+      stays,
       // Only the requester is asked, and not when the change is their own:
       // the notice still shows, but there is nothing to answer. One answer
-      // per claim: a dispute or a confirmation stops the ask (#6606).
-      ask: mine && requesterId !== builderId && !disputed && !confirmed,
+      // per claim: a dispute or a confirmation stops the ask (#6606), and a
+      // closed request has nothing left to close, so it is never asked.
+      ask: mine && requesterId !== builderId && !disputed && !confirmed && !closed,
     });
   }
   return out;

@@ -81,6 +81,13 @@ const SHOTS_TOOLS = ['get_brief', 'save_shot', 'save_clip', 'skip_change', 'note
 const RETIRED_TOOLS = /evidence_(?:get_context|run_plan|finish|capture|report_blocker|set_request_failure|reset_pair|reset_side)/;
 
 // Run the real config writer against a temporary state directory.
+// The clip recording a browser's own Playwright config asks for, if any.
+function recordVideoOf(entry) {
+  const at = entry.args.indexOf('--config');
+  if (at < 0) return undefined;
+  return JSON.parse(fs.readFileSync(entry.args[at + 1], 'utf8')).browser?.contextOptions?.recordVideo;
+}
+
 function writeConfig(dir, extra = {}) {
   const hostedFile = path.join(dir, 'hosted-origins.json');
   if (!fs.existsSync(hostedFile)) {
@@ -118,11 +125,11 @@ test('the shots agent launches Playwright through the content-free timing observ
   const codexRunner = read('run-codex-agent.sh');
 
   assert.match(dockerfile, /npm install -g @playwright\/mcp@\$\{PLAYWRIGHT_MCP_VERSION\}/);
-  assert.match(dockerfile, /command -v mcp-server-playwright/);
+  assert.match(dockerfile, /command -v playwright-mcp/);
   assert.match(dockerfile, /RUN node \/usr\/local\/bin\/verify-shots-browser-mcp\.js/);
   assert.match(dockerfile, /RUN node \/usr\/local\/bin\/verify-shots-browser-auth\.js/);
   assert.match(dockerfile, /COPY shots-mcp\.js \/usr\/local\/bin\/shots-mcp\.js/);
-  assert.match(claudeRunner, /command -v mcp-server-playwright[^\n]*\n\s*\|\| die/);
+  assert.match(claudeRunner, /command -v playwright-mcp[^\n]*\n\s*\|\| die/);
   assert.match(dockerfile, /COPY shots-browser-observer\.js \/usr\/local\/bin\/shots-browser-observer\.js/);
   assert.match(claudeRunner, /SHOTS_BROWSER_DIAGNOSTIC_FILE/);
   // Every shots turn runs on Claude Code. The Codex runner has no shots
@@ -170,7 +177,8 @@ test('every shots browser, the guest\'s included, is denied the tools that run c
     assert.deepEqual(servers.sort(), ['browser_admin', 'browser_admin_phone', 'browser_full_admin',
       'browser_full_admin_phone', 'browser_guest', 'browser_guest_phone', 'browser_member', 'browser_member_phone']);
     for (const server of servers) {
-      for (const tool of ['browser_evaluate', 'browser_run_code', 'browser_file_upload', 'browser_install']) {
+      for (const tool of ['browser_evaluate', 'browser_run_code', 'browser_run_code_unsafe', 'browser_file_upload',
+        'browser_drop']) {
         assert.ok(denied.has(`mcp__${server}__${tool}`), `${server} is denied ${tool}`);
       }
     }
@@ -375,27 +383,37 @@ test('the config writer gives each persona its own shots directory and records c
       assert.equal(args.filter((arg) => arg === '--output-dir').length, 1);
       assert.equal(args[args.indexOf('--output-dir') + 1], path.join(shotsDir, persona));
       assert.ok(fs.statSync(path.join(shotsDir, persona)).isDirectory(), `${persona} directory is created`);
-      assert.equal(args.some((arg) => arg.startsWith('--save-video')), false, 'no video unless a change is motion');
+      assert.equal(recordVideoOf(config.mcpServers[server]), undefined, 'no video unless a change is motion');
+      assert.equal(Object.hasOwn(config.mcpServers[server].env, 'SHOTS_RECORD_CLIPS'), false);
+      // Named files are saved in --output-dir (patch-playwright-mcp.js); the
+      // workspace root, which inputs resolve against, is the samples the
+      // observer starts the server in, never the agent client's.
+      assert.ok(args.includes('--ignore-roots'));
+      assert.equal(args[args.indexOf('--file-paths') + 1], 'absolute');
     }
 
+    // Each browser's clip is its pages' video, saved into its own directory.
     const clips = writeConfig(dir, { SHOTS_RECORD_CLIPS: '1' }).config;
-    for (const server of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest']) {
-      assert.equal(clips.mcpServers[server].args.filter((arg) => arg === '--save-video=1280x800').length, 1);
-      assert.equal(clips.mcpServers[server].args.filter((arg) => arg.startsWith('--save-video')).length, 1);
+    for (const [server, persona] of [['browser_member', 'member'], ['browser_admin', 'admin'],
+      ['browser_full_admin', 'full_admin'], ['browser_guest', 'guest']]) {
+      assert.deepEqual(recordVideoOf(clips.mcpServers[server]),
+        { dir: path.join(shotsDir, persona), size: { width: 1280, height: 800 } });
+      assert.equal(clips.mcpServers[server].args.filter((arg) => arg === '--config').length, 1);
+      assert.equal(clips.mcpServers[server].env.SHOTS_RECORD_CLIPS, '1', 'the observer parks before a recorded close');
     }
     // Recorded at the motion screen's own size, so a phone clip fills its frame.
     const phone = writeConfig(dir, { SHOTS_RECORD_CLIPS: '1', SHOTS_CLIP_SIZE: '390x844' }).config;
-    assert.ok(phone.mcpServers.browser_member.args.includes('--save-video=390x844'));
+    assert.deepEqual(recordVideoOf(phone.mcpServers.browser_member).size, { width: 390, height: 844 });
     for (const odd of ['390', '390x844 --flag', '0x0', 'x']) {
       const fallback = writeConfig(dir, { SHOTS_RECORD_CLIPS: '1', SHOTS_CLIP_SIZE: odd }).config;
-      assert.ok(fallback.mcpServers.browser_member.args.includes('--save-video=1280x800'), odd);
+      assert.deepEqual(recordVideoOf(fallback.mcpServers.browser_member).size, { width: 1280, height: 800 }, odd);
     }
-    assert.equal(writeConfig(dir, { SHOTS_CLIP_SIZE: '390x844' }).config.mcpServers.browser_member.args
-      .some((arg) => arg.startsWith('--save-video')), false, 'a size alone records nothing');
+    assert.equal(recordVideoOf(writeConfig(dir, { SHOTS_CLIP_SIZE: '390x844' }).config.mcpServers.browser_member),
+      undefined, 'a size alone records nothing');
     for (const value of ['0', 'true', 'yes', '']) {
       const off = writeConfig(dir, { SHOTS_RECORD_CLIPS: value }).config;
       for (const server of ['browser_member', 'browser_admin', 'browser_full_admin', 'browser_guest']) {
-        assert.equal(off.mcpServers[server].args.some((arg) => arg.startsWith('--save-video')), false,
+        assert.equal(recordVideoOf(off.mcpServers[server]), undefined,
           `SHOTS_RECORD_CLIPS=${JSON.stringify(value)} records nothing`);
       }
     }
@@ -408,7 +426,6 @@ test('the config writer gives each persona its own shots directory and records c
         assert.equal(entry.args.includes('--config'), false, `${server} ${value}`);
         assert.equal(Object.hasOwn(entry.env, 'SHOTS_SCREENSHOT_SCALE'), false, `${server} ${value}`);
       }
-      assert.equal(fs.existsSync(path.join(path.dirname(off.output), 'shots-desktop-browser.json')), false);
     }
     // On, every desktop browser draws at 3 device pixels per CSS pixel, from
     // a private config beside the MCP config (Playwright takes a density only
@@ -501,7 +518,7 @@ test('a persona with a phone screen gets a phone browser: its sign-in, its proxy
       // init script and limits.
       const strip = (list) => list.filter((arg, index) => index > 1
         && !['--device', 'iPhone 15', '--output-dir', '--config'].includes(arg) && !arg.startsWith(shotsDir)
-        && !arg.endsWith('shots-desktop-browser.json'));
+        && !/shots-browser-[a-z_]+\.json$/.test(arg));
       assert.deepEqual(strip(args), strip(desktopArgs), desktop);
       assert.equal(args[args.indexOf('--proxy-server') + 1], desktopArgs[desktopArgs.indexOf('--proxy-server') + 1]);
       assert.equal(args[args.indexOf('--storage-state') + 1], desktopArgs[desktopArgs.indexOf('--storage-state') + 1]);
@@ -512,14 +529,16 @@ test('a persona with a phone screen gets a phone browser: its sign-in, its proxy
     // others at theirs; a phone browser with no size of its own takes theirs.
     const clips = writeConfig(dir, { SHOTS_PHONE_PERSONAS: '["member"]', SHOTS_RECORD_CLIPS: '1',
       SHOTS_CLIP_SIZE: '1280x800', SHOTS_PHONE_CLIP_SIZE: '390x844' }).config;
-    assert.ok(clips.mcpServers.browser_member.args.includes('--save-video=1280x800'));
-    assert.ok(clips.mcpServers.browser_member_phone.args.includes('--save-video=390x844'));
+    assert.deepEqual(recordVideoOf(clips.mcpServers.browser_member).size, { width: 1280, height: 800 });
+    assert.deepEqual(recordVideoOf(clips.mcpServers.browser_member_phone),
+      { dir: path.join(shotsDir, 'member_phone'), size: { width: 390, height: 844 } });
+    // The phone's screen is still its device's: the config adds the video only.
+    assert.ok(clips.mcpServers.browser_member_phone.args.includes('--device'));
     const shared = writeConfig(dir, { SHOTS_PHONE_PERSONAS: '["member"]', SHOTS_RECORD_CLIPS: '1',
       SHOTS_CLIP_SIZE: '1280x800', SHOTS_PHONE_CLIP_SIZE: '390' }).config;
-    assert.ok(shared.mcpServers.browser_member_phone.args.includes('--save-video=1280x800'));
-    assert.equal(writeConfig(dir, { SHOTS_PHONE_PERSONAS: '["member"]', SHOTS_PHONE_CLIP_SIZE: '390x844' })
-      .config.mcpServers.browser_member_phone.args.some((arg) => arg.startsWith('--save-video')), false,
-    'a size alone records nothing');
+    assert.deepEqual(recordVideoOf(shared.mcpServers.browser_member_phone).size, { width: 1280, height: 800 });
+    assert.equal(recordVideoOf(writeConfig(dir, { SHOTS_PHONE_PERSONAS: '["member"]', SHOTS_PHONE_CLIP_SIZE: '390x844' })
+      .config.mcpServers.browser_member_phone), undefined, 'a size alone records nothing');
 
     // A persona list the platform did not write is refused, not guessed at.
     for (const odd of ['["admin"]', '["member","../state"]', '"member"', '{}', 'not json']) {

@@ -135,7 +135,12 @@ test('a change\'s claim on a request is told once and can be answered', { timeou
     const card = asAna.elsewhere.find((e) => Number(e.id) === Number(pin.id));
     assert.deepEqual({ ...card }, {
       id: Number(pin.id), number: 6230, title: 'Tidy the Workshop', summary: 'Rows show who replied last.',
-      on: 21, request: 20, disputed: false, confirmed: false, mine: true, ask: true,
+      on: 21, request: 20, disputed: false, confirmed: false, mine: true,
+      // #6605: the card also says whether the request is already closed (it is
+      // not) and whether votes are what kept the change on #21 (none have been
+      // cast, so the "it stays" line would misreport the reason).
+      closed: false, stays: false,
+      ask: true,
     });
     const asSam = await threads.threadPage(pool, { thread: twenty, viewerId: sam.id });
     assert.equal(asSam.elsewhere.find((e) => Number(e.id) === Number(pin.id)).ask, false, 'only the requester is asked');

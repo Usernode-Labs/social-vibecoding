@@ -211,6 +211,15 @@ config:
   domain: social-vibecoding.example.invalid
   # Empty retains the historical <slug>.<domain> layout.
   appsDomain: ""
+  # The apps domain appsDomain replaced, while apps and previews move off it:
+  # production app Ingresses move to appsDomain, previews move on their next
+  # build, and both are still recognized here until then. Empty when nothing
+  # is moving. Must differ from appsDomain and domain.
+  legacyAppsDomain: ""
+  # Switch only after the native cookie migration and app-domain move in
+  # docs/plans/browser-site-isolation.md. Strict refuses legacy sessions and
+  # requires appsDomain on a separate registrable browser site.
+  browserSiteIsolation: legacy
   # The app-host gate (scripts/app-gate.js): "on" routes every app and preview
   # Ingress through a platform-owned check (members-only private apps, signing
   # people in at an app's own address, and offline apps' cache headers below);

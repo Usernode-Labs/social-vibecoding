@@ -450,6 +450,66 @@ test('D4: a change for this request on another request\'s page is a card that na
   assert.equal(message('project:topic.thread.page.claimNotConfirmed'), '(not confirmed)');
 });
 
+// #6605: a change that closes only requests that are already closed says so
+// under its title, and a closed request's card says it is closed and offers
+// nothing to answer. A change that belongs in this request's thread but
+// stayed because of votes says why.
+test('#6605: closed requests are named as closed, and a voted change says why it stayed', () => {
+  const src = read(`${TOPIC}/thread-changes.tsx`);
+  assert.match(src, /<AlreadyClosed item=\{item\} \/>/, 'the change\'s own card carries the line');
+  assert.match(src, /data-thread-elsewhere-closed=\{e\.id\}/);
+  assert.match(src, /data-thread-elsewhere-stays=\{e\.id\}/);
+
+  assert.equal(message('project:topic.thread.page.alreadyClosed_one'), '<0>{{numbers}}</0> is already closed');
+  assert.equal(message('project:topic.thread.page.alreadyClosed_other'), '<0>{{numbers}}</0> are already closed');
+  assert.equal(message('project:topic.thread.page.claimClosed'), '#{{number}} is already closed');
+  assert.equal(message('project:topic.thread.page.claimStays'), 'It stays on #{{on}} because people have voted on it.');
+
+  const item = {
+    ...review(93, 6581, [6581, 6582, 6583]),
+    closesRequests: [
+      { number: 6582, title: 'b', by: 'ana', confirmed: false, closed: true },
+      { number: 6581, title: 'a', by: 'ana', confirmed: false, closed: true },
+      { number: 6583, title: 'c', by: 'ana', confirmed: false, closed: true },
+    ],
+  };
+  const elsewhere = [{ id: 91, number: 12, title: 'Pin it', on: 10, request: 11, ask: false, mine: true, disputed: false, closed: true, stays: false }];
+  const wasWindow = globalThis.window;
+  globalThis.window = { AppView: { appData: { slug: 'club' } }, addEventListener() {}, removeEventListener() {} };
+  let html;
+  let card;
+  try {
+    html = renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+      slug: 'club', data: thread([request, item]), number: 6581, changes: [item], close: null, onChanged: () => {},
+    });
+    card = renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+      slug: 'club',
+      data: thread([{ ...request, number: 11 }], {
+        elsewhere: [{ ...elsewhere[0], closed: false, stays: true }],
+      }),
+      number: 11, changes: [], close: null, onChanged: () => {},
+    });
+  } finally {
+    if (wasWindow === undefined) delete globalThis.window; else globalThis.window = wasWindow;
+  }
+  assert.match(html, /data-thread-change-closed="93"/);
+  assert.match(html, /are already closed/, 'every request it closes is closed');
+  assert.match(html, /data-thread-change-closed-on="6581"/, 'the first number links to its page');
+  assert.match(html, /data-thread-change-closed-on="6582"/);
+  assert.match(html, /data-thread-change-closed-on="6583"/);
+
+  const closedCard = renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+    slug: 'club',
+    data: thread([{ ...request, number: 11 }], { elsewhere }),
+    number: 11, changes: [], close: null, onChanged: () => {},
+  });
+  assert.match(closedCard, /data-thread-elsewhere-closed="91"/);
+  assert.match(closedCard, /#11 is already closed/);
+  assert.doesNotMatch(closedCard, /data-thread-elsewhere-dispute="91"/, 'a closed request is not asked');
+  assert.match(card, /data-thread-elsewhere-stays="91"/);
+  assert.match(card, /It stays on #10 because people have voted on it\./);
+});
+
 // #6224: a change for several requests lives on its first one's page, so its
 // section there must say which other requests it closes: the first three as
 // links, then "N more" that unfolds the rest, from its linked_issues.

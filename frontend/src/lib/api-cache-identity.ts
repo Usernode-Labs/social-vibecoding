@@ -1,7 +1,8 @@
 import { fetchWithin, READ_TIMEOUT_MS } from './read-timeout';
 
 /** Session partitions are cache labels, never credentials or authorization. */
-export const API_SCOPE_COOKIE = 'usernode_api_scope';
+export const API_SCOPE_COOKIE = '__Host-usernode_api_scope';
+const DEV_API_SCOPE_COOKIE = 'usernode_api_scope';
 export const API_SCOPE_HEADER = 'X-Usernode-Cache-Scope';
 const EXPIRY_HEADER = 'X-Usernode-Cache-Expires';
 const BOUNDARY_KEY = 'usernode.api-identity-boundary';
@@ -61,11 +62,14 @@ export function publicReadIsForAnyone(pathname: string): boolean {
   return FOR_ANYONE.some(route => route.test(pathname));
 }
 
-export function readApiCacheScope(doc: Pick<Document, 'cookie'> | undefined = typeof document !== 'undefined' ? document : undefined): string | null {
+export function readApiCacheScope(doc: Pick<Document, 'cookie'> | undefined = typeof document !== 'undefined' ? document : undefined,
+  secure = typeof location === 'undefined' || location.protocol !== 'http:'): string | null {
   try {
     if (!doc) return null;
-    const value = doc.cookie.split(';').map(s => s.trim())
-      .find(s => s.startsWith(API_SCOPE_COOKIE + '='))?.slice(API_SCOPE_COOKIE.length + 1);
+    const name = secure ? API_SCOPE_COOKIE : DEV_API_SCOPE_COOKIE;
+    const values = doc.cookie.split(';').map(s => s.trim()).filter(s => s.startsWith(name + '='));
+    if (values.length !== 1) return null;
+    const value = values[0].slice(name.length + 1);
     return /^[a-f0-9]{64}$/.test(value || '') ? value! : null;
   } catch { return null; }
 }
@@ -186,7 +190,9 @@ export function createFenceLog({ setTimer, clearTimer, deliver, now = Date.now }
 export function installApiCacheIdentity(win: any = typeof window !== 'undefined' ? window : null): void {
   if (!win || typeof win.fetch !== 'function' || win.__apiCacheIdentityInstalled) return;
   const send: typeof fetch = win.fetch.bind(win);
-  const scope = () => readApiCacheScope(win.document);
+  const secure = new URL(win.location.href).protocol === 'https:';
+  const cookieName = secure ? API_SCOPE_COOKIE : DEV_API_SCOPE_COOKIE;
+  const scope = () => readApiCacheScope(win.document, secure);
   const renewal = () => {
     try { return win.NativeChrome?.webSessionRenewal?.() || { epoch: 0, settled: null }; }
     catch { return { epoch: 0, settled: null }; }
@@ -273,7 +279,7 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
     const expiry = Date.parse(res.headers.get(EXPIRY_HEADER) || '');
     if (!Number.isFinite(expiry) || expiry <= Date.now()) return false;
     try {
-      win.document.cookie = `${API_SCOPE_COOKIE}=${label}; Path=/; SameSite=Lax; Expires=${new Date(expiry).toUTCString()}${win.location.protocol === 'https:' || win.location.href.startsWith('https:') ? '; Secure' : ''}`;
+      win.document.cookie = `${cookieName}=${label}; Path=/; SameSite=Lax; Expires=${new Date(expiry).toUTCString()}${secure ? '; Secure' : ''}`;
     } catch { /* unavailable cookies disable the offline partition */ }
     return true;
   }

@@ -332,14 +332,19 @@
       "schemaSha256": "b087bda2528bee618c65b04f787a4fd73c40356fc9e9671323035297f1810104"
     },
     {
+      "id": "change-thread-follows-links",
+      "sha256": "0e23cc37ac0c9b8d6fa9445e6bad4b4e0e7eab0a20ed87d4a81e621f545eec98",
+      "schemaSha256": "cc1abe1a94bd3668be36679fdee60e7e1b976184d049ac21dfd3bf9121a52ac3"
+    },
+    {
       "id": "change-request-claims-confirm",
       "sha256": "25c5edefb2193a3337feaca7da640ef8b285b166b20b808da4dd32fda9b0c618",
-      "schemaSha256": "4fcfacb6135d11a2a3a11c3e9a75e9d374539d9b0739ba71dc2cfaabcfc0803c"
+      "schemaSha256": "b9699b9462a8fa1fbf70615ec5defb83d30b7afc99d2dcf64719e97524a95022"
     },
     {
       "id": "requests-filer-from-twin",
       "sha256": "c2c7b8469376599c5b83f74a3916b4f6386f6467f555453b629f5be62b6e9542",
-      "schemaSha256": "8eb02eac2f877dfdd1bd4e599731b8ffef02a16ad2c068dab8bcbc5f087f049f"
+      "schemaSha256": "78d3ae3f376fe9865019e30705c9c0891901250f20b4035875b5109bbadc3b8b"
     }
   ]
 }

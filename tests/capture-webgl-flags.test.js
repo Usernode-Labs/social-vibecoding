@@ -64,3 +64,25 @@ test('worker-run.sh seeds a Playwright config with the SwiftShader args', () => 
   assert.match(wr, /--headless/);
   assert.match(wr, /--isolated/);
 });
+
+// The capture browser is Chrome for Testing, installed by playwright-core at
+// the worker's Chromium revision, not Debian's chromium package, which
+// trailed Chrome's security fixes by weeks. playwright-core stays in the
+// image so the image audit can read the browser's version
+// (scripts/playwright-browsers-inventory.js looks in /app/node_modules and
+// /ms-playwright).
+test('the capture image runs Playwright\'s Chromium, where the audit can read its version', () => {
+  const dockerfile = fs.readFileSync(path.join(__dirname, '..', 'capture', 'Dockerfile'), 'utf8');
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'capture', 'package.json'), 'utf8'));
+  assert.match(pkg.dependencies['playwright-core'], /^\d+\.\d+\.\d+$/, 'an exact release');
+  assert.doesNotMatch(dockerfile, /apt-get install[^\n]*\n[^\n]*\bchromium\b/, 'no Debian chromium');
+  assert.match(dockerfile, /ENV PLAYWRIGHT_BROWSERS_PATH=\/ms-playwright/);
+  assert.match(dockerfile, /npx playwright-core install --with-deps --no-shell chromium/);
+  assert.match(dockerfile, /ENV PUPPETEER_EXECUTABLE_PATH=\/usr\/local\/bin\/chromium/);
+  const captureSource = fs.readFileSync(path.join(__dirname, '..', 'capture', 'capture.js'), 'utf8');
+  assert.equal(captureSource.split("process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/local/bin/chromium'").length - 1, 2);
+  assert.doesNotMatch(captureSource, /process\.env\.PUPPETEER_EXECUTABLE_PATH \|\| '\/usr\/bin\/chromium'/);
+  const inventory = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'playwright-browsers-inventory.js'), 'utf8');
+  assert.match(inventory, /'\/app\/node_modules'/);
+  assert.match(inventory, /'\/ms-playwright'/);
+});

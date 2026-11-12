@@ -50,6 +50,13 @@ test('#6225: a number with no request row shows no title or filer, and is unconf
     'unless it is the request the change was built for');
 });
 
+// #6605: a request that is already closed says so, so the change is not read
+// as that request's open work.
+test('#6605: a resolved request reports whether it is already closed', () => {
+  const out = closesRequests([row(10, { closed: true }), row(11, { closed: false }), row(12)], 7);
+  assert.deepEqual(out.map((r) => [r.number, r.closed]), [[10, true], [11, false], [12, false]]);
+});
+
 test('#6225: the list is ascending and without duplicates, and tolerates a null column', () => {
   const out = closesRequests([row(12), row(10), row(11), row(10)], 7);
   assert.deepEqual(out.map((r) => r.number), [10, 11, 12]);

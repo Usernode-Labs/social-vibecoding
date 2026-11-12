@@ -548,7 +548,7 @@ test('the landing offers what the options list, never inside the app, and reopen
   const landing = read('frontend/src/features/auth/landing.tsx');
   assert.match(landing, /if \(!list\.length \|\| typeof window === 'undefined' \|\| isNative\(\)\) return \[\];/);
   assert.match(landing, /return \(\['apple', 'google'\] as const\)\.filter\(\(p\) => list\.includes\(p\)\);/);
-  assert.match(landing, /document\.cookie = `\$\{PROVIDER_RESULT_COOKIE\}=; Max-Age=0; path=\/`;/);
+  assert.match(landing, /doc\.cookie = `\$\{name\}=; Max-Age=0; path=\/\$\{secure \? '; Secure' : ''\}`;/);
   assert.match(landing, /setSheet\(inviteTokenFrom\(location\.pathname\) \? 'join' : 'start'\);/);
   assert.match(landing, /from="invite"\s+returnTo=\{location\.pathname\}/);
   // Back to Home, or to the public project's page the sheet was opened over

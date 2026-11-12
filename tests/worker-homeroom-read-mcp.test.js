@@ -346,8 +346,8 @@ test('lean_turns: a first version\'s build leaves out the tools it never uses; n
   const d = lean.args.indexOf('--disallowed-tools');
   const off = lean.args.slice(d + 1, lean.args.findIndex((a, i) => i > d && a.startsWith('--')));
   for (const tool of ['WebSearch', 'WebFetch', 'NotebookEdit', 'Task', 'Agent', 'TodoWrite', 'ExitPlanMode',
-    'mcp__playwright__browser_install', 'mcp__playwright__browser_file_upload', 'mcp__playwright__browser_tabs',
-    'mcp__playwright__browser_run_code']) {
+    'mcp__playwright__browser_file_upload', 'mcp__playwright__browser_drop', 'mcp__playwright__browser_tabs',
+    'mcp__playwright__browser_run_code', 'mcp__playwright__browser_run_code_unsafe']) {
     assert.ok(off.includes(tool), tool);
   }
   for (const kept of ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'Skill', 'mcp__playwright__browser_evaluate',

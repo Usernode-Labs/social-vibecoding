@@ -2100,6 +2100,69 @@ async function seedStagingBotWaitingRows(pool) {
           },
         })]);
       }
+      // 11 Nov 2026 (#6614): a reply about work the bot queued, with the
+      // plain yes first, and the one short line that answers that yes with
+      // no buttons. Staging has no model, so both are stored. For the shots'
+      // member fixture on request 9103; idempotent by their stagingDemo
+      // marks; strictly a no-op outside staging.
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         SELECT $1, $2, $3, 'message', 'issue', 9103, $4, NOW() - INTERVAL '40 minutes'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+                               AND metadata->>'stagingDemo' = 'affirmed-work')`,
+        [
+          appId, botRow.rows[0].id,
+          'Staging demo: I have queued a fix on Change #178. The one failing check is the repo unit suite.',
+          JSON.stringify({
+            stagingDemo: 'affirmed-work',
+            homeroomBot: {
+              kind: 'voice',
+              affirm: { label: 'Sounds good' },
+              suggest: { status: 'open', forUserIds: [userId] },
+              actions: [
+                { id: 'suggest-1', label: 'Sounds good', style: 'secondary', type: 'prompt' },
+                { id: 'suggest-2', label: 'Tell me when it\'s ready', style: 'secondary', type: 'prompt' },
+              ],
+              othersActions: [
+                { id: 'others-1', label: 'I\'d like this too', style: 'secondary', type: 'prompt' },
+                { id: 'others-2', label: 'Can I try it?', style: 'secondary', type: 'prompt' },
+              ],
+            },
+          }),
+        ],
+      );
+      const yes = await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         SELECT $1, $2, 'Sounds good', 'message', 'issue', 9103, $3, NOW() - INTERVAL '30 minutes'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+                               AND metadata->>'stagingDemo' = 'affirm-yes')
+          RETURNING id`,
+        [appId, userId, JSON.stringify({ stagingDemo: 'affirm-yes' })],
+      );
+      const yesId = yes.rows[0]?.id || (await pool.query(
+        `SELECT id FROM chat_messages
+          WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+            AND metadata->>'stagingDemo' = 'affirm-yes' LIMIT 1`, [appId],
+      )).rows[0]?.id;
+      if (yesId) {
+        await pool.query(
+          `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+           SELECT $1, $2, $3, 'message', 'issue', 9103, $4, NOW() - INTERVAL '20 minutes'
+            WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                               WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+                                 AND metadata->>'stagingDemo' = 'affirm-ack')`,
+          [
+            appId, botRow.rows[0].id,
+            'Thanks, I\'ll tell you here when it\'s ready.',
+            JSON.stringify({
+              stagingDemo: 'affirm-ack',
+              homeroomBot: { kind: 'voice', affirmed: { messageId: Number(yesId) } },
+            }),
+          ],
+        );
+      }
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot waiting rows seeding failed', { message: err.message });
