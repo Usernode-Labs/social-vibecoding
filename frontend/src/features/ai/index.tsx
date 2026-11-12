@@ -93,7 +93,7 @@ import {
   probeLayout,
 } from '../side-panel/resize';
 import { sidePanelStore } from '../side-panel/store.js';
-import { attachmentFor, columnAddress, columnKey, routeOf, type Column, type ColumnDetail, type ColumnHow } from './column';
+import { attachmentFor, columnAddress, columnKey, pageProject, routeOf, type Column, type ColumnDetail, type ColumnHow } from './column';
 import {
   BOT_TAB, botDetailAt, botItemFromRoute, botItemRoute, botTabAddress, botTabAt, knownBotConversation, noteBotConversation, useBotTabAsk,
   type BotAt, type BotItem,
@@ -112,9 +112,10 @@ import { AiDrawer, MainPane, usePhone } from './phone-drawer';
 import { closeDetail, detailLayout, openDetail, useDetail, THREE_COLUMNS } from './detail';
 import { DetailPane } from '../detail/detail-pane';
 import {
-  freshCount, heroWords, inProgress, isTopicHref, liveThisWeek, needsYou, owedCount, rankProjects, upNext,
+  applyWorkState, freshCount, heroWords, inProgress, isTopicHref, liveThisWeek, needsYou, owedCount, rankProjects, upNext,
   type AiApp, type AiThread, type AiWork, type NeedItem, type WorkRow,
 } from './model';
+import type { WorkStatePush } from '../../lib/work-state';
 
 // 1 Nov 2026: the column is docked from 768px, where a phone's drawer ends.
 const WIDE = '(min-width: 768px)';
@@ -602,7 +603,21 @@ export function AiScreen(): ReactNode {
     () => new Set(rankProjects(rows, progress, waiting, live).map((p) => p.app.slug)),
     [rows, progress, waiting, live],
   );
-  useLiveLists(() => setMoved((n) => n + 1), visible, { projects, botId });
+  // A work_state push is drawn at once where the lists hold its item
+  // (./model.ts applyWorkState); the read after it puts the row in its list.
+  const applyPush = useCallback((push: WorkStatePush) => {
+    setWork((now) => applyWorkState(now, null, push).work);
+    setNeeds((now) => applyWorkState(null, now, push).needs);
+  }, []);
+  // #6595: a request or a change open in the column is a page of its own
+  // project, so an update about that project re-reads the lists beside it
+  // even when nothing of it was listed. Never by App.currentApp: on this
+  // page that is null.
+  const shownProjects = useMemo(() => {
+    const slug = column?.at === 'page' ? pageProject(column.route) : null;
+    return slug && !projects.has(slug) ? new Set([...projects, slug]) : projects;
+  }, [projects, column]);
+  useLiveLists(() => setMoved((n) => n + 1), visible, { projects: shownProjects, botId }, applyPush);
   // HISTORY (./history.ts): read on each showing, and again when the
   // projects picked or its kind change.
   const [showings, setShowings] = useState(0);
@@ -674,6 +689,18 @@ export function AiScreen(): ReactNode {
     else if (ask.item) openItem(ask.item);
     else if (ask.at) showAt(ask.at);
   }, [ask, visible, wide, phone]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 10 Nov 2026: `#homeroom-bot/new…` is the "+" pressed for you, with the
+  // project and who works on it already set when the address names them
+  // (./door.ts botNewAt). It opens beside the chat, so it has a count of its
+  // own to wait on until the page knows which chat that is.
+  const freshTaken = useRef(0);
+  useEffect(() => {
+    if (!ask?.fresh || ask.seq === freshTaken.current || !visible || !(wide || phone) || !botId) return;
+    freshTaken.current = ask.seq;
+    how.current = 'row';
+    openBlank();
+    startNewThread(botId, ask.fresh);
+  }, [ask, visible, wide, phone, botId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openMain = () => {
     if (!(wide || phone)) { go(botTabAddress(null)); return; }

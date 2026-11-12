@@ -143,7 +143,7 @@ test('Pinned communities are rows that say what is new there', () => {
   assert.equal((group.match(/data-kind="act"/g) || []).length, 1);
 });
 
-test('Communities to join are the same rows, with Join as the row\'s word', () => {
+test('Communities to join are the signed-out page\'s rows, with no Join word (#6609)', () => {
   const html = render({
     initialFeed: [], initialQuestions: [],
     initialDirectory: [{ slug: 'game-corner', name: 'Game Corner', member_count: 12 }, { slug: 'solo', name: 'Solo', member_count: 1 }],
@@ -152,7 +152,7 @@ test('Communities to join are the same rows, with Join as the row\'s word', () =
   assert.match(group, /<a class="fr-row" href="\/app\/game-corner\/workshop\?ws=status">/);
   assert.match(group, /12 members/);
   assert.match(group, /1 member</);
-  assert.equal((group.match(/<span class="fr-btn fr-sm">Join<\/span>/g) || []).length, 2);
+  assert.doesNotMatch(group, /fr-btn/, 'no Join word on a row');
   assert.doesNotMatch(html, /<a[^>]*>(?:(?!<\/a>).)*<button/s, 'no button inside a link');
 });
 
@@ -242,7 +242,7 @@ test('every row is a door, not a page load', () => {
 test('the words are catalog text', () => {
   const en = JSON.parse(read('frontend', 'locales', 'en', 'home.json'));
   for (const k of ['frame.title', 'frame.purposeNeeds_one', 'frame.purposeNeeds_other', 'frame.purposeNeedsIn_one', 'frame.purposeNeedsIn_other', 'frame.purposeQuiet',
-    'frame.make', 'frame.needs', 'frame.all', 'frame.edit', 'frame.browseAll', 'frame.pinnedApps', 'frame.pinnedCommunities', 'frame.toJoin', 'frame.join',
+    'frame.make', 'frame.needs', 'frame.all', 'frame.edit', 'frame.browseAll', 'frame.pinnedApps', 'frame.pinnedCommunities', 'frame.toJoin',
     'frame.vote', 'frame.reply', 'frame.approve', 'frame.waiting.checks', 'frame.waiting.conflict', 'frame.toVote_one', 'frame.toVote_other',
     'frame.voteLine_one', 'frame.voteLine_other', 'frame.askedLine', 'frame.inProgress_one', 'frame.inProgress_other',
     'frame.liveThisWeek', 'frame.ago.minutes', 'frame.ago.hours', 'frame.ago.days']) {
@@ -279,17 +279,29 @@ test('the season\'s challenges are picture cards in one sideways row below the c
   assert.doesNotMatch(none, /fr-cap">Challenges/, 'a note with no challenge draws no group');
 });
 
-test('the communities the platform features are picture cards in one row, then the rest as rows', () => {
+test('Featured and Communities to join are the signed-out page\'s rows, in one shared list (#6609)', () => {
   const dir = [
     { slug: 'plain', name: 'Plain', member_count: 3, description: 'A plain one.' },
+    { slug: 'quiet', name: 'Quiet', member_count: 0, description: 'Nothing much yet.' },
     { slug: 'star', name: 'Star', member_count: 9, featured: true, featured_order: 1, illustration_url: '/app-illustrations/9', illustration_dark_url: '/app-illustrations/9d', description: 'Twelve small games.' },
     { slug: 'moon', name: 'Moon', member_count: 4, featured: true, featured_order: 0, icon_emoji: '🌙' },
   ];
   const html = render({ initialDirectory: dir });
-  assert.match(html, /<section class="fr-sec" id="home-frame-featured"><div class="fr-sechead"><h2 class="fr-cap">Featured<\/h2><\/div><div class="fr-hrow"><a class="fr-card fr-fcard" href="\/app\/moon\/workshop\?ws=status"><span class="fr-fcover"><span class="fr-tile" style="--fr-ts:56px;--fr-tc:#fff" aria-hidden="true">🌙<\/span><\/span><span class="fr-fbody"><span class="fr-t">Moon<\/span><span class="fr-fm">4 members<span class="fr-btn fr-quiet fr-sm">Join<\/span><\/span><\/span><\/a>/, 'in their featured order; no picture: the tile large on the cover; no sentence: no line');
-  assert.match(html, /<a class="fr-card fr-fcard" href="\/app\/star\/workshop\?ws=status"><span class="fr-fcover"><img src="\/app-illustrations\/9" alt="" loading="lazy" class="fr-sun"\/><img src="\/app-illustrations\/9d" alt="" loading="lazy" class="fr-moon"\/><\/span><span class="fr-fbody"><span class="fr-t">Star<\/span><span class="fr-s">Twelve small games\.<\/span><span class="fr-fm">9 members<span class="fr-btn fr-quiet fr-sm">Join<\/span><\/span><\/span><\/a>/, 'the picture, its dark twin, the name, the sentence, the people');
+  // Featured leads with the platform's picks, in their order, as rows: the
+  // tile, the name and one line, no picture card and no Join word.
+  assert.match(html, /<section class="fr-sec" id="home-frame-featured"><div class="fr-sechead"><h2 class="fr-cap">Featured<\/h2><\/div><div class="fr-card"><a class="fr-row" href="\/app\/moon\/workshop\?ws=status"><span class="fr-tile" style="--fr-ts:40px;--fr-tc:#fff" aria-hidden="true">🌙<\/span><span class="fr-tx"><span class="fr-t">Moon<\/span><span class="fr-s">4 members<\/span><\/span><\/a>/);
+  assert.match(html, /<a class="fr-row" href="\/app\/star\/workshop\?ws=status">.*?<span class="fr-t">Star<\/span><span class="fr-s">9 members<\/span>/s);
   assert.match(html, /<h2 class="fr-cap">Communities to join<\/h2>.*?<span class="fr-t">Plain<\/span>/s);
+  // One line: members when it has any, else the sentence.
+  assert.doesNotMatch(html, /Twelve small games\./, 'a community with members says its count');
+  assert.match(html, /<a class="fr-row" href="\/app\/quiet\/workshop\?ws=status">.*?<span class="fr-t">Quiet<\/span><span class="fr-s">Nothing much yet\.<\/span>/s);
+  assert.doesNotMatch(html, /fr-fcard|fr-hrow|fr-fcover/, 'no picture card under a frame look');
+  const featured = html.slice(html.indexOf('id="home-frame-featured"'), html.indexOf('id="home-frame-to-join"'));
+  assert.doesNotMatch(featured, /fr-btn/, 'no Join word on a featured row');
   assert.ok(html.indexOf('id="home-frame-featured"') < html.indexOf('id="home-frame-to-join"'), 'Featured first, the directory next');
   assert.ok(html.indexOf('id="home-frame-communities"') < html.indexOf('id="home-frame-featured"') || html.indexOf('id="home-frame-communities"') < 0);
   assert.doesNotMatch(html.slice(html.indexOf('Communities to join')), /<span class="fr-t">Moon<\/span>/, 'a featured community is not listed twice');
+  // One shared component draws both frame pages' lists (#6609).
+  assert.match(read('frontend', 'src', 'features', 'home', 'frame', 'home-frame.tsx'), /import \{ FrameCommunityList \} from '\.\.\/\.\.\/guest\/frame\/community-list'/);
+  assert.doesNotMatch(read('frontend', 'src', 'features', 'home', 'frame', 'home-frame.tsx'), /PicCard/);
 });

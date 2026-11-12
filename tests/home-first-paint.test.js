@@ -313,7 +313,7 @@ test('the viewer comes from the session snapshot, under App\'s own rules', () =>
       localStorage: fakeStorage(snapshot === undefined ? {} : { 'usernode.session.v1': JSON.stringify(snapshot) }),
       UsernodeReact: { nav: { setViewer: (v) => named.push(v) } },
     };
-    globalThis.document = { cookie: 'usernode_api_scope=' + 'a'.repeat(64),
+    globalThis.document = { cookie: '__Host-usernode_api_scope=' + 'a'.repeat(64),
       documentElement: { classList: { contains: (c) => classes.includes(c) } } };
   };
   page({ user: { id: 7, username: ' evan ' }, savedAt: Date.now() - day });

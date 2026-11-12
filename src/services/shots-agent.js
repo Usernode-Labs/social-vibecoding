@@ -85,9 +85,10 @@ For each declared change and each of its screen sizes (viewports):
    "<change>-<screen>-after.png" and look at it: it should show what the
    checkpoint describes.
 5. Shoot the changed element on its own as well: call
-   browser_take_screenshot with its element and ref from a snapshot and a
-   filename. The element shot leads the change on the proposal, so take one
-   whenever intent.focus or hints.focusTarget names something you can find.
+   browser_take_screenshot with its element, its ref from a snapshot as
+   target, and a filename. The element shot leads the
+   change on the proposal, so take one whenever intent.focus or
+   hints.focusTarget names something you can find.
    Pick the smallest element that holds the whole change, including anything
    drawn over its edges such as a badge on a corner; for a change only a few
    pixels across, pick the bar or card around it.

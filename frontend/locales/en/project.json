@@ -771,6 +771,34 @@
     "text": "Nothing of yours here right now.",
     "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's second line when none of the person's work is under way or waiting in this project."
   },
+  "workshop.first.title": {
+    "text": "Make your first change here",
+    "description": "Title of a card on a project's Workshop page, shown to a member who has not made a request or a change on that project yet. It takes the place of the \"Your work\" card."
+  },
+  "workshop.first.text": {
+    "text": "Pick who does the building. Whatever it makes goes to the group for a vote.",
+    "description": "Under \"Make your first change here\" on a project's Workshop page, over three rows: Homeroom bot, Claude Code and ChatGPT."
+  },
+  "workshop.first.label": {
+    "text": "Who builds it",
+    "description": "Accessible name of the group of three rows (Homeroom bot, Claude Code, ChatGPT) in the \"Make your first change here\" card on a project's Workshop page."
+  },
+  "workshop.first.homeroom.name": {
+    "text": "Homeroom bot",
+    "description": "First row of the \"Make your first change here\" card on a project's Workshop page: Homeroom's own bot."
+  },
+  "workshop.first.homeroom.sub": {
+    "text": "Say what you want. It builds it here.",
+    "description": "Under \"Homeroom bot\" in the \"Make your first change here\" card on a project's Workshop page."
+  },
+  "workshop.first.own": {
+    "text": "On your own {{product}} plan",
+    "description": "Under \"Claude Code\" or \"ChatGPT\" in the \"Make your first change here\" card on a project's Workshop page. {{product}} is Claude or ChatGPT, the subscription the person already pays for."
+  },
+  "workshop.first.setUp": {
+    "text": "Set up",
+    "description": "A small pill on the Claude Code or ChatGPT row of the \"Make your first change here\" card while Homeroom's connector is not connected in that product yet: opening the row shows the steps to add it."
+  },
   "hub.workshop.sub": {
     "text": "What happened, and every item",
     "description": "The Workshop row of a project's Hub (For you): opens the project's Workshop, which shows what happened week by week and All items, the whole board. Not the person's own work, which has its own card on the Workshop tab (Your work)."
@@ -1767,6 +1795,18 @@
     "text": "{{count}} votes you skipped are still open",
     "description": "Line on the Needs you card of a project's Hub when every proposal waiting for this person's vote is one they already swiped past without voting: how many of those can still be voted on."
   },
+  "hub.needs.upForVote": {
+    "text": "Up for a vote",
+    "description": "Title of the first row of For you on a project's hub, for somebody signed in who has not joined the community: opens the changes up for a vote."
+  },
+  "hub.needs.upForVoteCount_one": {
+    "text": "{{count}} change up for a vote",
+    "description": "Screen-reader words for the count beside \"Up for a vote\" on a project's hub, for somebody who has not joined."
+  },
+  "hub.needs.upForVoteCount_other": {
+    "text": "{{count}} changes up for a vote",
+    "description": "Screen-reader words for the count beside \"Up for a vote\" on a project's hub, for somebody who has not joined."
+  },
   "hub.needs.joinToVote": {
     "text": "Join to vote on these.",
     "description": "Note under the Needs you card of a project's Hub for a person who is not a member of the community: they must join it before they can vote on the proposals. \"These\" are the proposals."
@@ -1870,6 +1910,22 @@
   "hub.recent.going": {
     "text": "Going live now",
     "description": "Line under a change's title in Recently live on a project's Hub, for a change that has merged and is still on its way to the live app, when there is no maker to name."
+  },
+  "hub.recent.morePill_one": {
+    "text": "+{{count}}",
+    "description": "Small badge leading the last row of Recently live on a project's hub: how many more changes went live this month than the pictures above show."
+  },
+  "hub.recent.morePill_other": {
+    "text": "+{{count}}",
+    "description": "Small badge leading the last row of Recently live on a project's hub: how many more changes went live this month than the pictures above show."
+  },
+  "hub.recent.moreThisMonth_one": {
+    "text": "{{count}} more live this month",
+    "description": "Last row of Recently live on a project's hub, after the pictures of the latest changes: how many more went live in the last thirty days. Opens the Workshop."
+  },
+  "hub.recent.moreThisMonth_other": {
+    "text": "{{count}} more live this month",
+    "description": "Last row of Recently live on a project's hub, after the pictures of the latest changes: how many more went live in the last thirty days. Opens the Workshop."
   },
   "hub.recent.own.today": {
     "text": "Live since today",
@@ -2896,8 +2952,8 @@
     "description": "A number a change says it would close, on its Votes card, when no request in this project has that number. <0></0> is the number as a link, and {{number}} that number."
   },
   "topic.change.gate.closesUnconfirmed": {
-    "text": "not confirmed by its requester",
-    "description": "End of a line naming a request a change will close, on its Votes card, when the person who filed that request has not agreed to it: the change was neither built for that request nor made by that person."
+    "text": "waiting for whoever filed it to agree this closes it",
+    "description": "End of a line naming a request a change will close, on its Votes card, when Homeroom knows a person who filed that request and could still answer. It says what confirming means, in words: that person has not yet agreed the change closes their request."
   },
   "topic.change.gate.closesMore_one": {
     "text": "{{count}} more",
@@ -2906,6 +2962,38 @@
   "topic.change.gate.closesMore_other": {
     "text": "{{count}} more",
     "description": "Button under the list of requests a change will close, on its Votes card, when some more are hidden. Tapping it shows the hidden lines in the same list."
+  },
+  "topic.change.gate.merge.tried_one": {
+    "text": "Tried {{count}} min ago.",
+    "description": "One sentence at the end of the line under the Merging card on a change's page: when Homeroom last asked GitHub to merge the change. {{count}} is how many minutes ago, 1."
+  },
+  "topic.change.gate.merge.tried_other": {
+    "text": "Tried {{count}} min ago.",
+    "description": "One sentence at the end of the line under the Merging card on a change's page: when Homeroom last asked GitHub to merge the change. {{count}} is how many minutes ago."
+  },
+  "topic.change.gate.merge.triedJustNow": {
+    "text": "Tried just now.",
+    "description": "One sentence at the end of the line under the Merging card on a change's page: Homeroom asked GitHub to merge the change less than a minute ago."
+  },
+  "topic.change.gate.merge.next_one": {
+    "text": "Trying again in about {{count}} min.",
+    "description": "The last sentence of the line under the Merging card on a change's page: when Homeroom asks GitHub again. {{count}} is how many minutes from now, 1."
+  },
+  "topic.change.gate.merge.next_other": {
+    "text": "Trying again in about {{count}} min.",
+    "description": "The last sentence of the line under the Merging card on a change's page: when Homeroom asks GitHub again. {{count}} is how many minutes from now."
+  },
+  "topic.change.gate.merge.nextNow": {
+    "text": "Trying again now.",
+    "description": "The last sentence of the line under the Merging card on a change's page: Homeroom is asking GitHub to merge it again now."
+  },
+  "topic.change.gate.merge.longFigure": {
+    "text": "Waiting longer than usual",
+    "description": "The large figure on the Merging card of a change's page once the merge has waited about 30 minutes or more, in place of the reason it waits."
+  },
+  "topic.change.gate.merge.long": {
+    "text": "This usually takes a few minutes, and it has waited {{minutes}} min. Homeroom keeps trying. If it is still waiting, say so in this change's thread.",
+    "description": "One sentence of the line under the Merging card on a change's page once the merge has waited about 30 minutes or more. {{minutes}} is how many minutes it has waited. The last sentence asks the reader to report it in the change's own discussion."
   },
   "topic.change.shots.title": {
     "text": "Before and after",
@@ -2966,6 +3054,10 @@
   "topic.thread.state.voting": {
     "text": "Up for a vote",
     "description": "Where a change, a vote to close or a decision in the list stands: people are voting on it now."
+  },
+  "topic.thread.state.approved": {
+    "text": "Approved",
+    "description": "Where a change in the list stands: it has the votes its project's rule needs, and it waits for its checks to pass before it goes live."
   },
   "topic.thread.state.live": {
     "text": "Live",
@@ -4243,6 +4335,14 @@
     "text": "Proposed",
     "description": "Small caption over the right thumbnail on a featured-illustration proposal's card: the illustration the proposal would put in its place."
   },
+  "card.illustration.preview": {
+    "text": "Preview loop",
+    "description": "Caption over the short silent clip a card-picture vote proposes, beside the Current and Proposed pictures."
+  },
+  "card.illustration.previewLabel": {
+    "text": "The proposed preview loop",
+    "description": "Accessible name of the video player for the short silent clip a card-picture vote proposes."
+  },
   "card.claims.label": {
     "text": "Claims:",
     "description": "Label before the list of members who have claimed a request (said they are working on it), shown to admins on the request's page. A plural noun; keep the colon."
@@ -4430,6 +4530,34 @@
   "menu.button.manage": {
     "text": "Suggest an improvement, import a PR or manage this app",
     "description": "Tooltip and accessible name of the round ⋯ button on a project's page, for someone who can take part. It opens the project's menu of actions and settings. PR is a GitHub pull request."
+  },
+  "menu.visitorView.title": {
+    "text": "See what visitors see",
+    "description": "First row of a project hub's ⋯ menu, for a member of a public project: opens the project's page as somebody signed out sees it."
+  },
+  "menu.visitorView.sub": {
+    "text": "The page before joining: the preview, the featured illustration and what's up for a vote",
+    "description": "Line under \"See what visitors see\" in a project hub's ⋯ menu: what that page shows. The featured illustration is the picture the group voted in for the project's card."
+  },
+  "visitorView.title": {
+    "text": "What visitors see",
+    "description": "Bar over a member's preview of their project's signed-out page, opened from \"See what visitors see\" in the hub's ⋯ menu. Also the preview's accessible name."
+  },
+  "visitorView.sub": {
+    "text": "The project's page for somebody who isn't signed in",
+    "description": "Second line of the bar over a member's preview of their project's signed-out page."
+  },
+  "visitorView.back": {
+    "text": "Back to hub",
+    "description": "Button on the bar over a member's preview of their project's signed-out page: closes it and returns to the project's hub."
+  },
+  "visitorView.inert": {
+    "text": "Visitors are asked to sign in here",
+    "description": "Toast when a member presses Join, Vote, Sign in or another button in the preview of their project's signed-out page: the button does nothing for them, and this says what a visitor would get."
+  },
+  "visitorView.unavailable": {
+    "text": "This project has no page for visitors. Only public projects do.",
+    "description": "Shown in a member's preview of their project's signed-out page when the project is not in the public directory."
   },
   "menu.suggest.title": {
     "text": "Suggest an improvement",
@@ -6083,6 +6211,22 @@
     "text": "Built, and its checks pass. Its votes open once it is put up for a vote.",
     "description": "Line under a change on a request's page, where its Votes and Testing cards will be: the change has finished building and its checks pass, and nothing happens until it is put up for a vote."
   },
+  "topic.thread.page.readyMine": {
+    "text": "Built, and its checks pass.",
+    "description": "Line under the Put it up for a vote button on a change's card on a request's page: the viewer's own change has finished building and its checks pass."
+  },
+  "topic.thread.page.proposeAction": {
+    "text": "Put it up for a vote",
+    "description": "Button on a change's card on a request's page, and its row in the card's ⋯ menu: puts the viewer's own built change up for the group to vote on."
+  },
+  "topic.thread.page.proposing": {
+    "text": "Proposing…",
+    "description": "Label of the Put it up for a vote button while the change is being put up for a vote."
+  },
+  "topic.thread.page.proposeFailed": {
+    "text": "Could not put this change up for the vote.",
+    "description": "Said under the Put it up for a vote button when Homeroom refused without a sentence of its own to show why."
+  },
   "topic.thread.page.rowBy": {
     "text": "{{by}} · #{{number}}",
     "description": "Second line of one competing change's row on a request's page, under the request: its changes and its vote to close: who built it and the change's number."
@@ -6119,6 +6263,10 @@
     "text": "<0>A change</0> says it closes this",
     "description": "Small line over the card on a request's page for a change that has no number yet, lives on another request's page, and lists this request among the ones it closes. <0></0> links to the change where it lives."
   },
+  "topic.thread.page.claimClosed": {
+    "text": "#{{number}} is already closed",
+    "description": "Line on the card for a change that says it closes the viewer's request, when that request is already closed. It replaces the \"This doesn't close it\" button: there is nothing left to close."
+  },
   "topic.thread.page.claimDispute": {
     "text": "This doesn't close it",
     "description": "Button on the card for a change that says it closes the viewer's request. Only the request's requester sees it. Pressing it records their disagreement and posts a line in the change's discussion; it does not unlink the request."
@@ -6131,9 +6279,21 @@
     "text": "(not confirmed)",
     "description": "After another request's number under a change that closes it, when that request's requester answered \"This doesn't close it\": the change still lists it, but the requester says the change does not close it."
   },
+  "topic.thread.page.claimStays": {
+    "text": "It stays on #{{on}} because people have voted on it.",
+    "description": "Line on the card for a change that belongs in this request's thread but stayed on another request's page, because people have already voted on it. {{on}} is the number of the request whose page it is on."
+  },
   "topic.thread.page.claimDisputeFailed": {
     "text": "Couldn't save that. Try again.",
-    "description": "Error line under the \"This doesn't close it\" button when recording the requester's answer failed."
+    "description": "Error line under the Confirm and \"This doesn't close it\" buttons when recording the requester's answer failed."
+  },
+  "topic.thread.page.alreadyClosed_one": {
+    "text": "<0>{{numbers}}</0> is already closed",
+    "description": "Under the title of a change that is not live yet and closes only requests that are already closed. {{numbers}} is the list of request numbers; <0></0> holds them, each a link to its page."
+  },
+  "topic.thread.page.alreadyClosed_other": {
+    "text": "<0>{{numbers}}</0> are already closed",
+    "description": "Under the title of a change that is not live yet and closes only requests that are already closed. {{numbers}} is the list of request numbers; <0></0> holds them, each a link to its page."
   },
   "topic.thread.page.alsoCloses": {
     "text": "Also closes <0>{{numbers}}</0>",
@@ -6266,6 +6426,10 @@
   "topic.thread.pill.vote": {
     "text": "Up for a vote",
     "description": "Status pill beside a request's number in its page's header: a change built for it is up for a vote."
+  },
+  "topic.thread.pill.approved": {
+    "text": "Approved",
+    "description": "Status pill beside a request's number in its page's header: the change built for it has the votes its project's rule needs, and it waits for its checks before it goes live."
   },
   "topic.thread.pill.close": {
     "text": "Vote to close",
@@ -6694,5 +6858,25 @@
   "frame.allItems.items_other": {
     "text": "{{count}} items",
     "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many of the topic's items are open. {{count}} is the number."
+  },
+  "topic.change.gate.closesClosed": {
+    "text": "already closed",
+    "description": "End of a line naming a request a change will close, on its Votes card, when that request is already closed, so nothing is waiting on anybody."
+  },
+  "topic.change.gate.closesDisputed": {
+    "text": "its filer says this doesn't close it",
+    "description": "End of a line naming a request a change will close, on its Votes card, when the person who filed that request pressed \"This doesn't close it\"."
+  },
+  "topic.change.gate.closesConfirm": {
+    "text": "Confirm",
+    "description": "Small button at the end of a line naming a request a change will close, on its Votes card. Only the person who filed that request sees it; pressing it records that they agree the change closes their request."
+  },
+  "topic.thread.page.claimConfirm": {
+    "text": "Confirm",
+    "description": "Button on the card for a change that says it closes the viewer's request. Only the request's filer sees it. Pressing it records their agreement and posts a line in the change's discussion; it unlinks nothing."
+  },
+  "topic.thread.page.claimConfirmed": {
+    "text": "You confirmed this closes it",
+    "description": "Line in place of the Confirm and \"This doesn't close it\" buttons on the card for a change that says it closes the viewer's request, after the filer pressed Confirm. Shown only to the filer."
   }
 }

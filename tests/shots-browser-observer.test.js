@@ -138,7 +138,7 @@ test('observer forwards MCP JSON-RPC unchanged through a child server', async ()
 for (const persona of ['full_admin', 'guest', 'member_phone', 'admin_phone']) test(`observer command-line entry point accepts the ${persona} shots persona`, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-browser-observer-cli-'));
   const diagnosticFile = path.join(dir, 'diagnostics.log');
-  const stubPath = path.join(dir, 'mcp-server-playwright');
+  const stubPath = path.join(dir, 'playwright-mcp');
   fs.writeFileSync(diagnosticFile, '');
   fs.writeFileSync(stubPath, `#!/usr/bin/env node
 process.stdin.setEncoding('utf8');
@@ -234,7 +234,7 @@ test('the observer moves the pointer off the page before a screenshot that follo
       'browser_take_screenshot', 'browser_hover', 'browser_take_screenshot',
     ]);
     assert.deepEqual(sent[1].params.arguments, {
-      element: 'Pointer off the page before a screenshot', x: -1, y: -1,
+      x: -1, y: -1,
     });
     assert.match(sent[1].id, /^usernode-shots-park-[0-9a-f]{12}-\d+$/);
     // The agent sees exactly its own calls answered, never the move.
@@ -501,11 +501,11 @@ test('the observer stamps each screenshot with the site it was taken on, and eac
     observer.request(JSON.stringify({ id, method: 'tools/call', params: { name, arguments: {} } }));
     observer.response(JSON.stringify({ id, result: { content: [{ type: 'text', text }], isError } }), { bytes: 100 });
   };
-  const pageState = (url) => `### Ran Playwright code\n\`\`\`js\nawait page.goto('${url}');\n\`\`\`\n\n### Page state\n- Page URL: ${url}\n- Page Title: T\n- Page Snapshot:\n\`\`\`yaml\n- heading "T"\n\`\`\``;
+  const pageState = (url) => `### Ran Playwright code\n\`\`\`js\nawait page.goto('${url}');\n\`\`\`\n### Page\n- Page URL: ${url}\n- Page Title: T\n### Snapshot\n\`\`\`yaml\n- heading "T"\n\`\`\``;
   const shot = (name, pixels) => {
     const file = path.join(outputDir, name);
     fs.writeFileSync(file, pixels);
-    call('browser_take_screenshot', `### Result\nTook the viewport screenshot and saved it as ${file}\n\n### Ran Playwright code\n\`\`\`js\nawait page.screenshot();\n\`\`\``);
+    call('browser_take_screenshot', `### Result\n- [Screenshot of viewport](${file})\n### Ran Playwright code\n\`\`\`js\n// Screenshot viewport and save it as ${file}\nawait page.screenshot();\n\`\`\``);
   };
   const origin = (name, pixels) => boundary.screenshotOrigin(outputDir, name, Buffer.from(pixels));
 
@@ -519,11 +519,11 @@ test('the observer stamps each screenshot with the site it was taken on, and eac
 
   // A failed screenshot, or one saved outside the browser's directory, is not stamped.
   fs.writeFileSync(path.join(outputDir, 'failed.png'), 'x');
-  call('browser_take_screenshot', `### Result\nTook the viewport screenshot and saved it as ${path.join(outputDir, 'failed.png')}`, { isError: true });
+  call('browser_take_screenshot', `### Result\n- [Screenshot of viewport](${path.join(outputDir, 'failed.png')})`, { isError: true });
   assert.equal(origin('failed.png', 'x'), null);
   fs.mkdirSync(path.join(outputDir, 'nested'));
   fs.writeFileSync(path.join(outputDir, 'nested', 'deep.png'), 'x');
-  call('browser_take_screenshot', `### Result\nTook the viewport screenshot and saved it as ${path.join(outputDir, 'nested', 'deep.png')}`);
+  call('browser_take_screenshot', `### Result\n- [Screenshot of viewport](${path.join(outputDir, 'nested', 'deep.png')})`);
   assert.deepEqual(fs.readdirSync(boundary.provenanceDir(outputDir)).sort(), ['elsewhere.png.json', 'lists-after.png.json']);
 
   // Closing the session records every site it showed, as its clip is written.
@@ -552,7 +552,7 @@ test('a screenshot result over the capture limit is still stamped from its leadi
   const observer = createObserver({ persona: 'admin', origins: [], emit: () => {}, outputDir });
   observer.request(JSON.stringify({ id: 1, method: 'tools/call', params: { name: 'browser_navigate', arguments: {} } }));
   observer.response(JSON.stringify({ id: 1, result: { content: [{ type: 'text',
-    text: '### Page state\n- Page URL: http://base.internal:3000/admin\n- Page Title: Admin' }] } }), { bytes: 80 });
+    text: '### Page\n- Page URL: http://base.internal:3000/admin\n- Page Title: Admin' }] } }), { bytes: 80 });
 
   const file = path.join(outputDir, 'admin-before.png');
   fs.writeFileSync(file, 'big screenshot');
@@ -560,7 +560,7 @@ test('a screenshot result over the capture limit is still stamped from its leadi
   const tap = lineTap((line, meta) => observer.response(line, meta));
   tap.resume();
   tap.end(`${JSON.stringify({ jsonrpc: '2.0', result: { content: [
-    { type: 'text', text: `### Result\nTook the viewport screenshot and saved it as ${file}\n\n### Ran Playwright code` },
+    { type: 'text', text: `### Result\n- [Screenshot of viewport](${file})\n### Ran Playwright code` },
     { type: 'image', data: 'x'.repeat(2 * 1024 * 1024), mimeType: 'image/png' },
   ] }, id: 2 })}\n`);
   await once(tap, 'end');
@@ -570,23 +570,23 @@ test('a screenshot result over the capture limit is still stamped from its leadi
 
 test('the page Playwright reports is its page state, else the current tab', () => {
   const { reportedPageUrl, savedScreenshotPath } = require('../worker/shots-browser-observer');
-  assert.equal(reportedPageUrl('### Open tabs\n- 0: [A] (http://a.internal/)\n- 1: (current) [B] (https://b.example/x)\n\n### Page state\n- Page URL: https://b.example/x\n'),
+  assert.equal(reportedPageUrl('### Open tabs\n- 0: [A](http://a.internal/)\n- 1: (current) [B](https://b.example/x)\n### Page\n- Page URL: https://b.example/x\n'),
     'https://b.example/x');
-  assert.equal(reportedPageUrl('### Open tabs\n- 0: (current) [Home] (http://head.internal:3000/#home)\n- 1: [Docs] (https://docs.example/)\n'),
+  assert.equal(reportedPageUrl('### Result\n- 0: (current) [Home](http://head.internal:3000/#home)\n- 1: [Docs](https://docs.example/)\n'),
     'http://head.internal:3000/#home');
-  assert.equal(reportedPageUrl('### Result\nTook the viewport screenshot and saved it as /tmp/x.png'), null);
-  assert.equal(savedScreenshotPath('### Result\nTook the element screenshot and saved it as /out/member/a-b.png\n\n### Ran'), '/out/member/a-b.png');
-  assert.equal(savedScreenshotPath('{"text":"### Result\\nTook the viewport screenshot and saved it as /out/member/c.jpeg\\n\\n'), '/out/member/c.jpeg');
+  assert.equal(reportedPageUrl('### Result\n- [Screenshot of viewport](/tmp/x.png)'), null);
+  assert.equal(savedScreenshotPath('### Result\n- [Screenshot of the invite card](/out/member/a-b.png)\n### Ran'), '/out/member/a-b.png');
+  assert.equal(savedScreenshotPath('{"text":"### Result\\n- [Screenshot of viewport](/out/member/c.jpeg)\\n### Ran'), '/out/member/c.jpeg');
   assert.equal(savedScreenshotPath('### Result\nClicked'), null);
 });
 
 test('the observer starts the installed Playwright server unless the dry run names another', () => {
   const { browserCommand } = require('../worker/shots-browser-observer');
-  assert.deepEqual(browserCommand(undefined), ['mcp-server-playwright']);
-  assert.deepEqual(browserCommand('not json'), ['mcp-server-playwright']);
-  assert.deepEqual(browserCommand('[]'), ['mcp-server-playwright']);
-  assert.deepEqual(browserCommand('["npx",""]'), ['mcp-server-playwright']);
-  assert.deepEqual(browserCommand('["npx","@playwright/mcp@0.0.41"]'), ['npx', '@playwright/mcp@0.0.41']);
+  assert.deepEqual(browserCommand(undefined), ['playwright-mcp']);
+  assert.deepEqual(browserCommand('not json'), ['playwright-mcp']);
+  assert.deepEqual(browserCommand('[]'), ['playwright-mcp']);
+  assert.deepEqual(browserCommand('["npx",""]'), ['playwright-mcp']);
+  assert.deepEqual(browserCommand('["npx","@playwright/mcp@0.0.85"]'), ['npx', '@playwright/mcp@0.0.85']);
 });
 
 // upload_file (worker/shots-mcp.js) asks the observer to send the browser an
@@ -606,7 +606,7 @@ test('a shots tool\'s own call reaches the browser in turn, and its answer goes 
   const injected = h.forwarded[3];
   assert.equal(injected.id, 'usernode-shots-control-n0-1');
   assert.deepEqual(injected.params.arguments, { paths: ['/samples/landscape.png'] });
-  const page = '### Page state\n- Page URL: http://head.internal/upload';
+  const page = '### Page\n- Page URL: http://head.internal/upload';
   h.parker.output.write([
     JSON.stringify({ jsonrpc: '2.0', id: 1, result: {} }),
     JSON.stringify({ result: { content: [{ type: 'text', text: page }] }, jsonrpc: '2.0', id: injected.id }),
@@ -651,7 +651,7 @@ test('the observer chooses the sample files itself, on its own socket, for the t
   fs.writeFileSync(diagnosticFile, '');
   const token = 'e'.repeat(64);
   const observerPath = path.join(__dirname, '..', 'worker', 'shots-browser-observer.js');
-  const stub = `const fs=require('fs');process.stdin.setEncoding('utf8');let b='';process.stdin.on('data',c=>{b+=c;let i;while((i=b.indexOf('\\n'))>=0){const line=b.slice(0,i);b=b.slice(i+1);fs.appendFileSync(${JSON.stringify(received)},line+'\\n');const m=JSON.parse(line);process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{content:[{type:'text',text:'### Ran '+m.params.name+' '+JSON.stringify(m.params.arguments)+'\\n### Page state\\n- Page URL: http://head.internal/upload'}]}})+'\\n')}});`;
+  const stub = `const fs=require('fs');process.stdin.setEncoding('utf8');let b='';process.stdin.on('data',c=>{b+=c;let i;while((i=b.indexOf('\\n'))>=0){const line=b.slice(0,i);b=b.slice(i+1);fs.appendFileSync(${JSON.stringify(received)},line+'\\n');const m=JSON.parse(line);process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{content:[{type:'text',text:'### Ran '+m.params.name+' '+JSON.stringify(m.params.arguments)+'\\n### Page\\n- Page URL: http://head.internal/upload'}]}})+'\\n')}});`;
   const launcher = `require(${JSON.stringify(observerPath)}).start({persona:'member',binary:process.execPath,args:['-e',${JSON.stringify(stub)}],controlDir:${JSON.stringify(dir)},controlToken:${JSON.stringify(token)},samplesDir:${JSON.stringify(samplesDir)},diagnosticFile:${JSON.stringify(diagnosticFile)}});`;
   const child = spawn(process.execPath, ['-e', launcher], { stdio: ['pipe', 'pipe', 'pipe'] });
   const stdout = [];
@@ -675,7 +675,7 @@ test('the observer chooses the sample files itself, on its own socket, for the t
   const answer = await ask({ token, action: 'upload', files: ['landscape.png', 'table.csv'] });
   const chosen = [path.join(samplesDir, 'landscape.png'), path.join(samplesDir, 'table.csv')];
   assert.deepEqual(answer, { ok: true, outcome: 'ok',
-    text: `### Ran browser_file_upload ${JSON.stringify({ paths: chosen })}\n### Page state\n- Page URL: http://head.internal/upload` });
+    text: `### Ran browser_file_upload ${JSON.stringify({ paths: chosen })}\n### Page\n- Page URL: http://head.internal/upload` });
   for (const [message, code] of [
     [{ token: 'f'.repeat(64), action: 'upload', files: ['landscape.png'] }, 'forbidden'],
     [{ action: 'upload', files: ['landscape.png'] }, 'forbidden'],
@@ -725,7 +725,7 @@ test('a close-up is taken on the observer\'s own socket, saved under its own nam
   const token = 'e'.repeat(64);
   const observerPath = path.join(__dirname, '..', 'worker', 'shots-browser-observer.js');
   // A browser that saves what it is asked to, and says which page it is on.
-  const stub = `const fs=require('fs'),path=require('path');process.stdin.setEncoding('utf8');let b='';process.stdin.on('data',c=>{b+=c;let i;while((i=b.indexOf('\\n'))>=0){const line=b.slice(0,i);b=b.slice(i+1);fs.appendFileSync(${JSON.stringify(received)},line+'\\n');const m=JSON.parse(line);let text='### Page state\\n- Page URL: http://head.internal/invite';if(m.params.name==='browser_take_screenshot'){const f=path.join(${JSON.stringify(outDir)},m.params.arguments.filename);fs.writeFileSync(f,'png');text='Took the close-up screenshot and saved it as '+f}process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{content:[{type:'text',text}]}})+'\\n')}});`;
+  const stub = `const fs=require('fs'),path=require('path');process.stdin.setEncoding('utf8');let b='';process.stdin.on('data',c=>{b+=c;let i;while((i=b.indexOf('\\n'))>=0){const line=b.slice(0,i);b=b.slice(i+1);fs.appendFileSync(${JSON.stringify(received)},line+'\\n');const m=JSON.parse(line);let text='### Page\\n- Page URL: http://head.internal/invite';if(m.params.name==='browser_take_screenshot'){const f=path.join(${JSON.stringify(outDir)},m.params.arguments.filename);fs.writeFileSync(f,'png');text='Took the close-up screenshot and saved it as '+f}process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result:{content:[{type:'text',text}]}})+'\\n')}});`;
   const launcher = `require(${JSON.stringify(observerPath)}).start({persona:'member',binary:process.execPath,args:['-e',${JSON.stringify(stub)},'--','--output-dir',${JSON.stringify(outDir)}],controlDir:${JSON.stringify(dir)},controlToken:${JSON.stringify(token)},diagnosticFile:${JSON.stringify(diagnosticFile)}});`;
   const child = spawn(process.execPath, ['-e', launcher], { stdio: ['pipe', 'pipe', 'pipe'] });
   const stdout = [];

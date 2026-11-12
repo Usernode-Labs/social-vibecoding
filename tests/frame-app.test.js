@@ -156,7 +156,7 @@ test('today\'s header and tab bar stay mounted, unseen, and the screens take the
   const css = read('public', 'css', 'app.css');
   assert.match(css, /html\[data-frame-chrome\] #platform-header \{ visibility: hidden !important; pointer-events: none !important;[^}]*height: var\(--fr-shell-top\) !important;/);
   assert.match(css, /html\[data-frame-chrome\] #platform-tabs \{ visibility: hidden !important; pointer-events: none !important; \}/);
-  assert.match(css, /html\[data-frame-chrome\] body \{ --platform-header-h: var\(--fr-shell-top\); \}/);
+  assert.match(css, /html\[data-frame-chrome\] body \{ --platform-header-h: calc\(var\(--fr-shell-top\) - var\(--platform-safe-top, 0px\)\); \}/);
   assert.match(css, /@media \(min-width: 768px\) \{\s*html\[data-frame-chrome\] body \{ --platform-rail-full: var\(--fr-shell-left\); \}/);
   assert.match(css, /html\[data-frame-chrome\] body \{ --platform-bar-h: var\(--fr-shell-bottom\) !important; --platform-tabs-h: var\(--fr-shell-bottom\) !important; \}/);
   assert.match(css, /html\[data-skin\] \.fr\.fr-app\.fr-shell \{ position: fixed; inset: 0; z-index: 30;[^}]*pointer-events: none; \}/, 'over the screens, under the sheets, and taking presses only on what it draws');
@@ -178,7 +178,7 @@ test('today\'s header and tab bar stay mounted, unseen, and the screens take the
   // …and the header token the screens subtract from the window (`--ws-area`
   // takes the strip off by --browser-banner-h already): the bar alone too,
   // or a project's fitted Discussion was a strip shorter than the room.
-  assert.match(css, /html\[data-frame-chrome\] body\.has-install-strip \{ --platform-header-h: calc\(var\(--fr-shell-top\) - var\(--install-strip-h\)\); \}/);
+  assert.match(css, /html\[data-frame-chrome\] body\.has-install-strip \{ --platform-header-h: calc\(var\(--fr-shell-top\) - var\(--install-strip-h\) - var\(--platform-safe-top, 0px\)\); \}/);
   // On a phone the kit's tab bar is fixed over the page's foot, and a kit
   // page scrolls in the document or in a pane that gave up its own
   // allowance for it: the page's last card ended under the bar. A spacer
@@ -189,6 +189,41 @@ test('today\'s header and tab bar stay mounted, unseen, and the screens take the
   for (const name of ['--fr-shell-left', '--fr-shell-top', '--fr-shell-bottom']) assert.ok(src.includes(`'${name}'`), `${name} is published`);
   assert.match(src, /root\.setAttribute\('data-frame-chrome', ''\)/);
   assert.match(src, /root\.removeAttribute\('data-frame-chrome'\)/, 'and taken back when the chrome goes');
+});
+
+test('the chrome keeps clear of a phone\'s status bar and home strip', () => {
+  // The fixed layer starts at the window's edges, so each look's bar and
+  // tab bar meet the notch and the home strip. Both grow around the inset
+  // with their own ground filling it; the page area the chrome measures
+  // moves with them, and the screens follow. Margin, not padding, so each
+  // look keeps its own border-box height.
+  const css = read('public', 'css', 'app.css');
+  assert.match(css, /html\[data-skin\] \.fr\.fr-shell \.fr-bar \{\s*position: relative;\s*margin-top: var\(--platform-safe-top, 0px\);\s*\}/);
+  assert.match(css, /html\[data-skin\] \.fr\.fr-shell \.fr-bar::before \{[^}]*bottom: 100%;[^}]*height: var\(--platform-safe-top, 0px\);[^}]*background: inherit;/,
+    'the bar\'s own ground fills the status bar\'s strip');
+  assert.match(css, /html\[data-skin\]:not\(\[data-skin="pastel"\]\) \.fr\.fr-shell > \.fr-side \{\s*border-top: var\(--platform-safe-top, 0px\) solid transparent;\s*border-bottom: var\(--platform-safe-bottom, 0px\) solid transparent;\s*\}/,
+    'a tablet\'s sidebar keeps its first and last rows clear, its ground under the transparent borders');
+  assert.match(css, /html\[data-skin\] \.fr\.fr-shell \.fr-tabbar \{\s*position: relative;\s*margin-bottom: var\(--platform-safe-bottom, 0px\);\s*\}/);
+  assert.match(css, /html\[data-skin\] \.fr\.fr-shell \.fr-tabbar::after \{[^}]*top: 100%;[^}]*height: var\(--platform-safe-bottom, 0px\);[^}]*background: inherit;/,
+    'the tab bar\'s ground fills the home strip');
+  assert.match(css, /html\[data-skin="glass"\] \.fr\.fr-shell \.fr-tabbar,\s*html\[data-skin="pastel"\] \.fr\.fr-shell \.fr-tabbar \{\s*margin-bottom: 0;\s*\}/,
+    'a floating tab bar reaches the foot of the screen');
+  assert.match(css, /html\[data-skin="glass"\] \.fr\.fr-shell \.fr-tabbar \{\s*height: calc\(64px \+ var\(--platform-tabs-inset, 0px\)\);\s*padding-bottom: calc\(8px \+ var\(--platform-tabs-inset, 0px\)\);\s*\}/,
+    'and spends the home strip as its own padding, the way #platform-tabs does');
+  assert.match(css, /html\[data-skin="pastel"\] \.fr\.fr-shell \.fr-tabbar \{\s*height: calc\(62px \+ var\(--platform-tabs-inset, 0px\)\);\s*padding-bottom: calc\(6px \+ var\(--platform-tabs-inset, 0px\)\);\s*\}/,
+    'Pastel too, at its own height');
+  assert.match(css, /html\[data-skin="glass"\] \.fr\.fr-shell \.fr-tabbar::after,\s*html\[data-skin="pastel"\] \.fr\.fr-shell \.fr-tabbar::after \{ content: none; \}/,
+    'the bar\'s own box fills the strip under it, so the general rule\'s strip is not drawn');
+  assert.match(css, /html\[data-skin="pastel"\] \.fr\.fr-app\.fr-shell \{ top: var\(--platform-safe-top, 0px\); \}/,
+    'Pastel\'s horizontal pill is in the top row, so its layer is offset instead');
+  // --platform-header-h is defined without the inset and the screens add it
+  // themselves; --fr-shell-top now includes it, so it is subtracted once.
+  assert.match(css, /html\[data-frame-chrome\] body \{ --platform-header-h: calc\(var\(--fr-shell-top\) - var\(--platform-safe-top, 0px\)\); \}/);
+  assert.match(css, /html\[data-frame-chrome\] body\.has-install-strip \{ --platform-header-h: calc\(var\(--fr-shell-top\) - var\(--install-strip-h\) - var\(--platform-safe-top, 0px\)\); \}/);
+  // The install strip already moves the layer below the inset; the bar must
+  // not add it again.
+  assert.match(css, /body\.has-install-strip \.fr\.fr-shell \.fr-bar \{ margin-top: 0; \}/);
+  assert.match(css, /body\.has-install-strip \.fr\.fr-shell \.fr-bar::before \{ content: none; \}/);
 });
 
 test('the chrome\'s words are catalog text', () => {

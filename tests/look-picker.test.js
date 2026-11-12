@@ -51,6 +51,17 @@ test('real admins only, and never on the first render', () => {
   assert.match(src, /const skin = useLiveSkin\(\);/);
 });
 
+test('the head module is the one place a pick is written', () => {
+  // The picker and Settings only hand the look to window.Skin, which owns
+  // data-skin, storage and the address. Nothing else repaints <html> or
+  // keeps a second copy, so the fix lives in one place.
+  for (const src of [read(PICKER), read('frontend/src/features/settings/settings.js')]) {
+    assert.doesNotMatch(src, /setAttribute\(\s*['"]data-skin/, 'no control writes data-skin itself');
+  }
+  assert.doesNotMatch(read(PICKER), /localStorage/, 'the picker keeps no copy of the look');
+  assert.match(read(PICKER), /window\.Skin\?\.set\?\.\(next\);/, 'the picker\'s pick goes through the head module');
+});
+
 test('it sits just before the bell in both bars', () => {
   const frame = read('frontend/src/features/frame/frame-app.tsx');
   assert.match(frame, /<LookPicker variant="frame" \/>\s*<button type="button" className=\{k\('ib'\)\} aria-label=\{t\('core:header\.notifications'\)\}/);

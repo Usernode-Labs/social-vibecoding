@@ -94,11 +94,22 @@ export function isReadyMessage(message: ConversationMessage): boolean {
 export function readyTitle(meta: HomeroomBotMeta): string {
   const project = meta.appName || meta.appSlug || '';
   const broken = !!meta.ready?.broken?.length;
+  // #6407: a change that does not match the plan it was built from is never
+  // called ready either: "is built, but doesn't match the plan yet".
+  const offPlan = !!meta.ready?.offPlan?.misses?.length;
   if (meta.ready?.group && !meta.firstVersion) {
-    if (!project) return broken ? translate('messages:bot.ready.title.changeUnnamedBroken') : translate('messages:bot.ready.title.changeUnnamed');
+    if (!project) {
+      return offPlan ? translate('messages:bot.ready.title.changeUnnamedOffPlan')
+        : broken ? translate('messages:bot.ready.title.changeUnnamedBroken') : translate('messages:bot.ready.title.changeUnnamed');
+    }
+    if (offPlan) return translate('messages:bot.ready.title.changeOffPlan', { project });
     return broken ? translate('messages:bot.ready.title.changeBroken', { project }) : translate('messages:bot.ready.title.change', { project });
   }
-  if (!project) return broken ? translate('messages:bot.ready.title.unnamedBroken') : translate('messages:bot.ready.title.unnamed');
+  if (!project) {
+    return offPlan ? translate('messages:bot.ready.title.unnamedOffPlan')
+      : broken ? translate('messages:bot.ready.title.unnamedBroken') : translate('messages:bot.ready.title.unnamed');
+  }
+  if (offPlan) return translate('messages:bot.ready.title.projectOffPlan', { project });
   return broken ? translate('messages:bot.ready.title.projectBroken', { project }) : translate('messages:bot.ready.title.project', { project });
 }
 
@@ -152,6 +163,21 @@ export function brokenLine(ready: HomeroomBotReady | undefined): string | null {
     count: said.length,
     problems: said.reduce((first, second) => translate('messages:bot.ready.brokenPair', { first, second })),
   });
+}
+
+/**
+ * Pure (#6407): what the plan draws and this change does not, in red:
+ * "Not what @evan's plan (version 3) draws: …". Null when it matches the
+ * plan, or no plan was checked.
+ */
+export function offPlanLine(ready: HomeroomBotReady | undefined): string | null {
+  const off = ready?.offPlan;
+  const misses = (off?.misses || []).filter((miss) => typeof miss === 'string' && miss.trim());
+  if (!misses.length) return null;
+  const values = { misses: misses.join(' ') };
+  return off?.author
+    ? translate('messages:bot.ready.offPlan', { ...values, author: off.author, version: String(off.version ?? '') })
+    : translate('messages:bot.ready.offPlanUnnamed', values);
 }
 
 /**
@@ -404,6 +430,7 @@ export function ReadyCardView({
   // message's own update said it, else from what the card was sent with.
   const next = fresh?.goesLive || meta.goesLive || goesLive || goesLiveFromReady(meta.ready);
   const broken = state === 'open' ? brokenLine(meta.ready) : null;
+  const offPlan = state === 'open' ? offPlanLine(meta.ready) : null;
   const what = changeLine(meta);
   const changeUrl = what ? changeLink(meta, actions) : null;
   // A merge of Homeroom itself counts down to the platform's next release.
@@ -442,6 +469,7 @@ export function ReadyCardView({
             </p>
           ) : null}
           {meta.askedText ? <p className="line-clamp-2 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">{t('messages:bot.ready.youAsked', { request: meta.askedText })}</p> : null}
+          {offPlan ? <p className="text-[0.8125rem] leading-[1.125rem] text-red-700 dark:text-red-400" data-bot-ready-off-plan="">{offPlan}</p> : null}
           {broken ? <p className="text-[0.8125rem] leading-[1.125rem] text-red-700 dark:text-red-400" data-bot-ready-broken="">{broken}</p> : null}
           {waiting ? <p className="text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-bot-ready-waiting="">{waiting}</p> : null}
         </div>

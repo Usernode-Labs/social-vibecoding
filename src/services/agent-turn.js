@@ -328,6 +328,11 @@ async function startCodexAttempt({
   // (turn-lifecycle.turnOwner): written with the claim, as execInWorker
   // writes it for a turn it registers itself.
   owner = null,
+  // #6602: whose session row this turn locks. It is the account whose key
+  // pays (`userId`) but for a turn Homeroom bot runs on a change its author
+  // made in another coding tool: that row belongs to the author. The ledger
+  // row's user_id stays `userId`, so the cost is still the bot's.
+  sessionOwnerId = null,
 }) {
   const ctx = runtimeContext || {};
   const turnOwnerRecord = turnLifecycle.turnOwner(owner);
@@ -353,7 +358,7 @@ async function startCodexAttempt({
          FROM chat_sessions
         WHERE id = $1 AND user_id = $2
         FOR UPDATE`,
-      [session.id, userId],
+      [session.id, sessionOwnerId || userId],
     );
     const sessRow = rows[0];
     if (!sessRow) {

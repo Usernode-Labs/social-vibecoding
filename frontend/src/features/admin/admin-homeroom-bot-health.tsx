@@ -26,6 +26,39 @@ export interface RolloutHealthData {
   chat: { turns: number; failed: number; unanswered: number; recovered: number; claimsCaught: number };
   cards: { total: number; repaired: number; whole: number; lines: number; fallback: number; kinds: Record<string, number> };
   watch: { mergeRate: Watch; hoursToProposal: Watch; questionsWaiting: Watch; turnFailures: Watch; chatFailures: Watch; cardFallbacks: Watch };
+  rereads?: Rereads | null;
+}
+
+// Step 5 of the bot's one model (services/homeroom-bot-health.js
+// shapeRereads): whether it reads requests again less, and says less twice.
+export interface RereadWeek {
+  week: string;
+  reads: number;
+  why: Record<string, number>;
+  taps: number;
+  notFound: number;
+  gone: number;
+  surfaces: Record<string, { taps: number; notFound: number; gone: number }>;
+}
+
+export interface Rereads {
+  days: number;
+  weeks: number;
+  reads: number;
+  requests: number;
+  perRequest: number | null;
+  otherRuns: Record<string, number>;
+  byWeek: RereadWeek[];
+  claimRepair: { recovered: number; turns: number; rate: number | null };
+  // Counted by step 4 from its said-once keys; null until then.
+  duplicateNotes: number | null;
+}
+
+export interface RereadRow {
+  key: 'reads' | 'why' | 'repair' | 'taps' | 'notes';
+  label: string;
+  value: string;
+  lines: string[];
 }
 
 // One DM answer that failed on the way, as the payload's dmChat lists the
@@ -151,6 +184,79 @@ export function healthRows(h: RolloutHealthData, now: number = Date.now()): Heal
   ];
 }
 
+// The runs that read no request, by their kind (homeroom_bot_runs.look_kind).
+const RUN_KIND: Record<string, string> = {
+  fix: 'fix round',
+  sync: 'sync with main',
+  hand_off: 'hand-off',
+  retry: 'retry',
+};
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "Week of 9 Nov", from the week's Monday ("2026-11-09"). Pure. */
+export function weekLabel(week: string): string {
+  const d = new Date(`${week}T00:00:00Z`);
+  return Number.isNaN(d.getTime()) ? week : `Week of ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+}
+
+/** What started a week's reads, most first: "changed:discussion 5, new 2". Pure. */
+function whyLine(why: Record<string, number>): string {
+  return Object.entries(why || {}).filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([code, n]) => `${code} ${n}`).join(', ');
+}
+
+/** The re-read numbers' rows (step 5), newest week first. Pure. */
+export function rereadRows(r: Rereads): RereadRow[] {
+  const weeks = r.byWeek || [];
+  const latest = weeks[0];
+  const other = Object.entries(r.otherRuns || {}).filter(([, n]) => n > 0)
+    .map(([kind, n]) => plural(n, RUN_KIND[kind] || kind)).join(', ');
+  const read = weeks.filter((w) => w.reads > 0);
+  const tapped = weeks.filter((w) => w.taps > 0);
+  return [
+    {
+      key: 'reads',
+      label: 'Reads per request',
+      value: r.perRequest == null ? '–' : r.perRequest.toFixed(1),
+      lines: [
+        `${plural(r.reads, 'read')} of ${plural(r.requests, 'request')} in the last ${r.days} days. A held verdict used again without a read is not one.`,
+        other ? `Not reads: ${other}.` : 'Every run was a read.',
+      ],
+    },
+    {
+      key: 'why',
+      label: 'Why it read, by week',
+      value: latest ? String(latest.reads) : '0',
+      lines: read.length ? read.map((w) => `${weekLabel(w.week)}: ${whyLine(w.why)}.`) : [`No reads in the last ${r.weeks} weeks.`],
+    },
+    {
+      key: 'repair',
+      label: 'Main Chat answers repaired',
+      value: percent(r.claimRepair.rate),
+      lines: [`${r.claimRepair.recovered} of ${plural(r.claimRepair.turns, 'answer')} in the last ${r.days} days were asked again before they were sent: a request that failed, or a claim it had not done.`],
+    },
+    {
+      key: 'taps',
+      label: 'Taps on buttons that did nothing',
+      value: latest ? `${latest.notFound + latest.gone} of ${latest.taps}` : '0',
+      lines: tapped.length
+        ? tapped.map((w) => `${weekLabel(w.week)}: ${w.notFound} found nothing to do (404), ${w.gone} found the offer gone (410), of ${plural(w.taps, 'tap')}.`)
+        : [`No taps on its offers in the last ${r.weeks} weeks.`],
+    },
+    {
+      key: 'notes',
+      label: 'Notes said twice per request',
+      value: r.duplicateNotes == null ? '–' : String(r.duplicateNotes),
+      lines: [r.duplicateNotes == null ? 'Could not be counted just now.' : `Notes on requests said, or asked for, more than once in the last ${r.days} days.`],
+    },
+  ];
+}
+
+// One figure's tile, in the rollout rows and the re-read rows alike.
+const FIGURE = 'rounded-xl bg-zinc-100 dark:bg-zinc-800 p-3';
+
 // #4210: an error that should not happen, as the payload's incidents list
 // them (services/platform-incidents.js): build_interrupted, and a red check
 // that is not its change's doing (checks_not_change).
@@ -240,7 +346,7 @@ export function RolloutHealth({ health, failures, incidents }: {
       {health ? (
         <ul className="grid gap-3 md:grid-cols-2" id="admin-homeroom-bot-rollout-rows">
           {rows.map((r) => (
-            <li key={r.key} className="rounded-xl bg-zinc-100 dark:bg-zinc-800 p-3" data-rollout={r.key} data-watch={r.watch == null ? 'unknown' : String(r.watch)}>
+            <li key={r.key} className={FIGURE} data-rollout={r.key} data-watch={r.watch == null ? 'unknown' : String(r.watch)}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className={AdminUI.muted}>{r.label}</span>
                 {r.watch ? <span className={AdminUI.badge.warn}>Worth a look</span> : null}
@@ -251,6 +357,23 @@ export function RolloutHealth({ health, failures, incidents }: {
             </li>
           ))}
         </ul>
+      ) : null}
+      {health?.rereads ? (
+        <div className="mt-4" id="admin-homeroom-bot-rereads">
+          <div className={AdminUI.cardHeader}>
+            <h4 className={AdminUI.sectionTitle}>Reading again</h4>
+            <span className={AdminUI.cardDescription}>Whether it reads requests again less, and says less twice</span>
+          </div>
+          <ul className="grid gap-3 md:grid-cols-2" id="admin-homeroom-bot-rereads-rows">
+            {rereadRows(health.rereads).map((r) => (
+              <li key={r.key} className={FIGURE} data-reread={r.key}>
+                <span className={AdminUI.muted}>{r.label}</span>
+                <div className="text-2xl font-semibold mt-0.5 tabular-nums">{r.value}</div>
+                {r.lines.map((line, i) => <p key={i} className={AdminUI.muted}>{line}</p>)}
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
       <details className="mt-3" id="admin-homeroom-bot-rollout-failures">
         <summary className={`${AdminUI.muted} cursor-pointer`}>

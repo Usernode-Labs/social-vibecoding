@@ -2,24 +2,28 @@
  * COMMUNITIES TO JOIN (One Home, #6361): the bottom of Home, signed in or
  * out. It is the signed-out directory's picture card (features/guest Card,
  * GuestCover), so the page a visitor browses before signing up is the page
- * they land on after, with a footer for what a card can do:
- *
- *   signed in    "N up for a vote" and Join (Home.setMembership, which joins
- *                and pins the community; the card leaves this list then).
- *   signed out   nothing: a visitor's card is its picture, name and sentence
- *                (#6433), and the page behind it has Try it, Join and Pin.
+ * they land on after. A card is the same either way (#6609): its picture,
+ * one count, its name and its sentence, with no footer and no Join. The
+ * whole card opens the project's page, where Join already sits next to what
+ * the community is about; joining there takes the community off this list
+ * (sv:membership-changed).
  *
  * Kind chips over the cards. Then FEATURED, the communities an admin
  * featured, in their order (featured_order), in the same wrapping grid as
  * the rest (#6434): the first group of the section, of the chosen kind, and
  * left out while a search is typed (its matches are the grid, featured
- * first). Then the rest under "More communities" when a kind other than All
- * is chosen; with All chosen the rest simply follow Featured, no heading
- * between them (#6470). The most used first; more load as the reader reaches
- * the end (an IntersectionObserver on the last card's
- * sentinel, inside Home's own scroller), with two placeholder cards while
- * they come. The directory is GET /api/public/apps, which answers every
- * public project at once today, so "more" pages through it here.
+ * first). Then the rest under "More communities" whenever Featured is
+ * shown, under All or a chosen kind (#6584, #6597): every community of the
+ * kind that Featured does not already show, most used first, so no
+ * community appears twice. The heading tells the rest apart from Featured;
+ * when every community of the kind is featured there is nothing left and
+ * it is not drawn. No heading while searching, or with nothing featured:
+ * then there is one grid. More load as the reader reaches the end (an
+ * IntersectionObserver on the last card's sentinel, inside Home's own
+ * scroller), with two
+ * placeholder cards while they come. The directory is
+ * GET /api/public/apps, which answers every public project at once today,
+ * so "more" pages through it here.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -41,16 +45,16 @@ export function joinOrder(apps: readonly GuestApp[]): GuestApp[] {
   return [...featured, ...sortApps(apps, 'trending').filter((a) => !first.has(a.slug))];
 }
 
-export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onJoin, onRetry }: {
+export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onRetry }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** The directory could not be read: say so, with a way to try again. */
   failed?: boolean;
   /** Communities already on this Home (joined or pinned), left out of the list. */
   exclude: ReadonlySet<string>;
+  /** Only the heading and the ids the tours and declared checks find. */
   signedIn: boolean;
   query: string;
-  onJoin: (app: GuestApp) => void;
   /** Read the directory again, from the line that says it could not be. */
   onRetry?: () => void;
 }) {
@@ -65,12 +69,15 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   const kinds = useMemo(() => presentCategories(pool), [pool]);
   const featured = useMemo(() => (query ? [] : featuredApps(pool).filter((a) => !kind || a.category === kind)), [pool, kind, query]);
   const list = useMemo(() => {
+    // Searching keeps the join order (featured first); otherwise this is the
+    // rest, most used first, the featured ones left out because Featured
+    // already shows them (#6597). When every community of the kind is
+    // featured, nothing is left and the list is empty.
     const lead = new Set(featured.map((a) => a.slug));
-    return joinOrder(pool)
-      .filter((a) => !lead.has(a.slug))
+    return (query ? joinOrder(pool) : sortApps(pool, 'trending').filter((a) => !lead.has(a.slug)))
       .filter((a) => !kind || a.category === kind)
       .filter((a) => matchesQuery(query, a.name, a.slug, a.description));
-  }, [pool, featured, kind, query]);
+  }, [pool, kind, query, featured]);
   useEffect(() => { setShown(JOIN_PAGE); }, [kind, query]);
   const more = list.length > shown;
 
@@ -94,22 +101,8 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   }, [more, shown]);
 
   if (query && !list.length) return null;
-  // Signed out, a card has no footer at all (#6433): the row is the
-  // signed-in one's, with the votes or members line and Join.
-  const footerFor = (app: GuestApp) => (signedIn ? (
-      <>
-        <span className="min-w-0 flex-1 truncate text-[12.5px] text-zinc-500 dark:text-zinc-400">
-          {app.open_votes
-            ? t('home:join.votes', { count: app.open_votes })
-            : t('home:join.members', { count: app.member_count || 0 })}
-        </span>
-        <Button type="button" variant="pillAccent" size="sm" ink="solid" className="min-h-11 py-0 un-touch-target" data-home-join={app.slug}
-          aria-label={t('home:join.buttonNamed', { community: app.name })}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onJoin(app); }}>
-          {t('home:join.button')}
-        </Button>
-      </>
-    ) : null);
+  // Nothing drawn on a card depends on being signed in (#6609): a member and
+  // a visitor get the same card, and Join is the project page's.
   const heading = signedIn ? t('home:join.heading') : t('home:join.headingSignedOut');
   return (
     // The id is the signed-in Home's (the tours and the declared checks find
@@ -139,7 +132,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
           >
             {featured.map((app, i) => (
               <div key={app.slug} role="listitem" className="flex [&>article]:flex-1">
-                <Card app={app} eager={i < 3} featured footer={footerFor(app)} />
+                <Card app={app} eager={i < 3} featured />
               </div>
             ))}
           </div>
@@ -148,8 +141,8 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
       {failed ? (
         // #6354 review: a request that failed must say so and offer to try
         // again, rather than leaving the loading placeholders up forever.
-        <div className="flex flex-col items-center gap-3 px-2 py-6" data-home-join-failed="">
-          <p className="text-center text-[14px] text-zinc-500 dark:text-zinc-400">{t('home:join.failed')}</p>
+        <div className="flex flex-col items-start gap-3 px-1 py-6" data-home-join-failed="">
+          <p className="text-[14px] text-zinc-500 dark:text-zinc-400">{t('home:join.failed')}</p>
           {onRetry ? (
             <Button type="button" variant="pill" size="sm" className="min-h-11 px-5 py-0 un-touch-target"
               data-home-join-retry="" onClick={onRetry}>
@@ -163,18 +156,18 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
         </div>
       ) : list.length ? (
         <>
-        {/* Featured above, so a chosen kind's rest get a heading of their
-            own: without it they read as more of Featured (#6434). With All
-            chosen every card follows Featured with no heading (#6470). A
-            search leaves Featured out, and then there is one grid too. */}
-        {kind && featured.length ? <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`} data-home-join-rest="">{t('home:join.more')}</h3> : null}
+        {/* Featured above, so the rest gets a heading of its own: without it
+            every card reads as featured (#6434, #6584). It is not drawn when
+            nothing is left (every community of the kind is featured, #6597).
+            A search leaves Featured out, and then there is one grid with no
+            heading. */}
+        {featured.length ? <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`} data-home-join-rest="">{t('home:join.more')}</h3> : null}
         <div className={`${CARD_GRID} px-1`}>
           {list.slice(0, shown).map((app, i) => (
             <Card
               key={app.slug}
               app={app}
               eager={i < 4}
-              footer={footerFor(app)}
             />
           ))}
         </div>
@@ -216,7 +209,14 @@ let directory: Promise<GuestApp[] | null> | null = null;
 export function readDirectory(refresh = false): Promise<GuestApp[] | null> {
   if (refresh) directory = null;
   if (!directory) {
-    directory = fetch('/api/public/apps?include_wallets=0', { credentials: 'same-origin' })
+    // An answer the server never sends ends as a failed read, not as loading
+    // placeholders left up for good (#6609 review): to the section, a held
+    // request and one that failed are the same, and it has a Retry.
+    const init: RequestInit = { credentials: 'same-origin' };
+    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+      init.signal = AbortSignal.timeout(8000);
+    }
+    directory = fetch('/api/public/apps?include_wallets=0', init)
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => (Array.isArray(body?.apps) ? body.apps as GuestApp[] : null))
       .catch(() => null)

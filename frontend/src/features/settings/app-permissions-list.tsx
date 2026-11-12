@@ -15,6 +15,7 @@
 
 import { Button } from '@/components/ui/button';
 
+import { closeLiveApp, isLiveApp } from '../app-frame/live-apps';
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { appPermissionsStore } from './app-permissions-store.js';
@@ -72,7 +73,20 @@ function CapabilityRow({ app, item }: { app: PermissionAppView; item: Permission
           type="button"
           data-role="revoke"
           className="rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-0.5 font-medium text-red-700 dark:text-red-400 transition-colors touch-target-32"
-          onClick={() => { void controller()?._onPermissionRevoke?.(app.appId, item.capability); }}
+          onClick={() => {
+            // #6512: an app open in this tab keeps what its frame was given
+            // until the frame goes, so the revoke closes it too. A question,
+            // not a value: Settings asks it when the dialog opens and again
+            // once the revoke is through, since the app can open or close
+            // in between.
+            const target = {
+              slug: app.appSlug,
+              name: app.appName,
+              isOpen: () => isLiveApp(app.appSlug),
+              close: () => closeLiveApp(app.appSlug),
+            };
+            void controller()?._onPermissionRevoke?.(app.appId, item.capability, target);
+          }}
         >
           {t('settings:appPermissions.revoke')}
         </button>
@@ -93,7 +107,7 @@ export function AppPermissionsList() {
   }
   if (!state.apps.length) {
     return (
-      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+      <p className="text-sm text-zinc-500 dark:text-zinc-400">
         {t('settings:appPermissions.empty')}
       </p>
     );

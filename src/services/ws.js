@@ -1,3 +1,5 @@
+const { readSessionCookie } = require('./browser-session-cookies');
+const { isSameOriginBrowserRequest } = require('../middleware/same-site-browser');
 const { nativeWebSessionIsLive } = require('./web-session-auth');
 const http = require('http');
 const { WebSocketServer } = require('ws');
@@ -488,7 +490,14 @@ function attach(server, config) {
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 async function authenticateWs(req, pool, config) {
-  const viaCookie = await authenticateWsCookie(req, pool);
+  // Browsers attach the Lax session cookie to every same-site handshake, and
+  // WebSockets have no CORS: without this check any page on a sibling host
+  // (an app, a preview) could open these sockets as the visitor, read their
+  // events and post as them. The cookie counts only on a handshake the
+  // Homeroom page itself opened, by the same rule as cookie writes
+  // (middleware/same-site-browser.js). A client that is not a browser sends
+  // neither Origin nor Sec-Fetch-Site and rides nobody's cookie, so it passes.
+  const viaCookie = isSameOriginBrowserRequest(req) ? await authenticateWsCookie(req, pool) : null;
   if (viaCookie) return viaCookie;
   if (!IS_STAGING) return null;
   return authenticateWsStagingJwt(req, pool, config);
@@ -496,8 +505,7 @@ async function authenticateWs(req, pool, config) {
 
 async function authenticateWsCookie(req, pool) {
   try {
-    const cookies = parseCookies(req.headers.cookie || '');
-    const token = cookies.session;
+    const token = readSessionCookie(req);
     if (!token) return null;
 
     const { rows } = await pool.query(
@@ -563,15 +571,6 @@ async function authenticateWsStagingJwt(req, pool, config) {
   } catch {
     return null;
   }
-}
-
-function parseCookies(header) {
-  const result = {};
-  header.split(';').forEach((pair) => {
-    const [key, ...vals] = pair.trim().split('=');
-    if (key) result[key.trim()] = vals.join('=').trim();
-  });
-  return result;
 }
 
 async function resolveAppForAccess(pool, slug) {
@@ -771,7 +770,8 @@ function broadcastGlobal(data) {
 //     — on the owner's or an admin's screen) and `unwatch_session` when it
 //     leaves, and re-sends its watches whenever the socket reconnects;
 //   * for the few events lists and boards also draw (SESSION_FANOUT_EVENTS:
-//     a checks run's progress and verdict, a preview built or failed),
+//     a checks run's progress and verdict, a preview built, woken or
+//     failed),
 //     everyone who may VIEW the app as well — the broadcastGlobalScoped
 //     audience. Those are the events App.handleSessionEvent handles before
 //     its "is this the open session" gate; every other event it drops
@@ -780,7 +780,10 @@ function broadcastGlobal(data) {
 // Cached owner/app metadata and the bus routing select candidates. The
 // receiving pod checks current identity, session ownership and app access
 // against PostgreSQL before disclosing anything to its own sockets.
-const SESSION_FANOUT_EVENTS = new Set(['checks_ready', 'staging_ready', 'staging_failed']);
+// A woken preview (`staging_awake`, #6157) is a preview made ready like a
+// rebuilt one: a member who pressed Try it on somebody else's change waits
+// for it behind the same loader, so it goes to the same audience.
+const SESSION_FANOUT_EVENTS = new Set(['checks_ready', 'staging_ready', 'staging_awake', 'staging_failed']);
 const MAX_WATCHED_SESSIONS_PER_SOCKET = 16;
 const sessionWatchers = new Map(); // sessionId -> Set<client>
 
@@ -2188,15 +2191,23 @@ async function getReactionsForMessages(pool, messageIds, viewerId = null) {
 // panel (services/app-notices.js, read from `events`). A call with no thread
 // is refused here rather than trusted to the callers.
 // db/migrate.js clearAutomatedChannelLines removes the lines written before.
-async function sendSystemMessage(pool, appId, content, msgType = 'system', metadata = null, thread = null) {
+async function sendSystemMessage(pool, appId, content, msgType = 'system', metadata = null, thread = null, { onInsert = null } = {}) {
   if (!thread) return null;
-  const { rows } = await pool.query(
-    `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, created_at`,
-    // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
-    [appId, content, msgType, JSON.stringify(metadata || {}), thread.type, thread.ref]
-  );
+  // Step 4 (11 Nov 2026): `onInsert(db, { messageId })`, the caller's own
+  // write about the line (services/bot-post.js: the post's record names its
+  // message), committed with it.
+  const write = async (db) => {
+    const { rows: inserted } = await db.query(
+      `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, created_at`,
+      // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
+      [appId, content, msgType, JSON.stringify(metadata || {}), thread.type, thread.ref]
+    );
+    if (inserted[0] && typeof onInsert === 'function') await onInsert(db, { messageId: Number(inserted[0].id) });
+    return inserted;
+  };
+  const rows = typeof onInsert === 'function' ? await require('./bot-cards').inTransaction(pool, write) : await write(pool);
 
   broadcast(appId, {
     type: 'chat',
@@ -2242,9 +2253,23 @@ async function sendSystemMessage(pool, appId, content, msgType = 'system', metad
  * this too, as that person: the same thread card, and it should not wake the
  * bot either. Its route has already applied the membership and collaborator
  * gates this function skips.
+ *
+ * `card` (step 3, 11 Nov 2026, services/bot-cards.js): an offer with buttons
+ * under the message ({ kind, args, forUserId }). The card is written in the
+ * message's own transaction, before it: its id goes into the metadata (the
+ * offer and each button name it), the message is written, and the card's
+ * chat_message_id is set, all committed together, then the room hears it.
+ * So buttons on screen always have their card. `card.onInsert(db, { cardId,
+ * messageId })` is the caller's own write in that transaction. Resolves
+ * `cardId` too.
+ *
+ * `onInsert(db, { messageId, cardId })` (step 4, 11 Nov 2026): the caller's
+ * own write about the message, with or without a card, in the same
+ * transaction (services/bot-post.js: the post's record names its message,
+ * so a retry never says it again).
  */
 const BOT_MESSAGE_TYPES = new Set(['message', 'spec_share']);
-async function sendBotMessage(pool, appId, { user, content, metadata = null, thread = null, msgType = 'message', attachmentIds = null } = {}) {
+async function sendBotMessage(pool, appId, { user, content, metadata = null, thread = null, msgType = 'message', attachmentIds = null, card = null, onInsert = null } = {}) {
   if (!thread || !user || !Number.isInteger(Number(user.id))) return null;
   const text = String(content || '').trim().slice(0, MAX_CHAT_LEN);
   if (!text) return null;
@@ -2279,19 +2304,33 @@ async function sendBotMessage(pool, appId, { user, content, metadata = null, thr
       })),
     };
   }
-  const { rows } = await pool.query(
-    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
-     VALUES ($1, $2, $3, $7, $4, $5, $6)
-     RETURNING id, created_at`,
-    [appId, Number(user.id), text, JSON.stringify(allMetadata), thread.type, thread.ref, kind]
-  );
-  if (attRows.length) {
-    await pool.query(
-      `UPDATE chat_message_attachments SET message_id = $1
-        WHERE id = ANY($2) AND user_id = $3 AND message_id IS NULL`,
-      [rows[0].id, attIds, Number(user.id)]
+  const botCards = require('./bot-cards');
+  const write = async (db) => {
+    const made = card ? await botCards.insertCard(db, { ...card, place: 'thread', appId }) : null;
+    if (made) allMetadata = botCards.withThreadCard(allMetadata, made);
+    const { rows: [row] } = await db.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
+       VALUES ($1, $2, $3, $7, $4, $5, $6)
+       RETURNING id, created_at`,
+      [appId, Number(user.id), text, JSON.stringify(allMetadata), thread.type, thread.ref, kind]
     );
-  }
+    if (made) {
+      await db.query('UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1', [made.id, row.id]);
+      // The caller's own write about the card, committed with it.
+      if (typeof card.onInsert === 'function') await card.onInsert(db, { cardId: Number(made.id), messageId: Number(row.id) });
+    }
+    if (attRows.length) {
+      await db.query(
+        `UPDATE chat_message_attachments SET message_id = $1
+          WHERE id = ANY($2) AND user_id = $3 AND message_id IS NULL`,
+        [row.id, attIds, Number(user.id)]
+      );
+    }
+    if (typeof onInsert === 'function') await onInsert(db, { messageId: Number(row.id), cardId: made ? Number(made.id) : null });
+    return { row, cardId: made ? Number(made.id) : null };
+  };
+  const { row: saved, cardId } = card || typeof onInsert === 'function' ? await botCards.inTransaction(pool, write) : await write(pool);
+  const rows = [saved];
   // A reply in a reply thread names its root, as a person's does, so the
   // stream the root is in can draw it (the bot's voice answers there).
   let threadRoot = null;
@@ -2313,13 +2352,13 @@ async function sendBotMessage(pool, appId, { user, content, metadata = null, thr
     username: user.username,
     content: text,
     msgType: kind,
-    ...(attRows.length || metadata ? { metadata: allMetadata } : {}),
+    ...(attRows.length || metadata || cardId ? { metadata: allMetadata } : {}),
     thread,
     ...(threadRoot ? { threadRoot } : {}),
     createdAt: rows[0].created_at,
     postedVia: null,
   }, Number(user.id));
-  return { id: rows[0].id, createdAt: rows[0].created_at };
+  return { id: rows[0].id, createdAt: rows[0].created_at, ...(cardId ? { cardId } : {}) };
 }
 
 /**

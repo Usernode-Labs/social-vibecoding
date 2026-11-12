@@ -4117,7 +4117,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 ) AS base_sha,
                 -- When the merge queue tries this change again after GitHub
                 -- held its merge back (services/integration.js HELD_UNTIL_SQL).
-                ${require('../services/integration').HELD_UNTIL_SQL} AS merge_held_until
+                ${require('../services/integration').HELD_UNTIL_SQL} AS merge_held_until,
+                -- #6563: when Homeroom last tried it, and first met this hold.
+                ${require('../services/integration').HELD_AT_SQL} AS merge_held_at,
+                ${require('../services/integration').HELD_SINCE_SQL} AS merge_held_since
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND (cs.user_id = $2 OR $3::boolean)`,
@@ -10526,6 +10529,10 @@ async function runCodexAttemptLoop({
   resumeThreadId, resolveRuntime, dispatchOnce, retryPredicate,
   sendStatus, waitForStopped, prepareRetry, classifyAttemptStatus,
   containerName, mode = 'build', telemetryComponent = null,
+  // #6602: whose row startCodexAttempt locks and whose turn it is. The
+  // ledger row's user_id stays `userId` (the account whose key pays), so a
+  // turn Homeroom bot runs on somebody else's change names its author here.
+  sessionOwnerId = null,
   // The work item that runs the turn, when workflow work started it: on
   // every attempt's record (startCodexAttempt) and handed to the dispatch
   // (execInWorker's `owner`).
@@ -10626,6 +10633,7 @@ async function runCodexAttemptLoop({
         allowRetryPending: allowRetryPendingForAttempt,
         mode,
         owner,
+        ...(sessionOwnerId ? { sessionOwnerId } : {}),
         telemetryComponent: telemetryComponent
           || (mode === 'scout' ? 'coding_agent_scout' : 'coding_agent_build'),
       });

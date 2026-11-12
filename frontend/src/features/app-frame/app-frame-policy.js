@@ -139,6 +139,7 @@ export function isSafeAppFrameSrc(src, platformOrigin) {
  */
 export const FRAME_THEME_PARAM = 'un-theme';
 export const FRAME_REFRESH_PARAM = 'un-refresh';
+export const FRAME_BUILD_PARAM = 'un-build';
 
 export function sameFrameSrc(a, b) {
   if (a === b) return true;
@@ -149,8 +150,11 @@ export function sameFrameSrc(a, b) {
       url.searchParams.delete(FRAME_THEME_PARAM);
       // An offline app's address (src/services/offline-cache.js) carries the
       // platform's parameters after `#`: its theme is ignored like the
-      // query's, and so is the one-off refresh flag.
+      // query's, and so is the one-off refresh flag. So is the build in its
+      // query: a build that lands under an open app is the reload Improve
+      // offers, never one a render makes on its own.
       if (url.hash.startsWith('#un-')) {
+        url.searchParams.delete(FRAME_BUILD_PARAM);
         const own = new URLSearchParams(url.hash.slice(1));
         own.delete(FRAME_THEME_PARAM);
         own.delete(FRAME_REFRESH_PARAM);

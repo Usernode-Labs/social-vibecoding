@@ -20,6 +20,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const express = require('express');
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -133,7 +135,12 @@ test('a change\'s claim on a request is told once and can be answered', { timeou
     const card = asAna.elsewhere.find((e) => Number(e.id) === Number(pin.id));
     assert.deepEqual({ ...card }, {
       id: Number(pin.id), number: 6230, title: 'Tidy the Workshop', summary: 'Rows show who replied last.',
-      on: 21, request: 20, disputed: false, mine: true, ask: true,
+      on: 21, request: 20, disputed: false, confirmed: false, mine: true,
+      // #6605: the card also says whether the request is already closed (it is
+      // not) and whether votes are what kept the change on #21 (none have been
+      // cast, so the "it stays" line would misreport the reason).
+      closed: false, stays: false,
+      ask: true,
     });
     const asSam = await threads.threadPage(pool, { thread: twenty, viewerId: sam.id });
     assert.equal(asSam.elsewhere.find((e) => Number(e.id) === Number(pin.id)).ask, false, 'only the requester is asked');
@@ -159,6 +166,17 @@ test('a change\'s claim on a request is told once and can be answered', { timeou
   const changeLines = async (sessionId) => (await pool.query(
     `SELECT content FROM chat_messages WHERE app_id = $1 AND thread_type = 'session' AND thread_ref = $2
        AND content LIKE '%doesn''t close their request%' ORDER BY id`, [app.id, sessionId])).rows;
+  const confirmLines = async (sessionId) => (await pool.query(
+    `SELECT content FROM chat_messages WHERE app_id = $1 AND thread_type = 'session' AND thread_ref = $2
+       AND content LIKE '%confirms this closes their request%' ORDER BY id`, [app.id, sessionId])).rows;
+  const agree = async (who, sessionId, n = 20) => {
+    const res = await fetch(`${base}/api/apps/${app.slug}/issues/${n}/changes/${sessionId}/confirm-closing`, {
+      method: 'POST',
+      headers: { 'x-test-user': String(who.id), 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
+      body: '{}',
+    });
+    return { status: res.status, body: await res.json().catch(() => null) };
+  };
 
   await t.test('answering: the gate, the requester and the change\'s builder', async () => {
     const outsider = await user('claim_outsider');
@@ -201,5 +219,93 @@ test('a change\'s claim on a request is told once and can be answered', { timeou
     const home = await threads.threadPage(pool, { thread: twentyOne, viewerId: ana.id });
     assert.deepEqual(home.items.find((i) => i.type === 'change' && Number(i.id) === Number(pin.id)).notConfirmed, [20],
       'the change\'s own "Also closes" line marks request 20');
+  });
+
+  // #6606: the filer's other answer, and the backfill that finds them.
+  await t.test('confirming: the same gate, the filer only, and never the change\'s builder', async () => {
+    const elsewhere = await change(dewi, { linked: [21, 20], pr: 6231, title: 'Retry GitHub errors', summary: 'A turn failed.' });
+    const outsider = await user('claim_outsider2');
+    const refused = await agree(outsider, elsewhere.id);
+    assert.equal(refused.status, 403);
+    assert.equal(refused.body.code, 'join_required', 'a non-member meets the request-membership gate');
+
+    const notFiler = await agree(sam, elsewhere.id);
+    assert.equal(notFiler.status, 403);
+    assert.equal(notFiler.body.code, 'not_requester');
+
+    const own = await change(ana, { linked: [21, 20], status: 'promoted', title: 'Ana\'s own change' });
+    const ownAnswer = await agree(ana, own.id);
+    assert.equal(ownAnswer.status, 409);
+    assert.equal(ownAnswer.body.code, 'own_change');
+
+    const unknownChange = await agree(ana, 999999);
+    assert.equal(unknownChange.status, 404, 'a change that does not link the request');
+  });
+
+  await t.test('confirming records it once and the cards stop asking', async () => {
+    const pooled = await change(dewi, { linked: [21, 20], pr: 6232, title: 'Show the closes list', summary: 'Lists every request.' });
+    const linkedBefore = (await pool.query('SELECT linked_issues FROM chat_sessions WHERE id = $1', [pooled.id])).rows[0].linked_issues;
+
+    const first = await agree(ana, pooled.id);
+    assert.deepEqual(first, { status: 200, body: { ok: true, confirmed: true } });
+    const lines = await confirmLines(pooled.id);
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0].content, '@claim_ana confirms this closes their request #20.');
+    assert.deepEqual((await pool.query('SELECT linked_issues FROM chat_sessions WHERE id = $1', [pooled.id])).rows[0].linked_issues,
+      linkedBefore, 'nothing is unlinked');
+
+    const second = await agree(ana, pooled.id);
+    assert.deepEqual(second, { status: 200, body: { ok: true, confirmed: true } });
+    assert.equal((await confirmLines(pooled.id)).length, 1, 'idempotent, with no second line');
+
+    const twenty = await threads.threadForNumber(pool, { appId: app.id, number: 20 });
+    const card = (await threads.threadPage(pool, { thread: twenty, viewerId: ana.id }))
+      .elsewhere.find((e) => Number(e.id) === Number(pooled.id));
+    assert.equal(card.confirmed, true, 'the request\'s page shows the answer');
+    assert.equal(card.ask, false, 'and stops asking');
+
+    const twentyOne = await threads.threadForNumber(pool, { appId: app.id, number: 21 });
+    const asAna = await threads.threadPage(pool, { thread: twentyOne, viewerId: ana.id });
+    const closes = asAna.items.find((i) => i.type === 'change' && Number(i.id) === Number(pooled.id))
+      .closesRequests.find((r) => Number(r.number) === 20);
+    assert.equal(closes.confirmed, true, 'the Votes card calls it confirmed');
+    assert.equal(closes.waiting, false);
+    assert.equal(closes.canConfirm, false, 'and asks nothing more');
+  });
+
+  await t.test('one answer per claim, either way', async () => {
+    // Request 20's claim on `pin` was disputed above; confirming it now is a no-op.
+    const afterDispute = await agree(ana, pin.id);
+    assert.equal(afterDispute.status, 200);
+    assert.equal(afterDispute.body.confirmed, true);
+    assert.equal((await confirmLines(pin.id)).length, 0, 'a disputed claim is not confirmed');
+    // And a confirmed claim cannot then be disputed.
+    const confirmedChange = (await pool.query(
+      `SELECT session_id FROM change_request_claims WHERE app_id = $1 AND request_number = 20 AND confirmed_at IS NOT NULL LIMIT 1`,
+      [app.id])).rows[0];
+    assert.ok(confirmedChange, 'the confirmation is stored');
+    await answer(ana, Number(confirmedChange.session_id));
+    assert.equal((await changeLines(Number(confirmedChange.session_id))).length, 0, 'a confirmed claim is not disputed');
+  });
+
+  await t.test('the backfill finds a request\'s filer from its twin, and leaves a set one alone', async () => {
+    const { rows: [tony] } = await pool.query(
+      `INSERT INTO users (username, password, has_platform_access) VALUES ('claim_tony', 'x', TRUE) RETURNING id`);
+    await pool.query(`INSERT INTO requests (app_id, number, title) VALUES ($1, 30, 'Filed through the connector')`, [app.id]);
+    await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, kind, created_by)
+       VALUES ($1, 30, 'Filed through the connector', 'general', $2)`, [app.id, tony.id]);
+    await pool.query(`INSERT INTO requests (app_id, number, title, created_by) VALUES ($1, 31, 'Already has a filer', $2)`, [app.id, ana.id]);
+    await pool.query(
+      `INSERT INTO issues (app_id, github_issue_number, title, kind, created_by)
+       VALUES ($1, 31, 'Already has a filer', 'general', $2)`, [app.id, tony.id]);
+
+    const sql = fs.readFileSync(path.join(__dirname, '../src/db/migrations/requests-filer-from-twin.sql'), 'utf8');
+    await pool.query(sql);
+    await pool.query(sql); // forward only and idempotent
+    const filerOf = async (n) => (await pool.query(
+      'SELECT created_by FROM requests WHERE app_id = $1 AND number = $2', [app.id, n])).rows[0].created_by;
+    assert.equal(Number(await filerOf(30)), Number(tony.id), 'a request with no filer gets its twin\'s');
+    assert.equal(Number(await filerOf(31)), Number(ana.id), 'a request that already has one keeps it');
   });
 });

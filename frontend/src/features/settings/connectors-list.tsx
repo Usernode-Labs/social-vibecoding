@@ -10,7 +10,9 @@
  * `Settings._disconnectConnector` is called BY NAME on `window.Settings`, for
  * the reason ./grants-list.tsx gives — and it already owns its own
  * disable-on-click, its refetch and its status reporting, so the component
- * hands it the id and the button and forgets.
+ * hands it the id and the button and forgets. `Settings._reconnectConnector`
+ * likewise, for the reason it gives: Reconnect opens this card's guide on the
+ * step that signs in again, and that guide is static markup settings.js owns.
  */
 
 import { ListRow } from '@/components/ui/grouped-list';
@@ -21,7 +23,14 @@ import { connectorsStore } from './connectors-store.js';
 
 type ToolKey = 'claude' | 'chatgpt' | 'codex' | 'generic';
 type StatusKey = 'working' | 'unused' | 'attention' | 'none';
-type ConnectionView = { id: string; title: string; detail: string; capabilities: string | null };
+type ConnectionView = {
+  id: string;
+  title: string;
+  detail: string;
+  capabilities: string | null;
+  /** Its sign-in ran out and its guide has a step that signs in again (#6137). */
+  reconnect?: boolean;
+};
 type ToolView = { key: ToolKey; status: StatusKey; connections: ConnectionView[] };
 type ConnectorsState = { phase: 'idle' | 'loading' | 'ready'; tools: ToolView[] };
 
@@ -55,8 +64,13 @@ export function ToolStatusView({ status }: { status: StatusKey }) {
 /**
  * Disconnect stays its OWN button and the row is not a control: a destructive
  * action never gets a whole row's width, where a stray thumb finds it.
+ *
+ * An expired row whose guide has a sign-in step also offers Reconnect (#6137), under its lines rather than
+ * beside Disconnect: two buttons in the trailing edge leave a phone's title a
+ * few letters wide. It is the list's tinted control (the guide's "Ask Claude"
+ * surface), the one action the row asks for.
  */
-export function ToolConnectionsView({ connections }: { connections: ConnectionView[] }) {
+export function ToolConnectionsView({ tool, connections }: { tool: ToolKey; connections: ConnectionView[] }) {
   const t = useMessages('settings');
   return (
     <>
@@ -71,6 +85,16 @@ export function ToolConnectionsView({ connections }: { connections: ConnectionVi
             <>
               <span className="block">{connection.detail}</span>
               {connection.capabilities ? <span className="mt-0.5 block">{connection.capabilities}</span> : null}
+              {connection.reconnect ? (
+                <button
+                  type="button"
+                  data-connector-reconnect={tool}
+                  className="mt-2 inline-flex min-h-[44px] items-center rounded-full bg-zinc-100 px-4 text-[0.9375rem] font-semibold text-violet-700 transition-colors hover:bg-zinc-200 dark:bg-zinc-800 dark:text-violet-400 dark:hover:bg-zinc-700"
+                  onClick={() => controller()?._reconnectConnector?.(tool)}
+                >
+                  {t('settings:connectors.list.reconnect')}
+                </button>
+              ) : null}
             </>
           )}
           subtitleClassName="whitespace-normal"
@@ -102,5 +126,5 @@ export function ToolStatus({ tool }: { tool: ToolKey }) {
 
 export function ToolConnections({ tool }: { tool: ToolKey }) {
   const view = useTool(tool);
-  return view && view.connections.length ? <ToolConnectionsView connections={view.connections} /> : null;
+  return view && view.connections.length ? <ToolConnectionsView tool={tool} connections={view.connections} /> : null;
 }

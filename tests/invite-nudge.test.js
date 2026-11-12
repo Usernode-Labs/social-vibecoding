@@ -130,23 +130,27 @@ test('the item claims, then sends, each a step', async () => {
   assert.deepEqual(done, ['claim'], 'nothing is sent for a claim that found nothing');
   const src = read('src/services/invite-nudge.js');
   assert.match(src, /const claimed = await steps\.once\('claim', \(\) => claim\(pool, \{ userId, appId, deps \}\)\);\s+if \(!claimed\?\.nudgeId\) return claimed;\s+return steps\.once\('sent', \(\) => send\(pool, claimed, deps\)\);/);
-  // The claim: a lock on the person, the question asked again, the card and the row in one transaction.
+  // The claim: a lock on the person, the question asked again, the row in one transaction. Its card is
+  // written with its message (step 3, dm.sendDm `card`), and named on the row in that transaction.
   assert.match(src, /pg_advisory_xact_lock\(\$1, \$2\)', \[INVITE_NUDGE_LOCK, Number\(userId\)\]/);
   assert.match(src, /ON CONFLICT \(user_id, app_id\) DO NOTHING RETURNING id/);
   // The send: Main, under the row's idempotency key.
   assert.match(src, /idempotencyKey: `hrbot-invite-nudge-\$\{claimed\.nudgeId\}`/);
   assert.match(src, /threadRootId: false,/);
+  assert.match(src, /onInsert: \(db, \{ cardId \}\) => db\.query\('UPDATE invite_nudges SET card_id = \$2 WHERE id = \$1', \[claimed\.nudgeId, cardId\]\)/);
+  assert.doesNotMatch(src, /INSERT INTO bot_cards/, 'no card is written before its message');
   assert.equal(require('../src/services/advisory-locks').INVITE_NUDGE_LOCK, 991031);
 });
 
-test('a send the chat refuses settles its card as failed', async () => {
+test('a send the chat refuses writes no card, and nothing to settle', async () => {
   const queries = [];
   const pool = { async query(sql, params) { queries.push({ sql, params }); return { rows: [] }; } };
-  const fakeDm = { ...dm, async botAccount() { return { id: 1 }; }, async sendDm() { return null; } };
-  const out = await nudges.send(pool, { nudgeId: 5, cardId: 6, userId: 7, appId: 8, act: 'vote', slug: 'run-club', name: 'Run Club' }, { dm: fakeDm });
+  const asked = [];
+  const fakeDm = { ...dm, async botAccount() { return { id: 1 }; }, async sendDm(_p, args) { asked.push(args); return null; } };
+  const out = await nudges.send(pool, { nudgeId: 5, userId: 7, appId: 8, act: 'vote', slug: 'run-club', name: 'Run Club' }, { dm: fakeDm });
   assert.deepEqual(out, { said: 'not_sent' });
-  assert.match(queries[0].sql, /UPDATE bot_cards SET status = 'failed', error = 'not_sent' WHERE id = \$1 AND status = 'open'/);
-  assert.deepEqual(queries[0].params, [6]);
+  assert.deepEqual(queries, [], 'the card goes with the message or not at all');
+  assert.deepEqual([asked[0].card.kind, asked[0].card.appId, asked[0].card.title], ['invite_friends', 8, 'Invite friends to Run Club']);
   await assert.rejects(nudges.send(pool, { nudgeId: 5 }, { dm: { ...fakeDm, async botAccount() { return null; } } }), /not available/);
 });
 
@@ -156,9 +160,9 @@ test('Not now is decided once on the server, and only Not now', async () => {
   const dismissed = [];
   const deps = { inviteNudge: { async dismiss(_pool, args) { dismissed.push(args); return { ok: true, choice: 'no', label: 'Not now' }; } } };
   assert.deepEqual(await mayor.decideOfferTap(pool, {}, { user: { id: 7 }, actionId: 41, choice: 'yes', deps }),
-    { ok: false, status: 400, error: 'choice must be no' });
+    { ok: false, status: 400, error: 'choice must be no', code: 'no_such_choice' });
   assert.deepEqual(await mayor.decideOfferTap(pool, {}, { user: { id: 7 }, actionId: 41, choice: 'build', deps }),
-    { ok: false, status: 400, error: 'choice must be no' });
+    { ok: false, status: 400, error: 'choice must be no', code: 'no_such_choice' });
   assert.deepEqual(await mayor.decideOfferTap(pool, {}, { user: { id: 7 }, actionId: 41, choice: 'no', deps }),
     { ok: true, choice: 'no', label: 'Not now' });
   assert.equal(dismissed.length, 1);
@@ -174,7 +178,7 @@ test('Not now is decided once on the server, and only Not now', async () => {
   assert.match(queries[1].sql, /UPDATE invite_nudges SET dismissed_at = COALESCE\(dismissed_at, NOW\(\)\) WHERE card_id = \$1/);
   assert.deepEqual(states, [{ id: 90, patch: { status: 'answered', answer: 'Not now', chosen: 'no' } }]);
   assert.deepEqual(await nudges.dismiss(answer([]), { user: { id: 7 }, action: card, deps: { dm: fakeDm } }),
-    { ok: false, status: 409, error: 'already_decided' });
+    { ok: false, status: 409, error: 'already_decided', code: 'already_decided' });
   // Words typed or quoted never decide it: the model reads them.
   const src = read('src/services/homeroom-bot-mayor.js');
   assert.match(src, /AND a\.kind NOT IN \('build_plan', 'invite_friends'\)/);

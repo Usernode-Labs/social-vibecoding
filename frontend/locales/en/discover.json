@@ -159,6 +159,34 @@
     "text": "Use images with the same dimensions. Framing and colour are shared across both themes.",
     "description": "Small note in the featured illustration editor about the light and dark pictures."
   },
+  "illustration.preview.add": {
+    "text": "Add preview loop",
+    "description": "Button in the featured illustration editor: choose a short, silent video clip of the app that plays over the card's picture."
+  },
+  "illustration.preview.replace": {
+    "text": "Replace preview loop",
+    "description": "Button in the featured illustration editor: choose a different short video clip to play over the card's picture."
+  },
+  "illustration.preview.remove": {
+    "text": "Remove preview loop",
+    "description": "Button in the featured illustration editor: drop the card's short video clip, so the card shows its picture only."
+  },
+  "illustration.preview.formats": {
+    "text": "MP4 or WebM, 5 to 8 seconds, up to 1.5 MB, showing made-up content only. It plays over the picture when someone points at the card.",
+    "description": "Small note under the preview loop buttons in the featured illustration editor. Keep the format names."
+  },
+  "illustration.preview.fileLabel": {
+    "text": "Upload preview loop",
+    "description": "Accessible name of the hidden video file chooser in the featured illustration editor."
+  },
+  "illustration.preview.player": {
+    "text": "Preview loop",
+    "description": "Accessible name of the video player that shows the card's preview loop in the featured illustration editor."
+  },
+  "illustration.preview.invalid": {
+    "text": "Choose an MP4 or WebM of at most 1.5 MB.",
+    "description": "Error in the featured illustration editor when the chosen preview loop is the wrong kind of file or too large."
+  },
   "illustration.cardColour": {
     "text": "Card colour",
     "description": "Label, and accessible name, of the row of colour swatches in the featured illustration editor: the background colour of the app's card."
@@ -190,6 +218,22 @@
   "illustration.pending": {
     "text": "A change to this illustration is already waiting for the group's vote. Another can be proposed once it settles. <0>Open the proposal</0>",
     "description": "Shown in the featured illustration editor when an earlier change to the illustration is still being voted on. The numbered tag is a link to that proposal (noun); \"Open\" is a verb."
+  },
+  "illustration.pendingMine": {
+    "text": "Your change to this picture is waiting for the group's vote. Saving replaces it and clears the votes cast on it. <0>Open the proposal</0>",
+    "description": "Shown in the featured illustration editor when the viewer's own change to the picture is waiting for the community's vote: what they save now replaces that change in place. The numbered tag is a link to the proposal (noun); \"Open\" is a verb."
+  },
+  "illustration.openProposal": {
+    "text": "Open the proposal",
+    "description": "Link beside a refused replace in the featured illustration editor, when the change it was for can still be opened (it was already decided). The proposal is the change that was put to the group's vote."
+  },
+  "illustration.replace": {
+    "text": "Replace the waiting change",
+    "description": "Main button of the featured illustration editor, when the viewer's own change to the picture is already waiting for the group's vote: replaces that waiting change with what is on screen, instead of proposing another."
+  },
+  "illustration.replaced": {
+    "text": "Replaced. The group votes again on the new picture. <0>Open the proposal</0>",
+    "description": "Shown in the featured illustration editor after the viewer replaced their own waiting change. The numbered tag is a link to the proposal (noun); \"Open\" is a verb."
   },
   "illustration.proposeNote": {
     "text": "Proposing opens a governance card on the board. The change applies when the group votes it in.",

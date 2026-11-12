@@ -202,6 +202,49 @@ test('the hold is written and cleared as one set: a new head starts without it',
   assert.match(read('src/workflow/proposal/facts.ts'), /cs\.integration_behind_by/);
 });
 
+// ── Held times (#6563) ─────────────────────────────────────────────────
+
+test('the first held try is kept across the repeat refusals of one head, and a new head starts afresh', () => {
+  const first = refusedBy(machine(), merging(), { githubChecks: 'pending' });
+  assert.equal(first.next.data.refused.since, NOW.toISOString(), 'the first try starts the clock');
+  const again = refusedBy(machine(), merging({
+    refused: { head: SHA('7'), main: SHA('4'), kind: 'blocked', checks: 'pending', at: '2026-11-09T18:40:00Z', retryAt: '2026-11-09T18:44:00Z', since: '2026-11-09T18:35:00Z' },
+  }), { githubChecks: 'pending' });
+  assert.equal(again.next.data.refused.since, '2026-11-09T18:35:00Z', 'the same head keeps its first held try');
+  assert.equal(again.next.data.refused.at, NOW.toISOString(), 'the last try moves');
+  const moved = refusedBy(machine(), merging({
+    refused: { head: SHA('6'), main: SHA('4'), kind: 'blocked', checks: 'pending', at: '2026-11-09T18:40:00Z', retryAt: '2026-11-09T18:44:00Z', since: '2026-11-09T18:35:00Z' },
+  }), { githubChecks: 'pending' });
+  assert.equal(moved.next.data.refused.since, NOW.toISOString(), 'a new head, a new wait');
+});
+
+test('#6563: the Merging card has its four states, and Tested says whose checks passed', () => {
+  const view = read('public/js/app-view.js');
+  const start = view.indexOf('  _changeMergeView(item)');
+  const merge = view.slice(start, view.indexOf("  // The change page's half of _stackedOn"));
+  assert.ok(start > 0 && merge.length > 200);
+  assert.match(merge, /changes:page\.merge\.figure\.githubChecks/, 'checks still running');
+  assert.match(merge, /changes:page\.merge\.figure\.githubWait/, 'GitHub held it back');
+  assert.match(merge, /changes:page\.merge\.figure\.failing/, "GitHub's checks failed");
+  assert.match(merge, /changes:page\.merge\.figure\.merging/, 'the merge under way');
+  assert.match(merge, /tone: 'bad'/, 'failing is red');
+  assert.match(merge, /state: 'bad'/, 'failing fills the bar red');
+  assert.doesNotMatch(merge, /done: true/, 'no merge state is finished');
+  // The Tested figure names Homeroom's set while GitHub's holds the merge.
+  const testing = view.slice(view.indexOf('    if (cs === \'passing\') {'));
+  assert.match(testing, /changes:page\.testing\.figure\.passedHomeroom/);
+  assert.match(testing, /changes:page\.testing\.figure\.passed'/);
+});
+
+test('readIntegration serves the last try and the first held try', () => {
+  const { readIntegration } = require('../src/services/integration');
+  const read1 = readIntegration({ merge_held_at: '2026-11-10T20:28:00Z', merge_held_since: '2026-11-10T20:05:00Z' });
+  assert.equal(read1.heldAt, '2026-11-10T20:28:00.000Z');
+  assert.equal(read1.heldSince, '2026-11-10T20:05:00.000Z');
+  assert.equal(readIntegration({}).heldAt, null, 'no record, no claim');
+  assert.equal(readIntegration({}).heldSince, null);
+});
+
 // ── Where it stands ────────────────────────────────────────────────────
 
 test('work state: an approved change GitHub holds is going live, with what it waits on', () => {
@@ -213,17 +256,27 @@ test('work state: an approved change GitHub holds is going live, with what it wa
   assert.deepEqual([change(['github_busy']).stage, change(['github_busy']).line], ['going_live', { code: 'github_wait' }]);
   assert.deepEqual([change(['github_checks_failing']).stage, change(['github_checks_failing']).line], ['checking', { code: 'github_checks_failing' }]);
   assert.equal(change([]).stage, 'up_for_vote', 'nothing held: still up for a vote');
-  assert.equal(ws.WORDS['work.line.githubChecks'], "Waiting for GitHub's checks");
-  assert.equal(ws.WORDS['work.line.githubChecksFailing'], "GitHub's checks are failing");
-  assert.equal(ws.WORDS['work.line.githubWait'], 'Waiting on GitHub');
-  const core = JSON.parse(read('frontend/locales/en/core.json'));
-  for (const key of ['work.line.githubChecks', 'work.line.githubChecksFailing', 'work.line.githubWait']) {
-    assert.equal(ws.WORDS[key], core[key].text, `${key}: the server and the browser say the same`);
+  // 11 Nov 2026: a held merge is never open for votes, so Needs you never
+  // asks for one (work_states.vote_open).
+  for (const reasons of [['github_checks'], ['github_refused'], ['github_busy'], ['github_checks_failing']]) {
+    assert.equal(ws.voteOpenOf(change(reasons)), false, reasons[0]);
   }
+  assert.equal(ws.voteOpenOf(change([])), true);
+  assert.equal(ws.lineSays({ line: { code: 'github_checks' } }), "Waiting on GitHub's checks");
+  assert.equal(ws.lineSays({ line: { code: 'github_checks_failing' } }), "GitHub's checks are failing");
+  assert.equal(ws.lineSays({ line: { code: 'github_wait' } }), 'Waiting on GitHub');
+  // The phrase ids ship with the row (`words`); the browser draws them.
+  const core = JSON.parse(read('frontend/locales/en/core.json'));
+  for (const [code, key] of [['github_checks', 'work.line.githubChecks'], ['github_checks_failing', 'work.line.githubChecksFailing'],
+    ['github_wait', 'work.line.githubWait']]) {
+    const phrase = ws.phrasesOf({ stage: 'going_live', line: { code } }).line;
+    assert.equal(phrase.id, `core:${key}`);
+    assert.equal(ws.english(phrase), core[key].text, `${key}: the server and the browser say the same`);
+  }
+  // 11 Nov 2026 (one model): the browser draws the line the server words
+  // (lib/work-state.ts lineWords reads the standing's `words`).
   const lines = read('frontend/src/lib/work-state.ts');
-  assert.match(lines, /github_checks: 'core:work\.line\.githubChecks'/);
-  assert.match(lines, /github_checks_failing: 'core:work\.line\.githubChecksFailing'/);
-  assert.match(lines, /github_wait: 'core:work\.line\.githubWait'/);
+  assert.match(lines, /return \(state\.words && state\.words\.line\) \|\| null;/);
 });
 
 test('work state: the bot\'s own change at its vote step reads the same', () => {
@@ -232,19 +285,38 @@ test('work state: the bot\'s own change at its vote step reads the same', () => 
   assert.match(vote, /const hold = githubHold\(row\);\s*if \(hold\) return state\(hold\.stage, \{ since, line: \{ code: hold\.code \} \}\);/);
 });
 
-test('the change page: its badge, its status title and its Votes card say the same', () => {
+test('#6593: the page read asks GitHub for the count only while the checks are running', () => {
+  const src = read('src/routes/votes.js');
+  assert.match(src, /require\('\.\.\/services\/github-checks-progress'\)/);
+  assert.match(src, /held\.indexOf\('github_checks'\) !== -1 && held\.indexOf\('github_checks_failing'\) === -1/,
+    'a failed run is the failing card\'s to say: no read is made');
+  assert.match(src, /headSha: proposal\.integration\.headSha \|\| proposal\.reviewed_head_sha/);
+});
+
+test('the change page: its badge, its status title and the Merging card say the same', () => {
   const changes = JSON.parse(read('frontend/locales/en/changes.json'));
   const session = JSON.parse(read('frontend/locales/en/session.json'));
-  for (const key of ['badge.reason.githubChecks.label', 'badge.reason.githubChecks.detail', 'badge.reason.githubChecks.detailSoon',
-    'badge.reason.githubChecksFailing.label', 'badge.reason.githubChecksFailing.detail',
-    'page.votes.note.githubChecks', 'page.votes.note.githubChecksFailing']) {
+  for (const key of ['badge.reason.githubChecks.label', 'badge.reason.githubChecks.detail',
+    'badge.reason.githubChecksFailing.label', 'badge.reason.githubChecksFailing.detail']) {
     assert.ok(changes[key] && changes[key].text && changes[key].description, key);
   }
-  for (const key of ['merge.title.githubChecks', 'merge.title.githubChecksSoon']) assert.ok(session[key] && session[key].text, key);
+  // #6593: the still-running tooltip names what GitHub is doing, with no
+  // retry time, and the "soon" variant is gone.
+  assert.equal(changes['badge.reason.githubChecks.detail'].text,
+    'GitHub is building and scanning the release images for this change, which usually takes about 6 minutes. It merges as soon as they pass.');
+  assert.equal(changes['badge.reason.githubChecks.detailSoon'], undefined);
+  assert.equal(session['merge.title.githubChecks'].text,
+    'GitHub is building and scanning the release images for this change, which usually takes about 6 minutes. It merges as soon as they pass.');
+  assert.equal(session['merge.title.githubChecksSoon'], undefined);
   const view = read('public/js/app-view.js');
   assert.match(view, /served\.includes\('github_checks'\)/);
   assert.match(view, /served\.includes\('github_checks_failing'\)/);
-  assert.match(view, /changes:page\.votes\.note\.githubChecks'/);
+  // #6563: the GitHub hold is said once, on the Merging card; the Votes card
+  // no longer carries its own line about it.
+  assert.doesNotMatch(view, /changes:page\.votes\.note\.githubChecks/);
+  assert.match(view, /_changeMergeView\(item\)/);
+  assert.match(view, /changes:page\.merge\.figure\.githubChecks/);
+  assert.match(view, /changes:page\.merge\.figure\.failing/);
   assert.match(read('public/js/merge-status.js'), /served\.indexOf\('github_checks'\) !== -1 \? 'github_checks'/);
   for (const text of Object.values(changes).map((v) => v.text).filter((t) => /GitHub's/.test(t))) {
     assert.doesNotMatch(text, /—/, 'no em dashes');

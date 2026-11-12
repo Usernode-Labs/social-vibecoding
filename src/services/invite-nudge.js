@@ -144,8 +144,9 @@ async function targets(pool, { now = new Date(), limit = 200 } = {}) {
 /**
  * Claim one person's nudge for one project: asked again, under a lock on the
  * person, whether it is still owed (the window, the once, the week, who they
- * are), then its card and its row written in one transaction. Resolves what
- * the send needs, or `{ skipped }` with why nothing was claimed.
+ * are), then its row written. Its card is written with its message (send).
+ * Resolves what the send needs, or `{ skipped }` with why nothing was
+ * claimed.
  */
 async function claim(pool, { userId, appId, now = new Date(), deps = {} }) {
   const dm = deps.dm || require('./homeroom-bot-dm');
@@ -165,18 +166,14 @@ async function claim(pool, { userId, appId, now = new Date(), deps = {} }) {
     if (!works) { await client.query('ROLLBACK'); return { skipped: 'no_bot' }; }
     const { rows: [app] } = await client.query('SELECT slug, name FROM apps WHERE id = $1', [Number(appId)]);
     const name = String(app?.name || app?.slug || '');
-    const { rows: [card] } = await client.query(
-      `INSERT INTO bot_cards (user_id, app_id, kind, title) VALUES ($1, $2, $3, $4) RETURNING id`,
-      [Number(userId), Number(appId), dm.INVITE_NUDGE_KIND, `Invite friends to ${name}`.slice(0, 200)],
-    );
     const { rows: [row] } = await client.query(
-      `INSERT INTO invite_nudges (user_id, app_id, act, card_id) VALUES ($1, $2, $3, $4)
+      `INSERT INTO invite_nudges (user_id, app_id, act) VALUES ($1, $2, $3)
        ON CONFLICT (user_id, app_id) DO NOTHING RETURNING id`,
-      [Number(userId), Number(appId), owed.act, card.id],
+      [Number(userId), Number(appId), owed.act],
     );
     if (!row) { await client.query('ROLLBACK'); return { skipped: 'already' }; }
     await client.query('COMMIT');
-    return { nudgeId: row.id, cardId: card.id, userId: Number(userId), appId: Number(appId), act: owed.act, slug: app.slug, name };
+    return { nudgeId: row.id, userId: Number(userId), appId: Number(appId), act: owed.act, slug: app.slug, name };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
@@ -187,10 +184,11 @@ async function claim(pool, { userId, appId, now = new Date(), deps = {} }) {
 
 /**
  * Send a claimed nudge in the person's chat with the bot (Main), under an
- * idempotency key of its row, and tie the message to its card and its row.
+ * idempotency key of its row, its card (Not now) written with the message
+ * and named on its row in the same transaction (step 3, dm.sendDm `card`).
  * Throws when the bot cannot be found (the item tries again). Resolves
  * `{ said }`: 'sent', or 'not_sent' when the chat refused it (the bot
- * blocked, the chat left), when the card is settled as failed.
+ * blocked, the chat left), when no card is written either.
  */
 async function send(pool, claimed, deps = {}) {
   const dm = deps.dm || require('./homeroom-bot-dm');
@@ -202,17 +200,17 @@ async function send(pool, claimed, deps = {}) {
     userId: claimed.userId,
     content,
     idempotencyKey: `hrbot-invite-nudge-${claimed.nudgeId}`,
-    metadata: dm.inviteNudgeMeta({ slug: claimed.slug, appName: claimed.name, act: claimed.act, actionId: claimed.cardId }),
+    metadata: dm.inviteNudgeMeta({ slug: claimed.slug, appName: claimed.name, act: claimed.act, actionId: null }),
     threadRootId: false,
+    card: {
+      kind: dm.INVITE_NUDGE_KIND, appId: claimed.appId, title: `Invite friends to ${claimed.name}`.slice(0, 200),
+      onInsert: (db, { cardId }) => db.query('UPDATE invite_nudges SET card_id = $2 WHERE id = $1', [claimed.nudgeId, cardId]),
+    },
   }) : null;
   if (!sent?.messageId) {
-    await pool.query(
-      `UPDATE bot_cards SET status = 'failed', error = 'not_sent' WHERE id = $1 AND status = 'open'`, [claimed.cardId]);
     log.info('invite-nudge', 'A nudge was not sent', { userId: claimed.userId, appId: claimed.appId });
     return { said: 'not_sent' };
   }
-  await pool.query('UPDATE bot_cards SET message_id = $2, conversation_id = $3 WHERE id = $1',
-    [claimed.cardId, sent.messageId, sent.conversationId]);
   await pool.query('UPDATE invite_nudges SET sent_at = COALESCE(sent_at, NOW()), message_id = $2 WHERE id = $1',
     [claimed.nudgeId, sent.messageId]);
   return { said: 'sent', messageId: sent.messageId };
@@ -246,7 +244,7 @@ async function dismiss(pool, { user, action, deps = {} }) {
       WHERE id = $1 AND user_id = $2 AND status = 'open' RETURNING id`,
     [Number(action.id), Number(user.id)],
   );
-  if (!decided.length) return { ok: false, status: 409, error: 'already_decided' };
+  if (!decided.length) return { ok: false, status: 409, error: 'already_decided', code: 'already_decided' };
   await pool.query('UPDATE invite_nudges SET dismissed_at = COALESCE(dismissed_at, NOW()) WHERE card_id = $1', [Number(action.id)]);
   const label = dm.inviteNudgeActions().find((a) => a.id === 'no').label;
   if (action.message_id) {

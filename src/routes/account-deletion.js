@@ -1,5 +1,7 @@
 'use strict';
 
+const { readSessionCookie, clearSessionCookies } = require('../services/browser-session-cookies');
+
 const { Router } = require('express');
 const { rateLimit } = require('express-rate-limit');
 const { getPool } = require('../db/pool');
@@ -19,7 +21,7 @@ function accountDeletionRoutes(config, { pool = getPool(config) } = {}) {
   const limiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false,
     keyGenerator: req => String(req.user.id), message: { error: 'Too many attempts. Try again in 15 minutes.' } });
   const browser = (req, res, next) => {
-    if (!req.user || req.cliAuthenticated || !req.cookies?.session) {
+    if (!req.user || req.cliAuthenticated || !readSessionCookie(req)) {
       return res.status(401).json({ error: 'Sign in in your browser before deleting your account.' });
     }
     // A JSON-only mutation cannot be issued by a cross-origin HTML form.
@@ -42,10 +44,9 @@ function accountDeletionRoutes(config, { pool = getPool(config) } = {}) {
       res.locals.accountDeletionResponse = true;
       const result = await deletion.deleteAccount(pool, {
         userId: req.user.id, actorId: req.user.id, mode: 'self',
-        confirmation: req.body?.confirmation, password: req.body?.password, sessionToken: req.cookies.session,
+        confirmation: req.body?.confirmation, password: req.body?.password, sessionToken: readSessionCookie(req),
       });
-      res.clearCookie('session', { path: '/' });
-      res.clearCookie(require('../services/browser-api-cache').SCOPE_COOKIE, { path: '/' });
+      clearSessionCookies(res);
       res.json(result);
     } catch (err) { sendError(res, err); }
   });

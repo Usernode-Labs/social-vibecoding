@@ -623,7 +623,7 @@ Not built yet, for the same runs: taking a browser offline and back
 location (mountain-trail PR 12), and showing a change in its people's
 language (world-weather PR 18: the personas' tokens carry `locale: 'en'`,
 `shots-identities.js`). Going offline needs the browser context itself
-(Playwright's `setOffline`), which Playwright MCP 0.0.41 offers no tool for;
+(Playwright's `setOffline`), which Playwright MCP 0.0.85 offers no tool for;
 a location can be granted at launch (`--grant-permissions geolocation` and a
 `contextOptions.geolocation` config) once a declared change can ask for it;
 and a language needs a locale on the declaration, carried to the persona
@@ -822,7 +822,7 @@ each declared screen as before).
 
 - **The screenshot tool.** The pinned Playwright MCP hard-codes
   `browser_take_screenshot` to CSS scale. The worker image patches that one
-  tool (`worker/patch-playwright-mcp-screenshot.js`): with
+  tool (`worker/patch-playwright-mcp.js`): with
   `SHOTS_SCREENSHOT_SCALE=device`, the file it saves is captured at
   `scale: "device"`, and the image it answers the agent with is a second
   capture at CSS scale, the size it always was, so a 3x screen never reaches
@@ -1234,9 +1234,10 @@ The shots agent is always Claude Code on this model, in a fresh thread
 started from its brief, including for proposals built on Codex (OpenRouter).
 
 Clips are recorded only for runs with a `motion` change
-(`SHOTS_RECORD_CLIPS=1` in the worker adds `--save-video` to each browser, at
-`SHOTS_CLIP_SIZE`, the desktop motion screens' size, or 1280x800, and at
-`SHOTS_PHONE_CLIP_SIZE` for the phone browsers). Each persona's browser saves
+(`SHOTS_RECORD_CLIPS=1` in the worker gives each browser a Playwright config
+that records its pages' video, `contextOptions.recordVideo`, into its own
+directory, at `SHOTS_CLIP_SIZE`, the desktop motion screens' size, or
+1280x800, and at `SHOTS_PHONE_CLIP_SIZE` for the phone browsers). Each persona's browser saves
 files under `SHOTS_DIR/<member|admin|full_admin|guest>` via `--output-dir`,
 and its phone browser under `SHOTS_DIR/<persona>_phone`.
 
@@ -1261,7 +1262,8 @@ and its phone browser under `SHOTS_DIR/<persona>_phone`.
 | Every shots page's init script (install strip dismissed unless `shots-install-strip=show`; the Workshop's visit stamp dropped) | `worker/shots-page-init.js` |
 | Persona tokens and the guest's, and the warnings on declaring (`mintShotsAuthTokens`, `shotsGuestIdentity`, `personaWarnings`) | `src/services/shots-identities.js` |
 | Phone sign-in on Homeroom's copies (`shotsPhoneSignInEnv`, `shotsPhoneTestCodeFrom`, `testNumbersAllowed`) | `src/services/shots-environment.js`, `src/config.js`, `src/services/firebase-phone-auth.js` |
-| Browser servers (`--output-dir`, `--save-video`, the phone browsers' `--device`) | `worker/write-shots-mcp-config.js` |
+| Browser servers (`--output-dir`, the clips' `recordVideo` config, the phone browsers' `--device`) | `worker/write-shots-mcp-config.js` |
+| What the image changes in Playwright MCP (named shots answer their image and land in `--output-dir`, actions answer with the page snapshot, density, close-ups, the settle wait) | `worker/patch-playwright-mcp.js` |
 | Egress proxy (origins, public-only egress, platform assets, requests held or failed) | `worker/shots-origin-proxy.js` |
 | Where the browser may go, and which shots may be published | `worker/shots-boundary.js` |
 | Local dry run: the pair, then the shots | `scripts/shots-dry-run-pair.js`, `scripts/shots-dry-run.js` |
@@ -1365,11 +1367,13 @@ Still open:
 - An element shot is cut at the element's own box, so a badge drawn over a
   corner is half clipped. Crops too small to read (under 120×40 px) no
   longer lead the card; the screen shots do.
-- Shots are 1×: Playwright MCP 0.0.41 saves screenshots at CSS scale.
-  0.0.83 adds `scale: "device"`, but it also renames the binary
-  (`playwright-mcp`), renames an element's `ref` to `target`, and replaces
-  `--save-video` with `browser_start_video`/`browser_stop_video`; the same
-  server is the coding agent's in-loop browser. Upgrading is its own change.
+- Shots are 1× unless a run is taken at device density
+  (`services/shots-density.js`). The worker runs Playwright MCP 0.0.85 and
+  its own Chromium (Chrome for Testing 158), with the image's patch
+  (`worker/patch-playwright-mcp.js`): upstream answers an action with a link
+  to a snapshot file and a named screenshot without its image, which the
+  shots agent, having no file tools, could not read. An element is named by
+  `target` (its ref from a snapshot), no longer `ref`.
 - The agent does not always call `browser_wait_for` before shooting. The
   screenshot tool now settles by itself first (its own requests finished and
   a stable page, at most 3 s), so a conversation that loads late is in the

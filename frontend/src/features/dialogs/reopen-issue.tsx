@@ -78,6 +78,11 @@ export function ReopenIssueDialog() {
     }
 
     dialog.close();
+    // #6595: as the close dialog does — the view this was proposed from
+    // re-reads at once, wherever it is shown.
+    (window.App?._liveRefresh as
+      ((kind: string, ids: null, opts: Record<string, unknown>) => unknown) | undefined)
+      ?.('issue', null, { appSlug: appData.slug, issueNumber: target });
     await (appView?._loadDevFeed as (() => Promise<void>) | undefined)?.();
     // Refresh the opened-topic card too (the issue row's button flips to
     // "Reopen proposed") — _loadDevFeed's repaint no-ops without #dev-feed.
