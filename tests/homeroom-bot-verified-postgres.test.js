@@ -153,17 +153,21 @@ test('the verified-accounts rule against the full PostgreSQL schema', { timeout:
   await t.test('the moment is written once, the grandfather box decides, and admins always have the bot', async () => {
     const first = (await settings()).verifiedSince;
     assert.ok(first, 'written when the rule was switched on');
-    await new Promise((r) => setTimeout(r, 15));
+    // Kept apart from "now" without waiting: the stored moment is moved an
+    // hour back, so a save that rewrote it would show.
+    const moved = new Date(Date.parse(first) - 3600 * 1000).toISOString();
+    await pool.query("UPDATE platform_settings SET value = $1 WHERE key = 'homeroom_bot_verified_since'", [moved]);
     assert.deepEqual(await save({ worksFor: 'verified', verifiedGrandfather: true }), { ok: true });
-    assert.equal((await settings()).verifiedSince, first, 'a later save of verified does not move it');
+    assert.equal((await settings()).verifiedSince, moved, 'a later save of verified does not move it');
+    const since = moved;
     const early = await user('early');
-    await pool.query("UPDATE users SET platform_access_granted_at = $2::timestamptz - INTERVAL '1 day' WHERE id = $1", [early.id, first]);
+    await pool.query("UPDATE users SET platform_access_granted_at = $2::timestamptz - INTERVAL '1 day' WHERE id = $1", [early.id, since]);
     const late = await user('late');
-    await pool.query("UPDATE users SET platform_access_granted_at = $2::timestamptz + INTERVAL '1 minute' WHERE id = $1", [late.id, first]);
+    await pool.query("UPDATE users SET platform_access_granted_at = $2::timestamptz + INTERVAL '1 minute' WHERE id = $1", [late.id, since]);
     const waited = await user('waited');
-    await pool.query("UPDATE users SET created_at = $2::timestamptz - INTERVAL '30 days', platform_access_granted_at = $2::timestamptz + INTERVAL '1 minute' WHERE id = $1", [waited.id, first]);
+    await pool.query("UPDATE users SET created_at = $2::timestamptz - INTERVAL '30 days', platform_access_granted_at = $2::timestamptz + INTERVAL '1 minute' WHERE id = $1", [waited.id, since]);
     const boss = await user('boss', { isAdmin: true });
-    await pool.query("UPDATE users SET platform_access_granted_at = $2::timestamptz + INTERVAL '1 minute' WHERE id = $1", [boss.id, first]);
+    await pool.query("UPDATE users SET platform_access_granted_at = $2::timestamptz + INTERVAL '1 minute' WHERE id = $1", [boss.id, since]);
     let s = await settings();
     assert.deepEqual(
       [await dm.botWorksFor(pool, s, early), await dm.botWorksFor(pool, s, late), await dm.botWorksFor(pool, s, waited), await dm.botWorksFor(pool, s, boss)],
@@ -174,13 +178,13 @@ test('the verified-accounts rule against the full PostgreSQL schema', { timeout:
     s = await settings();
     assert.equal(await dm.botWorksFor(pool, s, early), false, 'unticked, the rule applies to everyone');
     assert.equal(await dm.botWorksFor(pool, s, boss), true);
-    assert.equal((await settings()).verifiedSince, first, 'unticking the box leaves the moment');
+    assert.equal((await settings()).verifiedSince, moved, 'unticking the box leaves the moment');
     // Off removes the moment; on again writes a new one.
     await save({ worksFor: 'everyone' });
     assert.equal((await settings()).verifiedSince, null);
     assert.equal(await dm.botWorksFor(pool, await settings(), late), true, 'everyone again');
     await save({ worksFor: 'verified', verifiedGrandfather: false });
-    assert.ok(Date.parse((await settings()).verifiedSince) > Date.parse(first));
+    assert.ok(Date.parse((await settings()).verifiedSince) > Date.parse(moved), 'a new moment, not the old one');
   });
 
   await t.test('the chat: one fixed reply with Verify, once a day, no model asked; verified, the model answers', async () => {
