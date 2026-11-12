@@ -216,6 +216,13 @@ config:
   # build, and both are still recognized here until then. Empty when nothing
   # is moving. Must differ from appsDomain and domain.
   legacyAppsDomain: ""
+  # A domain of their own for previews (src/services/previews-domain.js):
+  # <slug>--s<id>.<previewsDomain>, on another registrable site from both the
+  # platform and the apps, so a preview's unreviewed code cannot plant
+  # cookies on production apps. Empty keeps previews on appsDomain. A preview
+  # moves on its next build and keeps serving on appsDomain until then. The
+  # wildcard certificate must cover it. Kubernetes routing only.
+  previewsDomain: ""
   # Switch only after the native cookie migration and app-domain move in
   # docs/plans/browser-site-isolation.md. Strict refuses legacy sessions and
   # requires appsDomain on a separate registrable browser site.

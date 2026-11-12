@@ -99,11 +99,15 @@ function send(res, status, headers, body, method) {
 // asks the platform to wake the preview, polls, and reloads once the app
 // answers. Any other host keeps the plain 404 below.
 function sleepingPreview(req, res, method) {
-  // A preview still on the old apps domain while apps move (its next build
-  // moves it: services/apps-domain-move.js) sleeps and wakes there too.
-  const host = wakingPage.previewHost(req.headers.host, process.env.USERNODE_APPS_DOMAIN)
-    || (process.env.USERNODE_LEGACY_APPS_DOMAIN
-      ? wakingPage.previewHost(req.headers.host, process.env.USERNODE_LEGACY_APPS_DOMAIN) : null);
+  // A preview on the previews domain (services/previews-domain.js), or one
+  // not rebuilt yet on the apps domain, or on the old apps domain while apps
+  // move (its next build moves it: services/apps-domain-move.js), sleeps
+  // and wakes there too.
+  const host = [
+    process.env.USERNODE_PREVIEWS_DOMAIN,
+    process.env.USERNODE_APPS_DOMAIN,
+    process.env.USERNODE_LEGACY_APPS_DOMAIN,
+  ].filter(Boolean).map((domain) => wakingPage.previewHost(req.headers.host, domain)).find(Boolean) || null;
   if (!host) return false;
   const headers = { 'Cache-Control': 'no-store', 'Retry-After': '10' };
   if (method === 'GET' && wakingPage.wantsDocument(req.headers)) {
