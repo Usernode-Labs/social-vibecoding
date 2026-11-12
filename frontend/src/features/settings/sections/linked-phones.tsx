@@ -231,7 +231,11 @@ export function LinkedPhonesSection() {
   useEffect(() => {
     if (phones || browsers) reportPhones((phones?.length || 0) + (browsers?.length || 0));
   }, [phones, browsers]);
-  useWindowEvent('usernode:settings-section', () => { void load(); });
+  // Read again when this page is opened, never when another one is (#6591:
+  // every page of Settings re-read both lists, hidden, on each switch).
+  useWindowEvent('usernode:settings-section', (event) => {
+    if ((event as CustomEvent<{ section?: string }>).detail?.section === 'phones') void load();
+  });
 
   const unlink = async (phone: LinkedPhone) => {
     if (busy) return;
