@@ -64,9 +64,10 @@ const GATES = [
     key: 'admin_yes',
     label: 'Admin approval',
     actor: 'admin',
-    // A locked app, or (#6643) a change held for an admin
-    // (services/release-holds.js): either asks for an admin's yes.
-    applies: (c) => !!c.locked || !!c.held,
+    // A locked app, (#6643) a change held for an admin
+    // (services/release-holds.js), or (#6642) a change the Content rules
+    // review flagged while CONTENT_REVIEW_MODE is `admin`.
+    applies: (c) => !!c.locked || !!c.held || !!c.contentHold,
   },
   {
     // Under direct-merge lanes (the merge-queue machine, src/workflow/merge-queue/) this asks one thing:

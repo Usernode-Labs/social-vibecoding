@@ -19,6 +19,7 @@
 import type { Tx } from '../kernel/index.ts';
 import { readPrGate } from '../rules/pr-gate.ts';
 import { parseRepoAddress } from '../rules/github-url.ts';
+import { contentAdminHold } from '../rules/merge-claim.ts';
 
 const SHA = /^[0-9a-f]{40}$/;
 const sha = (v: unknown) => (SHA.test(String(v || '').toLowerCase()) ? String(v).toLowerCase() : null);
@@ -48,8 +49,9 @@ export interface Candidate {
   // A settled verdict stands on the pinned head; a run for it is under way.
   settled: boolean;
   runInFlight: boolean;
-  // Something only a person can change: a locked app with no admin Yes,
-  // checks that failed on the pinned head.
+  // Something only a person can change: a locked app, or a head the Content
+  // rules review flagged (#6642), with no admin Yes; checks that failed on
+  // the pinned head.
   unmergeable: string | null;
   // What the proposal machine holds: its state, a gate, an attempt or a sync
   // under way, GitHub's last refusal, what the AI could not resolve, the
@@ -112,6 +114,11 @@ const LINE_SQL = `
                   WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND pv.approval_epoch = cs.approval_epoch
                     AND u.is_admin = TRUE AND u.admin_readonly = FALSE
                     AND pv.user_id IS DISTINCT FROM cs.user_id) AS hold_admin_yes,
+         (SELECT lower(r->>'reviewedSha')
+            FROM jsonb_array_elements(CASE WHEN jsonb_typeof(cs.test_results) = 'array'
+                                           THEN cs.test_results ELSE '[]'::jsonb END) r
+           WHERE r->>'name' = 'Content rules' AND r->>'status' = 'fail'
+           LIMIT 1) AS content_flag_sha,
          (SELECT COUNT(*)::int FROM pr_votes pv
            WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND pv.approval_epoch = cs.approval_epoch
              AND counts_toward_session_outcome(pv.user_id, pv.session_id)) AS yes_count,
@@ -126,6 +133,7 @@ const LINE_SQL = `
 export async function readLine(tx: Tx, appId: number, now: Date): Promise<Candidate[]> {
   const { rows } = await tx.query(LINE_SQL, [appId]);
   const out: Candidate[] = [];
+  const holdOn = contentAdminHold();
   for (const r of rows) {
     const d = r.wf_data || {};
     const gate = await readPrGate(tx, {
@@ -140,7 +148,10 @@ export async function readLine(tx: Tx, appId: number, now: Date): Promise<Candid
     const integrationMain = sha(r.integration_main_sha);
     const githubConflict = d.refused?.kind === 'conflict' && !!head && sha(d.refused.head) === head
       && (!d.refused.main || !integrationMain || sha(d.refused.main) === integrationMain);
-    const unmergeable = (r.locked === true && r.admin_yes === false) || (r.held === true && r.hold_admin_yes === false) ? 'lock'
+    // #6642: a head the Content rules review flagged waits for an admin's
+    // Yes exactly as a locked app's does, so it reads as the same 'lock'.
+    const flagged = holdOn && !!head && sha(r.content_flag_sha) === head;
+    const unmergeable = ((r.locked === true || flagged) && r.admin_yes === false) || (r.held === true && r.hold_admin_yes === false) ? 'lock'
       : (r.check_state === 'failing' || r.check_state === 'error') && onHead && !!checksSha ? `checks_${r.check_state}` : null;
     out.push({
       id: Number(r.id), head, epoch: Number(r.approval_epoch) || 0,
