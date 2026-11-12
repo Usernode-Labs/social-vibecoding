@@ -19,6 +19,9 @@ const USERNODE_DOMAIN = process.env.USERNODE_DOMAIN || 'apps.example.invalid';
 // Keep platform links/auth on USERNODE_DOMAIN while apps and previews may
 // live beside it, e.g. my.example.com and <slug>.example.com.
 const USERNODE_APPS_DOMAIN = process.env.USERNODE_APPS_DOMAIN || USERNODE_DOMAIN;
+// The apps domain this one replaced, while apps and previews move off it
+// (services/apps-domain-move.js). Empty when nothing is moving.
+const USERNODE_LEGACY_APPS_DOMAIN = require('./apps-domain-move').legacyAppsDomain();
 
 function assertAppHostname(hostname, platformDomain = USERNODE_DOMAIN) {
   if (hostname.toLowerCase() === platformDomain.toLowerCase()) {
@@ -58,6 +61,13 @@ function productionHostname(slug) {
 // platform already assigns. `sessionLabel` is `s${session.id}`.
 function stagingHostname(slug, sessionLabel) {
   return assertAppHostname(`${slug}--${sessionLabel}.${USERNODE_APPS_DOMAIN}`);
+}
+
+// Where an app was before its domain moved, or null when nothing is moving.
+// Only ever compared against (a custom domain's CNAME may still point here);
+// nothing is served or routed at it.
+function legacyProductionHostname(slug) {
+  return USERNODE_LEGACY_APPS_DOMAIN ? `${slug}.${USERNODE_LEGACY_APPS_DOMAIN}` : null;
 }
 
 // One-level wildcard match, the same rule browsers apply: `*.a.b` covers
@@ -253,12 +263,14 @@ function warmCert(hostname, {
 module.exports = {
   productionHostname,
   stagingHostname,
+  legacyProductionHostname,
   probeEdge,
   warmCert,
   summarizeCert,
   matchesName,
   USERNODE_DOMAIN,
   USERNODE_APPS_DOMAIN,
+  USERNODE_LEGACY_APPS_DOMAIN,
   assertAppHostname,
   CERT_WARM_TIMEOUT_MS,
   CERT_PROBE_SLOW_MS,
