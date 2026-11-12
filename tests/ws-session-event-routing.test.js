@@ -262,9 +262,10 @@ test('checks and previews still reach everyone who may view the app', async () =
   await settle();
   ws.broadcastGlobal({ type: 'session_event', sessionId: 100, event: 'checks_ready', checkState: 'passed' });
   ws.broadcastGlobal({ type: 'session_event', sessionId: 100, event: 'staging_ready', url: 'https://x' });
+  ws.broadcastGlobal({ type: 'session_event', sessionId: 100, event: 'staging_awake', url: 'https://x' });
   await settle();
-  assert.deepEqual(sessionEvents(stranger, 100).map((m) => m.event), ['checks_ready', 'staging_ready'],
-    'a board or proposal page on a public app still patches its row');
+  assert.deepEqual(sessionEvents(stranger, 100).map((m) => m.event), ['checks_ready', 'staging_ready', 'staging_awake'],
+    'a board or proposal page on a public app still patches its row, and a woken preview opens for whoever pressed Try it');
   stranger.terminate();
 });
 
@@ -285,7 +286,9 @@ test('the audience decision is per event type', () => {
   assert.equal(ws.sessionEventAudience({ event: 'cc_progress' }), 'session');
   assert.equal(ws.sessionEventAudience({ event: 'mayor_reasoning' }), 'session');
   assert.equal(ws.sessionEventAudience({ event: 'status' }), 'session');
-  for (const e of ['checks_ready', 'staging_ready', 'staging_failed']) {
+  // staging_awake: a woken preview's loader may be a member's on somebody
+  // else's change, who neither owns nor watches the session.
+  for (const e of ['checks_ready', 'staging_ready', 'staging_awake', 'staging_failed']) {
     assert.equal(ws.sessionEventAudience({ event: e }), 'app', e);
   }
 });

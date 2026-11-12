@@ -770,7 +770,8 @@ function broadcastGlobal(data) {
 //     — on the owner's or an admin's screen) and `unwatch_session` when it
 //     leaves, and re-sends its watches whenever the socket reconnects;
 //   * for the few events lists and boards also draw (SESSION_FANOUT_EVENTS:
-//     a checks run's progress and verdict, a preview built or failed),
+//     a checks run's progress and verdict, a preview built, woken or
+//     failed),
 //     everyone who may VIEW the app as well — the broadcastGlobalScoped
 //     audience. Those are the events App.handleSessionEvent handles before
 //     its "is this the open session" gate; every other event it drops
@@ -779,7 +780,10 @@ function broadcastGlobal(data) {
 // Cached owner/app metadata and the bus routing select candidates. The
 // receiving pod checks current identity, session ownership and app access
 // against PostgreSQL before disclosing anything to its own sockets.
-const SESSION_FANOUT_EVENTS = new Set(['checks_ready', 'staging_ready', 'staging_failed']);
+// A woken preview (`staging_awake`, #6157) is a preview made ready like a
+// rebuilt one: a member who pressed Try it on somebody else's change waits
+// for it behind the same loader, so it goes to the same audience.
+const SESSION_FANOUT_EVENTS = new Set(['checks_ready', 'staging_ready', 'staging_awake', 'staging_failed']);
 const MAX_WATCHED_SESSIONS_PER_SOCKET = 16;
 const sessionWatchers = new Map(); // sessionId -> Set<client>
 
