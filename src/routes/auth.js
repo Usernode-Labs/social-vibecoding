@@ -51,6 +51,7 @@ const {
   withTransaction,
 } = require('../services/cli-auth');
 const { revokeNativeSessionCredentials } = require('../services/native-session-revocation');
+const { sessionTokenIsLive } = require('../services/web-session-auth');
 // The SAME predicate the CLI 404 gates use (routes/cli-auth.js), so the
 // capability this route advertises can never disagree with what that
 // surface actually serves.
@@ -213,13 +214,7 @@ function authRoutes(config) {
     const token = readSessionCookie(req);
     if (!token) return next();
     try {
-      const { rows } = await pool.query(
-        `SELECT 1 FROM sessions
-          WHERE token = $1 AND expires_at > NOW()
-          LIMIT 1`,
-        [token]
-      );
-      if (rows.length === 0) return next();
+      if (!(await sessionTokenIsLive(pool, token))) return next();
       return res.status(409).json({
         error: 'Sign out before signing in again.',
         code: 'logout_required',

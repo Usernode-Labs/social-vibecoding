@@ -2292,6 +2292,13 @@
       "preview": "`DELETE FROM ${t.sql} WHERE ${quoteIdent(c.name)} = $1::integer`"
     },
     {
+      "source": "src/services/web-session-auth.js",
+      "kind": "structural-template",
+      "fingerprint": "44c8f68b9ae0d78364e7",
+      "count": 1,
+      "preview": "`SELECT 1 FROM sessions s WHERE s.token = $1 AND s.expires_at > NOW() AND ${nativeWebSessionIsLive('s')} AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = s.us"
+    },
+    {
       "source": "src/services/work-state.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "e07f8fc99a563b8a567b",

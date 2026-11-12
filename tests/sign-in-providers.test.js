@@ -620,6 +620,11 @@ test('inside the app: the app\'s own sheet, offered where the server lists it an
   }
   const sheetSrc = read('frontend/src/features/auth/sign-in-sheet.tsx');
   assert.match(sheetSrc, /if \(!native\) \{\n\s+window\.location\.assign\(providerStartUrl/);
+  // #6619: the starts, the callback and the mint boundary call live only
+  // what the auth middleware honours, so a half-revoked session (signed out
+  // everywhere else) is not "already signed in" to a sign-in.
+  assert.match(read('src/routes/sign-in-providers.js'), /return sessionTokenIsLive\(pool, readSessionCookie\(req\)\);/);
+  assert.match(read('src/routes/auth.js'), /if \(!\(await sessionTokenIsLive\(pool, token\)\)\) return next\(\);/);
   assert.match(sheetSrc, /await finish\(outcome\.created \? 'new' : 'existing'\);/);
 });
 
