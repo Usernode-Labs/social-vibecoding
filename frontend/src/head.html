@@ -272,8 +272,13 @@
         _listeners.forEach(function (fn) { try { fn(mode); } catch {} });
       }
 
+      // Returns the way to stop listening, for a control that unmounts.
       function onChange(fn) {
         _listeners.push(fn);
+        return function () {
+          const i = _listeners.indexOf(fn);
+          if (i !== -1) _listeners.splice(i, 1);
+        };
       }
 
       // Re-apply when OS preference changes (only meaningful in system mode).

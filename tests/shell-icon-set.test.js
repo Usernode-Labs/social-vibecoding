@@ -292,7 +292,7 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // ArrowsMoveIcon (#4514): the comment bar's drag handle, drawn only in
     // comment mode.
     'M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3',
-    // SunIcon now prerenders in the header theme shortcut (#6459).
+    'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
     // PhonePlusIcon (#4399): the mark menu's "Add Homeroom to your home
     // screen", drawn only after mount for a private member on a phone.
     'M8 2.5h8a2 2 0 012 2v15a2 2 0 01-2 2H8a2 2 0 01-2-2v-15a2 2 0 012-2z',
