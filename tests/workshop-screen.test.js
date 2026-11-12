@@ -236,9 +236,9 @@ test('#5023: the Workshop asks GET /api/apps for joined rows only, not the whole
   // One Home (#6361): the switcher's list reads it; the Needs you page left
   // of the Communities screen reads no list of communities at all.
   assert.doesNotMatch(read('frontend/src/features/workshop/index.tsx'), /\/api\/apps/);
-  assert.match(read('frontend/src/features/home/home-pins-store.ts'), /readJson\('\/api\/apps\?scope=joined'\)/, 'and Home\'s All communities');
+  assert.match(read('frontend/src/features/home/home-pins-store.ts'), /sharedJson<any>\('\/api\/apps\?scope=joined'\)/, 'and Home\'s All communities');
   for (const file of ['frontend/src/features/workshop/community-scope.ts']) {
-    assert.match(read(file), /fetch\(`\/api\/apps\?scope=joined\$\{/, `${file} reads the joined scope`);
+    assert.match(read(file), /sharedJson<any>\(`\/api\/apps\?scope=joined\$\{/, `${file} reads the joined scope`);
   }
 });
 
@@ -720,7 +720,7 @@ test('the app\'s own Workshop switches communities through Your communities, the
   assert.match(scope, /switcher: SwitcherFrom \| null;/);
   // The list loads on open, and never during render.
   assert.match(scope, /communityScopeStore\.set\(\{ switcher: from, anchor \}\);\s*void loadCommunities\(\);/);
-  assert.match(scope, /fetch\(`\/api\/apps\?scope=joined\$\{q\.replace\('\?', '&'\)\}`/);
+  assert.match(scope, /sharedJson<any>\(`\/api\/apps\?scope=joined\$\{q\.replace\('\?', '&'\)\}`/);
 });
 
 // ── 4. The rows behind the counts (#3051) ──────────────────────────────

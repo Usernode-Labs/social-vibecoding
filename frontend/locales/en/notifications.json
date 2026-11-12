@@ -875,6 +875,14 @@
     "text": "Homeroom filed request #{{number}} on its own board from its own records.",
     "description": "Second line of the \"A platform problem needs a person\" notification to an administrator. {{number}} is the request's number on Homeroom's own board."
   },
+  "row.incident.private.label": {
+    "text": "A private platform request needs a person",
+    "description": "First line of a notification to an administrator: Homeroom found a problem in itself that only administrators should see (for example a security finding in its dependencies) and filed a private request for a person."
+  },
+  "row.incident.private.body": {
+    "text": "Homeroom filed it privately: only administrators can see it, under Private requests in its Workshop.",
+    "description": "Second line of the \"A private platform request needs a person\" notification to an administrator. \"Private requests\" is the name of the section at the end of Homeroom's own Workshop page."
+  },
   "row.kudos.label": {
     "text": "Kudos",
     "description": "First line of a notification: another member gave the viewer kudos (a thank-you that counts on a leaderboard) for a change. \"Kudos\" is the feature's name."

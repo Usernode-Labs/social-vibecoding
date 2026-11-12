@@ -294,7 +294,7 @@ test('platform signals against the full schema', { timeout: 180000 }, async (t) 
     assert.notEqual(byId.get('pipeline.not-the-change').state, 'error');
   });
 
-  await t.test('security creates native requests, queues fixes once and retains incomplete audits', async () => {
+  await t.test('security files private requests by upgrade, and the bot an upgrade request that says only what to upgrade', async () => {
     // Real compatibility methods write requests, without a GitHub issue client.
     const requests = require('../src/services/requests');
     const github = require('../src/services/github');
@@ -314,70 +314,163 @@ test('platform signals against the full schema', { timeout: 180000 }, async (t) 
     const { deps, calls } = fakeDeps(pool, seen);
     deps.github = { ...github, isEnabled: () => true };
     const now = Date.now();
-    let findings = [{ id: 'CVE-2026-12345', package: 'libssl3', version: '3.5.0-r0', severity: 'HIGH', fixedVersion: null }];
+    // Debian's openssl and libssl3 share their advisories: one upgrade.
+    const ssl = (extra = {}) => [
+      { id: 'CVE-2026-12345', package: 'libssl3', version: '3.5.0-r0', severity: 'HIGH', fixedVersion: null, ...extra },
+      { id: 'CVE-2026-12345', package: 'openssl', version: '3.5.0-r0', severity: 'HIGH', fixedVersion: null, ...extra },
+      { id: 'CVE-2026-12346', package: 'openssl', version: '3.5.0-r0', severity: 'HIGH', fixedVersion: null, ...extra },
+    ];
+    let findings = ssl();
     let complete = true;
     const observe = async () => {
       const previous = (await pool.query("SELECT * FROM platform_signals WHERE kind IN ('security', 'security_audit') AND state <> 'closed'")).rows;
       return audit.itemsFrom({ complete, report: { components: COMPONENTS.map((component) => ({ component, findings })) } }, previous, app, now);
     };
     deps.observers = () => ({ observeAll: observe });
+    const boardCount = async () => (await pool.query('SELECT COUNT(*)::int AS n FROM requests WHERE app_id = $1', [app.id])).rows[0].n;
+    const privateRow = async (id) => (await pool.query('SELECT * FROM private_requests WHERE id = $1', [id])).rows[0];
+    const privateComments = async (id) => (await pool.query(
+      'SELECT body FROM private_request_comments WHERE private_request_id = $1 ORDER BY id', [id])).rows.map((r) => r.body);
+
     await signals.sweep(pool, {}, { deps });
-    let row = await rowOf(pool, 'security:CVE-2026-12345');
+    let row = await rowOf(pool, 'security:libssl3');
+    assert.ok(row, 'one row for the upgrade, keyed by its first package');
+    assert.equal(await rowOf(pool, 'security:CVE-2026-12345'), null, 'no row per advisory');
+    assert.equal(row.fixer, 'person');
+    assert.equal(row.issue_number, null, 'nothing on the board');
+    assert.equal(await boardCount(), 0);
+    const pid = row.private_request_id;
+    assert.ok(pid);
+    const first = await privateRow(pid);
+    assert.equal(first.status, 'open');
+    assert.match(first.title, /^Upgrade libssl3 and 1 related package in /);
+    assert.match(first.description, /CVE-2026-12345 \(HIGH\), CVE-2026-12346 \(HIGH\)/);
+    assert.match(first.description, /Severity: HIGH\. Remediation target: /);
+    assert.match(first.description, /no published fix/);
+    assert.deepEqual(calls.notified, [`private:${pid}`], 'full admins are told, privately');
+    assert.equal(calls.fronted.length, 0);
+    assert.deepEqual((await signals.openForTopic(pool, { appId: app.id, topicKey: 'infra' })).signals, [],
+      'a private request is not on the topic page for anybody but full admins');
+    assert.equal((await signals.openForTopic(pool, { appId: app.id, topicKey: 'infra', fullAdmin: true })).signals.length, 1);
+    await signals.sweep(pool, {}, { deps });
+    assert.equal((await privateRow(pid)).updated_at.getTime(), first.updated_at.getTime(), 'an unchanged audit changes nothing');
+
+    // A fix is published: the bot gets a request on the board that names the
+    // upgrade and nothing private.
+    findings = ssl({ fixedVersion: '3.5.1-r0' });
+    await signals.sweep(pool, {}, { deps });
+    row = await rowOf(pool, 'security:libssl3');
+    assert.equal(row.fixer, 'bot');
     const n = row.issue_number;
     assert.ok(n);
-    assert.equal(row.fixer, 'person');
-    assert.equal(calls.fronted.length, 0);
-    const native = () => pool.query('SELECT * FROM requests WHERE app_id = $1 AND number = $2', [app.id, n]);
-    const first = (await native()).rows[0];
-    assert.equal(first.source, 'homeroom');
-    assert.match(first.body, /no published version/);
-    assert.equal((await signals.openForTopic(pool, { appId: app.id, topicKey: 'infra' })).signals[0].issueNumber, n);
-    assert.equal((await observe()).items[0].subject.materialKey, row.subject.materialKey);
+    assert.deepEqual(calls.fronted, [n], 'handed to the bot');
+    const board = (await pool.query('SELECT * FROM requests WHERE app_id = $1 AND number = $2', [app.id, n])).rows[0];
+    assert.equal(board.title, (await privateRow(pid)).title);
+    assert.match(board.body, /libssl3 3\.5\.0-r0, upgrade to 3\.5\.1-r0 or later/);
+    assert.doesNotMatch(`${board.title}\n${board.body}`, /CVE-|HIGH|Remediation|target|advisor|security/i);
+    assert.match((await privateComments(pid)).at(-1), new RegExp(`request #${n}`));
     await signals.sweep(pool, {}, { deps });
-    assert.equal((await native()).rows[0].updated_at.getTime(), first.updated_at.getTime(), 'unchanged audit does not retriage');
-    findings = [{ ...findings[0], fixedVersion: '3.5.1-r0' }];
+    assert.deepEqual(calls.fronted, [n], 'handed on once');
+    assert.equal(await boardCount(), 1);
+
+    // The upgrade merges, and the audit still finds the old versions: the row
+    // stays open, and a day and a half later a person is told, once.
+    await github.closeIssue('Usernode-Labs', 'social-vibecoding', n);
+    await pool.query("UPDATE issues SET status = 'closed' WHERE app_id = $1 AND github_issue_number = $2", [app.id, n]);
     await signals.sweep(pool, {}, { deps });
-    row = await rowOf(pool, 'security:CVE-2026-12345');
-    assert.equal(row.fixer, 'bot');
-    assert.deepEqual(calls.fronted, [n], 'published fix is handed to the bot');
-    assert.match((await native()).rows[0].body, /3\.5\.1-r0/);
+    row = await rowOf(pool, 'security:libssl3');
+    assert.equal(row.state, 'open', 'closing the upgrade request does not close the problem');
+    assert.ok(row.upgrade_closed_at);
+    assert.equal((await privateRow(pid)).status, 'open');
+    await pool.query("UPDATE platform_signals SET upgrade_closed_at = NOW() - interval '37 hours' WHERE id = $1", [row.id]);
+    calls.notified.length = 0;
     await signals.sweep(pool, {}, { deps });
-    assert.deepEqual(calls.fronted, [n]);
-    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM requests WHERE app_id = $1', [app.id])).rows[0].n, 1);
+    await signals.sweep(pool, {}, { deps });
+    assert.deepEqual(calls.notified, [`private:${pid}`]);
+    assert.match((await privateComments(pid)).at(-1), /still finds this .* needs a person/);
+    assert.equal(await boardCount(), 1, 'no second upgrade request while nothing changed');
+
+    // What needs upgrading changes (a newer fix): the bot gets a new request.
+    findings = ssl({ fixedVersion: '3.5.2-r0' });
+    await signals.sweep(pool, {}, { deps });
+    row = await rowOf(pool, 'security:libssl3');
+    assert.notEqual(row.issue_number, n);
+    assert.equal(await boardCount(), 2);
+    assert.equal(row.escalated_at, null);
+    const n2 = row.issue_number;
+
+    // Holds, as before: a failed refresh, an incomplete audit and a failed
+    // observer all keep it open.
     findings = [];
     await signals.sweep(pool, {}, { deps });
-    assert.equal((await rowOf(pool, 'security:CVE-2026-12345')).state, 'clearing');
+    assert.equal((await rowOf(pool, 'security:libssl3')).state, 'clearing');
     await pool.query("UPDATE platform_signals SET cleared_at = NOW() - interval '1 hour' WHERE id = $1", [row.id]);
-    findings = [{ id: 'CVE-2026-12345', package: 'libssl3', version: '3.5.0-r0', severity: 'HIGH', fixedVersion: '3.5.1-r0' }];
+    findings = ssl({ fixedVersion: '3.5.2-r0' });
     const query = pool.query;
     pool.query = function (sql, ...args) {
       if (/INSERT INTO platform_signals/.test(sql)) return Promise.reject(new Error('injected refresh failure'));
       return query.call(this, sql, ...args);
     };
     try { await signals.sweep(pool, {}, { deps }); } finally { pool.query = query; }
-    assert.equal((await rowOf(pool, 'security:CVE-2026-12345')).state, 'open', 'observed finding cannot close after a failed refresh upsert');
+    assert.equal((await rowOf(pool, 'security:libssl3')).state, 'open', 'observed finding cannot close after a failed refresh upsert');
     findings = [];
     await signals.sweep(pool, {}, { deps });
     await pool.query("UPDATE platform_signals SET cleared_at = NOW() - interval '1 hour' WHERE id = $1", [row.id]);
     complete = false;
     await signals.sweep(pool, {}, { deps });
-    assert.equal((await rowOf(pool, 'security:CVE-2026-12345')).state, 'open', 'incomplete audit restores retained finding');
-    assert.equal((await native()).rows[0].state, 'open');
+    assert.equal((await rowOf(pool, 'security:libssl3')).state, 'open', 'incomplete audit restores retained finding');
     complete = true;
     await signals.sweep(pool, {}, { deps });
     await pool.query("UPDATE platform_signals SET cleared_at = NOW() - interval '1 hour' WHERE id = $1", [row.id]);
     deps.observers = () => ({ observeAll: async () => ({ items: [], ok: new Set() }) });
     await signals.sweep(pool, {}, { deps });
-    assert.equal((await rowOf(pool, 'security:CVE-2026-12345')).state, 'open', 'observer failure breaks the quiet window too');
+    assert.equal((await rowOf(pool, 'security:libssl3')).state, 'open', 'observer failure breaks the quiet window too');
     deps.observers = () => ({ observeAll: observe });
     await signals.sweep(pool, {}, { deps });
-    assert.equal((await native()).rows[0].state, 'open', 'recovery starts a new quiet window');
+    assert.equal((await privateRow(pid)).status, 'open', 'recovery starts a new quiet window');
+
+    // The audit is clean and stays so: both requests close.
     await pool.query("UPDATE platform_signals SET cleared_at = NOW() - interval '1 hour' WHERE id = $1", [row.id]);
     await signals.sweep(pool, {}, { deps });
-    assert.equal((await native()).rows[0].state, 'closed');
-    findings = [{ id: 'CVE-2026-12345', package: 'libssl3', version: '3.5.0-r0', severity: 'HIGH', fixedVersion: '3.5.1-r0' }];
+    assert.equal((await rowOf(pool, 'security:libssl3')).state, 'closed');
+    assert.equal((await privateRow(pid)).status, 'closed');
+    assert.match((await privateComments(pid)).at(-1), /This stopped/);
+    assert.equal((await pool.query('SELECT state FROM requests WHERE app_id = $1 AND number = $2', [app.id, n2])).rows[0].state, 'closed');
+
+    // It comes back within 7 days: the same private request reopens, and the
+    // bot gets a new upgrade request.
+    findings = ssl({ fixedVersion: '3.5.2-r0' });
     await signals.sweep(pool, {}, { deps });
-    assert.equal((await rowOf(pool, 'security:CVE-2026-12345')).issue_number, n);
-    assert.equal((await native()).rows[0].state, 'open', 'recurrence reopens the same native request');
+    row = await rowOf(pool, 'security:libssl3');
+    assert.equal(row.private_request_id, pid);
+    assert.equal((await privateRow(pid)).status, 'open', 'recurrence reopens the same private request');
+    assert.equal(await boardCount(), 3);
+
+    // An admin closes the private request: the problem's episode ends, and
+    // so does the bot's request.
+    await pool.query("UPDATE private_requests SET status = 'closed', closed_at = NOW() WHERE id = $1", [pid]);
+    await signals.sweep(pool, {}, { deps });
+    assert.equal((await rowOf(pool, 'security:libssl3')).close_reason, 'closed');
+    assert.equal((await pool.query('SELECT state FROM requests WHERE app_id = $1 AND number = $2', [app.id, row.issue_number])).rows[0].state, 'closed');
+  });
+
+  await t.test('a request filed per advisory before grouping is retired with a note, once the audit no longer files it', async () => {
+    process.env.PLATFORM_SIGNALS = 'file';
+    const { deps, calls } = fakeDeps(pool, seen);
+    await pool.query('DELETE FROM platform_signals');
+    const { rows: [legacy] } = await pool.query(
+      `INSERT INTO platform_signals (fingerprint, kind, subject, app_id, topic_key, fixer, state, title, issue_number, filed_at)
+       VALUES ('security:CVE-2026-99999', 'security', $1::jsonb, $2, 'infra', 'person', 'open', 'Security: CVE-2026-99999 affects Homeroom', 4321, NOW())
+       RETURNING id`,
+      [JSON.stringify({ advisory: 'CVE-2026-99999', findings: [], dueAt: new Date().toISOString() }), app.id]);
+    deps.observers = () => ({ observeAll: async () => ({ items: [], ok: new Set(['security', 'security_audit']) }) });
+    await signals.sweep(pool, {}, { deps });
+    assert.equal((await rowOf(pool, 'security:CVE-2026-99999')).state, 'clearing');
+    await pool.query("UPDATE platform_signals SET cleared_at = NOW() - interval '1 hour' WHERE id = $1", [legacy.id]);
+    await signals.sweep(pool, {}, { deps });
+    assert.equal((await rowOf(pool, 'security:CVE-2026-99999')).state, 'closed');
+    assert.deepEqual(calls.comments.map((c) => c.n), [4321]);
+    assert.match(calls.comments[0].body, /private requests, one per upgrade/);
+    assert.doesNotMatch(calls.comments[0].body, /This stopped/);
   });
 });

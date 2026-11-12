@@ -514,7 +514,7 @@ jobs:
       #                       build starts, so the config below cannot reach
       #                       it: the capture job failed right here at 21:41.
       #   buildkitd config    every docker.io image a build pulls: the base
-      #                       images (node:22-alpine, node:22-bookworm-slim)
+      #                       images (node:22-alpine, node:22-trixie-slim)
       #                       and the SBOM scanner `sbom: true` runs
       #                       (docker/buildkit-syft-scanner). BuildKit tries
       #                       the mirror first and falls back to Docker Hub.

@@ -123,12 +123,16 @@ const KINDS = Object.freeze({
     topic: 'infra', fixer: 'infra', source: 'poll', fileAfterMs: 0, quietMs: 30 * MINUTE, admin: 'status',
     done: 'Alertmanager\'s Watchdog heartbeat arrives again every hour.',
   }),
+  // `private`: filed as a private request (#5048), which only full admins
+  // see, instead of on the board. Which of Homeroom's dependencies are
+  // still unpatched, by when and what is overdue is a list worth keeping to
+  // the people who fix it, even though each advisory is public.
   security: Object.freeze({
-    topic: 'infra', fixer: 'bot', source: 'poll', fileAfterMs: 0, quietMs: 30 * MINUTE, admin: 'status',
-    done: 'A complete current security audit no longer finds this advisory.',
+    topic: 'infra', fixer: 'bot', source: 'poll', fileAfterMs: 0, quietMs: 30 * MINUTE, admin: 'status', private: true,
+    done: 'A complete current security audit no longer finds any of these advisories.',
   }),
   security_audit: Object.freeze({
-    topic: 'infra', fixer: 'person', source: 'poll', fileAfterMs: 0, quietMs: 30 * MINUTE, admin: 'status',
+    topic: 'infra', fixer: 'person', source: 'poll', fileAfterMs: 0, quietMs: 30 * MINUTE, admin: 'status', private: true,
     done: 'A complete successful security audit is available again.',
   }),
   // ── Wave 2: detectors that did not exist before ──
@@ -264,7 +268,7 @@ function decide(row, { now, def, modeName, allowed, held = {}, capFull = false, 
   const countedOnly = row.subject?.noFile === true;
   // Recorded while filing was off (shadow), and filing is on now: it files.
   const unfiled = row.state === 'pending'
-    || (row.state === 'open' && !row.issue_number && modeName === 'file' && !countedOnly);
+    || (row.state === 'open' && !row.issue_number && !row.private_request_id && modeName === 'file' && !countedOnly);
   if (unfiled) {
     if (row.muted_until && t(row.muted_until) > now) return 'wait';
     const fileAfter = Number.isFinite(row.subject?.fileAfterMs) ? row.subject.fileAfterMs : def.fileAfterMs;
@@ -396,7 +400,7 @@ function parseRepo(url) {
 
 const ROWS_TO_ACT_SQL = `
   SELECT ps.*, a.slug AS app_slug, a.repo_url AS app_repo_url, a.self_hosted AS app_self_hosted,
-         i.status AS issue_status,
+         i.status AS issue_status, pr.status AS private_status,
          (EXTRACT(EPOCH FROM (NOW() - ps.first_seen_at)) * 1000)::bigint AS age_ms,
          (EXTRACT(EPOCH FROM (NOW() - ps.cleared_at)) * 1000)::bigint AS cleared_ms,
          (EXTRACT(EPOCH FROM (NOW() - ps.last_seen_at)) * 1000)::bigint AS quiet_ms
@@ -407,6 +411,7 @@ const ROWS_TO_ACT_SQL = `
        WHERE app_id = ps.app_id AND github_issue_number = ps.issue_number AND kind = 'general'
        ORDER BY id DESC LIMIT 1
     ) i ON TRUE
+    LEFT JOIN private_requests pr ON pr.id = ps.private_request_id
    WHERE ps.state <> 'closed'
    ORDER BY ps.first_seen_at, ps.id`;
 
@@ -430,19 +435,33 @@ const HELD_OPEN_SQL = `
                AND m.msg_type = 'message' AND u.is_synthetic IS NOT TRUE
                AND m.created_at > NOW() - make_interval(secs => $3::float8 / 1000)) AS person`;
 
+// A row's request on the board is still open. A private kind keeps its row
+// open after the bot's upgrade request closes (only the audit can say the
+// upgrade worked), and a closed request holds no bot slot.
+const OPEN_ON_BOARD = `NOT EXISTS (SELECT 1 FROM issues bi
+   WHERE bi.app_id = ps.app_id AND bi.github_issue_number = ps.issue_number
+     AND bi.kind = 'general' AND bi.status = 'closed')`;
+
+// A private request's own hold: a person's comment in the last day.
+const PRIVATE_PERSON_SQL = `
+  SELECT EXISTS (SELECT 1 FROM private_request_comments c JOIN users u ON u.id = c.user_id
+                  WHERE c.private_request_id = $1 AND u.is_synthetic IS NOT TRUE
+                    AND c.created_at > NOW() - make_interval(secs => $2::float8 / 1000)) AS person`;
+
 const FILED_SINCE_SQL = `
   SELECT github_issue_number FROM issues
    WHERE app_id = $1 AND kind = 'general' AND title = $2 AND created_at >= $3::timestamptz
    ORDER BY id LIMIT 1`;
 
 const BOT_SLOT_SQL = `
-  SELECT COUNT(*)::int AS n FROM platform_signals
-   WHERE app_id = $1 AND fixer = 'bot' AND state = 'open' AND issue_number IS NOT NULL AND id <> $2`;
+  SELECT COUNT(*)::int AS n FROM platform_signals ps
+   WHERE ps.app_id = $1 AND ps.fixer = 'bot' AND ps.state = 'open' AND ps.issue_number IS NOT NULL AND ps.id <> $2
+     AND ${OPEN_ON_BOARD}`;
 
 async function previousRow(pool, row) {
   if (!row.previous_id) return null;
   const { rows } = await pool.query(
-    'SELECT id, issue_number, closed_at FROM platform_signals WHERE id = $1', [row.previous_id]);
+    'SELECT id, issue_number, private_request_id, closed_at FROM platform_signals WHERE id = $1', [row.previous_id]);
   return rows[0] || null;
 }
 
@@ -450,6 +469,7 @@ async function previousRow(pool, row) {
 async function fileRow(pool, config, row, deps) {
   const github = deps.github;
   const def = KINDS[row.kind];
+  if (def.private) return filePrivate(pool, config, row, deps);
   const app = row.app_id ? { id: row.app_id, slug: row.app_slug, repo_url: row.app_repo_url } : null;
   const parsed = app && parseRepo(app.repo_url);
   if (!parsed || !github.isEnabled()) return false;
@@ -507,6 +527,172 @@ async function fileRow(pool, config, row, deps) {
   return true;
 }
 
+// ── Private kinds: a private request, never the board ──────────────────
+
+function privateText(row) {
+  return evidenceText.privateRequestText({
+    signal: row, kind: KINDS[row.kind], evidence: row.evidence, evidencePrivate: row.evidence_private,
+    summary: row.subject?.summary, done: row.subject?.done,
+  });
+}
+
+// One statement files the request and records it on the row, so a pass that
+// dies between the two cannot file it twice.
+const FILE_PRIVATE_SQL = `
+  WITH filed AS (
+    INSERT INTO private_requests (app_id, title, description, created_by)
+    VALUES ($2, $3, $4, $5) RETURNING id)
+  UPDATE platform_signals
+     SET state = 'open', private_request_id = (SELECT id FROM filed), filed_at = NOW(),
+         published_occurrences = occurrences, last_error = NULL, subject = subject || $6::jsonb
+   WHERE id = $1
+  RETURNING private_request_id`;
+
+async function privateComment(pool, requestId, botId, body) {
+  await pool.query(
+    'INSERT INTO private_request_comments (private_request_id, user_id, body) VALUES ($1, $2, $3)',
+    [requestId, botId, body]);
+}
+
+// The request: a new private one, or the previous episode's reopened.
+async function filePrivate(pool, config, row, deps) {
+  if (!row.app_id) return false;
+  const bot = await deps.bot().ensureBotUser(pool, config);
+  const prev = await previousRow(pool, row);
+  const reopen = prev && prev.private_request_id && prev.closed_at
+    && Date.now() - new Date(prev.closed_at).getTime() < REOPEN_MS;
+  const text = privateText(row);
+  await pool.query(
+    'UPDATE platform_signals SET filing_attempts = filing_attempts + 1 WHERE id = $1', [row.id]);
+  let requestId;
+  if (reopen) {
+    requestId = Number(prev.private_request_id);
+    await pool.query(
+      `UPDATE private_requests
+          SET status = 'open', closed_by = NULL, closed_at = NULL, title = $2, description = $3, updated_at = NOW()
+        WHERE id = $1`,
+      [requestId, row.title, text]);
+    await privateComment(pool, requestId, bot.id, evidenceText.reopenComment({ signal: row }));
+    await pool.query(
+      `UPDATE platform_signals
+          SET state = 'open', private_request_id = $2, filed_at = NOW(), published_occurrences = occurrences,
+              last_error = NULL, subject = subject || $3::jsonb
+        WHERE id = $1`,
+      [row.id, requestId, JSON.stringify(publishedSubject(row))]);
+  } else {
+    const { rows: [filed] } = await pool.query(FILE_PRIVATE_SQL, [
+      row.id, row.app_id, row.title, text, bot.id, JSON.stringify(publishedSubject(row))]);
+    requestId = Number(filed?.private_request_id);
+    if (!Number.isInteger(requestId) || requestId <= 0) throw new Error('private request not recorded');
+  }
+  row.private_request_id = requestId;
+  await handOffPrivate(pool, config, row, deps);
+  log.info('platform-signals', reopen ? 'Reopened a private signal request' : 'Filed a private signal request', {
+    kind: row.kind, privateRequestId: requestId, fixer: row.fixer,
+  });
+  return true;
+}
+
+// Who works on a private request. The bot builds only from a request on the
+// board (its queue, triage, branch and proposal are all keyed by one), so
+// when it can fix the problem it gets one of its own that says only what to
+// change: the row's public tier, which is the proposal's content anyway.
+// Otherwise the full admins are told.
+async function handOffPrivate(pool, config, row, deps) {
+  try {
+    if (row.fixer === 'bot' && botOn()) {
+      const open = row.issue_number && row.issue_status !== 'closed';
+      if (!open) await fileUpgrade(pool, config, row, deps);
+      return;
+    }
+    await tellAdminsPrivately(pool, row, deps);
+  } catch (err) {
+    log.warn('platform-signals', 'Could not hand a private signal request on', {
+      privateRequestId: row.private_request_id, err: err.message,
+    });
+  }
+}
+
+async function tellAdminsPrivately(pool, row, deps) {
+  const notifications = deps.notifications();
+  const detail = `private:${Number(row.private_request_id)}`;
+  const created = await notifications.createPlatformIncidentNotifications(pool, {
+    detail, dedupePrefix: detail, since: new Date(Date.now() - DAY),
+  });
+  await Promise.all((created || []).map((r) => notifications.hydrateAndPush(pool, r)));
+}
+
+// The bot's request for a private row: on the board, with the row's title
+// and public tier and nothing from its private one.
+async function fileUpgrade(pool, config, row, deps) {
+  const github = deps.github;
+  const app = { id: row.app_id, slug: row.app_slug, repo_url: row.app_repo_url };
+  const parsed = parseRepo(app.repo_url);
+  if (!parsed || !github.isEnabled()) return;
+  const bot = await deps.bot().ensureBotUser(pool, config);
+  const body = evidenceText.upgradeRequestBody({ evidence: row.evidence, summary: row.subject?.summary, done: row.subject?.done });
+  const created = await github.createIssue(parsed.owner, parsed.repo, { title: row.title, body });
+  const issueNumber = Number(created && created.number);
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) throw new Error('invalid issue number');
+  const { rows: [issueRow] } = await pool.query(
+    `INSERT INTO issues (app_id, github_issue_number, title, description, kind, payload, created_by)
+     VALUES ($1, $2, $3, $4, 'general', $5::jsonb, $6) RETURNING id`,
+    [app.id, issueNumber, row.title, body, JSON.stringify({ signalId: Number(row.id) }), bot.id]);
+  await pool.query(
+    'UPDATE platform_signals SET issue_number = $2, upgrade_closed_at = NULL, escalated_at = NULL WHERE id = $1',
+    [row.id, issueNumber]);
+  row.issue_number = issueNumber;
+  row.issue_status = 'open';
+  try {
+    require('./ws').pushIssueUpdate?.({ action: 'created', appSlug: app.slug, appId: app.id, issueId: issueRow?.id, kind: 'general' });
+  } catch {}
+  await privateComment(pool, row.private_request_id, bot.id,
+    `Homeroom bot is making the upgrade on request #${issueNumber}, which names only what to upgrade.`);
+  await handOff(pool, row, app, issueNumber, deps);
+}
+
+// How long a private row may stay open after the bot's upgrade request
+// closed before a person is told: the daily audit runs every 24 hours, and
+// its report is read for 36 (signal-observers/security-audit.js MAX_AGE).
+const UPGRADE_SETTLE_MS = 36 * HOUR;
+
+// The bot's upgrade closed (merged, or closed by somebody) and the audit
+// still sees the problem a full audit later: a person is told, once.
+async function followUpgrade(pool, config, row, deps) {
+  if (!row.issue_number || row.issue_status !== 'closed' || row.state !== 'open') return;
+  if (!row.upgrade_closed_at) {
+    await pool.query('UPDATE platform_signals SET upgrade_closed_at = NOW() WHERE id = $1 AND upgrade_closed_at IS NULL', [row.id]);
+    return;
+  }
+  if (row.escalated_at || Date.now() - new Date(row.upgrade_closed_at).getTime() < UPGRADE_SETTLE_MS) return;
+  const bot = await deps.bot().ensureBotUser(pool, config);
+  await privateComment(pool, row.private_request_id, bot.id,
+    `Request #${Number(row.issue_number)} closed, but the audit still finds this a day and a half later. It needs a person.`);
+  await pool.query('UPDATE platform_signals SET escalated_at = NOW() WHERE id = $1', [row.id]);
+  await tellAdminsPrivately(pool, row, deps);
+}
+
+async function rewritePrivate(pool, row, deps) {
+  await pool.query(
+    'UPDATE private_requests SET title = $2, description = $3, updated_at = NOW() WHERE id = $1',
+    [row.private_request_id, row.title, privateText(row)]);
+  await pool.query('UPDATE platform_signals SET published_occurrences = occurrences, subject = subject || $2::jsonb WHERE id = $1',
+    [row.id, JSON.stringify(publishedSubject(row))]);
+}
+
+async function closePrivate(pool, config, row, deps, { comment }) {
+  if (row.private_status === 'closed') return;
+  const bot = await deps.bot().ensureBotUser(pool, config);
+  if (comment) {
+    await privateComment(pool, row.private_request_id, bot.id,
+      evidenceText.closingComment({ kind: KINDS[row.kind], signal: row }));
+  }
+  await pool.query(
+    `UPDATE private_requests SET status = 'closed', closed_by = $2, closed_at = NOW(), updated_at = NOW()
+      WHERE id = $1 AND status <> 'closed'`,
+    [row.private_request_id, bot.id]);
+}
+
 // Who gets the request: the bot's queue (a bot problem, within its slots),
 // or the full admins (anything else; the bot is held off it, issueHolders).
 async function handOff(pool, row, app, issueNumber, deps) {
@@ -532,7 +718,14 @@ async function handOff(pool, row, app, issueNumber, deps) {
   }
 }
 
-async function rewriteBody(pool, row, deps) {
+async function rewriteBody(pool, config, row, deps) {
+  if (row.private_request_id) {
+    await rewritePrivate(pool, row, deps);
+    // What needs upgrading changed: the bot gets a new request when its
+    // last one closed (a newly published fix, or what an upgrade left).
+    if (row.fixer === 'bot') await handOffPrivate(pool, config, row, deps);
+    return;
+  }
   const github = deps.github;
   const parsed = parseRepo(row.app_repo_url);
   if (!parsed || !row.issue_number || !github.isEnabled()) return;
@@ -551,13 +744,22 @@ function publishedSubject(row) {
   return securityKind(row.kind) ? { publishedKey: row.subject?.materialKey, publishedFixer: row.fixer } : {};
 }
 
-async function closeRow(pool, row, deps, { reason = 'cleared', comment = true } = {}) {
+// The comment a request on the board gets as it closes.
+function closingWords(row) {
+  if (row.private_request_id) return evidenceText.upgradeClosingComment();
+  // Filed per advisory, on the board, before security findings were grouped
+  // by upgrade and kept private: its findings continue there.
+  if (row.kind === 'security' && typeof row.subject?.advisory === 'string') return evidenceText.movedPrivateComment();
+  return evidenceText.closingComment({ kind: KINDS[row.kind], signal: row });
+}
+
+async function closeRow(pool, config, row, deps, { reason = 'cleared', comment = true } = {}) {
+  if (row.private_request_id) await closePrivate(pool, config, row, deps, { comment });
   const github = deps.github;
   const parsed = parseRepo(row.app_repo_url);
   if (row.issue_number && parsed && github.isEnabled() && row.issue_status !== 'closed') {
     if (comment) {
-      await github.createIssueComment(parsed.owner, parsed.repo, row.issue_number,
-        evidenceText.closingComment({ kind: KINDS[row.kind], signal: row }));
+      await github.createIssueComment(parsed.owner, parsed.repo, row.issue_number, closingWords(row));
     }
     await github.closeIssue(parsed.owner, parsed.repo, row.issue_number, { reason: 'not_planned' });
     await pool.query(
@@ -632,8 +834,14 @@ async function sweepLocked(pool, config, { deps, now, modeName }) {
       await pool.query("UPDATE platform_signals SET state = 'open', cleared_at = NULL WHERE id = $1", [row.id]);
       row.state = 'open';
     }
-    if (row.issue_number && row.issue_status === 'closed' && row.state !== 'pending') {
-      await closeRow(pool, row, deps, { reason: 'closed', comment: false });
+    // A private kind's request on the board is the bot's upgrade: closing it
+    // (its merge) does not say the problem stopped. Only the private
+    // request, closed by an admin, or the audit does.
+    const closedByPerson = row.private_request_id
+      ? row.private_status === 'closed'
+      : row.issue_number && row.issue_status === 'closed';
+    if (closedByPerson && row.state !== 'pending') {
+      await closeRow(pool, config, row, deps, { reason: 'closed', comment: false });
       out.closed += 1;
       row.state = 'closed';
       continue;
@@ -666,6 +874,11 @@ async function sweepLocked(pool, config, { deps, now, modeName }) {
         const { rows: [h] } = await pool.query(HELD_OPEN_SQL, [row.app_id, row.issue_number, PERSON_RECENT_MS]);
         held = { ...held, proposal: !!h?.proposal, person: !!h?.person };
       }
+      if (row.state === 'clearing' && row.private_request_id && !held.person) {
+        const { rows: [h] } = await pool.query(PRIVATE_PERSON_SQL, [row.private_request_id, PERSON_RECENT_MS]);
+        held = { ...held, person: !!h?.person };
+      }
+      if (row.private_request_id) await followUpgrade(pool, config, row, deps);
       const capFull = filedHour >= MAX_FILED_PER_HOUR || filedDay >= MAX_FILED_PER_DAY;
       const rowMode = modeForKind(row.kind);
       const what = decide(row, { now, def, modeName: rowMode, allowed, held, capFull, budgetOk });
@@ -676,10 +889,10 @@ async function sweepLocked(pool, config, { deps, now, modeName }) {
           out.filed += 1; filedHour += 1; filedDay += 1;
         }
       } else if (what === 'close') {
-        await closeRow(pool, row, deps);
+        await closeRow(pool, config, row, deps);
         out.closed += 1;
-      } else if (row.state === 'open' && row.issue_number && rowMode === 'file' && isMaterial(row)) {
-        await rewriteBody(pool, row, deps);
+      } else if (row.state === 'open' && (row.issue_number || row.private_request_id) && rowMode === 'file' && isMaterial(row)) {
+        await rewriteBody(pool, config, row, deps);
         out.rewritten += 1;
       }
     } catch (err) {
@@ -741,8 +954,8 @@ async function heldIssues(pool, appId) {
       `SELECT issue_number AS n, first_seen_at AS since FROM (
          SELECT issue_number, first_seen_at, fixer,
                 ROW_NUMBER() OVER (PARTITION BY fixer = 'bot' ORDER BY filed_at, id) AS rank
-           FROM platform_signals
-          WHERE app_id = $1 AND issue_number IS NOT NULL AND state = 'open'
+           FROM platform_signals ps
+          WHERE app_id = $1 AND issue_number IS NOT NULL AND state = 'open' AND ${OPEN_ON_BOARD}
        ) s
        WHERE s.fixer <> 'bot' OR s.rank > $2 OR $3::boolean IS NOT TRUE`,
       [Number(appId), BOT_SLOTS, botOn()],

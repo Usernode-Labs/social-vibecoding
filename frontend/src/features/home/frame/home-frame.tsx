@@ -58,6 +58,7 @@ import { resolveIllustration } from '../../../lib/challenge-illustrations';
 import { useCommunityColor } from '../../../lib/community-color';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
+import { useVisibility } from '../../../lib/visibility-store';
 import { liveAppLabel, useLiveAppSlugs } from '../../app-frame/live-apps';
 import { type GuestApp, MIN_PEOPLE, isNew } from '../../guest/guest-data';
 import { communityScopeStore } from '../../workshop/community-scope';
@@ -501,8 +502,11 @@ function ToJoin({ query, initialDirectory }: { query: string; initialDirectory: 
 
   // The directory, read as ../home-join.tsx reads it: null is one that could
   // not be read, which says so and offers to try again.
+  // And only while Home is on show (#6591, ../home-join.tsx): Home stays
+  // mounted behind every other screen.
+  const shown = useVisibility('home-screen', true);
   useEffect(() => {
-    if (!pins.ready) return undefined;
+    if (!pins.ready || !shown) return undefined;
     let on = true;
     setFailed(false);
     void readDirectory(attempt > 0).then((list) => {
@@ -511,7 +515,7 @@ function ToJoin({ query, initialDirectory }: { query: string; initialDirectory: 
       else { setApps(null); setFailed(true); }
     });
     return () => { on = false; };
-  }, [pins.ready, attempt]);
+  }, [pins.ready, attempt, shown]);
 
   const exclude = useMemo(() => new Set([...pins.joined.map((c) => c.slug), ...pins.pins.map((p) => p.slug)]), [pins.joined, pins.pins]);
   if (!pins.ready) return null;
