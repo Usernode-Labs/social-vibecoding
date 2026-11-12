@@ -129,6 +129,7 @@ const KINDS = Object.freeze([
   { kind: 'openrouter_key_review', actor: true },
   { kind: 'platform_limit', detail: 'apps_warn:8:10' },
   { kind: 'platform_incident', detail: 'digest:3' },
+  { kind: 'release_hold', app: true, detail: 'wallet' },
   // The Settings button's test push.
   { kind: 'test_alert' },
 ]);

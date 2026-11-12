@@ -623,6 +623,7 @@ function closedLine(r: Row, reason: string, byOwner: boolean, base: string | nul
   switch (reason) {
     case 'auto-rejected': return `${l} was set aside for now (more No than Yes, and not enough support to carry it).`;
     case 'admin-no': return `${l} was set aside: an admin voted No and nobody voted Yes within a week. It can always come back as a new change.`;
+    case 'admin-declined': return `${l} was closed: it was held for an admin's approval, and an admin voted No.`;
     case 'approver-no': return `${l} was set aside: an approver voted No and nobody voted Yes within ${APPROVER_NO_WINDOW_WORDS}. It can always come back as a new change.`;
     case 'proposal-replaced':
       return byOwner && r.ownerName ? `${r.ownerName} replaced ${r.prTitle ? l : 'this change'} with a new one.` : `${l} was replaced by a new one.`;

@@ -106,6 +106,14 @@ const LINE_SQL = `
          EXISTS (SELECT 1 FROM pr_votes pv JOIN users u ON u.id = pv.user_id
                   WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND pv.approval_epoch = cs.approval_epoch
                     AND u.is_admin = TRUE AND u.admin_readonly = FALSE) AS admin_yes,
+         -- #6643: a change held for an admin (services/release-holds.js
+         -- heldSql and approvedSql, the same two reads): the yes that lifts
+         -- it is a full admin's who is not the author.
+         EXISTS (SELECT 1 FROM release_holds rh WHERE rh.session_id = cs.id AND rh.status = 'waiting') AS held,
+         EXISTS (SELECT 1 FROM pr_votes pv JOIN users u ON u.id = pv.user_id
+                  WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND pv.approval_epoch = cs.approval_epoch
+                    AND u.is_admin = TRUE AND u.admin_readonly = FALSE
+                    AND pv.user_id IS DISTINCT FROM cs.user_id) AS hold_admin_yes,
          (SELECT lower(r->>'reviewedSha')
             FROM jsonb_array_elements(CASE WHEN jsonb_typeof(cs.test_results) = 'array'
                                            THEN cs.test_results ELSE '[]'::jsonb END) r
@@ -143,7 +151,7 @@ export async function readLine(tx: Tx, appId: number, now: Date): Promise<Candid
     // #6642: a head the Content rules review flagged waits for an admin's
     // Yes exactly as a locked app's does, so it reads as the same 'lock'.
     const flagged = holdOn && !!head && sha(r.content_flag_sha) === head;
-    const unmergeable = (r.locked === true || flagged) && r.admin_yes === false ? 'lock'
+    const unmergeable = ((r.locked === true || flagged) && r.admin_yes === false) || (r.held === true && r.hold_admin_yes === false) ? 'lock'
       : (r.check_state === 'failing' || r.check_state === 'error') && onHead && !!checksSha ? `checks_${r.check_state}` : null;
     out.push({
       id: Number(r.id), head, epoch: Number(r.approval_epoch) || 0,

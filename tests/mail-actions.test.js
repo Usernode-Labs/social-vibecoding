@@ -8,7 +8,7 @@ const { ACTIONS, actionFor } = require('../src/services/mail/actions');
 test('covers every kind', () => {
   assert.deepEqual(Object.keys(ACTIONS).sort(), [...templates.KINDS].sort());
   // 13, then the two waitlist reminders (services/waitlist-reminders.js).
-  assert.equal(templates.KINDS.length, 15);
+  assert.equal(templates.KINDS.length, 16);
   assert.equal(actionFor('otp'), ACTIONS.otp);
   assert.equal(actionFor('nope'), null);
   assert.equal(actionFor('constructor'), null);
@@ -84,9 +84,10 @@ test('activity mails and the waitlist reminders carry their unsubscribe headers;
   assert.equal(Object.entries(ACTIONS).filter(([, a]) => a.headers).length, 5);
 });
 
-test('only admin_test and content_report are English only', () => {
+test('only what an admin or an operator receives is English only', () => {
   const only = Object.entries(ACTIONS).filter(([, a]) => a.englishOnly).map(([k]) => k).sort();
-  assert.deepEqual(only, ['admin_test', 'content_report']);
+  // #6643: release_hold goes to full admins, like the content report.
+  assert.deepEqual(only, ['admin_test', 'content_report', 'release_hold']);
 });
 
 test('url values are checked', () => {

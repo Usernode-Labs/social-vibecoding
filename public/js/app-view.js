@@ -18900,7 +18900,11 @@ const AppView = {
       approveSolo: AppView._approveSolo(p),
     };
     const live = AppView._withLiveState(gates, p);
-    const s = AppView._summarizeRequirements(live, viewer);
+    // #6643: held for an admin. An author who is an admin cannot lift their
+    // own hold, so the admin step is not theirs to clear.
+    const hold = AppView._holdSpec(p);
+    const s = AppView._summarizeRequirements(live,
+      hold && hold.other && viewer.isAuthor ? { ...viewer, isAdmin: false } : viewer);
     // A held admin force merge says where it is instead of whose turn it is:
     // the vote steps it skips are done, and the one it waits on is named.
     const forced = block && block.forced && typeof block.forced === 'object' ? block.forced : null;
@@ -18926,12 +18930,40 @@ const AppView = {
       // Not remembered per viewer: a remembered "closed" would hide the one
       // case the rule exists for.
       open: forced ? (forced.step === 'stopped' && s.needsViewer) : s.needsViewer,
+      ...(hold ? { hold } : {}),
       gates: live.map((g, i) => ({
         key: g.key, label: g.label, actor: g.actor, state: g.state,
         skipped: !!(g.detail && g.detail.skipped === 'force'),
         note: lines[i],
         action: AppView._requirementAction(g, viewer),
       })),
+    };
+  },
+
+  // #6643: the warning a held change's card carries (services/release-
+  // holds.js): what the change does that needs an admin, and that an admin
+  // has been asked. Null once an admin has approved it, or with no hold.
+  _HOLD_RULE_IDS: {
+    wallet: 'changes:hold.rule.wallet',
+    people: 'changes:hold.rule.people',
+    secret: 'changes:hold.rule.secret',
+    capability: 'changes:hold.rule.capability',
+    script: 'changes:hold.rule.script',
+    content: 'changes:hold.rule.content',
+    unread: 'changes:hold.rule.unread',
+  },
+  _holdSpec(p) {
+    const h = p && p.releaseHold;
+    if (!h || h.approved) return null;
+    const reasons = (Array.isArray(h.rules) ? h.rules : [])
+      .map((k) => AppView._HOLD_RULE_IDS[k]).filter(Boolean).map((id) => PlatformI18n.t(id));
+    const other = !!h.needsAnotherAdmin;
+    return {
+      other,
+      pill: other ? PlatformI18n.t('changes:hold.pillOther') : PlatformI18n.t('changes:hold.pill'),
+      title: other ? PlatformI18n.t('changes:hold.titleOther') : PlatformI18n.t('changes:hold.title'),
+      reasons,
+      asked: h.askedAt ? PlatformI18n.t('changes:hold.asked') : PlatformI18n.t('changes:hold.willAsk'),
     };
   },
 
@@ -18986,7 +19018,16 @@ const AppView = {
         if (g.state === 'done' || !reached) return null;
         return AppView._explicitCopy(detail.reason || p.explicit_approval_reason).line;
       }
-      case 'admin_yes': return g.state === 'done' || !reached ? null : PlatformI18n.t('changes:step.adminYes');
+      case 'admin_yes': {
+        if (g.state === 'done' || !reached) return null;
+        // #6643: held for an admin, with what it does that needs one.
+        if (detail.held) {
+          const hold = AppView._holdSpec(p);
+          const lead = detail.needsAnotherAdmin ? PlatformI18n.t('changes:hold.stepOther') : PlatformI18n.t('changes:hold.step');
+          return hold && hold.reasons.length ? [lead, ...hold.reasons].join(' ') : lead;
+        }
+        return PlatformI18n.t('changes:step.adminYes');
+      }
       case 'integration': return AppView._integrationLine(g, p, o.viewer);
       case 'checks': {
         const integration = gates.find((x) => x && x.key === 'integration');

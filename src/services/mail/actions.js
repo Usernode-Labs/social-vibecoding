@@ -398,6 +398,41 @@ const ACTIONS = {
     },
   },
 
+  // #6643: a change held for an admin's approval, to each full admin
+  // (services/release-holds.js). The reasons are that module's own English
+  // sentences, one per rule the change tripped.
+  release_hold: {
+    label: 'Change held for approval',
+    placeholders: {
+      app: text('The project\'s name, at most 80 characters, when known'),
+      hasApp: flag('True when the project is named'),
+      title: text('The change\'s name, at most 160 characters'),
+      author: text('Who made the change, as @username, when known'),
+      hasAuthor: flag('True when the author is known'),
+      reasons: text('Why it is held: one sentence per reason, joined by spaces', { fromCode: true }),
+      url: link('Opens the change, where an admin votes'),
+    },
+    required: BOTH('url'),
+    englishOnly: true,
+    sample: { appName: 'Recipe Box', title: 'Add a tip jar to the recipe page', author: 'maya', reasons: ['It lets the app send tokens'], url: 'https://app.onhomeroom.com/#app/recipe-box/dev/proposals/12' },
+    values: (payload) => {
+      const app = payload.appName ? clip(payload.appName, 80) : '';
+      const author = payload.author ? `@${clip(payload.author, 60)}` : '';
+      const reasons = (Array.isArray(payload.reasons) ? payload.reasons : [])
+        .map((r) => str(r).trim()).filter(Boolean).slice(0, 8)
+        .map((r) => (/[.!?]$/.test(r) ? r : `${r}.`)).join(' ');
+      return {
+        app,
+        hasApp: !!app,
+        title: clip(payload.title || 'A change', 160),
+        author,
+        hasAuthor: !!author,
+        reasons: reasons || 'It tripped a rule that needs an admin.',
+        url: url(payload.url) || PRODUCTION_ORIGIN,
+      };
+    },
+  },
+
   project_invite: {
     label: 'Project invite',
     placeholders: {

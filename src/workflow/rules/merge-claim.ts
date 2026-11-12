@@ -20,6 +20,10 @@ export interface ClaimFacts {
   shotsDetail: Record<string, unknown> | null;
   locked: boolean;
   adminYes: boolean;
+  // #6643: held for an admin (services/release-holds.js), and whether a full
+  // admin other than the author has a yes that still counts.
+  held: boolean;
+  holdAdminYes: boolean;
   // #6642: the commit the Content rules review flagged, while
   // CONTENT_REVIEW_MODE is `admin`; null in every other mode. A flag on the
   // claimed head needs a full admin's yes, like a locked app.
@@ -44,6 +48,11 @@ export async function readClaimFacts(db: Queryable, sessionId: number): Promise<
             EXISTS (SELECT 1 FROM pr_votes pv JOIN users u ON u.id = pv.user_id
                      WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND ${currentVotePredicateSql('pv', 'cs')}
                        AND u.is_admin = TRUE AND u.admin_readonly = FALSE) AS admin_yes,
+            EXISTS (SELECT 1 FROM release_holds rh WHERE rh.session_id = cs.id AND rh.status = 'waiting') AS held,
+            EXISTS (SELECT 1 FROM pr_votes pv JOIN users u ON u.id = pv.user_id
+                     WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND ${currentVotePredicateSql('pv', 'cs')}
+                       AND u.is_admin = TRUE AND u.admin_readonly = FALSE
+                       AND pv.user_id IS DISTINCT FROM cs.user_id) AS hold_admin_yes,
             (SELECT lower(r->>'reviewedSha')
                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(cs.test_results) = 'array'
                                               THEN cs.test_results ELSE '[]'::jsonb END) r
@@ -64,6 +73,8 @@ export async function readClaimFacts(db: Queryable, sessionId: number): Promise<
     shotsDetail: r.shots_detail && typeof r.shots_detail === 'object' ? r.shots_detail : null,
     locked: !!r.locked,
     adminYes: !!r.admin_yes,
+    held: !!r.held,
+    holdAdminYes: !!r.hold_admin_yes,
     contentFlagSha: contentAdminHold() ? lower(r.content_flag_sha) : null,
     mainPaused: paused,
   };
@@ -96,7 +107,7 @@ export function claimRefusal(f: ClaimFacts, x: ClaimInputs): string | null {
   if (!x.force) {
     if (!x.votesMergeable) return 'not_mergeable';
     const flagged = !!f.contentFlagSha && !!x.head && f.contentFlagSha === x.head;
-    if ((f.locked || flagged) && !f.adminYes) return 'awaiting_admin';
+    if (((f.locked || flagged) && !f.adminYes) || (f.held && !f.holdAdminYes)) return 'awaiting_admin';
   }
   if (!forceWaivesChecks(x.force, x.forcedHead, x.head)) {
     const settled = (f.checkState === 'passing' || f.checkState === 'skipped')

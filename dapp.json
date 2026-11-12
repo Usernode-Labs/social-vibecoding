@@ -4604,6 +4604,12 @@
       "expectText": "Waiting on an admin"
     },
     {
+      "name": "#6643: a change held for an admin says so on its card, with the reason",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban [data-proposal-row=\"9000097\"] [data-release-hold]",
+      "expectText": "It lets the app send tokens."
+    },
+    {
       "name": "#2061: an automatic step says nobody has to act",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban [data-proposal-row=\"9000091\"] [data-req-headline]",
