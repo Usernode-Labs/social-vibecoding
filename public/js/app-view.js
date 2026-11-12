@@ -1662,6 +1662,9 @@ const AppView = {
   TOKEN_FRESH_MS: 60 * 1000,
   _tokenInflight: {},
   _tokenFresh: null,
+  // #6512: bumped per app by forgetToken, so a mint that was already on its
+  // way when a permission was revoked cannot write its old grant set back.
+  _tokenEpoch: {},
 
   // Resolves the token string for `slug`, or null on any failure. Never
   // rejects, and never touches iframeToken/iframeTokenSlug — a prewarm for
@@ -1676,7 +1679,9 @@ const AppView = {
     }
     const inflight = AppView._tokenInflight[slug];
     if (inflight) return inflight;
-    const p = (async () => {
+    const epoch = AppView._tokenEpoch[slug] || 0;
+    let p = null;
+    p = (async () => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), AppView.TOKEN_REQUEST_TIMEOUT_MS);
       try {
@@ -1686,17 +1691,71 @@ const AppView = {
         if (!token) return null;
         // #2219: the grant set rides the mint, so the launch path stays at
         // one round trip. Cached with the token and expiring with it.
+        // #6512: unless forgetToken ran meanwhile; then this answer predates
+        // a revoke, and its caller gets the token with no grant set cached.
+        if ((AppView._tokenEpoch[slug] || 0) !== epoch) return token;
         AppView._tokenFresh = { slug, token, permissions: permissions || null, at: Date.now() };
         return token;
       } catch {
         return null;
       } finally {
         clearTimeout(timer);
-        delete AppView._tokenInflight[slug];
+        // Only this mint's own entry: forgetToken may have detached it, and a
+        // newer mint for the same app may hold the slot by now.
+        if (!p || AppView._tokenInflight[slug] === p) delete AppView._tokenInflight[slug];
       }
     })();
     AppView._tokenInflight[slug] = p;
     return p;
+  },
+
+  // #6512: a device permission was revoked for `slug` (Settings > App device
+  // permissions). The grant set cached with the last mint is now wrong, and
+  // the next launch inside TOKEN_FRESH_MS would hand it to a new frame's
+  // `allow`, giving the revoked capability straight back. Drop it, detach
+  // any mint already in flight (the epoch keeps it from caching its answer),
+  // and drop the held grant set for that app, so the next open re-mints and
+  // reads the server's answer. The held token stays: it carries no grants,
+  // and a frame built before the re-mint gets the ungated base, failing
+  // closed.
+  //
+  // Every Homeroom tab in this browser keeps its own cache, so the forget
+  // is also posted to the others (GRANTS_CHANNEL); one that hears it forgets
+  // without posting again. A frame already open in another tab is left
+  // alone: that tab's person did not see the dialog that would close it.
+  forgetToken(slug, { fromOtherTab = false } = {}) {
+    if (!slug) return;
+    AppView._tokenEpoch[slug] = (AppView._tokenEpoch[slug] || 0) + 1;
+    delete AppView._tokenInflight[slug];
+    if (AppView._tokenFresh && AppView._tokenFresh.slug === slug) AppView._tokenFresh = null;
+    if (AppView.iframePermissionsSlug === slug) AppView.iframePermissions = null;
+    if (fromOtherTab) return;
+    const channel = AppView._grantsChannel();
+    if (!channel) return;
+    try { channel.postMessage({ kind: 'forget', slug }); } catch { /* best effort */ }
+  },
+
+  // #6512: the channel forgetToken tells this browser's other tabs on, opened
+  // once (the listener is attached at load, below the object) and null where
+  // BroadcastChannel is missing. Same-origin only, which is every Homeroom tab.
+  GRANTS_CHANNEL: 'homeroom-app-grants',
+  _grantsChannelState: undefined,
+  _grantsChannel() {
+    if (AppView._grantsChannelState !== undefined) return AppView._grantsChannelState;
+    let channel = null;
+    try {
+      if (typeof window !== 'undefined' && typeof window.BroadcastChannel === 'function') {
+        channel = new window.BroadcastChannel(AppView.GRANTS_CHANNEL);
+        channel.onmessage = (event) => {
+          const data = event && event.data;
+          if (data && data.kind === 'forget' && typeof data.slug === 'string') {
+            AppView.forgetToken(data.slug, { fromOtherTab: true });
+          }
+        };
+      }
+    } catch { channel = null; }
+    AppView._grantsChannelState = channel;
+    return channel;
   },
 
   // True when a token for `slug` is already in hand, i.e. beginLaunch can
@@ -33174,6 +33233,9 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
 
 if (typeof window !== 'undefined') {
   window.AppView = AppView;
+  // #6512: listen from the start, so a revoke made in another tab drops this
+  // tab's cached grant set even if this tab never revokes anything itself.
+  AppView._grantsChannel();
   // #5385: the bot started or finished a piece of work for this viewer (the
   // socket's homeroom_bot_work_changed, relayed as a window event by
   // app.js): the Workshop's rows of it re-read, as the Activity drawer
