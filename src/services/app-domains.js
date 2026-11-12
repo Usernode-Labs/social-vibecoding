@@ -72,7 +72,7 @@ const ROW_COLUMNS = `id, app_id, hostname, verification_token, status, dns_check
 const LABEL_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
 function platformDomains() {
-  return [caddy.USERNODE_DOMAIN, caddy.USERNODE_APPS_DOMAIN]
+  return [caddy.USERNODE_DOMAIN, caddy.USERNODE_APPS_DOMAIN, caddy.USERNODE_LEGACY_APPS_DOMAIN]
     .map((d) => String(d || '').toLowerCase())
     .filter(Boolean);
 }
@@ -184,7 +184,12 @@ async function checkDns(app, row, resolver = makeResolver()) {
   }
   const found = (targets || []).map((t) => String(t).toLowerCase().replace(/\.$/, ''));
   if (!found.length) return { ok: false, error: `No CNAME record found for ${cname.name}.`, transient: false };
-  if (!found.includes(cname.value.toLowerCase())) {
+  // While apps move to another domain, a CNAME made before the move still
+  // points at the app's old address, which keeps resolving to the same
+  // gateway: it passes, and new claims are shown the new one.
+  const legacy = caddy.legacyProductionHostname(app.slug);
+  const accepted = [cname.value.toLowerCase(), ...(legacy ? [legacy.toLowerCase()] : [])];
+  if (!found.some((t) => accepted.includes(t))) {
     return { ok: false, error: `The CNAME for ${cname.name} points to ${found[0]}, not ${cname.value}.`, transient: false };
   }
   let records;
