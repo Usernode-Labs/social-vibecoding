@@ -4387,6 +4387,14 @@
     "text": "Withdraw",
     "description": "Row in the ⋯ menu of a governance proposal's card, shown to the person who made it: takes the proposal back so it is no longer voted on. A verb."
   },
+  "governance.menu.edit": {
+    "text": "Edit proposal",
+    "description": "Row in the ⋯ menu of a card-picture proposal's card, shown to the person who proposed it while the vote waits: opens the picture editor to replace the waiting picture."
+  },
+  "governance.menu.editTitle": {
+    "text": "Replace the picture this waiting proposal carries",
+    "description": "Tooltip of the \"Edit proposal\" row in a card-picture proposal's ⋯ menu. \"Replace\" is a verb."
+  },
   "governance.menu.withdrawTitle": {
     "text": "Withdraw this proposal (removes it from the vote panel)",
     "description": "Tooltip of the \"Withdraw\" row in a governance proposal's ⋯ menu."
@@ -5631,6 +5639,10 @@
     "text": "Something on Homeroom’s side stopped these screenshots, so it takes them again on its own.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots failed for a reason on Homeroom's own side (not the proposal's), and Homeroom takes them again once by itself. \"Homeroom\" is the product's name. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
   },
+  "badge.reason.shots.retryingGithubDetail": {
+    "text": "GitHub didn’t answer. Trying again in a few minutes.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots could not start because GitHub did not answer, and Homeroom tries again once by itself shortly. \"GitHub\" is the code host's name. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
+  },
   "badge.reason.shots.enforcedDetail": {
     "text": "Voting and merging wait for before & after screenshots of the current proposal commit.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: the screenshots are missing, on a project where they are required before a vote. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
@@ -6218,6 +6230,14 @@
   "shots.sentence.retryingFault": {
     "text": "Trying the screenshots again. Something on Homeroom’s side stopped these screenshots, so it takes them again on its own.",
     "description": "Line on a change's page, under \"What changes for you\", when taking the screenshots failed for a reason on Homeroom's own side (not the proposal's) and Homeroom takes them again once by itself. Homeroom is the product's name."
+  },
+  "shots.sentence.retryingGithub": {
+    "text": "Couldn’t take the screenshots: GitHub didn’t answer. Trying again in a few minutes.",
+    "description": "Line on a change's page, under \"What changes for you\", when taking the screenshots could not start because GitHub did not answer, and Homeroom tries again once by itself shortly. \"GitHub\" is the code host's name."
+  },
+  "shots.sentence.githubDown": {
+    "text": "Couldn’t take the screenshots: GitHub didn’t answer. Take them again in a few minutes.",
+    "description": "Line on a change's page, under \"What changes for you\", when taking the screenshots could not start because GitHub did not answer, and Homeroom does not try again by itself. \"GitHub\" is the code host's name."
   },
   "shots.sentence.couldNot": {
     "text": "Couldn’t take the screenshots. The screenshot agent could not take the before & after screenshots.",
@@ -8375,45 +8395,25 @@
     "text": "Nobody is working on this yet.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. \"This\" is the request."
   },
-  "request.status.lead.botQuestion": {
-    "text": "Waiting for an answer to Homeroom bot's question.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it asked a question on the request and waits for someone to answer it."
+  "request.status.lead.stands": {
+    "text": "{{stage}}.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands, when its stage has no second line. {{stage}} is the stage's own words, already translated, the same words every screen uses for it (for example Reading it, Up for a vote, or Waiting for you to decide)."
   },
-  "request.status.lead.botPlanWaiting": {
-    "text": "@{{username}}'s plan is ready. Any member can build it below.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands, for anyone but the person who asked for it. Homeroom bot wrote a plan for the change, drawn right below this card, and any member of the community may press its Build it button. {{username}} is the person who asked for it, after an @."
+  "request.status.lead.standsLine": {
+    "text": "{{stage}} · {{line}}",
+    "description": "The one sentence on the status card of a request's page that says where the request stands: its stage, then what that means now. {{stage}} and {{line}} are already translated, the same words every screen uses (for example Ready to build and Number 2 in line). Keep the dot between them as a separator."
   },
-  "request.status.lead.botPlanYours": {
-    "text": "Your plan is ready. Build it is on the plan below.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands, read by the person who asked for it while Homeroom bot's plan for it waits for Build it. The plan, with its Build it button, is drawn right below this card. \"Build it\" is the name of that button: keep it as the button reads."
-  },
-  "request.status.lead.botPlanWaitingUnnamed": {
-    "text": "The plan is ready. Any member can build it below.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands, when the person who asked for it cannot be named. Homeroom bot wrote a plan for the change, drawn right below this card, and any member of the community may press its Build it button."
-  },
-  "request.status.lead.botHeld": {
-    "text": "Homeroom bot will start when one of its changes here is voted in or closed.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it already has as many changes waiting for a vote on this project as it may, so it starts on this request when one of them is approved or closed. \"Here\" is the project."
-  },
-  "request.status.lead.botHeldTurn": {
-    "text": "Homeroom bot will start when one of the changes it is building here is done.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it is already building as many changes on this project at once as it may, so it starts on this request when one of those builds is done. \"Here\" is the project."
-  },
-  "request.status.lead.upForVote": {
-    "text": "Up for a vote.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and waits for the group's vote; used when how many more yes votes it needs is not known."
+  "request.status.lead.standsSaid": {
+    "text": "{{stage}}. {{said}}",
+    "description": "The status card of a request's page, when Homeroom bot handed the request back with a reason of its own: the stage, as a sentence, then the bot's reason. {{stage}} is already translated (for example Waiting for you to decide). {{said}} is \"Homeroom bot:\" followed by the bot's own sentence, already ending in its own full stop."
   },
   "request.status.lead.upForVoteNeeds_one": {
     "text": "Up for a vote: needs 1 more yes.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and waits for the group's vote; it needs one more yes vote. English spells the one out; a translation may use {{count}}."
+    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and up for the group's vote; it needs one more yes vote. English spells the one out; a translation may use {{count}}."
   },
   "request.status.lead.upForVoteNeeds_other": {
     "text": "Up for a vote: needs {{count}} more yes.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and waits for the group's vote; it needs {{count}} more yes votes. \"Yes\" is the vote, as a noun."
-  },
-  "request.status.lead.upForVoteChecksFailing": {
-    "text": "Up for a vote, but a test is failing. It needs a fix before it can go live.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is up for the group's vote, but one of its tests failed, so it cannot go live until its author fixes it; the card counts no yes votes while that is so."
+    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and up for the group's vote; it needs {{count}} more yes votes. \"Yes\" is the vote, as a noun."
   },
   "request.status.lead.reviewYours": {
     "text": "Your change for this is waiting for approval.",
@@ -8426,50 +8426,6 @@
   "request.status.lead.review": {
     "text": "A change for this is waiting for approval.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. Somebody's change (a proposal that fulfils the request) is up for the group's vote, and its author is not named. \"Change\" is a noun."
-  },
-  "request.status.lead.botQueued": {
-    "text": "Homeroom bot will build this next.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; the request is next in its queue. \"Build\" is a verb."
-  },
-  "request.status.lead.botOnHoldUntil": {
-    "text": "Homeroom bot has this on hold until {{date}}.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it has the request in its queue but holds it until {{date}}, a short month and day, and nothing needs to be done meanwhile."
-  },
-  "request.status.lead.botWaitsPlan": {
-    "text": "Homeroom bot is waiting for your plan.",
-    "description": "The one sentence on the status card of a request's page while the viewer, who asked for it, works on it with Homeroom bot (the platform's assistant) in a private thread: the bot builds nothing until they post a plan on it or let it go ahead."
-  },
-  "request.status.lead.waitingDecide": {
-    "text": "Waiting for you to decide. {{reason}}",
-    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and handed it back for a person to decide. {{reason}} is the bot's own sentence on why, which ends with a full stop."
-  },
-  "request.status.lead.waitingDecidePlain": {
-    "text": "Waiting for you to decide.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and handed it back for a person to decide, without having given a reason."
-  },
-  "request.status.lead.waitingDetail": {
-    "text": "Waiting for more detail from you. {{reason}}",
-    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and needs more detail before it can build anything. {{reason}} is the bot's own sentence on what is missing, which ends with a full stop."
-  },
-  "request.status.lead.waitingDetailPlain": {
-    "text": "Waiting for more detail from you.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and needs more detail before it can build anything, without having given a reason."
-  },
-  "request.status.lead.waitingDone": {
-    "text": "It may already work. {{reason}}",
-    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and thinks what it asks for may already work, so somebody should check before building. {{reason}} is the bot's own sentence on why, which ends with a full stop."
-  },
-  "request.status.lead.waitingDonePlain": {
-    "text": "It may already work. Close it, or say what is missing.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and thinks what it asks for may already work. Somebody can close the request, or say what is still missing from it."
-  },
-  "request.status.lead.botReading": {
-    "text": "Homeroom bot is reading this.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant; it has started on the request and is reading it before building."
-  },
-  "request.status.lead.botBuilding": {
-    "text": "Homeroom bot is building this.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant; it is writing the change that fulfils the request."
   },
   "request.status.lead.autoSolving": {
     "text": "An auto-solve run is working on this.",
@@ -8898,10 +8854,6 @@
   "page.votes.facts.youSaidNo": {
     "text": "You voted no.",
     "description": "Line on the Votes card of a change's page: the viewer's own current vote is No."
-  },
-  "page.votes.facts.yourProposal": {
-    "text": "Proposing it counts as your yes.",
-    "description": "Line on the Votes card of a change the viewer proposed, on a project whose rule counts proposing a change as a Yes from its author, who has not voted themselves."
   },
   "page.votes.facts.notVoted": {
     "text": "You haven’t voted.",

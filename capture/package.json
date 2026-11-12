@@ -2,6 +2,7 @@
   "name": "homeroom-capture",
   "private": true,
   "dependencies": {
+    "playwright-core": "1.65.0",
     "puppeteer-core": "25.16.0"
   },
   "overrides": {

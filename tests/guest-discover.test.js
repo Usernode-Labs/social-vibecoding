@@ -265,9 +265,9 @@ test('a visitor\'s card has no buttons at all: Try it, Join and Pin are the proj
     assert.deepEqual(card.match(/<button/g) || [], [], `${slug}: no button`);
     assert.doesNotMatch(card, /data-home-pin=|data-home-join=|data-guest-card-footer/);
   }
-  // The page behind the card is where a visitor joins; the card only tells
-  // the landing what was asked for, never from a button of its own.
-  assert.match(read(DISCOVER), /onJoin=\{\(app\) => \{ onIntent\?\.\(\{ kind: 'join', app \}\); \}\}/);
+  // The page behind the card is where a visitor joins; the card has no way
+  // to join of its own (#6433, #6609).
+  assert.doesNotMatch(read(DISCOVER), /onJoin=|onIntent\?\.\(\{ kind: 'join'/);
   // A waitlisted account is signed in: every project is still there,
   // Featured's and the rest's, each once (#6584, #6597).
   const signedIn = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ signedIn: true }));
@@ -308,23 +308,26 @@ test('signed out with an app pinned on this device: Pinned apps draws its tile a
   assert.doesNotMatch(html, /data-guest-suggested-app|Tap \+ to pin/);
 });
 
-test('a visitor\'s community cards have no Pin or Join; a signed-in card keeps its votes line and Join (#6433)', () => {
+test('a card is the same signed in or out: no Pin, no Join, no footer, one count (#6433, #6609)', () => {
   const { CommunitiesToJoin } = loadTsx(JOIN);
   const { renderToHtml, createElement } = require('./lib/render-tsx');
   const draw = (over = {}) => renderToHtml(createElement(CommunitiesToJoin, {
-    apps: APPS, exclude: new Set(), signedIn: true, query: '', onJoin() {}, ...over,
+    apps: APPS, exclude: new Set(), signedIn: true, query: '', ...over,
   }));
   const guest = draw({ signedIn: false });
-  assert.doesNotMatch(guest, /data-home-pin=|data-home-join=|data-guest-card-footer/);
-  // Signed in, the row is unchanged: what is up for a vote, then Join.
   const signedIn = draw();
-  for (const slug of ['todo-list', 'game-corner', 'fresh-one']) {
-    const card = cardOf(signedIn, slug);
-    assert.match(card, new RegExp(`data-home-join="${slug}"`));
-    assert.match(card, /data-guest-card-footer=""/);
-    assert.doesNotMatch(card, /data-home-pin=/);
+  for (const html of [guest, signedIn]) {
+    assert.doesNotMatch(html, /data-home-pin=|data-home-join=|data-guest-card-footer/);
+    assert.doesNotMatch(html, /up for a vote/, 'no votes line on a card');
   }
-  assert.ok(text(cardOf(signedIn, 'game-corner')).includes(message('home:join.votes', { count: 7 })));
+  // One code path: the same community's card is drawn identically on the
+  // signed-out page and on the signed-in Home (#6609).
+  for (const slug of ['game-corner', 'todo-list', 'fresh-one']) {
+    assert.equal(cardOf(signedIn, slug), cardOf(guest, slug), slug);
+  }
+  // The card has no footer prop at all, so a later change cannot branch it.
+  assert.doesNotMatch(read(DISCOVER), /footer=\{footerFor|data-guest-card-footer/);
+  assert.doesNotMatch(read(JOIN), /footerFor|home:join\.votes|home:join\.button/);
 });
 
 test('an app open for a visitor is pinned from the landing\'s bar, to this device, and Home shows it (#6433)', () => {
@@ -358,7 +361,7 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   const { CommunitiesToJoin } = loadTsx(JOIN);
   const { renderToHtml, createElement } = require('./lib/render-tsx');
   const draw = (over = {}) => renderToHtml(createElement(CommunitiesToJoin, {
-    apps: APPS, exclude: new Set(), signedIn: true, query: '', onJoin() {}, ...over,
+    apps: APPS, exclude: new Set(), signedIn: true, query: '', ...over,
   }));
   const featuredOf = (html) => [...html.matchAll(/data-guest-featured="([^"]+)"/g)].map((m) => m[1]);
   const cardsOf = (html) => [...html.matchAll(/<article data-guest-card="([^"]+)"/g)].map((m) => m[1]);
@@ -389,8 +392,8 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   assert.match(read(JOIN), /\{featured\.length \? <h3 className=\{`\$\{SMALL_CAPS_LABEL\} px-1 pb-2`\} data-home-join-rest="">\{t\('home:join\.more'\)\}<\/h3> : null\}/, 'the heading is not limited to a chosen kind');
   const src = read(JOIN);
   assert.match(src, /const lead = new Set\(featured\.map\(\(a\) => a\.slug\)\);\s+return \(query \? joinOrder\(pool\) : sortApps\(pool, 'trending'\)\.filter\(\(a\) => !lead\.has\(a\.slug\)\)\)/, 'the non-search list leaves out what Featured shows');
-  // Each featured card keeps what a card can do: Join, signed in.
-  assert.match(cardOf(html, 'game-corner'), /data-home-join="game-corner"/);
+  // Each featured card is the visitor's card, with no Join and no footer (#6609).
+  assert.doesNotMatch(cardOf(html, 'game-corner'), /data-home-join=|data-guest-card-footer/);
   // A community already on this Home is in neither.
   const mine = draw({ exclude: new Set(['todo-list']) });
   assert.deepEqual(featuredOf(mine), ['game-corner']);

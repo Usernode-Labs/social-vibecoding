@@ -363,7 +363,10 @@ test('checkRepoPublic says the budget is used up instead of passing GitHub\'s wo
   github._setOctokitFactoryForTests(() => ({
     rest: { repos: { get: async () => { throw Object.assign(new Error('Server Error'), { status: 502 }); } } },
   }));
-  assert.deepEqual(await github.checkRepoPublic('o', 'r'), { ok: false, code: 'github_error', message: 'Server Error' });
+  // #6598: a 5xx is worth asking again, so it says so; the worker's start
+  // check retries it before giving up.
+  assert.deepEqual(await github.checkRepoPublic('o', 'r'),
+    { ok: false, code: 'github_error', message: 'Server Error', transient: true });
 });
 
 test('a worker that cannot start for the budget says so in words a person reads', () => {

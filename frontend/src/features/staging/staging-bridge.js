@@ -20,6 +20,7 @@ import {
   visualCompareHandlers,
   visualCompareStore,
 } from './staging-store.js';
+import { APP_FRAME_SANDBOX, PENDING_FRAME_SANDBOX } from '../app-frame/app-frame-policy.js';
 
 /**
  * Counts genuine `src` assignments on #staging-iframe.
@@ -155,6 +156,11 @@ export const stagingBridge = {
     const el = stagingRefs.iframe;
     if (!el || !src) return false;
     navigations += 1;
+    // A preview runs unreviewed code: it gets the production app frame's
+    // sandbox, so it can never navigate the Homeroom tab itself, and it
+    // behaves as its change will once it is live. A sandbox applies from the
+    // next navigation, so it is set before `src` (../app-frame/app-frame-policy.js).
+    el.setAttribute('sandbox', APP_FRAME_SANDBOX);
     el.src = src;
     return true;
   },
@@ -162,7 +168,11 @@ export const stagingBridge = {
   clearSrc() {
     stagingStore.set({ background: '' });
     const el = stagingRefs.iframe;
-    if (el) el.src = '';
+    if (!el) return;
+    // The blank document it falls back to is same-origin with the shell, so
+    // it must not keep allow-scripts with allow-same-origin.
+    el.setAttribute('sandbox', PENDING_FRAME_SANDBOX);
+    el.src = '';
   },
 
   setHandlers(patch) {

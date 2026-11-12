@@ -1813,12 +1813,37 @@ async function getCloneUrl(owner, repo) {
 // repositories with).
 const { parseGithubUrl } = require('../workflow/rules/github-url.ts');
 
+// The network error codes a call can fail with when GitHub is busy, slow, or
+// the connection dropped — worth asking again in a moment. A refusal that
+// carries an HTTP status below 500 is the same answer next time.
+const TRANSIENT_GITHUB_CODES = new Set([
+  'ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EAI_AGAIN', 'EPIPE',
+]);
+
+/**
+ * Pure: whether a GitHub call failed for a reason worth retrying — a 5xx, a
+ * timeout, or a dropped connection — rather than a settled answer. A status
+ * below 500 (a 404, a refusal) is never transient.
+ */
+function isTransientGithubError(err) {
+  if (!err || typeof err !== 'object') return false;
+  const raw = err.status != null ? err.status : (err.response && err.response.status);
+  const status = Number(raw);
+  if (Number.isFinite(status) && status > 0) return status >= 500;
+  const code = String(err.code || (err.cause && err.cause.code) || '');
+  if (TRANSIENT_GITHUB_CODES.has(code)) return true;
+  if (code.startsWith('UND_ERR_')) return true;
+  if (err.name === 'AbortError' || err.name === 'TimeoutError') return true;
+  return /timeout/i.test(code);
+}
+
 // Lightweight privacy check. Used by:
 //   - worker bootstrap (defense against post-import privacy flips)
 //   - the startup audit (sweeps existing imports)
 // Returns { ok: true, private: bool } on success, { ok: false, code, message }
 // on failure. Callers decide whether to treat "couldn't determine" as
-// fatal (bootstrap) or just log (audit).
+// fatal (bootstrap) or just log (audit). A failure worth asking again carries
+// `transient: true`.
 async function checkRepoPublic(owner, repo) {
   if (onGitHost(owner)) return hostedGit().checkRepoPublic(owner, repo);
   if (!app && !require('./github-read-access').configured() && !_octokitFactoryForTests) {
@@ -1831,7 +1856,10 @@ async function checkRepoPublic(owner, repo) {
     octokit = await getReadOctokit(owner);
   } catch (err) {
     if (pause.isPausedError(err)) return { ok: false, code: 'github_paused', message: err.message };
-    return { ok: false, code: 'github_error', message: err.message };
+    return {
+      ok: false, code: 'github_error', message: err.message,
+      ...(isTransientGithubError(err) ? { transient: true } : {}),
+    };
   }
   try {
     const { data } = await octokit.rest.repos.get({ owner, repo });
@@ -1847,7 +1875,10 @@ async function checkRepoPublic(owner, repo) {
       const retryAfterSeconds = budget.rateLimitRetryAfterSeconds(err);
       return { ok: false, code: 'rate_limited', message: notice, ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
     }
-    return { ok: false, code: 'github_error', message: err.message };
+    return {
+      ok: false, code: 'github_error', message: err.message,
+      ...(isTransientGithubError(err) ? { transient: true } : {}),
+    };
   }
 }
 
@@ -2038,6 +2069,7 @@ module.exports = {
   safeMention,
   parseGithubUrl,
   checkRepoPublic,
+  isTransientGithubError,
   fetchPublicRepoInfo,
   // The header builder for read-only PUBLIC GitHub reads (anonymous), for
   // services/external-agent-tasks.

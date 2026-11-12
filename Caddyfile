@@ -264,7 +264,10 @@ import /etc/caddy/active/platform-upstream.caddy
 	# real platform session. See the decision tree atop GET /__caddy/access
 	# in src/routes/internal.js. On a non-2xx the gate's response
 	# (404 / authorize redirect / cookie-setting redirect) is returned to
-	# the client verbatim and the app container is never reached.
+	# the client verbatim and the app container is never reached. Verbatim
+	# includes every Set-Cookie: the redirect that starts the sign-in hop
+	# sets its state cookie that way, and the callback's sets the access
+	# cookie (copy_headers only ever applies to a 2xx).
 	#
 	# WebSocket gotcha: forward_auth's subrequest PRESERVES the original
 	# Connection/Upgrade headers, so for a proxied WS handshake the gate
@@ -336,9 +339,10 @@ import /etc/caddy/active/platform-upstream.caddy
 		# The app never sees the gate's own material: the identity's
 		# carrier header (it already has it as x-usernode-token) and the
 		# app-host cookies, which are the visitor's sign-in at this host
-		# and could be replayed by whoever reads them.
+		# and could be replayed by whoever reads them, and the sign-in
+		# hop's state, which would let it plant a code of its own.
 		header_up -X-Usernode-Identity
-		header_up Cookie `(?:__Host-usernode|__usernode)_(?:access|anon)=[^;]*;?\s*` ""
+		header_up Cookie `(?:__Host-usernode|__usernode)_(?:access|anon|state)=[^;]*;?\s*` ""
 		@unauth status 401
 		handle_response @unauth {
 			@chromeless {
@@ -466,7 +470,7 @@ https:// {
 		header_up -X-Usernode-Identity
 		header_up -X-Usernode-Upstream
 		header_up -X-Usernode-Applink
-		header_up Cookie `(?:__Host-usernode|__usernode)_(?:access|anon)=[^;]*;?\s*` ""
+		header_up Cookie `(?:__Host-usernode|__usernode)_(?:access|anon|state)=[^;]*;?\s*` ""
 		@unauth status 401
 		handle_response @unauth {
 			@chromeless {

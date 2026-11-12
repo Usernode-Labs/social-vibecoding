@@ -161,6 +161,26 @@ test('the bot\'s follow-ups against the full PostgreSQL schema', { timeout: 1200
     assert.equal(sent.length, 1);
   });
 
+  // Step 4's review (11 Nov 2026): the line is one post (bot-post.js), and
+  // a send that fails throws, so the work that fired it is retried: never a
+  // promise marked kept with nobody told.
+  await t.test('a line that could not be sent throws, and the retry tells it once', async () => {
+    await clear();
+    await ask();
+    const send = deps.ws.sendBotMessage;
+    deps.ws.sendBotMessage = async () => { throw new Error('room down'); };
+    await assert.rejects(followups.fire(pool, { sessionId: change.id, event: 'vote', deps }), /room down/);
+    deps.ws.sendBotMessage = send;
+    const [owed] = await rows();
+    assert.deepEqual([owed.state, owed.message_id], ['fired', null], 'claimed, and still owed');
+    assert.equal(sent.length, 0);
+    assert.equal(await followups.fire(pool, { sessionId: change.id, event: 'vote', deps }), 1);
+    assert.equal(sent.length, 1, 'told on the retry');
+    assert.equal(Number((await rows())[0].message_id), sent[0].id);
+    assert.equal(await followups.fire(pool, { sessionId: change.id, event: 'vote', deps }), 0);
+    assert.equal(sent.length, 1, 'and once');
+  });
+
   await t.test('a message that already told them keeps the promise', async () => {
     await clear();
     await ask();

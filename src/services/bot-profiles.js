@@ -109,7 +109,9 @@ const PROFILES = Object.freeze({
   }),
   request: profile('request', {
     surface: 'thread', scope: 'thread', prompt: 'request', places: ['issue'], limits: THREAD_LIMITS,
-    tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'start_request', 'offer_close_request', 'offer_copy_request', 'offer_withdraw', 'change_plan', 'make_pictures', 'attach_files', 'show_change', 'list_change_files']),
+    // Step 5 (11 Nov 2026): ask_changed reads it again for a comment that
+    // changes what it asks for; nothing else said there does.
+    tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'start_request', 'offer_close_request', 'offer_copy_request', 'offer_withdraw', 'change_plan', 'ask_changed', 'make_pictures', 'attach_files', 'show_change', 'list_change_files']),
     // Words passed on as a change are the follow-up's; the bot's own change
     // up for a vote answers anyone; the requester or an admin straight after
     // a post of the bot's is answering it; else only a mention or a reply,

@@ -195,7 +195,7 @@ async function run(t, h, item = ITEM) {
     post: real.post, advanceSeen: real.seen, postOnProposal: real.onProposal, mentionTargets: real.targets,
   }));
   live.post = async (args) => { h.calls.order.push(args.kind); h.calls.posts.push(args); return { githubCreatedAt: '2026-10-09T21:00:00Z' }; };
-  live.postOnProposal = async (args) => { h.calls.order.push(args.kind); h.calls.onProposal.push(args); return { postId: 1, thread: true }; };
+  live.postOnProposal = async (args) => { h.calls.order.push(args.kind); h.calls.onProposal.push(args); return { postId: 1, thread: true, outcome: 'said' }; };
   live.advanceSeen = async () => ({ advanced: true });
   live.mentionTargets = async () => ['evan'];
   return bot.runTriage(h.pool, {}, { bot: BOT, app: APP, item, mode: 'shadow', settings: SETTINGS, deps: h.deps });
@@ -314,7 +314,7 @@ test('a reply that has to wait for another turn on the change says why, once', a
 test('a wait is said only on the bot\'s own change, while a person is waiting there', async () => {
   const posted = [];
   const real = live.postOnProposal;
-  live.postOnProposal = async (args) => { posted.push(args); return { postId: 1 }; };
+  live.postOnProposal = async (args) => { posted.push(args); return { postId: 1, outcome: 'said' }; };
   try {
     const pool = (rows, open = { id: 5001, status: 'promoted' }) => ({
       async query(sql) {
@@ -328,6 +328,8 @@ test('a wait is said only on the bot\'s own change, while a person is waiting th
     assert.equal(await bot.noteFollowUpWait(pool([{ by_bot: false, recent: true }]), { ...args, why: 'allowance' }), true);
     assert.match(posted[0].text, /building time for this request is used up for this week/);
     assert.equal(posted[0].kind, 'followup_wait');
+    // Step 4: said once per message waited on, by its key (bot-post.js).
+    assert.equal(posted[0].version, 'after-0-allowance');
     assert.equal(await bot.noteFollowUpWait(pool([{ by_bot: true, recent: true }]), { ...args, why: 'budget' }), false);
     assert.equal(await bot.noteFollowUpWait(pool([{ by_bot: false, recent: false }]), { ...args, why: 'budget' }), false, 'an old message is nobody waiting');
     assert.equal(await bot.noteFollowUpWait(pool([]), { ...args, why: 'budget' }), false);
@@ -347,7 +349,7 @@ test('a wait is said only on the bot\'s own change, while a person is waiting th
 test('a message on the bot\'s change on a project it is paused on hears why', async () => {
   const posted = [];
   const real = live.postOnProposal;
-  live.postOnProposal = async (args) => { posted.push(args); return { postId: 1 }; };
+  live.postOnProposal = async (args) => { posted.push(args); return { postId: 1, outcome: 'said' }; };
   try {
     const pool = (paused) => ({
       async query(sql) {

@@ -43,7 +43,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { SectionHeading } from './panels/ui';
 import { communityScopeStore } from '../workshop/community-scope';
-import { homePinsStore, importDevicePins, loadHomePins, setHomePin, wireHomePins, type HomePin } from './home-pins-store';
+import { homePinsStore, importDevicePins, loadHomePins, loadHomePinsForSession, setHomePin, wireHomePins, type HomePin } from './home-pins-store';
 import { matchesQuery, useHomeQuery } from './use-home-query';
 
 const HEAD_ACTION = 'shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target';
@@ -207,7 +207,7 @@ export function PinnedCommunities() {
     const unwire = wireHomePins(moved);
     // Signed in before Home mounted (the session event already went by):
     // move what this device pinned first, then read the list.
-    if ((window as any).App?.user) void importDevicePins(moved).then(() => loadHomePins());
+    if ((window as any).App?.user) void importDevicePins(moved).then((count) => (count ? loadHomePins() : loadHomePinsForSession()));
     return unwire;
   }, []);
   useEffect(() => { if (query) setEditing(false); }, [query]);

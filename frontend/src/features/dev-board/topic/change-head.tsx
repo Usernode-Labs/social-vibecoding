@@ -39,7 +39,7 @@
  * clashes with the version's own changes, Ask Homeroom bot to fit it.
  */
 
-import { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { forwardRef, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Html } from '../../../lib/html';
@@ -49,6 +49,7 @@ import { listText, t as translate } from '../../../lib/i18n/runtime';
 import { releaseSentence } from '../../../lib/release-eta';
 import { useReleaseNow } from '../../../lib/use-release-now';
 import { Alert } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/feed';
 import { CheckIcon, EllipsisHorizontalIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../group-chat/swatch';
@@ -60,6 +61,7 @@ import type { ActionSpec, DevCardModel } from '../card/model';
 import type { ChangeGateView, ChangeMergeView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
 import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
+import { TopicPageContext } from './topic-store';
 import { ThreadItems, pageSlug } from './thread-items';
 import type { ClosesRequest } from './thread-model';
 import { changeMenuKey } from './thread-menu';
@@ -175,12 +177,18 @@ function FixRow({ fix, rerun }: { fix: FixChecksView; rerun: ReactNode }): React
 /**
  * #6225: what a yes on a change would close, under its Votes card's tally:
  * every request the change closes, each a link to its page with its title and
- * filer. A request its requester has not agreed to says so, so a voter can see
- * overreach and vote no. Five lines, then one tap for the rest.
+ * filer. #6606: the line then says where its filer stands — nothing when it
+ * is confirmed, "already closed", "its filer says this doesn't close it", or
+ * that it is waiting for whoever filed it to agree. Only a line that is
+ * waiting, seen by the person who filed it, carries Confirm. Five lines, then
+ * one tap for the rest.
  */
-function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
+function VoteCloses({ closes, id }: { closes: ClosesRequest[]; id: number | null }): ReactNode {
   const t = useMessages('project');
   const [open, setOpen] = useState(false);
+  const [answered, setAnswered] = useState<number[]>([]);
+  const [sending, setSending] = useState<number | null>(null);
+  const [failed, setFailed] = useState<number | null>(null);
   const shown = open || closes.length <= 5 ? closes : closes.slice(0, 5);
   const rest = closes.length - shown.length;
   const slug = (window as any).AppView?.appData?.slug || '';
@@ -188,6 +196,23 @@ function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
   const link = (n: number) => (
     <a href={slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${n}` : `#${n}`} className={linkClass} />
   );
+  async function confirm(n: number) {
+    if (sending != null || !slug || id == null) return;
+    setSending(n);
+    setFailed(null);
+    try {
+      const res = await fetch(
+        `/api/apps/${encodeURIComponent(slug)}/issues/${n}/changes/${id}/confirm-closing`,
+        { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      );
+      if (!res.ok) throw new Error(String(res.status));
+      setAnswered((was) => (was.includes(n) ? was : [...was, n]));
+    } catch {
+      setFailed(n);
+    } finally {
+      setSending(null);
+    }
+  }
   return (
     <div
       className="col-span-full mt-2.5 border-t border-[color:var(--app-sheet-line)] pt-2 text-[13px] leading-normal text-zinc-500 dark:text-zinc-400"
@@ -196,31 +221,65 @@ function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
       <p className="font-semibold text-zinc-700 dark:text-zinc-300">
         {t('project:topic.change.gate.closesHead', { count: closes.length })}
       </p>
-      {shown.map((r) => (
-        <p
-          key={r.number}
-          // #6225: a hanging indent, so a long title wrapping on a phone stays
-          // aligned after the "#number" link rather than under it.
-          className="ps-[3.4em] -indent-[3.4em]"
-          data-change-vote-closes-on={r.number}
-          data-confirmed={r.confirmed ? 'true' : 'false'}
-        >
-          {r.title && r.by ? (
-            <RichMessage
-              id="project:topic.change.gate.closesLine"
-              values={{ number: r.number, title: r.title, by: r.by }}
-              components={[link(r.number)]}
-            />
-          ) : r.title ? (
-            <RichMessage id="project:topic.change.gate.closesLineNoFiler" values={{ number: r.number, title: r.title }} components={[link(r.number)]} />
-          ) : (
-            <RichMessage id="project:topic.change.gate.closesLineUntitled" values={{ number: r.number }} components={[link(r.number)]} />
-          )}
-          {r.confirmed ? null : (
-            <>{' · '}<span className="whitespace-nowrap font-semibold text-zinc-700 dark:text-zinc-300">{t('project:topic.change.gate.closesUnconfirmed')}</span></>
-          )}
-        </p>
-      ))}
+      {shown.map((r) => {
+        const confirmed = r.confirmed || answered.includes(r.number);
+        const tail = r.closed
+          ? t('project:topic.change.gate.closesClosed')
+          : confirmed
+            ? null
+            : r.disputed
+              ? t('project:topic.change.gate.closesDisputed')
+              : r.waiting
+                ? t('project:topic.change.gate.closesUnconfirmed')
+                : null;
+        return (
+          <p
+            key={r.number}
+            // #6225: a hanging indent, so a long title wrapping on a phone stays
+            // aligned after the "#number" link rather than under it.
+            className="ps-[3.4em] -indent-[3.4em]"
+            data-change-vote-closes-on={r.number}
+            data-confirmed={confirmed ? 'true' : 'false'}
+          >
+            {r.title && r.by ? (
+              <RichMessage
+                id="project:topic.change.gate.closesLine"
+                values={{ number: r.number, title: r.title, by: r.by }}
+                components={[link(r.number)]}
+              />
+            ) : r.title ? (
+              <RichMessage id="project:topic.change.gate.closesLineNoFiler" values={{ number: r.number, title: r.title }} components={[link(r.number)]} />
+            ) : (
+              <RichMessage id="project:topic.change.gate.closesLineUntitled" values={{ number: r.number }} components={[link(r.number)]} />
+            )}
+            {tail ? (
+              <>{' · '}<span className="whitespace-nowrap font-semibold text-zinc-700 dark:text-zinc-300">{tail}</span></>
+            ) : null}
+            {!confirmed && !r.closed && !r.disputed && r.waiting && r.canConfirm ? (
+              <>
+                <Button
+                  type="button"
+                  variant="pillAccent"
+                  size="sm"
+                  className="align-middle ms-1"
+                  disabled={sending === r.number}
+                  data-change-vote-closes-confirm={r.number}
+                  onClick={() => void confirm(r.number)}
+                >
+                  {t('project:topic.change.gate.closesConfirm')}
+                </Button>
+              </>
+            ) : null}
+            {failed === r.number ? (
+              <>
+                <span className="ms-1 text-[color:var(--state-blocked)]" role="alert">
+                  {t('project:topic.thread.page.claimDisputeFailed')}
+                </span>
+              </>
+            ) : null}
+          </p>
+        );
+      })}
       {rest > 0 ? (
         <button
           type="button"
@@ -325,7 +384,7 @@ export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
         </div>
       ) : null}
       {/* #6225: what a yes would close, under the tally. */}
-      {which === 'votes' && closes.length ? <VoteCloses closes={closes} /> : null}
+      {which === 'votes' && closes.length ? <VoteCloses closes={closes} id={id} /> : null}
       {why ? (
         <p className="dev-change-gate-why" data-change-gate-why={explanation ? 'explained' : 'own-words'}>
           {page ? `${why} ` : why}
@@ -675,6 +734,11 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   threadAsChange?: boolean;
 }): ReactNode {
   const t = useMessages('project');
+  // #6608: the thread list and the bot door read the project THIS page was
+  // painted for (TopicPageContext), never whichever project the app last
+  // loaded. `pageSlug()` is the fallback for the Workshop's own side panel
+  // and older callers outside a painted head.
+  const slug = useContext(TopicPageContext).slug || pageSlug();
   // Under one of the frame's looks the page tells the bar its trail (the
   // Workshop, then this change) and stands its votes and checks, and About,
   // in the context column beside its words (./frame/side-stack.ts).
@@ -754,7 +818,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
             />
           ) : null}
           {/* #6019: the requests, other changes and votes in its thread. */}
-          {id ? <ThreadItems slug={pageSlug()} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} menuKey={menuKey || null} /> : null}
+          {id ? <ThreadItems slug={slug} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} menuKey={menuKey || null} /> : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
           {frame ? (
             <div className="dev-change-status">
@@ -774,7 +838,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {/* 1 Nov 2026: ask about it, or sketch a revision, privately. #6392:
               the words say so, and the bot building or fixing it leaves this out. */}
           <WorkWithBotButton
-            slug={pageSlug()}
+            slug={slug}
             number={v.number}
             voting={!!v.votes.facts?.length}
             botAtWork={v.testing.botFix === 'fixing' || v.testing.botFix === 'queued'}

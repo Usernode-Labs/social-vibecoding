@@ -325,9 +325,10 @@ export function StagingOverlay(): ReactNode {
             camera is what the gate exists to stop; the permission PROMPT is
             still relayed here, so an app can see why it was refused. See
             ../app-frame/app-frame-policy.js, and BASE_ALLOW there for why
-            `pointer-lock` is not written (QA 2026-09-24 Q35): this frame has
-            no sandbox, so pointer lock was never restricted in the first
-            place.
+            `pointer-lock` is not written (QA 2026-09-24 Q35). The sandbox is
+            the production app frame's (allow-pointer-lock included), set by
+            stagingBridge.setSrc before each navigation: unreviewed code must
+            not be able to navigate the Homeroom tab.
         */}
         <iframe
           id="staging-iframe"

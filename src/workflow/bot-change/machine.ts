@@ -24,7 +24,7 @@ import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Check, Event, Json, Machine, Outcome, Push, TransitionContext, Tx, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
 import { toUser } from '../pushes.ts';
 import { BOT_CHANGE, botChangeKey } from '../rules/bot-notes.ts';
-import { checksDue, readiness } from '../rules/bot-readiness.ts';
+import { checksDue, readiness, READY_HOLD_MS } from '../rules/bot-readiness.ts';
 import type { Claim } from '../rules/bot-readiness.ts';
 import { NO_FACTS, readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
@@ -41,6 +41,9 @@ export const WORK = Object.freeze({
   approved: 'bot.tellApproved',
   // #6264: the promises people asked for, kept where they asked.
   followups: 'bot.tellFollowups',
+  // #6407: a change built from a person's plan is compared with that plan's
+  // after screen before anyone is asked to vote.
+  planCheck: 'bot.checkPlan',
 });
 // How often a change being merged is looked at again (a merge GitHub does
 // not confirm puts it back up for its vote).
@@ -69,6 +72,11 @@ interface Note { kind: string; input: Json; status: 'pending' | 'done' | 'failed
 // platform's failure, which it says itself; asked again on the next verdict),
 // or that it gave up waiting (`gaveUp`, for this head).
 interface Fix { head: string; asked: boolean; lost: number; refused: string | null; gaveUp: boolean }
+// #6407: a change built from a person's plan, and whether it was compared
+// with that plan's after screen for this head: asked (waiting on the answer),
+// on (it matches), off (with what the plan draws and it does not), or
+// unchecked (no answer could be trusted: it goes to the vote as it used to).
+interface PlanCheck { head: string; state: 'asked' | 'on' | 'off' | 'unchecked'; misses: string[]; at: number }
 export interface Data {
   sessionId: number;
   appId: number;
@@ -76,6 +84,7 @@ export interface Data {
   told: number | null;
   stoppedEpoch: number | null;
   fix: Fix | null;
+  plan: PlanCheck | null;
   notes: Record<string, Note>;
 }
 export type BState = { name: Name; data: Data } | { name: typeof NONE; data: null };
@@ -206,6 +215,31 @@ function decide(s: Live | null, f: Facts, ctx: TransitionContext, base: Data, ex
   // failure looks like the platform's and it said so itself): nobody else is
   // told anything, as on [main].
   if (!r.checked) return at('checking', { timer: null });
+  // #6407: a change built from a person's plan is compared with that plan's
+  // after screen once its shots are in and before anybody is asked to vote.
+  // It stays here (still up for its vote, no card, no bells) while it waits,
+  // at most READY_HOLD_MS; no answer in that time is `unchecked`, and an
+  // unchecked change goes to the vote exactly as it used to.
+  let offPlan: string[] = [];
+  if (f.builtFromSessionId && r.head) {
+    let plan = d.plan && d.plan.head === r.head ? d.plan : null;
+    if (!plan) {
+      const key = `plan:${shortSha(r.head)}:v${ctx.version + 1}`;
+      const work: WorkRequest[] = [...follow, {
+        kind: WORK.planCheck, key, input: { sessionId: d.sessionId, head: r.head },
+      }];
+      d = asked({ ...d, plan: { head: r.head, state: 'asked', misses: [], at: now } }, work);
+      return step('waiting_on_shots', d, { work, push: extra.push, timer: { at: new Date(now + READY_HOLD_MS), event: { type: 'Look' } } });
+    }
+    if (plan.state === 'asked') {
+      if (now - plan.at < READY_HOLD_MS) {
+        return at('waiting_on_shots', { timer: { at: new Date(plan.at + READY_HOLD_MS + 1000), event: { type: 'Look' } } });
+      }
+      plan = { ...plan, state: 'unchecked', misses: [] };
+      d = { ...d, plan };
+    }
+    if (plan.state === 'off') offPlan = plan.misses;
+  }
   // Ready to try: said once per epoch, saying what does not work. An epoch
   // asked before and not sent (it was being merged meanwhile) is asked
   // again under a key of its own; the DM's own key is the epoch's.
@@ -214,7 +248,7 @@ function decide(s: Live | null, f: Facts, ctx: TransitionContext, base: Data, ex
   const voteKey = `followups:vote:${r.epoch}`;
   const work: WorkRequest[] = d.told === r.epoch ? [] : [{
     kind: WORK.ready, key: d.notes[first] ? `${first}:v${ctx.version + 1}` : first,
-    input: { sessionId: d.sessionId, epoch: r.epoch, broken },
+    input: { sessionId: d.sessionId, epoch: r.epoch, broken, ...(offPlan.length ? { offPlan } : {}) },
   }];
   // Whoever asked to be told when it is ready to vote hears it once, at
   // this epoch (a later epoch is a newer change to vote on).
@@ -255,7 +289,7 @@ function answered(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Out
 }
 
 function created(e: Event<any>, f: Facts): Data {
-  return { sessionId: e.payload.sessionId, appId: f.row!.app_id, told: null, stoppedEpoch: null, fix: null, notes: {} };
+  return { sessionId: e.payload.sessionId, appId: f.row!.app_id, told: null, stoppedEpoch: null, fix: null, plan: null, notes: {} };
 }
 
 // A look from anything that tells it: a verdict, a settle, a round that
@@ -356,6 +390,25 @@ function workResult(status: Note['status']) {
       const prev = live.data.notes[e.payload.workKey]!;
       const notes = { ...live.data.notes, [e.payload.workKey]: { ...prev, status, ...(e.payload.error ? { error: e.payload.error.message.slice(0, 500) } : {}) } };
       let d: Data = { ...live.data, notes };
+      // #6407: the plan check's answer, recorded for this head. The change
+      // is decided again, so its ready card carries `offPlan` or not.
+      if (e.payload.kind === WORK.planCheck) {
+        const result = (e.payload.result || {}) as { state?: unknown; misses?: unknown };
+        const state = status === 'done' && ['on', 'off', 'unchecked'].includes(String(result.state))
+          ? String(result.state) : 'unchecked';
+        d = {
+          ...d,
+          plan: {
+            head: String((prev.input as any)?.head || ''),
+            state: state as PlanCheck['state'],
+            misses: Array.isArray(result.misses)
+              ? result.misses.filter((m) => typeof m === 'string').slice(0, 3).map(String) : [],
+            at: 0,
+          },
+        };
+        if (!FINAL.has(live.name) && live.name !== 'merged' && live.name !== 'closed' && f.row) return decide(live, f, ctx, d);
+        return step(live.name as Name, d);
+      }
       // A ready card not sent because it was no longer up for a vote (being
       // merged, say): its epoch is not told, and is considered again now and
       // on every later look (a merge GitHub refuses puts it back up).

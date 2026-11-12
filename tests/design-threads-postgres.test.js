@@ -541,3 +541,29 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     assert.match(plan, /<h1>T &lt;b&gt;<\/h1>/);
   });
 });
+
+test('#6407: a plan made from a design says which of its versions is chosen', () => {
+  const designs = require('../src/services/design-threads');
+  const after = '<div data-variant="As it is now">One list</div>'
+    + '<div data-variant="With date headings" data-chosen>TODAY</div>';
+  assert.deepEqual(designs.designVariants(after), { labels: ['As it is now', 'With date headings'], chosen: 'With date headings' });
+  assert.deepEqual(designs.designVariants('<div>One screen</div>'), { labels: [], chosen: null });
+
+  const chosen = designs.planHtml({
+    design: { width: 1280, height: 800, title: 'History', route: null }, title: 'History by day', notes: '', before: null, after, version: 3,
+  });
+  assert.match(chosen, /This design draws 2 versions side by side/);
+  assert.match(chosen, /Build &quot;With date headings&quot;, the chosen one/);
+
+  const none = designs.planHtml({
+    design: { width: 1280, height: 800, title: 'History', route: null }, title: 'History by day', notes: '', before: null,
+    after: after.replace(' data-chosen', ''), version: 3,
+  });
+  assert.match(none, /It does not say which one to build yet/);
+
+  const one = designs.planHtml({
+    design: { width: 1280, height: 800, title: 'History', route: null }, title: 'History', notes: '', before: null,
+    after: '<div>One screen</div>', version: 1,
+  });
+  assert.doesNotMatch(one, /versions side by side/);
+});

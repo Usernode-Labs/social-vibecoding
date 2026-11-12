@@ -26,8 +26,8 @@
  * are drawn, so this module needs no i18n runtime and its tests read it bare.
  */
 
-import { lineWords, stageWords } from '../../lib/work-state';
-import type { WorkState } from '../../lib/work-state';
+import { lineWords, normalizeWorkState, stageWords, standingOfPush, waitsForPlan, withoutClosedVote } from '../../lib/work-state';
+import type { WorkState, WorkStatePush } from '../../lib/work-state';
 import { dayKeyOf } from '../../lib/time-zone';
 
 export interface AiApp {
@@ -93,6 +93,12 @@ export interface AiThread {
    * it; its stage stays the change's own (absent from an older server).
    */
   fixYours?: boolean;
+  /**
+   * #6600: that change's fix, taken over by Homeroom bot, whose last attempt
+   * failed: it stays in Needs you, saying so, with Ask again. Absent from an
+   * older server.
+   */
+  botFixFailed?: boolean;
   at: string | null;
   /**
    * #6233: on a Live row, when the change merged and its id, so the tab can
@@ -465,14 +471,17 @@ function waitingRow(reasons: string[]) {
 }
 
 /**
- * Pure: which hand-back a Needs you row of the bot's is, by its stage: the
+ * Pure: which hand-back a Needs you row of the bot's is, by its standing: the
  * row's key and pill. A plan waits for Build it; a decision, for a person;
  * #6306: one already there only needs closing; a stopped build, for a
- * restart; #6284: failing checks it stopped fixing, for one more try.
+ * restart; #6284: failing checks it stopped fixing, for one more try. Only a
+ * standing waiting for its requester has a why: one that is anything else
+ * (being built, say) is never "Review plan", whatever an older read said.
  */
 function needKind(work: WorkState): string {
   if (work.stage === 'stopped') return work.reason === 'fix_stopped' ? 'fix_stopped' : 'stopped';
-  if (work.why === 'plan') return 'plan';
+  if (work.stage !== 'waiting_for_you') return 'needs';
+  if (waitsForPlan(work)) return 'plan';
   if (work.why === 'already_works') return 'works';
   if (work.why === 'needs_detail') return 'detail';
   return 'decide';
@@ -486,6 +495,7 @@ const NEED_PILLS: Record<string, string> = {
   fix_stopped: 'messages:ai.pill.letTryAgain',
   detail: 'messages:ai.pill.needsYou',
   fix_yours: 'messages:ai.pill.fixIt',
+  bot_fix_failed: 'messages:ai.pill.askAgain',
 };
 
 /**
@@ -642,7 +652,7 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
   }
   for (const t of work?.needs || []) {
     if (isOwed(owed, t)) continue;
-    const kind = t.fixYours ? 'fix_yours' : needKind(t.work);
+    const kind = t.botFixFailed ? 'bot_fix_failed' : t.fixYours ? 'fix_yours' : needKind(t.work);
     rows.push({
       key: `${kind}:${t.threadId}`,
       title: t.title || '',
@@ -652,16 +662,21 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       // detail), or stopped: nothing moves until a person does, so it is
       // Needs you's, and says so in its stage's words.
       // Your own change waiting on your fix says so, in the change's words
-      // ("PR 12" on GitHub).
-      sub: t.fixYours
-        ? { id: prWord('messages:ai.row.fixYours', changeOnGithub(t)), values: where(t.app, t.number) }
-        : stageLine(t),
+      // ("PR 12" on GitHub). #6600: once Homeroom bot's own try failed, it
+      // says that instead.
+      sub: t.botFixFailed
+        ? { id: prWord('messages:ai.row.botCouldntFix', changeOnGithub(t)), values: where(t.app, t.number) }
+        : t.fixYours
+          ? { id: prWord('messages:ai.row.fixYours', changeOnGithub(t)), values: where(t.app, t.number) }
+          : stageLine(t),
       pill: { id: NEED_PILLS[kind] || 'messages:ai.pill.needsYou' },
       // A phone shows it under the title, where nothing hovers: its second
       // line where it has one (the bot's own reason), else its stage.
-      why: t.fixYours
-        ? { id: 'messages:ai.why.fixYours' }
-        : lineWords(t.work) || stageWords(t.work, { yours: true }),
+      why: t.botFixFailed
+        ? { id: 'messages:ai.why.botCouldntFix' }
+        : t.fixYours
+          ? { id: 'messages:ai.why.fixYours' }
+          : lineWords(t.work) || stageWords(t.work, { yours: true }),
       href: t.href,
       rootId: null,
       threadId: t.threadId,
@@ -786,6 +801,56 @@ export function upNext(needs: NeedItem[] | null, work: AiWork | null): AiThread[
   });
 }
 
+/**
+ * Pure (11 Nov 2026): the lists with a `work_state` push applied where they
+ * hold its item, so a row says where it stands now rather than after the
+ * next read. Its request's row (or its change's own, for a change with no
+ * request) takes the standing the push carries; a row of Needs you that no
+ * longer asks its requester anything (a plan OK'd and now being built) leaves
+ * Needs you; and a Vote card of the feed whose change the push says is not
+ * open for votes (merged, merging, held, closed) leaves at once. Which list a
+ * row belongs in is the server's to say: the read that follows the push puts
+ * it there. Hands back the same lists when nothing matched.
+ */
+export function applyWorkState(
+  work: AiWork | null,
+  needs: NeedItem[] | null,
+  push: WorkStatePush,
+): { work: AiWork | null; needs: NeedItem[] | null } {
+  const standing = standingOfPush(push);
+  const state = normalizeWorkState(push.state);
+  if (!standing || !state) return { work, needs };
+  const { kind, issueNumber, sessionId } = standing;
+  const slug = push.appSlug || null;
+  const holds = (t: AiThread) => !!slug && t.app?.slug === slug && (kind === 'change'
+    ? t.kind === 'change' && !!sessionId && t.change?.id === sessionId
+    : t.kind !== 'change' && t.kind !== 'decision' && !!issueNumber && t.number === issueNumber);
+  let moved = false;
+  const take = (list: AiThread[] | undefined, group: AiThread['group']) => {
+    if (!list) return list;
+    let changed = false;
+    const out: AiThread[] = [];
+    for (const t of list) {
+      if (!holds(t)) { out.push(t); continue; }
+      changed = true;
+      // Needs you is what asks the person something: a row that asks
+      // nothing any more waits for the read to say where it went.
+      if (group === 'needs' && !t.fixYours && state.stage !== 'waiting_for_you' && state.stage !== 'stopped') continue;
+      out.push({ ...t, work: state });
+    }
+    if (changed) moved = true;
+    return changed ? out : list;
+  };
+  const nextWork = work ? {
+    ...work,
+    needs: take(work.needs, 'needs'),
+    next: take(work.next, 'next') || [],
+    waiting: take(work.waiting, 'waiting') || [],
+    live: take(work.live, 'live') || [],
+  } : work;
+  return { work: moved ? nextWork : work, needs: withoutClosedVote(needs, push) };
+}
+
 /** How long a done private thread stays under Live this week. */
 const CLOSED_DAYS = 7;
 
@@ -835,6 +900,7 @@ const PR_TWIN: Record<string, string> = {
   'messages:ai.row.stageLine': 'messages:ai.row.stageLinePr',
   'messages:ai.live.row': 'messages:ai.live.rowPr',
   'messages:ai.row.fixYours': 'messages:ai.row.fixYoursPr',
+  'messages:ai.row.botCouldntFix': 'messages:ai.row.botCouldntFixPr',
 };
 
 /** Whether a row names a change on a project whose code is on GitHub. */

@@ -24,6 +24,7 @@ test('Helm session and capture settings reach the runtime as decimal strings, in
       { MAX_GLOBAL_SESSIONS: '25', CAPTURE_CPUS: '8', CHECKS_MAX_CONCURRENT_RUNS: '6' }],
     [['--set', 'platform.shotsEnabled=false'],
       { MAX_GLOBAL_SESSIONS: '25', WORKER_IDLE_EVICTION_MS: '600000', SESSION_AUTOPAUSE_IDLE_MS: '300000', CAPTURE_CPUS: '8', SHOTS_ENABLED: 'false' }],
+    [['--set-string', 'config.browserSiteIsolation=strict'], { BROWSER_SITE_ISOLATION: 'strict' }],
     [['--set', 'config.previewSleepAfterMs=1800000,config.appSleepAfterMs=0,config.checkNodePoolRequired=true',
       '--set-string', 'config.checkNodePool=pool=checks'],
       { PREVIEW_SLEEP_AFTER_MS: '1800000', APP_SLEEP_AFTER_MS: '0', EARLY_UNIT_SUITE: '0' }],
@@ -32,6 +33,7 @@ test('Helm session and capture settings reach the runtime as decimal strings, in
     const env = Object.fromEntries([...rendered.matchAll(/\{name: ([A-Z0-9_]+), value: "([^"]*)"\}/g)]
       .map(([, key, value]) => [key, value]));
     assert.equal(env.PLATFORM_SIGNALS, 'shadow', 'other platform signals retain their mode');
+    assert.equal(env.BROWSER_SITE_ISOLATION, expected.BROWSER_SITE_ISOLATION || 'legacy');
     assert.equal(env.PLATFORM_SIGNALS_SECURITY_AUDIT, 'on', 'only security filing opts in');
     for (const [name, value] of Object.entries({
       CHECKS_MAX_CONCURRENT_RUNS: '4',
@@ -42,7 +44,7 @@ test('Helm session and capture settings reach the runtime as decimal strings, in
       ...expected,
     })) {
       assert.equal(env[name], value, name);
-      assert.equal(parseInt(env[name], 10), Number(value), `${name} application parsing`);
+      if (name !== 'BROWSER_SITE_ISOLATION') assert.equal(parseInt(env[name], 10), Number(value), `${name} application parsing`);
     }
     // The preview machine is the only path; its flag is no longer rendered.
     assert.equal(env.WF_PREVIEWS_ENABLED, undefined, 'WF_PREVIEWS_ENABLED is gone');
@@ -55,6 +57,11 @@ test('Helm session and capture settings reach the runtime as decimal strings, in
     'config.checkNodePoolRequired=true,config.checksMaxConcurrentRuns=0',
     '--set-string', 'config.checkNodePool=pool=checks'], { encoding: 'utf8', stdio: 'pipe' }),
   /requires a positive config.checksMaxConcurrentRuns/);
+  for (const value of ['typo', 'false', 'null', '""']) {
+    assert.throws(() => execFileSync('helm', [...args, '--set-json',
+      `config.browserSiteIsolation=${value === 'typo' ? '"typo"' : value}`],
+    { encoding: 'utf8', stdio: 'pipe' }), /config.browserSiteIsolation must be legacy or strict/);
+  }
 });
 
 test('sleep exceptions reach web and conductor and reject undocumented exclusions', {

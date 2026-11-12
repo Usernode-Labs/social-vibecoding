@@ -219,6 +219,22 @@
     "text": "A change to this illustration is already waiting for the group's vote. Another can be proposed once it settles. <0>Open the proposal</0>",
     "description": "Shown in the featured illustration editor when an earlier change to the illustration is still being voted on. The numbered tag is a link to that proposal (noun); \"Open\" is a verb."
   },
+  "illustration.pendingMine": {
+    "text": "Your change to this picture is waiting for the group's vote. Saving replaces it and clears the votes cast on it. <0>Open the proposal</0>",
+    "description": "Shown in the featured illustration editor when the viewer's own change to the picture is waiting for the community's vote: what they save now replaces that change in place. The numbered tag is a link to the proposal (noun); \"Open\" is a verb."
+  },
+  "illustration.openProposal": {
+    "text": "Open the proposal",
+    "description": "Link beside a refused replace in the featured illustration editor, when the change it was for can still be opened (it was already decided). The proposal is the change that was put to the group's vote."
+  },
+  "illustration.replace": {
+    "text": "Replace the waiting change",
+    "description": "Main button of the featured illustration editor, when the viewer's own change to the picture is already waiting for the group's vote: replaces that waiting change with what is on screen, instead of proposing another."
+  },
+  "illustration.replaced": {
+    "text": "Replaced. The group votes again on the new picture. <0>Open the proposal</0>",
+    "description": "Shown in the featured illustration editor after the viewer replaced their own waiting change. The numbered tag is a link to the proposal (noun); \"Open\" is a verb."
+  },
   "illustration.proposeNote": {
     "text": "Proposing opens a governance card on the board. The change applies when the group votes it in.",
     "description": "Small note above the buttons of the featured illustration editor: what pressing \"Propose change\" does. The board is the project's list of proposals."

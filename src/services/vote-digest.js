@@ -38,9 +38,6 @@
 
 const log = require('./logger');
 const { VOTE_DIGEST_LOCK } = require('./advisory-locks');
-const { firstVersionSql } = require('./first-version-rule');
-const { voteReadySql } = require('./vote-ready');
-const { APPROVED_SQL } = require('./work-state');
 
 const INTERVAL_MS = 60 * 60 * 1000;      // swept hourly (the vote-digest clock)
 // 20 rather than 24: the sweep is hourly and a strict 24 would drift a
@@ -67,9 +64,8 @@ const MAX_COUNT = 99;
  *     collab-private app they cannot vote on is still counted.
  *   - `hidden` is not read, so a hidden opt-out row counts like a pin.
  *
- * Excluded: the proposal's own author (unless a coding agent submitted it
- * for them, `external_agent`: their yes counts only once they tap it,
- * governance-rules.ts), apps the person blocked, proposals
+ * Its own author is asked too: proposing is never their yes, and their tap
+ * is (governance-rules.ts). Excluded: apps the person blocked, proposals
  * they already voted on, a change Homeroom bot built for a request they
  * asked for, a change they were told is ready to try in the last 24 hours,
  * a project's first version (it goes live without a vote:
@@ -91,20 +87,19 @@ const PENDING_SQL = `
       FROM apps a WHERE a.created_by IS NOT NULL
   ),
   open_proposals AS (
-    SELECT cs.id, cs.app_id, cs.user_id AS author_id,
-           (cs.external_agent IS NOT NULL) AS made_by_agent
+    SELECT cs.id, cs.app_id
       FROM chat_sessions cs
      WHERE cs.status = 'promoted'
-       -- 13 Oct 2026, D1: a project's first version waits on nobody's vote.
-       AND NOT ${firstVersionSql('cs')}
-       -- #6402: and only once its checks passed and it merges cleanly with
-       -- main. A change still being tested is nobody's vote yet.
-       AND ${voteReadySql('cs')}
-       -- #6594: nor once its votes are in: it is approved and waits on its
-       -- checks, so the digest does not ask anyone for a vote it has.
-       AND NOT EXISTS (
-             SELECT 1 FROM work_states w
-              WHERE w.session_id = cs.id AND ${APPROVED_SQL('w')})
+       -- 11 Nov 2026: only a change open for votes, as its stored work state
+       -- says (services/work-state.js, the Needs you feed's own test): its
+       -- checks passed and it merges cleanly (#6402), not a first version
+       -- (D1), no update on its way, no merge GitHub holds, no shots still
+       -- being taken. A change still being tested is nobody's vote yet.
+       -- #6594: nor one whose votes are in: it is Approved (waiting on its
+       -- checks) or going live, never open for votes, so the digest does
+       -- not ask anyone for a vote it has.
+       AND EXISTS (SELECT 1 FROM work_states ws
+                    WHERE ws.item_kind = 'change' AND ws.item_ref = cs.id AND ws.vote_open)
   )
   SELECT s.user_id, COUNT(DISTINCT p.id) AS pending,
          -- The one change, when there is exactly one: the row names it, so a
@@ -113,8 +108,7 @@ const PENDING_SQL = `
          CASE WHEN COUNT(DISTINCT p.id) = 1 THEN MIN(p.app_id) END AS only_app_id
     FROM open_proposals p
     JOIN stakeholders s ON s.app_id = p.app_id
-   WHERE (s.user_id IS DISTINCT FROM p.author_id OR p.made_by_agent)
-     AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = s.user_id AND b.app_id = p.app_id)
+   WHERE NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = s.user_id AND b.app_id = p.app_id)
      AND NOT EXISTS (
        SELECT 1 FROM pr_votes v
         WHERE v.session_id = p.id AND v.user_id = s.user_id

@@ -512,3 +512,49 @@ test('the admin block guard lets reads through and refuses cross-site writes', a
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+// ── Every cookie-authenticated write, by default ─────────────────────────
+
+const { sameOriginCookieWrites } = require('../src/middleware/same-site-browser');
+
+async function withCookieGuardedApp(fn) {
+  const app = express();
+  app.use(sameOriginCookieWrites);
+  app.all('*', (_req, res) => res.json({ ok: true }));
+  const server = app.listen(0);
+  await new Promise((resolve) => server.once('listening', resolve));
+  try {
+    return await fn(`http://127.0.0.1:${server.address().port}`);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+test('a write that carries the session cookie is refused unless the Homeroom page sent it', async () => {
+  await withCookieGuardedApp(async (base) => {
+    const send = (path, headers, method = 'POST') => fetch(base + path, { method, headers }).then(r => r.status);
+    const cookie = { cookie: 'session=fake-token' };
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      assert.equal(await send('/api/me/password', { ...cookie, 'sec-fetch-site': 'same-site' }, method), 403, method);
+    }
+    assert.equal(await send('/api/me/password', { ...cookie, 'sec-fetch-site': 'cross-site' }), 403);
+    assert.equal(await send('/api/me/password', { ...cookie, origin: 'https://evil-app.onhomeroom.com' }), 403);
+    assert.equal(await send('/api/me/password', { ...cookie, origin: 'null' }), 403);
+    assert.equal(await send('/api/me/password', { ...cookie, 'sec-fetch-site': 'same-origin' }), 200);
+    assert.equal(await send('/api/me/password', cookie), 200, 'neither header: not a browser (native app, CLI, tests)');
+    assert.equal(await send('/api/me/password', { 'sec-fetch-site': 'cross-site' }), 200, 'no session cookie, nothing ambient to ride');
+    assert.equal(await send('/api/me/password', { ...cookie, 'sec-fetch-site': 'cross-site' }, 'GET'), 200, 'reads are not writes');
+    assert.equal(await send('/api/public/waitlist', { ...cookie, 'sec-fetch-site': 'same-site' }), 200,
+      'the anonymous public tier never reads the session');
+  });
+});
+
+test('the cookie-write guard is mounted ahead of every router', () => {
+  const server = read('server.js');
+  const guard = server.indexOf('sameOriginCookieWrites');
+  assert.ok(guard > 0, 'server.js mounts sameOriginCookieWrites');
+  const before = server.slice(0, guard).match(/^app\.(?:use|get|post|put|patch|delete|all)\(.*$/gm) || [];
+  const infrastructure = /inflightRequests|requestCounts|errorLanguage|trustedProxyClientIp|responseCompression|publicApiCors/;
+  for (const line of before) assert.match(line, infrastructure, `mounted before the guard: ${line}`);
+  assert.ok(before.length >= 6);
+});

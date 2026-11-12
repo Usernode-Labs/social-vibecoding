@@ -243,8 +243,11 @@ const App = {
   // screen selector must not restore another session's display-only state.
   _sessionCacheScope() {
     try {
-      const value = document.cookie.split(';').map(s => s.trim())
-        .find(s => s.startsWith('usernode_api_scope='))?.slice('usernode_api_scope='.length);
+      const name = typeof location !== 'undefined' && location.protocol === 'http:'
+        ? 'usernode_api_scope' : '__Host-usernode_api_scope';
+      const values = document.cookie.split(';').map(s => s.trim()).filter(s => s.startsWith(name + '='));
+      if (values.length !== 1) return null;
+      const value = values[0].slice(name.length + 1);
       return /^[a-f0-9]{64}$/.test(value || '') ? value : null;
     } catch (err) { return null; }
   },
@@ -3626,11 +3629,11 @@ const App = {
             // the chat draw (React, features/messages/bot-work.tsx) are read
             // again under the viewer's own session; nothing here writes the
             // DOM. The Homeroom bot tab hears the same push (features/ai/live.ts).
-            window.dispatchEvent(new CustomEvent('homeroom-bot-work-changed'));
-            // #6595: a work state also names the item whose stage moved, so
-            // a request or a change open on screen re-reads itself wherever
-            // it is shown. `dev: false`: the Workshop's own refresh is told
-            // nothing by a work state.
+            // 11 Nov 2026: with the push, which a screen holding its item
+            // draws at once (lib/work-state.ts).
+            window.dispatchEvent(new CustomEvent('homeroom-bot-work-changed', { detail: data }));
+            // #6595: and the item shown re-reads itself wherever it is
+            // (`dev: false`: the Workshop's own refresh is not told).
             if (data.type === 'work_state') {
               App._liveRefresh('work', data.item?.sessionId ?? null, {
                 appSlug: data.appSlug,
