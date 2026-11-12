@@ -491,7 +491,7 @@ async function showCard(pool, { wait, change, syncWhy = null, deps = {} }) {
     if (!(issueNumber > 0)) return null;
     const requester = await dm.requesterOf(pool, Number(change.app_id), issueNumber).catch(() => null);
     const settings = await botModule(deps).readSettings(pool).catch(() => null);
-    if (!requester || !dm.hasBot(settings, requester)) return null;
+    if (!requester || !(await require('./homeroom-bot-verified').worksFor(dm, pool, settings, requester))) return null;
     const bot = deps.bot || await dm.botAccount(pool);
     if (!bot?.id) return null;
     const shown = typeof dm.cardShown === 'function'
@@ -543,7 +543,7 @@ async function ringPerson(pool, { change, wait, text, deps = {} }) {
     if (!(issueNumber > 0)) return null;
     const requester = await dm.requesterOf(pool, Number(change.app_id), issueNumber).catch(() => null);
     const settings = await botModule(deps).readSettings(pool).catch(() => null);
-    if (!requester || !dm.hasBot(settings, requester)) return null;
+    if (!requester || !(await require('./homeroom-bot-verified').worksFor(dm, pool, settings, requester))) return null;
     const bot = deps.bot || await dm.botAccount(pool);
     if (!bot?.id) return null;
     const shown = typeof dm.cardShown === 'function'

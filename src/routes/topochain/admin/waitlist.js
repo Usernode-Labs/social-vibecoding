@@ -13,9 +13,10 @@
 //     block producer (surfaced via GET /api/v4/mobile/me).
 // Plus a direct per-user access grant for accounts that never joined
 // the waitlist, the switch for invite links skipping the waitlist
-// (services/community-invites.js, the invite tree), and the reminders to
+// (services/community-invites.js, the invite tree), the reminders to
 // admitted people who have not signed in (services/waitlist-reminders.js):
-// their switch, and "Send a reminder now" on one row.
+// their switch, and "Send a reminder now" on one row, and the switch for
+// the waitlist itself (#6633, services/waitlist-open.js).
 'use strict';
 
 const { Router } = require('express');
@@ -25,10 +26,9 @@ const waitlist = require('../../../services/waitlist');
 const firstSession = require('../../../services/first-session');
 const releaseMailSetting = require('../../../services/release-mail-setting');
 const { signalsFor } = require('../../../services/waitlist-signals');
-const { sendWaitlistReleaseMail } = require('../../../services/topochain/mailer');
-const releaseLinks = require('../../../services/release-links');
+const releaseMail = require('../../../services/waitlist-release-mail');
+const waitlistOpen = require('../../../services/waitlist-open');
 const waitlistReminders = require('../../../services/waitlist-reminders');
-const { loadMobileAppUrls } = require('../../../services/mobile-store-links');
 const { adminWriteGate } = require('./auth');
 const { toIntId } = require('./util');
 const { ok, fail, iso, paginate, meta, csvField } = require('../helpers');
@@ -311,61 +311,12 @@ function waitlistAdminRoutes(config) {
   const router = Router();
   const pool = getPool(config);
 
-  // "You're in" notification for a row admitting just released — first
+  // "You're in" notification for a row admitting just released: first
   // release only (re-releases are idempotent no-ops and must not re-email).
-  // Degrades silently when no mail transport is configured; never fails the
-  // release. `mobile` is the store-listing lookup, done once by the caller
-  // so a batch does not repeat it per row.
-  async function sendReleaseMail(released, mobile) {
-    // A phone row has no address: its "you're in" goes by text, the SMS hook
-    // (#4096, services/waitlist.js sendReleaseText).
-    if (!released.email) {
-      await waitlist.sendReleaseText(pool, released);
-      return;
-    }
-    // #5971: an admin can switch the email off; the release itself stands.
-    if (!(await releaseMailSetting.releaseMailEnabled(pool))) {
-      log.info('topochain-admin', 'Release email switched off; not sent', { signupId: released.id });
-      return;
-    }
-    const hasAccount = released.linked_user_id != null;
-    // #4594: a new account's one-time sign-in link. A failure to mint drops
-    // the link, not the mail: the mail's link still prefills the address
-    // and sends a code, as it did before.
-    let link = null;
-    if (!hasAccount) {
-      try {
-        link = await releaseLinks.mintLink(pool, { signupId: released.id, email: released.email });
-      } catch (err) {
-        log.error('topochain-admin', 'release sign-in link not minted', { signupId: released.id, message: err.message });
-      }
-    }
-    await sendWaitlistReleaseMail(config, released.email, {
-      mobile,
-      hasAccount,
-      signInToken: link ? link.token : null,
-      // When the link stops working, for the line above the button.
-      signInExpiresAt: link ? link.expiresAt : null,
-      // #1548: lets the signup screen prefill the address and send the
-      // code without a second step. An unguessable capability already
-      // delivered to this address, so it carries nothing the recipient
-      // does not already hold — and unlike the address itself it is safe
-      // in a query string, which is what survives a link rewriter.
-      moreToken: released.more_token || null,
-      // The account's language. An address with no account yet has none: the
-      // admin's browser says nothing about the person being let in.
-      ...(released.recipient_locale ? { locale: released.recipient_locale } : {}),
-    });
-  }
-
-  // The mail's mobile steps link the published store listings; a failed
-  // lookup drops those steps rather than the mail or the release.
-  function loadReleaseMailMobile() {
-    return loadMobileAppUrls(pool).catch((err) => {
-      log.error('topochain-admin', 'release mail mobile links failed', { message: err.message });
-      return null;
-    });
-  }
+  // The notice itself is services/waitlist-release-mail.js, shared with
+  // "Let them all in" (services/waitlist-open.js).
+  const sendReleaseMail = (released, mobile) => releaseMail.sendReleaseMail(config, pool, released, mobile);
+  const loadReleaseMailMobile = () => releaseMail.loadReleaseMailMobile(pool);
 
   // ── GET /api/v4/admin/waitlist ────────────────────────────────────────
   // `?status=pending|released` filters; default lists everything,
@@ -831,6 +782,67 @@ function waitlistAdminRoutes(config) {
       return ok(res, { data: { id, has_platform_access: true } });
     } catch (err) {
       log.error('topochain-admin', 'POST /admin/users/:id/grant-access failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  // ── GET / PUT /api/v4/admin/waitlist-enabled ─────────────────────────
+  // Whether a new account waits to be admitted (#6633,
+  // services/release-mail-setting.js `waitlist_enabled`). On unless switched
+  // off here; off, an account a sign-up makes is let in at once
+  // (services/waitlist.js admitIfOpen).
+  //
+  // Turning it off says what happens to the people already waiting, each
+  // time: `waiting: 'keep'` leaves them in the list, `waiting: 'admit'`
+  // starts the "Let them all in" run (services/waitlist-open.js), which the
+  // waitlist-admit-all clock works through in the background under the
+  // release-email switch. The same PUT while it is already off starts the
+  // run again, for the people a run passed over. Turning it on ends a run
+  // where it stands.
+  //
+  // `waiting` is how many are waiting now; `admitting` is the run in
+  // progress and how many it has left, or null.
+  const readWaitlistSwitch = async () => {
+    const s = await releaseMailSetting.readWaitlistSetting(pool, { fresh: true });
+    const run = await waitlistOpen.readAdmitAll(pool);
+    return {
+      enabled: s.enabled,
+      updated_at: iso(s.updatedAt),
+      updated_by: s.updatedBy,
+      waiting: await waitlistOpen.countWaiting(pool),
+      admitting: run ? { remaining: await waitlistOpen.remainingFor(pool, run) } : null,
+      release_email: await releaseMailSetting.releaseMailEnabled(pool),
+    };
+  };
+
+  router.get('/api/v4/admin/waitlist-enabled', async (req, res) => {
+    try {
+      return ok(res, { data: await readWaitlistSwitch() });
+    } catch (err) {
+      log.error('topochain-admin', 'GET /admin/waitlist-enabled failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  router.put('/api/v4/admin/waitlist-enabled', adminWriteGate, async (req, res) => {
+    const enabled = req.body?.enabled;
+    const waiting = req.body?.waiting;
+    if (typeof enabled !== 'boolean') return fail(res, 422, 'Provide enabled: true or false.');
+    if (!enabled && waiting !== 'keep' && waiting !== 'admit') {
+      return fail(res, 422, 'Turning the waitlist off needs waiting: keep or admit, for the people already waiting.');
+    }
+    try {
+      const actorId = req.user?.id ?? null;
+      await releaseMailSetting.setWaitlistEnabled(pool, { enabled, actorId });
+      let started = null;
+      if (enabled) await waitlistOpen.cancelAdmitAll(pool, { actorId });
+      else if (waiting === 'admit') started = await waitlistOpen.startAdmitAll(pool, { actorId });
+      log.info('topochain-admin', 'Waitlist switched', {
+        enabled, waiting: enabled ? null : waiting, started, adminId: req.user?.id,
+      });
+      return ok(res, { data: await readWaitlistSwitch() });
+    } catch (err) {
+      log.error('topochain-admin', 'PUT /admin/waitlist-enabled failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
   });

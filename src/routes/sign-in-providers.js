@@ -140,6 +140,9 @@ function signInProviderRoutes(config) {
       // in, project invites to it are claimed, and the included OpenRouter
       // key is made. Each is best effort and never throws.
       await waitlist.linkUserByEmail(pool, { userId: result.userId, email: result.email, newAccount: true });
+      // #6633: with the waitlist switched off, the account just made is let
+      // in at once, before its waitlist spot and any invite it carries.
+      await waitlist.admitIfOpen(pool, result.userId);
       await require('../services/email-invites').claimEmailInvites(pool, { userId: result.userId, email: result.email });
       await managedOpenRouter.ensureIncludedKey({
         pool, userId: result.userId, config, reason: `signup_${provider}`,

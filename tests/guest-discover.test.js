@@ -700,7 +700,8 @@ test('the short story heads Discover: welcome, headline, one line, what an accou
   assert.equal([...html.matchAll(/class="hidden text-\[13px\] leading-\[18px\] text-zinc-500 md:block dark:text-zinc-400"/g)].length, 3);
   assert.match(html, /<ul data-landing-story-points="" class="mt-5 grid w-full grid-cols-3 gap-3 md:max-w-\[820px\] md:gap-6">/);
   assert.equal(message('auth:guest.hero.joinWaitlist'), 'Join the waitlist');
-  // Once new accounts no longer wait, the same button says Sign up.
+  // Once new accounts no longer wait, the same button says Create account.
+  assert.equal(message('auth:guest.hero.signUp'), 'Create account');
   const open = renderComponent(STORY, 'Story', { compact: true, primaryClass: 'pill', onStart() {}, onSignIn() {} });
   assert.ok(text(open).includes(message('auth:guest.hero.signUp')));
   assert.ok(!text(open).includes(message('auth:guest.hero.joinWaitlist')));
@@ -718,9 +719,24 @@ test('the short story heads Discover: welcome, headline, one line, what an accou
   assert.deepEqual([...html.matchAll(/<button[^>]*>/g)].map((m) => m[0]), ['<button type="button" data-landing-story-join="" class="pill mt-5 h-11 w-auto px-5 text-[15px]">']);
   assert.doesNotMatch(html, /<a\s/);
   assert.doesNotMatch(read(LANDING), /data-landing-story-sign-up/);
-  // The landing says it from the one switch, and the button notes itself as
-  // the way in (features/auth/sign-up-from.ts).
-  assert.match(read(LANDING), /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+waitlist=\{NEW_ACCOUNTS_WAIT\}/);
+  // The landing says it from the one switch, Admin › Waitlist's (#6633): the
+  // public options' `waitlist_enabled`, and the waitlist's words until they
+  // arrive, so the first paint is what the prerendered document says. The
+  // button notes itself as the way in (features/auth/sign-up-from.ts).
+  assert.match(read(LANDING), /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+waitlist=\{accountsWait\}/);
+  assert.match(read(LANDING), /const accountsWait = newAccountsWait\(waitlistPayload\);/);
+  assert.doesNotMatch(read(LANDING), /waitlist=\{NEW_ACCOUNTS_WAIT\}/);
+  const { NEW_ACCOUNTS_WAIT, newAccountsWait } = loadTsx(DATA);
+  assert.equal(NEW_ACCOUNTS_WAIT, true);
+  assert.equal(newAccountsWait(null), true, 'until the options arrive');
+  assert.equal(newAccountsWait({}), true, 'an older server');
+  assert.equal(newAccountsWait({ waitlist_enabled: true }), true);
+  assert.equal(newAccountsWait({ waitlist_enabled: false }), false, 'only an explicit off');
+  // The frames and the email step read the same switch.
+  assert.equal([...read(LANDING).matchAll(/waitlist=\{accountsWait\}/g)].length, 3);
+  assert.match(read('frontend/src/features/auth/login.tsx'), /const accountsWait = newAccountsWait\(useWaitlistOptions\(\)\);/);
+  assert.match(read('frontend/src/features/auth/login.tsx'), /\{accountsWait \? t\('auth:login\.otp\.lead'\) : t\('auth:login\.otp\.leadOpen'\)\}/);
+  assert.doesNotMatch(message('auth:login.otp.leadOpen'), /waitlist/i);
   assert.doesNotMatch(read(LANDING), /<GuestDiscover[^>]*\bwaitlist=/, 'the card that read it is gone');
   assert.match(read(STORY), /onClick=\{\(\) => \{ noteSignUpFrom\('hero'\); onStart\(\); \}\}/);
   // The line invites a look; it does not promise that nothing needs an
@@ -877,7 +893,7 @@ test('a project page\'s sheets are titled for what the visitor tried, and come b
   assert.equal(intentTitle({ kind: 'use', app }, t, true), 'Sign in to use Game Corner');
   const src = read(LANDING);
   assert.match(src, /export function intentTitle\(intent: GuestIntent, t: Translate, waitlist: boolean = NEW_ACCOUNTS_WAIT\): string \{/);
-  assert.match(src, /title=\{intentTitle\(intent, \(id, params\) => t\(id, params\)\)\}/);
+  assert.match(src, /title=\{intentTitle\(intent, \(id, params\) => t\(id, params\), accountsWait\)\}/);
   // Remembered for an email sign-in (AuthScreens.finishLogin), and the
   // provider's trip comes back to the same page.
   assert.match(src, /rememberDeepLink as undefined \| \(\(h: string\) => void\)\)\?\.\(projectHash\(i\.app\.slug\)\);/);

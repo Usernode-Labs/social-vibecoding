@@ -336,7 +336,7 @@ async function startCard(pool, {
     if (!app?.id || !bot?.id || !requester?.userId || !Number.isInteger(n) || n <= 0 || !jobKey) return null;
     const dm = dmModule(deps);
     const s = settings || await settingsModule(deps).readSettings(pool);
-    if (!dm.hasBot(s, requester)) return null;
+    if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, s, requester))) return null;
     const payer = payerUserId === undefined ? requester.userId : payerUserId;
     const existing = await requestCard(pool, { userId: requester.userId, appId: app.id, issueNumber: n });
     // One story per request: every request gets a card, however it was
@@ -486,7 +486,7 @@ async function noteLowAllowance(pool, {
     const dm = dmModule(deps);
     if (typeof dm.noteStep !== 'function') return null;
     const s = settings || await settingsModule(deps).readSettings(pool);
-    if (!dm.hasBot(s, requester)) return null;
+    if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, s, requester))) return null;
     if (typeof dm.overWeeklyAllowance === 'function'
         && await dm.overWeeklyAllowance(pool, s, requester.userId).catch(() => false)) return null;
     if (typeof dm.allowanceLow !== 'function'
@@ -522,7 +522,7 @@ async function cardUnderPlan(pool, { app, issueNumber, runId, planMessageId, req
     if (!app?.id || !bot?.id || !requester?.userId || !Number.isInteger(n) || n <= 0 || !Number.isInteger(run) || run <= 0) return null;
     const dm = dmModule(deps);
     const s = settings || await settingsModule(deps).readSettings(pool);
-    if (!dm.hasBot(s, requester)) return null;
+    if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, s, requester))) return null;
     const existing = await requestCard(pool, { userId: requester.userId, appId: app.id, issueNumber: n });
     if (existing && existing.messageId > Number(planMessageId)) {
       return { messageId: existing.messageId, conversationId: existing.conversationId, duplicate: true, continued: true };
@@ -1246,7 +1246,7 @@ async function catchUpCards(pool, { user, settings = null, deps = {}, now = new 
     const s = settings || await botSvc.readSettings(pool);
     // As the tray: nothing is under way while the bot is off, or on a
     // staging copy, which never acts.
-    if (!dm.hasBot(s, user) || s.mode === 'off' || liveSvc.isStaging()) return none;
+    if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, s, user)) || s.mode === 'off' || liveSvc.isStaging()) return none;
     const added = await whileHolding(pool, userId, async () => {
       const states = await progressModule(deps).requestStates(pool, { userId, settings: s, now });
       const quietReasons = [botSvc.APP_AGAIN_REASON].filter(Boolean);

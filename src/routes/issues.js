@@ -1509,7 +1509,11 @@ function issueRoutes(config) {
         const out = await require('../services/homeroom-bot-dm').askBotToBuild(pool, {
           app, user: req.user, issueNumber: n, readAgain: req.body?.readAgain === true,
         });
-        if (!out.ok) return res.status(out.status || 400).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
+        if (!out.ok) {
+          return res.status(out.status || 400).json({
+            error: out.error, ...(out.code ? { code: out.code } : {}), ...(out.signals ? { signals: out.signals } : {}),
+          });
+        }
         return res.json(out);
       } catch (err) {
         log.error('issues', 'Asking Homeroom bot to build failed', { message: err.message, slug: req.params.slug });

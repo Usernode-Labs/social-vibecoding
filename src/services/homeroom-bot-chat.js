@@ -171,7 +171,7 @@ async function botFor(pool, { app, user, settings = null, deps = {} }) {
   try {
     if (!app?.id || !user?.id || user.isSynthetic) return null;
     const s = settings || await botModule(deps).readSettings(pool);
-    if (!dmModule(deps).hasBot(s, user)) return null;
+    if (!(await require('./homeroom-bot-verified').worksFor(dmModule(deps), pool, s, user))) return null;
     return { builds: !!liveModule(deps).isLiveFor(s, app), settings: s };
   } catch (err) {
     log.warn('homeroom-bot-chat', 'Could not read whether Homeroom bot answers here', { app: app?.slug, err: err.message });

@@ -40,7 +40,7 @@ test('the head: the welcome over the headline, its sentence, and the one primary
   const html = render();
   assert.match(html, /^<div class="fr" data-landing-frame=""><div class="fr-inner"><div class="fr-head"><div class="fr-tx"><div class="fr-cap fr-over">Welcome to Homeroom<\/div><h1 class="fr-title">On Homeroom, communities make apps together\.<\/h1><p class="fr-purpose">Look around and try what we&#x27;re making\.<\/p><\/div>/);
   assert.match(html, /<div class="fr-acts"><button type="button" class="fr-btn" data-landing-frame-join="">Join the waitlist<\/button><\/div>/, 'one button, as the story\'s short version has');
-  assert.match(render({ waitlist: false }), /data-landing-frame-join="">Sign up<\/button>/, 'where accounts open at once, the button says so');
+  assert.match(render({ waitlist: false }), /data-landing-frame-join="">Create account<\/button>/, 'where accounts open at once, the button says so');
   assert.match(render({ welcomeEmail: 'mina@example.com' }), /<h1 class="fr-title">[^<]+<\/h1><div class="fr-sub13">mina@example\.com<\/div>/, 'a "You\'re in" link\'s address is greeted, as the story greets it');
 });
 

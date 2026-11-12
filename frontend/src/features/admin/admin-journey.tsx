@@ -2182,6 +2182,7 @@ function CameInFacts({ cameIn }: { cameIn: CameIn & { door?: string | null } }) 
     rows.push(['Mail\u2019s page', [cameIn.mailPage.at ? `opened ${when(cameIn.mailPage.at)}` : null, outcome].filter(Boolean).join(' · ')]);
   }
   if (cameIn.fromEmail) rows.push(['Admit mail', cameIn.fromEmail === 1 ? 'the first send led in' : `send ${cameIn.fromEmail} led in`]);
+  if (cameIn.door === 'open_signup') rows.push(['Let in', 'at sign-up, while the waitlist was off']);
   rows.push(['Signed up with', cameIn.signupMethod ? SIGNUP_METHOD[cameIn.signupMethod] || cameIn.signupMethod : 'not recorded']);
   return (
     <div data-journey-person-came-in>

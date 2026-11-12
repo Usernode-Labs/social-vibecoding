@@ -225,8 +225,12 @@ test('privileged operations are conductor work', { timeout: 90000 }, async (t) =
     const c = (await instance(conflict.key)).data;
     assert.equal(c.status, 409); assert.equal(c.error, 'branch_conflict');
     assert.equal(host.branches.get(`dev/cli-u${p.userId}-req-2`), 'd'.repeat(40), 'the existing ref is never moved');
-    const made = host.calls.slice(before).filter(x => x[0] === 'ensureBranchAtSha').map(x => x[2]);
-    assert.deepEqual(made, [`dev/cli-u${p.userId}-req-1`, `dev/cli-u${p.userId}-req-2`]);
+    // Which ensure the conductor runs first is not this test's subject, and
+    // under the full suite's load it varies (it failed on PR #6560 with the
+    // two swapped): compare the set, sorted, which still catches a duplicate
+    // or a branch outside dev/.
+    const made = host.calls.slice(before).filter(x => x[0] === 'ensureBranchAtSha').map(x => x[2]).sort();
+    assert.deepEqual(made, [`dev/cli-u${p.userId}-req-1`, `dev/cli-u${p.userId}-req-2`].sort());
   });
 
   await t.test('a first-turn branch is refused once the change records another', async () => {

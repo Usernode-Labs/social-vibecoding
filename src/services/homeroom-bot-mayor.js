@@ -3561,7 +3561,7 @@ function runDmTurn(pool, config, { bot, user, settings, conversationId, message,
 async function answerLater(pool, config, { bot, user, conversationId, message, deps = {} }, attempt) {
   const dm = dmModule(deps);
   const settings = await botModule(deps).readSettings(pool);
-  if (!dm.hasBot(settings, user)) return null;
+  if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, settings, user))) return null;
   log.info('homeroom-bot-mayor', 'Asking a DM answer again', { userId: user.id, messageId: message.id, attempt });
   // 31 Oct 2026: a later try reads the thread the message was written in, as
   // its first try did (answerUserMessage); it used to read the main chat.
@@ -4974,6 +4974,14 @@ async function decideOfferTap(pool, config, { user, actionId, choice, answers = 
     return { ok: false, status: 410, error: 'expired', code: 'expired' };
   }
   if (nudge) return (deps.inviteNudge || require('./invite-nudge')).dismiss(pool, { user, action, deps });
+  // #6632: a yes, or Build it, is the bot acting for them. With the bot for
+  // verified accounts only, an unverified tap is answered with its own code
+  // before anything is decided (the card stays open for after they verify);
+  // a no is always theirs to give.
+  if (choice !== 'no') {
+    const locked = await require('./homeroom-bot-verified').refusalFor(pool, user, { botSvc: deps.botSvc });
+    if (locked) return locked;
+  }
   const out = await (deps.replies || require('../workflow/platform.ts')).tapDmAction({
     userId: Number(user.id), actionId: id, choice, answers: Array.isArray(answers) ? answers.slice(0, 2) : [],
   });

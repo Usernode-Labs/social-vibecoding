@@ -73,6 +73,12 @@ function collapse(sql) {
 function handleQuery(rawSql, params = []) {
   const sql = collapse(rawSql);
   seen.push({ sql, params });
+  // Who is waiting now, and who a "Let them all in" run still has to reach
+  // (services/waitlist-open.js); the list's own count is the line after.
+  if (sql.startsWith('SELECT COUNT(*)::int AS c FROM waitlist_signups w WHERE w.released_at IS NULL AND NOT EXISTS')) {
+    const inRun = (r) => !sql.includes('w.id > $1') || (r.id > params[0] && r.id <= params[1]);
+    return { rows: [{ c: signupRows.filter((r) => !r.released_at && inRun(r)).length }] };
+  }
   if (sql.startsWith('SELECT COUNT(*)::int AS c FROM waitlist_signups w')) return { rows: [{ c: 0 }] };
   if (sql.startsWith('SELECT w.id, w.email') && sql.includes('LIMIT $1 OFFSET $2')) return { rows: [] };
   if (sql.startsWith('SELECT w.id, w.email') && sql.includes('user_social_identities')) return { rows: [] };
@@ -87,6 +93,14 @@ function handleQuery(rawSql, params = []) {
   if (sql.startsWith('SELECT COUNT(*) FILTER (WHERE invite_generation = 0')) return { rows: [{ roots: 0, through_links: 0 }] };
   if (sql.startsWith('SELECT s.value, s.updated_at, u.username AS updated_by FROM platform_settings s')) {
     return { rows: params[0] in settings ? [{ value: settings[params[0]], updated_at: new Date(), updated_by: 'full' }] : [] };
+  }
+  // The waitlist switch's own reads (services/waitlist-open.js).
+  if (sql === 'SELECT value FROM platform_settings WHERE key = $1') {
+    return { rows: params[0] in settings ? [{ value: settings[params[0]] }] : [] };
+  }
+  if (sql.startsWith('SELECT COALESCE(MAX(w.id), 0)::bigint AS max_id')) {
+    const waiting = signupRows.filter((r) => !r.released_at);
+    return { rows: [{ max_id: String(Math.max(0, ...waiting.map((r) => r.id))), c: waiting.length }] };
   }
   if (sql.startsWith('INSERT INTO platform_settings')) {
     settings[params[0]] = params[1];
@@ -419,6 +433,65 @@ test('the release email switch reads on by default and is saved by a write admin
   assert.equal(saved.body.data.enabled, false);
   assert.equal(saved.body.data.updated_by, 'full');
   assert.equal(settings.waitlist_release_email, 'false');
+});
+
+// The waitlist's own switch (#6633). What switching it off does to sign-ups
+// and to the people waiting, against the real schema:
+// tests/waitlist-open-postgres.test.js.
+test('the waitlist switch reads on by default, and only a write admin turns it off, saying what happens to the people waiting', async () => {
+  const read = await call('GET', '/api/v4/admin/waitlist-enabled', undefined, 'readonly');
+  assert.equal(read.status, 200);
+  assert.deepEqual(read.body.data, {
+    enabled: true, updated_at: null, updated_by: null, waiting: 2, admitting: null, release_email: true,
+  });
+
+  assert.equal((await call('PUT', '/api/v4/admin/waitlist-enabled', { enabled: false, waiting: 'admit' }, 'readonly')).status, 403);
+  assert.equal(settings.waitlist_enabled, undefined);
+  assert.equal(settings.waitlist_admit_all, undefined);
+  assert.equal((await call('PUT', '/api/v4/admin/waitlist-enabled', { enabled: 'no' })).status, 422);
+  // Off always carries the choice: there is no default for the people waiting.
+  assert.equal((await call('PUT', '/api/v4/admin/waitlist-enabled', { enabled: false })).status, 422);
+  assert.equal((await call('PUT', '/api/v4/admin/waitlist-enabled', { enabled: false, waiting: 'all' })).status, 422);
+  assert.equal(settings.waitlist_enabled, undefined);
+
+  // Keep them waiting: the switch alone.
+  const kept = await call('PUT', '/api/v4/admin/waitlist-enabled', { enabled: false, waiting: 'keep' });
+  assert.equal(kept.status, 200);
+  assert.equal(kept.body.data.enabled, false);
+  assert.equal(kept.body.data.updated_by, 'full');
+  assert.equal(kept.body.data.waiting, 2);
+  assert.equal(kept.body.data.admitting, null);
+  assert.equal(settings.waitlist_enabled, 'false');
+  assert.equal(settings.waitlist_admit_all, undefined, 'no run was started');
+  assert.equal(mailed.length, 0, 'the request itself admits and mails nobody');
+
+  // Let them all in: a stored run for the clock, covering who waits now.
+  const admit = await call('PUT', '/api/v4/admin/waitlist-enabled', { enabled: false, waiting: 'admit' });
+  assert.equal(admit.status, 200);
+  assert.deepEqual(JSON.parse(settings.waitlist_admit_all), { lastId: 0, maxId: 2, by: 902 });
+  assert.ok(admit.body.data.admitting, 'the run shows as in progress');
+  assert.equal(mailed.length, 0, 'the run is the clock\'s, not the request\'s');
+
+  // Back on: the run ends where it stands.
+  const on = await call('PUT', '/api/v4/admin/waitlist-enabled', { enabled: true });
+  assert.equal(on.status, 200);
+  assert.equal(on.body.data.enabled, true);
+  assert.equal(on.body.data.admitting, null);
+  assert.equal(settings.waitlist_enabled, 'true');
+  assert.equal(settings.waitlist_admit_all, '');
+});
+
+test('the Waitlist panel leads the settings, and unticking it asks about the people waiting before anything is switched', () => {
+  assert.match(screenSource, /<WaitlistSwitchPanel onChanged=\{onBatchAdmitted\} \/>\s+<StoryLandingPanel \/>/);
+  assert.match(screenSource, /id="admin-topo-wl-switch-enabled" label="New accounts wait to be admitted"/);
+  // Unticking only opens the question; its two buttons carry the choice.
+  assert.match(screenSource, /if \(next\) \{\s+setAsking\(false\);\s+if \(!setting\?\.enabled\) save\(\{ enabled: true \}\);\s+return;\s+\}\s+load\(\);\s+setAsking\(true\);/);
+  assert.match(screenSource, /id="admin-topo-wl-switch-keep"[^>]+onClick=\{\(\) => save\(\{ enabled: false, waiting: 'keep' \}\)\}/);
+  assert.match(screenSource, /id="admin-topo-wl-switch-admit"[^>]+onClick=\{\(\) => save\(\{ enabled: false, waiting: 'admit' \}\)\}/);
+  assert.match(screenSource, /Nobody is emailed, because the release email is off\./);
+  const html = renderComponent(SCREEN, 'WaitlistSwitchPanel', {});
+  assert.match(html, /id="admin-topo-wl-switch"/);
+  assert.doesNotMatch(html, /admin-topo-wl-switch-ask/, 'nothing is asked until the box is unticked');
 });
 
 test('the Release email panel sits beside Landing, and Admit says when nobody is emailed', () => {

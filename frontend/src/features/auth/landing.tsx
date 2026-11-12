@@ -83,7 +83,7 @@ import { devicePinsStore, loadDevicePins, toggleDevicePin } from '../guest/devic
 import { GuestDiscover } from '../guest/guest-discover';
 import { LandingFrame } from '../guest/frame/landing-frame';
 import { type GuestIntent, GuestProject } from '../guest/guest-project';
-import { type GuestApp, linksToWorkshop, NEW_ACCOUNTS_WAIT, projectHash } from '../guest/guest-data';
+import { type GuestApp, linksToWorkshop, NEW_ACCOUNTS_WAIT, newAccountsWait, projectHash } from '../guest/guest-data';
 import { noteSignUpFrom } from './sign-up-from';
 import { WaitlistCard } from '../guest/waitlist-card';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
@@ -806,7 +806,7 @@ type Translate = (id: string, params?: Record<string, unknown>) => string;
 
 /**
  * The sign-in sheet's title for what a visitor tried to do on a project's
- * page. While new accounts wait (guest-data NEW_ACCOUNTS_WAIT), taking part
+ * page. While new accounts wait (guest-data newAccountsWait), taking part
  * asks for an account in the title: an account made now waits on the
  * waitlist, and can join, vote, ask or chat once it is let in. The title, not
  * a line under it (the sheets carry none, #4037). Try it's "Sign in to use"
@@ -1001,6 +1001,9 @@ export function LandingScreen() {
   // (a hydration mismatch is a console error, and a console error on any
   // route fails the proposal checks).
   const waitlistPayload = useWaitlistOptions();
+  // Whether a new account waits (#6633): the waitlist's words until the
+  // options arrive, and after that unless an admin switched it off.
+  const accountsWait = newAccountsWait(waitlistPayload);
   const waitlistUrl = marketingWaitlistUrl(waitlistPayload);
   const siteUrl = marketingSiteUrl(waitlistPayload);
 
@@ -2298,7 +2301,7 @@ export function LandingScreen() {
             <LandingFrame
               apps={apps}
               failed={appsFailed && !apps}
-              waitlist={NEW_ACCOUNTS_WAIT}
+              waitlist={accountsWait}
               waiting={waitingGuest ? { email: sessionEmail() } : null}
               welcomeEmail={releaseEmail}
               onStart={() => setSheet('start')}
@@ -2320,7 +2323,7 @@ export function LandingScreen() {
                   compact
                   primaryClass={PRIMARY_PILL}
                   welcomeEmail={releaseEmail}
-                  waitlist={NEW_ACCOUNTS_WAIT}
+                  waitlist={accountsWait}
                   onStart={() => setSheet('start')}
                   onSignIn={() => setSheet('signin')}
                 />
@@ -2393,7 +2396,7 @@ export function LandingScreen() {
       {intent ? (
         <SignInSheet
           open
-          title={intentTitle(intent, (id, params) => t(id, params))}
+          title={intentTitle(intent, (id, params) => t(id, params), accountsWait)}
           providers={providers}
           native={nativeSignIn}
           phoneLink={phoneSignIn}

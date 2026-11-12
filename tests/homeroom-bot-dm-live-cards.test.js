@@ -572,6 +572,6 @@ test('#4238: a first version is announced once in the project\'s channel, by the
   const merged = read('src/services/homeroom-bot-dm.js');
   const fn = merged.slice(merged.indexOf('async function noteProposalMerged('), merged.indexOf('// ── A person writing to the bot'));
   assert.match(fn, /if \(requester\?\.firstVersion && !platform\) await announceFirstVersion\(pool, run, \{ live, deps \}\);/);
-  assert.ok(fn.indexOf('announceFirstVersion(') < fn.indexOf('if (!requester || !hasBot(settings, requester)) { await finish(null); return null; }'),
+  assert.ok(fn.indexOf('announceFirstVersion(') < fn.indexOf('if (!requester || !(await botWorksFor(pool, settings, requester))) { await finish(null); return null; }'),
     'said in the channel whether or not the maker gets the DM');
 });

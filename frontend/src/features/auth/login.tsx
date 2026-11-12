@@ -77,7 +77,8 @@ import { CodeBoxes } from './code-boxes';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
 import { SignupOptIn } from './signup-opt-in';
-import { TermsNotice } from './waitlist-shared';
+import { TermsNotice, useWaitlistOptions } from './waitlist-shared';
+import { newAccountsWait } from '../guest/guest-data';
 import {
   AUTH_SCREEN_IDS,
   blockedOffline,
@@ -483,6 +484,9 @@ export function LoginScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.login, false);
   const t = useMessages('auth');
+  // #6633: the email step says nothing of a waitlist once an admin has
+  // switched it off. The waitlist's words until the options arrive.
+  const accountsWait = newAccountsWait(useWaitlistOptions());
   // The screen's interior mounts on its first reveal, not in the prerender —
   // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
   // window.UsernodeReact.mount) before it wires or reveals the screen, so the
@@ -1676,7 +1680,7 @@ export function LoginScreen() {
               onKeyDown={returnKeyHandler({ submit: () => { if (!cooldownLeft) void otpRequestCode(); } })}
             >
               <p className={STEP_P}>
-                {t('auth:login.otp.lead')}
+                {accountsWait ? t('auth:login.otp.lead') : t('auth:login.otp.leadOpen')}
               </p>
               {/*
                   One field, one card — the same white grouped card the

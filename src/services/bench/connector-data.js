@@ -209,6 +209,12 @@ function settingsOf(p = {}) {
     turnInputTokens: num(s.turnInputTokens),
     shadowBuildPlatform: !!s.shadowBuildPlatform,
     liveBuildStream: s.liveBuildStream !== false,
+    // #6632: who the bot works for (services/homeroom-bot-verified.js), and
+    // the moment the verified rule was switched on (read-only).
+    worksFor: s.worksFor === 'verified' ? 'verified' : 'everyone',
+    verifiedSignals: Array.isArray(s.verifiedSignals) ? [...s.verifiedSignals] : [],
+    verifiedGrandfather: s.verifiedGrandfather !== false,
+    verifiedSince: s.verifiedSince || null,
   };
 }
 
@@ -603,6 +609,9 @@ const SETTINGS_FIELDS = Object.freeze([
   'appCaps',
   'shadowBuilds', 'shadowBuildPlatform', 'dmChat', 'voiceSession', 'voiceIssue', 'voiceChat',
   'continueReads', 'liveBuildStream',
+  // #6632: who the bot works for (everyone let in, or verified accounts),
+  // which signals count, and whether earlier members keep it.
+  'worksFor', 'verifiedSignals', 'verifiedGrandfather',
   // Homeroom bot parity, P8: pictures' model and weekly cap.
   'imageModel', 'pictureWeeklyCap',
 ]);
