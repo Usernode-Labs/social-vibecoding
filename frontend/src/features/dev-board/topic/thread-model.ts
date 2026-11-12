@@ -35,8 +35,14 @@ export interface ClosesRequest {
   title: string | null;
   by: string | null;
   confirmed: boolean;
-  /** #6605: the request is already closed, so the change is not open work. */
+  /** #6605/#6606: the request is already closed, so its line says so. */
   closed?: boolean;
+  /** #6606: its filer answered "This doesn't close it". */
+  disputed?: boolean;
+  /** #6606: its filer could still confirm it, so the line says it is waiting. */
+  waiting?: boolean;
+  /** #6606: the viewer filed it and may press Confirm here. */
+  canConfirm?: boolean;
 }
 
 export interface ThreadItem {
@@ -144,6 +150,8 @@ export interface ThreadElsewhere {
   request: number;
   /** #6420: the requester answered "This doesn't close it". */
   disputed?: boolean;
+  /** #6606: the requester confirmed that it does close their request. */
+  confirmed?: boolean;
   /** #6420: the viewer is this request's requester, so "This doesn't close it" is theirs to press. */
   ask?: boolean;
   /** #6420: the viewer asked for this request, so the after-press line is theirs to read. */

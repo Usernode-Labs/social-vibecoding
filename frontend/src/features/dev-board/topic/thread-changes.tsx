@@ -838,13 +838,13 @@ export function Elsewhere({ list, slug = null, onChanged }: {
   const current = slug || appView()?.appData?.slug || '';
   const github = projectChangesOnGithub();
   if (!list.length) return null;
-  async function dispute(e: ThreadElsewhere) {
+  async function answer(e: ThreadElsewhere, action: 'not-closing' | 'confirm-closing') {
     if (sending != null || !current) return;
     setSending(e.id);
     setFailed(null);
     try {
       const res = await fetch(
-        `/api/apps/${encodeURIComponent(current)}/issues/${e.request}/changes/${e.id}/not-closing`,
+        `/api/apps/${encodeURIComponent(current)}/issues/${e.request}/changes/${e.id}/${action}`,
         { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' },
       );
       if (!res.ok) throw new Error(String(res.status));
@@ -891,18 +891,34 @@ export function Elsewhere({ list, slug = null, onChanged }: {
               </p>
             ) : null}
             {e.ask ? (
-              <Button
-                type="button"
-                variant="pillNeutral"
-                size="sm"
-                ink="neutral"
-                className="mt-2.5"
-                disabled={sending === e.id}
-                data-thread-elsewhere-dispute={e.id}
-                onClick={() => void dispute(e)}
-              >
-                {t('project:topic.thread.page.claimDispute')}
-              </Button>
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="pillAccent"
+                  size="sm"
+                  disabled={sending === e.id}
+                  data-thread-elsewhere-confirm={e.id}
+                  onClick={() => void answer(e, 'confirm-closing')}
+                >
+                  {t('project:topic.thread.page.claimConfirm')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="pillNeutral"
+                  size="sm"
+                  ink="neutral"
+                  disabled={sending === e.id}
+                  data-thread-elsewhere-dispute={e.id}
+                  onClick={() => void answer(e, 'not-closing')}
+                >
+                  {t('project:topic.thread.page.claimDispute')}
+                </Button>
+              </div>
+            ) : null}
+            {e.confirmed && e.mine ? (
+              <p className="mt-2.5 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-elsewhere-confirmed={e.id}>
+                {t('project:topic.thread.page.claimConfirmed')}
+              </p>
             ) : null}
             {e.disputed && e.mine ? (
               <p className="mt-2.5 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-elsewhere-disputed={e.id}>

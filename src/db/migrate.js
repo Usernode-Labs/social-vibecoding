@@ -3431,30 +3431,49 @@ async function seedStagingClosesListFixture(pool) {
        ON CONFLICT DO NOTHING`,
       [member.id, appId],
     );
-    const changeNumber = 999999992;
     const title = 'Staging demo: the request the change was built for';
     const requests = [
       [900120, title, member.id],
       [900121, 'Staging demo: a request it also closes, filed by the change\'s author', member.id],
       [900122, 'Staging demo: a request it also closes, filed by somebody else', other.id],
     ];
+    // #6606: the change lives on its first request's thread, which is the
+    // thread a request's own page reads (its number is the request's).
     const thread = await pool.query(
       `INSERT INTO threads (app_id, number, kind, title, created_at)
        SELECT $1::int, $2::int, 'work', $3::text, NOW() - INTERVAL '1 day'
         WHERE NOT EXISTS (SELECT 1 FROM threads WHERE app_id = $1::int AND number = $2::int AND kind = 'work')
         RETURNING id`,
-      [appId, changeNumber, title],
+      [appId, 900120, title],
     );
     const threadId = thread.rows[0]?.id || (await pool.query(
-      'SELECT id FROM threads WHERE app_id = $1 AND number = $2 AND kind = \'work\'', [appId, changeNumber],
+      'SELECT id FROM threads WHERE app_id = $1 AND number = $2 AND kind = \'work\'', [appId, 900120],
     )).rows[0]?.id || null;
     for (const [number, requestTitle, filer] of requests) {
+      // #6606: the change lives on the first request's thread; each other
+      // request has a thread of its own, so its page says "Change PR … says
+      // it closes this" and its filer can answer there (the shots need the
+      // one filed by somebody else to exist on a page of its own).
+      let requestThread = threadId;
+      if (number !== 900120) {
+        const own = await pool.query(
+          `INSERT INTO threads (app_id, number, kind, title, created_at)
+           SELECT $1::int, $2::int, 'work', $3::text, NOW() - INTERVAL '4 days'
+            WHERE NOT EXISTS (SELECT 1 FROM threads WHERE app_id = $1::int AND number = $2::int AND kind = 'work')
+            RETURNING id`,
+          [appId, number, requestTitle],
+        );
+        requestThread = own.rows[0]?.id || (await pool.query(
+          `SELECT id FROM threads WHERE app_id = $1 AND number = $2 AND kind = 'work'`,
+          [appId, number],
+        )).rows[0]?.id || threadId;
+      }
       await pool.query(
         `INSERT INTO requests (app_id, number, title, body, created_by, thread_id, created_at, updated_at)
          SELECT $1::int, $2::int, $3::text, 'Staging demo: obviously fake.', $4::int, $5::int,
                 NOW() - INTERVAL '4 days', NOW() - INTERVAL '2 days'
           WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1::int AND number = $2::int)`,
-        [appId, number, requestTitle, filer, threadId],
+        [appId, number, requestTitle, filer, requestThread],
       );
     }
     await pool.query(

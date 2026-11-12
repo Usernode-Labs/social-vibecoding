@@ -4,14 +4,15 @@
 // change lists a request among the ones it closes, that request's page says
 // so and its requester and followers hear it once — even when the change
 // lives on another request's page. The requester can answer "This doesn't
-// close it", which marks the claim and says so in the change's discussion.
-// Nothing here unlinks a request: `linked_issues` is untouched, so merging
-// the change still closes it unless its builder removes it.
+// close it" or, since #6606, confirm that it does, which marks the claim and
+// says so in the change's discussion. Nothing here unlinks a request:
+// `linked_issues` is untouched, so merging the change still closes it unless
+// its builder removes it.
 //
 // `change_request_claims` (src/db/migrations/change-request-claims.sql) is
 // the once-only record: a row means the claim was announced, and
-// `disputed_at` is the requester's answer. Both the announcement and the
-// answer are best effort: neither may fail the write it rides on.
+// `disputed_at` / `confirmed_at` are the requester's one answer. Both the
+// announcement and the answer are best effort: neither may fail the write it rides on.
 
 const log = require('./logger');
 const ws = require('./ws');
@@ -160,6 +161,7 @@ async function dispute(pool, { appId, requestNumber, sessionId, userId, username
      ON CONFLICT (session_id, request_number) DO UPDATE
        SET disputed_at = EXCLUDED.disputed_at, disputed_by = EXCLUDED.disputed_by
        WHERE change_request_claims.disputed_at IS NULL
+         AND change_request_claims.confirmed_at IS NULL
      RETURNING session_id`,
     [id, Number(appId), n, Number(userId)],
   );
@@ -174,4 +176,50 @@ async function dispute(pool, { appId, requestNumber, sessionId, userId, username
   return { ok: true, status: 200, disputed: true };
 }
 
-module.exports = { announce, dispute, claimLine, CANDIDATES_SQL };
+/**
+ * #6606: the request's filer agrees the change closes it. The same checks as
+ * `dispute` (a request the change links, a change the viewer may read, the
+ * filer only, and never the change's own author). One answer per claim:
+ * confirming after disputing, or twice, writes nothing and posts nothing.
+ * Returns { ok, status, error, code } for the route.
+ */
+async function confirm(pool, { appId, requestNumber, sessionId, userId, username }, deps = {}) {
+  const n = Number(requestNumber);
+  const id = Number(sessionId);
+  if (!Number.isSafeInteger(n) || n <= 0 || !Number.isSafeInteger(id) || id <= 0) {
+    return { ok: false, status: 400, error: 'Invalid request or change' };
+  }
+  const { rows } = await pool.query(CHANGE_FOR_CLAIM_SQL, [id, Number(appId), n]);
+  const row = rows[0];
+  if (!row || !Array.isArray(row.linked_issues) || !row.linked_issues.map(Number).includes(n)) {
+    return { ok: false, status: 404, error: 'Change not found' };
+  }
+  if (!isNavigable(row, userId)) return { ok: false, status: 404, error: 'Change not found' };
+  if (row.requester_id == null || Number(row.requester_id) !== Number(userId)) {
+    return { ok: false, status: 403, error: 'Only the requester can answer this', code: 'not_requester' };
+  }
+  if (Number(row.user_id) === Number(userId)) {
+    return { ok: false, status: 409, error: 'You built this change, so there is nothing to answer', code: 'own_change' };
+  }
+  const { rows: written } = await pool.query(
+    `INSERT INTO change_request_claims (session_id, app_id, request_number, confirmed_at, confirmed_by)
+     VALUES ($1, $2, $3, NOW(), $4)
+     ON CONFLICT (session_id, request_number) DO UPDATE
+       SET confirmed_at = EXCLUDED.confirmed_at, confirmed_by = EXCLUDED.confirmed_by
+       WHERE change_request_claims.confirmed_at IS NULL
+         AND change_request_claims.disputed_at IS NULL
+     RETURNING session_id`,
+    [id, Number(appId), n, Number(userId)],
+  );
+  // Already answered (or already confirmed): idempotent, no second line.
+  if (!written.length) return { ok: true, status: 200, confirmed: true, repeated: true };
+  const sender = deps.ws || ws;
+  await sender.sendSystemMessage(pool, Number(appId),
+    `@${username} confirms this closes their request #${n}.`,
+    'system', { kind: 'change_claim_confirmed', request: n }, { type: 'session', ref: id }).catch((err) => {
+      log.warn('change-claims', 'The requester\'s confirmation could not be posted', { sessionId: id, err: err.message });
+    });
+  return { ok: true, status: 200, confirmed: true };
+}
+
+module.exports = { announce, dispute, confirm, claimLine, CANDIDATES_SQL };
