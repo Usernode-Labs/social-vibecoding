@@ -777,6 +777,8 @@ function platformAssetEnv(config) {
     // still knows a preview at the old domain. Absent otherwise, so nothing
     // rolls the asset server when nothing is moving.
     ...(cfg.legacyAppDomain ? [{ name: 'USERNODE_LEGACY_APPS_DOMAIN', value: String(cfg.legacyAppDomain) }] : []),
+    // Only once previews have a domain of their own (services/previews-domain.js).
+    ...(cfg.previewDomain ? [{ name: 'USERNODE_PREVIEWS_DOMAIN', value: String(cfg.previewDomain) }] : []),
     { name: 'MARKETING_BASE_URL', value: String(config?.marketingBaseUrl || '') },
     // Offline apps (services/offline-cache.js): how the shared files are cached.
     { name: 'APP_OFFLINE_CACHE', value: require('./offline-cache').enabled() ? 'on' : 'off' },
@@ -793,13 +795,19 @@ function platformAssetPath(prefix) {
 
 function isSelfAppIngressHost(hostname, config) {
   const slug = String(config?.selfAppSlug || '');
-  const domain = String(config?.kubernetes?.appDomain || '');
+  const appDomain = String(config?.kubernetes?.appDomain || '');
+  const previewDomain = String(config?.kubernetes?.previewDomain || '');
   const host = String(hostname || '');
-  if (!slug || !domain || !host.endsWith(`.${domain}`)) return false;
-  const appLabel = host.slice(0, -(domain.length + 1));
-  if (appLabel === slug) return true;
-  const previewId = appLabel.slice(`${slug}--s`.length);
-  return appLabel.startsWith(`${slug}--s`) && /^\d+$/.test(previewId);
+  if (!slug || !appDomain) return false;
+  const isPreview = (label) => label.startsWith(`${slug}--s`) && /^\d+$/.test(label.slice(`${slug}--s`.length));
+  // A preview on its own domain (services/previews-domain.js), or one not
+  // rebuilt since, still on the apps domain.
+  if (previewDomain && host.endsWith(`.${previewDomain}`)) {
+    return isPreview(host.slice(0, -(previewDomain.length + 1)));
+  }
+  if (!host.endsWith(`.${appDomain}`)) return false;
+  const appLabel = host.slice(0, -(appDomain.length + 1));
+  return appLabel === slug || isPreview(appLabel);
 }
 
 // Heal Ingresses that predate the shared asset backend. A recheck reuses a
@@ -1361,7 +1369,7 @@ async function deployApplication(config, {
   const secretName = attempt ? attemptSecretName(name, attempt) : withSuffix(name, 'env');
   const hostname = environment === 'production'
     ? `${app.slug}.${cfg.appDomain}`
-    : `${app.slug}--s${sessionId}.${cfg.appDomain}`;
+    : `${app.slug}--s${sessionId}.${cfg.previewDomain || cfg.appDomain}`;
   // Check before creating or updating any Kubernetes resources.
   require('./caddy').assertAppHostname(hostname, cfg.platformDomain);
   const resourceProfile = require('./app-resource-profiles').forApp(config, app, environment, { cpus, internalOnly });

@@ -61,7 +61,7 @@ function kubernetesCaptureOrigin(config, app, sessionId = null) {
   const cfg = config.kubernetes;
   if (!cfg?.appDomain) throw new Error('Kubernetes capture requires a configured ingress hostname');
   const hostname = sessionId != null
-    ? `${app.slug}--s${sessionId}.${cfg.appDomain}`
+    ? `${app.slug}--s${sessionId}.${cfg.previewDomain || cfg.appDomain}`
     : app.slug === config.selfAppSlug
       ? cfg.platformDomain
       : `${app.slug}.${cfg.appDomain}`;

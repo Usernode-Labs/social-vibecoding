@@ -72,7 +72,7 @@ const ROW_COLUMNS = `id, app_id, hostname, verification_token, status, dns_check
 const LABEL_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
 function platformDomains() {
-  return [caddy.USERNODE_DOMAIN, caddy.USERNODE_APPS_DOMAIN, caddy.USERNODE_LEGACY_APPS_DOMAIN]
+  return [caddy.USERNODE_DOMAIN, caddy.USERNODE_APPS_DOMAIN, caddy.USERNODE_LEGACY_APPS_DOMAIN, caddy.USERNODE_PREVIEWS_DOMAIN]
     .map((d) => String(d || '').toLowerCase())
     .filter(Boolean);
 }

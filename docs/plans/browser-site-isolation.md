@@ -7,10 +7,11 @@ and production apps and their previews move to `onhomeroom.app`. Two ICANN
 sites, not one: the Public Suffix List's private section would give each app
 its own site, but it holds only in browsers that already ship an entry, and
 the list's maintainers decline projects of our size. Previews share the apps'
-site for now. That keeps the platform out of their reach, but a preview's
+site by default. That keeps the platform out of their reach, but a preview's
 unreviewed code is same-site with every production app; only a previews
-domain of its own (a later setting beside `USERNODE_APPS_DOMAIN` in
-`caddy.js`) protects apps from their previews. This change prepares the
+domain of its own protects apps from their previews. `config.previewsDomain`
+(`USERNODE_PREVIEWS_DOMAIN`, `src/services/previews-domain.js`) gives them
+one, planned as `onhomeroom.dev`, after the apps move. This change prepares the
 cutover and leaves it disabled. It is not a declaration that deployment
 isolation is complete.
 The strict cutover in this change targets Kubernetes. The stock Compose edge
