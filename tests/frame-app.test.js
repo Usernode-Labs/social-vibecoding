@@ -249,8 +249,8 @@ test('the chrome keeps clear of a phone\'s status bar and home strip', () => {
   assert.match(css, /html\[data-skin\] \.fr\.fr-shell \.fr-bar \{\s*position: relative;\s*margin-top: var\(--platform-safe-top, 0px\);\s*\}/);
   assert.match(css, /html\[data-skin\] \.fr\.fr-shell \.fr-bar::before \{[^}]*bottom: 100%;[^}]*height: var\(--platform-safe-top, 0px\);[^}]*background: inherit;/,
     'the bar\'s own ground fills the status bar\'s strip');
-  assert.match(css, /html\[data-skin\]:not\(\[data-skin="pastel"\]\) \.fr\.fr-shell > \.fr-side \{\s*border-top: var\(--platform-safe-top, 0px\) solid transparent;\s*border-bottom: var\(--platform-safe-bottom, 0px\) solid transparent;\s*\}/,
-    'a tablet\'s sidebar keeps its first and last rows clear, its ground under the transparent borders');
+  assert.match(css, /html\[data-skin\] \.fr\.fr-shell > \.fr-side \{\s*border-top: var\(--platform-safe-top, 0px\) solid transparent;\s*border-bottom: var\(--platform-safe-bottom, 0px\) solid transparent;\s*\}/,
+    'a tablet\'s sidebar keeps its first and last rows clear, its ground under the transparent borders (every look\'s: Pastel\'s is a left panel too since 12 Nov 2026)');
   assert.match(css, /@media \(max-width: 767\.98px\) \{\s+html\[data-skin\]:is\(\.un-kb, \.platform-kb-open\) \.fr\.fr-shell \.fr-tabbar \{ display: none; \}/, 'with the keys up the bar goes, on every page');
   assert.match(css, /html\[data-skin\] \.fr\.fr-shell \.fr-tabbar \{\s*position: relative;\s*margin-bottom: var\(--platform-safe-bottom, 0px\);\s*\}/);
   assert.match(css, /html\[data-skin\] \.fr\.fr-shell \.fr-tabbar::after \{[^}]*top: 100%;[^}]*height: var\(--platform-safe-bottom, 0px\);[^}]*background: inherit;/,
@@ -263,8 +263,7 @@ test('the chrome keeps clear of a phone\'s status bar and home strip', () => {
     'Pastel too, at its own height');
   assert.match(css, /html\[data-skin="glass"\] \.fr\.fr-shell \.fr-tabbar::after,\s*html\[data-skin="pastel"\] \.fr\.fr-shell \.fr-tabbar::after \{ content: none; \}/,
     'the bar\'s own box fills the strip under it, so the general rule\'s strip is not drawn');
-  assert.match(css, /html\[data-skin="pastel"\] \.fr\.fr-app\.fr-shell \{ top: var\(--platform-safe-top, 0px\); \}/,
-    'Pastel\'s horizontal pill is in the top row, so its layer is offset instead');
+  assert.doesNotMatch(css, /html\[data-skin="pastel"\] \.fr\.fr-app\.fr-shell \{ top:/, 'Pastel\'s top capsule is gone, and the offset it needed with it');
   // --platform-header-h is defined without the inset and the screens add it
   // themselves; --fr-shell-top now includes it, so it is subtracted once.
   assert.match(css, /html\[data-frame-chrome\] body \{ --platform-header-h: calc\(var\(--fr-shell-top\) - var\(--platform-safe-top, 0px\)\); \}/);

@@ -34,17 +34,20 @@ test('a kit selector is scoped to any look, a look\'s selector to its own flag',
   assert.equal(looks.mapSelector('.tab.on::after', null).selector, 'html[data-skin] .fr-tab.fr-on::after');
 });
 
-test('Mosaic lays a list out as tiles, never a card of launcher tiles or a list of one-line rows', () => {
+test('Mosaic lays a list out as tiles, never a card of launcher tiles, a list of one-line rows or a form', () => {
   const mosaic = read('frontend', 'looks', 'mosaic.css');
-  const not = ':not(.list,:has(>.tiles,.row.showall,.row.item,.row.proj,.row.month,.row.th,.row.rk))';
+  const not = ':not(.list,:has(>.tiles,.row.showall,.row.item,.row.proj,.row.month,.row.th,.row.rk,.tog,.chk))';
   // Every rule of the mosaic carries the same exceptions: Home's Pinned apps
   // (tiles, then "Show all N apps") and You's History (an item under its
   // project's head row) were both laid out as two columns of tiles. The
   // rows are named at any depth: History's are inside a group per project.
+  // A card holding a switch or a choice is a form: it stays one plain list.
   const all = mosaic.split('.cols>.stack:first-child .card:has(>.row)').length - 1;
   assert.ok(all >= 9);
   assert.equal(mosaic.split(`.cols>.stack:first-child .card:has(>.row)${not}`).length - 1, all);
-  assert.ok(read('public', 'css', 'app.css').includes('html[data-skin="mosaic"] .fr-cols>.fr-stack:first-child .fr-card:has(>.fr-row):not(.fr-list,:has(>.fr-tiles,.fr-row.fr-showall,.fr-row.fr-item,.fr-row.fr-proj,.fr-row.fr-month,.fr-row.fr-th,.fr-row.fr-rk)),'));
+  assert.ok(read('public', 'css', 'app.css').includes('html[data-skin="mosaic"] .fr-cols>.fr-stack:first-child .fr-card:has(>.fr-row):not(.fr-list,:has(>.fr-tiles,.fr-row.fr-showall,.fr-row.fr-item,.fr-row.fr-proj,.fr-row.fr-month,.fr-row.fr-th,.fr-row.fr-rk,.fr-tog,.fr-chk)),'));
+  // An odd last tile fills the row, so a group never ends on a hole.
+  assert.ok(mosaic.includes(`.cols>.stack:first-child .card:has(>.row)${not}>.row:last-child:nth-child(odd){grid-column:1/-1}`));
 });
 
 test('on a phone only a card\'s own item rows wrap; a compact list\'s stay one line', () => {
@@ -71,6 +74,8 @@ test('.phone becomes a media query and keeps its extra weight', () => {
 test('.dark moves onto <html>, with its weight', () => {
   assert.deepEqual(looks.mapSelector('.dark .tile.hm', null), { media: null, selector: 'html[data-skin].dark .fr-tile.fr-hm' });
   assert.deepEqual(looks.mapSelector('.dark .nv.on', 'sunrise'), { media: null, selector: 'html[data-skin="sunrise"].dark .fr-nv.fr-on' });
+  // The mock's root when it is dark and a phone at once: both, each with its weight.
+  assert.deepEqual(looks.mapSelector('.dark.phone .tabbar', 'pastel'), { media: 'phone', selector: 'html[data-skin="pastel"][data-skin].dark .fr-tabbar' });
 });
 
 test('the mock\'s own machinery is dropped, and its reset is kept inside a frame root', () => {

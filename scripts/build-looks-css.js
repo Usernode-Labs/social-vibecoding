@@ -19,6 +19,7 @@
  *   .row .t                →  html[data-skin="<id>"] .fr-row .fr-t
  *   .dark .row             →  html[data-skin="<id>"].dark .fr-row
  *   .phone .row            →  @media (max-width: 767.98px) { html[data-skin="<id>"][data-skin] .fr-row }
+ *   .dark.phone .row       →  the same, with .dark on html
  *   var(--x)               →  var(--fr-x)
  *
  * WEIGHT IS KEPT. In the tour a kit rule and a look's rule weigh the same
@@ -73,6 +74,8 @@ function mapSelector(raw, id) {
   if (sel === '.hr.phone') return null;
   if (/^\.hr /.test(sel)) sel = `.fr ${sel.slice(4)}`;
   if (/^\.phone /.test(sel)) { media = 'phone'; sel = sel.replace(/^\.phone /, ''); }
+  // The mock's root when it is dark and a phone at once.
+  if (/^\.dark\.phone /.test(sel)) { media = 'phone'; sel = sel.replace(/^\.dark\.phone /, '.dark '); }
   if (/^\.dark /.test(sel)) { dark = true; sel = sel.replace(/^\.dark /, ''); }
   if (/\.(hr|phone|dark)\b/.test(sel)) throw new Error(`build-looks-css: cannot place "${raw}"`);
   // `.hr *` is the kit's reset: kept, inside a frame root.

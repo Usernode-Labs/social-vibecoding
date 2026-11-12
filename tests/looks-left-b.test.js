@@ -171,7 +171,7 @@ test('a request and a change: what scrolls fades out under the pinned head, and 
   assert.ok(hand.includes('html[data-skin] #dev-topic-thread .dev-request #gc-thread-scroll { -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 16px); mask-image: linear-gradient(to bottom, transparent 0, black 16px); }'), 'the head is over the page at every width');
   assert.match(hand, /@media \(max-width: 767\.98px\) \{\n\s+html\[data-skin\] #dev-topic-thread \.dev-request :has\(> \[data-jump-latest\]\) \{ justify-content: flex-end; padding-inline: 16px; \}/, 'the disc at the row\'s end, on a phone');
   assert.ok(hand.includes(`${LOOK} :is(#dev-topic-thread, .messages-screen) [data-jump-latest] { background: var(--fr-solid, var(--fr-surface)); color: var(--fr-ink);`), 'and it is the kit\'s round button');
-  assert.ok(hand.includes('html[data-skin="paper"] .dev-change-pair .dev-change-gate-act .gc-vote-btn { background: var(--fr-surface); }'));
+  assert.ok(hand.includes('html[data-skin="paper"] .dev-change-pair .dev-change-gate-act .gc-vote-btn { background: var(--fr-ctl); }'));
   // The standard page opens at the end of the discussion too: where the page opens is not the look's to change.
   assert.doesNotMatch(read('frontend/src/features/dev-board/topic/frame/topic-frame.tsx'), /scrollTop|scrollTo\(/);
 });

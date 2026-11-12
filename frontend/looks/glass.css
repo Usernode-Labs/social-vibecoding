@@ -1,9 +1,9 @@
 /* C · Aurora glass. The wallpaper is the room; everything else is frosted glass floating in it. */
-.hr{--surface:rgba(255,255,255,.58);--sunk:rgba(55,71,123,.09);--ink:#1a1e3c;--mut:#565c82;--faint:#8b90b0;--line:rgba(55,71,123,.13);--line2:rgba(55,71,123,.08);
-  --acc:#3b55e6;--acc-ink:#fff;--acc-t:rgba(59,85,230,.12);--lit:#2b3769;--lit-t:rgba(55,71,123,.11);--ring:rgba(255,255,255,.8);--glow:0 22px 44px -30px rgba(55,71,123,.55);
+.hr{--surface:rgba(255,255,255,.58);--sunk:rgba(55,71,123,.09);--ink:#1a1e3c;--mut:#565c82;--faint:#6d7296;--line:rgba(55,71,123,.13);--line2:rgba(55,71,123,.08);
+  --acc:#3b55e6;--acc-ink:#fff;--acc-t:rgba(59,85,230,.12);--lit:#2b3769;--lit-t:rgba(55,71,123,.11);--ring:rgba(255,255,255,.8);--glow:0 1px 2px rgba(55,71,123,.05),0 22px 44px -30px rgba(55,71,123,.5);--dim:rgba(26,30,60,.3);
   --f:"Albert Sans",system-ui,-apple-system,"Segoe UI",sans-serif;font-family:var(--f)}
-.hr.dark{--surface:rgba(255,255,255,.065);--sunk:rgba(255,255,255,.08);--ink:#f1f0fa;--mut:#aeb0cf;--faint:#7a7d9e;--line:rgba(255,255,255,.12);--line2:rgba(255,255,255,.07);
-  --acc:#8ea2ff;--acc-ink:#0a0f2c;--acc-t:rgba(142,162,255,.16);--lit:#dfe3ff;--lit-t:rgba(199,208,245,.14);--ring:rgba(255,255,255,.12);--glow:0 22px 44px -30px rgba(0,0,0,.9)}
+.hr.dark{--surface:rgba(255,255,255,.065);--sunk:rgba(255,255,255,.08);--ink:#f1f0fa;--mut:#aeb0cf;--faint:#8b8eb0;--line:rgba(255,255,255,.12);--line2:rgba(255,255,255,.07);
+  --acc:#8ea2ff;--acc-ink:#0a0f2c;--acc-t:rgba(142,162,255,.16);--lit:#dfe3ff;--lit-t:rgba(199,208,245,.14);--ring:rgba(255,255,255,.12);--glow:0 22px 44px -30px rgba(0,0,0,.9);--dim:rgba(4,5,14,.6)}
 .app{grid-template-columns:260px minmax(0,1fr)}
 .side{margin:12px 0 12px 12px;padding:14px 10px 10px;border-right:0;border-radius:28px;background:var(--surface);backdrop-filter:blur(26px) saturate(1.5);-webkit-backdrop-filter:blur(26px) saturate(1.5);box-shadow:inset 0 0 0 1px var(--ring),var(--glow)}
 .brand{font-size:18px;font-weight:700;letter-spacing:-.02em;margin-bottom:12px}
@@ -45,12 +45,44 @@
 .composer{border-radius:26px;background:var(--surface);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);box-shadow:inset 0 0 0 1px var(--ring),var(--glow)}
 .pane+.pane{border-left:1px solid var(--line)}
 .dhead{border-bottom:1px solid var(--line)}
-.sheet{border-radius:32px;background:color-mix(in srgb,var(--ground) 82%,transparent);backdrop-filter:blur(34px) saturate(1.5);-webkit-backdrop-filter:blur(34px) saturate(1.5);box-shadow:var(--sh),inset 0 0 0 1px var(--ring)}
-.ov{backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}.ov.pop{backdrop-filter:none;-webkit-backdrop-filter:none}
+/* the sheet's tint is said here, not as a token on the root: the page's ground is the product's, set on <body>, and a token on <html> could not read it */
+.sheet{border-radius:32px;background:color-mix(in srgb,var(--ground) 80%,transparent);backdrop-filter:blur(34px) saturate(1.5);-webkit-backdrop-filter:blur(34px) saturate(1.5);box-shadow:var(--sh),inset 0 0 0 1px var(--ring)}
+.dark .sheet{background:color-mix(in srgb,#14162a 78%,transparent)}
+/* no blur on the scrim: it would be the sheet's backdrop root and leave the sheet itself unfrosted */
 .ov.right{padding:12px}.ov.right .sheet{border-radius:28px;box-shadow:var(--sh),inset 0 0 0 1px var(--ring)}
 .phone .ov.right{padding:0}
 .sheet .x{background:var(--surface)}
 .phone .tabbar{margin:0 12px 12px;height:64px;padding:8px;border-top:0;border-radius:28px;background:var(--surface);backdrop-filter:blur(26px) saturate(1.5);-webkit-backdrop-filter:blur(26px) saturate(1.5);box-shadow:inset 0 0 0 1px var(--ring),var(--glow)}
 .tb{border-radius:20px}.tb.on{background:var(--ink);color:var(--ground)}
 .stage{border-radius:24px}.stage .title{font-size:26px}
+
+/* ---- refinements ---- */
+.nv.on{box-shadow:0 8px 16px -10px rgba(26,30,60,.6)}
+.sidefoot{padding-top:10px}
+.pane .tab{padding:0 12px}
+.phone .tabs{max-width:calc(100% + 64px)}
+.phone .tab{height:40px;padding:0 14px}
+.phone .ib{width:40px;height:40px}
+.phone .btn{height:44px}
+.phone .btn.sm{height:40px;padding:0 14px;font-size:14px}
+.phone .pane .head .acts .btn{height:44px;font-size:15px}
+.btn.sm{box-shadow:0 8px 16px -10px var(--acc)}.btn.sm.quiet{box-shadow:inset 0 0 0 1px var(--ring)}.btn.sm.line{box-shadow:inset 0 0 0 1px var(--line)}
+.btn.off{box-shadow:none}
+.card.pad,.prose,.status,.ballot,.fields,.thread,.shots{padding:20px}
+.phone .card.pad,.phone .prose,.phone .status,.phone .ballot,.phone .fields,.phone .thread,.phone .shots{padding:18px}
+.pane.det .thread{padding:0}
+.fact{padding:18px 20px}
+.phone .facts.f5 .fact{padding:14px 4px 14px 10px}
+.phone .facts.f5 .fact:first-child{padding-left:16px}
+.phone .facts.f5 .fact .l{white-space:normal;line-height:1.2}
+.inp.focus,.search .inp.focus{box-shadow:inset 0 0 0 2px var(--acc),0 0 0 4px var(--acc-t)}
+.inp.err{box-shadow:inset 0 0 0 2px var(--bad)}
+.post .when,.mono{color:var(--faint)}
+.day{color:var(--mut)}
+.phone .pane+.pane{border-left:0}
+/* (the tour floats the phone's capsule over the page, which runs on beneath it and fades out; in the product the page area is measured
+   and every screen ends above the bar, so the capsule keeps its own row: app.css, THE PHONE'S SAFE AREA) */
+.tb .n{top:-3px;left:calc(50% + 5px);height:18px;min-width:18px;padding:0 5px}
+.phone .sheet,.phone .ov.right .sheet,.phone .ov.pop .sheet{width:auto;margin:0 8px 8px;border-radius:32px;padding:24px 16px 16px}
+.dock{border-top:0!important;background:transparent!important}
 .phone .barline{border-bottom:0}

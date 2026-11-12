@@ -281,13 +281,13 @@ test('a field inside a card has an edge in Pastel and in Paper, said for this sc
   const FIELD = ':is\\(input, select, textarea\\):not\\(\\[type="checkbox"\\], \\[type="radio"\\], \\[type="file"\\], \\[type="range"\\], \\[type="hidden"\\]\\):not\\(:focus\\)';
   const AT = '#settings-screen #settings-root #settings-section-content :is\\(\\.ui-card, \\.ui-fields\\) ';
   assert.match(settings, new RegExp(`html\\[data-skin="pastel"\\] ${AT}${FIELD} \\{ background: var\\(--fr-sunk\\); box-shadow: inset 0 0 0 1px var\\(--fr-line\\); \\}`), 'Pastel: what it does on a white sheet');
-  assert.match(settings, new RegExp(`html\\[data-skin="paper"\\] ${AT}${FIELD} \\{ box-shadow: inset 0 0 0 1px color-mix\\(in srgb, var\\(--fr-ink\\) 22%, transparent\\); \\}`), 'Paper: a ring that shows on its white field');
+  assert.match(settings, new RegExp(`html\\[data-skin="paper"\\] ${AT}${FIELD} \\{ background: var\\(--fr-ctl\\); box-shadow: inset 0 0 0 1px color-mix\\(in srgb, var\\(--fr-ink\\) 22%, transparent\\); \\}`), 'Paper: its control tone (white in light) and a ring that shows');
   for (const look of ['pastel', 'paper']) assert.doesNotMatch(read('frontend/looks', `${look}.css`), /settings/, `${look}.css is not touched`);
 });
 
-test('in Paper a quiet button inside one of this screen\'s cards is the white one, as the look says of its own', () => {
-  assert.match(read('frontend/looks/paper.css'), /\.card \.btn\.quiet,\.card \.btn\.line\{background:var\(--surface\);box-shadow:none\}/, 'the look\'s own rule');
-  assert.match(settings, /html\[data-skin="paper"\] #settings-screen #settings-root :is\(\.ui-card, \.ui-glist\) :is\(\.ui-btn, :is\(button, a, label\):is\(\.bg-white, \.bg-zinc-100, \.border:is\(\.rounded, \.rounded-md, \.rounded-lg, \.rounded-full\)\)\):is\(\.bg-white, \.bg-zinc-100, \.border, \.ui-btn-quiet, \.ui-btn-line\):not\(\.border-red-400, \.ui-btn-bad, \.bg-violet-600, \.ui-lrow, \.ui-row, \[role="radio"\], \.ui-plain\) \{ background: var\(--fr-surface\); box-shadow: none; \}/);
+test('in Paper a quiet button inside one of this screen\'s cards is the control tone (white in light), as the look says of its own', () => {
+  assert.match(read('frontend/looks/paper.css'), /\.card \.btn\.quiet,\.card \.btn\.line\{background:var\(--ctl\);box-shadow:none\}/, 'the look\'s own rule');
+  assert.match(settings, /html\[data-skin="paper"\] #settings-screen #settings-root :is\(\.ui-card, \.ui-glist\) :is\(\.ui-btn, :is\(button, a, label\):is\(\.bg-white, \.bg-zinc-100, \.border:is\(\.rounded, \.rounded-md, \.rounded-lg, \.rounded-full\)\)\):is\(\.bg-white, \.bg-zinc-100, \.border, \.ui-btn-quiet, \.ui-btn-line\):not\(\.border-red-400, \.ui-btn-bad, \.bg-violet-600, \.ui-lrow, \.ui-row, \[role="radio"\], \.ui-plain\) \{ background: var\(--fr-ctl\); box-shadow: none; \}/);
 });
 
 test('with the keys up on a phone the frame\'s tab bar goes while Settings is open, as the standard look\'s does', () => {
