@@ -194,6 +194,10 @@ test('#6604: a repaint while a page is still loading keeps the thread it mounted
   h.AppView._paintedTopic = null;
   // The row is still in flight, but the thread was mounted on the ref alone
   // and is reading: it is THIS page's stream, not a previous page to drop.
+  // GroupChat.mountThread connects to the app before it sets activeThread
+  // (`connect(appSlug)`), so a mounted thread always carries the app it is
+  // in; the stub sets it the same way.
+  h.sandbox.GroupChat.appSlug = 'demo';
   h.sandbox.GroupChat.activeThread = { type: 'issue', ref: 30, language: 'request' };
   h.AppView._clearTopicHeadBody();
   assert.deepEqual(h.unmountThreads, [], 'the page keeps the stream it is loading');
