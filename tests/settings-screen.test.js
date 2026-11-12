@@ -2272,7 +2272,7 @@ test('Re-enable re-grants by slug with the cap and BYOK choice the row carries (
 
 const CONNECTORS_LIST = 'frontend/src/features/settings/connectors-list.tsx';
 const toolStatus = (status) => renderComponent(CONNECTORS_LIST, 'ToolStatusView', { status });
-const toolRows = (connections) => renderComponent(CONNECTORS_LIST, 'ToolConnectionsView', { connections });
+const toolRows = (connections, tool = 'claude') => renderComponent(CONNECTORS_LIST, 'ToolConnectionsView', { tool, connections });
 
 test('the cards ship their state hosts empty, so the prerender draws no status', () => {
   const shell = shellMarkup();
@@ -2310,6 +2310,18 @@ test('every connection is disconnectable, and names itself', () => {
   assert.match(html2, />Connected client</);
   assert.match(html2, /not used yet/);
   assert.match(html2, /Can read your apps/);
+});
+
+test('only a row marked for Reconnect offers it, beside its Disconnect', () => {
+  const html2 = toolRows([
+    { id: '1', title: 'Claude (claude.ai)', detail: 'Last active 2 Jan', capabilities: null, reconnect: false },
+    { id: '2', title: 'Claude (old)', detail: 'Sign-in ran out 1 Jan.', capabilities: null, reconnect: true },
+  ], 'claude');
+  const reconnect = message('settings:connectors.list.reconnect');
+  assert.equal((html2.match(new RegExp(`>${reconnect}<`, 'g')) || []).length, 1, 'one Reconnect, on the expired row');
+  assert.equal((html2.match(/>Disconnect</g) || []).length, 2, 'an expired row can still be removed');
+  assert.match(html2, /data-connector-reconnect="claude"/);
+  assert.match(html2, /min-h-\[44px\][^"]*text-violet-700/, 'a tinted action, not a pill');
 });
 
 test('settings.js publishes the connector cards rather than building them', () => {

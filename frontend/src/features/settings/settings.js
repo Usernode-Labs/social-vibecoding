@@ -2580,8 +2580,14 @@
       const connected = stamp(connector.connected_at);
       const lastUsed = stamp(connector.last_used_at);
       const ranOut = stamp(connector.expired_at);
+      // Reconnect only where a guide step really signs in again (#6137).
+      const reconnect = expired && !!this.CONNECTOR_RECONNECT_STEP[this._connectorTool(connector.client_name)];
       let detail;
-      if (expired) {
+      if (reconnect) {
+        detail = ranOut
+          ? tr('settings:connectors.row.expiredReconnect', { when: ranOut })
+          : tr('settings:connectors.row.expiredReconnectUnknownDate');
+      } else if (expired) {
         detail = ranOut
           ? tr('settings:connectors.row.expired', { when: ranOut })
           : tr('settings:connectors.row.expiredUnknownDate');
@@ -2593,6 +2599,7 @@
         title: connector.client_name || tr('settings:connectors.row.unnamedClient'),
         detail,
         capabilities: this._connectorCapabilities(connector, expired),
+        reconnect,
       };
     },
 
@@ -2839,6 +2846,37 @@
         line.hidden = done === 0;
         line.textContent = done ? tr('settings:connectors.progress.done', { done, total }) : '';
       }
+    },
+
+    // Reconnect on an expired row (#6137): the sign-in ran out, but the
+    // connector is still set up in the tool, so the first-time walkthrough's
+    // early steps are already done. This opens the tool's card and lands on
+    // the one step that signs in again: Claude's "Connect" next to the
+    // connector, and Codex's `codex mcp login`. Nothing is sent: a new consent
+    // can only start from the tool itself.
+    //
+    // ChatGPT and other agents are left out on purpose. None of ChatGPT's four
+    // steps is a sign-in (directory, create, URL, use), and the other-agent
+    // guide's OAuth step describes discovery and scopes, not how to start a
+    // sign-in again in whatever client someone configured. There is no step to
+    // land on, and re-authorisation instructions nobody has checked would be
+    // invented. Their expired rows keep the "follow the steps" line and no
+    // Reconnect.
+    CONNECTOR_RECONNECT_STEP: Object.freeze({ claude: 5, codex: 2 }),
+
+    _reconnectConnector(tool) {
+      const step = this.CONNECTOR_RECONNECT_STEP[tool];
+      if (!step) return false;
+      const card = document.querySelector(`#connector-tool-${tool} details`);
+      if (card) card.open = true;
+      const tick = document.querySelector(`[data-connector-step-tick="${tool}:${step}"]`);
+      const target = (tick && typeof tick.closest === 'function' && tick.closest('li')) || tick || card;
+      if (!target) return false;
+      if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'center' });
+      // Focus follows, so a keyboard or screen-reader user lands on the step
+      // too. The tick is the step's one control; focusing it presses nothing.
+      if (tick && typeof tick.focus === 'function') tick.focus({ preventScroll: true });
+      return true;
     },
 
     async _disconnectConnector(id, button) {
