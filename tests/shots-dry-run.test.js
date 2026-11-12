@@ -26,10 +26,11 @@ test('the dry run needs a declaration and two origins, and takes exact commits o
   assert.equal(options.before, 'http://127.0.0.1:4101');
   assert.equal(options.intentFile, path.resolve('i.json'));
   assert.equal(options.timeoutMs, 30_000, 'the budget has a floor');
-  assert.deepEqual(options.playwrightMcp, ['npx', '-y', '@playwright/mcp@0.0.41']);
+  // The patched server the pair installs, never an unpatched one from npm.
+  assert.deepEqual(options.playwrightMcp, [path.join(__dirname, '..', '.shots-dry-run', 'pw', 'node_modules', '.bin', 'playwright-mcp')]);
   assert.deepEqual(parseArgs(['--intent', 'i.json', '--before', 'http://a', '--after', 'http://b',
-    '--playwright-mcp', 'lab/pw/bin/mcp-server-playwright --flag']).playwrightMcp,
-  [path.resolve('lab/pw/bin/mcp-server-playwright'), '--flag'], 'the agent runs elsewhere, so a relative command is resolved');
+    '--playwright-mcp', 'lab/pw/bin/playwright-mcp --flag']).playwrightMcp,
+  [path.resolve('lab/pw/bin/playwright-mcp'), '--flag'], 'the agent runs elsewhere, so a relative command is resolved');
   assert.equal(options.fixturesFile, null, 'no fixtures unless the pair seeded some');
   assert.equal(options.claudeBin, 'claude');
   assert.equal(options.model, null, 'the run falls back to the hosted shots agent\'s model');
@@ -55,12 +56,14 @@ test('every declared persona has a browser, and the guest\'s always starts signe
     assert.equal(args('guest')[args('guest').indexOf('--output-dir') + 1], path.join('/tmp/shots', 'guest'));
     // A phone screen's browser has the persona's sign-in and presents as the
     // same phone a hosted turn's does, saving beside the persona's directory.
-    const phone = browserServer(options, 'read_only_admin', '/tmp/shots', '390x844', { phone: true }).args;
+    const phone = browserServer(options, 'read_only_admin', '/tmp/shots', '390x844', { phone: true, configDir: stateDir }).args;
     assert.equal(phone[1], 'admin_phone');
     assert.equal(phone[phone.indexOf('--device') + 1], PHONE_DEVICE);
     assert.ok(phone.includes(path.join(stateDir, 'read_only_admin.json')));
     assert.equal(phone[phone.indexOf('--output-dir') + 1], path.join('/tmp/shots', 'admin_phone'));
-    assert.ok(phone.includes('--save-video=390x844'));
+    assert.deepEqual(JSON.parse(fs.readFileSync(phone[phone.indexOf('--config') + 1], 'utf8')),
+      { browser: { contextOptions: { recordVideo: { dir: path.join('/tmp/shots', 'admin_phone'), size: { width: 390, height: 844 } } } } });
+    assert.ok(phone.includes('--ignore-roots'));
     assert.equal(args('member').includes('--device'), false);
     const worker = fs.readFileSync(path.join(__dirname, '..', 'worker', 'write-shots-mcp-config.js'), 'utf8');
     assert.ok(worker.includes(`const PHONE_DEVICE = '${PHONE_DEVICE}';`), 'the dry run presents as the worker\'s phone');

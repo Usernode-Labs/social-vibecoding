@@ -50,7 +50,7 @@ try {
 }
 // #6379: the picture was sometimes taken while the page was still loading,
 // so a request's or change's conversation was missing from it. The patched
-// browser_take_screenshot (patch-playwright-mcp-screenshot.js) waits until
+// browser_take_screenshot (patch-playwright-mcp.js) waits until
 // the page's own requests are done and its markup has stopped changing;
 // this counts them. Top-level pages only: a frame's requests are not the
 // page's own. Without fetch or XMLHttpRequest the counter stays absent, and

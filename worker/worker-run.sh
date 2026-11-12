@@ -168,7 +168,10 @@ JSON
 #                workspace. The MCP default is ./.playwright-mcp in the cwd —
 #                the app checkout — and the commit step's `git add -A` then
 #                shipped them into app history (five apps carried committed
-#                .playwright-mcp screenshots before this).
+#                .playwright-mcp screenshots before this). A file saved under
+#                a name the agent gives lands there too (patch-playwright-mcp.js).
+#   --file-paths absolute : answers name those files by their whole path,
+#                not one relative to the checkout.
 # Launch the image's pinned MCP executable directly. `npx @playwright/mcp`
 # may resolve a newer registry package instead of this global install,
 # requiring a different browser revision at the first tool call. Chromium
@@ -183,8 +186,8 @@ cat > "$BROWSER_MCP_CONFIG" <<JSON
       "args": ["/usr/local/bin/visible-changes-mcp.js"]
     },
     "playwright": {
-      "command": "/usr/local/bin/mcp-server-playwright",
-      "args": ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "$BROWSER_PW_CONFIG", "--output-dir", "$BROWSER_OUTPUT_DIR"]
+      "command": "/usr/local/bin/playwright-mcp",
+      "args": ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "$BROWSER_PW_CONFIG", "--output-dir", "$BROWSER_OUTPUT_DIR", "--file-paths", "absolute"]
     }
   }
 }
@@ -198,8 +201,8 @@ cat > "$BROWSER_ONLY_MCP_CONFIG" <<JSON
 {
   "mcpServers": {
     "playwright": {
-      "command": "/usr/local/bin/mcp-server-playwright",
-      "args": ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "$BROWSER_PW_CONFIG", "--output-dir", "$BROWSER_OUTPUT_DIR"]
+      "command": "/usr/local/bin/playwright-mcp",
+      "args": ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "$BROWSER_PW_CONFIG", "--output-dir", "$BROWSER_OUTPUT_DIR", "--file-paths", "absolute"]
     }
   }
 }
