@@ -15,7 +15,7 @@ const express = require('express');
 
 const robots = require('../src/services/search-robots');
 const template = require('../src/services/template');
-const { requestOrigin } = require('../src/routes/community-invites');
+const { platformOrigin } = require('../src/services/app-identity-env');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -61,18 +61,23 @@ test('the shell’s front page names one address; nothing else, and nothing on a
   assert.equal(link({ origin: 'https://evil.example/>; rel="x' }), null, 'only a plain origin is ever written into the header');
 });
 
-test('server.js sends that header ahead of the static handler, so `/?report=app` gets it too', async () => {
+test('server.js sends that header ahead of the static handler, from the configured address and never the Host', async (t) => {
   const source = read('server.js');
   const at = source.indexOf('shellCanonicalLink(');
   assert.ok(at > 0, 'server.js asks for the front page’s canonical');
   assert.ok(at < source.indexOf("app.use(express.static(path.join(__dirname, 'public'), {"),
     'before express.static, which is what answers `/`');
+  const call = source.slice(at, source.indexOf('});', at));
+  assert.match(call, /origin: require\('\.\/src\/services\/app-identity-env'\)\.platformOrigin\(\)/);
+  assert.doesNotMatch(call, /requestOrigin|req\.headers|req\.get\(|req\.hostname/, 'nothing request-derived names the address');
 
-  // The same middleware shape, driven for real.
+  // The same middleware, driven for real with a forged Host.
+  const before = process.env.USERNODE_DOMAIN;
+  t.after(() => { if (before === undefined) delete process.env.USERNODE_DOMAIN; else process.env.USERNODE_DOMAIN = before; });
   const app = express();
   app.use((req, res, next) => {
     const value = robots.shellCanonicalLink({
-      method: req.method, path: req.path, origin: requestOrigin(req), staging: false,
+      method: req.method, path: req.path, origin: platformOrigin(), staging: false,
     });
     if (value) res.setHeader('Link', value);
     next();
@@ -81,12 +86,19 @@ test('server.js sends that header ahead of the static handler, so `/?report=app`
   const server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
+  const get = (p, headers = {}) => new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: p, headers }, (res) => { res.resume(); resolve(res.headers.link || null); })
+      .on('error', reject);
+  });
   try {
-    const get = async (p) => (await fetch(`http://127.0.0.1:${port}${p}`, {
-      headers: { 'x-forwarded-host': 'app.example.com', 'x-forwarded-proto': 'https' },
-    })).headers.get('link');
+    process.env.USERNODE_DOMAIN = 'app.example.com';
     assert.equal(await get('/?report=app'), '<https://app.example.com/>; rel="canonical"');
+    assert.equal(await get('/', { host: 'evil.example', 'x-forwarded-host': 'evil.example', 'x-forwarded-proto': 'http' }),
+      '<https://app.example.com/>; rel="canonical"', 'a forged Host or X-Forwarded-Host changes nothing');
     assert.equal(await get('/app/some-project'), null);
+    delete process.env.USERNODE_DOMAIN;
+    assert.equal(await get('/', { host: 'evil.example', 'x-forwarded-host': 'evil.example' }), null,
+      'no configured address: no header, never the request’s');
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -117,13 +129,11 @@ test('a public project’s page, its og:url and its sitemap entry are one addres
   assert.ok(sitemapXml(origin, [app]).includes(`<loc>${address}</loc>`));
 });
 
-test('the starter app’s page names itself without its query string', () => {
+test('the starter app sends no canonical: it holds no trusted address, and the Host is never one', () => {
   const files = template.getTemplateFiles('Demo', { slug: 'demo-1' });
   const server = (Array.isArray(files) ? files : Object.values(files)).find((f) => f.path === 'server.js').content;
-  assert.match(server, /res\.set\('Link', '<https:\/\/' \+ pageHost \+ req\.path \+ '>; rel="canonical"'\)/);
-  assert.match(server, /\/\^\[A-Za-z0-9\.-\]\+\$\/\.test\(pageHost\)/, 'only a plain host is written into the header');
-  assert.ok(server.indexOf("res.set('Link'") > server.indexOf('Open this app inside Homeroom'),
-    'on the page it serves, not on the "open in Homeroom" answer');
+  assert.doesNotMatch(server, /rel="canonical"/);
+  assert.doesNotMatch(server, /res\.set\('Link'/);
 });
 
 test('the conventions say it: a canonical without state or paging parameters, no per-visitor state in URLs, API routes noindex', () => {
@@ -135,5 +145,7 @@ test('the conventions say it: a canonical without state or paging parameters, no
   assert.match(section, /Never put per-visitor state in a URL a crawler can follow/);
   assert.match(section, /API routes are never pages/);
   assert.match(section, /Do not block these URLs in `robots\.txt`/);
-  assert.ok(section.length < 1800, 'kept short: it is read on every build');
+  assert.match(section, /Never build the canonical's host from the request/);
+  assert.match(section, /The scaffold sends none/);
+  assert.ok(section.length < 2200, 'kept short: it is read on every build');
 });

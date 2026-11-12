@@ -1413,15 +1413,6 @@ app.get('*', (req, res) => {
   </div>
 </body>\`);
   }
-  // Search engines: one address per page. A public app's pages can be
-  // crawled, and the same page under every query string (a token, a page
-  // number, saved view state) is listed as a duplicate, so the page names
-  // itself without one. A page that IS a different page per parameter sets
-  // its own canonical instead.
-  const pageHost = req.get('x-forwarded-host') || req.get('host') || '';
-  if (/^[A-Za-z0-9.-]+$/.test(pageHost)) {
-    res.set('Link', '<https://' + pageHost + req.path + '>; rel="canonical"');
-  }
   ${server.sendPage}
 });
 

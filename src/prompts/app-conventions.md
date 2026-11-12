@@ -390,11 +390,15 @@ visitor.
 
 - **A page reached by a paging, filter or state query parameter carries a
   canonical without it**: `<link rel="canonical" href="https://<host>/<path>">`,
-  or the same as a `Link: <...>; rel="canonical"` response header (the
-  scaffold's page handler sends that header). Pages that are parts of one
-  thing (chapters, result pages) name the thing's own page, and add
-  `<meta name="robots" content="noindex, follow">` when they should not be
-  listed at all.
+  or the same as a `Link: <...>; rel="canonical"` response header. Pages
+  that are parts of one thing (chapters, result pages) name the thing's own
+  page, and add `<meta name="robots" content="noindex, follow">` when they
+  should not be listed at all.
+- **Never build the canonical's host from the request** (`Host`,
+  `X-Forwarded-Host`): anybody can send those, and a cached page then names
+  somebody else's site as its real address. Take the host from a value you
+  trust (a `dapp.json` secret holding the app's public address), and send
+  no canonical when there is none. The scaffold sends none.
 - **Never put per-visitor state in a URL a crawler can follow.** Keep it in
   the fragment (`#...`), in `localStorage`, or on the server.
 - **API routes are never pages.** The platform marks `/api/*` and its own

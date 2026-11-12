@@ -1151,11 +1151,14 @@ app.get('/shell/release.json', (_req, res, next) => {
 // The shell's front page has one address for a search engine, whatever query
 // string a link carries (`/?report=app` was listed as a duplicate): the
 // canonical goes out as a Link header, so the document itself is unchanged.
+// The address is the platform's configured one (USERNODE_DOMAIN), never the
+// Host a request arrived with: a forged Host must not be able to name
+// another site as this page's canonical. No configured address, no header.
 app.use((req, res, next) => {
   const link = require('./src/services/search-robots').shellCanonicalLink({
     method: req.method,
     path: req.path,
-    origin: require('./src/routes/community-invites').requestOrigin(req),
+    origin: require('./src/services/app-identity-env').platformOrigin(),
     staging: process.env.USERNODE_ENV === 'staging',
   });
   if (link) res.setHeader('Link', link);

@@ -77,6 +77,9 @@ function withRobots(existing, rule) {
  * Only for `/` on production: a query string (`?report=app`, `?demo=1`) is
  * the same page. Every other shell address is left alone; a public
  * project's page carries its own canonical (services/project-preview.js).
+ * `origin` is the platform's CONFIGURED address (app-identity-env.js
+ * platformOrigin), never one read from the request's Host or
+ * X-Forwarded-Host: the caller must not pass a request-derived value.
  */
 function shellCanonicalLink({ method, path, origin, staging = false } = {}) {
   if (staging || (method !== 'GET' && method !== 'HEAD') || path !== '/') return null;
