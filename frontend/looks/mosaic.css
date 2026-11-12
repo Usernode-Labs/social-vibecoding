@@ -36,15 +36,17 @@
 .card{border-radius:22px;background:var(--surface);backdrop-filter:blur(20px) saturate(1.3);-webkit-backdrop-filter:blur(20px) saturate(1.3);box-shadow:inset 0 0 0 1px var(--ring),var(--soft)}
 .row .t{font-weight:750;font-size:15.5px}
 .lead{border-radius:13px}
-/* the mosaic: in the content column a list is a grid of tiles */
-.cols>.stack:first-child .card:has(>.row){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;background:none;backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:none;border-radius:0;overflow:visible}
-.phone .cols>.stack:first-child .card:has(>.row){grid-template-columns:minmax(0,1fr)}
-.cols>.stack:first-child .card:has(>.row)>.row{min-height:78px;padding:12px 14px;border-top:0;border-radius:20px;background:var(--surface);backdrop-filter:blur(20px) saturate(1.3);-webkit-backdrop-filter:blur(20px) saturate(1.3);box-shadow:inset 0 0 0 1px var(--ring),var(--soft);align-items:center}
-.cols>.stack:first-child .card:has(>.row)>.row.sm{min-height:56px}
-.cols>.stack:first-child .card:has(>.row)>.row .t{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.25}
-.cols>.stack:first-child .card:has(>.row)>.row .go,.cols>.stack:first-child .card:has(>.row)>.row .track.mini{display:none}
-.cols>.stack:first-child .card:has(>.row)>.row.on{background:var(--ink);color:var(--solid)}
-.cols>.stack:first-child .card:has(>.row)>.row.on .s,.cols>.stack:first-child .card:has(>.row)>.row.on .meta{color:inherit;opacity:.75}
+/* the mosaic: in the content column a list is a grid of tiles. A list, not every card with a row in it: a card of
+   launcher tiles that ends in its show-all row, and version 2's lists of one-line rows (an item, its project's or month's
+   head row, a table's rows), stay the cards they are, whether the rows are the card's own or a group's inside it. */
+.cols>.stack:first-child .card:has(>.row):not(.list,:has(>.tiles,.row.showall,.row.item,.row.proj,.row.month,.row.th,.row.rk)){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;background:none;backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:none;border-radius:0;overflow:visible}
+.phone .cols>.stack:first-child .card:has(>.row):not(.list,:has(>.tiles,.row.showall,.row.item,.row.proj,.row.month,.row.th,.row.rk)){grid-template-columns:minmax(0,1fr)}
+.cols>.stack:first-child .card:has(>.row):not(.list,:has(>.tiles,.row.showall,.row.item,.row.proj,.row.month,.row.th,.row.rk))>.row{min-height:78px;padding:12px 14px;border-top:0;border-radius:20px;background:var(--surface);backdrop-filter:blur(20px) saturate(1.3);-webkit-backdrop-filter:blur(20px) saturate(1.3);box-shadow:inset 0 0 0 1px var(--ring),var(--soft);align-items:center}
+.cols>.stack:first-child .card:has(>.row):not(.list,:has(>.tiles,.row.showall,.row.item,.row.proj,.row.month,.row.th,.row.rk))>.row.sm{min-height:56px}
+.cols>.stack:first-child .card:has(>.row):not(.list,:has(>.tiles,.row.showall,.row.item,.row.proj,.row.month,.row.th,.row.rk))>.row .t{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.25}
+.cols>.stack:first-child .card:has(>.row):not(.list,:has(>.tiles,.row.showall,.row.item,.row.proj,.row.month,.row.th,.row.rk))>.row .go,.cols>.stack:first-child .card:has(>.row):not(.list,:has(>.tiles,.row.showall,.row.item,.row.proj,.row.month,.row.th,.row.rk))>.row .track.mini{display:none}
+.cols>.stack:first-child .card:has(>.row):not(.list,:has(>.tiles,.row.showall,.row.item,.row.proj,.row.month,.row.th,.row.rk))>.row.on{background:var(--ink);color:var(--solid)}
+.cols>.stack:first-child .card:has(>.row):not(.list,:has(>.tiles,.row.showall,.row.item,.row.proj,.row.month,.row.th,.row.rk))>.row.on .s,.cols>.stack:first-child .card:has(>.row):not(.list,:has(>.tiles,.row.showall,.row.item,.row.proj,.row.month,.row.th,.row.rk))>.row.on .meta{color:inherit;opacity:.75}
 .btn{border-radius:14px;font-weight:800}.btn.sm{border-radius:10px}
 .btn.quiet{background:var(--sunk)}
 .fact .v{font-size:30px;font-weight:800}
@@ -64,3 +66,4 @@
 .phone .tabbar{background:color-mix(in srgb,var(--ground) 80%,transparent);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-top:1px solid var(--line)}
 .tb{font-weight:700}.tb.on{background:var(--ink);color:var(--solid)}
 .stage{border-radius:22px}
+.phone .barline{border-bottom:0}

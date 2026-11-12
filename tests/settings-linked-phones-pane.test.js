@@ -60,8 +60,8 @@ test('the prerendered pane is hidden, names both groups and lists no device', ()
   const html = renderToHtml(createElement(LinkedPhonesSection, {}));
   assert.match(html, /^<div data-settings-section="phones" class="hidden">/);
   assert.match(html, /id="settings-phones-section"/);
-  assert.match(html, /<div id="settings-phones-list" class="flex flex-col"><\/div>/);
-  assert.match(html, /<div id="settings-browsers-list" class="flex flex-col"><\/div>/);
+  assert.match(html, /<div id="settings-phones-list" class="ui-card flex flex-col"><\/div>/);
+  assert.match(html, /<div id="settings-browsers-list" class="ui-card flex flex-col"><\/div>/);
   assert.ok(html.includes(escape(message('settings:phones.title'))));
   assert.ok(html.includes(escape(message('settings:phones.intro'))));
   // The two groups, phones first, each with its explaining line.

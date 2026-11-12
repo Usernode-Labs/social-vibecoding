@@ -47,13 +47,13 @@ export function GuideSection() {
         <SectionHeading title={t('settings:guide.title')}>
           {t('settings:guide.intro')}
         </SectionHeading>
-        <SectionHeader className="px-0 pt-2">{t('settings:guide.start.heading')}</SectionHeader>
+        <SectionHeader className="ui-cap px-0 pt-2">{t('settings:guide.start.heading')}</SectionHeader>
         <GroupedList className="mx-0">
           <Row title={t('settings:guide.start.join.title')} body={t('settings:guide.start.join.body')} />
           <Row title={t('settings:guide.start.open.title')} body={t('settings:guide.start.open.body')} />
           <Row title={t('settings:guide.start.suggest.title')} body={t('settings:guide.start.suggest.body')} />
         </GroupedList>
-        <SectionHeader className="px-0">{t('settings:guide.places.heading')}</SectionHeader>
+        <SectionHeader className="ui-cap px-0">{t('settings:guide.places.heading')}</SectionHeader>
         <GroupedList className="mx-0">
           <Row title={t('settings:guide.place.communities.title')} body={t('settings:guide.place.communities.body')} />
           <Row title={t('settings:guide.place.apps.title')} body={t('settings:guide.place.apps.body')} />
@@ -62,7 +62,7 @@ export function GuideSection() {
           <Row title={t('settings:guide.place.bot.title')} body={t('settings:guide.place.bot.body')} />
           <Row title={t('settings:guide.place.you.title')} body={t('settings:guide.place.you.body')} />
         </GroupedList>
-        <SectionHeader className="px-0">{t('settings:guide.vote.heading')}</SectionHeader>
+        <SectionHeader className="ui-cap px-0">{t('settings:guide.vote.heading')}</SectionHeader>
         <GroupedList id="settings-guide-voting" className="mx-0">
           <Row title={t('settings:guide.vote.request.title')} body={t('settings:guide.vote.request.body')} />
           <Row title={t('settings:guide.vote.build.title')} body={t('settings:guide.vote.build.body')} />
@@ -70,12 +70,12 @@ export function GuideSection() {
           <Row title={t('settings:guide.vote.checks.title')} body={t('settings:guide.vote.checks.body')} />
           <Row title={t('settings:guide.vote.rule.title')} body={t('settings:guide.vote.rule.body')} />
         </GroupedList>
-        <SectionHeader className="px-0">{t('settings:guide.compare.heading')}</SectionHeader>
+        <SectionHeader className="ui-cap px-0">{t('settings:guide.compare.heading')}</SectionHeader>
         <GroupedList className="mx-0">
           <Row title={t('settings:guide.compare.suggest.title')} body={t('settings:guide.compare.suggest.body')} />
           <Row title={t('settings:guide.compare.bot.title')} body={t('settings:guide.compare.bot.body')} />
         </GroupedList>
-        <SectionHeader className="px-0">{t('settings:guide.terms.heading')}</SectionHeader>
+        <SectionHeader className="ui-cap px-0">{t('settings:guide.terms.heading')}</SectionHeader>
         <GroupedList className="mx-0">
           <Row title={t('settings:guide.term.hub.title')} body={t('settings:guide.term.hub.body')} />
           <Row title={t('settings:guide.term.workshop.title')} body={t('settings:guide.term.workshop.body')} />
@@ -86,7 +86,7 @@ export function GuideSection() {
           <Row title={t('settings:guide.term.private.title')} body={t('settings:guide.term.private.body')} />
           <Row title={t('settings:guide.term.public.title')} body={t('settings:guide.term.public.body')} />
         </GroupedList>
-        <SectionHeader className="px-0">{t('settings:guide.faq.heading')}</SectionHeader>
+        <SectionHeader className="ui-cap px-0">{t('settings:guide.faq.heading')}</SectionHeader>
         <GroupedList className="mx-0">
           <Row title={t('settings:guide.faq.findApp.title')} body={t('settings:guide.faq.findApp.body')} />
           <Row title={t('settings:guide.faq.suggestion.title')} body={t('settings:guide.faq.suggestion.body')} />

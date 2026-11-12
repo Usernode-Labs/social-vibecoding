@@ -43,3 +43,4 @@
 .sheet{background:var(--surface);border-radius:22px}.sheet .x{background:var(--sunk)}
 .phone .tabbar{background:var(--surface)}
 .fact .v{font-size:26px}
+.phone .barline{border-bottom-color:var(--line2)}

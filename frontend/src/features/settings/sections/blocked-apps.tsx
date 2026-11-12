@@ -45,11 +45,11 @@ function BlockedAppsList() {
     } catch (err) { setError((err as Error).message); }
     finally { setBusy(null); }
   }
-  return <div ref={host} className="mt-4 space-y-3">
+  return <div ref={host} className="ui-card mt-4 space-y-3">
     {apps === null && !error ? <p className="text-sm text-zinc-500">{t('settings:blockedApps.loading')}</p> : null}
     {apps?.length === 0 ? <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('settings:blockedApps.empty')}</p> : null}
-    {apps?.map(app => <div key={app.slug} className="flex items-center justify-between gap-3 rounded-lg bg-zinc-500/5 p-3">
-      <span className="min-w-0 break-words">{app.name}</span>
+    {apps?.map(app => <div key={app.slug} className="ui-row flex items-center justify-between gap-3 rounded-lg bg-zinc-500/5 p-3">
+      <span className="ui-row-tx ui-row-t min-w-0 break-words">{app.name}</span>
       <Button type="button" layout="shrink" disabled={!!busy} onClick={() => void unblock(app)}>{busy === app.slug ? t('settings:blockedApps.unblocking') : t('settings:blockedApps.unblock')}</Button>
     </div>)}
     {error ? <div role="alert"><p className="text-sm text-red-700 dark:text-red-400">{error}</p><Button type="button" onClick={() => refresh.current()}>{t('core:common.retry')}</Button></div> : null}

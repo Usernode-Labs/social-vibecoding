@@ -68,12 +68,11 @@ import { CardPreview } from './card-preview';
 import {
   type GuestApp,
   MIN_PEOPLE,
+  isNew,
   projectHash,
   projectPath,
 } from './guest-data';
 
-/** A project made in the last 30 days wears "New". */
-const NEW_FOR_MS = 30 * 24 * 60 * 60 * 1000;
 
 export const SMALL_CAPS_LABEL = 'text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400';
 
@@ -83,11 +82,6 @@ export const SMALL_CAPS_LABEL = 'text-xs font-bold uppercase tracking-[0.06em] t
  * half the gap, is the floor).
  */
 export const CARD_GRID = 'grid grid-cols-[repeat(auto-fill,minmax(min(190px,calc(50%_-_6px)),1fr))] gap-3';
-
-function isNew(app: GuestApp, now = Date.now()): boolean {
-  const t = app.created_at ? Date.parse(app.created_at) : NaN;
-  return Number.isFinite(t) && now - t < NEW_FOR_MS;
-}
 
 /** The app's icon, in the tile Discover's rows draw (app-card-view.tsx). `className` overrides the size's radius or shadow. */
 export function GuestIcon({ app, size = 'md', eager = false, className }: { app: GuestApp; size?: 'sm' | 'md' | 'lg' | 'xl'; eager?: boolean; className?: string }) {

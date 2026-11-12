@@ -52,3 +52,4 @@
 .tb{color:rgba(255,255,255,.8);font-weight:600}.tb.on{background:var(--grad);color:#17182f}
 .tb .n{box-shadow:0 0 0 2px var(--nav)}
 .noside .bar .brand{font-weight:800}
+.phone .barline{border-bottom:0}

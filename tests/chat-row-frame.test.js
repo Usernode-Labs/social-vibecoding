@@ -43,7 +43,7 @@ test('the same person going on is the same post: no face, no name, the time kept
 
 test('the bot\'s picture is the kit\'s tile, and a day\'s label the kit\'s', () => {
   const bot = row('glass', { avatar: createElement('img', { src: '/brand/homeroom-mark.png', alt: '' }) });
-  assert.match(bot, /<span class="fr-tile" style="--fr-ts:32px;--fr-tc:#fff" aria-hidden="true"><img src="\/brand\/homeroom-mark\.png" alt=""/);
+  assert.match(bot, /<span class="fr-tile" style="--fr-ts:32px;--fr-tc:var\(--fr-sunk\)" aria-hidden="true"><img src="\/brand\/homeroom-mark\.png" alt=""/);
   assert.equal(renderToHtml(createElement(load('glass').DaySeparator, null, 'Yesterday')), '<div class="fr-day">Yesterday</div>');
 });
 

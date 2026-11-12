@@ -62,3 +62,4 @@
 .phone .tabbar{margin:0 12px 12px;height:62px;padding:6px;border-top:0;border-radius:999px;background:var(--surface);box-shadow:var(--soft)}
 .tb{border-radius:999px}.tb.on{background:var(--ink);color:var(--surface)}
 .stage{border-radius:26px}
+.phone .barline{border-bottom:0}

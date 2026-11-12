@@ -40,13 +40,26 @@ const TEXT_SIZES = ['normal', 'large', 'larger'] as const;
 type TextSize = (typeof TEXT_SIZES)[number];
 
 const SIZE_SEG_CLASS =
-  'theme-seg flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors';
+  'theme-seg ui-row ui-row-sm flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors';
 
 const SIZE_LABELS: Record<TextSize, string> = {
   normal: 'settings:accessibility.textSize.normal',
   large: 'settings:accessibility.textSize.large',
   larger: 'settings:accessibility.textSize.larger',
 };
+
+/**
+ * The radio mark a row wears under one of the frame's looks (looks v2: the
+ * choices are radio rows in a card there). Never drawn by the standard look
+ * (`ui-look-only`, app.css), whose segment says which one is chosen by its own fill.
+ */
+function RadioMark({ on }: { on: boolean }) {
+  return (
+    <span aria-hidden="true" className={on ? 'ui-chk ui-chk-on ui-look-only' : 'ui-chk ui-look-only'}>
+      {on ? <span className="h-2 w-2 rounded-full bg-[color:var(--accent-ink)]" /> : null}
+    </span>
+  );
+}
 
 /**
  * The Normal / Large / Larger segmented control. Three things re-read the
@@ -88,7 +101,7 @@ function TextSizeControl() {
       role="radiogroup"
       aria-label={t('settings:accessibility.textSize.controlName')}
       onKeyDown={keys.onKeyDown}
-      className="relative flex p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium"
+      className="ui-card ui-radios relative flex p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium"
     >
       {TEXT_SIZES.map((s) => (
         <button
@@ -101,6 +114,7 @@ function TextSizeControl() {
           className={size === s ? `${SIZE_SEG_CLASS} theme-seg-active` : SIZE_SEG_CLASS}
           onClick={() => choose(s)}
         >
+          <RadioMark on={size === s} />
           {t(SIZE_LABELS[s])}
         </button>
       ))}
@@ -129,6 +143,8 @@ function HighContrastRow() {
 
   return (
     <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+      {/* A neutral wrapper (looks v2): one card's switch row under a look. */}
+      <div className="ui-card ui-swrow">
       <label className="flex items-center gap-2 cursor-pointer select-none">
         <Switch
           id="settings-high-contrast"
@@ -146,6 +162,7 @@ function HighContrastRow() {
       <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
         {t('settings:accessibility.contrast.description')}
       </p>
+      </div>
     </div>
   );
 }

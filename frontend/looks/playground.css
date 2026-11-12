@@ -58,3 +58,4 @@
 .phone .tabbar{background:var(--surface);border-top:0;box-shadow:0 -1px 0 var(--line);height:70px}
 .tb{font-weight:800;border-radius:16px;font-size:11.5px}.tb.on{background:var(--lit-t);color:#1f2a44}.dark .tb.on{color:#ffe6a7}
 .stage{border-radius:20px}
+.phone .barline{background:var(--surface);border-bottom:0;box-shadow:0 1px 0 var(--line)}.phone .bar:has(+.barline){box-shadow:none}

@@ -25,7 +25,7 @@
 .card{border-radius:24px;box-shadow:var(--soft);background:var(--surface)}
 .row{min-height:72px;padding:12px 20px;gap:16px}.row.sm{min-height:54px}
 .row .t{font-size:16px;font-weight:700}.row .s{font-size:14px}
-.row .tile{--ts:48px!important}.row .av{--as:48px!important}.lead{width:48px;height:48px;border-radius:14px}
+.row .tile{--ts:48px!important}.row .av{--as:48px!important}.row .tx .av{--as:20px!important}.lead{width:48px;height:48px;border-radius:14px}
 .row.sm .tile{--ts:36px!important}.row.sm .lead{width:36px;height:36px}
 .pill{height:28px;padding:0 12px;font-size:13px}
 .btn{height:44px;border-radius:999px;font-weight:700;font-size:16px}
@@ -48,3 +48,4 @@
 .phone .tabbar{background:color-mix(in srgb,var(--surface) 72%,transparent);backdrop-filter:blur(30px) saturate(1.6);-webkit-backdrop-filter:blur(30px) saturate(1.6);border-top:1px solid var(--line2);height:70px}
 .tb{font-size:10.5px;font-weight:600;border-radius:0}.tb.on{background:none;color:var(--acc)}
 .stage{border-radius:24px}
+.phone .barline{border-bottom:0}

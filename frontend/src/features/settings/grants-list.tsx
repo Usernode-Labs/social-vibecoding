@@ -53,7 +53,7 @@ function controller(): any {
  * figure/ground, so the row is the surface and needs no border, which is also
  * what every other card on this screen does.
  */
-const ROW_CLASS = 'rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
+const ROW_CLASS = 'ui-mini rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
 
 /*
  * #1957: the way back. A revoked row used to be the badge and nothing else —

@@ -78,6 +78,11 @@ function mapSelector(raw, id) {
   // `.hr *` is the kit's reset: kept, inside a frame root.
   sel = sel.replace(/^\.fr /, '\u0000');
   sel = renameClasses(sel).replace('\u0000', '.fr ');
+  // The reset stops at a piece of the product's own drawn inside a kit page
+  // (class fr-own: Home's waitlist and verify cards, its widget strip, the
+  // standard grid while Pinned apps is arranged), whose utilities carry its
+  // margins and padding. :where() keeps the reset's weight what it was.
+  sel = sel.replace(/^\.fr \*/, '.fr *:where(:not(.fr-own,.fr-own *))');
   const head = `${flag(id)}${media ? '[data-skin]' : ''}${dark ? '.dark' : ''}`;
   return { media, selector: `${head} ${sel}` };
 }
@@ -96,21 +101,28 @@ function wornSelector(mapped, raw = null) {
   // attribute without being one: it draws no kit markup, so only a worn
   // rule could reach it. :where() leaves it out at no weight.
   const head = mapped.slice(0, at) + (mapped.startsWith('html[data-skin=') ? '' : ':where(:not([data-skin="brand"]))');
-  let sel = mapped.slice(at);
+  const sel = mapped.slice(at);
   const names = (sel.match(/\.fr-[\w-]+/g) || []).map((c) => c.slice(4));
   const key = names.find((name) => config.wear.roots[name]);
   if (!key) return null;
   const root = config.wear.roots[key];
   const plain = raw == null ? sel.trim().replace(/\.fr-/g, '.') : raw.trim().replace(/\s+/g, ' ').replace(/^\.(hr|phone|dark) /, '');
   if ((root.skip || []).includes(plain)) return null;
-  const to = { [key]: root.to, ...(root.parts || {}) };
-  // A state the kit writes as a class on the component itself (.btn.sm,
-  // .card.pad) is one the product's node never carries unless the map
-  // names it as a part: such a rule could match nothing, so it is left out.
-  const dead = new RegExp(`\\.fr-${key}((?:\\.fr-[\\w-]+)+)`).exec(sel);
-  if (dead && dead[1].split('.fr-').filter(Boolean).some((name) => !Object.prototype.hasOwnProperty.call(to, name))) return null;
-  sel = sel.replace(/\.fr-([\w-]+)/g, (m, name) => (Object.prototype.hasOwnProperty.call(to, name) ? to[name] : m));
-  return head + sel;
+  // A root may be worn by a second node that must not share the first's
+  // selector ("also"): :is() weighs as its heaviest argument, so a node
+  // that needs two ids to outweigh the standard look's rule would lift
+  // every other wearer with it. Each is written as a selector of its own.
+  const out = [];
+  for (const wearer of [root, ...(root.also || [])]) {
+    const to = { [key]: wearer.to, ...(wearer.parts || {}) };
+    // A state the kit writes as a class on the component itself (.btn.sm,
+    // .card.pad) is one the product's node never carries unless the map
+    // names it as a part: such a rule could match nothing, so it is left out.
+    const dead = new RegExp(`\\.fr-${key}((?:\\.fr-[\\w-]+)+)`).exec(sel);
+    if (dead && dead[1].split('.fr-').filter(Boolean).some((name) => !Object.prototype.hasOwnProperty.call(to, name))) continue;
+    out.push(head + sel.replace(/\.fr-([\w-]+)/g, (m, name) => (Object.prototype.hasOwnProperty.call(to, name) ? to[name] : m)));
+  }
+  return out.length ? out.join(',') : null;
 }
 
 /** One declaration → [prop, value], tokens namespaced where set and where read. */
@@ -261,9 +273,12 @@ function lookBlock(id) {
     const [l, d] = look.ground;
     const lightRoot = `${flag(id)}:not(.dark):not([data-app-tone="dark"])`;
     const darkRoot = `${flag(id)}.dark:not([data-app-tone="light"])`;
-    out.push(`${lightRoot} body:has(#platform-tabs){--home-ground:${l};--un-zoom-bg:${l};background:${l}}`);
+    // --fr-page is the page's whole ground for an overlay that must paint
+    // it again over the screens (Make): this look's is the flat colour;
+    // a look without one leaves it unset and the wallpaper is read instead.
+    out.push(`${lightRoot} body:has(#platform-tabs){--home-ground:${l};--un-zoom-bg:${l};--fr-page:${l};background:${l}}`);
     out.push(`${lightRoot} body::before{background:${l}}`);
-    out.push(`${darkRoot} body:has(#platform-tabs){--home-ground:${d};--un-zoom-bg:${d};background:${d}}`);
+    out.push(`${darkRoot} body:has(#platform-tabs){--home-ground:${d};--un-zoom-bg:${d};--fr-page:${d};background:${d}}`);
     out.push(`${darkRoot} body::before{background:${d}}`);
   }
   if (look.opaque) {

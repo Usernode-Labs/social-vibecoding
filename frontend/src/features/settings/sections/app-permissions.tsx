@@ -35,7 +35,7 @@ export function AppPermissionsSection() {
         <SectionHeading title={t('settings:appPermissions.title')} blurbClassName="dark:text-zinc-400">
           {t('settings:appPermissions.intro')}
         </SectionHeading>
-        <div id="app-permissions-list" className="space-y-2">
+        <div id="app-permissions-list" className="ui-card space-y-2">
           <AppPermissionsList />
         </div>
         <StatusLine id="app-permissions-status" />

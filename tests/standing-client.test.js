@@ -216,7 +216,9 @@ test('a live or merged standing never draws Vote', () => {
   // Every screen that draws the feed drops it on the push.
   const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
   assert.match(read('frontend/src/features/workshop/index.tsx'), /const feed = withoutClosedVote\(state\.feed, \(event as CustomEvent\)\.detail\);/);
-  assert.match(read('frontend/src/features/home/frame/home-frame.tsx'), /setFeed\(\(now\) => withoutClosedVote\(now, \(event as CustomEvent\)\.detail\)\)/);
+  // Home under a look draws no feed of its own any more (looks v2): its Needs
+  // you tile is the header's count, as on the standard Home.
+  assert.doesNotMatch(read('frontend/src/features/home/frame/home-frame.tsx'), /needs-feed|setFeed/);
   assert.match(read('public/js/app.js'), /new CustomEvent\('homeroom-bot-work-changed', \{ detail: data \}\)/);
 });
 
