@@ -370,7 +370,7 @@ async function getWsVisibility(pool, { appId = null, appSlug = null } = {}) {
 // 10s TTL cache so the view-public fast path costs ~zero DB work.
 
 const platformJwt = require('./platform-jwt');
-const { USERNODE_DOMAIN, USERNODE_APPS_DOMAIN } = require('./caddy');
+const { USERNODE_DOMAIN, USERNODE_APPS_DOMAIN, USERNODE_LEGACY_APPS_DOMAIN } = require('./caddy');
 
 // The single-use sign-in code the apex /__access/authorize route mints from
 // a real platform session (services/edge-gate.js handleAuthorize); the
@@ -394,8 +394,11 @@ function mintAccessGrant({ uid, appId, host, sid, state }) {
 function parseAppHost(rawHost) {
   const host = String(rawHost || '').trim().toLowerCase().replace(/:\d+$/, '');
   if (host === USERNODE_DOMAIN) return null;
-  const suffix = '.' + USERNODE_APPS_DOMAIN;
-  if (!host.endsWith(suffix)) return null;
+  // While apps move to another domain (services/apps-domain-move.js), a
+  // preview not rebuilt yet still serves at the old one.
+  const suffix = ['.' + USERNODE_APPS_DOMAIN, ...(USERNODE_LEGACY_APPS_DOMAIN ? ['.' + USERNODE_LEGACY_APPS_DOMAIN] : [])]
+    .find((s) => host.endsWith(s));
+  if (!suffix) return null;
   const label = host.slice(0, -suffix.length);
   // Only single-level subdomains are routable (the Caddy wildcard
   // matches one label).

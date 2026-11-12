@@ -17,7 +17,9 @@ finish() {
   exit "$result"
 }
 trap finish EXIT
-rm -f "$out/assessment.json" "$out/vulnerabilities.json" "$out/image-vulnerabilities.json"
+rm -f "$out/assessment.json" "$out/vulnerabilities.json" "$out/image-vulnerabilities.json" \
+  "$out/playwright-browsers.json" "$out/playwright-browser-query.cdx.json" \
+  "$out/playwright-browser-advisories.json" "$out/browser-vulnerabilities.json"
 printf '%s\n' "$image" > "$out/image-reference.txt"
 case "$image" in
   *@sha256:*) ;;
@@ -54,6 +56,10 @@ if [ -z "$live" ]; then
     --entrypoint node "$image" < scripts/check-node-runtime.js > "$out/runtime.json"
   docker run --rm -i --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
     --entrypoint node "$image" < scripts/image-npm-inventory.js > "$out/npm-inventory.json"
+  # The Chromium builds Playwright downloaded: no scanner below can see them.
+  phase='Playwright browser inventory'
+  docker run --rm -i --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+    --entrypoint node "$image" < scripts/playwright-browsers-inventory.js > "$out/playwright-browsers.json"
 fi
 # Download the public database in a container that sees no project files.
 # Scanners that receive the SBOM or image archive have networking disabled.
@@ -81,6 +87,22 @@ if [ -z "$live" ]; then
   test -s "$out/image-vulnerabilities.json"
   rm -rf "$archive_dir"
   archive_dir=
+fi
+# Each Playwright browser against every Chromium advisory in the same offline
+# database, judged by the Chrome release that fixed it
+# (scripts/playwright-browser-findings.js). A browser whose version cannot be
+# read fails this phase: the assessment is unavailable, never clean.
+if [ -s "$out/playwright-browsers.json" ]; then
+  phase='Playwright browser scan'
+  browsers=$(node scripts/playwright-browser-findings.js --query "$out/playwright-browsers.json" "$out/playwright-browser-query.cdx.json")
+  if [ "$browsers" != 0 ]; then
+    docker run --rm --network none -v "$(cd "$out" && pwd):/output" -v social-security-trivy-db:/root/.cache/trivy \
+      aquasec/trivy:0.76.1 sbom --skip-db-update --offline-scan --cache-backend memory \
+      --scanners vuln --format json --output /output/playwright-browser-advisories.json \
+      /output/playwright-browser-query.cdx.json
+    node scripts/playwright-browser-findings.js --report "$out/playwright-browsers.json" \
+      "$out/playwright-browser-advisories.json" "$out/browser-vulnerabilities.json"
+  fi
 fi
 
 baseline=

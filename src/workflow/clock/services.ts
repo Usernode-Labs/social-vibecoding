@@ -665,6 +665,15 @@ export const JOBS: readonly Job[] = Object.freeze([
       : { off: true }),
   },
   {
+    // Apps moving to another domain (USERNODE_LEGACY_APPS_DOMAIN,
+    // services/apps-domain-move.js): every production app Ingress still on
+    // the old domain moves to the apps domain. Previews move on their next
+    // build. Nothing to do while the setting is empty. The newest build's
+    // setting, as for the gate.
+    name: 'apps-domain-move', everyMs: 10 * MIN, newestOnly: true, leaseMs: 5 * MIN,
+    run: (_ctx: WorkContext, { config }: JobDeps) => legacy('services/apps-domain-move').run({ config }),
+  },
+  {
     // The translation of this build's new interface text
     // (services/language-sync-runner.js): a catalog not yet translated, or a
     // batch to collect, is a target, one pass at a time. Paid: a batch is

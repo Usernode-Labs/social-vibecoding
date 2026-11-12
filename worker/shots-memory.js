@@ -78,7 +78,7 @@ function processClass(cmdline) {
     return 'browser';
   }
   if (/shots-origin-proxy\.js/.test(text)) return 'proxy';
-  if (/mcp-server-playwright|@playwright\/mcp|shots-browser-observer\.js|shots-mcp\.js|visible-changes-mcp\.js/.test(text)) {
+  if (/playwright-mcp|@playwright\/mcp|shots-browser-observer\.js|shots-mcp\.js|visible-changes-mcp\.js/.test(text)) {
     return 'mcp';
   }
   if (/(?:^|[\s/])claude(?:\s|$)|@anthropic-ai\/claude-code/.test(text)) return 'agent';

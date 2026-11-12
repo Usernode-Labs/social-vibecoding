@@ -81,8 +81,15 @@ shared site too:
    shared assets, gate, preview and custom-domain routes, network policy and
    ingress, and the iOS App-Bound Domains list. Private apps in shell frames
    are ready for it (the frame door, below). Strict mode needs apps and
-   previews off the platform's site, not
-   apart from each other. Inventory and retire old app/preview routes on the
+   previews off the platform's site, not apart from each other. The switch
+   is `config.appsDomain: onhomeroom.app` with
+   `config.legacyAppsDomain: onhomeroom.com`
+   (`src/services/apps-domain-move.js`): the release moves every production
+   app Ingress to the new domain, a preview moves on its next build and keeps
+   serving at the old one until then, a custom domain's CNAME may still point
+   at an app's old address, and the infrastructure redirects old addresses
+   nothing serves any more. Retire the previews left on the old domain, then
+   clear `legacyAppsDomain`. Inventory and retire old app/preview routes on the
    platform site, including old captures and custom domains. A configuration
    check cannot prove their absence. Do not leave an alias serving untrusted
    content on the old site. `git.onhomeroom.com` and the marketing apex stay
