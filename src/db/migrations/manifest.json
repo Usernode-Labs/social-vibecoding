@@ -330,6 +330,11 @@
       "id": "bot-posts-claims",
       "sha256": "9306ae1ef3220c20e6b4ba4e2fb204f0f73df60ebd0888e306becf9cd7d1c411",
       "schemaSha256": "b087bda2528bee618c65b04f787a4fd73c40356fc9e9671323035297f1810104"
+    },
+    {
+      "id": "change-thread-follows-links",
+      "sha256": "0e23cc37ac0c9b8d6fa9445e6bad4b4e0e7eab0a20ed87d4a81e621f545eec98",
+      "schemaSha256": "cc1abe1a94bd3668be36679fdee60e7e1b976184d049ac21dfd3bf9121a52ac3"
     }
   ]
 }
