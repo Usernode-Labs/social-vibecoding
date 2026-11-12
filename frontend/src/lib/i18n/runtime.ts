@@ -15,6 +15,7 @@ const runtime = createLanguageRuntime(catalogs);
 export const {
   i18n, t, htmlText, htmlRich, listText, languageName, registerNamespace, ensureNamespace,
   changeLanguage, applySessionLanguage, getLanguage, getDateLocale, getPreference, getAutoLanguage,
+  subscribeAutoLanguage,
   getNotice, subscribeNotice, dismissNotice, getLanguages, subscribeLanguages,
 } = runtime;
 

@@ -114,6 +114,9 @@ export function createLanguageRuntime(catalogs: Catalogs) {
   const noticeListeners = new Set<() => void>();
   let activeLanguage = 'en';
   let preference: string | null = null;
+  // Whether a language has been put on screen yet, and who hears that.
+  let activated = false;
+  const autoListeners = new Set<() => void>();
   let signedIn = false;
   let notice: LanguageNotice | null = null;
   // How a choice reaches the screen, and what keeps the two from parting:
@@ -374,6 +377,8 @@ export function createLanguageRuntime(catalogs: Catalogs) {
     const changed = activeLanguage !== language;
     activeLanguage = language;
     preference = value;
+    activated = true;
+    for (const listener of autoListeners) listener();
     await i18n.changeLanguage(language);
     if (typeof document !== 'undefined') {
       const root = document.documentElement;
@@ -541,11 +546,21 @@ export function createLanguageRuntime(catalogs: Catalogs) {
     getDateLocale: () => dateLocale(activeLanguage, deviceLanguages()),
     getPreference: () => preference,
     /**
-     * What Auto shows on this device (#6511): the device's languages tried
-     * in order against what is offered now, else English, by the same rule a
-     * session with no saved choice is resolved by.
+     * What Auto shows on this device (#6511). While Auto is the choice on
+     * screen, that is the language actually shown, English included when the
+     * device's language could not be loaded. Otherwise it is what Auto would
+     * give: the device's languages tried in order against what is offered
+     * now, else English, the rule a session with no saved choice follows.
      */
-    getAutoLanguage: () => resolveLanguage(null, deviceLanguages(), shipped).language,
+    getAutoLanguage: () => (activated && !preference
+      ? activeLanguage
+      : resolveLanguage(null, deviceLanguages(), shipped).language),
+    /** Hears whatever can change getAutoLanguage: a language shown, or a new list. */
+    subscribeAutoLanguage(listener: () => void) {
+      autoListeners.add(listener);
+      languageListeners.add(listener);
+      return () => { autoListeners.delete(listener); languageListeners.delete(listener); };
+    },
     isSignedIn: () => signedIn,
     getNotice: () => notice,
     subscribeNotice(listener: () => void) {

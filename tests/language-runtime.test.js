@@ -573,6 +573,24 @@ test('Auto names the language it gives on this device: the first one offered, el
   }
 });
 
+test('Auto names the language actually shown when the device language cannot load (#6511)', async (t) => {
+  const { runtime, page } = setup(t, { deviceLanguages: ['es-ES'] });
+  let heard = 0;
+  runtime.subscribeAutoLanguage(() => { heard += 1; });
+  page.unavailable = (url) => /\/es\./.test(url);
+  await runtime.applySessionLanguage({ id: 1, locale: null });
+  assert.equal(runtime.getLanguage(), 'en', 'the pack failed: English is shown');
+  assert.equal(runtime.getAutoLanguage(), 'en', 'and Auto says English, not Español');
+  assert.ok(heard >= 1, 'the label is told');
+  page.unavailable = null;
+  await runtime.applySessionLanguage({ id: 1, locale: null });
+  assert.equal(runtime.getAutoLanguage(), 'es', 'once it loads, Auto says Spanish');
+  // A fixed choice on screen: Auto names what it would give, not what shows.
+  page.unavailable = (url) => /\/es\./.test(url);
+  await runtime.applySessionLanguage({ id: 1, locale: 'en' });
+  assert.equal(runtime.getAutoLanguage(), 'es');
+});
+
 test('a list the runtime cannot trust is refused, and the build\'s languages stand', (t) => {
   const { live, runtime } = liveSetup(t);
   const entry = live.manifest.es.core;

@@ -4,7 +4,7 @@ import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { Select } from '@/components/ui/select';
 import { useMessages } from '../../../lib/i18n/react';
 import {
-  getAutoLanguage, languageName, shippedLanguages, subscribeLanguages,
+  getAutoLanguage, languageName, shippedLanguages, subscribeAutoLanguage,
 } from '../../../lib/i18n/runtime';
 
 /**
@@ -35,8 +35,10 @@ import {
  * Auto says what it resolves to on this device (#6511), "Auto (currently:
  * English)", under the language's own name as the list gives it: the device's
  * languages against what is offered now, else English (getAutoLanguage, the
- * rule a session with no saved choice is shown by). It is read again when the
- * server's list changes what is offered. The prerendered shell has no device,
+ * rule a session with no saved choice is shown by). While Auto is the choice
+ * on screen it names the language actually shown, so a device language whose
+ * text failed to load reads English. It is read again when a language is
+ * shown or the server's list changes what is offered. The prerendered shell has no device,
  * so the first render (the server snapshot, null) keeps the plain label and
  * hydration matches; the resolved one follows at once.
  *
@@ -48,7 +50,7 @@ export function LanguageSection() {
   // that no longer ships: a new language changes only this pane's own text
   // nodes, and React leaves a node it did not create where it is.
   const t = useMessages('settings');
-  const auto = useSyncExternalStore(subscribeLanguages, getAutoLanguage, () => null);
+  const auto = useSyncExternalStore(subscribeAutoLanguage, getAutoLanguage, () => null);
   return (
     <div data-settings-section="language" className="hidden">
       <div id="settings-language-section">

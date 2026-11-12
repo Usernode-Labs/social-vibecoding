@@ -279,7 +279,7 @@ test('the Settings picker is offered to everyone, with Auto and the shipped lang
   // name. The prerender has no device, so it ships the plain label and the
   // resolved one follows hydration (a server snapshot of null).
   const pane = read('frontend/src/features/settings/sections/language.tsx');
-  assert.match(pane, /useSyncExternalStore\(subscribeLanguages, getAutoLanguage, \(\) => null\)/);
+  assert.match(pane, /useSyncExternalStore\(subscribeAutoLanguage, getAutoLanguage, \(\) => null\)/);
   assert.match(pane, /t\('settings:language\.autoCurrently', \{ language: languageName\(auto\) \}\)/);
   assert.equal(message('settings:language.autoCurrently', { language: 'English' }), 'Auto (currently: English)');
   assert.match(select.slice(0, select.indexOf('</option>')), new RegExp(message('settings:language.auto')),
