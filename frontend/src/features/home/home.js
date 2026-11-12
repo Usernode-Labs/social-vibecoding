@@ -1,4 +1,5 @@
 import { readInterfaceMode } from '../settings/interface-mode';
+import { reducedMotion } from '../../lib/reduced-motion';
 // The home screen's launcher grid: loads the viewer's apps, lays them out on
 // the (column, row) canvas HomeLayout models, renders the tiles, and owns the
 // drag-to-rearrange gesture.
@@ -1947,7 +1948,7 @@ const Home = {
     // keyboard was still going down. Scrolled smoothly, it slides away.
     glide(screen, top) {
       let still = false;
-      try { still = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (err) { /* unknown: animate */ }
+      try { still = reducedMotion(); } catch (err) { /* unknown: animate */ }
       if (still || typeof screen.scrollTo !== 'function') {
         screen.scrollTop = top;
         return;

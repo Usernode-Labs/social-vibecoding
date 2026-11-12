@@ -19,6 +19,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import { reducedMotion } from '../../lib/reduced-motion';
 import { easeOut, REDUCED_MS, SLIDE_MS } from './drawer-math';
 
 /** The community the header shows. */
@@ -62,13 +63,9 @@ export interface DepthChannel {
   cut(target: number): void;
 }
 
-export function reducedMotion(): boolean {
-  try {
-    return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  } catch {
-    return false;
-  }
-}
+// The one answer (../../lib/reduced-motion.ts), re-exported for the drawers
+// that already import it from here.
+export { reducedMotion };
 
 export function createDepthChannel(rest: number, deepest: number): DepthChannel {
   let depth = rest;

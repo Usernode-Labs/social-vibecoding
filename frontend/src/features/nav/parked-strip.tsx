@@ -95,6 +95,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { reducedMotion } from '../../lib/reduced-motion';
 
 import { XIcon } from '@/components/ui/icons';
 
@@ -131,7 +132,7 @@ export function forgetParked(app: ParkedApp | null): void {
 /** Whether a leave would actually be drawn: the phone, with motion allowed. */
 function leaveAnimates(): boolean {
   if (typeof window === 'undefined' || !window.matchMedia) return false;
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+  if (reducedMotion()) return false;
   return window.matchMedia('(max-width: 767px)').matches;
 }
 

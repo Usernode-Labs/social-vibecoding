@@ -1,6 +1,6 @@
 /**
- * Settings → Accessibility: text size and high contrast (#3969), and
- * whether project cards play their animated previews.
+ * Settings → Accessibility: text size and high contrast (#3969), reduce
+ * motion (#6510), and whether project cards play their animated previews.
  *
  * A page of one part, right after Appearance in Preferences, so the two
  * reading controls are visible without opening Appearance first. It follows
@@ -151,6 +151,51 @@ function HighContrastRow() {
 }
 
 /**
+ * Reduce motion (#6510): the same switch row as High contrast, through the
+ * same head module. On, it writes data-motion="reduce" on <html>, which every
+ * reduced-motion rule in app.css and native.css has a twin for, Tailwind's
+ * motion-reduce:/motion-safe: variants read (scripts/build-tailwind.js), and
+ * ../../../lib/reduced-motion.ts answers for script. Off is not "allow": the
+ * device's own prefers-reduced-motion still applies, which the description
+ * says.
+ */
+function ReduceMotionRow() {
+  const t = useMessages('settings');
+  const [on, setOn] = useState(false);
+
+  const sync = useCallback(() => setOn(!!window.Display?.getMotion?.()), []);
+
+  useIsomorphicLayoutEffect(() => {
+    sync();
+    window.Display?.onChange?.(sync);
+  }, [sync]);
+
+  useWindowEvent('usernode:settings-section', sync);
+
+  return (
+    <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+      <label className="flex items-center gap-2 cursor-pointer select-none">
+        <Switch
+          id="settings-reduce-motion"
+          checked={on}
+          onChange={(e) => {
+            const next = e.currentTarget.checked;
+            window.Display?.setMotion?.(next);
+            setOn(next);
+          }}
+        />
+        <span className="text-sm text-zinc-800 dark:text-zinc-200">
+          {t('settings:accessibility.motion.label')}
+        </span>
+      </label>
+      <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+        {t('settings:accessibility.motion.description')}
+      </p>
+    </div>
+  );
+}
+
+/**
  * "Play previews": a project card's short, silent loop plays when you point
  * at the card, or on a phone for the card you stop on
  * (../../../lib/card-previews.ts). On by default, kept on this device, and
@@ -206,6 +251,7 @@ export function AccessibilitySection() {
           <TextSizeControl />
         </div>
         <HighContrastRow />
+        <ReduceMotionRow />
         <CardPreviewsRow />
       </div>
     </div>

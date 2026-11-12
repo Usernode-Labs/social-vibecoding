@@ -161,7 +161,9 @@ test('the card keeps the vertical pan and moves only where motion is welcome', (
   assert.match(motion[1], /transition: transform \.26s/);
   const outside = block.replace(motion[0], '');
   assert.ok(!/transform: translateX/.test(outside), 'the card is moved nowhere else');
-  assert.ok(!/transition:/.test(outside), 'and nothing animates outside it');
+  assert.ok(!/transition:(?! none;)/.test(outside), 'and nothing animates outside it');
+  // The Reduce motion setting's twin (#6510) holds the card still too.
+  assert.match(outside, /:where\(html\[data-motion="reduce"\]\) \.dev-ws-item\[data-ws-swipe\] \{ transform: none; \}/);
   // No rotation of the card itself: a rotated snap child changes the box
   // the feed's y-snap measures, and the feed would jiggle under the drag.
   assert.ok(!/\.dev-ws-item\[data-ws-swipe\] \{[^}]*rotate/.test(block));

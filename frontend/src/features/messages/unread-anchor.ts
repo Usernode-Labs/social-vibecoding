@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
+import { reducedMotion } from '../../lib/reduced-motion';
 
 import { t } from '../../lib/i18n/runtime';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -223,12 +224,8 @@ export function jumpLabel(arrived: number): string {
 }
 
 /** A glide the reader asked for, or a jump for a reader who asked for less motion. */
-export function scrollBehavior(win: { matchMedia?: (query: string) => { matches: boolean } } = globalThis as never): ScrollBehavior {
-  try {
-    return win.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
-  } catch {
-    return 'auto';
-  }
+export function scrollBehavior(win: Parameters<typeof reducedMotion>[0] = globalThis as never): ScrollBehavior {
+  return reducedMotion(win, true) ? 'auto' : 'smooth';
 }
 
 type Box = { getBoundingClientRect(): { top: number } };

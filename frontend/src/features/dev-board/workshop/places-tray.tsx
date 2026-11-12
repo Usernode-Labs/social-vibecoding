@@ -22,6 +22,7 @@
  */
 
 import { useEffect, useRef, type ReactNode } from 'react';
+import { reducedMotion } from '../../../lib/reduced-motion';
 import { createPortal } from 'react-dom';
 
 import { pushDismissible, type Release } from '../../../lib/back-stack';
@@ -207,7 +208,7 @@ export function PlacesTray({ id, label, onClose, closing, onClosed, returnTo, na
   useEffect(() => {
     if (!closing) return undefined;
     if (typeof window === 'undefined') return undefined;
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+    if (reducedMotion()) {
       closedRef.current?.();
       return undefined;
     }
