@@ -21,6 +21,19 @@ type MotionWindow = {
  * window is "animate"; a matchMedia that throws answers `unreadable`
  * (default "animate"; a caller that would rather stay still passes true).
  */
+export function reducedMotion(win?: MotionWindow | null, unreadable = false): boolean {
+  const w: MotionWindow | null = win === undefined ? (typeof window === 'undefined' ? null : window) : win;
+  if (!w) return false;
+  try {
+    if (w.document?.documentElement?.getAttribute('data-motion') === 'reduce') return true;
+  } catch { /* a cross-origin frame: the media query below still answers */ }
+  try {
+    return !!w.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  } catch {
+    return unreadable;
+  }
+}
+
 /**
  * Call `fn` whenever the answer may have changed: the setting written onto
  * <html> (here, or by another tab through the head module's storage
@@ -40,17 +53,4 @@ export function onReducedMotionChange(fn: () => void): () => void {
     offs.push(() => query.removeEventListener('change', fn));
   } catch { /* no matchMedia */ }
   return () => { for (const off of offs) off(); };
-}
-
-export function reducedMotion(win?: MotionWindow | null, unreadable = false): boolean {
-  const w: MotionWindow | null = win === undefined ? (typeof window === 'undefined' ? null : window) : win;
-  if (!w) return false;
-  try {
-    if (w.document?.documentElement?.getAttribute('data-motion') === 'reduce') return true;
-  } catch { /* a cross-origin frame: the media query below still answers */ }
-  try {
-    return !!w.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  } catch {
-    return unreadable;
-  }
 }
