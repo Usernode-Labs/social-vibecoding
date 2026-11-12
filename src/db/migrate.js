@@ -2100,6 +2100,69 @@ async function seedStagingBotWaitingRows(pool) {
           },
         })]);
       }
+      // 11 Nov 2026 (#6614): a reply about work the bot queued, with the
+      // plain yes first, and the one short line that answers that yes with
+      // no buttons. Staging has no model, so both are stored. For the shots'
+      // member fixture on request 9103; idempotent by their stagingDemo
+      // marks; strictly a no-op outside staging.
+      await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         SELECT $1, $2, $3, 'message', 'issue', 9103, $4, NOW() - INTERVAL '40 minutes'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+                               AND metadata->>'stagingDemo' = 'affirmed-work')`,
+        [
+          appId, botRow.rows[0].id,
+          'Staging demo: I have queued a fix on Change #178. The one failing check is the repo unit suite.',
+          JSON.stringify({
+            stagingDemo: 'affirmed-work',
+            homeroomBot: {
+              kind: 'voice',
+              affirm: { label: 'Sounds good' },
+              suggest: { status: 'open', forUserIds: [userId] },
+              actions: [
+                { id: 'suggest-1', label: 'Sounds good', style: 'secondary', type: 'prompt' },
+                { id: 'suggest-2', label: 'Tell me when it\'s ready', style: 'secondary', type: 'prompt' },
+              ],
+              othersActions: [
+                { id: 'others-1', label: 'I\'d like this too', style: 'secondary', type: 'prompt' },
+                { id: 'others-2', label: 'Can I try it?', style: 'secondary', type: 'prompt' },
+              ],
+            },
+          }),
+        ],
+      );
+      const yes = await pool.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+         SELECT $1, $2, 'Sounds good', 'message', 'issue', 9103, $3, NOW() - INTERVAL '30 minutes'
+          WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                             WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+                               AND metadata->>'stagingDemo' = 'affirm-yes')
+          RETURNING id`,
+        [appId, userId, JSON.stringify({ stagingDemo: 'affirm-yes' })],
+      );
+      const yesId = yes.rows[0]?.id || (await pool.query(
+        `SELECT id FROM chat_messages
+          WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+            AND metadata->>'stagingDemo' = 'affirm-yes' LIMIT 1`, [appId],
+      )).rows[0]?.id;
+      if (yesId) {
+        await pool.query(
+          `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+           SELECT $1, $2, $3, 'message', 'issue', 9103, $4, NOW() - INTERVAL '20 minutes'
+            WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                               WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 9103
+                                 AND metadata->>'stagingDemo' = 'affirm-ack')`,
+          [
+            appId, botRow.rows[0].id,
+            'Thanks, I\'ll tell you here when it\'s ready.',
+            JSON.stringify({
+              stagingDemo: 'affirm-ack',
+              homeroomBot: { kind: 'voice', affirmed: { messageId: Number(yesId) } },
+            }),
+          ],
+        );
+      }
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot waiting rows seeding failed', { message: err.message });
@@ -3368,30 +3431,49 @@ async function seedStagingClosesListFixture(pool) {
        ON CONFLICT DO NOTHING`,
       [member.id, appId],
     );
-    const changeNumber = 999999992;
     const title = 'Staging demo: the request the change was built for';
     const requests = [
       [900120, title, member.id],
       [900121, 'Staging demo: a request it also closes, filed by the change\'s author', member.id],
       [900122, 'Staging demo: a request it also closes, filed by somebody else', other.id],
     ];
+    // #6606: the change lives on its first request's thread, which is the
+    // thread a request's own page reads (its number is the request's).
     const thread = await pool.query(
       `INSERT INTO threads (app_id, number, kind, title, created_at)
        SELECT $1::int, $2::int, 'work', $3::text, NOW() - INTERVAL '1 day'
         WHERE NOT EXISTS (SELECT 1 FROM threads WHERE app_id = $1::int AND number = $2::int AND kind = 'work')
         RETURNING id`,
-      [appId, changeNumber, title],
+      [appId, 900120, title],
     );
     const threadId = thread.rows[0]?.id || (await pool.query(
-      'SELECT id FROM threads WHERE app_id = $1 AND number = $2 AND kind = \'work\'', [appId, changeNumber],
+      'SELECT id FROM threads WHERE app_id = $1 AND number = $2 AND kind = \'work\'', [appId, 900120],
     )).rows[0]?.id || null;
     for (const [number, requestTitle, filer] of requests) {
+      // #6606: the change lives on the first request's thread; each other
+      // request has a thread of its own, so its page says "Change PR … says
+      // it closes this" and its filer can answer there (the shots need the
+      // one filed by somebody else to exist on a page of its own).
+      let requestThread = threadId;
+      if (number !== 900120) {
+        const own = await pool.query(
+          `INSERT INTO threads (app_id, number, kind, title, created_at)
+           SELECT $1::int, $2::int, 'work', $3::text, NOW() - INTERVAL '4 days'
+            WHERE NOT EXISTS (SELECT 1 FROM threads WHERE app_id = $1::int AND number = $2::int AND kind = 'work')
+            RETURNING id`,
+          [appId, number, requestTitle],
+        );
+        requestThread = own.rows[0]?.id || (await pool.query(
+          `SELECT id FROM threads WHERE app_id = $1 AND number = $2 AND kind = 'work'`,
+          [appId, number],
+        )).rows[0]?.id || threadId;
+      }
       await pool.query(
         `INSERT INTO requests (app_id, number, title, body, created_by, thread_id, created_at, updated_at)
          SELECT $1::int, $2::int, $3::text, 'Staging demo: obviously fake.', $4::int, $5::int,
                 NOW() - INTERVAL '4 days', NOW() - INTERVAL '2 days'
           WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1::int AND number = $2::int)`,
-        [appId, number, requestTitle, filer, threadId],
+        [appId, number, requestTitle, filer, requestThread],
       );
     }
     await pool.query(

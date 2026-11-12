@@ -212,3 +212,59 @@ test('the community scope asks for a fresh counts answer when forced', async () 
   assert.ok(forced, 'force skips the thirty-second wait');
   assert.equal(forced.init.cache, 'no-cache');
 });
+
+test('signing in while Home reads the pins does not read them all again (#6591)', async () => {
+  fakeWindow({ user: { id: 7 } });
+  const listeners = {};
+  globalThis.document = {
+    addEventListener(name, fn) { listeners[name] = fn; },
+    removeEventListener() {},
+  };
+  const calls = [];
+  globalThis.fetch = (url) => new Promise((resolve) => { calls.push({ url: String(url), resolve }); });
+  const settle = () => {
+    for (const c of calls.splice(0)) {
+      const body = c.url === '/api/me/home-pins' ? { pins: [] }
+        : c.url === '/api/apps?scope=joined' ? { apps: [] } : { counts: {} };
+      c.resolve({ ok: true, json: async () => body });
+    }
+  };
+  const store = loadStore();
+  store.wireHomePins(() => 'moved');
+
+  // Home.load's read on a cold load, then the session event while it runs.
+  const homeRead = store.refreshHomePins();
+  await tick();
+  assert.equal(calls.length, 3);
+  listeners['sv:session']({ type: 'sv:session', detail: { user: { id: 7 } } });
+  await tick();
+  settle();
+  await homeRead;
+  await tick();
+  await tick();
+  assert.equal(calls.length, 0, 'the read already on its way answers the session');
+
+  // A read running for another account does not answer this one.
+  const other = store.loadHomePins();
+  await tick();
+  assert.equal(calls.length, 3);
+  const queued = store.loadHomePinsForSession(8);
+  settle();
+  await other;
+  await tick();
+  assert.equal(calls.length, 3, 'the new account reads its own list');
+  settle();
+  await queued;
+
+  // A refresh while a read runs still queues one more (request 6500).
+  const running = store.loadHomePins();
+  const again = store.loadHomePins();
+  assert.notEqual(running, again);
+  await tick();
+  settle();
+  await running;
+  await tick();
+  assert.equal(calls.length, 3);
+  settle();
+  await again;
+});

@@ -1662,6 +1662,9 @@ const AppView = {
   TOKEN_FRESH_MS: 60 * 1000,
   _tokenInflight: {},
   _tokenFresh: null,
+  // #6512: bumped per app by forgetToken, so a mint that was already on its
+  // way when a permission was revoked cannot write its old grant set back.
+  _tokenEpoch: {},
 
   // Resolves the token string for `slug`, or null on any failure. Never
   // rejects, and never touches iframeToken/iframeTokenSlug — a prewarm for
@@ -1676,7 +1679,9 @@ const AppView = {
     }
     const inflight = AppView._tokenInflight[slug];
     if (inflight) return inflight;
-    const p = (async () => {
+    const epoch = AppView._tokenEpoch[slug] || 0;
+    let p = null;
+    p = (async () => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), AppView.TOKEN_REQUEST_TIMEOUT_MS);
       try {
@@ -1686,17 +1691,71 @@ const AppView = {
         if (!token) return null;
         // #2219: the grant set rides the mint, so the launch path stays at
         // one round trip. Cached with the token and expiring with it.
+        // #6512: unless forgetToken ran meanwhile; then this answer predates
+        // a revoke, and its caller gets the token with no grant set cached.
+        if ((AppView._tokenEpoch[slug] || 0) !== epoch) return token;
         AppView._tokenFresh = { slug, token, permissions: permissions || null, at: Date.now() };
         return token;
       } catch {
         return null;
       } finally {
         clearTimeout(timer);
-        delete AppView._tokenInflight[slug];
+        // Only this mint's own entry: forgetToken may have detached it, and a
+        // newer mint for the same app may hold the slot by now.
+        if (!p || AppView._tokenInflight[slug] === p) delete AppView._tokenInflight[slug];
       }
     })();
     AppView._tokenInflight[slug] = p;
     return p;
+  },
+
+  // #6512: a device permission was revoked for `slug` (Settings > App device
+  // permissions). The grant set cached with the last mint is now wrong, and
+  // the next launch inside TOKEN_FRESH_MS would hand it to a new frame's
+  // `allow`, giving the revoked capability straight back. Drop it, detach
+  // any mint already in flight (the epoch keeps it from caching its answer),
+  // and drop the held grant set for that app, so the next open re-mints and
+  // reads the server's answer. The held token stays: it carries no grants,
+  // and a frame built before the re-mint gets the ungated base, failing
+  // closed.
+  //
+  // Every Homeroom tab in this browser keeps its own cache, so the forget
+  // is also posted to the others (GRANTS_CHANNEL); one that hears it forgets
+  // without posting again. A frame already open in another tab is left
+  // alone: that tab's person did not see the dialog that would close it.
+  forgetToken(slug, { fromOtherTab = false } = {}) {
+    if (!slug) return;
+    AppView._tokenEpoch[slug] = (AppView._tokenEpoch[slug] || 0) + 1;
+    delete AppView._tokenInflight[slug];
+    if (AppView._tokenFresh && AppView._tokenFresh.slug === slug) AppView._tokenFresh = null;
+    if (AppView.iframePermissionsSlug === slug) AppView.iframePermissions = null;
+    if (fromOtherTab) return;
+    const channel = AppView._grantsChannel();
+    if (!channel) return;
+    try { channel.postMessage({ kind: 'forget', slug }); } catch { /* best effort */ }
+  },
+
+  // #6512: the channel forgetToken tells this browser's other tabs on, opened
+  // once (the listener is attached at load, below the object) and null where
+  // BroadcastChannel is missing. Same-origin only, which is every Homeroom tab.
+  GRANTS_CHANNEL: 'homeroom-app-grants',
+  _grantsChannelState: undefined,
+  _grantsChannel() {
+    if (AppView._grantsChannelState !== undefined) return AppView._grantsChannelState;
+    let channel = null;
+    try {
+      if (typeof window !== 'undefined' && typeof window.BroadcastChannel === 'function') {
+        channel = new window.BroadcastChannel(AppView.GRANTS_CHANNEL);
+        channel.onmessage = (event) => {
+          const data = event && event.data;
+          if (data && data.kind === 'forget' && typeof data.slug === 'string') {
+            AppView.forgetToken(data.slug, { fromOtherTab: true });
+          }
+        };
+      }
+    } catch { channel = null; }
+    AppView._grantsChannelState = channel;
+    return channel;
   },
 
   // True when a token for `slug` is already in hand, i.e. beginLaunch can
@@ -5430,17 +5489,38 @@ const AppView = {
     // page to drop: unmounting it here leaves the page's stream empty for
     // good, because the paint that follows mounts a thread only when none
     // was mounted. A live repaint during the load is what found this.
-    const active = typeof GroupChat !== 'undefined' ? GroupChat.activeThread : null;
-    const threadType = t.kind === 'gov' ? 'governance' : (t.kind === 'issue' ? 'issue' : 'session');
-    const ownThread = !!active && active.type === threadType && Number(active.ref) === Number(t.id);
     // The previous thread's stream goes with the body: the same pair
-    // `mountThread` runs before a remount (GroupChat.renderThread).
-    if (!ownThread && typeof GroupChat !== 'undefined' && GroupChat.unmountThread) {
+    // `mountThread` runs before a remount (GroupChat.renderThread). A thread
+    // that is already this topic's own is not the previous one, and stays: a
+    // request's or a decision's is mounted on its ref alone, before its row
+    // is in hand (_renderTopicSubView), and the paint that follows the row
+    // does not mount it again. Dropped here by a repaint in that gap, the
+    // page drew its head and no replies at all.
+    if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread
+        && !AppView._topicThreadIsOpen(t, slug)) {
       const prev = document.getElementById('gc-thread-messages');
       if (prev) GroupChat._react?.()?.unmountTranscript?.(prev);
       GroupChat.unmountThread();
     }
     AppView._paintedTopic = null;
+  },
+
+  // The thread each kind of topic page mounts (_mountTopicThread). A shared
+  // in-flight dev session uses the same 'session' namespace as a promoted
+  // proposal: the thread key is the chat_sessions id either way, which is
+  // what makes comments carry over when the session is later promoted.
+  _TOPIC_THREAD_TYPES: new Map([
+    ['issue', 'issue'], ['proposal', 'session'], ['gov', 'governance'], ['session', 'session'],
+  ]),
+
+  // Whether the thread open in the group chat is topic `t`'s own, in project
+  // `slug`: the same kind of thread, on the same id, in the same project.
+  _topicThreadIsOpen(t, slug) {
+    if (typeof GroupChat === 'undefined' || !t || !slug) return false;
+    const open = GroupChat.activeThread;
+    if (!open || GroupChat.appSlug !== slug) return false;
+    return open.type === AppView._TOPIC_THREAD_TYPES.get(t.kind)
+      && Number(open.ref) === Number(t.id);
   },
 
   // #1036: the address of the app's dev page — what every "← Back" in a
@@ -10332,18 +10412,13 @@ const AppView = {
       });
       return;
     }
-    // 'session' (a shared in-flight dev session) uses the same 'session'
-    // thread namespace as promoted proposals — the thread key is the
-    // chat_sessions id either way, which is exactly what makes comments
-    // carry over when the session is later promoted.
-    const typeMap = { issue: 'issue', proposal: 'session', gov: 'governance', session: 'session' };
     // Every topic thread — including merged proposals — mounts with a live,
     // editable composer. Merging settles the vote, not the conversation:
     // people keep posting follow-ups after a proposal lands. The WS handler
     // accepts session-thread posts on merged sessions (existence-only gate),
     // so there is no read-only lock or "voting closed" notice here.
     GroupChat.mountThread({
-      type: typeMap[t.kind],
+      type: AppView._TOPIC_THREAD_TYPES.get(t.kind),
       ref: t.id,
       container: slot,
       fullHeight: true,
@@ -32108,6 +32183,36 @@ const AppView = {
     return { slug, current, post, platformPreview };
   },
 
+  // ── The frame door (docs/plans/browser-site-isolation.md, step 4) ────
+  //
+  // A private app on another site than this shell keeps its door open with
+  // a partitioned cookie, set from the frame's token. When a frame navigates
+  // without one (an offline app's tokenless address, a door that ran out, a
+  // reload), the app gate answers with its frame door page instead of the
+  // sign-in hop, which cannot run in a cross-site frame
+  // (src/services/edge-gate.js). That page asks here: `{ __usernode_frame_door:
+  // 'open', nonce }`. The answer is a fresh token for the app THIS frame
+  // shows, never one the message names, posted only to the origin the frame
+  // was pointed at (`_bridgeRequest`), so a frame navigated elsewhere, a
+  // page nested inside an app, or another app's frame gets nothing it did
+  // not already hold. The app frame and the staging preview only: the
+  // landing viewer is signed out. A null token tells the page to stop.
+  FRAME_DOOR_FRAMES: ['app-iframe', 'staging-iframe'],
+
+  handleFrameDoorMessage(e) {
+    const data = e && e.data;
+    if (!data || typeof data !== 'object' || data.__usernode_frame_door !== 'open') return;
+    const nonce = typeof data.nonce === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(data.nonce) ? data.nonce : '';
+    if (!nonce) return;
+    const frameId = AppView.ownedFrameFor(e.source);
+    if (!AppView.FRAME_DOOR_FRAMES.includes(frameId)) return;
+    const request = AppView._bridgeRequest(e, frameId);
+    if (!request || !request.slug) return;
+    AppView._mintToken(request.slug).then((token) => {
+      request.post({ __usernode_frame_door: 'token', nonce, token: token || null });
+    });
+  },
+
   // Last value posted per frame id, so an unchanged recompute posts
   // nothing (a rotation is one message per frame, not a stream).
   _safeAreaSent: {},
@@ -33242,6 +33347,9 @@ if (typeof window !== 'undefined') {
     try { AppView.handleBackgroundBridgeMessage(e); } catch {}
     // An app's first screen, drawn (`usernode.ready()`): lifts its cover.
     try { AppView.handleReadyBridgeMessage(e); } catch {}
+    // A private app on another site asking for its door (the app gate's
+    // frame door page).
+    try { AppView.handleFrameDoorMessage(e); } catch {}
   });
 
   // #3257: Theme.onChange fires after the new theme is on <html>, for the
@@ -33360,6 +33468,9 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
 
 if (typeof window !== 'undefined') {
   window.AppView = AppView;
+  // #6512: listen from the start, so a revoke made in another tab drops this
+  // tab's cached grant set even if this tab never revokes anything itself.
+  AppView._grantsChannel();
   // #5385: the bot started or finished a piece of work for this viewer (the
   // socket's homeroom_bot_work_changed, relayed as a window event by
   // app.js): the Workshop's rows of it re-read, as the Activity drawer

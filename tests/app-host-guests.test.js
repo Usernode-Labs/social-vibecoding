@@ -258,8 +258,15 @@ test('the anonymous answer marks a guest for the bridge; signing in clears it', 
   const priv = await gate({ host: PRIV_HOST, uri: `/__usernode_access?anon=${encodeURIComponent(platformJwt.signEdgeAnon({ host: PRIV_HOST }))}&next=%2F` });
   assert.ok(!(priv.headers['set-cookie'] || []).some((c) => c.startsWith('__usernode_guest=')), 'never on a private app');
 
-  const code = platformJwt.signEdgeGrant({ uid: MEMBER_ID, appId: GUEST_APP_ID, host: GUEST_HOST, sid: SID });
-  const signedIn = await gate({ host: GUEST_HOST, uri: `/__usernode_access?code=${encodeURIComponent(code)}&next=%2F` });
+  // A code carries the SHA-256 of the state cookie its hop set in this
+  // browser (services/edge-gate.js), and is only good where that cookie is.
+  const stateValue = crypto.randomBytes(32).toString('base64url');
+  const state = crypto.createHash('sha256').update(stateValue).digest('base64url');
+  const code = platformJwt.signEdgeGrant({ uid: MEMBER_ID, appId: GUEST_APP_ID, host: GUEST_HOST, sid: SID, state });
+  const signedIn = await gate({
+    host: GUEST_HOST, uri: `/__usernode_access?code=${encodeURIComponent(code)}&next=%2F`,
+    cookie: `__usernode_state=${stateValue}`,
+  });
   assert.ok((signedIn.headers['set-cookie'] || []).some((c) => /^__usernode_guest=;/.test(c)), 'cleared on sign-in');
 });
 
@@ -273,6 +280,15 @@ test('the account links go to the platform and come back through the authorize h
   assert.equal(back.pathname, '/__access/authorize');
   assert.equal(back.searchParams.get('host'), GUEST_HOST);
   assert.equal(back.searchParams.get('next'), '/photos?p=2');
+  // The hop it comes back through is bound to this browser like any other:
+  // its state cookie, and the SHA-256 in the address the platform returns to.
+  // Signing up can take a while, so that state lives half an hour.
+  const set = (up.headers['set-cookie'] || []).find((c) => c.startsWith('__usernode_state='));
+  assert.ok(set, 'the state cookie is set');
+  assert.match(set, /; Max-Age=1800;/);
+  assert.match(set, /; HttpOnly/);
+  const stateValue = /^__usernode_state=([^;]+)/.exec(set)[1];
+  assert.equal(back.searchParams.get('state'), crypto.createHash('sha256').update(stateValue).digest('base64url'));
   const inn = await gate({ host: GUEST_HOST, uri: '/__usernode_access?account=signin&next=%2F' });
   assert.equal(new URL(inn.headers.location).hash, '#login');
   const evil = await gate({ host: GUEST_HOST, uri: '/__usernode_access?account=signup&next=%2F%2Fevil.com' });

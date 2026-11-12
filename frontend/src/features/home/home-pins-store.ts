@@ -74,6 +74,13 @@ function owedFrom(countsBody: any): Record<string, number> {
 
 let loading: Promise<void> | null = null;
 let queued: Promise<void> | null = null;
+// Whose account the running read was asked for (#6591), so a read once
+// signed in can tell whether the one already on its way answers it.
+let loadingFor: unknown = null;
+
+function viewerId(): unknown {
+  return typeof window === 'undefined' ? null : ((window as any).App?.user?.id ?? null);
+}
 
 /**
  * Read all three. Quiet on failure: the grid keeps what it had.
@@ -93,6 +100,7 @@ export function loadHomePins(): Promise<void> {
   }
   const run = readAll();
   loading = run;
+  loadingFor = viewerId();
   const settle = () => { if (loading === run) loading = null; };
   run.then(settle, settle);
   return run;
@@ -115,6 +123,19 @@ async function readAll(): Promise<void> {
   } catch {
     homePinsStore.set({ ready: true });
   }
+}
+
+/**
+ * The read once signed in (the session event, Home's first mount). It says
+ * nothing new about the pins, so a read already on its way for the same
+ * account answers it, rather than queueing a second read of all three
+ * (#6591: every cold load read the pins, the joined list and the counts
+ * twice, Home.load's read and then this one queued behind it). A read for
+ * another account, or none running, reads as `loadHomePins` does.
+ */
+export function loadHomePinsForSession(userId: unknown = viewerId()): Promise<void> {
+  if (loading && userId != null && loadingFor === userId) return queued || loading;
+  return loadHomePins();
 }
 
 /**
@@ -170,12 +191,13 @@ export async function setHomePin(pin: Omit<HomePin, 'member'> & { member?: boole
  * the first session (One Home, #6361; ../guest/device-pins.ts). Quiet when
  * there are none; a toast says how many moved when there were.
  */
-let importing: Promise<void> | null = null;
-export function importDevicePins(say: (count: number) => string): Promise<void> {
+let importing: Promise<number> | null = null;
+/** Resolves with how many pins moved: none means the account's list is as it was. */
+export function importDevicePins(say: (count: number) => string): Promise<number> {
   if (importing) return importing;
   importing = (async () => {
     const pins = takeDevicePins();
-    if (!pins.apps.length && !pins.communities.length) return;
+    if (!pins.apps.length && !pins.communities.length) return 0;
     // A request that fails puts its pins back on the device, for the next
     // session to move; a slug the server refuses (gone, or not visible) is
     // dropped, as the import route skips it.
@@ -194,6 +216,7 @@ export function importDevicePins(say: (count: number) => string): Promise<void> 
     const moved = pins.apps.length - left.apps.length + pins.communities.length - left.communities.length;
     if (moved) toast(say(moved));
     try { await (window as any).Home?.load?.(); } catch { /* the grid reads them on its next load */ }
+    return moved;
   })().finally(() => { importing = null; });
   return importing;
 }
@@ -207,8 +230,12 @@ export function wireHomePins(moveMessage?: (count: number) => string): () => voi
       homePinsStore.set({ ...INITIAL });
       return;
     }
-    if (event.type === 'sv:session' && moveMessage) {
-      void importDevicePins(moveMessage).then(() => loadHomePins());
+    if (event.type === 'sv:session') {
+      const userId = (event as CustomEvent).detail?.user?.id ?? null;
+      // Pins that moved changed the list on the server: read it back after
+      // them. Otherwise a read already running for this account will do.
+      const moving = moveMessage ? importDevicePins(moveMessage) : Promise.resolve(0);
+      void moving.then((moved) => (moved ? loadHomePins() : loadHomePinsForSession(userId)));
       return;
     }
     void loadHomePins();

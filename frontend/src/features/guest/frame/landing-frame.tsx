@@ -37,6 +37,7 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { noteSignUpFrom } from '../../auth/sign-up-from';
 import { devicePinsStore, loadDevicePins } from '../device-pins';
 import { joinOrder } from '../../home/communities-to-join';
+import { FrameCommunityList } from './community-list';
 import { type GuestApp, canTryHere, featuredApps, filterApps, inHomeroomApp, presentCategories, projectHash, projectPath } from '../guest-data';
 
 /** How many apps the "Try an app now" group offers. */
@@ -193,45 +194,21 @@ export function LandingFrame({ apps, failed, onRetry, waitlist, waiting = null, 
         </Sec>
       ) : null}
 
-      {featured.length ? (
-        <Sec label={th('home:join.featured')}>
-          <Card>
-            {featured.map((a) => (
-              <Row
-                key={a.slug}
-                href={projectPath(a.slug)}
-                onClick={(event) => openProject(event, a.slug)}
-                lead={<Tile name={a.name || a.slug} src={a.icon_url} emoji={a.icon_emoji} color={a.icon_color} />}
-                title={a.name || a.slug}
-                line={a.member_count ? th('home:join.members', { count: a.member_count }) : (a.description || undefined)}
-                right={<span className="fr-btn fr-quiet fr-sm">{t('auth:frame.landing.look')}</span>}
-              />
-            ))}
-          </Card>
-        </Sec>
-      ) : null}
+      <FrameCommunityList
+        label={th('home:join.featured')}
+        apps={featured}
+        href={projectPath}
+        onOpen={openProject}
+      />
 
       {apps ? (
-        <Sec label={t('auth:frame.landing.communities')}>
-          {rows.length ? (
-            <Card>
-              {/* The row is the door to the community's public page; its word
-                  is Look, the guest's version of Join, not a button inside
-                  the link. */}
-              {rows.map((a) => (
-                <Row
-                  key={a.slug}
-                  href={projectPath(a.slug)}
-                  onClick={(event) => openProject(event, a.slug)}
-                  lead={<Tile name={a.name || a.slug} src={a.icon_url} emoji={a.icon_emoji} color={a.icon_color} />}
-                  title={a.name || a.slug}
-                  line={a.member_count ? th('home:join.members', { count: a.member_count }) : (a.description || undefined)}
-                  right={<span className="fr-btn fr-quiet fr-sm">{t('auth:frame.landing.look')}</span>}
-                />
-              ))}
-            </Card>
-          ) : <Card pad>{t('auth:frame.landing.none')}</Card>}
-        </Sec>
+        <FrameCommunityList
+          label={t('auth:frame.landing.communities')}
+          apps={rows}
+          href={projectPath}
+          onOpen={openProject}
+          empty={t('auth:frame.landing.none')}
+        />
       ) : null}
     </PageBody>
   );

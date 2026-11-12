@@ -1,3 +1,5 @@
+const { readSessionCookie } = require('./browser-session-cookies');
+const { isSameOriginBrowserRequest } = require('../middleware/same-site-browser');
 const { nativeWebSessionIsLive } = require('./web-session-auth');
 const http = require('http');
 const { WebSocketServer } = require('ws');
@@ -488,7 +490,14 @@ function attach(server, config) {
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 async function authenticateWs(req, pool, config) {
-  const viaCookie = await authenticateWsCookie(req, pool);
+  // Browsers attach the Lax session cookie to every same-site handshake, and
+  // WebSockets have no CORS: without this check any page on a sibling host
+  // (an app, a preview) could open these sockets as the visitor, read their
+  // events and post as them. The cookie counts only on a handshake the
+  // Homeroom page itself opened, by the same rule as cookie writes
+  // (middleware/same-site-browser.js). A client that is not a browser sends
+  // neither Origin nor Sec-Fetch-Site and rides nobody's cookie, so it passes.
+  const viaCookie = isSameOriginBrowserRequest(req) ? await authenticateWsCookie(req, pool) : null;
   if (viaCookie) return viaCookie;
   if (!IS_STAGING) return null;
   return authenticateWsStagingJwt(req, pool, config);
@@ -496,8 +505,7 @@ async function authenticateWs(req, pool, config) {
 
 async function authenticateWsCookie(req, pool) {
   try {
-    const cookies = parseCookies(req.headers.cookie || '');
-    const token = cookies.session;
+    const token = readSessionCookie(req);
     if (!token) return null;
 
     const { rows } = await pool.query(
@@ -563,15 +571,6 @@ async function authenticateWsStagingJwt(req, pool, config) {
   } catch {
     return null;
   }
-}
-
-function parseCookies(header) {
-  const result = {};
-  header.split(';').forEach((pair) => {
-    const [key, ...vals] = pair.trim().split('=');
-    if (key) result[key.trim()] = vals.join('=').trim();
-  });
-  return result;
 }
 
 async function resolveAppForAccess(pool, slug) {
@@ -771,7 +770,8 @@ function broadcastGlobal(data) {
 //     — on the owner's or an admin's screen) and `unwatch_session` when it
 //     leaves, and re-sends its watches whenever the socket reconnects;
 //   * for the few events lists and boards also draw (SESSION_FANOUT_EVENTS:
-//     a checks run's progress and verdict, a preview built or failed),
+//     a checks run's progress and verdict, a preview built, woken or
+//     failed),
 //     everyone who may VIEW the app as well — the broadcastGlobalScoped
 //     audience. Those are the events App.handleSessionEvent handles before
 //     its "is this the open session" gate; every other event it drops
@@ -780,7 +780,10 @@ function broadcastGlobal(data) {
 // Cached owner/app metadata and the bus routing select candidates. The
 // receiving pod checks current identity, session ownership and app access
 // against PostgreSQL before disclosing anything to its own sockets.
-const SESSION_FANOUT_EVENTS = new Set(['checks_ready', 'staging_ready', 'staging_failed']);
+// A woken preview (`staging_awake`, #6157) is a preview made ready like a
+// rebuilt one: a member who pressed Try it on somebody else's change waits
+// for it behind the same loader, so it goes to the same audience.
+const SESSION_FANOUT_EVENTS = new Set(['checks_ready', 'staging_ready', 'staging_awake', 'staging_failed']);
 const MAX_WATCHED_SESSIONS_PER_SOCKET = 16;
 const sessionWatchers = new Map(); // sessionId -> Set<client>
 

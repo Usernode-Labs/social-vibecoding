@@ -478,3 +478,49 @@ test('a change that leaves the lists mid-view keeps its last render (#6608)', ()
   assert.equal(h.publishes.length, before, 'nothing is republished');
   assert.equal(h.unmounted.threads, threadsBefore, 'and its stream is left mounted');
 });
+
+// ── A request's own stream survives a repaint before its row lands ──
+//
+// A request's (and a decision's) thread is mounted on its ref alone, before
+// its row is in hand (_renderTopicSubView). A repaint in that gap
+// (_repaintCards → _renderTopicHead, the row still missing) dropped that
+// thread as if it were the previous page's, and the paint that follows the
+// row does not mount it again: the page drew its head and no replies. The
+// declared check "Request page screenshots link to the full-size file…"
+// failed on it whenever the repaint won the race.
+
+function openRequestThread(h, { slug, number }) {
+  h.AppView.appData = { slug };
+  h.sandbox.App._currentRoute = `#app/${slug}/dev/issues/${number}`;
+  h.AppView._devTopic = { kind: 'issue', id: number };
+  h.sandbox.GroupChat.appSlug = slug;
+  h.sandbox.GroupChat.activeThread = { type: 'issue', ref: number, language: 'request' };
+}
+
+test('a request\'s own thread stays mounted through a repaint before its row lands', () => {
+  const h = makeHeadAppView();
+  openRequestThread(h, { slug: 'a', number: 900010 });
+
+  h.AppView._renderTopicHead();
+
+  assert.equal(h.publishes.at(-1).loading, true, 'the head waits for its row');
+  assert.equal(h.unmounted.threads, 0, 'but the request\'s own stream is not dropped');
+  assert.equal(h.unmounted.transcripts.length, 0, 'nor its transcript');
+});
+
+test('a thread that is not the new topic\'s own is still dropped', () => {
+  // Another project's request with the same number.
+  const other = makeHeadAppView();
+  openRequestThread(other, { slug: 'a', number: 7 });
+  other.AppView.appData = { slug: 'b' };
+  other.sandbox.App._currentRoute = '#app/b/dev/issues/7';
+  other.AppView._renderTopicHead();
+  assert.equal(other.unmounted.threads, 1, 'project a\'s stream is not left under b\'s heading');
+
+  // A change with the request's number, in the same project.
+  const change = makeHeadAppView();
+  openRequestThread(change, { slug: 'a', number: 12 });
+  change.sandbox.GroupChat.activeThread = { type: 'session', ref: 12, language: 'change' };
+  change.AppView._renderTopicHead();
+  assert.equal(change.unmounted.threads, 1, 'change #12\'s stream is not request #12\'s');
+});

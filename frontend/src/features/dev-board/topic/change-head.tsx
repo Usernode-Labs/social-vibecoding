@@ -49,6 +49,7 @@ import { listText, t as translate } from '../../../lib/i18n/runtime';
 import { releaseSentence } from '../../../lib/release-eta';
 import { useReleaseNow } from '../../../lib/use-release-now';
 import { Alert } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/feed';
 import { CheckIcon, EllipsisHorizontalIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../group-chat/swatch';
@@ -176,12 +177,18 @@ function FixRow({ fix, rerun }: { fix: FixChecksView; rerun: ReactNode }): React
 /**
  * #6225: what a yes on a change would close, under its Votes card's tally:
  * every request the change closes, each a link to its page with its title and
- * filer. A request its requester has not agreed to says so, so a voter can see
- * overreach and vote no. Five lines, then one tap for the rest.
+ * filer. #6606: the line then says where its filer stands — nothing when it
+ * is confirmed, "already closed", "its filer says this doesn't close it", or
+ * that it is waiting for whoever filed it to agree. Only a line that is
+ * waiting, seen by the person who filed it, carries Confirm. Five lines, then
+ * one tap for the rest.
  */
-function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
+function VoteCloses({ closes, id }: { closes: ClosesRequest[]; id: number | null }): ReactNode {
   const t = useMessages('project');
   const [open, setOpen] = useState(false);
+  const [answered, setAnswered] = useState<number[]>([]);
+  const [sending, setSending] = useState<number | null>(null);
+  const [failed, setFailed] = useState<number | null>(null);
   const shown = open || closes.length <= 5 ? closes : closes.slice(0, 5);
   const rest = closes.length - shown.length;
   const slug = (window as any).AppView?.appData?.slug || '';
@@ -189,6 +196,23 @@ function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
   const link = (n: number) => (
     <a href={slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${n}` : `#${n}`} className={linkClass} />
   );
+  async function confirm(n: number) {
+    if (sending != null || !slug || id == null) return;
+    setSending(n);
+    setFailed(null);
+    try {
+      const res = await fetch(
+        `/api/apps/${encodeURIComponent(slug)}/issues/${n}/changes/${id}/confirm-closing`,
+        { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      );
+      if (!res.ok) throw new Error(String(res.status));
+      setAnswered((was) => (was.includes(n) ? was : [...was, n]));
+    } catch {
+      setFailed(n);
+    } finally {
+      setSending(null);
+    }
+  }
   return (
     <div
       className="col-span-full mt-2.5 border-t border-[color:var(--app-sheet-line)] pt-2 text-[13px] leading-normal text-zinc-500 dark:text-zinc-400"
@@ -197,31 +221,65 @@ function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
       <p className="font-semibold text-zinc-700 dark:text-zinc-300">
         {t('project:topic.change.gate.closesHead', { count: closes.length })}
       </p>
-      {shown.map((r) => (
-        <p
-          key={r.number}
-          // #6225: a hanging indent, so a long title wrapping on a phone stays
-          // aligned after the "#number" link rather than under it.
-          className="ps-[3.4em] -indent-[3.4em]"
-          data-change-vote-closes-on={r.number}
-          data-confirmed={r.confirmed ? 'true' : 'false'}
-        >
-          {r.title && r.by ? (
-            <RichMessage
-              id="project:topic.change.gate.closesLine"
-              values={{ number: r.number, title: r.title, by: r.by }}
-              components={[link(r.number)]}
-            />
-          ) : r.title ? (
-            <RichMessage id="project:topic.change.gate.closesLineNoFiler" values={{ number: r.number, title: r.title }} components={[link(r.number)]} />
-          ) : (
-            <RichMessage id="project:topic.change.gate.closesLineUntitled" values={{ number: r.number }} components={[link(r.number)]} />
-          )}
-          {r.confirmed ? null : (
-            <>{' · '}<span className="whitespace-nowrap font-semibold text-zinc-700 dark:text-zinc-300">{t('project:topic.change.gate.closesUnconfirmed')}</span></>
-          )}
-        </p>
-      ))}
+      {shown.map((r) => {
+        const confirmed = r.confirmed || answered.includes(r.number);
+        const tail = r.closed
+          ? t('project:topic.change.gate.closesClosed')
+          : confirmed
+            ? null
+            : r.disputed
+              ? t('project:topic.change.gate.closesDisputed')
+              : r.waiting
+                ? t('project:topic.change.gate.closesUnconfirmed')
+                : null;
+        return (
+          <p
+            key={r.number}
+            // #6225: a hanging indent, so a long title wrapping on a phone stays
+            // aligned after the "#number" link rather than under it.
+            className="ps-[3.4em] -indent-[3.4em]"
+            data-change-vote-closes-on={r.number}
+            data-confirmed={confirmed ? 'true' : 'false'}
+          >
+            {r.title && r.by ? (
+              <RichMessage
+                id="project:topic.change.gate.closesLine"
+                values={{ number: r.number, title: r.title, by: r.by }}
+                components={[link(r.number)]}
+              />
+            ) : r.title ? (
+              <RichMessage id="project:topic.change.gate.closesLineNoFiler" values={{ number: r.number, title: r.title }} components={[link(r.number)]} />
+            ) : (
+              <RichMessage id="project:topic.change.gate.closesLineUntitled" values={{ number: r.number }} components={[link(r.number)]} />
+            )}
+            {tail ? (
+              <>{' · '}<span className="whitespace-nowrap font-semibold text-zinc-700 dark:text-zinc-300">{tail}</span></>
+            ) : null}
+            {!confirmed && !r.closed && !r.disputed && r.waiting && r.canConfirm ? (
+              <>
+                <Button
+                  type="button"
+                  variant="pillAccent"
+                  size="sm"
+                  className="align-middle ms-1"
+                  disabled={sending === r.number}
+                  data-change-vote-closes-confirm={r.number}
+                  onClick={() => void confirm(r.number)}
+                >
+                  {t('project:topic.change.gate.closesConfirm')}
+                </Button>
+              </>
+            ) : null}
+            {failed === r.number ? (
+              <>
+                <span className="ms-1 text-[color:var(--state-blocked)]" role="alert">
+                  {t('project:topic.thread.page.claimDisputeFailed')}
+                </span>
+              </>
+            ) : null}
+          </p>
+        );
+      })}
       {rest > 0 ? (
         <button
           type="button"
@@ -326,7 +384,7 @@ export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
         </div>
       ) : null}
       {/* #6225: what a yes would close, under the tally. */}
-      {which === 'votes' && closes.length ? <VoteCloses closes={closes} /> : null}
+      {which === 'votes' && closes.length ? <VoteCloses closes={closes} id={id} /> : null}
       {why ? (
         <p className="dev-change-gate-why" data-change-gate-why={explanation ? 'explained' : 'own-words'}>
           {page ? `${why} ` : why}

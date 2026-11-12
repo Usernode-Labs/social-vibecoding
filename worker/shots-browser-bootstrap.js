@@ -219,7 +219,8 @@ async function main(progress) {
           }
           await page.close();
           progress.stage = 'cookie';
-          const sessionCookiePresent = (await context.cookies(origin)).some((cookie) => cookie.name === 'session');
+          const sessionCookiePresent = (await context.cookies(origin)).some((cookie) =>
+            cookie.name === 'session' || (origin.startsWith('https:') && cookie.name === '__Host-usernode_session'));
           reportAuth(persona, index === 0 ? 'base' : 'head', bootstrap, sessionCookiePresent);
           if (bootstrap.sessionCookieInstalled && !sessionCookiePresent) {
             throw new SessionBootstrapError('session_bootstrap_failed', 'The shots browser did not retain its private session cookie.');

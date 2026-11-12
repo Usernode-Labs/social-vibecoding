@@ -191,7 +191,7 @@ const RUNNING = {
   icon_emoji: '📝',
 };
 
-function makeAppView({ fetchImpl, apps = [RUNNING], offline = false, reduceMotion = false } = {}) {
+function makeAppView({ fetchImpl, apps = [RUNNING], offline = false, reduceMotion = false, globals = {} } = {}) {
   const clock = makeClock();
   const dom = makeDom();
   const fetches = [];
@@ -246,6 +246,7 @@ function makeAppView({ fetchImpl, apps = [RUNNING], offline = false, reduceMotio
     alert: () => {},
     addEventListener() {},
     localStorage: { getItem: () => null, setItem() {} },
+    ...globals,
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
@@ -882,6 +883,126 @@ test('the eager launch path delegates the prewarmed grant set', async () => {
     dom.els.get('app-iframe').getAttribute('allow'),
     'clipboard-write; microphone'
   );
+});
+
+// #6512: Settings revokes a device permission and closes the app. The grant
+// set cached by the last mint must not survive that: reopening within the
+// freshness window would otherwise put the revoked capability straight back
+// into the new frame's `allow`.
+function revocableServer(initial) {
+  let effective = initial;
+  const gates = [];
+  let hold = false;
+  const answer = () => ({
+    ok: true,
+    json: async () => ({
+      token: 'tok-1',
+      permissions: { declared: effective.map((c) => ({ capability: c, reason: null })), granted: effective, effective },
+    }),
+  });
+  return {
+    revoke(capability) { effective = effective.filter((c) => c !== capability); },
+    holdNext() { hold = true; },
+    release() { gates.splice(0).forEach((g) => g()); },
+    impl: (url) => {
+      if (!url.startsWith('/api/iframe-token')) return Promise.resolve({ ok: true, json: async () => ({ app: { ...RUNNING } }) });
+      const snapshot = answer();
+      if (!hold) return Promise.resolve(snapshot);
+      hold = false;
+      return new Promise((resolve) => gates.push(() => resolve(snapshot)));
+    },
+  };
+}
+
+test('revoke, close, reopen: the reopened frame does not get the revoked capability back (#6512)', async () => {
+  const server = revocableServer(['camera']);
+  const { AppView, dom, fetches } = makeAppView({ fetchImpl: server.impl });
+  await AppView.refreshToken('notes');
+  assert.deepEqual([...AppView.grantedForSlug('notes')], ['camera'], 'open with the camera');
+
+  server.revoke('camera');
+  AppView.forgetToken('notes');
+  assert.equal(AppView.hasFreshToken('notes'), false, 'the cached grant set is gone');
+  assert.deepEqual([...AppView.grantedForSlug('notes')], [], 'and so is the held one');
+
+  // Reopened a few seconds later, well inside TOKEN_FRESH_MS.
+  AppView.beginLaunch('notes');
+  for (let i = 0; i < 5; i++) await flush();
+  assert.equal(fetches.filter((u) => u.startsWith('/api/iframe-token')).length, 2, 'the reopen re-mints');
+  assert.equal(dom.els.get('app-iframe').getAttribute('allow'), 'clipboard-write',
+    'the new frame is delegated what the server says now');
+});
+
+test('a mint already in flight at the revoke cannot cache its old grant set (#6512)', async () => {
+  const server = revocableServer(['camera']);
+  const { AppView, fetches } = makeAppView({ fetchImpl: server.impl });
+  server.holdNext();
+  const early = AppView._mintToken('notes');
+  await flush();
+  AppView.forgetToken('notes');
+  server.revoke('camera');
+  server.release();
+  assert.equal(await early, 'tok-1', 'its caller still gets a token');
+  assert.equal(AppView.hasFreshToken('notes'), false, 'but its answer, from before the revoke, is not cached');
+
+  await AppView.refreshToken('notes');
+  assert.equal(fetches.filter((u) => u.startsWith('/api/iframe-token')).length, 2, 'the next open mints afresh');
+  assert.deepEqual([...AppView.grantedForSlug('notes')], []);
+});
+
+// Two tabs of one browser: a BroadcastChannel stand-in that delivers to every
+// other channel of the same name, as the real one does (never to itself).
+function makeBroadcastBus() {
+  const channels = new Set();
+  class FakeBroadcastChannel {
+    constructor(name) { this.name = name; this.onmessage = null; channels.add(this); }
+    postMessage(data) {
+      for (const other of channels) {
+        if (other !== this && other.name === this.name && other.onmessage) other.onmessage({ data });
+      }
+    }
+  }
+  return FakeBroadcastChannel;
+}
+
+test('a revoke in one tab drops the cached grant set in this browser’s other tabs (#6512)', async () => {
+  const BroadcastChannel = makeBroadcastBus();
+  const server = revocableServer(['camera']);
+  const settingsTab = makeAppView({ fetchImpl: server.impl, globals: { BroadcastChannel } });
+  const otherTab = makeAppView({ fetchImpl: server.impl, globals: { BroadcastChannel } });
+  await otherTab.AppView._mintToken('notes');
+  assert.equal(otherTab.AppView.hasFreshToken('notes'), true, 'the other tab prewarmed with the camera');
+
+  server.revoke('camera');
+  settingsTab.AppView.forgetToken('notes');
+  assert.equal(otherTab.AppView.hasFreshToken('notes'), false, 'told, and forgot');
+
+  otherTab.AppView.beginLaunch('notes');
+  for (let i = 0; i < 5; i++) await flush();
+  assert.equal(otherTab.dom.els.get('app-iframe').getAttribute('allow'), 'clipboard-write',
+    'a reopen in the other tab gets what the server says now');
+});
+
+test('a tab that hears a forget does not post it on again', () => {
+  const posted = [];
+  class CountingChannel {
+    constructor() { this.onmessage = null; }
+    postMessage(data) { posted.push(data); }
+  }
+  const { AppView } = makeAppView({ fetchImpl: okToken(), globals: { BroadcastChannel: CountingChannel } });
+  AppView._grantsChannel().onmessage({ data: { kind: 'forget', slug: 'notes' } });
+  assert.deepEqual(posted, [], 'no echo, so two tabs cannot ping-pong');
+  AppView.forgetToken('notes');
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].kind, 'forget');
+  assert.equal(posted[0].slug, 'notes');
+});
+
+test('forgetting one app leaves another app’s cached mint alone (#6512)', async () => {
+  const { AppView } = makeAppView({ fetchImpl: tokenWithPermissions(['camera']) });
+  await AppView._mintToken('other');
+  AppView.forgetToken('notes');
+  assert.equal(AppView.hasFreshToken('other'), true);
 });
 
 test('the pending source-less frame delegates the base before it navigates', () => {

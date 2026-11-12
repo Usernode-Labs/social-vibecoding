@@ -107,6 +107,11 @@ test('the edge grant is a one-minute code with a fresh jti and its session', () 
   assert.equal(a.sid, sid);
   assert.match(a.jti, /^[0-9a-f]{32}$/);
   assert.notEqual(a.jti, b.jti);
+  // The browser it is bound to: the SHA-256 of the hop's state cookie, only
+  // when given (services/edge-gate.js refuses a code without one).
+  assert.equal(a.state, undefined);
+  const state = 'S'.repeat(43);
+  assert.equal(pj.verifyEdgeGrant(pj.signEdgeGrant({ uid: 7, appId: APP_ID, host: 'app.example.com', sid, state })).state, state);
   const anon = pj.verifyEdgeAnon(pj.signEdgeAnon({ host: 'app.example.com' }));
   assert.equal(anon.pur, 'edge:anon');
   assert.equal(anon.host, 'app.example.com');

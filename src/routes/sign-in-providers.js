@@ -1,5 +1,8 @@
 'use strict';
 
+const { readSessionCookie, protectedCookieName } = require('../services/browser-session-cookies');
+const { sessionTokenIsLive } = require('../services/web-session-auth');
+
 /**
  * Apple and Google sign-in (services/sign-in-providers.js has the whole
  * story), and the console screen that sets them up.
@@ -20,9 +23,10 @@
  * THE WAY BACK. The callback ends every trip with a redirect to where the
  * person started (Home, or the invite link they were on), and leaves its
  * outcome for the sign-in sheet in a short-lived cookie the page can read
- * (`hr_oauth_result`): nothing when it signed them in, `username` when the
- * account still needs a handle, `error-<code>` when it did not work. No
- * outcome rides in the URL, so nothing about it lands in history or logs.
+ * (`__Host-hr_oauth_result`, `hr_oauth_result` on plain-HTTP development):
+ * nothing when it signed them in, `username` when the account still needs a
+ * handle, `error-<code>` when it did not work. No outcome rides in the URL,
+ * so nothing about it lands in history or logs.
  *
  * An invite link the person was on is followed exactly as the email code
  * follows it (routes/auth.js otp/verify): by an account the trip just made,
@@ -53,30 +57,48 @@ const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
 const { oauthSignInLimiter, otpVerifyLimiter } = require('../middleware/rate-limits');
 const { createSession, createSessionCookie, roleFields } = require('./auth');
 
-const SECURE_COOKIE = process.env.NODE_ENV === 'production';
+// Read per call, so a cookie's writer and reader always agree.
+const secureCookie = () => process.env.NODE_ENV === 'production';
+// Bare names. Each cookie is `__Host-<name>` when Secure (browser-session-
+// cookies.js protectedCookieName): Path=/ with no Domain, so an app on a
+// sibling host cannot plant a binder, a continuation or an outcome. The bare
+// name is plain-HTTP development's only, and never read in production.
 const BINDER_COOKIE = 'hr_oauth_binder';
 const SIGNUP_COOKIE = 'hr_oauth_signup';
+// The page reads it (frontend/src/features/auth/landing.tsx
+// takeProviderResult), so it is not HttpOnly.
 const RESULT_COOKIE = 'hr_oauth_result';
-const OAUTH_COOKIE_PATH = '/api/auth/oauth';
 // Long enough for the page to load and read it, short enough to mean "just now".
 const RESULT_MAX_AGE_MS = 2 * 60 * 1000;
 const RESULT_RE = /^(username|error-[a-z_]{1,40})$/;
 
-function privateCookie(res, name, value, maxAgeMs) {
-  res.cookie(name, value, {
-    httpOnly: true, secure: SECURE_COOKIE, sameSite: 'lax', path: OAUTH_COOKIE_PATH, maxAge: maxAgeMs,
-  });
+function cookieName(name) {
+  return protectedCookieName(name, secureCookie());
 }
 
+function privateCookieOptions() {
+  return { httpOnly: true, secure: secureCookie(), sameSite: 'lax', path: '/' };
+}
+
+function privateCookie(res, name, value, maxAgeMs) {
+  res.cookie(cookieName(name), value, { ...privateCookieOptions(), maxAge: maxAgeMs });
+}
+
+// The same attributes as the write: a browser drops a `__Host-` cookie only
+// for a Set-Cookie that is itself Secure, Path=/ and without a Domain.
 function clearPrivateCookie(res, name) {
-  res.clearCookie(name, { httpOnly: true, secure: SECURE_COOKIE, sameSite: 'lax', path: OAUTH_COOKIE_PATH });
+  res.clearCookie(cookieName(name), privateCookieOptions());
+}
+
+function readPrivateCookie(req, name) {
+  return req.cookies?.[cookieName(name)];
 }
 
 /** Back to where the trip started, with the outcome for the sheet. */
 function goBack(res, returnTo, result) {
   if (result && RESULT_RE.test(result)) {
-    res.cookie(RESULT_COOKIE, result, {
-      httpOnly: false, secure: SECURE_COOKIE, sameSite: 'lax', path: '/', maxAge: RESULT_MAX_AGE_MS,
+    res.cookie(cookieName(RESULT_COOKIE), result, {
+      httpOnly: false, secure: secureCookie(), sameSite: 'lax', path: '/', maxAge: RESULT_MAX_AGE_MS,
     });
   }
   res.set('Cache-Control', 'no-store');
@@ -92,15 +114,10 @@ function signInProviderRoutes(config) {
   const pool = getPool(config);
 
   // The ordinary sign-in routes refuse to mint a session over a live one
-  // (routes/auth.js SESSION_MINT_PATHS); these GETs make the same check.
-  async function liveSession(req) {
-    const token = req.cookies?.session;
-    if (!token) return false;
-    const { rows } = await pool.query(
-      'SELECT 1 FROM sessions WHERE token = $1 AND expires_at > NOW() LIMIT 1',
-      [token]
-    );
-    return rows.length > 0;
+  // (routes/auth.js SESSION_MINT_PATHS); these GETs make the same check,
+  // with the same meaning of live as the auth middleware (#6619).
+  function liveSession(req) {
+    return sessionTokenIsLive(pool, readSessionCookie(req));
   }
 
   // The trip runs on the canonical origin, the one registered with the
@@ -182,7 +199,7 @@ function signInProviderRoutes(config) {
 
   async function callback(req, res, params) {
     const provider = req.params.provider;
-    const binder = req.cookies?.[BINDER_COOKIE];
+    const binder = readPrivateCookie(req, BINDER_COOKIE);
     clearPrivateCookie(res, BINDER_COOKIE);
     res.set('Referrer-Policy', 'no-referrer');
     if (!providers.isProvider(provider)) return goBack(res, '/', 'error-not_offered');
@@ -290,7 +307,7 @@ function signInProviderRoutes(config) {
 
   router.post('/api/auth/oauth/:provider/native', oauthSignInLimiter, async (req, res) => {
     const provider = req.params.provider;
-    const binder = req.cookies?.[BINDER_COOKIE];
+    const binder = readPrivateCookie(req, BINDER_COOKIE);
     clearPrivateCookie(res, BINDER_COOKIE);
     res.set('Cache-Control', 'no-store');
     if (!providers.isProvider(provider)) return res.status(404).json({ error: 'Unknown provider.', code: 'not_offered' });
@@ -340,7 +357,7 @@ function signInProviderRoutes(config) {
   // log at most, and a report without a live one is dropped unread.
   router.post('/api/auth/oauth/:provider/native/failed', oauthSignInLimiter, async (req, res) => {
     const provider = req.params.provider;
-    const binder = req.cookies?.[BINDER_COOKIE];
+    const binder = readPrivateCookie(req, BINDER_COOKIE);
     clearPrivateCookie(res, BINDER_COOKIE);
     res.set('Cache-Control', 'no-store');
     if (!providers.isProvider(provider) || typeof req.body?.state !== 'string') return res.status(204).end();
@@ -358,7 +375,7 @@ function signInProviderRoutes(config) {
   router.post('/api/auth/oauth/finish', otpVerifyLimiter, async (req, res) => {
     try {
       const done = await providers.completeUsername(pool, {
-        signupToken: req.cookies?.[SIGNUP_COOKIE],
+        signupToken: readPrivateCookie(req, SIGNUP_COOKIE),
         username: typeof req.body?.username === 'string' ? req.body.username : '',
         // #5974: the session row names the browser that signed in.
         createSession: (db, userId) => createSession(db, userId, req),
@@ -434,4 +451,5 @@ function signInProviderRoutes(config) {
   return router;
 }
 
-module.exports = { signInProviderRoutes, RESULT_COOKIE, BINDER_COOKIE, SIGNUP_COOKIE };
+module.exports = { signInProviderRoutes, RESULT_COOKIE, BINDER_COOKIE, SIGNUP_COOKIE,
+  privateCookie, clearPrivateCookie, readPrivateCookie, goBack };

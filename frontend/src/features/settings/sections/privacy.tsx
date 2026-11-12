@@ -108,7 +108,11 @@ export function PrivacySection() {
   }, [t]);
 
   useEffect(() => { void load(); }, [load]);
-  useWindowEvent('usernode:settings-section', () => { void load(); });
+  // Read again when this page is opened, never when another one is (#6591:
+  // every page of Settings re-read it, hidden, on each switch).
+  useWindowEvent('usernode:settings-section', (event) => {
+    if ((event as CustomEvent<{ section?: string }>).detail?.section === 'contact-privacy') void load();
+  });
 
   const save = async (change: Partial<ContactPrivacy>) => {
     if (!settings || saving) return;
