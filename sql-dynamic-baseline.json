@@ -2581,7 +2581,7 @@
     {
       "source": "src/workflow/rules/merge-claim.ts",
       "kind": "structural-template",
-      "fingerprint": "7e0412d6932d2fef186c",
+      "fingerprint": "5cc8f21c2ca8e885df0e",
       "count": 1,
       "preview": "`SELECT cs.check_state, cs.checks_commit_sha, cs.unit_suite_fresh_sha, cs.shots_state, cs.shots_detail, a.locked, a.main_check_state, a.main_check_sha, a.main_c"
     },
