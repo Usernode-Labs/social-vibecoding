@@ -214,6 +214,30 @@ test('mentions stay quiet, and the lane does not start a request for somebody th
   assert.ok(lane.indexOf("'gate:verified'") < lane.indexOf("'gate:allowance'"), 'before the allowance, and so before any model call');
 });
 
+test('a yes or Build it on a chat card, and a card\'s own tap, ask to verify before anything is decided; a no is always theirs', () => {
+  const mayor = read('src/services/homeroom-bot-mayor.js');
+  const tap = mayor.slice(mayor.indexOf('async function decideOfferTap'));
+  assert.match(tap, /if \(choice !== 'no'\) \{\s*const locked = await require\('\.\/homeroom-bot-verified'\)\.refusalFor\(pool, user, \{ botSvc: deps\.botSvc \}\);\s*if \(locked\) return locked;\s*\}/);
+  assert.ok(tap.indexOf("if (choice !== 'no') {") < tap.indexOf('tapDmAction('), 'before the tap is handed to its machine');
+  const routes = read('src/routes/conversations.js');
+  const cards = routes.slice(routes.indexOf("router.post('/api/conversations/homeroom-bot/cards/:messageId'"));
+  assert.ok(cards.indexOf('refusalFor(pool, req.user)') > 0 && cards.indexOf('refusalFor(pool, req.user)') < cards.indexOf("require('../services/homeroom-bot-cards').decide("));
+  assert.match(routes, /\.\.\.\(out\.signals \? \{ signals: out\.signals \} : \{\}\),/, 'an offer tap\'s refusal carries what counts');
+});
+
+test('the request page still offers the door to somebody only the rule holds, so their press can ask them to verify', async () => {
+  const live = { id: 1, slug: 'seed-swap' };
+  const pool = poolOf({ settings: RULE_ROWS });
+  const door = await dm.botDoorFor(pool, live, ada);
+  assert.ok(door && typeof door.typicalMinutes === 'number', 'offered');
+  assert.equal(await dm.botDoorFor(pool, live, { ...ada, hasPlatformAccess: false }), null, 'never to somebody not let in');
+});
+
+test('an admin\'s Run now and the bot\'s own follow-ups are not held by the rule', () => {
+  const lane = read('src/services/homeroom-bot.js');
+  assert.match(lane, /botVerified\.ruleOn\(settings\) && !SELF_QUEUED_REASONS\.includes\(String\(item\?\.reason \|\| ''\)\)\s*&& item\?\.reason !== 'budget_retry' && item\?\.reason !== 'admin'\)/);
+});
+
 test('the connector keeps the code', () => {
   assert.match(read('src/services/mcp-tools.js'), /result\.body\.code === 'bot_verify_required'\) \{\s*return toolError\('bot_verify_required', message\);/);
 });

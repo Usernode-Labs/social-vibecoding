@@ -4974,6 +4974,14 @@ async function decideOfferTap(pool, config, { user, actionId, choice, answers = 
     return { ok: false, status: 410, error: 'expired', code: 'expired' };
   }
   if (nudge) return (deps.inviteNudge || require('./invite-nudge')).dismiss(pool, { user, action, deps });
+  // #6632: a yes, or Build it, is the bot acting for them. With the bot for
+  // verified accounts only, an unverified tap is answered with its own code
+  // before anything is decided (the card stays open for after they verify);
+  // a no is always theirs to give.
+  if (choice !== 'no') {
+    const locked = await require('./homeroom-bot-verified').refusalFor(pool, user, { botSvc: deps.botSvc });
+    if (locked) return locked;
+  }
   const out = await (deps.replies || require('../workflow/platform.ts')).tapDmAction({
     userId: Number(user.id), actionId: id, choice, answers: Array.isArray(answers) ? answers.slice(0, 2) : [],
   });

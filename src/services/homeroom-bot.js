@@ -4222,7 +4222,9 @@ async function runTriage(pool, config, {
     // verified member can press Build it, from their own week. What the bot
     // queued for itself (a follow-up on its own change) goes on. The refresh
     // leaves such a request out too (refreshApp); this is the look's own word.
-    if (botVerified.ruleOn(settings) && !SELF_QUEUED_REASONS.includes(String(item?.reason || '')) && item?.reason !== 'budget_retry') {
+    // An admin's Run now on one request is the admin's own doing too.
+    if (botVerified.ruleOn(settings) && !SELF_QUEUED_REASONS.includes(String(item?.reason || ''))
+        && item?.reason !== 'budget_retry' && item?.reason !== 'admin') {
       const forWhom = payerId && payerId !== requester?.userId ? await dm.personOf(pool, payerId).catch(() => null) : requester;
       if (forWhom && await look.once('gate:verified', () => botVerified.verifyRequired(pool, settings, forWhom))) {
         look.consume();

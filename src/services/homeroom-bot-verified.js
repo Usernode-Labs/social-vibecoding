@@ -144,7 +144,8 @@ function refusal(settings) {
  * the settings and nothing else.
  */
 async function refusalFor(db, person, { settings = null, botSvc = null } = {}) {
-  const s = settings || await (botSvc || require('./homeroom-bot')).readSettings(db);
+  const svc = botSvc && typeof botSvc.readSettings === 'function' ? botSvc : require('./homeroom-bot');
+  const s = settings || await svc.readSettings(db);
   return (await verifyRequired(db, s, person)) ? refusal(s) : null;
 }
 
