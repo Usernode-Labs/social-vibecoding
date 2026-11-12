@@ -485,7 +485,7 @@ test('the Waitlist panel leads the settings, and unticking it asks about the peo
   assert.match(screenSource, /<WaitlistSwitchPanel onChanged=\{onBatchAdmitted\} \/>\s+<StoryLandingPanel \/>/);
   assert.match(screenSource, /id="admin-topo-wl-switch-enabled" label="New accounts wait to be admitted"/);
   // Unticking only opens the question; its two buttons carry the choice.
-  assert.match(screenSource, /if \(next\) \{ setAsking\(false\); save\(\{ enabled: true \}\); return; \}\s+load\(\);\s+setAsking\(true\);/);
+  assert.match(screenSource, /if \(next\) \{\s+setAsking\(false\);\s+if \(!setting\?\.enabled\) save\(\{ enabled: true \}\);\s+return;\s+\}\s+load\(\);\s+setAsking\(true\);/);
   assert.match(screenSource, /id="admin-topo-wl-switch-keep"[^>]+onClick=\{\(\) => save\(\{ enabled: false, waiting: 'keep' \}\)\}/);
   assert.match(screenSource, /id="admin-topo-wl-switch-admit"[^>]+onClick=\{\(\) => save\(\{ enabled: false, waiting: 'admit' \}\)\}/);
   assert.match(screenSource, /Nobody is emailed, because the release email is off\./);

@@ -1012,12 +1012,17 @@ function WaitlistSwitchPanel({ onChanged }: { onChanged?: () => void }) {
     if (onChanged) onChanged();
   }, [onChanged]);
 
-  // Ticking it switches the waitlist on at once. Unticking only asks.
+  // Ticking it switches the waitlist on at once (or only takes the question
+  // back, when it was never switched off). Unticking only asks.
   const toggle = useCallback((next: boolean) => {
-    if (next) { setAsking(false); save({ enabled: true }); return; }
+    if (next) {
+      setAsking(false);
+      if (!setting?.enabled) save({ enabled: true });
+      return;
+    }
     load();
     setAsking(true);
-  }, [load, save]);
+  }, [load, save, setting]);
 
   const help = 'Someone who creates an account waits here until admitted. Off, a new account is let in '
     + 'as soon as it exists: no waiting room and no "you\'re in" email.';
