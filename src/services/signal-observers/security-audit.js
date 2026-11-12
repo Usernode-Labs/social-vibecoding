@@ -237,15 +237,22 @@ function itemsFrom(result, previous, app, now) {
       if (legacyDue.has(f.id)) due = Math.min(due, legacyDue.get(f.id));
     }
     const fixer = findings.some((f) => f.fixedVersion) ? 'bot' : 'person';
-    const materialKey = createHash('sha256').update(JSON.stringify({ findings, due, fixer })).digest('hex');
     const components = [...new Set(findings.map((f) => f.component))].sort();
     // An npm scope's @ would read as a mention in a title and is scrubbed
     // from a body, so the words name a package without it; the public lines
     // spell it out exactly.
     const named = (name) => name.replace(/^@/, '');
-    const lead = packages.length > 1 ? `${named(key)} and ${packages.length - 1} related package${packages.length > 2 ? 's' : ''}` : named(key);
+    // The key keeps an earlier request's identity, and may name a package
+    // the images no longer have (Debian 12's libperl5.36, kept by the Perl
+    // 5.40 group through perl and perl-base): the title names one found now.
+    const head = packages.includes(key) ? key : packages[0];
+    const lead = packages.length > 1 ? `${named(head)} and ${packages.length - 1} related package${packages.length > 2 ? 's' : ''}` : named(head);
     const where = listWords(components);
-    items.push({ kind: 'security', key, appId: app.id, fixer, title: `Upgrade ${lead} in ${where}`,
+    const title = `Upgrade ${lead} in ${where}`;
+    // The title counts as a change, so a request filed under an old one is
+    // rewritten with the new.
+    const materialKey = createHash('sha256').update(JSON.stringify({ findings, due, fixer, title })).digest('hex');
+    items.push({ kind: 'security', key, appId: app.id, fixer, title,
       subject: { upgrade: key, packages, severity, findings, dueAt: new Date(due).toISOString(), materialKey,
         publishedKey: old?.subject?.publishedKey, publishedFixer: old?.subject?.publishedFixer,
         noFile: !['HIGH', 'CRITICAL'].includes(severity) },

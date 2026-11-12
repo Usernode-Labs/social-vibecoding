@@ -356,6 +356,40 @@ test('an upgrade keeps its request and target as packages join it, and a request
   assert.equal(kept.subject.findings.length, 1);
 });
 
+test('a kept key that names a package no longer found keeps the request but not the title', () => {
+  // Debian 12's Perl, then Debian 13's: perl and perl-base carry the group
+  // (and its key) over, while libperl5.36 is gone from the images.
+  const perl = (pkg, version) => vuln({ id: 'CVE-2026-9538', package: pkg, version, fixedVersion: null });
+  const bookworm = observer.itemsFrom(result([perl('libperl5.36', '5.36.0-7+deb12u3'), perl('perl', '5.36.0-7+deb12u3'),
+    perl('perl-base', '5.36.0-7+deb12u3')]), [], app, now).items[0];
+  assert.equal(bookworm.key, 'libperl5.36');
+  assert.equal(bookworm.title, 'Upgrade libperl5.36 and 2 related packages in capture, platform, standalone, starter and worker');
+  const prior = [{ kind: 'security', first_seen_at: new Date(now), subject: {
+    ...bookworm.subject, publishedKey: bookworm.subject.materialKey, publishedFixer: 'person',
+  } }];
+  const debian13 = () => result([perl('libperl5.40', '5.40.1-6+deb13u1'), perl('perl', '5.40.1-6+deb13u1'),
+    perl('perl-base', '5.40.1-6+deb13u1'), perl('perl-modules-5.40', '5.40.1-6+deb13u1')]);
+  const trixie = observer.itemsFrom(debian13(), prior, app, now).items[0];
+  assert.equal(trixie.key, 'libperl5.36', 'the same request and target');
+  assert.equal(trixie.subject.dueAt, bookworm.subject.dueAt);
+  assert.equal(trixie.title, 'Upgrade libperl5.40 and 3 related packages in capture, platform, standalone, starter and worker');
+  // The title counts as a change on its own: the same findings, target and
+  // fixer under two titles, so a request filed under a stale one is rewritten.
+  const fresh = observer.itemsFrom(debian13(), [], app, now).items[0];
+  const keptAsPerl = observer.itemsFrom(debian13(),
+    [{ kind: 'security', first_seen_at: new Date(now), subject: { upgrade: 'perl', packages: ['perl'] } }], app, now).items[0];
+  assert.deepEqual([fresh.key, keptAsPerl.key], ['libperl5.40', 'perl']);
+  assert.equal(fresh.subject.dueAt, keptAsPerl.subject.dueAt);
+  assert.deepEqual(fresh.subject.findings, keptAsPerl.subject.findings);
+  assert.notEqual(fresh.title, keptAsPerl.title);
+  assert.notEqual(fresh.subject.materialKey, keptAsPerl.subject.materialKey);
+  // Once rewritten under the current title, a later audit does not churn it.
+  const settled = observer.itemsFrom(debian13(),
+    [{ kind: 'security', first_seen_at: new Date(now), subject: { ...trixie.subject, publishedKey: trixie.subject.materialKey } }],
+    app, now + 86400000).items[0];
+  assert.equal(signals.isMaterial(settled), false);
+});
+
 test('scoped npm packages survive the real evidence scrubber with their identity intact', () => {
   const item = signals.normalizeItem(observer.itemsFrom(result([vuln({ package: '@octokit/request' })]), [], app, now).items[0]);
   const body = require('../src/services/platform-signal-evidence').upgradeRequestBody({
