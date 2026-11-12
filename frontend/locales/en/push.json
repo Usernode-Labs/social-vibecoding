@@ -786,5 +786,17 @@
   "appHealth.other.body": {
     "text": "Open the app to see what needs attention",
     "description": "Phone notification text under the title: something is wrong with a project the reader runs."
+  },
+  "releaseHold.title": {
+    "text": "A change needs your approval",
+    "description": "Phone notification title, sent to platform administrators: a proposed change is held until one of them approves it."
+  },
+  "releaseHold.body.named": {
+    "text": "“{{title}}” is held until an admin votes yes",
+    "description": "Phone notification text under the title, sent to platform administrators. {{title}} is the name of the held change, kept as written, in quotation marks of the language."
+  },
+  "releaseHold.body.plain": {
+    "text": "It is held until an admin votes yes",
+    "description": "Phone notification text under the title, sent to platform administrators, when the held change has no name."
   }
 }

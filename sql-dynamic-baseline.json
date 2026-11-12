@@ -1858,6 +1858,34 @@
       "preview": "overrides.map(r => r.statement).join(';\\n')"
     },
     {
+      "source": "src/services/release-holds.js",
+      "kind": "structural-template",
+      "fingerprint": "32b772d3655bf79a7000",
+      "count": 1,
+      "preview": "`SELECT rh.session_id, rh.id, rh.rules, rh.created_at, rh.notified_at, ${approvedSql('cs')} AS approved, ${authorIsAdminSql('cs')} AS author_admin FROM release_"
+    },
+    {
+      "source": "src/services/release-holds.js",
+      "kind": "structural-template",
+      "fingerprint": "71b41b31a4083bef9e14",
+      "count": 1,
+      "preview": "`SELECT rh.id, rh.rules, rh.created_at, rh.notified_at, ${approvedSql('cs')} AS approved, ${authorIsAdminSql('cs')} AS author_admin FROM release_holds rh JOIN c"
+    },
+    {
+      "source": "src/services/release-holds.js",
+      "kind": "structural-template",
+      "fingerprint": "d118f486610ae7fcd139",
+      "count": 1,
+      "preview": "`${LIST_SQL} WHERE NOT (rh.status = 'waiting' AND cs.status IN ('promoted', 'merging') AND NOT ${approvedSql('cs')}) AND NOT (rh.status = 'waiting' AND cs.statu"
+    },
+    {
+      "source": "src/services/release-holds.js",
+      "kind": "structural-template",
+      "fingerprint": "f1e2859a73fbc6cd119b",
+      "count": 1,
+      "preview": "`${LIST_SQL} WHERE rh.status = 'waiting' AND cs.status IN ('promoted', 'merging') AND NOT ${approvedSql('cs')} ORDER BY rh.created_at ASC LIMIT 200`"
+    },
+    {
       "source": "src/services/report-ai.js",
       "kind": "structural-template",
       "fingerprint": "6300e3c7db647c91a87a",
@@ -2553,7 +2581,7 @@
     {
       "source": "src/workflow/rules/merge-claim.ts",
       "kind": "structural-template",
-      "fingerprint": "de7dfef88f84d5e7b6ae",
+      "fingerprint": "ad8e292e981419872714",
       "count": 1,
       "preview": "`SELECT cs.check_state, cs.checks_commit_sha, cs.unit_suite_fresh_sha, cs.shots_state, cs.shots_detail, a.locked, a.main_check_state, a.main_check_sha, a.main_c"
     },

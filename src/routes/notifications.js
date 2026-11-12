@@ -127,6 +127,18 @@ function stagingMockNotifications() {
       sessionId: null, sessionTitle: null,
       prTitle: null, prNumber: null, headlessIssueNumber: null,
     },
+    // #6643: a change held for an admin's approval, as a full admin's bell
+    // shows it: the warning sign, and the change's own name.
+    {
+      ...base,
+      id: 990231, kind: 'release_hold',
+      createdAt: new Date(now - 3.1 * 60 * 1000).toISOString(),
+      sourceUsername: 'staging-demo-user',
+      detail: 'wallet,people',
+      sessionId: 9000097,
+      sessionTitle: '[Mock] #6643: held for an admin, because it lets the app send tokens',
+      prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
     // #5404: the Monday count of the changes you voted on that were decided.
     // It names no project (services/voted-digest.js), so its app fields are
     // nulled; a preview has no Monday to wait for without this row.

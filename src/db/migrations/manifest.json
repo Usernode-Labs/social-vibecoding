@@ -345,6 +345,11 @@
       "id": "requests-filer-from-twin",
       "sha256": "c2c7b8469376599c5b83f74a3916b4f6386f6467f555453b629f5be62b6e9542",
       "schemaSha256": "78d3ae3f376fe9865019e30705c9c0891901250f20b4035875b5109bbadc3b8b"
+    },
+    {
+      "id": "release-holds",
+      "sha256": "8a3cd4c3bd9da7b25c9f3efd85471c5fa9c1797c2c059e479627615ac72b7038",
+      "schemaSha256": "cec8eeceb3f86c2426c2025b6dcac089c0093bd6d3746621307cacd9e0ee4e33"
     }
   ]
 }

@@ -1600,6 +1600,8 @@ const Notifications = {
         'pr_merged', 'proposal_vote', 'vote_digest', 'revision_recheck', 'change_ready',
         // #4787: a change the viewer voted on going live opens that change,
         // the same way the author's own "Live" row does.
+        // #6643: an admin asked to approve a held change opens that change.
+        'release_hold',
         'voted_change_merged',
       ]);
       const toProposals = proposalKinds.has(item.kind);
@@ -3493,6 +3495,19 @@ function rowWords(n) {
       icon: '\u{1F5F3}️',
       by: n.sourceUsername || null,
       ...headline(t('notifications:row.proposed.label'), prLabel || t('notifications:row.proposed.aChange')),
+    };
+  }
+
+  // #6643: a change held until an admin approves it (services/release-
+  // holds.js), for full admins. The warning sign is the point of the row: it
+  // is the one ask in the bell that something risky waits on this reader.
+  if (n.kind === 'release_hold') {
+    return {
+      ...base,
+      needsYou: true,
+      icon: '\u26A0\uFE0F',
+      by: n.sourceUsername || null,
+      ...headline(t('notifications:row.releaseHold.label'), prLabel || n.sessionTitle || t('notifications:row.releaseHold.body')),
     };
   }
 

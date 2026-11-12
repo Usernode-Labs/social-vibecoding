@@ -456,6 +456,12 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/voted-digest').sweep(pool),
   },
   {
+    // #6643: full admins are told about a change held for their approval
+    // once it is up for a vote (services/release-holds.js).
+    name: 'release-holds', everyMs: 2 * MIN,
+    run: (_ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/release-holds').sweep(pool, { config }),
+  },
+  {
     // A person let in gets the welcome group an admin set up.
     name: 'welcome-dm', everyMs: 30 * 1000,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/welcome-dm').sweep(pool),

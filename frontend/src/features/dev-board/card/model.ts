@@ -248,6 +248,18 @@ export interface TitleSpec {
   title: string;
 }
 
+/** The warning on a change held for an admin (services/release-holds.js). */
+export interface HoldSpec {
+  /** The author is an admin, so another admin has to approve. */
+  other: boolean;
+  pill: string;
+  title: string;
+  /** What the change does that needs an admin, one sentence each. */
+  reasons: string[];
+  /** Whether the admins have been told yet. */
+  asked: string;
+}
+
 /** One step of "what this still needs before it merges" (#2061). */
 export interface RequirementSpec {
   key: string;
@@ -308,6 +320,12 @@ export type ExtraSpec =
      * row put in front of a non-admin is a chore they cannot do.
      */
     open: boolean;
+    /**
+     * #6643: the change is held for an admin's approval. Drawn as a warning
+     * above the steps, always in view, because the collapsed line only says
+     * whose turn it is.
+     */
+    hold?: HoldSpec;
     gates: RequirementSpec[];
   };
 

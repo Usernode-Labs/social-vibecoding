@@ -808,6 +808,13 @@ function buildCopy(kind, context, now, t) {
     // cap, the level and the figures, so the push can say how close it is.
     case 'platform_limit':
       return platformLimitCopy(detail);
+    // #6643: a change held for an admin's approval, for full admins
+    // (services/release-holds.js). The change's own name says which.
+    case 'release_hold':
+      return {
+        title: withApp(t('push:releaseHold.title')),
+        body: label ? t('push:releaseHold.body.named', { title: label }) : t('push:releaseHold.body.plain'),
+      };
     // #4296: errors that should not happen, a daily digest or one kind past
     // its hourly line (services/platform-incident-alerts.js). Full admins.
     case 'platform_incident':

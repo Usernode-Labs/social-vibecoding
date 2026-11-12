@@ -1951,6 +1951,62 @@
     "text": "Needs one admin to vote yes",
     "description": "Line under the \"Admin approval\" step in a proposal's list of steps, while no administrator has voted Yes yet."
   },
+  "hold.pill": {
+    "text": "Held for an admin",
+    "description": "Short status label on a proposed change's card and page, in the warning shown while the change is held until a platform administrator approves it."
+  },
+  "hold.pillOther": {
+    "text": "Needs another admin",
+    "description": "Short status label on a proposed change's card and page, in the warning shown while the change is held until a platform administrator approves it, when the change's author is an administrator and so a different administrator has to approve it."
+  },
+  "hold.title": {
+    "text": "This change needs an admin’s approval",
+    "description": "Heading of the warning on a proposed change's card and page, in the warning shown while the change is held until a platform administrator approves it. The reasons are listed under it."
+  },
+  "hold.titleOther": {
+    "text": "This change needs another admin’s approval",
+    "description": "Heading of the warning on a proposed change's card and page, in the warning shown while the change is held until a platform administrator approves it, when the change's author is an administrator and so a different administrator has to approve it."
+  },
+  "hold.asked": {
+    "text": "An admin has been asked. Votes still count.",
+    "description": "Last line of the warning on a proposed change's card and page, in the warning shown while the change is held until a platform administrator approves it: the administrators were notified, and members can keep voting meanwhile."
+  },
+  "hold.willAsk": {
+    "text": "An admin is asked once it is up for a vote.",
+    "description": "Last line of the warning on a proposed change's card and page, in the warning shown while the change is held until a platform administrator approves it, before the change has been proposed to the group: administrators are notified when it is."
+  },
+  "hold.step": {
+    "text": "Held until an admin votes yes.",
+    "description": "Line under the \"Admin approval\" step in a proposal's list of steps, while the change is held and no administrator has voted Yes. One or more reason sentences follow it."
+  },
+  "hold.stepOther": {
+    "text": "Held until another admin votes yes.",
+    "description": "Line under the \"Admin approval\" step in a proposal's list of steps, while the change is held and its author is an administrator, so a different administrator has to vote Yes. One or more reason sentences follow it."
+  },
+  "hold.rule.wallet": {
+    "text": "It lets the app send tokens.",
+    "description": "One reason a proposed change is held for an administrator's approval: the change makes the app able to send the person's tokens from their wallet."
+  },
+  "hold.rule.people": {
+    "text": "It starts keeping data about people.",
+    "description": "One reason a proposed change is held for an administrator's approval: the change makes the app store information about the people who use it."
+  },
+  "hold.rule.secret": {
+    "text": "It adds a private key for an outside service.",
+    "description": "One reason a proposed change is held for an administrator's approval: the change declares a secret key the app uses to reach a service outside Homeroom."
+  },
+  "hold.rule.capability": {
+    "text": "It asks for a device capability such as location.",
+    "description": "One reason a proposed change is held for an administrator's approval: the change makes the app ask for access to something on the person's device, like their location, camera or microphone."
+  },
+  "hold.rule.script": {
+    "text": "It loads a script from another site.",
+    "description": "One reason a proposed change is held for an administrator's approval: the change makes the app load code from a website other than Homeroom."
+  },
+  "hold.rule.content": {
+    "text": "The Content rules check flagged it.",
+    "description": "One reason a proposed change is held for an administrator's approval: Homeroom's automatic review found something that may break the platform's content or data rules. Content rules is the name of that check."
+  },
   "step.shots.failed": {
     "text": "Couldn’t take screenshots",
     "description": "Line under the \"Before & after screenshots\" step in a proposal's list of steps when the automatic before-and-after screenshots could not be taken."

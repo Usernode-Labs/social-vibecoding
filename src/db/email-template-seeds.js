@@ -303,6 +303,24 @@ const SEEDS = {
         + `Open in Moderation: {{url}}`,
     },
 
+    release_hold: {
+      name: ACTIONS.release_hold.label,
+      layout: STANDARD_LAYOUT,
+      subject: `⚠️ Approval needed: {{title}}`,
+      preheader: `{{#if hasApp}}A change in {{app}} is held until an admin votes yes.{{else}}A change is held until an admin votes yes.{{/if}}`,
+      why: `You are receiving this because you are an administrator of Homeroom, and a change is waiting for an administrator's approval.`,
+      html: `<p style="margin:0 0 12px;font-size:13px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:#a85f00">⚠️ Held for an admin</p>`
+        + `<p><strong>{{title}}</strong>{{#if hasApp}} in {{app}}{{/if}}{{#if hasAuthor}}, by {{author}},{{/if}} cannot go live until an administrator approves it.</p>`
+        + `<p>Why it is held: {{reasons}}</p>`
+        + `<p>Vote yes on the change to let it through once its votes and checks allow. Vote no, with a reason, to close it and the request it was built for. Without an answer it stays held.</p>`
+        + `<p><a href="{{url}}" style="display:inline-block;padding:11px 20px;border-radius:8px;background:#0a6ee0;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none">Review the change</a></p>`,
+      text: `Held for an admin\n\n`
+        + `{{title}}{{#if hasApp}} in {{app}}{{/if}}{{#if hasAuthor}}, by {{author}},{{/if}} cannot go live until an administrator approves it.\n\n`
+        + `Why it is held: {{reasons}}\n\n`
+        + `Vote yes on the change to let it through once its votes and checks allow. Vote no, with a reason, to close it and the request it was built for. Without an answer it stays held.\n\n`
+        + `Review the change: {{url}}`,
+    },
+
     project_invite: {
       name: ACTIONS.project_invite.label,
       layout: STANDARD_LAYOUT,

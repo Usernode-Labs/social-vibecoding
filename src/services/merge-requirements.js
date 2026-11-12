@@ -64,7 +64,9 @@ const GATES = [
     key: 'admin_yes',
     label: 'Admin approval',
     actor: 'admin',
-    applies: (c) => !!c.locked,
+    // A locked app, or (#6643) a change held for an admin
+    // (services/release-holds.js): either asks for an admin's yes.
+    applies: (c) => !!c.locked || !!c.held,
   },
   {
     // Under direct-merge lanes (the merge-queue machine, src/workflow/merge-queue/) this asks one thing:
@@ -753,7 +755,7 @@ function readRequirements(session) {
     // that it IS provisional, so a surface can tone it accordingly.
     return withForceBlock({
       measuredAt: null,
-      gates: provisional(s),
+      gates: withLiveHold(provisional(s), s),
       evaluated: false,
       provisional: true,
       ...(record ? { superseded: true } : {}),
@@ -761,7 +763,7 @@ function readRequirements(session) {
   }
   return withForceBlock({
     measuredAt: s.merge_requirements_at ? new Date(s.merge_requirements_at).toISOString() : null,
-    gates: withLivePlatformRetry(withLiveExplicit(withLiveApprovals(withLiveMainPause(describe(record), s), s), s), s),
+    gates: withLiveHold(withLivePlatformRetry(withLiveExplicit(withLiveApprovals(withLiveMainPause(describe(record), s), s), s), s), s),
     evaluated: true,
     provisional: false,
   }, s);
@@ -857,6 +859,34 @@ function withLiveExplicit(gates, s) {
       detail: { reason: s.explicit_approval_reason || (entry.detail && entry.detail.reason) || null, otherYes: other },
     }
     : entry));
+}
+
+// #6643: a change held for an admin (services/release-holds.js), as the
+// serializer read it just now (`release_hold`: { rules, approved,
+// needsAnotherAdmin }). The step is there from the moment the hold is, not
+// only once the votes are in: a hold nobody is told about until the group
+// has approved is a surprise at the last step. Whether an admin has
+// answered is read off the votes, so the entry follows them live.
+function withLiveHold(gates, s) {
+  const hold = s && s.release_hold;
+  if (!hold || !Array.isArray(gates)) return gates;
+  const detail = {
+    held: true,
+    rules: Array.isArray(hold.rules) ? hold.rules : [],
+    needsAnotherAdmin: !!hold.needsAnotherAdmin,
+    note: hold.approved
+      ? 'An admin approved this change'
+      : hold.needsAnotherAdmin
+        ? 'This change is held, and its author is an admin, so another admin has to vote yes'
+        : 'This change is held, so an admin has to vote yes',
+  };
+  const entry = { key: 'admin_yes', label: 'Admin approval', actor: 'admin', state: hold.approved ? 'done' : 'waiting', detail };
+  const idx = gates.findIndex((g) => g && g.key === 'admin_yes');
+  if (idx >= 0) return gates.map((g, i) => (i === idx ? { ...g, ...entry } : g));
+  // After the votes and the member floor, where GATES puts it.
+  let at = 0;
+  gates.forEach((g, i) => { if (g && (g.key === 'approvals' || g.key === 'explicit')) at = i + 1; });
+  return [...gates.slice(0, at), entry, ...gates.slice(at)];
 }
 
 /**

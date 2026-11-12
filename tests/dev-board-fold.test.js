@@ -1776,7 +1776,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // says GitHub is building and scanning the release images and how many of
   // its checks are done, on the change page's own route; no existing declared
   // check reads that state. 733 leaves 147 slots.
-  checkCap.assertPinned(DAPP.tests.length, 733);
+  // 733 → 734: +1 (#6643): a change held for an admin says so on its card,
+  // with the reason. No existing check opens that demo card's warning, and
+  // a hold is a state no other route reaches. 734 leaves 146 slots.
+  checkCap.assertPinned(DAPP.tests.length, 734);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

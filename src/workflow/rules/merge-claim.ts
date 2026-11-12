@@ -20,6 +20,10 @@ export interface ClaimFacts {
   shotsDetail: Record<string, unknown> | null;
   locked: boolean;
   adminYes: boolean;
+  // #6643: held for an admin (services/release-holds.js), and whether a full
+  // admin other than the author has a yes that still counts.
+  held: boolean;
+  holdAdminYes: boolean;
   // The app's merges are paused by a red main (services/main-watch.js
   // describe: its own column, or red at a commit no admin resumed).
   mainPaused: boolean;
@@ -33,7 +37,12 @@ export async function readClaimFacts(db: Queryable, sessionId: number): Promise<
             a.locked, a.main_check_state, a.main_check_sha, a.main_check_resumed_sha, a.main_check_paused_sha,
             EXISTS (SELECT 1 FROM pr_votes pv JOIN users u ON u.id = pv.user_id
                      WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND ${currentVotePredicateSql('pv', 'cs')}
-                       AND u.is_admin = TRUE AND u.admin_readonly = FALSE) AS admin_yes
+                       AND u.is_admin = TRUE AND u.admin_readonly = FALSE) AS admin_yes,
+            EXISTS (SELECT 1 FROM release_holds rh WHERE rh.session_id = cs.id AND rh.status = 'waiting') AS held,
+            EXISTS (SELECT 1 FROM pr_votes pv JOIN users u ON u.id = pv.user_id
+                     WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND ${currentVotePredicateSql('pv', 'cs')}
+                       AND u.is_admin = TRUE AND u.admin_readonly = FALSE
+                       AND pv.user_id IS DISTINCT FROM cs.user_id) AS hold_admin_yes
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [sessionId]);
   if (!r) return null;
   const paused = r.main_check_paused_sha !== undefined
@@ -49,6 +58,8 @@ export async function readClaimFacts(db: Queryable, sessionId: number): Promise<
     shotsDetail: r.shots_detail && typeof r.shots_detail === 'object' ? r.shots_detail : null,
     locked: !!r.locked,
     adminYes: !!r.admin_yes,
+    held: !!r.held,
+    holdAdminYes: !!r.hold_admin_yes,
     mainPaused: paused,
   };
 }
@@ -79,7 +90,7 @@ export function forceWaivesChecks(force: boolean, forcedHead: string | null, hea
 export function claimRefusal(f: ClaimFacts, x: ClaimInputs): string | null {
   if (!x.force) {
     if (!x.votesMergeable) return 'not_mergeable';
-    if (f.locked && !f.adminYes) return 'awaiting_admin';
+    if ((f.locked && !f.adminYes) || (f.held && !f.holdAdminYes)) return 'awaiting_admin';
   }
   if (!forceWaivesChecks(x.force, x.forcedHead, x.head)) {
     const settled = (f.checkState === 'passing' || f.checkState === 'skipped')
