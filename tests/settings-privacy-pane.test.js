@@ -418,3 +418,11 @@ test('the Saved timer restarts on each save and stops with the page (#5926 item 
   t.mock.timers.tick(5000);
   assert.equal(h.setCalls, before, 'a save that lands after leaving starts nothing');
 });
+
+test('the pane reads again only when its own page is opened (#6591)', () => {
+  assert.match(
+    PANE,
+    /useWindowEvent\('usernode:settings-section', \(event\) => \{\s*if \(\(event as CustomEvent<\{ section\?: string \}>\)\.detail\?\.section === 'contact-privacy'\) void load\(\);\s*\}\);/,
+    'another page of Settings opening does not re-read it hidden'
+  );
+});
