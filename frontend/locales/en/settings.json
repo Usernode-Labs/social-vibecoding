@@ -1944,8 +1944,8 @@
     "description": "Heading of the section in Settings that lists which apps may use the device's location, microphone, camera and so on."
   },
   "appPermissions.intro": {
-    "text": "Apps you've allowed to use your location, microphone, camera, screen or connected devices. Each app is asked for separately, and only the app you granted gets it. Revoking stops the app the next time it opens, because a running app keeps what it was given until then.",
-    "description": "Explanation under the App device permissions heading in Settings."
+    "text": "Apps you've allowed to use your location, microphone, camera, screen or connected devices. Each app is asked for separately, and only the app you granted gets it. If an app is open in this tab, revoking closes it so it stops at once. Anywhere else it is open, it keeps access until it is closed. On another device, opening the app again within a minute may bring the permission back until it is closed again.",
+    "description": "Explanation under the App device permissions heading in Settings. Revoking closes the app when it is open in this browser tab. A running app keeps a permission until it is closed, and another device that reopens the app within about a minute of the revoke may still give it the permission, which it then keeps until it is closed."
   },
   "appPermissions.loadFailed": {
     "text": "Could not load app permissions.",
@@ -4044,20 +4044,32 @@
     "description": "Title of the confirmation dialog before taking away one device permission (camera, microphone, location…) from an app, in Settings."
   },
   "appPermissions.revoke.confirmMessage": {
-    "text": "The app loses it the next time it opens. It can ask you again later.",
-    "description": "Body of the confirmation dialog before taking away a device permission from an app, in Settings. \"It\" is the permission, then the app."
+    "text": "Anywhere the app is already open, it keeps this permission until it is closed. On another device, opening the app again within a minute may bring the permission back until it is closed again.",
+    "description": "Body of the confirmation dialog before taking away a device permission from an app that is not open in this browser tab, in Settings. A running app keeps a permission until it is closed, and another device that reopens the app within about a minute of the revoke may still give it the permission, which it then keeps until it is closed."
   },
   "appPermissions.revoke.confirmButton": {
     "text": "Revoke",
     "description": "Red confirm button in the dialog that takes away a device permission from an app, in Settings."
+  },
+  "appPermissions.revoke.confirmMessageOpen": {
+    "text": "{{app}} is open in this tab, so revoking closes it now and anything not saved in it may be lost. Anywhere else it is open, it keeps this permission until it is closed. On another device, opening the app again within a minute may bring the permission back until it is closed again.",
+    "description": "Body of the confirmation dialog before taking away a device permission (camera, microphone, location…) from an app that is open in this browser tab right now, in Settings. {{app}} is the app's name. Confirming also closes the app in this tab. A running app keeps a permission until it is closed, and another device that reopens the app within about a minute of the revoke may still give it the permission, which it then keeps until it is closed."
+  },
+  "appPermissions.revoke.confirmButtonClose": {
+    "text": "Revoke and close app",
+    "description": "Red confirm button in the dialog that takes away a device permission from an app that is open in this browser tab right now, in Settings: it takes the permission away and closes the app."
+  },
+  "appPermissions.status.revokedClosed": {
+    "text": "Revoked, and {{app}} was closed in this tab.",
+    "description": "Status under the list of device permissions granted to apps, in Settings > App device permissions, after a permission was taken away from an app that was open in this browser tab, which was closed so the change took effect at once. {{app}} is the app's name."
   },
   "appPermissions.status.revokeFailed": {
     "text": "Failed to revoke.",
     "description": "Status under the list of device permissions granted to apps, in Settings > App device permissions, when a permission could not be taken away and the server gave no reason."
   },
   "appPermissions.status.revoked": {
-    "text": "Revoked. It stops the next time the app opens.",
-    "description": "Status under the list of device permissions granted to apps, in Settings > App device permissions, after a permission was taken away from an app. \"It\" is the app's use of the permission."
+    "text": "Revoked. Anywhere the app is already open, it keeps the permission until it is closed. On another device, opening the app again within a minute may bring the permission back until it is closed again.",
+    "description": "Status under the list of device permissions granted to apps, in Settings > App device permissions, after a permission was taken away from an app that was not open in this browser tab. A running app keeps a permission until it is closed, and another device that reopens the app within about a minute of the revoke may still give it the permission, which it then keeps until it is closed."
   },
   "appPermissions.status.unknownApp": {
     "text": "This app could not be identified.",

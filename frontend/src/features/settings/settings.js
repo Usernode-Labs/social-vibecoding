@@ -5305,18 +5305,35 @@
 
     // Revoke one capability from one app.
     //
-    // The confirm copy says NEXT TIME IT OPENS rather than "immediately",
-    // and that difference is not hedging: a frame's Permissions Policy is
-    // computed from its `allow` attribute at navigation and cannot be
-    // narrowed afterwards, so a running app keeps what it already holds
-    // until it is reopened. The AI section can honestly promise immediate
-    // because its gate is a server-side check on every call.
-    async _onPermissionRevoke(appId, capability) {
+    // The copy says NEXT TIME IT OPENS rather than "immediately", and that
+    // difference is not hedging: a frame's Permissions Policy is computed
+    // from its `allow` attribute at navigation and cannot be narrowed
+    // afterwards, so a running app keeps what it already holds until its
+    // frame goes. The AI section can honestly promise immediate because its
+    // gate is a server-side check on every call.
+    //
+    // `target` (#6512) is `{ slug, name, isOpen, close }`: whether the app
+    // is open in THIS tab (on screen or kept running behind it), and how to
+    // close it. The frame store is per tab, so another tab or device is out
+    // of reach here. The dialog asks with what is open when it is shown;
+    // the close is decided again once the server has taken the permission
+    // away, because the app may have been opened while the request was out
+    // (its launch could then have used the old grant set). Either way the
+    // cached grant set is dropped first (AppView.forgetToken, which tells
+    // this browser's other Homeroom tabs too), or reopening the app within
+    // a minute would hand the revoked capability back.
+    async _onPermissionRevoke(appId, capability, target) {
       const status = (t, k) => this._setAppPermissionsStatus(t, k);
+      const isOpen = () => !!(target && typeof target.isOpen === 'function' && target.isOpen());
+      const openAtAsk = isOpen();
       const ok = await ConfirmModal.show({
         title: tr('settings:appPermissions.revoke.confirmTitle'),
-        message: tr('settings:appPermissions.revoke.confirmMessage'),
-        confirmLabel: tr('settings:appPermissions.revoke.confirmButton'),
+        message: openAtAsk
+          ? tr('settings:appPermissions.revoke.confirmMessageOpen', { app: target.name })
+          : tr('settings:appPermissions.revoke.confirmMessage'),
+        confirmLabel: openAtAsk
+          ? tr('settings:appPermissions.revoke.confirmButtonClose')
+          : tr('settings:appPermissions.revoke.confirmButton'),
         danger: true,
       });
       if (!ok) return;
@@ -5328,7 +5345,16 @@
         );
         const j = await r.json().catch(() => ({}));
         if (!r.ok) { status(j.error || tr('settings:appPermissions.status.revokeFailed'), 'error'); return; }
-        status(tr('settings:appPermissions.status.revoked'), 'ok');
+        const appView = typeof window !== 'undefined' ? window.AppView : null;
+        if (target && target.slug && appView && typeof appView.forgetToken === 'function') {
+          appView.forgetToken(target.slug);
+        }
+        // Asked again now, not at the dialog: see the comment above.
+        const closed = isOpen() && typeof target.close === 'function';
+        if (closed) target.close();
+        status(closed
+          ? tr('settings:appPermissions.status.revokedClosed', { app: target.name })
+          : tr('settings:appPermissions.status.revoked'), 'ok');
         this._renderAppPermissions();
       } catch (err) {
         status(tr('settings:appPermissions.status.networkError', { reason: err.message }), 'error');

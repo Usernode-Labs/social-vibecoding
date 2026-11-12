@@ -2221,6 +2221,113 @@ test('App permissions reads in the muted ink and its empty lists say what will a
   }
 });
 
+/**
+ * Run Settings._onPermissionRevoke on its own, with the dialog, the network,
+ * AppView and the status line stubbed, and report what it did. `open` is
+ * whether the app is open in this tab; `openWhileDeleting` changes it while
+ * the DELETE is out.
+ */
+async function runPermissionRevoke({ open = false, openWhileDeleting, confirm = true, ok = true } = {}) {
+  const calls = { dialog: null, fetches: [], status: [], rendered: 0, closed: 0, forgot: [], order: [] };
+  let live = open;
+  const target = {
+    slug: 'snap-cam',
+    name: 'Snap Cam',
+    isOpen: () => live,
+    close: () => { calls.closed += 1; calls.order.push('close'); live = false; },
+  };
+  const ConfirmModal = { show: async (opts) => { calls.dialog = opts; return confirm; } };
+  const fetch = async (url, init) => {
+    calls.fetches.push([url, init && init.method]);
+    await new Promise((r) => setImmediate(r));
+    if (openWhileDeleting !== undefined) live = openWhileDeleting;
+    return { ok, json: async () => (ok ? {} : { error: 'nope' }) };
+  };
+  const window = { AppView: { forgetToken: (slug) => { calls.forgot.push(slug); calls.order.push('forget'); } } };
+  const tr = englishPlatformI18n().t;
+  const host = new Function('tr', 'ConfirmModal', 'fetch', 'window',
+    `return {${sliceMethod(settingsJs, '_onPermissionRevoke')}};`)(tr, ConfirmModal, fetch, window);
+  host._setAppPermissionsStatus = (text, kind) => calls.status.push([text, kind]);
+  host._isDemoGrant = () => false;
+  host._renderAppPermissions = () => { calls.rendered += 1; };
+  await host._onPermissionRevoke(7, 'camera', target);
+  return calls;
+}
+
+test('revoking a device permission says plainly when it applies (#6512)', () => {
+  const intro = message('settings:appPermissions.intro');
+  assert.match(intro, /If an app is open in this tab, revoking closes it so it stops at once\./);
+  assert.match(intro, /Anywhere else it is open, it keeps access until it is closed\./);
+  assert.doesNotMatch(intro, /a running app keeps what it was given/, 'the old roundabout reason is gone');
+  // A kept frame elsewhere resumes the same document, so "the next time it
+  // opens" would be false there; the frame store is per tab, not device; and
+  // a reopen on another device inside its one-minute token cache delegates
+  // the permission to a new frame, which keeps it until that frame closes.
+  for (const id of ['intro', 'revoke.confirmMessage', 'revoke.confirmMessageOpen', 'status.revoked']) {
+    const text = message(`settings:appPermissions.${id}`);
+    assert.doesNotMatch(text, /next time|this device|immediately|up to a minute longer|won't get it again/,
+      `${id} promises only what is true`);
+    assert.match(text, /On another device, opening the app again within a minute may bring the permission back until it is closed again\.$/,
+      `${id} says what another device can still do`);
+  }
+});
+
+test('revoking from an app that is not open in this tab asks the plain question and closes nothing (#6512)', async () => {
+  const calls = await runPermissionRevoke();
+  assert.equal(calls.dialog.message, message('settings:appPermissions.revoke.confirmMessage'));
+  assert.equal(calls.dialog.confirmLabel, message('settings:appPermissions.revoke.confirmButton'));
+  assert.deepEqual(calls.fetches, [['/api/me/permission-grants/7/camera', 'DELETE']]);
+  assert.equal(calls.closed, 0);
+  assert.deepEqual(calls.forgot, ['snap-cam'], 'the cached grant set goes even when the app is not open');
+  assert.deepEqual(calls.status, [[message('settings:appPermissions.status.revoked'), 'ok']]);
+});
+
+test('revoking from an app open in this tab closes it, and the dialog says so first (#6512)', async () => {
+  const calls = await runPermissionRevoke({ open: true });
+  assert.equal(calls.dialog.confirmLabel, 'Revoke and close app');
+  assert.match(calls.dialog.message, /^Snap Cam is open in this tab, so revoking closes it now and anything not saved in it may be lost\./);
+  assert.equal(calls.closed, 1, 'the frame goes, so the revoke bites at once');
+  assert.deepEqual(calls.order, ['forget', 'close'], 'the cached grant set goes before the frame');
+  assert.deepEqual(calls.status, [['Revoked, and Snap Cam was closed in this tab.', 'ok']]);
+  assert.equal(calls.rendered, 1);
+
+  const cancelled = await runPermissionRevoke({ open: true, confirm: false });
+  assert.equal(cancelled.closed, 0, 'Cancel closes nothing');
+  assert.deepEqual(cancelled.fetches, []);
+  assert.deepEqual(cancelled.forgot, []);
+
+  const refused = await runPermissionRevoke({ open: true, ok: false });
+  assert.equal(refused.closed, 0, 'the app stays open when the server kept the permission');
+  assert.deepEqual(refused.forgot, []);
+  assert.deepEqual(refused.status, [['nope', 'error']]);
+});
+
+test('an app opened while the revoke was out is closed too, and the status says so (#6512)', async () => {
+  // Closed when the dialog asked, launched while the DELETE was pending: that
+  // launch may have used the old grant set, so it is closed once the server
+  // has answered, whatever the dialog said.
+  const opened = await runPermissionRevoke({ open: false, openWhileDeleting: true });
+  assert.equal(opened.dialog.confirmLabel, message('settings:appPermissions.revoke.confirmButton'));
+  assert.equal(opened.closed, 1);
+  assert.deepEqual(opened.order, ['forget', 'close']);
+  assert.deepEqual(opened.status, [['Revoked, and Snap Cam was closed in this tab.', 'ok']]);
+
+  // And the other way: open at the dialog, closed by the person meanwhile.
+  const left = await runPermissionRevoke({ open: true, openWhileDeleting: false });
+  assert.equal(left.closed, 0, 'nothing left to close');
+  assert.deepEqual(left.status, [[message('settings:appPermissions.status.revoked'), 'ok']]);
+});
+
+test('the Revoke button hands Settings a live question, not a snapshot, of whether the app is open (#6512)', () => {
+  const list = read('frontend/src/features/settings/app-permissions-list.tsx');
+  assert.match(list, /import \{ closeLiveApp, isLiveApp \} from '\.\.\/app-frame\/live-apps';/);
+  assert.match(list, /isOpen: \(\) => isLiveApp\(app\.appSlug\),\s*close: \(\) => closeLiveApp\(app\.appSlug\),/);
+  assert.match(list, /_onPermissionRevoke\?\.\(app\.appId, item\.capability, target\)/);
+  const live = read('frontend/src/features/app-frame/live-apps.tsx');
+  assert.match(live, /export function isLiveApp\(slug: string\): boolean \{\s*return !!slug && liveAppSlugs\(appFrameStore\.get\(\)\)\.includes\(slug\);/,
+    'open means the same frames the green dot reads: the mounted one and the kept ones');
+});
+
 test('a revoked app permission offers Re-enable; an active one offers Revoke (#1957)', () => {
   const html2 = grantRows({
     phase: 'ready',

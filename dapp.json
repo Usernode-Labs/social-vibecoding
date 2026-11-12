@@ -4636,7 +4636,7 @@
       "name": "#2219: Settings does not promise a revoke takes effect while the app is still open",
       "path": "/?demo=1#settings/app-permissions",
       "expectSelector": "[data-settings-section=\"app-permissions\"]:not(.hidden) #app-permissions-section",
-      "expectText": "the next time it opens"
+      "expectText": "If an app is open in this tab, revoking closes it"
     },
     {
       "name": "#2236: a note a coding agent posted through the connector wears a via agent chip beside the author on the topic's discussion",
