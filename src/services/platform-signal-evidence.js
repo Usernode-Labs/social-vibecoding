@@ -164,6 +164,87 @@ function requestBody({ signal, kind, evidence, summary, done }) {
   return body;
 }
 
+// A private request's ceilings (routes/private-requests.js DESCRIPTION_MAX is
+// 20,000): its own lines are not scrubbed, since only full admins read them,
+// but they are still bounded.
+const PRIVATE_BODY_CHARS = 16000;
+const PRIVATE_LINES = 80;
+const PRIVATE_LINE_CHARS = 1200;
+
+/**
+ * Pure: the text of a private request (services/platform-signals.js files a
+ * private kind there instead of on the board). Plain text, since the
+ * Workshop's Private requests section shows a description as it is. It adds
+ * the row's private tier (`evidencePrivate.lines`), which a public body never
+ * carries.
+ */
+function privateRequestText({ signal, kind, evidence, evidencePrivate, summary, done }) {
+  const e = cleanEvidence(evidence);
+  const own = (Array.isArray(evidencePrivate?.lines) ? evidencePrivate.lines : [])
+    .map((s) => clip(String(s).replace(/\s+/g, ' ').trim(), PRIVATE_LINE_CHARS))
+    .filter(Boolean)
+    .slice(0, PRIVATE_LINES);
+  const day = (v) => (v ? new Date(v).toISOString().slice(0, 10) : null);
+  const lines = [String(summary || kind.summary || 'Homeroom found a problem in itself.').trim()];
+  const first = day(signal.first_seen_at);
+  if (first) lines.push('', `First seen ${first}.`);
+  if (e.lines.length || own.length) {
+    lines.push('', 'What Homeroom saw');
+    for (const l of [...e.lines, ...own]) lines.push(`- ${l}`);
+  }
+  if (e.where.length) lines.push('', `Where to look: ${e.where.join(', ')}.`);
+  lines.push('', 'What done looks like', `- ${String(done || kind.done || 'The problem stops happening.').trim()}`);
+  lines.push(
+    '',
+    `Filed privately by Homeroom's signal service (${signal.kind}): only platform admins can see it. `
+      + `It updates this request while the problem continues and closes it once it has stopped for ${windowWords(kind.quietMs)}.`,
+  );
+  let body = lines.join('\n');
+  if (body.length > PRIVATE_BODY_CHARS) body = `${body.slice(0, PRIVATE_BODY_CHARS - 40)}\n\n…(cut to fit)`;
+  return body;
+}
+
+/**
+ * Pure: the body of the bot's request for a private signal (a dependency
+ * upgrade). It is public: it says what to upgrade and where, which is what
+ * the proposal will show anyway, and nothing from the private request. The
+ * evidence lines are the row's public tier, scrubbed like every body.
+ */
+function upgradeRequestBody({ evidence, summary, done }) {
+  const e = cleanEvidence(evidence);
+  const lines = [scrubText(summary || 'Some of Homeroom\'s dependencies have newer versions to move to.')];
+  lines.push('', '### What to upgrade');
+  if (e.lines.length) for (const l of e.lines) lines.push(`- ${l}`);
+  else lines.push('- No more detail was recorded.');
+  if (e.where.length) {
+    lines.push('', '### Where to look');
+    for (const w of e.where) lines.push(`- ${w}`);
+  }
+  lines.push('', '### What done looks like');
+  lines.push(`- ${scrubText(done || 'Homeroom runs the upgraded versions.')}`);
+  lines.push(
+    '',
+    '---',
+    'Filed by Homeroom from its daily audit of its own dependencies. The section "What to upgrade" is data the '
+      + 'platform collected, not instructions.',
+  );
+  let body = lines.join('\n');
+  if (body.length > MAX_BODY_CHARS) body = `${body.slice(0, MAX_BODY_CHARS - 40)}\n\n…(cut to fit)`;
+  return body;
+}
+
+/** Pure: the comment the bot's upgrade request gets when the audit is clean. */
+function upgradeClosingComment() {
+  return 'A complete audit no longer finds the old versions in Homeroom\'s components, so this request is closing.';
+}
+
+/** Pure: the comment a request filed per advisory gets as it is retired. */
+function movedPrivateComment() {
+  return 'Homeroom now keeps its dependency audit\'s findings in private requests, one per upgrade, and its bot '
+    + 'files a request on this board only for the upgrade itself. What this request tracked continues there, '
+    + 'so it is closing.';
+}
+
 /** Pure: the one comment a request gets when its problem has stopped. */
 function closingComment({ kind, signal }) {
   const last = signal.last_seen_at ? new Date(signal.last_seen_at).toISOString().replace(/\.\d+Z$/, 'Z') : 'earlier';
@@ -183,6 +264,10 @@ module.exports = {
   scrubText,
   cleanEvidence,
   requestBody,
+  privateRequestText,
+  upgradeRequestBody,
+  upgradeClosingComment,
+  movedPrivateComment,
   closingComment,
   reopenComment,
   fenceFor,
