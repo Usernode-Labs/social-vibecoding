@@ -291,6 +291,10 @@
     "text": "Disconnect",
     "description": "Button on a connection's row, on its AI tool's card in Settings > Connectors: removes that connection's access to Homeroom."
   },
+  "connectors.list.reconnect": {
+    "text": "Reconnect",
+    "description": "Button under a connection whose sign-in ran out, on its AI tool's card in Settings > Connectors: opens that tool's setup steps at the one step that signs in again, so the person can connect it again without repeating the whole setup. Shown for Claude and Codex."
+  },
   "connectors.claudeSteps.open.title": {
     "text": "Open connector settings.",
     "description": "Step 1 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader."
@@ -3082,6 +3086,14 @@
   "connectors.row.expiredUnknownDate": {
     "text": "Sign-in ran out. Follow the steps to connect again.",
     "description": "Line on a connection's row in Settings > Connectors when its sign-in has ended and the date is not known. The steps are that tool's setup steps on the same card."
+  },
+  "connectors.row.expiredReconnect": {
+    "text": "Sign-in ran out {{when}}. Reconnect to use it again.",
+    "description": "Line on a connection's row in Settings > Connectors when its sign-in has ended and the tool can sign in again from one step of its setup (Claude, Codex). {{when}} is a date with time. Reconnect is the button under this line."
+  },
+  "connectors.row.expiredReconnectUnknownDate": {
+    "text": "Sign-in ran out. Reconnect to use it again.",
+    "description": "Line on a connection's row in Settings > Connectors when its sign-in has ended, the date is not known, and the tool can sign in again from one step of its setup (Claude, Codex). Reconnect is the button under this line."
   },
   "connectors.capabilities.readWrite": {
     "text": "Can read your apps and send proposals",
