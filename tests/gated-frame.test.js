@@ -44,7 +44,7 @@ test('any other members\' address keeps the product\'s own words for it, and sti
   assert.match(html, /data-gated-frame="page".*?<h1 class="fr-title">Sign in to open Secret Club<\/h1><p class="fr-purpose">This page is for members\. Everything public is open to look around meanwhile\.<\/p>/s);
   assert.doesNotMatch(html, /What lives here/, 'nothing is claimed about a page the visitor cannot see');
   assert.deepEqual([...html.matchAll(/<h2 class="fr-cap">([^<]+)<\/h2>/g)].map((m) => m[1]), ['Open without an account', 'New here?']);
-  assert.match(render({ waitlist: false }), /<button type="button" class="fr-btn fr-line">Sign up<\/button>/);
+  assert.match(render({ waitlist: false }), /<button type="button" class="fr-btn fr-line">Create account<\/button>/);
 });
 
 test('which page it is comes from the address, as the product reads it', () => {

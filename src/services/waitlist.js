@@ -440,6 +440,44 @@ async function grantPlatformAccess(pool, userId, { manualRelease = false } = {})
   return !!(result && result.rowCount > 0);
 }
 
+// The waitlist switched off (#6633, Admin › Waitlist, `waitlist_enabled` in
+// services/release-mail-setting.js): an account a self-serve sign-up just
+// MADE is let in at once. Called after the account is committed, by the
+// three sign-ups that make one (email-signup.js finishProvenEmail,
+// routes/phone-auth.js, routes/sign-in-providers.js afterSignIn), and only
+// for an account that call created: somebody who was already waiting when
+// the switch went off is the admin's choice (services/waitlist-open.js),
+// never let in by signing in again.
+//
+// The grant is grantPlatformAccess's UPDATE, so what a hand admit sets off
+// happens here too (joining Homeroom's community, queued invites applying,
+// the welcome message). It is not a release by hand: no generation-0 invite
+// skips, no waitlist row released, no "you're in" email. The account is
+// marked with an `open_signup_let_in` event, which is how Admin › Journey
+// tells it from an activation code or a direct grant.
+//
+// The switch is read past its cache, and a read that fails says the waitlist
+// is on. Best-effort like the link below: a failure leaves the account
+// waiting, as it would be with the waitlist on, and never fails the sign-up.
+// Returns true when this call let the account in.
+async function admitIfOpen(pool, userId) {
+  if (!userId) return false;
+  try {
+    const settings = require('./release-mail-setting');
+    if (await settings.waitlistEnabled(pool, { fresh: true })) return false;
+    const letIn = await grantPlatformAccess(pool, userId);
+    if (letIn) {
+      const events = require('./events');
+      await events.record(pool, { type: events.EVENT_TYPES.OPEN_SIGNUP_LET_IN, userId });
+      log.info('waitlist', 'Waitlist is off: new account let in at once', { userId });
+    }
+    return letIn;
+  } catch (err) {
+    log.error('waitlist', 'admitIfOpen failed', { userId, message: err.message });
+    return false;
+  }
+}
+
 // Account-creation linkage: point the email's waitlist row (if any) at
 // the new user, and if that row was already released, grant platform
 // access on the spot — this is the doc's "released off the waitlist,
@@ -735,6 +773,7 @@ module.exports = {
   mergeMoreAnswers,
   setVerifiedHandle,
   grantPlatformAccess,
+  admitIfOpen,
   linkUserByEmail,
   ensureAccountSignup,
   accountAnswers,

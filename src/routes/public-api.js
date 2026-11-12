@@ -31,6 +31,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const firstSession = require('../services/first-session');
+const releaseMailSetting = require('../services/release-mail-setting');
 const signInProviders = require('../services/sign-in-providers');
 const phoneAuth = require('../services/firebase-phone-auth');
 const { clientIp } = require('../services/client-ip');
@@ -324,6 +325,10 @@ function publicApiRoutes(config) {
       waitlist_url: waitlistUrl(config),
       marketing_url: siteUrl(config),
       story_landing: await firstSession.storyLandingEnabled(pool),
+      // #6633: whether a new account waits to be admitted (Admin ›
+      // Waitlist). The signed-out pages say "Create account" instead of
+      // "Join the waitlist" when it is off. On when it cannot be read.
+      waitlist_enabled: await releaseMailSetting.waitlistEnabled(pool),
       sign_in_providers: await signInProviders.offeredProviders(pool, config),
       // Phone-number sign-in (services/firebase-phone-auth.js): offered
       // only when its four Firebase values are set and the flag is on.

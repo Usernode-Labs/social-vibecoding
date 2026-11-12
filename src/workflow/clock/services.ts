@@ -503,6 +503,14 @@ export const JOBS: readonly Job[] = Object.freeze([
     },
   },
   {
+    // "Let them all in" (#6633): the people who were waiting when an admin
+    // turned the waitlist off, admitted a few a beat under the release
+    // email's switch and the mail budget (services/waitlist-open.js). A
+    // stored run, so a restart carries on; nothing to do without one.
+    name: 'waitlist-admit-all', everyMs: MIN,
+    run: (_ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/waitlist-open').admitAllTick(config, pool),
+  },
+  {
     // "Your agent is waiting on you", once its delay has passed.
     name: 'connector-input-waits', everyMs: MIN,
     run: async (_ctx: WorkContext, { pool }: JobDeps) => ({ sent: await legacy('services/connector-input-waits').sweepDue(pool) }),

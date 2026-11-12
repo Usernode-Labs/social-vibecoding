@@ -62,8 +62,13 @@ test('#1548: the release path supplies the token it promises', () => {
   // query has to return one and the admin route has to pass it on.
   assert.match(read('src/services/waitlist.js'), /RETURNING w\.id, w\.email, w\.released_at, w\.linked_user_id, w\.more_token,/,
     'releaseWaitlistSignup returns more_token');
-  assert.match(read('src/routes/topochain/admin/waitlist.js'), /moreToken: released\.more_token \|\| null,/,
-    'the release route passes it to the mail');
+  // The notice is one function, shared by the admin routes and "Let them
+  // all in" (#6633): it passes the token on, and the route sends through it.
+  assert.match(read('src/services/waitlist-release-mail.js'), /moreToken: released\.more_token \|\| null,/,
+    'the release notice passes it to the mail');
+  assert.match(read('src/routes/topochain/admin/waitlist.js'),
+    /const sendReleaseMail = \(released, mobile\) => releaseMail\.sendReleaseMail\(config, pool, released, mobile\);/,
+    'and the release route sends that notice');
 });
 
 test('signup is a login-screen route and the segment reaches the screen', () => {

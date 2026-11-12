@@ -964,6 +964,143 @@ function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+// ── The waitlist itself: whether a new account waits (#6633) ────────────
+//
+// On (the default), an account a sign-up makes waits here until admitted.
+// Off, it is let in as soon as it exists (services/waitlist.js admitIfOpen):
+// no waiting room and no "you're in" email. Turning it off asks, each time,
+// what to do with the people already waiting: keep them in the list, or let
+// them all in, which a background run does a few at a time under the release
+// email's switch (services/waitlist-open.js). So unticking the box only
+// opens that question; one of its two buttons is what switches it off.
+
+type WaitlistSwitch = {
+  enabled: boolean;
+  updated_at?: string | null;
+  updated_by?: string | null;
+  waiting: number;
+  admitting?: { remaining: number } | null;
+  release_email: boolean;
+};
+
+function waitingWords(n: number): string {
+  return n === 1 ? '1 person is waiting now.' : `${n} people are waiting now.`;
+}
+
+function WaitlistSwitchPanel({ onChanged }: { onChanged?: () => void }) {
+  const [setting, setSetting] = useState<WaitlistSwitch | null>(null);
+  const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
+  const [asking, setAsking] = useState(false);
+  const saving = useRef(false);
+
+  const load = useCallback(async () => {
+    setError(null);
+    const { status, ok, data } = await fetchJson('/api/v4/admin/waitlist-enabled');
+    if (!ok || !data?.success) { setError({ status, message: data?.error || null }); return; }
+    setSetting(data.data);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const save = useCallback(async (body: { enabled: boolean; waiting?: 'keep' | 'admit' }) => {
+    if (!canWrite() || saving.current) return;
+    saving.current = true;
+    const { ok, data } = await send('PUT', '/api/v4/admin/waitlist-enabled', body);
+    saving.current = false;
+    if (!ok || !data?.success) { topo()._alert(data?.error || 'Could not save the waitlist setting.'); return; }
+    setAsking(false);
+    setSetting(data.data);
+    if (onChanged) onChanged();
+  }, [onChanged]);
+
+  // Ticking it switches the waitlist on at once (or only takes the question
+  // back, when it was never switched off). Unticking only asks.
+  const toggle = useCallback((next: boolean) => {
+    if (next) {
+      setAsking(false);
+      if (!setting?.enabled) save({ enabled: true });
+      return;
+    }
+    load();
+    setAsking(true);
+  }, [load, save, setting]);
+
+  const help = 'Someone who creates an account waits here until admitted. Off, a new account is let in '
+    + 'as soon as it exists: no waiting room and no "you\'re in" email.';
+  const mailNote = setting?.release_email
+    ? 'Each person gets the "you\'re in" email, as with Admit, because the release email is on. They are let in a few a minute, so a long list takes a while.'
+    : 'Nobody is emailed, because the release email is off.';
+  const left = setting?.admitting ? setting.admitting.remaining : 0;
+  return (
+    <div id="admin-topo-wl-switch">
+      <Panel title="Waitlist">
+        {error ? (
+          <ErrorState title="Couldn't load the waitlist setting" status={error.status} message={error.message} onRetry={load} />
+        ) : null}
+        {!error && !setting ? <Skeleton rows={1} /> : null}
+        {!error && setting ? (
+          canWrite() ? (
+            <CheckField id="admin-topo-wl-switch-enabled" label="New accounts wait to be admitted" help={help} checked={setting.enabled && !asking} onChange={toggle} />
+          ) : (
+            <p className="text-xs text-zinc-600 dark:text-zinc-400">
+              <span className="font-medium">{setting.enabled ? 'New accounts wait to be admitted.' : 'The waitlist is off: new accounts are let in at once.'}</span>
+              {` ${help}`}
+            </p>
+          )
+        ) : null}
+        {!error && setting && asking ? (
+          <div id="admin-topo-wl-switch-ask" className="mt-2 rounded-lg border border-amber-300 dark:border-amber-700 p-3">
+            <p className="text-sm font-medium">Turn the waitlist off?</p>
+            <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+              {setting.waiting
+                ? `${waitingWords(setting.waiting)} New accounts will be let in at once. What about the people already waiting?`
+                : 'Nobody is waiting now. New accounts will be let in at once.'}
+            </p>
+            {setting.waiting ? (
+              <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{`If you let them all in: ${mailNote}`}</p>
+            ) : null}
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button type="button" id="admin-topo-wl-switch-keep" className={BTN.secondary} onClick={() => save({ enabled: false, waiting: 'keep' })}>
+                {setting.waiting ? 'Turn off, keep them waiting' : 'Turn off'}
+              </button>
+              {setting.waiting ? (
+                <button type="button" id="admin-topo-wl-switch-admit" className={BTN.primary} onClick={() => save({ enabled: false, waiting: 'admit' })}>
+                  Turn off, let them all in now
+                </button>
+              ) : null}
+              <button type="button" id="admin-topo-wl-switch-cancel" className={BTN.secondary} onClick={() => setAsking(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {!error && setting && !setting.enabled && !asking ? (
+          <div id="admin-topo-wl-switch-off" className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+            {setting.admitting ? (
+              <p>
+                {`Letting in the people who were waiting: ${left} still to go. ${mailNote} Turning the waitlist back on stops this.`}
+              </p>
+            ) : setting.waiting ? (
+              <p>
+                {`${waitingWords(setting.waiting)} They stay in the list until admitted. `}
+                {canWrite() ? (
+                  <button type="button" id="admin-topo-wl-switch-admit-rest" className={BTN.row} onClick={() => save({ enabled: false, waiting: 'admit' })}>
+                    Let them all in now
+                  </button>
+                ) : null}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {setting?.updated_at ? (
+          <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+            {`Last switched ${fmt(setting.updated_at)}${setting.updated_by ? ` by ${setting.updated_by}` : ''}.`}
+          </p>
+        ) : null}
+      </Panel>
+    </div>
+  );
+}
+
 // ── The story landing: what a signed-out visitor is asked to do ─────────
 //
 // On (the default), the landing tells the first-session story and asks them
@@ -1821,6 +1958,7 @@ function WaitlistScreen() {
               <BatchAdmitPanel onClose={() => setShowBatch(false)} onAdmitted={onBatchAdmitted} />
             ) : null}
             {showAnalytics ? <WaitlistAnalyticsPanel onClose={() => setShowAnalytics(false)} /> : null}
+            <WaitlistSwitchPanel onChanged={onBatchAdmitted} />
             <StoryLandingPanel />
             <ReleaseEmailPanel />
             <ReminderEmailPanel />
@@ -1920,5 +2058,5 @@ function WaitlistScreen() {
 // an admin reads about each pasted address.
 export {
   SurveyAnswers, WaitlistScreen, WAITLIST_COLUMNS, WaitlistDetails, reminderLine,
-  BatchAdmitPanel, admitOutcomeLine, resolutionSummary, resolvedDetail, waitlistEmpty,
+  BatchAdmitPanel, WaitlistSwitchPanel, admitOutcomeLine, resolutionSummary, resolvedDetail, waitlistEmpty,
 };
