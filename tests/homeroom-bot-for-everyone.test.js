@@ -1,15 +1,22 @@
 'use strict';
 
-// The Homeroom bot works for everyone, on every project but a paused one.
+// The Homeroom bot works for everyone, on every project but a paused one,
+// unless an admin chooses verified accounts only (#6632).
 //
 // It was given out one person at a time first: a DM list an admin kept, a
 // Settings -> Experimental switch that put you on it, a list of live apps,
 // then an admin's switch to everyone and a box for the platform's own
 // project. All of that is gone, and this pins that it stays gone:
-//   1. the settings carry no list, no audience and no platform switch, and
-//      a patch naming them changes nothing;
-//   2. who has the bot is who may use the platform, and where it acts for
-//      real is every app but a paused one, the platform's own included;
+//   1. the settings carry no list of people or apps and no platform switch,
+//      and a patch naming them changes nothing. What they do carry since
+//      #6632 is one rule over who the bot works for: `worksFor`, 'everyone'
+//      who is let in (the default, and today's behaviour) or 'verified'
+//      accounts, with the signals that count. It is a rule about proofs an
+//      account holds, never a list of names, and it is not the retired
+//      `homeroom_bot_audience` row, which schema.sql still deletes;
+//   2. who has the bot is who may use the platform (while the rule is
+//      'everyone'), and where it acts for real is every app but a paused
+//      one, the platform's own included;
 //   3. the Settings switch and its route are gone, and /api/auth/me still
 //      reports `homeroomBotDm` from platform access;
 //   4. schema.sql retires the rows and the trigger, and writes the moment
@@ -36,7 +43,7 @@ const { authRoutes } = require('../src/routes/auth');
 
 // ── 1. The settings ─────────────────────────────────────────────────────
 
-test('the settings carry no list, no audience and no platform switch', () => {
+test('the settings carry no list of people or apps and no platform switch', () => {
   const s = bot.parseSettings([
     { key: 'homeroom_bot_mode', value: 'shadow' },
     { key: 'homeroom_bot_audience', value: 'list' },
@@ -49,6 +56,8 @@ test('the settings carry no list, no audience and no platform switch', () => {
     assert.equal(Object.hasOwn(s, key), false, `${key} is gone`);
   }
   assert.equal(s.everyoneSince, '2026-10-10T09:00:00.000Z', 'the moment it went on for everyone is kept');
+  // #6632: the retired row is not the new rule's, whatever it holds.
+  assert.equal(s.worksFor, 'everyone', 'the retired audience row switches nothing on');
   for (const patch of [{ audience: 'list' }, { livePlatform: false }, { dmUsers: ['ada'] }, { liveApps: ['plant-pal'] }]) {
     assert.deepEqual(bot.validateSettingsPatch(patch), { ok: false, error: 'Nothing to update' }, JSON.stringify(patch));
   }
@@ -72,9 +81,39 @@ test('a database without the moment counts from now, never from no time at all',
   assert.ok(Date.parse(s.everyoneSince) >= before);
 });
 
+test('#6632: the one rule the settings carry is who the bot works for, everyone by default', () => {
+  const s = bot.parseSettings([]);
+  assert.equal(s.worksFor, 'everyone');
+  assert.deepEqual(s.verifiedSignals, ['phone', 'x', 'github'], 'what starts ticked when verified is first chosen');
+  assert.equal(s.verifiedGrandfather, true);
+  assert.equal(s.verifiedSince, null);
+  const on = bot.parseSettings([
+    { key: 'homeroom_bot_works_for', value: 'verified' },
+    { key: 'homeroom_bot_verified_signals', value: '["github","phone","nonsense"]' },
+    { key: 'homeroom_bot_verified_grandfather', value: 'off' },
+    { key: 'homeroom_bot_verified_since', value: '2026-11-12T09:00:00.000Z' },
+  ]);
+  assert.deepEqual(
+    [on.worksFor, on.verifiedSignals, on.verifiedGrandfather, on.verifiedSince],
+    ['verified', ['phone', 'github'], false, '2026-11-12T09:00:00.000Z'],
+  );
+  assert.deepEqual(bot.parseSettings([{ key: 'homeroom_bot_verified_signals', value: 'not json' }]).verifiedSignals, [],
+    'a stored list that does not parse is no signal: the closed side');
+  for (const key of ['KEY_WORKS_FOR', 'KEY_VERIFIED_SIGNALS', 'KEY_VERIFIED_GRANDFATHER', 'KEY_VERIFIED_SINCE']) {
+    assert.ok(bot.SETTING_KEYS ? bot.SETTING_KEYS.includes(bot[key]) : bot[key], `${key} is read with the settings`);
+  }
+  assert.notEqual(bot.KEY_WORKS_FOR, 'homeroom_bot_audience', 'not the retired row schema.sql deletes');
+  assert.deepEqual(bot.validateSettingsPatch({ worksFor: 'verified' }), { ok: true, updates: [['homeroom_bot_works_for', 'verified']], weeklyLimitCents: undefined });
+  assert.equal(bot.validateSettingsPatch({ worksFor: 'list' }).ok, false);
+  assert.deepEqual(bot.validateSettingsPatch({ worksFor: 'verified', verifiedSignals: [] }),
+    { ok: false, error: 'Tick at least one signal that counts as verified.' }, 'never locked for everyone by accident');
+  assert.equal(bot.validateSettingsPatch({ verifiedSignals: ['fax'] }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ verifiedSince: '2020-01-01T00:00:00.000Z' }).ok, false, 'the moment is never a patch\'s');
+});
+
 // ── 2. Who has it, and where it acts ─────────────────────────────────────
 
-test('who has the bot is who may use the platform', () => {
+test('who has the bot is who may use the platform, while the rule is everyone', () => {
   const s = bot.parseSettings([]);
   assert.equal(dm.hasBot(s, { username: 'ada', hasPlatformAccess: true }), true);
   assert.equal(dm.hasBot(s, { username: 'ada', privateMember: true }), true, 'a private member');
@@ -82,6 +121,15 @@ test('who has the bot is who may use the platform', () => {
   assert.equal(dm.hasBot(s, { username: 'ada' }), false, 'not let in yet');
   assert.equal(dm.hasBot(s, { username: 'capture', hasPlatformAccess: true, isSynthetic: true }), false, 'never a synthetic account');
   assert.equal(dm.hasBot(null, { username: 'ada', hasPlatformAccess: true }), false);
+  // #6632: with verified accounts only, an admin, or somebody the rule was
+  // read for and passes; never somebody it was not read for.
+  const v = bot.parseSettings([{ key: 'homeroom_bot_works_for', value: 'verified' }]);
+  assert.equal(dm.hasBot(v, { username: 'ada', hasPlatformAccess: true }), false, 'not read: the closed side');
+  assert.equal(dm.hasBot(v, { username: 'ada', hasPlatformAccess: true, botVerified: true }), true);
+  assert.equal(dm.hasBot(v, { username: 'ada', hasPlatformAccess: true, botVerified: false }), false);
+  assert.equal(dm.hasBot(v, { username: 'ada', isAdmin: true }), true, 'admins always have the bot');
+  assert.equal(dm.hasBot(v, { username: 'ada', botVerified: true }), false, 'verified, and still not let in');
+  assert.equal(dm.hasBot(v, { username: 'capture', hasPlatformAccess: true, isSynthetic: true, botVerified: true }), false);
   assert.match(dm.NOT_ENABLED_TEXT, /as soon as Homeroom lets your account in/);
   assert.doesNotMatch(dm.NOT_ENABLED_TEXT, /Settings|Experimental|switch|—/);
 });

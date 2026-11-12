@@ -5120,7 +5120,10 @@ async function botDoorFor(pool, app, user) {
   try {
     if (!app?.slug || !user?.id || user.isSynthetic) return null;
     const settings = await settingsModule().readSettings(pool);
-    if (!(await botWorksFor(pool, settings, user)) || !require('./homeroom-bot-live').isLiveFor(settings, app)) return null;
+    // #6632: somebody let in whom only the verified-accounts rule holds is
+    // still offered the door: their press is answered `bot_verify_required`
+    // (askBotToBuild), which opens the verify sheet and is then sent again.
+    if (!hasBot({ ...settings, worksFor: 'everyone' }, user) || !require('./homeroom-bot-live').isLiveFor(settings, app)) return null;
     return { typicalMinutes: await typicalMinutes(pool) };
   } catch (err) {
     log.warn('homeroom-bot-dm', 'Could not read whether the bot builds here', { app: app?.slug, err: err.message });

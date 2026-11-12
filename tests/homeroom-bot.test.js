@@ -331,6 +331,9 @@ test('settings default to off and clamp their numbers', () => {
     // Homeroom bot parity, P8: pictures on the default image model, 24 a
     // person a week (services/bot-pictures.js).
     imageModel: 'google/gemini-2.5-flash-image', pictureWeeklyCap: 24,
+    // #6632: it works for everyone who is let in until an admin chooses
+    // verified accounts; phone, X and GitHub are what start ticked then.
+    worksFor: 'everyone', verifiedSignals: ['phone', 'x', 'github'], verifiedGrandfather: true, verifiedSince: null,
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },

@@ -268,6 +268,10 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
       // The staging demo's cards are fixtures: there is nothing to decide.
       if (isDemo(req)) return res.json({ ok: true, demo: true });
+      // #6632: a card's tap is the bot acting for them. With the bot for
+      // verified accounts only, an unverified tap is asked to verify first.
+      const locked = await require('../services/homeroom-bot-verified').refusalFor(pool, req.user);
+      if (locked) return res.status(locked.status).json({ error: locked.error, code: locked.code, signals: locked.signals });
       const out = await require('../services/homeroom-bot-cards').decide(pool, config, {
         user: req.user, messageId: req.params.messageId, action: req.body?.action, value: req.body?.value,
       });
