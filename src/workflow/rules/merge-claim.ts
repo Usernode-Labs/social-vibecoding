@@ -20,6 +20,10 @@ export interface ClaimFacts {
   shotsDetail: Record<string, unknown> | null;
   locked: boolean;
   adminYes: boolean;
+  // #6642: the commit the Content rules review flagged, while
+  // CONTENT_REVIEW_MODE is `admin`; null in every other mode. A flag on the
+  // claimed head needs a full admin's yes, like a locked app.
+  contentFlagSha: string | null;
   // The app's merges are paused by a red main (services/main-watch.js
   // describe: its own column, or red at a commit no admin resumed).
   mainPaused: boolean;
@@ -27,13 +31,24 @@ export interface ClaimFacts {
 
 const lower = (v: unknown) => (v == null ? null : String(v).toLowerCase());
 
+// CONTENT_REVIEW_MODE `admin` (services/content-review.js): a flagged change
+// waits for an admin instead of failing its checks or merging unremarked.
+export function contentAdminHold(env: Record<string, string | undefined> = process.env): boolean {
+  return String(env.CONTENT_REVIEW_MODE ?? '').trim().toLowerCase() === 'admin';
+}
+
 export async function readClaimFacts(db: Queryable, sessionId: number): Promise<ClaimFacts | null> {
   const { rows: [r] } = await db.query(
     `SELECT cs.check_state, cs.checks_commit_sha, cs.unit_suite_fresh_sha, cs.shots_state, cs.shots_detail,
             a.locked, a.main_check_state, a.main_check_sha, a.main_check_resumed_sha, a.main_check_paused_sha,
             EXISTS (SELECT 1 FROM pr_votes pv JOIN users u ON u.id = pv.user_id
                      WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND ${currentVotePredicateSql('pv', 'cs')}
-                       AND u.is_admin = TRUE AND u.admin_readonly = FALSE) AS admin_yes
+                       AND u.is_admin = TRUE AND u.admin_readonly = FALSE) AS admin_yes,
+            (SELECT lower(r->>'reviewedSha')
+               FROM jsonb_array_elements(CASE WHEN jsonb_typeof(cs.test_results) = 'array'
+                                              THEN cs.test_results ELSE '[]'::jsonb END) r
+              WHERE r->>'name' = 'Content rules' AND r->>'status' = 'fail'
+              LIMIT 1) AS content_flag_sha
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [sessionId]);
   if (!r) return null;
   const paused = r.main_check_paused_sha !== undefined
@@ -49,6 +64,7 @@ export async function readClaimFacts(db: Queryable, sessionId: number): Promise<
     shotsDetail: r.shots_detail && typeof r.shots_detail === 'object' ? r.shots_detail : null,
     locked: !!r.locked,
     adminYes: !!r.admin_yes,
+    contentFlagSha: contentAdminHold() ? lower(r.content_flag_sha) : null,
     mainPaused: paused,
   };
 }
@@ -79,7 +95,8 @@ export function forceWaivesChecks(force: boolean, forcedHead: string | null, hea
 export function claimRefusal(f: ClaimFacts, x: ClaimInputs): string | null {
   if (!x.force) {
     if (!x.votesMergeable) return 'not_mergeable';
-    if (f.locked && !f.adminYes) return 'awaiting_admin';
+    const flagged = !!f.contentFlagSha && !!x.head && f.contentFlagSha === x.head;
+    if ((f.locked || flagged) && !f.adminYes) return 'awaiting_admin';
   }
   if (!forceWaivesChecks(x.force, x.forcedHead, x.head)) {
     const settled = (f.checkState === 'passing' || f.checkState === 'skipped')

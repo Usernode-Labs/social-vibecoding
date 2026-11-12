@@ -6474,6 +6474,24 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
     dstep({ phase: 'gate:checks', message: `Checks gate: state = ${checkState}.`, detail: { checkState } });
     gateTrace.pass('checks', { checkState });
 
+    // #6642: a change the Content rules review flagged on this exact head
+    // waits for a full admin's yes while CONTENT_REVIEW_MODE is `admin`.
+    // It sits after the checks because the flag is one of their rows: until
+    // they settle on the reviewed head there is no verdict to hold on. An
+    // admin's force is that admin's approval, as it is for a locked app.
+    const contentHold = force ? null
+      : require('../services/content-review').adminHold(checkRows[0]?.test_results, reviewedHead);
+    if (contentHold && !(await hasAdminYesVote(pool, session.id))) {
+      log.info('votes', 'Content rules flag is waiting for an admin yes', { sessionId: session.id });
+      dstep({ phase: 'gate:content', level: 'warn', message: 'The Content rules review flagged this head and no admin has voted yes, so the merge is blocked.', detail: { reason: contentHold.reason } });
+      gateTrace.context({ contentHold: true }).stop('admin_yes', 'waiting', {
+        note: `The Content rules review flagged this change, so an admin has to vote yes as well. ${contentHold.reason}`,
+      });
+      gateSave();
+      dend('blocked', 'Blocked: flagged by the Content rules review, awaiting an admin yes vote.');
+      return { merged: false, yesCount, needed: required, awaitingAdmin: true };
+    }
+
     // #2380: when enforcement is enabled, a required shots run is an
     // exact-head merge gate. This is not pixel-regression approval: the hard
     // replay and relevance reviewer have already done their bounded jobs.
