@@ -82,8 +82,9 @@ const GATE_HEADERS = ['x-usernode-identity', 'x-usernode-upstream', 'x-usernode-
 // What a refusal may carry back to the visitor. `set-cookie` is what makes
 // the sign-in hop work at all: the redirect that starts it sets the state
 // cookie, and the callback's sets the access cookie (every value, when
-// there are several).
-const RELAYED = ['location', 'set-cookie', 'content-type', 'cache-control', 'referrer-policy', 'retry-after'];
+// there are several). The frame door page (src/services/edge-gate.js) comes
+// with its own Content-Security-Policy, which says who may frame it.
+const RELAYED = ['location', 'set-cookie', 'content-type', 'cache-control', 'referrer-policy', 'retry-after', 'content-security-policy'];
 
 function cleanHeaders(headers) {
   const out = {};

@@ -79,9 +79,9 @@ shared site too:
 4. Provision `onhomeroom.app` for production apps and previews: DNS at a
    provider cert-manager can drive (wildcards need DNS-01), wildcard TLS,
    shared assets, gate, preview and custom-domain routes, network policy and
-   ingress, the iOS App-Bound Domains list, and the token relay for private
-   apps in shell frames (the gate's Lax cookie is not sent to a cross-site
-   frame). Strict mode needs apps and previews off the platform's site, not
+   ingress, and the iOS App-Bound Domains list. Private apps in shell frames
+   are ready for it (the frame door, below). Strict mode needs apps and
+   previews off the platform's site, not
    apart from each other. Inventory and retire old app/preview routes on the
    platform site, including old captures and custom domains. A configuration
    check cannot prove their absence. Do not leave an alias serving untrusted
@@ -93,7 +93,46 @@ shared site too:
    legacy cookie: schedule a one-time sign-in for existing browser sessions.
    Keep the platform origin and OAuth registrations stable.
 
+## Private apps in a cross-site frame (the frame door)
+
+The gate's door cookie is SameSite=Lax, so it is never sent to a cross-site
+frame, and with third-party cookies blocked no unpartitioned cookie is kept
+there; the in-frame sign-in hop cannot run either, because its state cookie
+would be a third-party cookie. Once the configured hosts put apps on another
+ICANN registrable domain than the platform (`edge-gate.js`
+`framesCrossSite`; today's layout answers no and is unchanged):
+
+- A frame's token opens a partitioned door (CHIPS: `__Host-`, `Secure`,
+  `SameSite=None`, `Partitioned`), kept only under the platform's top-level
+  site. It covers the frame's assets, cookie-only fetches, WebSocket
+  handshakes and in-frame navigations. It stays door-only; the app's identity
+  is still the token it forwards. Top-level visits keep the Lax cookie.
+- A frame navigation holding nothing valid gets the frame door page (401,
+  framed only by the platform) instead of the hop. It asks the shell by
+  postMessage, to the platform origin only, for a fresh token; the shell
+  (`app-view.js` `handleFrameDoorMessage`) answers only its own App-tab or
+  preview frame, for that frame's app, at the origin the frame was pointed
+  at. The page trades the token at `/__usernode_access?frame=` and returns
+  to the page asked for, fragment included (an offline app's `#un-token`).
+- A browser that keeps no cookie in the frame (WebKit shipped partitioned
+  cookies in Safari 18.4, switched them off in 18.5 to 26.1, and brought them
+  back in 26.2) is shown that the app cannot open inside Homeroom, with a link
+  that opens it in its own tab, where the top-level hop works.
+
+The Storage Access API was not used: WebKit grants it only after a user
+gesture in the frame, a prompt, and prior first-party interaction with the
+apps' site. Neither platform cookie changes.
+
 ## Acceptance
+
+`node scripts/verify-framed-private-app.js --browser chrome --layout cross
+--expect pass` runs a synthetic shell on one registrable domain framing a
+private app behind the real gate on another, with third-party cookies blocked
+(confirmed by a probe frame), and checks assets, fetches, a WebSocket and an
+in-frame navigation, for a token frame and an offline app's tokenless one.
+`--layout same` checks today's layout; `--no-frame-cookies --expect blocked`
+checks the page a browser without partitioned cookies gets. `--serve` keeps it
+up for a hand-driven browser such as the iOS Simulator's Safari.
 
 Run `node scripts/verify-browser-site-isolation.js` with Chrome (or set
 `CHROME_EXECUTABLE`) and capture's pinned `puppeteer-core` installed. The

@@ -55,6 +55,13 @@ test.before(async () => {
       }
     }
     if (uri.startsWith('/deny')) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('Not found'); }
+    // The frame door page (src/services/edge-gate.js): a 401 page that says
+    // who may frame it.
+    if (uri.startsWith('/frame-door')) {
+      res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
+        'content-security-policy': "default-src 'none'; frame-ancestors https://apex.example" });
+      return res.end('<!doctype html><title>door</title>');
+    }
     if (uri.startsWith('/redirect')) {
       res.writeHead(302, { location: 'https://apex.example/__access/authorize?x=1', 'set-cookie': ['__Host-usernode_access=new; Path=/; Secure; HttpOnly'], 'x-secret': 'never relayed' });
       return res.end();
@@ -243,6 +250,12 @@ test('a refusal is the visitor’s answer, and only its safe headers travel', as
   const denied = await through('/deny');
   assert.equal(denied.status, 404);
   assert.equal(denied.text, 'Not found');
+  const door = await through('/frame-door', { headers: { 'sec-fetch-dest': 'iframe' } });
+  assert.equal(door.status, 401, 'the frame door page, never the app');
+  assert.equal(door.text, '<!doctype html><title>door</title>');
+  assert.equal(door.headers['content-security-policy'], "default-src 'none'; frame-ancestors https://apex.example",
+    'with the policy that says only the platform may frame it');
+  assert.deepEqual(appRequests, []);
 });
 
 test('the sign-in hop’s redirects carry every cookie they set', async () => {
