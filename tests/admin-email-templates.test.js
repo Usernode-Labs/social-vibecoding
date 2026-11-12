@@ -82,17 +82,17 @@ test('email template admin routes against PostgreSQL', { timeout: 180000 }, asyn
   await t.test('the list answers any admin with every action, template and layout', async () => {
     const res = await call('GET', '/api/admin/email-templates', undefined, 'view');
     assert.equal(res.status, 200);
-    assert.equal(res.body.actions.length, 15);
+    assert.equal(res.body.actions.length, 16);
     const otp = res.body.actions.find((a) => a.action === 'otp');
     assert.deepEqual(otp.required, { html: ['code'], text: ['code'] });
     assert.ok(otp.placeholders.some((p) => p.name === 'code'));
     assert.ok(res.body.actions.find((a) => a.action === 'build_ready').placeholders.find((p) => p.name === 'lead').fromCode);
-    assert.equal(res.body.templates.filter((r) => r.status === 'live').length, 15);
+    assert.equal(res.body.templates.filter((r) => r.status === 'live').length, 16);
     assert.ok(Array.isArray(res.body.templates[0].locales));
     assert.ok(res.body.layouts.length >= 1);
     const layouts = await call('GET', '/api/admin/email-layouts', undefined, 'view');
     assert.equal(layouts.status, 200);
-    assert.equal(layouts.body.layouts[0].usedBy.length, 15);
+    assert.equal(layouts.body.layouts[0].usedBy.length, 16);
     const outsider = await call('GET', '/api/admin/email-templates', undefined, 'none');
     assert.notEqual(outsider.status, 200, 'not an admin: adminMiddleware turns them away');
   });

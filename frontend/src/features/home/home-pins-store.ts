@@ -25,6 +25,7 @@
  * that fails keeps the numbers already on screen instead of zeroing them.
  */
 import { createStore } from '../../lib/plain-store.js';
+import { sharedJson } from '../../lib/shared-read';
 import { keepDevicePins, takeDevicePins } from '../guest/device-pins';
 import { loadCommunities } from '../workshop/community-scope';
 
@@ -110,9 +111,11 @@ async function readAll(): Promise<void> {
   try {
     const [pinsBody, appsBody, countsBody] = await Promise.all([
       readJson('/api/me/home-pins'),
-      readJson('/api/apps?scope=joined').catch(() => ({ apps: [] })),
+      // These two are the community scope's reads too (loadCommunities), a
+      // moment apart on every page load: one request serves both (#6591).
+      sharedJson<any>('/api/apps?scope=joined').catch(() => ({ apps: [] })),
       // The current numbers, never the worker's saved copy (request 6500).
-      readJson('/api/workshop/counts', { credentials: 'same-origin', cache: 'no-cache' }).catch(() => null),
+      sharedJson<any>('/api/workshop/counts', { fresh: true }).catch(() => null),
     ]);
     const joined = (Array.isArray(appsBody?.apps) ? appsBody.apps : [])
       .filter((a: any) => a && a.slug && a.is_member && !a.demo);

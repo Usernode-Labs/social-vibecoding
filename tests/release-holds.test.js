@@ -45,7 +45,7 @@ test('a test file trips nothing, and several rules come back in the listed order
     file('public/app.js', ['+  usernode.sendTransaction(a, b);']),
   ].join('\n');
   assert.deepEqual(holds.tripped({ diff, contentFlagged: true }), ['wallet', 'secret', 'capability', 'content']);
-  assert.deepEqual(holds.RULE_KEYS, ['wallet', 'people', 'secret', 'capability', 'script', 'content']);
+  assert.deepEqual(holds.RULE_KEYS, ['wallet', 'people', 'secret', 'capability', 'script', 'content', 'unread']);
   assert.deepEqual(holds.cleanRules(['content', 'nonsense', 'wallet']), ['wallet', 'content']);
 });
 
@@ -74,8 +74,8 @@ function pool(routes) {
   };
 }
 
-test('the platform\'s own app is never read, and a failed diff read leaves the hold alone', async () => {
-  const db = pool([]);
+test('the platform\'s own app is never read, and a diff that cannot be read whole holds the change', async () => {
+  const db = pool([[/INSERT INTO release_holds/, { rows: [{ id: 3, opened: true }], rowCount: 1 }]]);
   assert.equal(await holds.evaluate({
     pool: db, session: { id: 1 }, app: { id: 2, self_hosted: true }, repoOwner: 'o', repoName: 'r', commitHash: 'a'.repeat(40),
   }), null);
@@ -87,10 +87,16 @@ test('the platform\'s own app is never read, and a failed diff read leaves the h
   assert.equal(first, null, 'a project\'s first version is not held');
   const out = await holds.evaluate({
     pool: db, session: { id: 1 }, app: { id: 2 }, repoOwner: 'o', repoName: 'r', commitHash: 'b'.repeat(40),
-    deps: { isFirstVersion: async () => false, github: { getProposalDiff: async () => { throw new Error('down'); } } },
+    deps: { isFirstVersion: async () => false, notify: async () => {}, github: { getProposalDiff: async () => { throw new Error('down'); } } },
   });
-  assert.equal(out, null);
-  assert.equal(db.seen.length, 0, 'nothing was written');
+  assert.equal(out.state, 'held', 'a change that could not be read is held, not waved through');
+  assert.deepEqual(out.rules, ['unread']);
+  holds._resetCache();
+  const cut = await holds.evaluate({
+    pool: db, session: { id: 1 }, app: { id: 2 }, repoOwner: 'o', repoName: 'r', commitHash: 'e'.repeat(40),
+    deps: { isFirstVersion: async () => false, notify: async () => {}, github: { getProposalDiff: async () => ({ diff: file('README.md', ['+hello']), truncated: true }) } },
+  });
+  assert.deepEqual(cut.rules, ['unread'], 'a diff cut off at the budget never ends a hold or avoids one');
 });
 
 test('a head that trips a rule opens a hold and tells the admins; one that trips none ends it', async () => {

@@ -137,7 +137,7 @@ test('a held change against the full schema', async (t) => {
   assert.equal(lists.waiting[0].author, 'maya');
   assert.deepEqual(lists.history.map((h) => [h.sessionId, h.outcome]), [[own, 'approved']]);
   assert.equal(lists.history[0].needsAnotherAdmin, true, 'the viewer wrote it');
-  assert.equal(lists.rules.length, 6);
+  assert.equal(lists.rules.length, 7);
 
   // ── A later head that trips nothing ends it; a no declines it ──────────
   assert.equal((await holds.apply(pool, { sessionId: draft, appId, commitHash: 'e'.repeat(40), rules: [] })).state, 'fixed');

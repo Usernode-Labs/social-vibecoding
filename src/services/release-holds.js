@@ -82,6 +82,15 @@ const RULES = Object.freeze([
     words: 'The Content rules check flagged it',
     read: (c) => !!c.contentFlagged,
   }),
+  // The rules above only mean something on a change that was read whole. One
+  // too large for the reader, or whose diff could not be loaded, is held
+  // rather than waved through: a wallet send past the cut-off is still a
+  // wallet send.
+  Object.freeze({
+    key: 'unread',
+    words: 'It could not be read in full',
+    read: (c) => !!c.unread,
+  }),
 ]);
 const RULE_KEYS = Object.freeze(RULES.map((r) => r.key));
 const RULE_BY_KEY = new Map(RULES.map((r) => [r.key, r]));
@@ -104,8 +113,8 @@ function addedByFile(diff) {
 }
 
 /** Pure: the keys of the rules this diff trips, in RULES' order. */
-function tripped({ diff = '', contentFlagged = false } = {}) {
-  const facts = { files: addedByFile(diff), contentFlagged: !!contentFlagged };
+function tripped({ diff = '', contentFlagged = false, unread = false } = {}) {
+  const facts = { files: addedByFile(diff), contentFlagged: !!contentFlagged, unread: !!unread };
   return RULES.filter((r) => { try { return r.read(facts); } catch { return false; } }).map((r) => r.key);
 }
 
@@ -224,18 +233,29 @@ async function evaluate({
     let rules = evaluated.get(key);
     if (!rules) {
       let diff = '';
+      let unread = false;
+      let failed = false;
       try {
         const d = await github.getProposalDiff(repoOwner, repoName, `${baseRef}...${commitHash}`, DIFF_CHAR_BUDGET);
         diff = String(d?.diff || '');
+        // Cut off at the budget, or a file list the compare did not finish:
+        // what was read still counts, and the rest holds the change.
+        unread = !!d?.truncated || d?.filesComplete === false;
       } catch (err) {
-        // Without the diff nothing can be read. Keep whatever hold stands
-        // rather than ending one on a failed read.
-        log.warn('release-holds', 'Could not load the diff, leaving the hold as it is', { sessionId: session.id, err: err.message });
-        return null;
+        // Fails CLOSED, unlike the Content rules row beside it: that row
+        // must never turn checks red for the platform's own trouble, but a
+        // hold is not a red check. A change nobody could read waits for an
+        // admin, and the next run that reads it whole ends the hold.
+        log.warn('release-holds', 'Could not load the diff, so the change is held', { sessionId: session.id, err: err.message });
+        unread = true;
+        failed = true;
       }
-      rules = tripped({ diff, contentFlagged });
-      evaluated.set(key, rules);
-      if (evaluated.size > EVALUATED_MAX) evaluated.delete(evaluated.keys().next().value);
+      rules = tripped({ diff, contentFlagged, unread });
+      // A failed read is not remembered: the next run asks again.
+      if (!failed) {
+        evaluated.set(key, rules);
+        if (evaluated.size > EVALUATED_MAX) evaluated.delete(evaluated.keys().next().value);
+      }
     }
 
     const outcome = await apply(pool, { sessionId: session.id, appId: app.id, commitHash, rules });

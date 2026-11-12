@@ -1,4 +1,6 @@
-FROM node:22.23.4-bookworm-slim
+# Debian 13 (trixie), as the worker's image: Debian 12 left full security
+# support for LTS in mid-2026 (12 Nov 2026).
+FROM node:22.23.4-trixie-slim
 # Pin npm and replace its affected Undici bundle until npm ships the patch.
 RUN npm install --global npm@11.21.1 undici@6.29.1 \
   && rm -rf /usr/local/lib/node_modules/npm/node_modules/undici \

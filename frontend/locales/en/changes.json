@@ -2007,6 +2007,10 @@
     "text": "The Content rules check flagged it.",
     "description": "One reason a proposed change is held for an administrator's approval: Homeroom's automatic review found something that may break the platform's content or data rules. Content rules is the name of that check."
   },
+  "hold.rule.unread": {
+    "text": "It could not be read in full.",
+    "description": "One reason a proposed change is held for an administrator's approval: the change was too large, or could not be loaded, for Homeroom's automatic reading of it, so a person has to look."
+  },
   "step.shots.failed": {
     "text": "Couldn’t take screenshots",
     "description": "Line under the \"Before & after screenshots\" step in a proposal's list of steps when the automatic before-and-after screenshots could not be taken."

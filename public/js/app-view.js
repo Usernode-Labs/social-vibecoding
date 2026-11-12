@@ -18950,6 +18950,7 @@ const AppView = {
     capability: 'changes:hold.rule.capability',
     script: 'changes:hold.rule.script',
     content: 'changes:hold.rule.content',
+    unread: 'changes:hold.rule.unread',
   },
   _holdSpec(p) {
     const h = p && p.releaseHold;

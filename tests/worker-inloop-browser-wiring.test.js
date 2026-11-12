@@ -60,7 +60,7 @@ test('Dockerfile gives the browser a system-ui font with real weights (Inter)', 
   assert.match(df, /COPY fonts-local\.conf \/etc\/fonts\/local\.conf/);
   assert.match(df, /fc-cache -f/);
   // the image build fails if fontconfig would not give an 800 Inter ExtraBold
-  assert.ok(df.includes(`test "$(fc-match -f '%{family[0]}|%{style[0]}' 'system-ui:weight=205')" = 'Inter|Extra Bold'`));
+  assert.ok(df.includes(`test "$(fc-match -f '%{family[0]}|%{style[0]}' 'system-ui:weight=205')" = 'Inter|ExtraBold'`));
   // ...and if the bundled Chromium itself does not draw the shell's stack in
   // Inter: the font check rides the Chromium smoke test, as node.
   assert.match(df, /COPY verify-shots-browser-fonts\.js \/usr\/local\/bin\/verify-shots-browser-fonts\.js/);
