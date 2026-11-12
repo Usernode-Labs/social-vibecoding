@@ -45,7 +45,7 @@ const phoneClipSize = SIZE.test(process.env.SHOTS_PHONE_CLIP_SIZE || '')
 const PHONE_DEVICE = 'iPhone 15';
 // Experimental, off unless the platform switched it on for this run
 // (services/shots-density.js): shots saved at the screen's own density.
-// The browsers then save at device scale (patch-playwright-mcp-screenshot.js
+// The browsers then save at device scale (patch-playwright-mcp.js
 // reads SHOTS_SCREENSHOT_SCALE), so the browser's density is the shots'
 // density: the phone's is its device's (3), and a desktop browser draws at
 // 3 too, so a card can zoom into a change without drawing it soft (at 2,
@@ -56,12 +56,10 @@ const PHONE_DEVICE = 'iPhone 15';
 // every shot is 1x, as it always was.
 const deviceDensity = process.env.SHOTS_DEVICE_DENSITY === '1';
 const DESKTOP_DENSITY = 3;
-const desktopConfig = path.join(path.dirname(path.resolve(output)), 'shots-desktop-browser.json');
-if (deviceDensity) {
-  fs.writeFileSync(desktopConfig, `${JSON.stringify({
-    browser: { contextOptions: { viewport: { width: 1280, height: 720 }, deviceScaleFactor: DESKTOP_DENSITY } },
-  })}\n`, { mode: 0o600 });
-}
+const sizeOf = (size) => {
+  const [width, height] = size.split('x').map(Number);
+  return { width, height };
+};
 const PERSONAS = ['member', 'read_only_admin', 'full_admin', 'guest', 'invited_member', 'invited_member_listed'];
 // Which desktop browsers this run starts (services/worker.js
 // SHOTS_BROWSER_PERSONAS): the four ordinary ones, plus an invited
@@ -102,13 +100,33 @@ const proxyFor = (persona) => {
   const shared = new URL(proxy);
   return `${shared.protocol}//${shared.hostname}:${personaPort}`;
 };
+// A browser's own Playwright settings, written beside this config when it
+// has any: the desktop density's fixed viewport, and the clip recording (the
+// browser's video of each page, saved into its directory when the page
+// closes). A phone's screen comes from its --device; Playwright merges the
+// two key by key.
+const browserConfig = (persona, phone) => {
+  const observed = directory(persona, phone);
+  const contextOptions = {
+    ...(!phone && deviceDensity
+      ? { viewport: { width: 1280, height: 720 }, deviceScaleFactor: DESKTOP_DENSITY } : {}),
+    ...(recordClips
+      ? { recordVideo: { dir: path.join(shotsDir, observed), size: sizeOf(phone ? phoneClipSize : clipSize) } } : {}),
+  };
+  if (!Object.keys(contextOptions).length) return null;
+  const file = path.join(path.dirname(path.resolve(output)), `shots-browser-${observed}.json`);
+  fs.writeFileSync(file, `${JSON.stringify({ browser: { contextOptions } })}\n`, { mode: 0o600 });
+  return file;
+};
 const browserArgs = (persona, { phone = false } = {}) => {
   const observed = directory(persona, phone);
+  const settings = browserConfig(persona, phone);
   return [
     '/usr/local/bin/shots-browser-observer.js',
     observed,
     '--browser', 'chromium', '--headless', '--isolated', '--no-sandbox', '--caps', 'vision',
-    ...(phone ? ['--device', PHONE_DEVICE] : deviceDensity ? ['--config', desktopConfig] : []),
+    ...(phone ? ['--device', PHONE_DEVICE] : []),
+    ...(settings ? ['--config', settings] : []),
     '--storage-state', path.join(stateDir, `${persona}.json`),
     '--block-service-workers', '--image-responses', 'allow',
     '--proxy-server', proxyFor(persona),
@@ -120,7 +138,11 @@ const browserArgs = (persona, { phone = false } = {}) => {
     // #4087: every page starts with the install strip already dismissed.
     '--init-script', '/usr/local/share/usernode/shots-page-init.js',
     '--output-dir', path.join(shotsDir, observed),
-    ...(recordClips ? [`--save-video=${phone ? phoneClipSize : clipSize}`] : []),
+    // The files a page may be handed are the server's workspace: the
+    // observer starts it in the read-only samples directory, and the root is
+    // that directory rather than the one the agent's client names. Answers
+    // name saved files by their whole path, which the observer stamps.
+    '--ignore-roots', '--file-paths', 'absolute',
   ];
 };
 const browserEnv = {
@@ -132,6 +154,8 @@ const browserEnv = {
   // not get it.
   SHOTS_SCREENSHOT_SETTLE: '1',
   ...(deviceDensity ? { SHOTS_SCREENSHOT_SCALE: 'device' } : {}),
+  // The observer parks the pointer before a recorded session ends.
+  ...(recordClips ? { SHOTS_RECORD_CLIPS: '1' } : {}),
 };
 const config = {
   mcpServers: {

@@ -80,10 +80,10 @@ const { execFile } = require('child_process');
 // must be able to create a context here, or they crash on load with
 // "Could not create a WebGL context" — a console error that fails their
 // proposal checks (see runTest) and leaves the before/after screenshots
-// blank. The distro Chromium has no GPU in the container, so the fix is
+// blank. The capture Chromium has no GPU in the container, so the fix is
 // SwiftShader, Chromium's bundled CPU rasterizer, routed through ANGLE:
 //   --use-gl=angle --use-angle=swiftshader
-// On modern Chromium (bookworm ships a recent stable) unaccelerated
+// On modern Chromium (the image ships a current stable) unaccelerated
 // SwiftShader for WebGL is gated behind an explicit opt-in, without which
 // getContext() still returns null and logs a deprecation error:
 //   --enable-unsafe-swiftshader
@@ -2732,7 +2732,7 @@ async function runPageCapture(spec, deps = {}) {
   const launch = deps.launch || (async () => {
     const puppeteer = require('puppeteer-core');
     return puppeteer.launch({
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/local/bin/chromium',
       headless: true,
       args: CHROMIUM_LAUNCH_ARGS,
     });
@@ -2791,7 +2791,7 @@ async function main() {
   // resolveTargets.
   const puppeteer = require('puppeteer-core');
   const { browser, networkSettle } = await launchWhenSettled(() => puppeteer.launch({
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/local/bin/chromium',
     headless: true,
     args: CHROMIUM_LAUNCH_ARGS,
   }));

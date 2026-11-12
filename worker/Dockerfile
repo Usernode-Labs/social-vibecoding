@@ -178,20 +178,24 @@ COPY --from=esbuild-build /out/esbuild /usr/local/bin/esbuild
 # node switch below). The browser launches LAZILY — only when the agent
 # actually calls a browser tool — so turns that never reach for it pay
 # no runtime cost; scout/sync never wire the MCP server at all.
-ARG PLAYWRIGHT_MCP_VERSION=0.0.41
+# The Chromium is Playwright's own build (Chrome for Testing), which the image
+# audit cannot see as a distro package; scripts/security-*.js read its version
+# off the image and report the Chromium advisories that apply to it.
+ARG PLAYWRIGHT_MCP_VERSION=0.0.85
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
 RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
   && cd /usr/local/lib/node_modules/@playwright/mcp \
   && npx playwright install --with-deps chromium \
-  && command -v mcp-server-playwright \
-  && mcp-server-playwright --version
-# Shots are saved at the browser's device density (3 on a phone, 2 on a
-# desktop), but this MCP version hard-codes browser_take_screenshot's scale to
-# CSS pixels. The patch edits that one tool, and refuses a version whose code
-# no longer matches; verify-shots-browser-mcp.js below proves the saved
-# density in a real browser. See the script's header for why not a pin bump.
-COPY patch-playwright-mcp-screenshot.js /usr/local/bin/patch-playwright-mcp-screenshot.js
-RUN node /usr/local/bin/patch-playwright-mcp-screenshot.js
+  && command -v playwright-mcp \
+  && playwright-mcp --version
+# The MCP's bundled tools are edited so the shots and the in-loop browser
+# keep working as they are written for: a screenshot answers with its image
+# (and, in a shots run taken at density, saves at device scale), close-ups,
+# the settle wait, and an action's answer that carries the page snapshot.
+# The patch refuses a version whose code no longer matches;
+# verify-shots-browser-mcp.js below proves the result in a real browser.
+COPY patch-playwright-mcp.js /usr/local/bin/patch-playwright-mcp.js
+RUN node /usr/local/bin/patch-playwright-mcp.js
 
 COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh
@@ -337,15 +341,15 @@ WORKDIR /home/node/workspace
 ENV SOCIAL_VIBECODING_DRIFT_CHECK=off
 
 # Build-time smoke test: launch the MCP's bundled Chromium headless (as
-# node, same channel + sandbox setting + SwiftShader flags worker-run.sh seeds) and close
-# it. A future MCP pin bump that reintroduces a channel/revision mismatch
+# node, same channel + sandbox setting + SwiftShader flags worker-run.sh seeds),
+# get a software WebGL context in a page, and close it. A future MCP pin bump that reintroduces a channel/revision mismatch
 # — the failure mode behind #688 — fails the image build loudly here,
 # instead of silently degrading every build turn to "skipped the
 # screenshot check". Then (#4087) the same Chromium renders the shell's font
 # stack, and bare system-ui, at weights 400/650/700/800 and must report Inter
 # Regular/Bold/Bold/ExtraBold through CDP CSS.getPlatformFontsForNode.
 RUN cd /usr/local/lib/node_modules/@playwright/mcp \
-  && node -e "require('playwright').chromium.launch({channel:'chromium',headless:true,chromiumSandbox:false,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']}).then(b=>b.close()).catch(e=>{console.error(e);process.exit(1);})" \
+  && node -e "require('playwright').chromium.launch({channel:'chromium',headless:true,chromiumSandbox:false,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']}).then(async(b)=>{const p=await b.newPage();if(!(await p.evaluate(()=>!!document.createElement('canvas').getContext('webgl'))))throw new Error('no WebGL context');await b.close();}).catch(e=>{console.error(e);process.exit(1);})" \
   && node /usr/local/bin/verify-shots-browser-fonts.js
 
 # Validate the actual shots MCP config against the installed package.

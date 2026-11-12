@@ -2,7 +2,7 @@
 
 // Whether before/after shots are taken at the screen's own density: 3 device
 // pixels to a CSS pixel on a phone, 2 on a desktop (worker/write-shots-mcp-
-// config.js, worker/patch-playwright-mcp-screenshot.js), so a card can zoom
+// config.js, worker/patch-playwright-mcp.js), so a card can zoom
 // into a change without drawing it soft.
 //
 // Experimental, and off until an admin switches it on: a run started while
