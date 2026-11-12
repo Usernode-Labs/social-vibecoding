@@ -191,6 +191,8 @@ function ReduceMotionRow() {
 
   return (
     <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+      {/* The same neutral wrapper as High contrast (looks v2): one card's switch row under a look. */}
+      <div className="ui-card ui-swrow">
       <label className="flex items-center gap-2 cursor-pointer select-none">
         <Switch
           id="settings-reduce-motion"
@@ -208,6 +210,7 @@ function ReduceMotionRow() {
       <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
         {t('settings:accessibility.motion.description')}
       </p>
+      </div>
     </div>
   );
 }
@@ -235,6 +238,8 @@ function CardPreviewsRow() {
 
   return (
     <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+      {/* The same neutral wrapper as High contrast (looks v2): one card's switch row under a look. */}
+      <div className="ui-card ui-swrow">
       <label className="flex items-center gap-2 cursor-pointer select-none">
         <Switch
           id="settings-card-previews"
@@ -252,6 +257,7 @@ function CardPreviewsRow() {
       <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
         {t('settings:accessibility.previews.description')}
       </p>
+      </div>
     </div>
   );
 }
