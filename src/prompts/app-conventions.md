@@ -394,11 +394,12 @@ visitor.
   that are parts of one thing (chapters, result pages) name the thing's own
   page, and add `<meta name="robots" content="noindex, follow">` when they
   should not be listed at all.
-- **Never build the canonical's host from the request** (`Host`,
+- **Never write the request's host into a canonical** (`Host`,
   `X-Forwarded-Host`): anybody can send those, and a cached page then names
-  somebody else's site as its real address. Take the host from a value you
-  trust (a `dapp.json` secret holding the app's public address), and send
-  no canonical when there is none. The scaffold sends none.
+  somebody else's site as its real address. The scaffold builds the app's
+  own addresses from `USERNODE_APP_SLUG` and `USERNODE_PLATFORM_ORIGIN`,
+  sends the canonical only when the request's `Host` is exactly one of
+  them, and sends none otherwise (a preview, a custom domain). Do the same.
 - **Never put per-visitor state in a URL a crawler can follow.** Keep it in
   the fragment (`#...`), in `localStorage`, or on the server.
 - **API routes are never pages.** The platform marks `/api/*` and its own

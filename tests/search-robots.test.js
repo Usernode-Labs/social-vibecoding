@@ -129,11 +129,42 @@ test('a public project’s page, its og:url and its sitemap entry are one addres
   assert.ok(sitemapXml(origin, [app]).includes(`<loc>${address}</loc>`));
 });
 
-test('the starter app sends no canonical: it holds no trusted address, and the Host is never one', () => {
+// The starter app's canonical, run as the generated server runs it: the two
+// snippets are cut out of the generated file and evaluated with a request.
+function starterCanonical({ slug, platformOrigin: origin, host, path: reqPath, forwardedHost }) {
   const files = template.getTemplateFiles('Demo', { slug: 'demo-1' });
   const server = (Array.isArray(files) ? files : Object.values(files)).find((f) => f.path === 'server.js').content;
-  assert.doesNotMatch(server, /rel="canonical"/);
-  assert.doesNotMatch(server, /res\.set\('Link'/);
+  const hosts = server.match(/const CANONICAL_HOSTS = [\s\S]*?\}\)\(\);/);
+  const send = server.match(/const pageHost = [\s\S]*?rel="canonical"'\);\n  \}/);
+  assert.ok(hosts && send, 'the generated server has both halves');
+  const run = new Function('APP_SLUG', 'PLATFORM_ORIGIN', 'req', 'res', `${hosts[0]}\n${send[0]}`);
+  let link = null;
+  run(slug, origin, { headers: { host, 'x-forwarded-host': forwardedHost }, path: reqPath }, { set: (name, value) => { if (name === 'Link') link = value; } });
+  return link;
+}
+
+test('the starter app names its own address without the query string, and only at its own address', () => {
+  const hosted = { slug: 'viatales-125912', platformOrigin: 'https://app.onhomeroom.com', path: '/read/12' };
+  assert.equal(starterCanonical({ ...hosted, host: 'viatales-125912.onhomeroom.com' }),
+    '<https://viatales-125912.onhomeroom.com/read/12>; rel="canonical"', 'the platform has a name of its own: apps sit under its parent');
+  assert.equal(starterCanonical({ ...hosted, host: 'VIATALES-125912.onhomeroom.com' }),
+    '<https://viatales-125912.onhomeroom.com/read/12>; rel="canonical"');
+  assert.equal(starterCanonical({ slug: 'x', platformOrigin: 'https://homeroom.example', host: 'x.homeroom.example', path: '/' }),
+    '<https://x.homeroom.example/>; rel="canonical"', 'apps beside the platform');
+
+  // Anything else gets no canonical at all.
+  assert.equal(starterCanonical({ ...hosted, host: 'evil.example' }), null, 'a forged Host');
+  assert.equal(starterCanonical({ ...hosted, host: 'evil.example', forwardedHost: 'viatales-125912.onhomeroom.com' }), null,
+    'X-Forwarded-Host is never read');
+  assert.equal(starterCanonical({ ...hosted, host: 'viatales-125912.onhomeroom.com.evil.example' }), null);
+  assert.equal(starterCanonical({ ...hosted, host: 'other-app.onhomeroom.com' }), null, 'another app’s address');
+  assert.equal(starterCanonical({ ...hosted, host: 'viatales-125912--s77.onhomeroom.app' }), null, 'a preview');
+  assert.equal(starterCanonical({ ...hosted, host: 'tales.example.org' }), null, 'a custom domain: the app sets its own');
+  assert.equal(starterCanonical({ ...hosted, host: 'viatales-125912.onhomeroom.com', path: '/a>; rel="x' }), null,
+    'a path that could break out of the header');
+  assert.equal(starterCanonical({ ...hosted, platformOrigin: '', host: 'viatales-125912.onhomeroom.com' }), null,
+    'outside the platform: no address is known');
+  assert.equal(starterCanonical({ ...hosted, slug: 'Bad_Slug.evil', host: 'Bad_Slug.evil.onhomeroom.com' }), null);
 });
 
 test('the conventions say it: a canonical without state or paging parameters, no per-visitor state in URLs, API routes noindex', () => {
@@ -145,7 +176,7 @@ test('the conventions say it: a canonical without state or paging parameters, no
   assert.match(section, /Never put per-visitor state in a URL a crawler can follow/);
   assert.match(section, /API routes are never pages/);
   assert.match(section, /Do not block these URLs in `robots\.txt`/);
-  assert.match(section, /Never build the canonical's host from the request/);
-  assert.match(section, /The scaffold sends none/);
+  assert.match(section, /Never write the request's host into a canonical/);
+  assert.match(section, /only when the request's `Host` is exactly one of\s+them/);
   assert.ok(section.length < 2200, 'kept short: it is read on every build');
 });
