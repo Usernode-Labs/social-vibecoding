@@ -8,7 +8,7 @@ const source = fs.readFileSync(require.resolve('../public/js/app.js'), 'utf8');
 
 function session() {
   const store = new Map();
-  const document = { cookie: 'usernode_api_scope=' + 'a'.repeat(64) };
+  const document = { cookie: '__Host-usernode_api_scope=' + 'a'.repeat(64) };
   let drops = 0;
   const methods = ['saveSessionSnapshot', 'readSessionSnapshot', 'clearSessionSnapshot', '_sessionCacheScope'].map(name => {
     const start = source.indexOf(`\n  ${name}(`);
@@ -28,7 +28,7 @@ test('the current session can restore its display snapshot and another session c
   const h = session();
   h.app.saveSessionSnapshot({ id: 101, username: 'FAKE_A' });
   assert.equal(h.app.readSessionSnapshot().user.username, 'FAKE_A');
-  h.document.cookie = 'usernode_api_scope=' + 'b'.repeat(64);
+  h.document.cookie = '__Host-usernode_api_scope=' + 'b'.repeat(64);
   assert.equal(h.app.readSessionSnapshot(), null);
   assert.equal(h.drops, 1);
   assert.equal(h.store.size, 0);
@@ -45,4 +45,16 @@ test('expired/missing hints and unscoped legacy snapshots cannot revive a previo
   assert.equal(h.drops, 2);
   h.app.saveSessionSnapshot({ id: 202, username: 'FAKE_B' });
   assert.equal(h.store.size, 0, 'an unpartitioned snapshot is never written');
+});
+
+
+test('a legacy or duplicate hint cannot restore a protected HTTPS display snapshot', () => {
+  const h = session();
+  h.app.saveSessionSnapshot({ id: 101, username: 'FAKE_A' });
+  h.document.cookie = 'usernode_api_scope=' + 'a'.repeat(64);
+  assert.equal(h.app.readSessionSnapshot(), null);
+  h.document.cookie = '__Host-usernode_api_scope=' + 'a'.repeat(64);
+  h.app.saveSessionSnapshot({ id: 101, username: 'FAKE_A' });
+  h.document.cookie += '; __Host-usernode_api_scope=' + 'b'.repeat(64);
+  assert.equal(h.app.readSessionSnapshot(), null);
 });

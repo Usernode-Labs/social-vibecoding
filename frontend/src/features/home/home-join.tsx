@@ -1,9 +1,10 @@
 /**
  * Communities to join on the signed-in Home (One Home, #6361): the shared
  * section (./communities-to-join.tsx) over the public directory, less the
- * communities already on this Home, joined or pinned. Join is
- * Home.setMembership, which joins and pins the community; the store reads
- * the pins back, and the card leaves the list.
+ * communities already on this Home, joined or pinned. A card opens the
+ * project's page, where Join lives; joining there fires
+ * sv:membership-changed, the store reads the pins back, and the card leaves
+ * the list.
  */
 import { useEffect, useMemo, useState } from 'react';
 
@@ -47,7 +48,6 @@ export function HomeJoin() {
       exclude={exclude}
       signedIn
       query={query}
-      onJoin={(app) => { void (window as any).Home?.setMembership?.(app.slug, true); }}
       onRetry={() => { setApps(null); setAttempt((n) => n + 1); }}
     />
   );

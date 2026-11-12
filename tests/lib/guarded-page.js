@@ -89,9 +89,9 @@ function guardedPage({ pathname = '/', signedIn = false, routes = {} } = {}) {
 
   const win = {
     document: {
-      get cookie() { return cookie ? `usernode_api_scope=${cookie}` : ''; },
+      get cookie() { return cookie ? `__Host-usernode_api_scope=${cookie}` : ''; },
       set cookie(value) {
-        const m = /^usernode_api_scope=([a-f0-9]{64})/.exec(value);
+        const m = /^__Host-usernode_api_scope=([a-f0-9]{64})/.exec(value);
         if (m) cookie = m[1];
       },
     },

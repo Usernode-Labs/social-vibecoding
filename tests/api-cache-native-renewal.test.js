@@ -1,5 +1,8 @@
 'use strict';
 
+// The public HTTPS page and loopback transport model production cookie names.
+process.env.NODE_ENV = 'production';
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

@@ -20,8 +20,9 @@
 //     build, and an app outside the shell (a direct visit) must still pick
 //     up a platform fix on its next loads.
 //   * The shell (public/js/app-view.js) frames such an app at ONE address
-//     whatever the token, with the token after `#`, and asks the bridge to
-//     refresh the app's copies when the app's build changed.
+//     per build whatever the token (`?un-build=<sha>`, the token after `#`),
+//     so a merged change is a page no browser has kept yet, and asks the
+//     bridge to refresh the app's files when the app's build changed.
 //   * The bridge (usernode-bridge/v1/bridge.js) moves that token into the
 //     query before the app's code reads it, and does the refresh.
 //   * A page that never says it opened (no bridge) is reported by the

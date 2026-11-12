@@ -128,12 +128,18 @@ function fakePool({ mentions = [], notes = [], optouts = [] }) {
         assert.match(params[2], /@\(homeroom_bot\|/);
         return { rows: mentions };
       }
-      if (/SELECT issue_number, kind, created_at FROM homeroom_bot_posts/.test(s)) return { rows: notes };
+      // The answers said, and those decided and still going out (bot_posts).
+      if (/SELECT issue_number, kind, created_at FROM \(/.test(s)) return { rows: notes };
       if (/FROM homeroom_bot_mention_optouts/.test(s)) return { rows: optouts.map((username) => ({ username })) };
       if (/INSERT INTO homeroom_bot_posts/.test(s)) { posts.push(params[3]); return { rows: [{ id: posts.length }] }; }
-      // sayHeld: the app, and the pending row the machine wrote (none here).
+      // sayHeld: the app, and its post's key claimed (services/bot-post.js),
+      // what it sent recorded on it, then said.
       if (/SELECT \* FROM apps WHERE id/.test(s)) return { rows: [{ ...APP, repo_url: `https://github.com/${REPO.owner}/${REPO.repo}` }] };
-      if (/run_id IS NULL AND pending IS TRUE/.test(s)) return { rows: [] };
+      if (/INSERT INTO bot_posts/.test(s)) {
+        (this.keys ||= []).push(params[0]);
+        return { rows: [{ id: this.keys.length, fresh: true, outcome: 'pending' }] };
+      }
+      if (/UPDATE bot_posts/.test(s)) return { rows: [] };
       if (/UPDATE homeroom_bot_posts/.test(s)) return { rows: [] };
       throw new Error(`unexpected query: ${s.slice(0, 80)}`);
     },
@@ -183,6 +189,7 @@ test('answerMentions posts the answer, tagging the person who asked, and keeps t
   assert.deepEqual(f.owed.map((o) => [o.issueNumber, o.kind, o.mentionId, o.mention]), [[75, holds.LEAVING_KIND, 1, 'evan']],
     'owed to the request\'s place, keyed by the mention it answers');
   assert.deepEqual(pool.posts, [holds.LEAVING_KIND], 'one answer, on the request that was mentioned');
+  assert.deepEqual(pool.keys, [`${holds.LEAVING_KIND}:request:9-75:mention-1`], 'said once, by the mention it answers (bot-post.js)');
   // The thread copy is the bot's own words (homeroom-bot-words.js); GitHub keeps the note as written.
   assert.match(f.messages[0].content, /^@evan chinchan8 claimed this request 3 days ago, so I'm leaving it to them\./);
   assert.deepEqual(f.messages[0].thread, { type: 'issue', ref: 75 });

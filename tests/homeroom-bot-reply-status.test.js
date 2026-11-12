@@ -13,18 +13,21 @@ const ago = (seconds) => new Date(NOW.getTime() - seconds * 1000).toISOString();
 const status = (extra) => replyStatus.statusOf({ replyId: 500, now: NOW, ...extra });
 
 test('#6228: the thread\'s three states, and when there is nothing to say', () => {
-  // Queued or about to be: will read.
-  assert.equal(status({ stage: { stage: 'reading', reply: true, waiting: true } }), 'will_read');
+  // Queued or about to be: will read. 11 Nov 2026: the request's stored work
+  // state says so (services/work-state.js: its line `reply`, `soon`).
+  assert.equal(status({ stage: { stage: 'reading', line: { code: 'reply', soon: true } } }), 'will_read');
   assert.equal(status({ voiceOwed: true }), 'will_read');
   // Reading now: the turn began after the reply, or the read started.
   assert.equal(status({ voice: [{ started_at: ago(5), finished_at: null, outcome: null }], replyAt: ago(30) }), 'reading');
-  assert.equal(status({ stage: { stage: 'reading', reply: true } }), 'reading');
+  assert.equal(status({ stage: { stage: 'reading', line: { code: 'reply' } } }), 'reading');
+  // Reading something else (the request itself) says nothing of the reply.
+  assert.equal(status({ stage: { stage: 'reading', line: null } }), null);
   // Nothing to add: the bot was spoken to, read the reply, and stopped.
   assert.equal(status({
     voice: [{ started_at: ago(20), finished_at: ago(10), outcome: 'quiet', speaker_id: 9, through_message_id: 500 }],
   }), 'quiet');
   // The bot's answer is there: nothing to say.
-  assert.equal(status({ botAfter: true, stage: { stage: 'reading', reply: true } }), null);
+  assert.equal(status({ botAfter: true, stage: { stage: 'reading', line: { code: 'reply' } } }), null);
   // It read a message nobody addressed to it: never "nothing to add".
   assert.equal(status({
     voice: [{ started_at: ago(20), finished_at: ago(10), outcome: 'quiet', speaker_id: null, through_message_id: 500 }],
@@ -42,10 +45,15 @@ test('#6228: a status is broadcast to the project and the bot page re-reads for 
   const changed = [];
   const pool = {
     query: async (sql) => {
-      if (/FROM UNNEST\(\$2::int\[\]\) AS w\(n\)/.test(sql)) {
+      // The newest reply after the bot's newest look.
+      if (/SELECT reply\.reply_id, reply\.reply_at, reply\.reply_user_id/.test(sql)) {
+        return { rows: [{ reply_id: 500, reply_at: ago(30), reply_user_id: 8 }] };
+      }
+      // The request's stored work state: about to read the reply.
+      if (/FROM work_states ws JOIN apps a/.test(sql)) {
         return { rows: [{
-          app_id: 1, slug: 'homeroom', issue_number: 2, mode: 'live', verdict: 'person',
-          run_at: ago(600), reply_id: 500, reply_at: ago(30), reply_user_id: 8, queue_id: 3, enqueued_at: ago(20),
+          app_id: 1, slug: 'homeroom', item_kind: 'request', item_ref: 2, issue_number: 2, stage: 'reading',
+          line: { code: 'reply', soon: true }, whose_move: 'bot', standing: {},
         }] };
       }
       return { rows: [] };

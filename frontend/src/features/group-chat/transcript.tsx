@@ -113,10 +113,12 @@ function controller(): any {
 /**
  * The buttons under Homeroom bot's offer in a thread (File it / Not now,
  * Withdraw it / Keep it, Propose to close / Keep it open), for the one
- * person it was offered to (GroupChat._botOfferView says who). A tap is sent once (GroupChat.decideBotOffer);
- * the buttons then go for everybody when the room hears it was decided.
+ * person it was offered to (GroupChat._botOfferView says who). A tap is sent
+ * once, for its card (GroupChat.decideBotOffer with the offer's id); the
+ * buttons then go for everybody when the room hears it was decided. A
+ * refused tap is said under them by BotOfferStatus, which outlives them.
  */
-function BotOfferButtons({ id, offer }: { id: number | null; offer: BotOfferView }) {
+export function BotOfferButtons({ id, offer }: { id: number | null; offer: BotOfferView }) {
   const [busy, setBusy] = useState(false);
   // #6305: a many-project offer's rows, ticked here and sent with the tap.
   const rows = (offer.rows || []) as unknown as FileManyRow[];
@@ -130,7 +132,7 @@ function BotOfferButtons({ id, offer }: { id: number | null; offer: BotOfferView
     if (busy) return;
     setBusy(true);
     try {
-      await controller()?.decideBotOffer?.(id, choice, many ? picks : undefined);
+      await controller()?.decideBotOffer?.(id, choice, many ? picks : undefined, offer.id);
     } finally {
       setBusy(false);
     }
@@ -166,6 +168,66 @@ function BotOfferButtons({ id, offer }: { id: number | null; offer: BotOfferView
         ))}
       </div>
     </div>
+  );
+}
+
+// The line under an offer whose tap was refused, by the server's code
+// (homeroom-bot-voice.js decideOffer), and under one whose buttons went
+// because what it was about moved on, by why (bot-cards.js retireFor).
+// Whole ids, so the inventory can check each exists.
+const OFFER_REFUSED: Record<string, string> = {
+  already_decided: 'chat:group.botOffer.refused.alreadyDecided',
+  not_for_you: 'chat:group.botOffer.refused.notForYou',
+  not_this_message: 'chat:group.botOffer.refused.notThisMessage',
+  expired: 'chat:group.botOffer.expired',
+};
+const OFFER_RETIRED: Record<string, string> = {
+  close_vote: 'chat:group.botOffer.retired.closeVote',
+  closed: 'chat:group.botOffer.retired.closed',
+  building: 'chat:group.botOffer.retired.building',
+  moved_on: 'chat:group.botOffer.retired.movedOn',
+  superseded: 'chat:group.botOffer.retired.superseded',
+};
+
+/** Pure: the id of the line an offer's state says under it, or null for none. */
+export function offerStatusLine(offer: BotOfferView): string | null {
+  const gone = (kind?: string) => (kind === 'close_request' ? 'chat:group.botOffer.goneClose' : 'chat:group.botOffer.gone');
+  const retired = (reason?: string) => OFFER_RETIRED[reason || ''] || 'chat:group.botOffer.retired.other';
+  if (offer.status === 'retired') return retired(offer.retired);
+  if (offer.status === 'expired') return 'chat:group.botOffer.expired';
+  if (offer.status === 'gone') return gone(offer.kind);
+  const refused = offer.refused;
+  if (!refused) return null;
+  if (refused.code === 'retired') return retired(refused.reason);
+  if (refused.code === 'gone') return gone(offer.kind);
+  return OFFER_REFUSED[refused.code] || 'chat:group.botOffer.failed';
+}
+
+/**
+ * Step 3 (11 Nov 2026): what became of an offer's buttons, under where they
+ * were, for the person they were for: a tap refused (already decided, not
+ * theirs, under another message), the offer expired, retired because what
+ * it was about moved on, or gone. It is drawn from the message's state and
+ * the refusal GroupChat keeps for it, so it stays once the buttons go (the
+ * side panel beside Homeroom bot's page draws the same transcript).
+ */
+export function BotOfferStatus({ offer }: { offer: BotOfferView }) {
+  const t = useMessages('chat');
+  const line = offerStatusLine(offer);
+  if (!line) return null;
+  const why = offer.status === 'gone' || offer.refused?.code === 'gone' ? 'gone'
+    : offer.status === 'retired' || offer.refused?.code === 'retired' ? 'retired'
+      : offer.status === 'expired' || offer.refused?.code === 'expired' ? 'expired' : (offer.refused?.code || '');
+  return (
+    <p
+      className="mt-1 text-[12px] text-zinc-500 dark:text-zinc-400"
+      role="status"
+      data-gc-bot-offer-status={why}
+      data-gc-bot-offer-gone={why === 'gone' ? '' : undefined}
+      data-gc-bot-offer-error={offer.refused ? '' : undefined}
+    >
+      {t(line)}
+    </p>
   );
 }
 
@@ -977,6 +1039,8 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           {msg.botOffer && msg.botOffer.forMe && msg.botOffer.status === 'open' && msg.botOffer.actions.length ? (
             <BotOfferButtons id={msg.id} offer={msg.botOffer} />
           ) : null}
+          {/* Step 3: what became of them (a refused tap, expired, retired, gone), outliving them. */}
+          {msg.botOffer && msg.botOffer.forMe ? <BotOfferStatus offer={msg.botOffer} /> : null}
           {/* 3 Nov 2026: suggested replies under Homeroom bot's message in a
               thread — only while it is the newest comment (#6519). */}
           <BotSuggestGate msg={msg} latest={latest} />

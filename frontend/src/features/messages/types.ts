@@ -156,6 +156,10 @@ export interface HomeroomBotMeta {
   goesLive?: HomeroomBotGoesLive;
   /** Why its buttons were closed ("No longer needed", "A newer plan replaced this"), said in their place. */
   closedWhy?: string;
+  /** Step 3 (11 Nov 2026): an offer 14 days old, no longer to be chosen. */
+  expired?: boolean;
+  /** Step 3: why an offer's buttons went when what it was about moved on (services/bot-cards.js retireFor). */
+  retired?: string;
   /**
    * One request, one story: the request's activity card (its thread's root)
    * that this message was posted under. Set on every message in a request's
@@ -224,6 +228,12 @@ export interface HomeroomBotReady {
    * tellReady). The card then says so instead of "ready to try".
    */
   broken?: string[];
+  /**
+   * #6407: what the plan this change was built from draws and the change
+   * does not, when the pre-vote check found a miss (homeroom-bot-dm.js
+   * tellReady). `author` and `version` name that plan, when known.
+   */
+  offPlan?: { author: string | null; version: number | null; misses: string[] };
 }
 
 /**

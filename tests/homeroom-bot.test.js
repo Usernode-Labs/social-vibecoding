@@ -203,6 +203,21 @@ test('classifyIssue: unchanged since the last run is skipped; changed is re-queu
   });
   assert.deepEqual([onGithub.reason, onGithub.changedBy], ['changed', 'github'], 'the issue itself: a comment, an edit or a label');
   assert.equal(unchanged.changedBy, undefined, 'only a change says what changed');
+  // Step 5: the newest message is one the bot's voice judged to change the
+  // ask (ask_changed): changed:voice, as its own debt says.
+  const byVoice = bot.classifyIssue({
+    issue, threadLastAt: '2026-09-05T00:00:00Z', voiceAt: '2026-09-05T00:00:00Z', lastRun: { thread_seen_at: '2026-09-02T00:00:00Z' },
+  });
+  assert.deepEqual([byVoice.reason, byVoice.changedBy], ['changed', 'voice']);
+  const after = bot.classifyIssue({
+    issue, threadLastAt: '2026-09-06T00:00:00Z', voiceAt: '2026-09-05T00:00:00Z', lastRun: { thread_seen_at: '2026-09-02T00:00:00Z' },
+  });
+  assert.equal(after.changedBy, 'discussion', 'a person wrote after it');
+  const githubAfter = bot.classifyIssue({
+    issue: { ...issue, updatedAt: '2026-09-07T00:00:00Z' }, threadLastAt: '2026-09-05T00:00:00Z', voiceAt: '2026-09-05T00:00:00Z',
+    lastRun: { thread_seen_at: '2026-09-02T00:00:00Z' },
+  });
+  assert.equal(githubAfter.changedBy, 'github');
 });
 
 test('classifyIssue: an unchanged issue whose last verdict a cap held says which cap (#3152)', () => {
@@ -1350,13 +1365,16 @@ test('#3624: on a live import, the issues it came with wait until something happ
 
 // Papote #3 (18 Oct 2026): "@Homeroom bot status" under a plan waiting for
 // Build it read as a change to the request, and the look it started retired
-// the plan and wrote it again. What is said to the bot there is its voice's
-// to answer (start_request, change_plan); anything else still counts.
-test('papote #3: under a plan waiting for Build it, what people said to the bot does not read the request again', async () => {
+// the plan and wrote it again. Step 5 (11 Nov 2026), for every request: what
+// the voice answered there is its own (a question, a status check, thanks),
+// what it judged changes the ask is read again as changed:voice, and
+// anything else still counts (unaddressedActivityByIssue).
+test('papote #3 and step 5: what the voice answered does not read a request again; a change it judged does', async () => {
   const SEEN = '2026-10-18T17:22:08Z';
-  const run = (n, planWaiting) => ({
+  const AFTER = '2026-10-18T17:30:00Z';
+  const run = (n) => ({
     id: n, issue_number: n, thread_seen_at: SEEN, verdict: 'ready', cap_suppressed: null, created_at: SEEN, mode: 'live',
-    live_building: false, plan_waiting: planWaiting, failed_tries: 0,
+    live_building: false, failed_tries: 0,
   });
   const refresh = async ({ settings, unaddressed = 'reads' }) => {
     const events = [];
@@ -1367,16 +1385,24 @@ test('papote #3: under a plan waiting for Build it, what people said to the bot 
         const appended = botEvents(events, s, params);
         if (appended) return appended;
         if (QUEUED_BEFORE_RE.test(s) || /FROM wf_instances|FROM homeroom_bot_dm_projects/.test(s)) return { rows: [] };
-        if (/AS plan_waiting/.test(s)) return { rows: [run(3, true), run(4, false)] };
+        if (/AS live_building/.test(s)) return { rows: [run(3), run(4), run(5)] };
         if (/FROM issue_claims|UNNEST\(cs\.linked_issues\)|headless_issue_number AS n|created_from_issue_number AS n|FROM homeroom_bot_runs/.test(s)) return { rows: [] };
-        if (/!~\*/.test(s)) {
+        if (/WITH turns AS/.test(s)) {
           asked.push(params);
           if (unaddressed === 'fails') throw new Error('boom');
-          // What people said there apart from to the bot is older than the plan.
-          return { rows: [{ n: 3, last_at: '2026-10-18T17:00:00Z' }] };
+          // #3: only "@Homeroom bot status" since the read, which the voice
+          // answered. #4: words nobody said to the bot. #5: a change to the
+          // ask the voice judged (ask_changed).
+          return {
+            rows: [
+              { n: 3, last_at: null, voice_at: null },
+              { n: 4, last_at: AFTER, voice_at: null },
+              { n: 5, last_at: AFTER, voice_at: AFTER },
+            ],
+          };
         }
-        // "@Homeroom bot status" on #3 and plain words on #4, both after it.
-        if (/FROM chat_messages/.test(s)) return { rows: [{ n: 3, last_at: '2026-10-18T17:30:00Z' }, { n: 4, last_at: '2026-10-18T17:30:00Z' }] };
+        // Every one of them was written on after the last read.
+        if (/FROM chat_messages/.test(s)) return { rows: [3, 4, 5].map((n) => ({ n, last_at: AFTER })) };
         throw new Error(`unexpected query: ${s.slice(0, 60)}`);
       },
     };
@@ -1385,25 +1411,28 @@ test('papote #3: under a plan waiting for Build it, what people said to the bot 
         return {
           // A partial list: the closed-request sweep leaves it alone.
           truncatedList: true,
-          issues: [3, 4].map((number) => ({ number, state: 'open', createdAt: '2026-10-15T00:00:00Z', updatedAt: '2026-10-15T00:00:00Z' })),
+          issues: [3, 4, 5].map((number) => ({ number, state: 'open', createdAt: '2026-10-15T00:00:00Z', updatedAt: '2026-10-15T00:00:00Z' })),
         };
       },
     };
     await bot.refreshApp(pool, { id: 9, slug: 'papote', repo_url: 'https://github.com/usernode-bot/papote' }, {
       github, settings, bot: { id: 77 }, capRoom: { proposals_per_app: 5, proposals_total: 5 },
     });
-    return { owed: owedOf(events).map((e) => [e.payload.issueNumber, e.payload.reason]), asked };
+    return { owed: owedOf(events).map((e) => [e.payload.issueNumber, e.payload.reason, e.payload.changedBy]), asked };
   };
   const on = await refresh({ settings: { mode: 'live' } });
-  assert.deepEqual(on.owed, [[4, 'changed']], 'the request with a plan waiting is not read again; the other is');
-  assert.equal(on.asked.length, 1);
-  assert.deepEqual(on.asked[0][1], [3], 'only the requests with a plan waiting are read that way');
-  assert.equal(on.asked[0][2], require('../src/services/homeroom-bot-holds').mentionPattern());
-  assert.equal(on.asked[0][3], 77, 'a Reply to the bot is left out too');
+  assert.deepEqual(on.owed, [[4, 'changed', 'discussion'], [5, 'changed', 'voice']],
+    'what the voice answered is not read again; what it judged changes the ask is, and says so');
+  assert.equal(on.asked.length, 1, 'one read for the project');
+  assert.deepEqual(on.asked[0][1], [3, 4, 5], 'every open request, not only one whose plan waits');
+  assert.deepEqual(on.asked[0][2], ['9:issue:3', '9:issue:4', '9:issue:5'], 'the voice\'s own places');
+  assert.equal(on.asked[0][3], require('../src/services/bot-profiles').THREAD_LIMITS.answerWindowMinutes,
+    'what it has yet to judge waits for it, inside the window it answers in');
   // With the voice off in requests' discussions nobody answers it there, so it is read as before.
-  assert.deepEqual((await refresh({ settings: { mode: 'live', voiceIssue: false } })).owed, [[3, 'changed'], [4, 'changed']]);
+  const off = [[3, 'changed', 'discussion'], [4, 'changed', 'discussion'], [5, 'changed', 'discussion']];
+  assert.deepEqual((await refresh({ settings: { mode: 'live', voiceIssue: false } })).owed, off);
   // And so is a refresh that could not tell what was said to whom.
-  assert.deepEqual((await refresh({ settings: { mode: 'live' }, unaddressed: 'fails' })).owed, [[3, 'changed'], [4, 'changed']]);
+  assert.deepEqual((await refresh({ settings: { mode: 'live' }, unaddressed: 'fails' })).owed, off);
 });
 
 test('capRoomFor counts the same things the live check does', async () => {

@@ -102,7 +102,7 @@ test('worker-run.sh seeds the Playwright MCP config alongside the .claude.json r
   assert.match(wr, /BROWSER_MCP_CONFIG=\/home\/node\/\.usernode-mcp\.json/);
   assert.match(wr, /"mcpServers"/);
   assert.match(wr, /"playwright"/);
-  assert.match(wr, /"command": "\/usr\/local\/bin\/mcp-server-playwright"/);
+  assert.match(wr, /"command": "\/usr\/local\/bin\/playwright-mcp"/);
   // bundled-Chromium channel — without it the MCP defaults to branded
   // Google Chrome, which the image doesn't ship (#688)
   assert.match(wr, /"--browser", "chromium"/);

@@ -83,20 +83,30 @@ test('a card\'s outcome is the first live run after it began: its verdict, and f
   }
 });
 
-test('a card still going takes its step from progressFor; with nothing in progress it stopped', () => {
+// 11 Nov 2026: a card still going says where its request stands from the
+// request's stored work state (services/work-state.js), in the words every
+// screen says it.
+test('a card still going takes its step from its request\'s work state; with nothing in progress it stopped', () => {
   const row = { message_id: 31, created_at: '2026-10-02T11:51:00Z', slug: 'ear trainer', issue_number: 12 };
-  const entry = {
-    project: 'ear trainer', number: 12, stage: 'building', step: 3, of: 6, stepName: 'Building', doing: 'building it',
-    since: '2026-10-02T11:56:00.000Z', stepTimeLimitMinutes: 30,
-  };
+  const work = { stage: 'building', why: null, reason: null, line: { code: 'reviewing', round: 1, of: 2 },
+    whoseMove: 'bot', since: '2026-10-02T11:56:00.000Z' };
+  const entry = activity.entryOfWork(work);
   const going = activity.cardOf(row, entry);
   assert.deepEqual(going, {
     messageId: 31, startedAt: '2026-10-02T11:51:00.000Z', workedFrom: '2026-10-02T11:51:00.000Z',
     links: { request: '#app/ear%20trainer/dev/issues/12', proposal: null },
-    state: 'working', stage: 'building', step: 3, of: 6, stepName: 'Building', doing: 'building it',
-    stepSince: '2026-10-02T11:56:00.000Z', stepLimitMinutes: 30,
+    state: 'working', stage: 'building', step: 2, of: 5, stepName: null, doing: 'Building · Reviewing, round 1 of 2',
+    stepSince: '2026-10-02T11:56:00.000Z', typicalMinutes: { from: 5, to: 25 },
   });
-  assert.equal(activity.cardOf(row, { ...entry, waitingOn: 'them' }).waitingOn, 'them');
+  assert.equal(activity.cardOf(row, activity.entryOfWork({ ...work, stage: 'waiting_for_you', why: 'question', whoseMove: 'requester' })).waitingOn, 'them');
+  // Waiting its turn to be read, or on hold, it says so.
+  assert.equal(activity.entryOfWork({ stage: 'reading', line: { code: 'queued', place: 2 }, whoseMove: 'bot' }).stage, 'queued');
+  assert.equal(activity.entryOfWork({ stage: 'reading', line: { code: 'cooldown' }, whoseMove: 'bot' }).stage, 'cooldown');
+  // A request that ended, or was handed back, has no work going on.
+  for (const ended of [{ stage: 'live' }, { stage: 'closed' }, { stage: 'stopped', reason: 'build_failed' },
+    { stage: 'waiting_for_you', why: 'decide' }]) {
+    assert.equal(activity.entryOfWork(ended), null, JSON.stringify(ended));
+  }
 
   const gone = activity.cardOf(row, null);
   assert.equal(gone.state, 'done');
@@ -137,8 +147,9 @@ test('WP1: a card whose build still waits or runs is working, whatever began aft
   const entry = { stage: 'reading', step: 1, of: 6, stepName: 'Reading', doing: 'reading the request' };
   assert.equal(activity.cardOf({ ...row, build_status: 'active' }, entry).stage, 'building');
   // Its own progress, while it is the newest card, is read as before.
-  const own = activity.cardOf({ ...row, next_at: null, build_status: 'active' }, { stage: 'building', step: 3, of: 6, stepName: 'Building', doing: 'building it' });
-  assert.deepEqual([own.stage, own.step], ['building', 3]);
+  const own = activity.cardOf({ ...row, next_at: null, build_status: 'active' },
+    activity.entryOfWork({ stage: 'building', line: null, whoseMove: 'bot', since: '2026-10-03T16:50:00Z' }));
+  assert.deepEqual([own.stage, own.step, own.doing], ['building', 2, 'Building']);
   // A build with nothing under way any more (its session put away, never
   // recorded) is not working for ever, and an outcome always wins.
   assert.equal(activity.cardOf({ ...row, build_status: 'archived' }, null).outcome, 'stopped');

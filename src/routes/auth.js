@@ -1,3 +1,4 @@
+const { readSessionCookie, setSessionCookie, clearSessionCookies, protectedCookieName } = require('../services/browser-session-cookies');
 const appAllowance = require('../services/app-allowance');
 const appLimit = require('../services/app-limit');
 const crypto = require('crypto');
@@ -108,7 +109,12 @@ function roleFields(isAdmin, adminReadonly) {
 // Previously this was `NODE_ENV !== 'development'`, which silently dropped the
 // cookie on any dev box reached over LAN HTTP (mobile testing) because
 // NODE_ENV was usually unset => secure=true => browser refuses cookie on HTTP.
-const SECURE_COOKIE = process.env.NODE_ENV === 'production';
+// Read per call, so the signup cookie's writer and reader always agree.
+const secureCookie = () => process.env.NODE_ENV === 'production';
+// The email code's signup continuation, spent by set-password. Secure, it is
+// `__Host-usernode_signup` (browser-session-cookies.js protectedCookieName),
+// so it is Path=/ and an app on a sibling host cannot plant one; the bare
+// name is plain-HTTP development's only, and never read in production.
 const SIGNUP_COOKIE = 'usernode_signup';
 
 // Ordinary credential exchanges may only mint a session from a signed-out
@@ -151,12 +157,7 @@ const SESSION_MINT_PATHS = [
 ];
 
 function createSessionCookie(res, token, expiresAt) {
-  res.cookie('session', token, {
-    httpOnly: true,
-    secure: SECURE_COOKIE,
-    sameSite: 'lax',
-    expires: expiresAt,
-  });
+  setSessionCookie(res, token, expiresAt);
   require('../services/browser-api-cache').setSessionCacheCookie(res, token, expiresAt);
 }
 
@@ -174,23 +175,26 @@ async function createSession(queryable, userId, req = null) {
   return { token, expiresAt };
 }
 
+function signupCookieName() {
+  return protectedCookieName(SIGNUP_COOKIE, secureCookie());
+}
+
+// The clear repeats the attributes: a browser drops a `__Host-` cookie only
+// for a Set-Cookie that is itself Secure, Path=/ and without a Domain.
+function signupCookieOptions() {
+  return { httpOnly: true, secure: secureCookie(), sameSite: 'lax', path: '/' };
+}
+
 function createSignupCookie(res, token, expiresAt) {
-  res.cookie(SIGNUP_COOKIE, token, {
-    httpOnly: true,
-    secure: SECURE_COOKIE,
-    sameSite: 'lax',
-    path: '/api/auth/otp',
-    expires: expiresAt,
-  });
+  res.cookie(signupCookieName(), token, { ...signupCookieOptions(), expires: expiresAt });
 }
 
 function clearSignupCookie(res) {
-  res.clearCookie(SIGNUP_COOKIE, {
-    httpOnly: true,
-    secure: SECURE_COOKIE,
-    sameSite: 'lax',
-    path: '/api/auth/otp',
-  });
+  res.clearCookie(signupCookieName(), signupCookieOptions());
+}
+
+function readSignupCookie(req) {
+  return req.cookies?.[signupCookieName()];
 }
 
 function authRoutes(config) {
@@ -206,7 +210,7 @@ function authRoutes(config) {
   // protocol; every current native mint call remains routed through
   // fetchSessionMint until then.
   router.post(SESSION_MINT_PATHS, async (req, res, next) => {
-    const token = req.cookies?.session;
+    const token = readSessionCookie(req);
     if (!token) return next();
     try {
       const { rows } = await pool.query(
@@ -542,7 +546,7 @@ function authRoutes(config) {
   router.get('/api/auth/username-available', usernameCheckLimiter, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
-      const userId = await emailSignup.pendingUsernameChoice(pool, req.cookies?.[SIGNUP_COOKIE]);
+      const userId = await emailSignup.pendingUsernameChoice(pool, readSignupCookie(req));
       if (!userId) return res.status(401).json({ error: 'Your signup session expired. Request a new code.', code: 'invalid_signup_session' });
       const check = usernames.validateUsername(typeof req.query.username === 'string' ? req.query.username : '');
       if (!check.ok) return res.json({ ok: true, available: false, error: check.error });
@@ -569,7 +573,7 @@ function authRoutes(config) {
     }
     try {
       const completed = await emailSignup.completePassword(pool, {
-        signupToken: req.cookies?.[SIGNUP_COOKIE],
+        signupToken: readSignupCookie(req),
         password,
         // The handle the set-password step asks a new account for (QA
         // 2026-09-24 Q12). Required since #3575 for an account that has
@@ -746,7 +750,7 @@ function authRoutes(config) {
   });
 
   router.post('/api/auth/logout', sameOriginBrowserOnly, async (req, res) => {
-    const token = req.cookies?.session;
+    const token = readSessionCookie(req);
     if (token) {
       try {
         await withTransaction(pool, async (client) => {
@@ -773,8 +777,7 @@ function authRoutes(config) {
         return res.status(500).json({ error: 'Internal server error' });
       }
     }
-    res.clearCookie('session');
-    res.clearCookie(require('../services/browser-api-cache').SCOPE_COOKIE, { path: '/' });
+    clearSessionCookies(res);
     res.json({ ok: true });
   });
 
@@ -1446,7 +1449,7 @@ function authRoutes(config) {
   // which signs that phone out and stops its notifications. Only the
   // signed-in account's own phones: any other id is a 404.
   async function currentNativeCredential(req) {
-    const token = req.cookies?.session;
+    const token = readSessionCookie(req);
     if (!token) return null;
     const { rows } = await pool.query(
       'SELECT native_session_credential_reference FROM sessions WHERE token = $1 AND user_id = $2',
@@ -1494,7 +1497,7 @@ function authRoutes(config) {
     res.set('Cache-Control', 'private, no-store');
     try {
       const browsers = await linkedBrowsers.listLinkedBrowsers(pool, req.user.id, {
-        currentToken: req.cookies?.session || null,
+        currentToken: readSessionCookie(req) || null,
       });
       res.json({ browsers });
     } catch (err) {
@@ -1508,15 +1511,14 @@ function authRoutes(config) {
     const sessionId = req.params.id;
     if (!linkedBrowsers.isBrowserSessionId(sessionId)) return res.status(404).json({ error: 'Not found' });
     try {
-      const currentToken = req.cookies?.session || null;
+      const currentToken = readSessionCookie(req) || null;
       const { signedOut, current } = await linkedBrowsers.signOutBrowser(pool, req.user.id, sessionId, { currentToken });
       if (!signedOut) return res.status(404).json({ error: 'Not found' });
       log.info('settings', 'Browser session signed out', { userId: req.user.id, current });
       // The browser in your hands was signed out with it: drop its cookies
       // as /api/auth/logout does, so the page it reloads to is signed out.
       if (current) {
-        res.clearCookie('session');
-        res.clearCookie(require('../services/browser-api-cache').SCOPE_COOKIE, { path: '/' });
+        clearSessionCookies(res);
       }
       res.json({ ok: true, current });
     } catch (err) {
@@ -2305,4 +2307,5 @@ function authRoutes(config) {
 
 // Apple and Google sign-in (routes/sign-in-providers.js) mints the same
 // session, with the same cookie, and answers with the same role fields.
-module.exports = { authRoutes, createSession, createSessionCookie, roleFields };
+module.exports = { authRoutes, createSession, createSessionCookie, roleFields,
+  createSignupCookie, clearSignupCookie, readSignupCookie };

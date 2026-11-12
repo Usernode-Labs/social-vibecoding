@@ -68,26 +68,33 @@ const {
 } = require('../middleware/rate-limits');
 const { createSession, createSessionCookie, roleFields } = require('./auth');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const { protectedCookieName } = require('../services/browser-session-cookies');
 
-const SECURE_COOKIE = process.env.NODE_ENV === 'production';
+// Read per call, so a cookie's writer and reader always agree.
+const secureCookie = () => process.env.NODE_ENV === 'production';
 
 // The verify leg's sessionInfo → the SAME browser's verify call, the way
 // the email code's signup cookie works (routes/auth.js SIGNUP_COOKIE) and
-// the way the OAuth round trip's binder does. Scoped to the phone paths.
-const PHONE_COOKIE_PATH = '/api/auth/phone';
-
-function privateCookie(res, name, value, expiresAt) {
-  res.cookie(name, value, {
-    httpOnly: true,
-    secure: SECURE_COOKIE,
-    sameSite: 'lax',
-    path: PHONE_COOKIE_PATH,
-    expires: expiresAt,
-  });
+// the way the OAuth round trip's binder does. Each is called by its bare
+// name here and is `__Host-<name>` when Secure (browser-session-cookies.js
+// protectedCookieName): Path=/ with no Domain, so an app on a sibling host
+// cannot plant one. The bare name is plain-HTTP development's only.
+function privateCookieOptions() {
+  return { httpOnly: true, secure: secureCookie(), sameSite: 'lax', path: '/' };
 }
 
+function privateCookie(res, name, value, expiresAt) {
+  res.cookie(protectedCookieName(name, secureCookie()), value, { ...privateCookieOptions(), expires: expiresAt });
+}
+
+// The same attributes as the write: a browser drops a `__Host-` cookie only
+// for a Set-Cookie that is itself Secure, Path=/ and without a Domain.
 function clearPrivateCookie(res, name) {
-  res.clearCookie(name, { path: PHONE_COOKIE_PATH });
+  res.clearCookie(protectedCookieName(name, secureCookie()), privateCookieOptions());
+}
+
+function readPrivateCookie(req, name) {
+  return req.cookies?.[protectedCookieName(name, secureCookie())];
 }
 
 // The number's last four digits for the failure log. Only ever called with
@@ -298,8 +305,8 @@ function phoneAuthRoutes(config) {
       }
 
       // A brand-new account continues to the username step. The
-      // continuation rides this path-scoped HttpOnly cookie, the way the
-      // email code's signup cookie does.
+      // continuation rides this HttpOnly cookie, the way the email code's
+      // signup cookie does.
       privateCookie(res, 'hr_phone_signup', result.signupToken, result.expiresAt);
       log.info('phone-auth', 'Phone sign-up created an account, username pending', {
         userId: result.userId,
@@ -321,7 +328,7 @@ function phoneAuthRoutes(config) {
   router.post('/api/auth/phone/finish', requireOffered, otpVerifyLimiter, async (req, res) => {
     try {
       const done = await providers.completeUsername(pool, {
-        signupToken: req.cookies?.hr_phone_signup,
+        signupToken: readPrivateCookie(req, 'hr_phone_signup'),
         username: typeof req.body?.username === 'string' ? req.body.username : '',
         // #5974: the session row names the browser that signed in.
         createSession: (db, userId) => createSession(db, userId, req),
@@ -424,4 +431,4 @@ function phoneAuthRoutes(config) {
   return router;
 }
 
-module.exports = { phoneAuthRoutes, PHONE_COOKIE_PATH };
+module.exports = { phoneAuthRoutes, privateCookie, clearPrivateCookie, readPrivateCookie };

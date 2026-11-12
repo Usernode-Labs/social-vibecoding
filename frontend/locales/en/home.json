@@ -905,31 +905,15 @@
   },
   "join.more": {
     "text": "More communities",
-    "description": "Small heading over the rest of the community cards, after the Featured ones, in Communities to join on Home (signed in or out). Shown only when a kind other than All is chosen and Featured is shown above it."
-  },
-  "join.votes_one": {
-    "text": "{{count}} up for a vote",
-    "description": "Line on a community's card in Communities to join: how many changes are waiting for its members' votes. Singular."
-  },
-  "join.votes_other": {
-    "text": "{{count}} up for a vote",
-    "description": "Line on a community's card in Communities to join: how many changes are waiting for its members' votes. Plural."
+    "description": "Small heading over the community cards after Featured in Communities to join on Home (signed in or out): every community of the chosen kind that Featured does not show, most used first. Not shown while searching, with nothing featured, or when every community of the kind is featured."
   },
   "join.members_one": {
     "text": "{{count}} member",
-    "description": "Line on a community's card in Communities to join when nothing is up for a vote: how many people are in it. Singular."
+    "description": "Line on a community's row under a frame look (Home's Featured and Communities to join, and the signed-out landing's lists): how many people are in it. It has no line when the community has no members. Singular."
   },
   "join.members_other": {
     "text": "{{count}} members",
-    "description": "Line on a community's card in Communities to join when nothing is up for a vote: how many people are in it. Plural."
-  },
-  "join.button": {
-    "text": "Join",
-    "description": "Button on a community's card in Communities to join: becomes a member, which also pins the community to Home."
-  },
-  "join.buttonNamed": {
-    "text": "Join {{community}}",
-    "description": "Accessible name of the Join button on a community's card. {{community}} is the project's name."
+    "description": "Line on a community's row under a frame look (Home's Featured and Communities to join, and the signed-out landing's lists): how many people are in it. It has no line when the community has no members. Plural."
   },
   "join.allJoined": {
     "text": "You're in every community of this kind.",
@@ -1082,10 +1066,6 @@
   "frame.toJoin": {
     "text": "Communities to join",
     "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Label of the group listing public communities the viewer is not in."
-  },
-  "frame.join": {
-    "text": "Join",
-    "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Button on a row of Communities to join."
   },
   "frame.vote": {
     "text": "Vote",

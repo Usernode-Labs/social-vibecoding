@@ -398,7 +398,7 @@ function communityInviteRoutes(config) {
         requirePhone: phoneAuth.offered(config),
       });
       // Following a link clears any copy the sign-in carried: it is spent.
-      invites.clearInviteCookie(res);
+      invites.clearInviteCookie(req, res);
       if (result.reason === 'username_required') {
         return res.status(409).json({ ...require('../services/usernames').USERNAME_REQUIRED, reason: result.reason });
       }

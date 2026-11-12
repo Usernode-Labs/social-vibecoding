@@ -175,7 +175,7 @@ test('through the real wrappers, a native identity check begun on a dead network
   const { installSessionRenewalRetry } = loadTsx('frontend/src/lib/session-renewal-retry.ts');
   const { installReadTimeout, READ_TIMEOUT_MS } = loadTsx(MOD);
   const A = 'a'.repeat(64);
-  let cookie = `usernode_api_scope=${A}`;
+  let cookie = `__Host-usernode_api_scope=${A}`;
   let dead = true;
   const sent = [];
   const renewal = { epoch: 0, settled: null };

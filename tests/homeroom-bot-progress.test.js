@@ -221,27 +221,30 @@ test('links go to the platform\'s own pages, and only when there is a domain', (
   assert.deepEqual(progress.links(null, { slug: 'ear-trainer' }), {});
 });
 
+// 11 Nov 2026: the records are the stored work states (homeroom-bot-mayor.js
+// progressOf), said in the words every screen uses.
 test('the records, said in plain words when the model could not answer', () => {
-  const text = progress.progressText({
+  const { progressText } = require('../src/services/homeroom-bot-mayor');
+  const text = progressText({
     botIsOn: true,
     rightNow: [
-      { projectName: 'Ear Trainer', title: 'First version', step: 1, of: 7, doing: 'setting up the project: part 2 of 4, making its code repository', minutesSoFar: 2 },
-      { projectName: 'Seed swap', number: 3, title: 'Sort by date', step: 3, of: 6, doing: 'building it', minutesSoFar: 1 },
-      { projectName: 'Note board', number: 5, title: 'Pin notes', step: 5, of: 6, doing: 'its proposal is up for the group\'s vote', minutesSoFar: 0 },
+      { projectName: 'Ear Trainer', title: 'First version', says: 'setting up the project: part 2 of 4, making its code repository', minutesSoFar: 2 },
+      { projectName: 'Seed swap', number: 3, title: 'Sort by date', says: 'Building', minutesSoFar: 1 },
+      { projectName: 'Note board', number: 5, title: 'Pin notes', says: 'Up for a vote', minutesSoFar: 0 },
     ],
   });
   assert.equal(text, [
     'Here is where things stand, from my records:',
     '',
-    '- Ear Trainer, its first version: step 1 of 7, setting up the project: part 2 of 4, making its code repository, for 2 minutes so far.',
-    '- Seed swap request #3 (Sort by date): step 3 of 6, building it, for 1 minute so far.',
-    '- Note board request #5 (Pin notes): step 5 of 6, its proposal is up for the group\'s vote, for under a minute so far.',
+    '- Ear Trainer, its first version: setting up the project: part 2 of 4, making its code repository, for 2 minutes so far.',
+    '- Seed swap request #3 (Sort by date): Building, for 1 minute so far.',
+    '- Note board request #5 (Pin notes): Up for a vote, for under a minute so far.',
   ].join('\n'));
-  assert.match(progress.progressText({ botIsOn: false, rightNow: [{ projectName: 'A', number: 1, doing: 'x' }] }),
+  assert.match(progressText({ botIsOn: false, rightNow: [{ projectName: 'A', number: 1, says: 'x' }] }),
     /I'm switched off right now, so this waits until I'm back on\.$/);
-  assert.equal(progress.progressText({ rightNow: [] }), 'I\'m not working on anything for you right now.');
-  assert.equal(progress.progressText({ rightNow: [], finishedLately: [{ projectName: 'Seed swap', number: 3, outcome: 'approved and live' }] }),
-    'I\'m not working on anything for you right now. Most recently, Seed swap request #3: approved and live.');
+  assert.equal(progressText({ rightNow: [] }), 'I\'m not working on anything for you right now.');
+  assert.equal(progressText({ rightNow: [], finishedLately: [{ projectName: 'Seed swap', number: 3, says: 'Live' }] }),
+    'I\'m not working on anything for you right now. Most recently, Seed swap request #3: Live.');
   assert.doesNotMatch(text, /—/, 'no em dash in what the bot says');
 });
 
@@ -566,11 +569,15 @@ test('#6228: the reply read is one SQL definition, shared with the track', () =>
   assert.match(sql, /ru\.is_synthetic IS NOT TRUE/);
   assert.match(sql, /cm\.created_at > run\.created_at/);
   assert.match(progress.replyLateralSql({ appId: 'a.id', issueNumber: 'w.n' }), /cm\.app_id = a\.id/);
-  // #6280: the track reads the same record fragment the bot page does, and
-  // the reply lateral is in it, so the two cannot read a reply differently.
-  const trackSrc = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-track.js'), 'utf8');
-  assert.match(trackSrc, /requestRecordJoinsSql\(\{ appId: 'a\.id', issueNumber: 'w\.n' \}\)/);
+  // #6280: the stored work state (which the track and the bot page read)
+  // is derived from the same record fragment, and the reply lateral is in
+  // it, so no two screens read a reply differently. A thread's reply line
+  // reads the same lateral (homeroom-bot-reply-status.js).
+  const ws = require('../src/services/work-state');
+  assert.match(ws.REQUEST_FACTS_SQL, /cm\.created_at > run\.created_at/);
   assert.match(progress.requestRecordJoinsSql({ appId: 'a.id', issueNumber: 'w.n' }), /cm\.created_at > run\.created_at/);
+  const replySrc = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-reply-status.js'), 'utf8');
+  assert.match(replySrc, /replyLateralSql\(\{ appId: 'm\.app_id', issueNumber: 'm\.issue_number', runAt: 'run\.created_at' \}\)/);
 });
 
 // ── #6234: the bot's own fix of a change's failing checks, for its page ───
@@ -694,9 +701,10 @@ test('#6234: both reads of a change carry it, and the Homeroom bot page keeps it
   assert.deepEqual([queued.stage, queued.line, ws.placeFor(queued, { own: true })], ['checking', { code: 'checks_failing' }, 'waiting']);
   const counted = ws.fromStage({ stage: 'fix_queued' }, { failed_checks: 4 });
   assert.deepEqual([counted.stage, counted.line], ['checking', { code: 'checks_failing', failing: 4 }]);
-  // An update queued on a passing change still holds its vote.
+  // An update queued on a passing change still holds its vote: 11 Nov 2026,
+  // it is not open for votes, so it is the bot's, waiting its turn.
   const followUp = ws.fromStage({ stage: 'followup_queued' }, {});
-  assert.deepEqual([followUp.stage, followUp.line], ['up_for_vote', { code: 'update_queued' }]);
+  assert.deepEqual([followUp.stage, followUp.line], ['building', { code: 'update_queued' }]);
   assert.equal(require('../src/services/homeroom-bot-track').STEP_OF_STAGE[fixing.stage], 'build', 'its track lights Build');
 });
 
@@ -730,10 +738,10 @@ test('#6357: a hold says why: the week\'s building time, or a day\'s pause after
   // Every screen's line (services/work-state.js) keeps them apart.
   const ws = require('../src/services/work-state');
   const cool = ws.fromStage(stage({ ...queued, held_until: inADay }), {});
-  assert.deepEqual(cool.line, { code: 'cooldown' });
+  assert.deepEqual(cool.line, { code: 'cooldown', until: inADay }, 'with its own end, which its track draws');
   assert.equal(ws.says(cool), 'Not started yet · Paused after repeated errors: Homeroom bot tries again later');
   const week = ws.fromStage(stage({ ...queued, held_until: monday }), {});
-  assert.deepEqual(week.line, { code: 'on_hold' });
+  assert.deepEqual(week.line, { code: 'on_hold', until: monday });
   assert.equal(ws.lineSays(week), 'On hold until Monday: this week\'s building time is used up');
   assert.equal(ws.placeFor(cool, { own: true }), 'waiting');
   assert.equal(ws.placeFor(week, { own: true }), 'waiting');

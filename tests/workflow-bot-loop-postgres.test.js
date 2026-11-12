@@ -670,6 +670,27 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     await send(lane.MACHINE, lane.KEY, 'Look', {});
     fx = await events('bot-change', 'session:777', 'FixRoundEnded');
     assert.equal(fx.at(-1).payload.outcome, 'lost');
+    // Step 5 (11 Nov 2026): a look owed for failing checks with no change of
+    // the bot's up any more reads nothing: its debt is spent, and the change
+    // machine hears why the fix was not taken.
+    work.answer.set(request.WORK.look, { outcome: 'done', fix: { outcome: 'refused', why: 'no_change' } });
+    await send(request.MACHINE, requestKey(app.id, 10), 'FixAsked', { appId: app.id, issueNumber: 10, sessionId: 777, head: 'e'.repeat(40) }, { kind: 'system' });
+    await send(lane.MACHINE, lane.KEY, 'Look', {});
+    const refused = (await events('bot-change', 'session:777', 'FixRefused')).at(-1);
+    assert.deepEqual([refused.payload.head, refused.payload.why], ['e'.repeat(40), 'no_change']);
+    assert.equal((await inst(request.MACHINE, requestKey(app.id, 10))).state, 'idle');
+    assert.equal(await row(app.id, 10), undefined, 'nothing owed');
+    // A fix that went first leaves what people said owed to the next look.
+    let looks = 0;
+    work.answer.set(request.WORK.look, () => (++looks === 1
+      ? { outcome: 'done', fix: { outcome: 'looked' }, owe: [{ reason: 'changed', priority: 2, changedBy: 'github' }] }
+      : { outcome: 'done' }));
+    await send(request.MACHINE, requestKey(app.id, 10), 'FixAsked', { appId: app.id, issueNumber: 10, sessionId: 777, head: 'f'.repeat(40) }, { kind: 'system' });
+    await send(lane.MACHINE, lane.KEY, 'Look', {});
+    await settle();
+    const tail = calls(request.WORK.look).filter((c) => c.input.issueNumber === 10).slice(-2);
+    assert.deepEqual(tail.map((c) => c.input.owed.reason), ['checks_failing', 'changed'], 'the fix first, then the reply');
+    assert.equal(tail[1].input.owed.changedBy, 'github');
   });
 
   await t.test('L7: a fix asked for a request held for its payer\'s week is not held by it', async () => {

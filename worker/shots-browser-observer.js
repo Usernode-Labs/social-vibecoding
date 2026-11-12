@@ -109,20 +109,23 @@ function resultShape(message, bytes, truncated) {
   };
 }
 
-// The page Playwright says the browser is on. Most tool results end with a
-// "### Page state" block naming it; a tab list marks the current tab. A
-// screenshot's own result names neither, so the observer keeps the last one.
+// The page Playwright says the browser is on. Most tool results carry a
+// "### Page" block naming it; a tab list marks the current tab
+// (`- 0: (current) [Title](url)`). A screenshot's own result names neither,
+// so the observer keeps the last one.
 function reportedPageUrl(text) {
   const pages = [...String(text || '').matchAll(/^- Page URL: (\S+)$/gm)];
   if (pages.length) return pages[pages.length - 1][1];
-  const current = /^- \d+: \(current\) \[.*\] \((\S+)\)$/m.exec(String(text || ''));
+  const current = /^- \d+: \(current\) \[.*\]\((\S+)\)(?: \[[^\]\n]*\])*$/m.exec(String(text || ''));
   return current ? current[1] : null;
 }
 
-// Where browser_take_screenshot wrote its file. Read from the raw line too:
-// a result over the capture limit still begins with this text.
+// Where browser_take_screenshot wrote its file: its answer links it by its
+// whole path (`- [Screenshot of viewport](/…/name.png)`, --file-paths
+// absolute). Read from the raw line too: a result over the capture limit
+// still begins with this text.
 function savedScreenshotPath(text) {
-  const match = /saved it as ([^"\\\n]+?\.(?:png|jpeg))(?:\\n|\n|"|$)/.exec(String(text || ''));
+  const match = /\[Screenshot of [^\n]*?\]\(([^)"\\\n]+?\.(?:png|jpeg))\)/.exec(String(text || ''));
   return match ? match[1] : null;
 }
 
@@ -282,7 +285,8 @@ const PARSED_ANSWER_MAX_BYTES = 1024 * 1024;
 // for the page to settle after the files are chosen).
 const INJECT_TIMEOUT_MS = 30_000;
 const POINTER_LEFT_ON_PAGE = new Set([
-  'browser_click', 'browser_drag', 'browser_mouse_click_xy', 'browser_mouse_drag_xy',
+  'browser_click', 'browser_drag', 'browser_drop', 'browser_mouse_click_xy', 'browser_mouse_drag_xy',
+  'browser_mouse_down', 'browser_mouse_up',
 ]);
 const POINTER_PLACED = new Set(['browser_hover', 'browser_mouse_move_xy']);
 const ANY_ID = /"id"\s*:\s*(?:"([^"\\]{1,120})"|(-?\d{1,16}))/g;
@@ -290,7 +294,7 @@ const ANY_ID = /"id"\s*:\s*(?:"([^"\\]{1,120})"|(-?\d{1,16}))/g;
 function parkRequest(id) {
   return Buffer.from(`${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: {
     name: 'browser_mouse_move_xy',
-    arguments: { element: 'Pointer off the page before a screenshot', x: -1, y: -1 },
+    arguments: { x: -1, y: -1 },
   } })}\n`);
 }
 
@@ -610,7 +614,7 @@ function sameToken(value, expected) {
   return crypto.timingSafeEqual(Buffer.from(value), Buffer.from(expected));
 }
 
-// A close-up (patch-playwright-mcp-screenshot.js `closeup`): a region of the
+// A close-up (patch-playwright-mcp.js `closeup`): a region of the
 // screen at a density, saved under a name the observer chooses.
 const CLOSEUP_MAX_SCALE = 16;
 function closeupArgs(message) {
@@ -692,10 +696,11 @@ function browserCommand(value = process.env.SHOTS_BROWSER_MCP_COMMAND) {
       return parsed;
     }
   } catch { /* fall through to the installed server */ }
-  return ['mcp-server-playwright'];
+  return ['playwright-mcp'];
 }
 
 function start({ persona, phone = false, args, binary = null,
+  recordsClips = process.env.SHOTS_RECORD_CLIPS === '1',
   stdin = process.stdin, stdout = process.stdout, stderr = process.stderr,
   diagnosticFile = process.env.SHOTS_BROWSER_DIAGNOSTIC_FILE,
   origins = JSON.parse(process.env.SHOTS_ALLOWED_ORIGINS || '[]'),
@@ -714,13 +719,18 @@ function start({ persona, phone = false, args, binary = null,
   const outputDir = outputAt >= 0 ? list[outputAt + 1] || null : null;
   const observer = createObserver({ persona, phone, origins, hints, emit, outputDir });
   const [command, ...prefix] = binary ? [binary] : browserCommand();
-  const child = spawn(command, [...prefix, ...list], { stdio: ['pipe', 'pipe', 'pipe'] });
+  // In the read-only samples directory: the server's workspace root
+  // (--ignore-roots), so the only files a page can be handed are the samples
+  // upload_file names (the agent's own file tools are denied).
+  const child = spawn(command, [...prefix, ...list], {
+    stdio: ['pipe', 'pipe', 'pipe'], ...(samplesDir && fs.existsSync(samplesDir) ? { cwd: samplesDir } : {}),
+  });
   child.stdin.on('error', () => { /* Child exit is reported by the close handler. */ });
   const inputTap = lineTap((line, meta) => observer.request(line, meta));
   const safePersona = ['admin', 'full_admin', 'guest'].includes(persona) ? persona : 'member';
   const parker = createPointerParker({
     emit, persona: safePersona,
-    parkBeforeClose: list.some((arg) => /^--save-video(=|$)/.test(arg)),
+    parkBeforeClose: recordsClips,
   });
   const control = startControl({
     dir: controlDir, name: `${safePersona}${phone === true ? '_phone' : ''}`, token: controlToken,

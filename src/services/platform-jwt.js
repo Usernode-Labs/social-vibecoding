@@ -514,10 +514,13 @@ function verifyProdDebugToken(token) {
 // its token, never the token): the cookie it becomes is only good while
 // that session is, so signing out of Homeroom signs out of every app host.
 // `jti` is what makes the code single-use: the gate records it the first
-// time it is redeemed and refuses it after that.
-function signEdgeGrant({ uid, appId, host, sid = null, jti = null }) {
+// time it is redeemed and refuses it after that. `state` binds it to the
+// browser that started the hop (the SHA-256 of the state cookie the gate
+// set there): the gate trades it only in that browser.
+function signEdgeGrant({ uid, appId, host, sid = null, state = null, jti = null }) {
   const payload = { uid, appId, host, pur: PUR_EDGE_GRANT };
   if (sid) payload.sid = sid;
+  if (state) payload.state = state;
   return jwt.sign(payload, edgeSecret(), {
     algorithm: 'HS256',
     issuer: ISSUER,

@@ -43,9 +43,10 @@ import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { ActionButton, DevCard, StatusPill } from '../card/dev-card';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
-import { topicHeadStore } from './topic-store';
+import { topicHeadStore, TopicPageContext } from './topic-store';
 import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { TopicBack } from './topic-back';
 import { RequestHead, RequestWords } from './request-head';
@@ -748,20 +749,55 @@ function Transcript({ t: section }: { t: TranscriptSection }): ReactNode {
 // The governance rows a decision's page shows (routes/issues.js governance/:id).
 const GOVERNANCE_KINDS = new Set(['secret_change', 'rename', 'close_issue', 'maintenance_campaign', 'featured_illustration', 'thread_move']);
 
+/**
+ * #6608: the head's place while the route names a different topic whose page
+ * is not loaded yet. The previous change's body, votes and events are gone
+ * the moment the heading changes; these are the platform's existing loading
+ * bars (the same ones a request's change section shows, ./thread-changes.tsx
+ * ChangeSectionSkeleton), so nothing new is designed. It publishes no panel
+ * head: the column's pill comes back when the page itself draws.
+ */
+function TopicHeadLoading(): ReactNode {
+  const t = useMessages('project');
+  return (
+    <section className="dev-topic-loading px-1 py-4" data-topic-loading="">
+      <SkeletonGroup label={t('project:topic.thread.page.changeLoading')}>
+        <Skeleton className="h-4 w-3/5" />
+        <Skeleton shape="muted" className="mt-2.5 w-2/5" />
+        <Skeleton shape="block" className="mt-5 h-24 rounded-2xl" />
+        <Skeleton shape="muted" className="mt-4 w-1/2" />
+      </SkeletonGroup>
+    </section>
+  );
+}
+
 export function TopicHead(): ReactNode {
-  const { card, body, item } = useStoreState(topicHeadStore);
-  if (!body) return null;
-  // #4453: a request's page is a Messages reply thread with the request as
-  // its root post, not the card and its sheets.
-  if (body.request) return <RequestHead key={`request:${body.request.number}`} r={body.request} />;
-  // #6440: a governance vote's page is the same thread, the vote as its root
-  // post. It has no card: the head IS the page.
-  if (body.decision) return <GovernanceHead key={`decision:${body.decision.id}`} row={body.decision} />;
-  if (!card) return null;
-  // `back`: this IS the topic page, whose one back control is the chip at the
-  // top of the pane (#2916, ./topic-back.tsx). Every kind of topic comes
-  // through here, a change page and an issue/governance thread head alike.
-  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} back />;
+  const { card, body, item, slug = null, route = null, loading = false } = useStoreState(topicHeadStore);
+  if (loading) return <TopicHeadLoading />;
+  let page: ReactNode = null;
+  if (body) {
+    if (body.request) {
+      // #4453: a request's page is a Messages reply thread with the request as
+      // its root post, not the card and its sheets.
+      page = <RequestHead key={`request:${body.request.number}`} r={body.request} />;
+    } else if (body.decision) {
+      // #6440: a governance vote's page is the same thread, the vote as its root
+      // post. It has no card: the head IS the page.
+      page = <GovernanceHead key={`decision:${body.decision.id}`} row={body.decision} />;
+    } else if (card) {
+      // `back`: this IS the topic page, whose one back control is the chip at the
+      // top of the pane (#2916, ./topic-back.tsx). Every kind of topic comes
+      // through here, a change page and an issue/governance thread head alike.
+      page = <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} back />;
+    }
+  }
+  // #6608: the page's own thread list and its panel pill read the project and
+  // route it was painted for, never whichever project the app last loaded.
+  return (
+    <TopicPageContext.Provider value={{ slug: slug || null, route: route || null }}>
+      {page}
+    </TopicPageContext.Provider>
+  );
 }
 
 /** Refresh from the endpoint that owns this lifecycle's metadata. */

@@ -22,8 +22,10 @@ test('a change\'s page reads its thread as the change\'s, by its own pull reques
   assert.match(items, /useThreadPayload\(slug, number, threadId, controlled, asChange\)/);
   const head = read('frontend/src/features/dev-board/topic/topic-head.tsx');
   assert.match(head, /threadNumber=\{Number\(session\?\.pr_number\) \|\| Number\(linkedIssues\[0\]\) \|\| null\} threadAsChange=\{Number\(session\?\.pr_number\) > 0\}/);
+  // #6608: the list reads the project the page was painted for, not the app
+  // the viewer has since moved to (pageSlug is only the fallback).
   assert.match(read('frontend/src/features/dev-board/topic/change-head.tsx'),
-    /<ThreadItems slug=\{pageSlug\(\)\} number=\{threadNumber\} asChange=\{threadAsChange\} here=\{\{ type: 'change', id \}\} menuKey=\{menuKey \|\| null\} \/>/);
+    /<ThreadItems slug=\{slug\} number=\{threadNumber\} asChange=\{threadAsChange\} here=\{\{ type: 'change', id \}\} menuKey=\{menuKey \|\| null\} \/>/);
 });
 
 test('the AI tab names a change\'s own numberless thread by the change', () => {
@@ -32,10 +34,16 @@ test('the AI tab names a change\'s own numberless thread by the change', () => {
     id: 9, number: null, kind: 'work', thread_title: null, state: 'open', created_at: '2026-10-29T11:16:00Z',
     slug: 'usernode-2d5619', name: 'Homeroom', request_title: null, request_state: null,
     change_id: 11720, pr_number: 6002, change_status: 'promoted', change_user: 7, change_title: 'SEC-09',
-    promoted_at: '2026-10-29T11:18:00Z', voted: false,
+    promoted_at: '2026-10-29T11:18:00Z', voted: true, my_vote: 'yes',
   };
-  // Up for a vote and waiting on other people's: Up next (29 Oct 2026).
-  const { waiting } = arrange([row], 7, new Date('2026-10-29T15:00:00Z'));
+  // Up for a vote and waiting on other people's: Up next (29 Oct 2026); its
+  // author has said yes (#6580: until then it is a vote they owe). Its
+  // stored work state (services/work-state.js) is the change's own row.
+  const states = new Map([['change:11720', {
+    stage: 'up_for_vote', why: null, reason: null, line: null, whoseMove: 'group', since: '2026-10-29T11:18:00Z',
+    voteOpen: true, requesterId: 7,
+  }]]);
+  const { waiting } = arrange([row], 7, new Date('2026-10-29T15:00:00Z'), null, states);
   assert.equal(waiting.length, 1);
   assert.equal(waiting[0].number, 6002);
   assert.equal(waiting[0].href, '#app/usernode-2d5619/dev/changes/6002');

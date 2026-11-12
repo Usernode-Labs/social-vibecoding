@@ -65,6 +65,8 @@ const { isStandIn, lastRoundNote, standInNote, readingDoneNote } = require('./ho
 const turnEngine = require('./homeroom-bot-turn-engine');
 // Task 2020 follow-up: a reply laid out, as the bot's chat sends one.
 const replyHtml = require('./homeroom-bot-html');
+// The one reply checker every surface runs (Homeroom bot one model, step 2).
+const claims = require('./reply-claims');
 // #6534: pictures and files the bot may put under its reply in a thread.
 const threadPictures = require('./homeroom-bot-thread-tools/pictures');
 const threadAttachments = require('./homeroom-bot-thread-attachments');
@@ -150,22 +152,8 @@ const SWITCH_OF = Object.freeze({
   session: 'voiceSession', issue: 'voiceIssue', chat: 'voiceChat', category: 'voiceChat', message: 'voiceChat',
 });
 
-const OFFER_WORDS = Object.freeze({
-  file_request: { yes: 'File it', no: 'Not now' },
-  file_many: { yes: 'File on all', no: 'Not now' },
-  withdraw_change: { yes: 'Withdraw it', no: 'Keep it' },
-  close_request: { yes: 'Propose to close', no: 'Keep it open' },
-  try_again: { yes: 'Let it try again', no: 'Not now' },
-  // #6311: the copy beside the move. The original stays open.
-  copy_request: { yes: 'Put it on Homeroom\'s board', no: 'Keep it here only' },
-  // 5 Nov 2026: the move itself, under the note in the request's thread
-  // (its news no longer goes to their chat with the bot, where it was
-  // offered): filed on Homeroom's board, the original closed or voted on.
-  move_request: { yes: 'Move it to Homeroom', no: 'Keep it here' },
-  // #6533: a change's thread, showing what it looks like.
-  run_shots: { yes: 'Take the shots', no: 'Not now' },
-  post_pictures_plan: { yes: 'Post as a plan', no: 'Not now' },
-});
+// A thread card's buttons: their words (services/bot-cards.js).
+const { OFFER_WORDS, offerActions } = require('./bot-cards');
 
 let sharedConfig = null;
 /** The platform's config, as ws.attach hands it over (the hooks have none). */
@@ -220,34 +208,9 @@ function untrustedText(value, max) {
   return text ? `<untrusted-content>${text}</untrusted-content>` : null;
 }
 
-// #6263: a reply that says what a change's description contains, or that it
-// is an earlier version, without having read it this turn: "That's the
-// earlier wording, from before the update." was said about text the bot had
-// never read and could not read. Read as it would be sent.
-const UNREAD_DESCRIPTION_RE = new RegExp(
-  String.raw`\b(?:the\s+(?:change'?s?\s+)?|its\s+)?description\s+(?:still\s+)?(?:says?|said|reads?|describes?|described|is|was)\b`
-  + String.raw`|\bearlier\s+(?:wording|version|text)\b`,
-  'i',
-);
-const UNREAD_DESCRIPTION_NOTE = ' You described a change\'s description without reading it in this reply. Read it with get_change, or say you cannot see it.';
-
-/** Pure: the claims a reply makes about a description it did not read this turn. */
-function unreadDescriptionClaims(said, ctx) {
-  const read = ctx?.readChanges;
-  const readCount = read instanceof Set ? read.size : (Array.isArray(read) ? read.length : 0);
-  if (!said || readCount > 0) return [];
-  if (!UNREAD_DESCRIPTION_RE.test(String(said))) return [];
-  return [{ kind: 'unread_description', said: 'describes what a change\'s description says without reading it in this turn' }];
-}
-
-/** Pure: `text` less every sentence that describes a description it did not read. */
-function stripUnreadClaims(text, problems) {
-  if (!problems?.some((p) => p.kind === 'unread_description')) return text;
-  return String(text || '').split('\n').map((line) => line
-    .split(/(?<=[.!?])\s+/)
-    .filter((sentence) => !UNREAD_DESCRIPTION_RE.test(sentence))
-    .join(' ')).join('\n').trim();
-}
+// #6263: a reply that describes a change's description it did not read this
+// turn is one of the shared reply checker's claims (reply-claims.js
+// unread_description), held to the changes the turn read (ctx.readChanges).
 
 // ── Places ───────────────────────────────────────────────────────────────
 
@@ -768,18 +731,33 @@ async function claim(pool, { appId, place, turnKey, trigger = 'message', speaker
   return rows[0]?.id || null;
 }
 
+// Step 5 (11 Nov 2026): the most messages a turn records as judged.
+const MAX_ADDRESSED_IDS = 50;
+
 async function finishTurn(pool, turnId, row) {
   await pool.query(
     `UPDATE homeroom_bot_voice_turns
         SET finished_at = NOW(), outcome = $2, through_message_id = $3, reply_message_id = $4, model = $5,
             rounds = $6, tools = $7, input_tokens = $8, output_tokens = $9, cost_usd = $10, error = $11,
-            failures = $12, speaker_id = COALESCE($13, speaker_id)
+            failures = $12, speaker_id = COALESCE($13, speaker_id), addressed_ids = $14
       WHERE id = $1`,
     [turnId, row.outcome || null, row.throughId || null, row.replyId || null, row.model || null,
       row.rounds || 0, (row.tools || []).slice(0, 30), row.inputTokens ?? null, row.outputTokens ?? null,
       row.costUsd ?? null, row.error ? clip(row.error, 300) : null, (row.failures || []).slice(0, 20),
-      row.speakerId || null],
+      row.speakerId || null, (row.addressedIds || []).slice(-MAX_ADDRESSED_IDS)],
   );
+}
+
+/**
+ * Pure (step 5): the messages a finished turn judged, as finishTurn keeps
+ * them. The people it answered, or chose to say nothing to: a turn that
+ * could not answer (a fallback, a failure) judged nothing, unless it asked
+ * for the request to be read again (ask_changed), which it did.
+ */
+function judgedIds(record, outcome) {
+  const ids = Array.isArray(record?.addressedIds) ? record.addressedIds : [];
+  const asked = Array.isArray(record?.tools) && record.tools.includes('ask_changed');
+  return outcome === 'replied' || outcome === 'quiet' || asked ? ids : [];
 }
 
 /** The newest message a finished turn in this place read, or 0. */
@@ -907,6 +885,35 @@ async function goAheadCannotReply(pool, { app, place, row, speaker, deps = {} })
 }
 
 /**
+ * #6614: whether `row` is a person's reply to the bot's own short yes: the
+ * bot's newest message in this thread (below `row`) stored that wording as
+ * its affirmation and answered this speaker. Read best-effort: a failed read
+ * is false.
+ */
+async function affirmedAck(pool, { app, place, bot, row, speaker }) {
+  if (!place || (place.type !== 'issue' && place.type !== 'session') || !row || !speaker) return false;
+  const thread = threadOf(place);
+  if (!thread) return false;
+  try {
+    const { rows: [prev] } = await pool.query(
+      `SELECT metadata FROM chat_messages
+        WHERE app_id = $1 AND thread_type = $2 AND thread_ref = $3 AND user_id = $4
+          AND id < $5 AND deleted_at IS NULL
+        ORDER BY id DESC LIMIT 1`,
+      [Number(app.id), thread.type, thread.ref, Number(bot.id), Number(row.id)],
+    );
+    const homeroomBot = prev?.metadata?.homeroomBot || null;
+    const label = String(homeroomBot?.affirm?.label || '').trim();
+    if (!label) return false;
+    if (label.toLowerCase() !== String(row.content || '').trim().toLowerCase()) return false;
+    const ids = (homeroomBot?.suggest?.forUserIds || []).map(Number);
+    return ids.includes(Number(speaker.id));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Run one turn in one place (the bot-voice machine's `voice.turn` work):
  * read what was said there since `through`, answer the people who wrote to
  * the bot (or say nothing), and record it. `turnKey` is the work item's: a
@@ -941,6 +948,7 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
   const record = { outcome: 'quiet', tools: [], failures: [] };
   const finishWith = async (outcome) => {
     record.outcome = outcome;
+    record.addressedIds = judgedIds(record, outcome);
     await finishTurn(pool, turnId, record);
     noteStatus(true);
     return { outcome, throughId: record.throughId || null, replyId: record.replyId || null };
@@ -1022,6 +1030,10 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
     await restOfChat();
     return finishWith('quiet');
   }
+  // Step 5 (11 Nov 2026): what this turn judges, kept with it (finishTurn).
+  // On a request, a message the voice answered is not read as a change to
+  // the request unless it said so (ask_changed): homeroom-bot.js refreshApp.
+  record.addressedIds = addressed.map((a) => Number(a.message.id));
   // 6 Nov 2026 (#6430): a go-ahead in the request's own discussion is
   // answered here, once, in the same fixed words the chat's start tool uses.
   // Nothing is being built, so the model never writes "I'm on it" or offers
@@ -1036,6 +1048,18 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
       // The smaller part is the primary button (its own words), then Not now.
       extra: { goAheadCannot: { messageId: Number(last.message.id) }, actions: goAheadCannot.labels },
       deps,
+    });
+    record.replyId = sent?.id || null;
+    await restOfChat();
+    return finishWith('replied');
+  }
+  // 11 Nov 2026 (#6614): the person's yes to the bot's own short yes gets one
+  // line back and no buttons; the bot then says nothing until the work's
+  // result arrives.
+  if (await affirmedAck(pool, { app, place, bot, row: last.message, speaker: last.speaker })) {
+    const sent = await say(pool, {
+      app, place, bot, text: AFFIRMED_ACK_TEXT, answer, mark, suggest: false,
+      extra: { affirmed: { messageId: Number(last.message.id) } }, deps,
     });
     record.replyId = sent?.id || null;
     await restOfChat();
@@ -1062,21 +1086,36 @@ async function newestIn(pool, { app, place }) {
   return Number(rows[0]?.id) || 0;
 }
 
+/** Pure: the key a turn's reply is said once by (bot-post.js). */
+function replyKey(app, place, turnKey) {
+  const botPost = require('./bot-post');
+  return botPost.keyOf({ kind: 'reply', subject: botPost.placeSubject(app.id, place), version: `turn-${turnKey}` });
+}
+
 /**
- * The reply a turn (`turnKey`) already posted, by its mark, with what it
- * read through; null when it posted none. Its offer's message id is put
- * right if the attempt that posted it stopped before writing it.
+ * The reply a turn (`turnKey`) already posted, by its key (bot-post.js),
+ * with what it read through (its message's turn); null when it posted none.
+ * Its offer, if it has one, was written with it (say).
+ *
+ * For one release after step 4 (11 Nov 2026), a turn retried across it may
+ * have posted its reply before keys: its message's turn mark (which every
+ * reply still carries) is read too, read-only, when its key names none.
+ * Remove TURN_MARK_SQL in the release after.
  */
+const TURN_MARK_SQL = `
+  SELECT id, metadata FROM chat_messages
+   WHERE app_id = $1 AND user_id = $2 AND metadata->'homeroomBot'->'turn'->>'key' = $3
+     AND created_at > NOW() - INTERVAL '2 days'
+   ORDER BY id LIMIT 1`;
 async function replyOf(pool, { app, place, bot, turnKey }) {
-  const { rows: [m] } = await pool.query(
-    `SELECT id, metadata FROM chat_messages
-      WHERE app_id = $1 AND user_id = $2 AND metadata->'homeroomBot'->'turn'->>'key' = $3
-      ORDER BY id LIMIT 1`,
-    [app.id, bot.id, String(turnKey)],
+  const { rows: [keyed] } = await pool.query(
+    `SELECT m.id, m.metadata FROM bot_posts p
+       JOIN chat_messages m ON m.id = p.chat_message_id
+      WHERE p.said_key = $1 AND p.app_id = $2 AND m.user_id = $3`,
+    [replyKey(app, place, turnKey), app.id, bot.id],
   );
+  const m = keyed || (await pool.query(TURN_MARK_SQL, [app.id, bot.id, String(turnKey)])).rows[0];
   if (!m) return null;
-  const offerId = Number(m.metadata?.homeroomBot?.offer?.id);
-  if (offerId) await tieOffer(pool, offerId, m.id);
   return { id: Number(m.id), through: Number(m.metadata?.homeroomBot?.turn?.through) || null };
 }
 
@@ -1166,7 +1205,13 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
     const request = Array.isArray(change.linked_issues) && change.linked_issues.length ? Number(change.linked_issues[0]) : null;
     const counts = await followup.revisionCounts(pool, change.id);
     const asks = await askState(pool, change.id);
-    const busy = await changeBusy(pool, change.id);
+    // 11 Nov 2026: where it stands is its stored work state
+    // (services/work-state.js), the row its page and every list draw: its
+    // stage in their words, its checks, its votes, whether it is open for
+    // votes, and an update on its way.
+    const workState = require('./work-state');
+    const standing = (await workState.forChanges(pool, [change.id]).catch(() => new Map())).get(Number(change.id)) || null;
+    const busy = standing ? standing.change?.update === 'running' : (asks.running || await changeBusy(pool, change.id));
     // #6389: a change somebody else made, and where they made it. There is
     // no Fix it button on one made outside Homeroom: the facts say so, so the
     // model names the tool rather than inventing a button. Whether the bot may
@@ -1182,7 +1227,8 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
     lines.push(`The change${place.type === 'issue' ? ' you built for this request' : ''}: `
       + `${change.pr_number ? `Change #${Number(change.pr_number)}` : 'the change'} `
       + `(its id, for tool arguments only, is ${change.id}), "${clip(change.title, 160)}", ${built}, `
-      + `status ${change.status}${request ? `, for request #${request}` : ''}.`);
+      + `${standing ? `where it stands: ${workState.says(standing, { yours: false })}` : `status ${change.status}`}`
+      + `${request ? `, for request #${request}` : ''}.`);
     if (!own && change.external_agent && Number(change.user_id) === Number(speaker.id)) {
       lines.push(`The person who wrote to you made this change (${author}): answer them as you.`);
     }
@@ -1195,7 +1241,7 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
         lines.push(admitted.ok
           ? `You can update this change for them, on this same change (update_change), paid from ${author}'s week. You have made ${counts.asked} of ${followup.MAX_ASKED_REVISIONS} updates people asked for on it.`
           : `You cannot update this change just now: ${clip(admitted.error, 300)}`);
-        lines.push(busy || asks.running
+        lines.push(busy
           ? `An update of yours on it is running right now${asks.queued ? `, and ${asks.queued} more ask${asks.queued === 1 ? '' : 's'} wait${asks.queued === 1 ? 's' : ''} behind it` : ''}.`
           : asks.queued ? `${asks.queued} ask${asks.queued === 1 ? '' : 's'} wait${asks.queued === 1 ? 's' : ''} for its next update.` : 'Nothing of yours is running on it now.');
       } else {
@@ -1211,13 +1257,21 @@ async function factsFor(pool, { app, place, bot, settings, speaker, deps = {} })
     // On GitHub the change's number is GitHub's own pull request counter, so
     // it is written "PR N"; "#N" is only ever a request there.
     if (repoRef.isGithub(app.repo_url)) lines.push('On this project a change is written as PR N, from GitHub\'s own counter; #N is only ever a request.');
-    if (change.check_state) lines.push(`Its checks: ${change.check_state}.`);
+    const facts = standing?.change || null;
+    if (facts) {
+      const failing = Number(facts.checks?.failing) > 0 ? `, ${facts.checks.failing} failing` : '';
+      lines.push(`Its checks: ${facts.checks?.state || 'not run yet'}${failing}. Its votes this round: ${facts.votes.yes} yes, ${facts.votes.no} no. `
+        + `${facts.voteOpen ? 'It is open for votes now.' : 'It is not open for votes now.'}`
+        + `${facts.update === 'queued' ? ' An update is queued on it.' : ''}`);
+    } else if (change.check_state) {
+      lines.push(`Its checks: ${change.check_state}.`);
+    }
     if (own) {
       lines.push(`You have made ${counts.own} of ${followup.MAX_REVISIONS} fixes on it by yourself, and ${counts.asked} of ${followup.MAX_ASKED_REVISIONS} updates people asked for.`);
       if (counts.own >= followup.MAX_REVISIONS && !counts.openGrant) {
         lines.push('You stopped at your own limit, so you cannot fix it again until the person who asked for it or an admin lets you try once more (let_try_again).');
       }
-      lines.push(busy || asks.running
+      lines.push(busy
         ? `A run on it is going right now${asks.queued ? `, and ${asks.queued} more ask${asks.queued === 1 ? '' : 's'} wait${asks.queued === 1 ? 's' : ''} behind it` : ''}.`
         : asks.queued ? `${asks.queued} ask${asks.queued === 1 ? '' : 's'} wait${asks.queued === 1 ? 's' : ''} for its next update.` : 'Nothing is running on it now.');
     }
@@ -1261,6 +1315,8 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     has('offer_withdraw') ? '- Offer to withdraw your change when the person who asked for its request, or the project\'s owner, wants it dropped (offer_withdraw). Nothing happens until they tap Withdraw it under your reply: say so.' : null,
     has('start_request') ? '- Start this request now, or read it again, when somebody asks you to build it (start_request). The result says what happens; say exactly that. When it gives a link or changeLink, include them as written. When its result has `said`, reply with that and nothing else.' : null,
     has('change_plan') ? '- Your plan for this request waits for its requester to say Build it. Them saying to build it or go ahead is start_request, which builds the plan as they saw it. Somebody asking for something in the plan to change is change_plan, which plans it again with their words. A question about the plan or where it stands is answered from the facts, and changes nothing.' : null,
+    // Step 5 (11 Nov 2026): only what changes the ask reads it again.
+    has('ask_changed') ? '- When somebody changes what this request asks for (something added, dropped or done differently), call ask_changed with what changed in one line: you read the request again soon, with their words. Say so, and never what that read will decide. A question, a status check or thanks gets a reply only: never ask_changed for those. Asking you to build it or start now is start_request.' : null,
     has('offer_close_request') ? (place.type === 'issue'
       ? '- Offer a vote on closing this request when somebody says it is done, a duplicate or not wanted (offer_close_request). When the person who asked for this request, or somebody who decides on the project, asks to close or withdraw it, offer the close vote with their words as why, and never start_request. It opens only when they tap Propose to close, and closes only if the group votes for it. Never start a request somebody asked you to close.'
       : '- Offer a vote on closing one of this project\'s requests, by its number, when somebody says it is done, a duplicate or not wanted (offer_close_request). It opens only when they tap Propose to close, and closes only if the group votes for it.') : null,
@@ -1311,6 +1367,9 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
         'Never write them in the text. When your reply asks a question, they are its answers (for "Want me to tell',
         'you here when it is ready to vote?" put "Yes, tell me here" and "No thanks"). When the change is live or',
         'the request is closed, a short closing pair such as "Thanks" and "Something\'s still wrong".',
+        'When your reply says work is queued, running or about to start and asks nothing, the first is a short yes in',
+        'their words, such as "Sounds good", and any others are light, such as "Tell me when it\'s ready": never one',
+        'that changes or adds to the work. Their yes is answered with one short line and no buttons.',
         'Put one to three short things a member of this community whom you did not answer might say next in the',
         'reply tool\'s suggestionsForOthers field, such as "I\'d like this too", "Can I try it?" or "What\'s left',
         'to do?".']
@@ -1401,7 +1460,9 @@ function replyToolWithSuggestions() {
       description: 'One to three short things the people you answered might say next, in their own words, shown as '
         + 'buttons to tap that send them as that person\'s reply. Always give them: when your reply asks a question '
         + 'they are its answers, and when the request is closed or the change is live they are a short closing pair. '
-        + `Each at most ${mayor.MAX_SUGGESTION_CHARS} characters.`,
+        + 'When your reply says work is queued, running or about to start and asks nothing, the first is a short yes '
+        + 'in their words, such as "Sounds good", and any others are light, such as "Tell me when it\'s ready": never '
+        + `one that changes or adds to the work. Each at most ${mayor.MAX_SUGGESTION_CHARS} characters.`,
       items: { type: 'string' },
     },
     suggestionsForOthers: {
@@ -1493,6 +1554,15 @@ function toolsFor(place, {
     // longer reads the request again by itself (homeroom-bot.js
     // unaddressedActivityByIssue): a change to the plan is asked for here.
     if (planWaiting) tools.push(fn('change_plan', 'Plan this request again with what they asked to change in your plan.', {}, []));
+    // Step 5 (11 Nov 2026): a comment is read as a change to the request
+    // only when the voice says it is one (homeroom-bot.js refreshApp); with
+    // a change of its up, update_change takes it, and under a plan waiting
+    // for Build it, change_plan.
+    if (!requestChange && !planWaiting) {
+      tools.push(fn('ask_changed', 'Read this request again soon, because what somebody just said changes what it asks for. Never for a question, a status check or thanks.', {
+        what: { type: 'string', description: 'What changed in what the request asks for, in one line of your own words.' },
+      }, ['what']));
+    }
     tools.push(fn('offer_close_request', 'Offer a vote on closing this request.', {
       why: { type: 'string', description: 'Why it should close, in their words.' },
     }, ['why']));
@@ -1799,11 +1869,6 @@ async function scopedPlatformCall(pool, platform, app, name, args) {
  * The model's turn in a place: context, tools, the claims check, one reply
  * (or nothing). Resolves { outcome, messageId }.
  */
-async function claimsFor(pool, ctx, said) {
-  const mayor = mayorModule(ctx.deps);
-  return [...await mayor.claimProblems(pool, ctx, said), ...unreadDescriptionClaims(said, ctx)];
-}
-
 async function converse(pool, cfg, { app, place, bot, settings, messages, fresh, addressed, deps, record, mark = null }) {
   const mayor = mayorModule(deps);
   const last = addressed[addressed.length - 1];
@@ -1833,8 +1898,16 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     cards: [], appIds: new Set([Number(app.id)]), offer: null, reply: null, quiet: false,
     // #6534: the files this turn stored for its reply, in send order.
     attached: [],
-    revised: false, recentRevision: false, started: null, commented: null, posted: null, withdrew: null, reported: null,
+    revised: false, recentRevision: false, started: null, withdrew: null, reported: null,
     workBusy: false, triggerMessage: last.message,
+    // #6583: the platform's own posts here (a plan, a build's news, a
+    // filing) are a record the claim check may read; the voice's earlier
+    // replies, the model's own words, are not. The tools this place offers
+    // are the only ones a repair note may name.
+    earlierBotText: messages
+      .filter((m) => Number(m.user_id) === Number(bot.id) && m.metadata?.homeroomBot?.kind !== 'voice')
+      .map((m) => String(m.content || '')).join('\n'),
+    toolNames: new Set(tools.map((tool) => tool?.function?.name).filter(Boolean)),
     // #6263: the changes this turn read (get_change) and whether it already
     // reworded one. What is not read is never described.
     readChanges: new Set(), described: false,
@@ -1857,6 +1930,8 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   // The turn a tool's own model calls count toward (homeroom-bot-already-done.js).
   ctx.turn = t;
   let finalText = '';
+  // The repair pass's answer, once one ran (#6583).
+  let repaired = '';
   try {
     if (t.apiKey === undefined) t.apiKey = await mayor.botKey(pool, cfg, bot.id).catch(() => null);
     if (!t.apiKey) {
@@ -1945,7 +2020,10 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
       },
       call: async (call, name, args) => {
         record.tools.push(name.slice(0, 40));
-        return runTool(pool, ctx, name, args, { platform });
+        const result = await runTool(pool, ctx, name, args, { platform });
+        // #6581, #6307: the requests and projects a tool returned are real.
+        claims.noteTool(ctx, result);
+        return result;
       },
       afterCalls: ({ rounds }) => {
         // A stand-in refused by its reply tool is the tool's to say; either
@@ -1987,13 +2065,10 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     const said = (ctx.reply || ctx.pendingReply)?.text ?? finalText;
     // Task 2020 follow-up: what its laid-out copy says is checked as its words are.
     const shown = (ctx.reply || ctx.pendingReply)?.html || null;
-    const problems = said && !ctx.quiet ? await claimsFor(pool, ctx, replyHtml.withHtmlWords(said, shown)) : [];
+    const problems = said && !ctx.quiet ? await claims.checkReply(pool, ctx, replyHtml.withHtmlWords(said, shown)) : [];
     if (problems.length) {
       t.failures.push(`claims:${problems.map((p) => p.kind).join('+')}`.slice(0, 80));
-      msgs.push({
-        role: 'user',
-        content: `${mayor.checkNote(problems)}${problems.some((p) => p.kind === 'unread_description') ? UNREAD_DESCRIPTION_NOTE : ''}`,
-      });
+      msgs.push({ role: 'user', content: claims.repairNote(problems, { tools: ctx.toolNames }) });
       ctx.reply = null;
       finalText = '';
       turnRounds.limit = turnRounds.rounds + 2;
@@ -2001,9 +2076,12 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
       // has to describe.
       ctx.reads = 0;
       try { await runRounds(); } catch { /* the first answer, checked below, still goes */ }
+      // The repair pass's own answer, if it gave one: what a cut that would
+      // leave nothing sends instead (lastWords, below).
+      repaired = (ctx.reply || ctx.pendingReply)?.text ?? finalText ?? '';
       if (!ctx.reply && !ctx.pendingReply && !finalText) ctx.reply = { text: said, ...(shown ? { html: shown } : {}) };
       const again = ctx.reply || ctx.pendingReply;
-      ctx.checkedProblems = await claimsFor(pool, ctx, replyHtml.withHtmlWords(again?.text ?? finalText, again?.html));
+      ctx.checkedProblems = await claims.checkReply(pool, ctx, replyHtml.withHtmlWords(again?.text ?? finalText, again?.html));
     }
   } catch (err) {
     record.error = mayor.codeOf(err);
@@ -2017,11 +2095,18 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   }
   if (ctx.quiet) return { outcome: 'quiet' };
   const finalReply = ctx.reply || ctx.pendingReply || null;
-  let text = clip(withoutEmDashes(mayor.cleanReply(finalReply?.text || finalText)), MAX_REPLY_CHARS);
+  let text = clip(withoutEmDashes(claims.cleanReply(finalReply?.text || finalText)), MAX_REPLY_CHARS);
   // Task 2020 follow-up: the words as the reply wrote them, before anything below changes them.
   const asWritten = finalReply?.text ? text : null;
+  // What is still shown false is cut, and nothing is said in its place. A
+  // cut that leaves nothing sends the repair pass's own answer, when it gave
+  // one, less only what is certainly false (reply-claims.js lastWords),
+  // rather than the fixed line below.
   if (text && ctx.checkedProblems?.length) {
-    text = stripUnreadClaims(mayor.stripClaims(text, ctx.checkedProblems), ctx.checkedProblems);
+    const kept = claims.cut(text, ctx.checkedProblems, ctx);
+    text = kept || (repaired
+      ? claims.lastWords(clip(withoutEmDashes(claims.cleanReply(repaired)), MAX_REPLY_CHARS), ctx.checkedProblems, ctx)
+      : '');
   }
   // A turn that queued a change or made an offer did neither yet.
   if (text && (ctx.revised || ctx.offer)) text = notDoneYet(text);
@@ -2033,10 +2118,30 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   // Only beside those words unchanged: a cut claim, a "not done yet" or the
   // fallback line would leave the copy saying what the words no longer do.
   const html = threadReplyHtml({ finalReply, text, asWritten, checkedProblems: ctx.checkedProblems, offer: ctx.offer });
+  // #6600: a takeover the bot queued in this turn can already have failed
+  // before the reply is posted (a worker that could not start, say). The
+  // reply must say what happened, not that the work is queued.
+  let sentHtml = html;
+  let suggestions = finalReply?.suggestions;
+  let othersSuggestions = finalReply?.suggestionsForOthers;
+  let offer = ctx.offer;
+  // #6614: the turn queued or started work, so its reply's first button is a
+  // plain yes (unless the takeover already failed, below).
+  let queued = !!(ctx.revised || ctx.rebuilt || ctx.takeoverId);
+  if (ctx.takeoverId) {
+    const look = await takeoverModule(deps).loadUpdate(pool, ctx.takeoverId).catch(() => null);
+    if (look && look.state === 'failed') {
+      text = takeoverFailedReply(look.error);
+      sentHtml = null;
+      suggestions = null;
+      othersSuggestions = null;
+      offer = null;
+      queued = false;
+    }
+  }
   const posted = await say(pool, {
     app, place, bot, text, answer: addressed.map((a) => ({ message: a.message, username: a.speaker.username, userId: a.speaker.id })),
-    offer: ctx.offer, suggestions: finalReply?.suggestions,
-    othersSuggestions: finalReply?.suggestionsForOthers, html, mark, gallery: ctx.gallery, deps,
+    offer, suggestions, othersSuggestions, html: sentHtml, mark, gallery: ctx.gallery, deps, queued,
     attachments: ctx.attached || [],
   });
   return { outcome: record.outcome === 'fallback' ? 'fallback' : 'replied', messageId: posted?.id || null };
@@ -2310,6 +2415,9 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
       case 'change_plan':
         if (place.type !== 'issue') return { error: 'Not here.' };
         return await mayor.replanRequest(pool, ctx, { project: app.slug, number: place.ref });
+      case 'ask_changed':
+        if (place.type !== 'issue') return { error: 'Not here.' };
+        return await askChanged(pool, ctx, args);
       case 'offer_close_request': {
         if (!['issue', 'chat', 'category', 'message'].includes(place.type)) return { error: 'Not here.' };
         if (ctx.offer) return { error: 'One offer per reply.' };
@@ -2407,6 +2515,59 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
     log.warn('homeroom-bot-voice', 'A tool failed', { tool: name, app: app?.slug, err: err.message });
     return { error: 'That failed on Homeroom\'s side. Nothing was done.' };
   }
+}
+
+/**
+ * Step 5 (11 Nov 2026), `ask_changed`: what somebody said on a request
+ * changes what it asks for, so the request is read again as a change to it
+ * (its debt, and its read's read_reason, say changed:voice). A comment the
+ * voice answered without this is not read as a change at all
+ * (homeroom-bot.js refreshApp), so a question, a status check or thanks gets
+ * a reply and no new read. Once per reply. Refused, saying why, where no
+ * read would come of it: the bot not reading this project's requests now, a
+ * change of its for the request already up (update_change takes what
+ * changed), or its build already on its way from the request as it was read.
+ */
+async function askChanged(pool, ctx, args) {
+  const { app, place, settings, bot, deps } = ctx;
+  // A read queued is a start, as start_request's and change_plan's are.
+  if (ctx.started) return { ok: false, error: 'One start per turn: put everything that changed into one line.' };
+  const what = clip(withoutEmDashes(String(args?.what || '').replace(/\s+/g, ' ').trim()), 300);
+  if (what.length < 3) return { error: 'Say in one line what changed.' };
+  const live = liveModule(deps);
+  if (!live.isLiveFor(settings, app) || (settings?.pausedApps || []).includes(app.slug) || settings?.mode === 'off') {
+    return { ok: false, error: `You are not reading ${app.name || app.slug}'s requests right now, so it is not read again. Nothing was queued.` };
+  }
+  const issueNumber = Number(place.ref);
+  const open = await live.openBotProposal(pool, bot.id, app.id, issueNumber).catch(() => null);
+  if (open) {
+    return {
+      ok: false,
+      error: open.status === 'promoted'
+        ? 'Your change for it is up for a vote, so what changed is a change to that (update_change). Nothing was queued.'
+        : 'Your change for it was approved and is being merged, so it is not read again. A new request can change it once it is live. Nothing was queued.',
+    };
+  }
+  if (await mayorModule(deps).pendingBuild(pool, app.id, issueNumber).catch(() => false)) {
+    return { ok: false, error: 'Its build is already on its way, from the request as you read it, so what changed is not in it. Once its change is up for a vote, they can ask for it there. Nothing was queued.' };
+  }
+  const trigger = ctx.triggerMessage || {};
+  // Its instance's answer: owed and waiting its turn, or a read of it under
+  // way already, which reads what was just said (a message during a read
+  // starts it over, bot-request's interrupt).
+  const reply = await workflowModule(deps).botOwedAndWait({
+    appId: Number(app.id), issueNumber, reason: 'changed', priority: 2, changedBy: 'voice',
+    threadSeenAt: trigger.created_at ? new Date(trigger.created_at).toISOString() : null,
+    key: `voice-ask:${Number(app.id)}:${issueNumber}:${Number(trigger.id) || 0}`, source: 'voice',
+  });
+  ctx.started = app.name || app.slug;
+  ctx.askedChange = what;
+  return {
+    ok: true,
+    queued: reply?.looking
+      ? 'You are reading this request now, and what they said is read with it or right after. Say so in a few words. Never say what that read will decide, or that anything is built or changed yet.'
+      : 'You read this request again soon, with what they said. Say so in a few words. Never say what that read will decide, or that anything is built or changed yet.',
+  };
 }
 
 /** update_change: what somebody asked to change on one of the bot's changes, queued for its next update. */
@@ -2650,120 +2811,83 @@ function quoteOf(message, username) {
   };
 }
 
-/** Pure (#6211): the words an overlap note's buttons carry, from what it found. */
-function overlapWords(args = {}) {
-  const other = Number(args.other);
-  if (args.overlap === 'duplicate') {
-    return { yes: 'Propose to close as a duplicate', no: 'Keep both' };
-  }
-  if (args.overlap === 'part_of') {
-    return { yes: `Fold it into #${other}`, first: 'Build this one first', no: 'Keep separate' };
-  }
-  return { yes: `Build #${other} first`, first: 'Build this one first', no: 'Keep separate' };
-}
-
-/** Pure: an offer's buttons, as the thread draws them under the reply. */
-function offerActions(kind, offerId, args = {}) {
-  // #6211: an overlap's three choices for the requester. Duplicate is the
-  // two the close vote's own note has; the rest offer the order as well.
-  if (kind === 'overlap') {
-    const words = overlapWords(args);
-    return [
-      { id: 'yes', label: words.yes, style: 'primary', offerId: Number(offerId) },
-      ...(words.first ? [{ id: 'first', label: words.first, style: 'secondary', offerId: Number(offerId) }] : []),
-      { id: 'no', label: words.no, style: 'secondary', offerId: Number(offerId) },
-    ];
-  }
-  const words = OFFER_WORDS[kind];
-  if (!words) return [];
-  // #6533: the plan offer names its request, as the change page does.
-  const yes = kind === 'post_pictures_plan' && Number(args.issueNumber) > 0
-    ? `${words.yes} on request #${Number(args.issueNumber)}` : words.yes;
-  return [
-    { id: 'yes', label: yes, style: 'primary', offerId: Number(offerId) },
-    { id: 'no', label: words.no, style: 'secondary', offerId: Number(offerId) },
-  ];
-}
-
-/**
- * #6311: an offer under a fixed note in a request's thread (a platform
- * verdict's copy offer), stored now and tied to the note's message once it
- * is posted (tieThreadOffer). Resolves { id, metadata } in the shape say()
- * builds, or null. Never throws.
- */
 // ── Offers, in one store (5 Nov 2026, docs/plans/bot-one-model.md, step 2) ──
 //
 // A thread's offers are Homeroom bot's cards (bot_cards, place 'thread',
-// their message in chat_message_id). Those said before stay in
-// homeroom_bot_voice_offers until they are answered or 14 days old. Every
-// card's id is above every older offer's (migration bot-cards), so an id
-// names one row: a thread card when bot_cards has it, else an older offer.
-// Read through OFFERS_SQL, in the older table's own words.
+// their message in chat_message_id), each written with the message that
+// shows its buttons (step 3: ws.sendBotMessage's `card`). Those said before
+// the card store stay in homeroom_bot_voice_offers until they are answered
+// or 14 days old. Every card's id is above every older offer's (migration
+// bot-cards), so an id names one row: a thread card when bot_cards has it,
+// else an older offer. Read through OFFERS_SQL, in the older table's own
+// words.
 const OFFERS_SQL = `(
   SELECT id, app_id, chat_message_id AS message_id, kind, args, user_id AS for_user_id, status, result,
-         created_at, decided_at, decided_key, expires_at, 'cards' AS store
+         created_at, decided_at, decided_key, expires_at, retired_reason, 'cards' AS store
     FROM bot_cards WHERE place = 'thread'
   UNION ALL
   SELECT id, app_id, message_id, kind, args, for_user_id, status, result,
-         created_at, decided_at, decided_key, created_at + INTERVAL '14 days' AS expires_at, 'voice' AS store
+         created_at, decided_at, decided_key, created_at + INTERVAL '14 days' AS expires_at, NULL AS retired_reason,
+         'voice' AS store
     FROM homeroom_bot_voice_offers
 )`;
 const OFFER_TABLES = Object.freeze({ cards: 'bot_cards', voice: 'homeroom_bot_voice_offers' });
 
-/** A new offer in a project's thread, open, before its message: its id. */
-async function newOffer(db, { appId, kind, args = {}, forUserId = null }) {
-  const { rows: [row] } = await db.query(
-    `INSERT INTO bot_cards (place, app_id, kind, args, user_id) VALUES ('thread', $1, $2, $3, $4) RETURNING id`,
-    [Number(appId), String(kind), JSON.stringify(args || {}), forUserId || null],
-  );
-  return row ? Number(row.id) : null;
+// #6614: when the bot says work is under way, its first button is a plain
+// yes in the person's words, and the answer to it is one short line.
+const AFFIRMATION = 'Sounds good';
+const AFFIRMED_ACK_TEXT = 'Thanks, I\'ll tell you here when it\'s ready.';
+
+/** Pure: whether the reply's last sentence asks something. */
+function asksQuestion(text) {
+  const lastSentence = String(text || '').trim().split(/(?<=[.!?])\s+/).pop() || '';
+  return /\?[\s"'”’]*$/.test(lastSentence);
 }
 
-/** Name the message an offer was said on (a new card; or, after a restart, an older offer not yet tied). */
-async function tieOffer(db, offerId, messageId) {
-  await db.query('UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1 AND place = \'thread\' AND chat_message_id IS NULL',
-    [Number(offerId), Number(messageId)]);
-  await db.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1 AND message_id IS NULL',
-    [Number(offerId), Number(messageId)]);
+// Pure: the words a short yes is made of. A label of at most three of them
+// affirms; "Sounds good", "Thanks", "Go ahead", "Yes, thanks".
+const AFFIRMATION_WORDS = new Set([
+  'sounds', 'good', 'thanks', 'thank', 'you', 'go', 'ahead', 'ok', 'okay',
+  'great', 'perfect', 'yes', 'carry', 'on', 'please', 'sure', 'absolutely', 'nice',
+]);
+
+/** Pure: whether a suggested reply is a short yes rather than a new ask. */
+function isAffirmation(label) {
+  const words = String(label || '')
+    .toLowerCase()
+    .replace(/[^a-z]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+  return words.length > 0 && words.length <= 3 && words.every((word) => AFFIRMATION_WORDS.has(word));
 }
 
-async function threadOffer(pool, { app, kind, forUserId, args = {} }) {
-  try {
-    const id = await newOffer(pool, { appId: app.id, kind, args, forUserId });
-    if (!id) return null;
-    return {
-      id,
-      metadata: {
-        offer: { id, kind, status: 'open', forUserId: Number(forUserId) || null },
-        actions: offerActions(kind, id, args),
-      },
-    };
-  } catch (err) {
-    log.warn('homeroom-bot-voice', 'Could not put an offer under a note', { app: app?.slug, kind, err: err.message });
-    return null;
-  }
-}
-
-/** #6311: tie a thread offer to the note's message, so decideOffer finds it. */
-async function tieThreadOffer(pool, offerId, messageId) {
-  await tieOffer(pool, offerId, messageId)
-    .catch((err) => log.warn('homeroom-bot-voice', 'Could not tie an offer to its note', { offerId, messageId, err: err.message }));
-}
-
-/** #6311: the note could not be posted: its offer is dropped. */
-async function dropThreadOffer(pool, offerId) {
-  await pool.query('DELETE FROM bot_cards WHERE id = $1 AND place = \'thread\' AND chat_message_id IS NULL', [Number(offerId)])
-    .catch((err) => log.warn('homeroom-bot-voice', 'Could not drop an offer for an unposted note', { offerId, err: err.message }));
+/**
+ * Pure (#6614): a turn that queued work puts an affirmation first. Keeps the
+ * model's own first label when it already affirms, else puts `AFFIRMATION`
+ * ahead of it, drops a later label that repeats the affirmation, and clips
+ * to `max`. Resolves `{ labels, affirm }`: the affirmation's wording, which
+ * the next turn matches a person's reply against.
+ */
+function withAffirmationFirst(labels = [], max = 3) {
+  const clean = (Array.isArray(labels) ? labels : [])
+    .map((label) => String(label || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const affirm = clean.length && isAffirmation(clean[0]) ? clean[0] : AFFIRMATION;
+  const rest = clean.filter((label) => label.toLowerCase() !== affirm.toLowerCase());
+  const limit = Math.max(1, Number(max) || 3);
+  return { labels: [affirm, ...rest].slice(0, limit), affirm };
 }
 
 /**
  * Pure (#6391): the button sets Homeroom builds when the model gave none, or
  * wrote one that cannot be used. `ended`: the request is closed or the change
- * is live, so the reply is only where things stand. A reply that asks
- * something gets its answers; any other gets a way to say thanks and a way
- * to ask what happens next.
+ * is live, so the reply is only where things stand. `queued`: the turn queued
+ * or started work, so a reply that asks nothing gets the short yes first.
+ * A reply that asks something gets its answers; any other gets a way to say
+ * thanks and a way to ask what happens next.
  */
-function fallbackSuggestions({ text = '', ended = false } = {}) {
+function fallbackSuggestions({ text = '', ended = false, queued = false } = {}) {
   const mayor = require('./homeroom-bot-mayor');
   const others = ended
     ? ["Something's still wrong", 'Can I try it?']
@@ -2772,8 +2896,10 @@ function fallbackSuggestions({ text = '', ended = false } = {}) {
   if (ended) answered = ['Thanks', "Something's still wrong"];
   else {
     const lastSentence = String(text || '').trim().split(/(?<=[.!?])\s+/).pop() || '';
-    if (/\?[\s"'”’]*$/.test(lastSentence)) {
+    if (asksQuestion(text)) {
       answered = /tell you here when/i.test(lastSentence) ? ['Yes, tell me here', 'No thanks'] : ['Yes', 'No'];
+    } else if (queued) {
+      answered = [AFFIRMATION, 'Tell me when it\'s ready'];
     } else {
       answered = ['Thanks', 'What happens next?'];
     }
@@ -2856,12 +2982,14 @@ function threadReplyHtml({ finalReply = null, text = '', asWritten = null, check
  * One message from the bot in `place`, quoting the newest message it
  * answers and telling the people it answers (a mention notification each,
  * never in the text). In a project's main chat or a topic, it goes in a
- * reply thread under that message. With an offer, its buttons go under it.
- * Resolves the message, or null.
+ * reply thread under that message. With an offer ({ kind, args, forUserId }),
+ * its buttons go under it: the card is written with the message (step 3,
+ * ws.sendBotMessage `card`). Resolves the message, or null.
  */
 async function say(pool, {
   app, place, bot, text, answer = [], offer = null, suggestions = [], othersSuggestions = [],
   suggest = true, ended = null, mark = null, html = null, extra = null, gallery = null, deps = {}, attachments = [],
+  queued = false,
 }) {
   const ws = wsModule(deps);
   const newest = answer[answer.length - 1] || null;
@@ -2869,23 +2997,13 @@ async function say(pool, {
     ? (newest ? { type: 'message', ref: Number(newest.message.id) } : null)
     : threadOf(place);
   if (!thread) return null;
-  // `mark`: the work item it is said for ({ key, through }). Said once: a
-  // retry after a restart finds it and says it again nowhere.
-  if (mark) {
-    const had = await replyOf(pool, { app, place, bot, turnKey: mark.key });
-    if (had) return { id: had.id, again: true };
-  }
-  let offerRow = null;
-  if (offer) {
-    const id = await newOffer(pool, { appId: app.id, kind: offer.kind, args: offer.args, forUserId: offer.forUserId });
-    offerRow = id ? { id } : null;
-  }
   // #6391: a request's or a change's discussion always ends in buttons. The
   // people it answered see one set; the other members see the second one.
   // An offer keeps its own Yes/No instead, and a caller that says
   // `suggest: false` (the "I couldn't answer" line) carries none.
   const threadPlace = place.type === 'issue' || place.type === 'session';
-  const labelsOf = (list) => require('./homeroom-bot-mayor').suggestionLabels(list);
+  const mayor = require('./homeroom-bot-mayor');
+  const labelsOf = (list) => mayor.suggestionLabels(list);
   let suggestFor = suggest && !offer && threadPlace
     ? [...new Set(answer.map((a) => Number(a.userId)).filter((id) => Number.isSafeInteger(id) && id > 0))]
     : [];
@@ -2898,10 +3016,19 @@ async function say(pool, {
   if (suggest && !offer && threadPlace
       && ((suggestFor.length && !modelAnswered.length) || !modelOthers.length)) {
     const over = ended != null ? ended : await threadEnded(pool, { app, place, deps });
-    fallback = fallbackSuggestions({ text, ended: !!over });
+    fallback = fallbackSuggestions({ text, ended: !!over, queued });
   }
-  const answeredLabels = modelAnswered.length ? modelAnswered : (fallback?.answered || []);
+  let answeredLabels = modelAnswered.length ? modelAnswered : (fallback?.answered || []);
   const othersLabels = modelOthers.length ? modelOthers : (fallback?.others || []);
+  // #6614: a turn that queued work and asks nothing puts a plain yes first,
+  // even when the model offered only new asks. The wording is stored so the
+  // next turn can answer that yes and end the exchange.
+  let affirm = null;
+  if (queued && threadPlace && suggestFor.length && !offer && !asksQuestion(text)) {
+    const withFirst = withAffirmationFirst(answeredLabels, mayor.MAX_SUGGESTIONS);
+    answeredLabels = withFirst.labels;
+    affirm = withFirst.affirm;
+  }
   let suggestActions = suggestFor.length
     ? answeredLabels.map((label, i) => ({ id: `suggest-${i + 1}`, label, style: 'secondary', type: 'prompt' }))
     : [];
@@ -2924,18 +3051,11 @@ async function say(pool, {
     homeroomBot: {
       kind: 'voice',
       ...(mark ? { turn: { key: String(mark.key), ...(mark.through ? { through: Number(mark.through) } : {}) } } : {}),
-      ...(offerRow ? {
-        offer: {
-          id: Number(offerRow.id), kind: offer.kind, status: 'open', forUserId: Number(offer.forUserId) || null,
-          // #6305: a many-project offer's rows travel with it, so a thread
-          // draws the same card a private chat does.
-          ...(Array.isArray(offer.args?.rows) ? { rows: offer.args.rows } : {}),
-        },
-        actions: offerActions(offer.kind, offerRow.id),
-      } : {}),
       ...((suggestActions.length || othersActions.length) ? {
         suggest: { status: 'open', forUserIds: suggestFor }, actions: suggestActions, othersActions,
       } : {}),
+      // #6614: the wording of the short yes, so the next turn answers it.
+      ...(affirm ? { affirm: { label: affirm } } : {}),
       // Task 2020 follow-up: the answer laid out, drawn in place of the words
       // (frontend features/group-chat/long-body.tsx, messages/bot-html.tsx).
       ...(html && !offer ? { html } : {}),
@@ -2947,16 +3067,28 @@ async function say(pool, {
     },
     ...(newest && place.type !== 'chat' && place.type !== 'category' ? { quote: quoteOf(newest.message, newest.username) } : {}),
   };
-  const sent = await ws.sendBotMessage(pool, app.id, {
-    user: bot, content: text, metadata, thread,
-    attachmentIds: attachments.map((a) => a.id).filter(Boolean),
-  });
-  if (!sent?.id) return null;
-  if (offerRow) {
-    // Without it the buttons decide nothing (decideOffer finds the offer by
-    // its message): a failure here is the turn's, and retried.
-    await pool.query('UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1 AND place = \'thread\'', [offerRow.id, sent.id]);
-  }
+  // Step 4 (11 Nov 2026): one post (bot-post.js). `mark`, the work item it
+  // is said for ({ key, through }), is its key: a retry after a restart
+  // finds it said and says it again nowhere. A send that fails throws, its
+  // post left pending, so the work (the turn, a report, an act) is retried
+  // and says it then. Its words are written once, whole: nothing of them
+  // was shown while the model wrote.
+  const botPost = require('./bot-post');
+  const out = await botPost.post(pool, {
+    place: thread, appId: app.id, kind: 'reply', words: text, author: bot, metadata,
+    subject: botPost.placeSubject(app.id, place), version: mark ? `turn-${mark.key}` : null,
+    ...(place.type === 'issue' ? { issueNumber: Number(place.ref) } : {}),
+    attachments: attachments.map((a) => a.id).filter(Boolean),
+    ...(offer ? { card: { kind: offer.kind, args: offer.args || {}, forUserId: offer.forUserId || null } } : {}),
+    // The voice's reply is the conversation, not a request's record.
+    record: false,
+    // Its mark is its work's (a turn, a report, an act), run one attempt at
+    // a time: the next attempt takes a claim the last one left at once.
+    durable: !!mark,
+  }, { ws });
+  if (out.outcome === 'again' && out.messageId) return { id: out.messageId, again: true };
+  if (out.outcome !== 'said') return null;
+  const sent = { ...(out.message || {}), id: out.messageId, ...(out.cardId ? { cardId: out.cardId } : {}) };
   // A newer word from the bot in this thread retires the suggested replies
   // on its older messages there, as a newer word in its chat does.
   await retireThreadSuggestions(pool, { appId: app.id, thread, keepMessageId: Number(sent.id), deps });
@@ -2987,29 +3119,67 @@ async function say(pool, {
  * any member, for Propose to close under an "already works" note), in the
  * place its message is in (the bot-voice machine), whose work then acts on
  * it (actOnOffer): the buttons give way when the room hears it was decided.
- * Resolves { ok, status?, error? }.
+ *
+ * Step 3 (11 Nov 2026): found by its id, which the buttons send
+ * (`offerId`), or, from a client that sends none, the id its message's
+ * metadata names; it must be the offer of the message tapped. A message
+ * that names none is looked up by its id, the way offers were found before.
+ * A card is written with its message, so buttons on screen always have
+ * one. Resolves { ok } or { ok: false, status, code,
+ * error, reason? }: `code` is what the buttons' line says in the reader's
+ * language (frontend chat.json group.botOffer.refused.*), `error` the
+ * English for anybody else.
  */
-async function decideOffer(pool, config, { app, user: viewer, messageId, choice, rows = null, deps = {} }) {
-  if (!viewer?.id) return { ok: false, status: 404, error: 'Nothing to decide here.' };
-  if (choice !== 'yes' && choice !== 'no' && choice !== 'first') return { ok: false, status: 400, error: 'choice must be yes or no' };
+async function decideOffer(pool, config, { app, user: viewer, messageId, offerId = null, choice, rows = null, deps = {} }) {
+  const refused = (status, code, error, more = {}) => ({ ok: false, status, code, error, ...more });
+  if (!viewer?.id) return refused(404, 'no_such_offer', 'Nothing to decide here.');
+  if (choice !== 'yes' && choice !== 'no' && choice !== 'first') return refused(400, 'no_such_choice', 'choice must be yes or no');
   // #6305: a many-project card's File on all says which rows are ticked.
   if (choice === 'yes' && Array.isArray(rows) && !rows.length) {
-    return { ok: false, status: 400, error: 'Tick at least one project.' };
+    return refused(400, 'no_rows', 'Tick at least one project.');
   }
-  const { rows: [offer] } = await pool.query(
-    `SELECT o.id, o.kind, o.status, o.expires_at <= NOW() AS expired FROM ${OFFERS_SQL} o
-      WHERE o.message_id = $1 AND o.app_id = $2 ORDER BY o.id DESC LIMIT 1`, [Number(messageId), app.id],
+  const { rows: [message] } = await pool.query(
+    'SELECT id, metadata FROM chat_messages WHERE id = $1 AND app_id = $2', [Number(messageId), app.id],
   );
-  if (!offer) return { ok: false, status: 404, error: 'Nothing to decide here.' };
-  // #6211: an overlap's third choice, and only an overlap's.
-  if (choice === 'first' && offer.kind !== 'overlap') return { ok: false, status: 400, error: 'choice must be yes or no' };
-  // 14 days and it is no longer an offer: its buttons go.
-  if (offer.expired && offer.status === 'open') {
-    await markOfferMessage(pool, { app, messageId: Number(messageId), status: 'expired', deps });
-    return { ok: false, status: 410, error: 'That offer has expired.' };
+  if (!message) return refused(404, 'no_such_offer', 'Nothing to decide here.');
+  const idOf = (v) => (Number.isSafeInteger(Number(v)) && Number(v) > 0 ? Number(v) : null);
+  const named = idOf(offerId) || idOf(message.metadata?.homeroomBot?.offer?.id);
+  let offer = null;
+  if (named) {
+    ({ rows: [offer] } = await pool.query(
+      `SELECT o.id, o.kind, o.status, o.message_id, o.retired_reason, o.expires_at <= NOW() AS expired FROM ${OFFERS_SQL} o
+        WHERE o.id = $1 AND o.app_id = $2 ORDER BY o.store LIMIT 1`,
+      [named, app.id],
+    ));
+    if (offer && offer.message_id != null && Number(offer.message_id) !== Number(message.id)) {
+      return refused(409, 'not_this_message', 'That offer belongs to another message.');
+    }
+    if (!offer || offer.message_id == null) {
+      // The note names an offer that is lost: its buttons go, for good.
+      await markOfferMessage(pool, { app, messageId: Number(message.id), status: 'gone', deps });
+      return refused(410, 'gone', 'That offer is no longer available.');
+    }
+  } else {
+    ({ rows: [offer] } = await pool.query(
+      `SELECT o.id, o.kind, o.status, o.message_id, o.retired_reason, o.expires_at <= NOW() AS expired FROM ${OFFERS_SQL} o
+        WHERE o.message_id = $1 AND o.app_id = $2 ORDER BY o.id DESC LIMIT 1`, [Number(message.id), app.id],
+    ));
+    if (!offer) return refused(404, 'no_such_offer', 'Nothing to decide here.');
   }
+  // #6211: an overlap's third choice, and only an overlap's.
+  if (choice === 'first' && offer.kind !== 'overlap') return refused(400, 'no_such_choice', 'choice must be yes or no');
+  // What it was about moved on (bot-cards.js retireFor): its line says why.
+  if (offer.status === 'retired') {
+    return refused(410, 'retired', 'That offer is no longer needed.', { reason: offer.retired_reason || null });
+  }
+  // 14 days and it is no longer an offer: its buttons go.
+  if (offer.status === 'expired' || (offer.expired && offer.status === 'open')) {
+    if (offer.status === 'open') await markOfferMessage(pool, { app, messageId: Number(message.id), status: 'expired', deps });
+    return refused(410, 'expired', 'That offer has expired.');
+  }
+  if (offer.status !== 'open') return refused(409, 'already_decided', 'That was already decided.');
   return workflowModule(deps).tapVoiceOffer({
-    appId: Number(app.id), offerId: Number(offer.id), messageId: Number(messageId), userId: Number(viewer.id), choice,
+    appId: Number(app.id), offerId: Number(offer.id), messageId: Number(message.id), userId: Number(viewer.id), choice,
     ...(Array.isArray(rows) ? { rows } : {}),
   });
 }
@@ -3082,12 +3252,14 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, rows = n
     }
     const overlap = require('./homeroom-bot-overlap');
     const mayor = mayorModule(deps);
-    const sayInOther = async (kind) => botModule(deps).postThreadNoteNow({
+    const sayInOther = async (kind) => botModule(deps).postThreadNote({
       pool, ws: wsModule(deps), app, issueNumber: other, kind, text: overlap.linkText({
         kind: args.overlap, choice, from: args.issueNumber, requester: user.username,
         domain: domainOf(deps), appSlug: app.slug,
       }),
       bot,
+      // Once per offer (bot-post.js keys it by the offer).
+      version: `offer-${Number(offer.id)}`,
     });
     // Duplicate: the same close vote a request page opens, with this request
     // as its subject. It closes only if the group votes for it.
@@ -3343,6 +3515,9 @@ const OUTCOME_FACTS = Object.freeze({
   ask: 'you need one answer from them before you can make it: your question is below',
   person: 'a person should decide this, not you: why is below',
   failed: 'you tried and could not make it',
+  // #6598: the work never started, so nothing was touched and the asks stay.
+  start_retrying: 'you could not start because GitHub did not answer; nothing was changed; you try again on your own in a few minutes',
+  start_failed: 'you could not start because GitHub did not answer after several tries; nothing was changed; they can ask again',
   gone: 'the change was merged or closed before you could make it, so nothing was done',
 });
 
@@ -3393,6 +3568,16 @@ function notDoneYet(text) {
 }
 
 /**
+ * Pure (#6600): what a turn says when the takeover it queued has already
+ * failed by the time its reply is posted. It says what happened, never that
+ * the work is queued, and offers no buttons for it.
+ */
+function takeoverFailedReply(error) {
+  const why = String(error || 'it did not finish').replace(/[.\s]+$/, '');
+  return `I tried that just now and it didn't work: ${why}. Nothing was changed. You can ask me again, or fix it yourself.`;
+}
+
+/**
  * Pure: what a follow-up's result must say, whoever words it. One note per
  * update: that its earlier votes were cleared is the platform's line in the
  * change's discussion (routes/votes.js reconcileNativeReviewedHead), so it
@@ -3408,6 +3593,14 @@ function mustSay(outcome) {
   if (outcome.descriptionReworded) lines.push('Its description was reworded to match: say so.');
   if (outcome.descriptionStale) lines.push('Its description could not be reworded, so it still describes the earlier version: say so.');
   if (outcome.action === 'failed') lines.push('The change is as it was.');
+  // #6598: work that never started says so, in these words, and never tells
+  // anybody to do it themselves.
+  if (outcome.action === 'start_retrying') {
+    lines.push("GitHub didn't answer when I tried to start, so nothing was changed. I'll try again in a few minutes.");
+  }
+  if (outcome.action === 'start_failed') {
+    lines.push("GitHub still didn't answer, so nothing was changed. Ask me again here when you'd like me to try.");
+  }
   return lines;
 }
 
@@ -3438,9 +3631,19 @@ function plainReport(outcome) {
       return `I think a person should take this one from here: ${reply}`;
     case 'gone':
       return 'This change isn\'t up for a vote any more, so I didn\'t make that change. Ask on a request if it still needs doing.';
-    default:
+    // #6598: a start GitHub's outage stopped has its own words, and no
+    // "ask me again" line: the first failure is retrying by itself.
+    case 'start_retrying':
+    case 'start_failed':
+      return mustSay(outcome).join(' ');
+    default: {
+      // #6602: a change the bot cannot run on fails the same way every time,
+      // so asking again is no help; the why says so in words already.
+      const cannotRun = /^I can't run on\b/.test(String(outcome.why || ''));
       return [outcome.why ? `I couldn't make that change: ${ownWhy(outcome.why)}.` : 'I couldn\'t make that change.', ...mustSay(outcome),
-        outcome.retrying ? 'I\'ll try once more on my own.' : 'Ask me again here to try again.'].join(' ');
+        outcome.retrying ? 'I\'ll try once more on my own.' : (cannotRun ? null : 'Ask me again here to try again.'),
+      ].filter(Boolean).join(' ');
+    }
   }
 }
 
@@ -3508,8 +3711,12 @@ async function sayReport(pool, config, { appId, place, sessionId, runTag, asks: 
   const mark = { key: `report:${runTag}:${placeKey(appId, place)}` };
   const had = await replyOf(pool, { app, place, bot, turnKey: mark.key });
   if (had) return { id: had.id, again: true };
+  // The plain report is a template that says what was done: it goes through
+  // the reply check as the model's words do (reply-claims.js checkedNote).
   const text = await composeReport(pool, cfg, { app, session: session || { id: sessionId }, bot, asks, outcome, deps })
-    .catch(() => null) || plainReport(outcome);
+    .catch(() => null)
+    || await claims.checkedNote(pool, reportTurn({ app, session: session || { id: sessionId }, bot, asks, outcome, place, deps }), plainReport(outcome))
+    || plainReport(outcome);
   const answer = [];
   for (const ask of asks) {
     if (!ask.message_id) continue;
@@ -3534,6 +3741,22 @@ async function sayReport(pool, config, { appId, place, sessionId, runTag, asks: 
   return posted;
 }
 
+/**
+ * The turn a follow-up's report is checked as (reply-claims.js): what the
+ * follow-up did is what this turn did. The asker is who it is said to.
+ */
+function reportTurn({ app, session, bot, asks = [], outcome = {}, place = null, deps = {} }) {
+  const revisedNow = outcome.action === 'revise' && !!outcome.moved;
+  const asker = asks.find((a) => Number(a?.asker_id) > 0);
+  return {
+    user: { id: asker ? Number(asker.asker_id) : Number(bot?.id) || null }, bot, deps, app,
+    appIds: new Set(app?.id ? [Number(app.id)] : []),
+    place: place || (session?.id ? { type: 'session', ref: Number(session.id) } : null),
+    change: session?.id ? { id: Number(session.id) } : null,
+    revised: revisedNow, recentRevision: revisedNow, described: !!outcome.descriptionReworded,
+  };
+}
+
 /** The voice's words for a follow-up's facts: one short model turn, forced to reply. Null when it cannot. */
 async function composeReport(pool, cfg, { app, session, bot, asks, outcome, deps = {} }) {
   const mayor = mayorModule(deps);
@@ -3546,7 +3769,10 @@ async function composeReport(pool, cfg, { app, session, bot, asks, outcome, deps
     asked,
     `What came of it: ${OUTCOME_FACTS[outcome.action] || OUTCOME_FACTS.failed}${outcome.action === 'revise' && !outcome.moved ? ' (but nothing changed)' : ''}.`,
     // #6537: a change its author made in their own coding tool, updated for them.
-    outcome.handedOver ? 'This change is not yours: its author made it in their own coding tool, and you were asked to update it for them, on their change. Never call it yours.' : null,
+    // #6598: a start that never ran is nobody's to do, so the model is not
+    // prompted to hand it back.
+    outcome.handedOver && outcome.action !== 'start_retrying' && outcome.action !== 'start_failed'
+      ? 'This change is not yours: its author made it in their own coding tool, and you were asked to update it for them, on their change. Never call it yours.' : null,
     withoutInternals(outcome.summary) ? `What changed, in the coding agent's words: ${clip(withoutInternals(outcome.summary), 600)}` : null,
     withoutInternals(outcome.reply) ? `What the coding agent said: ${clip(withoutInternals(outcome.reply), 1500)}` : null,
     outcome.why ? `Why it did not work: ${clip(outcome.why, 300)}` : null,
@@ -3581,8 +3807,15 @@ async function composeReport(pool, cfg, { app, session, bot, asks, outcome, deps
     });
     const call = (res.toolCalls || [])[0];
     const text = call ? String(mayor.parseArgs(call.function?.arguments).text || '') : String(res.content || '');
-    // What it says of the agent's workings anyway is taken out.
-    const clean = clip(withoutEmDashes(withoutInternals(mayor.cleanReply(text))), MAX_REPLY_CHARS);
+    // What it says of the agent's workings anyway is taken out, and what it
+    // says was done that is shown false is cut (#6583): the report is
+    // checked as any reply is.
+    let clean = clip(withoutEmDashes(withoutInternals(claims.cleanReply(text))), MAX_REPLY_CHARS);
+    if (clean) {
+      const turn = reportTurn({ app, session, bot, asks, outcome, deps });
+      const problems = await claims.checkReply(pool, turn, clean).catch(() => []);
+      if (problems.length) clean = claims.cut(clean, problems, turn);
+    }
     if (!clean) return null;
     // Whatever it left out that it must say is added.
     const missing = mustSay(outcome).filter((line) => !clean.toLowerCase().includes(line.split(',')[0].toLowerCase().slice(0, 20)));
@@ -3753,6 +3986,8 @@ module.exports = {
   connectorSkip,
   gate,
   runTurn,
+  judgedIds,
+  askChanged,
   goAheadCannotReply,
   replyOf,
   transcriptLine,
@@ -3762,9 +3997,6 @@ module.exports = {
   toolsFor,
   runTool,
   scopedPlatformCall,
-  unreadDescriptionClaims,
-  stripUnreadClaims,
-  UNREAD_DESCRIPTION_RE,
   changeGate,
   changeRow,
   factsFor,
@@ -3777,12 +4009,15 @@ module.exports = {
   dropAsks,
   quoteOf,
   offerActions,
-  threadOffer,
-  tieThreadOffer,
-  dropThreadOffer,
   say,
   threadReplyHtml,
   fallbackSuggestions,
+  asksQuestion,
+  isAffirmation,
+  withAffirmationFirst,
+  affirmedAck,
+  AFFIRMATION,
+  AFFIRMED_ACK_TEXT,
   retireThreadSuggestions,
   decideOffer,
   actOnOffer,
@@ -3790,6 +4025,7 @@ module.exports = {
   plainReport,
   withoutInternals,
   notDoneYet,
+  takeoverFailedReply,
   reportFollowUp,
   sayReport,
   voiceSummary,

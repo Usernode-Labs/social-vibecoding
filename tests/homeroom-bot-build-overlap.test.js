@@ -40,12 +40,18 @@ function buildPool({ run = waitingRun(), sessions = [], posts = [], diffs = {} }
       if (/SELECT is_synthetic FROM users/.test(s)) return { rows: [{ is_synthetic: true }] };
       if (/FROM apps WHERE id = \$1/.test(s)) return { rows: [APP] };
       if (/SELECT \* FROM homeroom_bot_runs WHERE id = \$1/.test(s)) return { rows: run && run.id === Number(params[0]) ? [run] : [] };
-      if (/FROM homeroom_bot_posts WHERE run_id = \$1 AND kind = \$2/.test(s)) {
-        return { rows: state.posts.filter((p) => p.runId === Number(params[0]) && p.kind === params[1]).map(() => ({})) };
+      // Step 4: a post is claimed by its key (services/bot-post.js), once.
+      if (/INSERT INTO bot_posts/.test(s)) {
+        state.keys ||= new Map();
+        const had = state.keys.get(params[0]);
+        if (had) return { rows: [{ ...had, fresh: false }] };
+        const row = { id: state.keys.size + 1, outcome: 'said', chat_message_id: 1 };
+        state.keys.set(params[0], row);
+        return { rows: [{ ...row, outcome: 'pending', chat_message_id: null, fresh: true }] };
       }
       if (/INSERT INTO homeroom_bot_posts/.test(s)) {
         state.posts.push({ appId: Number(params[0]), issueNumber: Number(params[1]), runId: Number(params[2]), kind: params[3] });
-        return { rows: [] };
+        return { rows: [{ id: state.posts.length }] };
       }
       if (/FROM chat_sessions\s+WHERE app_id = \$1 AND is_headless = FALSE AND branch_name IS NOT NULL/.test(s)) return { rows: sessions };
       // buildOne's reads: no proposal, no other build; the issue unreadable.
@@ -68,7 +74,7 @@ function depsFor(pool, { diffs = {}, failDiffs = false } = {}) {
       async personOf() { return null; },
     },
     ws: {
-      async sendBotMessage(_pool, _appId, msg) { (pool.said ||= []).push(msg.content); },
+      async sendBotMessage(_pool, _appId, msg) { (pool.said ||= []).push(msg.content); return { id: 1 }; },
       async postOnProposal(_pool, _appId, msg) { (pool.said ||= []).push(msg.content); },
     },
     github: {

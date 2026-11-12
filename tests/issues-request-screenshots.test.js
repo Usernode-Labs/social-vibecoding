@@ -160,6 +160,17 @@ test('screenshots are verified, embedded like a person\'s, stored and linked to 
   } finally { restore(); }
 });
 
+test('#6606: the request remembers the account that filed it', async () => {
+  const pool = poolFor();
+  const { handler, spies, restore } = loadIssues(pool);
+  try {
+    const res = await file(handler, { kind: 'general', title: 'Retry GitHub errors', description: 'A turn failed.' });
+    assert.equal(res.statusCode, 201, JSON.stringify(res.body));
+    assert.equal(spies.ghCreates[0].args.createdBy, 42,
+      'the connected account is passed on as the request\'s filer');
+  } finally { restore(); }
+});
+
 test('no description: the body is the embed alone', async () => {
   const pool = poolFor({ owned: [A] });
   const { handler, spies, restore } = loadIssues(pool);

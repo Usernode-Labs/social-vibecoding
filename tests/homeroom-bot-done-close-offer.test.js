@@ -37,13 +37,21 @@ require.cache[wsId] = {
       );
       return { id: Number(row.id) };
     },
+    // Step 3: a card is written with its message, in one transaction (as
+    // ws.sendBotMessage writes it).
     async sendBotMessage(_pool, appId, message) {
-      const { rows: [row] } = await messagePool.query(
-        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
-         VALUES ($1, $2, $3, 'message', $4, $5, $6) RETURNING id`,
-        [appId, message.user.id, message.content, JSON.stringify(message.metadata || {}), message.thread?.type || null, message.thread?.ref || null],
-      );
-      return { id: Number(row.id) };
+      const cards = require('../src/services/bot-cards');
+      return cards.inTransaction(messagePool, async (db) => {
+        const made = message.card ? await cards.insertCard(db, { ...message.card, place: 'thread', appId }) : null;
+        const metadata = made ? cards.withThreadCard(message.metadata, made) : (message.metadata || {});
+        const { rows: [row] } = await db.query(
+          `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
+           VALUES ($1, $2, $3, 'message', $4, $5, $6) RETURNING id`,
+          [appId, message.user.id, message.content, JSON.stringify(metadata), message.thread?.type || null, message.thread?.ref || null],
+        );
+        if (made) await db.query('UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1', [made.id, row.id]);
+        return { id: Number(row.id), ...(made ? { cardId: Number(made.id) } : {}) };
+      });
     },
   },
 };
@@ -89,14 +97,15 @@ const WITHDRAWN_NOTE = `Asked to close: ${REASON} Tap Propose to close below to 
 
 // ── The note, with its database stubbed ──────────────────────────────────
 
-async function noteFor(parsed, { openVotes = [], last = null, posted = { messageId: 500 }, relook = false } = {}) {
+async function noteFor(parsed, {
+  openVotes = [], last = null, posted = { messageId: 500 }, relook = false,
+} = {}) {
   const says = [];
   const queries = [];
   const pool = {
     async query(sql, params) {
       const s = String(sql);
       queries.push({ sql: s, params });
-      if (/INSERT INTO bot_cards/.test(s)) return { rows: [{ id: 77 }] };
       if (/kind = 'close_issue'/.test(s)) return { rows: openVotes };
       return { rows: [] };
     },
@@ -123,12 +132,14 @@ async function noteFor(parsed, { openVotes = [], last = null, posted = { message
     Object.assign(live, { post: real.post, advanceSeen: real.advanceSeen, mentionTargets: real.mentionTargets });
     Object.assign(addressed, { shouldSpeak: real.shouldSpeak, lastNoteText: real.lastNoteText });
   }
-  return { says, queries, offers: queries.filter((q) => /INSERT INTO bot_cards/.test(q.sql)) };
+  // Step 3: the verdict writes no card of its own: it hands the post the
+  // card, which is written with the note's message (live.post `card`).
+  return { says, queries, offers: says.filter((s) => s.card).map((s) => s.card), cardSql: queries.filter((q) => /bot_cards/.test(q.sql)) };
 }
 
 for (const verdict of ['person', 'empty']) {
   test(`a done ${verdict} note says it already works and carries the offer, for nobody in particular`, async () => {
-    const { says, offers, queries } = await noteFor({ verdict });
+    const { says, offers, cardSql } = await noteFor({ verdict });
     assert.equal(says.length, 1);
     assert.equal(says[0].kind, verdict);
     assert.equal(says[0].homeroomText, NOTE);
@@ -136,17 +147,11 @@ for (const verdict of ['person', 'empty']) {
     // GitHub's copy keeps plain words: it has no buttons.
     assert.equal(says[0].text, `Homeroom bot found this already works: ${REASON}\n\nAnyone in the project can propose to close it, or reply here if something is missing.`);
     assert.equal(says[0].dm.done, true, 'the requester\'s DM keeps its own close offer');
-    const meta = says[0].metadata.homeroomBot;
-    assert.equal(meta.kind, 'voice');
-    assert.deepEqual(meta.offer, { id: 77, kind: 'close_request', status: 'open', forUserId: null });
-    assert.deepEqual(meta.actions.map((a) => [a.id, a.label, a.style]), [
-      ['yes', 'Propose to close', 'primary'], ['no', 'Keep it open', 'secondary'],
-    ]);
-    assert.equal(offers.length, 1);
-    assert.equal(offers[0].params[1], 'close_request');
-    assert.deepEqual(JSON.parse(offers[0].params[2]), { issueNumber: 7, title: 'Open the library', why: REASON });
-    assert.equal(offers[0].params[3], null);
-    assert.ok(queries.some((q) => /UPDATE bot_cards SET chat_message_id/.test(q.sql) && q.params[1] === 500), 'tied to the note');
+    // The card rides with the post, for nobody in particular: its buttons
+    // are drawn from the message it is written with.
+    assert.equal(says[0].metadata, undefined);
+    assert.deepEqual(offers, [{ kind: 'close_request', forUserId: null, args: { issueNumber: 7, title: 'Open the library', why: REASON } }]);
+    assert.deepEqual(cardSql, [], 'no card is written or tied around the post');
   });
 
   test(`a done ${verdict} note adds no buttons while a close vote is open, and keeps its words`, async () => {
@@ -164,9 +169,10 @@ for (const verdict of ['person', 'empty']) {
     }
   });
 
-  test(`a done ${verdict} note that could not be posted drops its offer`, async () => {
-    const { queries } = await noteFor({ verdict }, { posted: null });
-    assert.ok(queries.some((q) => /DELETE FROM bot_cards/.test(q.sql) && q.params[0] === 77));
+  test(`a done ${verdict} note that could not be posted leaves no card behind`, async () => {
+    const { offers, cardSql } = await noteFor({ verdict }, { posted: null });
+    assert.equal(offers.length, 1, 'handed to the post, which wrote nothing');
+    assert.deepEqual(cardSql, [], 'nothing to drop');
   });
 }
 
@@ -185,16 +191,7 @@ for (const verdict of ['person', 'empty']) {
     assert.equal(says[0].dm.withdrawn, true);
     assert.equal(says[0].dm.quiet, true);
     assert.equal(says[0].dm.done, undefined, 'not marked done');
-    const meta = says[0].metadata.homeroomBot;
-    assert.equal(meta.kind, 'voice');
-    assert.deepEqual(meta.offer, { id: 77, kind: 'close_request', status: 'open', forUserId: null });
-    assert.deepEqual(meta.actions.map((a) => [a.id, a.label, a.style]), [
-      ['yes', 'Propose to close', 'primary'], ['no', 'Keep it open', 'secondary'],
-    ]);
-    assert.equal(offers.length, 1);
-    assert.equal(offers[0].params[1], 'close_request');
-    assert.deepEqual(JSON.parse(offers[0].params[2]), { issueNumber: 7, title: 'Open the library', why: REASON });
-    assert.equal(offers[0].params[3], null);
+    assert.deepEqual(offers, [{ kind: 'close_request', forUserId: null, args: { issueNumber: 7, title: 'Open the library', why: REASON } }]);
   });
 
   test(`a withdrawn ${verdict} note adds no buttons while a close vote is open`, async () => {
@@ -362,6 +359,26 @@ test('#6321: a tap under the note, by any member, once', { timeout: 180000 }, as
 
     assert.deepEqual(await tap(ada, Number(offer.id), 77), { result: 'rejected', reason: 'already_decided' }, 'a second tap');
     assert.equal((await closeVotes(77)).length, 1, 'no second vote');
+  });
+
+  await t.test('#6582, step 3: Propose to close under an already-works note starts the vote, tapped by its card\'s id', async () => {
+    const { note, offer } = await verdictNote(85);
+    assert.equal(Number(offer.chat_message_id), Number(note.id), 'its card was written with the note');
+    assert.equal(note.metadata.homeroomBot.offer.id, Number(offer.id));
+    assert.ok(note.metadata.homeroomBot.actions.every((a) => a.offerId === Number(offer.id)), 'each button names it');
+    // The route's path: found by the id the buttons send, then the machine.
+    const replies = {
+      async tapVoiceOffer(p) {
+        const event = await tap(ben, p.offerId, 85, p.choice);
+        return { ok: event.result === 'accepted' };
+      },
+    };
+    const out = await realVoice.decideOffer(pool, CONFIG, {
+      app, user: ben, messageId: Number(note.id), offerId: Number(offer.id), choice: 'yes', deps: { replies },
+    });
+    assert.equal(out.ok, true);
+    assert.deepEqual((await closeVotes(85)).map((r) => r.created_by), [ben.id], 'the vote is open, and it is the tapper\'s');
+    assert.equal((await offerRow(offer.id)).status, 'done');
   });
 
   await t.test('Keep it open takes the buttons away and files nothing', async () => {

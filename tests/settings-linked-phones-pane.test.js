@@ -91,7 +91,7 @@ test('the pane reads and acts through the account\'s own routes', () => {
   assert.match(AUTH, /if \(!signedOut\) return res\.status\(404\)/);
   // Signing this browser out drops its cookies as logout does, so the
   // reload lands signed out rather than on a cookie that names nothing.
-  assert.match(AUTH, /if \(current\) \{\s+res\.clearCookie\('session'\);/);
+  assert.match(AUTH, /if \(current\) \{\s+clearSessionCookies\(res\);/);
   // The session's id is a digest prefix, never the token, and the phone
   // route is untouched for the mobile app.
   assert.doesNotMatch(AUTH, /res\.json\(\{ (phones|browsers)[^}]*token/);
@@ -236,6 +236,7 @@ function mountPane(t, account) {
   const calls = [];
   const counts = [];
   let reloads = 0;
+  const windowEvents = {};
   globalThis.window = {
     location: { reload() { reloads += 1; } },
     Settings: { _setNavStatus(key, count) { counts.push([key, count]); } },
@@ -254,13 +255,14 @@ function mountPane(t, account) {
     stubs: {
       react: h.React,
       '../../../lib/i18n/react': { useMessages: () => tr },
-      '../../../lib/legacy-dom': { useWindowEvent: () => {} },
+      '../../../lib/legacy-dom': { useWindowEvent: (name, fn) => { windowEvents[name] = fn; } },
       '@/components/ui/field': { SectionHeading: () => null },
     },
   });
   h.mount(mod.LinkedPhonesSection);
   const row = (attr, id) => findAll(h.tree, (el) => el.props.attrs && el.props.attrs[attr] === id)[0];
-  return { h, calls, counts, reloads: () => reloads, row };
+  const fire = (name, detail) => windowEvents[name]({ type: name, detail });
+  return { h, calls, counts, reloads: () => reloads, row, fire };
 }
 
 test('both groups load, the menu counts them together, and a forgotten device says so', async (t) => {
@@ -327,4 +329,18 @@ test('signing this browser out warns on the row and then starts the page again s
   await h.settle();
   assert.deepEqual(calls, [`DELETE /api/me/browser-sessions/${HERE}`]);
   assert.equal(reloads(), 1, 'signed out here: the shell reloads signed out');
+});
+
+test('opening another page of Settings reads nothing; opening this one reads again (#6591)', async (t) => {
+  const { h, calls, fire } = mountPane(t, fakeAccount());
+  await h.settle();
+  calls.length = 0;
+
+  fire('usernode:settings-section', { section: 'accessibility' });
+  await h.settle();
+  assert.deepEqual(calls, [], 'a hidden pane does not re-read on every switch');
+
+  fire('usernode:settings-section', { section: 'phones' });
+  await h.settle();
+  assert.deepEqual(calls, ['GET /api/me/phones', 'GET /api/me/browser-sessions'], 'its own page reads both lists again');
 });
