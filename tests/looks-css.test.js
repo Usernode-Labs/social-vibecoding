@@ -1,4 +1,4 @@
-// The frame's kit and its nine looks are the 2026-11-06 screen tour's own
+// The frame's kit and its looks are the 2026-11-06 screen tour's own
 // stylesheets (frontend/looks/kit.css and one file per look, in the tour's
 // notation). scripts/build-looks-css.js compiles them into a marked section
 // of public/css/app.css: classes prefixed fr-, tokens prefixed --fr-, the
@@ -70,7 +70,7 @@ test('.phone becomes a media query and keeps its extra weight', () => {
 
 test('.dark moves onto <html>, with its weight', () => {
   assert.deepEqual(looks.mapSelector('.dark .tile.hm', null), { media: null, selector: 'html[data-skin].dark .fr-tile.fr-hm' });
-  assert.deepEqual(looks.mapSelector('.dark .nv.on', 'playground'), { media: null, selector: 'html[data-skin="playground"].dark .fr-nv.fr-on' });
+  assert.deepEqual(looks.mapSelector('.dark .nv.on', 'sunrise'), { media: null, selector: 'html[data-skin="sunrise"].dark .fr-nv.fr-on' });
 });
 
 test('the mock\'s own machinery is dropped, and its reset is kept inside a frame root', () => {
@@ -96,14 +96,14 @@ test('tokens are namespaced where they are set and where they are read', () => {
 // ── A whole file ─────────────────────────────────────────────────────────
 
 test('a look\'s root rule becomes its tokens on <html> and its type on the frame root', () => {
-  const css = looks.compile('.hr{--surface:#fff;--f:"X",system-ui;font:14px/1.45 var(--f);background:var(--ground)}\n.hr.dark{--surface:#000}\n.tile{min-height:42px}\n.phone .tile{min-height:50px}\n.dark .tile{color:red}', 'workbench');
-  assert.match(css, /html\[data-skin="workbench"\]\{--fr-surface:#fff;--fr-f:"X",system-ui\}/);
-  assert.match(css, /html\[data-skin="workbench"\] \.fr\{font:14px\/1\.45 var\(--fr-f\)\}/, 'type goes on the frame root, never on <html> (rem sizes hang off it)');
+  const css = looks.compile('.hr{--surface:#fff;--f:"X",system-ui;font:14px/1.45 var(--f);background:var(--ground)}\n.hr.dark{--surface:#000}\n.tile{min-height:42px}\n.phone .tile{min-height:50px}\n.dark .tile{color:red}', 'mosaic');
+  assert.match(css, /html\[data-skin="mosaic"\]\{--fr-surface:#fff;--fr-f:"X",system-ui\}/);
+  assert.match(css, /html\[data-skin="mosaic"\] \.fr\{font:14px\/1\.45 var\(--fr-f\)\}/, 'type goes on the frame root, never on <html> (rem sizes hang off it)');
   assert.doesNotMatch(css, /background:var\(--fr-ground\)/, 'the page ground is the product\'s wallpaper, not the mock\'s');
-  assert.match(css, /html\[data-skin="workbench"\]\.dark\{--fr-surface:#000\}/);
-  assert.match(css, /html\[data-skin="workbench"\] \.fr-tile\{min-height:42px\}/);
-  assert.match(css, /html\[data-skin="workbench"\]\.dark \.fr-tile\{color:red\}/);
-  assert.match(css, /@media \(max-width: 767\.98px\)\{\nhtml\[data-skin="workbench"\]\[data-skin\] \.fr-tile\{min-height:50px\}\n\}/);
+  assert.match(css, /html\[data-skin="mosaic"\]\.dark\{--fr-surface:#000\}/);
+  assert.match(css, /html\[data-skin="mosaic"\] \.fr-tile\{min-height:42px\}/);
+  assert.match(css, /html\[data-skin="mosaic"\]\.dark \.fr-tile\{color:red\}/);
+  assert.match(css, /@media \(max-width: 767\.98px\)\{\nhtml\[data-skin="mosaic"\]\[data-skin\] \.fr-tile\{min-height:50px\}\n\}/);
 });
 
 test('a selector list is split when its parts land in different places', () => {
@@ -169,19 +169,19 @@ test('a kit rule for a worn component also names the product\'s own markup for i
   // is each kit class of those components, and the rule names both.
   assert.equal(looks.wornSelector('html[data-skin] .fr-post .fr-who'), 'html[data-skin]:where(:not([data-skin="brand"])) .messages-message .messages-message-author',
     'the kit is any look\'s, and the New look ("brand") is not one: its conversations keep the standard markup\'s rules');
-  assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-post .fr-when'), 'html[data-skin="workbench"] .messages-message .messages-message-head time');
-  assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-post'), 'html[data-skin="workbench"] .messages-message');
+  assert.equal(looks.wornSelector('html[data-skin="mosaic"] .fr-post .fr-when'), 'html[data-skin="mosaic"] .messages-message .messages-message-head time');
+  assert.equal(looks.wornSelector('html[data-skin="mosaic"] .fr-post'), 'html[data-skin="mosaic"] .messages-message');
   // (The day's label has a second wearer, the count of a reply thread's replies: lane M, tests/messages-frame-stream.test.js.)
   assert.equal(looks.wornSelector('html[data-skin] .fr-day::before').split(',')[0], 'html[data-skin]:where(:not([data-skin="brand"])) .messages-day::before');
   assert.equal(looks.wornSelector('html[data-skin][data-skin] .fr-dhead'), 'html[data-skin][data-skin]:where(:not([data-skin="brand"])) .messages-thread-header', 'a phone rule keeps its weight');
   assert.equal(looks.wornSelector('html[data-skin].dark .fr-day').split(',')[0], 'html[data-skin].dark:where(:not([data-skin="brand"])) .messages-day');
-  assert.equal(looks.wornSelector('html[data-skin="brandkit"] .fr-dhead .fr-t'), 'html[data-skin="brandkit"] .messages-thread-header .messages-thread-name');
-  assert.equal(looks.wornSelector('html[data-skin="playground"].dark .fr-composer .fr-send.fr-go'), 'html[data-skin="playground"].dark .messages-composer-card .messages-send:not(:disabled)',
+  assert.equal(looks.wornSelector('html[data-skin="pastel"] .fr-dhead .fr-t'), 'html[data-skin="pastel"] .messages-thread-header .messages-thread-name');
+  assert.equal(looks.wornSelector('html[data-skin="sunrise"].dark .fr-composer .fr-send.fr-go'), 'html[data-skin="sunrise"].dark .messages-composer-card .messages-send:not(:disabled)',
     'a state the kit writes as a class is the product\'s own state');
 });
 
 test('a class the map does not name stays the kit\'s, and a rule for anything else is not repeated', () => {
-  assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-post .fr-av'), 'html[data-skin="workbench"] .messages-message .fr-av', 'the avatar in a message is the kit\'s own');
+  assert.equal(looks.wornSelector('html[data-skin="mosaic"] .fr-post .fr-av'), 'html[data-skin="mosaic"] .messages-message .fr-av', 'the avatar in a message is the kit\'s own');
   assert.equal(looks.wornSelector('html[data-skin] .fr-tile .fr-t'), null, 'a tile is drawn by the kit: nothing to repeat');
   // Each wearer of a root is a selector of its own: Settings' rows first, then the review stage's help rows (lane K).
   assert.deepEqual(looks.wornSelector('html[data-skin] .fr-row+.fr-row').split(',html'), ['html[data-skin]:where(:not([data-skin="brand"])) :is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *)+:is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *)', '[data-skin]:where(:not([data-skin="brand"])) .rf-help-row+.rf-help-row', '[data-skin]:where(:not([data-skin="brand"])) .messages-object-card:is(.messages-message *)+.messages-object-card:is(.messages-message *)'], 'Settings\' rows wear the row, the scope inside each compound');
@@ -363,7 +363,7 @@ test('an item\'s page keeps the product\'s discussion and dresses it: the stream
   assert.deepEqual({ to: roots.evt.to, parts: roots.evt.parts }, { to: '#dev-topic-thread #gc-thread-messages .dev-request-event', parts: { ei: '.dev-request-event-glyph' } },
     'two ids: the standard look\'s rule for the line names both, and a worn rule must outweigh it');
   assert.equal(looks.wornSelector('html[data-skin] .fr-evt .fr-ei').split(',html')[0], 'html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event .dev-request-event-glyph');
-  assert.equal(looks.wornSelector('html[data-skin="workbench"] .fr-evt b').split(',html')[0], 'html[data-skin="workbench"] #dev-topic-thread #gc-thread-messages .dev-request-event b');
+  assert.equal(looks.wornSelector('html[data-skin="mosaic"] .fr-evt b').split(',html')[0], 'html[data-skin="mosaic"] #dev-topic-thread #gc-thread-messages .dev-request-event b');
   // The stream wears the card as a second wearer, a selector of its own:
   // inside the first's :is() its two ids would lift every other card.
   assert.doesNotMatch(roots.card.to, /gc-thread-messages/);
@@ -374,14 +374,14 @@ test('an item\'s page keeps the product\'s discussion and dresses it: the stream
   assert.ok(card.startsWith(`html[data-skin]:where(:not([data-skin="brand"])) ${roots.card.to},html[data-skin]:where(:not([data-skin="brand"])) ${roots.card.also[0].to}`));
   assert.equal(looks.wornSelector('html[data-skin] .fr-card.fr-pad'), null, 'a state neither wearer carries is still left out');
   // The line that counts the replies is the section's label: the kit's
-  // .cap, and .sechead .cap for the looks that draw a section's label
-  // larger (Today, Playground). The section head's own box is not worn.
+  // .cap, and .sechead .cap for a look that draws a section's label
+  // larger (Today and Playground did; none of the five does today). The
+  // section head's own box is not worn.
   assert.equal(looks.wornSelector('html[data-skin="paper"] .fr-cap').split(',')[0], 'html[data-skin="paper"] #dev-topic-thread .dev-request .messages-reply-count');
-  assert.equal(looks.wornSelector('html[data-skin="today"] .fr-sechead .fr-cap', '.sechead .cap'), 'html[data-skin="today"] #dev-topic-thread .dev-request #gc-thread-messages .messages-reply-count');
+  assert.equal(looks.wornSelector('html[data-skin="sunrise"] .fr-sechead .fr-cap', '.sechead .cap'), 'html[data-skin="sunrise"] #dev-topic-thread .dev-request #gc-thread-messages .messages-reply-count');
   assert.equal(looks.wornSelector('html[data-skin] .fr-sechead', '.sechead'), null);
   assert.equal(looks.wornSelector('html[data-skin] .fr-cap.fr-over'), null);
   const css = section();
-  assert.ok(css.includes('html[data-skin="today"] .fr-sechead .fr-cap,html[data-skin="today"] #dev-topic-thread .dev-request #gc-thread-messages .messages-reply-count{font-size:22px;'));
   assert.ok(css.includes(',html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event,'), 'and the bot\'s news lines after it');
   assert.ok(css.includes(':is(button:is(.messages-bot-news > *),div:is(.messages-bot-settled-run > *)){display:flex;align-items:center;gap:12px;font-size:13px;color:var(--fr-mut);min-width:0}'));
 });
@@ -430,7 +430,7 @@ function topLevel(head) {
 test('every rule of the section starts from a look, and every class and token is the frame\'s', () => {
   const body = section().replace(/\/\*[\s\S]*?\*\//g, '');
   const rules = [...body.matchAll(/(?:^|\n)([^@{}\n][^{}]*)\{([^{}]*)\}/g)];
-  assert.ok(rules.length > 900, `the kit and nine looks are all there (${rules.length} rules)`);
+  assert.ok(rules.length > 900, `the kit and five looks are all there (${rules.length} rules)`);
   for (const [, head, decls] of rules) {
     for (const sel of topLevel(head)) {
       assert.match(sel, /^html\[data-skin/, `"${sel}" must start from a look`);
@@ -479,7 +479,7 @@ test('what every look shares: the product\'s tokens follow the look\'s, at a loo
 });
 
 test('a solid sheet is solid under a see-through look: a dialog, a menu and a pinned head are never read through', () => {
-  // Glass, Workbench and Mosaic draw their surface see-through, over a blur.
+  // Glass and Mosaic draw their surface see-through, over a blur.
   // What the product calls --dc-sheet-solid sits over other content with no
   // blur behind it (a dialog's card, a menu, a head pinned over a scroller),
   // so it takes the look's opaque surface (looks.json "opaque", the same

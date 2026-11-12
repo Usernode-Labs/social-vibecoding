@@ -51,7 +51,7 @@ globalThis.window = {
   setTimeout, clearTimeout,
 };
 
-const FRAME = ['glass', 'brandkit', 'workbench', 'paper', 'pastel', 'mosaic', 'sunrise', 'today', 'playground'];
+const FRAME = ['glass', 'paper', 'pastel', 'mosaic', 'sunrise'];
 const skin = (look) => ({
   '../../lib/skin': { useLiveSkin: () => look, useSkin: () => look, currentSkin: () => look, isFrameSkin: (s) => FRAME.includes(s), FRAME_SKINS: FRAME },
 });
@@ -138,7 +138,6 @@ test('app.css sets the standard row\'s own spacing aside under a look, and only 
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.messages-thread-header > \.fr-av \{ --fr-as: 40px !important; \}/, 'the head\'s face is the row\'s size');
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.messages-message-gutter \{ flex-basis: 32px; width: 32px; margin-inline-start: 0; \}/,
     'a continuation\'s time takes the face\'s own width (32px, and the row\'s 12px gap after it), so its words start where the first line\'s do');
-  assert.match(hand, /html\[data-skin="workbench"\] \.messages-message-gutter \{ flex-basis: 26px; width: 26px; \}/, 'Workbench\'s face is 26px');
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.messages-thread-pane > \.messages-thread-scroll \{[^}]*padding: 24px 32px;/, 'the open-item pane\'s own margins');
 });
 

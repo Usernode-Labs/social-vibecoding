@@ -1,5 +1,5 @@
 /**
- * The landing in the one frame, under any of the nine looks: version 2 of
+ * The landing in the one frame, under any of the five looks: version 2 of
  * the screen tour's steps o01 to o03 and w03 (docs/superpowers/plans/
  * 2026-11-11-looks-v2-todays-content.md). The first tour's layout (the
  * kit's head with one primary button, its two columns, its tiles, cards

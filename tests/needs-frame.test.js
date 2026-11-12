@@ -64,7 +64,7 @@ test('the stage wears the kit by the wear map, each a wearer of its own', () => 
   assert.deepEqual(wearer('row', '.rf-help-row'), { to: '.rf-help-row', parts: { t: 'span', go: 'svg:last-child', sm: '' } });
   assert.deepEqual(wearer('inp', '.rf-ask-form'), { to: '.rf-ask-form input', parts: { val: '', focus: ':focus' } });
   // Compiled, a look's own card and button reach the stage.
-  assert.match(css, /html\[data-skin="workbench"\] \.fr-card,[^{]*html\[data-skin="workbench"\] :is\(\.rf-page,\.rf-desc-help\)(?:,[^{]*)?\{border-radius:10px/);
+  assert.match(css, /html\[data-skin="mosaic"\] \.fr-card,[^{]*html\[data-skin="mosaic"\] :is\(\.rf-page,\.rf-desc-help\)(?:,[^{]*)?\{border-radius:\d+px/);
   assert.match(css, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) :is\(\.rf-go,\.rf-desc-go,\.rf-end-btn,\.rf-morph,\.rf-chip,\[data-needs-vote-chip\]\):disabled(?:,[^{]*)?\{opacity:\.45\}/);
 });
 

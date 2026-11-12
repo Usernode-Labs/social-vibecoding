@@ -67,7 +67,8 @@ test('PicCard: with a control of its own the card is a group, its door over a fo
   assert.match(out, /<\/a><div class="fr-fm"><span class="fr-fmt">20 members<\/span><button type="button">Join<\/button><\/div><\/div>$/, 'the button is beside the link, never inside it');
   assert.match(html(h(K.PicCard, { href: '/app/a', title: 'A' })), /^<a class="fr-card fr-fcard" href="\/app\/a">/, 'without one it is the link it was');
   const home = read('frontend/src/features/home/frame/home-frame.tsx');
-  assert.match(home, /picture=\{\(app\) => \(\{\n\s+flag: isNew\(app\) \? ta\('auth:guest\.card\.new'\) : undefined,[\s\S]{0,260}meta: meta\(app\),\n\s+end: join\(app\),/, 'a member\'s directory is picture cards, each with its line and Join');
+  // Home's own directory no longer hands a card a control (#6609: no Join on a card), so there it is the link.
+  assert.match(home, /picture=\{\(app\) => \(\{\n\s+flag: isNew\(app\) \? ta\('auth:guest\.card\.new'\) : undefined,\n\s+badge: [^\n]+\n\s+\}\)\}/, 'a member\'s directory is picture cards, each the door to its page');
 });
 
 // ── The frame ────────────────────────────────────────────────────────────

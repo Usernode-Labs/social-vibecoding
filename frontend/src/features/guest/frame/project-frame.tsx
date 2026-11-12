@@ -1,6 +1,6 @@
 /**
  * A public community's page for a visitor, in the one frame, under any of
- * the nine looks: version 2 of the screen tour's steps o20, o21, w12 and
+ * the five looks: version 2 of the screen tour's steps o20, o21, w12 and
  * w13 (docs/superpowers/plans/2026-11-11-looks-v2-todays-content.md). The
  * first tour's layout (the kit's head with one primary button, the places
  * as tabs, two columns) holding today's read-only page (../guest-project

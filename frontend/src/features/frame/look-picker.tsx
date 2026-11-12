@@ -32,14 +32,10 @@ import { FRAME_SKINS, isFrameSkin, useLiveSkin, type Skin } from '../../lib/skin
 const NAME: Record<'standard' | (typeof FRAME_SKINS)[number], string> = {
   standard: 'settings:experimental.look.standard',
   glass: 'settings:experimental.look.glass',
-  brandkit: 'settings:experimental.look.brandkit',
-  workbench: 'settings:experimental.look.workbench',
   paper: 'settings:experimental.look.paper',
   pastel: 'settings:experimental.look.pastel',
   mosaic: 'settings:experimental.look.mosaic',
   sunrise: 'settings:experimental.look.sunrise',
-  today: 'settings:experimental.look.today',
-  playground: 'settings:experimental.look.playground',
 };
 const CHOICES = ['standard', ...FRAME_SKINS] as const;
 

@@ -7,7 +7,7 @@
 //
 // The standard Home is untouched: HomeScreen mounts <HomeFrame/> as the
 // scroller's first child only after mount, when the device's look is one of
-// the frame's nine (lib/skin.ts) and the viewer is signed in, and app.css
+// the frame's five (lib/skin.ts) and the viewer is signed in, and app.css
 // hides the standard body beside it while data-frame-page is set.
 //
 // Run with: node --test tests/home-frame.test.js
@@ -99,7 +99,7 @@ test('the page is the kit\'s: the head with one fixed sentence, the search field
     'beside the sidebar in a narrow window the page is one column, never six tiles in 350px');
   assert.doesNotMatch(html, /fr-wide|fr-first/, 'and the side column comes after the main one on a phone');
   assert.match(render(), /<div class="fr-cols fr-one fr-mix"><div class="fr-stack">/, 'no side column without challenges');
-  // Kit classes only: a utility class beside a look's rule would break one of the nine.
+  // Kit classes only: a utility class beside a look's rule would break one of the five.
   const classes = [...html.matchAll(/class="([^"]*)"/g)].flatMap((m) => m[1].split(/\s+/)).filter(Boolean);
   assert.ok(classes.length > 10);
   // (One class is the data's, not a utility: a challenge picture's tone, home-tone-*, which gives its ground in both themes.)

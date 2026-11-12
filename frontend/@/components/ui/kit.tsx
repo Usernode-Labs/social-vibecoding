@@ -8,10 +8,10 @@
  * `looks:begin` and `looks:end` marks (scripts/build-looks-css.js, from
  * frontend/looks/): the kit's rules for any look, then one block per look.
  * So a screen drawn here is the screen the tour drew, under each of the
- * nine looks, and a look is changed in its file there, never here.
+ * five looks, and a look is changed in its file there, never here.
  *
  * NO TAILWIND AND NO VALUES HERE. A kit element carries kit classes only;
- * a utility class would sit beside a look's rule and one of the nine would
+ * a utility class would sit beside a look's rule and one of the five would
  * stop matching the tour. The one inline style is a size or a colour the
  * data gives (a tile's size, a community's own colour), passed as the
  * custom property the kit reads.

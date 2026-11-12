@@ -49,7 +49,7 @@ import { LocalAgentsList } from '../local-agents-list';
  * The look is "Baseplate" (request #6278): white cards on a light warm grey
  * plate, sun yellow for what needs you, ink for where you are.
  *
- * Look (default Standard, the same device store) offers the nine looks of
+ * Look (default Standard, the same device store) offers the five looks of
  * the one frame (lib/skin.ts FRAME_SKINS, the directions the 2026-11-06
  * screen tour kept): each sets its id as data-skin and app.css draws it,
  * light and dark. It is an admin's preview while the looks are drawn screen
@@ -119,14 +119,10 @@ export function ExperimentalSection() {
           <Select id="settings-look" variant="plain">
             <option value="">{t('settings:experimental.look.standard')}</option>
             <option value="glass">{t('settings:experimental.look.glass')}</option>
-            <option value="brandkit">{t('settings:experimental.look.brandkit')}</option>
-            <option value="workbench">{t('settings:experimental.look.workbench')}</option>
             <option value="paper">{t('settings:experimental.look.paper')}</option>
             <option value="pastel">{t('settings:experimental.look.pastel')}</option>
             <option value="mosaic">{t('settings:experimental.look.mosaic')}</option>
             <option value="sunrise">{t('settings:experimental.look.sunrise')}</option>
-            <option value="today">{t('settings:experimental.look.today')}</option>
-            <option value="playground">{t('settings:experimental.look.playground')}</option>
           </Select>
           <p className="ui-hint text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
             {t('settings:experimental.look.description')}

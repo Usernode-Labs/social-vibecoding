@@ -18,7 +18,7 @@ const { renderComponent, createElement } = require('./lib/render-tsx');
 const ROOT = path.join(__dirname, '..');
 const read = (...parts) => fs.readFileSync(path.join(ROOT, ...parts), 'utf8');
 const CARD = 'frontend/src/features/profile/public-profile-card.tsx';
-const FRAME = ['glass', 'brandkit', 'workbench', 'paper', 'pastel', 'mosaic', 'sunrise', 'today', 'playground'];
+const FRAME = ['glass', 'paper', 'pastel', 'mosaic', 'sunrise'];
 const stubs = (look) => ({
   '../../lib/skin': { useLiveSkin: () => look, isFrameSkin: (s) => FRAME.includes(s) },
   './message-button': { MessageButton: ({ username }) => createElement('button', { type: 'button', 'data-message-person': username }, 'Message') },

@@ -1,7 +1,7 @@
 // The frame's own chrome (frontend/src/features/frame/frame-app.tsx): the
 // sidebar, bar and phone tab bar the 2026-11-06 screen tour draws around
 // every page, shown in place of today's header and tab bar while the
-// device's look is one of the frame's nine. It draws with the kit and reads
+// device's look is one of the frame's five. It draws with the kit and reads
 // the stores the shell's own navigation reads; today's chrome stays
 // mounted, unseen, and a press here is handed to its control there.
 //

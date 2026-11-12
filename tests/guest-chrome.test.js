@@ -169,8 +169,7 @@ test('the waiting room is a stand-alone page whose bar says whose it is and hold
   assert.match(hand, /#auth-waiting-screen > \.max-w-sm \{ max-width: 504px; padding: 64px 32px 48px; text-align: start; \}/);
   assert.match(hand, /html\[data-frame-chrome="guest"\] #waiting-logout \{ display: none; \}/, 'said once, in the bar');
   // Look around is the one primary button, and the look's own: worn (looks.json,
-  // btn), never a hand-set accent, which Brand kit's yellow and Sunrise's
-  // gradient could not reach.
+  // btn), never a hand-set accent, which Sunrise's gradient could not reach.
   assert.doesNotMatch(hand.slice(0, hand.indexOf('/* THE SIGN-IN SHEET')), /\[data-waiting-look-around\] \{[^}]*background:/, 'no hand-set fill on Look around');
   const looks = JSON.parse(read('frontend/looks/looks.json'));
   assert.ok(looks.wear.roots.card.to.includes('#auth-waiting-screen :is([data-waiting-queued],[data-waiting-invite])'));
@@ -300,8 +299,7 @@ test('a dead invite link is a stand-alone page: the welcome over the title, what
   assert.ok(hand.length > 0);
   assert.match(hand, /\[data-landing-invite="dead"\] \{ flex-grow: 0; align-items: stretch; justify-content: flex-start; max-width: 504px; margin-inline: auto; padding: 64px 32px 48px; text-align: start; \}/, 'the stand-alone column');
   assert.match(hand, /\[data-landing-invite="dead"\] > img \{ display: none; \}/);
-  // The title and the button are the look's own (Brand kit's serif and
-  // yellow, Sunrise's gradient): worn, not set by hand.
+  // The title and the button are the look's own (Sunrise's gradient): worn, not set by hand.
   assert.doesNotMatch(hand.replace(/\/\*[\s\S]*?\*\//g, ''), /data-landing-invite-dead-continue|font-size: 28px/);
   const looks = JSON.parse(read('frontend/looks/looks.json'));
   assert.ok([looks.wear.roots.title.to, ...looks.wear.roots.title.also.map((w) => w.to)].includes('#auth-landing-screen [data-landing-invite="dead"] > h1'), 'the look\'s title');

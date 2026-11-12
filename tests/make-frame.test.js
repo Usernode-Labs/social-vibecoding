@@ -53,8 +53,9 @@ test('from Create, Make and the made screen sit in the frame\'s page area, not o
   assert.match(rule[1], /bottom: 0;\s+padding-bottom: var\(--fr-shell-bottom, 0px\);/, 'to the foot, the tab bar\'s height kept clear inside: the bar is see-through');
   assert.match(rule[1], /inset-inline-start: var\(--fr-shell-left, 0px\);/);
   assert.match(rule[1], /background: var\(--fr-page, var\(--home-wallpaper, var\(--fr-ground\)\)\) !important;/,
-    'the page\'s own ground again: the look\'s flat page where it has one (Brand kit), else the wallpaper the body draws, never a flat colour over a wash');
-  assert.match(css, /html\[data-skin="brandkit"\]:not\(\.dark\):not\(\[data-app-tone="dark"\]\) body:has\(#platform-tabs\)\{--home-ground:#fffeea;--un-zoom-bg:#fffeea;--fr-page:#fffeea;background:#fffeea\}/);
+    'the page\'s own ground again: the look\'s flat page where it has one, else the wallpaper the body draws, never a flat colour over a wash');
+  // None of the five looks has a page of its own today (Brand kit, retired, had): every one reads the wallpaper.
+  assert.doesNotMatch(css.slice(css.indexOf('/* looks:begin'), css.indexOf('/* looks:end */')), /--fr-page:/);
   // The roots the rule reads are the product's, as written.
   const src = read('frontend/src/features/first-session/make.tsx');
   assert.match(src, /export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header fixed inset-x-0 bottom-0 /);

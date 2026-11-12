@@ -24,10 +24,9 @@ test('it is one small control: a glyph, and under it the system\'s own menu of l
   const html = view({ variant: 'frame', skin: 'glass' });
   assert.match(html, /^<label class="fr-ib fr-look" title="Look" data-look-picker="frame"><svg[^>]*>.*?<\/svg><select aria-label="Look">/s);
   assert.deepEqual([...html.matchAll(/<option value="([a-z]+)"( selected="")?>([^<]+)<\/option>/g)].map((m) => [m[1], m[3], !!m[2]]), [
-    ['standard', 'Standard', false], ['glass', 'Glass', true], ['brandkit', 'Brand kit', false], ['workbench', 'Workbench', false],
+    ['standard', 'Standard', false], ['glass', 'Glass', true],
     ['paper', 'Paper', false], ['pastel', 'Pastel', false], ['mosaic', 'Mosaic', false], ['sunrise', 'Sunrise', false],
-    ['today', 'Today', false], ['playground', 'Playground', false],
-  ], 'Standard, then the nine looks in the tour\'s order, the device\'s own chosen');
+  ], 'Standard, then the five looks in the tour\'s order, the device\'s own chosen');
 });
 
 test('under the standard look it is drawn with the header\'s own classes, beside its bell', () => {

@@ -2,9 +2,9 @@
 'use strict';
 
 /**
- * The frame's kit and its nine looks, compiled into app.css.
+ * The frame's kit and its looks, compiled into app.css.
  *
- * frontend/looks/kit.css and one file per look (glass.css, brandkit.css …)
+ * frontend/looks/kit.css and one file per look (glass.css, paper.css …)
  * are the 2026-11-06 screen tour's own stylesheets, kept in the tour's
  * notation so a look in the product is the look the tour drew, rule for
  * rule. The tour styles a mock: a fixed `.hr` box, `.hr.dark` for dark,

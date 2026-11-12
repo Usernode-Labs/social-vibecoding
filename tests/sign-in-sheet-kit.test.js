@@ -51,7 +51,7 @@ test('the first step in the kit\'s order: the field, the other ways as rows unde
 });
 
 test('the phone step: the number in its card, Apple and Google under "or", Text me a code, then the way back to email and the terms', () => {
-  const html = sheet('workbench', { phone: false, phoneLink: true, askName: false });
+  const html = sheet('mosaic', { phone: false, phoneLink: true, askName: false });
   assert.match(html, /data-sign-in-sheet="choose"/, 'the landing\'s sheets open on the first step; the phone is a row away');
   assert.match(KIT, /\{step === 'phone' \? \(\s*<form className=\{`mt-5 \$\{k\('stack'\)\}`\} onSubmit=\{\(e\) => \{ e\.preventDefault\(\); void submitPhoneStep\(\); \}\}>/);
   assert.match(KIT, /<PhoneInput inputRef=\{phoneField\} id="sign-in-sheet-phone" defaultValue=\{phoneNumber\} \/>/, 'the product\'s own field, with its country code');

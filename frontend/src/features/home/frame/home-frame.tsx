@@ -1,5 +1,5 @@
 /**
- * Home in the one frame, under any of the nine looks: version 2 of the
+ * Home in the one frame, under any of the five looks: version 2 of the
  * screen tour's step s01-home (docs/superpowers/plans/
  * 2026-11-11-looks-v2-todays-content.md). The first tour's layout (the
  * kit's head, its two columns, its tiles, cards and rows) holding today's

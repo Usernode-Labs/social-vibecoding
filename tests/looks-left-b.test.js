@@ -56,7 +56,7 @@ test('App slots, Share your week and Your feedback are the product\'s dialogs in
   assert.match(hand, /#profile-week-share-sheet \.rounded-2xl \{[^}]*background: var\(--fr-sunk\);/, 'the preview is the sunk box');
   assert.match(hand, /#profile-feedback-list \{ border-radius: 20px; background: var\(--fr-surface\); box-shadow: inset 0 0 0 1px var\(--fr-line\); \}/);
   for (const line of rules(hand)) {
-    assert.match(line, /^html\[data-skin(="workbench")?\]/);
+    assert.match(line, /^html\[data-skin\]/);
     assert.match(line, /#profile-(app-slots|week-share|feedback)-/, 'only these three dialogs');
     assert.doesNotMatch(line, /#[0-9a-f]{3,8}\b(?![\w-])|rgba?\(/i, 'kit tokens only');
   }
@@ -84,7 +84,7 @@ test('Standings: the first read, a failed read and a board with no table are the
   assert.match(hand, /#tc-lb-body \.animate-pulse > div > div \{ height: 10px; border-radius: 5px; background: var\(--fr-sunk\); \}/, 'the outline\'s blocks are the sunk tone');
   assert.ok(hand.includes(`${LOOK} [data-standings-cols] #tc-lb-drill h3 { color: var(--fr-ink); font-size: 17px; font-weight: 650; line-height: 1.3; letter-spacing: -.01em; }`), 'the details\' name is the 17px heading');
   assert.ok(hand.includes(`${LOOK} [data-standings-cols] #tc-lb-drill .font-mono { color: var(--fr-ink); font-family: inherit; font-variant-numeric: tabular-nums; font-weight: 600; }`), 'figures line up by digit in the look\'s own type');
-  assert.ok(hand.includes('html[data-skin="workbench"]:is([data-challenges-frame], [data-standings-frame]) #leaderboard-event-bar { max-width: 1240px; padding-inline: 28px; }'), 'the picker starts where Workbench\'s page does');
+  assert.ok(hand.includes('html[data-skin="paper"]:is([data-challenges-frame], [data-standings-frame]) #leaderboard-event-bar { padding-inline: 40px; }'), 'the picker starts where Paper\'s page does');
   for (const line of rules(hand)) assert.doesNotMatch(line, /#[0-9a-f]{3,8}\b(?![\w-])|rgba?\(/i, 'kit tokens only');
   // The pane's states are still its own markup: one Body, no second drawing.
   const pane = read('frontend/src/features/leaderboard/topochain-standings.tsx');
@@ -178,10 +178,9 @@ test('a request and a change: what scrolls fades out under the pinned head, and 
 
 // ── A project's pages ───────────────────────────────────────────────────
 test('a place\'s own body starts where its look\'s page does', () => {
-  assert.match(css, /@media \(min-width: 768px\) \{\n\s+html\[data-skin="paper"\] \.dev-ws > \[data-project-frame\] ~ \.dev-ws-tabbody \{ padding-inline: 40px; \}\n\s+html\[data-skin="today"\] \.dev-ws > \[data-project-frame\] ~ \.dev-ws-tabbody \{ padding-inline: 36px; \}\n\}/);
+  assert.match(css, /@media \(min-width: 768px\) \{\n\s+html\[data-skin="paper"\] \.dev-ws > \[data-project-frame\] ~ \.dev-ws-tabbody \{ padding-inline: 40px; \}\n\}/);
   const kit = (look) => read('frontend/looks', `${look}.css`);
   assert.match(kit('paper'), /\.inner\{padding:36px 40px 48px\}/, 'Paper\'s page is 40px in');
-  assert.match(kit('today'), /\.inner\{padding:20px 36px 56px\}/, 'Today\'s is 36px');
 });
 
 // ── Challenges and Standings ────────────────────────────────────────────

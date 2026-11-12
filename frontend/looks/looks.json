@@ -1,16 +1,12 @@
 {
-  "note": "Read by scripts/build-looks-css.js. order = FRAME_SKINS (frontend/src/lib/skin.ts). Per look: the tour direction it is, the family that leads the document font stack, the font directories under public/fonts whose @font-face it declares, --accent-tint in light and dark (a literal rgba at or under 0.2 alpha: tests/dev-chat-ground.test.js), the opaque --fr-surface for browsers without backdrop-filter (translucent looks only), and the page ground in light and dark when the look has its own page (Brand kit).",
+  "note": "Read by scripts/build-looks-css.js. order = FRAME_SKINS (frontend/src/lib/skin.ts). Per look: the tour direction it is, the family that leads the document font stack, the font directories under public/fonts whose @font-face it declares, --accent-tint in light and dark (a literal rgba at or under 0.2 alpha: tests/dev-chat-ground.test.js), the opaque --fr-surface for browsers without backdrop-filter (translucent looks only), and the page ground in light and dark when a look has its own page (none of the five does today).",
   "stack": "system-ui,-apple-system,'Segoe UI',sans-serif,'Apple Color Emoji','Segoe UI Emoji','Segoe UI Symbol','Noto Color Emoji'",
   "order": [
     "glass",
-    "brandkit",
-    "workbench",
     "paper",
     "pastel",
     "mosaic",
-    "sunrise",
-    "today",
-    "playground"
+    "sunrise"
   ],
   "looks": {
     "glass": {
@@ -27,41 +23,6 @@
       "opaque": [
         "#fbfbfd",
         "#171a2b"
-      ],
-      "ground": null
-    },
-    "brandkit": {
-      "letter": "D",
-      "name": "BRAND KIT",
-      "family": "Geist",
-      "faces": [
-        "source-serif-4"
-      ],
-      "tint": [
-        "rgba(48,144,225,.14)",
-        "rgba(48,144,225,.2)"
-      ],
-      "opaque": null,
-      "ground": [
-        "#fffeea",
-        "#000000"
-      ]
-    },
-    "workbench": {
-      "letter": "F",
-      "name": "WORKBENCH",
-      "family": "IBM Plex Sans",
-      "faces": [
-        "ibm-plex-sans",
-        "ibm-plex-mono"
-      ],
-      "tint": [
-        "rgba(29,95,224,.11)",
-        "rgba(127,166,255,.15)"
-      ],
-      "opaque": [
-        "#fafafc",
-        "#16182c"
       ],
       "ground": null
     },
@@ -123,34 +84,6 @@
       ],
       "opaque": null,
       "ground": null
-    },
-    "today": {
-      "letter": "L",
-      "name": "TODAY",
-      "family": "Figtree",
-      "faces": [
-        "figtree"
-      ],
-      "tint": [
-        "rgba(10,122,255,.12)",
-        "rgba(64,156,255,.2)"
-      ],
-      "opaque": null,
-      "ground": null
-    },
-    "playground": {
-      "letter": "S",
-      "name": "PLAYGROUND",
-      "family": "Nunito",
-      "faces": [
-        "nunito"
-      ],
-      "tint": [
-        "rgba(76,151,255,.16)",
-        "rgba(111,171,255,.2)"
-      ],
-      "opaque": null,
-      "ground": null
     }
   },
   "fonts": {
@@ -164,48 +97,6 @@
         },
         {
           "file": "AlbertSans-Variable-latin-ext.woff2",
-          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
-        }
-      ]
-    },
-    "source-serif-4": {
-      "family": "Source Serif 4",
-      "weight": "200 900",
-      "files": [
-        {
-          "file": "SourceSerif4-Variable.woff2",
-          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
-        },
-        {
-          "file": "SourceSerif4-Variable-latin-ext.woff2",
-          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
-        }
-      ]
-    },
-    "ibm-plex-sans": {
-      "family": "IBM Plex Sans",
-      "weight": "100 700",
-      "files": [
-        {
-          "file": "IBMPlexSans-Variable.woff2",
-          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
-        },
-        {
-          "file": "IBMPlexSans-Variable-latin-ext.woff2",
-          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
-        }
-      ]
-    },
-    "ibm-plex-mono": {
-      "family": "IBM Plex Mono",
-      "weight": "500",
-      "files": [
-        {
-          "file": "IBMPlexMono-500.woff2",
-          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
-        },
-        {
-          "file": "IBMPlexMono-500-latin-ext.woff2",
           "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
         }
       ]
@@ -262,34 +153,6 @@
         },
         {
           "file": "PlusJakartaSans-Variable-latin-ext.woff2",
-          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
-        }
-      ]
-    },
-    "figtree": {
-      "family": "Figtree",
-      "weight": "300 900",
-      "files": [
-        {
-          "file": "Figtree-Variable.woff2",
-          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
-        },
-        {
-          "file": "Figtree-Variable-latin-ext.woff2",
-          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
-        }
-      ]
-    },
-    "nunito": {
-      "family": "Nunito",
-      "weight": "200 1000",
-      "files": [
-        {
-          "file": "Nunito-Variable.woff2",
-          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
-        },
-        {
-          "file": "Nunito-Variable-latin-ext.woff2",
           "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
         }
       ]
