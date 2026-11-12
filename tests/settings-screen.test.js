@@ -2221,6 +2221,71 @@ test('App permissions reads in the muted ink and its empty lists say what will a
   }
 });
 
+// #6512 item 11: a plain line under the capabilities that see or hear the
+// person, and only those. Screen sharing is delegated by the frame's `allow`
+// and getDisplayMedia opens the browser's picker every time, so its line says
+// the person picks what is shared, never that the app sees "your screen".
+test('camera, microphone and screen sharing carry a plain note; the other permissions do not (#6512)', () => {
+  const html = renderComponent('frontend/src/features/settings/app-permissions-list.tsx', 'AppPermissionsListView', {
+    phase: 'ready',
+    apps: [{
+      appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam',
+      items: [
+        { capability: 'geolocation', label: 'Location', revoked: false },
+        { capability: 'microphone', label: 'Microphone', revoked: false },
+        { capability: 'camera', label: 'Camera', revoked: false },
+        { capability: 'display-capture', label: 'Screen sharing', revoked: true },
+        { capability: 'usb', label: 'USB devices', revoked: false },
+      ],
+    }, {
+      appId: 8, appName: 'Quiet Cam', appSlug: 'quiet-cam',
+      items: [
+        { capability: 'microphone', label: 'Microphone', revoked: true },
+        { capability: 'camera', label: 'Camera', revoked: true },
+      ],
+    }],
+  });
+  const notes = [...html.matchAll(/data-role="capability-note"[^>]*>([^<]*)</g)].map((m) => m[1]);
+  assert.deepEqual(notes, [
+    message('settings:appPermissions.note.microphone'),
+    message('settings:appPermissions.note.camera'),
+    message('settings:appPermissions.note.screen'),
+    message('settings:appPermissions.note.microphone'),
+    message('settings:appPermissions.note.camera'),
+  ], 'one note each, under its own row (revoked rows too), and none on location or USB');
+  // Shown beside Re-enable as well, so a note says what the permission lets
+  // the app do, never what it can do now, and that the browser decides too.
+  for (const id of ['camera', 'microphone']) {
+    const text = message(`settings:appPermissions.note.${id}`);
+    assert.match(text, /^Lets this app .* while it is open, once your browser allows it too\.$/, `${id} note is true on a revoked row`);
+    assert.doesNotMatch(text, /can turn on/, `${id} note claims no live access`);
+  }
+  assert.match(html, /data-role="capability-note" class="mt-0\.5 block text-zinc-500 dark:text-zinc-400"/,
+    'the note is the muted secondary line, not a pill');
+  const screen = message('settings:appPermissions.note.screen');
+  assert.match(screen, /choose a screen, window or tab/);
+  assert.match(screen, /sees only what you choose/);
+  assert.doesNotMatch(screen, /everything|whole screen|all of your screen/i, 'the person picks what is shared');
+});
+
+// #6512 item 9: a blocked app says when it was blocked.
+test('a blocked app shows when it was blocked, and a row without a stamp shows nothing (#6512)', () => {
+  const BLOCKED = 'frontend/src/features/settings/sections/blocked-apps.tsx';
+  const at = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const html = renderComponent(BLOCKED, 'BlockedAppRow', {
+    app: { slug: 'noisy', name: 'Noisy App', created_at: at }, busy: null, onUnblock: () => {},
+  });
+  assert.match(html, /Noisy App/);
+  assert.match(html, new RegExp(`<time data-role="blocked-at" dateTime="${at.replace(/\./g, '\\.')}" title="[^"]+" class="mt-0\\.5 block text-\\[13px\\] text-zinc-500 dark:text-zinc-400">Blocked 3d ago</time>`));
+  assert.match(html, />Unblock</);
+  const bare = renderComponent(BLOCKED, 'BlockedAppRow', {
+    app: { slug: 'noisy', name: 'Noisy App' }, busy: null, onUnblock: () => {},
+  });
+  assert.doesNotMatch(bare, /blocked-at/);
+  assert.match(read('src/services/app-blocks.js'), /SELECT a\.slug, a\.name, b\.created_at FROM user_app_blocks/,
+    'the list already returns the stamp the row reads');
+});
+
 /**
  * Run Settings._onPermissionRevoke on its own, with the dialog, the network,
  * AppView and the status line stubbed, and report what it did. `open` is
