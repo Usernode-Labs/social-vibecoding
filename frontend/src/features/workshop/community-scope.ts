@@ -61,6 +61,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import { sharedJson } from '../../lib/shared-read';
 import { voteSavedStore } from '../dev-board/card/cards-store';
 import { landKeepingPlace } from '../dev-board/workshop/place-store';
 import { navStore } from '../nav/nav-store.js';
@@ -441,28 +442,23 @@ export function loadCommunities(force = false): Promise<void> {
   const q = demoQuery();
   loading = (async () => {
     try {
-      const [appsRes, countsRes] = await Promise.all([
+      // Both are Home's pins' reads too (home-pins-store.ts), a moment apart
+      // on every page load: a request already on its way for the same
+      // address is shared, never a kept answer (lib/shared-read.ts, #6591).
+      const [body, countsBody] = await Promise.all([
         // Joined rows only (#5023), the ones kept below.
-        fetch(`/api/apps?scope=joined${q.replace('?', '&')}`, { credentials: 'same-origin' }),
+        sharedJson<any>(`/api/apps?scope=joined${q.replace('?', '&')}`),
         // A refresh asks for the current numbers, never the copy the service
         // worker saved (request 6500); an unforced read keeps its own cache.
-        fetch(`/api/workshop/counts${q}`, {
-          credentials: 'same-origin',
-          ...(force ? { cache: 'no-cache' as const } : {}),
-        }).catch(() => null),
+        sharedJson<any>(`/api/workshop/counts${q}`, { fresh: force }).catch(() => null),
       ]);
-      if (!appsRes.ok) return;
-      const body = await appsRes.json();
       const rows: AppRow[] = Array.isArray(body) ? body : (body && Array.isArray(body.apps) ? body.apps : []);
       const home = (window as any).Home;
       const joined = rows.filter((r) => r && r.slug && (
         typeof home?.isJoined === 'function' ? home.isJoined(r) : !!r.is_member
       ));
-      let counts: Record<string, { needs?: number; owed?: unknown; unchosen?: boolean }> = {};
-      if (countsRes && countsRes.ok) {
-        const c = await countsRes.json().catch(() => null);
-        counts = (c && c.counts) || {};
-      }
+      const counts: Record<string, { needs?: number; owed?: unknown; unchosen?: boolean }> =
+        (countsBody && countsBody.counts) || {};
       // Newest first, the order the Communities list and its sections use.
       const ordered = orderRows(joined as any) as unknown as AppRow[];
       hydrateNeedsSeen();

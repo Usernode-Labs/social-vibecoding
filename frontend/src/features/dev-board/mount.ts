@@ -65,6 +65,7 @@ import {
 import { DevKanban } from './card/dev-kanban';
 import type { DevKanbanView, DevWorkshopView } from './card/model';
 import { DevWorkshop, withoutSavedVotes } from './workshop/workshop';
+import { openPrivateRequest } from './workshop/private-request-door';
 import { TopicHead } from './topic/topic-head';
 import { prefetchThread } from './topic/thread-items';
 import { topicHeadStore, type TopicHeadState } from './topic/topic-store';
@@ -144,6 +145,8 @@ export interface DevBoardBridge {
   showVotes(sessionId: number): void;
   /** #6439: the next request's page opens at its vote to close it (topic/votes-in-view.ts). */
   showClose(closeId: number): void;
+  /** The Workshop's Private requests open private request `id` of `slug` (workshop/private-request-door.ts). */
+  showPrivateRequest(slug: string, id: number): void;
   publishViewMode(mode: string): void;
   publishWorkshopGroup(mode: string): void;
   /** #3700: the invite link a project's page was opened from (App._followInvite). */
@@ -421,6 +424,9 @@ export const devBoardBridge: DevBoardBridge = {
   showVotes: (sessionId: number) => askVotesInView(sessionId),
   // #6439: a door to a vote to close a request: the request's page opens at it.
   showClose: (closeId: number) => askVotesInView(`close:${Number(closeId)}`),
+  // A door to one private request (the bell's private platform request
+  // row): the Workshop's Private requests open it.
+  showPrivateRequest: (slug: string, id: number) => openPrivateRequest(slug, Number(id)),
 
   publishViewMode,
   publishWorkshopGroup,

@@ -283,9 +283,10 @@ test('ZIP reader stops an oversized extractor that handles SIGTERM and still cle
   }
 });
 
-test('one advisory aggregates all components, retains its target and updates only for semantic changes', () => {
+test('one upgrade aggregates all components, retains its target and updates only for semantic changes', () => {
   const initial = observer.itemsFrom(result(), [], app, now).items[0];
   assert.equal(initial.kind, 'security');
+  assert.equal(initial.key, 'libssl3');
   assert.equal(initial.fixer, 'bot');
   assert.equal(initial.subject.findings.length, 5);
   const old = { kind: 'security', first_seen_at: new Date(now), subject: {
@@ -297,15 +298,71 @@ test('one advisory aggregates all components, retains its target and updates onl
   const changed = observer.itemsFrom(result([vuln({ severity: 'CRITICAL', fixedVersion: '3.5.2-r0' })]), [old], app, now).items[0];
   assert.equal(signals.isMaterial(changed), true);
   assert.ok(Date.parse(changed.subject.dueAt) < Date.parse(initial.subject.dueAt));
-  assert.match(JSON.stringify(signals.normalizeItem(changed).evidence), /CRITICAL/);
+  assert.match(JSON.stringify(signals.normalizeItem(changed).evidencePrivate), /CRITICAL/);
+  assert.doesNotMatch(JSON.stringify(signals.normalizeItem(changed).evidence), /CRITICAL/);
+});
+
+test('findings group by the upgrade that fixes them: one per package, and packages that share an advisory together', () => {
+  // A browser release: one package, many advisories, two components.
+  const chromium = Array.from({ length: 17 }, (_, i) => vuln({ id: `CVE-2026-${70000 + i}`, package: 'playwright-chromium',
+    version: '156.0.7779.96', fixedVersion: '158.0.7800.1' }));
+  const ssl = [vuln(), vuln({ package: 'openssl' }), vuln({ id: 'CVE-2026-22222', package: 'openssl' })];
+  const curl = [vuln({ id: 'CVE-2026-33333', package: 'curl', version: '8.0.0', fixedVersion: '8.0.1' })];
+  const report = contract.fromAssessments(contract.COMPONENTS.map((component) => ({
+    version: 1, component, complete: true, checkedAt: new Date(now).toISOString(), mode: 'audit',
+    image: `sha256:${'b'.repeat(64)}`, ...context,
+    findings: ['worker', 'capture'].includes(component) ? [...chromium, ...ssl] : component === 'platform' ? curl : [],
+    status: ['worker', 'capture', 'platform'].includes(component) ? 'findings' : 'clean',
+  })), context);
+  const { items } = observer.itemsFrom({ report, run: run(), complete: true }, [], app, now);
+  assert.deepEqual(items.map((i) => [i.key, i.subject.packages, i.title]).sort(), [
+    ['curl', ['curl'], 'Upgrade curl in platform'],
+    ['libssl3', ['libssl3', 'openssl'], 'Upgrade libssl3 and 1 related package in capture and worker'],
+    ['playwright-chromium', ['playwright-chromium'], 'Upgrade playwright-chromium in capture and worker'],
+  ]);
+  const browser = items.find((i) => i.key === 'playwright-chromium');
+  assert.equal(browser.subject.findings.length, 34, 'every advisory in every component');
+  // What the board may show says what to upgrade, and nothing else.
+  assert.deepEqual(browser.evidence.lines, ['capture and worker: playwright-chromium 156.0.7779.96, upgrade to 158.0.7800.1 or later.']);
+  const pub = JSON.stringify([browser.title, browser.summary, browser.done, browser.evidence]);
+  assert.doesNotMatch(pub, /CVE-|HIGH|CRITICAL|target|advisor/);
+  // The private tier names every advisory, the severity and the target.
+  const priv = browser.evidencePrivate.lines.join('\n');
+  assert.match(priv, /^Severity: HIGH\. Remediation target: \d{4}-\d{2}-\d{2}\.$/m);
+  assert.match(priv, /playwright-chromium 156\.0\.7779\.96 in capture and worker, fixed in 158\.0\.7800\.1: CVE-2026-70000 \(HIGH\)/);
+  assert.match(priv, /CVE-2026-70016 \(HIGH\)\./, 'all 17 listed');
+  assert.match(priv, /actions\/runs\/123/);
+});
+
+test('an upgrade keeps its request and target as packages join it, and a request filed per advisory hands on its target', () => {
+  const first = observer.itemsFrom(result([vuln({ package: 'openssl' })]), [], app, now).items[0];
+  assert.equal(first.key, 'openssl');
+  const prior = [{ kind: 'security', first_seen_at: new Date(now), subject: first.subject }];
+  // libssl3 sorts first, but the upgrade is the one already filed as openssl.
+  const grown = observer.itemsFrom(result([vuln({ package: 'openssl' }), vuln()]), prior, app, now).items;
+  assert.deepEqual(grown.map((i) => [i.key, i.subject.packages]), [['openssl', ['libssl3', 'openssl']]]);
+  assert.equal(grown[0].subject.dueAt, first.subject.dueAt);
+  // A row filed per advisory: its earlier target holds, and while the audit
+  // is incomplete its findings are kept.
+  const legacyDue = new Date(now - 86400000).toISOString();
+  const legacy = [{ kind: 'security', first_seen_at: new Date(now - 6 * 86400000),
+    subject: { advisory: 'CVE-2026-12345', dueAt: legacyDue, findings: [{ ...vuln(), component: 'worker' }] } }];
+  const moved = observer.itemsFrom(result(), legacy, app, now).items[0];
+  assert.equal(moved.key, 'libssl3');
+  assert.equal(moved.subject.dueAt, legacyDue);
+  assert.match(moved.evidencePrivate.lines[0], /\(overdue\)/);
+  const kept = observer.itemsFrom({ reason: 'stale' }, legacy, app, now).items.find((i) => i.kind === 'security');
+  assert.equal(kept.key, 'libssl3');
+  assert.equal(kept.subject.findings.length, 1);
 });
 
 test('scoped npm packages survive the real evidence scrubber with their identity intact', () => {
   const item = signals.normalizeItem(observer.itemsFrom(result([vuln({ package: '@octokit/request' })]), [], app, now).items[0]);
-  const body = require('../src/services/platform-signal-evidence').requestBody({
-    signal: item, kind: signals.KINDS.security, evidence: item.evidence, summary: item.summary, done: item.done,
+  const body = require('../src/services/platform-signal-evidence').upgradeRequestBody({
+    evidence: item.evidence, summary: item.summary, done: item.done,
   });
-  assert.match(body, /npm scope octokit, package request 3\.5\.0-r0/);
+  assert.match(body, /npm scope octokit, package request 3\.5\.0-r0, upgrade to 3\.5\.1-r0 or later/);
+  assert.match(item.title, /^Upgrade octokit\/request in /, 'no @ to read as a mention');
   assert.doesNotMatch(body, /a person\/request/);
 });
 
