@@ -58,6 +58,7 @@ const communityInvites = require('../services/community-invites');
 const challengeScorer = require('../services/topochain/challenge-scorer');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
 const events = require('../services/events');
+const waitlist = require('../services/waitlist');
 const contactPreferences = require('../services/contact-preferences');
 const { signUpMetadata } = require('../services/sign-up-from');
 const {
@@ -231,6 +232,11 @@ function phoneAuthRoutes(config) {
       // #5974: the session row names the browser that signed in.
       const mintSession = (db, userId) => createSession(db, userId, req);
       const result = await phoneAuth.signIn(pool, claims, { createSession: mintSession });
+
+      // #6633: with the waitlist switched off, the account this sign-in just
+      // made is let in at once (never an existing one signing in), before
+      // any invite it carries is followed. Best effort; never throws.
+      if (result.created) await waitlist.admitIfOpen(pool, result.userId);
 
       // An invite link this visitor opened first is followed as the account
       // the phone just CREATED, and an existing account follows it only when

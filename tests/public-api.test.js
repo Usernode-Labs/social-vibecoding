@@ -628,13 +628,37 @@ test('waitlist options: the seven question maps are served untouched beside it',
     }
     assert.deepEqual(
       Object.keys(body).sort(),
-      [...Object.keys(expected), 'account_deletion_link', 'child_safety_link', 'data_protection_email', 'marketing_url', 'native_sign_in_providers', 'phone_sign_in', 'privacy_link', 'sign_in_providers', 'story_landing', 'terms_link', 'waitlist_url'].sort(),
+      [...Object.keys(expected), 'account_deletion_link', 'child_safety_link', 'data_protection_email', 'marketing_url', 'native_sign_in_providers', 'phone_sign_in', 'privacy_link', 'sign_in_providers', 'story_landing', 'terms_link', 'waitlist_enabled', 'waitlist_url'].sort(),
       'the public payload grew or lost a field'
     );
     // And the service's own constants are unmutated by the spread: the live
     // maps still equal the pre-request snapshot.
     assert.deepEqual(questions.publicOptions(), expected);
   } finally { await srv.close(); }
+});
+
+test('waitlist options: whether new accounts wait is on unless an admin switched the waitlist off (#6633)', async () => {
+  const on = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(on.baseUrl, '/api/public/waitlist/options');
+    assert.equal(body.waitlist_enabled, true, 'no stored setting is the waitlist');
+  } finally { await on.close(); }
+
+  const base = makeMockPool();
+  const stored = {
+    ...base,
+    query: async (sql, params = []) => {
+      if (/FROM platform_settings s/.test(String(sql)) && params[0] === 'waitlist_enabled') {
+        return { rows: [{ value: 'false', updated_at: new Date(), updated_by: 'admin' }] };
+      }
+      return base.query(sql, params);
+    },
+  };
+  const off = await startTestServer(stored);
+  try {
+    const { body } = await get(off.baseUrl, '/api/public/waitlist/options');
+    assert.equal(body.waitlist_enabled, false);
+  } finally { await off.close(); }
 });
 
 test('waitlist options: the never-public fields are still absent', async () => {
