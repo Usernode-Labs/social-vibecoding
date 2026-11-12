@@ -540,6 +540,12 @@ export function createLanguageRuntime(catalogs: Catalogs) {
     /** The locale dates are written in (#6103): this language, this device's region. */
     getDateLocale: () => dateLocale(activeLanguage, deviceLanguages()),
     getPreference: () => preference,
+    /**
+     * What Auto shows on this device (#6511): the device's languages tried
+     * in order against what is offered now, else English, by the same rule a
+     * session with no saved choice is resolved by.
+     */
+    getAutoLanguage: () => resolveLanguage(null, deviceLanguages(), shipped).language,
     isSignedIn: () => signedIn,
     getNotice: () => notice,
     subscribeNotice(listener: () => void) {
