@@ -478,7 +478,7 @@ test('the bar going away hides at once; a restored app does not slide in', () =>
 });
 
 test('reduced motion and the desktop skip the leave, and a timer always ends it', () => {
-  assert.match(STRIP, /matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches\) return false;/);
+  assert.match(STRIP, /if \(reducedMotion\(\)\) return false;/, 'the device or the Reduce motion setting (#6510)');
   assert.match(STRIP, /matchMedia\('\(max-width: 767px\)'\)\.matches;/);
   assert.match(STRIP, /window\.setTimeout\(finish, \(leaving \? LEAVE_MS : ENTER_MS\) \+ SLACK_MS\);/,
     'no animationend under display: none, so a timer backs it');

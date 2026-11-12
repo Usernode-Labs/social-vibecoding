@@ -10,16 +10,13 @@
 // leave the request alone (homeroom-bot.js issueHolders), mid-build.
 //
 // What is pinned here:
-//   - homeroom-bot-progress.js botWorkByIssue reads what the bot is doing on
-//     ONE project's requests with projectsBusy's own two reads: a request it
-//     is reading now (a claimed queue row, other than a follow-up on its own
-//     proposal), and one it is building (a live ready run with no proposal
-//     yet). By issue number, { what, since }.
-//   - and a live build WAITING for the project's build slot, by the bot's own
-//     "live build waiting or under way" rule (homeroom-bot.js classifyIssue,
-//     rules/bot-loop.ts READ_CANDIDATES_SQL): building too, since it began to wait. It can wait a
-//     whole other build's length, and a claim in that time would make the
-//     bot step back just the same.
+//   - 11 Nov 2026: what the bot is doing on a request is read off its stored
+//     work state (services/work-state.js botWorkOf), the row its page and
+//     every list draw: a request it is reading now, and one it is planning
+//     or building. By issue number, { what, since }.
+//   - and a live build WAITING for the project's build slot: building too,
+//     since it began to wait. It can wait a whole other build's length, and
+//     a claim in that time would make the bot step back just the same.
 //   - GET /api/apps/:slug/github-issues and /github-issues/:number carry it
 //     as each open request's `bot`, and still never as `in_progress`.
 //
@@ -58,8 +55,21 @@ github.fetchPublicIssue = async (_owner, _repo, n) => {
   return { issue: n === 8 ? { ...issue, state: 'closed', closedAt: '2026-10-03T11:00:00Z' } : { ...issue, state: 'open' } };
 };
 
-const progress = require('../src/services/homeroom-bot-progress');
+const workState = require('../src/services/work-state');
 const { issueRoutes } = require('../src/routes/issues');
+
+// What the bot is doing on each of a project's requests, by number, from
+// their stored rows, derived again now (as the drain does within seconds).
+async function botWork(pool, appId, numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+  const out = new Map();
+  if (!appId) return out;
+  await workState.refresh(pool, numbers.map((n) => ({ appId, issueNumber: n })));
+  for (const [n, row] of await workState.forRequests(pool, appId, numbers)) {
+    const work = workState.botWorkOf(row);
+    if (work) out.set(n, work);
+  }
+  return out;
+}
 
 async function openDatabase(t) {
   let pg;
@@ -127,9 +137,9 @@ test('a request the Homeroom bot is reading or building, by issue, through the r
   };
 
   await t.test('nothing under way is an empty map', async () => {
-    const work = await progress.botWorkByIssue(pool, plantPal);
+    const work = await botWork(pool, plantPal);
     assert.equal(work.size, 0);
-    assert.equal((await progress.botWorkByIssue(pool, null)).size, 0, 'no project, nothing asked');
+    assert.equal((await botWork(pool, null)).size, 0, 'no project, nothing asked');
   });
 
   // Request 3: being read now. Request 4: being built (its queue row is gone,
@@ -143,7 +153,7 @@ test('a request the Homeroom bot is reading or building, by issue, through the r
   await run(plantPal, 4, { build_session_id: building });
 
   await t.test('reading and building, by issue number', async () => {
-    const work = await progress.botWorkByIssue(pool, plantPal);
+    const work = await botWork(pool, plantPal);
     assert.deepEqual([...work.keys()].sort(), [3, 4]);
     assert.equal(work.get(3).what, 'reading');
     assert.equal(work.get(4).what, 'building');
@@ -162,9 +172,9 @@ test('a request the Homeroom bot is reading or building, by issue, through the r
     await run(plantPal, 9, { mode: 'shadow' });
     // Another project's build is that project's.
     await run(other, 3, { build_session_id: await session(other, 'active') });
-    const work = await progress.botWorkByIssue(pool, plantPal);
+    const work = await botWork(pool, plantPal);
     assert.deepEqual([...work.keys()].sort(), [3, 4]);
-    assert.deepEqual([...(await progress.botWorkByIssue(pool, other)).keys()], [3]);
+    assert.deepEqual([...(await botWork(pool, other)).keys()], [3]);
   });
 
   await t.test('a build waiting for the project\'s build slot is the bot building it, since it began to wait', async () => {
@@ -174,38 +184,32 @@ test('a request the Homeroom bot is reading or building, by issue, through the r
     // "Unassigned" and offer Claim for as long as it waited.
     const waitingSince = new Date(Date.now() - 25 * 60 * 1000);
     await run(plantPal, 6, { live_build_waiting_at: waitingSince, created_at: new Date(Date.now() - 26 * 60 * 1000) });
-    const work = await progress.botWorkByIssue(pool, plantPal);
+    const work = await botWork(pool, plantPal);
     assert.deepEqual([...work.keys()].sort((a, b) => a - b), [3, 4, 6]);
     assert.equal(work.get(6).what, 'building');
     assert.equal(new Date(work.get(6).since).getTime(), waitingSince.getTime(), 'since it began to wait');
 
-    // Read now and waiting for its build at once: building wins, as above.
+    // Read again while its build waits: the bot is on it either way (its
+    // stored stage says it is reading it now), never a request to claim.
     await pool.query(
       `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, started_at) VALUES ($1, 6, 0, 'dm_answer', NOW())`,
       [plantPal],
     );
-    assert.equal((await progress.botWorkByIssue(pool, plantPal)).get(6).what, 'building');
+    assert.equal((await botWork(pool, plantPal)).get(6).what, 'reading');
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [plantPal]);
-
-    // Past the abandoned-build sweep's window a waiting run holds nothing,
-    // exactly as the bot reads it.
-    await run(plantPal, 12, {
-      live_build_waiting_at: new Date(Date.now() - 9 * 86400000), created_at: new Date(Date.now() - 9 * 86400000),
-    });
-    assert.ok(!(await progress.botWorkByIssue(pool, plantPal)).has(12));
-    assert.equal(require('../src/services/homeroom-bot').ABANDONED_LIVE_WINDOW_DAYS, 7,
-      'the window is the bot\'s own constant, not a copy');
+    assert.equal((await botWork(pool, plantPal)).get(6).what, 'building');
   });
 
-  await t.test('a request read and built at once is building', async () => {
+  await t.test('a request read again while it is built is still the bot\'s', async () => {
     // The read lane picking up a request whose build is still running.
     await pool.query(
       `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, started_at)
        VALUES ($1, 4, 1, 'changed', NOW())`,
       [plantPal],
     );
-    assert.equal((await progress.botWorkByIssue(pool, plantPal)).get(4).what, 'building');
+    assert.ok((await botWork(pool, plantPal)).get(4), 'the bot is on it');
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 4', [plantPal]);
+    await botWork(pool, plantPal);
   });
 
   await t.test('the issue routes carry it as `bot`, and never as in_progress', async () => {

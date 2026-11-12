@@ -903,7 +903,7 @@ test('the nav components render what the module shapes, and nothing else', () =>
   assert.match(nav.slice(0, 1200), /'font-medium text-zinc-600 dark:text-zinc-300/,
     'the other rows stay at the lighter weight');
   assert.doesNotMatch(nav.slice(0, 1200), /violet/, 'the action accent no longer marks where you are');
-  assert.match(navTsx, /className=\{item\.className\}/,
+  assert.match(navTsx, /className=\{`ui-row ui-row-sm \$\{item\.className\}`\}/,
     'the component renders that string rather than recomputing it');
 
   // Section links on desktop, a LIST on mobile. dapp.json selects on
@@ -945,7 +945,7 @@ test('UX audit: the section list is the pane\'s sheet, and scrolls on its own', 
     /id="settings-sidebar-col" class="hidden lg:block lg:w-56 shrink-0 dc-lift dc-lift-session settings-side-sheet"/,
     'the column wears the pane\'s own lift, after the width classes the breakpoint test reads');
   assert.match(navTsx,
-    /className="sticky top-0 z-10 -mt-2\.5 pt-2\.5 pb-3 bg-\[color:var\(--dc-sheet-solid\)\]"/,
+    /className="ui-search sticky top-0 z-10 -mt-2\.5 pt-2\.5 pb-3 bg-\[color:var\(--dc-sheet-solid\)\]"/,
     '"Find a setting" is held at the sheet\'s top, on an opaque plane');
   const css = read('public/css/app.css');
   const block = css.slice(css.indexOf('#settings-sidebar-col {'));
@@ -2084,7 +2084,7 @@ test('the credential list renders its three host states', () => {
   // empty line would mismatch on hydration — a console error on #settings, and
   // a console error on any route fails proposal checks.
   assert.equal(cliRows({ phase: 'idle', tokens: [] }), '');
-  assert.equal(shellMarkup().includes('<div id="cli-tokens-list" class="space-y-2"></div>'),
+  assert.equal(shellMarkup().includes('<div id="cli-tokens-list" class="ui-card space-y-2"></div>'),
     true, 'and the prerendered document agrees');
   // Loading is the bare text node the module used to write with textContent.
   assert.match(cliRows({ phase: 'loading', tokens: [] }), /Loading credentials…/);
@@ -2190,11 +2190,207 @@ test('the permissions list renders its host states, and idle draws nothing', () 
   // `idle` is the PRERENDER state: the shipped host is an empty div, and a
   // first render that drew a line would mismatch on hydration.
   assert.equal(grantRows({ phase: 'idle', grants: [] }), '');
-  assert.equal(shellMarkup().includes('<div id="llm-grants-list" class="space-y-2"></div>'),
+  assert.equal(shellMarkup().includes('<div id="llm-grants-list" class="ui-card space-y-2"></div>'),
     true, 'and the prerendered document agrees');
   assert.match(grantRows({ phase: 'loading', grants: [] }), /Loading…/);
   assert.match(grantRows({ phase: 'error', grants: [] }), /Failed to load app permissions\./);
-  assert.match(grantRows({ phase: 'ready', grants: [] }), /No apps have asked to use AI yet\./);
+  assert.match(grantRows({ phase: 'ready', grants: [] }), /No apps can use AI on your behalf yet\. When you let an app use AI, it appears here with its spending cap, and you can revoke it at any time\./);
+});
+
+test('App permissions reads in the muted ink and its empty lists say what will appear (#6512)', () => {
+  // zinc-500 on the dark page is 3.5:1; a list row's subtitle and the privacy
+  // blurbs already step to zinc-400 in dark, and this privacy page does too.
+  for (const [file, key] of [
+    ['frontend/src/features/settings/sections/app-permissions.tsx', 'appPermissions'],
+    ['frontend/src/features/settings/sections/app-ai.tsx', 'grants'],
+    ['frontend/src/features/settings/sections/blocked-apps.tsx', 'blockedApps'],
+  ]) {
+    assert.ok(read(file).includes(`<SectionHeading title={t('settings:${key}.title')} blurbClassName="dark:text-zinc-400">`),
+      `${key}'s explanation is the muted ink, not the faint one`);
+  }
+  const lists = {
+    appPermissions: read('frontend/src/features/settings/app-permissions-list.tsx'),
+    grants: read('frontend/src/features/settings/grants-list.tsx'),
+    blockedApps: read('frontend/src/features/settings/sections/blocked-apps.tsx'),
+  };
+  for (const [key, src] of Object.entries(lists)) {
+    assert.match(src, new RegExp(`<p className="text-sm text-zinc-500 dark:text-zinc-400">\\s*\\{t\\('settings:${key}\\.empty'\\)\\}`),
+      `${key}'s empty line is one style across the page`);
+    assert.match(message(`settings:${key}.empty`), /appears here.*(revoke|unblock) it at any time\./,
+      `${key}'s empty line says what will appear and that it can be undone`);
+  }
+});
+
+// #6512 item 11: a plain line under the capabilities that see or hear the
+// person, and only those. Screen sharing is delegated by the frame's `allow`
+// and getDisplayMedia opens the browser's picker every time, so its line says
+// the person picks what is shared, never that the app sees "your screen".
+test('camera, microphone and screen sharing carry a plain note; the other permissions do not (#6512)', () => {
+  const html = renderComponent('frontend/src/features/settings/app-permissions-list.tsx', 'AppPermissionsListView', {
+    phase: 'ready',
+    apps: [{
+      appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam',
+      items: [
+        { capability: 'geolocation', label: 'Location', revoked: false },
+        { capability: 'microphone', label: 'Microphone', revoked: false },
+        { capability: 'camera', label: 'Camera', revoked: false },
+        { capability: 'display-capture', label: 'Screen sharing', revoked: true },
+        { capability: 'usb', label: 'USB devices', revoked: false },
+      ],
+    }, {
+      appId: 8, appName: 'Quiet Cam', appSlug: 'quiet-cam',
+      items: [
+        { capability: 'microphone', label: 'Microphone', revoked: true },
+        { capability: 'camera', label: 'Camera', revoked: true },
+      ],
+    }],
+  });
+  const notes = [...html.matchAll(/data-role="capability-note"[^>]*>([^<]*)</g)].map((m) => m[1]);
+  assert.deepEqual(notes, [
+    message('settings:appPermissions.note.microphone'),
+    message('settings:appPermissions.note.camera'),
+    message('settings:appPermissions.note.screen'),
+    message('settings:appPermissions.note.microphone'),
+    message('settings:appPermissions.note.camera'),
+  ], 'one note each, under its own row (revoked rows too), and none on location or USB');
+  // Shown beside Re-enable as well, so a note says what the permission lets
+  // the app do, never what it can do now, and that the browser decides too.
+  for (const id of ['camera', 'microphone']) {
+    const text = message(`settings:appPermissions.note.${id}`);
+    assert.match(text, /^Lets this app .* while it is open, once your browser allows it too\.$/, `${id} note is true on a revoked row`);
+    assert.doesNotMatch(text, /can turn on/, `${id} note claims no live access`);
+  }
+  assert.match(html, /data-role="capability-note" class="mt-0\.5 block text-zinc-500 dark:text-zinc-400"/,
+    'the note is the muted secondary line, not a pill');
+  const screen = message('settings:appPermissions.note.screen');
+  assert.match(screen, /choose a screen, window or tab/);
+  assert.match(screen, /sees only what you choose/);
+  assert.doesNotMatch(screen, /everything|whole screen|all of your screen/i, 'the person picks what is shared');
+});
+
+// #6512 item 9: a blocked app says when it was blocked.
+test('a blocked app shows when it was blocked, and a row without a stamp shows nothing (#6512)', () => {
+  const BLOCKED = 'frontend/src/features/settings/sections/blocked-apps.tsx';
+  const at = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const html = renderComponent(BLOCKED, 'BlockedAppRow', {
+    app: { slug: 'noisy', name: 'Noisy App', created_at: at }, busy: null, onUnblock: () => {},
+  });
+  assert.match(html, /Noisy App/);
+  assert.match(html, new RegExp(`<time data-role="blocked-at" dateTime="${at.replace(/\./g, '\\.')}" title="[^"]+" class="mt-0\\.5 block text-\\[13px\\] text-zinc-500 dark:text-zinc-400">Blocked 3d ago</time>`));
+  assert.match(html, />Unblock</);
+  const bare = renderComponent(BLOCKED, 'BlockedAppRow', {
+    app: { slug: 'noisy', name: 'Noisy App' }, busy: null, onUnblock: () => {},
+  });
+  assert.doesNotMatch(bare, /blocked-at/);
+  assert.match(read('src/services/app-blocks.js'), /SELECT a\.slug, a\.name, b\.created_at FROM user_app_blocks/,
+    'the list already returns the stamp the row reads');
+});
+
+/**
+ * Run Settings._onPermissionRevoke on its own, with the dialog, the network,
+ * AppView and the status line stubbed, and report what it did. `open` is
+ * whether the app is open in this tab; `openWhileDeleting` changes it while
+ * the DELETE is out.
+ */
+async function runPermissionRevoke({ open = false, openWhileDeleting, confirm = true, ok = true } = {}) {
+  const calls = { dialog: null, fetches: [], status: [], rendered: 0, closed: 0, forgot: [], order: [] };
+  let live = open;
+  const target = {
+    slug: 'snap-cam',
+    name: 'Snap Cam',
+    isOpen: () => live,
+    close: () => { calls.closed += 1; calls.order.push('close'); live = false; },
+  };
+  const ConfirmModal = { show: async (opts) => { calls.dialog = opts; return confirm; } };
+  const fetch = async (url, init) => {
+    calls.fetches.push([url, init && init.method]);
+    await new Promise((r) => setImmediate(r));
+    if (openWhileDeleting !== undefined) live = openWhileDeleting;
+    return { ok, json: async () => (ok ? {} : { error: 'nope' }) };
+  };
+  const window = { AppView: { forgetToken: (slug) => { calls.forgot.push(slug); calls.order.push('forget'); } } };
+  const tr = englishPlatformI18n().t;
+  const host = new Function('tr', 'ConfirmModal', 'fetch', 'window',
+    `return {${sliceMethod(settingsJs, '_onPermissionRevoke')}};`)(tr, ConfirmModal, fetch, window);
+  host._setAppPermissionsStatus = (text, kind) => calls.status.push([text, kind]);
+  host._isDemoGrant = () => false;
+  host._renderAppPermissions = () => { calls.rendered += 1; };
+  await host._onPermissionRevoke(7, 'camera', target);
+  return calls;
+}
+
+test('revoking a device permission says plainly when it applies (#6512)', () => {
+  const intro = message('settings:appPermissions.intro');
+  assert.match(intro, /If an app is open in this tab, revoking closes it so it stops at once\./);
+  assert.match(intro, /Anywhere else it is open, it keeps access until it is closed\./);
+  assert.doesNotMatch(intro, /a running app keeps what it was given/, 'the old roundabout reason is gone');
+  // A kept frame elsewhere resumes the same document, so "the next time it
+  // opens" would be false there; the frame store is per tab, not device; and
+  // a reopen on another device inside its one-minute token cache delegates
+  // the permission to a new frame, which keeps it until that frame closes.
+  for (const id of ['intro', 'revoke.confirmMessage', 'revoke.confirmMessageOpen', 'status.revoked']) {
+    const text = message(`settings:appPermissions.${id}`);
+    assert.doesNotMatch(text, /next time|this device|immediately|up to a minute longer|won't get it again/,
+      `${id} promises only what is true`);
+    assert.match(text, /On another device, opening the app again within a minute may bring the permission back until it is closed again\.$/,
+      `${id} says what another device can still do`);
+  }
+});
+
+test('revoking from an app that is not open in this tab asks the plain question and closes nothing (#6512)', async () => {
+  const calls = await runPermissionRevoke();
+  assert.equal(calls.dialog.message, message('settings:appPermissions.revoke.confirmMessage'));
+  assert.equal(calls.dialog.confirmLabel, message('settings:appPermissions.revoke.confirmButton'));
+  assert.deepEqual(calls.fetches, [['/api/me/permission-grants/7/camera', 'DELETE']]);
+  assert.equal(calls.closed, 0);
+  assert.deepEqual(calls.forgot, ['snap-cam'], 'the cached grant set goes even when the app is not open');
+  assert.deepEqual(calls.status, [[message('settings:appPermissions.status.revoked'), 'ok']]);
+});
+
+test('revoking from an app open in this tab closes it, and the dialog says so first (#6512)', async () => {
+  const calls = await runPermissionRevoke({ open: true });
+  assert.equal(calls.dialog.confirmLabel, 'Revoke and close app');
+  assert.match(calls.dialog.message, /^Snap Cam is open in this tab, so revoking closes it now and anything not saved in it may be lost\./);
+  assert.equal(calls.closed, 1, 'the frame goes, so the revoke bites at once');
+  assert.deepEqual(calls.order, ['forget', 'close'], 'the cached grant set goes before the frame');
+  assert.deepEqual(calls.status, [['Revoked, and Snap Cam was closed in this tab.', 'ok']]);
+  assert.equal(calls.rendered, 1);
+
+  const cancelled = await runPermissionRevoke({ open: true, confirm: false });
+  assert.equal(cancelled.closed, 0, 'Cancel closes nothing');
+  assert.deepEqual(cancelled.fetches, []);
+  assert.deepEqual(cancelled.forgot, []);
+
+  const refused = await runPermissionRevoke({ open: true, ok: false });
+  assert.equal(refused.closed, 0, 'the app stays open when the server kept the permission');
+  assert.deepEqual(refused.forgot, []);
+  assert.deepEqual(refused.status, [['nope', 'error']]);
+});
+
+test('an app opened while the revoke was out is closed too, and the status says so (#6512)', async () => {
+  // Closed when the dialog asked, launched while the DELETE was pending: that
+  // launch may have used the old grant set, so it is closed once the server
+  // has answered, whatever the dialog said.
+  const opened = await runPermissionRevoke({ open: false, openWhileDeleting: true });
+  assert.equal(opened.dialog.confirmLabel, message('settings:appPermissions.revoke.confirmButton'));
+  assert.equal(opened.closed, 1);
+  assert.deepEqual(opened.order, ['forget', 'close']);
+  assert.deepEqual(opened.status, [['Revoked, and Snap Cam was closed in this tab.', 'ok']]);
+
+  // And the other way: open at the dialog, closed by the person meanwhile.
+  const left = await runPermissionRevoke({ open: true, openWhileDeleting: false });
+  assert.equal(left.closed, 0, 'nothing left to close');
+  assert.deepEqual(left.status, [[message('settings:appPermissions.status.revoked'), 'ok']]);
+});
+
+test('the Revoke button hands Settings a live question, not a snapshot, of whether the app is open (#6512)', () => {
+  const list = read('frontend/src/features/settings/app-permissions-list.tsx');
+  assert.match(list, /import \{ closeLiveApp, isLiveApp \} from '\.\.\/app-frame\/live-apps';/);
+  assert.match(list, /isOpen: \(\) => isLiveApp\(app\.appSlug\),\s*close: \(\) => closeLiveApp\(app\.appSlug\),/);
+  assert.match(list, /_onPermissionRevoke\?\.\(app\.appId, item\.capability, target\)/);
+  const live = read('frontend/src/features/app-frame/live-apps.tsx');
+  assert.match(live, /export function isLiveApp\(slug: string\): boolean \{\s*return !!slug && liveAppSlugs\(appFrameStore\.get\(\)\)\.includes\(slug\);/,
+    'open means the same frames the green dot reads: the mounted one and the kept ones');
 });
 
 test('a revoked app permission offers Re-enable; an active one offers Revoke (#1957)', () => {
@@ -2248,7 +2444,7 @@ test('Re-enable re-grants by slug with the cap and BYOK choice the row carries (
 
 const CONNECTORS_LIST = 'frontend/src/features/settings/connectors-list.tsx';
 const toolStatus = (status) => renderComponent(CONNECTORS_LIST, 'ToolStatusView', { status });
-const toolRows = (connections) => renderComponent(CONNECTORS_LIST, 'ToolConnectionsView', { connections });
+const toolRows = (connections, tool = 'claude') => renderComponent(CONNECTORS_LIST, 'ToolConnectionsView', { tool, connections });
 
 test('the cards ship their state hosts empty, so the prerender draws no status', () => {
   const shell = shellMarkup();
@@ -2286,6 +2482,18 @@ test('every connection is disconnectable, and names itself', () => {
   assert.match(html2, />Connected client</);
   assert.match(html2, /not used yet/);
   assert.match(html2, /Can read your apps/);
+});
+
+test('only a row marked for Reconnect offers it, beside its Disconnect', () => {
+  const html2 = toolRows([
+    { id: '1', title: 'Claude (claude.ai)', detail: 'Last active 2 Jan', capabilities: null, reconnect: false },
+    { id: '2', title: 'Claude (old)', detail: 'Sign-in ran out 1 Jan.', capabilities: null, reconnect: true },
+  ], 'claude');
+  const reconnect = message('settings:connectors.list.reconnect');
+  assert.equal((html2.match(new RegExp(`>${reconnect}<`, 'g')) || []).length, 1, 'one Reconnect, on the expired row');
+  assert.equal((html2.match(/>Disconnect</g) || []).length, 2, 'an expired row can still be removed');
+  assert.match(html2, /data-connector-reconnect="claude"/);
+  assert.match(html2, /min-h-\[44px\][^"]*text-violet-700/, 'a tinted action, not a pill');
 });
 
 test('settings.js publishes the connector cards rather than building them', () => {

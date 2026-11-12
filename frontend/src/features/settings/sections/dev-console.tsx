@@ -17,12 +17,17 @@ export function DevConsoleSection() {
         <SectionHeading title={t('settings:devConsole.title')}>
           {t('settings:devConsole.intro')}
         </SectionHeading>
-        <SwitchRow id="dev-console-always-show">
-          {t('settings:devConsole.alwaysShow.label')}
-        </SwitchRow>
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-          {t('settings:devConsole.alwaysShow.description')}
-        </p>
+        {/* A neutral wrapper (looks v2): nothing in the standard look; under
+            one of the frame's looks the switch, its name and its sentence
+            are one card's row, the switch at the end (app.css, SETTINGS). */}
+        <div className="ui-card ui-swrow">
+          <SwitchRow id="dev-console-always-show">
+            {t('settings:devConsole.alwaysShow.label')}
+          </SwitchRow>
+          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+            {t('settings:devConsole.alwaysShow.description')}
+          </p>
+        </div>
       </div>
     </div>
   );

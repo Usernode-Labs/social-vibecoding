@@ -25,6 +25,14 @@
  * row, or a read that fails, is DRY RUN: the reminders start there, and an
  * admin turns them on once the list looks right; a lost setting sends
  * nothing. The two settings are independent of each other.
+ *
+ * The waitlist itself (#6633): whether a new account waits to be admitted,
+ * stored as `waitlist_enabled`. Off, an account a sign-up makes is let in at
+ * once (services/waitlist.js admitIfOpen). ON unless an admin turns it off:
+ * no row, or a read that fails, is on, because a lost setting must never
+ * open the door. `fresh` skips the cache: the sign-up paths read it that way,
+ * so switching the waitlist back on stops letting accounts in at once on
+ * every server, not ten seconds later.
  */
 
 const log = require('./logger');
@@ -45,10 +53,10 @@ const REMINDER_MAIL_DESCRIPTION = 'Whether people admitted from the waitlist who
 function makeSetting(key, description, what, { parse, fallback, unreadable }) {
   const caches = new WeakMap();
 
-  /** The stored setting: parse's facts, with { updatedAt, updatedBy }. Cached per pool. */
-  async function read(pool) {
+  /** The stored setting: parse's facts, with { updatedAt, updatedBy }. Cached per pool unless `fresh`. */
+  async function read(pool, { fresh = false } = {}) {
     const cached = caches.get(pool);
-    if (cached && Date.now() - cached.at < CACHE_MS) return cached.setting;
+    if (!fresh && cached && Date.now() - cached.at < CACHE_MS) return cached.setting;
     try {
       const { rows } = await pool.query(
         `SELECT s.value, s.updated_at, u.username AS updated_by
@@ -106,6 +114,26 @@ const reminders = makeSetting(REMINDER_MAIL_KEY, REMINDER_MAIL_DESCRIPTION, 'Rem
   unreadable: 'sending none (dry run)',
 });
 
+const WAITLIST_KEY = 'waitlist_enabled';
+const WAITLIST_DESCRIPTION = 'Whether a new account waits to be admitted. Off, an account a sign-up '
+  + 'makes is let in at once (services/waitlist.js admitIfOpen). Switched from Admin → Waitlist.';
+
+const waitlistSwitch = makeSetting(WAITLIST_KEY, WAITLIST_DESCRIPTION, 'Waitlist', {
+  parse: (value) => ({ enabled: value !== 'false' }),
+  fallback: { enabled: true },
+  unreadable: 'keeping the waitlist on',
+});
+
+/** Whether new accounts wait to be admitted. `fresh` reads past the cache. */
+async function waitlistEnabled(pool, { fresh = false } = {}) {
+  return (await waitlistSwitch.read(pool, { fresh })).enabled;
+}
+
+/** Switch the waitlist on or off as admin `actorId`. */
+async function setWaitlistEnabled(pool, { enabled, actorId = null }) {
+  await waitlistSwitch.store(pool, { value: enabled ? 'true' : 'false', actorId });
+}
+
 async function releaseMailEnabled(pool) {
   return (await release.read(pool)).enabled;
 }
@@ -132,6 +160,10 @@ async function setReminderMail(pool, { mode, actorId = null }) {
 }
 
 module.exports = {
+  WAITLIST_KEY,
+  readWaitlistSetting: waitlistSwitch.read,
+  waitlistEnabled,
+  setWaitlistEnabled,
   RELEASE_MAIL_KEY,
   readReleaseMailSetting: release.read,
   releaseMailEnabled,

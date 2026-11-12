@@ -71,11 +71,11 @@ function browser(t, { scope = ADA } = {}) {
   });
   const storage = fakeStorage();
   globalThis.localStorage = storage;
-  globalThis.document = { cookie: scope ? `usernode_api_scope=${scope}` : '' };
+  globalThis.document = { cookie: scope ? `__Host-usernode_api_scope=${scope}` : '' };
   globalThis.window = { location: { search: '', hash: '' } };
   return {
     storage,
-    signIn(next) { globalThis.document.cookie = next ? `usernode_api_scope=${next}` : ''; },
+    signIn(next) { globalThis.document.cookie = next ? `__Host-usernode_api_scope=${next}` : ''; },
     demo(on) { globalThis.window.location.search = on ? '?demo=1' : ''; },
     keys: () => [...storage.map.keys()],
   };

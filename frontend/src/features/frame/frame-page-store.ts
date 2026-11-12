@@ -11,17 +11,22 @@ import { useEffect } from 'react';
 
 import { createStore } from '../../lib/plain-store.js';
 
-export type FramePage = { crumb: string[] | null; onBack: (() => void) | null };
+/**
+ * `phoneUp`: on a phone, where the bar has room for one word, it says the
+ * crumb BEFORE the last. For a page whose own title already says the last
+ * one (Challenges under You), so the same word is not said twice.
+ */
+export type FramePage = { crumb: string[] | null; onBack: (() => void) | null; phoneUp?: boolean };
 export const framePageStore = createStore<FramePage>({ crumb: null, onBack: null });
 
 /** Publish this page's breadcrumb (last entry is where you are) and back, while it is mounted. */
-export function useFramePage(crumb: string[] | null, onBack: (() => void) | null): void {
+export function useFramePage(crumb: string[] | null, onBack: (() => void) | null, phoneUp = false): void {
   const key = crumb ? crumb.join('\u0000') : '';
   useEffect(() => {
     if (!crumb) return undefined;
-    framePageStore.set({ crumb, onBack });
+    framePageStore.set(phoneUp ? { crumb, onBack, phoneUp } : { crumb, onBack });
     return () => framePageStore.set({ crumb: null, onBack: null });
     // The crumb's words are the dependency; a new array of the same words is not a change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, onBack]);
+  }, [key, onBack, phoneUp]);
 }

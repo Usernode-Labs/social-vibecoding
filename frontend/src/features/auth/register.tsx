@@ -272,12 +272,27 @@ export function RegisterScreen() {
             <Button type="submit" layout="full" variant="pillAccent" size="pillLg" ink="solidLate">
               {t('auth:register.submit')}
             </Button>
+            {/*
+                `.auth-ways` is a neutral wrapper that holds the way to sign
+                in inside the form, as its last child (11 Nov 2026). It
+                draws nothing here: `!mt-0` takes back the 16px `space-y-4`
+                would put before it, and the line's own `mt-3` passes through
+                it, so the line stands 12px under Register, exactly where it
+                stood as the form's next sibling. It is there for the looks
+                (app.css, "Version 2 lays each stand-alone page out"), which
+                show this way over the Register button: `order` places a
+                form's own children, so the form keeps its box, where it
+                used to be `display: contents`, which an older Safari drops
+                from the accessibility tree with its role.
+            */}
+            <div className="auth-ways !mt-0">
+              <p className="mt-3">
+                <a href="#login" className={PILL_LINK}>
+                  <RichMessage id="auth:register.haveAccount" components={[<span className="ms-1 text-violet-700 dark:text-violet-400" />]} />
+                </a>
+              </p>
+            </div>
           </form>
-          <p className="mt-3">
-            <a href="#login" className={PILL_LINK}>
-              <RichMessage id="auth:register.haveAccount" components={[<span className="ms-1 text-violet-700 dark:text-violet-400" />]} />
-            </a>
-          </p>
         </div>
       </div>
         </>

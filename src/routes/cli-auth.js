@@ -1,5 +1,7 @@
 'use strict';
 
+const { readSessionCookie } = require('../services/browser-session-cookies');
+
 const { nativeWebSessionIsLive } = require('../services/web-session-auth');
 
 const path = require('path');
@@ -1037,7 +1039,7 @@ function cliBrowserRoutes(config) {
     try {
       const outcome = await withTransaction(pool, async (client) => {
         await acquireUserLock(client, req.user.id);
-        const sessionToken = req.cookies?.session;
+        const sessionToken = readSessionCookie(req);
         const { rows: sessionRows } = await client.query(
           `SELECT 1 FROM sessions
             WHERE token = $1 AND user_id = $2

@@ -43,7 +43,13 @@ before editing it.
   (`.claude/settings.json`), on the first prompt of a Codex session once its
   project config has been generated, and in OpenCode through
   `.opencode/plugins/`. When HEAD is behind, it puts a notice in your
-  context; act on it. It is advisory: offline, or in a Homeroom hosted worker
+  context; act on it. The notice covers instructions too: a behind
+  checkout's own `AGENTS.md` and `.agents/skills/` are as old as its code,
+  so read main's copy of a skill (`git show FETCH_HEAD:.agents/skills/<name>/SKILL.md`)
+  before following it, and with the Homeroom web connector connected use
+  `prepare_work` and `submit_work`, never the CLI or its login. It also has
+  you tell the user, once, that syncing their fork (next bullet) fixes this
+  for later sessions; never sync or pull for them unless they ask. It is advisory: offline, or in a Homeroom hosted worker
   (which sets `SOCIAL_VIBECODING_DRIFT_CHECK=off` because the harness fixes
   its base), it stays silent. Silence is therefore not proof the checkout is current: when
   the answer depends on current behavior and you have not seen a verdict,
@@ -274,6 +280,15 @@ is no replay plan to write and nothing to verify locally.
   from Main, answering what was said there, or from a request's page or a
   captured screen keeps its line in Main, which is the way to its row in the
   list. Main also holds what you said there, even when a thread grew from it.
+  The "+" also has an address, `#homeroom-bot/new`, which may name the
+  project and who works on the thread (`?project=<slug>&with=claude-code` or
+  `chatgpt`; `features/ai/door.ts` `botNewAddress`). Who works on it is a
+  second chip beside the project's (`features/messages/thread-builder.tsx`):
+  Homeroom bot, or the person's own Claude Code or ChatGPT, for which nothing
+  is sent or made here. The send opens that product with the person's own
+  words in the link, after the connector steps when it has no connection. A
+  project's Workshop offers the same three to somebody who has made nothing
+  there yet, in Your work's place (`dev-board/workshop/first-change.tsx`).
   **Home is the one page of apps and communities, signed in or out (One
   Home, #6361).** Its sections are **Pinned apps** (`app_favorites`: a tile
   opens the app; hidden until the first pin), **Pinned communities**

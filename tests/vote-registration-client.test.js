@@ -203,14 +203,26 @@ test('a fresh load queues behind the one in flight instead of joining it; a burs
 test('refreshDevData asks for a fresh load on a vote and nothing else', () => {
   const AppView = makeAppView();
   AppView.appData = { slug: 'demo-app' };
-  AppView._devTopic = { kind: 'issue', id: 3 };
   const asked = [];
   AppView._loadDevData = (opts) => { asked.push(opts ? { ...opts } : null); return Promise.resolve(true); };
-  AppView._refreshTopicOnDemandRow = async () => {};
-  AppView._renderTopicHead = () => {};
+  // The Workshop board is up: a session event joins the load under way, a
+  // vote queues a fresh one after it.
+  AppView.__sandbox.App.currentSubTab = 'forum';
+  AppView._loadDevFeed = () => Promise.resolve(true);
+  AppView._refreshOpenChangeFromBoard = () => {};
   AppView.refreshDevData('session');
   AppView.refreshDevData('vote');
-  assert.deepEqual(asked, [null, { fresh: true }]);
+  assert.deepEqual(asked, [{ fresh: true }], 'only the vote asks for a fresh load');
+  // #6604: a thread on screen re-reads its own row and never the board.
+  AppView.__sandbox.App.currentSubTab = 'topic';
+  AppView._devTopic = { kind: 'issue', id: 3 };
+  const read = [];
+  AppView._refreshTopicOwnRow = () => { read.push('row'); return Promise.resolve(true); };
+  asked.length = 0;
+  AppView.refreshDevData('session');
+  AppView.refreshDevData('vote');
+  assert.deepEqual(asked, [], 'no board read behind a thread');
+  assert.deepEqual(read, ['row', 'row'], 'the shown request is read again');
 });
 
 // ── 4. A live vote reads the part of the board it moved ─────────────────

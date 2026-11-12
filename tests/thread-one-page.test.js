@@ -202,6 +202,93 @@ test('#6139: the line under a change says whether it is still being built or fin
   assert.equal(message('project:topic.thread.page.ready'), 'Built, and its checks pass. Its votes open once it is put up for a vote.');
 });
 
+// #6599: a built draft of yours says its votes open once it is put up for a
+// vote, and used to offer no way to do it: the only door was the old session
+// view's Submit for review. Its card carries the call now (POST
+// /api/sessions/:id/promote, the same one), and so does its ⋯.
+test('#6599: a built draft of yours puts itself up for a vote from its card', () => {
+  const underway = { ...review(91, 6581), status: 'active', state: 'underway' };
+  const draw = (item) => renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+    slug: 'club', data: thread([request, item]), number: 10, changes: [item], close: null, onChanged: () => {},
+  });
+  const signedIn = (readOnly = false, fn) => {
+    globalThis.window = {
+      App: { user: { id: 7, username: 'evan' } },
+      AppView: { readOnly },
+      addEventListener() {},
+      removeEventListener() {},
+      dispatchEvent() {},
+    };
+    try { return fn(); } finally { delete globalThis.window; }
+  };
+  const mine = signedIn(false, () => draw({ ...underway, ready: true, mine: true }));
+  assert.match(mine, /data-thread-change-propose="91"/);
+  assert.match(mine, /Put it up for a vote/);
+  assert.ok(mine.includes(message('project:topic.thread.page.readyMine')), 'the shorter line under it');
+  assert.equal(message('project:topic.thread.page.readyMine'), 'Built, and its checks pass.');
+  assert.ok(!mine.includes(message('project:topic.thread.page.ready')), 'the waiting sentence is replaced, not repeated');
+  assert.ok(!mine.includes('data-thread-change-propose-error'), 'nothing is said until it is pressed');
+
+  const theirs = signedIn(false, () => draw({ ...underway, ready: true, mine: false }));
+  assert.ok(!theirs.includes('data-thread-change-propose'), 'not theirs to propose: the sentence alone');
+  assert.ok(theirs.includes(message('project:topic.thread.page.ready')));
+
+  const readOnly = signedIn(true, () => draw({ ...underway, ready: true, mine: true }));
+  assert.ok(!readOnly.includes('data-thread-change-propose'), 'a read-only view offers no action');
+
+  const guest = draw({ ...underway, ready: true, mine: true });
+  assert.ok(!guest.includes('data-thread-change-propose'), 'signed out, no action');
+
+  const building = signedIn(false, () => draw({ ...underway, ready: false, mine: true }));
+  assert.ok(!building.includes('data-thread-change-propose'), 'still being built: nothing to put up');
+  assert.ok(building.includes(message('project:topic.thread.page.underway')));
+
+  const promoted = signedIn(false, () => draw({ ...review(91, 6581), mine: true }));
+  assert.ok(!promoted.includes('data-thread-change-propose'), 'up for a vote: its Vote card, not the button');
+
+  // The ⋯ offers the same action, from the hook its line is drawn with; the
+  // card's own button calls the same thing from its own instance.
+  const src = read(`${TOPIC}/thread-changes.tsx`);
+  assert.match(src, /useThreadMenu\(propose\.can \? key : null, 'propose', propose\.can/, 'the row goes on the change\'s own ⋯');
+  assert.match(src, /\{ label: t\('project:topic\.thread\.page\.proposeAction'\), icon: 'default', act: propose\.propose \}/);
+  assert.match(src, /const propose = useProposeChange\(item, onChanged\);\s*useInView/, 'the line and its ⋯ draw from one hook');
+  assert.match(src, /<ChangeMenu item=\{item\} view=\{view\} propose=\{propose\} \/>/);
+});
+
+test('#6599: pressing it is the old Submit for review, and a refusal keeps Homeroom\'s own sentence', async () => {
+  const { proposeChange } = loadTsx(`${TOPIC}/thread-changes.tsx`);
+  const calls = [];
+  const events = [];
+  let answer = { ok: true, json: async () => ({ ok: true }) };
+  const realFetch = globalThis.fetch;
+  globalThis.window = { dispatchEvent: (e) => events.push(e) };
+  globalThis.fetch = async (url, init) => { calls.push({ url, init }); return answer; };
+  try {
+    assert.equal(await proposeChange(91), null);
+    assert.equal(calls[0].url, '/api/sessions/91/promote');
+    assert.equal(calls[0].init.method, 'POST');
+    assert.equal(calls[0].init.credentials, 'same-origin');
+    assert.deepEqual(events.map((e) => [e.type, e.detail]), [['change-detail-refresh', 91]], 'its section reads again');
+
+    answer = { ok: false, status: 409, json: async () => ({ error: 'proposal_not_ready', message: 'Nothing has been submitted to this change yet, so there is nothing to put up for review.' }) };
+    assert.equal(await proposeChange(91), 'Nothing has been submitted to this change yet, so there is nothing to put up for review.');
+
+    answer = { ok: false, status: 409, json: async () => ({ error: 'session_state_changed' }) };
+    assert.equal(await proposeChange(91), message('project:topic.thread.page.proposeFailed'));
+    assert.equal(message('project:topic.thread.page.proposeFailed'), 'Could not put this change up for the vote.');
+    assert.equal(events.length, 1, 'a refusal asks nothing to be redrawn');
+
+    answer = { ok: false, status: 404, json: async () => ({ error: 'Active session not found' }) };
+    assert.equal(await proposeChange(91), 'Active session not found', 'a sentence the server wrote is shown as it is');
+
+    answer = { ok: false, status: 500, json: async () => { throw new Error('not json'); } };
+    assert.equal(await proposeChange(91), message('project:topic.thread.page.proposeFailed'), 'a body that is not JSON falls back');
+  } finally {
+    globalThis.fetch = realFetch;
+    delete globalThis.window;
+  }
+});
+
 test('#6139: an open request page reads its thread again when a change underway has news, once for a burst', async () => {
   const { rereadOnChangeNews } = loadTsx(`${TOPIC}/change-detail-refresh.ts`);
   const target = new EventTarget();
@@ -337,6 +424,8 @@ test('D4: a change for this request on another request\'s page is a card that na
   assert.match(html, /Pin it/, 'the change\'s title');
   assert.match(html, /Pin one message\./, 'its one-line summary');
   assert.match(html, /data-thread-elsewhere-dispute="91"[^>]*>This doesn(?:'|&#x27;)t close it<\/button>/, 'the requester can answer it');
+  assert.match(html, /data-thread-elsewhere-confirm="91"[^>]*>Confirm<\/button>/, '#6606: the filer can also confirm it');
+  assert.match(read(`${TOPIC}/thread-changes.tsx`), /confirm-closing/, 'through the confirm route');
   const answered = renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
     slug: 'club',
     data: thread([{ ...request, number: 11 }], {
@@ -346,8 +435,79 @@ test('D4: a change for this request on another request\'s page is a card that na
   });
   assert.doesNotMatch(answered, />This doesn(?:'|&#x27;)t close it<\/button>/, 'no button once answered');
   assert.match(answered, /You said this doesn(?:'|&#x27;)t close it/, 'the requester reads their answer back');
+  const confirmed = renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+    slug: 'club',
+    data: thread([{ ...request, number: 11 }], {
+      elsewhere: [{ ...elsewhere[0], ask: false, confirmed: true }],
+    }),
+    number: 11, changes: [], close: null, onChanged: () => {},
+  });
+  assert.doesNotMatch(confirmed, /data-thread-elsewhere-confirm=/, 'no Confirm once answered');
+  assert.match(confirmed, /You confirmed this closes it/, '#6606: the filer reads their answer back');
+  assert.equal(message('project:topic.thread.page.claimConfirm'), 'Confirm');
+  assert.equal(message('project:topic.thread.page.claimConfirmed'), 'You confirmed this closes it');
   assert.equal(message('project:topic.thread.page.claimsUnnumbered'), '<0>A change</0> says it closes this');
   assert.equal(message('project:topic.thread.page.claimNotConfirmed'), '(not confirmed)');
+});
+
+// #6605: a change that closes only requests that are already closed says so
+// under its title, and a closed request's card says it is closed and offers
+// nothing to answer. A change that belongs in this request's thread but
+// stayed because of votes says why.
+test('#6605: closed requests are named as closed, and a voted change says why it stayed', () => {
+  const src = read(`${TOPIC}/thread-changes.tsx`);
+  assert.match(src, /<AlreadyClosed item=\{item\} \/>/, 'the change\'s own card carries the line');
+  assert.match(src, /data-thread-elsewhere-closed=\{e\.id\}/);
+  assert.match(src, /data-thread-elsewhere-stays=\{e\.id\}/);
+
+  assert.equal(message('project:topic.thread.page.alreadyClosed_one'), '<0>{{numbers}}</0> is already closed');
+  assert.equal(message('project:topic.thread.page.alreadyClosed_other'), '<0>{{numbers}}</0> are already closed');
+  assert.equal(message('project:topic.thread.page.claimClosed'), '#{{number}} is already closed');
+  assert.equal(message('project:topic.thread.page.claimStays'), 'It stays on #{{on}} because people have voted on it.');
+
+  const item = {
+    ...review(93, 6581, [6581, 6582, 6583]),
+    closesRequests: [
+      { number: 6582, title: 'b', by: 'ana', confirmed: false, closed: true },
+      { number: 6581, title: 'a', by: 'ana', confirmed: false, closed: true },
+      { number: 6583, title: 'c', by: 'ana', confirmed: false, closed: true },
+    ],
+  };
+  const elsewhere = [{ id: 91, number: 12, title: 'Pin it', on: 10, request: 11, ask: false, mine: true, disputed: false, closed: true, stays: false }];
+  const wasWindow = globalThis.window;
+  globalThis.window = { AppView: { appData: { slug: 'club' } }, addEventListener() {}, removeEventListener() {} };
+  let html;
+  let card;
+  try {
+    html = renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+      slug: 'club', data: thread([request, item]), number: 6581, changes: [item], close: null, onChanged: () => {},
+    });
+    card = renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+      slug: 'club',
+      data: thread([{ ...request, number: 11 }], {
+        elsewhere: [{ ...elsewhere[0], closed: false, stays: true }],
+      }),
+      number: 11, changes: [], close: null, onChanged: () => {},
+    });
+  } finally {
+    if (wasWindow === undefined) delete globalThis.window; else globalThis.window = wasWindow;
+  }
+  assert.match(html, /data-thread-change-closed="93"/);
+  assert.match(html, /are already closed/, 'every request it closes is closed');
+  assert.match(html, /data-thread-change-closed-on="6581"/, 'the first number links to its page');
+  assert.match(html, /data-thread-change-closed-on="6582"/);
+  assert.match(html, /data-thread-change-closed-on="6583"/);
+
+  const closedCard = renderComponent(`${TOPIC}/thread-changes.tsx`, 'ThreadChanges', {
+    slug: 'club',
+    data: thread([{ ...request, number: 11 }], { elsewhere }),
+    number: 11, changes: [], close: null, onChanged: () => {},
+  });
+  assert.match(closedCard, /data-thread-elsewhere-closed="91"/);
+  assert.match(closedCard, /#11 is already closed/);
+  assert.doesNotMatch(closedCard, /data-thread-elsewhere-dispute="91"/, 'a closed request is not asked');
+  assert.match(card, /data-thread-elsewhere-stays="91"/);
+  assert.match(card, /It stays on #10 because people have voted on it\./);
 });
 
 // #6224: a change for several requests lives on its first one's page, so its
@@ -454,14 +614,14 @@ function drawGate(props = {}) {
   }
 }
 
-const closesOf = (list) => list.map(([number, title, by, confirmed]) => ({ number, title, by, confirmed }));
+const closesOf = (list) => list.map(([number, title, by, confirmed, extra]) => ({ number, title, by, confirmed, ...(extra || {}) }));
 
 test('#6225: the Votes card lists every request the change will close, marking the unconfirmed', () => {
   const html = drawGate({
     closes: closesOf([
       [10, 'Phone navigation opens the wrong tab', 'evan', true],
       [11, 'Back arrow skips a page', 'evan', true],
-      [12, 'Sidebar rows too tight', 'mara', false],
+      [12, 'Sidebar rows too tight', 'mara', false, { waiting: true }],
     ]),
   });
   assert.match(html, /data-change-vote-closes="3"/);
@@ -469,11 +629,30 @@ test('#6225: the Votes card lists every request the change will close, marking t
   assert.equal((html.match(/data-change-vote-closes-on=/g) || []).length, 3, 'one line each');
   assert.match(html, /data-change-vote-closes-on="10" data-confirmed="true"/);
   assert.match(html, /data-change-vote-closes-on="12" data-confirmed="false"/, 'a request nobody agreed to');
-  assert.equal((html.match(/not confirmed by its requester/g) || []).length, 1, 'said only of the unconfirmed one');
+  assert.equal((html.match(/waiting for whoever filed it to agree this closes it/g) || []).length, 1, 'said only of the one waiting');
   assert.match(html, /href="#app\/club\/dev\/issues\/10"/, 'each number opens that request\'s page');
   assert.match(html, /Phone navigation opens the wrong tab · evan/, 'its title and who filed it');
   assert.ok(html.indexOf('data-change-vote-fact="tally"') < html.indexOf('data-change-vote-closes='), 'under the tally');
   assert.doesNotMatch(html, /data-change-vote-closes-more=/, 'three need no fold');
+});
+
+test('#6606: a closes line says where its filer stands, and asks only the one who can answer', () => {
+  const waiting = drawGate({ closes: closesOf([[12, 'Sidebar rows too tight', 'mara', false, { waiting: true, canConfirm: true }]]) });
+  assert.match(waiting, /waiting for whoever filed it to agree this closes it/);
+  assert.match(waiting, /data-change-vote-closes-confirm="12"[^>]*>Confirm<\/button>/, 'the filer may press Confirm');
+
+  const voter = drawGate({ closes: closesOf([[12, 'Sidebar rows too tight', 'mara', false, { waiting: true }]]) });
+  assert.doesNotMatch(voter, /data-change-vote-closes-confirm=/, 'a voter reads it, and is not asked');
+
+  const nobody = drawGate({ closes: closesOf([[12, 'Old import', 'mara', false]]) });
+  assert.doesNotMatch(nobody, /waiting for whoever/, 'nobody could confirm it, so nothing is asked');
+
+  const closed = drawGate({ closes: closesOf([[12, 'Fix the badge', 'kim', false, { closed: true }]]) });
+  assert.match(closed, /already closed/, 'a closed request says so');
+
+  const disputed = drawGate({ closes: closesOf([[12, 'Fix the badge', 'kim', false, { disputed: true }]]) });
+  assert.match(disputed, /its filer says this doesn(?:'|&#x27;)t close it/);
+  assert.equal(message('project:topic.change.gate.closesConfirm'), 'Confirm');
 });
 
 test('#6225: one request reads "Closes 1 request", and past five the rest fold behind a tap', () => {

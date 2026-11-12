@@ -43,6 +43,7 @@ import {
 import { MOVE_LABELS, ThreadMoves, moveChoices, type MoveKind } from './thread-moves';
 import { ThreadBallot } from './thread-ballot';
 import { useThreadMenu, type ThreadMenuRow } from './thread-menu';
+import { prefetchChangeDetail } from './topic-head';
 
 function openTopic(open: { kind: string; id: number }): void {
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -75,6 +76,70 @@ export function threadReads(pathname: string | null, slug: string | null, change
 }
 
 /**
+ * #6604: a thread's read, started when its page OPENS rather than when the
+ * page's root post has painted. `public/js/app-view.js` calls
+ * `UsernodeReact.devBoard.prefetchThread(slug, n)` in the same tick as its
+ * item read, so the two go out together. One promise per path, kept 10 s and
+ * consumed once (the page's first read takes it). Its answer also starts the
+ * read of each change the thread lists, before any of them renders.
+ */
+export const PREFETCH_TTL_MS = 10_000;
+
+interface PrefetchedThread {
+  at: number;
+  settled: boolean;
+  data: ThreadPayload | null;
+  promise: Promise<ThreadPayload | null>;
+}
+
+const prefetchedThreads = new Map<string, PrefetchedThread>();
+
+export function threadPath(slug: string, number: number): string {
+  return `/api/apps/${encodeURIComponent(slug)}/threads/${number}`;
+}
+
+/** Start (or join, within 10 s) a thread's own read. Returns its promise. */
+export function prefetchThread(slug: string | null, number: number | null): Promise<ThreadPayload | null> | null {
+  if (!slug || !number) return null;
+  const path = threadPath(slug, number);
+  const hit = prefetchedThreads.get(path);
+  if (hit && Date.now() - hit.at < PREFETCH_TTL_MS) return hit.promise;
+  const entry: PrefetchedThread = {
+    at: Date.now(), settled: false, data: null, promise: Promise.resolve(null),
+  };
+  entry.promise = fetch(path, { credentials: 'same-origin' })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((json) => {
+      entry.settled = true;
+      entry.data = json && Array.isArray(json.items) ? json : null;
+      for (const item of entry.data?.items || []) {
+        if (item && item.type === 'change' && Number.isInteger(Number(item.id))) prefetchChangeDetail(item);
+      }
+      return entry.data;
+    })
+    .catch(() => { entry.settled = true; return null; });
+  prefetchedThreads.set(path, entry);
+  return entry.promise;
+}
+
+/** The prefetched answer, if it is already here; leaves the entry in place. */
+export function peekThread(path: string | null): ThreadPayload | null {
+  if (!path) return null;
+  const hit = prefetchedThreads.get(path);
+  if (!hit || !hit.settled || Date.now() - hit.at >= PREFETCH_TTL_MS) return null;
+  return hit.data;
+}
+
+/** Take the prefetched read for `path`, once. */
+function takePrefetched(path: string): PrefetchedThread | null {
+  const hit = prefetchedThreads.get(path);
+  if (!hit) return null;
+  if (Date.now() - hit.at >= PREFETCH_TTL_MS) { prefetchedThreads.delete(path); return null; }
+  prefetchedThreads.delete(path);
+  return hit;
+}
+
+/**
  * A page's read of its thread (routes/threads.js), and a way to read it
  * again after something on the page changed it (a vote, a move). Null until
  * it is read, so the page's first paint is the one it had before.
@@ -86,20 +151,24 @@ export function useThreadPayload(slug: string | null, number: number | null, thr
   /** True until the first read of this path settles, whether it answers or fails. */
   loading: boolean;
 } {
-  const [data, setData] = useState<ThreadPayload | null>(null);
+  const path = skip ? null : number && slug ? `/api/apps/${encodeURIComponent(slug)}/threads/${number}${asChange ? '?as=change' : ''}`
+    : threadId ? `/api/threads/${threadId}` : null;
+  // #6604: a read another module started before this page mounted (the
+  // topic's own open, prefetchThread) is already the page's first read, so
+  // its answer is here on the first render rather than a moment later.
+  const peeked = peekThread(path);
+  const [data, setData] = useState<ThreadPayload | null>(peeked);
   // Read again after a move changed the thread (./thread-moves.tsx).
   const [revision, setRevision] = useState(0);
   // #6387: the path whose read settled, so "still loading" and "nothing to
   // show" stop looking the same: a failed read clears it too.
-  const [settledPath, setSettledPath] = useState<string | null>(null);
+  const [settledPath, setSettledPath] = useState<string | null>(peeked ? path : null);
   // #6139: a gap (a dropped socket, a sleeping tab) reads it again, past any saved copy.
   const freshNext = useRef(false);
-  const readPath = useRef<string | null>(null);
+  const readPath = useRef<string | null>(peeked ? path : null);
   // #6231: the changes this page last read, so a move announced by the
   // change's own id (`thread_changed`) still reaches this thread.
   const changeIds = useRef<Set<number>>(new Set());
-  const path = skip ? null : number && slug ? `/api/apps/${encodeURIComponent(slug)}/threads/${number}${asChange ? '?as=change' : ''}`
-    : threadId ? `/api/threads/${threadId}` : null;
   // A re-read of the same path keeps `data`, so it never shows as loading.
   const loading = !!path && !data && settledPath !== path;
   useEffect(() => {
@@ -111,10 +180,17 @@ export function useThreadPayload(slug: string | null, number: number | null, thr
     if (!again) { setData(null); ids.clear(); }
     if (!path) return undefined;
     let live = true;
-    const init: RequestInit = { credentials: 'same-origin', ...(freshNext.current ? FRESH : {}) };
+    const fresh = freshNext.current;
     freshNext.current = false;
-    fetch(path, init)
-      .then((res) => (res.ok ? res.json() : null))
+    const init: RequestInit = { credentials: 'same-origin', ...(fresh ? FRESH : {}) };
+    // #6604: the read started when the topic opened answers this one, once.
+    const pre = fresh ? null : takePrefetched(path);
+    const read: Promise<ThreadPayload | null> = pre
+      ? pre.promise
+      : fetch(path, init)
+        .then((res) => (res.ok ? res.json() : null))
+        .catch(() => null);
+    read
       .then((json) => {
         if (!live) return;
         setSettledPath(path);
@@ -125,11 +201,6 @@ export function useThreadPayload(slug: string | null, number: number | null, thr
           }
           setData(json);
         } else if (!again) setData(null);
-      })
-      .catch(() => {
-        if (!live) return;
-        setSettledPath(path);
-        if (!again) setData(null);
       });
     const pathname = path.split('?')[0];
     const unwatch = watch(() => {

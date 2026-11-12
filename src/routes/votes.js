@@ -2519,20 +2519,9 @@ async function retractVote({ pool, sessionId, userId, expectedEpoch = null }) {
         WHERE pv.session_id = $1 AND pv.user_id = $2
           AND cs.id = pv.session_id
           AND pv.approval_epoch = cs.approval_epoch
-        RETURNING pv.vote, pv.reason, cs.user_id AS author_id`,
+        RETURNING pv.vote, pv.reason`,
       [sessionId, userId]
     );
-    // #6477: the author took their own vote back on this version, so proposing
-    // stops counting as their yes (governance-rules.ts). Only the author's own
-    // retraction marks it, and a later vote or a new version (an epoch bump)
-    // makes the stamp stale on its own.
-    if (removed && parseInt(removed.author_id, 10) === userId) {
-      await client.query(
-        `UPDATE chat_sessions SET author_yes_withdrawn_epoch = approval_epoch
-          WHERE id = $1 AND user_id = $2`,
-        [sessionId, userId]
-      );
-    }
     // Whoever asked the bot for this change reads their card again, so it
     // names who it waits on now (no "approved it" line: there is no vote).
     if (removed) {
@@ -2777,6 +2766,18 @@ function mergedRowSelect() {
            rv.pr_number as revert_pr_number,
            rv.pr_url    as revert_pr_url,
            rv.status    as revert_status,
+           -- #6593: the integration record and the held-merge times, so the
+           -- change page's own read carries what its Merging card and its
+           -- step list read (the page re-renders from this read, and a read
+           -- without them replaced the board row's copy with nothing).
+           cs.integration_measured_at, cs.integration_head_sha, cs.integration_main_sha,
+           cs.integration_base_sha, cs.integration_behind_by, cs.integration_ahead_by,
+           cs.integration_merges_clean, cs.integration_conflict_paths,
+           cs.integration_merged_tree, cs.integration_checks_base_current,
+           cs.integration_block_reasons, cs.integration_error,
+           ${require('../services/integration').HELD_UNTIL_SQL} AS merge_held_until,
+           ${require('../services/integration').HELD_AT_SQL} AS merge_held_at,
+           ${require('../services/integration').HELD_SINCE_SQL} AS merge_held_since,
            -- An admin's force merge (services/merge-requirements.js
            -- FORCE_SQL): the change page reads its own row from here, so its
            -- Votes card can say the force skips the vote, and the force an
@@ -2788,6 +2789,21 @@ function mergedRowSelect() {
          LEFT JOIN chat_sessions rv ON rv.revert_of_session_id = cs.id
            AND rv.status IN ('promoted', 'merging', 'merged')
          LEFT JOIN chat_sessions inc ON inc.id = cs.included_in_session_id`;
+}
+
+// #6482: several chat_sessions rows can name one pull request (a rebuilt or
+// re-submitted change), and more than one can be marked merged. The Completed
+// list is one entry per change, chosen by the same rule GET
+// /api/apps/:slug/changes/:number uses: the row that reached a vote, then the
+// newest. Every row this fragment is applied to is already merged, so that
+// reduces to the highest id. Written once so the page, its Done total and the
+// shipped-week count can never disagree. A NULL pr_number never equals
+// anything, so rows with no pull request number are all kept.
+function noNewerMergedTwin(alias = 'cs') {
+  return `AND NOT EXISTS (
+    SELECT 1 FROM chat_sessions twin
+     WHERE twin.app_id = ${alias}.app_id AND twin.status = 'merged'
+       AND twin.pr_number = ${alias}.pr_number AND twin.id > ${alias}.id)`;
 }
 
 // #3893: whether a promote was sent by the owner's own agent with a bearer
@@ -4215,6 +4231,8 @@ function voteRoutes(config) {
       // HELD_UNTIL_SQL in services/integration.js), read beside
       // integration_block_reasons, which carries the reason it explains.
       const heldUntilSql = require('../services/integration').HELD_UNTIL_SQL;
+      const heldAtSql = require('../services/integration').HELD_AT_SQL;
+      const heldSinceSql = require('../services/integration').HELD_SINCE_SQL;
       // An admin's force merge, from the proposal machine's instance state
       // (services/merge-requirements.js FORCE_SQL), so the card can say it is
       // queued, which step it waits on, and that it skips the vote.
@@ -4295,6 +4313,9 @@ function voteRoutes(config) {
            -- When the queue tries this change again after GitHub held its
            -- merge back (services/integration.js HELD_UNTIL_SQL).
            ${heldUntilSql} AS merge_held_until,
+           -- #6563: when Homeroom last tried it, and first met this hold.
+           ${heldAtSql} AS merge_held_at,
+           ${heldSinceSql} AS merge_held_since,
            ${forceSql} AS merge_force,
            ${forceDroppedSql} AS merge_force_dropped,
            cs.approval_epoch,
@@ -4577,6 +4598,9 @@ function voteRoutes(config) {
           }
         );
         row.votes_required = gate.required;
+        // #6594: its votes are in, so its card says Approved and what it
+        // waits on, not "Waiting for approval". A first version has no vote.
+        row.votes_in = gate.mergeable === true && row.first_version !== true;
         row.merge_window_ends_at = gate.windowEndsAt;
         row.contested = gate.contested;
         row.reject_window_ends_at = gate.rejectionEndsAt;
@@ -4797,6 +4821,7 @@ function voteRoutes(config) {
       const { rows: prRows } = await pool.query(
         `${mergedRowSelect()}
          WHERE cs.app_id = $1 AND cs.status = 'merged'
+           ${noNewerMergedTwin()}
            ${prCursorSql}
          ORDER BY COALESCE(cs.merged_at, cs.created_at) DESC, cs.id DESC
          LIMIT $${prParams.length}`,
@@ -4870,8 +4895,9 @@ function voteRoutes(config) {
       // status), so this is far lighter than the per-row subqueries above.
       const { rows: totalRows } = await pool.query(
         `SELECT COUNT(*)::int AS total
-           FROM chat_sessions
-          WHERE app_id = $1 AND status = 'merged'`,
+           FROM chat_sessions cs
+          WHERE cs.app_id = $1 AND cs.status = 'merged'
+            ${noNewerMergedTwin()}`,
         [appRows[0].id]
       );
       // Applied close-issue proposals count toward the same Done total —
@@ -4911,9 +4937,10 @@ function voteRoutes(config) {
                   COUNT(*) FILTER (WHERE t >= $2::timestamptz - interval '7 days'
                                      AND t < now() - interval '7 days')::int AS shipped_prev_week_to_date
              FROM (
-               SELECT COALESCE(merged_at, created_at) AS t
-                 FROM chat_sessions
-                WHERE app_id = $1 AND status = 'merged' AND live_at IS NOT NULL
+               SELECT COALESCE(cs.merged_at, cs.created_at) AS t
+                 FROM chat_sessions cs
+                WHERE cs.app_id = $1 AND cs.status = 'merged' AND cs.live_at IS NOT NULL
+                  ${noNewerMergedTwin()}
                UNION ALL
                SELECT created_at AS t
                  FROM issues
@@ -5152,7 +5179,7 @@ function voteRoutes(config) {
       // topic view (my_vote resolves to null for them). `repo_url` for
       // whether its code is on the git host (services/code-missing.js).
       const gatedApp = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, locked, repo_url`
       );
       if (!gatedApp) return res.status(404).json({ error: 'App not found' });
 
@@ -5193,6 +5220,28 @@ function voteRoutes(config) {
         // #4452: how long testing usually takes here, for the change page's
         // one testing bar and its time left (services/checks-estimate.js).
         proposal.checks_estimate = await require('../services/checks-estimate').forApp(pool, gatedApp.id);
+        // #6604: the page's before/after, for a change with no verified
+        // shots yet (services/visuals.js). The board's /promoted rows carry
+        // this aggregate; a change page opened by its own read alone needs it
+        // here, or its legacy "All N screens" card disappeared.
+        {
+          const { rows: [vis] } = await pool.query(
+            `SELECT jsonb_object_agg(
+                      sv.kind || '_' || sv.capture_index || '_' || sv.media,
+                      jsonb_build_object(
+                        'id', sv.id,
+                        'path', sv.captured_path,
+                        'viewport', sv.captured_viewport,
+                        'commit', sv.commit_hash,
+                        'scenarioId', sv.scenario_id,
+                        'scenarioFingerprint', sv.scenario_fingerprint,
+                        'fellBack', sv.before_fell_back))
+               FROM session_visuals sv WHERE sv.session_id = $1`,
+            [proposal.id]
+          ).catch(() => ({ rows: [{ jsonb_object_agg: null }] }));
+          proposal.visuals = require('../services/visuals')
+            .shapeAgg(vis && vis.jsonb_object_agg, visualHeadForSession(proposal));
+        }
         // #6234: Homeroom bot fixing its own change's failing checks, for the
         // Testing card (services/homeroom-bot-progress.js changeBotFix);
         // null for any change of a person's.
@@ -5288,6 +5337,9 @@ function voteRoutes(config) {
           }
         );
         proposal.votes_required = gate.required;
+        // #6594: the same fact the board's rows carry, so the change page's
+        // own heading says Approved instead of Waiting for approval.
+        proposal.votes_in = gate.mergeable === true && proposal.first_version !== true;
         proposal.merge_window_ends_at = gate.windowEndsAt;
         proposal.contested = gate.contested;
         proposal.reject_window_ends_at = gate.rejectionEndsAt;
@@ -5341,6 +5393,28 @@ function voteRoutes(config) {
         });
       }
 
+      // #6593: while GitHub's required checks hold the merge, the page's own
+      // read carries them and, when GitHub lets Homeroom read them, how many
+      // of the required checks are done. Always written on a promoted row, so
+      // a response merged into the board's held row replaces a stale value
+      // rather than leaving one behind.
+      if (proposal && (proposal.status === 'promoted' || proposal.status === 'merging')) {
+        const integrationSvc = require('../services/integration');
+        proposal.integration = integrationSvc.readIntegration(proposal);
+        proposal.integration.githubChecks = null;
+        const held = proposal.integration.blockReasons;
+        // Failed checks are the failing card's to say; no read is made for
+        // them, even when a still-running reason is recorded beside them.
+        if (proposal.status === 'promoted'
+          && held.indexOf('github_checks') !== -1 && held.indexOf('github_checks_failing') === -1) {
+          proposal.integration.githubChecks = await require('../services/github-checks-progress')
+            .readProgress({
+              repoUrl: gatedApp.repo_url,
+              headSha: proposal.integration.headSha || proposal.reviewed_head_sha,
+            });
+        }
+      }
+
       // Staging demo mode (?demo=1): the mock merged/promoted rows aren't in
       // the DB, so resolve a mock id straight from the generators. This lets
       // a staging tester deep-link a mock Completed proposal that never
@@ -5354,6 +5428,7 @@ function voteRoutes(config) {
       // owns or that is shared), so the demo generators answer them the same
       // way; a 404 in the network log is a console error, which fails every
       // declared check on the route.
+      let demoRow = false;
       if (!proposal && IS_STAGING && req.query.demo === '1') {
         const sessionMocks = require('./sessions');
         proposal = stagingMockMerged(req.user).find((m) => m.id === id)
@@ -5362,9 +5437,39 @@ function voteRoutes(config) {
           || sessionMocks.stagingMockSharedSessions().find((m) => m.id === id)
           || sessionMocks.stagingMockOwnSessions(req.user?.id, config.selfAppSlug).find((m) => m.id === id)
           || null;
+        demoRow = !!proposal;
       }
 
       if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+      // #6604: a change's page draws from THIS read alone now — the board is
+      // not loaded behind it in the side panel or on its own page — so a
+      // staging ?demo=1 row must carry the same derived merge fields the
+      // board's list rows do. The list derives them for every row
+      // (GET .../promoted); one resolved from the generators above skipped
+      // that pass, so its steps sheet had no gates and its merge step read as
+      // if there were none.
+      if (demoRow) {
+        const freshnessSvc = require('../services/proposal-freshness');
+        const integrationSvc = require('../services/integration');
+        const requirementsSvc = require('../services/merge-requirements');
+        const mainCheck = await require('../services/main-watch').mergePause(pool, gatedApp.id);
+        proposal.freshness = proposal.freshness || freshnessSvc.readFreshness(proposal);
+        proposal.checks_on_head = sessionChecksOnHead(proposal);
+        proposal.integration = proposal.integration || integrationSvc.readIntegration(proposal);
+        proposal.shotsEnforced = !!config.shots?.enforce
+          && !!(proposal.shots_detail && typeof proposal.shots_detail === 'object');
+        proposal.mergeRequirements = requirementsSvc.readRequirements({
+          ...proposal,
+          shotsEnforced: proposal.shotsEnforced,
+          app_main_check_state: mainCheck.state,
+          app_main_check_sha: mainCheck.sha,
+          app_main_check_resumed_sha: mainCheck.resumedSha,
+          app_main_check_paused: mainCheck.paused,
+          app_main_check_paused_sha: mainCheck.pausedSha,
+          app_main_check_confirming: mainCheck.confirming,
+          app_main_check_failing_test: mainCheck.failingTest,
+        });
+      }
       if (IS_STAGING && req.query.demo === '1' && proposal.checks_estimate == null) {
         proposal = { ...proposal, checks_estimate: require('../services/checks-estimate').DEMO_ESTIMATE };
       }
@@ -5406,7 +5511,32 @@ function voteRoutes(config) {
       }
       // `?results=failing`: the proposal page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).
-      res.json({ proposal: listTestResults.forItem(req, proposal) });
+      // #6604: the change's page draws from this read alone now — the board
+      // is not loaded behind it — so the project-level vote context the
+      // board's /promoted answer carries rides along here too. Without it the
+      // Votes card lost its "any of N members" line and an admin lost the
+      // admin-merge affordance on a change opened cold or in the side panel.
+      let context = null;
+      try {
+        const { active: activeUsers, majority } = await getActiveUserStats(pool, gatedApp.id);
+        const gov = await require('../services/governance').getGovernance(pool, gatedApp.id);
+        context = {
+          slug: req.params.slug,
+          majority,
+          activeUsers,
+          // Same demo override /promoted applies (see its comment): a
+          // prod-cloned staging app is locked, and ?demo=1 exists to review
+          // states a lock would suppress.
+          locked: !!gatedApp.locked && !(IS_STAGING && req.query.demo === '1'),
+          approverPolicy: gov.approverPolicy,
+          approvalsRequired: gov.approvalsRequired,
+          isAppAdmin: await appAdmins.isAppAdmin(pool, gatedApp.id, req.user?.id),
+        };
+      } catch (err) {
+        // Best-effort: the page still draws from the proposal row.
+        log.warn('votes', 'Could not read the vote context', { message: err.message });
+      }
+      res.json({ proposal: listTestResults.forItem(req, proposal), context });
     } catch (err) {
       log.error('votes', 'Failed to get proposal by id', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

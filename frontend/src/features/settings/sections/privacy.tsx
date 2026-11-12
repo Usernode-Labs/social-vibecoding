@@ -62,7 +62,7 @@ const OPTIONS: { value: WhoCanContact; label: string; description: string }[] = 
   },
 ];
 
-const ROW_FIRST = 'flex items-start gap-3 cursor-pointer select-none py-2.5';
+const ROW_FIRST = 'ui-row flex items-start gap-3 cursor-pointer select-none py-2.5';
 const ROW_NEXT = `${ROW_FIRST} border-t border-zinc-200 dark:border-zinc-800`;
 
 function parse(value: unknown): ContactPrivacy | null {
@@ -77,11 +77,11 @@ const RADIO_FOCUS = 'peer-focus-visible:outline peer-focus-visible:outline-2 pee
 
 function Radio({ on }: { on: boolean }) {
   return on ? (
-    <span aria-hidden="true" className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[color:var(--accent)] ${RADIO_FOCUS}`}>
+    <span aria-hidden="true" className={`ui-chk ui-chk-on mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[color:var(--accent)] ${RADIO_FOCUS}`}>
       <span className="h-2 w-2 rounded-full bg-[color:var(--accent-ink)]" />
     </span>
   ) : (
-    <span aria-hidden="true" className={`mt-0.5 h-5 w-5 shrink-0 rounded-full ring-[1.5px] ring-inset ring-zinc-300 dark:ring-zinc-600 ${RADIO_FOCUS}`} />
+    <span aria-hidden="true" className={`ui-chk mt-0.5 h-5 w-5 shrink-0 rounded-full ring-[1.5px] ring-inset ring-zinc-300 dark:ring-zinc-600 ${RADIO_FOCUS}`} />
   );
 }
 
@@ -108,7 +108,11 @@ export function PrivacySection() {
   }, [t]);
 
   useEffect(() => { void load(); }, [load]);
-  useWindowEvent('usernode:settings-section', () => { void load(); });
+  // Read again when this page is opened, never when another one is (#6591:
+  // every page of Settings re-read it, hidden, on each switch).
+  useWindowEvent('usernode:settings-section', (event) => {
+    if ((event as CustomEvent<{ section?: string }>).detail?.section === 'contact-privacy') void load();
+  });
 
   const save = async (change: Partial<ContactPrivacy>) => {
     if (!settings || saving) return;
@@ -149,7 +153,7 @@ export function PrivacySection() {
           id="settings-who-can-message"
           role="radiogroup"
           aria-label={t('settings:privacy.whoCanMessage.title')}
-          className="flex flex-col"
+          className="ui-card flex flex-col"
         >
           {OPTIONS.map((option, index) => {
             const on = settings?.whoCanContact === option.value;
@@ -165,11 +169,11 @@ export function PrivacySection() {
                   onChange={() => { void save({ whoCanContact: option.value }); }}
                 />
                 <Radio on={on} />
-                <span className="min-w-0">
-                  <span className={`block text-sm text-zinc-800 dark:text-zinc-200 ${on ? 'font-semibold' : 'font-normal'}`}>
+                <span className="ui-row-tx min-w-0">
+                  <span className={`ui-row-t block text-sm text-zinc-800 dark:text-zinc-200 ${on ? 'font-semibold' : 'font-normal'}`}>
                     {t(option.label)}
                   </span>
-                  <span className={`block ${HELP} mt-0.5`}>
+                  <span className={`ui-row-s block ${HELP} mt-0.5`}>
                     {t(option.description)}
                   </span>
                 </span>
@@ -183,6 +187,8 @@ export function PrivacySection() {
           <SectionHeading title={t('settings:privacy.discoverable.title')} blurbClassName="dark:text-zinc-400">
             {t('settings:privacy.discoverable.intro')}
           </SectionHeading>
+          {/* A neutral wrapper (looks v2): the kit's card round the switch row under a look. */}
+          <div className="ui-card">
           <PrivacySwitch
             id="settings-profile-discoverable"
             label={t('settings:privacy.discoverable.label')}
@@ -194,6 +200,7 @@ export function PrivacySection() {
               : 'settings:privacy.discoverable.descriptionOff')}
             onChange={(e) => { void save({ discoverable: e.currentTarget.checked }); }}
           />
+          </div>
         </div>
         <SaveStatus id="settings-contact-privacy-status" saved={saved} error={error} />
       </div>

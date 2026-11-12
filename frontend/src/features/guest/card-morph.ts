@@ -20,6 +20,8 @@
  * at its top) is left unnamed, so the band fades out instead of flying away.
  */
 
+import { reducedMotion } from '../../lib/reduced-motion';
+
 export const HERO_NAME = 'guest-hero';
 
 /** How long the update callback waits for the new view before giving up on the morph. */
@@ -27,14 +29,6 @@ export const WAIT_MS = 600;
 
 type Transition = { ready: Promise<void>; finished: Promise<void> };
 type TransitionDoc = Document & { startViewTransition?: (update: () => Promise<void>) => Transition };
-
-function reducedMotion(): boolean {
-  try {
-    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  } catch {
-    return true;
-  }
-}
 
 function onScreen(el: HTMLElement): boolean {
   const r = el.getBoundingClientRect();
@@ -61,7 +55,7 @@ function waitFor(find: () => HTMLElement | null, ms: number): Promise<HTMLElemen
  */
 export function morph(from: HTMLElement | null, navigate: () => void, findTarget: () => HTMLElement | null): void {
   const doc = document as TransitionDoc;
-  if (!from || typeof doc.startViewTransition !== 'function' || reducedMotion()) {
+  if (!from || typeof doc.startViewTransition !== 'function' || reducedMotion(undefined, true)) {
     navigate();
     return;
   }

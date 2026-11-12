@@ -671,9 +671,17 @@
     "text": "Up for a vote",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change is waiting for the group's votes."
   },
+  "work.stage.approved": {
+    "text": "Approved",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change has the votes its project's rule needs, and it is waiting on its own checks or on GitHub's required checks before it goes live."
+  },
   "work.stage.goingLive": {
     "text": "Going live",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change was approved and is being put live."
+  },
+  "work.stage.waitingToMerge": {
+    "text": "Waiting to merge",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change was approved and tested, and GitHub has not merged it yet because GitHub's own required checks are still running or it is held back for a moment."
   },
   "work.stage.live": {
     "text": "Live",
@@ -811,6 +819,10 @@
     "text": "Tests are failing",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: some of its change's tests failed."
   },
+  "work.line.botFixFailed": {
+    "text": "Homeroom bot couldn't fix it",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot took over the change's failing tests and its last attempt could not fix them."
+  },
   "work.line.checksFailingCount_one": {
     "text": "{{count}} test failing",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: how many of its change's tests failed. {{count}} is a number."
@@ -835,8 +847,20 @@
     "text": "Conflicts with main: Homeroom resolves it once you approve",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line of a change up for a vote that conflicts with main: a yes lets Homeroom resolve the conflict, re-run the checks and merge it without asking again."
   },
+  "work.line.approvedChecking": {
+    "text": "Checking the latest version",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Approved: the change has the votes its rule needs, and Homeroom's own checks are still running on its latest version. It goes live once they pass."
+  },
+  "work.line.earlierYes_one": {
+    "text": "Changed since its yes vote, which counts again once confirmed",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line of a change up for a vote again after a new version retired one earlier yes vote, which counts again once its voter confirms it."
+  },
+  "work.line.earlierYes_other": {
+    "text": "Changed since its {{count}} yes votes, which count again once each is confirmed",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line of a change up for a vote again after a new version retired several earlier yes votes, which count again once each voter confirms. {{count}} is how many yes votes stopped counting."
+  },
   "work.line.githubChecks": {
-    "text": "Waiting for GitHub's checks",
+    "text": "Waiting on GitHub's checks",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Going live: the change has the yes it needs, and GitHub has not merged it yet because the required checks GitHub runs on it are still running, or failed and are being run again on today's main. Homeroom merges it once they pass."
   },
   "work.line.githubChecksFailing": {
@@ -846,6 +870,10 @@
   "work.line.githubWait": {
     "text": "Waiting on GitHub",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Going live: the change has the yes it needs, and GitHub held its merge back for a moment (busy, or a refusal nobody has to act on). Homeroom tries again in a few minutes."
+  },
+  "work.line.shots": {
+    "text": "Taking the before and after screenshots",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Checking: the change's tests passed, and Homeroom is still taking the before and after screenshots people look at before they vote, so nobody is asked to vote on it yet."
   },
   "work.line.firstVersion": {
     "text": "First version: it goes live without a vote",
@@ -890,41 +918,5 @@
   "frame.navigation": {
     "text": "Homeroom",
     "description": "Accessible name of the sidebar and of the phone's tab bar as navigation landmarks, when the interface is drawn in one of the frame's looks (an admin's preview). The product's name."
-  },
-  "frame.menu.handle": {
-    "text": "@{{username}}",
-    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one line under the person's name: their username with an at sign."
-  },
-  "frame.menu.profile": {
-    "text": "Your profile",
-    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row that opens the person's own profile."
-  },
-  "frame.menu.darkTheme": {
-    "text": "Dark theme",
-    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row with a switch: turns the dark theme on or off."
-  },
-  "frame.menu.invite": {
-    "text": "Invite people",
-    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row under the Homeroom label: opens inviting people to Homeroom."
-  },
-  "frame.menu.about": {
-    "text": "About Homeroom",
-    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row under the Homeroom label: opens what this build of Homeroom is. Homeroom is the product's name."
-  },
-  "frame.menu.signOut": {
-    "text": "Sign out",
-    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The last row: signs the person out."
-  },
-  "frame.menu.open": {
-    "text": "Account menu",
-    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Accessible name of the control that opens this menu."
-  },
-  "frame.menu.suggest": {
-    "text": "Suggest an improvement",
-    "description": "The account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the row under Homeroom that opens the Improve panel, as the logo menu's row does."
-  },
-  "frame.menu.homeScreen": {
-    "text": "Add Homeroom to your home screen",
-    "description": "The account menu under one of the frame's looks, on a phone's browser: the row that shows the steps to put Homeroom on the home screen, as the logo menu's row does."
   }
 }

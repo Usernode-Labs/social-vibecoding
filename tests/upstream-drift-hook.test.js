@@ -128,6 +128,12 @@ test('SessionStart puts the notice in front of the agent only when HEAD is behin
   assert.match(text, /prepare_work/);
   assert.match(text, /proposal_start/);
   assert.match(text, /never merge or rebase onto upstream main yourself/);
+  // 11 Nov 2026: a stale checkout's own instructions are as old as its code.
+  assert.match(text, /AGENTS\.md and \.agents\/skills\/ are just as old/);
+  assert.ok(text.includes('git show FETCH_HEAD:.agents/skills/<name>/SKILL.md'), 'read main’s copy of a skill');
+  assert.match(text, /web connector connected, use prepare_work and submit_work, never the CLI or its login/);
+  assert.match(text, /Tell the user once that syncing their fork's main/);
+  assert.match(text, /do not sync or pull unless they ask/, 'the fork and its working tree stay the user’s');
   assert.ok(text.length <= 1200, 'fits the Codex additionalContextLimit');
 
   const current = fakeGit({ 'rev-parse': head(NEW), 'ls-remote': lsRemote(NEW) });

@@ -261,6 +261,11 @@ function openRouterProviderShortlists(value) {
 }
 
 function load() {
+  // Check the deployment boundary before making keys, opening clients or
+  // starting roles. An explicit invalid setting must never downgrade silently.
+  const browserSiteIsolation = require('./services/browser-site-isolation').validateBrowserSiteIsolation();
+  require('./services/apps-domain-move').validateLegacyAppsDomain();
+  require('./services/previews-domain').validatePreviewsDomain();
   const staging = IS_STAGING();
   const appRuntime = process.env.APP_RUNTIME || 'docker';
 
@@ -373,6 +378,7 @@ function load() {
     // `env !== 'production'`. Not in REQUIRED: defaults to 'development'
     // so a bare checkout without NODE_ENV set behaves like local dev.
     env: process.env.NODE_ENV || 'development',
+    browserSiteIsolation,
     port: parseInt(process.env.PORT || '3000', 10),
     databaseUrl: process.env.DATABASE_URL,
     sessionSecret: process.env.SESSION_SECRET,
@@ -682,6 +688,11 @@ function load() {
       clusterIssuer: process.env.CLUSTER_ISSUER || 'letsencrypt-public',
       appTlsSecretName: process.env.APP_TLS_SECRET_NAME || 'social-apps-wildcard-tls',
       appDomain: process.env.USERNODE_APPS_DOMAIN || process.env.USERNODE_DOMAIN || 'apps.example.invalid',
+      // While apps move off it (services/apps-domain-move.js); '' otherwise.
+      legacyAppDomain: require('./services/apps-domain-move').legacyAppsDomain(),
+      // Previews' own domain (services/previews-domain.js); '' keeps them on
+      // appDomain.
+      previewDomain: require('./services/previews-domain').previewsDomain(),
       platformDomain: process.env.USERNODE_DOMAIN || 'apps.example.invalid',
       // The app-host gate (#3657; services/kubernetes.js, scripts/app-gate.js):
       // `on` routes every app and preview through a platform-owned check,

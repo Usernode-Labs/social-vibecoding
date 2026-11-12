@@ -203,13 +203,17 @@ function harness({
   // #5220: the pre-turn sync (syncBeforeFix). Not synced unless a test says
   // so, so the fix turn runs as before in the tests above.
   fixSync = { synced: false, why: 'own_failure' },
+  // The bot's open proposal on the request (live.openBotProposal), and
+  // (step 5) its last note on it (addressed.lastNoteText).
+  proposal = { id: 5001, status: 'promoted', pr_number: 82 }, lastNote = null,
 } = {}) {
   const calls = { queries: [], exec: [], loop: null, posts: [], onProposal: [], reconciled: [], seen: [], sync: [], fixSync: [] };
   const pool = {
     async query(sql, params) {
       const s = String(sql);
       calls.queries.push({ s, params });
-      if (/SELECT id, status, pr_number FROM chat_sessions/.test(s)) return { rows: [{ id: 5001, status: 'promoted', pr_number: 82 }] };
+      if (/SELECT id, status, pr_number FROM chat_sessions/.test(s)) return { rows: proposal ? [proposal] : [] };
+      if (/SELECT p\.kind, m\.content/.test(s)) return { rows: lastNote ? [lastNote] : [] };
       if (/SELECT id, thread_seen_at FROM homeroom_bot_runs/.test(s)) return { rows: [{ id: 800, thread_seen_at: SEEN }] };
       if (/AS looked/.test(s)) return { rows: row ? [row] : [] };
       if (/SELECT cs\.\*, a\.slug AS app_slug/.test(s)) {
@@ -292,8 +296,8 @@ async function run(t, h, item = ITEM) {
   t.after(() => {
     live.post = realPost; live.advanceSeen = realSeen; live.postOnProposal = realOnProposal; live.mentionTargets = realTargets;
   });
-  live.post = async (args) => { h.calls.posts.push(args); return { githubCreatedAt: '2026-10-01T12:05:00Z' }; };
-  live.postOnProposal = async (args) => { h.calls.onProposal.push(args); return { postId: 1, thread: true }; };
+  live.post = async (args) => { h.calls.posts.push(args); return h.postResult || { githubCreatedAt: '2026-10-01T12:05:00Z' }; };
+  live.postOnProposal = async (args) => { h.calls.onProposal.push(args); return { postId: 1, thread: true, outcome: 'said' }; };
   live.advanceSeen = async (args) => { h.calls.seen.push(args); return { advanced: true }; };
   live.mentionTargets = async () => ['ada'];
   // As its request's look (bot-request's bot.look) runs it: what the look
@@ -822,6 +826,93 @@ test('a person\'s reply comes first; a fix still due after it is queued again', 
   assert.deepEqual(h.look.out.owe, [{ reason: bot.CHECKS_REASON, priority: 1 }],
     'the checks are owed a look once this one ends (its request\'s instance takes the debt)');
 });
+
+// ── Step 5 (11 Nov 2026): failing checks go straight to the fix ─────────
+
+test('step 5: failing checks with no change of the bot\'s up are not a read: the look is spent and the fix refused', async (t) => {
+  const h = harness({ proposal: null });
+  const out = await run(t, h);
+  assert.deepEqual(out, { ran: false, reason: 'checks_no_change' });
+  assert.equal(h.calls.exec.length, 0, 'no triage turn');
+  assert.equal(h.calls.posts.length + h.calls.onProposal.length, 0, 'no "looking", nothing said');
+  assert.equal(insertOf(h), undefined, 'no run');
+  assert.equal(h.look.out.queue, 'consume', 'its debt is spent');
+  assert.deepEqual(h.look.out.fix, { outcome: 'refused', why: 'no_change' }, 'and its change machine hears why');
+});
+
+test('step 5: a look owed for failing checks fixes them first; what people said is the next look\'s', async (t) => {
+  const h = harness({
+    comments: [{ author: 'ada', body: 'Can the button say "Text size"?', createdAt: '2026-10-01T11:30:00Z' }],
+  });
+  // Its debt merged with a change since (the reason stays checks_failing).
+  const out = await run(t, h, { ...ITEM, thread_seen_at: '2026-10-01T11:30:00Z' });
+  assert.equal(out.acted, 'checks_revise', 'the fix went first');
+  assert.equal(h.calls.exec.length, 1, 'one turn: the fix');
+  assert.match(h.calls.exec[0].opts.prompt, /"action": "revise" \| "person"/, 'a fix turn, not a reply turn');
+  const insert = insertOf(h);
+  assert.equal(insert.params[12], SEEN, 'the fix does not count the reply as read');
+  assert.deepEqual(h.look.out.owe, [{ reason: 'changed', priority: 2, changedBy: 'github' }],
+    'the reply is owed the next look, once this one ends');
+  assert.deepEqual(h.look.out.fix, { outcome: 'looked' });
+  // No fix due (its head looked at already): the reply is answered now.
+  const answered = harness({
+    row: checksRow({ looked: true }),
+    comments: [{ author: 'ada', body: 'Can the button say "Text size"?', createdAt: '2026-10-01T11:30:00Z' }],
+    result: { lastResultText: '```json\n{"action":"answer","reply":"It can."}\n```', pushOk: true, sha: HEAD },
+  });
+  assert.equal((await run(t, answered, { ...ITEM, thread_seen_at: '2026-10-01T11:30:00Z' })).verdict, 'answer');
+  assert.doesNotMatch(answered.calls.exec[0].opts.prompt, /"action": "revise" \| "person"/, 'a reply turn');
+});
+
+test('step 5: a fix round, a sync, a hand-off and a retry each record that they read nothing', async (t) => {
+  const kindOf = (h) => {
+    const insert = insertOf(h);
+    assert.match(insert.s, /read_reason, builder, look_kind\)/);
+    return insert.params[insert.params.length - 1];
+  };
+  const fix = harness();
+  await run(t, fix);
+  assert.equal(kindOf(fix), 'fix');
+  const sync = harness({ fixSync: { synced: true, why: null, sha: NEW_HEAD } });
+  await run(t, sync);
+  assert.equal(kindOf(sync), 'sync');
+  const handOff = harness({ revisions: followup.MAX_REVISIONS });
+  await run(t, handOff);
+  assert.equal(kindOf(handOff), 'hand_off');
+  const src = read('src/services/homeroom-bot.js');
+  assert.match(src, /readReason: readReasonOf\(item\), lookKind: 'retry',\n\s+appId: app\.id, issueNumber, mode: runMode, verdict: 'failed',\n\s+reason: 'its attempt to fix them ran out of time'/);
+  assert.match(src, /recordFailure\(code, \{ proposalSessionId: session\.id, lookKind: 'fix', \.\.\.spent \}, \{ infra: true \}\)/);
+});
+
+// Step 4 (11 Nov 2026): whether a checks note or a hand-off says something
+// new is the posting function's failure rule (services/bot-post.js,
+// tests/homeroom-bot-failure-repeat-postgres.test.js): each goes to it keyed,
+// and nothing here reads the last note first.
+test('step 4: a checks note and a hand-off go to the posting function, which says only what is new', async (t) => {
+  const same = harness({ fixSync: { synced: true, why: null, sha: NEW_HEAD } });
+  assert.equal((await run(t, same)).acted, 'checks_synced');
+  assert.deepEqual(same.calls.onProposal.map((p) => p.kind), ['checks_synced']);
+  assert.match(String(same.calls.onProposal[0].version), /^(run-\d+|look-\d+)-1$/, 'keyed: said once across the look\'s attempts');
+  assert.ok(!same.calls.queries.some((q) => /SELECT p\.kind, m\.content/.test(q.s)), 'no read of the last note beside it');
+
+  const person = harness({ revisions: followup.MAX_REVISIONS });
+  person.postResult = { repeated: true, messageId: 12 };
+  const out = await run(t, person);
+  assert.equal(out.acted, 'checks_person_unchanged', 'the posting function found it said already');
+  assert.equal(person.calls.posts.length, 1);
+  assert.equal(person.calls.posts[0].kind, 'followup_person');
+  assert.equal(person.calls.seen.length, 0, 'nothing new to mark as seen');
+  assert.equal(kindOfRun(person), 'hand_off', 'its run is still recorded');
+  assert.deepEqual(person.look.out.fix, { outcome: 'looked' }, 'and the round still ended');
+  const said = harness({ revisions: followup.MAX_REVISIONS });
+  assert.equal((await run(t, said)).acted, 'checks_person');
+  assert.equal(said.calls.seen.length, 1);
+});
+
+function kindOfRun(h) {
+  const insert = insertOf(h);
+  return insert ? insert.params[insert.params.length - 1] : undefined;
+}
 
 // ── Getting it queued ────────────────────────────────────────────────────
 

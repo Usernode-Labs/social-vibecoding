@@ -1206,25 +1206,5 @@
   "kudos.status.goingLiveTitle": {
     "text": "{{release}}.",
     "description": "Tooltip on the \"going live\" status label of a change of Homeroom itself, in the Kudos tab's lists. {{release}} is a finished sentence saying when the change goes live, for example \"Merged; goes live in the next release (about 8 minutes)\"; this entry adds only the full stop that ends it."
-  },
-  "frame.pair": {
-    "text": "{{first}} · {{second}}",
-    "description": "Challenges when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Joins two short facts about the person's standing on the one line under the page's title, such as '#16 of 151 ranked' and '8 of 11 done'."
-  },
-  "frame.pts": {
-    "text": "{{points}} pts",
-    "description": "Challenges when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). A number of points with its short unit, as in '16,128 pts', inside the line under the page's title."
-  },
-  "frame.points": {
-    "text": "points",
-    "description": "Challenges when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label under the person's points total in the context column, as in '16,128' over 'points'."
-  },
-  "standings.frame.season": {
-    "text": "This season",
-    "description": "Label over the standings' rows under one of the frame's looks, on the whole-season board (Challenges > Standings): the people ranked this season."
-  },
-  "standings.frame.event": {
-    "text": "This event",
-    "description": "Label over the standings' rows under one of the frame's looks, when one event's board is picked instead of the whole season."
   }
 }

@@ -1,3 +1,4 @@
+import type * as React from 'react';
 import { useCallback, useState } from 'react';
 
 import { SectionHeading } from '@/components/ui/field';
@@ -6,6 +7,7 @@ import { ChevronRightIcon } from '@/components/ui/icons';
 import { useMessages } from '../../../lib/i18n/react';
 import { useIsomorphicLayoutEffect, useWindowEvent } from '../../../lib/legacy-dom';
 import { displayNameOf, initialOf } from '../../profile/profile-store.js';
+import { swatchFor } from '../../messages/format';
 
 /**
  * The Profile part — the head of the Account page.
@@ -50,6 +52,10 @@ function Avatar({ user }: { user: ProfileUser | null }) {
     <span
       aria-hidden="true"
       className="w-11 h-11 text-lg rounded-full shrink-0 flex items-center justify-center font-bold bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
+      // The person's own colour, the one the frame's bar draws them in. A
+      // custom property the standard look never reads: under a look the
+      // letter wears the kit's avatar (looks.json, "wear": av).
+      style={{ '--fr-ac': swatchFor(user?.username || '?') } as React.CSSProperties}
     >
       {initialOf(user)}
     </span>
@@ -77,18 +83,18 @@ export function ProfileSection() {
         <a
           id="settings-profile-card"
           href="#profile?edit"
-          className="flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
+          className="ui-card ui-row flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
         >
           <Avatar user={user} />
-          <span className="flex-1 min-w-0">
-            <span className="block text-[17px] font-semibold text-zinc-900 dark:text-zinc-100 truncate">
+          <span className="ui-row-tx flex-1 min-w-0">
+            <span className="ui-row-t block text-[17px] font-semibold text-zinc-900 dark:text-zinc-100 truncate">
               {displayNameOf(user)}
             </span>
             {handle ? (
-              <span className="block text-[15px] text-zinc-500 dark:text-zinc-400 truncate">{handle}</span>
+              <span className="ui-row-s block text-[15px] text-zinc-500 dark:text-zinc-400 truncate">{handle}</span>
             ) : null}
           </span>
-          <span className="text-[15px] font-medium text-violet-700 dark:text-violet-400 shrink-0">{t('settings:profile.edit')}</span>
+          <span className="ui-link text-[15px] font-medium text-violet-700 dark:text-violet-400 shrink-0">{t('settings:profile.edit')}</span>
           <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden="true" />
         </a>
       </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState, type RefObject } from 'react';
+import { reducedMotion } from '../../lib/reduced-motion';
 import { ChevronDownIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { isNearBottom, type ScrollBox } from './stick-to-bottom';
@@ -31,7 +32,7 @@ export function InboxToEnd({ scroller }: { scroller: RefObject<HTMLDivElement | 
           type="button" inert={!shown} aria-label={name} title={name}
           className={`pointer-events-auto relative flex h-9 items-center justify-center gap-1.5 rounded-full bg-white ps-3 pe-3.5 text-[0.8125rem] font-semibold text-zinc-700 shadow-[0_1px_2px_rgba(0,0,0,0.08),0_4px_14px_rgba(0,0,0,0.14)] dark:bg-zinc-800 dark:text-zinc-200 transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none ${shown ? 'translate-y-0 scale-100 opacity-100' : 'pointer-events-none translate-y-2 scale-90 opacity-0'}`}
           onClick={() => scroller.current?.scrollTo({ top: scroller.current.scrollHeight,
-            behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })}
+            behavior: reducedMotion() ? 'auto' : 'smooth' })}
         >
           <ChevronDownIcon aria-hidden="true" className="h-[18px] w-[18px]" />
           {t('messages:inbox.toEnd.label')}

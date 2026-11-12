@@ -117,7 +117,9 @@ test('the sheet lists the held rows, counts the unread ones, and dims what was r
   assert.match(body, /held=\{tab === 'unread' && !entry\.view\.unread && !olderShown\}/,
     'dim only on collapsed Unread: on All and in the older rows a read row is an ordinary row');
   assert.match(body, /held\.release\(unread\.map\(\(view\) => view\.id\)\);\s*void controller\(\)\?\.markAllRead\(\);/);
-  assert.match(SHEET_SRC, /onRead\?\.\(\);\s*Promise\.resolve\(controller\(\)\?\.markAppRead\(appId\)\)/);
+  // #6579: a project's Mark read still clears that app; the app-less group's
+  // ("Across Homeroom") reaches the controller's project-less clear.
+  assert.match(SHEET_SRC, /onRead\?\.\(\);\s*Promise\.resolve\(appId != null\s*\?\s*controller\(\)\?\.markAppRead\(appId\)\s*:\s*controller\(\)\?\.markNoAppRead\(\)\)/);
   // #5289: a folded row lets all of its notifications go, and clears them all.
   assert.match(SHEET_SRC, /onRelease\?\.\(groupIds \|\| \[view\.id\]\);\s*void controller\(\)\?\.clearNotification\(view\.id, groupIds \|\| undefined\);/,
     'the × lets the row go before clearing it');

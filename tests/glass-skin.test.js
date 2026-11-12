@@ -3,7 +3,7 @@
 // the device under 'homeroom:skin' and sets data-skin="glass" on <html>
 // before first paint; `?skin=` pins a look for one load, for the capture
 // runner; app.css draws the look from the attribute in light AND dark.
-// Glass was the first of the nine looks of the one frame; this suite holds
+// Glass was the first of the looks of the one frame; this suite holds
 // the Skin module, the hook and the Settings picker for all of them, and
 // tests/frame-looks.test.js the stylesheet.
 //
@@ -35,19 +35,23 @@ function skinModuleSrc() {
 }
 
 // Runs the module against a stub window/document. `stored` seeds storage,
-// `search` is the page's query string, `broken` makes storage throw.
-function runSkin({ stored = null, search = '', broken = false } = {}) {
+// `search` is the page's query string, `broken` makes every storage access
+// throw, `storageThrows` makes only writes throw (storage readable, not
+// writable), `href` is the page's full address.
+function runSkin({ stored = null, search = '', broken = false, storageThrows = false, href = null } = {}) {
   const store = new Map(stored === null ? [] : [['homeroom:skin', stored]]);
   const attrs = new Map();
   const listeners = [];
+  const replaced = [];
   const localStorage = {
     getItem(k) { if (broken) throw new Error('blocked'); return store.has(k) ? store.get(k) : null; },
-    setItem(k, v) { if (broken) throw new Error('blocked'); store.set(k, String(v)); },
-    removeItem(k) { if (broken) throw new Error('blocked'); store.delete(k); },
+    setItem(k, v) { if (broken || storageThrows) throw new Error('blocked'); store.set(k, String(v)); },
+    removeItem(k) { if (broken || storageThrows) throw new Error('blocked'); store.delete(k); },
   };
   const window = {
     localStorage,
-    location: { search },
+    location: { search, href: href || `https://app.example/${search}` },
+    history: { replaceState(state, title, url) { replaced.push(url); } },
     addEventListener(type, fn) { if (type === 'storage') listeners.push(fn); },
   };
   const document = {
@@ -56,8 +60,8 @@ function runSkin({ stored = null, search = '', broken = false } = {}) {
       removeAttribute(k) { attrs.delete(k); },
     },
   };
-  vm.runInNewContext(skinModuleSrc(), { window, document, URLSearchParams });
-  return { Skin: window.Skin, store, attrs, listeners };
+  vm.runInNewContext(skinModuleSrc(), { window, document, URLSearchParams, URL });
+  return { Skin: window.Skin, store, attrs, listeners, replaced };
 }
 
 // ── The inline head module ───────────────────────────────────────────────
@@ -94,13 +98,51 @@ test('?skin= pins the look for this load and stores nothing', () => {
   assert.equal(runSkin({ search: '?skin=neon' }).Skin.get(), 'standard', 'an unknown pin is ignored');
 });
 
-// ── The nine looks of the frame ──────────────────────────────────────────
-//
-// Glass was the first of the tour's nine looks over the one frame; the
-// other eight are stored, applied and pinned the same way. `brand` (New
-// look) is a look too, but not one of the frame's.
+test('a pick applies and holds even when the browser refuses to store it', () => {
+  const fired = [];
+  // Storage can be read but not written: the old value stays stored.
+  const r = runSkin({ stored: 'glass', storageThrows: true });
+  assert.equal(r.attrs.get('data-skin'), 'glass');
+  r.Skin.onChange(() => fired.push(r.Skin.get()));
+  r.Skin.set('paper');
+  assert.equal(r.attrs.get('data-skin'), 'paper', 'the picked look is on <html> at once');
+  assert.equal(r.Skin.get(), 'paper', 'and is what every reader gets, not the stale stored look');
+  assert.deepEqual(fired, ['paper'], 'and the listeners repaint');
+  assert.equal(r.store.get('homeroom:skin'), 'glass', 'storage still holds the old value: the write was refused');
+});
 
-const FRAME_LOOKS = ['glass', 'brandkit', 'workbench', 'paper', 'pastel', 'mosaic', 'sunrise', 'today', 'playground'];
+test('a pick replaces a look named in the address, keeping the rest of it', () => {
+  const r = runSkin({
+    search: '?skin=glass&tab=2',
+    href: 'https://app.example/wall?skin=glass&tab=2#section',
+  });
+  assert.equal(r.replaced.length, 0, 'a load alone never rewrites the address');
+  r.Skin.set('sunrise');
+  assert.equal(r.Skin.get(), 'sunrise');
+  assert.equal(r.store.get('homeroom:skin'), 'sunrise');
+  assert.deepEqual(r.replaced, ['/wall?tab=2#section'],
+    'the skin parameter is gone, the other parameters and the hash stay');
+});
+
+test('a pick made in another tab takes over, after a local pick', () => {
+  const r = runSkin({ stored: 'glass' });
+  r.Skin.set('paper');
+  assert.equal(r.Skin.get(), 'paper');
+  r.store.set('homeroom:skin', 'mosaic');
+  for (const fn of r.listeners) fn({ key: 'homeroom:skin' });
+  assert.equal(r.attrs.get('data-skin'), 'mosaic', 'the in-memory pick is dropped for the other tab\'s');
+  assert.equal(r.Skin.get(), 'mosaic');
+});
+
+// ── The five looks of the frame ──────────────────────────────────────────
+//
+// Glass was the first of the tour's looks over the one frame; the other
+// four are stored, applied and pinned the same way. `brand` (New look) is
+// a look too, but not one of the frame's. Four more were drawn and retired
+// on 12 Nov 2026 (Brand kit, Workbench, Today, Playground).
+
+const FRAME_LOOKS = ['glass', 'paper', 'pastel', 'mosaic', 'sunrise'];
+const RETIRED_LOOKS = ['brandkit', 'workbench', 'today', 'playground'];
 
 test('every frame look is stored, applied and pinned like glass', () => {
   for (const look of FRAME_LOOKS) {
@@ -113,7 +155,41 @@ test('every frame look is stored, applied and pinned like glass', () => {
   }
 });
 
-test('the head and the hook list the same looks, the frame\'s nine after brand', () => {
+// A device that chose a retired look keeps its id in storage. Nothing
+// draws it any more, so it must read as the standard design everywhere: no
+// attribute for app.css, no frame for the islands, Standard in the menus.
+test('a retired look, stored or named in the address, is the standard design', () => {
+  for (const look of RETIRED_LOOKS) {
+    const stored = runSkin({ stored: look });
+    assert.equal(stored.Skin.get(), 'standard', `${look} in storage reads as standard`);
+    assert.equal(stored.attrs.has('data-skin'), false, `${look} in storage puts no data-skin on <html>`);
+    const pinned = runSkin({ search: `?skin=${look}` });
+    assert.equal(pinned.Skin.get(), 'standard', `?skin=${look} pins nothing`);
+    assert.equal(pinned.attrs.has('data-skin'), false);
+    // The address cannot bring one back over a look that is stored.
+    assert.equal(runSkin({ stored: 'glass', search: `?skin=${look}` }).Skin.get(), 'glass');
+    // A pick after it works as on a fresh device.
+    stored.Skin.set('paper');
+    assert.equal(stored.attrs.get('data-skin'), 'paper');
+    assert.equal(stored.store.get('homeroom:skin'), 'paper');
+  }
+  const mod = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
+  for (const look of RETIRED_LOOKS) {
+    assert.equal(mod.isFrameSkin(look), false, `${look} draws no frame`);
+    // Even a head module that still answered it (a cached shell) is not believed.
+    globalThis.window = { Skin: { get: () => look, onChange() {} } };
+    try { assert.equal(mod.currentSkin(), 'standard'); } finally { delete globalThis.window; }
+  }
+  // Nothing of them is left to draw: no rule, no source, no name.
+  const css = read('public', 'css', 'app.css');
+  for (const look of RETIRED_LOOKS) {
+    assert.ok(!css.includes(`data-skin="${look}"`), `app.css has no rule for ${look}`);
+    assert.equal(fs.existsSync(path.join(__dirname, '..', 'frontend', 'looks', `${look}.css`)), false, `${look}.css is gone`);
+    assert.doesNotMatch(experimentalSrc(), new RegExp(`value="${look}"`), `${look} is not offered in Settings`);
+  }
+});
+
+test('the head and the hook list the same looks, the frame\'s five after brand', () => {
   const head = skinModuleSrc().match(/const SKINS = \[([^\]]*)\]/);
   assert.ok(head, 'the head module lists its looks');
   const listed = head[1].split(',').map((s) => s.trim().replace(/'/g, '')).filter(Boolean);
@@ -134,12 +210,9 @@ test('the head and the hook list the same looks, the frame\'s nine after brand',
 // shows only to a REAL admin (the same reading of App._realIsAdmin that
 // shows "view as non-admin").
 
-const LOOK_NAMES = {
-  glass: 'Glass', brandkit: 'Brand kit', workbench: 'Workbench', paper: 'Paper', pastel: 'Pastel',
-  mosaic: 'Mosaic', sunrise: 'Sunrise', today: 'Today', playground: 'Playground',
-};
+const LOOK_NAMES = { glass: 'Glass', paper: 'Paper', pastel: 'Pastel', mosaic: 'Mosaic', sunrise: 'Sunrise' };
 
-test('Settings › Experimental offers the nine looks in one menu, shipped hidden under New look', () => {
+test('Settings › Experimental offers the five looks in one menu, shipped hidden under New look', () => {
   const { renderComponent } = require('./lib/render-tsx');
   const html = renderComponent('frontend/src/features/settings/sections/experimental.tsx', 'ExperimentalSection', {});
   const section = html.match(/<div id="settings-look-section" class="([^"]*)">([\s\S]*?)<\/select>/);
@@ -148,7 +221,7 @@ test('Settings › Experimental offers the nine looks in one menu, shipped hidde
   assert.match(section[2], /<label[^>]*for="settings-look"[^>]*>Look<\/label>/);
   const options = [...section[2].matchAll(/<option value="([^"]*)"[^>]*>([^<]*)<\/option>/g)].map((m) => [m[1], m[2]]);
   assert.deepEqual(options, [['', 'Standard'], ...FRAME_LOOKS.map((id) => [id, LOOK_NAMES[id]])],
-    'Standard, then the nine in the tour\'s order, each by its name');
+    'Standard, then the five in the tour\'s order, each by its name');
   assert.ok(html.indexOf('id="new-look-enabled"') < html.indexOf('id="settings-look-section"'));
   assert.ok(html.indexOf('id="settings-look"') < html.indexOf('id="settings-local-agents-section"'));
   assert.doesNotMatch(html, /glass-look-enabled/, 'the one-look switch is gone');
@@ -226,7 +299,7 @@ test('New look and the Look menu are exclusive, and both paint what is stored', 
   assert.equal(on.state.skin, 'brand');
   assert.equal(on.select.value, '', 'New look is not one of the menu\'s looks: the menu reads Standard');
   assert.equal(on.toggle.checked, true);
-  on.select.listeners.change({ target: { value: 'today' } });
+  on.select.listeners.change({ target: { value: 'sunrise' } });
   assert.equal(on.toggle.checked, false, 'choosing a look turns New look off');
   // Another tab changes the look: this pane repaints.
   on.state.skin = 'glass';
@@ -249,7 +322,7 @@ test('the Look menu\'s words are English source with descriptions', () => {
 });
 
 // The stylesheet's side (each look's block, tokens, typeface and rules) is
-// held as a table over the nine in tests/frame-looks.test.js.
+// held as a table over the five in tests/frame-looks.test.js.
 
 // ── useSkin(): the look, read by an island after it mounts ─────────────
 //

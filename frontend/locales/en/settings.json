@@ -4,12 +4,16 @@
     "description": "Heading of the Language section in Settings, where the person picks the language Homeroom is shown in. \"Language\" is a noun."
   },
   "language.intro": {
-    "text": "Homeroom's own screens are in English for now. Apps on Homeroom use this as their default language, and may offer their own override.",
-    "description": "Explanation under the Language heading in Settings: what choosing a language does today."
+    "text": "The language Homeroom's screens are shown in. A language is listed once enough of Homeroom has been translated into it. Apps on Homeroom use your choice as their default, and some let you pick another in their own settings.",
+    "description": "Explanation under the Language heading in Settings: what choosing a language does, why a language may not be listed yet, and that apps follow it unless they offer their own choice."
   },
   "language.auto": {
     "text": "Auto: use device language",
-    "description": "First option in the Language list in Settings: follow the language of the phone or browser instead of a fixed choice."
+    "description": "First option in the Language list in Settings: follow the language of the phone or browser instead of a fixed choice. Shown only for a moment, until the page knows which language that is."
+  },
+  "language.autoCurrently": {
+    "text": "Auto (currently: {{language}})",
+    "description": "First option in the Language list in Settings: follow the language of the phone or browser instead of a fixed choice. {{language}} is the language that gives on this device, in its own name (for example \"English\" or \"Español\"), or English when Homeroom is not available in the device's language."
   },
   "language.saved": {
     "text": "✓ Saved",
@@ -290,6 +294,10 @@
   "connectors.list.disconnect": {
     "text": "Disconnect",
     "description": "Button on a connection's row, on its AI tool's card in Settings > Connectors: removes that connection's access to Homeroom."
+  },
+  "connectors.list.reconnect": {
+    "text": "Reconnect",
+    "description": "Button under a connection whose sign-in ran out, on its AI tool's card in Settings > Connectors: opens that tool's setup steps at the one step that signs in again, so the person can connect it again without repeating the whole setup. Shown for Claude and Codex."
   },
   "connectors.claudeSteps.open.title": {
     "text": "Open connector settings.",
@@ -656,8 +664,8 @@
     "description": "Error shown in place of the list in Settings > App AI permissions when it could not be loaded."
   },
   "grants.empty": {
-    "text": "No apps have asked to use AI yet.",
-    "description": "Shown in place of the list in Settings > App AI permissions when no app has ever asked for permission."
+    "text": "No apps can use AI on your behalf yet. When you let an app use AI, it appears here with its spending cap, and you can revoke it at any time.",
+    "description": "Shown in place of the list in Settings > App AI permissions when no app has ever been allowed to use AI: says what will appear here and that it can be revoked."
   },
   "grants.revoked": {
     "text": "Revoked",
@@ -1343,6 +1351,10 @@
     "text": "Try Homeroom's new look: white cards on a light grey background, the Geist typeface with a serif for titles, and colours that each have a job: yellow for what needs you, black for where you are. Light mode only. On for this browser.",
     "description": "Explanation under the New look switch in Settings, Experimental. Geist is the name of a typeface; keep it as is. Homeroom is the product name. Yellow and black name the colours of the highlights on screen."
   },
+  "experimental.look.fold": {
+    "text": "Look and theme",
+    "description": "Accessible name and tooltip of a round button in the top bar on a phone, which only admins see. It opens a small menu with two rows: Look (the visual style) and Theme (light or dark)."
+  },
   "experimental.look.label": {
     "text": "Look",
     "description": "Label of a menu in Settings, Experimental, which only admins see. It chooses the visual style Homeroom is drawn in on this browser."
@@ -1354,14 +1366,6 @@
   "experimental.look.glass": {
     "text": "Glass",
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (frosted glass panels floating on the wallpaper). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.look.brandkit": {
-    "text": "Brand kit",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (the brand's cream page, a serif for titles and one yellow button). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.look.workbench": {
-    "text": "Workbench",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (dense one-line rows for people who work in it all day). A proper name; translate it as a short name, not a sentence."
   },
   "experimental.look.paper": {
     "text": "Paper",
@@ -1379,16 +1383,8 @@
     "text": "Sunrise",
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (white cards and a peach-to-lavender main button). A proper name; translate it as a short name, not a sentence."
   },
-  "experimental.look.today": {
-    "text": "Today",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (large headings and big cards, like an app store's front page). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.look.playground": {
-    "text": "Playground",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (chunky rounded blocks and heavy friendly type). A proper name; translate it as a short name, not a sentence."
-  },
   "experimental.look.description": {
-    "text": "Try one of nine looks for Homeroom, in light and dark. Each has its own typeface, colours and shapes. Not every screen is drawn in them yet; admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",
+    "text": "Try one of five looks for Homeroom, in light and dark. Each has its own typeface, colours and shapes. Not every screen is drawn in them yet; admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",
     "description": "Explanation under the Look menu in Settings, Experimental, which only admins see while the looks are being drawn. Homeroom is the product name; Home is its first screen."
   },
   "experimental.localAgents.title": {
@@ -1462,6 +1458,22 @@
   "accessibility.contrast.description": {
     "text": "Darker text and clearer lines, in light and dark.",
     "description": "Explanation under the High contrast switch in Settings > Accessibility."
+  },
+  "accessibility.motion.label": {
+    "text": "Reduce motion",
+    "description": "Label of a switch in Settings > Accessibility: turns off most animations, slides and moving effects across Homeroom."
+  },
+  "accessibility.motion.description": {
+    "text": "Turns off most animations, slides and moving effects, so screens change in place. When this is off, Homeroom follows your device's own reduce motion setting.",
+    "description": "Explanation under the Reduce motion switch in Settings > Accessibility."
+  },
+  "accessibility.previews.label": {
+    "text": "Play previews on project cards",
+    "description": "Label of a switch in Settings, Accessibility: whether project cards play their short, silent preview clips."
+  },
+  "accessibility.previews.description": {
+    "text": "A project's card plays a short, silent clip of the project when you point at it, or on a phone for the card you stop on. Turn this off to see still pictures only. Clips never play when your device is set to reduce motion or save data.",
+    "description": "Explanation under the Play previews switch in Settings, Accessibility."
   },
   "privacy.whoCanMessage.title": {
     "text": "Who can message or invite me",
@@ -1928,16 +1940,16 @@
     "description": "Heading of the section in Settings that lists which apps may use the device's location, microphone, camera and so on."
   },
   "appPermissions.intro": {
-    "text": "Apps you've allowed to use your location, microphone, camera, screen or connected devices. Each app is asked for separately, and only the app you granted gets it. Revoking stops the app the next time it opens, because a running app keeps what it was given until then.",
-    "description": "Explanation under the App device permissions heading in Settings."
+    "text": "Apps you've allowed to use your location, microphone, camera, screen or connected devices. Each app is asked for separately, and only the app you granted gets it. If an app is open in this tab, revoking closes it so it stops at once. Anywhere else it is open, it keeps access until it is closed. On another device, opening the app again within a minute may bring the permission back until it is closed again.",
+    "description": "Explanation under the App device permissions heading in Settings. Revoking closes the app when it is open in this browser tab. A running app keeps a permission until it is closed, and another device that reopens the app within about a minute of the revoke may still give it the permission, which it then keeps until it is closed."
   },
   "appPermissions.loadFailed": {
     "text": "Could not load app permissions.",
     "description": "Error in Settings > App device permissions when the list could not be fetched."
   },
   "appPermissions.empty": {
-    "text": "No app has asked for your camera, microphone, location or devices yet.",
-    "description": "Shown in Settings > App device permissions when no app has been granted anything."
+    "text": "No apps can use your camera, microphone, location, screen or devices yet. When you allow an app one of these, it appears here and you can revoke it at any time.",
+    "description": "Shown in Settings > App device permissions when no app has been granted anything: says what will appear here and that it can be revoked."
   },
   "appPermissions.reEnable": {
     "text": "Re-enable",
@@ -1946,6 +1958,18 @@
   "appPermissions.revoke": {
     "text": "Revoke",
     "description": "Red button beside a permission of an app in Settings > App device permissions: takes that permission away from the app."
+  },
+  "appPermissions.note.camera": {
+    "text": "Lets this app use your camera while it is open, once your browser allows it too.",
+    "description": "Small grey line under the Camera permission of an app in Settings > App device permissions: says plainly what this permission lets the app do. Shown on revoked rows too, so it describes the permission rather than what the app can do right now; the browser must also allow the camera."
+  },
+  "appPermissions.note.microphone": {
+    "text": "Lets this app hear you and the sounds around you while it is open, once your browser allows it too.",
+    "description": "Small grey line under the Microphone permission of an app in Settings > App device permissions: says plainly what this permission lets the app do. Shown on revoked rows too, so it describes the permission rather than what the app can do right now; the browser must also allow the microphone."
+  },
+  "appPermissions.note.screen": {
+    "text": "Each time it asks, your browser lets you choose a screen, window or tab. The app sees only what you choose, until you stop sharing.",
+    "description": "Small grey line under the Screen sharing permission of an app in Settings > App device permissions. The browser shows its own picker every time the app asks to share, and the app sees only the screen, window or tab the person picks there."
   },
   "blockedApps.title": {
     "text": "Blocked apps",
@@ -1964,8 +1988,8 @@
     "description": "Error in Settings > Blocked apps when the list could not be fetched and the server gave no reason."
   },
   "blockedApps.empty": {
-    "text": "You haven’t blocked any apps.",
-    "description": "Shown in Settings > Blocked apps when the list is empty."
+    "text": "You haven’t blocked any apps. An app you block appears here, and you can unblock it at any time.",
+    "description": "Shown in Settings > Blocked apps when the list is empty: says what will appear here and that it can be undone."
   },
   "blockedApps.unblock": {
     "text": "Unblock",
@@ -1978,6 +2002,10 @@
   "blockedApps.unblockFailed": {
     "text": "Could not unblock this app.",
     "description": "Error in Settings > Blocked apps when removing a block failed and the server gave no reason."
+  },
+  "blockedApps.blockedAt": {
+    "text": "Blocked {{when}}",
+    "description": "Small grey line under an app's name in Settings > Blocked apps saying when the person blocked it. {{when}} is either how long ago (\"3d ago\", \"just now\") or, after a week, a date such as \"Jun 16\"."
   },
   "tour.title": {
     "text": "Welcome tour",
@@ -2000,8 +2028,36 @@
     "description": "Heading of the page in Settings that explains the places in Homeroom and how a change gets voted in."
   },
   "guide.intro": {
-    "text": "Where things are in Homeroom, and how a change goes live.",
+    "text": "How to start, where things are in Homeroom, and how a change goes live.",
     "description": "Explanation under the User guide heading in Settings."
+  },
+  "guide.start.heading": {
+    "text": "Start here",
+    "description": "Small label over the first card of Settings > User guide: the first steps for someone new to Homeroom, in order."
+  },
+  "guide.start.join.title": {
+    "text": "Join or make a community",
+    "description": "Row title in Settings > User guide: the first step for someone new."
+  },
+  "guide.start.join.body": {
+    "text": "On Home, Communities to join lists the public ones: open one and join it. To make your own, select New community under Pinned communities.",
+    "description": "Paragraph in Settings > User guide. \"Communities to join\", \"New community\" and \"Pinned communities\" are names shown on the Home screen."
+  },
+  "guide.start.open.title": {
+    "text": "Open an app and its Homeroom menu",
+    "description": "Row title in Settings > User guide: the second step for someone new."
+  },
+  "guide.start.open.body": {
+    "text": "Open a community's hub and select Open app, or select an app under Pinned apps on Home. Inside it, select the Homeroom logo to open its menu.",
+    "description": "Paragraph in Settings > User guide. \"Open app\" is a button on a community's hub; \"Pinned apps\" is the name of a section of the Home screen."
+  },
+  "guide.start.suggest.title": {
+    "text": "Suggest your first improvement",
+    "description": "Row title in Settings > User guide: the third step for someone new."
+  },
+  "guide.start.suggest.body": {
+    "text": "In that menu, select Suggest an improvement. Tap the part of the page you mean and say what should change. It is posted as a request on the project's Workshop.",
+    "description": "Paragraph in Settings > User guide. \"Suggest an improvement\" is the name of the button in the Homeroom menu."
   },
   "guide.places.heading": {
     "text": "Where things are",
@@ -2009,19 +2065,19 @@
   },
   "guide.place.communities.title": {
     "text": "Communities",
-    "description": "Row title in Settings > User guide, about communities and the Communities tab. Same word as the tab."
+    "description": "Row title in Settings > User guide, about communities."
   },
   "guide.place.communities.body": {
-    "text": "A community is the people behind a project. It shows as Just you, Private community or Public community, depending on who it is for. The Communities tab takes you to yours, each with a hub, a Workshop for the work going on, and channels to talk in. Joining a community is what lets you propose changes, vote and post there.",
-    "description": "Paragraph in Settings > User guide. \"Just you\", \"Private community\" and \"Public community\" are the names shown on screen for who a community is for. \"Workshop\" is the name of a place on a project's page."
+    "text": "A community is the people behind a project. It shows as Just you, Private community or Public community, depending on who can open it. Yours are on Home, under Pinned communities and All communities. Each has a hub, a Workshop for the work going on, and channels to talk in. You need to join a community to suggest changes, vote and post there.",
+    "description": "Paragraph in Settings > User guide. \"Just you\", \"Private community\" and \"Public community\" are the names shown on screen for who a community is for. \"Pinned communities\" and \"All communities\" are names shown on the Home screen. \"Workshop\" is the name of a place on a project's page."
   },
   "guide.place.apps.title": {
     "text": "Pinned apps",
     "description": "Row title in Settings > User guide, about the Pinned apps section of the home screen. Same words as that section's heading."
   },
   "guide.place.apps.body": {
-    "text": "Home lists the apps from your communities under Pinned apps. Select one to open it. + New project starts your own: it asks what the app should do and what to call it, then makes a private community you can invite people to.",
-    "description": "Paragraph in Settings > User guide. \"+ New project\" is the tile on the home screen that starts a project."
+    "text": "Pinned apps on Home holds the apps you pin and the ones you help build. Select one to open it. To start your own project, select New community: it asks what the app should do and what to call it, then makes it, just for you until you invite people.",
+    "description": "Paragraph in Settings > User guide. \"Pinned apps\" is a section of the Home screen; \"New community\" is the tile on Home that starts a project."
   },
   "guide.place.appMenu.title": {
     "text": "The Homeroom menu",
@@ -2036,15 +2092,15 @@
     "description": "Row title in Settings > User guide. Same words as the button in the Homeroom menu."
   },
   "guide.place.suggest.body": {
-    "text": "Use this button in the Homeroom menu to ask for a change to any of your apps or to Homeroom itself. You can start building it, or share a request for someone in the community to pick up.",
-    "description": "Paragraph in Settings > User guide. \"This button\" is Suggest an improvement, named by the row title above it."
+    "text": "Select it in the Homeroom menu to ask for a change to the app or to Homeroom itself. Tap the spot on the page you mean and say what should change, or switch to the form. It is posted as a request on the project's Workshop.",
+    "description": "Paragraph in Settings > User guide. \"It\" is Suggest an improvement, named by the row title above it. \"The form\" is the written form the button can switch to."
   },
   "guide.place.bot.title": {
     "text": "Homeroom bot",
     "description": "Row title in Settings > User guide, about the AI assistant. The bot's own name."
   },
   "guide.place.bot.body": {
-    "text": "Homeroom bot is your AI assistant: ask it to build a change, file an idea or fix a bug. It has its own tab, with Main Chat as the first row. Messages is a separate tab, for your conversations with people.",
+    "text": "Homeroom bot is your AI assistant: ask it a question, have it build a change, file an idea or fix a bug. It has its own tab. Main Chat is the first row there, and under it is the work you are part of across your projects. Messages is a separate tab, for your conversations with people.",
     "description": "Paragraph in Settings > User guide. \"Main Chat\" is the name of the person's main chat with the bot. \"Messages\" is the name of a tab."
   },
   "guide.place.you.title": {
@@ -2056,8 +2112,16 @@
     "description": "Paragraph in Settings > User guide. \"You\" is the name of a tab."
   },
   "guide.vote.heading": {
-    "text": "How a change gets voted in",
-    "description": "Small label over the card of Settings > User guide that explains, in four rows, how a change to an app goes live."
+    "text": "How a change goes live",
+    "description": "Small label over the card of Settings > User guide that explains, in five rows, how a change to an app goes live."
+  },
+  "guide.vote.request.title": {
+    "text": "It starts as a request",
+    "description": "Row title in Settings > User guide: the first step of how a change goes live."
+  },
+  "guide.vote.request.body": {
+    "text": "A member asks for a change, with Suggest an improvement or by telling Homeroom bot. The request goes on the project's Workshop, where people can see it.",
+    "description": "Paragraph in Settings > User guide. \"Workshop\" is the name of a place on a project's page."
   },
   "guide.vote.build.title": {
     "text": "Someone builds it",
@@ -2072,8 +2136,8 @@
     "description": "Row title in Settings > User guide: the second step of how a change goes live."
   },
   "guide.vote.up.body": {
-    "text": "When it is ready, the change goes up for a vote with a preview you can try. If it is waiting on you, it shows under Needs you in the Communities tab.",
-    "description": "Paragraph in Settings > User guide. \"Needs you\" is the name of a list on the Communities tab of decisions waiting on the person."
+    "text": "When it is ready, the change goes up for a vote with a preview you can try. If it is waiting on you, it is listed under Needs you.",
+    "description": "Paragraph in Settings > User guide. \"Needs you\" is the name of the list of things waiting on the person."
   },
   "guide.vote.checks.title": {
     "text": "Checks test it",
@@ -2090,6 +2154,138 @@
   "guide.vote.rule.body": {
     "text": "Each project has its own rule for who has to say yes: one person's yes can be enough, or it can take most of the group. Whoever manages a project can propose a new rule from Settings & rules in its ⋯ menu, and that goes to a vote under the current rule. Once the rule is met and the checks pass, the change goes live.",
     "description": "Paragraph in Settings > User guide. \"Settings & rules\" is the name of a row in a project's ⋯ menu."
+  },
+  "guide.compare.heading": {
+    "text": "Suggest, or ask Homeroom bot?",
+    "description": "Small label over a card of Settings > User guide that says when to use Suggest an improvement and when to ask Homeroom bot."
+  },
+  "guide.compare.suggest.title": {
+    "text": "When you can point at it",
+    "description": "Row title in Settings > User guide: the case for Suggest an improvement."
+  },
+  "guide.compare.suggest.body": {
+    "text": "Use Suggest an improvement when you can see what should change. Tap it on the page and say how. It goes straight to the project as a request.",
+    "description": "Paragraph in Settings > User guide. \"Suggest an improvement\" is the name of the button in the Homeroom menu."
+  },
+  "guide.compare.bot.title": {
+    "text": "When you want to talk it through",
+    "description": "Row title in Settings > User guide: the case for asking Homeroom bot."
+  },
+  "guide.compare.bot.body": {
+    "text": "Ask Homeroom bot when you have a question, want a change built, or are not sure yet what to ask for. It can file the request for you.",
+    "description": "Paragraph in Settings > User guide. \"Homeroom bot\" is the AI assistant's name."
+  },
+  "guide.terms.heading": {
+    "text": "Key terms",
+    "description": "Small label over the card of Settings > User guide that explains words Homeroom uses, one per row."
+  },
+  "guide.term.hub.title": {
+    "text": "Hub",
+    "description": "Row title in Settings > User guide: the name of a community's front page. Same word as on screen."
+  },
+  "guide.term.hub.body": {
+    "text": "A community's front page: who it is for, who was active this week, what needs you and what went live lately.",
+    "description": "Paragraph in Settings > User guide, explaining the word \"Hub\"."
+  },
+  "guide.term.workshop.title": {
+    "text": "Workshop",
+    "description": "Row title in Settings > User guide: the name of a place on a project's page. Same word as on screen."
+  },
+  "guide.term.workshop.body": {
+    "text": "Where a project's work is: the requests, the changes being built and the ones waiting for a vote.",
+    "description": "Paragraph in Settings > User guide, explaining the word \"Workshop\"."
+  },
+  "guide.term.channels.title": {
+    "text": "Channels",
+    "description": "Row title in Settings > User guide: the places on a project's page where members talk. Same word as on screen."
+  },
+  "guide.term.channels.body": {
+    "text": "Where a community's members talk: #general, plus one for each topic the project has.",
+    "description": "Paragraph in Settings > User guide, explaining the word \"Channels\". \"#general\" is the name of a channel; keep it as it is."
+  },
+  "guide.term.needsYou.title": {
+    "text": "Needs you",
+    "description": "Row title in Settings > User guide: the name of the list of decisions waiting on the person. Same words as on screen."
+  },
+  "guide.term.needsYou.body": {
+    "text": "Everything waiting on you, such as a vote or a question from Homeroom bot. Home shows a shortcut to it while a vote waits, and each project's page has its own.",
+    "description": "Paragraph in Settings > User guide, explaining \"Needs you\"."
+  },
+  "guide.term.mainChat.title": {
+    "text": "Main Chat",
+    "description": "Row title in Settings > User guide: the name of the person's main chat with Homeroom bot. Same words as on screen."
+  },
+  "guide.term.mainChat.body": {
+    "text": "Your own chat with Homeroom bot, the first row of its tab. News about a request is on the request's page instead.",
+    "description": "Paragraph in Settings > User guide, explaining \"Main Chat\"."
+  },
+  "guide.term.justYou.title": {
+    "text": "Just you",
+    "description": "Row title in Settings > User guide: the name shown for a project only its maker is in. Same words as on screen."
+  },
+  "guide.term.justYou.body": {
+    "text": "A project only you are in. Once someone you invite joins, it becomes a Private community.",
+    "description": "Paragraph in Settings > User guide, explaining \"Just you\". \"Private community\" is a name shown on screen."
+  },
+  "guide.term.private.title": {
+    "text": "Private community",
+    "description": "Row title in Settings > User guide: the name shown for a community only its members can open. Same words as on screen."
+  },
+  "guide.term.private.body": {
+    "text": "Only its members can open it. People join when they are invited.",
+    "description": "Paragraph in Settings > User guide, explaining \"Private community\"."
+  },
+  "guide.term.public.title": {
+    "text": "Public community",
+    "description": "Row title in Settings > User guide: the name shown for a community anyone can open. Same words as on screen."
+  },
+  "guide.term.public.body": {
+    "text": "Anyone can open it and join it.",
+    "description": "Paragraph in Settings > User guide, explaining \"Public community\". \"Open\" and \"join\" are verbs."
+  },
+  "guide.faq.heading": {
+    "text": "Questions",
+    "description": "Small label over the card of Settings > User guide that answers common questions, one per row."
+  },
+  "guide.faq.findApp.title": {
+    "text": "I can't find my app",
+    "description": "Row title in Settings > User guide: a question a person might ask."
+  },
+  "guide.faq.findApp.body": {
+    "text": "Pinned apps holds the apps you pin or help build. For any other app, open its community from Home, under Pinned communities or All communities, and select Open app on its hub. To keep it on Home, open the About entry in its Homeroom menu and choose Pin to Home.",
+    "description": "Paragraph in Settings > User guide. \"Pinned apps\", \"Pinned communities\" and \"All communities\" are names on the Home screen; \"Open app\" and \"Pin to Home\" are the names of buttons. \"The About entry\" is the row of the Homeroom menu that tells about the app."
+  },
+  "guide.faq.suggestion.title": {
+    "text": "My suggestion isn't showing",
+    "description": "Row title in Settings > User guide: a question a person might ask about a request they posted."
+  },
+  "guide.faq.suggestion.body": {
+    "text": "Your requests are listed in the Homeroom bot tab. A request is posted only once you are online and send it. A private request can be seen only by platform admins.",
+    "description": "Paragraph in Settings > User guide. \"Homeroom bot\" is the name of a tab."
+  },
+  "guide.faq.whoCan.title": {
+    "text": "Who can suggest, vote and post",
+    "description": "Row title in Settings > User guide: a question about who may take part in a community."
+  },
+  "guide.faq.whoCan.body": {
+    "text": "You need to be a member of the community, and a project can ask for more: some let only invited people build, and a vote on a public project may need a verified account. Anyone can read a public community. A private community is joined by invitation. Which yeses a change needs is the project's own rule.",
+    "description": "Paragraph in Settings > User guide. \"Yeses\" are approving votes."
+  },
+  "guide.faq.shortcuts.title": {
+    "text": "Keyboard shortcuts",
+    "description": "Row title in Settings > User guide."
+  },
+  "guide.faq.shortcuts.body": {
+    "text": "On a computer, press C on most screens, or inside an app, to comment on what you see. Your comments are posted as requests, each pinned to the spot you chose. Press C again to stop. In Settings, press / or Ctrl+K (⌘K on a Mac) to find a setting.",
+    "description": "Paragraph in Settings > User guide. C, /, Ctrl+K and ⌘K are keys; keep them as they are."
+  },
+  "guide.faq.problem.title": {
+    "text": "Something is broken",
+    "description": "Row title in Settings > User guide: how to report a problem."
+  },
+  "guide.faq.problem.body": {
+    "text": "Use Suggest an improvement and say what went wrong. Its form asks where it should go: this app, or the platform itself. You can also tell Homeroom bot.",
+    "description": "Paragraph in Settings > User guide. \"Suggest an improvement\" is the name of the button in the Homeroom menu."
   },
   "about.title": {
     "text": "About",
@@ -2648,12 +2844,12 @@
     "description": "Not shown on screen. Extra search words for \"Developer console\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.accessibility": {
-    "text": "text size font bigger larger zoom read contrast high normal accessible vision",
+    "text": "text size font bigger larger zoom read contrast high normal accessible vision motion animation reduce",
     "description": "Not shown on screen. Extra search words for \"Accessibility\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.language": {
-    "text": "locale translate english auto device",
-    "description": "Not shown on screen. Extra search words for \"Language\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
+    "text": "language languages locale translate translation english auto device bahasa idioma langue sprache lingua taal dil 语言 言語 언어 язык لغة",
+    "description": "Not shown on screen. Extra search words for \"Language\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words. The non-English words are the word for \"language\" in other languages, so someone whose screen is in the wrong language can still find this page: keep them."
   },
   "nav.keywords.alerts": {
     "text": "notifications sound push phone mute bell chime",
@@ -2906,6 +3102,14 @@
   "connectors.row.expiredUnknownDate": {
     "text": "Sign-in ran out. Follow the steps to connect again.",
     "description": "Line on a connection's row in Settings > Connectors when its sign-in has ended and the date is not known. The steps are that tool's setup steps on the same card."
+  },
+  "connectors.row.expiredReconnect": {
+    "text": "Sign-in ran out {{when}}. Reconnect to use it again.",
+    "description": "Line on a connection's row in Settings > Connectors when its sign-in has ended and the tool can sign in again from one step of its setup (Claude, Codex). {{when}} is a date with time. Reconnect is the button under this line."
+  },
+  "connectors.row.expiredReconnectUnknownDate": {
+    "text": "Sign-in ran out. Reconnect to use it again.",
+    "description": "Line on a connection's row in Settings > Connectors when its sign-in has ended, the date is not known, and the tool can sign in again from one step of its setup (Claude, Codex). Reconnect is the button under this line."
   },
   "connectors.capabilities.readWrite": {
     "text": "Can read your apps and send proposals",
@@ -3852,20 +4056,32 @@
     "description": "Title of the confirmation dialog before taking away one device permission (camera, microphone, location…) from an app, in Settings."
   },
   "appPermissions.revoke.confirmMessage": {
-    "text": "The app loses it the next time it opens. It can ask you again later.",
-    "description": "Body of the confirmation dialog before taking away a device permission from an app, in Settings. \"It\" is the permission, then the app."
+    "text": "Anywhere the app is already open, it keeps this permission until it is closed. On another device, opening the app again within a minute may bring the permission back until it is closed again.",
+    "description": "Body of the confirmation dialog before taking away a device permission from an app that is not open in this browser tab, in Settings. A running app keeps a permission until it is closed, and another device that reopens the app within about a minute of the revoke may still give it the permission, which it then keeps until it is closed."
   },
   "appPermissions.revoke.confirmButton": {
     "text": "Revoke",
     "description": "Red confirm button in the dialog that takes away a device permission from an app, in Settings."
+  },
+  "appPermissions.revoke.confirmMessageOpen": {
+    "text": "{{app}} is open in this tab, so revoking closes it now and anything not saved in it may be lost. Anywhere else it is open, it keeps this permission until it is closed. On another device, opening the app again within a minute may bring the permission back until it is closed again.",
+    "description": "Body of the confirmation dialog before taking away a device permission (camera, microphone, location…) from an app that is open in this browser tab right now, in Settings. {{app}} is the app's name. Confirming also closes the app in this tab. A running app keeps a permission until it is closed, and another device that reopens the app within about a minute of the revoke may still give it the permission, which it then keeps until it is closed."
+  },
+  "appPermissions.revoke.confirmButtonClose": {
+    "text": "Revoke and close app",
+    "description": "Red confirm button in the dialog that takes away a device permission from an app that is open in this browser tab right now, in Settings: it takes the permission away and closes the app."
+  },
+  "appPermissions.status.revokedClosed": {
+    "text": "Revoked, and {{app}} was closed in this tab.",
+    "description": "Status under the list of device permissions granted to apps, in Settings > App device permissions, after a permission was taken away from an app that was open in this browser tab, which was closed so the change took effect at once. {{app}} is the app's name."
   },
   "appPermissions.status.revokeFailed": {
     "text": "Failed to revoke.",
     "description": "Status under the list of device permissions granted to apps, in Settings > App device permissions, when a permission could not be taken away and the server gave no reason."
   },
   "appPermissions.status.revoked": {
-    "text": "Revoked. It stops the next time the app opens.",
-    "description": "Status under the list of device permissions granted to apps, in Settings > App device permissions, after a permission was taken away from an app. \"It\" is the app's use of the permission."
+    "text": "Revoked. Anywhere the app is already open, it keeps the permission until it is closed. On another device, opening the app again within a minute may bring the permission back until it is closed again.",
+    "description": "Status under the list of device permissions granted to apps, in Settings > App device permissions, after a permission was taken away from an app that was not open in this browser tab. A running app keeps a permission until it is closed, and another device that reopens the app within about a minute of the revoke may still give it the permission, which it then keeps until it is closed."
   },
   "appPermissions.status.unknownApp": {
     "text": "This app could not be identified.",
@@ -4687,80 +4903,8 @@
     "text": "Your choice could not be saved on this device. Try again.",
     "description": "Error below the mode switch when browser storage refuses a save."
   },
-  "frame.purpose.account": {
-    "text": "Your profile and how you sign in.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Account."
-  },
-  "frame.purpose.linkedAccounts": {
-    "text": "A connected account helps check that one person is not making many, because Homeroom pays for your AI credit.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Linked accounts."
-  },
-  "frame.purpose.contactPrivacy": {
-    "text": "Who can reach you, who can find you, and what Homeroom may send you.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Privacy."
-  },
-  "frame.purpose.phones": {
-    "text": "The phones and browsers signed in to your account. Unlink any you no longer use or do not recognize.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Linked devices."
-  },
-  "frame.purpose.wallet": {
-    "text": "The wallet linked to your account for this season's challenges.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Homeroom Wallet."
-  },
-  "frame.purpose.ai": {
-    "text": "What is left of this week's allowance, where it went, and which model does the work.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: AI usage & models."
-  },
-  "frame.purpose.connectors": {
-    "text": "Work on your apps from a Claude or ChatGPT chat, or from your own terminal, without using your weekly credit.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Connectors & CLI."
-  },
-  "frame.purpose.agentFiles": {
-    "text": "Personal files the coding agent follows on every build or plan you start, in any app.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Agent instructions & skills."
-  },
-  "frame.purpose.theme": {
-    "text": "How Homeroom looks on this browser.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Appearance."
-  },
-  "frame.purpose.accessibility": {
-    "text": "Make Homeroom easier to read on this browser.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Accessibility."
-  },
-  "frame.purpose.language": {
-    "text": "The language of Homeroom's own screens. Apps use it as their default and may offer their own choice.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Language."
-  },
-  "frame.purpose.alerts": {
-    "text": "Choose what reaches your phone and this browser.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Notifications."
-  },
-  "frame.purpose.appPermissions": {
-    "text": "What apps on Homeroom may use on your behalf, and which apps you have blocked.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: App permissions."
-  },
-  "frame.purpose.developer": {
-    "text": "Tools for people building and testing apps.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Developer."
-  },
-  "frame.purpose.tour": {
-    "text": "Take the welcome tour again.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Welcome tour."
-  },
-  "frame.purpose.guide": {
-    "text": "The places of Homeroom, and how a change gets voted in.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: User guide."
-  },
-  "frame.purpose.usernode": {
-    "text": "The Homeroom app on this phone, and its diagnostics.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Homeroom app."
-  },
-  "frame.purpose.about": {
-    "text": "Which build of Homeroom this is, and what is being improved.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: About."
-  },
-  "frame.purpose.experimental": {
-    "text": "Features still being tried. Switch one on to see it; switch it off to go back.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Experimental."
+  "frame.head.purpose": {
+    "text": "Your account, your preferences and your tools.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the title Settings at the head of the page, above the list of sections and the open section."
   }
 }

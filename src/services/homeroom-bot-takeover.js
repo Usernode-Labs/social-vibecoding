@@ -54,6 +54,11 @@ const STALE_UPDATE_MS = 3 * 60 * 60 * 1000;
 // before & after shots run) before it gives up and says so.
 const BUSY_WAIT_MS = 15 * 60 * 1000;
 const BUSY_POLL_MS = 20 * 1000;
+// #6598: an update whose worker could not start (GitHub did not answer) is
+// tried again by itself, this many times in all, about this far apart. The
+// asks stay queued meanwhile.
+const START_TRIES = 3;
+const START_RETRY_MS = 4 * 60 * 1000;
 const MAX_ASK_CHARS = 8000;
 const MAX_DESCRIPTION_CHARS = 6000;
 // The commit's message: Homeroom's own, never `#N` (on GitHub that is a pull
@@ -171,6 +176,15 @@ function outcomeOf(out, { tool = null } = {}) {
   // Every outcome says the change is its author's (voice.composeReport).
   const handedOver = true;
   if (!out || out.ok === false) {
+    // #6598: a worker that never started is not "it did not finish"; it is
+    // said as GitHub not answering, and the asks stay for another try.
+    if (out && out.code === 'start_failed' && out.startTransient !== false
+        && out.startCode !== 'github_rate_limited') {
+      return {
+        outcome: { action: 'start_failed', why: out.error || 'GitHub did not answer', handedOver },
+        status: 'failed',
+      };
+    }
     return { outcome: { action: 'failed', why: out?.error || 'it did not finish', handedOver }, status: 'failed' };
   }
   if (out.moved) {
@@ -245,6 +259,19 @@ async function clearStale(pool, sessionId) {
 }
 
 /**
+ * #6600: the change's stored work state, again, so the AI tab, its page and
+ * every other surface read a takeover as soon as it starts, ends or fails.
+ * Best effort: an error is logged and the run continues.
+ */
+async function refreshWorkState(pool, sessionId, deps = {}) {
+  try {
+    await (deps.workState || require('./work-state')).refresh(pool, [{ sessionId: Number(sessionId) }]);
+  } catch (err) {
+    log.warn('homeroom-bot-takeover', 'Could not refresh the change\'s work state', { sessionId, err: err.message });
+  }
+}
+
+/**
  * The update's row, written before it runs: { id } for a new one, or
  * { busy: true, id } when one on this change is running (it starts the next
  * when it ends). The row's user_id is the change's author, whose week pays.
@@ -285,6 +312,8 @@ async function start(pool, { app, change, askedBy = null, deps = {} }) {
     const row = await startRow(pool, { app, change, askedBy });
     if (row.busy) return { busy: true, id: row.id };
     await (deps.requestRun || requestRun)(pool, { id: row.id, appId: Number(app.id), userId: Number(change.user_id) });
+    // #6600: the change reads as the bot's work now, not as "Fix it".
+    await refreshWorkState(pool, change.id, deps);
     return { started: true, id: row.id };
   } catch (err) {
     log.warn('homeroom-bot-takeover', 'Could not start an update', { sessionId: change?.id, err: err.message });
@@ -318,11 +347,15 @@ async function queue(pool, ctx, { change, instruction, gate: admitted }) {
   }
   ctx.revised = true;
   ctx.workBusy = true;
+  // #6600: the reply is posted after this ask, and may have lost the race to
+  // the update's own failure (voice checks it before saying it is queued).
+  ctx.takeoverId = started.id || null;
   require('./bot-work-changed').noteWorkChanged(user.id, deps);
   const tool = toolOf(change);
   const author = change.author_username ? `@${change.author_username}` : 'its author';
   return {
     ok: true,
+    updateId: started.id || null,
     change: voice.changeRef(change),
     queued: started.busy
       ? 'An update to this change is running now. This one is queued right behind it: you make it as soon as that finishes.'
@@ -359,10 +392,12 @@ async function sessionOf(pool, sessionId) {
   return rows[0] || null;
 }
 
-function pause(ms, signal) {
+function pause(ms, signal, { hold = false } = {}) {
   return new Promise((resolve) => {
     const t = setTimeout(resolve, ms);
-    if (typeof t.unref === 'function') t.unref();
+    // A retry this work promised to make keeps the process alive; the busy
+    // wait, which only polls, does not.
+    if (!hold && typeof t.unref === 'function') t.unref();
     if (signal) signal.addEventListener?.('abort', () => { clearTimeout(t); resolve(); }, { once: true });
   });
 }
@@ -470,20 +505,42 @@ async function updateOnce(pool, config, { row, steps, runTag, signal = null, dep
     failingLines: failing ? followup.failingNowLines(failing, true) : [], locale: payer.locale || asker?.locale || null,
   });
 
-  const turn = await followup.runFollowUpTurn({
-    pool, config, bot, repo, session, prompt, mode: 'build', issueNumber: null, turnBudgetMs: budgetMs, model,
-    reasoningEffort: effort, commitMsg: COMMIT_MESSAGE, steps, owner, key: 'update',
-    deps: {
-      github,
-      worker: deps.worker || require('./worker'),
-      sessions: deps.sessions || require('../routes/sessions'),
-      agentTurn: deps.agentTurn || require('./agent-turn'),
-      ...(deps.durableTurn ? { durableTurn: deps.durableTurn } : {}),
-      // Waited for above; a turn that started between that look and here
-      // answers session_busy, said below.
-      sessionTaken: async () => false,
-    },
-  });
+  const turnDeps = {
+    github,
+    worker: deps.worker || require('./worker'),
+    sessions: deps.sessions || require('../routes/sessions'),
+    agentTurn: deps.agentTurn || require('./agent-turn'),
+    ...(deps.durableTurn ? { durableTurn: deps.durableTurn } : {}),
+    // Waited for above; a turn that started between that look and here
+    // answers session_busy, said below.
+    sessionTaken: async () => false,
+  };
+  // #6598: a worker that could not start because GitHub did not answer is
+  // tried again by itself, a few minutes apart, a limited number of times.
+  // The asks stay queued meanwhile, and only the first failure says so.
+  const startTries = Number.isFinite(deps.startTries) ? deps.startTries : START_TRIES;
+  const startRetryMs = Number.isFinite(deps.startRetryMs) ? deps.startRetryMs : START_RETRY_MS;
+  let turn = null;
+  for (let attempt = 1; attempt <= startTries; attempt += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    turn = await followup.runFollowUpTurn({
+      pool, config, bot, repo, session, prompt, mode: 'build', issueNumber: null, turnBudgetMs: budgetMs, model,
+      reasoningEffort: effort, commitMsg: COMMIT_MESSAGE, steps, owner, key: 'update',
+      deps: turnDeps,
+    });
+    if (!(turn.startFailed && turn.startTransient) || attempt >= startTries) break;
+    if (attempt === 1) {
+      // Said once, and only when it is going to try again: a restart during
+      // the wait does not say it twice.
+      // eslint-disable-next-line no-await-in-loop
+      await steps.once('start-note', () => voice.reportFollowUp(pool, config, {
+        app, session: change, asks, runTag: `${runTag}-start`, finish: null,
+        outcome: { action: 'start_retrying', handedOver: true },
+      }));
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await pause(startRetryMs, signal, { hold: true });
+  }
   const result = turn.result || {};
   const relay = botSvc.relaySpend(result.relayUsage, turn.pricing, deps.agentTurn || require('./agent-turn'));
   const costUsd = turn.costUsd ?? relay?.costUsd ?? null;
@@ -496,19 +553,49 @@ async function updateOnce(pool, config, { row, steps, runTag, signal = null, dep
     });
   }
   if (turn.stopped) return { ok: false, code: 'time', error: 'it ran out of time before it finished', costUsd, model };
+  if (turn.startFailed) {
+    // The worker never started, so no code was touched. A transient failure
+    // ran out its tries; anything else (a private repository) says the
+    // worker's own plain message once, with no wait.
+    log.warn('homeroom-bot-takeover', 'An update\'s worker could not start', {
+      sessionId: change.id, startCode: turn.startCode || null, transient: !!turn.startTransient,
+    });
+    // GitHub's hourly limit keeps its own plain message (when it resets);
+    // any other start failure says GitHub did not answer.
+    const quiet = String(turn.routed?.error || 'the worker could not start').replace(/^worker:\s*/, '');
+    return {
+      ok: false, code: 'start_failed', costUsd, model, startTransient: !!turn.startTransient,
+      startCode: turn.startCode || null,
+      error: turn.startTransient && turn.startCode !== 'github_rate_limited'
+        ? 'GitHub didn\'t answer when I tried to start, so nothing was changed'
+        : quiet,
+    };
+  }
   if (turn.routed?.error) {
     const code = String(turn.routed.error);
     log.warn('homeroom-bot-takeover', 'An update\'s turn failed', { sessionId: change.id, err: clip(code, 300) });
+    // #6602: a change the bot has no runtime for is said as that, in words,
+    // never as an answer that could not be read.
+    if (code === 'backend_unsupported') {
+      return {
+        ok: false, code: 'backend_unsupported', costUsd, model,
+        error: `I can't run on a change made in ${tool || 'another coding tool'} yet`,
+      };
+    }
     return {
       ok: false, code: code === 'session_busy' ? 'busy' : 'failed', costUsd, model,
       error: code === 'session_busy' ? 'somebody else started working on the change just then' : 'the platform failed while it worked on it',
     };
   }
   const parsed = followup.parseFollowUp(result.lastResultText);
-  const failedTurn = live.failedClaudeTurn(result);
+  // A turn that ran gives back a result with keys; a null or empty one never
+  // started, and is not an unreadable answer.
+  const ranIt = !!(turn.routed && turn.routed.result && Object.keys(turn.routed.result).length > 0);
+  const failedTurn = live.failedClaudeTurn(result) || !!result.fatalError;
   const moved = !failedTurn && !!result.pushOk && !!result.sha
     && (headBefore ? String(result.sha).toLowerCase() !== String(headBefore).toLowerCase() : parsed?.action === 'revise');
   if (!parsed && !moved) {
+    if (!ranIt) return { ok: false, code: 'failed', error: 'the turn did not run', costUsd, model };
     return { ok: false, code: 'unreadable', error: failedTurn ? 'the turn failed' : 'its answer could not be read', costUsd, model };
   }
   if (moved) {
@@ -614,6 +701,9 @@ async function runUpdateWork(ctx, { pool, config, deps = {} }, row, given = null
     : { ok: false, error: now?.error || 'it did not finish' };
   const tagOut = out;
   await steps.once('report', () => report(pool, config, { row: now || row, out: tagOut, runTag, deps }));
+  // #6600: its end, and its asks finished, are what the change's list and
+  // page read next (the taken ask holds it until this point). Best effort.
+  await refreshWorkState(pool, row.session_id, deps);
   await steps.once('next', () => startNext(pool, { row: now || row, deps }));
   return { state: now?.state || 'gone' };
 }
@@ -625,6 +715,9 @@ async function updateFailed(ctx, { pool, config, deps = {} }, row) {
   const out = { ok: false, error: 'it did not finish' };
   const now = await finishRow(pool, id, out);
   await report(pool, config, { row: now || row, out, runTag, deps });
+  // #6600: the change says the bot could not fix it until it is checked
+  // again, once its asks are finished.
+  await refreshWorkState(pool, row.session_id, deps);
   await startNext(pool, { row: now || row, deps });
   return { state: now?.state || 'gone' };
 }
@@ -648,6 +741,8 @@ module.exports = {
   OPEN_STATUSES,
   STALE_UPDATE_MS,
   BUSY_WAIT_MS,
+  START_TRIES,
+  START_RETRY_MS,
   COMMIT_MESSAGE,
   toolOf,
   mayAsk,

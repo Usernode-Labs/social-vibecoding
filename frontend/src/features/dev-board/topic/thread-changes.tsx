@@ -77,6 +77,7 @@ import { RequestWords } from './request-head';
 import { openRequestSpec, type RequestSpecCard } from './request-model';
 import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
 import { pageSlug } from './thread-items';
+import { useThreadMenu } from './thread-menu';
 import { swatchFor } from '../../group-chat/swatch';
 import { WorkWithBotButton } from './work-with-bot';
 import {
@@ -132,6 +133,100 @@ function changeBotAtWork(item: ThreadItem, view: ChangeView | null): boolean {
   if (item.byBot && item.state === 'underway' && !item.ready) return true;
   const fix = view?.v.testing.botFix;
   return fix === 'fixing' || fix === 'queued';
+}
+
+/**
+ * #6599: a built draft of yours goes up for a vote from its own card. Before
+ * this the only door was the old session view's Submit for review, and the
+ * card said its votes open once it is put up without offering a way to do
+ * it. Who may: its author, signed in on a screen that is not read-only — the
+ * promote route loads the session by `user_id`, so an admin who is not its
+ * author would only be refused. A draft still being built, or whose checks
+ * do not pass, has nothing to put up (`item.ready`, services/threads.js).
+ */
+function canPropose(item: ThreadItem): boolean {
+  if (item.state !== 'underway' || !item.ready || !item.mine) return false;
+  if (typeof window === 'undefined') return false;
+  const w = window as any;
+  return !!w.App?.user && !w.App.user.isSynthetic && !w.AppView?.readOnly;
+}
+
+/**
+ * What Homeroom said when it refused, in its own words: `proposal_not_ready`
+ * carries a sentence in `message`, and other refusals put one in `error`.
+ * A code such as `session_state_changed` is nothing to a reader, so it falls
+ * back to the card's own sentence.
+ */
+function proposeRefusal(body: any): string {
+  const message = body && typeof body.message === 'string' ? body.message.trim() : '';
+  if (message) return message;
+  const error = body && typeof body.error === 'string' ? body.error : '';
+  if (/\s/.test(error)) return error;
+  return translate('project:topic.thread.page.proposeFailed');
+}
+
+/**
+ * The one call the old view's Submit for review made (POST
+ * /api/sessions/:id/promote), resolving to the sentence to show when it
+ * refused and to null when the change went up. It went up: the change's own
+ * read is asked again, so its section becomes its vote card.
+ */
+export async function proposeChange(id: number): Promise<string | null> {
+  let body: any = null;
+  try {
+    const res = await fetch(`/api/sessions/${id}/promote`, { method: 'POST', credentials: 'same-origin' });
+    body = await res.json().catch(() => null);
+    if (!res.ok || (body && body.ok === false)) return proposeRefusal(body);
+  } catch {
+    return translate('project:topic.thread.page.proposeFailed');
+  }
+  if (typeof window === 'undefined') return null;
+  window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(id) }));
+  return null;
+}
+
+interface ProposeState {
+  /** The card may put its change up for a vote, and the ⋯ offers it. */
+  can: boolean;
+  busy: boolean;
+  /** Homeroom's sentence when it refused, or the card's own. */
+  error: string | null;
+  propose: () => void;
+}
+
+/** A line drawn without its card (`ChangeLine` on its own): nothing to put up. */
+const NO_PROPOSE: ProposeState = Object.freeze({ can: false, busy: false, error: null, propose: () => {} });
+
+/**
+ * #6599: `busy` stays true once it went up, until the change leaves
+ * `underway`, so the label never flashes back to Put it up for a vote while
+ * the thread re-reads. `onDone` is the thread's own immediate re-read; the
+ * card's own instance passes none, and the `change-detail-refresh` that
+ * `proposeChange` dispatches makes the request's page re-read it too.
+ */
+function useProposeChange(item: ThreadItem, onDone?: () => void): ProposeState {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const can = canPropose(item);
+  const propose = () => {
+    if (busy || !can) return;
+    setBusy(true);
+    setError(null);
+    void proposeChange(item.id).then((refusal) => {
+      if (refusal) {
+        setError(refusal);
+        setBusy(false);
+        return;
+      }
+      onDone?.();
+    });
+  };
+  useEffect(() => {
+    if (item.state === 'underway') return;
+    setBusy(false);
+    setError(null);
+  }, [item.state]);
+  return { can, busy, error, propose };
 }
 
 /**
@@ -195,21 +290,6 @@ function useChangeViews(items: ThreadItem[], tick = 0): Array<ChangeView | null>
   }), [items, rows]);
 }
 
-/**
- * Whether the gate counts the viewer's own change as their Yes without a
- * vote (governance-rules.ts: proposing counts as a yes on the counted
- * rules), read off its proposal row: Two yeses and Open floor count every
- * person's change; You or the group counts the creator's. Anything else
- * (Group vote, a project's own rules) is not assumed: the viewer taps. Nor
- * is a change a coding agent submitted for them (`external_agent`): its
- * author taps Yes on it like anyone else.
- */
-export function authorCounts(item: ThreadItem, row: any): boolean {
-  if (!item.mine || item.byBot || item.myVote || !row || row.external_agent || row.approval_mode !== 'rules') return false;
-  if (row.approval_preset === 'two_yeses' || row.approval_preset === 'open_floor') return true;
-  return row.approval_preset === 'you_or_the_group' && !!row.creator_yes;
-}
-
 /** What a change's own page counts toward its rule, and needs. */
 function tally(row: any): { yes: number; need: number } {
   const yes = Number(row?.qualified_yes_count ?? row?.yes_count) || 0;
@@ -236,11 +316,16 @@ function useKicker(item: ThreadItem, letter: string | null): string {
 /**
  * 1 Nov 2026: a change's own ⋯, its page's rows (AppView._topicCard
  * registers them under its view's key), which the document-level handler
- * opens as any `data-card-menu` disc.
+ * opens as any `data-card-menu` disc. #6599: a built draft of the viewer's
+ * gets Put it up for a vote among them too, the same call its card's button
+ * makes.
  */
-function ChangeMenu({ item, view }: { item: ThreadItem; view: ChangeView | null }): ReactNode {
+function ChangeMenu({ item, view, propose }: { item: ThreadItem; view: ChangeView | null; propose: ProposeState }): ReactNode {
   const t = useMessages('project');
   const key = view?.card.rail?.menuKey || '';
+  useThreadMenu(propose.can ? key : null, 'propose', propose.can
+    ? [{ label: t('project:topic.thread.page.proposeAction'), icon: 'default', act: propose.propose }]
+    : []);
   if (!key) return null;
   const label = item.number
     ? t(projectChangesOnGithub() ? 'project:topic.thread.page.moreNumberedPr' : 'project:topic.thread.page.moreNumbered', { number: item.number })
@@ -257,7 +342,9 @@ function ChangeMenu({ item, view }: { item: ThreadItem; view: ChangeView | null 
  * its status pill and its ⋯ on that line, then its title. The title is not
  * a door any more: this is the change's page.
  */
-export function ChangeLine({ item, view, letter = null }: { item: ThreadItem; view: ChangeView | null; letter?: string | null }): ReactNode {
+export function ChangeLine({ item, view, propose = NO_PROPOSE, letter = null }: {
+  item: ThreadItem; view: ChangeView | null; propose?: ProposeState; letter?: string | null;
+}): ReactNode {
   const t = useMessages('project');
   const kicker = useKicker(item, letter);
   const status = view?.v.status || null;
@@ -279,7 +366,7 @@ export function ChangeLine({ item, view, letter = null }: { item: ThreadItem; vi
             {t('project:change.reload')}
           </button>
         ) : null}
-        <ChangeMenu item={item} view={view} />
+        <ChangeMenu item={item} view={view} propose={propose} />
       </div>
       <h3 className="mt-0.5 min-w-0 text-[15px] font-[650] leading-snug text-zinc-900 dark:text-zinc-100" data-thread-change-title={item.id}>
         {item.title || t('project:topic.thread.item.changeUnnumbered')}
@@ -518,6 +605,43 @@ function AlsoCloses({ item, request }: { item: ThreadItem; request: number }): R
 }
 
 /**
+ * #6605: a change that is not live yet and closes only requests that are
+ * already closed says so under its title, so it does not read as that
+ * request's open work. The numbers link to their pages.
+ */
+function AlreadyClosed({ item }: { item: ThreadItem }): ReactNode {
+  const t = useMessages('project');
+  const list = Array.isArray(item.closesRequests) ? item.closesRequests : [];
+  if (!list.length) return null;
+  if (item.state === 'merged' || item.status === 'merging' || item.status === 'merged') return null;
+  if (!list.every((r) => r.closed === true)) return null;
+  const slug = appView()?.appData?.slug || '';
+  const numbers = list.map((r) => Number(r.number)).filter((n) => Number.isInteger(n) && n > 0).sort((a, b) => a - b);
+  if (!numbers.length) return null;
+  const linkClass = 'font-semibold text-violet-700 hover:underline dark:text-violet-300';
+  const parts: ReactNode[] = numbers.map((n) => (
+    <a
+      key={`c${n}`}
+      href={slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${n}` : `#${n}`}
+      className={linkClass}
+      data-thread-change-closed-on={n}
+    >
+      {`#${n}`}
+    </a>
+  ));
+  const locale = i18n.language || 'en';
+  return (
+    <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-closed={item.id}>
+      <RichMessage
+        id="project:topic.thread.page.alreadyClosed"
+        values={{ count: numbers.length, numbers: numberText(numbers, locale) }}
+        components={[<Joined key="closed" parts={joinParts(parts, locale)} />]}
+      />
+    </p>
+  );
+}
+
+/**
  * #6387: the change section's shape while the request's thread is still being
  * read (./request-head.tsx `holding`): its line — the small-caps kicker and
  * its status pill — its title, then its Votes and Testing cards. The loaded
@@ -533,6 +657,18 @@ export function ChangeSectionSkeleton(): ReactNode {
           <Skeleton shape="block" className="h-5 w-24 rounded-full" />
         </div>
         <Skeleton className="mt-2.5 h-3.5 w-3/5" />
+        {/* #6604: the summary's lines, a before/after pair and the two cards
+            below them, at the size they are once loaded, so the page does not
+            change height as they fill in. */}
+        <div className="mt-2 flex flex-col gap-1.5">
+          <Skeleton className="h-2.5 w-full" />
+          <Skeleton className="h-2.5 w-11/12" />
+          <Skeleton className="h-2.5 w-3/5" />
+        </div>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <Skeleton shape="block" className="h-24 rounded-xl" />
+          <Skeleton shape="block" className="h-24 rounded-xl" />
+        </div>
         <ChangeGatesSkeleton />
       </SkeletonGroup>
     </section>
@@ -543,8 +679,8 @@ export function ChangeSectionSkeleton(): ReactNode {
 function ChangeGatesSkeleton(): ReactNode {
   return (
     <div className="dev-change-pair">
-      <Skeleton shape="block" className="h-16 rounded-2xl" />
-      <Skeleton shape="block" className="h-16 rounded-2xl" />
+      <Skeleton shape="block" className="h-20 rounded-2xl" />
+      <Skeleton shape="block" className="h-20 rounded-2xl" />
     </div>
   );
 }
@@ -585,10 +721,12 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
   item: ThreadItem; view: ChangeView | null; plan?: RequestSpecCard | null; ballot?: boolean; request: number;
 }): ReactNode {
   const t = useMessages('project');
+  const propose = useProposeChange(item);
   const summary = view?.body.summaryHtml || '';
   const threadRequests = useContext(ThreadRequests);
   return (
     <>
+      <AlreadyClosed item={item} />
       <AlsoCloses item={item} request={request} />
       <ClosesOf item={item} requests={threadRequests} />
       {summary ? <div className="dev-thread-change-summary" data-thread-change-summary={item.id}><RequestWords html={summary} /></div> : null}
@@ -598,9 +736,33 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
       {plan ? <PlanLine plan={plan} builtFrom={item.builtFrom} /> : null}
       {view?.v.shots ? <ShotsPair id={item.id} number={item.number ?? null} s={view.v.shots} /> : null}
       {item.state === 'underway' || !hasCards(item) ? (
-        <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-waiting={item.ready ? 'ready' : 'building'}>
-          {t(item.ready ? 'project:topic.thread.page.ready' : 'project:topic.thread.page.underway')}
-        </p>
+        propose.can ? (
+          // #6599: its one action, where the Votes card will appear, with the
+          // shorter line under it; a refusal keeps its sentence here too.
+          <div className="mt-2" data-thread-change-propose={item.id}>
+            <button
+              type="button"
+              className="dev-vote-btn"
+              disabled={propose.busy}
+              aria-busy={propose.busy || undefined}
+              onClick={() => propose.propose()}
+            >
+              {t(propose.busy ? 'project:topic.thread.page.proposing' : 'project:topic.thread.page.proposeAction')}
+            </button>
+            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-waiting="ready">
+              {t('project:topic.thread.page.readyMine')}
+            </p>
+            {propose.error ? (
+              <p className="mt-1 text-[13px] text-[color:var(--state-blocked)]" role="alert" data-thread-change-propose-error>
+                {propose.error}
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-change-waiting={item.ready ? 'ready' : 'building'}>
+            {t(item.ready ? 'project:topic.thread.page.ready' : 'project:topic.thread.page.underway')}
+          </p>
+        )
       ) : view ? (
         <ChangeGates id={item.id} card={view.card} v={view.v} ballot={ballot} closes={closesList(item)} />
       ) : (
@@ -614,13 +776,16 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
 }
 
 /** One change, on its own: its line, then everything its page had. */
-function ChangeBlock({ item, plan = null, request }: { item: ThreadItem; plan?: RequestSpecCard | null; request: number }): ReactNode {
+function ChangeBlock({ item, plan = null, request, onChanged }: {
+  item: ThreadItem; plan?: RequestSpecCard | null; request: number; onChanged?: () => void;
+}): ReactNode {
   const [view] = useChangeViews([item]);
   const box = useRef<HTMLDivElement>(null);
+  const propose = useProposeChange(item, onChanged);
   useInView(item.id, !!view || item.state === 'underway', box);
   return (
     <div ref={box} className="mt-3" data-thread-change={item.id} data-thread-change-state={item.state || ''}>
-      <ChangeLine item={item} view={view} />
+      <ChangeLine item={item} view={view} propose={propose} />
       <ChangeBody item={item} view={view} plan={plan} request={request} />
       {/* 1 Nov 2026: ask about it, or sketch a revision, privately. #6392: the
           words say so, and the bot building or fixing it leaves this out. */}
@@ -639,12 +804,14 @@ function ChangeBlock({ item, plan = null, request }: { item: ThreadItem; plan?: 
  * the rest of its section. `open` is the ballot's, so a tap on the change's
  * row in the ballot opens it too.
  */
-function FoldedChange({ item, i, view, plan, request, open, onToggle }: {
+function FoldedChange({ item, i, view, plan, request, open, onToggle, onChanged }: {
   item: ThreadItem; i: number; view: ChangeView | null; plan: RequestSpecCard | null; request: number; open: boolean; onToggle: () => void;
+  onChanged?: () => void;
 }): ReactNode {
   const t = useMessages('project');
   const kicker = useKicker(item, letterOf(i));
   const status = view?.v.status || null;
+  const propose = useProposeChange(item, onChanged);
   return (
     <div className="dev-thread-fold" data-thread-change={item.id} data-thread-change-state={item.state || ''} data-thread-fold={open ? 'open' : 'shut'}>
       <div className="flex min-w-0 items-center gap-2" data-thread-change-line={item.id}>
@@ -658,7 +825,7 @@ function FoldedChange({ item, i, view, plan, request, open, onToggle }: {
           </span>
         </button>
         {status ? <span className="shrink-0" data-thread-change-status={status.key}><StatusPill s={status} inline /></span> : null}
-        <ChangeMenu item={item} view={view} />
+        <ChangeMenu item={item} view={view} propose={propose} />
       </div>
       {open ? <div className="ps-[22px]"><ChangeBody item={item} view={view} plan={plan} ballot request={request} /></div> : null}
     </div>
@@ -683,13 +850,13 @@ export function Elsewhere({ list, slug = null, onChanged }: {
   const current = slug || appView()?.appData?.slug || '';
   const github = projectChangesOnGithub();
   if (!list.length) return null;
-  async function dispute(e: ThreadElsewhere) {
+  async function answer(e: ThreadElsewhere, action: 'not-closing' | 'confirm-closing') {
     if (sending != null || !current) return;
     setSending(e.id);
     setFailed(null);
     try {
       const res = await fetch(
-        `/api/apps/${encodeURIComponent(current)}/issues/${e.request}/changes/${e.id}/not-closing`,
+        `/api/apps/${encodeURIComponent(current)}/issues/${e.request}/changes/${e.id}/${action}`,
         { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' },
       );
       if (!res.ok) throw new Error(String(res.status));
@@ -725,19 +892,45 @@ export function Elsewhere({ list, slug = null, onChanged }: {
               <a href={href} className="hover:underline" onClick={keep}>{e.title || t('project:topic.thread.item.changeUnnumbered')}</a>
             </p>
             {e.summary ? <p className="mt-0.5 truncate text-[13px] text-zinc-500 dark:text-zinc-400">{e.summary}</p> : null}
+            {e.closed ? (
+              <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-elsewhere-closed={e.id}>
+                {t('project:topic.thread.page.claimClosed', { number: e.request })}
+              </p>
+            ) : null}
+            {e.stays ? (
+              <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-elsewhere-stays={e.id}>
+                {t('project:topic.thread.page.claimStays', { on: e.on })}
+              </p>
+            ) : null}
             {e.ask ? (
-              <Button
-                type="button"
-                variant="pillNeutral"
-                size="sm"
-                ink="neutral"
-                className="mt-2.5"
-                disabled={sending === e.id}
-                data-thread-elsewhere-dispute={e.id}
-                onClick={() => void dispute(e)}
-              >
-                {t('project:topic.thread.page.claimDispute')}
-              </Button>
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="pillAccent"
+                  size="sm"
+                  disabled={sending === e.id}
+                  data-thread-elsewhere-confirm={e.id}
+                  onClick={() => void answer(e, 'confirm-closing')}
+                >
+                  {t('project:topic.thread.page.claimConfirm')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="pillNeutral"
+                  size="sm"
+                  ink="neutral"
+                  disabled={sending === e.id}
+                  data-thread-elsewhere-dispute={e.id}
+                  onClick={() => void answer(e, 'not-closing')}
+                >
+                  {t('project:topic.thread.page.claimDispute')}
+                </Button>
+              </div>
+            ) : null}
+            {e.confirmed && e.mine ? (
+              <p className="mt-2.5 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-elsewhere-confirmed={e.id}>
+                {t('project:topic.thread.page.claimConfirmed')}
+              </p>
             ) : null}
             {e.disputed && e.mine ? (
               <p className="mt-2.5 text-[13px] text-zinc-500 dark:text-zinc-400" data-thread-elsewhere-disputed={e.id}>
@@ -861,8 +1054,7 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
   // A door to one of these changes (./votes-in-view.ts) lands on the ballot,
   // where it is voted on.
   useBallotInView(options, box);
-  const counts = new Set(options.filter((o, i) => authorCounts(o, views[i]?.row)).map((o) => o.id));
-  const ballot: Ballot | null = ballotOf(data, counts, anchor);
+  const ballot: Ballot | null = ballotOf(data, anchor);
   if (!ballot) return null;
   const toggle = (id: number) => setOpen((was) => {
     const next = new Set(was);
@@ -887,7 +1079,7 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
     const wasFocused = !!from && document.activeElement === from;
     setBusy(true);
     try {
-      for (const v of ballotVotes(ballot, pick, counts)) {
+      for (const v of ballotVotes(ballot, pick)) {
         if (v.kind === 'close') await av.castIssueVote?.(v.issueId, 'up', { reason: null });
         else if (v.vote === null) await av.retractVote?.(v.sessionId, v.epoch);
         else await av.castVote?.(v.sessionId, v.vote, v.epoch, { reason: null });
@@ -973,7 +1165,7 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
       <div className="mt-2 flex flex-col" data-thread-folds={options.length}>
         {options.map((o, i) => (
           <FoldedChange key={o.id} item={o} i={i} view={views[i]} plan={plans?.get(o.id) || null} request={Number(anchor[0])}
-            open={open.has(o.id)} onToggle={() => toggle(o.id)} />
+            open={open.has(o.id)} onToggle={() => toggle(o.id)} onChanged={onChanged} />
         ))}
       </div>
     </div>
@@ -1295,7 +1487,7 @@ export function ThreadChanges({ slug, data, number, changes, close, onChanged, p
   const anchor = [number];
   // Who counts as whose pick is settled inside the ballot, from each change's
   // own read; which changes compete is not, so ask without it.
-  const ballot = ballotOf(data, new Set(), anchor);
+  const ballot = ballotOf(data, anchor);
   const competing = ballot ? new Set(ballot.options.map((o) => o.id)) : new Set<number>();
   const rest = changes.filter((c) => !competing.has(c.id));
   const closeAlone = close && !(ballot && ballot.close && ballot.close.id === close.id) ? close : null;
@@ -1306,7 +1498,7 @@ export function ThreadChanges({ slug, data, number, changes, close, onChanged, p
           <Competing key={ballot.options.map((o) => o.id).join(',')} slug={slug} data={data} anchor={anchor}
             options={ballot.options} close={ballot.close} onChanged={onChanged} plans={plans} />
         ) : null}
-        {rest.map((item) => <Fragment key={item.id}><ChangeBlock item={item} plan={plans?.get(item.id) || null} request={number} /></Fragment>)}
+        {rest.map((item) => <Fragment key={item.id}><ChangeBlock item={item} plan={plans?.get(item.id) || null} request={number} onChanged={onChanged} /></Fragment>)}
         {closeAlone ? <CloseVote slug={slug} close={closeAlone} onChanged={onChanged} /> : null}
         <Elsewhere list={elsewhere} slug={slug} onChanged={onChanged} />
       </section>

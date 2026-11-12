@@ -98,6 +98,7 @@ import { StagingOverlay, VisualCompareOverlay } from './features/staging';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
 import { LanguageNotice } from './features/shell/language-notice';
 import { LegacyPortals } from './lib/legacy-portals';
+import { IllustrationEditorHost } from './features/apps/illustration-editor-bridge';
 import { NavDrawer } from './features/nav-drawer/nav-drawer';
 import { Island } from './lib/island-boundary';
 import { assetUrl } from './lib/asset-url';
@@ -471,7 +472,7 @@ export function Shell() {
           THE FRAME'S OWN CHROME (features/frame/frame-app.tsx): the sidebar,
           bar and phone tab bar the 2026-11-06 screen tour draws, shown in
           place of the header and the tab bar above while the device's look
-          is one of the frame's nine (an admin's preview). It renders
+          is one of the frame's five (an admin's preview). It renders
           nothing on the first render and nothing under the standard look,
           so the prerendered document does not know it exists.
       */}
@@ -610,7 +611,7 @@ export function Shell() {
           no root to leak, and no `createRoot` on a live container. See
           lib/legacy-portals.tsx.
       */}
-      <Island name="LegacyPortals"><LegacyPortals /></Island>
+      <Island name="LegacyPortals"><LegacyPortals /><IllustrationEditorHost /></Island>
       {/*
           PlatformUI — the platform's single wrapper over the native kit
           (toasts, alerts, confirms, sheets). Loaded FIRST in the bundle:

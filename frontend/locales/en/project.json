@@ -771,6 +771,34 @@
     "text": "Nothing of yours here right now.",
     "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's second line when none of the person's work is under way or waiting in this project."
   },
+  "workshop.first.title": {
+    "text": "Make your first change here",
+    "description": "Title of a card on a project's Workshop page, shown to a member who has not made a request or a change on that project yet. It takes the place of the \"Your work\" card."
+  },
+  "workshop.first.text": {
+    "text": "Pick who does the building. Whatever it makes goes to the group for a vote.",
+    "description": "Under \"Make your first change here\" on a project's Workshop page, over three rows: Homeroom bot, Claude Code and ChatGPT."
+  },
+  "workshop.first.label": {
+    "text": "Who builds it",
+    "description": "Accessible name of the group of three rows (Homeroom bot, Claude Code, ChatGPT) in the \"Make your first change here\" card on a project's Workshop page."
+  },
+  "workshop.first.homeroom.name": {
+    "text": "Homeroom bot",
+    "description": "First row of the \"Make your first change here\" card on a project's Workshop page: Homeroom's own bot."
+  },
+  "workshop.first.homeroom.sub": {
+    "text": "Say what you want. It builds it here.",
+    "description": "Under \"Homeroom bot\" in the \"Make your first change here\" card on a project's Workshop page."
+  },
+  "workshop.first.own": {
+    "text": "On your own {{product}} plan",
+    "description": "Under \"Claude Code\" or \"ChatGPT\" in the \"Make your first change here\" card on a project's Workshop page. {{product}} is Claude or ChatGPT, the subscription the person already pays for."
+  },
+  "workshop.first.setUp": {
+    "text": "Set up",
+    "description": "A small pill on the Claude Code or ChatGPT row of the \"Make your first change here\" card while Homeroom's connector is not connected in that product yet: opening the row shows the steps to add it."
+  },
   "hub.workshop.sub": {
     "text": "What happened, and every item",
     "description": "The Workshop row of a project's Hub (For you): opens the project's Workshop, which shows what happened week by week and All items, the whole board. Not the person's own work, which has its own card on the Workshop tab (Your work)."
@@ -1767,6 +1795,18 @@
     "text": "{{count}} votes you skipped are still open",
     "description": "Line on the Needs you card of a project's Hub when every proposal waiting for this person's vote is one they already swiped past without voting: how many of those can still be voted on."
   },
+  "hub.needs.upForVote": {
+    "text": "Up for a vote",
+    "description": "Title of the first row of For you on a project's hub, for somebody signed in who has not joined the community: opens the changes up for a vote."
+  },
+  "hub.needs.upForVoteCount_one": {
+    "text": "{{count}} change up for a vote",
+    "description": "Screen-reader words for the count beside \"Up for a vote\" on a project's hub, for somebody who has not joined."
+  },
+  "hub.needs.upForVoteCount_other": {
+    "text": "{{count}} changes up for a vote",
+    "description": "Screen-reader words for the count beside \"Up for a vote\" on a project's hub, for somebody who has not joined."
+  },
   "hub.needs.joinToVote": {
     "text": "Join to vote on these.",
     "description": "Note under the Needs you card of a project's Hub for a person who is not a member of the community: they must join it before they can vote on the proposals. \"These\" are the proposals."
@@ -1870,6 +1910,22 @@
   "hub.recent.going": {
     "text": "Going live now",
     "description": "Line under a change's title in Recently live on a project's Hub, for a change that has merged and is still on its way to the live app, when there is no maker to name."
+  },
+  "hub.recent.morePill_one": {
+    "text": "+{{count}}",
+    "description": "Small badge leading the last row of Recently live on a project's hub: how many more changes went live this month than the pictures above show."
+  },
+  "hub.recent.morePill_other": {
+    "text": "+{{count}}",
+    "description": "Small badge leading the last row of Recently live on a project's hub: how many more changes went live this month than the pictures above show."
+  },
+  "hub.recent.moreThisMonth_one": {
+    "text": "{{count}} more live this month",
+    "description": "Last row of Recently live on a project's hub, after the pictures of the latest changes: how many more went live in the last thirty days. Opens the Workshop."
+  },
+  "hub.recent.moreThisMonth_other": {
+    "text": "{{count}} more live this month",
+    "description": "Last row of Recently live on a project's hub, after the pictures of the latest changes: how many more went live in the last thirty days. Opens the Workshop."
   },
   "hub.recent.own.today": {
     "text": "Live since today",
@@ -2896,8 +2952,8 @@
     "description": "A number a change says it would close, on its Votes card, when no request in this project has that number. <0></0> is the number as a link, and {{number}} that number."
   },
   "topic.change.gate.closesUnconfirmed": {
-    "text": "not confirmed by its requester",
-    "description": "End of a line naming a request a change will close, on its Votes card, when the person who filed that request has not agreed to it: the change was neither built for that request nor made by that person."
+    "text": "waiting for whoever filed it to agree this closes it",
+    "description": "End of a line naming a request a change will close, on its Votes card, when Homeroom knows a person who filed that request and could still answer. It says what confirming means, in words: that person has not yet agreed the change closes their request."
   },
   "topic.change.gate.closesMore_one": {
     "text": "{{count}} more",
@@ -2906,6 +2962,38 @@
   "topic.change.gate.closesMore_other": {
     "text": "{{count}} more",
     "description": "Button under the list of requests a change will close, on its Votes card, when some more are hidden. Tapping it shows the hidden lines in the same list."
+  },
+  "topic.change.gate.merge.tried_one": {
+    "text": "Tried {{count}} min ago.",
+    "description": "One sentence at the end of the line under the Merging card on a change's page: when Homeroom last asked GitHub to merge the change. {{count}} is how many minutes ago, 1."
+  },
+  "topic.change.gate.merge.tried_other": {
+    "text": "Tried {{count}} min ago.",
+    "description": "One sentence at the end of the line under the Merging card on a change's page: when Homeroom last asked GitHub to merge the change. {{count}} is how many minutes ago."
+  },
+  "topic.change.gate.merge.triedJustNow": {
+    "text": "Tried just now.",
+    "description": "One sentence at the end of the line under the Merging card on a change's page: Homeroom asked GitHub to merge the change less than a minute ago."
+  },
+  "topic.change.gate.merge.next_one": {
+    "text": "Trying again in about {{count}} min.",
+    "description": "The last sentence of the line under the Merging card on a change's page: when Homeroom asks GitHub again. {{count}} is how many minutes from now, 1."
+  },
+  "topic.change.gate.merge.next_other": {
+    "text": "Trying again in about {{count}} min.",
+    "description": "The last sentence of the line under the Merging card on a change's page: when Homeroom asks GitHub again. {{count}} is how many minutes from now."
+  },
+  "topic.change.gate.merge.nextNow": {
+    "text": "Trying again now.",
+    "description": "The last sentence of the line under the Merging card on a change's page: Homeroom is asking GitHub to merge it again now."
+  },
+  "topic.change.gate.merge.longFigure": {
+    "text": "Waiting longer than usual",
+    "description": "The large figure on the Merging card of a change's page once the merge has waited about 30 minutes or more, in place of the reason it waits."
+  },
+  "topic.change.gate.merge.long": {
+    "text": "This usually takes a few minutes, and it has waited {{minutes}} min. Homeroom keeps trying. If it is still waiting, say so in this change's thread.",
+    "description": "One sentence of the line under the Merging card on a change's page once the merge has waited about 30 minutes or more. {{minutes}} is how many minutes it has waited. The last sentence asks the reader to report it in the change's own discussion."
   },
   "topic.change.shots.title": {
     "text": "Before and after",
@@ -2966,6 +3054,10 @@
   "topic.thread.state.voting": {
     "text": "Up for a vote",
     "description": "Where a change, a vote to close or a decision in the list stands: people are voting on it now."
+  },
+  "topic.thread.state.approved": {
+    "text": "Approved",
+    "description": "Where a change in the list stands: it has the votes its project's rule needs, and it waits for its checks to pass before it goes live."
   },
   "topic.thread.state.live": {
     "text": "Live",
@@ -4243,6 +4335,14 @@
     "text": "Proposed",
     "description": "Small caption over the right thumbnail on a featured-illustration proposal's card: the illustration the proposal would put in its place."
   },
+  "card.illustration.preview": {
+    "text": "Preview loop",
+    "description": "Caption over the short silent clip a card-picture vote proposes, beside the Current and Proposed pictures."
+  },
+  "card.illustration.previewLabel": {
+    "text": "The proposed preview loop",
+    "description": "Accessible name of the video player for the short silent clip a card-picture vote proposes."
+  },
   "card.claims.label": {
     "text": "Claims:",
     "description": "Label before the list of members who have claimed a request (said they are working on it), shown to admins on the request's page. A plural noun; keep the colon."
@@ -4430,6 +4530,34 @@
   "menu.button.manage": {
     "text": "Suggest an improvement, import a PR or manage this app",
     "description": "Tooltip and accessible name of the round ⋯ button on a project's page, for someone who can take part. It opens the project's menu of actions and settings. PR is a GitHub pull request."
+  },
+  "menu.visitorView.title": {
+    "text": "See what visitors see",
+    "description": "First row of a project hub's ⋯ menu, for a member of a public project: opens the project's page as somebody signed out sees it."
+  },
+  "menu.visitorView.sub": {
+    "text": "The page before joining: the preview, the featured illustration and what's up for a vote",
+    "description": "Line under \"See what visitors see\" in a project hub's ⋯ menu: what that page shows. The featured illustration is the picture the group voted in for the project's card."
+  },
+  "visitorView.title": {
+    "text": "What visitors see",
+    "description": "Bar over a member's preview of their project's signed-out page, opened from \"See what visitors see\" in the hub's ⋯ menu. Also the preview's accessible name."
+  },
+  "visitorView.sub": {
+    "text": "The project's page for somebody who isn't signed in",
+    "description": "Second line of the bar over a member's preview of their project's signed-out page."
+  },
+  "visitorView.back": {
+    "text": "Back to hub",
+    "description": "Button on the bar over a member's preview of their project's signed-out page: closes it and returns to the project's hub."
+  },
+  "visitorView.inert": {
+    "text": "Visitors are asked to sign in here",
+    "description": "Toast when a member presses Join, Vote, Sign in or another button in the preview of their project's signed-out page: the button does nothing for them, and this says what a visitor would get."
+  },
+  "visitorView.unavailable": {
+    "text": "This project has no page for visitors. Only public projects do.",
+    "description": "Shown in a member's preview of their project's signed-out page when the project is not in the public directory."
   },
   "menu.suggest.title": {
     "text": "Suggest an improvement",
@@ -6083,6 +6211,22 @@
     "text": "Built, and its checks pass. Its votes open once it is put up for a vote.",
     "description": "Line under a change on a request's page, where its Votes and Testing cards will be: the change has finished building and its checks pass, and nothing happens until it is put up for a vote."
   },
+  "topic.thread.page.readyMine": {
+    "text": "Built, and its checks pass.",
+    "description": "Line under the Put it up for a vote button on a change's card on a request's page: the viewer's own change has finished building and its checks pass."
+  },
+  "topic.thread.page.proposeAction": {
+    "text": "Put it up for a vote",
+    "description": "Button on a change's card on a request's page, and its row in the card's ⋯ menu: puts the viewer's own built change up for the group to vote on."
+  },
+  "topic.thread.page.proposing": {
+    "text": "Proposing…",
+    "description": "Label of the Put it up for a vote button while the change is being put up for a vote."
+  },
+  "topic.thread.page.proposeFailed": {
+    "text": "Could not put this change up for the vote.",
+    "description": "Said under the Put it up for a vote button when Homeroom refused without a sentence of its own to show why."
+  },
   "topic.thread.page.rowBy": {
     "text": "{{by}} · #{{number}}",
     "description": "Second line of one competing change's row on a request's page, under the request: its changes and its vote to close: who built it and the change's number."
@@ -6119,6 +6263,10 @@
     "text": "<0>A change</0> says it closes this",
     "description": "Small line over the card on a request's page for a change that has no number yet, lives on another request's page, and lists this request among the ones it closes. <0></0> links to the change where it lives."
   },
+  "topic.thread.page.claimClosed": {
+    "text": "#{{number}} is already closed",
+    "description": "Line on the card for a change that says it closes the viewer's request, when that request is already closed. It replaces the \"This doesn't close it\" button: there is nothing left to close."
+  },
   "topic.thread.page.claimDispute": {
     "text": "This doesn't close it",
     "description": "Button on the card for a change that says it closes the viewer's request. Only the request's requester sees it. Pressing it records their disagreement and posts a line in the change's discussion; it does not unlink the request."
@@ -6131,9 +6279,21 @@
     "text": "(not confirmed)",
     "description": "After another request's number under a change that closes it, when that request's requester answered \"This doesn't close it\": the change still lists it, but the requester says the change does not close it."
   },
+  "topic.thread.page.claimStays": {
+    "text": "It stays on #{{on}} because people have voted on it.",
+    "description": "Line on the card for a change that belongs in this request's thread but stayed on another request's page, because people have already voted on it. {{on}} is the number of the request whose page it is on."
+  },
   "topic.thread.page.claimDisputeFailed": {
     "text": "Couldn't save that. Try again.",
-    "description": "Error line under the \"This doesn't close it\" button when recording the requester's answer failed."
+    "description": "Error line under the Confirm and \"This doesn't close it\" buttons when recording the requester's answer failed."
+  },
+  "topic.thread.page.alreadyClosed_one": {
+    "text": "<0>{{numbers}}</0> is already closed",
+    "description": "Under the title of a change that is not live yet and closes only requests that are already closed. {{numbers}} is the list of request numbers; <0></0> holds them, each a link to its page."
+  },
+  "topic.thread.page.alreadyClosed_other": {
+    "text": "<0>{{numbers}}</0> are already closed",
+    "description": "Under the title of a change that is not live yet and closes only requests that are already closed. {{numbers}} is the list of request numbers; <0></0> holds them, each a link to its page."
   },
   "topic.thread.page.alsoCloses": {
     "text": "Also closes <0>{{numbers}}</0>",
@@ -6266,6 +6426,10 @@
   "topic.thread.pill.vote": {
     "text": "Up for a vote",
     "description": "Status pill beside a request's number in its page's header: a change built for it is up for a vote."
+  },
+  "topic.thread.pill.approved": {
+    "text": "Approved",
+    "description": "Status pill beside a request's number in its page's header: the change built for it has the votes its project's rule needs, and it waits for its checks before it goes live."
   },
   "topic.thread.pill.close": {
     "text": "Vote to close",
@@ -6403,61 +6567,13 @@
     "text": "No longer needed. Voting has ended.",
     "description": "Line under the Votes card on a governance vote's page once something else settled what it was about, so the vote no longer applies."
   },
-  "frame.ask": {
-    "text": "Ask for a change",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The page's one primary button: opens the form that sends a request to the project."
-  },
-  "frame.invite": {
-    "text": "Invite",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The page's second button: opens the invite link for this community."
-  },
   "frame.hub.people": {
     "text": "People",
     "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who is active and who the community is for."
   },
-  "frame.hub.rule": {
-    "text": "How a change goes live",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who must approve a change."
-  },
-  "frame.hub.app": {
-    "text": "The app",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that opens the project's own app."
-  },
-  "frame.hub.openApp": {
-    "text": "Open {{app}}",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Title of the row that opens the project's app; {{app}} is the app's name."
-  },
-  "frame.hub.open": {
-    "text": "Open",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small button at the end of the app's row: opens the app."
-  },
-  "frame.hub.builtBy": {
-    "text": "Built by {{username}}",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under a change that recently went live: who built it."
-  },
-  "frame.hub.allTopics_one": {
-    "text": "All {{count}}",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Link at the end of the Topics group's label: opens the page that lists every topic; {{count}} is how many there are."
-  },
-  "frame.hub.allTopics_other": {
-    "text": "All {{count}}",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Link at the end of the Topics group's label: opens the page that lists every topic; {{count}} is how many there are."
-  },
   "frame.hub.channel": {
     "text": "#{{handle}}",
     "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Title of a channel's row and tab: the channel's handle after a hash sign, such as #general."
-  },
-  "frame.hub.saidBy": {
-    "text": "{{username}}: {{message}}",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under a channel's row: who wrote its last message, then the message."
-  },
-  "frame.hub.members_one": {
-    "text": "{{count}} member",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under the audience row in the context column: how many members the community has."
-  },
-  "frame.hub.members_other": {
-    "text": "{{count}} members",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under the audience row in the context column: how many members the community has."
   },
   "frame.place.workshop": {
     "text": "Everything asked for, being built and voted on in {{project}}.",
@@ -6472,84 +6588,8 @@
     "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under a channel's title."
   },
   "frame.topics.purpose": {
-    "text": "Each topic is a channel and a category of work. A new topic is voted on like any change.",
+    "text": "Each topic is a channel and a category of work.",
     "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title."
-  },
-  "frame.topics.propose": {
-    "text": "Propose a topic",
-    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The page's one primary button: opens the form that proposes a new topic, which goes to a vote."
-  },
-  "frame.topics.about": {
-    "text": "About topics",
-    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column."
-  },
-  "frame.topics.byVote": {
-    "text": "Changed by a vote",
-    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Title of the one row in the context column: topics change only when the group votes."
-  },
-  "frame.topics.byVoteLine": {
-    "text": "New, renamed, merged or archived",
-    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under 'Changed by a vote': the four ways a topic can change."
-  },
-  "frame.topics.requests_one": {
-    "text": "{{count}} open request",
-    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a topic's row: how many open requests are filed under it."
-  },
-  "frame.topics.requests_other": {
-    "text": "{{count}} open requests",
-    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a topic's row: how many open requests are filed under it."
-  },
-  "frame.topics.requestsAbout": {
-    "text": "{{requests}} · {{about}}",
-    "description": "A project's Topics page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). A topic's line when it has both: its count of open requests ({{requests}} is already a phrase such as '7 open requests'), then what the topic is about."
-  },
-  "frame.workshop.where": {
-    "text": "Where things are",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group of figures at the top: how many items are open, unclaimed, waiting on votes and live this week."
-  },
-  "frame.workshop.needsVote": {
-    "text": "Needs your vote",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group holding the one change that waits for this person's vote."
-  },
-  "frame.workshop.yourVote": {
-    "text": "Your vote",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Blue pill over a change's title on its vote card: it waits for this person's vote."
-  },
-  "frame.workshop.yes_one": {
-    "text": "{{count}} yes",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a vote card: how many people have voted yes."
-  },
-  "frame.workshop.yes_other": {
-    "text": "{{count}} yes",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a vote card: how many people have voted yes."
-  },
-  "frame.workshop.noMore_one": {
-    "text": "{{no}} no · {{count}} more to pass",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a vote card, after the yes count: how many voted no ({{no}}), then how many more yes votes ({{count}}) the change needs to pass."
-  },
-  "frame.workshop.noMore_other": {
-    "text": "{{no}} no · {{count}} more to pass",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a vote card, after the yes count: how many voted no ({{no}}), then how many more yes votes ({{count}}) the change needs to pass."
-  },
-  "frame.workshop.noPassed": {
-    "text": "{{no}} no · passed",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). On a vote card, after the yes count: how many voted no ({{no}}), and that the change has the yes votes it needs."
-  },
-  "frame.workshop.needed_one": {
-    "text": "{{count}} yes needed",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label on a vote card's bar, at the point the yes votes must reach."
-  },
-  "frame.workshop.needed_other": {
-    "text": "{{count}} yes needed",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label on a vote card's bar, at the point the yes votes must reach."
-  },
-  "frame.workshop.review": {
-    "text": "Review and vote",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The vote card's one button: opens the Needs you page, where the change is reviewed and the vote is cast."
-  },
-  "frame.workshop.weeks": {
-    "text": "Week by week",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group that lists earlier weeks, each opening what happened in it."
   },
   "frame.workshop.bot": {
     "text": "Homeroom bot",
@@ -6563,136 +6603,52 @@
     "text": "Who decides",
     "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who must approve a change."
   },
-  "frame.workshop.unclaimed": {
-    "text": "Nobody is on these",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column listing open requests nobody has picked up."
+  "frame.topic.theRequest": {
+    "text": "The request",
+    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card that holds the request in the asker's own words."
   },
-  "frame.workshop.all_one": {
-    "text": "All {{count}}",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Link at the end of a group's label: opens the full list; {{count}} is how many there are."
+  "frame.topic.theChange": {
+    "text": "The change",
+    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card that holds the change's summary and who put it up."
   },
-  "frame.workshop.all_other": {
-    "text": "All {{count}}",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Link at the end of a group's label: opens the full list; {{count}} is how many there are."
-  },
-  "frame.workshop.liveCount_one": {
-    "text": "{{count}} live",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). At the end of a past week's row: how many changes went live that week."
-  },
-  "frame.workshop.liveCount_other": {
-    "text": "{{count}} live",
-    "description": "A project's Workshop when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). At the end of a past week's row: how many changes went live that week."
-  },
-  "frame.rule.you": {
-    "text": "You say yes",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, as a row's title in the context column: on a project that is just this person's, their own yes is what a change needs."
-  },
-  "frame.rule.members_one": {
-    "text": "{{count}} of {{total}} members says yes",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, as a row's title in the context column: how many of the active members ({{total}}) must approve a change ({{count}})."
-  },
-  "frame.rule.members_other": {
-    "text": "{{count}} of {{total}} members say yes",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, as a row's title in the context column: how many of the active members ({{total}}) must approve a change ({{count}})."
-  },
-  "frame.rule.approvers_one": {
-    "text": "{{count}} of {{total}} approvers says yes",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, as a row's title in the context column: how many of the named approvers ({{total}}) must approve a change ({{count}})."
-  },
-  "frame.rule.approvers_other": {
-    "text": "{{count}} of {{total}} approvers say yes",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, as a row's title in the context column: how many of the named approvers ({{total}}) must approve a change ({{count}})."
-  },
-  "frame.rule.afterChecks": {
-    "text": "After the checks pass",
-    "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The approval rule in a few words, Line under the approval rule's row: a change is voted on once its automatic checks have passed."
-  },
-  "frame.topic.about": {
-    "text": "About",
-    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who asked and under which topic."
-  },
-  "frame.topic.asked": {
-    "text": "Asked {{when}}",
-    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under the asker's name in the context column; {{when}} is a short date or time, such as '28 Oct, 10:24'."
-  },
-  "frame.topic.topic": {
-    "text": "Topic",
-    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Line under a topic's name in the context column, saying the row is the topic the request is filed under."
-  },
-  "frame.allItems.purpose_one": {
-    "text": "{{count}} open request or change in {{project}}, newest first.",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title. Singular."
-  },
-  "frame.allItems.purpose_other": {
-    "text": "{{count}} open requests and changes in {{project}}, newest first.",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title. Plural."
-  },
-  "frame.allItems.all": {
-    "text": "All",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The first tab, before one per stage of the board (Requests, Under way, In review, Done): every item."
-  },
-  "frame.allItems.search": {
-    "text": "Search requests, changes or a number",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Placeholder of the search box under the tabs."
-  },
-  "frame.allItems.open_one": {
-    "text": "{{count}} open",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the list: how many items it shows. Singular."
-  },
-  "frame.allItems.open_other": {
-    "text": "{{count}} open",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the list: how many items it shows. Plural."
+  "frame.topic.status": {
+    "text": "Status",
+    "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card in the context column that says where the request or the change stands."
   },
   "frame.allItems.show": {
     "text": "Show",
     "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the two rows in the side column that choose whose items the list shows."
   },
-  "frame.allItems.everyone": {
-    "text": "Everyone's",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). First row under Show: every member's items (the default)."
+  "frame.place.general": {
+    "text": "Where everyone in {{project}} talks.",
+    "description": "A project's #general channel when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title: what the channel is for, as the standard page's line says it."
   },
-  "frame.allItems.mine": {
-    "text": "Only yours",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Second row under Show: only the items the viewer made or asked for."
+  "frame.channel.this": {
+    "text": "This channel",
+    "description": "A project's #general channel when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The small label over the card beside the conversation that says how many members the channel reaches and holds its Mute button."
   },
-  "frame.allItems.none": {
-    "text": "Nothing matches that.",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Shown in place of the list when the stage, Show and the search box leave nothing."
+  "frame.allItems.purpose": {
+    "text": "Every request and change in {{project}}, grouped by category or by stage.",
+    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title; {{project}} is the project's name."
   },
-  "frame.allItems.loading": {
-    "text": "Loading…",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Shown in place of the list while the board is being read."
+  "topic.change.gate.closesClosed": {
+    "text": "already closed",
+    "description": "End of a line naming a request a change will close, on its Votes card, when that request is already closed, so nothing is waiting on anybody."
   },
-  "frame.topic.follow": {
-    "text": "Follow this request",
-    "description": "A request's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Title of the row in the About column whose switch turns notifications for this request on or off."
+  "topic.change.gate.closesDisputed": {
+    "text": "its filer says this doesn't close it",
+    "description": "End of a line naming a request a change will close, on its Votes card, when the person who filed that request pressed \"This doesn't close it\"."
   },
-  "frame.topic.followLine": {
-    "text": "Replies and status changes",
-    "description": "A request's page under one of the frame's looks: the line under \"Follow this request\", saying what following brings."
+  "topic.change.gate.closesConfirm": {
+    "text": "Confirm",
+    "description": "Small button at the end of a line naming a request a change will close, on its Votes card. Only the person who filed that request sees it; pressing it records that they agree the change closes their request."
   },
-  "frame.allItems.nobody": {
-    "text": "Nobody on it",
-    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the word at the end of a request's row that nobody has taken yet, where a row otherwise ends in its stage's word."
+  "topic.thread.page.claimConfirm": {
+    "text": "Confirm",
+    "description": "Button on the card for a change that says it closes the viewer's request. Only the request's filer sees it. Pressing it records their agreement and posts a line in the change's discussion; it unlinks nothing."
   },
-  "frame.allItems.topicLine": {
-    "text": "{{people}} · {{items}}",
-    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The line under a topic's row in the context column: how many people are in it and how many items are open, each a whole phrase, joined by a middle dot."
-  },
-  "frame.allItems.people_one": {
-    "text": "{{count}} person",
-    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many people are involved in the topic. {{count}} is the number."
-  },
-  "frame.allItems.people_other": {
-    "text": "{{count}} people",
-    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many people are involved in the topic. {{count}} is the number."
-  },
-  "frame.allItems.items_one": {
-    "text": "{{count}} item",
-    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many of the topic's items are open. {{count}} is the number."
-  },
-  "frame.allItems.items_other": {
-    "text": "{{count}} items",
-    "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). In a topic row's line: how many of the topic's items are open. {{count}} is the number."
+  "topic.thread.page.claimConfirmed": {
+    "text": "You confirmed this closes it",
+    "description": "Line in place of the Confirm and \"This doesn't close it\" buttons on the card for a change that says it closes the viewer's request, after the filer pressed Confirm. Shown only to the filer."
   }
 }

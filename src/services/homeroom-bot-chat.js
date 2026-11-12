@@ -120,8 +120,6 @@ const PROPOSAL_LINK_RE = /(?:^|[/#])app\/([a-z0-9][a-z0-9-]{0,254})\/dev\/(propo
 const FIRST_VERSION_RE = /\bfirst\s+version\b/i;
 // The most of the bot's pending changes the read is offered.
 const MAX_OFFERED_CHANGES = 5;
-// A change's checks that leave it ready to try (homeroom-bot-dm.js READY_CHECKS).
-const READY_CHECKS = new Set(['passing', 'skipped']);
 // The most cards one read works out who still has to approve for.
 const MAX_APPROVAL_READS = 10;
 
@@ -173,7 +171,7 @@ async function botFor(pool, { app, user, settings = null, deps = {} }) {
   try {
     if (!app?.id || !user?.id || user.isSynthetic) return null;
     const s = settings || await botModule(deps).readSettings(pool);
-    if (!dmModule(deps).hasBot(s, user)) return null;
+    if (!(await require('./homeroom-bot-verified').worksFor(dmModule(deps), pool, s, user))) return null;
     return { builds: !!liveModule(deps).isLiveFor(s, app), settings: s };
   } catch (err) {
     log.warn('homeroom-bot-chat', 'Could not read whether Homeroom bot answers here', { app: app?.slug, err: err.message });
@@ -299,9 +297,9 @@ async function noteRequestStatus(pool, { appId, issueNumber, deps = {} }) {
  * What the records say about each of `rows` (filed or revise, with a
  * number): the request's newest live run since it was asked (as the DM's
  * activity card reads one; a fix reads only its change's own turns), the
- * bot's change for it (a fix's own), whether it waits in the queue (and
- * whether that wait is for the project's first version: `held_first_version`,
- * heldFirstVersion), and whether it is a first version. By message id.
+ * bot's change for it (a fix's own), whether it waits in the queue, and
+ * whether it is a first version. By message id. Where it stands is its
+ * stored work state (stageOf).
  */
 async function stateRows(pool, rows, { botId = null, deps = {} } = {}) {
   const ids = rows
@@ -351,38 +349,8 @@ async function stateRows(pool, rows, { botId = null, deps = {} } = {}) {
       WHERE r.chat_message_id = ANY($1::int[])`,
     [ids, Number(botId) || 0, RESTARTED_BUILD_NOTE],
   );
-  await heldFirstVersion(pool, found, { deps });
+  void deps;
   return new Map(found.map((row) => [Number(row.chat_message_id), row]));
-}
-
-/**
- * Mark each of stateRows' `found` rows a request (not a fix) that waits in
- * the queue, not started, while its project's first version is not live:
- * `held_first_version`. The bot's own rule decides, as its read lane does
- * (homeroom-bot.js firstVersionHolds, heldForFirstVersion): never the first
- * version's own request, nor an admin's Run now. A request with the bot's
- * change already up (a follow-up, which is not held) is read as that change
- * before this is (stageOf). A read that fails holds nothing: the card says
- * what it said before.
- */
-async function heldFirstVersion(pool, found, { deps = {} } = {}) {
-  const waiting = found.filter((row) => row.kind === 'filed' && row.queue_waiting);
-  if (!waiting.length) return;
-  const given = botModule(deps);
-  const bot = typeof given.firstVersionHolds === 'function' && typeof given.heldForFirstVersion === 'function'
-    ? given : require('./homeroom-bot');
-  let holds;
-  try {
-    holds = await bot.firstVersionHolds(pool, waiting.map((row) => Number(row.app_id)));
-  } catch (err) {
-    log.warn('homeroom-bot-chat', 'Could not read whether a first version holds chat requests', { err: err.message });
-    return;
-  }
-  for (const row of waiting) {
-    row.held_first_version = bot.heldForFirstVersion(holds, {
-      appId: row.app_id, issueNumber: row.issue_number, firstVersion: !!row.first_version, reason: row.queue_reason || null,
-    });
-  }
 }
 
 // The card's sentence for each stage of a request's work state.
@@ -400,9 +368,9 @@ function cardStageOfWork(work) {
     case 'reading': return 'reading';
     case 'planning': return code === 'retry_plan' || code === 'planning_with_you' ? 'waiting' : 'building';
     case 'waiting_for_you': return work.why === 'question' || work.why === 'plan' ? 'question' : 'person';
-    case 'building': return READY_LINES.has(code) ? 'waiting' : 'building';
+    case 'building': return READY_LINES.has(code) ? 'waiting' : code === 'update_queued' ? 'checking' : 'building';
     case 'checking': return 'checking';
-    case 'up_for_vote': return code === 'update_queued' ? 'checking' : 'proposed';
+    case 'up_for_vote': return 'proposed';
     case 'going_live': return 'approved';
     case 'live': return 'live';
     case 'closed': return 'closed';
@@ -411,34 +379,31 @@ function cardStageOfWork(work) {
 }
 
 /**
- * Pure: where one request (or fix) stands, from its stateRows row and, for
- * a request, its stored work state: one of CARD_STAGES. A fix's merged
- * change is live once production runs it (its `live_at`), approved until
- * then. A request held for its project's first version
- * (`held_first_version`, stateRows) waits for it.
+ * Pure: where one request (or fix) stands, as the card says it (one of
+ * CARD_STAGES), from its stored work state (services/work-state.js): a
+ * filed request's own row (`work`), and for a fix asked on one of the bot's
+ * changes, that change's row (`change`), with what the fix's own follow-up
+ * came to (its stateRows row: run, verdict, queued). A request its
+ * project's first version holds waits for it (its line says so).
  */
-function stageOf(row, { work = null } = {}) {
-  // 5 Nov 2026: a filed request reads its stored work state, the one every
-  // screen draws (services/work-state.js), worded by this card's own
-  // sentences; one held for its project's first version waits for it. With
-  // none read, the card says what it said before.
+function stageOf(row, { work = null, change = null } = {}) {
   if (row.kind === 'filed') {
     if (!work) return null;
-    if (row.held_first_version && work.stage === 'reading') return 'waiting_first_version';
+    if (work.stage === 'reading' && work.line?.code === 'first_version_wait') return 'waiting_first_version';
     return cardStageOfWork(work);
   }
-  // A fix asked on one of the bot's changes follows that change.
-  const status = row.session_status || null;
-  if (status === 'merged') return row.session_live_at ? 'live' : 'approved';
+  if (row.kind !== 'revise' || !change) return null;
+  const status = change.change?.status || null;
+  if (status === 'merged') return change.stage === 'live' ? 'live' : 'approved';
   if (status === 'merging') return 'approved';
   if (status === 'closed' || status === 'archived') return 'closed';
-  if (row.kind !== 'revise') return null;
-  const ready = status === 'promoted' && READY_CHECKS.has(row.check_state);
   // Not up for approval any more, and not approved: nothing to change.
   if (status !== 'promoted') return 'stopped';
   // Its follow-up waits or runs (again, when somebody wrote since).
-  if (!row.run_id || row.queued) return 'fixing';
-  if (row.verdict === 'revise') return ready ? 'proposed' : 'checking';
+  if (!row.run_id || row.queued || change.change?.update) return 'fixing';
+  // Revised: up for a vote once it is open for one (or, a first version,
+  // going live without one); still being checked until then.
+  if (row.verdict === 'revise') return change.change.voteOpen || change.stage === 'going_live' ? 'proposed' : 'checking';
   if (row.verdict === 'question') return 'asked';
   if (row.verdict === 'answer') return 'answered';
   if (row.verdict === 'person') return 'person';
@@ -507,9 +472,22 @@ async function cardsOf(pool, { appId, user, rows, builds = true, typical = true,
       log.warn('homeroom-bot-chat', 'Could not read the chat requests\' work states', { appId, err: err.message });
     }
   }
+  // And the changes fixes were asked on: their own stored rows.
+  const revised = [...new Set([...states.values()].filter((r) => r.kind === 'revise' && r.session_id).map((r) => Number(r.session_id)))];
+  let changes = new Map();
+  if (revised.length) {
+    try {
+      changes = await (deps.workState || require('./work-state')).forChanges(pool, revised);
+    } catch (err) {
+      log.warn('homeroom-bot-chat', 'Could not read the work states of changes asked to be fixed', { appId, err: err.message });
+    }
+  }
   const stages = new Map();
   for (const [id, state] of states) {
-    stages.set(id, stageOf(state, { work: works.get(Number(state.issue_number)) || null }));
+    stages.set(id, stageOf(state, {
+      work: works.get(Number(state.issue_number)) || null,
+      change: state.session_id ? changes.get(Number(state.session_id)) || null : null,
+    }));
   }
   const stageOfRow = (row) => stages.get(Number(row.chat_message_id)) || null;
   const typicalMinutes = typical && rows.some((row) => row.kind === 'filed' && (stageOfRow(row) || 'reading') === 'reading')

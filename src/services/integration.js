@@ -81,6 +81,16 @@ function parseRepo(repoUrl) {
 const HELD_UNTIL_SQL = `(SELECT wi.data->'refused'->>'retryAt' FROM wf_instances wi
   WHERE wi.machine = 'proposal' AND wi.key = 'session:' || cs.id)`;
 
+// #6563: when Homeroom last tried the held merge, and when it first met the
+// hold on this head, from the same record as HELD_UNTIL_SQL. A record written
+// before `since` existed falls back to `at`, so the long-wait clock starts at
+// the last try: it may come late, never early.
+const HELD_AT_SQL = `(SELECT wi.data->'refused'->>'at' FROM wf_instances wi
+  WHERE wi.machine = 'proposal' AND wi.key = 'session:' || cs.id)`;
+
+const HELD_SINCE_SQL = `(SELECT COALESCE(wi.data->'refused'->>'since', wi.data->'refused'->>'at') FROM wf_instances wi
+  WHERE wi.machine = 'proposal' AND wi.key = 'session:' || cs.id)`;
+
 /**
  * The `integration` block the API serializes and the card renders. Calls
  * nothing, never throws, and is correct on a row that predates the columns.
@@ -113,6 +123,10 @@ function readIntegration(session) {
     // alongside the 'github_busy' / 'github_refused' reason, so a stale
     // record says nothing.
     heldUntil: s.merge_held_until ? new Date(s.merge_held_until).toISOString() : null,
+    // #6563: the last try and the first held try, read only with a GitHub
+    // hold reason, so a stale record says nothing (HELD_AT_SQL, HELD_SINCE_SQL).
+    heldAt: s.merge_held_at ? new Date(s.merge_held_at).toISOString() : null,
+    heldSince: s.merge_held_since ? new Date(s.merge_held_since).toISOString() : null,
     error: s.integration_error || null,
     // Derived, so every surface agrees without re-deriving: is this answer
     // about the head the row currently claims? A measurement about a head
@@ -505,6 +519,8 @@ const { currentVotePredicateSql } = require('./pr-vote-revision');
 module.exports = {
   readIntegration,
   HELD_UNTIL_SQL,
+  HELD_AT_SQL,
+  HELD_SINCE_SQL,
   isFresh,
   measure,
   fetchAppMirror,

@@ -43,6 +43,7 @@
  */
 
 import { Fragment, memo, useCallback, useEffect, useId, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from 'react';
+import { reducedMotion } from '../../../lib/reduced-motion';
 
 import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/ui/grouped-list';
@@ -114,8 +115,13 @@ import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { drawerStore } from '../../nav-drawer/drawer-store';
 import { ProjectPlaces } from './project-places';
 import {
-  ProjectAllItemsFrame, ProjectFrameHead, ProjectHubFrame, ProjectTopicsFrame, ProjectWorkshopFrame, type AllItemRow, type ProjectTab,
+  ProjectAllItemsFrame, ProjectFrameHead, ProjectHubFrame, ProjectTopicsFrame, ProjectWorkshopFrame, type ProjectTab,
 } from './frame/project-frame';
+import { placeRows } from './project-places';
+import { kanbanFiltersStore, type KanbanFiltersState } from '../kanban-filters-store';
+import { ruleSentence } from './community-card';
+import { THIS_WEEK_NEW_MAX, THIS_WEEK_SEEN } from './week-pages';
+import { FirstChangeCard, useFirstChange } from './first-change';
 import { slotCounts, useBotSlots } from './bot-slots';
 import { weekName, weekRange } from './week-pages';
 import { liveSinceLine } from './hub-cards';
@@ -832,7 +838,7 @@ function useThemeReorderMotion(listRef: { current: HTMLElement | null }, themes:
   const capture = () => {
     const list = listRef.current;
     if (!list || typeof window === 'undefined'
-      || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) return;
+      || reducedMotion()) return;
     const tops = new Map<string, number>();
     list.querySelectorAll<HTMLElement>(':scope > [data-ws-theme]').forEach((el) => {
       tops.set(el.dataset.wsTheme || '', el.getBoundingClientRect().top);
@@ -3095,6 +3101,8 @@ export function DevWorkshop(): ReactNode {
   // Your work is read only then; Topics is a page the kit adds, held here.
   const frame = isFrameSkin(useLiveSkin());
   const desk = useDesk(frame ? v.slug : null);
+  // The kit's Workshop asks a newcomer who should build, as the Your work card does (./first-change.tsx).
+  const frameFirst = useFirstChange(frame ? v.slug || '' : '', desk);
   const frameSlots = useBotSlots(frame ? v.slug : null);
   const [frameTopics, setFrameTopics] = useState(false);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -3123,13 +3131,10 @@ export function DevWorkshop(): ReactNode {
   // #4457: the item whose page is open in the panel beside the list (wide
   // windows only; ./side-panel.tsx), as the kind and id AppView opens.
   const [sideItem, setSideItem] = useState<TopicRef | null>(null);
-  // All items in the kit reads the board's own columns (frameAll, below);
-  // its stage, Show and search box are this page's own state. Here with the
-  // other hooks: the kit's branch sits after the page's early returns.
-  const kanban = useStoreState(devKanbanStore);
-  const [frameStage, setFrameStage] = useState('');
-  const [frameMine, setFrameMine] = useState(false);
-  const [frameQuery, setFrameQuery] = useState('');
+  // All items in the kit shows the board's own search and filters
+  // (frameAll, below). Here with the other hooks: the kit's branch sits
+  // after the page's early returns.
+  const frameFilters = useStoreState<KanbanFiltersState>(kanbanFiltersStore);
   const sideWide = useMediaFlag(WORKSHOP_SIDE_QUERY);
   // Whether the Workshop tab's Your work shows every row or its first
   // WORKSHOP_WORK_FIRST.
@@ -3155,14 +3160,6 @@ export function DevWorkshop(): ReactNode {
   // the prerendered page is unchanged; the publish is the fallback where
   // AppView is not there to ask.
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
-  // The board's columns are published only while its "By stage" pane is up
-  // (app-view.js _rerenderWorkshop). The kit's All items asks for them
-  // itself, from the same bucketing, whenever the Workshop view is republished.
-  const [frameKanban, setFrameKanban] = useState<DevKanbanView | null>(null);
-  useEffect(() => {
-    if (!frame || tab !== 'all') return;
-    try { setFrameKanban(((window as any).AppView?._kanbanView?.() as DevKanbanView | undefined) || null); } catch { setFrameKanban(null); }
-  }, [frame, tab, v]);
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
   // from a door lower down should start at its own head — in the element
@@ -3814,7 +3811,6 @@ export function DevWorkshop(): ReactNode {
     if (key === tabRef.current) scrollToHead(hostRef.current);
     else openTab(key as TabKey);
   };
-  const askChange = canPost ? () => { (window as any).App?.openFeedbackModal?.({ fromDev: true, intent: 'issue' }); } : null;
   const inviteHere = community?.is_member ? () => { openInviteLinks(); } : null;
   // Join, for someone signed in who is not in yet: the hero's own Join
   // (lib/join-required.ts offerJoin asks, joins and re-reads the hub).
@@ -3824,131 +3820,167 @@ export function DevWorkshop(): ReactNode {
   // A topic's channel lights Topics but is the product's own page under
   // the head (its figures, its signals, its room), so the head says so and
   // app.css leaves the body on show.
-  const frameHead = { tabs: frameTabs, tab: frameTab, page: tab.startsWith('c:') && !frameTopics ? 'channel' : undefined, onTab: pickFrameTab, onAsk: askChange, onInvite: inviteHere, onJoin: joinHere };
-  // Said the same way on the Hub and in the Workshop: your work with
-  // Homeroom bot here, and the approval rule in its short words, the wait
-  // as its line.
-  const frameWork = () => {
-    if (!v.mine?.viewer) return null;
-    const line = deskLine(desk);
-    const words = deskWords(desk);
-    return {
-      line: line ? t(line.id, line.values) : null,
-      words: words ? translate(words.id, words.values).replace(/<\/?\d+>/g, '') : null,
-      href: projectTabAddress(slug),
-    };
-  };
+  const frameHead = { tabs: frameTabs, tab: frameTab, page: tab.startsWith('c:') && !frameTopics ? 'channel' : undefined, onTab: pickFrameTab, onInvite: inviteHere, onJoin: joinHere };
+  // The approval rule, as the Overview's own line says it where the card is
+  // narrow (./community-card.tsx ApprovalLine, RuleWords): the sentence,
+  // the wait after it, and Rules for whoever may change it.
   const frameRule = () => {
     const approval = community?.approval || null;
     if (!approval || !community) return null;
     const approvers = Array.isArray(approval.approvers) ? approval.approvers : null;
-    // A few words, as the tour's row says it ("3 members say yes"); the
-    // page's own sentence stays the standard look's (ApprovalLine).
-    const required = Math.max(1, Number(approval.required) || 1);
-    const electorate = Math.max(required, Number(approval.electorate) || required);
-    const title = community.audience === 'solo' && community.is_member && electorate === 1
-      ? t('project:frame.rule.you')
-      : approval.policy === 'invited'
-        ? t('project:frame.rule.approvers', { count: required, total: electorate })
-        : t('project:frame.rule.members', { count: required, total: electorate });
+    const line = ruleSentence(approval, community, approvers);
     return {
-      title,
-      line: (ruleHasWait(approval) ? approvalStep(approval, community, approvers).wait : '') || t('project:frame.rule.afterChecks'),
-      onOpen: community.can_manage ? () => { window.UsernodeReact?.dialogs?.whoDecides?.open({ slug }); } : null,
+      id: line.short,
+      values: line.values,
+      faces: line.names ? line.names.map((name) => ({ name, color: swatchFor(name) })) : null,
+      wait: (ruleHasWait(approval) ? approvalStep(approval, community, approvers).wait : '') || null,
+      onRules: community.can_manage ? () => { window.UsernodeReact?.dialogs?.whoDecides?.open({ slug }); } : null,
     };
   };
   const frameWorkshopUp = frame && !frameTopics && tab === 'workshop' && !weekUp;
-  // ALL ITEMS IN THE KIT (the tour's s29): the board's own columns as rows,
-  // from the same view model the board renders; the stage, Show and the
-  // search box are this page's own state, as the board's filters are its.
+  // ALL ITEMS IN THE KIT (version 2 of the tour's s29): the kit's head,
+  // its two groupings as tabs, the board's own search and filters, and the
+  // categories' order. The list under it is this page's own (the theme
+  // cards, or the board by stage), which app.css lays in the kit's content
+  // column.
   const frameAllUp = frame && !frameTopics && tab === 'all';
-  const frameAll = (): ReactNode => {
-    const board = kanban.cols.length ? kanban : frameKanban || kanban;
-    const cols = board.cols.map((col) => ({
-      key: col.key,
-      title: col.title,
-      items: col.rows.flatMap((row): AllItemRow[] => {
-        if (row.t !== 'card') return [];
-        const b = row.brief;
-        const pill = row.card.pill?.state || null;
-        const asks = pill && /^(vote|reply|decide|question|needs)/i.test(pill.key);
-        return [{
-          key: row.key,
-          title: row.card.title.text || row.card.title.title || '',
-          line: factsLine([b && b.n ? `#${b.n}` : null, b?.category || null]) || null,
-          href: openHref(slug, row.card),
-          mine: !!b?.mine,
-          word: pill && !asks ? pill.label : (b?.kind === 'request' && b.unclaimed ? t('project:frame.allItems.nobody') : null),
-          pill: pill && asks ? { kind: pill.tone === 'ok' || pill.tone === 'done' ? 'ok' : pill.tone === 'bad' || pill.tone === 'blocked' || pill.tone === 'error' ? 'bad' : /wait|on votes/i.test(pill.label) ? 'wait' : 'act', label: pill.label } : null,
-        }];
-      }),
-    }));
-    return (
-      <ProjectAllItemsFrame
-        {...frameHead}
-        project={projectName}
-        cols={cols}
-        topics={v.themes.filter((th) => !th.ungrouped && th.topic).map((th) => ({ key: th.id, name: th.name, icon: th.icon, people: th.people.length, items: th.counts.open + th.counts.underway + th.counts.review, href: placeHref(slug, channelPlace(th.topic!.handle)) }))}
-        loading={!!board.loading && !board.cols.length}
-        stage={frameStage}
-        onStage={setFrameStage}
-        mine={frameMine}
-        onMine={setFrameMine}
-        query={frameQuery}
-        onQuery={setFrameQuery}
-        openKey={sideKey}
-        onOpen={(event, row) => {
-          const ref = board.cols.flatMap((col) => col.rows).find((r) => r.key === row.key);
-          const topic = ref && ref.t === 'card' ? topicRef(ref.card) : null;
-          if (topic) openItem(event, topic);
-        }}
-      />
-    );
-  };
+  const frameAll = (): ReactNode => (
+    <ProjectAllItemsFrame
+      {...frameHead}
+      project={projectName}
+      group={group === 'stage' ? 'stage' : 'category'}
+      onGroup={(key) => { callAppView('_setWorkshopGroup', key); }}
+      query={frameFilters.q}
+      querySeq={frameFilters.seq}
+      // The board reads its search box (AppView._onKanbanSearchInput), which
+      // stays mounted behind the kit's field: the text goes through it.
+      onQuery={(next) => {
+        const box = hostRef.current ? hostRef.current.querySelector<HTMLInputElement>('#dev-kanban-search') : null;
+        if (!box) return;
+        box.value = next;
+        callAppView('_onKanbanSearchInput');
+      }}
+      filters={frameFilters.mounted ? {
+        count: frameFilters.count,
+        chips: frameFilters.chips,
+        quick: frameFilters.quick || null,
+        onOpen: () => { callAppView('_openKanbanFiltersDialog'); },
+        onDismiss: (key) => { callAppView('_dismissKanbanFilter', key); },
+        onQuick: (key) => { callAppView('_toggleKanbanQuickFilter', key); },
+      } : null}
+      sort={group !== 'stage' && themes.length ? {
+        key: sortKey,
+        options: SORTS.map((option) => ({ key: option.key, label: t(option.label) })),
+        onSort: (key) => { if (key !== sortKey) captureThemeTops(); setSortKey(key as SortKey); },
+      } : null}
+    />
+  );
   const frameWorkshop = (): ReactNode => {
     const d = v.dashboard;
-    const first = owedRows.find((row) => row.t === 'card') || null;
-    const approval = community?.approval || null;
-    const need = Math.max(1, Number(approval?.required) || 1);
     const slots = frameSlots.view && (frameSlots.view.acts || frameSlots.view.slots.length) ? frameSlots.view : null;
     const counts = slots ? slotCounts(slots) : null;
-    const open = [v.nextUp, ...(v.nextMore || [])].filter((row): row is NonNullable<typeof row> => !!row && row.t === 'card');
+    // The Overview's figures, as DashTiles draws them: each opens what it
+    // counts when it counts something (the votes figure the one waiting
+    // item's page, or All items).
+    const stage = (key: 'open' | 'unclaimed' | 'shipped') => () => { callAppView('openWorkshopStage', key); openTab('all'); };
+    const votes = () => {
+      const refs = v.dashboard?.votesWaitingRefs || [];
+      if (refs.length === 1) callAppView('openTopic', refs[0].kind, refs[0].id);
+      else openTab('all');
+    };
+    const paced = !!d && !d.partial && d.shippedPrevWeekToDate > 0;
+    const line = deskLine(desk);
+    const liveOf = (week: (typeof weeks)[number]) => (week.counts && week.counts.closed ? { count: week.counts.closed, partial: !!week.counts.partial } : null);
+    const weekOf = (week: (typeof weeks)[number], open: boolean) => ({
+      key: sinceWeekStateKey(week),
+      name: weekName(week),
+      range: week.title || week.key === 'lastWeek' || week.live ? weekRange(week.startMs, week.endMs, week.live) : null,
+      fresh: week.fresh.filter((r) => !!r.brief).length,
+      live: liveOf(week),
+      onOpen: open ? () => openWeekPage(sinceWeekStateKey(week)) : null,
+    });
+    const GLYPH: Record<string, string> = { request: 'chat', change: 'edit', live: 'rocket', vote: 'vote' };
+    const itemOf = (row: WorkCardRow, fresh: boolean) => {
+      const b = row.brief!;
+      const ref = topicRef(row.card);
+      const state = row.card.pill?.state || null;
+      const going = b.kind === 'live' && !!state && (state.key === 'deploying' || state.key === 'delivery_pending' || state.key === 'merging');
+      const at = Number(row.at) || 0;
+      // Build it, on a new request nobody has picked up (freshAct, above).
+      const a = fresh && !b.mine && !b.requested && b.kind === 'request' ? primaryAct(row.card) : null;
+      const fn = a && a.act ? a.act.fn : '';
+      const actLabel = fn === 'askBotToBuild' || fn === 'chooseIssueWork' ? t('project:workshop.fresh.buildIt')
+        : fn === 'workOnIssueWithBot' ? t('project:workshop.fresh.workOnIt') : '';
+      return {
+        key: row.key,
+        title: row.card.title.text || row.card.title.title || '',
+        href: openHref(slug, row.card),
+        glyph: going ? 'refresh' : GLYPH[b.kind] || 'edit',
+        fresh,
+        you: !!b.mine,
+        going,
+        stuck: b.kind === 'live' && state && !going && state.tone === 'blocked' ? state.label : null,
+        ago: at > 0 ? agoStamp(at).text : null,
+        on: !!ref && sideKey === `${ref.kind}:${ref.id}`,
+        onOpen: ref ? (event: ReactMouseEvent<HTMLAnchorElement>) => openItem(event, ref) : undefined,
+        act: a && a.act && actLabel ? {
+          label: actLabel,
+          title: a.title || a.label,
+          onPress: (button: HTMLElement) => { callAppView(a.act!.fn, ...(a.act!.args || []), ...(a.passNode ? [button] : [])); },
+        } : null,
+      };
+    };
+    const cards = (rows: ListRow[]) => rows.filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief);
     return (
       <ProjectWorkshopFrame
         {...frameHead}
         purpose={t('project:frame.place.workshop', { project: projectName })}
-        onAll={() => openTab('all')}
-        facts={d ? [
-          { value: d.open, label: t('project:workshop.dash.open', { count: d.open }) },
-          { value: d.unclaimed, label: t('project:workshop.dash.unclaimed') },
-          { value: d.votesWaiting, label: t('project:workshop.dash.votes', { count: d.votesWaiting }), tone: owed > 0 ? 'acc' as const : d.votesWaiting ? 'wait' as const : undefined },
-          { value: d.shippedWeek, label: t('project:workshop.dash.shipped'), tone: 'ok' as const },
-        ] : []}
-        vote={first && first.t === 'card' && owed > 0 ? {
-          id: first.number ? `#${first.number}` : null,
-          title: first.card.title.text || first.card.title.title || '',
-          line: factsLine([first.who, first.ago]) || null,
-          yes: Number(first.tally?.yes) || 0,
-          no: Number(first.tally?.no) || 0,
-          of: Math.max(need, Number(approval?.electorate) || need),
-          need,
-          note: null,
-          onVote: () => openTab('needs'),
+        overview={d ? {
+          onAll: () => openTab('all'),
+          filtered: !!v.meta.filtered,
+          facts: [
+            { value: d.open, label: t('project:workshop.dash.open', { count: d.open }), onClick: d.open > 0 ? stage('open') : null },
+            { value: d.unclaimed, label: t('project:workshop.dash.unclaimed'), onClick: d.unclaimed > 0 ? stage('unclaimed') : null },
+            {
+              value: d.votesWaiting,
+              label: t('project:workshop.dash.votes', { count: d.votesWaiting }),
+              tone: d.votesWaiting ? 'wait' as const : undefined,
+              sub: owed > 0 ? t('project:workshop.dash.onYou', { count: owed }) : null,
+              subAsks: owed > 0,
+              onClick: d.votesWaiting > 0 ? votes : null,
+            },
+            {
+              value: d.partial && d.shippedWeek ? `${d.shippedWeek}+` : d.shippedWeek,
+              label: t('project:workshop.dash.shipped'),
+              tone: d.shippedWeek ? 'ok' as const : undefined,
+              sub: paced ? t('project:workshop.dash.fromLastWeek', { count: d.shippedPrevWeekToDate }) : null,
+              onClick: d.shippedWeek > 0 ? stage('shipped') : null,
+            },
+          ],
         } : null}
-        work={frameWork()}
-        live={(v.recentLive || []).slice(0, 3).map((row) => ({
-          key: row.key,
-          title: row.title,
-          ago: row.going ? t('project:hub.recent.going') : row.at ? agoStamp(row.at).text : null,
-          href: changeHref(slug, row.sessionId, row.prNumber),
-        }))}
-        weeks={weeks.slice(0, 4).map((week) => ({
-          key: sinceWeekStateKey(week),
-          title: weekName(week),
-          line: week.title || week.key === 'lastWeek' ? weekRange(week.startMs, week.endMs, week.live) : null,
-          right: week.counts && week.counts.closed ? t('project:frame.workshop.liveCount', { count: week.counts.closed }) : null,
-          onOpen: () => openWeekPage(sinceWeekStateKey(week)),
-        }))}
+        first={v.mine?.viewer && frameFirst.show ? <FirstChangeCard slug={slug} onClose={frameFirst.close} /> : null}
+        work={v.mine?.viewer ? {
+          line: line ? t(line.id, line.values) : null,
+          words: deskWords(desk),
+          href: projectTabAddress(slug),
+          hint: t('project:workshop.desk.open', { project: projectName }),
+        } : null}
+        happened={weeks.length || v.since ? {
+          onClear: v.since ? clearSince : null,
+          clearOff: !sinceRows.length,
+          none: !!v.since && !sinceRows.length,
+          thisWeek: thisWeek ? {
+            ...weekOf(thisWeek, false),
+            items: [
+              ...cards(thisWeek.fresh).slice(0, THIS_WEEK_NEW_MAX).map((row) => itemOf(row, true)),
+              ...cards(thisWeek.seen).slice(0, THIS_WEEK_SEEN).map((row) => itemOf(row, false)),
+            ],
+            onAll: thisWeek.fresh.length || thisWeek.seen.length || thisWeek.line ? () => openWeekPage(sinceWeekStateKey(thisWeek)) : null,
+          } : null,
+          weeks: pastWeeks.slice(0, weeksShown).map((week) => weekOf(week, true)),
+          onEarlier: weeksShown < pastWeeks.length ? () => setWeeksShown(weeksShown + WEEKS_STEP) : null,
+          started: !(weeksShown < pastWeeks.length) && firstWeek && pastWeeks.length ? t('project:since.projectStarted', { date: weekDate(firstWeek) }) : null,
+        } : null}
         slots={slots && counts ? {
           title: t('project:frame.workshop.building', { used: counts.building, cap: slots.buildCap ?? counts.building }),
           line: factsLine([
@@ -3958,17 +3990,7 @@ export function DevWorkshop(): ReactNode {
           onOpen: () => openTab('bot'),
         } : null}
         rule={frameRule()}
-        unclaimed={open.slice(0, 3).map((row) => {
-          const ref = row.t === 'card' ? topicRef(row.card) : null;
-          return {
-            key: row.key,
-            title: row.t === 'card' ? row.card.title.text || row.card.title.title || '' : '',
-            id: ref ? `#${ref.id}` : null,
-            onOpen: () => { if (ref) callAppView('openTopic', ref.kind, ref.id); },
-          };
-        })}
-        unclaimedTotal={d ? d.unclaimed : open.length}
-        onAllUnclaimed={() => { callAppView('openWorkshopStage', 'unclaimed'); openTab('all'); }}
+        below={slug ? <PrivateRequests slug={slug} /> : null}
       />
     );
   };
@@ -3978,6 +4000,7 @@ export function DevWorkshop(): ReactNode {
     if (channel && !recent.length && channel.last_at) recent.push({ content: channel.last_message || '', by: channel.last_by, at: channel.last_at });
     const said = (m: { content: string | null }) => String(m.content || '').replace(/\s+/g, ' ').trim();
     const last = [...recent].reverse().find((m) => said(m)) || recent[recent.length - 1] || null;
+    const lastAgo = last && last.at ? agoStamp(last.at).text : '';
     const first = owedRows.find((row) => row.t === 'card') || null;
     const firstTitle = first && first.t === 'card' ? first.card.title.text || first.card.title.title || '' : '';
     const claims = Math.max(0, Number(v.dashboard?.unclaimed) || 0);
@@ -3985,67 +4008,77 @@ export function DevWorkshop(): ReactNode {
     const active = (community?.activity?.active_people || []).filter((person) => person && person.username).slice(0, 5);
     const names = listText(active.map((person) => person.username));
     const rest = Math.max(0, activeCount - active.length);
+    const liveRows = (v.recentLive || []).slice(0, 3);
     return (
       <ProjectHubFrame
         {...frameHead}
         name={projectName}
         purpose={community?.description || null}
-        needs={owed > 0 ? {
+        tile={{ src: own ? app.iconUrl || null : null, emoji: own ? app.iconEmoji || null : null }}
+        onOpenApp={!actions.selfHosted ? () => { (window as any).App?.openAppTab?.(slug, 'app'); } : null}
+        // As the Hub's own card (./hub-cards.tsx ForYouCard): the row while
+        // any vote is owed, seen or not, else the quiet line, which says
+        // nothing on a project nobody else is in unless requests wait.
+        needs={owedRows.length ? {
           count: owed,
-          title: owed > 1 && firstTitle ? t('project:hub.forYou.needs.firstAndMore', { title: firstTitle, count: owed - 1 }) : firstTitle,
+          line: owed > 0
+            ? (owed > 1 && firstTitle ? t('project:hub.forYou.needs.firstAndMore', { title: firstTitle, count: owed - 1 }) : firstTitle)
+            : t('project:hub.needs.skipped', { count: owedRows.length }),
+          join: owed > 0 && !canPost,
         } : null}
-        quiet={owed > 0 ? null
-          : owedRows.length ? t('project:hub.needs.skipped', { count: owedRows.length })
-            : alone && !claims ? null : t('project:hub.needs.none')}
+        quiet={owedRows.length || (alone && !claims) ? null : { claims, alone }}
         onNeeds={() => openTab('needs')}
-        work={frameWork()}
-        onWorkshop={() => openTab('workshop')}
+        onWorkshop={v.mine?.viewer ? () => openTab('workshop') : null}
         general={channel ? {
           handle: channel.handle || 'general',
-          line: last && said(last) ? (last.by ? t('project:frame.hub.saidBy', { username: last.by, message: said(last) }) : said(last)) : null,
-          ago: last && last.at ? agoStamp(last.at).text : null,
+          last: !!last,
+          said: last ? said(last) : '',
+          by: last ? last.by || null : null,
+          ago: lastAgo,
           unread: Number(channel.unread_count) || 0,
         } : null}
         onGeneral={() => openTab('discussion')}
-        live={(v.recentLive || []).slice(0, 3).map((row) => ({
-          key: row.key,
-          title: row.title,
-          who: row.who,
-          ago: row.going ? t('project:hub.recent.going') : row.at ? agoStamp(row.at).text : null,
-          href: changeHref(slug, row.sessionId, row.prNumber),
+        topics={frameTopicList.map((topic) => ({
+          key: channelPlace(topic.handle), name: topic.name || topic.handle, handle: topic.handle, icon: topic.icon || '', about: topic.about || '', unread: Math.max(0, Number(topic.unread) || 0),
         }))}
-        onAllLive={() => openTab('workshop')}
-        topics={frameTopicList.slice(0, 3).map((topic) => ({
-          key: channelPlace(topic.handle), name: topic.name || topic.handle, about: topic.about || '', unread: Math.max(0, Number(topic.unread) || 0),
-        }))}
-        topicsTotal={frameTopicList.length}
         onTopic={(key) => openTab(key as TabKey)}
-        onAllTopics={() => pickFrameTab('topics')}
+        live={liveRows.map((row) => {
+          const ago = row.at ? agoStamp(row.at).text : '';
+          return {
+            key: row.key,
+            title: row.title,
+            line: row.going
+              ? (row.who ? t('project:hub.recent.byGoing', { who: row.who }) : t('project:hub.recent.going'))
+              : row.who && ago ? t('project:hub.recent.byAgo', { who: row.who, ago }) : row.who || ago || null,
+            src: row.picture || null,
+            href: changeHref(slug, row.sessionId, row.prNumber),
+          };
+        })}
+        ownLive={!liveRows.length && ownLive && liveSinceLine(ownLive.since) ? {
+          name: ownLive.name,
+          line: liveSinceLine(ownLive.since),
+          onOpen: () => { (window as any).App?.openAppTab?.(slug, 'app'); },
+        } : null}
+        onAllLive={() => openTab('workshop')}
         people={activeCount ? {
           title: t('project:hub.people.active', { count: activeCount }),
           line: active.length ? (rest ? t('project:hub.people.namesAndMore', { names, count: rest }) : names) : null,
+          faces: active.map((person) => ({ name: person.username, color: swatchFor(person.username) })),
+          more: rest,
         } : null}
         audience={{
           kind: community?.audience || 'invited',
           title: community?.audience_label || '',
-          line: community && community.audience !== 'solo' ? t('project:frame.hub.members', { count: Number(community.member_count) || 0 }) : null,
+          line: community && community.audience !== 'solo' ? t('project:communityCard.people.members', { count: Number(community.member_count) || 0 }) : null,
         }}
-        rule={frameRule()}
-        app={!actions.selfHosted ? {
-          name: projectName,
-          src: own ? app.iconUrl || null : null,
-          emoji: own ? app.iconEmoji || null : null,
-          color: null,
-          line: community?.live_since ? liveSinceLine(community.live_since) : null,
-          onOpen: () => { (window as any).App?.openAppTab?.(slug, 'app'); },
-        } : null}
       />
     );
   };
   const framePurpose = tab === 'workshop' || tab === 'all' || tab === 'bot' || tab === 'plan'
     ? t('project:frame.place.workshop', { project: projectName })
     : tab === 'needs' ? t('project:frame.place.needs', { project: projectName })
-      : t('project:frame.place.channel', { project: projectName });
+      : tab === 'discussion' ? t('project:frame.place.general', { project: projectName })
+        : t('project:frame.place.channel', { project: projectName });
 
   return (
     <div
@@ -4068,22 +4101,15 @@ export function DevWorkshop(): ReactNode {
       {frame && frameTopics ? (
         <ProjectTopicsFrame
           {...frameHead}
-          general={community?.channel ? { handle: community.channel.handle || 'general', unread: Number(community.channel.unread_count) || 0 } : null}
-          topics={frameTopicList.map((topic) => ({
-            key: channelPlace(topic.handle),
-            name: topic.name || topic.handle,
-            about: topic.about || '',
-            requests: topic.requests,
-            unread: Math.max(0, Number(topic.unread) || 0),
-          }))}
+          general={community?.channel ? placeRows(community?.places, owed).general : null}
+          topics={placeRows(community?.places, owed).topics}
           onOpen={(key) => { setFrameTopics(false); openTab(key as TabKey); }}
-          onPropose={community?.can_manage ? () => { window.UsernodeReact?.dialogs?.topics?.open({ slug }); } : null}
         />
       ) : null}
       {frame && !frameTopics && tab === 'status' && !pending ? frameHub() : null}
       {frameWorkshopUp ? frameWorkshop() : null}
       {frameAllUp ? frameAll() : null}
-      {frame && !frameTopics && tab !== 'status' && !frameWorkshopUp && !frameAllUp ? <ProjectFrameHead {...frameHead} title={pageTitle(tab)} purpose={framePurpose} /> : null}
+      {frame && !frameTopics && tab !== 'status' && !frameWorkshopUp && !frameAllUp ? <ProjectFrameHead {...frameHead} title={tab === 'workshop' && weekUp ? weekName(weekUp) : pageTitle(tab)} purpose={framePurpose} /> : null}
       {band}
       {tray}
       {/* Everything but the bar lives in here. It is what carries the
@@ -4120,7 +4146,9 @@ export function DevWorkshop(): ReactNode {
           // opens Needs you at its first card when votes are already
           // waiting on the new member, and otherwise stays on this hub.
           onJoinedByInvite={() => { if (owesVote(v.queue)) openTab('needs'); }}
-          menu={(
+          // The hero's ⋯, or the project card's for somebody who has not
+          // joined (./community-card.tsx): the same one node either way.
+          menu={(place) => (
             <DevPlusMenu
               illustrationApp={actions.illustrationApp}
               canManageIllustration={actions.canManageIllustration}
@@ -4129,6 +4157,10 @@ export function DevWorkshop(): ReactNode {
               canCollaborate={actions.canCollaborate}
               showsMembers={actions.showsMembers}
               inHero
+              onCard={place === 'card'}
+              // SEE WHAT VISITORS SEE (11 Nov 2026): a member's, on a public
+              // project; the platform's own has no page for visitors.
+              visitorView={!actions.selfHosted && community?.is_member && community.audience === 'open' ? { slug } : null}
               // #4666: who can see it and how its changes are approved, one
               // row and one sheet (features/dialogs/who-decides.tsx), for
               // whoever may propose it. It took "Make it public" and "Make it
@@ -4254,7 +4286,7 @@ export function DevWorkshop(): ReactNode {
           last update went down. Nothing on a project nobody has made a
           version of. See ./hub-cards.tsx FromVersionsCard. */}
       {slug ? <FromVersionsCard slug={slug} data={community} /> : null}
-      {slug ? <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} own={ownLive} ident={recentIdent} /> : null}
+      {slug ? <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} own={ownLive} ident={recentIdent} month={community?.activity?.shipped_month} /> : null}
       {/* Start a new change was the hub's last line; it is the hero's ⋯
           now (../actions-row.tsx), as well as the Homeroom menu's. */}
       </>

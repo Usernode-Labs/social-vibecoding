@@ -21,6 +21,8 @@ const { dmStream } = require('./lib/bot-dm-stream');
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { settleWorkStates } = require('./lib/work-states');
+const workState = require('../src/services/work-state');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -152,7 +154,10 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
   }
   const asAda = { id: ada.id, username: ada.username, isAdmin: false, hasPlatformAccess: true };
   const asSam = { id: sam.id, username: sam.username, isAdmin: false, hasPlatformAccess: true };
-  const cardsOf = async (who) => (await activity.cardsFor(pool, { user: who, settings })).cards;
+  // 11 Nov 2026: a card says where its request stands from the request's
+  // stored work state, derived again from what the triggers mark; read once
+  // the drain has run, as its clock does within seconds.
+  const cardsOf = async (who) => (await settleWorkStates(pool), await activity.cardsFor(pool, { user: who, settings })).cards;
   const byId = async (who, id) => (await cardsOf(who)).find((card) => card.messageId === id);
 
   // #4242: the bot's news about a request, recorded as relayIssuePost and
@@ -218,8 +223,8 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
   await t.test('the card moves through the steps as the records do, and ends in the proposal', async () => {
     let card = await byId(asAda, first.messageId);
     assert.equal(card.state, 'working');
-    assert.deepEqual([card.stage, card.step, card.of, card.stepName], ['reading', 1, 6, 'Reading']);
-    assert.match(card.doing, /^reading the request/);
+    assert.deepEqual([card.stage, card.step, card.of, card.stepName], ['reading', 1, 5, null]);
+    assert.equal(card.doing, 'Reading it', 'in the words every screen says it');
     assert.equal(card.links.request, '#app/seed-swap/dev/issues/3');
     assert.ok(Date.parse(card.startedAt) <= Date.now());
 
@@ -232,7 +237,7 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
     );
     const runId = await run(seeds, 3, { verdict: 'ready', buildSessionId: build.id });
     card = await byId(asAda, first.messageId);
-    assert.deepEqual([card.state, card.stage, card.step, card.stepName], ['working', 'planning', 2, 'Planning']);
+    assert.deepEqual([card.state, card.stage, card.step, card.doing], ['working', 'planning', 1, 'Planning']);
 
     // Its plan posted: building.
     await pool.query(
@@ -240,7 +245,7 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
       [seeds.id, runId],
     );
     card = await byId(asAda, first.messageId);
-    assert.deepEqual([card.state, card.stage, card.step, card.stepName, card.doing], ['working', 'building', 3, 'Building', 'building it']);
+    assert.deepEqual([card.state, card.stage, card.step, card.doing], ['working', 'building', 2, 'Building']);
 
     // Built: its proposal is up for a vote. #4242: until its ready card has
     // gone out, it is being checked, not waiting for approval.
@@ -249,6 +254,8 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
     card = await byId(asAda, first.messageId);
     assert.equal(card.state, 'done');
     assert.equal(card.outcome, 'checking');
+    // Its checks pass and its ready card goes out: it is open for votes.
+    await pool.query(`UPDATE chat_sessions SET check_state = 'passing' WHERE id = $1`, [build.id]);
     await recordNews(first.conversationId, 3, 'proposal');
     card = await byId(asAda, first.messageId);
     assert.equal(card.outcome, 'proposed', 'its ready card is out: now it waits for approval');
@@ -263,8 +270,11 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
        VALUES ($1, $2, 'a seed swap', 'filed', 3, NOW())`,
       [seeds.id, ada.id],
     );
+    // Nothing marks a first version's record: the sweep derives it again.
+    await workState.refresh(pool, [{ sessionId: build.id }]);
     assert.equal((await byId(asAda, first.messageId)).outcome, 'going_live');
     await pool.query('DELETE FROM homeroom_bot_first_versions WHERE app_id = $1', [seeds.id]);
+    await workState.refresh(pool, [{ sessionId: build.id }]);
     assert.equal((await byId(asAda, first.messageId)).outcome, 'proposed');
 
     // #4227: being merged, not live yet: going live; then live.
@@ -389,59 +399,6 @@ test('the Homeroom bot DM\'s activity cards: one per piece of work, read from it
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 8', [seeds.id]);
     assert.equal((await byId(asAda, third.messageId)).outcome, 'stopped');
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 8', [seeds.id]);
-  });
-
-  // WP1 (#10): the bot's answers read a request's newest look and newest
-  // proposal only, so a second build of Plant Pal #1 was invisible to it and
-  // it said "Nothing broke". Its progress now names the request's other
-  // builds beside the one it describes.
-  await t.test('WP1 (#10): progress names another build of the same request, and the build before', async () => {
-    const progressSvc = require('../src/services/homeroom-bot-progress');
-    await pool.query(
-      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES
-         ($1, 10, $2, 'Plant list'), ($1, 11, $2, 'Reminders')`,
-      [seeds.id, ada.id],
-    );
-    const session = async (status, issue) => (await pool.query(
-      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, linked_issues, promoted_at)
-       VALUES ($1, $2, $3, $4, 'x', $5, NOW()) RETURNING id`,
-      [seeds.id, bot.id, `bot-${issue}-${status}`, status, [issue]],
-    )).rows[0].id;
-    const ready = async (issue, fields = {}) => (await pool.query(
-      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_session_id, proposal_session_id, build_ok, build_error)
-       VALUES ($1, $2, 'live', 'ready', $3, $4, $5, $6) RETURNING id`,
-      [seeds.id, issue, fields.build || null, fields.proposal || null, fields.ok ?? null, fields.error || null],
-    )).rows[0].id;
-    const entries = async () => {
-      const p = await progressSvc.progressFor(pool, { userId: ada.id, settings, deps: { domain: null } });
-      return new Map(p.rightNow.map((e) => [e.number, e]));
-    };
-
-    // #10: the first build's proposal is up for a vote while a second build
-    // of the same request runs.
-    const first = await session('promoted', 10);
-    await ready(10, { build: first, proposal: first, ok: true });
-    await ready(10, { build: await session('active', 10) });
-    let entry = (await entries()).get(10);
-    assert.equal(entry.proposal.proposal, first, 'it is still described by its proposal');
-    assert.equal(entry.alsoBuilding.doing, 'another build of this same request is under way');
-    assert.ok(entry.alsoBuilding.since);
-    assert.equal(entry.earlierAttempt, undefined);
-
-    // #11: a build that failed, then another look that builds it again.
-    await ready(11, { build: await session('archived', 11), ok: false, error: 'the build ran past its time limit' });
-    await ready(11, { build: await session('active', 11) });
-    entry = (await entries()).get(11);
-    assert.equal(entry.stage, 'planning');
-    assert.equal(entry.alsoBuilding, undefined, 'the one it describes is not "also" building');
-    assert.equal(entry.earlierAttempt.outcome, 'the build did not succeed: the build ran past its time limit');
-    assert.ok(entry.earlierAttempt.when);
-
-    // A request with one build says neither.
-    for (const [n, e] of await entries()) {
-      if (n !== 10 && n !== 11) assert.ok(!e.alsoBuilding && !e.earlierAttempt, `request #${n}`);
-    }
-    await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number IN (10, 11)', [seeds.id]);
   });
 
   await t.test('nobody else\'s cards, never an app they cannot view, and none for somebody the bot does not DM', async () => {

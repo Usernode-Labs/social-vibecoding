@@ -32,7 +32,7 @@ const NETWORK = 'usernode-net';
 const DUMP = '/tmp/shots-dry-run.dump';
 const PORTS = Object.freeze({ base: 4101, head: 4102 });
 const ORIGINS = Object.freeze({ base: 'http://127.0.0.1:4101', head: 'http://localhost:4102' });
-const PLAYWRIGHT_MCP = '@playwright/mcp@0.0.41';
+const PLAYWRIGHT_MCP = '@playwright/mcp@0.0.85';
 
 function usage() {
   return `Usage: npm run shots:pair -- up --before SHA --after SHA [options]
@@ -190,13 +190,22 @@ function knownPairs(lab) {
   return fs.readdirSync(dir).filter((name) => fs.existsSync(path.join(dir, name, 'pair.json')));
 }
 
+// The dry run's browser server and its Playwright, patched as the worker
+// image patches its own (worker/patch-playwright-mcp.js). A lab holding
+// another version is installed afresh: the patch fits one version only.
 function playwright(lab) {
   const dir = path.join(lab, 'pw');
   const entry = path.join(dir, 'node_modules', 'playwright');
-  if (!fs.existsSync(entry)) {
+  const mcp = path.join(dir, 'node_modules', '@playwright', 'mcp');
+  const wanted = PLAYWRIGHT_MCP.slice(PLAYWRIGHT_MCP.lastIndexOf('@') + 1);
+  let installed = null;
+  try { installed = JSON.parse(fs.readFileSync(path.join(mcp, 'package.json'), 'utf8')).version; } catch { /* none */ }
+  if (installed !== wanted) {
     log(`installing ${PLAYWRIGHT_MCP} into ${dir} (the dry run's browser server and its Playwright)`);
+    fs.rmSync(dir, { recursive: true, force: true });
     fs.mkdirSync(dir, { recursive: true });
     sh('npm', ['install', '--prefix', dir, '--no-audit', '--no-fund', PLAYWRIGHT_MCP], { timeout: 300_000 });
+    sh(process.execPath, [path.join(ROOT, 'worker', 'patch-playwright-mcp.js'), mcp], { timeout: 60_000 });
   }
   return require(entry);
 }
@@ -284,7 +293,8 @@ async function up(options) {
           const page = await context.newPage();
           await page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: 30_000 });
           await page.close();
-          if (!(await context.cookies(ORIGINS[side])).some((cookie) => cookie.name === 'session')) {
+          if (!(await context.cookies(ORIGINS[side])).some((cookie) =>
+            cookie.name === 'session' || (ORIGINS[side].startsWith('https:') && cookie.name === '__Host-usernode_session'))) {
             throw new Error(`${persona} has no session on ${ORIGINS[side]}`);
           }
           // The demo data a copy makes on first view, made on both sides
@@ -307,7 +317,7 @@ async function up(options) {
   --state-dir ${path.relative(ROOT, stateDir)} --fixtures ${path.relative(ROOT, path.join(pairDir, 'fixtures.json'))} \\
   --base-sha ${before} --head-sha ${after} \\
   --head-checkout ${path.relative(ROOT, path.join(lab, 'rev', after.slice(0, 12)))} \\
-  --playwright-mcp ${path.relative(ROOT, path.join(lab, 'pw', 'node_modules', '.bin', 'mcp-server-playwright'))}${options.executablePath ? ` \\\n  --executable-path "${options.executablePath}"` : ''}`);
+  --playwright-mcp ${path.relative(ROOT, path.join(lab, 'pw', 'node_modules', '.bin', 'playwright-mcp'))}${options.executablePath ? ` \\\n  --executable-path "${options.executablePath}"` : ''}`);
 }
 
 async function main() {

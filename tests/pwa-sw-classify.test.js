@@ -317,6 +317,15 @@ test('the installed worker leaves an app\'s install page to the browser', () => 
   assert.equal(intercepted.length, 0, 'the browser receives the install page, not a cached document');
 });
 
+// #6564: a boot that opened blank asks once for a document the worker must
+// not answer from its cache. The unique `fresh-shell` value also keeps the
+// browser's HTTP cache out of it; every other navigation is unchanged.
+test('a fresh-shell navigation bypasses the cached shell', () => {
+  assert.equal(classify('GET', '/?fresh-shell=1', 'text/html', 'navigate'), 'bypass');
+  assert.equal(classify('GET', '/#home', 'text/html', 'navigate'), 'navigate');
+  assert.equal(classify('GET', '/?a=1', 'text/html', 'navigate'), 'navigate');
+});
+
 test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/js/app.js'), 'shell');
   assert.equal(classify('GET', '/css/app.css'), 'shell');

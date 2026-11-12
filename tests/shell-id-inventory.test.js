@@ -394,6 +394,10 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #6510: Reduce motion, Settings > Accessibility ─────────────────
+  'settings-reduce-motion': 'The Reduce motion switch in Settings > Accessibility (features/settings/sections/accessibility.tsx): writes data-motion="reduce" on <html> through the head module (window.Display). Ships off in the prerender and reads the stored setting in an effect, like #settings-high-contrast beside it.',
+  // ── Card preview loops: Settings > Accessibility ───────────────────
+  'settings-card-previews': 'The Play previews switch in Settings > Accessibility (features/settings/sections/accessibility.tsx): whether project cards play their short, silent preview loops (lib/card-previews.ts). Ships off in the prerender and reads the device setting in an effect, like #settings-high-contrast beside it.',
   // ── #6371: This week, the page the weekly digest opens ─────────────
   'weekly-digest-screen': 'This week (frontend/src/features/weekly-digest/index.tsx, #week): what each project did in the last seven days, which the Friday "Your weekly digest is ready" row opens. Ships hidden and empty; the read runs from its controller\'s open(), so the prerender and the first client render agree. App.REACT_SCREEN_IDS lists it, as it lists #workshop-screen.',
   // ── One Home (#6361): Home's sections for communities ─────────────
@@ -425,7 +429,7 @@ const ADDED_IDS = {
   'new-look-enabled': 'New look: the switch in Settings, Experimental (off by default, kept on the device by the head\'s window.Skin) that sets data-skin="brand" on <html>, which app.css draws the new look from in light mode. settings.js paints and saves it through window.Skin.',
   // ── The frame's looks (an admin's preview) ─────────────────────────
   'settings-look-section': 'Look: the menu\'s own wrapper under New look in Settings, Experimental, shipped hidden. settings.js _renderAdminSection lifts the class only for a real admin (App._realIsAdmin): the looks are an admin\'s preview while they are drawn screen by screen.',
-  'settings-look': 'Look: the menu of the one frame\'s nine looks (Standard, then glass, brandkit, workbench, paper, pastel, mosaic, sunrise, today, playground). Kept on the device by the head\'s window.Skin, which sets the chosen id as data-skin on <html> for app.css to draw from, light and dark. Exclusive with New look; settings.js paints and saves both through window.Skin.',
+  'settings-look': 'Look: the menu of the one frame\'s five looks (Standard, then glass, paper, pastel, mosaic, sunrise). Kept on the device by the head\'s window.Skin, which sets the chosen id as data-skin on <html> for app.css to draw from, light and dark. Exclusive with New look; settings.js paints and saves both through window.Skin.',
   // ── #5097: Settings > Privacy, "Share usage analytics" ──────────────
   // ── #5097: Settings > Privacy, usage data ──────────────
   'settings-usage-analytics-section': '#5097: the usage data block, the last of Settings > Privacy under #5104\'s contact settings (features/settings/sections/usage-analytics.tsx): what Homeroom keeps, and the address to write to be left out of screen usage data.',

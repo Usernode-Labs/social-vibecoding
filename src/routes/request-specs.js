@@ -126,7 +126,11 @@ function requestSpecRoutes(config) {
         const went = await publicPlan.buildPlan(pool, {
           app, issueNumber, user: req.user, runId, answers,
         });
-        if (!went.ok) return res.status(went.status).json({ error: went.error });
+        if (!went.ok) {
+          return res.status(went.status).json({
+            error: went.error, ...(went.code ? { code: went.code, signals: went.signals || [] } : {}),
+          });
+        }
         return res.json({ ok: true });
       } catch (err) {
         log.error('request-specs', 'Build it on a request\'s plan failed', { issueNumber, message: err.message });

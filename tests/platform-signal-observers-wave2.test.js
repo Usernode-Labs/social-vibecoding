@@ -377,6 +377,8 @@ function healthPool({ proposals = {}, questions = {}, turns = {}, chat = {}, car
     asked,
     query: async (sql, params) => {
       asked.push(params);
+      // Step 5's re-read numbers watch nothing: read, and empty here.
+      if (/AS requests|AS code|bot_offer_tap/.test(sql)) return { rows: [] };
       const which = sql.includes('homeroom_bot_dm_turns') ? 'chat'
         : sql.includes('question_status') ? 'questions'
           : sql.includes('build_ok') ? 'turns'

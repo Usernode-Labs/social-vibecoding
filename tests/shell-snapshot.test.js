@@ -68,7 +68,7 @@ function loadStorage(store, scope = 'a'.repeat(64)) {
     Date,
     JSON,
     readApiCacheScope,
-    document: { cookie: `usernode_api_scope=${scope}` },
+    document: { cookie: `__Host-usernode_api_scope=${scope}` },
     window: {
       localStorage: {
         getItem: (k) => (Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null),

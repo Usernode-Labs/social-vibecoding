@@ -142,7 +142,7 @@ test('past the named paths a read counts in its own reason\'s and kind\'s overfl
 // ── Through the real guard ────────────────────────────────────────────────
 
 function page({ initial = A, fetcher, viewer } = {}) {
-  let cookie = initial ? `usernode_api_scope=${initial}` : '';
+  let cookie = initial ? `__Host-usernode_api_scope=${initial}` : '';
   const c = clock();
   const reports = [];
   const handlers = {};
@@ -158,7 +158,7 @@ function page({ initial = A, fetcher, viewer } = {}) {
   };
   if (viewer !== undefined) win.App = { user: viewer == null ? null : { id: viewer } };
   installApiCacheIdentity(win);
-  return { win, c, reports, handlers, setCookie(v) { cookie = v ? `usernode_api_scope=${v}` : ''; } };
+  return { win, c, reports, handlers, setCookie(v) { cookie = v ? `__Host-usernode_api_scope=${v}` : ''; } };
 }
 
 test('#5931 replayed: a reset during a signed-out public read reports epoch, signed out, public', async () => {

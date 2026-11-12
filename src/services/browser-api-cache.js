@@ -2,7 +2,8 @@
 
 const crypto = require('node:crypto');
 
-const SCOPE_COOKIE = 'usernode_api_scope';
+const { scopeCookieName } = require('./browser-session-cookies');
+const SCOPE_COOKIE = scopeCookieName();
 const SCOPE_HEADER = 'X-Usernode-Cache-Scope';
 const EXPIRY_HEADER = 'X-Usernode-Cache-Expires';
 
@@ -16,10 +17,15 @@ function sessionCacheScope(token) {
 // Write the hint only when the session cookie itself is written. Updating it
 // on ordinary reads would let an old request overwrite a newer login's hint.
 function setSessionCacheCookie(res, token, expiresAt) {
-  res.cookie(SCOPE_COOKIE, sessionCacheScope(token), {
-    httpOnly: false, secure: process.env.NODE_ENV === 'production',
+  const secure = process.env.NODE_ENV === 'production' || res.req?.secure === true;
+  res.cookie(scopeCookieName(process.env, secure), sessionCacheScope(token), {
+    httpOnly: false, secure,
     sameSite: 'lax', path: '/', expires: new Date(expiresAt),
   });
+  // Old tabs must lose their previous hint when a new server pairs the
+  // protected label with a different login. They may refresh to regain
+  // offline use; they must never keep using the former partition meanwhile.
+  if (secure) res.clearCookie?.('usernode_api_scope', { path: '/' });
 }
 
 function stampApiIdentity(req, res, token, expiresAt) {

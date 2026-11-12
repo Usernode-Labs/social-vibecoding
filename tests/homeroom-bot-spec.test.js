@@ -398,8 +398,13 @@ test('#4612: publishSpec says when the plan it stores is a revision', async () =
 test('live.post puts the card in the thread and the full spec on GitHub', async () => {
   const sent = [];
   const comments = [];
-  const pool = { async query(sql) { return /INSERT INTO homeroom_bot_posts/.test(String(sql)) ? { rows: [{ id: 1 }] } : { rows: [] }; } };
-  const ws = { async sendBotMessage(_p, appId, args) { sent.push({ appId, ...args }); return { id: 200 }; } };
+  const pool = {
+    async query(sql) {
+      if (/INSERT INTO bot_posts/.test(String(sql))) return { rows: [{ id: 1, fresh: true, outcome: 'pending' }] };
+      return /INSERT INTO homeroom_bot_posts/.test(String(sql)) ? { rows: [{ id: 1 }] } : { rows: [] };
+    },
+  };
+  const ws = { async sendBotMessage(_p, appId, { onInsert, ...args }) { sent.push({ appId, ...args }); return { id: 200 }; } };
   const github = { async createIssueComment(_o, _r, n, body) { comments.push({ n, body }); return { id: 1, created_at: '2026-09-28T10:00:00Z' }; } };
   const card = live.specCard({ sessionId: 5001, version: 3, spec: SPEC, bot: BOT });
   const out = await live.post({
@@ -410,8 +415,8 @@ test('live.post puts the card in the thread and the full spec on GitHub', async 
   assert.equal(comments[0].body, live.specCommentText(SPEC));
   assert.deepEqual(sent, [{
     // In Homeroom the card is the bot's own words (homeroom-bot-words.js).
-    // With the post's mark, so a retry finds it (homeroom-bot-live.js threadMessageOf).
-    appId: 9, user: BOT, content: firstPerson(card.content), metadata: { ...card.metadata, hrbotPost: '1' },
+    // With the post's mark; a retry finds it by its key (bot-post.js).
+    appId: 9, user: BOT, content: firstPerson(card.content), metadata: { ...card.metadata, hrbotPost: 'post-1' },
     thread: { type: 'issue', ref: 12 }, msgType: 'spec_share',
   }]);
   assert.equal(sent[0].content, '📋 Plan v3: Hourly feed refresh. I\'m building it now.');

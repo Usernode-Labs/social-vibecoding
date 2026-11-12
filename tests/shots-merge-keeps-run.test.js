@@ -94,3 +94,23 @@ test('only the shots agent\'s turn is exempt, and only for the merge queue\'s as
   assert.match(ask, /if \(f\.row!\.mergeMoving\) return 'busy';/, 'only the merge ask reads mergeMoving');
   assert.doesNotMatch(ask, /moving\(f\.row!\)/);
 });
+
+test('GitHub not answering when a shots run tried to start is taken again once, while in review', () => {
+  // #6598: the worker's start named this fault, and the run is retried like
+  // the platform's other transient faults.
+  const failed = event('WorkSucceeded', { kind: WORK.agent, workKey: 'agent:1:1',
+    result: {
+      agent: {
+        outcome: 'failed', code: 'shots_agent_failed', message: 'GitHub did not answer',
+        platformFault: { kind: 'github_unavailable', retryAt: Date.parse('2026-10-21T17:47:00Z') },
+        retryAt: '2026-10-21T17:47:00Z',
+      },
+      passed: false, skippedAny: false,
+    } });
+  failed.source = { kind: 'service', workId: 'w1' };
+  const out = apply(liveState('taking_shots'), failed, facts('promoted'));
+  assert.equal(out.next.name, 'failed');
+  assert.equal(out.next.data.last.fault, 'github_unavailable');
+  assert.equal(out.timer.event.type, 'RetryDue');
+  assert.equal(out.timer.at.toISOString(), '2026-10-21T17:47:00.000Z', 'about five minutes on');
+});

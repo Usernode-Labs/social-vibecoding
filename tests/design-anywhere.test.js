@@ -247,8 +247,13 @@ test('#6257: a first drawing with nothing to go on asks first, and quotes a ques
 
   assert.equal(designBot.notDrawnYet('I\'ll draw it for you. What is the app for, and what should this screen do?',
     { handoff: true, mayAsk: true, mayor }), null, 'the question is the answer');
-  assert.equal(designBot.notDrawnYet('I\'ll draw it for you. What is the app for, and what should this screen do?',
-    { handoff: true, mayor }), 'claimed', 'without the gate it is a claim');
+  // Without the gate it is a claim: the shared reply check's drawing claim
+  // (reply-claims.js), which the design turn lets through only while it may ask.
+  const claims = require('../src/services/reply-claims');
+  assert.deepEqual(claims.check(claims.mentions('I\'ll draw it for you. What is the app for, and what should this screen do?'),
+    { turn: { design: true } }).map((p) => p.kind), ['drawing'], 'without the gate it is a claim');
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'design-bot.js'), 'utf8'),
+    /mayAsk && realQuestion\(words\) \? found\.filter\(\(p\) => p\.kind !== 'drawing' && p\.kind !== 'design_done'\) : found/);
   assert.equal(designBot.notDrawnYet('Tell me what it is for.', { handoff: true, mayAsk: true, mayor }), 'handoff',
     'a statement is not a question, even when asking is allowed');
 

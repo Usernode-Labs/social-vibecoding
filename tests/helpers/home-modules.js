@@ -83,8 +83,15 @@ const SEARCH_RANK_SRC = fs.readFileSync(SEARCH_RANK_PATH, 'utf8').replace(/^expo
 
 // Classic-script form: the `import` lines removed. See the note above.
 const MODE_SRC = require('typescript').transpile(fs.readFileSync(path.join(FEATURE_DIR, '..', 'settings', 'interface-mode.ts'), 'utf8'), { target: 99, module: 99 }).replace(/^export\s+/gm, '');
+// And the shared reduced-motion reader (frontend/src/lib/reduced-motion.ts,
+// #6510), with no import of its own: Home._searchReveal.glide asks it whether
+// to scroll smoothly. Transpiled the same way, so a sandbox's matchMedia (or
+// an <html data-motion="reduce">) answers through the shipped reader rather
+// than an unbound name the glide's try swallows.
+const REDUCED_MOTION_SRC = require('typescript').transpile(fs.readFileSync(path.join(FEATURE_DIR, '..', '..', 'lib', 'reduced-motion.ts'), 'utf8'), { target: 99, module: 99 }).replace(/^export\s+/gm, '');
 const HOME_SRC = HOME_RAW
   .replace(/^import \{ readInterfaceMode \}.*$/m, MODE_SRC)
+  .replace(/^import \{ reducedMotion \} from '\.\.\/\.\.\/lib\/reduced-motion';$/m, () => REDUCED_MOTION_SRC)
   .replace(I18N_IMPORT, () => I18N_BINDINGS)
   .replace(/^import .* from '\.\.\/first-session\/build-line-words\.js';$/m, () => BUILD_LINE_WORDS_SRC)
   .replace(/^import .* from '\.\.\/\.\.\/lib\/repo-link\.js';$/m, () => REPO_LINK_SRC)

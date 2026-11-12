@@ -49,7 +49,7 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { CreditList, type CreditView } from './challenge-credits';
 import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
-import { LockedChallengesCard } from './locked-challenges-card';
+import { LockedChallengesCard, lockedHint, lockedTitle } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
 import type { ChallengeState } from './challenge-card';
 import { topochainChallengesStore } from './topochain-challenges-store.js';
@@ -158,6 +158,9 @@ type BlockProductionView =
 type DetailView = {
   key: string;
   goal: string;
+  // The organiser's what-to-do line (#6592), under the rail: what to do to
+  // start and finish. Null when the challenge has none, so no line is drawn.
+  task?: string | null;
   // The points under the title: earned (emerald), so far, or on offer.
   amount: { text: string; earned: boolean } | null;
   // #3253/#3248: under the points, what the scoring rule counts (a proposal
@@ -597,13 +600,14 @@ function ArtworkWell({ slug, tone }: { slug: string | null; tone: string | null 
 // The page, below the platform header that carries the way back: the title,
 // its points ("500 pts", "320 pts so far", emerald once earned) and what the
 // rule counts, then a line on what points are for whenever points show, the
-// artwork well, the clean rail, the action, then "What
-// counts". The Semi design (2026-10-16) left out the category eyebrow, the
-// deadline and the time of the next count, the task line, the description,
-// Scoring and the participants list (with the profile overlay it opened):
-// the card's title says what to do and "What counts" says how it is counted.
-// The board's "Next: …" hint under the action is deliberately absent (owner
-// decision).
+// artwork well, the clean rail, the organiser's task line, the action, then
+// "What counts". The Semi design (2026-10-16) left out the category eyebrow,
+// the deadline and the time of the next count, the description, Scoring and
+// the participants list (with the profile overlay it opened); the task line it
+// left out too is back (#6592), because it is what tells people how to start
+// and finish. The card's title says what the challenge is and "What counts"
+// says how it is counted. The board's "Next: …" hint under the action is
+// deliberately absent (owner decision).
 export function DetailPage({ view }: { view: DetailView }): ReactNode {
   const t = useMessages('leaderboard');
   return (
@@ -627,6 +631,10 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
         name={view.goal}
         counted={view.counted}
       />
+      {/* #6592: the organiser's one-line task — what to do to start and
+          finish — right under the rail. It is their own words, so no heading
+          and no label: the same plain prose the notes below it use. */}
+      {view.task ? <p className={PROSE} data-challenge-task>{view.task}</p> : null}
       {/* #3650: what makes an invite count, in plain words, right under the
           rail that shows the count. */}
       {view.invitesNote ? <p className={PROSE}>{view.invitesNote}</p> : null}
@@ -674,9 +682,11 @@ function scrollTarget(el: HTMLElement): HTMLElement | Window {
  * The grid under one of the frame's looks: the kit's page
  * (./frame/challenges-frame.tsx) from this pane's own view and the
  * viewer's standing (./my-standing.js), which the standard look draws as a
- * card of its own over the grid.
+ * card of its own over the grid. Every state of the grid is the kit's page
+ * (its cards, and loading, the error and "no challenges"), so the head and
+ * the tabs never give way to the standard parts.
  */
-function ChallengesInFrame({ grid, up }: { grid: Extract<GridView, { kind: 'cards' }> | null; up: boolean }): ReactNode {
+function ChallengesInFrame({ grid, up }: { grid: GridView | null; up: boolean }): ReactNode {
   const t = useMessages('leaderboard');
   // The pane stays mounted behind Standings and Kudos: it is the page on
   // show only while its own section is.
@@ -686,37 +696,42 @@ function ChallengesInFrame({ grid, up }: { grid: Extract<GridView, { kind: 'card
     token: { gated: true } | { gated: false; empty: boolean; amount: string; revealed: boolean };
   } | null;
   useEffect(() => { void MyStanding.load(); }, []);
-  const plain = (text: string) => text.replace(/<\/?\d+>/g, '');
   const ranked = standing && standing.rank != null
     ? (standing.people > 0
       ? t('leaderboard:standing.rankOf', { rank: standing.rank, count: standing.people, number: standing.people.toLocaleString('en-US') })
       : t('leaderboard:standing.rank', { rank: standing.rank }))
     : null;
-  // While the cards load (grid null) the page is still the kit's: the
-  // standing it knows, no groups, and a loading note.
-  const points = grid && grid.progress.points != null ? Math.round(grid.progress.points).toLocaleString('en-US') : null;
-  const progress = !grid ? null : points
-    ? t('leaderboard:progress.summary', { points: t('leaderboard:frame.pts', { points }), done: grid.progress.done, count: grid.progress.total })
-    : t('leaderboard:progress.plainLabel', { done: grid.progress.done, count: grid.progress.total });
-  const said = [ranked ? plain(ranked) : null, standing?.pending || null, progress ? plain(progress) : null].filter((part): part is string => !!part);
   // "#16" and " of 151 ranked": the figure the catalog marks, then its words.
   const figure = ranked ? /<0>(.*?)<\/0>(.*)/.exec(ranked) : null;
   const token = !standing ? null
     : standing.token.gated ? { gated: true as const, onReview: () => MyStanding.reviewTerms() }
       : standing.token.empty ? null
         : { gated: false as const, amount: standing.token.amount, revealed: standing.token.revealed, onReveal: () => MyStanding.revealTokens() };
+  const cards = grid && grid.kind === 'cards' ? grid : null;
+  // The line over the bar, as ./season-progress.tsx says it.
+  const raw = cards && typeof cards.progress.points === 'number' ? cards.progress.points : NaN;
+  const points = Number.isFinite(raw) ? Math.max(0, Math.round(raw)) : null;
+  const total = cards ? Math.max(0, Math.floor(Number(cards.progress.total) || 0)) : 0;
+  const lockedCount = cards ? Math.floor(Number(cards.lockedCount) || 0) : 0;
+  const firstEvent = cards ? cards.onboardingEventId : null;
   return (
     <ChallengesFrame
       up={up && section === 'challenges'}
       tabs={[{ key: 'challenges', label: t('leaderboard:tabs.challenges') }, { key: 'topochain', label: t('leaderboard:tabs.standings') }]}
       onTab={(key) => { if (key !== 'challenges') (window as any).Leaderboard?._setSection?.(key); }}
-      purpose={said.length ? said.reduce((first, second) => t('leaderboard:frame.pair', { first, second })) : null}
-      groups={grid ? grid.groups : []}
-      notice={grid ? grid.notice : t('leaderboard:challenges.loading')}
+      state={!grid || grid.kind === 'loading' ? 'loading' : grid.kind}
+      error={grid && grid.kind === 'error' ? grid.message : null}
+      progress={cards && total ? {
+        done: Math.max(0, Math.min(total, Math.floor(Number(cards.progress.done) || 0))),
+        total,
+        points: points == null ? null : t('leaderboard:challenges.points', { count: points, points: points.toLocaleString('en-US') }),
+      } : null}
+      onFirst={firstEvent != null ? () => controller()?._toOnboarding(firstEvent) : null}
+      groups={cards ? cards.groups : []}
+      notice={cards ? cards.notice : null}
+      locked={cards && lockedCount >= 1 ? { title: lockedTitle(lockedCount), hint: lockedHint(lockedCount, cards.lockedNames) } : null}
       onOpen={(idx) => controller()?._openIdx(idx)}
-      season={figure ? { rank: figure[1], of: figure[2].trim() || null, points, pointsLabel: t('leaderboard:frame.points') } : null}
-      note={standing ? t('leaderboard:standing.updateNote') : null}
-      token={token}
+      standing={standing ? { rank: figure ? figure[1] : null, of: figure ? figure[2].trim() || null : null, pending: standing.pending, token } : null}
     />
   );
 }
@@ -789,9 +804,7 @@ export function ChallengesPane(): ReactNode {
             token allocation the Me screen used to carry (./your-standing.tsx).
             It is inside the grid so a challenge's page hides it too.
         */}
-        {frame && (!state.grid || state.grid.kind === 'loading' || state.grid.kind === 'cards') ? (
-          <ChallengesInFrame grid={state.grid && state.grid.kind === 'cards' ? state.grid : null} up={!state.detail} />
-        ) : null}
+        {frame ? <ChallengesInFrame grid={state.grid} up={!state.detail} /> : null}
         <YourStanding />
         <Grid view={state.grid} />
       </div>

@@ -12,6 +12,8 @@
  * goes next.
  */
 
+import { isSettled, type WorkState } from '../../../lib/work-state';
+
 export type ThreadItemType = 'request' | 'change' | 'close' | 'decision';
 
 export interface FoldedReply {
@@ -33,6 +35,14 @@ export interface ClosesRequest {
   title: string | null;
   by: string | null;
   confirmed: boolean;
+  /** #6605/#6606: the request is already closed, so its line says so. */
+  closed?: boolean;
+  /** #6606: its filer answered "This doesn't close it". */
+  disputed?: boolean;
+  /** #6606: its filer could still confirm it, so the line says it is waiting. */
+  waiting?: boolean;
+  /** #6606: the viewer filed it and may press Confirm here. */
+  canConfirm?: boolean;
 }
 
 export interface ThreadItem {
@@ -49,6 +59,12 @@ export interface ThreadItem {
    * sent without it reads as live, as merge-status.js does.
    */
   liveAt?: string | null;
+  /**
+   * #6594: its votes are in, by its project's rule (the server's work state:
+   * it is approved and waiting on checks, or going live). A review change
+   * with this is not asked for a vote anywhere.
+   */
+  approved?: boolean;
   /** #6139, a change underway: built, with its checks passing on its current head and nothing working on it. */
   ready?: boolean;
   at?: string | null;
@@ -134,10 +150,16 @@ export interface ThreadElsewhere {
   request: number;
   /** #6420: the requester answered "This doesn't close it". */
   disputed?: boolean;
+  /** #6606: the requester confirmed that it does close their request. */
+  confirmed?: boolean;
   /** #6420: the viewer is this request's requester, so "This doesn't close it" is theirs to press. */
   ask?: boolean;
   /** #6420: the viewer asked for this request, so the after-press line is theirs to read. */
   mine?: boolean;
+  /** #6605: the request is already closed; the card says so and offers nothing to press. */
+  closed?: boolean;
+  /** #6605: this is the request whose thread the change belongs in, but votes kept it here. */
+  stays?: boolean;
 }
 
 /** D4: the changes for request `number` that live on another request's page. Pure. */
@@ -253,7 +275,8 @@ function standing(item: ThreadItem): Phrase | null {
   if (item.type === 'change') {
     return item.state === 'merged'
       ? { id: goingLive(item) ? 'project:topic.thread.state.goingLive' : 'project:topic.thread.state.live' }
-      : item.state === 'review' ? { id: 'project:topic.thread.state.voting' }
+      : item.state === 'review'
+        ? { id: item.approved ? 'project:topic.thread.state.approved' : 'project:topic.thread.state.voting' }
         : { id: item.ready ? 'project:topic.thread.state.ready' : 'project:topic.thread.state.underway' };
   }
   return { id: item.status === 'open' ? 'project:topic.thread.state.voting' : 'project:topic.thread.state.settled' };
@@ -402,12 +425,9 @@ export function threadLayout(payload: ThreadPayload | null, here: ThreadHere | n
  * clears only that change's), and the first to pass its project's approval
  * rule goes in and closes the rest.
  *
- * Proposing counts as a yes (governance-rules.ts): on a project whose rule
- * counts yeses, a change's author is counted for it unless they voted No, so
- * the ballot shows their own change as their pick. `authorCounts` names the
- * changes whose author that is true of for this viewer (read off each
- * change's own proposal: its rule, and its author a person, not the bot).
- * Null when there is no ballot. Pure.
+ * The pick is only what the viewer voted: proposing a change is never its
+ * author's yes (governance-rules.ts), so their own change is not their pick
+ * until they choose it. Null when there is no ballot. Pure.
  */
 export interface Ballot {
   options: ThreadItem[];
@@ -416,15 +436,13 @@ export interface Ballot {
   pick: number | 'neither' | 'close' | null;
 }
 
-/** A change's vote as the gate counts it for the viewer: their own, or their authorship. */
-function counted(o: ThreadItem, authorCounts: ReadonlySet<number>): 'yes' | 'no' | null {
-  if (o.myVote) return o.myVote;
-  return o.mine && authorCounts.has(o.id) ? 'yes' : null;
+/** A change's vote as the gate counts it for the viewer: the one they cast. */
+function counted(o: ThreadItem): 'yes' | 'no' | null {
+  return o.myVote || null;
 }
 
 export function ballotOf(
   payload: ThreadPayload | null,
-  authorCounts: ReadonlySet<number> = new Set(),
   anchor: readonly number[] | null = null,
 ): Ballot | null {
   if (!payload) return null;
@@ -435,7 +453,7 @@ export function ballotOf(
   const options = payload.items.filter((i) => i.type === 'change' && i.state === 'review' && closesHere(i));
   const close = payload.items.find((i) => i.type === 'close' && i.status === 'open' && i.target != null && on.has(Number(i.target))) || null;
   if (options.length < (close ? 1 : 2)) return null;
-  const votes = options.map((o) => counted(o, authorCounts));
+  const votes = options.map((o) => counted(o));
   const yes = options.filter((_, i) => votes[i] === 'yes');
   const pick = close && close.myVote === 'yes' && !yes.length ? 'close'
     : yes.length === 1 ? yes[0].id
@@ -449,21 +467,18 @@ export type BallotVote =
 
 /**
  * The votes a pick casts. A change: Yes on it, and its Yes taken back from
- * every other (a No would count against it). The viewer's own change, which
- * counts as their Yes without a vote, takes a No to stop counting. Neither,
- * or Close it: No on every change, and Close it is Yes on the close. Only
- * what changes is cast; a close's Yes is taken back by voting it again (the
- * server's toggle). Pure.
+ * every other (a No would count against it). Neither, or Close it: No on
+ * every change, and Close it is Yes on the close. Only what changes is cast;
+ * a close's Yes is taken back by voting it again (the server's toggle). Pure.
  */
-export function ballotVotes(ballot: Ballot, pick: number | 'neither' | 'close', authorCounts: ReadonlySet<number> = new Set()): BallotVote[] {
+export function ballotVotes(ballot: Ballot, pick: number | 'neither' | 'close'): BallotVote[] {
   const out: BallotVote[] = [];
   for (const o of ballot.options) {
-    const now = counted(o, authorCounts);
-    const implicit = !o.myVote && now === 'yes';
+    const now = counted(o);
     let want: 'yes' | 'no' | null;
     if (pick === 'neither' || pick === 'close') want = 'no';
     else if (o.id === pick) want = 'yes';
-    else want = now === 'yes' ? (implicit ? 'no' : null) : now;
+    else want = now === 'yes' ? null : now;
     if (want === now) continue;
     out.push({ kind: 'change', sessionId: o.id, vote: want, epoch: o.epoch ?? null });
   }
@@ -480,38 +495,65 @@ export function ballotVotes(ballot: Ballot, pick: number | 'neither' | 'close', 
  * in the status pill's own shape and tones (../card/model.ts
  * StatusPillState): where the work in its thread stands. Nothing once it is
  * closed (the bar's own line says how it ended) or before anything moved.
- * `stand` is 'closed', or the bot's track state ('building', …), or null;
- * `say` words a message id. Pure.
+ * `stand` is 'closed', or the request's standing (lib/work-state.ts), or
+ * null; `say` words a message id. Pure.
+ *
+ * 11 Nov 2026 (one model): the standing is what was decided, on the server.
+ * One whose change is merged or merging is Going live or Live, never a vote,
+ * whatever an older read of the thread still lists as up for one; its change
+ * is drawn as up for a vote only while the standing says its vote is open;
+ * and a build waiting its turn is the server's Ready to build.
  */
 export function requestPill(
   layout: ThreadLayout,
-  stand: string | null,
+  stand: 'closed' | WorkState | null,
   say: (id: string) => string = (id) => id,
 ): { tier: number; key: string; label: string; tone: string; yes: number; no: number; majority: number; advisory: number; lock: boolean; spinner?: boolean } | null {
   if (stand === 'closed') return null;
+  const work = stand && typeof stand === 'object' ? stand : null;
   const base = { tier: 1, yes: 0, no: 0, majority: 1, advisory: 0, lock: false };
+  const goingLivePill = { ...base, key: 'going_live', label: say('project:topic.thread.pill.goingLive'), tone: 'progress', spinner: true };
+  const livePill = { ...base, key: 'live', label: say('project:topic.thread.pill.live'), tone: 'ok' };
+  // #6594: its votes are in: it is approved and waits on its checks (or
+  // GitHub's), so the header does not ask for a vote it no longer needs.
+  // Approved takes Going live's look (the progress tone), as a work in
+  // flight. The standing says so in its own words (Approved), here before
+  // the settled stages, since waiting on GitHub's checks is still Approved.
+  const approvedPill = { ...base, key: 'approved', label: say('project:topic.thread.pill.approved'), tone: 'progress', spinner: true };
+  if (work && work.words?.stage.id === 'core:work.stage.approved') return approvedPill;
+  if (work && isSettled(work)) return work.stage === 'live' ? livePill : goingLivePill;
   // #6439: an ended vote to close still draws its card, but the header only
   // says a vote is on while one is open.
   const close = layout.close && layout.close.status === 'open' ? layout.close : null;
-  const review = layout.changes.filter((c) => c.state === 'review').length;
+  // The standing's change while it is not open for votes (its checks, an
+  // update on its way, a hold) is not drawn as up for one.
+  const shut = work && work.change && !work.change.voteOpen ? work.change.id : null;
+  const review = layout.changes.filter((c) => c.state === 'review' && c.id !== shut).length;
   if (review >= 2 || (review >= 1 && close)) return { ...base, key: 'choosing', label: say('project:topic.thread.pill.choosing'), tone: 'neutral' };
-  if (review === 1) return { ...base, key: 'vote', label: say('project:topic.thread.pill.vote'), tone: 'neutral' };
+  // #6594: a thread read with no standing says the same of its one change
+  // in review, from the change's own row (threads.js `approved`).
+  if (review === 1) {
+    const only = layout.changes.find((c) => c.state === 'review' && c.id !== shut);
+    if (only && only.approved) return approvedPill;
+    return { ...base, key: 'vote', label: say('project:topic.thread.pill.vote'), tone: 'neutral' };
+  }
   if (close) return { ...base, key: 'close', label: say('project:topic.thread.pill.close'), tone: 'neutral' };
   const underway = layout.changes.filter((c) => c.state === 'underway');
-  if (underway.some((c) => !c.ready) || stand === 'building') {
+  // #6532: a build waiting its turn is the server's Ready to build, not
+  // being built.
+  const building = !!work && work.stage === 'building';
+  const readyToBuild = building && work.words?.stage.id === 'core:work.stage.readyToBuild';
+  if (underway.some((c) => !c.ready) || (building && !readyToBuild)) {
     return { ...base, key: 'building', label: say('project:topic.thread.pill.building'), tone: 'progress', spinner: true };
   }
-  // #6532: a build that is ready and waits its turn is not being built yet.
-  if (stand === 'ready_to_build') {
+  if (readyToBuild) {
     return { ...base, key: 'ready_to_build', label: say('project:topic.thread.pill.readyToBuild'), tone: 'neutral' };
   }
   // #6139: every change underway has finished; only putting one up is left.
   if (underway.length) return { ...base, key: 'ready', label: say('project:topic.thread.pill.ready'), tone: 'neutral' };
   // Merged is live only once production runs it, the fact each change's own
   // pill reads: until then the header says Going live, never Live.
-  if (layout.changes.some(goingLive)) {
-    return { ...base, key: 'going_live', label: say('project:topic.thread.pill.goingLive'), tone: 'progress', spinner: true };
-  }
-  if (layout.changes.some((c) => c.state === 'merged')) return { ...base, key: 'live', label: say('project:topic.thread.pill.live'), tone: 'ok' };
+  if (layout.changes.some(goingLive)) return goingLivePill;
+  if (layout.changes.some((c) => c.state === 'merged')) return livePill;
   return null;
 }

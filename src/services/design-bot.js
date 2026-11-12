@@ -28,6 +28,8 @@
 // Its limits are a design thread's (bot-profiles.js, step 5).
 const { DESIGN_LIMITS } = require('./bot-profiles');
 const botTools = require('./bot-tools');
+// The one reply checker every surface runs (Homeroom bot one model, step 2).
+const claims = require('./reply-claims');
 const log = require('./logger');
 const turnEngine = require('./homeroom-bot-turn-engine');
 const { withoutEmDashes } = require('./em-dashes');
@@ -97,7 +99,8 @@ const CLOSE_NOTE = '[Homeroom check, not from them: there is no control on their
 const CLOSED_TEXT = 'This thread was put away, so I won\'t change its design here. Start a new thread to draw it again.';
 const NO_THREAD_TEXT = 'I couldn\'t open a thread for the design just now. Try again in a minute.';
 const FULL_TEXT = 'I couldn\'t keep that change: this design has as many versions as it can hold, or it grew too big.';
-// 1 Nov 2026: what is said in place of words that claim a drawing that was not made.
+// 1 Nov 2026: what a turn that drew nothing says when its words were no
+// answer (filler, a preamble, leave to start) or said nothing true.
 const NOT_DRAWN_TEXT = 'I couldn\'t draw that just now. Ask me again and I\'ll have another go.';
 
 // ── A turn that ends before it drew (1 Nov 2026) ─────────────────────────
@@ -106,15 +109,11 @@ const NOT_DRAWN_TEXT = 'I couldn\'t draw that just now. Ask me again and I\'ll h
 // was answered "Drawing it now from the app's own markup and styles." and
 // nothing else: a round of words with no write_screen, which ended the turn
 // with the design as it was. While a round with tools is left, such an end
-// goes back to the model: words that only announce the next step (the
-// mayor's announcesOnly), words that say it drew or is drawing what it did
-// not (DRAWING_CLAIM, DESIGN_DONE), a question asking leave to start, and,
-// when Main Chat handed it a screen to draw, anything but a real question.
-
-// "I've changed the header", "I just made it blue", "here's the new version":
-// done now. Not "In version 2 I made the header blue", which tells of a
-// version before.
-const DESIGN_DONE = /\bI(?:'ve| have)\s+(?:just\s+|now\s+)?(?:changed|updated|made|moved|added|removed|swapped|replaced|redrawn|drawn|redesigned|reworked)\b|\bI\s+(?:just|now)\s+(?:changed|updated|made|moved|added|removed|swapped|replaced|redrew|drew|redesigned|reworked)\b|\bhere(?:'s| is) (?:the|your) (?:new |next |updated )?(?:version|screen|design)\b/i;
+// goes back to the model: words that say it drew or is drawing what it did
+// not (the shared reply check's drawing and design_done claims,
+// reply-claims.js), words that only announce the next step (the mayor's
+// announcesOnly), a question asking leave to start, and, when Main Chat
+// handed it a screen to draw, anything but a real question.
 // "Want me to start?", "Shall I draw it?", "Should I go ahead?"
 const ASKS_LEAVE = /\b(?:want me to|do you want me to|would you like me to|shall I|should I|ok(?:ay)? if I|can I go ahead|ready for me to|shall we start|should we start|want to start|go ahead)\b[^?]*\?/i;
 const DRAW_NOTE = '[Homeroom check, not from them: you have not drawn anything yet. Call write_screen (or edit_design) '
@@ -169,7 +168,8 @@ function askFirst({ current = null, pictures = [], added = [], about = null, his
 }
 
 /**
- * Pure: why words that end a design turn are not its end yet, or null.
+ * Pure: why words that end a design turn are not its end yet by their shape,
+ * or null. What they claim is the reply check's (reply-claims.js).
  * `changed` the turn made a version, `offered` it offered a card,
  * `handoff` Main Chat handed it a screen to draw, `drawnBefore` the thread
  * holds a version already. Filler (isFiller) is 'filler' whatever was asked.
@@ -183,8 +183,6 @@ function notDrawnYet(text, { changed = false, offered = false, handoff = false, 
   if (isFiller(said)) return 'filler';
   // #6257: asked what it is for, with nothing to draw from yet.
   if (mayAsk && realQuestion(said)) return null;
-  // Said to be drawn or drawing first: it is told to draw, not to go on.
-  if (mayor.DRAWING_CLAIM.test(said) || DESIGN_DONE.test(said)) return 'claimed';
   if (mayor.announcesOnly(said)) return 'preamble';
   // Leave to start drawing, with nothing drawn yet. Once there is a screen,
   // "Want me to make the title bigger?" is a suggestion of its own.
@@ -204,24 +202,13 @@ function notDrawnYet(text, { changed = false, offered = false, handoff = false, 
 // what happens after the tap. A filed (or posted) design's turn now reads
 // its request's track (homeroom-bot-track.js) and is told where it stands
 // (filedLine). Words that say it cannot be built, or that somebody else has
-// to start it, go back with BUILT_NOTE while Homeroom bot builds it, as a
-// drawing it did not make goes back with DRAW_NOTE.
+// to start it (the reply check's not_built claim), go back with BUILT_NOTE
+// while Homeroom bot builds it, as a drawing it did not make goes back with
+// DRAW_NOTE.
 
 const FILED_STATES = new Set(['filed', 'posted']);
-// "I can't build it myself", "it won't be built", "someone on the project
-// has to start it", "building starts on the project's side".
-const NOT_BUILT = new RegExp([
-  String.raw`\b(?:can['’]?t|cannot|can not|won['’]?t|will not|unable to|not able to)\s+(?:be\s+)?(?:build|built|start building|start the build)\b`,
-  String.raw`\b(?:someone|somebody|a person|people|the project|its members|a member|another person)\b[^.?!]{0,40}\b(?:has|have|needs?|must)\s+to\s+(?:start|build|begin|pick it up)\b`,
-  String.raw`\bthe project['’]?s side\b`,
-].join('|'), 'i');
 const BUILT_NOTE = '[Homeroom check, not from them: this design is filed, and Homeroom bot builds it from its plan. Say so, '
   + 'and where it stands from the FILED line. Never say it cannot be built or that someone else has to start it.]';
-
-/** Pure (#6151): words that say a filed design will not be built, or that somebody else has to start it. */
-function saysNotBuilt(text) {
-  return NOT_BUILT.test(String(text || ''));
-}
 
 /** Pure (#6151): the step after the one a track is on, or for one waiting its turn, the step it starts on; null once it ended. */
 function nextStepOf(track) {
@@ -289,9 +276,35 @@ function filedBuilds(filed) {
   return standing.say !== 'ended' && standing.say !== 'person';
 }
 
-/** What a turn that still says a filed design will not be built says instead. */
+/** A filed design's standing in a line: what a turn whose words said only that it will not be built says. */
 function builtText(filed) {
   return `Homeroom bot builds request #${filed.number} from this design's plan. Where it stands shows on the request.`;
+}
+
+/**
+ * The note a design turn's words go back with when the reply check shows
+ * them false (reply-claims.js): this thread's own note for its own claims
+ * (a build it says will not happen, a control on their side, a drawing it
+ * did not make), else the shared repair note, naming only this thread's
+ * tools.
+ */
+function designNote(problems) {
+  const kinds = problems.map((p) => p.kind);
+  const only = (...list) => kinds.every((k) => list.includes(k));
+  if (only('not_built')) return BUILT_NOTE;
+  if (only('no_control')) return CLOSE_NOTE;
+  if (only('drawing', 'design_done')) return DRAW_NOTE;
+  return claims.repairNote(problems, { tools: new Set(TOOLS.map((tool) => tool.function.name)) });
+}
+
+/** Pure: how a turn records what its words claimed, as its failures' codes read. */
+function claimTag(problems) {
+  const kinds = problems.map((p) => p.kind);
+  const only = (...list) => kinds.every((k) => list.includes(k));
+  if (only('not_built')) return 'not_built';
+  if (only('no_control')) return 'no_control';
+  if (only('drawing', 'design_done')) return 'claimed';
+  return `claims:${kinds.join('+')}`.slice(0, 80);
 }
 
 /**
@@ -346,7 +359,8 @@ const TOOLS = Object.freeze([
         + 'stylesheets in, so use their classes and never copy CSS from them. A plan shows the screen without its '
         + 'scripts, so write every row, label and state it must show into the markup; use a script only for an '
         + 'interactive state the plan does not need. One write_screen a turn: grow it with edit_design. It becomes the '
-        + 'next version when you reply. Say in `note`, in a few words, what it is.',
+        + 'next version when you reply. When you draw versions side by side, give each column data-variant="its label", '
+        + 'and put data-chosen on the one they picked. Say in `note`, in a few words, what it is.',
       parameters: {
         type: 'object',
         properties: {
@@ -1287,6 +1301,26 @@ async function answer(pool, config, {
   // #6260: the platform read grant for this turn, opened only if the model
   // reads a project's board, and closed when the turn ends.
   const board = { grant: undefined };
+  // The turn as the reply check reads it (reply-claims.js): what it drew,
+  // offered or showed, the thread it closed, the filed design it is about,
+  // and what its tools returned (noteTool).
+  const checkTurn = {
+    user, bot, conversationId, deps, app: project || null,
+    appIds: new Set(Number(project?.id) > 0 ? [Number(project.id)] : []), design: true,
+  };
+  const turnNow = () => Object.assign(checkTurn, {
+    drew: (!!html && html !== (current?.html || '')) || !!offered || !!card,
+    offer: offered, closedThread, filedDesign: filed, designBuilds: builds,
+  });
+  // #6257: a first drawing that may ask what the screen is for answers with
+  // its question: "I'll draw it for you. What is the app for?" draws later,
+  // so its drawing is no claim.
+  const claimsIn = (words, copy = null) => claims.checkReply(pool, turnNow(), replyHtml.withHtmlWords(words, copy))
+    .then((found) => (mayAsk && realQuestion(words) ? found.filter((p) => p.kind !== 'drawing' && p.kind !== 'design_done') : found))
+    .catch((err) => {
+      log.warn('design-bot', 'Could not check a design turn\'s words', { err: clip(err?.message, 200) });
+      return [];
+    });
   try {
     if (t.apiKey === undefined) t.apiKey = await mayor.botKey(pool, config, bot.id).catch(() => null);
     if (!t.apiKey) throw Object.assign(new Error('no key'), { code: 'no_key' });
@@ -1351,20 +1385,18 @@ async function answer(pool, config, {
     // twice (notDrawnYet), while the next round still has its tools: the
     // last one only replies.
     let nudges = 0;
-    const holdEnd = (said) => {
+    const holdEnd = async (said, copy = null) => {
       if (nudges >= mayor.MAX_PREAMBLE_NUDGES || turnRounds.rounds + 1 >= MAX_ROUNDS) return null;
-      // #6151: Homeroom bot builds a filed design: words saying it will not go back.
-      if (builds && saysNotBuilt(said)) {
+      // What the words say was done, or will not be, is checked as every
+      // reply is (reply-claims.js): a drawing it did not make, "close it
+      // from your side" (#6159), a filed design Homeroom bot builds said not
+      // to be built (#6151), a filing or a draft no record backs. What is
+      // shown false goes back once or twice with its note.
+      const problems = await claimsIn(said, copy);
+      if (problems.length) {
         nudges += 1;
-        t.failures.push(`d${turnRounds.rounds}:not_built`);
-        return BUILT_NOTE;
-      }
-      // #6159: "close it from your side" is no answer: there is no such
-      // control, and close_thread finishes the thread.
-      if (!closedThread && mayor.NO_CONTROL_CLAIM.test(said)) {
-        nudges += 1;
-        t.failures.push(`d${turnRounds.rounds}:no_control`);
-        return CLOSE_NOTE;
+        t.failures.push(`d${turnRounds.rounds}:${claimTag(problems)}`);
+        return designNote(problems);
       }
       const changedNow = !!html && html !== (current?.html || '');
       // A card (a comparison, pictures) is an answer in itself, as an offer is.
@@ -1409,9 +1441,9 @@ async function answer(pool, config, {
             : drawNow ? { type: 'function', function: { name: 'write_screen' } } : 'auto',
         };
       },
-      onWords: (res) => {
+      onWords: async (res) => {
         const said = String(res.content || '').trim();
-        const note = holdEnd(said);
+        const note = await holdEnd(said);
         if (note) {
           messages.push({ role: 'assistant', content: said });
           messages.push({ role: 'user', content: note });
@@ -1561,12 +1593,14 @@ async function answer(pool, config, {
         } else {
           result = { ok: false, error: `There is no tool called ${name}.` };
         }
+        // #6581, #6307: the requests and projects a tool returned are real.
+        claims.noteTool(checkTurn, result);
         return result;
       },
-      afterCalls: () => {
+      afterCalls: async () => {
         // A reply that says it drew, or asks leave to, with nothing drawn.
         if (replyText) {
-          const note = holdEnd(replyText);
+          const note = await holdEnd(replyText, replyCopy);
           if (note) {
             messages.push({ role: 'user', content: note });
             replyText = '';
@@ -1585,11 +1619,12 @@ async function answer(pool, config, {
   }
   const changed = !!html && html !== (current?.html || '');
   // 1 Nov 2026, #6141: words that end a turn with nothing shown are not sent
-  // as its answer when they say it drew or is about to, ask leave to start,
-  // or, handed a screen to draw, are anything but a real question back (the
-  // "placeholder" a reply forced in the last round came back with). The turn
-  // says it could not draw (NOT_DRAWN_TEXT), recorded as `end:<why>`. A turn
-  // that failed with nothing to say says that instead (BROKEN_TEXT).
+  // as its answer when they only announce what it is about to do, ask leave
+  // to start, or, handed a screen to draw, are anything but a real question
+  // back (the "placeholder" a reply forced in the last round came back
+  // with). The turn says it could not draw (NOT_DRAWN_TEXT), recorded as
+  // `end:<why>`. A turn that failed with nothing to say says that instead
+  // (BROKEN_TEXT).
   // #6144: on every design turn, an edit too, filler is no answer, and nor is
   // a reply the last round forced (`reply` is its only tool) unless it asks
   // a real question back: `end:filler`, `end:forced`.
@@ -1598,19 +1633,30 @@ async function answer(pool, config, {
   const unkept = shown || (error && !replyText) ? null
     : notDrawnYet(replyText, { handoff, drawnBefore: !!current, mayAsk, mayor }) || (forced && !realQuestion(replyText) ? 'forced' : null);
   if (unkept) t.failures.push(`end:${unkept}`);
-  // #6151: still saying a design Homeroom bot builds will not be built, once
-  // told: it says that Homeroom bot builds it instead, recorded as `end:not_built`.
-  if (builds && saysNotBuilt(replyText)) {
-    t.failures.push('end:not_built');
-    replyText = builtText(filed);
+  // #6583: what the words still say that is shown false (a drawing it did
+  // not make, a filed design said not to be built, #6151) is cut, sentence
+  // by sentence, and nothing is said in its place (reply-claims.js),
+  // recorded as `end:<what>`. Cut to nothing with nothing shown, a filed
+  // design's words say where it stands, and any other say nothing was drawn.
+  let endProblems = [];
+  if (!unkept && replyText) {
+    endProblems = await claimsIn(replyText, replyCopy);
+    if (endProblems.length) {
+      t.failures.push(`end:${claimTag(endProblems)}`);
+      replyText = claims.cut(replyText, endProblems, turnNow());
+      if (!replyText && !shown && filed && endProblems.some((p) => p.kind === 'not_built')) {
+        replyText = await claims.checkedNote(pool, turnNow(), builtText(filed));
+      }
+    }
   }
+  const notDrawn = unkept || (!replyText && !shown && endProblems.length ? 'cut' : null);
   // The words sent beside a version or an offer: never filler (#6144). With
   // nothing shown, filler is unkept above.
   const said = isFiller(replyText) ? '' : replyText;
   await mayor.recordTurn(pool, {
     userId: user.id, conversationId, messageId: message.id, model: t.model, rounds: turnRounds.rounds, tools,
     inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, costUsd: t.usage.costUsd,
-    error, failures: t.failures, fallback: error ? 'design_broken' : unkept ? 'not_drawn' : null,
+    error, failures: t.failures, fallback: error ? 'design_broken' : notDrawn ? 'not_drawn' : null,
   });
   await turnEngine.chargeTurn(pool, bot.id, t.usage.costUsd, { what: 'a design turn', category: 'design-bot' });
   if (offered && !changed && !error) {
@@ -1624,10 +1670,10 @@ async function answer(pool, config, {
     if (error === 'no_key') return say(mayor.KEY_TEXT);
     // Task 2020 follow-up: an answer with no new version may come laid out,
     // beside its words exactly as written (never the not-drawn or broken line).
-    const copy = !unkept && !error && replyCopy && replyText && replyText === copyBeside
-      && !(builds && saysNotBuilt(replyHtml.htmlWords(replyCopy))) ? replyCopy : null;
+    const copy = !notDrawn && !error && replyCopy && replyText && replyText === copyBeside
+      && !endProblems.length ? replyCopy : null;
     const meta = { ...withCard, ...(copy ? { html: copy } : {}) };
-    return say(unkept ? NOT_DRAWN_TEXT : clip(replyText, MAX_REPLY_CHARS) || BROKEN_TEXT,
+    return say(notDrawn ? NOT_DRAWN_TEXT : clip(replyText, MAX_REPLY_CHARS) || BROKEN_TEXT,
       Object.keys(meta).length ? { metadata: { kind: 'chat', ...meta } } : {});
   }
   // #6150: a version about to be saved with a sheet block left empty (an
@@ -1766,7 +1812,8 @@ module.exports = {
   NOT_DRAWN_TEXT,
   DRAW_NOTE,
   BUILT_NOTE,
-  saysNotBuilt,
+  CLOSE_NOTE,
+  designNote,
   filedLine,
   filedBuilds,
   filedOf,

@@ -264,12 +264,26 @@ test('the Settings picker is offered to everyone, with Auto and the shipped lang
   assert.match(read('frontend/src/features/settings/sections/language.tsx'),
     /shippedLanguages\.map\(\(\{ tag, name \}\) => \(/, 'the options are the config, not a second list');
   assert.equal(shipped[0], 'en', 'English always ships, and comes first');
+  // #6511: the cache translates Homeroom's own screens, so the intro may not
+  // say they are English only; it says why a language may be missing instead.
+  const intro = message('settings:language.intro');
+  assert.doesNotMatch(intro, /English/, 'the intro does not claim the screens are English only');
+  assert.match(intro, /listed once enough of Homeroom has been translated/);
   // A locale saved when the picker listed more stays visible and changeable.
   const start = js.indexOf('    _renderLanguageSection() {');
   const fn = js.slice(start, start + 900);
   assert.doesNotMatch(fn, /settings-language-section/, 'nothing hides the section any more');
   assert.match(fn, /opt\.textContent = window\.PlatformI18n\?\.languageName\?\.\(value\) \|\| value/,
     'a kept choice is listed under its own name');
+  // #6511: Auto says what it gives on this device, in that language's own
+  // name. The prerender has no device, so it ships the plain label and the
+  // resolved one follows hydration (a server snapshot of null).
+  const pane = read('frontend/src/features/settings/sections/language.tsx');
+  assert.match(pane, /useSyncExternalStore\(subscribeAutoLanguage, getAutoLanguage, \(\) => null\)/);
+  assert.match(pane, /t\('settings:language\.autoCurrently', \{ language: languageName\(auto\) \}\)/);
+  assert.equal(message('settings:language.autoCurrently', { language: 'English' }), 'Auto (currently: English)');
+  assert.match(select.slice(0, select.indexOf('</option>')), new RegExp(message('settings:language.auto')),
+    'the prerendered shell keeps the plain Auto label');
 });
 
 test('shell answers the __usernode_locale family and pushes changes', () => {

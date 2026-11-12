@@ -194,7 +194,7 @@ test('Apple and Google sign-in against the full PostgreSQL schema', { timeout: 1
     assert.equal(to.host, 'accounts.google.com');
     const binder = cookiesFrom(start).hr_oauth_binder;
     assert.ok(binder);
-    assert.match(start.headers.getSetCookie().join('\n'), /hr_oauth_binder=[^;]+; Max-Age=600; Path=\/api\/auth\/oauth; Expires=[^;]+; HttpOnly; SameSite=Lax/);
+    assert.match(start.headers.getSetCookie().join('\n'), /hr_oauth_binder=[^;]+; Max-Age=600; Path=\/; Expires=[^;]+; HttpOnly; SameSite=Lax/);
 
     // Without its binder, the callback signs nobody in.
     nextClaims = claims('g-http', 'http@example.com');
@@ -290,7 +290,7 @@ test('Apple and Google sign-in against the full PostgreSQL schema', { timeout: 1
       const res = await post('/api/auth/oauth/apple/native/start', { from: 'invite', follow: true });
       assert.equal(res.status, 200);
       const body = await res.json();
-      assert.match(res.headers.getSetCookie().join('\n'), /hr_oauth_binder=[^;]+; Max-Age=600; Path=\/api\/auth\/oauth; Expires=[^;]+; HttpOnly; SameSite=Lax/);
+      assert.match(res.headers.getSetCookie().join('\n'), /hr_oauth_binder=[^;]+; Max-Age=600; Path=\/; Expires=[^;]+; HttpOnly; SameSite=Lax/);
       return { ...body, binder: cookiesFrom(res).hr_oauth_binder };
     };
 

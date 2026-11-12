@@ -13,7 +13,7 @@ import {
 
 type Art = NonNullable<DiscoverTileView['illustration']>;
 /** The governance card a save opened, or the one already waiting (#2086). */
-type ProposalLink = { id: number; href: string };
+type ProposalLink = { id: number; href: string; mine?: boolean; proposed?: Art | null };
 /**
  * The card colour rides INSIDE the framing state, not beside it, and that is
  * what makes every existing action behave the way it already did: a gesture
@@ -26,6 +26,8 @@ type ProposalLink = { id: number; href: string };
 // that the sliders are gone.
 const KEY_PAN = 3;
 const KEY_ZOOM = 1.08;
+// routes/app-illustrations.js MAX_PREVIEW_BYTES: the most a card's loop may be.
+const MAX_PREVIEW_BYTES = 1536 * 1024;
 
 export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose: () => void }) {
   const t = useMessages('discover');
@@ -39,6 +41,10 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
   const [art, setArt] = useState<Art | null>(null);
   const pendingBlob = useRef<Blob | null>(null);
   const pendingDark = useRef<Blob | null>(null);
+  // The card's preview loop: undefined keeps the card's own, null drops it,
+  // a file replaces it.
+  const pendingPreview = useRef<Blob | null | undefined>(undefined);
+  const loopFile = useRef<HTMLInputElement>(null);
   const uploadTheme = useRef<'light' | 'dark'>('light');
   const [previewTheme, setPreviewTheme] = useState<'light' | 'dark'>('light');
   const [loading, setLoading] = useState(true);
@@ -48,7 +54,11 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
   // group votes on, so the editor tells the user where it went (`sent`) and,
   // when one is already open, that this save has to wait for it (`pending`).
   const [pending, setPending] = useState<ProposalLink | null>(null);
-  const [sent, setSent] = useState<ProposalLink | null>(null);
+  const [sent, setSent] = useState<{ link: ProposalLink; replaced: boolean } | null>(null);
+  // #6601: a refused replace (403 only-the-proposer, 409 already-decided) is
+  // said in the editor's own status line, not as a red error, because it is
+  // an answer about the waiting change rather than a failure to save.
+  const [refusal, setRefusal] = useState<{ message: string; href: string | null; decided: boolean } | null>(null);
   // Live pointers, in insertion order: one is a drag, two or more a pinch.
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const [dragging, setDragging] = useState(false);
@@ -59,8 +69,14 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || t('discover:illustration.loadFailed'));
       if (controller.signal.aborted) return;
-      setArt(data.illustration ? { ...data.illustration, ...clampFrame(data.illustration) } : null);
-      setPending(data.pending || null); setLoading(false);
+      const waiting = data.pending || null;
+      // #6601: your own waiting change opens the editor on ITS record, so a
+      // replace can swap one picture and keep the rest, and Save replaces it
+      // instead of waiting. Someone else's waiting change keeps today's view
+      // (what the card wears, Save disabled).
+      const shown = waiting?.mine ? (waiting.proposed ?? null) : (data.illustration || null);
+      setArt(shown ? { ...shown, ...clampFrame(shown) } : null);
+      setPending(waiting); setLoading(false);
     }).catch(err => { if (!controller.signal.aborted) setError(err.message); });
     return () => { controller.abort(); generation.current++; };
   }, [endpoint]);
@@ -68,6 +84,10 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
     const url = art?.url;
     return () => { if (url?.startsWith('blob:')) URL.revokeObjectURL(url); };
   }, [art?.url]);
+  useEffect(() => {
+    const url = art?.preview?.url;
+    return () => { if (url?.startsWith('blob:')) URL.revokeObjectURL(url); };
+  }, [art?.preview?.url]);
   useEffect(() => {
     const url = art?.darkUrl;
     return () => { if (url?.startsWith('blob:')) URL.revokeObjectURL(url); };
@@ -132,9 +152,22 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
     } catch (err) { if (current === generation.current) setError((err as Error).message); }
     finally { if (current === generation.current) setBusy(false); }
   };
+  // A preview loop is checked here as the server checks it (an MP4 or
+  // WebM of at most 1.5 MB), so a wrong file is said before Save.
+  const choosePreview = (chosen?: File) => {
+    if (!chosen) return;
+    if (!/^video\/(mp4|webm)$/.test(chosen.type) || chosen.size > MAX_PREVIEW_BYTES) {
+      setError(t('discover:illustration.preview.invalid'));
+      return;
+    }
+    setError('');
+    pendingPreview.current = chosen;
+    const url = URL.createObjectURL(chosen);
+    setArt(a => a ? { ...a, preview: { url, type: chosen.type } } : a);
+  };
   const save = async () => {
     if (busy || loading) return;
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setRefusal(null);
     try {
       const encode = async (blob: Blob | null) => {
         if (!blob) return undefined;
@@ -144,22 +177,37 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
         return btoa(binary);
       };
       const framing = art ? { ...clampFrame(art), ...(art.tint ? { tint: art.tint } : null) } : null;
-      const res = await fetch(endpoint, { method: art ? 'PUT' : 'DELETE',
+      // #6601: when it is your own change that is waiting, Save replaces it
+      // in place (and Use app icon replaces it with a removal) rather than
+      // being refused.
+      const replace = !!pending?.mine;
+      const res = await fetch(replace && !art ? `${endpoint}?replace=1` : endpoint, { method: art ? 'PUT' : 'DELETE',
         headers: { 'Content-Type': 'application/octet-stream' },
-        body: art ? JSON.stringify({ ...framing, light: await encode(pendingBlob.current),
-          dark: art.darkUrl ? await encode(pendingDark.current) : null }) : undefined });
+        body: art ? JSON.stringify({ ...framing, ...(replace ? { replace: true } : {}), light: await encode(pendingBlob.current),
+          dark: art.darkUrl ? await encode(pendingDark.current) : null,
+          ...(pendingPreview.current === undefined ? {}
+            : { preview: pendingPreview.current ? await encode(pendingPreview.current) : null }) }) : undefined });
       const data = await res.json();
       if (!res.ok) {
         // 409 carries the card already waiting; keep it on screen with the
         // message so the link is one tap away.
         if (data.pending) setPending(data.pending);
+        // #6601: the two refusals a replace can get (403 not_proposer, 409
+        // already decided) are answers about the waiting change, so they are
+        // said in the status line under the buttons. A decided change cannot
+        // be retried, so the main button goes away with it.
+        if (res.status === 403 || res.status === 409) {
+          setRefusal({ message: data.error || t('discover:illustration.saveFailed'),
+            href: data.pending?.href || pending?.href || null, decided: res.status === 409 });
+          return;
+        }
         throw new Error(data.error || t('discover:illustration.saveFailed'));
       }
       // Nothing changed on the app: the caches the editor used to patch here
       // are patched by the illustration_changed broadcast when the vote
       // applies it. Removing an illustration the app never had opens nothing.
       if (!data.proposal) { close.current(); return; }
-      setSent(data.proposal);
+      setSent({ link: data.proposal, replaced: data.replaced === true });
     } catch (err) { setError((err as Error).message); }
     finally { setBusy(false); }
   };
@@ -230,8 +278,16 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
           <DiscoverCard tile={tile} preview previewTheme={previewTheme} />
         </div>
       </div>
+      {art?.preview?.url ? (
+        // The loop the card will play, still until it is played here.
+        <video data-illustration-preview-loop src={art.preview.url} poster={art.url} controls muted loop playsInline preload="none"
+          aria-label={t('discover:illustration.preview.player')}
+          className="block w-full max-w-[320px] mx-auto mb-4 aspect-[16/10] rounded-xl bg-zinc-100 object-cover dark:bg-zinc-800" />
+      ) : null}
       <input ref={file} name="featured-illustration" type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
         aria-label={t('discover:illustration.upload.fileLabel')} onChange={e => { void chooseFile(e.target.files?.[0]); e.target.value = ''; }} />
+      <input ref={loopFile} name="featured-illustration-preview" type="file" accept="video/mp4,video/webm" className="hidden"
+        aria-label={t('discover:illustration.preview.fileLabel')} onChange={e => { choosePreview(e.target.files?.[0]); e.target.value = ''; }} />
       <fieldset disabled={busy || loading || !!sent} className="flex flex-col gap-3">
         <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => { uploadTheme.current = 'light'; file.current?.click(); }}>{art ? t('discover:illustration.upload.replaceLight') : t('discover:illustration.upload.light')}</Button>
         <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('discover:illustration.upload.formats')}</p>
@@ -243,6 +299,12 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
           {art.darkUrl ? <Button type="button" variant="neutral" ink="muted"
             onClick={() => { pendingDark.current = null; setArt({ ...art, darkUrl: null }); }}>{t('discover:illustration.upload.useLightInBoth')}</Button> : null}
           <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('discover:illustration.upload.sameDimensions')}</p>
+          <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => loopFile.current?.click()}>
+            {art.preview ? t('discover:illustration.preview.replace') : t('discover:illustration.preview.add')}
+          </Button>
+          {art.preview ? <Button type="button" variant="neutral" ink="muted"
+            onClick={() => { pendingPreview.current = null; setArt({ ...art, preview: null }); }}>{t('discover:illustration.preview.remove')}</Button> : null}
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('discover:illustration.preview.formats')}</p>
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             <RichMessage
               id="discover:illustration.framingHelp"
@@ -278,16 +340,25 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
           </div>
           <div className="flex gap-3">
             <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => setArt({ ...art, ...DEFAULT_FRAME })}>{t('discover:illustration.resetPosition')}</Button>
-            <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => { setArt(null); pendingBlob.current = null; pendingDark.current = null; }}>{t('discover:illustration.useAppIcon')}</Button>
+            <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => { setArt(null); pendingBlob.current = null; pendingDark.current = null; pendingPreview.current = undefined; }}>{t('discover:illustration.useAppIcon')}</Button>
           </div>
         </> : null}
       </fieldset>
       {loading && !error ? <p role="status" className="text-sm mt-3">{t('discover:illustration.loadingPreview')}</p> : null}
       {error ? <p role="alert" className="text-sm text-red-700 dark:text-red-400 mt-3">{error}</p> : null}
+      {refusal ? <p role="status" data-illustration-refused className="text-sm mt-3 text-zinc-700 dark:text-zinc-300">
+        {refusal.message}
+        {refusal.href ? <> <a href={refusal.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose}>{t('discover:illustration.openProposal')}</a></> : null}
+      </p> : null}
       {sent ? <p role="status" data-illustration-sent className="text-sm mt-3 text-zinc-700 dark:text-zinc-300">
         <RichMessage
-          id="discover:illustration.sent"
-          components={[<a href={sent.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose} />]}
+          id={sent.replaced ? 'discover:illustration.replaced' : 'discover:illustration.sent'}
+          components={[<a href={sent.link.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose} />]}
+        />
+      </p> : pending?.mine ? <p role="status" data-illustration-pending className="text-sm mt-3 text-zinc-700 dark:text-zinc-300">
+        <RichMessage
+          id="discover:illustration.pendingMine"
+          components={[<a href={pending.href} className="text-violet-600 dark:text-violet-400 underline" onClick={onClose} />]}
         />
       </p> : pending ? <p role="status" data-illustration-pending className="text-sm mt-3 text-zinc-700 dark:text-zinc-300">
         <RichMessage
@@ -299,7 +370,7 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
         {sent
           ? <Button type="button" className="min-h-[44px] flex-1" onClick={onClose}>{t('core:common.done')}</Button>
           : <>
-            <Button type="button" className="min-h-[44px] flex-1" disabled={loading || busy || !!pending} onClick={() => { void save(); }}>{busy ? t('discover:illustration.pleaseWait') : t('discover:illustration.propose')}</Button>
+            <Button type="button" className="min-h-[44px] flex-1" disabled={loading || busy || refusal?.decided || (!!pending && !pending.mine)} onClick={() => { void save(); }}>{busy ? t('discover:illustration.pleaseWait') : pending?.mine ? t('discover:illustration.replace') : t('discover:illustration.propose')}</Button>
             <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" disabled={busy} onClick={onClose}>{t('core:common.cancel')}</Button>
           </>}
       </div>

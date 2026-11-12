@@ -93,7 +93,7 @@ import {
   probeLayout,
 } from '../side-panel/resize';
 import { sidePanelStore } from '../side-panel/store.js';
-import { attachmentFor, columnAddress, columnKey, routeOf, type Column, type ColumnDetail, type ColumnHow } from './column';
+import { attachmentFor, columnAddress, columnKey, pageProject, routeOf, type Column, type ColumnDetail, type ColumnHow } from './column';
 import {
   BOT_TAB, botDetailAt, botItemFromRoute, botItemRoute, botTabAddress, botTabAt, knownBotConversation, noteBotConversation, useBotTabAsk,
   type BotAt, type BotItem,
@@ -112,9 +112,10 @@ import { AiDrawer, MainPane, usePhone } from './phone-drawer';
 import { closeDetail, detailLayout, openDetail, useDetail, THREE_COLUMNS } from './detail';
 import { DetailPane } from '../detail/detail-pane';
 import {
-  freshCount, heroWords, inProgress, isTopicHref, liveThisWeek, needsYou, owedCount, rankProjects, upNext,
+  applyWorkState, freshCount, heroWords, inProgress, isTopicHref, liveThisWeek, needsYou, owedCount, rankProjects, upNext,
   type AiApp, type AiThread, type AiWork, type NeedItem, type WorkRow,
 } from './model';
+import type { WorkStatePush } from '../../lib/work-state';
 
 // 1 Nov 2026: the column is docked from 768px, where a phone's drawer ends.
 const WIDE = '(min-width: 768px)';
@@ -574,9 +575,14 @@ export function AiScreen(): ReactNode {
   // the lists says so. The server keeps the cursor (POST threads/read), so
   // the next read agrees.
   const [seenThreads, setSeenThreads] = useState<ReadonlySet<number>>(() => new Set());
-  const markThreadRead = (threadId: number | null | undefined, app: AiApp | null): void => {
+  const markThreadRead = (threadId: number | null | undefined, app: AiApp | null, rootId?: number | null): void => {
     if (!threadId) return;
     setSeenThreads((had) => (had.has(threadId) ? had : new Set([...had, threadId])));
+    // #6604: only a PRIVATE thread is marked read from here. A request's or
+    // a change's page marks its own thread when its group chat mounts
+    // (group-chat.js _noteThreadRead), so posting from both sent the same
+    // read twice on every open.
+    if (!rootId) return;
     if (!app?.slug || typeof window === 'undefined') return;
     void fetch(`/api/apps/${encodeURIComponent(app.slug)}/threads/read${demoQuery()}`, {
       method: 'POST',
@@ -602,7 +608,21 @@ export function AiScreen(): ReactNode {
     () => new Set(rankProjects(rows, progress, waiting, live).map((p) => p.app.slug)),
     [rows, progress, waiting, live],
   );
-  useLiveLists(() => setMoved((n) => n + 1), visible, { projects, botId });
+  // A work_state push is drawn at once where the lists hold its item
+  // (./model.ts applyWorkState); the read after it puts the row in its list.
+  const applyPush = useCallback((push: WorkStatePush) => {
+    setWork((now) => applyWorkState(now, null, push).work);
+    setNeeds((now) => applyWorkState(null, now, push).needs);
+  }, []);
+  // #6595: a request or a change open in the column is a page of its own
+  // project, so an update about that project re-reads the lists beside it
+  // even when nothing of it was listed. Never by App.currentApp: on this
+  // page that is null.
+  const shownProjects = useMemo(() => {
+    const slug = column?.at === 'page' ? pageProject(column.route) : null;
+    return slug && !projects.has(slug) ? new Set([...projects, slug]) : projects;
+  }, [projects, column]);
+  useLiveLists(() => setMoved((n) => n + 1), visible, { projects: shownProjects, botId }, applyPush);
   // HISTORY (./history.ts): read on each showing, and again when the
   // projects picked or its kind change.
   const [showings, setShowings] = useState(0);
@@ -674,6 +694,18 @@ export function AiScreen(): ReactNode {
     else if (ask.item) openItem(ask.item);
     else if (ask.at) showAt(ask.at);
   }, [ask, visible, wide, phone]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 10 Nov 2026: `#homeroom-bot/new…` is the "+" pressed for you, with the
+  // project and who works on it already set when the address names them
+  // (./door.ts botNewAt). It opens beside the chat, so it has a count of its
+  // own to wait on until the page knows which chat that is.
+  const freshTaken = useRef(0);
+  useEffect(() => {
+    if (!ask?.fresh || ask.seq === freshTaken.current || !visible || !(wide || phone) || !botId) return;
+    freshTaken.current = ask.seq;
+    how.current = 'row';
+    openBlank();
+    startNewThread(botId, ask.fresh);
+  }, [ask, visible, wide, phone, botId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openMain = () => {
     if (!(wide || phone)) { go(botTabAddress(null)); return; }
@@ -707,7 +739,7 @@ export function AiScreen(): ReactNode {
     if (openPublic(href, app, title)) underPanel();
   };
   const openRow = (row: WorkRow) => {
-    markThreadRead(row.threadId, row.app);
+    markThreadRead(row.threadId, row.app, row.rootId);
     if (row.rootId) {
       openPrivate(row.rootId);
       return;
@@ -715,7 +747,7 @@ export function AiScreen(): ReactNode {
     openPage(row.href, row.app, row.title, aboutRow(row));
   };
   const openThread = (th: AiThread) => {
-    markThreadRead(th.threadId, th.app);
+    markThreadRead(th.threadId, th.app, th.rootId);
     // #6153: a request filed from a private thread opens that thread, where
     // its design and its story are, rather than the request's page.
     if (th.rootId) {
@@ -909,20 +941,27 @@ export function AiScreen(): ReactNode {
         <AiFrameList
           heroLine={heroLine}
           main={{ lit: lit === 'main', unread, open: openMain }}
+          query={searchOpen ? query : ''}
+          onQuery={setQuery}
+          searchOpen={searchOpen}
+          onSearch={setSearchOpen}
+          searchRef={searchRef}
           lit={lit}
           ready={!!work && !!needs}
+          failed={failed}
+          onRetry={() => setMoved((n) => n + 1)}
           rows={rows}
+          owed={owed}
           progress={progress}
           waiting={waiting}
           live={live}
           openRow={openRow}
           openThread={openThread}
+          onDone={(rootId) => { setDoneRoots((had) => new Set([...had, rootId])); setMoved((n) => n + 1); }}
           picked={picked}
           onPick={pick}
           appFor={appFor}
           onNew={() => { openBlank(); if (botId) startNewThread(botId); }}
-          query={query}
-          onQuery={setQuery}
           history={history}
           historyKind={historyKind}
           onHistoryKind={pickKind}
@@ -1034,7 +1073,7 @@ export function AiScreen(): ReactNode {
                 <KitTile name={t('messages:store.header.main')} src={BOT_AVATAR} />
                 <div className={kit('tx')}>
                   <div className={kit('t')} id="ai-main-title">{t('messages:store.header.main')}</div>
-                  <div className={kit('s')}>{t('messages:ai.main.sub')}</div>
+                  <div className={kit('s')}><span className={kit('inl')}><KitIcon name="lock" size={13} />{t('messages:ai.main.sub')}</span></div>
                 </div>
                 <button type="button" className={kit('ib')} data-ai-main-close="" aria-label={t('messages:ai.main.close')} onClick={closeColumn}>
                   <KitIcon name="x" size={18} />

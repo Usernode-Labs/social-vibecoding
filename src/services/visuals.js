@@ -61,7 +61,7 @@ function kubernetesCaptureOrigin(config, app, sessionId = null) {
   const cfg = config.kubernetes;
   if (!cfg?.appDomain) throw new Error('Kubernetes capture requires a configured ingress hostname');
   const hostname = sessionId != null
-    ? `${app.slug}--s${sessionId}.${cfg.appDomain}`
+    ? `${app.slug}--s${sessionId}.${cfg.previewDomain || cfg.appDomain}`
     : app.slug === config.selfAppSlug
       ? cfg.platformDomain
       : `${app.slug}.${cfg.appDomain}`;
@@ -2111,7 +2111,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
           [beforeSessionToken, captureUser.id, new Date(Date.now() + CAPTURE_AUTH_TTL_MS)]
         );
-        beforeCookie = `session=${beforeSessionToken}`;
+        beforeCookie = `${require('./browser-session-cookies').sessionCookieName()}=${beforeSessionToken}`;
       } catch (err) {
         beforeSessionToken = '';
         log.warn('visuals', 'Capture session-cookie mint failed — "before" unauthenticated', {

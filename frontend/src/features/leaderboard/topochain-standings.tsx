@@ -28,7 +28,7 @@
  * initial value is what makes it do so.
  */
 
-import { Fragment, useEffect, type ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
@@ -37,9 +37,9 @@ import { useStoreState } from '../../lib/use-store-state';
 import { ActivityRow } from './activity-row';
 import { topochainStandingsStore } from './topochain-standings-store.js';
 import { isFrameSkin, useLiveSkin } from '../../lib/skin';
-import { StandingsFrameHead, StandingsFrameRows } from './frame/challenges-frame';
+import { StandingsFrameCols, StandingsFrameHead, StandingsFrameLine, StandingsFrameRows, StandingsFrameYou, type FrameEvent } from './frame/challenges-frame';
+import { eventBarStore } from './event-bar-store.js';
 import { useLeaderboardSection } from './section-store';
-import { MyStanding, myStandingStore, standingView } from './my-standing.js';
 
 type ColumnKey = 'rank' | 'user' | 'points';
 
@@ -415,8 +415,7 @@ function Body({ view, drill, frame }: { view: BodyView | null; drill: DrillView 
   if (view.state === 'noentries') {
     return (
       <>
-        <ChallengeLine line={view.challengeLine} />
-        <Disclaimer text={view.disclaimer} />
+        <Lines frame={frame} line={view.challengeLine} disclaimer={view.disclaimer} toggle={null} />
         {/* data-tc-lb-empty marks the LEGITIMATE no-scores state for the
             dapp.json standings checks: a fresh season has an empty
             leaderboard, and the checks accept "table or this hint" while
@@ -432,10 +431,27 @@ function Body({ view, drill, frame }: { view: BodyView | null; drill: DrillView 
   if (view.state === 'allexcluded') {
     return (
       <>
-        <ChallengeLine line={view.challengeLine} />
-        <Disclaimer text={view.disclaimer} />
-        <NonPodiumChip toggle={view.nonPodiumToggle} />
+        <Lines frame={frame} line={view.challengeLine} disclaimer={view.disclaimer} toggle={view.nonPodiumToggle} />
         <p className={HINT} data-tc-lb-empty="">{t('leaderboard:standings.allExcluded')}</p>
+      </>
+    );
+  }
+  // Under a look (the tour's s55): the line and the chip, your own line lit,
+  // then the board as the kit's rows under the table's own headings.
+  if (frame) {
+    return (
+      <>
+        <Lines frame line={view.challengeLine} disclaimer={view.disclaimer} toggle={view.nonPodiumToggle} />
+        <StandingsFrameYou you={view.you} onOpen={() => controller()?._openViewerRow()} />
+        <StandingsFrameRows
+          headers={view.headers}
+          rows={view.rows}
+          you={view.you || null}
+          openIndex={drill && drill.index != null ? drill.index : null}
+          details={drill ? <DrillPanel view={drill} /> : null}
+          onOpen={(index) => controller()?._openRowAt(index)}
+        />
+        {view.orderNote ? <OrderNote /> : null}
       </>
     );
   }
@@ -443,19 +459,38 @@ function Body({ view, drill, frame }: { view: BodyView | null; drill: DrillView 
     <>
       <ChallengeLine line={view.challengeLine} />
       <Disclaimer text={view.disclaimer} />
-      {frame ? null : <YouLine you={view.you} />}
+      <YouLine you={view.you} />
       <NonPodiumChip toggle={view.nonPodiumToggle} />
-      {frame ? (
-        <StandingsFrameRows
-          label={t(view.isSeason ? 'leaderboard:standings.frame.season' : 'leaderboard:standings.frame.event')}
-          rows={view.rows}
-          you={view.you || null}
-          openIndex={drill && drill.index != null ? drill.index : null}
-          details={drill ? <DrillPanel view={drill} /> : null}
-          onOpen={(index) => controller()?._openRowAt(index)}
-        />
-      ) : <StandingsTable view={view} drill={drill} />}
+      <StandingsTable view={view} drill={drill} />
       {view.orderNote ? <OrderNote /> : null}
+    </>
+  );
+}
+
+/**
+ * What stands over the board: the line to the challenges, the disclaimer and
+ * the non-podium chip. The standard look draws its three parts in its order;
+ * under a look the line and the chip are the kit's, on one line.
+ */
+function Lines({ frame, line, disclaimer, toggle }: {
+  frame: boolean;
+  line: { done: string | null; total: string } | null;
+  disclaimer: string | null;
+  toggle: NonPodiumToggle | null;
+}): ReactNode {
+  if (frame) {
+    return (
+      <>
+        <StandingsFrameLine line={line} toggle={toggle} onChallenges={() => controller()?._goToChallenges()} onToggle={() => controller()?._toggleNonPodium()} />
+        <Disclaimer text={disclaimer} />
+      </>
+    );
+  }
+  return (
+    <>
+      <ChallengeLine line={line} />
+      <Disclaimer text={disclaimer} />
+      <NonPodiumChip toggle={toggle} />
     </>
   );
 }
@@ -619,26 +654,29 @@ function Drill({ view, inline }: { view: DrillView | null; inline: boolean }): R
   );
 }
 
-/** Standings' head under one of the frame's looks: the kit's, with the viewer's place as its sentence. */
+/** Standings' head under one of the frame's looks: the kit's, the one Challenges wears. */
 function StandingsInFrameHead(): ReactNode {
   const t = useMessages('leaderboard');
-  const standing = standingView(useStoreState(myStandingStore)) as { rank: number | null; people: number } | null;
-  useEffect(() => { void MyStanding.load(); }, []);
   // The pane stays mounted behind the other sections.
   const { section } = useLeaderboardSection();
-  const ranked = standing && standing.rank != null
-    ? (standing.people > 0
-      ? t('leaderboard:standing.rankOf', { rank: standing.rank, count: standing.people, number: standing.people.toLocaleString('en-US') })
-      : t('leaderboard:standing.rank', { rank: standing.rank })).replace(/<\/?\d+>/g, '')
-    : null;
   return (
     <StandingsFrameHead
       up={section === 'topochain'}
       tabs={[{ key: 'challenges', label: t('leaderboard:tabs.challenges') }, { key: 'topochain', label: t('leaderboard:tabs.standings') }]}
       onTab={(key) => { if (key !== 'topochain') (window as any).Leaderboard?._setSection?.(key); }}
-      purpose={ranked}
     />
   );
+}
+
+/**
+ * The event on show, for the kit's side column: the event bar's own hero
+ * (./event-bar.tsx draws it under the picker on the standard page), read
+ * from the same store. Null for a member with no earlier season, who has no
+ * picker and no card.
+ */
+function useFrameEvent(): FrameEvent | null {
+  const bar = useStoreState(eventBarStore) as { mounted: boolean; history: boolean; hero: FrameEvent | null };
+  return bar.mounted && bar.history ? bar.hero : null;
 }
 
 export function TopochainStandingsPane(): ReactNode {
@@ -652,15 +690,28 @@ export function TopochainStandingsPane(): ReactNode {
   };
   // Subscribed: the table's headings and names are read by the controller's views.
   useMessages('leaderboard');
+  const event = useFrameEvent();
   if (!state.mounted) return null;
   // The details sit inside the table when their row is on it.
   const inline = !!(state.drill && state.drill.index != null
     && state.body && state.body.state === 'table'
     && state.drill.index < state.body.rows.length);
+  // Under a look: the head and tabs, then (the screen's own picker between
+  // them, app.css) the board and the event's card as two columns.
+  if (frame) {
+    return (
+      <>
+        <StandingsInFrameHead />
+        <StandingsFrameCols event={event}>
+          <div id="tc-lb-body"><Body view={state.body} drill={inline ? state.drill : null} frame /></div>
+          <Drill view={state.drill} inline={inline} />
+        </StandingsFrameCols>
+      </>
+    );
+  }
   return (
     <>
-      {frame ? <StandingsInFrameHead /> : null}
-      <div id="tc-lb-body"><Body view={state.body} drill={inline ? state.drill : null} frame={frame} /></div>
+      <div id="tc-lb-body"><Body view={state.body} drill={inline ? state.drill : null} frame={false} /></div>
       <Drill view={state.drill} inline={inline} />
     </>
   );
