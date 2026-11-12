@@ -188,6 +188,18 @@ test('an allowed request reaches the app with the identity, and without the gate
   assert.deepEqual(r.headers['set-cookie'], ['app=1; Path=/'], 'the app’s own response passes through');
 });
 
+// Search engines (src/services/search-robots.js): what the gate adds to an
+// app's answers, and what it leaves alone.
+test('an API answer, a platform path and anything on a preview are marked noindex; an app’s pages are not', async () => {
+  assert.equal((await through('/api/items')).headers['x-robots-tag'], 'noindex');
+  assert.equal((await through('/api/items?page=2')).headers['x-robots-tag'], 'noindex');
+  assert.equal((await through('/__usernode/cache/')).headers['x-robots-tag'], 'noindex');
+  assert.equal((await through('/ident')).headers['x-robots-tag'], undefined, 'a page is the app’s to describe');
+  assert.equal((await through('/apiary')).headers['x-robots-tag'], undefined, 'only /api itself and what is under it');
+  const preview = await through('/ident', { headers: { host: 'a--s12.onhomeroom.app' } });
+  assert.equal(preview.headers['x-robots-tag'], 'noindex', 'a preview is never a page for a search engine');
+});
+
 test('a token the request carries itself reaches the app untouched when the platform adds none', async () => {
   const r = await through('/plain', { headers: { 'x-usernode-token': 'OWN', cookie: '__usernode_access=x' } });
   assert.equal(r.json.headers['x-usernode-token'], 'OWN');

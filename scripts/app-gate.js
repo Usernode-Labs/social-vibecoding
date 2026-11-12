@@ -51,6 +51,8 @@ const net = require('net');
 const { URL } = require('url');
 // Dependency-free, like this file: the rule for offline apps' cache headers.
 const offlineCache = require('../src/services/offline-cache');
+// Dependency-free too: what a search engine is told about an app host's answers.
+const searchRobots = require('../src/services/search-robots');
 const { createActivity } = require('../src/services/gateway-activity');
 
 // The same stripping the Caddyfile does with a header_up replacement: the
@@ -368,6 +370,10 @@ function createGate({
           delete headers.pragma;
         }
       }
+      // Search engines (src/services/search-robots.js): an API answer, the
+      // platform's own paths and anything on a preview are never pages.
+      const robots = searchRobots.appHostRobots({ host: req.headers.host, url: req.url });
+      if (robots) headers['x-robots-tag'] = searchRobots.withRobots(headers['x-robots-tag'], robots);
       res.writeHead(upRes.statusCode || 502, headers);
       upRes.pipe(res);
     });
