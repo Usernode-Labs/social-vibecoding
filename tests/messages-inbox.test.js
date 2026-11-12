@@ -110,11 +110,26 @@ test('#6019: the Homeroom bot\'s DM is the AI tab, not a row of Messages', () =>
 });
 
 test('the discussions read fails quietly', () => {
-  const fn = STORE.slice(STORE.indexOf('export async function loadAppDiscussions'));
+  const fn = STORE.slice(STORE.indexOf('async function readAppDiscussions'));
   const body = fn.slice(0, fn.indexOf('\n}\n'));
   assert.match(body, /if \(!response\.ok\) return;/, 'a bad status changes nothing');
   assert.match(body, /\} catch \{/, 'and neither does being offline');
   assert.doesNotMatch(body, /publish\(\{ error/, 'it never blanks the conversations');
+});
+
+// #6591: a page load that lands on Messages asked for the discussions twice
+// in the same moment, the store filling at sign-in and the screen opening.
+test('the discussions reads that say nothing new share one request; a read after a change asks again', () => {
+  const fn = STORE.slice(STORE.indexOf('export function loadAppDiscussions'));
+  const body = fn.slice(0, fn.indexOf('\n}\n'));
+  assert.match(body, /if \(join && discussionsRead\) return discussionsRead;/, 'a joining read takes the one in flight');
+  assert.match(body, /if \(discussionsRead === read\) discussionsRead = null;/, 'and nothing is kept once it lands');
+  assert.equal((STORE.match(/loadAppDiscussions\(\{ join: true \}\)/g) || []).length, 4, 'sign-in (twice) and the two opens join');
+  for (const after of ['async function refreshBlockedView', 'export async function resync', '  refresh: () => {']) {
+    const at = STORE.indexOf(after);
+    assert.ok(at > 0, after);
+    assert.match(STORE.slice(at, at + 200), /void loadAppDiscussions\(\);/, `${after.trim()} asks the server itself`);
+  }
 });
 
 test('the "+" sits beside the search, and opens a choice rather than guessing (#2778)', () => {
