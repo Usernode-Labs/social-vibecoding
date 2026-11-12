@@ -159,8 +159,8 @@ async function claim(pool, { userId, appId, now = new Date(), deps = {} }) {
     if (!owed) { await client.query('ROLLBACK'); return { skipped: 'not_due' }; }
     const { rows: [person] } = await client.query(
       `SELECT username, is_synthetic, has_platform_access, is_admin, private_member_since FROM users WHERE id = $1`, [Number(userId)]);
-    const works = dm.hasBot(settings, {
-      username: person?.username, isSynthetic: !!person?.is_synthetic, hasPlatformAccess: !!person?.has_platform_access,
+    const works = await require('./homeroom-bot-verified').worksFor(dm, client, settings, {
+      id: Number(userId), username: person?.username, isSynthetic: !!person?.is_synthetic, hasPlatformAccess: !!person?.has_platform_access,
       isAdmin: !!person?.is_admin, privateMember: person?.private_member_since != null,
     });
     if (!works) { await client.query('ROLLBACK'); return { skipped: 'no_bot' }; }

@@ -531,7 +531,7 @@ test('the short description is suggested for everyone making a project, and ever
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'homeroom-bot-dm.js'), 'utf8');
   assert.doesNotMatch(src, /function projectsMadeFor|function firstVersionAppSlugs/);
   const made = src.slice(src.indexOf('async function noteProjectMade('), src.indexOf('// ── Sending'));
-  assert.match(made, /if \(!hasBot\(settings, user\)\) return false;\n  const \{ rowCount \} = await pool\.query\(\n    `INSERT INTO homeroom_bot_dm_projects \(app_id, user_id, origin\) VALUES \(\$1, \$2, \$3\)/);
+  assert.match(made, /if \(!\(await botWorksFor\(pool, settings, user\)\)\) return false;\n  const \{ rowCount \} = await pool\.query\(\n    `INSERT INTO homeroom_bot_dm_projects \(app_id, user_id, origin\) VALUES \(\$1, \$2, \$3\)/);
   assert.match(made, /SELECT created_at FROM homeroom_bot_dm_projects WHERE app_id = \$1 AND origin = 'import'/);
   // The bot's wake is only for a first version it builds.
   assert.match(src, /if \(botBuilds\) settingsModule\(\)\.noteIssueActivity\(/);

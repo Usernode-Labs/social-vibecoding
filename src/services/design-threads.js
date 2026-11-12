@@ -304,6 +304,9 @@ async function startDesign(pool, config, {
   const dm = deps.dm || require('./homeroom-bot-dm');
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
   if (!user?.id || user.isSynthetic) return { ok: false, status: 403, error: 'Not available for this account' };
+  // #6632: a design thread is the bot working for them.
+  const locked = await require('./homeroom-bot-verified').refusalFor(pool, user, { botSvc: deps.botSvc });
+  if (locked) return locked;
   const body = validHtml(html);
   if (!body) return { ok: false, status: 413, error: 'That screen is too big to capture. Try a smaller part of it.' };
   if (!SURFACES.has(surface)) return { ok: false, status: 400, error: 'Unknown screen' };

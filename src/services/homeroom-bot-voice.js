@@ -543,7 +543,10 @@ const SPEAK_RULES = Object.freeze({
   // loop guard decides before the place's own rules get to speak.
   connector_place: (s) => (s.row.posted_via === 'agent' && !CONNECTOR_PLACES.includes(s.place.type) ? no('connector') : null),
   not_relayed: (s) => (isRelay(s.row.content) ? no('relayed') : null),
-  has_the_bot: (s) => (dmModule(s.deps).hasBot(s.settings, s.speaker) ? null : no('not_let_in')),
+  // #6632: and, with the bot for verified accounts only, verified (quiet
+  // for anybody else, as for somebody not let in).
+  has_the_bot: async (s) => ((await require('./homeroom-bot-verified').worksFor(dmModule(s.deps), s.pool, s.settings, s.speaker))
+    ? null : no('not_let_in')),
   connector_loop: async (s) => {
     if (s.row.posted_via !== 'agent') return null;
     const looped = await connectorGuard(s.pool, {

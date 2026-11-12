@@ -72,6 +72,7 @@ import { applyNavSnapshot, applyShellSnapshot } from './lib/shell-snapshot-apply
 import { installFirstPaintReserve } from './lib/first-paint-reserve';
 import { installBootRecovery } from './lib/boot-recovery';
 import { installJoinRequired } from './lib/join-required';
+import { installBotVerifyRequired } from './lib/bot-verify-required';
 import { installAdultGate } from './features/auth/adult-gate';
 import { installSessionRenewalRetry } from './lib/session-renewal-retry';
 import { installApiCacheIdentity } from './lib/api-cache-identity';
@@ -233,6 +234,9 @@ bootStep('installApiCacheIdentity', () => installApiCacheIdentity());
 // refused with `join_required` becomes a Join prompt and a retry
 // (./lib/join-required.ts), for every caller in both bundles.
 bootStep('installJoinRequired', () => installJoinRequired());
+// #6632: and a press Homeroom bot refused for an unverified account is
+// offered the verify sheet, then sent again (./lib/bot-verify-required.ts).
+bootStep('installBotVerifyRequired', () => installBotVerifyRequired());
 // Same seam for the 18+ check (#5095): a wallet, staking, node or passport
 // write refused `adult_attestation_required` asks "Are you 18 or older?"
 // and is sent again on a yes (./features/auth/adult-gate.tsx).
