@@ -31889,6 +31889,36 @@ const AppView = {
     return { slug, current, post, platformPreview };
   },
 
+  // ── The frame door (docs/plans/browser-site-isolation.md, step 4) ────
+  //
+  // A private app on another site than this shell keeps its door open with
+  // a partitioned cookie, set from the frame's token. When a frame navigates
+  // without one (an offline app's tokenless address, a door that ran out, a
+  // reload), the app gate answers with its frame door page instead of the
+  // sign-in hop, which cannot run in a cross-site frame
+  // (src/services/edge-gate.js). That page asks here: `{ __usernode_frame_door:
+  // 'open', nonce }`. The answer is a fresh token for the app THIS frame
+  // shows, never one the message names, posted only to the origin the frame
+  // was pointed at (`_bridgeRequest`), so a frame navigated elsewhere, a
+  // page nested inside an app, or another app's frame gets nothing it did
+  // not already hold. The app frame and the staging preview only: the
+  // landing viewer is signed out. A null token tells the page to stop.
+  FRAME_DOOR_FRAMES: ['app-iframe', 'staging-iframe'],
+
+  handleFrameDoorMessage(e) {
+    const data = e && e.data;
+    if (!data || typeof data !== 'object' || data.__usernode_frame_door !== 'open') return;
+    const nonce = typeof data.nonce === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(data.nonce) ? data.nonce : '';
+    if (!nonce) return;
+    const frameId = AppView.ownedFrameFor(e.source);
+    if (!AppView.FRAME_DOOR_FRAMES.includes(frameId)) return;
+    const request = AppView._bridgeRequest(e, frameId);
+    if (!request || !request.slug) return;
+    AppView._mintToken(request.slug).then((token) => {
+      request.post({ __usernode_frame_door: 'token', nonce, token: token || null });
+    });
+  },
+
   // Last value posted per frame id, so an unchanged recompute posts
   // nothing (a rotation is one message per frame, not a stream).
   _safeAreaSent: {},
@@ -33023,6 +33053,9 @@ if (typeof window !== 'undefined') {
     try { AppView.handleBackgroundBridgeMessage(e); } catch {}
     // An app's first screen, drawn (`usernode.ready()`): lifts its cover.
     try { AppView.handleReadyBridgeMessage(e); } catch {}
+    // A private app on another site asking for its door (the app gate's
+    // frame door page).
+    try { AppView.handleFrameDoorMessage(e); } catch {}
   });
 
   // #3257: Theme.onChange fires after the new theme is on <html>, for the

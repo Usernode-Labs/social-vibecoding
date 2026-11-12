@@ -717,6 +717,32 @@ test('private: the shell’s iframe token still sets the door cookie and bounces
   assert.equal((await gate({ host: PRIV_HOST, uri: `/?token=${tok}`, ws: true })).status, 200, 'a WebSocket cannot follow a redirect');
 });
 
+// Apps on the platform's own site (this file's layout) are framed same-site:
+// the frame keeps the Lax door and signs in again by the hop, exactly as
+// before the frame door existed (tests/edge-gate-frame-door.test.js pins the
+// cross-site layout). Under HTTPS too, where the frame door would be
+// partitioned.
+test('private, the platform’s own site: a frame keeps the Lax door and the in-frame hop', async () => {
+  const before = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+  try {
+    assert.equal(edgeGate.framesCrossSite(PRIV_HOST), false);
+    const r = await gate({ host: PRIV_HOST, uri: `/?token=${iframeToken(MEMBER_ID)}`, dest: 'iframe', site: 'same-site' });
+    assert.equal(r.status, 302);
+    const door = setCookies(r).find((v) => v.startsWith('__Host-usernode_access='));
+    assert.ok(door.split('; ').includes('SameSite=Lax'), door);
+    assert.doesNotMatch(door, /Partitioned|SameSite=None/);
+    const again = await gate({ host: PRIV_HOST, uri: '/scores', dest: 'iframe', site: 'same-origin' });
+    assert.equal(again.status, 302);
+    assert.ok(isAuthorize(again.headers.location), 'the hop, not the frame door page');
+    const traded = await gate({ host: PRIV_HOST, uri: `/__usernode_access?frame=${iframeToken(MEMBER_ID)}&next=%2Fx`, dest: 'iframe' });
+    assert.equal(traded.headers.location, '/x', 'the frame door’s trade is not offered here');
+    assert.equal(setCookies(traded).length, 0);
+  } finally {
+    process.env.NODE_ENV = before;
+  }
+});
+
 test('private: outsiders, other apps’ tokens, forged and worker tokens are refused', async () => {
   const refused = [
     iframeToken(OUTSIDER_ID),
