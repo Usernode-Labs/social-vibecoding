@@ -829,7 +829,11 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
         </div>
       ) : null}
       {selMenu ? (
-        <div ref={menuRef} className="messages-select-menu" role="menu" aria-label={t('messages:composer.format.menu')} style={{ left: `${selMenu.x}px`, top: `${selMenu.y}px` }} onMouseDown={(event) => event.preventDefault()}>
+        // Its mousedown is prevented so the message field keeps the
+        // keyboard (and the selection) while one of these actions is
+        // chosen; the mark is what makes a tap there keep it
+        // (tests/keyboard-dismiss.test.js).
+        <div ref={menuRef} className="messages-select-menu" role="menu" data-keep-keyboard="" aria-label={t('messages:composer.format.menu')} style={{ left: `${selMenu.x}px`, top: `${selMenu.y}px` }} onMouseDown={(event) => event.preventDefault()}>
           {SELECT_MENU_ACTIONS.map(({ kind, label, Icon }) => (
             <button key={kind} type="button" role="menuitem" onClick={() => runMenuFormat(kind)}>
               <Icon aria-hidden="true" />
