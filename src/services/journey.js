@@ -574,6 +574,35 @@ const FIRST_MILE_INVITED_SQL = `WITH ${ADMITTED_CTE}
      AND ${REAL_PERSON_SQL}
    ORDER BY iv.invite_redeemed_at, u.id`;
 
+// Still on the waitlist: joined and not let off yet. One row per person (a
+// sign-up, or the account it is linked to), the longest wait first. An
+// account that already has access some other way is not waiting; a test
+// sign-up (source 'test') and a team address stay out, and an account is
+// held to the real-person rule like everyone else on this page. $1 the most
+// rows to return, $2 now; `total` is everyone, whatever $1 cuts off.
+const WAITING_MAX = 2000;
+const FIRST_MILE_WAITING_SQL = `WITH waiting AS (
+    SELECT DISTINCT ON (COALESCE('u' || w.linked_user_id::text, 'w' || w.id::text))
+           w.id AS signup_id, w.email, w.submitted_at, w.confirmed_at, w.source,
+           w.answers->'discovery'->>'source' AS discovery,
+           (w.answers ?| ARRAY[${FOLLOW_UP_KEYS_SQL}]) AS answered_follow_up,
+           w.invited_by IS NOT NULL AS referred, w.project_invite_id IS NOT NULL AS project_invite,
+           u.id AS user_id, u.username, u.created_at AS account_at
+      FROM waitlist_signups w
+      LEFT JOIN users u ON u.id = w.linked_user_id
+     WHERE w.released_at IS NULL
+       AND w.submitted_at <= $2::timestamptz
+       AND COALESCE(w.source, '') <> 'test'
+       AND NOT (w.email IS NOT NULL AND (LOWER(split_part(w.email, '@', 2)) IN (${TEAM_DOMAINS_SQL})
+         OR LOWER(regexp_replace(w.email, '\\+[^@]*@', '@')) IN (${TEAM_ADDRESSES_SQL})))
+       AND (u.id IS NULL OR (u.has_platform_access IS NOT TRUE AND ${REAL_PERSON_SQL}))
+     ORDER BY COALESCE('u' || w.linked_user_id::text, 'w' || w.id::text), w.submitted_at, w.id
+  )
+  SELECT wt.*, (COUNT(*) OVER ())::int AS total
+    FROM waiting wt
+   ORDER BY wt.submitted_at, wt.signup_id
+   LIMIT $1::int`;
+
 const MAIL_PROOF_DAYS = 30;
 
 const FIRST_MILE_STEPS = Object.freeze([
@@ -762,6 +791,80 @@ function invitedMilePerson(row, now) {
     mail: null,
     ...cameInFacts(row),
     ...invitedMileSteps(row, now),
+  };
+}
+
+// The first mile of somebody still on the waitlist. There is no admit yet,
+// so it is what they did while waiting: joined, proved the address takes
+// mail, answered the follow-up questions, made an account. Only the first is
+// on everyone's way. The middle three are theirs to do or not, so one not
+// done is "not yet", never where they stopped: they are all stuck at the
+// release, which is ours to do.
+const WAITING_MILE_STEPS = Object.freeze(['wl_joined', 'wl_confirmed', 'wl_answered', 'wl_account', 'wl_released']);
+const WAITING_STUCK = 'Not let off the waitlist yet';
+
+/** Pure: one waiting person's first mile, from a FIRST_MILE_WAITING_SQL row, in firstMileSteps' shape. */
+function waitingMileSteps(row, now = new Date()) {
+  const t = (v) => (v ? new Date(v) : null);
+  const nowMs = new Date(now).getTime();
+  const joined = t(row.submitted_at);
+  const facts = {
+    wl_joined: { done: true, at: joined, note: row.source || null },
+    wl_confirmed: { done: !!row.confirmed_at, at: t(row.confirmed_at) },
+    wl_answered: { done: row.answered_follow_up === true, at: null },
+    wl_account: { done: row.user_id != null, at: t(row.account_at) },
+    wl_released: { done: false },
+  };
+  let furthest = 0;
+  WAITING_MILE_STEPS.forEach((key, i) => { if (facts[key].done) furthest = i; });
+  const steps = WAITING_MILE_STEPS.map((key) => {
+    const f = facts[key];
+    if (f.done) return { key, state: 'done', at: f.at || null, note: f.note || null };
+    if (key === 'wl_released') return { key, state: 'stuck', at: null, note: WAITING_STUCK };
+    return { key, state: 'not_yet', at: null, note: null };
+  });
+  return {
+    steps,
+    furthest: WAITING_MILE_STEPS[furthest],
+    stuckAt: 'wl_released',
+    stuckReason: WAITING_STUCK,
+    daysSince: joined ? Math.max(0, Math.floor((nowMs - joined.getTime()) / DAY_MS)) : null,
+    failedAttempts: 0,
+    repeatedTaps: 0,
+    tour: null,
+    welcome: null,
+  };
+}
+
+/**
+ * One waiting person's row, in firstMilePerson's shape. `waitedDays` is the
+ * wait so far, since nobody has ended it.
+ */
+function waitingMilePerson(row, now = new Date()) {
+  const mile = waitingMileSteps(row, now);
+  const joined = row.submitted_at ? new Date(row.submitted_at) : null;
+  return {
+    signupId: row.signup_id != null ? Number(row.signup_id) : null,
+    userId: row.user_id != null ? Number(row.user_id) : null,
+    // As in the admit cohorts: no account means only the address is known.
+    name: row.username || row.email || null,
+    hasAccount: row.user_id != null,
+    door: 'waitlist',
+    mail: null,
+    signupMethod: null,
+    waitlist: joined ? {
+      joinedAt: joined,
+      waitedDays: mile.daysSince,
+      source: row.source || null,
+      discovery: row.discovery || null,
+      answeredFollowUp: row.answered_follow_up === true,
+      referred: row.referred === true,
+      projectInvite: row.project_invite === true,
+    } : null,
+    mailPage: null,
+    fromEmail: null,
+    invite: null,
+    ...mile,
   };
 }
 
@@ -1033,10 +1136,13 @@ async function cohorts(pool, { now = new Date(), leftOutIds = [] } = {}) {
   const { rows } = await pool.query(COHORTS_SQL, [null, now, ...realPersonParams(leftOutIds)]);
   const other = await pool.query(FIRST_MILE_OTHER_WAY_SQL, [NEWCOMER_DAYS, now, ...realPersonParams(leftOutIds)]);
   const invited = await pool.query(FIRST_MILE_INVITED_SQL, [INVITED_DAYS, now, ...realPersonParams(leftOutIds)]);
+  // One row is enough here: it carries the count of everyone waiting.
+  const waiting = await pool.query(FIRST_MILE_WAITING_SQL, [1, now, ...realPersonParams(leftOutIds)]);
   return {
     cohorts: rows.map((r) => ({ day: r.day, admitted: r.admitted, withAccount: r.with_account })),
     otherWay: { people: other.rows.length },
     invited: { people: invited.rows.length },
+    waiting: { people: waiting.rows.length ? Number(waiting.rows[0].total) || 0 : 0 },
   };
 }
 
@@ -1072,15 +1178,22 @@ async function onboardFor(pool, row, seasonId) {
   return { shown: true, done, total, complete: done === total };
 }
 
-/** One cohort's first mile: `day` is an admit day, or 'other_way'. */
+/**
+ * One cohort's first mile: `day` is an admit day, 'other_way', 'invited', or
+ * 'waiting' (still on the waitlist, at most WAITING_MAX people, the longest
+ * wait first; `total` then says how many are waiting in all).
+ */
 async function firstMile(pool, { day, now = new Date(), leftOutIds = [] } = {}) {
   const params = realPersonParams(leftOutIds);
   let result;
   if (day === 'other_way') result = await pool.query(FIRST_MILE_OTHER_WAY_SQL, [NEWCOMER_DAYS, now, ...params]);
   else if (day === 'invited') result = await pool.query(FIRST_MILE_INVITED_SQL, [INVITED_DAYS, now, ...params]);
+  else if (day === 'waiting') result = await pool.query(FIRST_MILE_WAITING_SQL, [WAITING_MAX, now, ...params]);
   else result = await pool.query(FIRST_MILE_ADMITTED_SQL, [day, now, ...params]);
   const season = result.rows.some(cardWasShown) ? await fetchCurrentSeason(pool) : null;
-  const person = day === 'invited' ? invitedMilePerson : firstMilePerson;
+  let person = firstMilePerson;
+  if (day === 'invited') person = invitedMilePerson;
+  else if (day === 'waiting') person = waitingMilePerson;
   const cameFromRecords = await cameFromFor(pool, {
     userIds: result.rows.map((r) => r.user_id).filter((v) => v != null),
     signupIds: result.rows.map((r) => r.signup_id).filter((v) => v != null),
@@ -1100,8 +1213,11 @@ async function firstMile(pool, { day, now = new Date(), leftOutIds = [] } = {}) 
       tracked: tracked.length,
       opened: tracked.filter((p) => p.mail.opened).length,
       clicked: tracked.filter((p) => p.mail.clicked).length,
-    } : notRecorded('No admit mail in this cohort was tracked: tracking began on 7 Oct 2026.'),
+    } : notRecorded(day === 'waiting'
+      ? 'People still on the waitlist have been sent no admit mail.'
+      : 'No admit mail in this cohort was tracked: tracking began on 7 Oct 2026.'),
     notRecorded: {},
+    ...(day === 'waiting' ? { total: result.rows.length ? Number(result.rows[0].total) || result.rows.length : 0 } : {}),
   };
 }
 
@@ -3080,6 +3196,11 @@ module.exports = {
   FIRST_MILE_ADMITTED_SQL,
   FIRST_MILE_OTHER_WAY_SQL,
   FIRST_MILE_INVITED_SQL,
+  FIRST_MILE_WAITING_SQL,
+  WAITING_MILE_STEPS,
+  WAITING_MAX,
+  waitingMileSteps,
+  waitingMilePerson,
   FIRST_MILE_STEPS,
   INVITED_MILE_STEPS,
   INVITED_DAYS,

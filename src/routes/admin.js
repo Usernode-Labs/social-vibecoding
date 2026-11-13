@@ -943,13 +943,15 @@ function adminRoutes(config) {
   // clone mixes emptied private tables with reseeded fixtures, and half-real
   // numbers would be worse than invented ones that say so.
   const journeyDemo = (req) => IS_STAGING && req.query.demo === '1';
-  // `cohort` narrows a reading to one admit cohort: an admit day, or
-  // other_way. Absent means everyone; anything else is refused.
-  const badCohort = { status: 400, error: 'cohort must be an admit day in YYYY-MM-DD, other_way, or invited.' };
+  // `cohort` narrows a reading to one cohort: an admit day, other_way,
+  // invited, or waiting (still on the waitlist). Absent means everyone;
+  // anything else is refused.
+  const NAMED_COHORTS = new Set(['other_way', 'invited', 'waiting']);
+  const badCohort = { status: 400, error: 'cohort must be an admit day in YYYY-MM-DD, other_way, invited, or waiting.' };
   const journeyCohort = (req) => {
     const raw = req.query.cohort;
     if (raw == null || raw === '') return { day: null };
-    const day = raw === 'other_way' || raw === 'invited' ? raw : journey.parseDay(raw);
+    const day = NAMED_COHORTS.has(raw) ? raw : journey.parseDay(raw);
     return day ? { day } : null;
   };
   const journeyMembers = async (day, ctx) => {
@@ -1004,9 +1006,9 @@ function adminRoutes(config) {
 
   router.get('/api/admin/journey/first-mile', journeyRead('first mile', (req) => journeyDemoData.firstMile(req.query.admitted),
     async (req, ctx) => {
-      const day = req.query.admitted === 'other_way' || req.query.admitted === 'invited'
+      const day = NAMED_COHORTS.has(req.query.admitted)
         ? req.query.admitted : journey.parseDay(req.query.admitted);
-      if (!day) return { status: 400, error: 'admitted must be an admit day in YYYY-MM-DD, other_way, or invited.' };
+      if (!day) return { status: 400, error: 'admitted must be an admit day in YYYY-MM-DD, other_way, invited, or waiting.' };
       return journey.firstMile(pool, { day, ...ctx });
     }));
 
@@ -1053,9 +1055,9 @@ function adminRoutes(config) {
   router.get('/api/admin/journey/next-steps', journeyRead('next steps', () => journeyDemoData.nextSteps(),
     async (req, ctx) => {
       if (req.query.admitted == null) return journey.newcomerNextSteps(pool, ctx);
-      const day = req.query.admitted === 'other_way' || req.query.admitted === 'invited'
+      const day = NAMED_COHORTS.has(req.query.admitted)
         ? req.query.admitted : journey.parseDay(req.query.admitted);
-      if (!day) return { status: 400, error: 'admitted must be an admit day in YYYY-MM-DD, other_way, or invited.' };
+      if (!day) return { status: 400, error: 'admitted must be an admit day in YYYY-MM-DD, other_way, invited, or waiting.' };
       const mile = await journey.firstMile(pool, { day, ...ctx });
       const to = ctx.now;
       const from = new Date(to.getTime() - journey.NEWCOMER_DAYS * journey.DAY_MS);

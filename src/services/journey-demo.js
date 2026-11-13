@@ -58,6 +58,7 @@ function cohorts() {
     ],
     otherWay: { people: 1 },
     invited: { people: 2 },
+    waiting: { people: 3 },
   };
 }
 
@@ -96,6 +97,29 @@ function firstMile(day) {
     ].map((p) => ({ ...p, daysSince: 1, onboard: null }));
     return { demo: true, cohort: day, people, steps: journey.firstMileCounts(people),
       mail: journey.notRecorded('Invited people are sent no admit mail.'), notRecorded: {} };
+  }
+  if (day === 'waiting') {
+    // Three sample sign-ups nobody has let off yet, the longest wait first.
+    const now = new Date('2026-10-08T12:00:00Z');
+    const rows = [
+      { signup_id: 900301, email: 'sample.one@example.test', submitted_at: '2026-08-20T09:00:00Z',
+        confirmed_at: '2026-08-20T09:05:00Z', source: 'form', discovery: 'friend', answered_follow_up: true },
+      { signup_id: 900302, email: 'sample.two@example.test', submitted_at: '2026-09-18T16:30:00Z',
+        confirmed_at: null, source: 'form', discovery: 'x', answered_follow_up: false },
+      { signup_id: 900303, email: null, submitted_at: '2026-10-06T11:00:00Z', confirmed_at: null,
+        source: 'account', discovery: null, answered_follow_up: false,
+        user_id: P.noor.userId, username: P.noor.name, account_at: '2026-10-06T11:00:00Z' },
+    ];
+    const from = [
+      cameFrom(null, waitlistFrom('none', null, null, null, rows[0].submitted_at)),
+      cameFrom(null, waitlistFrom('t.co', 'x', 'launch', null, rows[1].submitted_at)),
+      cameFrom(null, null),
+    ];
+    const people = rows.map((row, i) => ({ ...journey.waitingMilePerson(row, now), cameFrom: from[i], onboard: null }));
+    return { demo: true, cohort: day, people, steps: journey.firstMileCounts(people),
+      sources: journey.cohortSources(people),
+      mail: journey.notRecorded('People still on the waitlist have been sent no admit mail.'), notRecorded: {},
+      total: people.length };
   }
   if (day === 'other_way') {
     const people = [allDone(P.rafa, '2026-09-20T10:00:00Z', {

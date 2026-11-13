@@ -65,6 +65,9 @@
     },
     "otherWay": {
       "people": "number"
+    },
+    "waiting": {
+      "people": "number"
     }
   },
   "firstMile": {
