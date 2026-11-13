@@ -39,7 +39,7 @@ import {
   ArrowUpTrayIcon, ChatIcon, CheckIcon, ChevronRightIcon, GitBranchIcon, PlusIcon,
 } from '@/components/ui/icons';
 
-import { useMessages } from '../../lib/i18n/react';
+import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { whenPlatformViewer } from '../../lib/platform-viewer';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
@@ -109,7 +109,6 @@ interface Allowance {
  * account with no limit.
  */
 export function SlotsLine({ allowance }: { allowance: Allowance | null }) {
-  const t = useMessages('home');
   const remaining = allowance?.quota?.remaining;
   if (!allowance || remaining === null || remaining === undefined) return null;
   if (remaining > 0) {
@@ -117,19 +116,21 @@ export function SlotsLine({ allowance }: { allowance: Allowance | null }) {
       <p className="m-0 flex items-center justify-center gap-2 text-[13px] text-zinc-600 dark:text-zinc-300" data-home-slots={String(remaining)}>
         <span className="h-2 w-2 shrink-0 rounded-full bg-[#2e9d5b]" aria-hidden="true" />
         <span>
-          <b className="font-bold text-zinc-900 dark:text-zinc-100">{formatCount(remaining)}</b>{' '}
-          {t('home:forYou.newProject.slotsWord', { count: remaining })}
+          <RichMessage
+            id="home:forYou.newProject.slots"
+            values={{ count: remaining, n: formatCount(remaining) }}
+            components={[<b className="font-bold text-zinc-900 dark:text-zinc-100" />]}
+          />
         </span>
       </p>
     );
   }
   return (
     <p className="m-0 text-center text-[13px] leading-[1.45] text-zinc-600 dark:text-zinc-300" data-home-slots="0">
-      {t('home:forYou.newProject.noSlots')}{' '}
-      <a href="#profile?slots" className="font-semibold text-[color:var(--accent)] hover:underline">
-        {t('home:forYou.newProject.requestSlots')}
-      </a>{' '}
-      {t('home:forYou.newProject.requestSlotsWhy')}
+      <RichMessage
+        id="home:forYou.newProject.noSlots"
+        components={[<a href="#profile?slots" className="font-semibold text-[color:var(--accent)] hover:underline" />]}
+      />
     </p>
   );
 }

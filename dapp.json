@@ -1058,10 +1058,10 @@
       "expectSelector": "#home-body.home-column #home-challenges-section article.home-panel .home-panel-rows .home-challenge-card:not([data-challenge-state=done]) [role=progressbar][aria-valuetext] + span.bg-zinc-100 > svg[aria-hidden=true]"
     },
     {
-      "name": "Challenges: Home names the block by what it holds, with no season progress above the cards",
+      "name": "Challenges: Home's For you column titles the card Challenges, with See all beside it and no season progress above the cards (#6650)",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section:not(:has(.home-panel-season)) > h2.home-area-label + article.home-panel > .home-panel-body .home-challenge-card [role=progressbar]",
-      "expectText": "Next challenges"
+      "expectSelector": "#home-for-you #home-challenges-section:not(:has(.home-panel-season)):has(> h2.home-area-label a.home-panel-see-all) > h2.home-area-label + article.home-panel > .home-panel-body .home-challenge-card [role=progressbar]",
+      "expectText": "Challenges"
     },
     {
       "name": "Challenges: with nothing running it says so, and shows only that (#947)",
@@ -1070,15 +1070,15 @@
       "expectText": "No challenges right now"
     },
     {
-      "name": "Challenges: with two open, Next challenges shows just those two",
+      "name": "Challenges: with two open, Home's Challenges card shows just those two (#6650)",
       "path": "/?demo=1&challenges=few",
-      "expectSelector": "#home-challenges-section article.home-panel[data-rows=\"2\"] > .home-panel-body .home-challenge-card",
-      "expectText": "Next challenges"
+      "expectSelector": "#home-for-you #home-challenges-section article.home-panel[data-rows=\"2\"] > .home-panel-body .home-challenge-card",
+      "expectText": "Challenges"
     },
     {
-      "name": "Challenges: Next challenges shows at most three, the furthest along first",
+      "name": "Challenges: Home's Challenges card shows at most two, the furthest along first (#6650)",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section article.home-panel[data-rows=\"3\"]:not(:has(.home-panel-expand)) .home-panel-rows > .home-challenge-card[data-challenge-id=\"900512\"]:first-child",
+      "expectSelector": "#home-for-you #home-challenges-section article.home-panel[data-rows=\"2\"]:not(:has(.home-panel-expand)) .home-panel-rows > .home-challenge-card[data-challenge-id=\"900512\"]:first-child",
       "expectText": "4/8 Apps tested this week"
     },
     {
