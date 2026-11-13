@@ -76,8 +76,10 @@ test('its styles are scoped to the section and use no untuned palette', () => {
   const css = read('public/css/app.css');
   const from = css.indexOf('/* ── Onboarding flows (features/admin/admin-onboarding-flows.tsx)');
   assert.ok(from > 0, 'the block is in app.css');
-  const to = css.indexOf('/* ── THE NEW LOOK, AN EXPERIMENT');
-  assert.ok(to > from, 'before the new look\'s block, which runs to the end of the file');
+  // With the console's other section styles: the end of the file belongs to the looks.
+  const to = css.indexOf('/* ── Analytics (was public/dashboard.html)');
+  assert.ok(to > from, 'beside the other admin sections\' styles');
+  assert.ok(from > css.indexOf('#admin-status-root:not(.is-admin)'));
   const block = css.slice(from, to).replace(/\/\*[\s\S]*?\*\//g, '');
   // Every selector, inside a media query or not, starts at the section root.
   const selectors = [...block.matchAll(/(^|[{}])\s*([^{}@]+?)\s*\{/g)].map((m) => m[2].trim())
