@@ -518,7 +518,11 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.equal((await dm.firstVersionState(pool, app.id, { viewerId: maya.id })).line, 'plan');
     assert.deepEqual(fv.plan.bullets, PLAN.bullets);
     assert.equal(fv.plan.actionId, (await planMessage(first)).meta.actionId);
-    assert.equal((await progress.botWorkByIssue(pool, app.id)).get(1).what, 'queued', 'nobody else starts it');
+    // Its page's `bot`, read off its stored row (work-state.js botWorkOf).
+    const ws = require('../src/services/work-state');
+    await ws.refresh(pool, [{ appId: app.id, issueNumber: 1 }]);
+    const [row1] = await ws.forItems(pool, [{ appId: app.id, issueNumber: 1 }]);
+    assert.equal(ws.botWorkOf(row1).what, 'queued', 'nobody else starts it');
   });
 
   await t.test('Build it, from any device, builds once, with the choices tapped and the rest suggested', async () => {
@@ -591,15 +595,22 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     await bot.awaitGo(pool, { runId: third, app, issueNumber: 1, parsed: { plan: { bullets: ['A shared list'], questions: [] } }, bot: homeroomBot });
     assert.equal((await planMessage(second)).meta.replaced, true, 'Replaced by a newer plan');
     assert.notEqual((await planMessage(first)).meta.replaced, true, 'a plan that was built stays as it was');
+    // Where the request stands, stored as the drain stores it: waiting for its plan.
+    const { settleWorkStates } = require('./lib/work-states');
+    await settleWorkStates(pool);
     assert.deepEqual(await bot.retireWaitingPlans(pool, { appId: app.id, issueNumber: 1, why: 'the request was read again' }), [third]);
     const run = await runRow(third);
     assert.deepEqual([run.awaiting_go_at, run.build_ok, run.build_error], [null, false, 'skipped: the request was read again']);
     const card = await planMessage(third);
     assert.equal(card.meta.status, 'closed');
-    const { rows: [action] } = await pool.query('SELECT status FROM bot_cards WHERE id = $1', [card.meta.actionId]);
-    assert.equal(action.status, 'declined');
+    // Step 3: its Build it card retires with the request's move off its plan
+    // (bot-cards.js retireOnMove, from the standing), as the drain finds it.
+    await settleWorkStates(pool);
+    const { rows: [action] } = await pool.query('SELECT status, retired_reason FROM bot_cards WHERE id = $1', [card.meta.actionId]);
+    assert.equal(action.status, 'retired');
+    assert.equal(action.retired_reason, 'moved_on');
     const late = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: card.meta.actionId, choice: 'build' });
-    assert.equal(late.status, 409, 'a closed plan builds nothing');
+    assert.deepEqual([late.status, late.code, late.reason], [410, 'retired', 'moved_on'], 'a closed plan builds nothing, and says why');
   });
 
   await t.test('a week with no tap stops it; "build it" written under a plan is its button; "yes" typed is never an offer\'s', async () => {

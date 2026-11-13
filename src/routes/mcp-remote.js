@@ -1135,6 +1135,14 @@ function demoConnectorState(flag) {
         connectors: [demoConnector('claude'), demoConnector('expired')],
         hint: demoHintStatus({}),
       };
+    // An expired Claude connection (#6137): the row that offers Reconnect,
+    // which lands on the Claude guide's sign-in step. ChatGPT's guide has no
+    // such step, so the fixture above shows the row without it.
+    case 'connectors-reconnect':
+      return {
+        connectors: [demoConnector('expired', { id: 'staging-demo-connector-5', client_name: 'Claude (claude.ai)' })],
+        hint: demoHintStatus({}),
+      };
     default:
       return null;
   }

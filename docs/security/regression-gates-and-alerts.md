@@ -62,22 +62,44 @@ approval; existing findings cannot stop unrelated releases.
 The workflow uploads a compact `homeroom-security-audit-<run attempt>` artifact.
 It has no issue-write permission or production credentials. Homeroom's existing
 five-minute platform-signals observer reads only the latest trusted main-branch
-audit, verifies its repository, commit, run and attempt, and files **native
-requests in Homeroom**, not GitHub issues. This covers Homeroom's five components
-only; other projects are outside this rollout.
+audit, verifies its repository, commit, run and attempt, and files **private
+requests in Homeroom** (#5048), which only full admins see: in the Workshop's
+Private requests, never on the board or GitHub. This covers Homeroom's five
+components only; other projects are outside this rollout.
 
-One request per HIGH/CRITICAL advisory groups all affected components. Findings
-with a published fix enter the existing Homeroom bot queue, subject to its slots,
-budget and hold rules. Findings without a fix, and audit failures, wait for a
-person. Unfixable findings and reviewed exceptions remain visible. Targets are
-one day for CRITICAL and seven for HIGH, shortened by an earlier exception expiry;
-they never move forward during an episode. Assess urgent exposure as an incident;
-a deployment freeze remains an explicit operator decision.
+Findings are grouped by the upgrade that fixes them, not by advisory: one
+request per package, and packages that share an advisory are one upgrade
+(Debian's `openssl` and `libssl3`, one Chromium release fixing a dozen
+advisories in worker and capture). A request keeps its key while packages join
+it, so its target date holds. It files when its highest severity is HIGH or
+CRITICAL, and lists every affected component, version, fix and advisory.
+
+When a fix is published, the bot gets a request of its own on the board, titled
+like the private one, that says only what to upgrade: the packages, the
+installed versions, the versions to move to and the components. No advisory,
+severity or date is on it. The bot works on it through its existing queue,
+subject to its slots, budget and hold rules, and the private request says
+which request it is. Findings without a fix, and audit failures, notify the
+full admins (a private bell row and push that name no finding). Unfixable
+findings and reviewed exceptions remain visible in the private request.
+Targets are one day for CRITICAL and seven for HIGH, shortened by an earlier
+exception expiry; they never move forward during an episode. Assess urgent
+exposure as an incident; a deployment freeze remains an explicit operator
+decision.
+
+The upgrade's merge closes the bot's request, not the private one: only the
+audit can say the upgrade worked. If a complete audit still finds the problem
+36 hours after the bot's request closed, the private request says so and the
+full admins are told, once. If what needs upgrading changes (a newer fix, or
+what an upgrade left), the bot gets a new request. An admin closing the
+private request ends the episode and closes the bot's request with it.
 
 Unchanged findings do not rewrite or requeue requests. Changes to dependency
-versions, severity, fixes or affected components update the request. A newly
-available fix can hand a previously unfixable request to the bot. Recent recurrence
-reopens the same request, using the existing seven-day signal window.
+versions, severity, fixes or affected components update the private request.
+A newly available fix hands a previously unfixable upgrade to the bot. Recent
+recurrence reopens the same private request, using the existing seven-day
+signal window. Requests filed per advisory before this grouping are closed
+with a note once the audit stops filing them; their targets carry over.
 
 Only a complete, successful audit of all five components, at both current main
 and Homeroom's recorded main revision, can confirm resolution. A severity downgrade

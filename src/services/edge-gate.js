@@ -1,5 +1,7 @@
 'use strict';
 
+const { readSessionCookie } = require('./browser-session-cookies');
+
 // The app-host gate: who may load an app at its own address, and as whom.
 //
 // Every request to an app host (<slug>.<apps domain>) or a preview host
@@ -34,6 +36,16 @@
 //     trades it for an HttpOnly, Secure, host-only (`__Host-`), SameSite=Lax
 //     cookie and redirects to the same-host path the visitor asked for, with
 //     the code gone from the address.
+//   * the code is also bound to the BROWSER that started the hop, the way
+//     OAuth's `state` is: starting the hop sets a random value in a
+//     five-minute, HttpOnly, host-only cookie here (`state` in cookieNames)
+//     and sends only its SHA-256 to the apex, which writes it into the code
+//     (`state` claim). The callback trades a code only in the browser that
+//     holds the matching cookie, before it spends the code, and clears the
+//     cookie once its hop is over. Without it, somebody could run the hop
+//     with their OWN session and send the code to another person's browser,
+//     which would then be signed in to the app as them (login CSRF). The
+//     cookie is stripped from what the app receives, like the others.
 //   * not signed in, public app: the apex sends the browser back with a
 //     one-minute "anonymous" token instead, which the gate turns into a
 //     ten-minute marker so it stops asking; the visitor sees what they see
@@ -96,6 +108,43 @@
 // APP_HOST_SIGNIN=off turns the sign-in half off (no hop for public apps, no
 // identity from the cookie, no guests, the chromeless view for a direct visit
 // to a private app) while keeping everything else.
+//
+// ── Homeroom's frame from another site (browser-site-isolation, step 4) ──
+//
+// Once apps live on a registrable domain of their own (<slug>.onhomeroom.app
+// framed by app.onhomeroom.com), the shell's frame is a cross-site frame. A
+// SameSite=Lax cookie is never sent there, and with third-party cookies
+// blocked (Safari always, Chrome when asked) no unpartitioned cookie is kept
+// there at all. So the door a frame's `?token=` opens would close again on
+// its first stylesheet, and the sign-in hop could not run inside the frame
+// (its state cookie is a third-party cookie, and the platform session must
+// never be widened to reach it). For a frame on another site, decided from
+// the configured hosts (framesCrossSite), never from a header:
+//
+//   * the door cookie a frame's token opens is PARTITIONED (CHIPS:
+//     `SameSite=None; Secure; Partitioned`, same `__Host-` name). The browser
+//     keeps it only under the top-level site that framed the app, so it is
+//     sent on the frame's own assets, fetches, WebSocket handshakes and
+//     navigations, inside Homeroom only. It is door-only like before: no
+//     platform session behind it and no identity from it; the app's identity
+//     is still the token it forwards. Chrome 114+, Firefox 141+ and Safari
+//     26.2+ keep it with third-party cookies blocked. A top-level visit and
+//     the same-site layout keep the Lax cookie exactly as before.
+//   * a frame navigation that arrives with nothing valid (an offline app's
+//     tokenless address, a door that ran out, a reload) is answered with the
+//     frame door page instead of the hop: a small page that asks the shell,
+//     by postMessage to the platform's origin only, for a fresh token for
+//     the app its frame shows (public/js/app-view.js
+//     handleFrameDoorMessage), and trades it at CALLBACK_PATH?frame= for the
+//     partitioned door, then goes on to the page it was asked for with its
+//     address and fragment intact. The shell answers only a frame it owns,
+//     only for that frame's own app, and only to the origin the frame was
+//     pointed at.
+//   * a browser that keeps no cookie in such a frame at all (Safari 18.5 to
+//     26.1, where WebKit had partitioned cookies switched off) comes back
+//     from either path without the door; it is shown the same page saying
+//     the app cannot open inside Homeroom in this browser, with a link that
+//     opens it in a tab of its own, where the sign-in hop works.
 
 const crypto = require('crypto');
 const platformJwt = require('./platform-jwt');
@@ -103,6 +152,7 @@ const offlineCache = require('./offline-cache');
 const appAccess = require('./app-access');
 const log = require('./logger');
 const { USERNODE_DOMAIN } = require('./caddy');
+const { appHostIsIsolated } = require('./browser-site-isolation');
 
 const CALLBACK_PATH = '/__usernode_access';
 // Appended when the gate redirects to itself to set a cookie from an iframe
@@ -128,6 +178,14 @@ const SAFE_METHODS = new Set(['GET', 'HEAD']);
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 // How long the readable guest hint lasts. Signing in clears it.
 const GUEST_HINT_TTL_S = 12 * 60 * 60;
+// How long a sign-in hop's state cookie lives: the hop itself is three
+// redirects. Signing up or in on the platform first (the bridge's account
+// buttons) can take a person much longer, so that hop's state lives longer.
+const STATE_TTL_S = 5 * 60;
+const ACCOUNT_STATE_TTL_S = 30 * 60;
+// The state cookie's value is 32 random bytes and the address carries its
+// SHA-256: both are 43 base64url characters.
+const STATE_RE = /^[A-Za-z0-9_-]{43}$/;
 
 const ACCOUNT_REQUIRED = Object.freeze({
   error: 'account_required',
@@ -143,8 +201,8 @@ function secureCookies() {
 // ("cookie tossing"). Plain HTTP dev boxes cannot use the prefix.
 function cookieNames() {
   return secureCookies()
-    ? { access: '__Host-usernode_access', anon: '__Host-usernode_anon', guest: '__Host-usernode_guest' }
-    : { access: '__usernode_access', anon: '__usernode_anon', guest: '__usernode_guest' };
+    ? { access: '__Host-usernode_access', anon: '__Host-usernode_anon', guest: '__Host-usernode_guest', state: '__Host-usernode_state' }
+    : { access: '__usernode_access', anon: '__usernode_anon', guest: '__usernode_guest', state: '__usernode_state' };
 }
 
 function signinEnabled() {
@@ -176,9 +234,34 @@ function safeNext(raw) {
   return next || '/';
 }
 
-function authorizeUrl(host, next) {
+// The apex hop's address. `state` is the SHA-256 of this browser's state
+// cookie (hopStateDigest), never the cookie's value; without one the apex
+// mints no code.
+function authorizeUrl(host, next, state = null) {
   return `https://${USERNODE_DOMAIN}/__access/authorize`
-    + `?host=${encodeURIComponent(host)}&next=${encodeURIComponent(next)}`;
+    + `?host=${encodeURIComponent(host)}&next=${encodeURIComponent(next)}`
+    + (state ? `&state=${encodeURIComponent(state)}` : '');
+}
+
+// ── The sign-in hop's state (see the header) ─────────────────────────────
+function newHopState() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+function hopStateDigest(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('base64url');
+}
+
+function wellFormedState(value) {
+  return typeof value === 'string' && STATE_RE.test(value);
+}
+
+// Does the state cookie this browser holds match the code's claim?
+function stateMatches(cookieValue, claimed) {
+  if (!wellFormedState(cookieValue) || !wellFormedState(claimed)) return false;
+  const held = Buffer.from(hopStateDigest(cookieValue));
+  const named = Buffer.from(claimed);
+  return held.length === named.length && crypto.timingSafeEqual(held, named);
 }
 
 // The platform shell's chromeless view of the app: where a visitor the app
@@ -214,6 +297,23 @@ function isTopLevelNavigation(headers, method) {
     && header(headers, 'sec-fetch-dest').toLowerCase() === 'document';
 }
 
+// A request that may be a person's navigation, and so may start a sign-in
+// hop with its state: a top-level visit, a frame's navigation (a private
+// app in Homeroom's frame whose door cookie ran out signs in again inside
+// the frame), or a read from a browser that sends no Fetch Metadata at all
+// (an old one's visit). A fetch, an asset or a WebSocket never sets the
+// state cookie, so polling in one tab, or a sibling app's <img>, cannot
+// overwrite the state of a hop in flight; their trip to the apex carries no
+// state and gets no code, which a request that is not a visit could not
+// have used anyway. A sibling app can frame one to restart a hop, which
+// costs the other hop one retry and grants nothing: the code still only
+// works in the browser holding its state.
+function mayStartHop(headers, method) {
+  if (!SAFE_METHODS.has(method) || isWebSocketUpgrade(headers)) return false;
+  const dest = header(headers, 'sec-fetch-dest').toLowerCase();
+  return dest === 'document' || dest === 'iframe' || dest === '';
+}
+
 function selfOrigins(host) {
   const origins = [`https://${host}`];
   if (!secureCookies()) origins.push(`http://${host}`);
@@ -244,8 +344,93 @@ function sameOriginWrite({ headers, host }) {
   return !site || site === 'same-origin';
 }
 
+// ── Frames on another site (see the header) ────────────────────────────────
+
+// Does the platform frame `host` from another site? Only a definite yes:
+// their ICANN registrable domains differ (browser-site-isolation.js), which
+// every browser agrees is cross-site. Today's layout, apps under the
+// platform's own domain, answers no.
+const crossSiteHosts = new Map(); // host -> boolean
+function framesCrossSite(host) {
+  let answer = crossSiteHosts.get(host);
+  if (answer === undefined) {
+    answer = appHostIsIsolated(host, String(USERNODE_DOMAIN).replace(/:\d+$/, ''));
+    if (crossSiteHosts.size >= CACHE_MAX) crossSiteHosts.clear();
+    crossSiteHosts.set(host, answer);
+  }
+  return answer;
+}
+
+// A frame loading a document: Homeroom's frame, or a frame the app's own
+// page navigates. Never a top-level visit, an asset, a fetch or a socket.
+function isFrameNavigation(headers, method) {
+  return SAFE_METHODS.has(method) && !isWebSocketUpgrade(headers)
+    && header(headers, 'sec-fetch-dest').toLowerCase() === 'iframe';
+}
+
+// The frame door page, as JSON inside a script: never a `</script>`.
+function scriptJson(value) {
+  return JSON.stringify(value).replace(/</g, '\\u003c');
+}
+
+// The page a frame on another site gets when it holds no door (see the
+// header): it asks the shell for a token and trades it for the door, or,
+// `blocked` (this browser keeps no cookie in the frame) or when nobody
+// answers, says the app cannot open here and offers it in a tab of its own.
+// English in code like the gate's other pages: it loads no shell bundle.
+function frameDoorPage({ platformOrigin, next, blocked, nonce }) {
+  const text = {
+    title: 'This app can’t open here',
+    body: 'This browser keeps the app from signing in inside Homeroom. It works in a tab of its own.',
+    open: 'Open in a new tab',
+  };
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer"><title>${text.title}</title>
+<style nonce="${nonce}">
+:root{color-scheme:light dark}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font:15px/1.4 system-ui,-apple-system,sans-serif;background:transparent;color:#18181b}
+@media (prefers-color-scheme:dark){body{color:#f4f4f5}}
+main{max-width:22rem;padding:24px;text-align:center}
+main[hidden]{display:none}
+h1{font-size:17px;margin:0 0 8px}
+p{margin:0 0 16px;opacity:.75}
+a{display:inline-block;padding:10px 16px;border-radius:999px;background:#2563eb;color:#fff;text-decoration:none;font-weight:600}
+</style></head>
+<body><main id="blocked"${blocked ? '' : ' hidden'}><h1>${text.title}</h1><p>${text.body}</p>
+<a href="${next.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}" target="_blank" rel="noopener">${text.open}</a></main>
+<script nonce="${nonce}">
+(function () {
+  var platform = ${scriptJson(platformOrigin)};
+  var nonce = ${scriptJson(nonce)};
+  var callback = ${scriptJson(CALLBACK_PATH)};
+  var settled = false;
+  function show() {
+    if (settled) return;
+    settled = true;
+    document.getElementById('blocked').hidden = false;
+  }
+  if (${blocked ? 'true' : 'false'} || window.parent === window) return show();
+  window.addEventListener('message', function (e) {
+    if (settled || e.source !== window.parent || e.origin !== platform) return;
+    var d = e.data;
+    if (!d || d.__usernode_frame_door !== 'token' || d.nonce !== nonce) return;
+    if (typeof d.token !== 'string' || !d.token) return show();
+    settled = true;
+    // The fragment rides along: redirects keep it, so the page asked for
+    // gets back its own (an offline app's #un-token=, a client route).
+    location.replace(callback + '?frame=' + encodeURIComponent(d.token)
+      + '&next=' + encodeURIComponent(location.pathname + location.search) + location.hash);
+  });
+  try { window.parent.postMessage({ __usernode_frame_door: 'open', nonce: nonce }, platform); } catch (e) { return show(); }
+  setTimeout(show, 10000);
+})();
+</script></body></html>`;
+}
+
 // Every gate cookie name, in either spelling, for stripping before the app.
-const GATE_COOKIE_RE = /^(?:__Host-usernode|__usernode)_(?:access|anon)$/;
+// (The guest hint is not one: the bridge reads it on the app's own page.)
+const GATE_COOKIE_RE = /^(?:__Host-usernode|__usernode)_(?:access|anon|state)$/;
 
 // The Cookie header minus the gate's own cookies (scripts/app-gate.js; the
 // Caddyfile does the same with a header_up replacement).
@@ -271,7 +456,7 @@ let captureId = { at: 0, id: null };
 
 function resetCachesForTest() {
   liveSessions.clear(); identities.clear(); upstreams.clear();
-  guestTokens.clear(); appAccess.resetOfflineOptOutsForTest?.();
+  guestTokens.clear(); crossSiteHosts.clear(); appAccess.resetOfflineOptOutsForTest?.();
   captureId = { at: 0, id: null };
 }
 
@@ -358,8 +543,9 @@ function browserRequest(headers) {
 
 // The platform's sign-up or sign-in, coming back through the authorize hop
 // to the same page of the app, signed in (auth-screens.js RETURN_TO_PATHS).
-function accountUrl(kind, host, next) {
-  const back = `/__access/authorize?host=${encodeURIComponent(host)}&next=${encodeURIComponent(next)}`;
+function accountUrl(kind, host, next, state = null) {
+  const back = `/__access/authorize?host=${encodeURIComponent(host)}&next=${encodeURIComponent(next)}`
+    + (state ? `&state=${encodeURIComponent(state)}` : '');
   return `https://${USERNODE_DOMAIN}/?return_to=${encodeURIComponent(back)}#${kind === 'signup' ? 'signup' : 'login'}`;
 }
 
@@ -410,6 +596,29 @@ function cookieOptions(maxAgeSeconds) {
   };
 }
 
+// The door a token opens. In a frame on another site it is partitioned (see
+// the header), the only cookie such a frame can keep; anywhere else it is
+// the Lax cookie it has always been. `Partitioned` needs `Secure`, so plain
+// HTTP development keeps Lax everywhere.
+function doorCookieOptions(host, headers, method) {
+  const options = cookieOptions(platformJwt.EDGE_COOKIE_TTL_S);
+  if (!secureCookies() || !isFrameNavigation(headers, method) || !framesCrossSite(host)) return options;
+  return { ...options, sameSite: 'none', partitioned: true };
+}
+
+// Where the frame door page's "Open in a new tab" goes: the page the frame
+// asked for, without the token or the loop marker the gate put on it.
+function frameDoorNext(uri) {
+  const next = safeNext(uri);
+  const q = next.indexOf('?');
+  if (q === -1) return next;
+  const params = new URLSearchParams(next.slice(q + 1));
+  params.delete('token');
+  params.delete(RETRY_MARKER);
+  const rest = params.toString();
+  return next.slice(0, q) + (rest ? `?${rest}` : '');
+}
+
 function readAccessCookie(req, { host, appId }) {
   const raw = req.cookies?.[cookieNames().access];
   if (!raw) return null;
@@ -457,6 +666,36 @@ async function handleAccess(pool, req, res) {
     res.set('Referrer-Policy', 'no-referrer');
     return res.redirect(302, location);
   };
+
+  // Every sign-in hop starts here. A visit gets a FRESH state each time
+  // (never one it already holds, which the app's own code could have
+  // planted): its value in the cookie, its SHA-256 in the address. Two tabs
+  // that start hops at once overwrite each other's; the loser's code is
+  // refused at the callback, which sends it on to its page with the loop
+  // marker rather than into another hop (see the callback).
+  const startHop = (next, { account = null } = {}) => {
+    let state = null;
+    if (mayStartHop(req.headers, method)) {
+      const value = newHopState();
+      res.cookie(names.state, value, cookieOptions(account ? ACCOUNT_STATE_TTL_S : STATE_TTL_S));
+      state = hopStateDigest(value);
+    }
+    return redirect(account ? accountUrl(account, host, next, state) : authorizeUrl(host, next, state));
+  };
+
+  // A frame on another site that holds no door (see the header): the frame
+  // door page, which only the platform may frame. 401, so neither edge ever
+  // passes the request on to the app.
+  const frameDoor = ({ blocked = false } = {}) => {
+    const nonce = crypto.randomBytes(16).toString('base64url');
+    const platformOrigin = `https://${USERNODE_DOMAIN}`;
+    res.set('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; `
+      + `style-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors ${platformOrigin}`);
+    res.set('Referrer-Policy', 'no-referrer');
+    return res.status(401).type('html')
+      .send(frameDoorPage({ platformOrigin, next: frameDoorNext(uri), blocked, nonce }));
+  };
+  const crossSiteFrame = isFrameNavigation(req.headers, method) && framesCrossSite(host);
 
   // Every 2xx goes out through here, so what an edge copies onto the
   // request is decided in one place.
@@ -516,12 +755,34 @@ async function handleAccess(pool, req, res) {
       return redirect(stuck ? next : withRetryMarker(next));
     }
     const checkUrl = (kind) => `${CALLBACK_PATH}?check=${kind}&next=${encodeURIComponent(next)}`;
+    // The frame door page's trade (see the header): the token the shell
+    // handed this frame, for the partitioned door. Only a frame Homeroom
+    // shows from another site, only a private app's, and only for a member.
+    // A refusal goes on to the page with the loop marker, which shows the
+    // page saying the app cannot open here, never another round.
+    const frameToken = query.get('frame');
+    if (frameToken) {
+      if (!crossSiteFrame || !vis.viewPrivate) return redirect(next);
+      const claims = platformJwt.orNull(
+        () => platformJwt.verifyAppIdentityToken(frameToken, { appId: vis.appId })
+      );
+      const member = !!claims && Number.isInteger(claims.id)
+        && (await appAccess.isViewMember(pool, vis.appId, claims.id)
+          || (!isProduction && await isCaptureIdentity(pool, claims.id)));
+      if (!member) {
+        log.warn('edge-gate', 'Frame door refused', { host, reason: claims ? 'not_a_member' : 'invalid_token' });
+        return redirect(withRetryMarker(next));
+      }
+      const door = platformJwt.signEdgeCookie({ uid: claims.id, appId: vis.appId, host });
+      res.cookie(names.access, door, doorCookieOptions(host, req.headers, method));
+      return redirect(checkUrl('access'));
+    }
     // The bridge's "Continue with email" and "I have an account".
     const account = query.get('account');
     if (account === 'signup' || account === 'signin') {
-      return redirect(isProduction
-        ? accountUrl(account, host, next)
-        : `https://${USERNODE_DOMAIN}/`);
+      return isProduction
+        ? startHop(next, { account })
+        : redirect(`https://${USERNODE_DOMAIN}/`);
     }
     const anon = query.get('anon');
     if (anon) {
@@ -541,9 +802,29 @@ async function handleAccess(pool, req, res) {
       && claims.host === host
       && claims.appId === vis.appId
       && Number.isInteger(claims.uid)
-      && typeof claims.sid === 'string';
+      && typeof claims.sid === 'string'
+      && wellFormedState(claims.state);
     // Cheap checks first; the redemption is last so a code that fails
     // anything else is not spent.
+    //
+    // The code must come back to the browser whose hop it ends: the one
+    // holding the state cookie the code names. A code planted in another
+    // browser (login CSRF), or a tab whose state another tab's hop
+    // overwrote, is refused without being spent and goes on to the page
+    // with the loop marker, never straight into another hop: where a
+    // browser that refuses cookies has always ended up (the check step's
+    // answer), and signed in if the other tab's hop has finished. A private
+    // preview, which never honoured the marker, starts a fresh hop there.
+    if (ok) {
+      const held = req.cookies?.[names.state];
+      if (!stateMatches(held, claims.state)) {
+        log.warn('edge-gate', 'Sign-in code refused', { host, reason: held ? 'state_mismatch' : 'state_missing' });
+        return redirect(withRetryMarker(next));
+      }
+      // This hop is over, whatever comes next. A mismatched cookie above is
+      // left alone: it belongs to another tab's hop, still in flight.
+      res.clearCookie(names.state, { path: '/', secure: secureCookies(), sameSite: 'lax', httpOnly: true });
+    }
     if (ok) ok = await appAccess.isViewMember(pool, vis.appId, claims.uid);
     if (ok) ok = await sessionLive(pool, claims.sid, claims.uid);
     if (ok) ok = await redeemOnce(pool, claims.jti, claims.exp);
@@ -586,7 +867,7 @@ async function handleAccess(pool, req, res) {
       return allow({ identityFor: ok ? cookie.uid : null });
     }
     if (signin && topNav && !anonMarked(req) && query.get(RETRY_MARKER) !== '1') {
-      return redirect(authorizeUrl(host, safeNext(uri)));
+      return startHop(safeNext(uri));
     }
     if (guests) {
       // Every write needs an account.
@@ -608,14 +889,21 @@ async function handleAccess(pool, req, res) {
   if (iframeJwt && Number.isInteger(iframeJwt.id)
       && (await appAccess.isViewMember(pool, vis.appId, iframeJwt.id)
         || (!isProduction && await isCaptureIdentity(pool, iframeJwt.id)))) {
+    // A frame on another site that came back from that bounce without the
+    // door: this browser keeps no cookie there, so the page's assets would
+    // all be refused. It is told so, with the app offered in its own tab.
+    if (queryToken && crossSiteFrame && query.get(RETRY_MARKER) === '1' && !req.cookies?.[names.access]) {
+      return frameDoor({ blocked: true });
+    }
     // A header-credentialed fetch, a WebSocket handshake (which cannot
     // follow a redirect) or a cookie-set retry that came back cookieless.
     if (!queryToken || ws || query.get(RETRY_MARKER) === '1') return allow();
     // The first iframe document load: set the scoped cookie and bounce back
     // to the same URL so the page's assets (no token, no header) pass too.
-    // It carries no platform session, so it only ever opens the door.
+    // It carries no platform session, so it only ever opens the door. In a
+    // frame on another site the cookie is partitioned (doorCookieOptions).
     const scoped = platformJwt.signEdgeCookie({ uid: iframeJwt.id, appId: vis.appId, host });
-    res.cookie(names.access, scoped, cookieOptions(platformJwt.EDGE_COOKIE_TTL_S));
+    res.cookie(names.access, scoped, doorCookieOptions(host, req.headers, method));
     return redirect(withRetryMarker(uri));
   }
 
@@ -635,7 +923,7 @@ async function handleAccess(pool, req, res) {
       // A door-only cookie (from an iframe token) on a direct visit: trade
       // it for one that signs the person in, if they are signed in.
       if (signin && topNav && query.get(RETRY_MARKER) !== '1') {
-        return redirect(authorizeUrl(host, safeNext(uri)));
+        return startHop(safeNext(uri));
       }
       return allow();
     }
@@ -645,11 +933,18 @@ async function handleAccess(pool, req, res) {
   // 4. Nothing valid. A visit that already went round the hop (the loop
   // marker) goes where an unsigned visitor goes rather than round again.
   if (topNav && isProduction) {
-    return redirect(signin && query.get(RETRY_MARKER) !== '1'
-      ? authorizeUrl(host, safeNext(uri))
-      : chromelessUrl(slug));
+    return signin && query.get(RETRY_MARKER) !== '1'
+      ? startHop(safeNext(uri))
+      : redirect(chromelessUrl(slug));
   }
-  if (method === 'GET') return redirect(authorizeUrl(host, safeNext(uri)));
+  // A frame Homeroom shows from another site cannot run the hop (its state
+  // cookie would be a third-party cookie): the frame door page asks the
+  // shell for a token instead (see the header). Once it has already been
+  // round (the loop marker), the browser keeps no door there.
+  if (crossSiteFrame) return frameDoor({ blocked: query.get(RETRY_MARKER) === '1' });
+  // A preview's visit hops here too (it only ever opens the door), and so
+  // does an old browser's; anything else goes without a state (startHop).
+  if (method === 'GET') return startHop(safeNext(uri));
   return res.status(404).send('Not found');
 }
 
@@ -683,11 +978,15 @@ async function handleAuthorize(pool, req, res) {
   );
   // The session the code is bound to. A request authenticated some other
   // way (a CLI bearer) has none, and gets no code.
-  const sessionToken = typeof req.cookies?.session === 'string' ? req.cookies.session : '';
-  if (!app || app.id !== vis.appId || !sessionToken) return res.redirect(302, fallback);
+  const sessionToken = readSessionCookie(req) || '';
+  // And the browser: the SHA-256 of the state cookie the gate set when it
+  // started this hop. A hop that names none (not started by the gate, or
+  // not a visit) gets no code.
+  const state = wellFormedState(req.query.state) ? req.query.state : null;
+  if (!app || app.id !== vis.appId || !sessionToken || !state) return res.redirect(302, fallback);
 
   const code = appAccess.mintAccessGrant({
-    uid: req.user.id, appId: app.id, host: parsed.host, sid: sha256Hex(sessionToken),
+    uid: req.user.id, appId: app.id, host: parsed.host, sid: sha256Hex(sessionToken), state,
   });
   return res.redirect(302, `https://${parsed.host}${CALLBACK_PATH}`
     + `?code=${encodeURIComponent(code)}&next=${encodeURIComponent(next)}`);
@@ -697,17 +996,22 @@ module.exports = {
   CALLBACK_PATH,
   RETRY_MARKER,
   ANON_TTL_S,
+  STATE_TTL_S,
+  ACCOUNT_STATE_TTL_S,
   CAPTURE_USERNAME,
   ACCOUNT_REQUIRED,
   cookieNames,
   signinEnabled,
   sha256Hex,
+  hopStateDigest,
   safeNext,
   authorizeUrl,
   chromelessUrl,
   isTopLevelNavigation,
   identityAllowed,
   sameOriginWrite,
+  framesCrossSite,
+  isFrameNavigation,
   stripGateCookies,
   sessionLive,
   redeemOnce,

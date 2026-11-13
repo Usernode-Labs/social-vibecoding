@@ -40,6 +40,7 @@ const path = require('node:path');
 
 const { loadTsx } = require('./lib/render-tsx');
 const { message } = require('./lib/platform-i18n');
+const { withWords } = require('./lib/work-words');
 
 const MODEL = 'frontend/src/features/ai/model.ts';
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
@@ -89,7 +90,8 @@ const thread = (threadId, number, what, extra = {}) => {
   return {
     threadId, number, kind: 'work', title: `T${threadId}`, app, change: null,
     href: `#app/garden/dev/issues/${number}`, group: 'waiting', at: null,
-    work: { why: null, reason: null, line: null, since: null, ...(WORK[what] || { stage: what }), ...(given || {}) },
+    // 11 Nov 2026: with the words the server sends with it (tests/lib/work-words.js).
+    work: withWords({ why: null, reason: null, line: null, since: null, ...(WORK[what] || { stage: what }), ...(given || {}) }),
     ...rest,
   };
 };
@@ -145,7 +147,7 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
   assert.equal(rows[4].plan, undefined);
   const index = read('frontend/src/features/ai/index.tsx');
   assert.doesNotMatch(index, /openBotRequest/, 'no row opens Main Chat at a plan');
-  assert.match(index, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}\s+openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);\s+\};/,
+  assert.match(index, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app, row\.rootId\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}\s+openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);\s+\};/,
     'every other row opens its own page, and opening it clears what is new');
   // Private threads: a lock on the tile, and where they stand.
   assert.deepEqual([rows[5].who, words(rows[5].sub)], ['solo', 'Only you · Not in a community yet']);
@@ -197,10 +199,10 @@ test('each section groups its rows by project, and a project shows its first few
   assert.match(lists, /aria-hidden=\{open \? undefined : true\}\s+inert=\{!open\}/, 'the folded rest is out of reach until it opens');
   assert.match(lists, /\{g\.app \? <SmallTile app=\{g\.app\} size="head" \/> : <LockIcon className="h-4 w-4 shrink-0" aria-hidden="true" \/>\}/);
   assert.equal(message('messages:ai.short.private'), 'Only you', 'the heading over private ideas in no project');
-  assert.match(lists, /right: row\.pill \? say\(row\.pill\)! : row\.app \? t\('messages:ai\.short\.private'\) : '',/,
+  assert.match(read('frontend/src/features/ai/lines.ts'), /right: row\.pill \? say\(row\.pill\)! : row\.app \? t\('messages:ai\.short\.private'\) : '',/,
     'B07: a private idea under that heading does not say Only you again on its row');
   // One project picked: its chip names it, so its name is not said again.
-  assert.match(lists, /const heads = picked\.length !== 1;/);
+  assert.match(read('frontend/src/features/ai/lines.ts'), /const heads = picked\.length !== 1;/);
 });
 
 // #6245 (4 Nov 2026, Evan): pressing a row past a project's first five slid
@@ -622,7 +624,8 @@ test('each In progress and Waiting row says its stage and its second line, in th
     'Garden club · #7 · Building · Updating the change',
     'Garden club · #7 · Reading it',
     'Garden club · #7 · Reading it · Reading your reply',
-    'Garden club · #7 · Building', 'Garden club · #7 · Building',
+    'Garden club · #7 · Building · Homeroom bot is building it',
+    'Garden club · #7 · Building · You\'re building it',
     'Garden club · #7 · Building · snait is building it',
   ], 'a claim with no change yet names who has it');
   const waits = (what, extra = {}) => thread(1, 7, what, extra);
@@ -667,9 +670,9 @@ test('a row\'s one word on the right, and on a phone the reason where it is news
     row('building', { by: 'someone' }), row('vote'), row('checking'), row('queued'), row('build_queued'),
     row('held'), row('held_turn'), row('on_hold'), row('not_picked_up'), row('build_stopped'),
   ].map((r) => words(shortWords(r))), [
-    'Going live', 'Homeroom bot', 'You', 'snait', 'Building', 'Up for a vote', 'Checking', 'Not started yet', 'Ready to build',
+    'Going live', 'Building', 'Building', 'Building', 'Building', 'Up for a vote', 'Checking', 'Not started yet', 'Ready to build',
     'Ready to build', 'Ready to build', 'Not started yet', 'Not started yet', 'Stopped: the build didn\'t finish',
-  ], 'the stage, in the words every screen uses; who is building it where that is the news');
+  ], 'the stage, in the words every screen uses');
   // Handed back by the bot: Needs Reply, Restart build and Retry the fix,
   // each saying its stage.
   const work = {
@@ -732,8 +735,9 @@ test('#6306: a request the bot found already works says so, and offers Confirm i
   ], 'the bot\'s own reason, where it gave one');
   assert.equal(rows[0].href, '#app/garden/dev/issues/410', 'the row opens the request, where Propose to close lives');
   // The glyph is a check, not the raised hand a decision gets.
-  const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /if \(kind === 'works'\) return <CheckIcon className=\{G\} \/>;/);
+  // The row's glyph is a name both faces draw (./lines.ts); the standard list's icon for it is the check.
+  assert.match(read('frontend/src/features/ai/lines.ts'), /if \(kind === 'works'\) return 'check';/);
+  assert.match(read('frontend/src/features/ai/lists.tsx'), /chat: ChatIcon, play: PlayIcon, hand: HandRaisedIcon, check: CheckIcon,/);
 });
 
 test('#6306: the chat names already-done requests as working, not as decisions', () => {
@@ -830,7 +834,12 @@ test('the server: a row\'s list is its stored work state, read for the viewer', 
   const ME = 5;
   const open = { state: 'open', own: true, number: 7, request_id: 1, request_state: 'open', request_at: at, created_at: at };
   const ws = (stage, extra = {}) => ({ stage, why: null, reason: null, line: null, since: at, requesterId: null, ...extra });
-  const work = (stage, extra = {}) => ({ stage, why: null, reason: null, line: null, since: at, ...extra });
+  // 11 Nov 2026: each row's words travel with it (services/work-state.js phrasesOf).
+  const { phrasesOf } = require('../src/services/work-state');
+  const work = (stage, extra = {}) => {
+    const w = { stage, why: null, reason: null, line: null, since: at, ...extra };
+    return { ...w, words: phrasesOf(w) };
+  };
   const promoted = { ...open, change_status: 'promoted', change_user: 9, voted: true, my_vote: 'yes', promoted_at: at };
   assert.deepEqual(aiWork.standing(promoted, ME, now, null, ws('up_for_vote')),
     { group: 'waiting', work: work('up_for_vote'), at, myVote: 'yes' }, 'a vote you have given waits on others');
@@ -884,9 +893,10 @@ test('the server: a row\'s list is its stored work state, read for the viewer', 
     { group: 'live', work: work('live'), at, mergedAt: at, changeId: 4 });
   assert.equal(aiWork.standing({ ...live, live_at: '2026-10-01T00:00:00.000Z' }, ME, now, null, ws('live', { since: '2026-10-01T00:00:00.000Z' })), null,
     'a week on, it is history');
-  // With no stored row yet (a read that failed), the change says it.
-  assert.equal(aiWork.standing({ ...promoted, check_state: 'passing', change_id: 4 }, ME, now).work.stage, 'up_for_vote');
-  assert.equal(aiWork.standing(open, ME, now).work.stage, 'reading');
+  // 11 Nov 2026: with no stored row read, nothing is listed: the stored row
+  // is the one source (statesFor makes a missing one first).
+  assert.equal(aiWork.standing({ ...promoted, check_state: 'passing', change_id: 4 }, ME, now), null);
+  assert.equal(aiWork.standing(open, ME, now), null);
   // A decision up for a vote waits for votes; one whose vote is owed is the feed's.
   const decision = { state: 'open', own: true, kind: 'decision', number: null, created_at: at, decision_status: 'open' };
   assert.deepEqual(aiWork.standing({ ...decision, decision_mine: true }, ME, now),
@@ -1466,7 +1476,7 @@ test('a thread opens on this page: beside the list in Main\'s place, or on its p
   assert.match(src, /const BOT_PAGE = BOT_TAB;/);
   assert.equal(loadTsx('frontend/src/features/ai/door.ts').BOT_TAB, '#homeroom-bot');
   // #6153: a request filed from a private thread opens that thread first.
-  assert.match(src, /const openThread = \(th: AiThread\) => \{(\s+\/\/[^\n]*)*\s+markThreadRead\(th\.threadId, th\.app\);(\s+\/\/[^\n]*)*\s+if \(th\.rootId\) \{\s+openPrivate\(th\.rootId\);\s+return;\s+\}\s+openPage\(th\.href, th\.app, th\.title, aboutRow\(th\)\);/,
+  assert.match(src, /const openThread = \(th: AiThread\) => \{(\s+\/\/[^\n]*)*\s+markThreadRead\(th\.threadId, th\.app, th\.rootId\);(\s+\/\/[^\n]*)*\s+if \(th\.rootId\) \{\s+openPrivate\(th\.rootId\);\s+return;\s+\}\s+openPage\(th\.href, th\.app, th\.title, aboutRow\(th\)\);/,
     'In progress, Waiting and Live this week');
   assert.match(src, /openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);\s+\};/, 'and Needs you');
   const { isTopicHref } = loadTsx(MODEL);
@@ -1476,7 +1486,7 @@ test('a thread opens on this page: beside the list in Main\'s place, or on its p
   assert.equal(isTopicHref('#app/garden/workshop'), false, 'a Workshop is no topic: the origin would wait for the next one');
   // A private thread is the column's: the panel gives its place back first (showAt).
   assert.match(src, /const openPrivate = \(rootId: number\) => \{\s+const next = \{ threadRootId: rootId, focusMessageId: null \};[\s\S]{0,160}showAt\(next\);\s+\};/);
-  assert.match(src, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}/);
+  assert.match(src, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app, row\.rootId\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}/);
   // The panel may stand beside the AI tab's page, and stays while it is up.
   const controller = read('frontend/src/features/side-panel/controller.ts');
   assert.match(controller, /const besideAi = typeof A\._isScreenVisible === 'function' && A\._isScreenVisible\('ai-screen'\);/);
@@ -1920,7 +1930,11 @@ test('the page listens while it is shown: the socket through app.js, the bot\'s 
   // The page: each read it is asked for is the showing's read again, past
   // the worker's saved copy after the first, keeping the lists on a failure.
   const src = read('frontend/src/features/ai/index.tsx');
-  assert.match(src, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects, botId \}\);/);
+  // #6595: the page open in the column adds its own project to that set.
+  // 11 Nov 2026: and a work_state push is drawn in place first (applyWorkState).
+  assert.match(src, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects: shownProjects, botId \}, applyPush\);/);
+  assert.match(src, /setWork\(\(now\) => applyWorkState\(now, null, push\)\.work\);\s+setNeeds\(\(now\) => applyWorkState\(null, now, push\)\.needs\);/);
+  assert.match(live, /if \(isWorkStatePush\(event\)\) latest\.current\.apply\?\.\(event\);/);
   assert.match(src, /const init = again \? FRESH : undefined;/);
   assert.match(src, /readJson<AiWork>\(`\/api\/ai\/work\$\{qs\}`, init\)/);
   // A failed read keeps what is drawn (offline test, 2 Nov 2026: and with
@@ -1991,8 +2005,8 @@ test('one column state: where each row goes, the row it lights, its address and 
   assert.match(src, /showAddress\(withFilter\(columnAddress\(columnShown\), \{ projects: filterRef\.current\.picked, kind: filterRef\.current\.historyKind \}\)\);/);
   assert.match(src, /showAddress\(withFilter\(window\.location\.hash, \{ projects: next\.picked, kind: next\.historyKind \}\)\);/);
   assert.equal((src.match(/showAddress\(/g) || []).length, 3, 'the column\'s writer and the filter\'s, besides its definition');
-  assert.match(read('frontend/src/features/ai/lists.tsx'), /lit: !!lit && rowKey\(row\) === lit,/);
-  assert.match(read('frontend/src/features/ai/lists.tsx'), /lit: !!lit && rowKey\(th\) === lit,/);
+  assert.match(read('frontend/src/features/ai/lines.ts'), /lit: !!lit && rowKey\(row\) === lit,/);
+  assert.match(read('frontend/src/features/ai/lines.ts'), /lit: !!lit && rowKey\(th\) === lit,/);
 });
 
 test('#6218: the row whose page is open beside the list is lit, and Main Chat is not', () => {
@@ -2195,4 +2209,72 @@ test('#6389: Needs you says what your own change waits on instead of Vote', () =
   const [plainVote] = needsYou([{ kind: 'proposal', id: 2, number: 601, title: 'Plain', app }], null);
   assert.deepEqual(plain(plainVote.pill), { id: 'messages:ai.pill.vote' });
   assert.equal(whyOf(plainVote), null);
+});
+
+test('10 Nov 2026: `#homeroom-bot/new` is the "+" pressed for you, and may name the project and who works on it', () => {
+  const door = loadTsx('frontend/src/features/ai/door.ts');
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+  assert.equal(door.botNewAddress(null), '#homeroom-bot/new');
+  assert.equal(door.botNewAddress({ project: 'run-club-1a2b3c', builder: 'claude-code' }), '#homeroom-bot/new?project=run-club-1a2b3c&with=claude-code');
+  assert.equal(door.botNewAddress({ project: 'run-club-1a2b3c', builder: 'homeroom' }), '#homeroom-bot/new?project=run-club-1a2b3c', 'Homeroom bot is the default and is not said');
+  assert.equal(door.botNewAddress({ project: 'Not A Slug!', builder: 'someone-else' }), '#homeroom-bot/new', 'only a slug the platform mints and a builder it knows');
+  assert.deepEqual(plain(door.botNewAt('#homeroom-bot/new?project=run-club-1a2b3c&with=chatgpt')), { project: 'run-club-1a2b3c', builder: 'chatgpt' });
+  assert.deepEqual(plain(door.botNewAt('#homeroom-bot/new')), { project: null, builder: 'homeroom' });
+  assert.deepEqual(plain(door.botNewAt('#homeroom-bot/new?project=..%2Fx&with=root')), { project: null, builder: 'homeroom' }, 'an address is anybody\'s to write');
+  assert.equal(door.botNewAt('#homeroom-bot/main'), null);
+  assert.equal(door.botNewAt('#homeroom-bot/new/extra'), null);
+  assert.equal(door.botTabAt('#homeroom-bot/new?project=run-club-1a2b3c'), null, 'not a place in the chat');
+  assert.deepEqual([...door.BOT_NEW_BUILDERS], [...loadTsx('frontend/src/features/messages/thread-builder.tsx', { stubs: { './api': {} } }).BUILDERS], 'the builders a thread knows');
+  // The router hands the address to the page, which takes it once the chat it opens beside is known.
+  const app = read('public/js/app.js');
+  assert.match(app, /if \(parts\[1\] === 'new'\) \{\s+window\.UsernodeReact\?\.ai\?\.openNew\?\.\('#' \+ parts\.join\('\/'\) \+ \(fragQuery \? '\?' \+ fragQuery : ''\)\);\s+\}/);
+  const doorSrc = read('frontend/src/features/ai/door.ts');
+  assert.match(doorSrc, /openNew: \(hash: string\) => \{ const fresh = botNewAt\(hash\); if \(fresh\) askBotNew\(fresh\); \}/);
+  const src = read('frontend/src/features/ai/index.tsx');
+  assert.match(src, /if \(!ask\?\.fresh \|\| ask\.seq === freshTaken\.current \|\| !visible \|\| !\(wide \|\| phone\) \|\| !botId\) return;\n\s+freshTaken\.current = ask\.seq;/, 'it waits for the chat, and is not marked taken until then');
+  assert.match(src, /openBlank\(\);\n\s+startNewThread\(botId, ask\.fresh\);/, 'the same two halves the "+" runs, with what the address named');
+  const thread = read('frontend/src/features/messages/new-thread.tsx');
+  assert.match(thread, /export function startNewThread\(conversationId: number, fresh\?: NewThreadPreset \| null\): void \{\n\s+if \(!conversationId\) return;\n\s+closeThread\(\);\n\s+preset = fresh \|\| null;/, 'the "+" itself clears what an earlier door named');
+  assert.match(thread, /const \[project, setProject\] = useState\(\(\) => preset\?\.project \|\| ''\);/);
+  assert.match(thread, /const \[builder, setBuilder\] = useState<Builder>\(\(\) => preset\?\.builder \|\| 'homeroom'\);/);
+});
+
+test('#6595: pageProject reads the project off a page route, and only there', () => {
+  const column = loadTsx('frontend/src/features/ai/column.ts');
+  assert.equal(column.pageProject('app/garden/dev/issues/6580'), 'garden');
+  assert.equal(column.pageProject('/app/garden/dev/changes/12'), 'garden');
+  assert.equal(column.pageProject('app/garden?project=x'), 'garden');
+  assert.equal(column.pageProject('homeroom-bot'), null, 'the tab itself');
+  assert.equal(column.pageProject('app'), null);
+  assert.equal(column.pageProject('messages/12'), null);
+  assert.equal(column.pageProject(null), null);
+  // The page open in the column is added to what the lists are re-read for,
+  // so a project that moved there is not missed when it is not listed.
+  const index = read('frontend/src/features/ai/index.tsx');
+  assert.match(index, /column\?\.at === 'page' \? pageProject\(column\.route\)/);
+  assert.match(index, /useLiveLists\(\(\) => setMoved\(\(n\) => n \+ 1\), visible, \{ projects: shownProjects, botId \}, applyPush\)/);
+});
+
+// #6600: after Homeroom bot took over the person's change and its last try
+// failed, the row says so and offers Ask again, not Fix it.
+test('#6600: a takeover that failed says the bot could not fix it, with Ask again', () => {
+  const { needsYou } = loadTsx(MODEL);
+  const work = {
+    private: [],
+    needs: [thread(7, 410, 'fixing', {
+      group: 'needs', kind: 'change', title: 'Show the reason', fixYours: true, botFixFailed: true,
+      work: { stage: 'checking', line: { code: 'bot_fix_failed' } },
+    })],
+    next: [], waiting: [], live: [],
+  };
+  const [row] = needsYou(null, work);
+  assert.equal(row.key, 'bot_fix_failed:7');
+  assert.equal(message(row.pill.id), 'Ask again');
+  assert.equal(words(row.sub), "Garden club · #410 · Homeroom bot couldn't fix it");
+  assert.equal(message(row.why.id), "Homeroom bot couldn't fix it. Ask it again, or fix it yourself");
+  assert.equal(row.href, '#app/garden/dev/issues/410', 'the change, where the bot can be asked again');
+  // On GitHub the change's number is written PR, not #.
+  const onGithub = { ...app, changesOnGithub: true };
+  const [pr] = needsYou(null, { ...work, needs: [{ ...work.needs[0], app: onGithub }] });
+  assert.equal(words(pr.sub), "Garden club · PR 410 · Homeroom bot couldn't fix it");
 });

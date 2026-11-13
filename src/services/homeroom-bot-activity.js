@@ -41,9 +41,10 @@
 //   - its OUTCOME is the first live run on the request after the card began
 //     (and before the next card on the same request began): its verdict, and
 //     for a build, the proposal it opened or the build that did not finish;
-//   - with no outcome yet it is in progress, and how far along is
-//     `progressFor`'s (homeroom-bot-progress.js), the derivation the bot
-//     answers "how far along are you?" with: step N of M, what it is doing;
+//     what that change came to (up for a vote, live, closed) is its
+//     request's stored work state (services/work-state.js);
+//   - with no outcome yet it is in progress, and how far along is its
+//     request's stored work state, in the words every screen says it;
 //   - with neither, nothing about it is in progress any more: it stopped.
 //
 // LIVE: the client reads it again on the events the tray reads on: the
@@ -335,7 +336,7 @@ async function startCard(pool, {
     if (!app?.id || !bot?.id || !requester?.userId || !Number.isInteger(n) || n <= 0 || !jobKey) return null;
     const dm = dmModule(deps);
     const s = settings || await settingsModule(deps).readSettings(pool);
-    if (!dm.hasBot(s, requester)) return null;
+    if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, s, requester))) return null;
     const payer = payerUserId === undefined ? requester.userId : payerUserId;
     const existing = await requestCard(pool, { userId: requester.userId, appId: app.id, issueNumber: n });
     // One story per request: every request gets a card, however it was
@@ -485,7 +486,7 @@ async function noteLowAllowance(pool, {
     const dm = dmModule(deps);
     if (typeof dm.noteStep !== 'function') return null;
     const s = settings || await settingsModule(deps).readSettings(pool);
-    if (!dm.hasBot(s, requester)) return null;
+    if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, s, requester))) return null;
     if (typeof dm.overWeeklyAllowance === 'function'
         && await dm.overWeeklyAllowance(pool, s, requester.userId).catch(() => false)) return null;
     if (typeof dm.allowanceLow !== 'function'
@@ -521,7 +522,7 @@ async function cardUnderPlan(pool, { app, issueNumber, runId, planMessageId, req
     if (!app?.id || !bot?.id || !requester?.userId || !Number.isInteger(n) || n <= 0 || !Number.isInteger(run) || run <= 0) return null;
     const dm = dmModule(deps);
     const s = settings || await settingsModule(deps).readSettings(pool);
-    if (!dm.hasBot(s, requester)) return null;
+    if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, s, requester))) return null;
     const existing = await requestCard(pool, { userId: requester.userId, appId: app.id, issueNumber: n });
     if (existing && existing.messageId > Number(planMessageId)) {
       return { messageId: existing.messageId, conversationId: existing.conversationId, duplicate: true, continued: true };
@@ -648,9 +649,82 @@ function buildUnderWay(row) {
     && !row.cap_suppressed && (!!row.build_waiting_at || row.build_status === 'active' || row.build_status === 'paused');
 }
 
-// The progress stages (homeroom-bot-progress.js) that are a ready verdict's
-// build: its plan, the build, the proposal it opens.
-const BUILD_STAGES = new Set(['build_queued', 'starting', 'planning', 'building', 'reviewing', 'proposing']);
+// 11 Nov 2026 (docs/plans/bot-one-model.md, step 3): a card still going
+// says where its request stands from the request's stored work state
+// (services/work-state.js), the row every screen draws, in the same words
+// (`doing`), never from a reading of the bot's records of its own.
+const WAITING_TURN = new Set(['queued', 'waiting', 'first_version_wait']);
+const HELD_LINES = new Set(['held_builds', 'held_waiting', 'claimed']);
+
+/**
+ * Pure: a card's working entry from its request's stored work state: the
+ * stage it shows (`queued` while it waits its turn to be read,
+ * `build_queued` while its build does, `on_hold` or `cooldown` while a hold
+ * keeps it, else the stage), the step of the five a
+ * track draws, its words, since when, how long the step usually takes
+ * while the bot is at it, who it waits on, and whether its build is under
+ * way (`building`).
+ */
+// A request's stages that are not work going on: it ended, or it was
+// handed back for somebody to decide.
+const NOT_GOING = new Set(['live', 'closed', 'stopped']);
+const HANDED_BACK = new Set(['decide', 'already_works', 'needs_detail']);
+
+function entryOfWork(work) {
+  if (!work || NOT_GOING.has(work.stage)) return null;
+  if (work.stage === 'waiting_for_you' && HANDED_BACK.has(work.why)) return null;
+  // Nobody has it and nothing is queued: nothing about it is in progress.
+  if (work.stage === 'reading' && work.line?.code === 'waiting') return null;
+  const workState = require('./work-state');
+  const track = require('./homeroom-bot-track');
+  const code = work.line?.code || null;
+  // The card's own names for a wait (the client words them): waiting its
+  // turn to be read, a build waiting its turn, or a hold.
+  const stage = work.stage === 'reading' && (code === 'on_hold' || code === 'cooldown') ? code
+    : work.stage === 'reading' && WAITING_TURN.has(code) ? 'queued'
+      : work.stage === 'building' && code === 'queued' ? 'build_queued' : work.stage;
+  const stepKey = track.STEP_OF_STAGE[work.stage] || null;
+  const step = stepKey && stage !== 'queued' ? track.STEPS.indexOf(stepKey) + 1 : null;
+  const busy = workState.busyNow(work);
+  const typicalKey = !busy ? null
+    : work.stage === 'reading' ? 'reading'
+      : work.stage === 'planning' ? 'planning'
+        : ['reviewing', 'proposing', 'fixing', 'revising', 'starting'].includes(code) ? code : 'building';
+  return {
+    stage,
+    step,
+    of: step ? track.STEPS.length : null,
+    stepName: null,
+    doing: workState.says(work),
+    since: work.since || null,
+    ...(typicalKey ? { typicalMinutes: progressModule({}).typicalMinutes(typicalKey) } : {}),
+    ...(work.whoseMove === 'requester' ? { waitingOn: 'them' } : work.whoseMove === 'group' ? { waitingOn: 'the group' } : {}),
+    building: (work.stage === 'planning' || work.stage === 'building') && !HELD_LINES.has(code),
+  };
+}
+
+/**
+ * Pure: what a card's change came to, from its request's stored work state,
+ * when the card's run proposed the change that request draws now (the
+ * row's `change`): live, going live (merged, merging, a first version whose
+ * checks passed, which needs no vote), closed, up for a vote (open for
+ * votes), or still
+ * being checked (or, when the "needs a look" message went out, needing a
+ * look). Null otherwise, and the card's own run says it.
+ */
+function changeOutcomeOf(row, work) {
+  const change = work?.change;
+  if (!change || !row.proposal_session_id || Number(change.id) !== Number(row.proposal_session_id)) return null;
+  if (change.status === 'merged') return work.stage === 'live' ? 'live' : 'going_live';
+  if (change.status === 'merging') return 'going_live';
+  if (change.status === 'closed' || change.status === 'archived') return 'closed';
+  if (change.status !== 'promoted') return null;
+  // A first version whose checks passed goes live without a vote; one
+  // GitHub holds once approved is going live too.
+  if (work.stage === 'going_live') return 'going_live';
+  if (change.voteOpen) return 'proposed';
+  return row.needs_look ? 'needs_look' : 'checking';
+}
 
 // ── How long it took: the work, not the wait ──
 //
@@ -770,7 +844,7 @@ async function firstVersionsLive(pool, appIds) {
  * is when its project's first version went live (firstVersionsLive), for
  * what a wait before the work was for.
  */
-function cardOf(row, entry, { firstVersion = null } = {}) {
+function cardOf(row, entry, { firstVersion = null, work = null } = {}) {
   const clock = workClock(row, entry);
   const waited = waitedFor(row, clock, firstVersion);
   const base = {
@@ -786,6 +860,11 @@ function cardOf(row, entry, { firstVersion = null } = {}) {
     links: linksOf(row),
   };
   let outcome = outcomeOf(row);
+  // Its change's status is its request's stored row's, while that row draws
+  // the change this card's run proposed.
+  if (outcome && ['proposed', 'checking', 'needs_look', 'going_live', 'live', 'closed'].includes(outcome)) {
+    outcome = changeOutcomeOf(row, work) || outcome;
+  }
   // WP1 (#9): a card whose build still waits or runs is working, even when
   // a newer card on the same request began or the request's progress says
   // something else: it used to read "Didn't finish" the moment a second look
@@ -793,7 +872,7 @@ function cardOf(row, entry, { firstVersion = null } = {}) {
   const building = !outcome && buildUnderWay(row);
   // B4: with one card per request, a newer look's progress (reading the
   // request again) is not this build's; the build's own stages are.
-  if (building && (row.next_at || !entry || !BUILD_STAGES.has(entry.stage))) {
+  if (building && (row.next_at || !entry || !entry.building)) {
     return {
       ...base,
       state: 'working',
@@ -823,13 +902,12 @@ function cardOf(row, entry, { firstVersion = null } = {}) {
     state: 'working',
     // #6357: a day's pause after repeated errors is its own stage on the
     // card, never the week's "On hold until Monday".
-    stage: entry.stage === 'on_hold' && entry.hold === 'cooldown' ? 'cooldown' : entry.stage || null,
+    stage: entry.stage || null,
     step: Number.isInteger(entry.step) ? entry.step : null,
     of: Number.isInteger(entry.of) ? entry.of : null,
     stepName: entry.stepName || null,
     doing: entry.doing || null,
     stepSince: entry.since || null,
-    ...(Number.isFinite(entry.stepTimeLimitMinutes) ? { stepLimitMinutes: entry.stepTimeLimitMinutes } : {}),
     // How long the step usually takes (progress.typicalMinutes), when it is
     // one that takes a while rather than waits on somebody.
     ...(typicalOf(entry) ? { typicalMinutes: typicalOf(entry) } : {}),
@@ -1034,20 +1112,21 @@ async function activityCards(pool, { user, userId, settings, config, deps, now }
   if (!rows.length) return [];
   const allowed = await viewableSlugs(pool, user, [...new Set(rows.map((row) => row.slug))]);
   const shown = rows.filter((row) => allowed.has(row.slug));
-  // How far along: read once, and only when a card is still going.
-  const progress = new Map();
-  if (shown.some((row) => !outcomeOf(row) && !row.next_at)) {
-    const s = settings || await settingsModule(deps).readSettings(pool);
-    const p = await progressModule(deps).progressFor(pool, {
-      userId, settings: s, config,
-      deps: { botSvc: deps.botSvc, creationPhase: deps.creationPhase, domain: null },
-      now,
-    });
-    for (const entry of p.rightNow || []) {
-      if (entry.project && entry.number) progress.set(`${entry.project}#${entry.number}`, entry);
-    }
+  // Where each card's request stands: its stored work state, made first
+  // for one that has none yet.
+  const works = new Map();
+  if (shown.length) {
+    const ws = deps.workState || require('./work-state');
+    const keys = [...new Map(shown.map((row) => [`${row.app_id}#${row.issue_number}`, { appId: Number(row.app_id), issueNumber: Number(row.issue_number) }])).values()];
+    for (const work of await ws.forItems(pool, keys).catch((err) => {
+      log.warn('homeroom-bot-activity', 'Could not read where the cards\' requests stand', { userId, err: err.message });
+      return [];
+    })) works.set(`${work.appId}#${work.issueNumber}`, work);
   }
-  const entryOf = (row) => progress.get(`${row.slug}#${Number(row.issue_number)}`) || null;
+  void settings; void config; void now;
+  const workOf = (row) => works.get(`${Number(row.app_id)}#${Number(row.issue_number)}`) || null;
+  // A card still going says where its request stands; one that ended does not ask.
+  const entryOf = (row) => (!outcomeOf(row) && !row.next_at ? entryOfWork(workOf(row)) : null);
   // What a wait before the work was for: read only for the cards that waited.
   const waited = shown.filter((row) => workClock(row, entryOf(row)).waitedFrom);
   const firstVersions = waited.length
@@ -1056,7 +1135,9 @@ async function activityCards(pool, { user, userId, settings, config, deps, now }
       return new Map();
     })
     : new Map();
-  const cards = shown.map((row) => cardOf(row, entryOf(row), { firstVersion: firstVersions.get(Number(row.app_id)) || null }));
+  const cards = shown.map((row) => cardOf(row, entryOf(row), {
+    firstVersion: firstVersions.get(Number(row.app_id)) || null, work: workOf(row),
+  }));
   // A change merged into the platform's own app and not live yet waits for
   // the platform's next release (services/release-watch.js): its card says
   // when, "Merged; goes live in the next release (about 8 minutes)". Read
@@ -1165,7 +1246,7 @@ async function catchUpCards(pool, { user, settings = null, deps = {}, now = new 
     const s = settings || await botSvc.readSettings(pool);
     // As the tray: nothing is under way while the bot is off, or on a
     // staging copy, which never acts.
-    if (!dm.hasBot(s, user) || s.mode === 'off' || liveSvc.isStaging()) return none;
+    if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, s, user)) || s.mode === 'off' || liveSvc.isStaging()) return none;
     const added = await whileHolding(pool, userId, async () => {
       const states = await progressModule(deps).requestStates(pool, { userId, settings: s, now });
       const quietReasons = [botSvc.APP_AGAIN_REASON].filter(Boolean);
@@ -1354,6 +1435,8 @@ module.exports = {
   cardUnderPlan,
   thanksText,
   outcomeOf,
+  entryOfWork,
+  changeOutcomeOf,
   endedAt,
   linksOf,
   buildUnderWay,

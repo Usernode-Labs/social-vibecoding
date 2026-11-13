@@ -64,6 +64,7 @@ import {
   type ClipboardEvent, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode,
 } from 'react';
 import { flushSync } from 'react-dom';
+import { reducedMotion } from '../../lib/reduced-motion';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -115,9 +116,6 @@ const HEADER_BAND = 60;
 const KEYBOARD_SETTLE_MS = 800;
 /** How long the mode takes to leave: the picture growing back over the page (app.css `.comment-mode-leaving`). */
 const LEAVE_MS = 200;
-const reducedMotion = (): boolean => {
-  try { return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
-};
 /** Whether this screen is a phone: the same narrow-touch test the shell's
  *  keyboard handling uses. A narrow desktop window keeps the desktop flow. */
 function isPhone(): boolean {

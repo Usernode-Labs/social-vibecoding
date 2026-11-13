@@ -25,6 +25,8 @@ export interface GuestApp extends PublicApp {
   icon_color?: string | null;
   illustration_url?: string | null;
   illustration_dark_url?: string | null;
+  /** The card's animated preview, a short silent loop over the picture (./card-preview.tsx). */
+  preview_url?: string | null;
   active_users?: number;
   member_count?: number;
   open_votes?: number;
@@ -61,26 +63,42 @@ export interface GuestMerged {
   title: string | null;
   summary: string | null;
   merged_at: string | null;
+  /** Its after picture, where anybody may see it (src/services/shots-public.js); else null. */
+  picture?: string | null;
 }
 
 export interface GuestOverview {
   app: GuestApp & { builders: number };
+  /**
+   * How many took part this week and how many changes went live in the last
+   * thirty days: numbers, never who. Null when they could not be read.
+   */
+  activity?: { active_week: number; merged_month: number } | null;
   votes: GuestVote[];
   merged: GuestMerged[];
   requests: { total: number; more: boolean; items: { number: number; title: string }[] } | null;
 }
 
 /**
- * New accounts start on the waitlist: one made from these pages has no
- * platform access until it is let in (src/services/email-signup.js
- * isWaitlisted), and nothing on the server switches that off for everyone.
- * The guest pages say so where somebody is about to make one: the hero's
- * button ("Join the waitlist") and the sheets for taking part on a
- * project's page. One switch for both, so the day
- * Homeroom lets everyone in (Evan: about four weeks from 21 Oct 2026) is
- * this line.
+ * New accounts start on the waitlist unless an admin switched it off (Admin ›
+ * Waitlist, #6633): one made from these pages has no platform access until
+ * it is let in (src/services/email-signup.js isWaitlisted). The guest pages
+ * say so where somebody is about to make one: the hero's button ("Join the
+ * waitlist") and the sheets for taking part on a project's page.
+ *
+ * This is what they say until the server has answered: the prerendered
+ * document and the first paint carry the waitlist's words, so nothing
+ * flickers for the usual case and hydration matches. `newAccountsWait` is
+ * the one reader: the public options' `waitlist_enabled`, and this until
+ * they arrive.
  */
 export const NEW_ACCOUNTS_WAIT = true;
+
+/** Whether a new account waits: only the options' `waitlist_enabled: false` says no. */
+export function newAccountsWait(options: { waitlist_enabled?: boolean } | null | undefined): boolean {
+  if (options && options.waitlist_enabled === false) return false;
+  return NEW_ACCOUNTS_WAIT;
+}
 
 /** The sorts Discover offers, in the order its control shows them. */
 export const SORTS = ['trending', 'new', 'built'] as const;
@@ -88,10 +106,13 @@ export type GuestSort = (typeof SORTS)[number];
 
 /**
  * The kinds of app, in app-manifest.js APP_CATEGORIES order (the same list
- * Discover's type chips use, features/apps/browse.js CATEGORIES). Only the
- * kinds some app in the directory has get a chip (presentCategories).
+ * the kind chips use, features/home/communities-to-join.tsx; tests/
+ * guest-discover.test.js pins the two together). Only the kinds some app in
+ * the directory has get a chip (presentCategories).
  */
-export const CATEGORIES = ['games', 'social', 'tools', 'learning', 'creative', 'other'] as const;
+export const CATEGORIES = [
+  'games', 'social', 'tools', 'learning', 'creative', 'money', 'health', 'food', 'other',
+] as const;
 
 /** How many people built it: the directory's contributors, counted. */
 export function buildersOf(app: GuestApp): number {
@@ -181,6 +202,13 @@ export const MIN_BUILDERS = 5;
  * picture it is a figure beside others, not a claim on its own.
  */
 export const MIN_PEOPLE = 5;
+
+/** A project made in the last 30 days wears "New" on its card. */
+const NEW_FOR_MS = 30 * 24 * 60 * 60 * 1000;
+export function isNew(app: GuestApp, now = Date.now()): boolean {
+  const t = app.created_at ? Date.parse(app.created_at) : NaN;
+  return Number.isFinite(t) && now - t < NEW_FOR_MS;
+}
 /** "Updated …" reaches this far back; older says nothing. */
 export const UPDATED_WITHIN_MS = 30 * 24 * 60 * 60 * 1000;
 

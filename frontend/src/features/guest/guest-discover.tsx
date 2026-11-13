@@ -64,15 +64,15 @@ import { devicePinsStore, loadDevicePins, toggleDevicePin } from './device-pins'
 import { useCommunityColor } from '../../lib/community-color';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { cardCover, morph, projectHero } from './card-morph';
+import { CardPreview } from './card-preview';
 import {
   type GuestApp,
   MIN_PEOPLE,
+  isNew,
   projectHash,
   projectPath,
 } from './guest-data';
 
-/** A project made in the last 30 days wears "New". */
-const NEW_FOR_MS = 30 * 24 * 60 * 60 * 1000;
 
 export const SMALL_CAPS_LABEL = 'text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400';
 
@@ -82,11 +82,6 @@ export const SMALL_CAPS_LABEL = 'text-xs font-bold uppercase tracking-[0.06em] t
  * half the gap, is the floor).
  */
 export const CARD_GRID = 'grid grid-cols-[repeat(auto-fill,minmax(min(190px,calc(50%_-_6px)),1fr))] gap-3';
-
-function isNew(app: GuestApp, now = Date.now()): boolean {
-  const t = app.created_at ? Date.parse(app.created_at) : NaN;
-  return Number.isFinite(t) && now - t < NEW_FOR_MS;
-}
 
 /** The app's icon, in the tile Discover's rows draw (app-card-view.tsx). `className` overrides the size's radius or shadow. */
 export function GuestIcon({ app, size = 'md', eager = false, className }: { app: GuestApp; size?: 'sm' | 'md' | 'lg' | 'xl'; eager?: boolean; className?: string }) {
@@ -167,6 +162,8 @@ export function ProjectLink({ slug, children, ...rest }: { slug: string; childre
  * on its colour, lit from the top left, with a blurred copy of the icon
  * glowing behind it in its own colours. The people pill sits in its lower
  * left and, under a pointer or keyboard focus, an arrow in its lower right.
+ * A picture may carry an animated preview (`preview_url`), which plays over
+ * it under the rules in ./card-preview.tsx; the pills stay on top.
  */
 function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
   const t = useMessages('auth');
@@ -196,6 +193,7 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
               className="absolute inset-0 hidden h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.04] motion-reduce:transition-none motion-reduce:group-hover:scale-100 dark:block"
             />
           ) : null}
+          {app.preview_url ? <CardPreview src={app.preview_url} /> : null}
         </>
       ) : (
         <>
@@ -247,14 +245,10 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
  * tall (`py-3`) with `-my-3` taking the padding back out of the card, so a
  * finger has a real target while the card looks exactly as it did.
  */
-export function Card({ app, eager, featured = false, footer }: {
+export function Card({ app, eager, featured = false }: {
   app: GuestApp;
   eager: boolean;
   featured?: boolean;
-  /** One Home (#6361): a row under the words, raised over the card's link so
-      its buttons (the signed-in Join) take their own taps. A visitor's card
-      has no footer row (#6433). */
-  footer?: ReactNode;
 }) {
   const t = useMessages('auth');
   const people = app.active_users || 0;
@@ -272,7 +266,7 @@ export function Card({ app, eager, featured = false, footer }: {
           slug={app.slug}
           data-guest-card-link=""
           aria-label={people >= MIN_PEOPLE ? t('auth:guest.card.peopleLabel', { name: app.name, count: people }) : undefined}
-          className="block truncate text-[15px] font-[650] leading-5 text-zinc-900 outline-none -my-3 py-3 after:absolute after:inset-0 after:z-[1] after:rounded-[20px] after:content-[''] dark:text-zinc-100"
+          className="line-clamp-2 break-words text-[15px] font-[650] leading-5 text-zinc-900 outline-none -my-3 py-3 after:absolute after:inset-0 after:z-[1] after:rounded-[20px] after:content-[''] dark:text-zinc-100"
         >
           {app.name}
         </ProjectLink>
@@ -284,7 +278,6 @@ export function Card({ app, eager, featured = false, footer }: {
             {app.description}
           </span>
         ) : null}
-        {footer ? <span className="relative z-[2] mt-2.5 flex items-center gap-2" data-guest-card-footer="">{footer}</span> : null}
       </span>
     </article>
   );
@@ -323,7 +316,7 @@ export function TryLink({ app, className, onOpenInside, inside = false, children
   );
 }
 
-export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, onIntent, onOpenInside }: {
+export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, onOpenInside }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** The directory could not be read. */
@@ -337,8 +330,6 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
    * app opens for it, signed in, and joining waits until it is let in.
    */
   signedIn?: boolean;
-  /** ONE HOME (#6361): Join on a card asks to sign up, titled for the project. */
-  onIntent?: (intent: { kind: 'join'; app: GuestApp }) => void;
   /** Open an app in the landing's own viewer (TryLink). */
   onOpenInside?: (app: GuestApp) => void;
 }) {
@@ -453,13 +444,13 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
           ) : null}
         </div>
       ) : (
+        // The visitor's cards are the signed-in Home's, from one path (#6609).
         <div className="px-1">
           <CommunitiesToJoin
             apps={apps}
             exclude={EMPTY}
             signedIn={false}
             query={q}
-            onJoin={(app) => { onIntent?.({ kind: 'join', app }); }}
           />
         </div>
       )}

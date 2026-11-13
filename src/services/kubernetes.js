@@ -773,6 +773,12 @@ function platformAssetEnv(config) {
   return [
     { name: 'USERNODE_DOMAIN', value: String(cfg.platformDomain || '') },
     { name: 'USERNODE_APPS_DOMAIN', value: String(cfg.appDomain || cfg.platformDomain || '') },
+    // Only while apps move (services/apps-domain-move.js): the waking page
+    // still knows a preview at the old domain. Absent otherwise, so nothing
+    // rolls the asset server when nothing is moving.
+    ...(cfg.legacyAppDomain ? [{ name: 'USERNODE_LEGACY_APPS_DOMAIN', value: String(cfg.legacyAppDomain) }] : []),
+    // Only once previews have a domain of their own (services/previews-domain.js).
+    ...(cfg.previewDomain ? [{ name: 'USERNODE_PREVIEWS_DOMAIN', value: String(cfg.previewDomain) }] : []),
     { name: 'MARKETING_BASE_URL', value: String(config?.marketingBaseUrl || '') },
     // Offline apps (services/offline-cache.js): how the shared files are cached.
     { name: 'APP_OFFLINE_CACHE', value: require('./offline-cache').enabled() ? 'on' : 'off' },
@@ -789,13 +795,19 @@ function platformAssetPath(prefix) {
 
 function isSelfAppIngressHost(hostname, config) {
   const slug = String(config?.selfAppSlug || '');
-  const domain = String(config?.kubernetes?.appDomain || '');
+  const appDomain = String(config?.kubernetes?.appDomain || '');
+  const previewDomain = String(config?.kubernetes?.previewDomain || '');
   const host = String(hostname || '');
-  if (!slug || !domain || !host.endsWith(`.${domain}`)) return false;
-  const appLabel = host.slice(0, -(domain.length + 1));
-  if (appLabel === slug) return true;
-  const previewId = appLabel.slice(`${slug}--s`.length);
-  return appLabel.startsWith(`${slug}--s`) && /^\d+$/.test(previewId);
+  if (!slug || !appDomain) return false;
+  const isPreview = (label) => label.startsWith(`${slug}--s`) && /^\d+$/.test(label.slice(`${slug}--s`.length));
+  // A preview on its own domain (services/previews-domain.js), or one not
+  // rebuilt since, still on the apps domain.
+  if (previewDomain && host.endsWith(`.${previewDomain}`)) {
+    return isPreview(host.slice(0, -(previewDomain.length + 1)));
+  }
+  if (!host.endsWith(`.${appDomain}`)) return false;
+  const appLabel = host.slice(0, -(appDomain.length + 1));
+  return appLabel === slug || isPreview(appLabel);
 }
 
 // Heal Ingresses that predate the shared asset backend. A recheck reuses a
@@ -1249,6 +1261,76 @@ async function reconcileAppGateIngresses(config, { force = null } = {}) {
   return { mode, updated };
 }
 
+// Apps and previews moving to another domain (USERNODE_LEGACY_APPS_DOMAIN,
+// services/apps-domain-move.js). Pure: the Ingress with every
+// `<label>.<from>` host, in its rules and its TLS, now `<label>.<to>`, or
+// null when it names none. A label is one DNS label (an app's slug or a
+// preview's `<slug>--s<id>`), so nothing nested under the old domain moves.
+function ingressOnAppsDomain(ingress, from, to) {
+  if (!ingress?.spec || !from || !to || from === to) return null;
+  const suffix = `.${from}`;
+  let changed = false;
+  const move = (host) => {
+    const name = String(host || '').toLowerCase();
+    if (!name.endsWith(suffix)) return host;
+    const label = name.slice(0, -suffix.length);
+    if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label)) return host;
+    changed = true;
+    return `${label}.${to}`;
+  };
+  const rules = (ingress.spec.rules || []).map((rule) => ({ ...rule, host: move(rule.host) }));
+  const tls = (ingress.spec.tls || []).map((entry) => ({ ...entry, hosts: (entry.hosts || []).map(move) }));
+  if (!changed) return null;
+  return { ...ingress, spec: { ...ingress.spec, rules, ...(ingress.spec.tls ? { tls } : {}) } };
+}
+
+// Move every production app Ingress still on the old apps domain to the
+// current one. A preview's address is its machine's (staging_url) and moves
+// on its next build; a custom domain's Ingress is the person's own host and
+// never on either. Like the gate's pass: each Ingress on its own, one that
+// changed since the list read again, and any failure thrown at the end so
+// the next run tries again. The wildcard certificate covers both domains
+// while the move runs (the foundation's runtime.appTls.dnsNames).
+async function reconcileAppsDomainIngresses(config, { from, to }) {
+  const namespace = config.kubernetes.appNamespace;
+  const { networking } = getClients();
+  if (!networking?.listNamespacedIngress || !networking?.replaceNamespacedIngress) return { updated: 0 };
+  const listed = await networking.listNamespacedIngress({
+    namespace,
+    labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY}`,
+  });
+  let updated = 0;
+  const failed = [];
+  for (const listedIngress of listed.items || []) {
+    if (listedIngress?.metadata?.labels?.['app.kubernetes.io/managed-by'] !== MANAGED_BY) continue;
+    if (listedIngress?.metadata?.labels?.[CUSTOM_DOMAIN_ID_LABEL]) continue;
+    if (listedIngress?.metadata?.labels?.['social.usernode.io/environment'] !== 'production') continue;
+    const name = listedIngress.metadata.name;
+    let ingress = listedIngress;
+    for (let attempt = 1; ; attempt += 1) {
+      const body = ingressOnAppsDomain(ingress, from, to);
+      if (!body) break;
+      try {
+        await networking.replaceNamespacedIngress({ name, namespace, body });
+        updated += 1;
+        break;
+      } catch (err) {
+        if (isConflict(err) && attempt < UPSERT_CONFLICT_ATTEMPTS && networking.readNamespacedIngress) {
+          ingress = await networking.readNamespacedIngress({ name, namespace }).catch(() => null);
+          if (ingress) continue;
+        }
+        if (isNotFound(err)) break;
+        failed.push({ name, message: err.message });
+        break;
+      }
+    }
+  }
+  if (failed.length) {
+    throw Object.assign(new Error(`${failed.length} Ingress(es) not moved: ${failed.slice(0, 3).map((f) => `${f.name} (${f.message})`).join(', ')}`), { updated });
+  }
+  return { updated };
+}
+
 // `cpus` is the container's CPU LIMIT (a ceiling, not a request — requests
 // stay at 100m so scheduling is unchanged). Staging previews pass
 // docker.STAGING_CPUS through application-runtime.deploy so the capture
@@ -1287,7 +1369,7 @@ async function deployApplication(config, {
   const secretName = attempt ? attemptSecretName(name, attempt) : withSuffix(name, 'env');
   const hostname = environment === 'production'
     ? `${app.slug}.${cfg.appDomain}`
-    : `${app.slug}--s${sessionId}.${cfg.appDomain}`;
+    : `${app.slug}--s${sessionId}.${cfg.previewDomain || cfg.appDomain}`;
   // Check before creating or updating any Kubernetes resources.
   require('./caddy').assertAppHostname(hostname, cfg.platformDomain);
   const resourceProfile = require('./app-resource-profiles').forApp(config, app, environment, { cpus, internalOnly });
@@ -4198,6 +4280,7 @@ module.exports = {
   APP_GATE_NAME, APP_GATE_HEALTH_PATH, appGateMode, ensureAppGateBackend, reconcileAppGateIngresses,
   _appGateDeploymentManifestForTest: appGateDeploymentManifest,
   _ingressWithGateRouteForTest: ingressWithGateRoute,
+  reconcileAppsDomainIngresses, ingressOnAppsDomain,
   _resetAppGateForTest: () => { appGateBackend = null; appGateBackendRetryAfter = 0; appGateBackendReady = false; },
   _ingressWithPlatformAssetRoutesForTest: ingressWithPlatformAssetRoutes,
   _reconcilePlatformAssetIngressesForTest: reconcilePlatformAssetIngresses,

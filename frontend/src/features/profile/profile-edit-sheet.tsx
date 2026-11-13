@@ -298,7 +298,7 @@ function PublicPage({ controls, status, publishing, previewOpen }: {
             <p className="px-4 mb-3 text-xs text-zinc-500 dark:text-zinc-400">
               {t('profile:edit.public.previewNote')}
             </p>
-            <PublicProfileCard profile={controls.profile} allowReport={false} />
+            <PublicProfileCard profile={controls.profile} allowReport={false} preview />
           </>
         ) : null}
       </div>

@@ -7,6 +7,10 @@ const repoRef = require('./repo-ref');
 // `dependencies` in services/app-templates.js), with their lockfile entries.
 const extraPackages = require('../templates/node-app/extra-packages.json');
 const appTemplates = require('./app-templates');
+// From services/app-categories.js, which requires nothing: this module is
+// loaded by scripts/security-starter.js with only the starter's packages
+// installed, so it must not reach app-manifest.js's server dependencies.
+const { APP_CATEGORIES } = require('./app-categories');
 const { WORDS_PATH } = require('./upstream-lineage');
 
 // Forwarder snippet injected into every scaffolded app's public/index.html.
@@ -702,7 +706,12 @@ ${withLive ? '    changes.close();\n' : ''}    server.close(() => {});
 // Discover and the project's page show) and the first sentence of
 // CLAUDE.md's About section, so the coding agent starts from the same
 // intent. Absent, both stay as they were.
-function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = null, sketch = null, iconEmoji = null } = {}) {
+//
+// `category` is the kind the first plan implies (services/app-category.js),
+// so a new project starts in the right chip instead of always Other. A game
+// starter is still a game; anything not one of APP_CATEGORIES writes the
+// starting `other`, as callers outside the create flow always get.
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null, template = null, sketch = null, iconEmoji = null, category = null } = {}) {
   const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
   // `template` is the create screen's starter (services/app-templates.js).
   // Absent or `empty` writes exactly what every new app always got; a
@@ -1166,11 +1175,14 @@ value = "build"
       content: JSON.stringify(
         {
           ...(about ? { description: about } : {}),
-          // What kind of app it is, for Discover's "Filter by type" chips
-          // (#3962; app-manifest.js APP_CATEGORIES has the set). A game
-          // starter is a game; anything else starts as `other`, a line the
-          // group changes by proposal once it knows what it is making.
-          category: starter && starter.kind === 'game' ? 'games' : 'other',
+          // What kind of app it is, for the kind chips (#3962, #6585;
+          // app-categories.js APP_CATEGORIES has the set). A game starter is a
+          // game; otherwise the kind the first plan implies, and `other` only
+          // when nothing fits. The group changes it by proposal like any
+          // other line.
+          category: starter && starter.kind === 'game'
+            ? 'games'
+            : (APP_CATEGORIES.includes(category) ? category : 'other'),
           // A starter's tile icon, else the first session card's, and the
           // checks a starter's first proposal runs. The empty starter ships
           // an empty `tests` array, so the key its checks go under is there
@@ -1268,6 +1280,24 @@ const PLATFORM_ORIGIN = (process.env.USERNODE_PLATFORM_ORIGIN || '')
 // platform injects, and not written in here either: every project made from
 // the same starter is then the same code. Unset only outside the platform.
 const APP_SLUG = process.env.USERNODE_APP_SLUG || '';
+// The addresses this app is really served at, for the canonical its pages
+// send (search engines: one address per page). Worked out from the two
+// values above and nothing else: <slug>.<platform host> where apps sit
+// beside the platform, <slug>.<its parent domain> where the platform has a
+// name of its own. A request's Host is only ever COMPARED with these, never
+// written out: anybody can send a Host, and a cached page must not name
+// another site as its real address. A preview or a custom domain matches
+// neither, and sends no canonical.
+const CANONICAL_HOSTS = (() => {
+  try {
+    if (!/^[a-z0-9-]+$/.test(APP_SLUG)) return [];
+    const platformHost = new URL(PLATFORM_ORIGIN).hostname.toLowerCase();
+    const parent = platformHost.split('.').slice(1).join('.');
+    return [APP_SLUG + '.' + platformHost].concat(parent.includes('.') ? [APP_SLUG + '.' + parent] : []);
+  } catch (_) {
+    return [];
+  }
+})();
 
 app.get(/^\\/usernode-(?:bridge|native|tailwind)\\//, async (req, res) => {
   try {
@@ -1400,6 +1430,14 @@ app.get('*', (req, res) => {
     <a href="\${PLATFORM_ORIGIN}\${appPath}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Homeroom</a>
   </div>
 </body>\`);
+  }
+  // One address per page for a search engine: this page without its query
+  // string (a token, a page number, saved view state). Only at one of the
+  // app's own addresses, and only for a plain path. A page that IS a
+  // different page per parameter sets its own canonical instead.
+  const pageHost = String(req.headers.host || '').toLowerCase();
+  if (CANONICAL_HOSTS.includes(pageHost) && /^\\/[A-Za-z0-9\\-._~!$&'()*+,;=:@\\/%]*$/.test(req.path)) {
+    res.set('Link', '<https://' + pageHost + req.path + '>; rel="canonical"');
   }
   ${server.sendPage}
 });

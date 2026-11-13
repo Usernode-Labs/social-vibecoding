@@ -38,7 +38,12 @@ const PERSONAS = Object.freeze({
 // (worker/write-shots-mcp-config.js); tests/shots-dry-run.test.js pins the pair.
 const PHONE_DEVICE = 'iPhone 15';
 // The same MCP browser tools a hosted turn is denied (worker/run-cc.sh).
-const DENIED_BROWSER_TOOLS = ['browser_evaluate', 'browser_run_code', 'browser_file_upload', 'browser_install'];
+const DENIED_BROWSER_TOOLS = ['browser_evaluate', 'browser_run_code', 'browser_run_code_unsafe', 'browser_file_upload',
+  'browser_drop'];
+// The browser server a pair installs and patches as the worker image does
+// (scripts/shots-dry-run-pair.js, worker/patch-playwright-mcp.js): without
+// the patch the agent would read pages and save shots differently.
+const LAB_PLAYWRIGHT_MCP = path.join(ROOT, '.shots-dry-run', 'pw', 'node_modules', '.bin', 'playwright-mcp');
 
 function usage() {
   return `Usage: node scripts/shots-dry-run.js --intent FILE --before URL --after URL [options]
@@ -64,7 +69,8 @@ function usage() {
   --model ID             model for the shots agent (default: the hosted
                          shots agent's, claude-sonnet-5-5)
   --timeout-ms N         agent budget (default 480000, the hosted default)
-  --playwright-mcp CMD   how to start Playwright MCP (default "npx -y @playwright/mcp@0.0.41")
+  --playwright-mcp CMD   how to start Playwright MCP (default: the patched one
+                         "npm run shots:pair -- up" installs in .shots-dry-run/pw)
   --browser NAME         browser for Playwright MCP (default chromium)
   --executable-path P    browser binary, when Playwright's own is not installed
   --claude-args "..."    extra arguments for claude (for example --bare)
@@ -118,7 +124,7 @@ function parseArgs(argv) {
     timeoutMs: Math.max(30_000, Number(values['--timeout-ms']) || 480_000),
     // The agent runs in a scratch directory, so a relative command path is
     // resolved here; a bare command name stays a PATH lookup.
-    playwrightMcp: (values['--playwright-mcp'] || 'npx -y @playwright/mcp@0.0.41').split(/\s+/).filter(Boolean)
+    playwrightMcp: (values['--playwright-mcp'] || LAB_PLAYWRIGHT_MCP).split(/\s+/).filter(Boolean)
       .map((part, index) => (index === 0 && part.includes('/') ? path.resolve(part) : part)),
     browser: values['--browser'] || 'chromium',
     executablePath: values['--executable-path'] || null,
@@ -174,11 +180,23 @@ function localBridge(runtimeDir) {
 // same sign-in and presents as a phone, saving beside the persona's.
 // `control` is where its observer answers the shots bridge's upload_file
 // (worker/shots-browser-observer.js startControl), as a hosted turn's does.
-function browserServer(options, persona, shotsDir, clipSize, { phone = false, control = null } = {}) {
+function browserServer(options, persona, shotsDir, clipSize, {
+  phone = false, control = null, configDir = path.dirname(shotsDir),
+} = {}) {
   // The guest is the browser that is not signed in, whatever the directory holds.
   const statePath = options.stateDir && persona !== 'guest'
     ? path.join(options.stateDir, `${persona}.json`) : null;
   const dir = `${PERSONAS[persona].dir}${phone ? '_phone' : ''}`;
+  // A clip is the page's video, saved into the browser's directory when the
+  // page closes, as a hosted turn's is (worker/write-shots-mcp-config.js).
+  let clipConfig = null;
+  if (clipSize) {
+    const [width, height] = clipSize.split('x').map(Number);
+    clipConfig = path.join(configDir, `browser-${dir}.json`);
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(clipConfig, JSON.stringify({ browser: { contextOptions: {
+      recordVideo: { dir: path.join(shotsDir, dir), size: { width, height } } } } }));
+  }
   return {
     command: process.execPath,
     args: [
@@ -193,13 +211,17 @@ function browserServer(options, persona, shotsDir, clipSize, { phone = false, co
       '--block-service-workers', '--image-responses', 'allow',
       '--timeout-action', '10000', '--timeout-navigation', '30000',
       '--output-dir', path.join(shotsDir, dir),
-      ...(clipSize ? [`--save-video=${clipSize}`] : []),
+      ...(clipConfig ? ['--config', clipConfig] : []),
+      // As a hosted turn's: inputs resolve against the samples directory the
+      // observer starts the server in; answers name files by their whole path.
+      '--ignore-roots', '--file-paths', 'absolute',
       ...(options.executablePath ? ['--executable-path', options.executablePath] : []),
     ],
     env: {
       PATH: process.env.PATH || '',
       SHOTS_BROWSER_MCP_COMMAND: JSON.stringify(options.playwrightMcp),
       SHOTS_ALLOWED_ORIGINS: JSON.stringify([options.before, options.after]),
+      ...(clipSize ? { SHOTS_RECORD_CLIPS: '1' } : {}),
       ...(control ? {
         SHOTS_BROWSER_CONTROL_DIR: control.dir,
         SHOTS_BROWSER_CONTROL_TOKEN: control.token,

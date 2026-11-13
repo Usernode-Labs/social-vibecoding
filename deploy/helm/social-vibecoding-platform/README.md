@@ -361,6 +361,25 @@ Platform links, CLI authentication, and access-grant redirects continue to use
 collision before writing Kubernetes resources, and app access parsing never
 treats the platform as a generated app.
 
+To move apps and previews to another domain, set `config.appsDomain` to the
+new one and `config.legacyAppsDomain` to the old one
+(`USERNODE_LEGACY_APPS_DOMAIN`). The release then moves every production app
+Ingress to the new domain within ten minutes (the `apps-domain-move` clock
+job); a preview moves on its next build and keeps serving at the old domain
+until then. Custom domains whose CNAME still points at an app's old address
+keep passing their checks. The wildcard certificate must cover both domains,
+and the infrastructure should redirect old addresses nothing serves any more
+to the new domain. Clear `legacyAppsDomain` once no preview is left on the old
+domain.
+
+To give previews a domain of their own, set `config.previewsDomain`
+(`USERNODE_PREVIEWS_DOMAIN`): previews are then served at
+`<slug>--s<sessionId>.<previewsDomain>`, and only previews are recognized
+there. Startup refuses a previews domain on the same registrable site as the
+platform or the apps, since its purpose is to keep a preview's unreviewed code
+away from both. A preview moves on its next build and keeps serving on the apps
+domain until then. The wildcard certificate must cover the previews domain too.
+
 Before & after shots are on by default. The chart always injects
 `SHOTS_ENABLED=true`; in an incident, set `platform.shotsEnabled: false`
 (formerly `platform.visualEvidenceV2Enabled`) and sync Argo CD to stop

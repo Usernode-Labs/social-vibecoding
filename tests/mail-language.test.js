@@ -149,7 +149,7 @@ test('words built in code carrying markup reach the html as text', () => {
 
 test('what only an admin or an operator receives is English, whatever is asked', async (t) => {
   const only = Object.entries(ACTIONS).filter(([, action]) => action.englishOnly).map(([kind]) => kind).sort();
-  assert.deepEqual(only, ['admin_test', 'content_report']);
+  assert.deepEqual(only, ['admin_test', 'content_report', 'release_hold']);
   t.mock.method(cache, 'readSource', () => sourceWith());
   const sends = [];
   const pool = poolWith([row('buildReady.lead.ready', 'NO')]);

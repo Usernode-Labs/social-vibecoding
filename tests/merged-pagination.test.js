@@ -546,7 +546,9 @@ test('the first page carries exact week counts over the whole merged history', a
   assert.equal(call.params[0], 1, 'scoped to this app only');
   assert.equal(call.params.length, 2, 'the app id and the week start, nothing else');
   // Same rows and timestamps as the client's count (app-view.js mergedAtOf).
-  assert.match(call.sql, /COALESCE\(merged_at, created_at\) AS t\s+FROM chat_sessions\s+WHERE app_id = \$1 AND status = 'merged'/);
+  // #6482: one per pull request — the twin exclusion is part of this query.
+  assert.match(call.sql, /COALESCE\(cs\.merged_at, cs\.created_at\) AS t\s+FROM chat_sessions cs\s+WHERE cs\.app_id = \$1 AND cs\.status = 'merged'/);
+  assert.match(call.sql, /twin\.pr_number = cs\.pr_number AND twin\.id > cs\.id/);
   assert.match(call.sql, /FROM issues\s+WHERE app_id = \$1 AND kind = 'close_issue' AND status = 'closed'\s+AND payload \? 'appliedAt'/);
   // #2176: the calendar week (Monday 00:00 UTC), not a trailing seven days.
   assert.match(call.sql, /t >= \$2::timestamptz\)::int AS shipped_week/);
@@ -556,7 +558,9 @@ test('the first page carries exact week counts over the whole merged history', a
   assert.match(call.sql, /t >= \$2::timestamptz - interval '7 days'\s+AND t < now\(\) - interval '7 days'\)::int AS shipped_prev_week_to_date/);
   assert.match(String(call.params[1]), /^\d{4}-\d{2}-\d{2}T00:00:00Z$/, 'the week start rides as a parameter');
   assert.equal(new Date(call.params[1]).getUTCDay(), 1, 'and it is a Monday');
-  assert.doesNotMatch(call.sql, /AS total\b|cs\.status/, 'never collides with the other stubs');
+  // #6482: this query now aliases its table `cs` for the twin exclusion, so
+  // the distinct `AS total` alias is what keeps it apart from the Done total.
+  assert.doesNotMatch(call.sql, /AS total\b/, 'never collides with the other stubs');
 });
 
 test('an older server\'s week counts omit the to-date figure, and the client falls back', async () => {

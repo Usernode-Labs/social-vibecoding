@@ -24,6 +24,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { withWords } = require('./lib/work-words');
 const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
@@ -109,7 +110,9 @@ test('#6387 the thread read says when it is loading, and settles on success or f
   const src = read(ITEMS);
   assert.match(src, /const loading = !!path && !data && settledPath !== path;/);
   assert.match(src, /\.then\(\(json\) => \{\s+if \(!live\) return;\s+setSettledPath\(path\);/);
-  assert.match(src, /\.catch\(\(\) => \{\s+if \(!live\) return;\s+setSettledPath\(path\);/);
+  // #6604: the read itself never rejects (a prefetched answer and a fetch
+  // both resolve null on failure), so one branch settles both outcomes.
+  assert.match(src, /const read: Promise<ThreadPayload \| null> = pre[\s\S]*?\.catch\(\(\) => null\);/);
   assert.match(src, /return \{ data, setData, reread: \(\) => setRevision\(\(n\) => n \+ 1\), loading \};/);
   assert.match(src, /const again = !!path && readPath\.current === path;/, 'a re-read of the same path keeps data, so it is never loading');
 });
@@ -133,8 +136,10 @@ test('the request, change and decision pages draw it', () => {
   // own rows (Mute, its moves) in the page's ⋯ (./thread-page-menu.test.js).
   assert.match(head, /<ThreadChanges slug=\{slug\} data=\{threadRead\.data\} number=\{r\.number\} changes=\{layout\.changes\} close=\{layout\.close\} plans=\{plans\} onChanged=\{threadRead\.reread\} \/>/);
   assert.match(head, /<ThreadItems slug=\{slug\} number=\{r\.number\} here=\{here\} payload=\{threadRead\.data\} items=\{layout\.listed\} onChanged=\{threadRead\.reread\} menuKey=\{menuKey\} \/>/);
+  // #6608: the list reads the project the page was painted for, not the app
+  // the viewer has since moved to (pageSlug is only the fallback).
   assert.match(read('frontend/src/features/dev-board/topic/change-head.tsx'),
-    /<ThreadItems slug=\{pageSlug\(\)\} number=\{threadNumber\} asChange=\{threadAsChange\} here=\{\{ type: 'change', id \}\} menuKey=\{menuKey \|\| null\} \/>/);
+    /<ThreadItems slug=\{slug\} number=\{threadNumber\} asChange=\{threadAsChange\} here=\{\{ type: 'change', id \}\} menuKey=\{menuKey \|\| null\} \/>/);
   const topic = read('frontend/src/features/dev-board/topic/topic-head.tsx');
   assert.match(topic, /threadNumber=\{Number\(session\?\.pr_number\) \|\| Number\(linkedIssues\[0\]\) \|\| null\} threadAsChange=\{Number\(session\?\.pr_number\) > 0\}/,
     'a change\'s page reads its own thread by its pull request, else its first request\'s');
@@ -190,7 +195,7 @@ test('competing changes are one ballot; a pick is votes, cast only where they ch
   assert.equal(ballotOf(payload([request, a, { ...b, closes: [] }])), null, 'a change that closes nothing is on no ballot');
   assert.equal(ballotOf(payload([request, a, { ...b, closes: [12] }])), null, 'nor one that closes another request');
   assert.deepEqual(ballotOf(payload([request, a, b, { ...b, id: 53, closes: [12] }])).options.map((o) => o.id), [51, 52]);
-  assert.equal(ballotOf(payload([request, a, { ...b, closes: [12] }]), new Set(), [12]), null, 'drawn for the requests a page is about');
+  assert.equal(ballotOf(payload([request, a, { ...b, closes: [12] }]), [12]), null, 'drawn for the requests a page is about');
   // A waiting move says what it does and when.
   const lines = moveLines({ id: 1, kind: 'merge', state: 'pending', input: { intoNumber: 12 }, deadline: new Date(Date.now() + 23.2 * 3600000).toISOString(), agreed: [], governanceId: null });
   assert.equal(`${words(lines.what)}. ${words(lines.when)}`, 'Proposed: merge into #12. Happens in 24 hours unless someone objects');
@@ -257,27 +262,19 @@ test('a change and a vote to close compete; Close it stands in for Neither', () 
   assert.equal(message('project:topic.thread.ballot.close'), 'Close it');
 });
 
-test('proposing counts as your yes on the ballot where the gate counts it', () => {
+test('your own change is not your pick on the ballot until you make it (proposing is not a yes)', () => {
   const { ballotOf, ballotVotes } = loadTsx(MODEL);
-  const { authorCounts } = loadTsx('frontend/src/features/dev-board/topic/thread-changes.tsx');
   const plain = (v) => JSON.parse(JSON.stringify(v));
   const mine = { type: 'change', id: 51, number: 8, title: 'Mine', status: 'promoted', state: 'review', replies: 0, epoch: 2, myVote: null, mine: true, closes: [7] };
   const theirs = { type: 'change', id: 52, number: 9, title: 'Theirs', status: 'promoted', state: 'review', replies: 0, epoch: 1, myVote: null, closes: [7] };
-  // The rule decides (governance-rules.ts): Two yeses and Open floor count a person's change.
-  assert.equal(authorCounts(mine, { approval_mode: 'rules', approval_preset: 'two_yeses' }), true);
-  assert.equal(authorCounts(mine, { approval_mode: 'rules', approval_preset: 'open_floor' }), true);
-  assert.equal(authorCounts(mine, { approval_mode: 'rules', approval_preset: 'you_or_the_group', creator_yes: true }), true);
-  assert.equal(authorCounts(mine, { approval_mode: 'rules', approval_preset: 'group_vote' }), false, 'Group vote counts votes as cast');
-  assert.equal(authorCounts({ ...mine, byBot: true }, { approval_mode: 'rules', approval_preset: 'open_floor' }), false, 'the bot\'s change is nobody\'s yes');
-  assert.equal(authorCounts(theirs, { approval_mode: 'rules', approval_preset: 'open_floor' }), false);
-  const counts = new Set([51]);
-  const ballot = ballotOf(payload([request, mine, theirs]), counts);
-  assert.equal(ballot.pick, 51, 'their own change is their pick');
-  assert.deepEqual(plain(ballotVotes(ballot, 51, counts)), [], 'nothing to cast: proposing was the yes');
-  assert.deepEqual(plain(ballotVotes(ballot, 52, counts)), [
-    { kind: 'change', sessionId: 51, vote: 'no', epoch: 2 }, { kind: 'change', sessionId: 52, vote: 'yes', epoch: 1 },
-  ], 'picking another takes a No to stop their own change counting');
-  assert.equal(ballotOf(payload([request, mine, theirs])).pick, null, 'without the rule it is no pick');
+  const ballot = ballotOf(payload([request, mine, theirs]));
+  assert.equal(ballot.pick, null, 'proposing it picked nothing (governance-rules.ts)');
+  assert.deepEqual(plain(ballotVotes(ballot, 51)), [{ kind: 'change', sessionId: 51, vote: 'yes', epoch: 2 }],
+    'picking your own casts its yes');
+  assert.deepEqual(plain(ballotVotes(ballot, 52)), [{ kind: 'change', sessionId: 52, vote: 'yes', epoch: 1 }],
+    'picking another needs no No on your own: it never counted');
+  const chosen = ballotOf(payload([request, { ...mine, myVote: 'yes' }, theirs]));
+  assert.equal(chosen.pick, 51, 'once you vote it, it is your pick');
 });
 
 test('the bar\'s pill says where the request\'s work stands', () => {
@@ -291,12 +288,15 @@ test('the bar\'s pill says where the request\'s work stands', () => {
   assert.equal(requestPill(layoutOf([review, { ...review, id: 52 }]), null).key, 'choosing');
   assert.equal(requestPill(layoutOf([{ ...close, target: 7 }]), null).key, 'close');
   assert.equal(requestPill(layoutOf([{ ...review, state: 'underway' }]), null).tone, 'progress');
-  assert.equal(requestPill(layoutOf([]), 'building').key, 'building', 'the bot building it');
-  assert.equal(requestPill(layoutOf([]), 'ready_to_build').key, 'ready_to_build', 'ready, and waiting its turn');
-  assert.equal(requestPill(layoutOf([]), 'ready_to_build').spinner, undefined, 'a waiting build does not turn');
-  assert.equal(requestPill(layoutOf([]), 'ready_to_build').tone, 'neutral', 'the plain tone of Ready for a vote');
+  // 11 Nov 2026 (one model): the request's standing, in the server's words.
+  const building = withWords({ stage: 'building', line: null });
+  const readyToBuild = withWords({ stage: 'building', line: { code: 'queued', place: 2 } });
+  assert.equal(requestPill(layoutOf([]), building).key, 'building', 'the bot building it');
+  assert.equal(requestPill(layoutOf([]), readyToBuild).key, 'ready_to_build', 'ready, and waiting its turn: the server\'s Ready to build');
+  assert.equal(requestPill(layoutOf([]), readyToBuild).spinner, undefined, 'a waiting build does not turn');
+  assert.equal(requestPill(layoutOf([]), readyToBuild).tone, 'neutral', 'the plain tone of Ready for a vote');
   assert.equal(
-    requestPill(layoutOf([{ ...review, state: 'underway', ready: false }]), 'ready_to_build').key,
+    requestPill(layoutOf([{ ...review, state: 'underway', ready: false }]), readyToBuild).key,
     'building',
     'a change underway still wins over a queued build',
   );
@@ -349,8 +349,8 @@ test('#6139: a change that finished building reads as ready, with no spinner, an
   const still = requestPill(layoutOf([ready, building]), null, message);
   assert.equal(still.key, 'building', 'another change is still being built');
   assert.equal(still.spinner, true);
-  assert.equal(requestPill(layoutOf([ready]), 'building').key, 'building', 'the bot is really building for it');
-  assert.equal(requestPill(layoutOf([ready]), 'queued').key, 'ready', 'a build that has not started says nothing');
+  assert.equal(requestPill(layoutOf([ready]), withWords({ stage: 'building' })).key, 'building', 'the bot is really building for it');
+  assert.equal(requestPill(layoutOf([ready]), withWords({ stage: 'reading', line: { code: 'queued' } })).key, 'ready', 'a build that has not started says nothing');
   assert.equal(requestPill(layoutOf([ready, { ...building, id: 53, status: 'promoted', state: 'review' }]), null).key, 'vote', 'one up for a vote still leads');
 
   const [row] = threadRows(payload([ready]), null);

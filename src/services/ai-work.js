@@ -54,7 +54,7 @@
 const log = require('./logger');
 const repoRef = require('./repo-ref');
 const workState = require('./work-state');
-const { updateComingSql, updateAskSql } = require('./homeroom-bot-progress');
+const { updateComingSql, updateAskSql, updateFailedSql } = require('./homeroom-bot-progress');
 const { planRecordSql } = require('./request-specs');
 
 const THREADS_MAX = 80;
@@ -119,9 +119,10 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
        req.id AS request_id, req.title AS request_title, req.state AS request_state, req.updated_at AS request_at,
        ch.id AS change_id, ch.pr_number, ch.status AS change_status, ch.user_id AS change_user,
        ch.title AS change_title, ch.promoted_at, ch.merged_at, ch.live_at, ch.last_activity_at,
-       ch.voted, ch.my_vote, ch.by_agent, ch.check_state, ch.needs_fix,
+       ch.voted, ch.my_vote, ch.check_state, ch.needs_fix,
        -- #6282: an update on its way holds the vote the change would ask for.
-       ch.update_coming, ch.update_ask,
+       -- #6600: and why a takeover's last attempt failed, when it did.
+       ch.update_coming, ch.update_ask, ch.update_failed,
        dec.id AS decision_id, dec.status AS decision_status, dec.mine AS decision_mine, dec.my_vote AS decision_vote,
        cl.username AS claimed_by, cl.mine AS claimed_mine,
        COALESCE(ch.live_at, ch.merged_at, ch.promoted_at, req.updated_at, t.created_at) AS sort_at,
@@ -157,7 +158,6 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
              WHERE v.session_id = cs.id AND v.user_id = $1
                AND v.approval_epoch IS NOT DISTINCT FROM cs.approval_epoch
              LIMIT 1) AS my_vote,
-           (cs.external_agent IS NOT NULL) AS by_agent,
            -- Waits on its author for a fix, as the Workshop's Waiting on you
            -- read it (AppView._workshopNeedsFix): its checks failed, its
            -- preview did not build, or a merge attempt hit a conflict that
@@ -175,7 +175,8 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
            -- #6282: 'running' while a turn updates it, 'queued' while an
            -- ask waits its turn, and what was asked, for the row's words.
            ${updateComingSql('cs')} AS update_coming,
-           ${updateAskSql('cs')} AS update_ask
+           ${updateAskSql('cs')} AS update_ask,
+           ${updateFailedSql('cs')} AS update_failed
       FROM chat_sessions cs
      WHERE cs.thread_id = t.id AND cs.is_headless = FALSE
        -- A posted plan is no change (threads.js ITEMS_SQL says the same).
@@ -362,13 +363,19 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
     const myVote = row.decision_vote === 'yes' || row.decision_vote === 'no' ? row.decision_vote : null;
     // Their vote still owed: the Needs you feed's, as a change's is.
     if (!myVote && row.decision_mine !== true) return null;
-    return { group: 'waiting', work: { stage: 'up_for_vote', why: null, reason: null, line: null, since: iso(row.created_at) },
-      at: iso(row.created_at), myVote };
+    const vote = { stage: 'up_for_vote', why: null, reason: null, line: null, since: iso(row.created_at) };
+    return { group: 'waiting', work: { ...vote, words: workState.phrasesOf(vote) }, at: iso(row.created_at), myVote };
   }
-  const state = work || fallbackState(row);
+  // 11 Nov 2026: the stored row is the one source (statesFor makes it first
+  // when it is missing); a thread with none to read is not listed.
+  const state = work;
   if (!state) return null;
   const at = iso(state.since) || iso(row.request_at || row.created_at);
-  const stored = { stage: state.stage, why: state.why || null, reason: state.reason || null, line: state.line || null, since: at };
+  // Its words travel with it (work-state.js phrasesOf): the tab draws them.
+  const stored = {
+    stage: state.stage, why: state.why || null, reason: state.reason || null, line: state.line || null, since: at,
+    words: state.words || workState.phrasesOf(state),
+  };
   if (state.stage === 'live') {
     const liveAt = row.live_at || state.since;
     if (!liveAt || now - new Date(liveAt) > LIVE_DAYS * DAY_MS) return null;
@@ -383,22 +390,28 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
     || (state.requesterId != null && Number(state.requesterId) === Number(viewerId));
   // The bot's question is the Needs you feed's Answer.
   if (decides && state.stage === 'waiting_for_you' && state.why === 'question') return null;
-  // Owed by everyone but its author, and by its author too when a coding
-  // agent submitted it for them: their yes is a tap (governance-rules.ts).
-  const wouldVote = !row.voted && (!theirs || row.by_agent);
+  // Owed by everyone, its author included: proposing is never their yes,
+  // and their tap is (governance-rules.ts).
+  const wouldVote = !row.voted;
   // #6282: an update on its way holds the vote. It is listed for its own
   // people and for the ones who would have been asked to vote; somebody who
   // already voted and only wrote in it gets no row.
   const code = state.line?.code;
-  const updating = status === 'promoted' && (code === 'revising' || code === 'update_queued');
-  const voteOwed = state.stage === 'up_for_vote' && !updating && status === 'promoted' && wouldVote;
+  // #6600: a takeover the bot is running on the change is an update under
+  // way, whether it is fixing its failing checks or revising it.
+  const updating = status === 'promoted' && (code === 'revising' || code === 'update_queued' || code === 'fixing');
+  // #6600: its last takeover attempt failed, and nothing has checked it since.
+  const botFixFailed = row.update_failed != null || code === 'bot_fix_failed';
+  // Owed only while its change is open for votes (work_states.vote_open).
+  const voteOwed = (state.voteOpen ?? state.stage === 'up_for_vote') && !updating && status === 'promoted' && wouldVote;
   // Their own change (not Homeroom bot's, whose fixes are its own) that
   // waits on them: checks that failed, a preview that did not build, a
   // conflict to resolve (THREADS_SQL needs_fix). Needs you, with Fix it,
   // not Waiting under "Checks failing", which it would wait in forever. The
   // stage stays the change's own; that it is theirs to fix is the viewer's.
+  // #6600: after Homeroom bot's own attempt failed it says that instead.
   if (status === 'promoted' && theirs && row.needs_fix === true && !updating && state.stage !== 'building') {
-    return { group: 'needs', work: stored, at: iso(row.last_activity_at || row.promoted_at) || at, fixYours: true };
+    return { group: 'needs', work: stored, at: iso(row.last_activity_at || row.promoted_at) || at, fixYours: true, ...(botFixFailed ? { botFixFailed: true } : {}) };
   }
   // #6402: a change still being checked asks nobody for a vote yet. Someone
   // who would have been asked, but is not its author or a follower, sees it
@@ -409,7 +422,7 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   // One they only voted or wrote in is listed while no change of it is in
   // flight, as Waiting: it asks nothing of them, and nobody is building it.
   const place = updating
-    ? ((own || wouldVote) ? (code === 'revising' ? 'next' : 'waiting') : null)
+    ? ((own || wouldVote) ? ((code === 'revising' || code === 'fixing') ? 'next' : 'waiting') : null)
     : workState.placeFor(state, { requester: decides, own, voteOwed }) || (!own && !inFlight(state) ? 'waiting' : null);
   if (!place) return null;
   const out = { group: place, work: stored, at };
@@ -437,44 +450,6 @@ function inFlight(state) {
   return state.stage === 'checking' || state.stage === 'up_for_vote' || state.stage === 'going_live';
 }
 
-/**
- * Pure: a thread's state before its stored row exists (it is made on the
- * read, workFor; this covers a read that failed): its change's, or waiting
- * to be read. Null for a thread with neither a request nor a change.
- *
- * Waiting to be read only for a request that is open. A thread with a
- * number but no request row (an old request from before the move off
- * GitHub, never mirrored into `requests`) is not one: listing it drew a row
- * with no title, "Not started yet", that opened the project's Workshop
- * (6 Nov 2026, twelve of them under Not moving). The tab before #6359 left
- * such a thread out the same way.
- */
-function fallbackState(row) {
-  if (row.change_status) {
-    const change = workState.deriveChange({
-      status: row.change_status, check_state: row.check_state, promoted_at: row.promoted_at,
-      merged_at: row.merged_at, live_at: row.live_at, last_activity_at: row.last_activity_at,
-    });
-    // #6282: an update on its way holds the vote (work-state.js derive says
-    // the same). #6545: a queued one holds only a vote, never a change still
-    // checking (a fix waiting its turn).
-    if (row.update_coming && row.change_status === 'promoted') {
-      const since = iso(row.last_activity_at || row.promoted_at);
-      if (row.update_coming === 'running') {
-        return { stage: 'building', why: null, reason: null, line: { code: 'revising' }, since };
-      }
-      if (change.stage === 'up_for_vote') {
-        return { stage: 'up_for_vote', why: null, reason: null, line: { code: 'update_queued' }, since };
-      }
-    }
-    return change;
-  }
-  if (row.request_state === 'open') {
-    return { stage: 'reading', why: null, reason: null, line: { code: 'waiting' }, since: iso(row.request_at || row.created_at) };
-  }
-  return null;
-}
-
 // In progress is soonest first: going live, then a change being fixed or
 // updated, then made, then planned, then a request being read.
 const NEXT_ORDER = { going_live: 0, checking: 1, building: 2, planning: 3, reading: 4 };
@@ -487,7 +462,8 @@ const nextRank = (t) => (t.work.stage === 'building' && t.work.line && ['fixing'
 function waitingRank(t) {
   const { stage, line } = t.work;
   const code = line && line.code;
-  if (stage === 'up_for_vote') return code === 'update_queued' ? 1 : 0;
+  if (stage === 'up_for_vote') return 0;
+  if (stage === 'building' && code === 'update_queued') return 1;
   if (stage === 'checking' || (stage === 'planning' && code !== 'retry_plan')) return 0;
   if (stage === 'planning') return 4;
   if (stage === 'building') return code === 'queued' ? 2 : 3;
@@ -561,7 +537,7 @@ function arrange(rows, viewerId, now = new Date(), botId = null, states = null, 
  * The stored work state of each thread's request (by botKey) and of each
  * change with no request (`change:<id>`), with a row made first for any
  * request that has none yet (work-state.js ensure). Empty on a read error:
- * the rows then fall back to what their change says (fallbackState).
+ * a thread with no row read is then not listed.
  */
 async function statesFor(pool, rows) {
   const states = new Map();
@@ -569,11 +545,7 @@ async function statesFor(pool, rows) {
   const changes = (rows || []).filter((r) => r.change_id && r.request_id == null).map((r) => Number(r.change_id));
   try {
     await workState.ensure(pool, requests.map((r) => ({ appId: Number(r.app_id), issueNumber: Number(r.number) })));
-    const missingChanges = changes.length ? (await pool.query(
-      `SELECT x.id FROM unnest($1::int[]) AS x(id)
-        WHERE NOT EXISTS (SELECT 1 FROM work_states ws WHERE ws.item_kind = 'change' AND ws.item_ref = x.id)`,
-      [changes])).rows.map((r) => Number(r.id)) : [];
-    if (missingChanges.length) await workState.refresh(pool, missingChanges.map((id) => ({ sessionId: id })));
+    await workState.ensureChanges(pool, changes);
     const { rows: found } = await pool.query(
       `SELECT ws.*, a.slug FROM work_states ws JOIN apps a ON a.id = ws.app_id
         WHERE (ws.item_kind = 'request' AND (ws.app_id, ws.item_ref) IN (SELECT * FROM unnest($1::int[], $2::int[])))
@@ -816,7 +788,11 @@ const NEED_SAYS = Object.freeze({
  * slot.
  */
 function threadSays(t, slotVotes = 0) {
-  if (t.fixYours) return 'their own change waits for their fix: its checks failed, its preview did not build, or it conflicts';
+  if (t.fixYours) {
+    return t.botFixFailed
+      ? 'Homeroom bot could not fix their own change'
+      : 'their own change waits for their fix: its checks failed, its preview did not build, or it conflicts';
+  }
   const work = t.work || { stage: 'reading' };
   const yours = t.group === 'needs';
   let says = workState.says(work, { yours });
@@ -944,7 +920,6 @@ module.exports = {
   PRIVATE_MAX,
   LIVE_DAYS,
   standing,
-  fallbackState,
   arrange,
   shapePrivate,
   filedKey,

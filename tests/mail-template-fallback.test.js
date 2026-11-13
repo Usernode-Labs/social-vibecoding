@@ -143,6 +143,7 @@ test('every kind through the door matches what the code renders today, from the 
     admin_test: { provider: 'test', from: 'a@b.c', sentAt: 'now', reference: 'r' },
     content_report: { reason: 'spam', targetType: 'app', targetLabel: 'T', reporter: 'u', caseId: 1, reportId: 2, url: 'https://x.test/m' },
     project_invite: { inviter: 'Sam', project: 'P', url: 'https://x.test/w' },
+    release_hold: { appName: 'P', title: 'T', author: 'sam', reasons: ['It lets the app send tokens'], url: 'https://x.test/h' },
     ...Object.fromEntries(['build_ready', 'invite_activity', 'project_opened', 'waitlist_reminder', 'waitlist_reminder_last'].map((kind) => [kind, SAMPLES[kind]])),
   };
   assert.deepEqual(Object.keys(payloads).sort(), [...KINDS].sort());

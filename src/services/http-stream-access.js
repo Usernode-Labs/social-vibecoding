@@ -1,4 +1,6 @@
 'use strict';
+
+const { readSessionCookie } = require('./browser-session-cookies');
 const { nativeWebSessionIsLive } = require('./web-session-auth');
 const SESSION = Symbol('authenticated-stream-session');
 const WRITES = Symbol('stream-frame-writes');
@@ -132,7 +134,7 @@ function captureStreamAuthority(req, pool) {
     // Keep them closed here until streaming has an explicit credential policy.
     const cli = req.cliAuthenticated && req.cliToken ? String(req.cliToken.id) : null;
     const unsupportedBearer = req.cliAuthenticated && !cli;
-    const cookie = req[SESSION] || req.cookies?.session;
+    const cookie = req[SESSION] || readSessionCookie(req);
     const source = cli ? 'cli' : 'cookie';
     const params = [id, source, cookie || null, cli, resource?.kind || null, resource?.id || null,
         resource?.slug || null, !!resource?.collab];

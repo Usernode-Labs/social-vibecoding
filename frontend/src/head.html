@@ -133,6 +133,7 @@
     html.dark.release-signing-in::after { border-color: rgba(161, 161, 170, 0.25); border-top-color: #a1a1aa; }
     @keyframes release-signing-in-spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { html.release-signing-in::after { animation: none; } }
+    html.release-signing-in:where([data-motion="reduce"])::after { animation: none; }
     /* The wordmark on the held ground (review of #5323's build). While the
        holds above keep the body hidden, only the ground paints — a flat
        background with nothing on it, which is what a signed-out load shows
@@ -299,7 +300,8 @@
     }());
   </script>
   <script>
-    // Display module — text size and high contrast (#3969).
+    // Display module — text size and high contrast (#3969), and reduced
+    // motion (#6510).
     // Storage contract (the same head-blocking pattern as window.Theme
     // above: a deferred React bundle is several frames too late to size the
     // page, so the stored choice lands on <html> before first paint):
@@ -307,12 +309,20 @@
     //                         → key removed for Normal (the default)
     //   'homeroom:contrast'   → 'more'
     //                         → key removed for off (the default)
+    //   'homeroom:motion'     → 'reduce'
+    //                         → key removed for off (the default: follow
+    //                           the device's own reduced-motion setting)
     // Every storage access sits in try/catch: unreadable storage means the
     // defaults, and an unknown stored value reads as a default too.
     window.Display = (function () {
       const SIZE_KEY = 'homeroom:text-size';
       const CONTRAST_KEY = 'homeroom:contrast';
+      const MOTION_KEY = 'homeroom:motion';
       const _listeners = [];
+      // The Reduce motion pick made on this page, held in memory as well, so
+      // it applies even when the browser refuses to store it (or to forget
+      // it); null until a pick, and again when another tab writes the key.
+      let _motionChosen = null;
 
       function getTextSize() {
         try {
@@ -332,7 +342,35 @@
         }
       }
 
-      // Sets or removes data-text-size / data-contrast on <html>. The
+      // The Reduce motion setting alone: true only when it was turned on
+      // here. Off means the device decides, so this is not the question to
+      // ask before animating; reducedMotion() below is.
+      function getMotion() {
+        if (_motionChosen !== null) return _motionChosen;
+        try {
+          return window.localStorage.getItem(MOTION_KEY) === 'reduce';
+        } catch {
+          return false;
+        }
+      }
+
+      // THE question every animation asks: the setting, or the device's own
+      // prefers-reduced-motion. Modules ask frontend/src/lib/reduced-motion.ts,
+      // which reads the same two things (the attribute apply() writes, and
+      // the media query); classic scripts ask this.
+      function reducedMotion() {
+        if (document.documentElement.getAttribute('data-motion') === 'reduce') return true;
+        try {
+          return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        } catch {
+          return false;
+        }
+      }
+
+      // Sets or removes data-text-size / data-contrast / data-motion on <html>.
+      // data-motion="reduce" is what app.css's twins of its
+      // prefers-reduced-motion rules, and Tailwind's motion-reduce: and
+      // motion-safe: variants, key off. The
       // attributes live OUTSIDE React's body tree, exactly like `.dark`, so
       // hydrating the shell never disagrees with them.
       function apply() {
@@ -347,6 +385,11 @@
           root.setAttribute('data-contrast', 'more');
         } else {
           root.removeAttribute('data-contrast');
+        }
+        if (getMotion()) {
+          root.setAttribute('data-motion', 'reduce');
+        } else {
+          root.removeAttribute('data-motion');
         }
       }
 
@@ -374,6 +417,19 @@
         _listeners.forEach(function (fn) { try { fn(); } catch {} });
       }
 
+      function setMotion(reduce) {
+        _motionChosen = !!reduce;
+        try {
+          if (reduce) {
+            window.localStorage.setItem(MOTION_KEY, 'reduce');
+          } else {
+            window.localStorage.removeItem(MOTION_KEY);
+          }
+        } catch { /* unwritable storage: the choice applies for this load only */ }
+        apply();
+        _listeners.forEach(function (fn) { try { fn(); } catch {} });
+      }
+
       function onChange(fn) {
         _listeners.push(fn);
       }
@@ -381,7 +437,8 @@
       // Other tabs in the same browser follow (the settings pane re-reads
       // through the same listener).
       window.addEventListener('storage', function (e) {
-        if (e.key === SIZE_KEY || e.key === CONTRAST_KEY) {
+        if (e.key === SIZE_KEY || e.key === CONTRAST_KEY || e.key === MOTION_KEY) {
+          if (e.key === MOTION_KEY) _motionChosen = null;
           apply();
           _listeners.forEach(function (fn) { try { fn(); } catch {} });
         }
@@ -391,7 +448,10 @@
       // size is on <html> before app.css, whose rules read it, is applied.
       apply();
 
-      return { getTextSize, setTextSize, getContrast, setContrast, apply, onChange };
+      return {
+        getTextSize, setTextSize, getContrast, setContrast,
+        getMotion, setMotion, reducedMotion, apply, onChange,
+      };
     }());
   </script>
   <script>
@@ -400,26 +460,34 @@
     // the stored choice lands on <html> before app.css, whose rules read
     // it, is applied, so a look never flashes in after first paint.
     //   'homeroom:skin'  → 'brand'  the new look (light mode only)
-    //                    → 'glass', 'brandkit', 'workbench', 'paper',
-    //                      'pastel', 'mosaic', 'sunrise', 'today',
-    //                      'playground'  the nine looks of the one frame
+    //                    → 'glass', 'paper', 'pastel', 'mosaic',
+    //                      'sunrise'  the five looks of the one frame
     //                      (light and dark; an admin's preview)
+    //                    → anything else, a retired look's id among them
+    //                      ('brandkit', 'workbench', 'today', 'playground',
+    //                      gone 12 Nov 2026), reads as the standard look
     //                    → key removed for the standard look (the default)
     // Kept on the DEVICE: there is nothing to save or fail. app.css scopes
     // every rule of a look to html[data-skin="<look>"]. Every storage access
-    // sits in try/catch: unreadable storage means the standard look.
+    // sits in try/catch: unreadable storage means the standard look. A pick
+    // is held in memory for the page's life as well (`chosen`), so it always
+    // applies even when the browser refuses to store it; reading storage is
+    // only what restores a pick after a reload.
     // `?skin=<look>|standard` pins a look for THIS LOAD only, nothing
     // stored: the capture runner reaches the page by URL with a fresh
-    // profile, the same way `?theme=` pins the mode above.
+    // profile, the same way `?theme=` pins the mode above. A pick takes the
+    // parameter out of the address, so a reload keeps what was picked.
     window.Skin = (function () {
       const SKIN_KEY = 'homeroom:skin';
-      // 'brand' is New look; the nine after it are the looks of the one
+      // 'brand' is New look; the five after it are the looks of the one
       // frame (the 2026-11-06 screen tour), in the tour's order. The same
       // list, less 'brand', is FRAME_SKINS in src/lib/skin.ts.
-      const SKINS = ['brand', 'glass', 'brandkit', 'workbench', 'paper', 'pastel', 'mosaic', 'sunrise', 'today', 'playground'];
+      const SKINS = ['brand', 'glass', 'paper', 'pastel', 'mosaic', 'sunrise'];
       const _listeners = [];
 
       let pinned = null;
+      // The pick made on this page, held even when storage refuses it.
+      let chosen = null;
       try {
         const want = new URLSearchParams(window.location.search).get('skin');
         if (want === 'standard' || SKINS.includes(want)) pinned = want;
@@ -427,6 +495,7 @@
 
       function get() {
         if (pinned) return pinned;
+        if (chosen) return chosen;
         try {
           const val = window.localStorage.getItem(SKIN_KEY);
           return SKINS.includes(val) ? val : 'standard';
@@ -450,13 +519,23 @@
 
       function set(skin) {
         pinned = null;
+        // Held for the page's life whether or not the browser stores it.
+        chosen = SKINS.includes(skin) ? skin : 'standard';
         try {
           if (SKINS.includes(skin)) {
             window.localStorage.setItem(SKIN_KEY, skin);
           } else {
             window.localStorage.removeItem(SKIN_KEY);
           }
-        } catch { /* unwritable storage: nothing is stored, so the look stays standard */ }
+        } catch { /* unwritable storage: the pick still holds in memory */ }
+        // A pick replaces a look named in the address, so a reload keeps it.
+        try {
+          const url = new URL(window.location.href);
+          if (url.searchParams.has('skin')) {
+            url.searchParams.delete('skin');
+            window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+          }
+        } catch { /* no address to rewrite */ }
         apply();
         _listeners.forEach(function (fn) { try { fn(); } catch {} });
       }
@@ -466,9 +545,11 @@
       }
 
       // Other tabs in the same browser follow (the settings pane re-reads
-      // through the same listener).
+      // through the same listener). The in-memory pick is dropped first, so
+      // a choice made in another tab still wins here.
       window.addEventListener('storage', function (e) {
         if (e.key === SKIN_KEY) {
+          chosen = null;
           apply();
           _listeners.forEach(function (fn) { try { fn(); } catch {} });
         }

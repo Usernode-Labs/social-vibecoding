@@ -9,17 +9,16 @@
 // possible on the change's own page. Before this, Needs you asked for a vote
 // while the tests were still running, and a fix push often cleared the yes.
 //
-// The readers, all of them through this module's two SQL fragments:
-//   services/workshop-overview.js  OWED_PROPOSALS_WHERE, and so COUNTS_SQL,
-//                                  ITEMS_SQL, NEEDS_FEED_SQL,
-//                                  NEEDS_FEED_IN_THREADS_SQL (the Homeroom
-//                                  bot tab), OWED_BY_COMMUNITY_SQL and
-//                                  services/places.js;
-//   services/vote-digest.js        the daily "what needs your vote" digest;
-//   workflow/rules/proposal-notifications.ts
-//                                  the "new proposal to vote on" ping, now
-//                                  sent when the checks pass rather than at
-//                                  promotion.
+// 11 Nov 2026: the lists that ask for a vote (routes/workshop-overview.js
+// OWED_PROPOSALS_WHERE, and so every count, the Needs you feed and
+// OWED_BY_COMMUNITY_SQL; services/vote-digest.js) read whether a change is
+// open for votes off its stored work state (work_states.vote_open), which
+// services/work-state.js derives with syncWaits/syncStand below beside the
+// rest of what holds a vote (its first version, an update on its way, a
+// merge GitHub holds, its shots). The SQL predicate is still read by
+// workflow/rules/proposal-notifications.ts, the "new proposal to vote on"
+// ping, sent when the checks pass rather than at promotion, inside the
+// proposal machine's own transition.
 //
 // The predicate itself is one copy, in src/workflow/rules/vote-ready.ts, so
 // the proposal machine and the preview machine read the same words.

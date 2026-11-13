@@ -51,10 +51,14 @@ const net = require('net');
 const { URL } = require('url');
 // Dependency-free, like this file: the rule for offline apps' cache headers.
 const offlineCache = require('../src/services/offline-cache');
+// Dependency-free too: what a search engine is told about an app host's answers.
+const searchRobots = require('../src/services/search-robots');
 const { createActivity } = require('../src/services/gateway-activity');
 
-// The same stripping the Caddyfile does with a header_up replacement.
-const GATE_COOKIE_RE = /^(?:__Host-usernode|__usernode)_(?:access|anon)$/;
+// The same stripping the Caddyfile does with a header_up replacement: the
+// access cookie, the anonymous marker and the sign-in hop's state
+// (src/services/edge-gate.js cookieNames).
+const GATE_COOKIE_RE = /^(?:__Host-usernode|__usernode)_(?:access|anon|state)$/;
 function hasGateCookie(cookieHeader) {
   if (typeof cookieHeader !== 'string' || !cookieHeader) return false;
   return cookieHeader.split(';').some((part) => GATE_COOKIE_RE.test(part.split('=')[0].trim()));
@@ -77,8 +81,12 @@ const HOP_BY_HOP = new Set([
 // Headers only the platform may set on what the app receives. A client that
 // sends one has it discarded before anything else happens.
 const GATE_HEADERS = ['x-usernode-identity', 'x-usernode-upstream', 'x-usernode-gate', 'x-usernode-applink', 'x-usernode-cache', 'x-usernode-runtime-sleep'];
-// What a refusal may carry back to the visitor.
-const RELAYED = ['location', 'set-cookie', 'content-type', 'cache-control', 'referrer-policy', 'retry-after'];
+// What a refusal may carry back to the visitor. `set-cookie` is what makes
+// the sign-in hop work at all: the redirect that starts it sets the state
+// cookie, and the callback's sets the access cookie (every value, when
+// there are several). The frame door page (src/services/edge-gate.js) comes
+// with its own Content-Security-Policy, which says who may frame it.
+const RELAYED = ['location', 'set-cookie', 'content-type', 'cache-control', 'referrer-policy', 'retry-after', 'content-security-policy'];
 
 function cleanHeaders(headers) {
   const out = {};
@@ -362,6 +370,10 @@ function createGate({
           delete headers.pragma;
         }
       }
+      // Search engines (src/services/search-robots.js): an API answer, the
+      // platform's own paths and anything on a preview are never pages.
+      const robots = searchRobots.appHostRobots({ host: req.headers.host, url: req.url });
+      if (robots) headers['x-robots-tag'] = searchRobots.withRobots(headers['x-robots-tag'], robots);
       res.writeHead(upRes.statusCode || 502, headers);
       upRes.pipe(res);
     });

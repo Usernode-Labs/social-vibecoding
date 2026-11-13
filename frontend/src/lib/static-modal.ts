@@ -52,6 +52,7 @@
  */
 
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
+import { reducedMotion } from './reduced-motion';
 
 import { adoptKitSurface, type KitAdoption } from './kit-surface';
 import { useIsomorphicLayoutEffect } from './legacy-dom';
@@ -402,8 +403,7 @@ export function useStaticModal(
         const generation = (generationRef.current += 1);
         const stillOwns = () => generationRef.current === generation;
         delete root.dataset.dialogSheetShown;
-        const reduced = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-          && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const reduced = reducedMotion();
         setTimeout(() => {
           if (!stillOwns()) return;
           root.classList.add('hidden');

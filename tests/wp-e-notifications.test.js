@@ -159,15 +159,16 @@ test('the browser an open came from: a random HttpOnly cookie, kept only as its 
   const res = { cookie(name, value, opts) { set.push({ name, value, opts }); } };
   const key = activity.ensureBrowser({ cookies: {}, headers: { 'x-forwarded-proto': 'https' } }, res);
   assert.equal(set.length, 1);
-  assert.equal(set[0].name, 'hr_iv');
+  // Over HTTPS only this host can set it (tests/protected-cookie-names.test.js).
+  assert.equal(set[0].name, '__Host-hr_iv');
   assert.match(set[0].value, /^[A-Za-z0-9_-]{32}$/, 'random, and nothing about the browser or where it is');
   const { maxAge, ...rest } = set[0].opts;
-  assert.deepEqual(rest, { httpOnly: true, sameSite: 'lax', secure: true, path: '/api' });
+  assert.deepEqual(rest, { httpOnly: true, sameSite: 'lax', secure: true, path: '/' });
   assert.ok(maxAge >= 30 * 24 * 60 * 60 * 1000, 'kept for as long as a link is likely to be opened again');
   assert.match(key, /^[0-9a-f]{64}$/);
   assert.ok(!key.includes(set[0].value), 'the database keeps a hash, never the cookie');
   // The same browser next time: the same person, and no new cookie.
-  assert.equal(activity.ensureBrowser({ cookies: { hr_iv: set[0].value }, headers: {} }, res), key);
+  assert.equal(activity.ensureBrowser({ cookies: { '__Host-hr_iv': set[0].value }, headers: { 'x-forwarded-proto': 'https' } }, res), key);
   assert.equal(set.length, 1);
   assert.equal(activity.browserFrom({ cookies: { hr_iv: 'x' } }), null, 'not one of ours');
   assert.equal(activity.browserFrom({}), null);

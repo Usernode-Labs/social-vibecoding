@@ -75,6 +75,17 @@ export function takeVotesInView(sessionId: unknown, now: number = Date.now()): b
 }
 
 /**
+ * Whether a door asked for this card, WITHOUT taking the ask: a page that is
+ * about to hold its top (holdTopInView) stands aside for the card the reader
+ * was sent to, and leaves the ask for the card's own owner.
+ */
+export function isVotesInViewAsked(sessionId: unknown, now: number = Date.now()): boolean {
+  const key = askKey(sessionId);
+  const ask = asked;
+  return !!key && !!ask && ask.key === key && now - ask.at <= ASK_TTL_MS;
+}
+
+/**
  * Pure: how far to scroll so a card whose top is at `cardTop` sits `gap`
  * below `viewTop`, the lowest of the scroller's own top and the bottom of
  * any header drawn over it. Positive is down.
@@ -132,6 +143,44 @@ export function holdVotesInView(card: HTMLElement, { ms = HOLD_MS }: { ms?: numb
   // it back at the top) is put right. The reader's own touch, wheel, press
   // or key, anywhere on the page, ends the hold before it moves anything.
   target.addEventListener('scroll', place, { passive: true });
+  LET_GO.forEach((type) => doc.addEventListener(type, release, { capture: true, passive: true }));
+  const timer = window.setTimeout(release, ms);
+  place();
+  return release;
+}
+
+/**
+ * #6604: a thread opens at its top and stays there while the rest fills in
+ * below, unless a door asked for the Votes card (takeVotesInView). The
+ * thread's own first load puts its scroller back at the top, and each of the
+ * change's pieces arriving grows the page; holding the top means the reader
+ * sees the request and its replies, not a scroll that moves on its own. It
+ * lets go at the reader's first touch, wheel or key, or after HOLD_MS.
+ */
+export function holdTopInView(scroller: HTMLElement | null, { ms = HOLD_MS }: { ms?: number } = {}): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const el = scroller && scroller.isConnected ? scroller : null;
+  if (!el) return () => {};
+  const doc = el.ownerDocument || document;
+  let done = false;
+  const place = () => {
+    if (done || !el.isConnected) return;
+    if (el.scrollTop !== 0) el.scrollTop = 0;
+  };
+  const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(() => place()) : null;
+  resize?.observe(el);
+  const release = () => {
+    if (done) return;
+    done = true;
+    resize?.disconnect();
+    el.removeEventListener('scroll', place);
+    LET_GO.forEach((type) => doc.removeEventListener(type, release, true));
+    window.clearTimeout(timer);
+  };
+  // Another scroll that is not the reader's (the thread's first load, a card
+  // landing above) is put back. The reader's own touch, wheel, press or key
+  // ends the hold before it moves anything.
+  el.addEventListener('scroll', place, { passive: true });
   LET_GO.forEach((type) => doc.addEventListener(type, release, { capture: true, passive: true }));
   const timer = window.setTimeout(release, ms);
   place();

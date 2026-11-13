@@ -27,7 +27,10 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { BellIcon } from '@/components/ui/icons';
 
+import { Btn, Card, Lead, Row, Sec } from '@/components/ui/kit';
+
 import { useMessages } from '../../../lib/i18n/react';
+import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
 import { reloadCommunity, type CommunityPayload } from './community-card';
 import { channelsOf } from './places';
 
@@ -45,6 +48,9 @@ export function ChannelHead({ slug, name, data }: {
   data: CommunityPayload | null;
 }): ReactNode {
   const t = useMessages('project');
+  // Under one of the frame's looks the line is the kit's group beside the
+  // room (This channel: its members, and Mute), from the same state.
+  const frame = isFrameSkin(useLiveSkin());
   const known = generalMuted(data);
   const [muted, setMuted] = useState<boolean | null>(known);
   const [busy, setBusy] = useState(false);
@@ -77,6 +83,39 @@ export function ChannelHead({ slug, name, data }: {
       setBusy(false);
     }
   };
+
+  if (frame) {
+    // The page's head says what the channel is for (workshop.tsx
+    // framePurpose); here, who it reaches and how to quiet it.
+    if (!members && muted == null) return null;
+    return (
+      <div className="fr dev-ws-channel-head" data-ws-channel-head="general" data-frame-side="">
+        <Sec label={t('project:frame.channel.this')}>
+          <Card>
+            <Row
+              lead={<Lead icon="users" />}
+              title={members > 0 ? t('project:places.generalHead.members', { count: members }) : about}
+              sm
+              right={muted != null ? (
+                <Btn
+                  small
+                  kind="line"
+                  icon="bell"
+                  data-ws-channel-mute={muted ? 'on' : 'off'}
+                  aria-pressed={muted}
+                  disabled={busy}
+                  title={muted ? t('project:places.generalHead.unmuteHint') : t('project:places.generalHead.muteHint')}
+                  onClick={() => { void toggle(); }}
+                >
+                  {muted ? t('project:places.generalHead.muted') : t('project:places.generalHead.mute')}
+                </Btn>
+              ) : undefined}
+            />
+          </Card>
+        </Sec>
+      </div>
+    );
+  }
 
   return (
     <div className="dev-ws-channel-head" data-ws-channel-head="general">

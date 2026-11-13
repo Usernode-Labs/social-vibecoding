@@ -548,7 +548,7 @@ test('the landing offers what the options list, never inside the app, and reopen
   const landing = read('frontend/src/features/auth/landing.tsx');
   assert.match(landing, /if \(!list\.length \|\| typeof window === 'undefined' \|\| isNative\(\)\) return \[\];/);
   assert.match(landing, /return \(\['apple', 'google'\] as const\)\.filter\(\(p\) => list\.includes\(p\)\);/);
-  assert.match(landing, /document\.cookie = `\$\{PROVIDER_RESULT_COOKIE\}=; Max-Age=0; path=\/`;/);
+  assert.match(landing, /doc\.cookie = `\$\{name\}=; Max-Age=0; path=\/\$\{secure \? '; Secure' : ''\}`;/);
   assert.match(landing, /setSheet\(inviteTokenFrom\(location\.pathname\) \? 'join' : 'start'\);/);
   assert.match(landing, /from="invite"\s+returnTo=\{location\.pathname\}/);
   // Back to Home, or to the public project's page the sheet was opened over
@@ -620,6 +620,11 @@ test('inside the app: the app\'s own sheet, offered where the server lists it an
   }
   const sheetSrc = read('frontend/src/features/auth/sign-in-sheet.tsx');
   assert.match(sheetSrc, /if \(!native\) \{\n\s+window\.location\.assign\(providerStartUrl/);
+  // #6619: the starts, the callback and the mint boundary call live only
+  // what the auth middleware honours, so a half-revoked session (signed out
+  // everywhere else) is not "already signed in" to a sign-in.
+  assert.match(read('src/routes/sign-in-providers.js'), /return sessionTokenIsLive\(pool, readSessionCookie\(req\)\);/);
+  assert.match(read('src/routes/auth.js'), /if \(!\(await sessionTokenIsLive\(pool, token\)\)\) return next\(\);/);
   assert.match(sheetSrc, /await finish\(outcome\.created \? 'new' : 'existing'\);/);
 });
 

@@ -880,8 +880,32 @@ const Improve = {
     // long as the inbox stayed open. Asked through the island's window seam
     // rather than an import, so this module keeps its three dependencies.
     if (notificationsSheetStore.get().open || Improve._messagesOnScreen()) {
-      Improve.loadSessions();
+      Improve._reloadSoon();
     }
+  },
+
+  // The reload above, at most once every RELOAD_MIN_GAP_MS with the last
+  // one kept (#6591). A turn in flight pushes a state change about once a
+  // second, and each one re-read the whole list: with Messages open that was
+  // a request a second for as long as anything of the viewer's was running.
+  // The pills never waited on the reload (the rebucket above is the push),
+  // so only the title, the status line and the activity stamp arrive up to
+  // this much later. The first change after a quiet spell still reloads at
+  // once.
+  RELOAD_MIN_GAP_MS: 4000,
+  _reloadAt: 0,
+  _reloadTimer: null,
+  _reloadSoon() {
+    if (Improve._reloadTimer) return;
+    const run = () => {
+      Improve._reloadTimer = null;
+      Improve._reloadAt = Date.now();
+      // The surface may have closed while this waited.
+      if (notificationsSheetStore.get().open || Improve._messagesOnScreen()) Improve.loadSessions();
+    };
+    const wait = Improve._reloadAt + Improve.RELOAD_MIN_GAP_MS - Date.now();
+    if (wait <= 0) run();
+    else Improve._reloadTimer = setTimeout(run, wait);
   },
 
   /** Whether the Messages screen is the one on screen. Safe before it exists. */

@@ -243,9 +243,11 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
     // when the update was in and the line it posted when it was, and 9112
     // for #6399, the request whose hand-back reason a later release lifted,
     // and 9114/9115 for #6211, the pair whose discussions show the overlap
-    // note, its three choices and the line saying what was chosen).
+    // note, its three choices and the line saying what was chosen, and 9116
+    // for #6581, the request whose build failed twice with a reply under the
+    // first failure note).
     // #6503: the similar-title fixture adds one ordinary request.
-    assert.strictEqual(body.issues.length, 29);
+    assert.strictEqual(body.issues.length, 30);
     assert.strictEqual(body.issues.find((i) => i.number === 900001).similar.number, 9006503);
 
     // #6399: and opened by its address, as the shots do, the request whose
@@ -300,23 +302,24 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
 
 // ── #17: the Homeroom bot's work on a request ───────────────────────────
 //
-// `bot` ({ what, since }) is read with homeroom-bot-progress.js's
-// projectsBusy queries (botWorkByIssue), against PostgreSQL in
-// tests/request-bot-work-postgres.test.js. Here: the wiring, the staging
-// mock, and that the list never fails over it.
+// 11 Nov 2026 (docs/plans/bot-one-model.md, step 3): each request carries
+// where it stands (`standing`, its stored work state with the viewer's own
+// `mine` and `voteOwed`), and `bot` ({ what, since }) is read off that same
+// row (services/work-state.js botWorkOf). Here: the wiring, and that the
+// list reads every request's row at once.
 
-test('#17: each request carries what the Homeroom bot is doing on it, from the projectsBusy reads', async () => {
+test('#17: each request carries where it stands, and what the Homeroom bot is doing on it, from its stored row', async () => {
   const asked = [];
+  const row = (n, stage, line = null) => ({
+    app_id: 1, slug: 'demo', app_name: 'Demo', item_kind: 'request', item_ref: n, issue_number: n, session_id: null,
+    stage, why: null, reason: null, line, whose_move: 'bot', requester_id: null, since: '2026-10-03T10:00:00Z',
+    updated_at: '2026-10-03T10:00:00Z', standing: {}, vote_open: false, lead_change_id: null,
+  });
   poolQueryHandler = async (sql, params) => {
     const s = String(sql);
-    if (/FROM homeroom_bot_queue q/.test(s) && /'reading' AS what/.test(s) && /'building' AS what/.test(s)) {
+    if (/FROM work_states ws JOIN apps a ON a\.id = ws\.app_id/.test(s) && /ws\.item_ref = ANY\(\$2::int\[\]\)/.test(s)) {
       asked.push(params);
-      return {
-        rows: [
-          { app_id: 1, issue_number: 2, since: '2026-10-03T10:00:00Z', what: 'reading' },
-          { app_id: 1, issue_number: 4, since: '2026-10-03T09:40:00Z', what: 'building' },
-        ],
-      };
+      return { rows: [row(2, 'reading'), row(4, 'building'), row(5, 'reading', { code: 'waiting' })] };
     }
     return { rows: [] };
   };
@@ -326,18 +329,24 @@ test('#17: each request carries what the Homeroom bot is doing on it, from the p
     const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
     assert.strictEqual(res.status, 200);
     const byNumber = new Map((await res.json()).issues.map((i) => [i.number, i]));
-    assert.deepStrictEqual(byNumber.get(2).bot, { what: 'reading', since: '2026-10-03T10:00:00Z' });
-    assert.deepStrictEqual(byNumber.get(4).bot, { what: 'building', since: '2026-10-03T09:40:00Z' });
+    assert.deepStrictEqual(byNumber.get(2).bot, { what: 'reading', since: '2026-10-03T10:00:00.000Z' });
+    assert.deepStrictEqual(byNumber.get(4).bot, { what: 'building', since: '2026-10-03T10:00:00.000Z' });
     for (const n of [1, 3, 5]) assert.strictEqual(byNumber.get(n).bot, null, `#${n}: the bot is not on it`);
+    // Its standing, the row its status card draws, with its words.
+    assert.equal(byNumber.get(4).standing.stage, 'building');
+    assert.deepStrictEqual(byNumber.get(4).standing.words.stage, { id: 'core:work.stage.building' });
+    assert.deepStrictEqual([byNumber.get(4).standing.mine, byNumber.get(4).standing.voteOwed], [false, false]);
+    assert.equal(byNumber.get(5).standing.stage, 'reading', 'nobody on it yet: still a standing');
     // Never in_progress: the bot is not a person to claim it from.
     assert.strictEqual(byNumber.get(4).in_progress, null);
     assert.strictEqual(asked.length, 1, 'one read for the whole list');
-    assert.deepStrictEqual(asked[0][0], [1], 'for this app alone');
+    assert.deepStrictEqual(asked[0][0], 1, 'for this app alone');
   } finally {
     poolQueryHandler = async () => ({ rows: [] });
     server.close();
   }
 });
+
 
 test('#17: a failed read of the bot\'s work leaves the list whole, with no `bot` anywhere', async () => {
   poolQueryHandler = async (sql) => {

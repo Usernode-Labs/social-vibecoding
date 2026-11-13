@@ -22,7 +22,7 @@
  * show it, so it keeps this bar, with its name on it and, in the waiting
  * room, Sign out.
  */
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { Av, Btn, Frame, Icon, Tile, k } from '@/components/ui/kit';
 import { useMessages } from '../../lib/i18n/react';
@@ -35,8 +35,12 @@ const MARK = '/brand/homeroom-mark.png';
 /** One of the landing bar's own buttons, as the kit's bar repeats it. */
 export type GuestAction = { key: string; label: string; primary: boolean; pressed: boolean | null };
 
-/** What the bar says, read off the screen that is up. `who` is an account still in line: signed in, not let in yet. */
-export type GuestBar = { back: boolean; crumb: string; actions: GuestAction[]; who?: string };
+/**
+ * What the bar says, read off the screen that is up. `who` is an account
+ * still in line: signed in, not let in yet. `trail` is what follows the
+ * brand or the name: a project's Workshop, then a request by its number.
+ */
+export type GuestBar = { back: boolean; crumb: string; trail?: string[]; actions: GuestAction[]; who?: string };
 
 const EMPTY: GuestBar = { back: false, crumb: '', actions: [] };
 
@@ -61,10 +65,15 @@ function readLanding(root: HTMLElement): GuestBar {
       actions.push({ key: String(i), label: (button.textContent || '').trim(), primary, pressed: pressed == null ? null : pressed === 'true' });
     });
   }
+  // A place the landing names for the bar alone (a gated address, a public
+  // project's tab): unseen words in its header, the head in the brand's place.
+  const places = [...root.querySelectorAll('#landing-header [data-guest-place]')];
+  const words = (kind: string) => places.filter((el) => el.getAttribute('data-guest-place') === kind).map((el) => (el.textContent || '').trim()).filter(Boolean);
   return {
     back: shown(root.querySelector('#landing-back-btn')),
     // The wordmark is a picture: the bar draws the brand itself then.
-    crumb: title && !title.querySelector('svg') ? (title.textContent || '').trim() : '',
+    crumb: title && !title.querySelector('svg') ? (title.textContent || '').trim() : words('head')[0] || '',
+    trail: words('trail'),
     actions,
     who: sessionName(),
   };
@@ -84,18 +93,46 @@ function readWaiting(root: HTMLElement): GuestBar {
 /** A stand-alone screen's own way back: the shared disc, or "more ways"'s plain link. */
 const SOLO_BACK = '[data-auth-back], :scope > a[href="#landing"]';
 
+/**
+ * A profile opened with no account, or by one still in line (the tour's
+ * o26): the bar names it, and for a visitor carries the landing's two ways
+ * in, which the profile screen has no buttons of its own for.
+ */
+function readProfile(words: { signIn: string; signUp: string }): GuestBar {
+  let name = '';
+  try { name = decodeURIComponent((location.hash.replace(/^#/, '').split('?')[0].split('/')[1] || '')); } catch { name = ''; }
+  const who = sessionName();
+  return {
+    back: false,
+    crumb: name ? `@${name}` : '',
+    actions: who ? [] : [
+      { key: 'signin', label: words.signIn, primary: false, pressed: null },
+      { key: 'signup', label: words.signUp, primary: true, pressed: null },
+    ],
+    who,
+  };
+}
+
 /** Any other anonymous screen: a way back, and the brand. */
 function readSolo(root: HTMLElement): GuestBar {
   return { back: !!root.querySelector(SOLO_BACK), crumb: '', actions: [] };
 }
 
-const same = (a: GuestBar, b: GuestBar) => a.back === b.back && a.crumb === b.crumb && (a.who || '') === (b.who || '') && a.actions.length === b.actions.length
+const same = (a: GuestBar, b: GuestBar) => a.back === b.back && a.crumb === b.crumb && (a.trail || []).join('\n') === (b.trail || []).join('\n') && (a.who || '') === (b.who || '') && a.actions.length === b.actions.length
   && a.actions.every((x, i) => x.label === b.actions[i].label && x.primary === b.actions[i].primary && x.pressed === b.actions[i].pressed);
 
 /** The bar of the screen with that id, followed as the screen changes it. */
-function useGuestBar(id: string): GuestBar {
+function useGuestBar(id: string, words: { signIn: string; signUp: string }): GuestBar {
   const [bar, setBar] = useState<GuestBar>(EMPTY);
+  const { signIn, signUp } = words;
   useEffect(() => {
+    if (id === PROFILE) {
+      // The profile's name is the address's: followed as it changes.
+      const read = () => { const next = readProfile({ signIn, signUp }); setBar((prev) => (same(prev, next) ? prev : next)); };
+      read();
+      window.addEventListener('hashchange', read);
+      return () => window.removeEventListener('hashchange', read);
+    }
     const root = document.getElementById(id);
     if (!root) return undefined;
     const read = () => {
@@ -117,7 +154,7 @@ function useGuestBar(id: string): GuestBar {
     mo.observe(root, { childList: true });
     if (watched) mo.observe(watched, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class', 'hidden', 'aria-pressed'] });
     return () => mo.disconnect();
-  }, [id]);
+  }, [id, signIn, signUp]);
   return bar;
 }
 
@@ -128,6 +165,9 @@ function pressIn(id: string, selector: string, nth = 0) {
 }
 
 const SCREENS = ['auth-landing-screen', 'auth-login-screen', 'auth-register-screen', 'auth-waitlist-screen', 'auth-more-screen', 'auth-waiting-screen'] as const;
+/** The one member's screen a visitor reaches: somebody's profile, which answers with one line. */
+const PROFILE = 'profile-screen';
+type GuestScreen = (typeof SCREENS)[number] | typeof PROFILE;
 
 /** Mounted by the shell beside FrameApp: nothing on the first render, nothing under the standard look. */
 export function GuestFrame() {
@@ -137,12 +177,25 @@ export function GuestFrame() {
     useVisibility(SCREENS[0], false), useVisibility(SCREENS[1], false), useVisibility(SCREENS[2], false),
     useVisibility(SCREENS[3], false), useVisibility(SCREENS[4], false), useVisibility(SCREENS[5], false),
   ];
+  // A profile's address with nobody let in: no anonymous screen is up, and
+  // the member's chrome has no viewer to draw for (./frame-app.tsx).
+  const profile = useVisibility(PROFILE, false);
   const at = up.indexOf(true);
-  return isFrameSkin(skin) && at > -1 ? <GuestChrome screen={SCREENS[at]} /> : null;
+  if (!isFrameSkin(skin)) return null;
+  if (at > -1) return <GuestChrome screen={SCREENS[at]} />;
+  return profile ? <GuestChrome screen={PROFILE} /> : null;
 }
 
-function GuestChrome({ screen }: { screen: (typeof SCREENS)[number] }) {
-  const bar = useGuestBar(screen);
+/** The landing's sign-in sheet over the page asked for, which a sign-in then lands on (AuthScreens.showSignInFor). */
+function signInHere() {
+  const screens = (window as any).AuthScreens;
+  if (screens?.showSignInFor) screens.showSignInFor(location.hash);
+  else location.hash = '#login';
+}
+
+function GuestChrome({ screen }: { screen: GuestScreen }) {
+  const ta = useMessages('auth');
+  const bar = useGuestBar(screen, { signIn: ta('auth:guest.header.signIn'), signUp: ta('auth:guest.header.signUp') });
   // The page area, published for the screen to lay itself out by.
   const areaRef = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
@@ -172,7 +225,10 @@ function GuestChrome({ screen }: { screen: (typeof SCREENS)[number] }) {
       bar={bar}
       areaRef={areaRef}
       onBack={() => pressIn(screen, screen === 'auth-landing-screen' ? '#landing-back-btn' : SOLO_BACK)}
-      onAction={(action) => (action.key === 'logout' ? pressIn(screen, '#waiting-logout') : pressIn(screen, '[data-landing-actions] button', Number(action.key)))}
+      onAction={(action) => (action.key === 'logout' ? pressIn(screen, '#waiting-logout')
+        : action.key === 'signin' ? signInHere()
+          : action.key === 'signup' ? (location.hash = '#landing')
+            : pressIn(screen, '[data-landing-actions] button', Number(action.key)))}
     />
   );
 }
@@ -185,6 +241,7 @@ export function GuestChromeView({ bar, onBack, onAction, areaRef }: {
   areaRef?: React.Ref<HTMLElement>;
 }) {
   const t = useMessages('core');
+  const trail = bar.trail || [];
   return (
     <>
       {/* Behind the screen: what a look gives the page column itself. */}
@@ -199,14 +256,24 @@ export function GuestChromeView({ bar, onBack, onAction, areaRef }: {
                 <Icon name="cl" />
               </button>
             ) : null}
-            {bar.crumb ? (
-              <div className={k('crumb')}><span className={k('ci here keep')}>{bar.crumb}</span></div>
-            ) : (
+            {bar.crumb ? null : (
               <span className={k('brand')} style={{ margin: 0, padding: 0 }}>
                 <Tile size={28} src={MARK} color="#0f1116" name={t('core:frame.brand')} />
                 {t('core:frame.brand')}
               </span>
             )}
+            {bar.crumb || trail.length ? (
+              <div className={k('crumb')}>
+                {/* Flat children: on a phone the kit keeps only the last one. */}
+                {bar.crumb ? <span className={k('ci', !trail.length && 'here keep')}>{bar.crumb}</span> : null}
+                {trail.map((word, i) => (
+                  <Fragment key={`${i}:${word}`}>
+                    {i > 0 || bar.crumb ? <Icon name="cr" size={14} /> : null}
+                    <span className={k('ci', i === trail.length - 1 && 'here keep')}>{word}</span>
+                  </Fragment>
+                ))}
+              </div>
+            ) : null}
             <span className={k('sp')} />
             {bar.who ? (
               <div className={k('crumb')}>

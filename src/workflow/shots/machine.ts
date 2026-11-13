@@ -193,7 +193,7 @@ export const PLATFORM_RETRY_MS = 60 * 1000;
 // finished, a run a release cut off, the revision step itself never ending.
 // Anything else is the proposal's to fix.
 const PLATFORM_FAULTS: ReadonlySet<string> = new Set([
-  'database', 'clone', 'worker_bootstrap', 'github_rate_limited', 'agent_exit', 'copies_timeout', 'release', 'revision',
+  'database', 'clone', 'worker_bootstrap', 'github_rate_limited', 'github_unavailable', 'agent_exit', 'copies_timeout', 'release', 'revision',
 ]);
 
 // What each refusal to start says on the proposal (#2601/#2558).

@@ -22,7 +22,11 @@
 // Mode (CONTENT_REVIEW_MODE, declared in the root dapp.json platform_env):
 //   off       no row at all;
 //   advisory  (default) a flag shows on the card but never closes the gate;
-//   blocking  a flag fails the checks, so the proposal cannot merge.
+//   blocking  a flag fails the checks, so the proposal cannot merge;
+//   admin     (#6642) a flag never fails the checks, but the merge gate
+//             holds the proposal until a full admin has voted yes on it
+//             (adminHold below, read by evaluateMergeGate; the claim and
+//             the merge queue read the same stored row in SQL).
 //
 // Fails OPEN. A GitHub or model error, or no configured model, yields an
 // advisory pass row that says it was not reviewed. This row must never add
@@ -50,7 +54,7 @@ const DIFF_CHAR_BUDGET = parseInt(process.env.CONTENT_REVIEW_DIFF_CHARS, 10) || 
 const REASON_MAX = 400;
 const CACHE_MAX = 500;
 
-const MODES = new Set(['off', 'advisory', 'blocking']);
+const MODES = new Set(['off', 'advisory', 'blocking', 'admin']);
 
 function mode() {
   const v = String(process.env.CONTENT_REVIEW_MODE ?? '').trim().toLowerCase();
@@ -139,6 +143,21 @@ function shapeRow({ review, reviewMode, note = '', truncated = false, reviewedSh
     summary: flagged ? '' : (note || `Passes${tail}`),
     ...(reviewedSha ? { reviewedSha: String(reviewedSha).toLowerCase() } : {}),
   };
+}
+
+// #6642: the flag an admin has to approve, or null. Pure. `results` is the
+// proposal's stored test_results and `head` the commit its votes and checks
+// are about: only a flag reviewed on that exact commit holds it, so a new
+// head waits on its own review and an old flag never follows the proposal.
+// A row that was not reviewed (the review fails open) carries no flag.
+function adminHold(results, head, reviewMode = mode()) {
+  if (reviewMode !== 'admin' || !head) return null;
+  const rows = Array.isArray(results) ? results : [];
+  const want = String(head).toLowerCase();
+  const row = rows.find((r) => r && r.name === CONTENT_CHECK_NAME && r.status === 'fail'
+    && r.reviewedSha && String(r.reviewedSha).toLowerCase() === want);
+  if (!row) return null;
+  return { reason: clip(row.failureReason || 'Flagged by the Content rules review.') };
 }
 
 const cache = new Map();
@@ -293,6 +312,6 @@ function _resetCache() { cache.clear(); }
 module.exports = {
   CONTENT_CHECK_NAME, CONTENT_CHECK_PATH, CONTENT_CHECK_INDEX, RULES_SLUG, DATA_RULES_SLUG,
   mode, onlyNonText, changedFiles, buildSystemPrompt, shapeRow,
-  normaliseFile, buildReviewInput,
+  normaliseFile, buildReviewInput, adminHold,
   maybeRunContentReview, _resetCache,
 };

@@ -45,6 +45,19 @@ test('on any other commit the force still skips the votes and the lock, never th
   assert.equal(claimRefusal(facts({ checkState: 'failing' }), inputs({ force: true, forcedHead: null })), 'checks');
 });
 
+test('a head the Content rules review flagged waits for an admin yes, like a locked app (#6642)', () => {
+  assert.equal(claimRefusal(facts({ contentFlagSha: A }), inputs()), 'awaiting_admin');
+  assert.equal(claimRefusal(facts({ contentFlagSha: A, adminYes: true }), inputs()), null);
+  // A flag on another commit is not about this head.
+  assert.equal(claimRefusal(facts({ contentFlagSha: B }), inputs()), null);
+  assert.equal(claimRefusal(facts({ contentFlagSha: null }), inputs()), null);
+  // An admin's force is that admin's approval.
+  assert.equal(claimRefusal(facts({ contentFlagSha: A }), inputs({ force: true, forcedHead: A })), null);
+  const { contentAdminHold } = require('../src/workflow/rules/merge-claim.ts');
+  assert.equal(contentAdminHold({ CONTENT_REVIEW_MODE: ' Admin ' }), true);
+  for (const v of ['advisory', 'blocking', 'off', '', undefined]) assert.equal(contentAdminHold({ CONTENT_REVIEW_MODE: v }), false);
+});
+
 test('without a force nothing changes: votes, then the lock, then the checks', () => {
   assert.equal(claimRefusal(facts(), inputs({ votesMergeable: false })), 'not_mergeable');
   assert.equal(claimRefusal(facts({ locked: true }), inputs()), 'awaiting_admin');
