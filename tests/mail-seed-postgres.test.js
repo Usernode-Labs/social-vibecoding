@@ -367,6 +367,7 @@ test('seeding email templates against PostgreSQL', { timeout: 180000 }, async (t
       admin_test: [{ provider: 'p', from: 'f', sentAt: 'n', reference: 'r' }],
       content_report: [{ reason: 'spam', targetType: 'app', targetLabel: 'T', url: 'https://x.test/m' }],
       project_invite: [{ inviter: 'Sam', project: 'P', url: 'https://x.test/w' }, { url: 'https://x.test/w' }],
+      release_hold: [{ appName: 'P', title: 'T', author: 'sam', reasons: ['It lets the app send tokens'], url: 'https://x.test/h' }, { url: 'https://x.test/h' }],
       build_ready: [{ appName: 'Run Club', url: 'https://x.test/a', unsubscribeUrl: UNSUB }, { notWorking: true, unsubscribeUrl: UNSUB }],
       invite_activity: [{ appName: 'Run Club', notice: { id: 'member_joined', values: { name: 'sam' } }, unsubscribeUrl: UNSUB }],
       project_opened: [{ appName: 'Run Club', url: 'https://x.test/a', unsubscribeUrl: UNSUB }],

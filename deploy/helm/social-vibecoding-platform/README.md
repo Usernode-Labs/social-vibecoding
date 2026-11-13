@@ -170,9 +170,19 @@ endpoint and `config.mediaStorage.bucket` as `MEDIA_STORAGE_ENDPOINT` and
 without a bucket, or, when the chart creates the Secret, without both keys.
 Give the platform a key that can reach only its own bucket: a Hetzner Object
 Storage key reaches every bucket in its project, so the media bucket lives in a
-project of its own, apart from the database backups. App file uploads
-(`MINIO_*`, `src/services/app-files.js`) are a separate store this chart does
-not configure, so they stay off.
+project of its own, apart from the database backups.
+
+App file uploads (images and audio apps store, `src/services/app-files.js`)
+are a second store, off until `config.appFileStorage.endpoint` is set; until
+then every upload answers 503 `storage_unavailable`. The chart passes the
+endpoint and `config.appFileStorage.bucket` as `MINIO_ENDPOINT` and
+`STORAGE_BUCKET`, and maps `secrets.appFileStorageAccessKey` /
+`secrets.appFileStorageSecretKey` to `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`
+(names kept from the MinIO sidecar; any S3-compatible endpoint works). It is
+refused the same half configurations as the media store. Always set the
+bucket: bucket names are global, so the code's default, `usernode-app-files`,
+is not one to rely on. Its bucket may share the media project, and so its key, since both hold
+what people put into the platform.
 
 The infra values can use a separate SOPS-encrypted overlay containing only this
 new field, encrypted to the same cluster recipients and listed after the existing
@@ -350,6 +360,25 @@ Platform links, CLI authentication, and access-grant redirects continue to use
 `config.domain`. The platform hostname is reserved: app deployment rejects a
 collision before writing Kubernetes resources, and app access parsing never
 treats the platform as a generated app.
+
+To move apps and previews to another domain, set `config.appsDomain` to the
+new one and `config.legacyAppsDomain` to the old one
+(`USERNODE_LEGACY_APPS_DOMAIN`). The release then moves every production app
+Ingress to the new domain within ten minutes (the `apps-domain-move` clock
+job); a preview moves on its next build and keeps serving at the old domain
+until then. Custom domains whose CNAME still points at an app's old address
+keep passing their checks. The wildcard certificate must cover both domains,
+and the infrastructure should redirect old addresses nothing serves any more
+to the new domain. Clear `legacyAppsDomain` once no preview is left on the old
+domain.
+
+To give previews a domain of their own, set `config.previewsDomain`
+(`USERNODE_PREVIEWS_DOMAIN`): previews are then served at
+`<slug>--s<sessionId>.<previewsDomain>`, and only previews are recognized
+there. Startup refuses a previews domain on the same registrable site as the
+platform or the apps, since its purpose is to keep a preview's unreviewed code
+away from both. A preview moves on its next build and keeps serving on the apps
+domain until then. The wildcard certificate must cover the previews domain too.
 
 Before & after shots are on by default. The chart always injects
 `SHOTS_ENABLED=true`; in an incident, set `platform.shotsEnabled: false`

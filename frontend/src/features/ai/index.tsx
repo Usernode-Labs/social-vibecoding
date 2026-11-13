@@ -78,7 +78,7 @@ import { FRESH } from '../../lib/live-reads';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { EmbeddedConversation } from '../messages';
-import { closeNewThread, NewThreadButton, useNewThread } from '../messages/new-thread';
+import { closeNewThread, NewThreadButton, startNewThread, useNewThread } from '../messages/new-thread';
 import { keptConversations, openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
 import { closeThread, embed, loadConversations, useMessagesSnapshot } from '../messages/store';
@@ -93,13 +93,17 @@ import {
   probeLayout,
 } from '../side-panel/resize';
 import { sidePanelStore } from '../side-panel/store.js';
-import { attachmentFor, columnAddress, columnKey, routeOf, type Column, type ColumnDetail, type ColumnHow } from './column';
+import { attachmentFor, columnAddress, columnKey, pageProject, routeOf, type Column, type ColumnDetail, type ColumnHow } from './column';
 import {
   BOT_TAB, botDetailAt, botItemFromRoute, botItemRoute, botTabAddress, botTabAt, knownBotConversation, noteBotConversation, useBotTabAsk,
   type BotAt, type BotItem,
 } from './door';
 import { useLiveLists } from './live';
 import { AiLists } from './lists';
+import { AiFrameList } from './frame-list';
+import { isFrameSkin, useSkin } from '../../lib/skin';
+import { useFramePage } from '../frame/frame-page-store';
+import { Icon as KitIcon, Tile as KitTile, k as kit } from '@/components/ui/kit';
 import { historyAsked, isBotTabHash, kindOf, projectsOf, withFilter, type HistoryKind } from './filter-address';
 import { useHistory, type HistoryRow } from './history';
 import { communityScopeStore } from '../workshop/community-scope';
@@ -108,9 +112,10 @@ import { AiDrawer, MainPane, usePhone } from './phone-drawer';
 import { closeDetail, detailLayout, openDetail, useDetail, THREE_COLUMNS } from './detail';
 import { DetailPane } from '../detail/detail-pane';
 import {
-  freshCount, heroWords, inProgress, isTopicHref, liveThisWeek, needsYou, owedCount, rankProjects, upNext,
+  applyWorkState, freshCount, heroWords, inProgress, isTopicHref, liveThisWeek, needsYou, owedCount, rankProjects, upNext,
   type AiApp, type AiThread, type AiWork, type NeedItem, type WorkRow,
 } from './model';
+import type { WorkStatePush } from '../../lib/work-state';
 
 // 1 Nov 2026: the column is docked from 768px, where a phone's drawer ends.
 const WIDE = '(min-width: 768px)';
@@ -570,9 +575,14 @@ export function AiScreen(): ReactNode {
   // the lists says so. The server keeps the cursor (POST threads/read), so
   // the next read agrees.
   const [seenThreads, setSeenThreads] = useState<ReadonlySet<number>>(() => new Set());
-  const markThreadRead = (threadId: number | null | undefined, app: AiApp | null): void => {
+  const markThreadRead = (threadId: number | null | undefined, app: AiApp | null, rootId?: number | null): void => {
     if (!threadId) return;
     setSeenThreads((had) => (had.has(threadId) ? had : new Set([...had, threadId])));
+    // #6604: only a PRIVATE thread is marked read from here. A request's or
+    // a change's page marks its own thread when its group chat mounts
+    // (group-chat.js _noteThreadRead), so posting from both sent the same
+    // read twice on every open.
+    if (!rootId) return;
     if (!app?.slug || typeof window === 'undefined') return;
     void fetch(`/api/apps/${encodeURIComponent(app.slug)}/threads/read${demoQuery()}`, {
       method: 'POST',
@@ -598,7 +608,21 @@ export function AiScreen(): ReactNode {
     () => new Set(rankProjects(rows, progress, waiting, live).map((p) => p.app.slug)),
     [rows, progress, waiting, live],
   );
-  useLiveLists(() => setMoved((n) => n + 1), visible, { projects, botId });
+  // A work_state push is drawn at once where the lists hold its item
+  // (./model.ts applyWorkState); the read after it puts the row in its list.
+  const applyPush = useCallback((push: WorkStatePush) => {
+    setWork((now) => applyWorkState(now, null, push).work);
+    setNeeds((now) => applyWorkState(null, now, push).needs);
+  }, []);
+  // #6595: a request or a change open in the column is a page of its own
+  // project, so an update about that project re-reads the lists beside it
+  // even when nothing of it was listed. Never by App.currentApp: on this
+  // page that is null.
+  const shownProjects = useMemo(() => {
+    const slug = column?.at === 'page' ? pageProject(column.route) : null;
+    return slug && !projects.has(slug) ? new Set([...projects, slug]) : projects;
+  }, [projects, column]);
+  useLiveLists(() => setMoved((n) => n + 1), visible, { projects: shownProjects, botId }, applyPush);
   // HISTORY (./history.ts): read on each showing, and again when the
   // projects picked or its kind change.
   const [showings, setShowings] = useState(0);
@@ -670,6 +694,18 @@ export function AiScreen(): ReactNode {
     else if (ask.item) openItem(ask.item);
     else if (ask.at) showAt(ask.at);
   }, [ask, visible, wide, phone]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 10 Nov 2026: `#homeroom-bot/new…` is the "+" pressed for you, with the
+  // project and who works on it already set when the address names them
+  // (./door.ts botNewAt). It opens beside the chat, so it has a count of its
+  // own to wait on until the page knows which chat that is.
+  const freshTaken = useRef(0);
+  useEffect(() => {
+    if (!ask?.fresh || ask.seq === freshTaken.current || !visible || !(wide || phone) || !botId) return;
+    freshTaken.current = ask.seq;
+    how.current = 'row';
+    openBlank();
+    startNewThread(botId, ask.fresh);
+  }, [ask, visible, wide, phone, botId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openMain = () => {
     if (!(wide || phone)) { go(botTabAddress(null)); return; }
@@ -703,7 +739,7 @@ export function AiScreen(): ReactNode {
     if (openPublic(href, app, title)) underPanel();
   };
   const openRow = (row: WorkRow) => {
-    markThreadRead(row.threadId, row.app);
+    markThreadRead(row.threadId, row.app, row.rootId);
     if (row.rootId) {
       openPrivate(row.rootId);
       return;
@@ -711,7 +747,7 @@ export function AiScreen(): ReactNode {
     openPage(row.href, row.app, row.title, aboutRow(row));
   };
   const openThread = (th: AiThread) => {
-    markThreadRead(th.threadId, th.app);
+    markThreadRead(th.threadId, th.app, th.rootId);
     // #6153: a request filed from a private thread opens that thread, where
     // its design and its story are, rather than the request's page.
     if (th.rootId) {
@@ -834,6 +870,13 @@ export function AiScreen(): ReactNode {
   useEffect(() => { if (searchOpen) searchRef.current?.focus(); }, [searchOpen]);
 
   const heroLine = work ? heroWords(owed, progress.length, fresh) : null;
+  // A look of the one frame draws the list with the kit (./frame-list.tsx),
+  // from the same rows and presses. Read after mount (lib/skin.ts says why).
+  const frame = isFrameSkin(useSkin());
+  // On a phone the open chat takes the whole screen: the frame's bar names
+  // it and its arrow goes back to the list (../frame/frame-page-store.ts).
+  const listAgain = useCallback(() => toListRef.current(), []);
+  useFramePage(frame && phone && visible && level === 1 && !threadUp ? [mainTitle] : null, listAgain);
   const hero = (
     <>
       <section className="flex items-center gap-3 px-4 pt-3" data-ai-hero="">
@@ -894,6 +937,38 @@ export function AiScreen(): ReactNode {
 
   const listContent = (
     <>
+      {frame ? (
+        <AiFrameList
+          heroLine={heroLine}
+          main={{ lit: lit === 'main', unread, open: openMain }}
+          query={searchOpen ? query : ''}
+          onQuery={setQuery}
+          searchOpen={searchOpen}
+          onSearch={setSearchOpen}
+          searchRef={searchRef}
+          lit={lit}
+          ready={!!work && !!needs}
+          failed={failed}
+          onRetry={() => setMoved((n) => n + 1)}
+          rows={rows}
+          owed={owed}
+          progress={progress}
+          waiting={waiting}
+          live={live}
+          openRow={openRow}
+          openThread={openThread}
+          onDone={(rootId) => { setDoneRoots((had) => new Set([...had, rootId])); setMoved((n) => n + 1); }}
+          picked={picked}
+          onPick={pick}
+          appFor={appFor}
+          onNew={() => { openBlank(); if (botId) startNewThread(botId); }}
+          history={history}
+          historyKind={historyKind}
+          onHistoryKind={pickKind}
+          openHistory={openHistory}
+          historyRef={historyRef}
+        />
+      ) : (
       <div className="ai-screen-body max-w-2xl mx-auto pb-8">
         <AiLists
           hero={hero}
@@ -922,6 +997,7 @@ export function AiScreen(): ReactNode {
         />
         <div className="ai-askbar-gap" aria-hidden="true" />
       </div>
+      )}
 
       {/* Ask Homeroom bot: Main. A bar over the tab bar; on a desktop Main
           is docked beside the list and this is not drawn. */}
@@ -950,6 +1026,7 @@ export function AiScreen(): ReactNode {
       data-ai-open={columnOpen ? '' : undefined}
       data-ai-drawer={phone ? level : undefined}
       data-ai-preview={detailHere ? layout : undefined}
+      data-frame-list={frame ? '' : undefined}
       style={{ position: 'relative' }}
     >
       {phone ? (
@@ -988,6 +1065,23 @@ export function AiScreen(): ReactNode {
               alone under its own (ReplyThreadPanel `inMain`), with no bar of
               Main Chat's over it. 6 Nov 2026: Main Chat closes with its own
               ×, leaving the lists alone (#6425). */}
+          {frame ? (threadUp ? null : (
+            // The open item's head, as the kit draws it: who it is, one line
+            // about it, and the way to close it.
+            <header className="fr" data-ai-main-head="">
+              <div className={kit('dhead')}>
+                <KitTile name={t('messages:store.header.main')} src={BOT_AVATAR} />
+                <div className={kit('tx')}>
+                  <div className={kit('t')} id="ai-main-title">{t('messages:store.header.main')}</div>
+                  <div className={kit('s')}><span className={kit('inl')}><KitIcon name="lock" size={13} />{t('messages:ai.main.sub')}</span></div>
+                </div>
+                <button type="button" className={kit('ib')} data-ai-main-close="" aria-label={t('messages:ai.main.close')} onClick={closeColumn}>
+                  <KitIcon name="x" size={18} />
+                </button>
+              </div>
+            </header>
+          )) : (
+            <>
           {threadUp ? null : (
             <header className="ai-main-head" data-ai-main-head="">
               <img src={BOT_AVATAR} alt="" className="w-8 h-8 rounded-[10px] object-cover shrink-0" />
@@ -1011,6 +1105,8 @@ export function AiScreen(): ReactNode {
                 <XIcon className="w-4 h-4" aria-hidden="true" />
               </button>
             </header>
+          )}
+            </>
           )}
           {conversationUp ? <EmbeddedConversation conversationId={botId!} active={visible && columnOpen} at={at} mainChat /> : null}
         </aside>

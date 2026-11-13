@@ -179,7 +179,6 @@ const {
 // the whole list, so the board pays for it once and not per card.
 const { resolveIssueProposalRefs } = require('../services/issue-proposal-ref');
 const threadsService = require('../services/threads');
-const { botWorkByIssue } = require('../services/homeroom-bot-progress');
 const MAX_CLOSE_REASON_LENGTH = 2000;
 // #556: cap for author-edited issue titles (rename route below). Matches
 // the feedback form's optional title input; far below GitHub's own limit.
@@ -202,18 +201,48 @@ function issueBodyWithScreenshots(description, screenshotIds, domain) {
   return description ? `${description}${embed}` : embed.replace(/^\n+/, '');
 }
 
-// What the Homeroom bot is reading or building among an app's requests, by
-// issue number, for each row's `bot` field ({ what, since }, or null). The
-// bot's own sessions never count as `in_progress` (synthetic authors are
-// left out below), so this is the only way a request it is building says
-// so. Best effort: a list is not worth failing over it.
-async function botWorkFor(pool, appId) {
+// 11 Nov 2026 (docs/plans/bot-one-model.md, step 3): where each request
+// stands is its stored work state (services/work-state.js), the same row
+// every screen draws and Homeroom bot says of it. Each request in a payload
+// carries it as `standing`, with what is only the viewer's: `mine` (they
+// asked for it, or it is their project) and `voteOwed` (its change is open
+// for votes and they owe a vote on it, by the Needs you feed's own test,
+// routes/workshop-overview.js OWED_PROPOSALS_WHERE). Made first for a
+// request with none yet. Best effort: a list is not worth failing over it.
+async function standingsFor(pool, { app, numbers, viewer, askers = null }) {
+  const workState = require('../services/work-state');
+  const out = new Map();
+  const list = [...new Set((numbers || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!app || !list.length) return out;
   try {
-    return await botWorkByIssue(pool, appId);
+    await workState.ensure(pool, list.map((n) => ({ appId: app.id, issueNumber: n })));
+    const rows = await workState.forRequests(pool, app.id, list);
+    const open = [...rows.values()].filter((r) => r.voteOpen && r.change?.id).map((r) => Number(r.change.id));
+    let owed = new Set();
+    if (open.length && viewer?.id) {
+      const { OWED_PROPOSALS_WHERE } = require('./workshop-overview');
+      const { rows: found } = await pool.query(
+        `SELECT cs.id FROM chat_sessions cs WHERE cs.id = ANY($2::int[]) AND ${OWED_PROPOSALS_WHERE}`,
+        [viewer.id, open],
+      );
+      owed = new Set(found.map((r) => Number(r.id)));
+    }
+    const owner = viewer?.id && Number(app.created_by) === Number(viewer.id);
+    for (const [n, row] of rows) {
+      const asker = askers?.get(n);
+      const mine = !!viewer?.id && (Number(row.requesterId) === Number(viewer.id)
+        || (asker && Number(asker.userId) === Number(viewer.id)) || !!owner);
+      // What is asked of its requester (their chat's question, a plan they
+      // are drafting, their cards) is theirs alone: anybody else reads only
+      // that something is asked, and nobody's id (work-state.js publicOf).
+      out.set(n, workState.forViewer(row, {
+        mine, voteOwed: !!(row.change && owed.has(Number(row.change.id))), viewerId: viewer?.id ?? null,
+      }));
+    }
   } catch (err) {
-    log.warn('issues', 'Failed to read the Homeroom bot\'s work', { message: err.message });
-    return new Map();
+    log.warn('issues', 'Failed to read where requests stand', { message: err.message });
   }
+  return out;
 }
 
 // #132: should this issue kind get a GitHub twin on the app's repo?
@@ -245,6 +274,115 @@ function shouldCreateGithubTwin(kind) {
 // updatedAt is computed per request so the feed's activity sort places
 // them naturally. Strictly a no-op in production.
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+
+// Staging: the [Mock] rows carry no topic_attribute_votes, so a few get a
+// synthetic priority / assignee / category summary. BOTH the board's list and
+// a request opened by its own number apply it, so the chips read the same
+// whichever way the page was reached (#6604).
+function stagingMockAttrs(viewer) {
+  return new Map([
+      // Clear leader on all fields; the viewer is their own assignee.
+      [900001, {
+        priority: { top: 'high', count: 3, myValue: null },
+        assignee: { top: viewer, count: 2, myValue: viewer },
+        // #504: a clear category leader (count 3) so the chip + colour
+        // and the category filter dropdown are reviewable.
+        category: { top: 'bug', count: 3, myValue: null },
+      }],
+      // A tie (count 1 vs 1) — the earlier-suggested value wins the chip.
+      [900003, {
+        priority: { top: 'low', count: 1, myValue: null },
+        assignee: { top: 'staging-demo-user', count: 1, myValue: null },
+        category: { top: 'docs', count: 1, myValue: null },
+      }],
+      // #489: a third assignee whose first letter (M) differs from the
+      // others (S), so the deterministic initial-avatar colouring is
+      // reviewable across several visibly-distinct avatars on the board.
+      [900006, {
+        priority: { top: 'medium', count: 2, myValue: null },
+        assignee: { top: 'maya-builder', count: 3, myValue: null },
+        // A second, distinct category leader so the filter has choices.
+        category: { top: 'feature', count: 2, myValue: null },
+      }],
+      // #780: a CUSTOM category leader, matching one of the two demo
+      // entries listCategories() appends in staging — so the custom chip
+      // colour, and narrowing the board by a custom category in the
+      // filter bar, are both reviewable in a preview.
+      [900007, {
+        priority: { top: 'high', count: 1, myValue: null },
+        assignee: { top: 'staging-demo-user', count: 1, myValue: null },
+        category: { top: 'staging-demo-perf', count: 2, myValue: null },
+      }],
+      // 900002 deliberately left untouched → muted "Set priority" /
+      // "Unassigned" / "Set category"; opening its assignee dropdown
+      // pre-fills the viewer's own username.
+    ]);
+}
+
+// Staging: the [Mock] rows have no chat_sessions rows behind them, so the
+// "In progress" chip variants get a synthetic worked-on summary. BOTH the
+// board's list and a request opened by its own number apply it, so the card
+// reads the same whichever way the page was reached (#6604).
+function stagingMockInProgress(viewer) {
+  const hoursAgoIso = (hrs) => new Date(Date.now() - hrs * 3600 * 1000).toISOString();
+  const hoursAheadIso = (hrs) => new Date(Date.now() + hrs * 3600 * 1000).toISOString();
+  const mkMockClaim = (username, mine, hrs) => ({
+    username, userId: mine && viewer ? viewer.id : 0, mine,
+    claimedAt: hoursAgoIso(hrs), expiresAt: hoursAheadIso(7 * 24 - hrs),
+  });
+  const mkMockSession = (sessionId, username, status, hrs, busy) => ({
+    sessionId, username, mine: false, status, busy: !!busy,
+    lastActivityAt: hoursAgoIso(hrs),
+  });
+  return new Map([
+    // #1112 `in_review`: the session was promoted, so the work is
+    // waiting on reviewers rather than on an agent. CLICKABLE styling
+    // (synthetic proposal target — clicking lands on the topic view's
+    // not-found fallback, same visual-review-only caveat as the
+    // synthetic myPrSessionId above).
+    [900007, {
+      count: 1, users: ['staging-tester'], peopleTotal: 1, mine: false, claims: [],
+      sessions: [mkMockSession(900007, 'staging-tester', 'promoted', 4, false)],
+      target: { kind: 'proposal', sessionId: 900007 },
+    }],
+    // #1112 `working` with a live turn: two active sessions, the
+    // most-recent one busy, so the chip renders emerald with its
+    // spinner and a "+1" for the second person. NON-clickable
+    // (private-work) styling.
+    [900006, {
+      count: 2, users: ['maya-builder', 'staging-tester'], peopleTotal: 2, mine: false,
+      claims: [],
+      sessions: [
+        mkMockSession(900106, 'maya-builder', 'active', 0.2, true),
+        mkMockSession(900206, 'staging-tester', 'active', 3, false),
+      ],
+      target: null,
+    }],
+    // #1112 `claimed`, with the VIEWER among the claimers — reviews
+    // the multi-claimer "+1" plus the "Release my claim" button state.
+    [900004, {
+      count: 0, users: [], peopleTotal: 2, mine: true, sessions: [],
+      claims: [mkMockClaim((viewer && viewer.username) || 'staging-tester', true, 2), mkMockClaim('maya-builder', false, 5)],
+      target: null,
+    }],
+    // #1112 `claimed` by someone else — the viewer's button stays
+    // "Claim this issue" and the admin per-claim clear is reviewable
+    // in the topic view.
+    [900008, {
+      count: 0, users: [], peopleTotal: 1, mine: false, sessions: [],
+      claims: [mkMockClaim('maya-builder', false, 8)],
+      target: null,
+    }],
+    // #1112 `paused`: one session, paused, last touched 5 days ago —
+    // two days short of the 7-day self-clear, which is exactly the
+    // case the topic head's dated sentence exists to explain.
+    [900014, {
+      count: 1, users: ['maya-builder'], peopleTotal: 1, mine: false, claims: [],
+      sessions: [mkMockSession(900114, 'maya-builder', 'paused', 5 * 24, false)],
+      target: null,
+    }],
+  ]);
+}
 
 // Whether requests can be read and written here. Requests are Homeroom's
 // own rows (services/requests.js) since GitHub suspended the account that
@@ -473,6 +611,15 @@ function stagingMockIssues(repoUrl) {
     mk(9115, 'Staging demo: a plan row opens Main Chat',
       'Staging demo: obviously fake. One piece of the larger request.\n\n'
       + '**Source:** Homeroom user (usernode-capture)', 30),
+    // #6581: the request whose build failed twice, with a reply under its
+    // first failure note (seedStagingBotFailureNotes in src/db/migrate.js
+    // stores the thread). A staging copy has no GitHub to read the request
+    // from, so its page's own fetch finds it here, and only the after copy
+    // has it: the change keeps the first note and posts the second below.
+    mk(9116, 'Staging demo: a request whose build failed twice',
+      'Staging demo: obviously fake. Its build failed, so the bot said so, '
+      + 'and it failed again after somebody replied.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 3),
   ];
 }
 
@@ -527,6 +674,20 @@ function stagingMockBotWork() {
   return { what: 'building', since: new Date(Date.now() - 20 * 60 * 1000).toISOString() };
 }
 
+// Its standing, in the shape a stored row has (services/work-state.js
+// shapeOf: its words included), for the same mock request: the bot is
+// building it, its second try. Written nowhere.
+function stagingMockStanding(app, number) {
+  const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const workState = require('../services/work-state');
+  return workState.forViewer(workState.shapeOf({
+    appId: app.id, app: { slug: app.slug, name: app.name || app.slug }, kind: 'request', ref: number,
+    issueNumber: number, sessionId: null, stage: 'building', why: null, reason: null, line: null, whoseMove: 'bot',
+    since, updatedAt: since, voteOpen: false, leadChangeId: null,
+    standing: { change: null, said: null, tries: 2, tryStarts: [] },
+  }), { mine: false, voteOwed: false });
+}
+
 // Staging-only mock GOVERNANCE proposals (DB-issue shaped) for the
 // Proposals-tab vote panel, so the dynamic threshold + visibility-window
 // countdown is exercisable on a prod-cloned staging DB via ?demo=1. Distinct
@@ -570,11 +731,17 @@ function stagingMockGovernance() {
       { required: 2, windowEndsAt: hoursAhead(36) }),
     // #2086: an open featured-illustration proposal, so the card's preview
     // (proposed image beside the current one) is reviewable via ?demo=1 on
-    // an empty staging DB. The image is a shipped static asset rather than
-    // an app-illustrations id, which the empty DB could not serve.
+    // an empty staging DB. The images are shipped static assets rather than
+    // app-illustrations ids, which the empty DB could not serve. It also
+    // proposes an animated preview, a made-up "Sample recipe helper" loop
+    // (public/illustrations/card-previews/), whose first frame is the
+    // proposed picture, so the vote's loop player is reviewable too.
     mk(9100077, 'featured_illustration', '[Mock] Change the featured illustration',
       {
-        proposed: { url: '/icons/v3/icon-512.png', darkUrl: null, zoom: 1.2, x: 10, y: -5, tint: 'teal' },
+        proposed: {
+          url: '/illustrations/card-previews/sample.png', darkUrl: null, zoom: 1, x: 0, y: 0, tint: 'yellow',
+          preview: { url: '/illustrations/card-previews/sample.mp4', type: 'video/mp4' },
+        },
         current: { url: '/icons/v3/icon-192.png', darkUrl: null, zoom: 1, x: 0, y: 0 },
         remove: false,
       }, 5, 1, 0,
@@ -1451,7 +1618,11 @@ function issueRoutes(config) {
         const out = await require('../services/homeroom-bot-dm').askBotToBuild(pool, {
           app, user: req.user, issueNumber: n, readAgain: req.body?.readAgain === true,
         });
-        if (!out.ok) return res.status(out.status || 400).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
+        if (!out.ok) {
+          return res.status(out.status || 400).json({
+            error: out.error, ...(out.code ? { code: out.code } : {}), ...(out.signals ? { signals: out.signals } : {}),
+          });
+        }
         return res.json(out);
       } catch (err) {
         log.error('issues', 'Asking Homeroom bot to build failed', { message: err.message, slug: req.params.slug });
@@ -1510,6 +1681,32 @@ function issueRoutes(config) {
         return res.json({ ok: true, disputed: true });
       } catch (err) {
         log.error('issues', 'Answering a change\'s claim failed', { message: err.message, slug: req.params.slug });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+  // #6606: the request's filer agrees the change closes it. Same gate,
+  // validation and view-access read as not-closing above; the service keeps
+  // "one answer per claim" and refuses the change's own author.
+  router.post('/api/apps/:slug/issues/:number/changes/:sessionId/confirm-closing', issueKindLimiter, sameOriginBrowserOnly,
+    communities.requireAppMembership(pool), async (req, res) => {
+      try {
+        const n = Number(req.params.number);
+        const sessionId = Number(req.params.sessionId);
+        if (!Number.isSafeInteger(n) || n <= 0 || !Number.isSafeInteger(sessionId) || sessionId <= 0) {
+          return res.status(400).json({ error: 'Invalid request or change' });
+        }
+        const app = await appAccess.getAppForUser(
+          pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS,
+        );
+        if (!app) return res.status(404).json({ error: 'App not found' });
+        const out = await require('../services/change-claims').confirm(pool, {
+          appId: app.id, requestNumber: n, sessionId, userId: req.user.id, username: req.user.username,
+        });
+        if (!out.ok) return res.status(out.status || 400).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
+        return res.json({ ok: true, confirmed: true });
+      } catch (err) {
+        log.error('issues', 'Confirming a change\'s claim failed', { message: err.message, slug: req.params.slug });
         return res.status(500).json({ error: 'Internal server error' });
       }
     });
@@ -1885,6 +2082,11 @@ function issueRoutes(config) {
           const ghIssue = await github.createIssue(parsed.owner, parsed.repo, {
             title,
             body: description || '',
+            // #6606: the request's filer is the account that filed it, so a
+            // change saying it closes this one can be confirmed (or not) by
+            // them. Without it `requests.created_by` was empty for every
+            // request filed through the connector.
+            createdBy: req.user.id,
           });
           if (!Number.isInteger(ghIssue?.number) || ghIssue.number <= 0) {
             throw new Error('GitHub returned an invalid issue number');
@@ -2485,10 +2687,10 @@ function issueRoutes(config) {
       const addressedBy = await resolveIssueProposalRefs(
         pool, app.id, (result.issues || []).map((i) => i.number), req.user.id
       );
-      const botByNumber = await botWorkFor(pool, app.id);
       // 16 Oct 2026: where the bot's work on each request is
       // (homeroom-bot-track.js): an open request's page draws from this
-      // list, so its track card travels with it, as `bot` does.
+      // list, so its track card travels with it. 11 Nov 2026: both read the
+      // request's stored work state, which travels as `standing`.
       const trackSvc = require('../services/homeroom-bot-track');
       const tracks = await trackSvc.tracksForRequests(pool, { appId: app.id, numbers: (result.issues || []).map((i) => i.number) });
       // B8: who each request the bot is on is being built for, and whether
@@ -2497,8 +2699,18 @@ function issueRoutes(config) {
       const botDm = require('../services/homeroom-bot-dm');
       // Papote #3: and of each track waiting on its requester, which names
       // them to everybody else (homeroom-bot-track.js forViewer).
-      const waitingTracks = [...tracks].filter(([, track]) => track?.waitingOn === 'you').map(([n]) => n);
-      const askers = await botDm.askersOf(pool, app.id, [...botByNumber.keys(), ...waitingTracks]);
+      const listed = (result.issues || []).map((i) => i.number);
+      const askers = await botDm.askersOf(pool, app.id, listed);
+      // Staging's mock requests are written nowhere: they carry their own.
+      const mocked = IS_STAGING
+        ? new Set([...stagingMockIssues(app.repo_url), ...stagingMockClosedIssues(app.repo_url)].map((i) => Number(i.number)))
+        : new Set();
+      const standings = await standingsFor(pool, { app, numbers: listed.filter((n) => !mocked.has(Number(n))), viewer: req.user, askers });
+      const botByNumber = new Map();
+      for (const [n, standing] of standings) {
+        const work = require('../services/work-state').botWorkOf(standing);
+        if (work) botByNumber.set(n, work);
+      }
       const botAsked = (n) => {
         const work = botByNumber.get(n);
         if (!work) return null;
@@ -2549,6 +2761,10 @@ function issueRoutes(config) {
           // ({ what, since }), or null. Its own field, like `headless`: the
           // bot is never `in_progress`.
           bot: botAsked(issue.number),
+          // 11 Nov 2026: where it stands (services/work-state.js), the one
+          // source its status card draws, with the viewer's own `mine` and
+          // `voteOwed`.
+          standing: standings.get(issue.number) || null,
           track: trackSvc.forViewer(tracks.get(issue.number) || null, askers.get(issue.number), req.user.id),
           // #4530: the bot's note there that nobody has answered yet
           // ({ kind: 'question' | 'person' | 'empty', messageId }), or null.
@@ -2670,64 +2886,7 @@ function issueRoutes(config) {
         // newest-on-top (#617) demos, and an in-progress mark would move
         // them out of the Issues column. Request-time, read-only, no-op
         // in production.
-        const hoursAgoIso = (hrs) => new Date(Date.now() - hrs * 3600 * 1000).toISOString();
-        const hoursAheadIso = (hrs) => new Date(Date.now() + hrs * 3600 * 1000).toISOString();
-        const mkMockClaim = (username, mine, hrs) => ({
-          username, userId: mine ? req.user.id : 0, mine,
-          claimedAt: hoursAgoIso(hrs), expiresAt: hoursAheadIso(7 * 24 - hrs),
-        });
-        const mkMockSession = (sessionId, username, status, hrs, busy) => ({
-          sessionId, username, mine: false, status, busy: !!busy,
-          lastActivityAt: hoursAgoIso(hrs),
-        });
-        const mockInProgress = new Map([
-          // #1112 `in_review`: the session was promoted, so the work is
-          // waiting on reviewers rather than on an agent. CLICKABLE styling
-          // (synthetic proposal target — clicking lands on the topic view's
-          // not-found fallback, same visual-review-only caveat as the
-          // synthetic myPrSessionId above).
-          [900007, {
-            count: 1, users: ['staging-tester'], peopleTotal: 1, mine: false, claims: [],
-            sessions: [mkMockSession(900007, 'staging-tester', 'promoted', 4, false)],
-            target: { kind: 'proposal', sessionId: 900007 },
-          }],
-          // #1112 `working` with a live turn: two active sessions, the
-          // most-recent one busy, so the chip renders emerald with its
-          // spinner and a "+1" for the second person. NON-clickable
-          // (private-work) styling.
-          [900006, {
-            count: 2, users: ['maya-builder', 'staging-tester'], peopleTotal: 2, mine: false,
-            claims: [],
-            sessions: [
-              mkMockSession(900106, 'maya-builder', 'active', 0.2, true),
-              mkMockSession(900206, 'staging-tester', 'active', 3, false),
-            ],
-            target: null,
-          }],
-          // #1112 `claimed`, with the VIEWER among the claimers — reviews
-          // the multi-claimer "+1" plus the "Release my claim" button state.
-          [900004, {
-            count: 0, users: [], peopleTotal: 2, mine: true, sessions: [],
-            claims: [mkMockClaim(req.user.username, true, 2), mkMockClaim('maya-builder', false, 5)],
-            target: null,
-          }],
-          // #1112 `claimed` by someone else — the viewer's button stays
-          // "Claim this issue" and the admin per-claim clear is reviewable
-          // in the topic view.
-          [900008, {
-            count: 0, users: [], peopleTotal: 1, mine: false, sessions: [],
-            claims: [mkMockClaim('maya-builder', false, 8)],
-            target: null,
-          }],
-          // #1112 `paused`: one session, paused, last touched 5 days ago —
-          // two days short of the 7-day self-clear, which is exactly the
-          // case the topic head's dated sentence exists to explain.
-          [900014, {
-            count: 1, users: ['maya-builder'], peopleTotal: 1, mine: false, claims: [],
-            sessions: [mkMockSession(900114, 'maya-builder', 'paused', 5 * 24, false)],
-            target: null,
-          }],
-        ]);
+        const mockInProgress = stagingMockInProgress(req.user);
         for (const issue of issues) {
           const m = mockInProgress.get(issue.number);
           if (m && !issue.in_progress) issue.in_progress = m;
@@ -2736,8 +2895,10 @@ function issueRoutes(config) {
         // marks, and only where no real bot work claimed the number.
         for (const issue of issues) {
           if (issue.number === 900018 && !issue.bot) issue.bot = stagingMockBotWork();
-          // And its track, as its own page shows it (homeroom-bot-track.js).
+          // And its track, as its own page shows it (homeroom-bot-track.js),
+          // and its standing, in the shape every real row has.
           if (issue.number === 900018 && !issue.track) issue.track = trackSvc.demoRequestTrack(app, 900018, issue.title);
+          if (issue.number === 900018 && !issue.standing) issue.standing = stagingMockStanding(app, 900018);
         }
         // #4530: and one it asked a question on that nobody has answered:
         // 900001, where its door is drawn (?demo=1&bot=1). Its card offers
@@ -2776,43 +2937,7 @@ function issueRoutes(config) {
         // 900002 stays untouched (Unassigned) so opening ITS dropdown shows
         // the name box PRE-FILLED with the viewer's username.
         const viewer = (req.user && req.user.username) || 'staging-tester';
-        const mockAttrs = new Map([
-          // Clear leader on all fields; the viewer is their own assignee.
-          [900001, {
-            priority: { top: 'high', count: 3, myValue: null },
-            assignee: { top: viewer, count: 2, myValue: viewer },
-            // #504: a clear category leader (count 3) so the chip + colour
-            // and the category filter dropdown are reviewable.
-            category: { top: 'bug', count: 3, myValue: null },
-          }],
-          // A tie (count 1 vs 1) — the earlier-suggested value wins the chip.
-          [900003, {
-            priority: { top: 'low', count: 1, myValue: null },
-            assignee: { top: 'staging-demo-user', count: 1, myValue: null },
-            category: { top: 'docs', count: 1, myValue: null },
-          }],
-          // #489: a third assignee whose first letter (M) differs from the
-          // others (S), so the deterministic initial-avatar colouring is
-          // reviewable across several visibly-distinct avatars on the board.
-          [900006, {
-            priority: { top: 'medium', count: 2, myValue: null },
-            assignee: { top: 'maya-builder', count: 3, myValue: null },
-            // A second, distinct category leader so the filter has choices.
-            category: { top: 'feature', count: 2, myValue: null },
-          }],
-          // #780: a CUSTOM category leader, matching one of the two demo
-          // entries listCategories() appends in staging — so the custom chip
-          // colour, and narrowing the board by a custom category in the
-          // filter bar, are both reviewable in a preview.
-          [900007, {
-            priority: { top: 'high', count: 1, myValue: null },
-            assignee: { top: 'staging-demo-user', count: 1, myValue: null },
-            category: { top: 'staging-demo-perf', count: 2, myValue: null },
-          }],
-          // 900002 deliberately left untouched → muted "Set priority" /
-          // "Unassigned" / "Set category"; opening its assignee dropdown
-          // pre-fills the viewer's own username.
-        ]);
+        const mockAttrs = stagingMockAttrs(viewer);
         for (const issue of issues) {
           const m = mockAttrs.get(issue.number);
           if (m && (!issue.priority || !issue.priority.top) && (!issue.assignee || !issue.assignee.top)) {
@@ -2963,6 +3088,17 @@ function issueRoutes(config) {
       const attrs = (await topicAttrs.summarizeForTargets(
         pool, app.id, 'issue', [number], req.user.id
       )).get(number) || topicAttrs.emptySummary();
+      // #6604: the page reads this row on its own now, without the board's
+      // list, so the same staging [Mock] chips the list seeds are applied
+      // here — a request opened by number shows its category and priority.
+      if (IS_STAGING) {
+        const m = stagingMockAttrs((req.user && req.user.username) || 'staging-tester').get(number);
+        if (m && (!attrs.priority || !attrs.priority.top) && (!attrs.assignee || !attrs.assignee.top)) {
+          attrs.priority = m.priority;
+          attrs.assignee = m.assignee;
+          attrs.category = m.category;
+        }
+      }
       // #2431: for a CLOSED issue this is the whole answer to "what closed
       // this?" — the merged change that linked it. Same resolver the list
       // uses, so both pages name the same proposal.
@@ -2972,12 +3108,18 @@ function issueRoutes(config) {
       // The Homeroom bot's work, as the list carries it, for an OPEN issue:
       // a request it is building is not one to claim, opened from wherever.
       // A closed issue has nothing being built on it.
+      // 11 Nov 2026: where it stands (services/work-state.js), as the list
+      // carries it: `standing`, and `bot` read off the same row.
+      const askerRows = await require('../services/homeroom-bot-dm').askersOf(pool, app.id, [number]);
+      let standing = issue === mock ? null
+        : (await standingsFor(pool, { app, numbers: [number], viewer: req.user, askers: askerRows })).get(number) || null;
+      if (!standing && mock && number === 900018) standing = stagingMockStanding(app, number);
       let bot = null;
       if (issue.state !== 'closed') {
-        bot = (await botWorkFor(pool, app.id)).get(number) || null;
+        bot = require('../services/work-state').botWorkOf(standing);
         // B8: and who it is being built for, as the list says.
         if (bot) {
-          const asker = (await require('../services/homeroom-bot-dm').askersOf(pool, app.id, [number])).get(number);
+          const asker = askerRows.get(number);
           if (asker) bot = { ...bot, askedBy: asker.username, mine: asker.userId === req.user.id };
         }
         if (!bot && mock && number === 900018) bot = stagingMockBotWork();
@@ -2989,10 +3131,7 @@ function issueRoutes(config) {
       let track = (await trackSvc.tracksForRequests(pool, { appId: app.id, numbers: [number] })).get(number) || null;
       if (!track && mock && number === 900018) track = trackSvc.demoRequestTrack(app, number, issue.title);
       // Papote #3: a track waiting on its requester names them to anybody else.
-      if (track?.waitingOn === 'you') {
-        const asker = (await require('../services/homeroom-bot-dm').askersOf(pool, app.id, [number])).get(number);
-        track = trackSvc.forViewer(track, asker, req.user.id);
-      }
+      if (track?.waitingOn === 'you') track = trackSvc.forViewer(track, askerRows.get(number), req.user.id);
       // #4530: and its unanswered note there, as the list says it.
       const botAwaits = issue.state !== 'closed' && !bot && issue !== mock
         ? (await require('../services/homeroom-bot-dm').botWaitingByIssue(pool, app.id, [issue])).get(number) || null
@@ -3028,6 +3167,83 @@ function issueRoutes(config) {
       delete issueFields.mockAddressedBy;
       delete issueFields.mockClosedVia;
 
+      // #6604: a request's page draws from THIS read alone now — the board's
+      // list is not loaded behind it — so the work state its card shows has
+      // to be composed here, exactly as the list composes it: the live
+      // sessions that linked this request, the manual claims still in their
+      // window, the viewer's own dev chat, and a headless run. Without them a
+      // paused request read "Nobody is working on this yet" and its
+      // "Continue work" / "Create new proposal" buttons were missing.
+      if (issue.state !== 'closed') {
+        const { rows: inProgressRows } = await pool.query(
+          `SELECT cs.id, cs.user_id, cs.status, cs.shared_at,
+                  cs.last_activity_at, cs.created_at, u.username,
+                  ${workedOnSql()} AS worked_on
+             FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
+            WHERE cs.app_id = $1 AND cs.is_headless = FALSE
+              AND $2::int = ANY(cs.linked_issues)
+              AND u.is_synthetic IS NOT TRUE
+              AND NOT ${planRecordSql('cs')}
+              AND (cs.status IN ('active','promoted','merging')
+                   OR (cs.status = 'paused'
+                       AND cs.last_activity_at > NOW() - make_interval(days => $3)))`,
+          [app.id, number, IN_PROGRESS_PAUSED_WINDOW_DAYS]
+        );
+        const { rows: claimRows } = await pool.query(
+          `SELECT ic.user_id, ic.claimed_at, u.username
+             FROM issue_claims ic JOIN users u ON u.id = ic.user_id
+            WHERE ic.app_id = $1 AND ic.github_issue_number = $2
+            ORDER BY ic.claimed_at ASC`,
+          [app.id, number]
+        );
+        const claimNow = Date.now();
+        const lastAt = chat && chat.last_at;
+        const claims = claimRows
+          .filter((c) => claimIsLive(c.claimed_at, lastAt, claimNow))
+          .map((c) => ({ ...c, expires_at: claimExpiresAt(c.claimed_at, lastAt).toISOString() }));
+        issueFields.in_progress = composeInProgress(inProgressRows, claims, req.user.id)
+          || (IS_STAGING && req.query.demo === '1' ? stagingMockInProgress(req.user).get(number) : null)
+          || null;
+
+        const { rows: headlessRows } = await pool.query(
+          `SELECT cs.id, cs.headless_status, cs.headless_outcome,
+                  cs.staging_url, cs.pr_number, u.username, cs.user_id
+             FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
+            WHERE cs.app_id = $1 AND cs.is_headless = TRUE
+              AND cs.headless_issue_number = $2
+              AND cs.headless_status IN ('generating', 'ready')
+              AND u.is_synthetic IS NOT TRUE
+            ORDER BY cs.created_at DESC
+            LIMIT 1`,
+          [app.id, number]
+        );
+        const h = headlessRows[0] || null;
+        issueFields.headless = h ? {
+          sessionId: h.id,
+          status: h.headless_status,
+          outcome: h.headless_outcome,
+          username: h.username,
+          mine: h.user_id === req.user.id,
+          mySessionId: null,
+          stagingUrl: h.staging_url || null,
+          prNumber: h.pr_number || null,
+        } : null;
+
+        const { rows: prSessionRows } = await pool.query(
+          `SELECT id FROM chat_sessions
+            WHERE app_id = $1 AND user_id = $2
+              AND created_from_issue_number = $3
+              AND status <> 'archived'
+              AND NOT ${planRecordSql('')}
+            ORDER BY created_at DESC
+            LIMIT 1`,
+          [app.id, req.user.id, number]
+        );
+        issueFields.myPrSessionId = (prSessionRows[0] && prSessionRows[0].id)
+          || (IS_STAGING && req.query.demo === '1' && number === 900007 ? number : null)
+          || null;
+      }
+
       return res.json({
         issue: {
           state: 'open',
@@ -3038,13 +3254,14 @@ function issueRoutes(config) {
           created_by_username: (creatorRows[0] && creatorRows[0].username)
             || creatorFromSourceLine(issue.body)
             || ghLogin,
-          headless: null,
-          in_progress: null,
+          in_progress: issueFields.in_progress ?? null,
+          headless: issueFields.headless ?? null,
           bot,
           botAwaits,
           botHold,
+          standing,
           track,
-          myPrSessionId: null,
+          myPrSessionId: issueFields.myPrSessionId ?? null,
           addressed_by: addressed,
           closed_via: closedVia,
           chatCount: (chat && chat.cnt) || 0,
@@ -3654,6 +3871,8 @@ function issueRoutes(config) {
 
 module.exports = {
   issueRoutes,
+  // 11 Nov 2026: each request's standing, as its payload carries it.
+  standingsFor,
   creatorFromSourceLine,
   shouldCreateGithubTwin,
   issueBodyWithScreenshots,

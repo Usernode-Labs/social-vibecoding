@@ -1352,6 +1352,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // and the card owed from the row once this commits.
       const readyMade = appTemplates.isReadyMade(template);
       const owesFirstVersion = !readyMade && !!homeroomBotDm.normalizeBrief(req.body.brief);
+      // #6632: a described project's first version is the bot building for
+      // its maker. With the bot for verified accounts only, an unverified
+      // maker is asked to verify before anything is made (the client opens
+      // the verify sheet and sends the create again).
+      if (owesFirstVersion) {
+        const locked = await require('../services/homeroom-bot-verified').refusalFor(pool, req.user);
+        if (locked) return res.status(locked.status).json({ error: locked.error, code: locked.code, signals: locked.signals });
+      }
       // A ready-made app whose starter directory has an original is a
       // version of it (docs/plans/versions.md, services/originals.js
       // linkFor): of a running original, where versions are on, one that
@@ -2251,8 +2259,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const kind = body.kind === 'opened' || body.kind === 'watched' ? body.kind : null;
       const runId = Number(body.runId);
       if (!kind || !Number.isInteger(runId) || runId <= 0) return res.status(400).json({ error: 'kind and runId are required' });
-      // #5097: analytics only, so kept only for somebody who shares them.
-      if (!(await usageAnalytics.sharesUsageAnalytics(pool, req.user.id))) return res.json({ ok: true, discarded: true });
+      // Screen usage data: dropped for somebody who objected to being recorded.
+      if (!(await usageAnalytics.recordsUsage(pool, req.user.id))) return res.json({ ok: true, discarded: true });
       await require('../services/first-version-live').recordView(pool, {
         userId: req.user.id, appId: app.id, runId, kind, seconds: body.seconds, goodFrame: body.goodFrame === true,
       });
@@ -4370,6 +4378,29 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (channel && places.generalMuted(placesPayload)) {
         channel = { ...channel, unread_count: 0, muted: true };
       }
+      // THE PROJECT CARD'S PICTURE (workshop/community-card.tsx, for somebody
+      // who has not joined): the featured illustration its group voted in,
+      // its dark twin and its preview loop, the same three the public
+      // directory serves (public-app-directory.js shapeApp). Best-effort: a
+      // read that fails is the icon on the project's colour.
+      let cover = null;
+      try {
+        const { rows: art } = await pool.query(
+          `SELECT ill.id, ill.dark_id, ill.preview_id
+             FROM apps a JOIN app_illustrations ill ON ill.app_id = a.id
+            WHERE a.id = $1 AND a.featured_illustration IS NOT NULL`,
+          [app.id]
+        );
+        if (art[0] && art[0].id) {
+          cover = {
+            illustration_url: `/app-illustrations/${art[0].id}`,
+            illustration_dark_url: art[0].dark_id ? `/app-illustrations/${art[0].dark_id}` : null,
+            preview_url: art[0].preview_id ? `/app-previews/${art[0].preview_id}` : null,
+          };
+        }
+      } catch (err) {
+        log.warn('apps', 'Could not read the picture for the hub', { slug: app.slug, message: err.message });
+      }
       // Versions (services/version-links.js). Best-effort, like the reads
       // above: one that fails is no line, never a failed hub.
       const versionFields = await versionLinks.communityFields(pool, app).catch((err) => {
@@ -4381,6 +4412,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         name: app.name,
         // What the app is, for the page's hero (above).
         description,
+        cover,
         invite_link: inviteLink,
         invite_summary: inviteSummary,
         // Since when the app itself has been live, for Recently live's card
@@ -4572,10 +4604,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
       );
       if (!appRow) return res.status(404).json({ error: 'App not found' });
-      // #5097: usage analytics, kept only for somebody who switched "Share
-      // usage analytics" on. A 2xx all the same, so the browser's retry
-      // queue lets it go.
-      if (!(await usageAnalytics.sharesUsageAnalytics(pool, req.user.id))) {
+      // Screen usage data: dropped for somebody who objected to being
+      // recorded (services/usage-analytics.js). A 2xx all the same, so the browser's
+      // retry queue lets it go.
+      if (!(await usageAnalytics.recordsUsage(pool, req.user.id))) {
         return res.status(200).json({ ok: true, discarded: true });
       }
 

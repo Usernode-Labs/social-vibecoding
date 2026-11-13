@@ -1,7 +1,9 @@
 import { createContext, useContext, useMemo, useState, type MouseEvent } from 'react';
 
+import { Av as KitAv, Tile as KitTile } from '@/components/ui/kit';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
+import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 import { messageStamp } from '../../lib/timestamp';
 import { requestHue } from './bot-request';
 import { dotText } from './bot-shared';
@@ -151,6 +153,15 @@ export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
   shape?: 'circle' | 'square';
 }) {
   const label = title || user?.username || 'Conversation';
+  // Under one of the frame's looks a face is the kit's: a circle in the
+  // person's own colour, the bot's the Homeroom tile (the tour's av()).
+  // Its sizes are the kit's three: 24, 32 and 40.
+  const frame = isFrameSkin(useLiveSkin());
+  if (frame) {
+    const px = size === 'sm' ? 24 : size === 'lg' ? 40 : 32;
+    if (user?.bot) return <KitTile size={px} src={BOT_AVATAR} name={label} />;
+    return <KitAv size={px} name={label} initials={initials(label)} src={user?.avatarUrl} color={swatchFor(label)} />;
+  }
   const sizeClass = size === 'sm' ? 'w-7 h-7 text-[10px]' : size === 'lg' ? 'w-11 h-11 text-sm' : 'w-9 h-9 text-xs';
   const square = shape === 'square';
   const radius = square ? (size === 'sm' ? 'rounded-lg' : 'rounded-xl') : 'rounded-full';

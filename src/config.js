@@ -261,6 +261,11 @@ function openRouterProviderShortlists(value) {
 }
 
 function load() {
+  // Check the deployment boundary before making keys, opening clients or
+  // starting roles. An explicit invalid setting must never downgrade silently.
+  const browserSiteIsolation = require('./services/browser-site-isolation').validateBrowserSiteIsolation();
+  require('./services/apps-domain-move').validateLegacyAppsDomain();
+  require('./services/previews-domain').validatePreviewsDomain();
   const staging = IS_STAGING();
   const appRuntime = process.env.APP_RUNTIME || 'docker';
 
@@ -373,6 +378,7 @@ function load() {
     // `env !== 'production'`. Not in REQUIRED: defaults to 'development'
     // so a bare checkout without NODE_ENV set behaves like local dev.
     env: process.env.NODE_ENV || 'development',
+    browserSiteIsolation,
     port: parseInt(process.env.PORT || '3000', 10),
     databaseUrl: process.env.DATABASE_URL,
     sessionSecret: process.env.SESSION_SECRET,
@@ -682,6 +688,11 @@ function load() {
       clusterIssuer: process.env.CLUSTER_ISSUER || 'letsencrypt-public',
       appTlsSecretName: process.env.APP_TLS_SECRET_NAME || 'social-apps-wildcard-tls',
       appDomain: process.env.USERNODE_APPS_DOMAIN || process.env.USERNODE_DOMAIN || 'apps.example.invalid',
+      // While apps move off it (services/apps-domain-move.js); '' otherwise.
+      legacyAppDomain: require('./services/apps-domain-move').legacyAppsDomain(),
+      // Previews' own domain (services/previews-domain.js); '' keeps them on
+      // appDomain.
+      previewDomain: require('./services/previews-domain').previewsDomain(),
       platformDomain: process.env.USERNODE_DOMAIN || 'apps.example.invalid',
       // The app-host gate (#3657; services/kubernetes.js, scripts/app-gate.js):
       // `on` routes every app and preview through a platform-owned check,
@@ -1058,6 +1069,11 @@ function load() {
     // submitReport). Optional, like every mail key: the platform's own
     // compliance inbox is the default.
     complianceEmail: (process.env.PLATFORM_COMPLIANCE_EMAIL || '').trim() || 'compliance@usernodelabs.org',
+    // Where people write about their data: to object to screen usage data
+    // (services/usage-analytics.js) or exercise any other right. Settings ›
+    // Privacy shows it, as the privacy notice does (compliance item L-01).
+    // A self-hosted deployment sets its own.
+    dataProtectionEmail: (process.env.PLATFORM_DATA_PROTECTION_EMAIL || '').trim() || 'dataprotection@onhomeroom.com',
     // Where a reply to the last waitlist reminder goes
     // (services/waitlist-reminders.js): it asks the reader to reply and say
     // what put them off, so a person must read it. Optional, like the above.

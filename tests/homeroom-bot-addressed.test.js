@@ -434,7 +434,60 @@ test('a first look posts as it always did, and runs no gate query', async (t) =>
   const pool = fakePool();
   assert.equal(await bot.actOnVerdict(verdictArgs({ pool, relook: false })), 'person');
   assert.equal(seen.posts.length, 1);
-  assert.ok(!pool.queries.some(([sql]) => /homeroom_bot_posts/.test(sql)), 'the gate is not even asked');
+  // Step 5: every look asks whether its note says what the last one did
+  // (there is none), and none but a re-read asks who was talking to it.
+  assert.ok(pool.queries.some(([sql]) => /SELECT p\.kind, m\.content/.test(sql)), 'the last note is read');
+  assert.ok(!pool.queries.some(([sql]) => /metadata->'quote'/.test(sql)), 'the gate is not even asked');
+});
+
+// Step 5 (11 Nov 2026): a note is posted only when its verdict or its reason
+// changed, on every look but a read somebody asked for again.
+test('step 5: any look whose note says what the last one said posts nothing, but a read asked for again', async (t) => {
+  const seen = stubLive(t);
+  const noteText = live.personHomeroomText({ ...PERSON_PARSED, project: 'Chores', requester: null, deciders: [] });
+  const lastSaid = [/SELECT p\.kind, m\.content/, { rows: [{ kind: 'person', content: `@evan ${noteText}` }] }];
+  // A restart's read, a slot freed, a start asked in a chat: none is a
+  // re-read the request's own words started (relook), and none says it again.
+  assert.equal(await bot.actOnVerdict(verdictArgs({ pool: fakePool([lastSaid]), relook: false })), 'unchanged');
+  assert.equal(seen.posts.length, 0, 'the handles a note was tagged with are not words it said');
+  // #6399: a read somebody asked for again always says what it found.
+  const again = fakePool([lastSaid]);
+  assert.equal(await bot.actOnVerdict(verdictArgs({ pool: again, relook: true, askedAgain: true })), 'person');
+  assert.equal(seen.posts.length, 1);
+  // The same words under another verdict are news.
+  const other = fakePool([[/SELECT p\.kind, m\.content/, { rows: [{ kind: 'question', content: noteText }] }]]);
+  assert.equal(await bot.actOnVerdict(verdictArgs({ pool: other, relook: false })), 'person');
+  assert.equal(seen.posts.length, 2);
+});
+
+test('step 5: a held line is said again only when its cap changed, as its kind says', async (t) => {
+  const seen = stubLive(t);
+  const held = (kind) => fakePool([
+    [/SELECT p\.kind, m\.content/, { rows: kind ? [{ kind, content: null }] : [] }],
+    [/FROM platform_settings/, { rows: [] }],
+  ]);
+  const args = (pool) => verdictArgs({ pool, relook: false, capSuppressed: 'proposals_total', parsed: { verdict: 'ready', reason: 'x' } });
+  assert.equal(await bot.actOnVerdict(args(held('held_proposals_total'))), 'held');
+  assert.equal(seen.posts.length, 0, 'the same cap, said already: a held line has no words in the thread to compare');
+  assert.equal(await bot.actOnVerdict(args(held('held_proposals_per_app'))), 'held');
+  assert.equal(seen.posts.length, 1, 'another cap is news');
+  assert.equal(seen.posts[0].kind, 'held_proposals_total');
+  assert.equal(await bot.actOnVerdict(args(held(null))), 'held');
+  assert.equal(seen.posts.length, 2, 'and so is the first');
+});
+
+test('step 5: repeatsLastNote compares kind and words, and a wordless note by its kind only when asked', async () => {
+  const last = (row) => fakePool([[/SELECT p\.kind, m\.content/, { rows: row ? [row] : [] }]]);
+  const ask = (pool, over = {}) => addressed.repeatsLastNote(pool, { appId: 9, issueNumber: 12, kinds: ['checks_synced'], text: 'I brought it up to date with main.', ...over });
+  assert.equal(await ask(last({ kind: 'checks_synced', content: 'I brought it up to date with main.' })), true);
+  assert.equal(await ask(last({ kind: 'checks_synced', content: 'I fixed the check that was failing.' })), false, 'other words');
+  assert.equal(await ask(last({ kind: 'checks_revise', content: 'I brought it up to date with main.' })), false, 'another kind');
+  assert.equal(await ask(last(null)), false, 'nothing said yet');
+  assert.equal(await ask(last({ kind: 'checks_synced', content: null })), false, 'no words: not the same words');
+  assert.equal(await ask(last({ kind: 'checks_synced', content: null }), { wordless: true }), true);
+  assert.equal(await ask(last({ kind: 'checks_synced', content: 'x' }), { kinds: [null, 'checks_synced'] }), false);
+  const broken = fakePool([[/SELECT p\.kind, m\.content/, new Error('down')]]);
+  assert.equal(await ask(broken), false, 'a read that fails says it is new');
 });
 
 // 6 Nov 2026 (#6430): a go-ahead typed in the request's own discussion is

@@ -49,11 +49,15 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { CreditList, type CreditView } from './challenge-credits';
 import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
-import { LockedChallengesCard } from './locked-challenges-card';
+import { LockedChallengesCard, lockedHint, lockedTitle } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
 import type { ChallengeState } from './challenge-card';
 import { topochainChallengesStore } from './topochain-challenges-store.js';
 import { YourStanding } from './your-standing';
+import { isFrameSkin, useLiveSkin } from '../../lib/skin';
+import { ChallengesFrame } from './frame/challenges-frame';
+import { useLeaderboardSection } from './section-store';
+import { MyStanding, myStandingStore, standingView } from './my-standing.js';
 
 // The controller, by name. It is published on `window` for its legacy callers
 // (./leaderboard.js's lazy mount, app.js's pull-to-refresh and its #982
@@ -154,6 +158,9 @@ type BlockProductionView =
 type DetailView = {
   key: string;
   goal: string;
+  // The organiser's what-to-do line (#6592), under the rail: what to do to
+  // start and finish. Null when the challenge has none, so no line is drawn.
+  task?: string | null;
   // The points under the title: earned (emerald), so far, or on offer.
   amount: { text: string; earned: boolean } | null;
   // #3253/#3248: under the points, what the scoring rule counts (a proposal
@@ -593,13 +600,14 @@ function ArtworkWell({ slug, tone }: { slug: string | null; tone: string | null 
 // The page, below the platform header that carries the way back: the title,
 // its points ("500 pts", "320 pts so far", emerald once earned) and what the
 // rule counts, then a line on what points are for whenever points show, the
-// artwork well, the clean rail, the action, then "What
-// counts". The Semi design (2026-10-16) left out the category eyebrow, the
-// deadline and the time of the next count, the task line, the description,
-// Scoring and the participants list (with the profile overlay it opened):
-// the card's title says what to do and "What counts" says how it is counted.
-// The board's "Next: …" hint under the action is deliberately absent (owner
-// decision).
+// artwork well, the clean rail, the organiser's task line, the action, then
+// "What counts". The Semi design (2026-10-16) left out the category eyebrow,
+// the deadline and the time of the next count, the description, Scoring and
+// the participants list (with the profile overlay it opened); the task line it
+// left out too is back (#6592), because it is what tells people how to start
+// and finish. The card's title says what the challenge is and "What counts"
+// says how it is counted. The board's "Next: …" hint under the action is
+// deliberately absent (owner decision).
 export function DetailPage({ view }: { view: DetailView }): ReactNode {
   const t = useMessages('leaderboard');
   return (
@@ -623,6 +631,10 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
         name={view.goal}
         counted={view.counted}
       />
+      {/* #6592: the organiser's one-line task — what to do to start and
+          finish — right under the rail. It is their own words, so no heading
+          and no label: the same plain prose the notes below it use. */}
+      {view.task ? <p className={PROSE} data-challenge-task>{view.task}</p> : null}
       {/* #3650: what makes an invite count, in plain words, right under the
           rail that shows the count. */}
       {view.invitesNote ? <p className={PROSE}>{view.invitesNote}</p> : null}
@@ -666,7 +678,68 @@ function scrollTarget(el: HTMLElement): HTMLElement | Window {
     ? window : el;
 }
 
+/**
+ * The grid under one of the frame's looks: the kit's page
+ * (./frame/challenges-frame.tsx) from this pane's own view and the
+ * viewer's standing (./my-standing.js), which the standard look draws as a
+ * card of its own over the grid. Every state of the grid is the kit's page
+ * (its cards, and loading, the error and "no challenges"), so the head and
+ * the tabs never give way to the standard parts.
+ */
+function ChallengesInFrame({ grid, up }: { grid: GridView | null; up: boolean }): ReactNode {
+  const t = useMessages('leaderboard');
+  // The pane stays mounted behind Standings and Kudos: it is the page on
+  // show only while its own section is.
+  const { section } = useLeaderboardSection();
+  const standing = standingView(useStoreState(myStandingStore)) as {
+    rank: number | null; people: number; pending: string | null;
+    token: { gated: true } | { gated: false; empty: boolean; amount: string; revealed: boolean };
+  } | null;
+  useEffect(() => { void MyStanding.load(); }, []);
+  const ranked = standing && standing.rank != null
+    ? (standing.people > 0
+      ? t('leaderboard:standing.rankOf', { rank: standing.rank, count: standing.people, number: standing.people.toLocaleString('en-US') })
+      : t('leaderboard:standing.rank', { rank: standing.rank }))
+    : null;
+  // "#16" and " of 151 ranked": the figure the catalog marks, then its words.
+  const figure = ranked ? /<0>(.*?)<\/0>(.*)/.exec(ranked) : null;
+  const token = !standing ? null
+    : standing.token.gated ? { gated: true as const, onReview: () => MyStanding.reviewTerms() }
+      : standing.token.empty ? null
+        : { gated: false as const, amount: standing.token.amount, revealed: standing.token.revealed, onReveal: () => MyStanding.revealTokens() };
+  const cards = grid && grid.kind === 'cards' ? grid : null;
+  // The line over the bar, as ./season-progress.tsx says it.
+  const raw = cards && typeof cards.progress.points === 'number' ? cards.progress.points : NaN;
+  const points = Number.isFinite(raw) ? Math.max(0, Math.round(raw)) : null;
+  const total = cards ? Math.max(0, Math.floor(Number(cards.progress.total) || 0)) : 0;
+  const lockedCount = cards ? Math.floor(Number(cards.lockedCount) || 0) : 0;
+  const firstEvent = cards ? cards.onboardingEventId : null;
+  return (
+    <ChallengesFrame
+      up={up && section === 'challenges'}
+      tabs={[{ key: 'challenges', label: t('leaderboard:tabs.challenges') }, { key: 'topochain', label: t('leaderboard:tabs.standings') }]}
+      onTab={(key) => { if (key !== 'challenges') (window as any).Leaderboard?._setSection?.(key); }}
+      state={!grid || grid.kind === 'loading' ? 'loading' : grid.kind}
+      error={grid && grid.kind === 'error' ? grid.message : null}
+      progress={cards && total ? {
+        done: Math.max(0, Math.min(total, Math.floor(Number(cards.progress.done) || 0))),
+        total,
+        points: points == null ? null : t('leaderboard:challenges.points', { count: points, points: points.toLocaleString('en-US') }),
+      } : null}
+      onFirst={firstEvent != null ? () => controller()?._toOnboarding(firstEvent) : null}
+      groups={cards ? cards.groups : []}
+      notice={cards ? cards.notice : null}
+      locked={cards && lockedCount >= 1 ? { title: lockedTitle(lockedCount), hint: lockedHint(lockedCount, cards.lockedNames) } : null}
+      onOpen={(idx) => controller()?._openIdx(idx)}
+      standing={standing ? { rank: figure ? figure[1] : null, of: figure ? figure[2].trim() || null : null, pending: standing.pending, token } : null}
+    />
+  );
+}
+
 export function ChallengesPane(): ReactNode {
+  // Under one of the frame's looks the grid is the kit's page, drawn ahead
+  // of this pane's own parts, which app.css puts away while it is up.
+  const frame = isFrameSkin(useLiveSkin());
   const state = useStoreState(topochainChallengesStore) as {
     mounted: boolean;
     grid: GridView | null;
@@ -731,6 +804,7 @@ export function ChallengesPane(): ReactNode {
             token allocation the Me screen used to carry (./your-standing.tsx).
             It is inside the grid so a challenge's page hides it too.
         */}
+        {frame ? <ChallengesInFrame grid={state.grid} up={!state.detail} /> : null}
         <YourStanding />
         <Grid view={state.grid} />
       </div>

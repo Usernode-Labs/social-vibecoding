@@ -79,6 +79,7 @@ function makeHarness(recordAnswers) {
 
   const sandbox = {
     PlatformI18n: englishPlatformI18n(),
+    URLSearchParams,
     console: { ...console, warn: () => {}, debug: () => {} },
     Date,
     escapeHtml: (s) => String(s),
@@ -116,6 +117,10 @@ function makeHarness(recordAnswers) {
         return answer
           ? { ok: true, status: 200, json: async () => ({ app: { slug: 'topic-app', name: 'Topic app', can_collaborate: true } }) }
           : { ok: false, status: 503, json: async () => ({}) };
+      }
+      // #6604: the topic page reads its own item, not the board.
+      if (u.split('?')[0] === '/api/apps/topic-app/github-issues/7') {
+        return { ok: true, status: 200, json: async () => ({ issue: { number: 7, title: 'Issue 7', app: 'topic-app', state: 'open' } }) };
       }
       return { ok: false, status: 404, json: async () => ({}) };
     },
@@ -192,8 +197,8 @@ test('a topic with no app record asks once more, and renders against it when it 
   await h.AppView.renderDevView('topic', ISSUE);
 
   assert.equal(h.appRequests.length, 1, 'the record is asked for again');
-  assert.deepEqual(h.dataLoads, ['topic-app'], 'the data loads against the record');
-  assert.deepEqual(h.heads, ['topic-app'], 'the topic is painted for this app');
+  assert.deepEqual(h.dataLoads, [], 'the board is not loaded for one thread');
+  assert.deepEqual(h.heads, ['topic-app'], 'the topic is painted from its own read');
   assert.deepEqual(h.switches, [], 'no bounce to the board');
   assert.doesNotMatch(h.thread.innerHTML, /dev-topic-app-unavailable/);
 });
@@ -230,7 +235,7 @@ test('Try again renders the topic once the record is back', async () => {
   await settle(() => h.heads.length > 0);
 
   assert.equal(h.appRequests.length, 2);
-  assert.deepEqual(h.dataLoads, ['topic-app']);
+  assert.deepEqual(h.dataLoads, [], 'still no board load');
   assert.deepEqual(h.heads, ['topic-app'], 'the topic is painted after the retry');
 });
 
@@ -241,7 +246,7 @@ test('a record for ANOTHER app counts as missing, and its issue is never painted
   await h.AppView.renderDevView('topic', ISSUE);
 
   assert.equal(h.appRequests.length, 1, 'the open app\'s record is asked for');
-  assert.deepEqual(h.dataLoads, ['topic-app'], 'only the open app\'s data is loaded');
+  assert.deepEqual(h.dataLoads, [], 'no board is loaded for one thread');
   assert.deepEqual(h.heads, ['topic-app'], 'the issue painted is this app\'s');
   assert.deepEqual(h.titles, ['Topic app'], 'and the header never names the other app');
 });
@@ -269,7 +274,7 @@ test('a record already here costs no extra request', async () => {
   await h.AppView.renderDevView('topic', ISSUE);
 
   assert.equal(h.appRequests.length, 0);
-  assert.deepEqual(h.dataLoads, ['topic-app']);
+  assert.deepEqual(h.dataLoads, [], 'the board is not loaded for one thread');
   assert.deepEqual(h.heads, ['topic-app']);
   assert.equal(h.topicMounts.length, 1);
 });

@@ -159,15 +159,16 @@ test('the browser an open came from: a random HttpOnly cookie, kept only as its 
   const res = { cookie(name, value, opts) { set.push({ name, value, opts }); } };
   const key = activity.ensureBrowser({ cookies: {}, headers: { 'x-forwarded-proto': 'https' } }, res);
   assert.equal(set.length, 1);
-  assert.equal(set[0].name, 'hr_iv');
+  // Over HTTPS only this host can set it (tests/protected-cookie-names.test.js).
+  assert.equal(set[0].name, '__Host-hr_iv');
   assert.match(set[0].value, /^[A-Za-z0-9_-]{32}$/, 'random, and nothing about the browser or where it is');
   const { maxAge, ...rest } = set[0].opts;
-  assert.deepEqual(rest, { httpOnly: true, sameSite: 'lax', secure: true, path: '/api' });
+  assert.deepEqual(rest, { httpOnly: true, sameSite: 'lax', secure: true, path: '/' });
   assert.ok(maxAge >= 30 * 24 * 60 * 60 * 1000, 'kept for as long as a link is likely to be opened again');
   assert.match(key, /^[0-9a-f]{64}$/);
   assert.ok(!key.includes(set[0].value), 'the database keeps a hash, never the cookie');
   // The same browser next time: the same person, and no new cookie.
-  assert.equal(activity.ensureBrowser({ cookies: { hr_iv: set[0].value }, headers: {} }, res), key);
+  assert.equal(activity.ensureBrowser({ cookies: { '__Host-hr_iv': set[0].value }, headers: { 'x-forwarded-proto': 'https' } }, res), key);
   assert.equal(set.length, 1);
   assert.equal(activity.browserFrom({ cookies: { hr_iv: 'x' } }), null, 'not one of ours');
   assert.equal(activity.browserFrom({}), null);
@@ -195,7 +196,9 @@ test('opens are counted from the page\'s own reads, once per person, never from 
   assert.match(routes, /token: req\.params\.token, user: req\.user, browser: inviteActivity\.browserFrom\(req\),/);
   const service = read('src/services/community-invites.js');
   assert.match(service, /void require\('\.\/invite-activity'\)\.noteJoined\(pool, \{ inviteId: invite\.id, user, browser \}\);/);
-  assert.match(service, /const browser = require\('\.\/invite-activity'\)\.browserFrom\(req\);\s*const result = await redeem\(pool, \{ token, user, browser, requirePhone \}\);/);
+  // Signing up carrying the link first claims the open that browser made
+  // (Admin › Journey's "Opened the invite"), then redeems with it.
+  assert.match(service, /const browser = require\('\.\/invite-activity'\)\.browserFrom\(req\);\s*\/\/ [^\n]*\n\s*await require\('\.\/invite-activity'\)\.claimOpen\(pool, \{ token, userId: user\.id, browser \}\);\s*const result = await redeem\(pool, \{ token, user, browser, requirePhone \}\);/);
   // Not awaited where it starts: the small-group discussion ring waits for it
   // later, so the maker is not told about the same message twice
   // (services/group-channel-notify.js).

@@ -179,7 +179,9 @@ test('a track carries codes and links, never words', () => {
   assert.deepEqual(Object.keys(t).sort(), ['appName', 'appSlug', 'askId', 'askThreadId', 'busy', 'firstVersion', 'iconEmoji', 'iconUrl', 'issueNumber',
     'key', 'links', 'proposalId', 'rootId', 'sessionId', 'since', 'step', 'title', 'try', 'tryStartedAt', 'tryStarts',
     'waitingOn', 'work'].sort());
-  assert.deepEqual(Object.keys(t.work).sort(), ['line', 'reason', 'since', 'stage', 'why']);
+  // Its words are phrase ids of the core catalog, never words (work-state.js phrasesOf).
+  assert.deepEqual(Object.keys(t.work).sort(), ['line', 'reason', 'since', 'stage', 'why', 'words']);
+  assert.deepEqual(t.work.words, { stage: { id: 'core:work.stage.upForVote' }, stageOthers: { id: 'core:work.stage.upForVote' }, line: null });
   assert.equal(t.sessionId, 9, 'its plan and change: the change');
   assert.equal(t.rootId, 44, 'the thread to open: its card');
   assert.equal(t.waitingOn, 'group');
@@ -239,7 +241,7 @@ test('the request page and the slots route read the tracks, from the stored work
   // declared check on #900018 found the card missing without it).
   assert.match(issues, /const tracks = await trackSvc\.tracksForRequests\(pool, \{ appId: app\.id, numbers: \(result\.issues \|\| \[\]\)\.map\(\(i\) => i\.number\) \}\);/);
   // Papote #3: as the viewer reads it (forViewer, below).
-  assert.match(issues, /bot: botAsked\(issue\.number\),\s*track: trackSvc\.forViewer\(tracks\.get\(issue\.number\) \|\| null, askers\.get\(issue\.number\), req\.user\.id\),/);
+  assert.match(issues, /bot: botAsked\(issue\.number\),[\s\S]{0,300}?standing: standings\.get\(issue\.number\) \|\| null,\s*track: trackSvc\.forViewer\(tracks\.get\(issue\.number\) \|\| null, askers\.get\(issue\.number\), req\.user\.id\),/);
   assert.match(issues, /if \(issue\.number === 900018 && !issue\.track\) issue\.track = trackSvc\.demoRequestTrack\(app, 900018, issue\.title\);/);
   // A whole list is narrowed first to the requests the bot has touched,
   // and the rows it reads are the stored ones, made for any that have none.
@@ -273,7 +275,7 @@ test('papote #3: a track waiting on its requester names them to anybody else', (
   const routes = fs.readFileSync(path.join(__dirname, '..', 'src/routes/issues.js'), 'utf8');
   assert.match(routes, /track: trackSvc\.forViewer\(tracks\.get\(issue\.number\) \|\| null, askers\.get\(issue\.number\), req\.user\.id\),/,
     'the board list');
-  assert.match(routes, /track = trackSvc\.forViewer\(track, asker, req\.user\.id\);/, 'and a request opened on its own');
+  assert.match(routes, /track = trackSvc\.forViewer\(track, askerRows\.get\(number\), req\.user\.id\);/, 'and a request opened on its own');
 });
 
 test('B02: a filed first version waiting on its creator\'s plan is waiting on them, never "Stopped"', () => {
@@ -285,7 +287,7 @@ test('B02: a filed first version waiting on its creator\'s plan is waiting on th
   // The request rows say which requests are a project's first version.
   assert.match(read('src/services/homeroom-bot-track.js'),
     /COALESCE\(\(SELECT rq\.first_version FROM homeroom_bot_requesters rq\s+WHERE rq\.app_id = a\.id AND rq\.issue_number = w\.n\), FALSE\) AS first_version,/);
-  assert.equal(track.jobOfRow({ slug: 'flat-chores', issue_number: 1, first_version: true }).firstVersion, true);
+  assert.equal(track.jobOf({ slug: 'flat-chores', issue_number: 1, first_version: true }).firstVersion, true);
 });
 
 test('B23: a request its own change made live reads live once it closed, whatever a later look said', () => {
@@ -312,11 +314,12 @@ test('a plan said in a private thread names that thread on its track, for its do
 test('#6228: a read of somebody\'s reply is reading, its line "reply"', () => {
   const replied = track.trackOf({ job: job(), work: work('reading', { line: { code: 'reply' }, since: ago(2) }) });
   assert.deepEqual([replied.work.stage, replied.step, replied.work.line, replied.busy], ['reading', 'plan', { code: 'reply' }, true]);
-  // The stored state reads it from the records (stageOf's reply).
+  // The stored state reads it from the records (stageOf's reply): its read
+  // is queued, so about to read it (`soon`, which a thread's reply line reads).
   const stored = ws.derive({
     app_id: 1, issue_number: 6228, mode: 'live', verdict: 'person', run_at: ago(10), reply_at: ago(1), queue_id: 3, enqueued_at: ago(2),
   }, { now: new Date(NOW) });
-  assert.deepEqual([stored.stage, stored.line], ['reading', { code: 'reply' }]);
+  assert.deepEqual([stored.stage, stored.line], ['reading', { code: 'reply', soon: true }]);
 });
 
 // #6313 (4 Nov 2026): a request queued again after a plan that could not be

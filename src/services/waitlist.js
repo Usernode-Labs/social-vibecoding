@@ -57,6 +57,14 @@ function parseEmailList(text) {
   return { entries, skipped, duplicates };
 }
 
+// Which form a signup came from, for Admin › Journey (waitlist_signups.source,
+// src/db/migrations/waitlist-first-mile-facts.sql): 'form', 'app', 'account',
+// 'test' or 'partner:<label>'. Anything else is not recorded.
+const SIGNUP_SOURCE_RE = /^(form|app|account|test|partner:[A-Za-z0-9 ._-]{1,48})$/;
+function signupSource(value) {
+  return typeof value === 'string' && SIGNUP_SOURCE_RE.test(value) ? value : null;
+}
+
 // Join the platform waitlist. Idempotent by email: re-joining is a
 // silent no-op at the DATABASE level (the original submitted_at is kept).
 // Returns { created, moreToken, submittedAt } — created=false means the
@@ -69,7 +77,7 @@ function parseEmailList(text) {
 // this flag plus the existing row's confirmed_at is what picks the
 // branch. The capability token is the part that did NOT widen: a
 // re-join still gets null, whatever else the response says.
-async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode = null, source = null }) {
+async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode = null, source = null, arrival = null }) {
   const moreToken = crypto.randomBytes(24).toString('hex');
   const stored = answers
     ? { _version: ANSWERS_VERSION, ...answers }
@@ -89,7 +97,7 @@ async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode
 
   // A `ref` that is a referral code is already carried as the referral, so
   // it is not stored a second time as a source tag (#6540).
-  let ref = source?.ref || null;
+  let ref = arrival?.ref || null;
   if (ref) {
     if (ref === inviteCode) ref = null;
     else {
@@ -111,18 +119,18 @@ async function joinWaitlist(pool, { email, ip = null, answers = null, inviteCode
   // block without a second round trip. ON CONFLICT DO NOTHING returns no
   // row, which is still exactly how a re-join is detected.
   const { rows } = await pool.query(
-    `INSERT INTO waitlist_signups (email, ip, answers, more_token, invited_by, project_invite_id,
+    `INSERT INTO waitlist_signups (email, ip, answers, more_token, invited_by, project_invite_id, source,
                                    referrer_host, utm_source, utm_campaign, ref)
      VALUES ($1, $2, $3, $4, $5,
        (SELECT id FROM app_email_invites
          WHERE email = $1::varchar AND claimed_at IS NULL
          ORDER BY created_at ASC, id ASC
          LIMIT 1),
-       $6, $7, $8, $9)
+       $6, $7, $8, $9, $10)
      ON CONFLICT (email) DO NOTHING
      RETURNING submitted_at`,
-    [email, ip, stored ? JSON.stringify(stored) : null, moreToken, invitedBy,
-      source?.referrerHost ?? null, source?.utmSource ?? null, source?.utmCampaign ?? null, ref]
+    [email, ip, stored ? JSON.stringify(stored) : null, moreToken, invitedBy, signupSource(source),
+      arrival?.referrerHost ?? null, arrival?.utmSource ?? null, arrival?.utmCampaign ?? null, ref]
   );
   const created = rows.length > 0;
   return {
@@ -432,6 +440,44 @@ async function grantPlatformAccess(pool, userId, { manualRelease = false } = {})
   return !!(result && result.rowCount > 0);
 }
 
+// The waitlist switched off (#6633, Admin › Waitlist, `waitlist_enabled` in
+// services/release-mail-setting.js): an account a self-serve sign-up just
+// MADE is let in at once. Called after the account is committed, by the
+// three sign-ups that make one (email-signup.js finishProvenEmail,
+// routes/phone-auth.js, routes/sign-in-providers.js afterSignIn), and only
+// for an account that call created: somebody who was already waiting when
+// the switch went off is the admin's choice (services/waitlist-open.js),
+// never let in by signing in again.
+//
+// The grant is grantPlatformAccess's UPDATE, so what a hand admit sets off
+// happens here too (joining Homeroom's community, queued invites applying,
+// the welcome message). It is not a release by hand: no generation-0 invite
+// skips, no waitlist row released, no "you're in" email. The account is
+// marked with an `open_signup_let_in` event, which is how Admin › Journey
+// tells it from an activation code or a direct grant.
+//
+// The switch is read past its cache, and a read that fails says the waitlist
+// is on. Best-effort like the link below: a failure leaves the account
+// waiting, as it would be with the waitlist on, and never fails the sign-up.
+// Returns true when this call let the account in.
+async function admitIfOpen(pool, userId) {
+  if (!userId) return false;
+  try {
+    const settings = require('./release-mail-setting');
+    if (await settings.waitlistEnabled(pool, { fresh: true })) return false;
+    const letIn = await grantPlatformAccess(pool, userId);
+    if (letIn) {
+      const events = require('./events');
+      await events.record(pool, { type: events.EVENT_TYPES.OPEN_SIGNUP_LET_IN, userId });
+      log.info('waitlist', 'Waitlist is off: new account let in at once', { userId });
+    }
+    return letIn;
+  } catch (err) {
+    log.error('waitlist', 'admitIfOpen failed', { userId, message: err.message });
+    return false;
+  }
+}
+
 // Account-creation linkage: point the email's waitlist row (if any) at
 // the new user, and if that row was already released, grant platform
 // access on the spot — this is the doc's "released off the waitlist,
@@ -485,8 +531,8 @@ async function ensureAccountSignup(pool, { userId }) {
     // No conflict target: both the address's UNIQUE (email) and the
     // case-folded index count, and either means the address has a row.
     await pool.query(
-      `INSERT INTO waitlist_signups (email, linked_user_id, confirmed_at, more_token)
-       SELECT LOWER(TRIM(u.email)), u.id, NOW(), $2
+      `INSERT INTO waitlist_signups (email, linked_user_id, confirmed_at, more_token, source)
+       SELECT LOWER(TRIM(u.email)), u.id, NOW(), $2, 'account'
          FROM users u
         WHERE u.id = $1
           AND u.has_platform_access = FALSE
@@ -727,6 +773,7 @@ module.exports = {
   mergeMoreAnswers,
   setVerifiedHandle,
   grantPlatformAccess,
+  admitIfOpen,
   linkUserByEmail,
   ensureAccountSignup,
   accountAnswers,

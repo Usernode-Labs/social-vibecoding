@@ -174,3 +174,68 @@ test('locked app WITH an admin yes + passing checks auto-merges', async () => {
     restore();
   }
 });
+
+// #6642: CONTENT_REVIEW_MODE=admin. A flag from the Content rules review on
+// the reviewed head passes the checks but waits for a full admin's yes.
+function poolWithContentFlag(reviewedSha = 'a'.repeat(40)) {
+  return makeRecordingPool([
+    [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '1' }]],
+    [/SELECT check_state, test_results/, [{
+      check_state: 'passing',
+      test_results: [{ status: 'pass' }, {
+        name: 'Content rules', status: 'fail', advisory: true, reviewedSha,
+        failureReason: 'Flagged: Violence in game.js. A gun.',
+      }],
+    }]],
+  ]);
+}
+
+async function withReviewMode(value, fn) {
+  const prev = process.env.CONTENT_REVIEW_MODE;
+  if (value === undefined) delete process.env.CONTENT_REVIEW_MODE; else process.env.CONTENT_REVIEW_MODE = value;
+  try { return await fn(); } finally {
+    if (prev === undefined) delete process.env.CONTENT_REVIEW_MODE; else process.env.CONTENT_REVIEW_MODE = prev;
+  }
+}
+
+test('admin mode: a flagged head with no admin yes waits for an admin, on an unlocked app', async () => {
+  const { subject, claims, restore } = loadVotes({ locked: false, adminYes: false });
+  try {
+    const r = await withReviewMode('admin', () => subject.evaluateMergeGate({ jwtSecret: 's' }, poolWithContentFlag(), { ...session }));
+    assert.equal(r.merged, false);
+    assert.equal(r.awaitingAdmin, true);
+    assert.equal(claims.length, 0, 'never claimed the merge');
+  } finally {
+    restore();
+  }
+});
+
+test('admin mode: an admin yes lets the flagged head through, and so does an admin force', async () => {
+  const yes = loadVotes({ locked: false, adminYes: true });
+  try {
+    const r = await withReviewMode('admin', () => yes.subject.evaluateMergeGate({ jwtSecret: 's' }, poolWithContentFlag(), { ...session }));
+    assert.equal(r.ready, true);
+  } finally {
+    yes.restore();
+  }
+  const forced = loadVotes({ locked: false, adminYes: false });
+  try {
+    const r = await withReviewMode('admin', () => forced.subject.evaluateMergeGate(
+      { jwtSecret: 's' }, poolWithContentFlag(), { ...session }, { force: true, forceBy: 1 }));
+    assert.notEqual(r.awaitingAdmin, true);
+  } finally {
+    forced.restore();
+  }
+});
+
+test('a flag holds nothing outside admin mode, or on another commit', async () => {
+  for (const [modeValue, sha] of [['advisory', 'a'.repeat(40)], [undefined, 'a'.repeat(40)], ['admin', 'b'.repeat(40)]]) {
+    const { subject, restore } = loadVotes({ locked: false, adminYes: false });
+    try {
+      const r = await withReviewMode(modeValue, () => subject.evaluateMergeGate({ jwtSecret: 's' }, poolWithContentFlag(sha), { ...session }));
+      assert.equal(r.ready, true, `${modeValue} ${sha.slice(0, 1)}`);
+    } finally {
+      restore();
+    }
+  }
+});

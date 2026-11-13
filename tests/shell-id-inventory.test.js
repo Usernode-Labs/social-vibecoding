@@ -394,6 +394,10 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #6510: Reduce motion, Settings > Accessibility ─────────────────
+  'settings-reduce-motion': 'The Reduce motion switch in Settings > Accessibility (features/settings/sections/accessibility.tsx): writes data-motion="reduce" on <html> through the head module (window.Display). Ships off in the prerender and reads the stored setting in an effect, like #settings-high-contrast beside it.',
+  // ── Card preview loops: Settings > Accessibility ───────────────────
+  'settings-card-previews': 'The Play previews switch in Settings > Accessibility (features/settings/sections/accessibility.tsx): whether project cards play their short, silent preview loops (lib/card-previews.ts). Ships off in the prerender and reads the device setting in an effect, like #settings-high-contrast beside it.',
   // ── #6371: This week, the page the weekly digest opens ─────────────
   'weekly-digest-screen': 'This week (frontend/src/features/weekly-digest/index.tsx, #week): what each project did in the last seven days, which the Friday "Your weekly digest is ready" row opens. Ships hidden and empty; the read runs from its controller\'s open(), so the prerender and the first client render agree. App.REACT_SCREEN_IDS lists it, as it lists #workshop-screen.',
   // ── One Home (#6361): Home's sections for communities ─────────────
@@ -423,10 +427,12 @@ const ADDED_IDS = {
   'platform-side-strip-back': 'iPhone Duo: #back-btn\'s copy in the side strip, rendered from the same useBackSlot hook and handing its press to #back-btn. Ships hidden with no href, as #back-btn does.',
   // ── New look (an experiment) ───────────────────────────────────────
   'new-look-enabled': 'New look: the switch in Settings, Experimental (off by default, kept on the device by the head\'s window.Skin) that sets data-skin="brand" on <html>, which app.css draws the new look from in light mode. settings.js paints and saves it through window.Skin.',
+  // ── The frame's looks (an admin's preview) ─────────────────────────
+  'settings-look-section': 'Look: the menu\'s own wrapper under New look in Settings, Experimental, shipped hidden. settings.js _renderAdminSection lifts the class only for a real admin (App._realIsAdmin): the looks are an admin\'s preview while they are drawn screen by screen.',
+  'settings-look': 'Look: the menu of the one frame\'s five looks (Standard, then glass, paper, pastel, mosaic, sunrise). Kept on the device by the head\'s window.Skin, which sets the chosen id as data-skin on <html> for app.css to draw from, light and dark. Exclusive with New look; settings.js paints and saves both through window.Skin.',
   // ── #5097: Settings > Privacy, "Share usage analytics" ──────────────
-  'settings-usage-analytics': '#5097: the Share usage analytics switch (features/settings/sections/usage-analytics.tsx, the last block of Settings > Privacy). Off, and disabled until the saved choice is read.',
-  'settings-usage-analytics-section': '#5097: the Usage analytics block, the last of Settings > Privacy under #5104\'s contact settings (features/settings/sections/usage-analytics.tsx).',
-  'settings-usage-analytics-description': '#5097: the line under that switch saying what is collected; the switch\'s aria-describedby.',
+  // ── #5097: Settings > Privacy, usage data ──────────────
+  'settings-usage-analytics-section': '#5097: the usage data block, the last of Settings > Privacy under #5104\'s contact settings (features/settings/sections/usage-analytics.tsx): what Homeroom keeps, and the address to write to be left out of screen usage data.',
   // ── #5286: the admin console marks itself ─────────────────────────
   'admin-console-bar': '#5286: the admin console\'s own band at the top of #admin-root, ships hidden and is revealed through classList by AdminConsole._renderShell for an admin (never in public mode).',
   'admin-exit': '#5286: the band\'s Exit link, href #profile, which goes back to the address the console was entered from when one is known.',

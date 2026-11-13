@@ -68,6 +68,7 @@
  */
 
 import { goToCommunity } from './community-scope';
+import { reducedMotion } from '../../lib/reduced-motion';
 
 /** What one press of the lit tab does. */
 export type Rung = 'up' | 'top' | 'root' | 'none';
@@ -139,7 +140,7 @@ export function isScrolled(el: { scrollTop: number } | null): boolean {
 export function toTop(el: HTMLElement | null): void {
   if (!el) return;
   let smooth = true;
-  try { smooth = !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches; } catch { smooth = true; }
+  smooth = !reducedMotion();
   try {
     if (typeof el.scrollTo === 'function') {
       el.scrollTo({ top: 0, behavior: smooth ? 'smooth' : 'auto' });

@@ -122,12 +122,14 @@ function postHarness() {
   const sent = { bot: [], system: [], mentions: [] };
   const pool = {
     async query(sql) {
+      // Step 4: its key claimed (services/bot-post.js), its request's row once said.
+      if (/INSERT INTO bot_posts/.test(String(sql))) return { rows: [{ id: 1, fresh: true, outcome: 'pending' }] };
       if (/INSERT INTO homeroom_bot_posts/.test(String(sql))) return { rows: [{ id: 1 }] };
       return { rows: [] };
     },
   };
   const ws = {
-    async sendBotMessage(_pool, appId, args) { sent.bot.push({ appId, ...args }); return { id: 100 + sent.bot.length }; },
+    async sendBotMessage(_pool, appId, { onInsert, ...args }) { sent.bot.push({ appId, ...args }); return { id: 100 + sent.bot.length }; },
     async sendSystemMessage(...args) { sent.system.push(args); return { id: 900 }; },
   };
   const github = { async createIssueComment() { return { id: 1, created_at: '2026-09-27T10:00:00Z' }; } };
@@ -151,9 +153,9 @@ test('with the bot as sender, every thread post is its message: the issue, the p
   assert.deepEqual(issue.user, BOT);
   assert.deepEqual(issue.thread, { type: 'issue', ref: 24 });
   assert.equal(issue.content, '@evan Homeroom bot built this', 'the poster is named in the thread');
-  // With the post's mark, so a retry finds it rather than posting it again
-  // (homeroom-bot-live.js threadMessageOf).
-  assert.deepEqual(issue.metadata, { vote: { sessionId: 5128, prNumber: 25 }, hrbotPost: '1' }, 'so the chat hangs the card under it');
+  // With the post's mark (routes/chat.js folds a change's twin of it); a
+  // retry finds it by its key, its record naming the message.
+  assert.deepEqual(issue.metadata, { vote: { sessionId: 5128, prNumber: 25 }, hrbotPost: 'post-1' }, 'so the chat hangs the card under it');
   assert.deepEqual(proposal.thread, { type: 'session', ref: 5128 });
   assert.equal(proposal.metadata, null, 'the card is on the issue post, not repeated');
   assert.equal(h.sent.mentions.length, 1, 'the poster is notified once');
@@ -291,7 +293,8 @@ test('a message row hangs the same vote card a vote row does, and no module-fill
 
 test('the hub\'s activity counts people only', () => {
   const src = read('src/services/communities.js');
-  const fn = src.slice(src.indexOf('async function activitySummary'), src.indexOf('const ACTIVE_PEOPLE_SHOWN'));
+  // The week's count is activityCounts', which the hub and a visitor's page share.
+  const fn = src.slice(src.indexOf('async function activityCounts'), src.indexOf('const ACTIVE_PEOPLE_SHOWN'));
   const joins = fn.match(/JOIN users u ON u\.id = (?:w|who)\.user_id AND u\.is_synthetic IS NOT TRUE/g) || [];
   assert.equal(joins.length, 3, 'the fourteen-day trend, the week\'s count and the people it names');
 });

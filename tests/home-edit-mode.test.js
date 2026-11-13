@@ -263,7 +263,8 @@ function withPopover(sandbox, Home) {
 const tile = ({ yours = true, demo = false } = {}) => ({
   nodeType: 1,
   getBoundingClientRect: () => ({ left: 0, top: 0, width: 80, height: 80 }),
-  closest: (sel) => (sel === '.app-card[data-yours]:not([data-demo])' && yours && !demo ? {} : null),
+  // The selector names the standard tile and, since the looks' left-overs pass, a kit tile of your own.
+  closest: (sel) => (sel === '.app-card[data-yours]:not([data-demo]), [data-home-frame-tile="yours"]' && yours && !demo ? {} : null),
 });
 
 test('the menu of an own tile on My apps ends with "Edit My apps", which starts edit mode (#5871)', () => {

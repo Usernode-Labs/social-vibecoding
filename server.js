@@ -222,6 +222,12 @@ app.use(responseCompression());
 // wildcard origin with no credentials is the safe shape for this prefix.
 app.use(publicApiCors());
 
+// Every write that carries the session cookie must come from the Homeroom
+// page itself, whatever route it reaches (src/middleware/same-site-browser.js
+// sameOriginCookieWrites). Mounted ahead of every router, the pre-auth ones
+// included, so no route can be added outside it.
+app.use(require('./src/middleware/same-site-browser').sameOriginCookieWrites);
+
 // OS domain verification is anonymous and must never reach login redirects
 // or the SPA/static fallback (which does not serve dot directories).
 app.use(mobileAppLinkRoutes());
@@ -1142,6 +1148,23 @@ app.get('/shell/release.json', (_req, res, next) => {
 // and kept running pre-fix code across redeploys — fixes appeared to have
 // no effect ("same as before"). setHeaders runs as `send` streams the file,
 // so it reliably overrides send's default `max-age=0`. 304s still apply.
+// The shell's front page has one address for a search engine, whatever query
+// string a link carries (`/?report=app` was listed as a duplicate): the
+// canonical goes out as a Link header, so the document itself is unchanged.
+// The address is the platform's configured one (USERNODE_DOMAIN), never the
+// Host a request arrived with: a forged Host must not be able to name
+// another site as this page's canonical. No configured address, no header.
+app.use((req, res, next) => {
+  const link = require('./src/services/search-robots').shellCanonicalLink({
+    method: req.method,
+    path: req.path,
+    origin: require('./src/services/app-identity-env').platformOrigin(),
+    staging: process.env.USERNODE_ENV === 'staging',
+  });
+  if (link) res.setHeader('Link', link);
+  next();
+});
+
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, filePath) {
     const cc = shellAssetCacheControl(filePath);

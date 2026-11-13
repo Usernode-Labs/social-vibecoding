@@ -182,6 +182,37 @@ test('the voice outside the DM: its switches, its week in counts and codes, and 
   const none = await data.botOverview(null, {}, {}, { bot: { async adminPayload() { return { settings: {}, queue: {}, runs: [] }; } } });
   assert.equal(none.voice, null);
   assert.equal(none.incidents, null);
+  assert.equal(none.rereads, null);
+});
+
+// Step 5 of the bot's one model (11 Nov 2026): the numbers that say whether
+// it reads requests again less, from the rollout health, field by field.
+test('botOverview: the re-read numbers, as counts, rates, weeks and codes only', async () => {
+  const rereads = {
+    days: 7, weeks: 4, reads: 12, requests: 5, perRequest: 2.4, otherRuns: { fix: 3, 'Not A Code': 9 },
+    byWeek: [
+      {
+        week: '2026-11-09', reads: 6, why: { 'changed:voice': 2, 'changed:discussion': 4, 'say "hi"': 1 }, taps: 15, notFound: 1, gone: 3,
+        surfaces: { thread: { taps: 10, notFound: 1, gone: 2, words: 'x' } }, note: 'dropped',
+      },
+      { week: 'last week', reads: 1 },
+    ],
+    claimRepair: { recovered: 2, turns: 30, rate: 2 / 30 }, duplicateNotes: null, extra: 'dropped',
+  };
+  const out = await data.botOverview(null, {}, {}, {
+    bot: { async adminPayload() { return { settings: {}, queue: {}, runs: [], health: { rereads } }; } },
+  });
+  assert.deepEqual(out.rereads, {
+    days: 7, weeks: 4, reads: 12, requests: 5, perRequest: 2.4, otherRuns: { fix: 3 },
+    byWeek: [{
+      week: '2026-11-09', reads: 6, why: { 'changed:voice': 2, 'changed:discussion': 4 }, taps: 15, notFound: 1, gone: 3,
+      surfaces: { thread: { taps: 10, notFound: 1, gone: 2 } },
+    }],
+    claimRepair: { recovered: 2, turns: 30, rate: 2 / 30 }, duplicateNotes: null,
+  });
+  const tools = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/services/mcp-tools.js'), 'utf8');
+  assert.match(tools, /rereads: b\.rereads \|\| null,/, 'get_homeroom_bot carries them');
+  assert.match(tools, /changed:voice when its voice judged a comment there changes what the request asks for/);
 });
 
 test('recent shots page through the gallery\'s own listing and counts, and keep only what they name', async () => {

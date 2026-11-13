@@ -83,7 +83,11 @@
  * app.js's router.
  */
 
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+
+import { whenPlatformViewer } from '../../lib/platform-viewer';
+import { isFrameSkin, useSkin } from '../../lib/skin';
+import { HomeFrame } from './frame/home-frame';
 
 import { SearchIcon } from '@/components/ui/icons';
 
@@ -122,6 +126,16 @@ export function HomeScreen() {
   // with no items and editing off, so the prerender and the first client
   // render draw no action at all.
   const grid = useStoreState(gridStore);
+  // A look of the one frame draws this page in it (./frame/home-frame.tsx).
+  // Read after mount only: the first render must match the prerendered
+  // document, which knows no look (lib/skin.ts says why).
+  const skin = useSkin();
+  // And for a viewer the member APIs answer: the signed-out landing and the
+  // waiting room keep the standard body (lib/platform-viewer.ts says why a
+  // member-only read from either is a console error).
+  const [viewer, setViewer] = useState(false);
+  useEffect(() => whenPlatformViewer(() => setViewer(true)), []);
+  const frame = isFrameSkin(skin) && viewer;
   const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.some((item) => !item.app.demo);
   // ONE HOME (#6361): Pinned apps appears once something is pinned. A new
@@ -137,7 +151,22 @@ export function HomeScreen() {
     && grid.items.length === 0 && !grid.create;
 
   return (
-    <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="">
+    <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="" data-frame-page={frame ? '' : undefined}>
+      {/* A look of the one frame draws this page with the kit
+          (./frame/home-frame.tsx), as the scroller's first child. The
+          standard Home below stays mounted, so what home.js writes still
+          lands; app.css hides it while data-frame-page is set. */}
+      {frame ? (
+        <HomeFrame
+          // The four standard pieces the kit page does not redraw. Each is
+          // drawn in one place at a time, here or in the standard body
+          // below, so its ids are in the document once.
+          grid={grid.editing ? <AppGrid /> : null}
+          widgets={<WidgetStrip />}
+          waitlist={<WaitlistCard />}
+          verify={<VerifyCard />}
+        />
+      ) : null}
       {/*
           Hidden-until-pulled search bar (iOS idiom). Deliberately the FIRST
           child of the scroller and NOT sticky: it occupies real scroll space
@@ -241,7 +270,7 @@ export function HomeScreen() {
             component took over from Home._wireWidgetStrip and what it left
             there.
         */}
-        <WidgetStrip />
+        {frame ? null : <WidgetStrip />}
         {/* One Home (#6361): no continue card. The change you last worked on
             is a row of the bell and of Homeroom bot's list. */}
         {/*
@@ -351,7 +380,7 @@ export function HomeScreen() {
           >
             {t('home:grid.heading')}
           </SectionHeading>
-          <AppGrid />
+          {frame && grid.editing ? null : <AppGrid />}
           {/*
               "Show all N apps" — revealed by Home.render() only when the
               viewer has more than the visible rows hold. Ships hidden
@@ -412,13 +441,13 @@ export function HomeScreen() {
             once the shell knows who is signed in. Their Home has no
             Challenges (src/routes/home-panels.js leaves it out).
         */}
-        <WaitlistCard />
+        {frame ? null : <WaitlistCard />}
         {/*
             "VERIFY YOUR ACCOUNT" (./verify-card.tsx): a member the
             verified-identity rule holds to it adds a phone here, or links
             GitHub and X. Nothing in the prerender, like the card above.
         */}
-        <VerifyCard />
+        {frame ? null : <VerifyCard />}
         <ChallengesSection />
         <HomeJoin />
         {/*

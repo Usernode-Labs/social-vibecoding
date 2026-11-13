@@ -1103,6 +1103,30 @@
     "text": "{{project}} is built, but not everything works yet",
     "description": "Title of the card Homeroom bot sends when a project's first version is built but some of it does not work yet. {{project}} is the project's name."
   },
+  "bot.ready.title.projectOffPlan": {
+    "text": "{{project}} is built, but doesn't match the plan yet",
+    "description": "Title of the card Homeroom bot sends when a change is built but its screens do not show what the plan a person posted draws. {{project}} is the project's name."
+  },
+  "bot.ready.title.changeOffPlan": {
+    "text": "Your change to {{project}} is built, but doesn't match the plan yet",
+    "description": "Title of the card Homeroom bot sends when a change a person asked for is built but does not show what the plan posted on the request draws. {{project}} is the project's name."
+  },
+  "bot.ready.title.unnamedOffPlan": {
+    "text": "Your project is built, but doesn't match the plan yet",
+    "description": "Title of the card Homeroom bot sends when a change is built but does not show what the plan draws, when the project's name is not known."
+  },
+  "bot.ready.title.changeUnnamedOffPlan": {
+    "text": "Your change to Your project is built, but doesn't match the plan yet",
+    "description": "Title of the card Homeroom bot sends when a change a person asked for is built but does not show what the plan draws, when the project's name is not known."
+  },
+  "bot.ready.offPlan": {
+    "text": "Not what @{{author}}'s plan (version {{version}}) draws: {{misses}}",
+    "description": "Red line on Homeroom bot's card saying a built change does not show what the plan a person posted draws. {{author}} is their username without the @, {{version}} its version number, {{misses}} what is missing."
+  },
+  "bot.ready.offPlanUnnamed": {
+    "text": "Not what the plan draws: {{misses}}",
+    "description": "Red line on Homeroom bot's card saying a built change does not show what the plan draws, when the plan's author is not known. {{misses}} is what is missing."
+  },
   "bot.ready.title.unnamed": {
     "text": "Your project is ready to try",
     "description": "Title of the card Homeroom bot sends when a project's first version is built and can be tried, when the project's name is not known."
@@ -3741,7 +3765,7 @@
   },
   "thread.botWorking.writing": {
     "text": "Writing",
-    "description": "On the card at the end of the chat while Homeroom bot writes its answer; the answer so far is shown under it as it grows. Three animated dots follow it, as an ellipsis."
+    "description": "On the card at the end of the chat while Homeroom bot writes its answer; the answer itself appears once it is sent, so no words are shown under this. Three animated dots follow it, as an ellipsis."
   },
   "thread.activityTimeRange": {
     "text": "{{start}} – {{end}}",
@@ -4006,6 +4030,110 @@
   "newThread.picker.loading": {
     "text": "Loading your projects…",
     "description": "In the project picker of a new thread while the projects you are in are read."
+  },
+  "newThread.builder.chip": {
+    "text": "Works on it: {{builder}}",
+    "description": "Accessible name and tooltip of the second chip over the message box of a new thread, beside the project chip: who works on the thread. {{builder}} is Homeroom bot, Claude Code or ChatGPT."
+  },
+  "newThread.builder.title": {
+    "text": "Who works on it?",
+    "description": "Title of the sheet a phone opens from the builder chip of a new thread, where the person picks Homeroom bot, Claude Code or ChatGPT."
+  },
+  "newThread.builder.label": {
+    "text": "Works on it",
+    "description": "Small heading of the menu a wide window opens from the builder chip of a new thread, over the rows Homeroom bot, Claude Code and ChatGPT."
+  },
+  "newThread.builder.note": {
+    "text": "Homeroom bot builds here. Claude Code and ChatGPT build on a plan you already pay for. Whichever you pick, a change goes to the group for a vote.",
+    "description": "Under the three rows of a new thread's builder picker: what the choice means."
+  },
+  "newThread.builder.homeroom.name": {
+    "text": "Homeroom bot",
+    "description": "The first row of a new thread's builder picker, and the builder chip while it is picked: Homeroom's own bot."
+  },
+  "newThread.builder.homeroom.sub": {
+    "text": "Builds here, on your weekly credits",
+    "description": "Under \"Homeroom bot\" in a new thread's builder picker: it builds inside Homeroom and its work is paid from the person's weekly credits."
+  },
+  "newThread.builder.own": {
+    "text": "On your own {{product}} plan",
+    "description": "Under \"Claude Code\" or \"ChatGPT\" in a new thread's builder picker. {{product}} is Claude or ChatGPT, the subscription the person already pays for."
+  },
+  "newThread.builder.ownConnected": {
+    "text": "On your own {{product}} plan · Connected",
+    "description": "Under \"Claude Code\" or \"ChatGPT\" in a new thread's builder picker once Homeroom's connector is connected in that product. {{product}} is Claude or ChatGPT."
+  },
+  "newThread.builder.setUp": {
+    "text": "Set up",
+    "description": "A small pill on the Claude Code or ChatGPT row of a new thread's builder picker while Homeroom's connector is not connected in that product yet: picking the row shows the steps to add it."
+  },
+  "newThread.builder.sub": {
+    "text": "With {{builder}}, on your {{product}} plan",
+    "description": "Under the title of a new thread while Claude Code or ChatGPT is picked to work on it, in place of \"With Homeroom bot, only you can see it\". {{builder}} is Claude Code or ChatGPT; {{product}} is Claude or ChatGPT."
+  },
+  "newThread.builder.handoff": {
+    "text": "Open hands this to {{builder}} in a new tab. The conversation continues there.",
+    "description": "Over the message box of a new thread while Claude Code or ChatGPT is picked: pressing Open does not send a message in Homeroom, it opens that product in a new browser tab with the box's words in it. \"Open\" is the button's label."
+  },
+  "newThread.builder.placeholder": {
+    "text": "Your prompt",
+    "description": "Placeholder of the message box of a new thread while Claude Code or ChatGPT is picked: what is typed is handed to that product, not sent to Homeroom bot."
+  },
+  "newThread.builder.placeholderLabel": {
+    "text": "Your prompt for {{builder}}",
+    "description": "Accessible name of the message box of a new thread while Claude Code or ChatGPT is picked. {{builder}} is Claude Code or ChatGPT."
+  },
+  "newThread.builder.open": {
+    "text": "Open in {{builder}}",
+    "description": "Accessible name of the button that takes the send button's place in a new thread while Claude Code or ChatGPT is picked: it opens that product in a new tab with the box's words in it."
+  },
+  "newThread.builder.openShort": {
+    "text": "Open",
+    "description": "The visible label of the button that takes the send button's place in a new thread while Claude Code or ChatGPT is picked, beside an arrow that leaves the page."
+  },
+  "newThread.builder.files": {
+    "text": "Files can’t be handed to {{builder}}. Remove them, or pick Homeroom bot.",
+    "description": "Error under the message box of a new thread when files are attached and Claude Code or ChatGPT is picked: only the typed words can be handed over."
+  },
+  "newThread.builder.tooLong": {
+    "text": "That is too long to hand over in a link. Shorten it to {{max}} characters, or pick Homeroom bot.",
+    "description": "Error under the message box of a new thread when the words are too long to hand to Claude Code or ChatGPT. {{max}} is a number of characters."
+  },
+  "newThread.builder.blocked": {
+    "text": "Your browser blocked the new tab. Allow pop-ups for this site, then press Open again.",
+    "description": "Error under the message box of a new thread when the browser refused to open Claude Code or ChatGPT in a new tab."
+  },
+  "newThread.builder.setup.title": {
+    "text": "Connect {{builder}}",
+    "description": "Title of a new thread while the steps to connect Claude Code or ChatGPT to Homeroom are shown in its place."
+  },
+  "newThread.builder.setup.sub": {
+    "text": "A few minutes, once per account",
+    "description": "Under \"Connect Claude Code\" or \"Connect ChatGPT\" in a new thread: how long adding Homeroom's connector takes, and that it is done once for each Claude or ChatGPT account."
+  },
+  "newThread.builder.setup.lead": {
+    "text": "{{builder}} reaches your projects through the Homeroom connector in {{product}}. There is no password or key: you approve it on a Homeroom page.",
+    "description": "First line of the steps a new thread shows when Claude Code or ChatGPT is picked and Homeroom's connector is not connected. {{builder}} is Claude Code or ChatGPT; {{product}} is Claude or ChatGPT."
+  },
+  "newThread.builder.setup.url": {
+    "text": "Your MCP server URL",
+    "description": "Small label over the copyable address of Homeroom's connector, in the steps a new thread shows to connect Claude Code or ChatGPT."
+  },
+  "newThread.builder.setup.startNew": {
+    "text": "A connector you just added is only picked up by a new {{product}} conversation, so one you already had open will not see it.",
+    "description": "Under the connector steps in a new thread. {{product}} is Claude or ChatGPT."
+  },
+  "newThread.builder.setup.check": {
+    "text": "I’ve added it. Check again",
+    "description": "The main button under the connector steps in a new thread: Homeroom looks again for the connection and, when it is there, shows the thread."
+  },
+  "newThread.builder.setup.missed": {
+    "text": "Homeroom does not see a {{product}} connection yet. Finish the steps, then check again.",
+    "description": "Shown over the buttons under the connector steps in a new thread after Check again found no connection. {{product}} is Claude or ChatGPT."
+  },
+  "newThread.builder.setup.useBot": {
+    "text": "Use Homeroom bot instead",
+    "description": "The second button under the connector steps in a new thread: go back to the thread with Homeroom bot working on it."
   },
   "design.pane.showPreview": {
     "text": "Preview",
@@ -4739,6 +4867,14 @@
     "text": "{{project}} · PR {{number}} · Your change needs a fix",
     "description": "The AI tab's main view, Needs you: the same tooltip on a project whose code is on GitHub, where a change's number is its pull request's (\"PR 12\"). Its checks failed, its preview did not build, or merging it hit a conflict a person has to resolve."
   },
+  "ai.row.botCouldntFix": {
+    "text": "{{project}} · #{{number}} · Homeroom bot couldn't fix it",
+    "description": "The AI tab's main view, Needs you: tooltip of the row of the person's own change after Homeroom bot took over its fix and its last attempt failed."
+  },
+  "ai.row.botCouldntFixPr": {
+    "text": "{{project}} · PR {{number}} · Homeroom bot couldn't fix it",
+    "description": "The AI tab's main view, Needs you: the same tooltip on a project whose code is on GitHub, where a change's number is its pull request's (\"PR 12\")."
+  },
   "ai.row.voteFreesSlot": {
     "text": "{{project}} · #{{number}} · Your vote helps free a build slot",
     "description": "The AI tab's main view, Needs you: tooltip of the row of a vote on one of Homeroom bot's changes while a request of the person's waits for one of its slots on that project; deciding the change frees one."
@@ -4834,6 +4970,10 @@
   "ai.pill.fixIt": {
     "text": "Fix it",
     "description": "The AI tab's main view, Needs you: the pill on a change the person made themselves whose checks failed, whose preview did not build, or that conflicts. Opens the change, where its Testing card says what failed. A verb."
+  },
+  "ai.pill.askAgain": {
+    "text": "Ask again",
+    "description": "The AI tab's main view, Needs you: the pill on the person's own change after Homeroom bot took over its fix and its last attempt failed. Opens the change, where the bot can be asked again in its thread. A verb."
   },
   "ai.pill.needsYou": {
     "text": "Take a look",
@@ -4987,18 +5127,6 @@
     "text": "Reload",
     "description": "The AI tab's main view: the word at the right end of a Live this week row that the page open in this tab is too old to show, and the button under that list which reloads the page onto the running version."
   },
-  "ai.short.bot": {
-    "text": "Homeroom bot",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: who is building it, Homeroom bot."
-  },
-  "ai.short.you": {
-    "text": "You",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: who is building it, the person themselves."
-  },
-  "ai.short.claimed": {
-    "text": "{{username}}",
-    "description": "The AI tab's main view: the one word at the right end of a one-line row in In progress: who claimed it and is building it, by username."
-  },
   "ai.short.private": {
     "text": "Only you",
     "description": "Homeroom bot tab: the word on the right of a private thread's row (only the person can see it), and the heading, beside a lock, over private ideas that are in no project yet."
@@ -5014,6 +5142,10 @@
   "ai.why.fixYours": {
     "text": "Checks failed, its preview did not build, or it conflicts",
     "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for a change the person made themselves that waits on their fix."
+  },
+  "ai.why.botCouldntFix": {
+    "text": "Homeroom bot couldn't fix it. Ask it again, or fix it yourself",
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for the person's own change after Homeroom bot took over its fix and its last attempt failed."
   },
   "ai.why.fixTests": {
     "text": "Tests failing",
@@ -5729,11 +5861,11 @@
   },
   "ai.why.botBuilding": {
     "text": "Homeroom bot is building it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line: Homeroom bot, the platform's builder bot (a name), is making the change."
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line, and the last part of an In progress or Waiting row's whole line (its tooltip and screen-reader text): Homeroom bot, the platform's builder bot (a name), is making the change."
   },
   "ai.why.youBuilding": {
     "text": "You're building it",
-    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line: the person is making the change themselves."
+    "description": "The AI tab's main view: the person's work with Homeroom bot across every project, beside Main, their private chat with it. A row's second line, and the last part of an In progress or Waiting row's whole line (its tooltip and screen-reader text): the person is making the change themselves."
   },
   "welcome.title": {
     "text": "Welcome back",
@@ -5830,5 +5962,57 @@
   "inbox.toEnd.name": {
     "text": "Jump to the oldest chats, at the end of the list",
     "description": "Accessible name and tooltip of the Messages list shortcut."
+  },
+  "frame.inbox.purpose": {
+    "text": "People and groups you talk to.",
+    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title."
+  },
+  "frame.inbox.none": {
+    "text": "Nothing here yet.",
+    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Said in place of the list when the chosen tab holds no conversation."
+  },
+  "frame.inbox.agentsPurpose": {
+    "text": "Chats with coding agents.",
+    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title while the Agents tab is chosen."
+  },
+  "bot.offer.expired": {
+    "text": "This offer has expired.",
+    "description": "In place of the buttons under an offer from Homeroom bot in a chat with it, once the offer is more than 14 days old and can no longer be chosen."
+  },
+  "bot.offer.retired.closeVote": {
+    "text": "No longer needed: a vote on closing this request is open.",
+    "description": "In place of the buttons under an offer from Homeroom bot in a chat with it, once a vote on closing the request it was about has opened."
+  },
+  "bot.offer.retired.closed": {
+    "text": "No longer needed: this is closed.",
+    "description": "In place of the buttons under an offer from Homeroom bot in a chat with it, once the request or change it was about has been closed."
+  },
+  "bot.offer.retired.building": {
+    "text": "No longer needed: building it has started.",
+    "description": "In place of the buttons under an offer from Homeroom bot in a chat with it, once the request it was about started being built."
+  },
+  "bot.offer.retired.movedOn": {
+    "text": "No longer needed: things have moved on since.",
+    "description": "In place of the buttons under an offer from Homeroom bot in a chat with it, once the request or change it was about moved to a stage where the choice no longer applies."
+  },
+  "bot.offer.retired.superseded": {
+    "text": "No longer needed: a newer message offers this.",
+    "description": "In place of the buttons under an offer from Homeroom bot in a chat with it, once a newer message from the bot offered the same choice again."
+  },
+  "bot.offer.retired.other": {
+    "text": "No longer needed.",
+    "description": "In place of the buttons under an offer from Homeroom bot in a chat with it, once the offer no longer applies, when no more specific reason is known."
+  },
+  "bot.offer.refused.alreadyDecided": {
+    "text": "That was already decided.",
+    "description": "The line under the buttons of an offer from Homeroom bot in a chat with it, when a button was pressed after the offer had already been answered, here or on another device."
+  },
+  "bot.offer.refused.gone": {
+    "text": "This offer is no longer available.",
+    "description": "The line under the buttons of an offer from Homeroom bot in a chat with it, when the offer behind them no longer exists."
+  },
+  "bot.offer.refused.failed": {
+    "text": "That didn’t work just now. Try again in a moment.",
+    "description": "The line under the buttons of an offer from Homeroom bot in a chat with it, when pressing one could not be sent or the server gave no reason of its own."
   }
 }

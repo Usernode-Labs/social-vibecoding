@@ -55,6 +55,7 @@ const appAccess = require('./app-access');
 const appAdmins = require('./app-admins');
 const communities = require('./communities');
 const { publicMergedStill } = require('./shots-public');
+const { protectedCookieName, requestCookieSecure } = require('./browser-session-cookies');
 
 // WP-D: 0 asks for no limit: a link with no end date (`days: 0`) or for any
 // number of people (`maxUses: 0`), stored as NULL, which works until it is
@@ -1225,21 +1226,37 @@ async function joinQueued(pool, userId, { requirePhone = true } = {}) {
 // follows the link server-side, whatever the browser did in between —
 // a new account cannot call the API from the waiting room, and the page it
 // signs up on is not the page the link opened.
+//
+// INVITE_COOKIE is the bare name. Secure (always in production, else over
+// HTTPS: browser-session-cookies.js requestCookieSecure) the cookie is
+// `__Host-hr_invite`, Path=/ with no Domain, so an app on a sibling host
+// cannot plant a link for a sign-in to follow. Its writer, its clear and its
+// readers make the decision from their own request, and never read the bare
+// name where the prefixed one is due.
 const INVITE_COOKIE = 'hr_invite';
 const INVITE_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-function setInviteCookie(req, res, token) {
-  res.cookie(INVITE_COOKIE, token, {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
-    maxAge: INVITE_COOKIE_MAX_AGE_MS,
-    path: '/',
-  });
+function inviteCookieOptions(req) {
+  return { httpOnly: true, sameSite: 'lax', secure: requestCookieSecure(req), path: '/' };
 }
 
-function clearInviteCookie(res) {
-  res.clearCookie(INVITE_COOKIE, { path: '/' });
+function inviteCookieName(req) {
+  return protectedCookieName(INVITE_COOKIE, requestCookieSecure(req));
+}
+
+function setInviteCookie(req, res, token) {
+  res.cookie(inviteCookieName(req), token, { ...inviteCookieOptions(req), maxAge: INVITE_COOKIE_MAX_AGE_MS });
+}
+
+// The same attributes as the write: a browser drops a `__Host-` cookie only
+// for a Set-Cookie that is itself Secure, Path=/ and without a Domain.
+function clearInviteCookie(req, res) {
+  res.clearCookie(inviteCookieName(req), inviteCookieOptions(req));
+}
+
+/** The link this request's browser carries through sign-in, if any. */
+function carriedToken(req) {
+  return req.cookies?.[inviteCookieName(req)];
 }
 
 /**
@@ -1248,9 +1265,9 @@ function clearInviteCookie(res) {
  * Returns `{ name, status, slug }` for the response to mention, or null.
  */
 async function redeemCarried(pool, req, res, userId, { requirePhone = false } = {}) {
-  const token = req.cookies?.[INVITE_COOKIE];
+  const token = carriedToken(req);
   if (!token) return null;
-  clearInviteCookie(res);
+  clearInviteCookie(req, res);
   if (!isToken(token) || !userId) return null;
   try {
     const { rows } = await pool.query(
@@ -1264,6 +1281,8 @@ async function redeemCarried(pool, req, res, userId, { requirePhone = false } = 
     // throws (journey-events.js).
     await require('./journey-events').noteInviteSignedIn(pool, { token, userId: user.id, carried: true });
     const browser = require('./invite-activity').browserFrom(req);
+    // The open this browser made signed out is theirs now, joined or queued.
+    await require('./invite-activity').claimOpen(pool, { token, userId: user.id, browser });
     const result = await redeem(pool, { token, user, browser, requirePhone });
     if (!result.ok) return null;
     return {
@@ -1288,10 +1307,11 @@ async function redeemCarried(pool, req, res, userId, { requirePhone = false } = 
  * null, as redeemCarried does when it follows nothing.
  */
 async function dropCarried(pool, req, res, userId) {
-  const token = req.cookies?.[INVITE_COOKIE];
-  clearInviteCookie(res);
+  const token = carriedToken(req);
+  clearInviteCookie(req, res);
   if (!token || !isToken(token) || !userId) return null;
   await require('./journey-events').noteInviteSignedIn(pool, { token, userId, carried: true });
+  await require('./invite-activity').claimOpen(pool, { token, userId, browser: require('./invite-activity').browserFrom(req) });
   return null;
 }
 
@@ -1315,6 +1335,8 @@ module.exports = {
   MAX_LIVE_PER_MAKER,
   TOKEN_RE,
   INVITE_COOKIE,
+  inviteCookieName,
+  carriedToken,
   isToken,
   invitePath,
   deadReason,

@@ -229,6 +229,7 @@ function load(answers) {
     store,
     sheet,
     fetches,
+    timers: sandbox.timers,
     tick: (ms) => { clock += ms; },
   };
 }
@@ -286,7 +287,7 @@ test('the open sheet refetches when the turn ends, and the row takes the new ver
   // Three answers for three requests: the open, the mid-turn reload the
   // starting push triggers, and the reload the ending push triggers — the
   // one that carries the verdict on the answered spec.
-  const { Improve, SessionState, store, sheet, fetches } = load([
+  const { Improve, SessionState, store, sheet, fetches, timers } = load([
     payload({ busy: false, awaiting_input: true }),
     payload({ busy: true, awaiting_input: false }),
     payload({ busy: false, awaiting_input: false }),
@@ -302,7 +303,13 @@ test('the open sheet refetches when the turn ends, and the row takes the new ver
   // is what carries the verdict, as it carries the title and the caption.
   SessionState.applyEvent({ sessionId: 5, busy: false, status: 'active' });
   Improve.onSessionStateChanged();
-  assert.equal(fetches.length, 3, 'the open panel refetched on both pushes');
+  assert.equal(fetches.length, 2, 'the starting push reloaded at once; the ending one waits its turn');
+  assert.equal(row(store).busy, false, 'the pill has already flipped: that is the push, not the reload');
+  // #6591: reloads are at most one every few seconds, the last one kept.
+  const waiting = timers.filter((timer) => timer.ms > 0 && timer.ms <= Improve.RELOAD_MIN_GAP_MS);
+  assert.equal(waiting.length, 1, 'one reload is waiting');
+  waiting[0].fn();
+  assert.equal(fetches.length, 3, 'and the open panel refetched for both pushes');
   // The stubbed fetch resolves in microtasks; one macrotask drains them.
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(row(store).busy, false);

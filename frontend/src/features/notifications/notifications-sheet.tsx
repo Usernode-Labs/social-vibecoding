@@ -298,50 +298,26 @@ function SectionHead({ children, ...rest }: { children: ReactNode } & Record<`da
 }
 
 /**
- * #5929 item 13: one line over the Unread groups, "3 need you · 96 unread",
- * so the shape of a backlog reads before its rows do.
- *
- * Its two numbers come from different places and neither pretends otherwise.
- * The total is the bell's own (`badgeTotal`), printed through the bell's cap
- * (#5289), and it INCLUDES the ones that need you: it is never the total less
- * the asks, because the asks are only counted in the rows paged in, and that
- * subtraction would state a figure nobody knows. So the asks say "At least"
- * while the Unread pager still has rows to bring up (`partial`), and the
- * total says nothing when it could only repeat them. Zero says nothing.
- */
-function CatchUpLine({ needs, total, partial }: { needs: number; total: number; partial: boolean }): ReactNode {
-  const t = useMessages('notifications');
-  // Nothing asks: the total alone only repeats the Unread tab's own number.
-  if (!needs) return null;
-  const needsWords = t(partial ? 'notifications:sheet.catchUp.needsYouAtLeast' : 'notifications:sheet.catchUp.needsYou', { count: needs });
-  const totalWords = total <= needs ? null
-    : total > 99 ? t('notifications:sheet.catchUp.unreadCapped')
-      : t('notifications:sheet.catchUp.unread', { count: total });
-  return (
-    <p className="px-4 pt-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400" data-notif-catch-up="">
-      {needsWords}
-      {totalWords ? <span aria-hidden="true"> · </span> : null}
-      {totalWords}
-    </p>
-  );
-}
-
-/**
  * #5406: the heading of one app's group of unread notifications on the Unread
  * tab, with that app's "Mark read" beside it. The heading is the app's name
  * (the same words each row's meta line already carries); the pill is the
- * sheet's own "Mark all read" pill in miniature, and clears that app's every
+ * sheet's own "Mark all read" pill in miniature, and clears that group's every
  * unread notification — including ones the sheet has not paged in — through
- * the controller's markAppRead. The app-less group (notifications that belong
- * to no app) renders no button: nothing but Mark all read owns those.
+ * the controller's markAppRead, or markNoAppRead for the app-less group
+ * (#6579).
  *
  * #5580: the heading of a project's stack. While the stack is open it also
  * offers "Show less", which folds the stack back under its newest card.
  */
-function AppGroupHead({ groupKey, label, appId, onRead, onShowLess }: {
+function AppGroupHead({ groupKey, label, appId, canRead, onRead, onShowLess }: {
   groupKey: string;
   label: string;
   appId: number | null;
+  /**
+   * Whether this heading draws its Mark read. With one group on the tab that
+   * button is Mark all read again, so the title row's is the one.
+   */
+  canRead?: boolean;
   /** Before the clear: let the group's rows go, so they leave Unread (useHeldUnread). */
   onRead?: () => void;
   /** An open stack's way back to closed; absent while there is nothing to fold. */
@@ -376,10 +352,10 @@ function AppGroupHead({ groupKey, label, appId, onRead, onShowLess }: {
           {t('notifications:stack.showLess')}
         </button>
       ) : null}
-      {appId != null ? (
+      {canRead ? (
         <button
           type="button"
-          data-notif-app-read={appId}
+          data-notif-app-read={appId != null ? appId : 'other'}
           // #5929: quieter than Mark all read, whose pill it would otherwise
           // repeat down the sheet: words in the secondary ink until hovered.
           className={'inline-flex items-center h-8 px-3 rounded-full text-xs font-medium '
@@ -398,7 +374,9 @@ function AppGroupHead({ groupKey, label, appId, onRead, onShowLess }: {
             if (busy) return;
             setBusy(true);
             onRead?.();
-            Promise.resolve(controller()?.markAppRead(appId))
+            Promise.resolve(appId != null
+              ? controller()?.markAppRead(appId)
+              : controller()?.markNoAppRead())
               .catch(() => false)
               .then(() => setBusy(false));
           }}
@@ -1756,11 +1734,6 @@ export function NotificationsSheetView() {
   // sum the unread rows paged in so far, which on a backlog was a count of
   // the list ("Unread (81)") under a bell saying 99+ and a title saying 300.
   const unreadCount = snap.badgeTotal || 0;
-  // #5929 item 13: what still waits on the reader, in what is known of it:
-  // the unread rows in hand (one answered here stops counting at once, though
-  // its row stays until the sheet closes) and the pending invites, every one
-  // of which the bell's number holds too.
-  const needsCount = unreadNow.filter((view) => view.needsYou).length + (snap.invites || []).length;
   const boundary = startOfToday();
   const entries: Entry[] = shown.map((view) => (
     { type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
@@ -1816,9 +1789,10 @@ export function NotificationsSheetView() {
           <AppGroupHead
             groupKey={group.key}
             label={label}
+            appId={group.appId}
             // N6 (polish board): with one group on the tab its Mark read is Mark
             // all read again, a pill's width apart, so the title row's is the one.
-            appId={appGroups.length > 1 ? group.appId : null}
+            canRead={appGroups.length > 1}
             onRead={() => held.release(group.entries.flatMap((entry) => (entry.type === 'notif'
               ? entry.view.groupIds || [entry.view.id] : [])))}
             onShowLess={showLess}
@@ -1828,27 +1802,13 @@ export function NotificationsSheetView() {
       />
     );
   };
-  // #5929 item 1: the groups with something waiting on the reader already
-  // come first (groupUnreadByApp); when the tab holds both kinds, a small
-  // "Needs you" label sits over them and "Everything else" over the rest, so
-  // an approval and a "Voted yes" no longer read with the same weight. One
-  // kind alone needs no label: there is nothing to tell apart. The labels are
-  // siblings of the stacks, never inside one, so the stack checks
-  // ([data-notif-stack] > [data-stack-top], [data-notif-app-group] ~ .notifications-row-slot)
-  // read exactly what they did.
-  const renderAppGroups = (): ReactNode => {
-    const needs = appGroups.filter((group) => group.needsYou);
-    const rest = appGroups.filter((group) => !group.needsYou);
-    if (!needs.length || !rest.length) return appGroups.map(renderAppGroup);
-    return (
-      <>
-        <SectionHead data-notif-groups-head="needs">{t('notifications:sheet.needsYou')}</SectionHead>
-        {needs.map(renderAppGroup)}
-        <SectionHead data-notif-groups-head="rest">{t('notifications:sheet.everythingElse')}</SectionHead>
-        {rest.map(renderAppGroup)}
-      </>
-    );
-  };
+  // #6579: the groups with something waiting on the reader already come first
+  // (groupUnreadByApp); the tab is one plain list of them, each under its own
+  // heading. The "Needs you" / "Everything else" labels of #5929 item 1 and the
+  // "N need you · N unread" line of item 13 were reversed on purpose here: the
+  // Unread tab says how many unread there are, and the order needs no label.
+  // Do not rebuild them from #5929.
+  const renderAppGroups = (): ReactNode => appGroups.map(renderAppGroup);
   // An older section: its heading, then one card per change. The cards are
   // read, so no Mark read, and a cleared card (an unread plain message)
   // stays where it is. They sit in no stack, so each names its project on
@@ -2110,9 +2070,6 @@ export function NotificationsSheetView() {
             {t('notifications:sheet.search.noMatches', { query: query.trim() })}
           </p>
         )
-      ) : null}
-      {!searching && appGroups.length ? (
-        <CatchUpLine needs={needsCount} total={unreadCount} partial={!!snap.unreadCanLoadMore} />
       ) : null}
       {!searching && (groupedUnread ? renderAppGroups() : olderGrouped ? (
         <>

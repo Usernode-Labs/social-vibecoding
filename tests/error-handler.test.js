@@ -311,9 +311,9 @@ test('the local dev stack overrides NODE_ENV back to development', () => {
     'docker-compose.dev.yml serves http://localhost:3000 and must not inherit production');
 });
 
-test('SECURE_COOKIE is still what keys the cookie off NODE_ENV', () => {
-  // If this moves, the docker-compose.dev.yml override above stops being
-  // the reason it is there, and the comment there goes stale.
-  assert.match(read('src/middleware/auth.js'),
-    /const SECURE_COOKIE = process\.env\.NODE_ENV === 'production';/);
+test('session cookie security follows NODE_ENV, preserving plain HTTP development', () => {
+  const { sessionCookieOptions } = require('../src/services/browser-session-cookies');
+  assert.equal(sessionCookieOptions(null, { NODE_ENV: 'production' }).secure, true);
+  assert.equal(sessionCookieOptions(null, { NODE_ENV: 'development' }).secure, false);
+  assert.equal(sessionCookieOptions(null, {}).secure, false);
 });

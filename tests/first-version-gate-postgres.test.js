@@ -15,6 +15,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { settleWorkStates } = require('./lib/work-states');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
@@ -119,7 +120,7 @@ test('the first version skips the vote; the bot\'s later changes wait for a pers
 
   const club = await project('club-votes-fv', [ada, sam, kim]);
 
-  await t.test('D2: on Open floor the bot\'s change needs a member\'s yes; a person\'s own does not', async () => {
+  await t.test('D2: on Open floor the bot\'s change needs a member\'s yes, as a person\'s own does', async () => {
     await reconcile(club, { preset: 'open_floor' });
     const bots = await proposal(club, bot);
     await run(club, 7, bots);
@@ -127,12 +128,14 @@ test('the first version skips the vote; the bot\'s later changes wait for a pers
     assert.equal(waiting.mode, 'rules');
     assert.equal(waiting.mergeable, false, 'the bot proposing it is nobody\'s yes');
     assert.equal((await listed(club, bots, bot)).mergeable, false, 'and the lists say the same');
-    assert.deepEqual([...(await governance.botAuthoredBatch(pool, 'pr', [bots]))], [bots]);
     await vote(bots, kim);
     assert.equal((await gate(club, bots)).mergeable, true, 'any member\'s yes lets it in');
 
     const hers = await proposal(club, sam);
-    assert.equal((await gate(club, hers)).mergeable, true, 'a person proposing is their yes');
+    assert.equal((await gate(club, hers)).mergeable, false, 'a person proposing is not their yes (11 Nov 2026)');
+    assert.equal((await listed(club, hers, sam)).mergeable, false);
+    await vote(hers, sam);
+    assert.equal((await gate(club, hers)).mergeable, true, 'their tap is');
     assert.equal((await listed(club, hers, sam)).mergeable, true);
   });
 
@@ -185,11 +188,12 @@ test('the first version skips the vote; the bot\'s later changes wait for a pers
     // Only the first version is up now.
     await pool.query(`UPDATE chat_sessions SET status = 'closed' WHERE app_id = $1 AND id <> $2`, [club.id, first]);
     const owed = async (who) => {
+      await settleWorkStates(pool);
       const { rows } = await pool.query(COUNTS_SQL, [who.id, false, false]);
       const row = rows.find((r) => r.slug === club.slug);
       return row ? Number(row.needs) : 0;
     };
-    const digest = async () => (await pool.query(PENDING_SQL, ['24'])).rows.filter((r) => [ada.id, sam.id, kim.id].includes(r.user_id));
+    const digest = async () => (await settleWorkStates(pool), await pool.query(PENDING_SQL, ['24'])).rows.filter((r) => [ada.id, sam.id, kim.id].includes(r.user_id));
     assert.equal(await owed(ada), 0, 'its maker owes no vote on it');
     assert.equal(await owed(sam), 0);
     assert.deepEqual(await digest(), [], 'nobody\'s digest counts it');

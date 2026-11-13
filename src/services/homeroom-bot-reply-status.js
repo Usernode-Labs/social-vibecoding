@@ -54,7 +54,8 @@ const ms = (value) => {
  * Pure (#6228): the status a thread shows for one reply, or null when there
  * is nothing to say.
  *
- *   stage      stageOf's answer for the request ({ stage, reply, waiting })
+ *   stage      the request's stored work state ({ stage, line }: line code
+ *              'reply', `soon` while its read is queued)
  *   replyId    the newest person's reply in the place
  *   replyAt    when that reply was written
  *   botAfter   whether the bot posted in the place after that reply
@@ -76,10 +77,13 @@ function statusOf({ stage = null, replyId = null, replyAt = null, botAfter = fal
   const running = answerable
     ? turns.find((t) => !t.finished_at && (replyTime == null || (ms(t.started_at) ?? 0) >= replyTime))
     : null;
-  const reading = !!(stage && stage.stage === 'reading' && stage.reply === true && stage.waiting !== true);
+  // The request's stored work state (services/work-state.js): reading a
+  // reply now, or about to (`soon`).
+  const replyLine = stage && stage.stage === 'reading' && stage.line && stage.line.code === 'reply' ? stage.line : null;
+  const reading = !!replyLine && replyLine.soon !== true;
   if (running || reading) return 'reading';
   // The read is queued (or about to be): the bot will read it in a moment.
-  const waiting = !!(stage && stage.stage === 'reading' && stage.reply === true && stage.waiting === true);
+  const waiting = !!replyLine && replyLine.soon === true;
   if (waiting || voiceOwed) return 'will_read';
   // The newest finished turn read the reply and chose not to answer, having
   // been spoken to (speaker_id), in the last minute.
@@ -187,15 +191,27 @@ async function readStatus(pool, { appId, place, issueNumber, answerable = true, 
   if (!Number.isInteger(id) || id <= 0 || !p) return EMPTY_READ;
   if (p.type !== 'issue') return placeReadStatus(pool, id, p, { answerable, now });
   const number = Number(p.ref);
-  const progress = require('./homeroom-bot-progress');
-  const { REQUEST_ROWS_SQL } = require('./homeroom-bot-track');
+  const { replyLateralSql } = require('./homeroom-bot-progress');
+  const workState = require('./work-state');
   const { placeKey } = require('./homeroom-bot-voice');
-  const { rows } = await pool.query(REQUEST_ROWS_SQL, [id, [number]]);
+  // The newest reply after the bot's newest look at it.
+  const { rows } = await pool.query(
+    `SELECT reply.reply_id, reply.reply_at, reply.reply_user_id
+       FROM (SELECT $1::int AS app_id, $2::int AS issue_number) m
+       LEFT JOIN LATERAL (
+         SELECT created_at FROM homeroom_bot_runs
+          WHERE app_id = m.app_id AND issue_number = m.issue_number AND mode = 'live'
+          ORDER BY id DESC LIMIT 1
+       ) run ON TRUE
+       ${replyLateralSql({ appId: 'm.app_id', issueNumber: 'm.issue_number', runAt: 'run.created_at' })}`,
+    [id, number],
+  );
   const row = rows[0];
   if (!row) return EMPTY_READ;
   const replyId = row.reply_id == null ? null : Number(row.reply_id);
   if (!replyId) return EMPTY_READ;
-  const stage = progress.stageOf(row, { now });
+  await workState.ensure(pool, [{ appId: id, issueNumber: number }]);
+  const stage = (await workState.forRequests(pool, id, [number])).get(number) || null;
   const [turns, after] = await Promise.all([
     voiceTurns(pool, placeKey(id, { type: 'issue', ref: number })),
     pool.query(

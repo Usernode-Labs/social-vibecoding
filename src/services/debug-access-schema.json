@@ -226,6 +226,8 @@
   "work_states.since": {"type":"timestamp with time zone","checks":[]},
   "work_states.updated_at": {"type":"timestamp with time zone","checks":[]},
   "work_states.checked_at": {"type":"timestamp with time zone","checks":[]},
+  "work_states.vote_open": {"type":"boolean","checks":[]},
+  "work_states.lead_change_id": {"type":"bigint","checks":[]},
   "requests.id": {"type":"bigint","checks":[]},
   "requests.app_id": {"type":"integer","checks":[]},
   "requests.number": {"type":"integer","checks":["CHECK ((number > 0))"]},

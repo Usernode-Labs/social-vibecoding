@@ -63,8 +63,10 @@ import { cn } from '@/lib/utils';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
+import { useFramePage } from '../frame/frame-page-store';
 import { FILTER_SHORTCUT_KEYS, installFilterShortcut } from './filter-shortcut';
 import { forgetSearches, loadRecent, recentSearchesStore, rememberSearch, visibleRecent } from './recent-searches.js';
+import { navStore } from '../nav/nav-store.js';
 import { settingsNavStore } from './settings-nav-store.js';
 
 interface FilterPart {
@@ -402,9 +404,9 @@ function FilterField({ id, query, setQuery, hits, signOutHit }: {
   );
 }
 
-const TRY_BUTTON = 'font-medium text-violet-600 dark:text-violet-400 hover:underline';
+const TRY_BUTTON = 'ui-link font-medium text-violet-600 dark:text-violet-400 hover:underline';
 // Recent searches' Clear (#5996): the suggestions' blue text button, small.
-const RECENT_CLEAR = 'shrink-0 text-xs font-medium text-violet-600 dark:text-violet-400 hover:underline';
+const RECENT_CLEAR = 'ui-link shrink-0 text-xs font-medium text-violet-600 dark:text-violet-400 hover:underline';
 
 /**
  * What both hosts show when nothing matches: the line saying so, and under
@@ -472,7 +474,7 @@ export function RecentSearches({ items, setQuery, variant }: {
   return (
     <div data-settings-recent="" className={desktop ? 'mb-1' : 'mb-5'}>
       <div className={desktop ? 'flex items-baseline justify-between gap-2 pe-3' : 'flex items-baseline justify-between gap-2 pe-4'}>
-        <SectionHeader className={desktop ? NAV_HEADING : 'px-4 pb-1.5'}>{t('settings:nav.filter.recent.heading')}</SectionHeader>
+        <SectionHeader className={desktop ? NAV_HEADING : 'ui-cap px-4 pb-1.5'}>{t('settings:nav.filter.recent.heading')}</SectionHeader>
         <button
           type="button"
           data-settings-recent-clear=""
@@ -483,18 +485,22 @@ export function RecentSearches({ items, setQuery, variant }: {
           {t('settings:nav.filter.recent.clear')}
         </button>
       </div>
-      {desktop ? items.map((q) => (
-        <button
-          key={q}
-          type="button"
-          data-settings-recent-item=""
-          className={HIT_ROW}
-          aria-label={t('settings:nav.filter.recent.again', { query: q })}
-          onClick={() => replay(q)}
-        >
-          {q}
-        </button>
-      )) : (
+      {desktop ? (
+        <div className="ui-card">
+          {items.map((q) => (
+            <button
+              key={q}
+              type="button"
+              data-settings-recent-item=""
+              className={HIT_ROW}
+              aria-label={t('settings:nav.filter.recent.again', { query: q })}
+              onClick={() => replay(q)}
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+      ) : (
         <GroupedList className="mx-0">
           {items.map((q) => (
             <ListRow
@@ -523,20 +529,20 @@ const GROUP_SPACED = 'mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800';
 // @/components/ui/grouped-list.tsx, which is what the deck's grouped lists use.
 // The settings screen was already grouped-list shaped, so this is the last
 // thing that made it read as the old vocabulary.
-const NAV_HEADING = 'px-3 pb-1';
+const NAV_HEADING = 'ui-cap px-3 pb-1';
 const MENU_ROW = 'settings-menu-row min-h-[44px] py-2 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors';
 // The sidebar's filter hits: the row's own class string, unhighlighted, with
 // room for the matched parts under the label.
-const HIT_ROW = 'settings-nav-item block w-full text-start rounded-lg px-3 py-2 text-sm font-medium transition-colors text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800';
-const HIT_PARTS = 'block text-xs font-normal text-zinc-500 dark:text-zinc-400';
+const HIT_ROW = 'ui-row ui-row-sm settings-nav-item block w-full text-start rounded-lg px-3 py-2 text-sm font-medium transition-colors text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800';
+const HIT_PARTS = 'ui-row-s block text-xs font-normal text-zinc-500 dark:text-zinc-400';
 // The Sign out hit: a hit row in the button's own red, an action and not a page.
-const SIGN_OUT_HIT_ROW = 'settings-nav-item block w-full text-start rounded-lg px-3 py-2 text-sm font-medium transition-colors text-red-700 dark:text-red-400 hover:bg-red-500/10';
+const SIGN_OUT_HIT_ROW = 'ui-row ui-row-sm settings-nav-item block w-full text-start rounded-lg px-3 py-2 text-sm font-medium transition-colors text-red-700 dark:text-red-400 hover:bg-red-500/10';
 const SIGN_OUT_TITLE = 'font-normal text-red-700 dark:text-red-400';
 // #5995: a row's count, in muted words; a settled state gets no colour.
-const NAV_STATUS = 'shrink-0 text-xs font-normal text-zinc-500 dark:text-zinc-400';
-const MENU_STATUS = 'shrink-0 text-[0.8125rem] text-zinc-500 dark:text-zinc-400';
+const NAV_STATUS = 'ui-row-meta shrink-0 text-xs font-normal text-zinc-500 dark:text-zinc-400';
+const MENU_STATUS = 'ui-row-meta shrink-0 text-[0.8125rem] text-zinc-500 dark:text-zinc-400';
 // The "Beta" label: a small grey pill, no accent (colour is for actions).
-const BETA_TAG = 'shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold leading-4 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300';
+const BETA_TAG = 'ui-pill shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold leading-4 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300';
 
 /** A row's trailing words or tag, or nothing. */
 function RowTrailing({ extras, statusClassName }: { extras: RowExtras; statusClassName: string }) {
@@ -560,18 +566,18 @@ function NavRow({ item }: { item: NavItem }) {
       type="button"
       aria-current={item.active ? 'page' : undefined}
       data-settings-nav={item.key}
-      className={item.className}
+      className={`ui-row ui-row-sm ${item.className}`}
       onClick={() => navClick(item.key)}
     >
       {Glyph ? (
         <>
           <Glyph className="h-4 w-4 shrink-0" aria-hidden="true" />
-          <span className="min-w-0 flex-1 truncate">{item.label}</span>
+          <span className="ui-row-t min-w-0 flex-1 truncate">{item.label}</span>
           <RowTrailing extras={item} statusClassName={NAV_STATUS} />
         </>
       ) : item.tag || item.status ? (
         <span className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="min-w-0 flex-1 truncate">{item.label}</span>
+          <span className="ui-row-t min-w-0 flex-1 truncate">{item.label}</span>
           <RowTrailing extras={item} statusClassName={NAV_STATUS} />
         </span>
       ) : item.label}
@@ -735,7 +741,7 @@ const PHONE_FOLD = 'flex min-h-[44px] w-full items-end gap-2 pb-1.5 text-start u
 // The sidebar's pin strip: over the row's trailing edge, on the plane colour
 // so a long name runs under it, shown while the row is pointed at or holds
 // the keyboard (always, on a screen with no pointer that hovers).
-const NAV_CONTROLS = 'absolute end-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-[color:var(--dc-sheet-solid)] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100';
+const NAV_CONTROLS = 'settings-nav-controls absolute end-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-[color:var(--dc-sheet-solid)] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100';
 
 /**
  * The desktop sidebar. `className` is NOT rendered on the <nav> — it is a
@@ -760,12 +766,12 @@ export function SettingsNavDesktop() {
           colour, so they do not show through. `-mt-2.5 pt-2.5` spends the
           sheet's own top padding, so the field sits flush. */}
       {desktop ? (
-        <div className="sticky top-0 z-10 -mt-2.5 pt-2.5 pb-3 bg-[color:var(--dc-sheet-solid)]">
+        <div className="ui-search sticky top-0 z-10 -mt-2.5 pt-2.5 pb-3 bg-[color:var(--dc-sheet-solid)]">
           <FilterField id="settings-filter-desktop" query={query} setQuery={setQuery} hits={hits} signOutHit={signOutHit} />
         </div>
       ) : null}
       {filtering ? (
-        <div data-settings-filter-results="">
+        <div className="ui-card" data-settings-filter-results="">
           {hits.map((hit) => (
             <button
               key={hit.item.key}
@@ -774,7 +780,7 @@ export function SettingsNavDesktop() {
               className={HIT_ROW}
               onClick={() => choose(hit, setQuery, query)}
             >
-              <span className="block"><Highlighted text={hit.item.label} query={query} /></span>
+              <span className="ui-row-t block"><Highlighted text={hit.item.label} query={query} /></span>
               {hit.parts.length ? (
                 <span className={HIT_PARTS}><PartLabels parts={hit.parts} query={query} /></span>
               ) : null}
@@ -797,16 +803,21 @@ export function SettingsNavDesktop() {
               <GroupHeading group={group} className={NAV_HEADING} phone={false} />
               {/* #5997: a folded group keeps the page you are on, so the sidebar
                   never loses your place. */}
-              {(group.folded ? group.items.filter((item) => item.active) : group.items).map((item, place) => (
-                group.key ? (
-                  <div key={item.key} className="group relative" data-settings-row={item.key}>
-                    <NavRow item={item} />
-                    <span className={NAV_CONTROLS}>
-                      <RowControls item={item} place={place} count={group.items.length} hostId="settings-nav-desktop" phone={false} />
-                    </span>
-                  </div>
-                ) : <NavRow key={item.key} item={item} />
-              ))}
+              {/* One neutral wrapper round a group's rows: nothing in the
+                  standard look, the kit's card under one of the frame's
+                  looks (looks.json "wear": card). */}
+              <div className="ui-card">
+                {(group.folded ? group.items.filter((item) => item.active) : group.items).map((item, place) => (
+                  group.key ? (
+                    <div key={item.key} className="group relative" data-settings-row={item.key}>
+                      <NavRow item={item} />
+                      <span className={NAV_CONTROLS}>
+                        <RowControls item={item} place={place} count={group.items.length} hostId="settings-nav-desktop" phone={false} />
+                      </span>
+                    </div>
+                  ) : <NavRow key={item.key} item={item} />
+                ))}
+              </div>
             </div>
           ))}
         </>
@@ -832,7 +843,7 @@ export function SettingsMobileMenu() {
   return (
     <div id="settings-mobile-menu-host" className="lg:hidden">
       {mobile ? (
-        <div className="px-1 pb-4">
+        <div className="ui-search px-1 pb-4">
           <FilterField id="settings-filter-mobile" query={query} setQuery={setQuery} hits={hits} signOutHit={signOutHit} />
         </div>
       ) : null}
@@ -875,7 +886,7 @@ export function SettingsMobileMenu() {
           {mobile ? <RecentSearches items={recent} setQuery={setQuery} variant="mobile" /> : null}
           {groups.map((group) => (
             <div key={group.key || group.name} className="mb-5">
-              <GroupHeading group={group} className="px-4 pb-1.5" phone />
+              <GroupHeading group={group} className="ui-cap px-4 pb-1.5" phone />
               {/* #5997: a folded group is its heading alone. */}
               {group.folded ? null : (
               <GroupedList className="mx-0">
@@ -927,7 +938,9 @@ export function SettingsMobileMenu() {
 
 /**
  * THE PAGE'S OWN NAME at the head of the pane (overnight audit W05, 1 Nov
- * 2026), from lg up, where the sidebar is beside it. A page of several parts
+ * 2026), from lg up, where the sidebar is beside it. (Under one of the
+ * frame's looks it is drawn for every page and at every width, as the kit's
+ * 22px sub-heading: app.css, SETTINGS.) A page of several parts
  * (Account is Profile, Sign-in and Delete account) opened under the first
  * part's heading, so "Account" was lit in the list while the pane said
  * "Profile", and three headings of the same large size stood in one page.
@@ -947,4 +960,34 @@ export function SettingsPageTitle() {
   }
   if (!label) return null;
   return <h2 className="settings-page-title" data-settings-page-title="">{label}</h2>;
+}
+
+/**
+ * THE BAR'S TRAIL UNDER A LOOK (looks v2, s56 to s73). The frame's bar reads
+ * a page's own breadcrumb from ../frame/frame-page-store.ts; Settings says
+ * "You › Settings" on the phone's list of sections and "Settings › <page>"
+ * wherever a section is open (a phone's bar shows the last word alone). The
+ * arrow stays the shell's own back button, whose target settings.js keeps
+ * (`_syncChrome`: the list from a section on a phone, You otherwise).
+ * Published only while the screen is up; the standard header never reads it.
+ * Draws nothing.
+ */
+const pressBack = () => { document.getElementById('back-btn')?.click(); };
+
+export function SettingsFrameCrumb() {
+  const t = useMessages('settings');
+  const tCore = useMessages('core');
+  // The router's last revealed screen: Settings does not publish through the visibility store.
+  const shown = (useStoreState(navStore) as { screen: string | null }).screen === 'settings-screen';
+  const { desktop, mobile } = useStoreState(settingsNavStore) as NavState;
+  let page = '';
+  for (const group of desktop || []) {
+    const hit = group.items.find((item) => item.active);
+    if (hit) { page = hit.label; break; }
+  }
+  const settings = t('settings:screen.title');
+  // `mobile` is the level-1 menu's descriptor: set only while the list is the page.
+  const crumb = !shown || !desktop ? null : mobile || !page ? [tCore('core:tabs.me'), settings] : [settings, page];
+  useFramePage(crumb, crumb ? pressBack : null);
+  return null;
 }

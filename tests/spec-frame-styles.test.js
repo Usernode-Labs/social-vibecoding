@@ -136,8 +136,14 @@ test('the shell document sends no policy that would stop its spec frames styling
   const cspAdvice = 'Spec screens\' sandboxed srcdoc frames inherit it. If a CSP is added on purpose, it must allow '
     + 'the frame stylesheets (style-src for the shell origin, loaded from an opaque-origin srcdoc frame), and this '
     + 'test should be updated to assert that instead (the browser test below renders a spec under it) (#4439).';
-  assert.equal(res.headers.get('content-security-policy'), null,
-    `The shell document sends Content-Security-Policy: ${res.headers.get('content-security-policy')}. ${cspAdvice}`);
+  // The one directive the shell does send is frame-ancestors (who may frame
+  // the shell itself, src/services/static-cache.js shellFrameAncestors). It
+  // is checked only on a navigation response, never on a srcdoc frame, and
+  // governs no fetch, so a spec frame's stylesheets are untouched by it.
+  const csp = res.headers.get('content-security-policy');
+  const directives = (csp || '').split(';').map((d) => d.trim().split(/\s+/)[0].toLowerCase()).filter(Boolean);
+  assert.ok(directives.every((d) => d === 'frame-ancestors'),
+    `The shell document sends Content-Security-Policy: ${csp}. ${cspAdvice}`);
   assert.doesNotMatch(html, /<meta[^>]+http-equiv=["']?content-security-policy["'\s>]/i,
     `The shell document declares a Content-Security-Policy in a <meta>. ${cspAdvice}`);
 

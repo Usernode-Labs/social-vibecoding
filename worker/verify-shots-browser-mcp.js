@@ -5,9 +5,11 @@
 // before/after turns. Listing tools catches a missing MCP binary; calling a
 // browser tool also catches Chromium startup failures in the worker image,
 // and a named screenshot proves shots land where the shots bridge reads them,
-// at 1x as every run takes them today, and, as a run taken at device density
-// does (patch-playwright-mcp-screenshot.js), at the browser's density: the
-// file is the image the tool answered with, times that density, wide.
+// answered with their image (patch-playwright-mcp.js), at 1x as every run
+// takes them today, and, as a run taken at device density does, at the
+// browser's density: the file is the image the tool answered with, times that
+// density, wide. An action's answer carries the page snapshot (the same
+// patch), and closing the browser writes its clip into the same directory.
 
 const { spawn, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -28,11 +30,13 @@ function pngWidth(buffer) {
   return buffer.length > 24 && buffer.toString('latin1', 12, 16) === 'IHDR' ? buffer.readUInt32BE(16) : 0;
 }
 
-// A close-up of a 20 x 10 region at 6.5 (patch-playwright-mcp-screenshot.js
+// A close-up of a 20 x 10 region at 6.5 (patch-playwright-mcp.js
 // `closeup`) must be saved 130 x 65, and answer with no image.
 const CLOSEUP = { x: 0, y: 0, width: 20, height: 10, scale: 6.5 };
+// A page with something in its snapshot, that needs no network or proxy.
+const SNAPSHOT_PAGE = 'data:text/html,<title>Shots smoke</title><h1>Shots smoke</h1>';
 
-function verifyBrowser(server, navigationChecks = [], { density = null, closeup = false } = {}) {
+function verifyBrowser(server, navigationChecks = [], { density = null, closeup = false, clip = false } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(server.command, server.args, {
       env: { ...process.env, ...server.env }, stdio: ['pipe', 'pipe', 'pipe'],
@@ -55,6 +59,16 @@ function verifyBrowser(server, navigationChecks = [], { density = null, closeup 
     child.on('exit', (code, signal) => finish(new Error(`Browser MCP exited during ${phase} (${code ?? signal}): ${errors.slice(-1000)}`)));
     child.stdin.on('error', (error) => finish(error));
     child.stderr.on('data', (chunk) => { errors = (errors + chunk).slice(-2000); });
+    // With clips on, closing the browser writes the session's video into its
+    // directory, where the shots bridge reads the newest one.
+    const closeAndCheckClip = () => {
+      if (!clip) return finish(null, tools);
+      phase = 'browser_close clip';
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 95, method: 'tools/call', params: {
+        name: 'browser_close', arguments: {},
+      } })}\n`);
+      return undefined;
+    };
     child.stdout.on('data', (chunk) => {
       output += chunk;
       if (output.length > 1_000_000) return finish(new Error('Browser MCP output exceeded the smoke-test limit.'));
@@ -79,12 +93,24 @@ function verifyBrowser(server, navigationChecks = [], { density = null, closeup 
             return finish(new Error(`Browser MCP browser_tabs failed: ${JSON.stringify(message.error || message.result).slice(0, 1200)}; stderr: ${errors.slice(-500)}`));
           }
           const response = (message.result?.content || []).filter((item) => item.type === 'text').map((item) => item.text).join('\n');
-          if (!response.includes('Open tabs')) {
+          if (!/^### Result\n(?:No open tabs|- \d+:)/m.test(response)) {
             return finish(new Error(`Browser MCP browser_tabs returned no tab listing: ${response.slice(0, 500)}`));
+          }
+          phase = 'browser_navigate snapshot';
+          child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 30, method: 'tools/call', params: {
+            name: 'browser_navigate', arguments: { url: SNAPSHOT_PAGE },
+          } })}\n`);
+        } else if (message.id === 30) {
+          // The shots agent reads the page from an action's answer: it has
+          // no tool that could open a snapshot file.
+          const response = (message.result?.content || []).filter((item) => item.type === 'text').map((item) => item.text).join('\n');
+          if (message.error || message.result?.isError
+              || !/### Snapshot\n```yaml\n[\s\S]*heading "Shots smoke"/.test(response)) {
+            return finish(new Error(`Browser MCP navigation did not answer with the page snapshot: ${(response || JSON.stringify(message.error)).slice(0, 600)}`));
           }
           phase = 'browser_mouse_move_xy';
           child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: {
-            name: 'browser_mouse_move_xy', arguments: { element: 'browser viewport', x: 10, y: 10 },
+            name: 'browser_mouse_move_xy', arguments: { x: 10, y: 10 },
           } })}\n`);
         } else if (message.id === 4) {
           if (message.error || message.result?.isError) {
@@ -100,6 +126,9 @@ function verifyBrowser(server, navigationChecks = [], { density = null, closeup 
               || !fs.existsSync(path.join(outputDir, 'image-smoke.png'))) {
             return finish(new Error(`Browser MCP did not save a named screenshot in its shots directory: ${JSON.stringify(message.error || message.result).slice(0, 600)}`));
           }
+          if (!(message.result?.content || []).some((item) => item.type === 'image')) {
+            return finish(new Error('Browser MCP answered a named screenshot without its image; the shots agent looks at every shot it saves (patch-playwright-mcp.js).'));
+          }
           if (closeup) {
             phase = 'browser_take_screenshot closeup';
             child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 91, method: 'tools/call', params: {
@@ -112,7 +141,7 @@ function verifyBrowser(server, navigationChecks = [], { density = null, closeup 
             const answered = image ? pngWidth(Buffer.from(String(image.data || ''), 'base64')) : 0;
             if (!answered || saved !== answered * density) {
               return finish(new Error(`Browser MCP saved a ${saved} px screenshot for a ${answered} px screen; `
-                + `shots must be saved at ${density}x (patch-playwright-mcp-screenshot.js, write-shots-mcp-config.js).`));
+                + `shots must be saved at ${density}x (patch-playwright-mcp.js, write-shots-mcp-config.js).`));
             }
           }
           if (closeup) return undefined;
@@ -121,7 +150,7 @@ function verifyBrowser(server, navigationChecks = [], { density = null, closeup 
             child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: {
               name: 'browser_navigate', arguments: { url: navigationChecks[0].url },
             } })}\n`);
-          } else return finish(null, tools);
+          } else return closeAndCheckClip();
         } else if (message.id === 91) {
           const outputDir = server.args[server.args.indexOf('--output-dir') + 1];
           const file = path.join(outputDir, 'closeup-smoke.png');
@@ -131,6 +160,14 @@ function verifyBrowser(server, navigationChecks = [], { density = null, closeup 
               || (message.result?.content || []).some((item) => item.type === 'image')) {
             return finish(new Error(`Browser MCP close-up was not saved 130 x 65 without an image (${size.join(' x ')}): `
               + `${JSON.stringify(message.error || message.result).slice(0, 600)}`));
+          }
+          return closeAndCheckClip();
+        } else if (message.id === 95) {
+          const outputDir = server.args[server.args.indexOf('--output-dir') + 1];
+          const clips = fs.readdirSync(outputDir).filter((name) => name.endsWith('.webm')
+            && fs.statSync(path.join(outputDir, name)).size > 0);
+          if (message.error || message.result?.isError || !clips.length) {
+            return finish(new Error(`Browser MCP wrote no clip on close in its shots directory: ${JSON.stringify(message.error || message.result).slice(0, 600)}`));
           }
           return finish(null, tools);
         } else if (message.id >= 5 && message.id < 5 + navigationChecks.length) {
@@ -146,7 +183,7 @@ function verifyBrowser(server, navigationChecks = [], { density = null, closeup 
             return finish(new Error(`Browser MCP ${phase} did not load its expected state: ${response.slice(0, 500)}`));
           }
           const next = navigationChecks[index + 1];
-          if (!next) return finish(null, tools);
+          if (!next) return closeAndCheckClip();
           child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id + 1, method: 'tools/call', params: {
             name: 'browser_navigate', arguments: { url: next.url },
           } })}\n`);
@@ -212,7 +249,7 @@ async function main() {
       // density, and the desktop browsers' own (write-shots-mcp-config.js).
       const density = mode === 1 ? 1 : 3;
       // Close-ups are taken only in runs at device density.
-      const tools = await verifyBrowser(configs[mode].mcpServers[persona], [], { density, closeup: mode !== 1 });
+      const tools = await verifyBrowser(configs[mode].mcpServers[persona], [], { density, closeup: mode !== 1, clip: true });
       const records = fs.readFileSync(diagnosticFile, 'utf8').trim().split('\n')
         .filter((line) => line.startsWith('__USERNODE_SHOTS_BROWSER__ '))
         .flatMap((line) => {
@@ -226,7 +263,7 @@ async function main() {
           || !records.some((event) => event.kind === 'browser_call_end')) {
         throw new Error(`Browser observer did not record ${persona} tool timing`);
       }
-      process.stdout.write(`${persona}: ${tools.length} MCP tools available; Chromium opened a tab; shots at ${density}x\n`);
+      process.stdout.write(`${persona}: ${tools.length} MCP tools available; Chromium opened a tab; shots at ${density}x; a clip on close\n`);
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

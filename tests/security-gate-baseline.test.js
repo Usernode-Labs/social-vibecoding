@@ -285,9 +285,10 @@ case "$*" in
   *"image inspect"*) echo "sha256:${'e'.repeat(64)}" ;;
   *"anchore/syft"*) cat "${path.join(dir, 'baseline.json')}" ;;
   *"imagetools inspect"*) cat "${path.join(dir, 'attestation.json')}" ;;
-  *"--entrypoint node"*) cat > /dev/null; [ "\${FAKE_RUNTIME_FAILURE:-}" != 1 ] || exit 8; echo '{}' ;;
+  *"--entrypoint node"*) input=$(cat); [ "\${FAKE_RUNTIME_FAILURE:-}" != 1 ] || exit 8
+    case "$input" in *ms-playwright*) if [ -n "\${FAKE_BROWSERS:-}" ]; then cat "$FAKE_BROWSERS"; else echo '{}'; fi ;; *) echo '{}' ;; esac ;;
   *" image --skip-db-update"*) [ "\${FAKE_IMAGE_SCAN_FAILURE:-}" != 1 ] || exit 9; cp "${path.join(dir, 'report.json')}" "$out/$report" ;;
-  *" sbom "*) cp "${path.join(dir, 'report.json')}" "$out/$report" ;;
+  *" sbom "*) if [ "$report" = playwright-browser-advisories.json ]; then cp "$FAKE_BROWSER_ADVISORIES" "$out/$report"; else cp "${path.join(dir, 'report.json')}" "$out/$report"; fi ;;
 esac
 `, { mode: 0o755 });
   return bin;
@@ -330,7 +331,7 @@ test('an image with the same digest as the live image is not pulled, saved or re
   // A different image keeps every check, against the live image's attestation.
   const changed = run(other, live, { SPDX: sbom });
   assert.equal(changed.res.status, 0, changed.res.stderr);
-  assert.equal((changed.calls.match(/--entrypoint node/g) || []).length, 2, 'both runtime probes');
+  assert.equal((changed.calls.match(/--entrypoint node/g) || []).length, 3, 'every runtime probe, the Playwright browsers\' included');
   assert.match(changed.calls, /image save -o/);
   assert.match(changed.calls, /imagetools inspect ghcr\.io\/usernode-labs\/social-vibecoding-worker@sha256:c{64}/);
   assert.match(changed.calls, / image --skip-db-update/, 'the full-image scan');
@@ -348,7 +349,7 @@ test('unchanged vulnerable Buildx warns; an introduced version blocks; audits re
   const scan = { SchemaVersion: 2, Results: [{ Target: 'buildx', Vulnerabilities: [
     { Severity: 'HIGH', PkgName: 'golang.org/x/net', InstalledVersion: 'v0.59.0', VulnerabilityID: 'CVE-2026-78661', FixedVersion: '0.62.0' },
     { Severity: 'CRITICAL', PkgName: 'unfixable', InstalledVersion: '1', VulnerabilityID: 'CVE-2026-12345' },
-    { Severity: 'HIGH', PkgName: 'decode-uri-component', InstalledVersion: '0.2.2', VulnerabilityID: 'CVE-2026-118664', FixedVersion: '0.5.1' },
+    { Severity: 'HIGH', PkgName: 'zod', InstalledVersion: '3.25.76', VulnerabilityID: 'CVE-2023-54404', FixedVersion: '4.0.0' },
   ] }] };
   const unchanged = imageAssessment([scan], { component: 'standalone', baseline: new Set(['golang.org/x/net@v0.59.0']), now: NOW });
   assert.equal(unchanged.status, 'existing_findings');
@@ -360,7 +361,7 @@ test('unchanged vulnerable Buildx warns; an introduced version blocks; audits re
   const full = imageAssessment([scan, scan], { component: 'standalone', audit: true, now: NOW });
   assert.equal(full.findings.length, 3, 'deduplicate SBOM/full-image matches but retain all risk categories');
   assert.equal(full.blocking.length, 0);
-  assert.equal(full.findings.find((f) => f.id === 'CVE-2026-118664').acceptedUntil, '2026-11-28');
+  assert.equal(full.findings.find((f) => f.id === 'CVE-2023-54404').acceptedUntil, '2026-11-22');
   const lower = JSON.parse(JSON.stringify(scan));
   lower.Results[0].Vulnerabilities[0].Severity = 'LOW';
   const merged = imageAssessment([scan, lower], { component: 'standalone', audit: true, now: NOW });
@@ -526,4 +527,62 @@ test('the same image finding blocks a PR and warns after merge while runtime and
   fs.writeFileSync(path.join(dir, 'report.json'), '{}');
   assert.equal(run().status, 1, 'invalid scan reports still fail');
   assert.equal(JSON.parse(fs.readFileSync(path.join(out, 'assessment.json'))).status, 'unavailable');
+});
+
+// A Chromium Playwright downloaded is in no distro database and no lockfile
+// (Chromium 141 sat in the worker image for a year with no finding). The
+// image check inventories it, matches it against the Chromium advisories in
+// the same offline database, and gates it like any finding: by the
+// Playwright that installed it, which the baseline's SBOM does list.
+test('a Playwright browser in the image is found, gated by its Playwright, and never assessed blind', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'security-browsers-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const live = 'ghcr.io/usernode-labs/social-vibecoding-worker@sha256:' + 'c'.repeat(64);
+  const candidate = 'ghcr.io/usernode-labs/social-vibecoding-worker@sha256:' + 'd'.repeat(64);
+  fs.writeFileSync(path.join(dir, 'report.json'), JSON.stringify({ SchemaVersion: 2, Results: [{ Target: 'worker' }] }));
+  const sbom = path.join(dir, 'sbom.spdx.json');
+  fs.writeFileSync(sbom, JSON.stringify({ spdxVersion: 'SPDX-2.3', packages: [{ name: 'playwright-core', versionInfo: '1.56.0' }] }));
+  const browsers = path.join(dir, 'browsers.json');
+  const inventory = (version) => fs.writeFileSync(browsers, JSON.stringify({ browsers: [
+    { dir: '/home/node/.cache/ms-playwright/chromium-1194', kind: 'chromium', revision: '1194', version, installedBy: ['playwright-core@1.56.0'] },
+  ] }));
+  const advisories = path.join(dir, 'advisories.json');
+  fs.writeFileSync(advisories, JSON.stringify({ SchemaVersion: 2, Results: [{ Target: 'query', Vulnerabilities: [
+    { VulnerabilityID: 'CVE-2026-121076', Severity: 'HIGH', Description: 'Use after free in WebXR in Google Chrome prior to 157.0.8103.38 allowed a remote attacker to execute arbitrary code.' },
+  ] }] }));
+  const attestation = path.join(dir, 'attestation.json');
+  const bin = fakeDocker(dir);
+  const run = (out, extra = {}) => spawnSync('sh', ['scripts/check-image-security.sh', candidate, path.join(dir, out), sbom, 'worker'], {
+    cwd: ROOT, encoding: 'utf8',
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, BASELINE_IMAGE: live, SECURITY_AUDIT_ONLY: '',
+      FAKE_BROWSERS: browsers, FAKE_BROWSER_ADVISORIES: advisories, GITHUB_STEP_SUMMARY: path.join(dir, 'summary.md'), ...extra },
+  });
+  const assessment = (out) => JSON.parse(fs.readFileSync(path.join(dir, out, 'assessment.json'), 'utf8'));
+
+  // The audit lists it, under its own name, fixed in the Chrome release.
+  inventory('141.0.7390.37');
+  const audit = run('audit', { SECURITY_AUDIT_ONLY: '1' });
+  assert.equal(audit.status, 0, audit.stderr);
+  assert.deepEqual(assessment('audit').findings, [{ id: 'CVE-2026-121076', package: 'playwright-chromium',
+    version: '141.0.7390.37', severity: 'HIGH', fixedVersion: '157.0.8103.38' }]);
+  assert.match(fs.readFileSync(path.join(dir, 'calls.log'), 'utf8'), / sbom --skip-db-update[^\n]*playwright-browser-query\.cdx\.json/);
+
+  // Shipped by the live image's Playwright: reported, not blocking.
+  fs.writeFileSync(attestation, JSON.stringify({ SPDX: { spdxVersion: 'SPDX-2.3', packages: [{ name: 'playwright-core', versionInfo: '1.56.0' }] } }));
+  const shipped = run('shipped');
+  assert.equal(shipped.status, 0, shipped.stderr);
+  assert.equal(assessment('shipped').status, 'existing_findings');
+  // A Playwright the live image does not install introduces it: blocking.
+  fs.writeFileSync(attestation, JSON.stringify({ SPDX: { spdxVersion: 'SPDX-2.3', packages: [{ name: 'playwright-core', versionInfo: '1.55.0' }] } }));
+  const introduced = run('introduced');
+  assert.equal(introduced.status, 1);
+  assert.equal(assessment('introduced').status, 'regression');
+  assert.match(introduced.stdout, /::error title=Security gate: worker image::[^\n]*playwright-chromium@141\.0\.7390\.37: CVE-2026-121076 \(fix 157\.0\.8103\.38\)/);
+
+  // A browser whose version cannot be read is never assessed as clean.
+  inventory(null);
+  const blind = run('blind', { SECURITY_AUDIT_ONLY: '1' });
+  assert.notEqual(blind.status, 0);
+  assert.equal(assessment('blind').status, 'unavailable');
+  assert.match(assessment('blind').reason, /Playwright browser scan failed/);
 });

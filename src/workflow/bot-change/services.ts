@@ -14,7 +14,7 @@ interface Deps { config: any; pool: Pool }
 // 30 s, doubling, at most 30 minutes between tries.
 const backoff = (attempt: number) => Math.min(30 * 60 * 1000, 30 * 1000 * 2 ** (attempt - 1));
 
-export function botChangeServices({ pool }: Deps): Record<string, WorkHandler> {
+export function botChangeServices({ pool, config }: Deps): Record<string, WorkHandler> {
   return {
     // Ready to try, once per approval epoch: the card in the requester's DM
     // (and its record, which the activity card reads), the approvers'
@@ -24,11 +24,28 @@ export function botChangeServices({ pool }: Deps): Record<string, WorkHandler> {
       backoffMs: backoff,
       async run({ input }): Promise<Json> {
         const told = await legacy('services/homeroom-bot-dm').tellReady(pool, Number(input.sessionId),
-          { epoch: Number(input.epoch), broken: Array.isArray(input.broken) ? input.broken : [] });
+          {
+            epoch: Number(input.epoch),
+            broken: Array.isArray(input.broken) ? input.broken : [],
+            offPlan: Array.isArray(input.offPlan) ? input.offPlan : [],
+          });
         // Not sent because it is no longer up for a vote with its checks
         // passed, or its epoch moved (`notUp`: the machine considers it
         // again); or a newer build's news overtook it (`stale` alone).
         return { messageId: told?.messageId ?? null, stale: !!told?.stale, notUp: !!told?.notUp };
+      },
+    },
+
+    // #6407: compare a change with the plan it was built from, once. A
+    // result it cannot get is `unchecked`, which never blocks the change.
+    [WORK.planCheck]: {
+      maxAttempts: 1,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        const out = await legacy('services/plan-match').checkAgainstPlan(pool, config, {
+          sessionId: Number(input.sessionId), head: input.head == null ? null : String(input.head),
+        });
+        return { state: out?.state || 'unchecked', misses: Array.isArray(out?.misses) ? out.misses : [] };
       },
     },
 

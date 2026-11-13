@@ -4,7 +4,8 @@
 // (src/routes/private-requests.js), so it is not on the board, in a chat
 // thread or in any feed: this section is where admins find, read, discuss
 // and close one. Filing one is the "Private request" box in the Suggest an
-// improvement dialog (features/dialogs/feedback-controller.js).
+// improvement dialog (features/dialogs/feedback-controller.js); the
+// platform's signal service files the dependency audit's findings here too.
 //
 // Nothing renders for anyone else, and nothing renders on the first pass:
 // whether the viewer is an admin is read in an effect, so the server render
@@ -18,6 +19,7 @@ import { LockIcon } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
 import { useMessages } from '../../../lib/i18n/react';
 import { agoStamp } from '../../../lib/timestamp';
+import { PRIVATE_REQUEST_OPEN, takePendingPrivateRequest } from './private-request-door';
 
 interface PrivateRequest {
   id: number;
@@ -182,6 +184,9 @@ export function PrivateRequests({ slug }: { slug: string }): ReactNode {
   const [requests, setRequests] = useState<PrivateRequest[]>([]);
   const [canWrite, setCanWrite] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
+  // The request a door asked for (private-request-door.ts), until the list
+  // holds it.
+  const [wanted, setWanted] = useState<number | null>(null);
 
   useEffect(() => { setAdmin(viewerIsAdmin()); }, []);
 
@@ -208,12 +213,32 @@ export function PrivateRequests({ slug }: { slug: string }): ReactNode {
       cancel();
       cancel = load();
     };
+    const onOpen = () => {
+      const id = takePendingPrivateRequest(slug);
+      if (id == null) return;
+      setWanted(id);
+      // It may be newer than the list.
+      cancel();
+      cancel = load();
+    };
+    onOpen();
     window.addEventListener(PRIVATE_REQUESTS_CHANGED, onChanged);
+    window.addEventListener(PRIVATE_REQUEST_OPEN, onOpen);
     return () => {
       cancel();
       window.removeEventListener(PRIVATE_REQUESTS_CHANGED, onChanged);
+      window.removeEventListener(PRIVATE_REQUEST_OPEN, onOpen);
     };
   }, [admin, load, slug]);
+
+  useEffect(() => {
+    if (wanted == null || !requests.some((r) => r.id === wanted)) return;
+    setOpenId(wanted);
+    setWanted(null);
+    requestAnimationFrame(() => {
+      document.querySelector(`[data-private-request="${wanted}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    });
+  }, [wanted, requests]);
 
   if (!admin || !requests.length) return null;
 

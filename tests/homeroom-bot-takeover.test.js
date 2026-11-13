@@ -249,6 +249,29 @@ test('update_change on a connector draft records the ask with no request and sta
   assert.equal(runs.length, 1);
   assert.equal(runs[0].userId, EVAN.id);
   assert.equal(ctx.revised, true);
+  // #6600: the reply may have lost the race to this update's own failure.
+  assert.equal(out.updateId, 301);
+  assert.equal(ctx.takeoverId, 301);
+});
+
+test('#6600: a takeover refreshes the change\'s work state when it starts and ends', async () => {
+  const calls = [];
+  const workState = { refresh: async (_pool, items) => { calls.push(items); return []; } };
+  // It starts.
+  const pool = queuePool();
+  const ctx = askCtx(pool, EVAN, draft());
+  ctx.deps.workState = workState;
+  await voice.runTool(pool, ctx, 'update_change', {
+    instruction: 'Reword the two reminder emails and give the stop page one button.',
+  });
+  assert.deepEqual(calls, [[{ sessionId: 13112 }]], 'the change reads as the bot\'s work at once');
+  // It ends.
+  const done = runPool();
+  const deps = { ...runDeps(done, { reply: REVISED }), workState };
+  await takeover.runUpdateWork({ steps: () => fakeSteps() }, { pool: done, config: {}, deps }, {
+    id: 301, app_id: APP.id, session_id: 13112, user_id: EVAN.id, kind: 'update', state: 'running',
+  });
+  assert.deepEqual(calls.at(-1), [{ sessionId: 13112 }], 'and says what came of it when it ends');
 });
 
 test('an admin\'s ask is recorded as theirs and paid by the author; one on a change already updating waits for it', async () => {
@@ -394,6 +417,123 @@ test('an update runs one build turn on the change\'s own branch, settles the pus
   assert.match(said, /work that does not start from it is refused/);
   assert.deepEqual(voice.withoutInternals(takeover.handBackLine({ tool: 'Claude Code', sha: NEW })),
     takeover.handBackLine({ tool: 'Claude Code', sha: NEW }), 'the hand-back survives the report\'s clean-up');
+});
+
+// ── #6602: a change its author made in another coding tool ──────────────
+
+// The change's session as it really is: made in Claude Code, so it carries
+// that backend, and it belongs to its author. Every write the turn makes to
+// `agent_backend` is recorded.
+function claudeCodePool() {
+  const pool = runPool();
+  const base = pool.query.bind(pool);
+  pool.backendWrites = [];
+  pool.query = async (sql, params = []) => {
+    const s = String(sql);
+    if (/SELECT cs\.\*, a\.slug AS app_slug/.test(s)) {
+      return {
+        rows: [{
+          ...draft(), user_id: EVAN.id, agent_backend: 'claude_code', agent_model: 'anthropic/claude-opus-5-5',
+          agent_config_version: 1, agent_thread_id: null, app_slug: APP.slug, app_name: APP.name, repo_url: APP.repo_url,
+        }],
+      };
+    }
+    if (/UPDATE chat_sessions SET agent_backend/.test(s)) { pool.backendWrites.push(params); return { rows: [] }; }
+    return base(sql, params);
+  };
+  return pool;
+}
+
+// The update's turn, through the REAL followup.runFollowUpTurn, with only the
+// pieces around it faked: the worker, the durable turn, and the dispatch loop
+// (which asks the runtime resolver, as it really does).
+function realTurnDeps(pool, { reply = REVISED, seen = [], loops = [], reports = [], runtime = true } = {}) {
+  return {
+    settings: LIVE,
+    bot: BOT,
+    live: { ...live, isLiveFor: () => true },
+    dm: { overWeeklyAllowance: async () => false },
+    limits: { checkBudget: async () => ({}) },
+    managedOpenRouter: { usesIncludedKey: async () => false },
+    github: { getBranchSha: async () => OLD },
+    followup,
+    proposalUpdate: { settleLandedHead: async () => ({ tail: 'paused', rebuilding: false }) },
+    voice: { ...voice, reportFollowUp: async (_p, _c, args) => { reports.push(args); return 1; } },
+    sessionTaken: async () => false,
+    worker: {
+      async ensureWorkerImage() {},
+      async ensureWorker() { return 'usernode-worker-13112'; },
+      async execInWorker() { throw new Error('no worker runs in this test'); },
+    },
+    durableTurn: { runTurn: async (_st, _key, spec) => ({ routed: await spec.dispatch({}), stopped: false }) },
+    sessions: {
+      async runCodexAttemptLoop(args) {
+        loops.push(args);
+        const ctx = await args.resolveRuntime();
+        if (!ctx) return null; // A session this turn has no runtime for.
+        return { result: { pushOk: true, sha: NEW, ahead: 1, lastResultText: reply } };
+      },
+    },
+    agentTurn: {
+      // What resolveCodexRuntimeContext opens with: no runtime for a session
+      // that is not on codex_openrouter.
+      async resolveCodexRuntimeContext({ session }) {
+        seen.push(session.agent_backend);
+        if (!runtime || session.agent_backend !== 'codex_openrouter') return null;
+        return { agentBackend: 'codex_openrouter', agentConfigVersion: 1 };
+      },
+    },
+  };
+}
+
+const UPDATE_ROW = { id: 301, app_id: APP.id, session_id: 13112, user_id: EVAN.id, asked_by: EVAN.id, kind: 'update', state: 'running' };
+const runCtx = () => ({ steps: () => fakeSteps(), kind: 'look.run', key: 'run', workId: 9, signal: null });
+
+test('a takeover of a change made in Claude Code runs the turn on the bot\'s backend, then puts the author\'s back', async () => {
+  const pool = claudeCodePool();
+  const seen = [];
+  const loops = [];
+  const reports = [];
+  const deps = realTurnDeps(pool, { seen, loops, reports });
+  const out = await takeover.runUpdateWork(runCtx(), { pool, config: {}, deps }, UPDATE_ROW);
+  assert.equal(out.state, 'done');
+  // The runtime resolver saw the bot's backend, not the author's, so it resolved one.
+  assert.deepEqual(seen, ['codex_openrouter']);
+  // The dispatch names the session's real owner, so its row lock finds the row;
+  // the model is still called with the bot's own key.
+  assert.equal(loops.length, 1);
+  assert.equal(loops[0].sessionOwnerId, EVAN.id);
+  assert.equal(loops[0].userId, BOT.id);
+  // The row is stamped for the turn, then put back: the change still says it
+  // was made in Claude Code.
+  assert.deepEqual(pool.backendWrites, [[13112, 'codex_openrouter'], [13112, 'claude_code']]);
+  // It ends as the update it is, never as an answer that could not be read.
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].outcome.action, 'revise');
+  assert.equal(reports[0].outcome.moved, true);
+  assert.equal(pool.state.finished[7], true, 'counted as an update people asked for');
+  assert.match(voice.plainReport(reports[0].outcome), /^Done: Reworded the two reminder emails/);
+});
+
+test('a takeover whose turn has no runtime for the change says so in words, and still puts the backend back', async () => {
+  const pool = claudeCodePool();
+  const seen = [];
+  const loops = [];
+  const reports = [];
+  // The dispatch loop resolves nothing at all: a null, never an empty answer.
+  const deps = realTurnDeps(pool, { seen, loops, reports, runtime: false });
+  const out = await takeover.runUpdateWork(runCtx(), { pool, config: {}, deps }, UPDATE_ROW);
+  assert.equal(out.state, 'failed');
+  assert.equal(loops.length, 1, 'the dispatch was still asked');
+  assert.deepEqual(pool.backendWrites, [[13112, 'codex_openrouter'], [13112, 'claude_code']]);
+  assert.equal(pool.state.finished[3], 'I can\'t run on a change made in Claude Code yet');
+  assert.equal(reports[0].outcome.action, 'failed');
+  assert.equal(reports[0].outcome.why, 'I can\'t run on a change made in Claude Code yet');
+  const said = voice.plainReport(reports[0].outcome);
+  assert.match(said, /I can't run on a change made in Claude Code yet/);
+  assert.match(said, /The change is as it was\./);
+  assert.doesNotMatch(said, /Ask me again here to try again/, 'asking again would fail the same way');
+  assert.doesNotMatch(said, /could not be read/);
 });
 
 test('an update that moved nothing, or whose save was refused, is said as a failure and settles nothing', async () => {
@@ -609,4 +749,119 @@ test('the facts tell the author the bot can update their change, and anybody els
     deps: gateDeps({ dmSvc: { overWeeklyAllowance: async () => true, requesterOf: async () => null } }),
   });
   assert.match(spent, /You cannot update this change just now: @evan's building time for this week is used up/);
+});
+
+// ── A worker that could not start (#6598) ─────────────────────────────────
+
+const START_ROW = { id: 301, app_id: APP.id, session_id: 13112, user_id: EVAN.id, asked_by: EVAN.id, kind: 'update', state: 'running' };
+
+function startDeps(pool, answers, { reports = [], turns = [] } = {}) {
+  return {
+    ...runDeps(pool, { reply: REVISED }),
+    startRetryMs: 0,
+    followup: {
+      ...followup,
+      runFollowUpTurn: async (args) => {
+        turns.push(args);
+        const answer = answers[Math.min(turns.length - 1, answers.length - 1)];
+        return answer;
+      },
+    },
+    voice: { ...voice, reportFollowUp: async (_p, _c, args) => { reports.push(args); return 1; } },
+  };
+}
+
+const START_FAILED = {
+  routed: { error: 'worker: GitHub didn\'t answer when Homeroom tried to start working on owner/repo, so nothing was changed. Try again in a few minutes.' },
+  result: {}, stopped: false, stoppedBy: null, costUsd: null, infra: true, startFailed: true, startTransient: true, startCode: 'github_unavailable',
+};
+
+test('an update whose worker could not start tries again by itself, says so once, and then makes the turn', async () => {
+  const pool = runPool();
+  const reports = [];
+  const turns = [];
+  const deps = startDeps(pool, [START_FAILED, START_FAILED, { result: { pushOk: true, sha: NEW, ahead: 1, lastResultText: REVISED }, costUsd: 0.42, stopped: false, routed: { result: {} } }], { reports, turns });
+  const out = await takeover.updateOnce(pool, {}, { row: START_ROW, steps: fakeSteps(), runTag: 'upd301', deps });
+
+  assert.equal(turns.length, 3, 'three tries in all');
+  assert.equal(out.ok, true, 'the third try made the change');
+  assert.equal(out.moved, true);
+  // The interim note, said once when it was going to try again. The final
+  // report is said by runUpdateWork, which these tests' other cases cover.
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].outcome.action, 'start_retrying');
+  assert.equal(reports[0].finish, null, 'the asks stay queued meanwhile');
+  assert.equal(reports[0].runTag, 'upd301-start');
+});
+
+test('all three tries failing reports start_failed once, and never "unreadable"', async () => {
+  const pool = runPool();
+  const reports = [];
+  const turns = [];
+  const deps = startDeps(pool, [START_FAILED], { reports, turns });
+  const out = await takeover.updateOnce(pool, {}, { row: START_ROW, steps: fakeSteps(), runTag: 'upd301', deps });
+
+  assert.equal(turns.length, takeover.START_TRIES);
+  assert.equal(out.ok, false);
+  assert.equal(out.code, 'start_failed');
+  assert.match(out.error, /GitHub didn't answer when I tried to start, so nothing was changed/);
+  assert.equal(reports.length, 1, 'the interim note, and no second report');
+  assert.equal(reports[0].outcome.action, 'start_retrying');
+});
+
+test('a private repository says the worker\'s message once, with no wait', async () => {
+  const pool = runPool();
+  const reports = [];
+  const turns = [];
+  const privateFail = {
+    routed: { error: 'worker: Cannot bootstrap worker for owner/repo: repo is private. Homeroom requires public repositories.' },
+    result: {}, stopped: false, stoppedBy: null, costUsd: null, infra: true,
+    startFailed: true, startTransient: false, startCode: null,
+  };
+  const deps = startDeps(pool, [privateFail], { reports, turns });
+  const out = await takeover.updateOnce(pool, {}, { row: START_ROW, steps: fakeSteps(), runTag: 'upd301', deps });
+
+  assert.equal(turns.length, 1, 'no retry for a settled answer');
+  assert.equal(out.code, 'start_failed');
+  assert.match(out.error, /repo is private/);
+  assert.doesNotMatch(out.error, /^worker:/);
+  assert.equal(reports.length, 0, 'the normal report says it once');
+});
+
+test('a turn that never ran is not an unreadable answer', async () => {
+  const pool = runPool();
+  const deps = startDeps(pool, [{ routed: { result: {} }, result: {}, stopped: false, stoppedBy: null, costUsd: null }]);
+  const out = await takeover.updateOnce(pool, {}, { row: START_ROW, steps: fakeSteps(), runTag: 'upd301', deps });
+  assert.equal(out.ok, false);
+  assert.equal(out.code, 'failed');
+  assert.equal(out.error, 'the turn did not run');
+});
+
+test('a turn that really ran and gave nothing usable is still unreadable', async () => {
+  const pool = runPool();
+  const text = 'I could not work out what to do.';
+  const deps = startDeps(pool, [{
+    routed: { result: { lastResultText: text } }, result: { lastResultText: text }, stopped: false, stoppedBy: null, costUsd: 0.1,
+  }]);
+  const out = await takeover.updateOnce(pool, {}, { row: START_ROW, steps: fakeSteps(), runTag: 'upd301', deps });
+  assert.equal(out.ok, false);
+  assert.equal(out.code, 'unreadable');
+  assert.equal(out.error, 'its answer could not be read');
+});
+
+test('outcomeOf says a start failure as its own action', () => {
+  const started = takeover.outcomeOf({ ok: false, code: 'start_failed', error: 'GitHub didn\'t answer when I tried to start, so nothing was changed' });
+  assert.equal(started.outcome.action, 'start_failed');
+  assert.equal(started.status, 'failed');
+  assert.deepEqual(voice.mustSay(started.outcome), ["GitHub still didn't answer, so nothing was changed. Ask me again here when you'd like me to try."]);
+});
+
+test('a private repository is reported with the worker\'s own words, not as GitHub being down', () => {
+  const out = takeover.outcomeOf({
+    ok: false, code: 'start_failed', startTransient: false,
+    error: 'Cannot bootstrap worker for owner/repo: repo is private. Homeroom requires public repositories.',
+  });
+  assert.equal(out.outcome.action, 'failed');
+  assert.equal(out.outcome.why, 'Cannot bootstrap worker for owner/repo: repo is private. Homeroom requires public repositories.');
+  assert.doesNotMatch(voice.plainReport(out.outcome), /GitHub still didn't answer/);
 });

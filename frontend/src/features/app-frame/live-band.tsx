@@ -33,7 +33,8 @@ import { useMessages } from '../../lib/i18n/react';
 import { sharesUsageAnalytics } from '../../lib/usage-analytics';
 import { DrawnLook, isDrawnLook } from '../first-session/drawn-look';
 import type { FirstVersionScreens } from './first-version-screens';
-import { GLOW_RULES, GlowTracker } from './live-glow';
+import { onReducedMotionChange, reducedMotion } from '../../lib/reduced-motion';
+import { GLOW_RULES, GlowTracker, syncStillGlow } from './live-glow';
 import { type FirstVersionLive, type LivePhase, livePill } from './live-switch';
 
 const POLL_MS = 2000;
@@ -131,8 +132,8 @@ export function phaseOf(state: LiveAnswer['state'] | null, drawn: boolean, ended
 }
 
 function post(slug: string, body: Record<string, unknown>): void {
-  // #5097: watching Live is usage analytics, sent only for somebody who
-  // shares it.
+  // Watching Live is screen usage data, sent only for somebody who has not
+  // objected to being recorded.
   if (!sharesUsageAnalytics()) return;
   void fetch(`/api/apps/${encodeURIComponent(slug)}/first-version/live/seen`, {
     method: 'POST',
@@ -203,6 +204,9 @@ export default function LiveBand({ live, firstLook, name }: {
           goodFrame = true;
           setDrawn(true);
           glow.rebuilt(replayer?.iframe?.contentDocument || null);
+          // A rebuilt page starts from the recording: the still glow again,
+          // if Reduce motion (#6510) or the device asks for it.
+          syncStillGlow(replayer?.iframe?.contentDocument, reducedMotion());
         });
         // The player sizes its frame to the recording (width and height
         // attributes); the page is shown as tall as the phone holds at the
@@ -272,7 +276,13 @@ export default function LiveBand({ live, firstLook, name }: {
     };
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('pagehide', sendWatched);
+    // The setting turned on or off (here or in another tab), or the device's
+    // own preference: the replayed page follows at once.
+    const offMotion = onReducedMotionChange(() => {
+      syncStillGlow(replayer?.iframe?.contentDocument, reducedMotion());
+    });
     return () => {
+      offMotion();
       disposed = true;
       if (timer != null) window.clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisibility);

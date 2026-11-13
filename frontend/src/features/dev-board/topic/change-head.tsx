@@ -39,7 +39,7 @@
  * clashes with the version's own changes, Ask Homeroom bot to fit it.
  */
 
-import { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { forwardRef, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Html } from '../../../lib/html';
@@ -49,6 +49,7 @@ import { listText, t as translate } from '../../../lib/i18n/runtime';
 import { releaseSentence } from '../../../lib/release-eta';
 import { useReleaseNow } from '../../../lib/use-release-now';
 import { Alert } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/feed';
 import { CheckIcon, EllipsisHorizontalIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../group-chat/swatch';
@@ -57,9 +58,10 @@ import { askToFit, upstreamAction } from '../../versions/upstream';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel } from '../card/model';
-import type { ChangeGateView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
+import type { ChangeGateView, ChangeMergeView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
 import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
+import { TopicPageContext } from './topic-store';
 import { ThreadItems, pageSlug } from './thread-items';
 import type { ClosesRequest } from './thread-model';
 import { changeMenuKey } from './thread-menu';
@@ -68,6 +70,13 @@ import { TopicBack } from './topic-back';
 import { WorkWithBotButton } from './work-with-bot';
 import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
 import { IncludedIn, IssueAssociations, ProposalBody, SummaryMore } from './topic-head';
+import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
+import { useFramePage } from '../../frame/frame-page-store';
+import { placeName } from '../workshop/places';
+import { TopicFrameBy, TopicFrameHead, TopicFrameLabel, TopicFrameStatus } from './frame/topic-frame';
+import { liveTally } from '../card/fold';
+import { useSideStack } from './frame/side-stack';
+import { dotLine, pillKind, topicBack } from './frame/topic-page';
 
 function host(id: string): Element | null {
   return typeof document === 'undefined' ? null : document.getElementById(id);
@@ -79,13 +88,23 @@ function host(id: string): Element | null {
  * gate the ⋯ Details row uses), the title itself opens the Details sheet
  * (#5329): it looks as it always did, and underlines on hover.
  */
-export function ChangeBar({ v, menuKey, detailsId = null }: { v: ChangeThreadView; menuKey: string; detailsId?: number | null }): ReactNode {
+export function ChangeBar({ v, menuKey, detailsId = null, name = null }: {
+  v: ChangeThreadView;
+  menuKey: string;
+  detailsId?: number | null;
+  /** The change's own title, for the kit's head under one of the frame's looks. */
+  name?: string | null;
+}): ReactNode {
   const t = useMessages('project');
   const title = v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title');
   // #6431: beside the Homeroom bot page this bar is not drawn at all (app.css),
   // and the column's heading carries its pill and its rows instead. Publishing
   // them is all this does there; nowhere else does it publish anything.
   usePanelHead({ kind: 'change', pill: v.status || null, menuKey: menuKey || null });
+  // UNDER ONE OF THE FRAME'S LOOKS the page's head is the kit's (the tour's
+  // s34): what it is in a small line over the change's title, with this menu.
+  const frame = isFrameSkin(useLiveSkin());
+  if (frame) return <TopicFrameHead title={name || title} over={dotLine([title, v.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.change.bar.more') } : null} />;
   return (
     <header className="messages-thread-header">
       <div className="min-w-0 flex-1">
@@ -159,12 +178,18 @@ function FixRow({ fix, rerun }: { fix: FixChecksView; rerun: ReactNode }): React
 /**
  * #6225: what a yes on a change would close, under its Votes card's tally:
  * every request the change closes, each a link to its page with its title and
- * filer. A request its requester has not agreed to says so, so a voter can see
- * overreach and vote no. Five lines, then one tap for the rest.
+ * filer. #6606: the line then says where its filer stands — nothing when it
+ * is confirmed, "already closed", "its filer says this doesn't close it", or
+ * that it is waiting for whoever filed it to agree. Only a line that is
+ * waiting, seen by the person who filed it, carries Confirm. Five lines, then
+ * one tap for the rest.
  */
-function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
+function VoteCloses({ closes, id }: { closes: ClosesRequest[]; id: number | null }): ReactNode {
   const t = useMessages('project');
   const [open, setOpen] = useState(false);
+  const [answered, setAnswered] = useState<number[]>([]);
+  const [sending, setSending] = useState<number | null>(null);
+  const [failed, setFailed] = useState<number | null>(null);
   const shown = open || closes.length <= 5 ? closes : closes.slice(0, 5);
   const rest = closes.length - shown.length;
   const slug = (window as any).AppView?.appData?.slug || '';
@@ -172,6 +197,23 @@ function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
   const link = (n: number) => (
     <a href={slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${n}` : `#${n}`} className={linkClass} />
   );
+  async function confirm(n: number) {
+    if (sending != null || !slug || id == null) return;
+    setSending(n);
+    setFailed(null);
+    try {
+      const res = await fetch(
+        `/api/apps/${encodeURIComponent(slug)}/issues/${n}/changes/${id}/confirm-closing`,
+        { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      );
+      if (!res.ok) throw new Error(String(res.status));
+      setAnswered((was) => (was.includes(n) ? was : [...was, n]));
+    } catch {
+      setFailed(n);
+    } finally {
+      setSending(null);
+    }
+  }
   return (
     <div
       className="col-span-full mt-2.5 border-t border-[color:var(--app-sheet-line)] pt-2 text-[13px] leading-normal text-zinc-500 dark:text-zinc-400"
@@ -180,31 +222,65 @@ function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
       <p className="font-semibold text-zinc-700 dark:text-zinc-300">
         {t('project:topic.change.gate.closesHead', { count: closes.length })}
       </p>
-      {shown.map((r) => (
-        <p
-          key={r.number}
-          // #6225: a hanging indent, so a long title wrapping on a phone stays
-          // aligned after the "#number" link rather than under it.
-          className="ps-[3.4em] -indent-[3.4em]"
-          data-change-vote-closes-on={r.number}
-          data-confirmed={r.confirmed ? 'true' : 'false'}
-        >
-          {r.title && r.by ? (
-            <RichMessage
-              id="project:topic.change.gate.closesLine"
-              values={{ number: r.number, title: r.title, by: r.by }}
-              components={[link(r.number)]}
-            />
-          ) : r.title ? (
-            <RichMessage id="project:topic.change.gate.closesLineNoFiler" values={{ number: r.number, title: r.title }} components={[link(r.number)]} />
-          ) : (
-            <RichMessage id="project:topic.change.gate.closesLineUntitled" values={{ number: r.number }} components={[link(r.number)]} />
-          )}
-          {r.confirmed ? null : (
-            <>{' · '}<span className="whitespace-nowrap font-semibold text-zinc-700 dark:text-zinc-300">{t('project:topic.change.gate.closesUnconfirmed')}</span></>
-          )}
-        </p>
-      ))}
+      {shown.map((r) => {
+        const confirmed = r.confirmed || answered.includes(r.number);
+        const tail = r.closed
+          ? t('project:topic.change.gate.closesClosed')
+          : confirmed
+            ? null
+            : r.disputed
+              ? t('project:topic.change.gate.closesDisputed')
+              : r.waiting
+                ? t('project:topic.change.gate.closesUnconfirmed')
+                : null;
+        return (
+          <p
+            key={r.number}
+            // #6225: a hanging indent, so a long title wrapping on a phone stays
+            // aligned after the "#number" link rather than under it.
+            className="ps-[3.4em] -indent-[3.4em]"
+            data-change-vote-closes-on={r.number}
+            data-confirmed={confirmed ? 'true' : 'false'}
+          >
+            {r.title && r.by ? (
+              <RichMessage
+                id="project:topic.change.gate.closesLine"
+                values={{ number: r.number, title: r.title, by: r.by }}
+                components={[link(r.number)]}
+              />
+            ) : r.title ? (
+              <RichMessage id="project:topic.change.gate.closesLineNoFiler" values={{ number: r.number, title: r.title }} components={[link(r.number)]} />
+            ) : (
+              <RichMessage id="project:topic.change.gate.closesLineUntitled" values={{ number: r.number }} components={[link(r.number)]} />
+            )}
+            {tail ? (
+              <>{' · '}<span className="whitespace-nowrap font-semibold text-zinc-700 dark:text-zinc-300">{tail}</span></>
+            ) : null}
+            {!confirmed && !r.closed && !r.disputed && r.waiting && r.canConfirm ? (
+              <>
+                <Button
+                  type="button"
+                  variant="pillAccent"
+                  size="sm"
+                  className="align-middle ms-1"
+                  disabled={sending === r.number}
+                  data-change-vote-closes-confirm={r.number}
+                  onClick={() => void confirm(r.number)}
+                >
+                  {t('project:topic.change.gate.closesConfirm')}
+                </Button>
+              </>
+            ) : null}
+            {failed === r.number ? (
+              <>
+                <span className="ms-1 text-[color:var(--state-blocked)]" role="alert">
+                  {t('project:topic.thread.page.claimDisputeFailed')}
+                </span>
+              </>
+            ) : null}
+          </p>
+        );
+      })}
       {rest > 0 ? (
         <button
           type="button"
@@ -233,7 +309,7 @@ function VoteCloses({ closes }: { closes: ClosesRequest[] }): ReactNode {
  * turn ends it reads "Fixing", with a door into that conversation.
  */
 export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
-  which: 'votes' | 'testing'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; closes?: ClosesRequest[];
+  which: 'votes' | 'testing' | 'merge'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; closes?: ClosesRequest[];
 }): ReactNode {
   const t = useMessages('project');
   const open = () => (window as any).AppView?.openTechnicalDetails?.(id, 'checks');
@@ -309,7 +385,7 @@ export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
         </div>
       ) : null}
       {/* #6225: what a yes would close, under the tally. */}
-      {which === 'votes' && closes.length ? <VoteCloses closes={closes} /> : null}
+      {which === 'votes' && closes.length ? <VoteCloses closes={closes} id={id} /> : null}
       {why ? (
         <p className="dev-change-gate-why" data-change-gate-why={explanation ? 'explained' : 'own-words'}>
           {page ? `${why} ` : why}
@@ -359,6 +435,71 @@ export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
       ) : null}
     </div>
   );
+}
+
+/** #6563: how long a held merge may wait before the card calls it out. */
+export const MERGE_WAIT_LONG_MS = 30 * 60 * 1000;
+/** #6563: how often the times under the Merging card are worded again. */
+export const MERGE_TICK_MS = 30 * 1000;
+
+const minutesBetween = (fromIso: string | null, toMs: number): number | null => {
+  if (!fromIso) return null;
+  const at = Date.parse(fromIso);
+  if (!Number.isFinite(at)) return null;
+  return Math.floor((toMs - at) / 60000);
+};
+
+/**
+ * #6563: the merge step, under Votes and Tested, while GitHub holds an
+ * approved change's merge or it is under way. It reuses GateCard: the same
+ * card, bar and grey line. Its one job is to say what the merge still waits
+ * on, so it carries the last try and the next one, counted from the viewer's
+ * own clock (a timer every MERGE_TICK_MS, started only in an effect so the
+ * first render matches what the view holds) — except while GitHub's required
+ * checks are still running (#6593), where those tries are bookkeeping and
+ * only the note and the wait's length are said. A wait of MERGE_WAIT_LONG_MS
+ * or more turns amber and says how long and what to do; GitHub's checks
+ * failing again is red, with no times and no button.
+ */
+export function MergeCard({ g, id }: { g: ChangeMergeView; id: number | null }): ReactNode {
+  const t = useMessages('project');
+  const wait = g.wait || null;
+  const held = !!wait;
+  const [, setTick] = useState(0);
+  const now = Date.now();
+  useEffect(() => {
+    if (!held) return undefined;
+    const timer = window.setInterval(() => setTick((n) => n + 1), MERGE_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, [held]);
+  const triedMin = minutesBetween(wait?.triedAt || null, now);
+  const retryAt = wait?.retryAt ? Date.parse(wait.retryAt) : NaN;
+  // A retry time that is missing or already past reads "Trying again now."
+  const nextMin = Number.isFinite(retryAt) && retryAt > now ? Math.max(1, Math.round((retryAt - now) / 60000)) : null;
+  const waitedMin = minutesBetween(wait?.since || null, now);
+  const long = wait?.since ? waitedMin != null && waitedMin * 60000 >= MERGE_WAIT_LONG_MS : false;
+  const note = [...g.note];
+  if (long) note.push(t('project:topic.change.gate.merge.long', { minutes: waitedMin ?? 0 }));
+  // #6593: GitHub building and scanning the release images is a normal wait,
+  // not a failed try. Homeroom's own tries are bookkeeping, so this hold
+  // says nothing about them; a busy or refused merge still does.
+  if (held && g.hold !== 'github_checks' && wait?.triedAt) {
+    note.push(triedMin == null || triedMin < 1
+      ? t('project:topic.change.gate.merge.triedJustNow')
+      : t(triedMin === 1 ? 'project:topic.change.gate.merge.tried_one' : 'project:topic.change.gate.merge.tried_other', { count: triedMin }));
+  }
+  if (held && g.hold !== 'github_checks') {
+    note.push(nextMin == null
+      ? t('project:topic.change.gate.merge.nextNow')
+      : t(nextMin === 1 ? 'project:topic.change.gate.merge.next_one' : 'project:topic.change.gate.merge.next_other', { count: nextMin }));
+  }
+  const shown: ChangeGateView = {
+    ...g,
+    figure: long ? t('project:topic.change.gate.merge.longFigure') : g.figure,
+    tone: long ? 'warn' : g.tone,
+    note,
+  };
+  return <GateCard which="merge" g={shown} action={null} id={id} />;
 }
 
 /**
@@ -519,6 +660,9 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
   id: number | null; card: DevCardModel; v: ChangeThreadView; ballot?: boolean; closes?: ClosesRequest[];
 }>(function ChangeGates({ id, card, v, ballot = false, closes = [] }, ref) {
   const { voteAction, testAction, withFix, testingActions, stopped } = gateActions(card, v);
+  // Under one of the frame's looks, on the change's own page, each card's
+  // name is the kit's label over it (app.css puts the name inside away).
+  const frame = isFrameSkin(useLiveSkin());
   const pair = useRef<HTMLDivElement>(null);
   const mark = useRef<HTMLSpanElement>(null);
   const [stick, setStick] = useState(false);
@@ -561,7 +705,7 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
     if (!el) return;
     if (!stuck) { full.current = el.offsetHeight; setGive(0); return; }
     setGive(Math.max(0, full.current - el.offsetHeight));
-  }, [stuck, v.votes, v.testing, stick]);
+  }, [stuck, v.votes, v.testing, v.merge, stick]);
   return (
     <>
       {stick ? <span ref={mark} className="dev-change-pair-mark" aria-hidden="true" /> : null}
@@ -572,8 +716,13 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
         data-stuck={stick && stuck ? '' : undefined}
         style={stick && give ? { marginBlockEnd: give } : undefined}
       >
+        {frame && stick ? <TopicFrameLabel>{v.votes.name}</TopicFrameLabel> : null}
         <GateCard which="votes" g={v.votes} action={ballot ? null : voteAction} id={id} closes={closes} />
+        {frame && stick ? <TopicFrameLabel>{v.testing.name}</TopicFrameLabel> : null}
         <GateCard which="testing" g={v.testing} action={testAction} rerun={withFix || stopped ? testingActions : null} id={id} />
+        {/* #6563: the merge itself, while GitHub holds it or it is under way. */}
+        {frame && stick && v.merge ? <TopicFrameLabel>{v.merge.name}</TopicFrameLabel> : null}
+        {v.merge ? <MergeCard g={v.merge} id={id} /> : null}
       </div>
     </>
   );
@@ -592,6 +741,18 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   threadAsChange?: boolean;
 }): ReactNode {
   const t = useMessages('project');
+  // #6608: the thread list and the bot door read the project THIS page was
+  // painted for (TopicPageContext), never whichever project the app last
+  // loaded. `pageSlug()` is the fallback for the Workshop's own side panel
+  // and older callers outside a painted head.
+  const slug = useContext(TopicPageContext).slug || pageSlug();
+  // Under one of the frame's looks the page tells the bar its trail (the
+  // Workshop, then this change) and stands its status, votes and checks in
+  // the context column beside its words (./frame/side-stack.ts).
+  const frame = isFrameSkin(useLiveSkin());
+  const trail = v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title');
+  useFramePage(frame ? [placeName('workshop'), trail] : null, topicBack);
+  useSideStack(frame, `[data-change-root="${id ?? ''}"] > [data-image-viewer-scope]`, ['.dev-change-status', '.dev-change-pair']);
   const images = useInlineImageViewer();
   const thanks = v.thanks && id ? <span className="contents" data-kudos-host={id} data-kudos-face="thread"></span> : null;
   const issues = body.issues || [];
@@ -620,7 +781,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
-      {bar ? createPortal(<ChangeBar v={v} menuKey={menuKey} detailsId={id && body.changeId ? id : null} />, bar) : null}
+      {bar ? createPortal(<ChangeBar v={v} menuKey={menuKey} detailsId={id && body.changeId ? id : null} name={card.title.text || card.title.title || null} />, bar) : null}
       {images.viewer}
       <article className="messages-message dev-request-root dev-change-root" data-change-root={id ?? ''}>
         <Avatar shape="square" size="sm" color={swatchFor(v.author)} aria-hidden="true">
@@ -635,6 +796,12 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           <h1 className="dev-request-title" data-change-title={id ?? ''}>
             <TitleContent t={card.title} />
           </h1>
+          {/* Under a look: "The change" over its card, and who put it up
+              and what built it at the card's top (the head above, which the
+              kit's page puts away with the title). A change with a diagram
+              says them on a line over the diagram. */}
+          {frame ? <TopicFrameLabel>{t('project:frame.topic.theChange')}</TopicFrameLabel> : null}
+          {frame ? <TopicFrameBy name={v.author} color={swatchFor(v.author)} line={dotLine([v.time, v.via])} title={v.timeTitle} at={v.at} /> : null}
           <ChangeDiagram value={body.diagram} />
           <RequestWords html={body.summaryHtml || ''} />
           {body.summaryMore ? <SummaryMore m={body.summaryMore} /> : null}
@@ -663,8 +830,17 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
             />
           ) : null}
           {/* #6019: the requests, other changes and votes in its thread. */}
-          {id ? <ThreadItems slug={pageSlug()} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} menuKey={menuKey || null} /> : null}
+          {id ? <ThreadItems slug={slug} number={threadNumber} asChange={threadAsChange} here={{ type: 'change', id }} menuKey={menuKey || null} /> : null}
           {body.note ? <p className="dev-change-stale">{body.note}</p> : null}
+          {/* Under a look: where it stands, as a pill, leading the context
+              column over Votes and Tested, with its final counted vote
+              beside the word once live, as the standard bar's pill has it.
+              No five-stop line: the standard page has none for a change. */}
+          {frame && v.status ? (
+            <div className="dev-change-status">
+              <TopicFrameStatus label={t('project:frame.topic.status')} pill={{ word: dotLine([v.status.label, liveTally(v.status)?.text]), kind: pillKind(v.status, v.votes) }} />
+            </div>
+          ) : null}
           {v.codeMissing ? <CodeMissingNotice /> : null}
           {v.waitsFor || v.baseNotMain ? <StackNotice v={v} /> : null}
           <ChangeGates ref={pair} id={id} card={card} v={v} />
@@ -673,7 +849,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {/* 1 Nov 2026: ask about it, or sketch a revision, privately. #6392:
               the words say so, and the bot building or fixing it leaves this out. */}
           <WorkWithBotButton
-            slug={pageSlug()}
+            slug={slug}
             number={v.number}
             voting={!!v.votes.facts?.length}
             botAtWork={v.testing.botFix === 'fixing' || v.testing.botFix === 'queued'}

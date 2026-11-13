@@ -249,7 +249,7 @@ test('the closed stack\'s cards sit under its top card in CSS, and the motion re
   assert.match(APP_CSS, /\.notifications-stack \.notifications-row-slot \.notifications-row::after \{ content: none; \}/,
     'cards are surfaces of their own: no hairline between them');
   assert.match(APP_CSS, /@media \(prefers-reduced-motion: reduce\) \{\s*\.notifications-stack > \.notifications-row-slot,/);
-  assert.match(STACKS_SRC, /window\.matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches/);
+  assert.match(STACKS_SRC, /\|\| reducedMotion\(\);/, 'the device or the Reduce motion setting (#6510)');
 });
 
 // ── 3. the history's lines ──────────────────────────────────────────────

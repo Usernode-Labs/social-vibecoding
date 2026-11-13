@@ -1,125 +1,73 @@
 /**
- * Settings › Privacy, its last block: "Share usage analytics" (#5097). It
- * sits under who can reach you and who can find you (./privacy.tsx, #5104),
- * on the same page.
+ * Settings › Privacy, its last block: usage data. It sits under who can
+ * reach you and who can find you (./privacy.tsx, #5104), on the same page.
  *
- * Off for everyone until they switch it on. The choice is the account's,
- * stored on the server (users.usage_analytics, GET/PUT
- * /api/me/usage-analytics), which drops the events of anybody who has it off
- * whatever the browser sends (src/services/usage-analytics.js lists them).
+ * It says plainly what Homeroom keeps: what it always keeps because the
+ * product runs on it, the screen usage data it also records for everyone,
+ * and what it never records. There is no switch. Somebody who does not want
+ * their screen usage data recorded writes to the data protection address
+ * (GET /api/public/waitlist/options data_protection_email, the address the
+ * privacy notice gives too), and an admin adds them to Admin › Journey's
+ * left-out list as "objected", which erases it and stops it
+ * (src/services/usage-analytics.js). It replaces #5593's "Share usage
+ * analytics", which was off for everyone and whose Off line said nothing was
+ * kept.
  *
- * Stateful like the rest of that page: settings.js binds nothing inside it.
- * The initial render is the switch off and disabled, exactly the markup the
- * prerender ships; the saved choice is read in an effect.
- *
- * Switching it tells the shell's telemetry at once (UITelemetry.setUser with
- * the server's new uiTelemetryEligible), so the page starts or stops sending
- * without a reload. Switching it off clears what this page had queued.
+ * Static text, so the prerender and the first client render are the same:
+ * the address starts as the default and becomes the server's once the
+ * options arrive.
  */
-
-import { useCallback, useEffect, useState } from 'react';
 
 import { SectionHeading } from '@/components/ui/field';
 
 import { useMessages } from '../../../lib/i18n/react';
-import { useWindowEvent } from '../../../lib/legacy-dom';
+import { useWaitlistOptions } from '../../auth/waitlist-shared';
 
-import { PrivacySwitch, SaveStatus, useSavedFlash } from './privacy-text';
+import { HELP } from './privacy-text';
 
-type Answer = { enabled?: unknown; uiTelemetryEligible?: unknown };
-
-type TelemetryHost = {
-  UITelemetry?: { setUser?(user: unknown, verifiedSession?: boolean): void };
-};
-
-/** Tell the shell's telemetry and App.user what the server now says. */
-function publish(eligible: boolean): void {
-  const user = window.App?.user;
-  if (!user || typeof user !== 'object') return;
-  user.uiTelemetryEligible = eligible;
-  try {
-    (window as unknown as TelemetryHost).UITelemetry?.setUser?.({ ...user, uiTelemetryEligible: eligible }, true);
-  } catch { /* the setting is saved either way */ }
-}
+const DEFAULT_DATA_PROTECTION_EMAIL = 'dataprotection@onhomeroom.com';
 
 export function UsageAnalyticsSection() {
   const t = useMessages('settings');
-  const [on, setOn] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const { saved, flash, clear } = useSavedFlash();
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch('/api/me/usage-analytics', { credentials: 'same-origin' });
-      if (!res.ok) return;
-      const body = (await res.json()) as Answer;
-      setOn(body.enabled === true);
-      setLoaded(true);
-    } catch { /* stays as it was; the next visit reads it again */ }
-  }, []);
-
-  useEffect(() => { void load(); }, [load]);
-  // Read again each time the page is opened: another device may have
-  // changed it.
-  useWindowEvent('usernode:settings-section', (event) => {
-    if ((event as CustomEvent<{ section?: string }>).detail?.section === 'contact-privacy') void load();
-  });
-
-  async function change(next: boolean) {
-    const previous = on;
-    setOn(next);
-    setSaving(true);
-    setError('');
-    clear();
-    try {
-      const res = await fetch('/api/me/usage-analytics', {
-        method: 'PUT',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: next }),
-      });
-      if (!res.ok) throw new Error(String(res.status));
-      const body = (await res.json()) as Answer;
-      setOn(body.enabled === true);
-      publish(body.uiTelemetryEligible === true);
-      flash();
-    } catch {
-      setOn(previous);
-      setError(t('settings:privacy.usageAnalytics.saveFailed'));
-    } finally {
-      setSaving(false);
-    }
-  }
+  const served = useWaitlistOptions()?.data_protection_email;
+  const address = typeof served === 'string' && served.includes('@') ? served : DEFAULT_DATA_PROTECTION_EMAIL;
 
   return (
     <div id="settings-usage-analytics-section" className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
       <SectionHeading title={t('settings:privacy.usageAnalytics.title')} blurbClassName="dark:text-zinc-400">
         {t('settings:privacy.usageAnalytics.intro')}
       </SectionHeading>
-      <PrivacySwitch
-        id="settings-usage-analytics"
-        label={t('settings:privacy.usageAnalytics.label')}
-        checked={on}
-        disabled={!loaded || saving}
-        describedBy="settings-usage-analytics-description"
-        description={(
-          // #5926: what is true now, then what it records, what it never
-          // records and what switching off leaves in place (item 5), each on
-          // its own line. Off only stops new rows: nothing deletes the old ones.
-          <>
-            <span className="block">{t(on ? 'settings:privacy.usageAnalytics.stateOn' : 'settings:privacy.usageAnalytics.stateOff')}</span>
-            <span className="block">{t('settings:privacy.usageAnalytics.records')}</span>
-            <span className="block">{t('settings:privacy.usageAnalytics.neverRecords')}</span>
-            <span className="block">{t('settings:privacy.usageAnalytics.googleAnalytics')}</span>
-            <span className="block">{t('settings:privacy.usageAnalytics.alreadyRecorded')}</span>
-          </>
-        )}
-        onChange={(e) => void change(e.currentTarget.checked)}
-      />
-      {error ? <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
-      <SaveStatus saved={saved} />
+      <div className={`${HELP} mt-3 space-y-3`} data-usage-analytics-kept>
+        {/* A neutral wrapper (looks v2): the two lists are one card under a
+            look, the two lines after it its notes. Same spacing as before
+            in the standard look. */}
+        <div className="ui-card ui-pad space-y-3">
+        <div>
+          <p className="font-medium text-zinc-700 dark:text-zinc-300">{t('settings:privacy.usageAnalytics.alwaysKept.title')}</p>
+          <ul className="mt-1 list-disc ps-5 space-y-0.5">
+            <li>{t('settings:privacy.usageAnalytics.alwaysKept.apps')}</li>
+            <li>{t('settings:privacy.usageAnalytics.alwaysKept.acts')}</li>
+            <li>{t('settings:privacy.usageAnalytics.alwaysKept.challenges')}</li>
+          </ul>
+        </div>
+        <div data-usage-analytics-recorded>
+          <p className="font-medium text-zinc-700 dark:text-zinc-300">{t('settings:privacy.usageAnalytics.alsoRecorded.title')}</p>
+          <ul className="mt-1 list-disc ps-5 space-y-0.5">
+            <li>{t('settings:privacy.usageAnalytics.alsoRecorded.screens')}</li>
+            <li>{t('settings:privacy.usageAnalytics.alsoRecorded.speed')}</li>
+          </ul>
+        </div>
+        </div>
+        <p>{t('settings:privacy.usageAnalytics.neverRecorded')}</p>
+        <p data-usage-analytics-ask>
+          {t('settings:privacy.usageAnalytics.leaveOut.ask')}
+          <br />
+          <a
+            href={`mailto:${address}`}
+            className="font-medium text-violet-700 underline underline-offset-2 dark:text-violet-400"
+          >{address}</a>
+        </p>
+      </div>
     </div>
   );
 }

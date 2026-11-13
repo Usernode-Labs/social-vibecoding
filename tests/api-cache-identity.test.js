@@ -7,13 +7,14 @@ const { A, B, deferred, json, ORIGIN, SCOPE_HEADER } = require('./lib/private-ca
 const { installApiCacheIdentity, readApiCacheScope } = loadTsx('frontend/src/lib/api-cache-identity.ts');
 
 function page({ initial = A, fetcher = async () => json({ fake: 'A' }), href = ORIGIN + '/', native = false } = {}) {
-  let cookie = initial ? `usernode_api_scope=${initial}` : '';
+  const cookieName = new URL(href).protocol === 'http:' ? 'usernode_api_scope' : '__Host-usernode_api_scope';
+  let cookie = initial ? `${cookieName}=${initial}` : '';
   const handlers = {}, calls = [], announcements = [];
   const renewal = { epoch: 0, settled: null };
   let reloads = 0;
   const win = {
     document: { get cookie() { return cookie; }, set cookie(value) { cookie = value.split(';')[0]; } },
-    location: { href, origin: ORIGIN, reload() { reloads++; } },
+    location: { href, origin: new URL(href).origin, reload() { reloads++; } },
     addEventListener(name, callback) { handlers[name] = callback; },
     localStorage: { setItem: (...args) => announcements.push(args) },
     fetch: async req => { calls.push(req); return fetcher(req); },
@@ -21,7 +22,7 @@ function page({ initial = A, fetcher = async () => json({ fake: 'A' }), href = O
   if (native) win.NativeChrome = { webSessionRenewal: () => ({ ...renewal }) };
   installApiCacheIdentity(win);
   return { win, calls, handlers, announcements, renewal,
-    setCookie(value) { cookie = value ? `usernode_api_scope=${value}` : ''; },
+    setCookie(value) { cookie = value ? `${cookieName}=${value}` : ''; },
     get reloads() { return reloads; } };
 }
 
@@ -360,4 +361,26 @@ test('aborting one native verification waiter settles it without cancelling anot
     { headers: { 'X-Usernode-Cache-Expires': new Date(Date.now() + 86400_000).toISOString() } }));
   assert.deepEqual(await (await other).json(), { fake: 'current' });
   assert.equal(h.calls.length, 2, 'only the uncancelled private request is sent');
+});
+
+
+test('HTTPS cache identity ignores legacy hints and refuses ambiguous protected hints', async () => {
+  const legacy = { cookie: `usernode_api_scope=${A}` };
+  assert.equal(readApiCacheScope(legacy), null);
+  assert.equal(readApiCacheScope(legacy, false), A, 'HTTP development retains its own cookie');
+  assert.equal(readApiCacheScope({ cookie: `usernode_api_scope=${B}; __Host-usernode_api_scope=${A}` }), A);
+  assert.equal(readApiCacheScope({ cookie: `__Host-usernode_api_scope=${A}; __Host-usernode_api_scope=${B}` }), null);
+  const h = page();
+  h.win.document.cookie = `usernode_api_scope=${A}`;
+  await h.win.fetch('/api/private');
+  assert.equal(h.calls[0].headers.has(SCOPE_HEADER), false, 'legacy hints never opt HTTPS into offline replay');
+});
+
+
+test('plain HTTP development keeps its unprefixed cache partition', async () => {
+  const h = page({ href: 'http://127.0.0.1:3000/' });
+  assert.deepEqual(await (await h.win.fetch('/api/private')).json(), { fake: 'A' });
+  assert.equal(h.calls[0].headers.get(SCOPE_HEADER), A);
+  assert.equal(readApiCacheScope(h.win.document, false), A);
+  assert.equal(readApiCacheScope(h.win.document, true), null);
 });

@@ -173,8 +173,12 @@ function incidentKindLabel(kind) {
   return String(kind).replace(/_/g, ' ');
 }
 
-// services/platform-signals.js: a problem the platform filed for a person.
+// services/platform-signals.js: a problem the platform filed for a person,
+// on its own board or, for a private kind (a security finding), as a private
+// request only admins see. The push names neither the private request's
+// title nor what it is about: a lock screen is not private.
 const INCIDENT_SIGNAL_RE = /^signal:(\d{1,9})$/;
+const INCIDENT_PRIVATE_RE = /^private:(\d{1,10})$/;
 
 function platformIncidentCopy(detail) {
   const signal = INCIDENT_SIGNAL_RE.exec(detail);
@@ -182,6 +186,12 @@ function platformIncidentCopy(detail) {
     return {
       title: 'A platform problem needs a person',
       body: `Homeroom filed request #${signal[1]} on its own board from its own records`,
+    };
+  }
+  if (INCIDENT_PRIVATE_RE.test(detail)) {
+    return {
+      title: 'A private platform request needs a person',
+      body: 'Homeroom filed it privately: open Private requests in its Workshop',
     };
   }
   const hour = INCIDENT_HOUR_RE.exec(detail);
@@ -808,6 +818,13 @@ function buildCopy(kind, context, now, t) {
     // cap, the level and the figures, so the push can say how close it is.
     case 'platform_limit':
       return platformLimitCopy(detail);
+    // #6643: a change held for an admin's approval, for full admins
+    // (services/release-holds.js). The change's own name says which.
+    case 'release_hold':
+      return {
+        title: withApp(t('push:releaseHold.title')),
+        body: label ? t('push:releaseHold.body.named', { title: label }) : t('push:releaseHold.body.plain'),
+      };
     // #4296: errors that should not happen, a daily digest or one kind past
     // its hourly line (services/platform-incident-alerts.js). Full admins.
     case 'platform_incident':

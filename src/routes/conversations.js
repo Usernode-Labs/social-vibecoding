@@ -234,7 +234,19 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       // The staging demo's offers are fixtures: there is nothing to decide.
       if (isDemo(req)) return res.json({ ok: true, choice, demo: true });
       const out = await require('../services/homeroom-bot-mayor').decideOfferTap(pool, config, { user: req.user, actionId, choice, answers });
-      if (!out.ok) return res.status(out.status || 400).json({ error: out.error });
+      // Every tap as answered (events BOT_OFFER_TAP): rollout health counts the 404s and 410s.
+      void require('../services/events').recordBotOfferTap(pool, {
+        surface: 'chat', status: out.ok ? 200 : out.status || 400, userId: req.user?.id ?? null,
+      });
+      // Step 3: a refusal names its code (the line under the buttons, in the
+      // reader's language: messages.json bot.offer.refused.*), and a retired
+      // card why.
+      if (!out.ok) {
+        return res.status(out.status || 400).json({
+          error: out.error, code: out.code || null, ...(out.reason ? { reason: out.reason } : {}),
+          ...(out.signals ? { signals: out.signals } : {}),
+        });
+      }
       return res.json(out);
     } catch (err) {
       log.error('conversations', 'homeroom bot action failed', { err: err.message, userId: req.user?.id });
@@ -256,8 +268,16 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
       // The staging demo's cards are fixtures: there is nothing to decide.
       if (isDemo(req)) return res.json({ ok: true, demo: true });
+      // #6632: a card's tap is the bot acting for them. With the bot for
+      // verified accounts only, an unverified tap is asked to verify first.
+      const locked = await require('../services/homeroom-bot-verified').refusalFor(pool, req.user);
+      if (locked) return res.status(locked.status).json({ error: locked.error, code: locked.code, signals: locked.signals });
       const out = await require('../services/homeroom-bot-cards').decide(pool, config, {
         user: req.user, messageId: req.params.messageId, action: req.body?.action, value: req.body?.value,
+      });
+      // Every tap as answered (events BOT_OFFER_TAP): rollout health counts the 404s and 410s.
+      void require('../services/events').recordBotOfferTap(pool, {
+        surface: 'card', status: out.ok ? 200 : out.status || 400, userId: req.user.id,
       });
       if (!out.ok) return res.status(out.status || 400).json({ error: out.error || 'That did not work' });
       return res.json(out);

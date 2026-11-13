@@ -64,6 +64,8 @@ test('every kind is framed, and framed exactly once', () => {
         ? /there was news on Homeroom for you and no phone to send it to\. Turn these emails off with the link above\./
         : kind === 'content_report'
           ? /this address is Homeroom's compliance inbox for content reports\./
+          : kind === 'release_hold'
+          ? /you are an administrator of Homeroom, and a change is waiting for an administrator's approval\./
           : /activity on your account or your place on the waitlist/,
     `${kind}: says why it arrived`);
     if (kind === 'project_invite') assert.doesNotMatch(html, /mail you asked for/, 'an invite was not asked for');

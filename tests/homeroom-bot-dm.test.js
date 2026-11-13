@@ -354,7 +354,12 @@ test('a post with `dm` is relayed to the requester\'s DM; one without is not', a
   const real = dm.relayIssuePost;
   dm.relayIssuePost = async (args) => { relayed.push(args); return null; };
   t.after(() => { dm.relayIssuePost = real; });
-  const pool = { async query(s) { return /INSERT INTO homeroom_bot_posts/.test(s) ? { rows: [{ id: 11 }] } : { rows: [] }; } };
+  const pool = {
+    async query(s) {
+      if (/INSERT INTO bot_posts/.test(s)) return { rows: [{ id: 21, fresh: true, outcome: 'pending' }] };
+      return /INSERT INTO homeroom_bot_posts/.test(s) ? { rows: [{ id: 11 }] } : { rows: [] };
+    },
+  };
   const github = { async createIssueComment() { return { id: 1, created_at: 'now' }; } };
   const ws = { async sendBotMessage() { return { id: 5 }; } };
   const sender = { id: 2, username: 'homeroom_bot' };
@@ -368,7 +373,7 @@ test('a post with `dm` is relayed to the requester\'s DM; one without is not', a
   });
   assert.equal(relayed.length, 1);
   assert.equal(relayed[0].kind, 'question');
-  assert.equal(relayed[0].postId, 11, 'keyed by the post, so a retry sends once');
+  assert.equal(relayed[0].postKey, 'bot-post-21', 'keyed by the post (bot-post.js), so a retry sends once');
   assert.deepEqual(relayed[0].dm, { question: 'Q?', answers: ['A'] });
   // A relay that throws never fails the post.
   dm.relayIssuePost = async () => { throw new Error('boom'); };
@@ -526,7 +531,7 @@ test('the short description is suggested for everyone making a project, and ever
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'homeroom-bot-dm.js'), 'utf8');
   assert.doesNotMatch(src, /function projectsMadeFor|function firstVersionAppSlugs/);
   const made = src.slice(src.indexOf('async function noteProjectMade('), src.indexOf('// ── Sending'));
-  assert.match(made, /if \(!hasBot\(settings, user\)\) return false;\n  const \{ rowCount \} = await pool\.query\(\n    `INSERT INTO homeroom_bot_dm_projects \(app_id, user_id, origin\) VALUES \(\$1, \$2, \$3\)/);
+  assert.match(made, /if \(!\(await botWorksFor\(pool, settings, user\)\)\) return false;\n  const \{ rowCount \} = await pool\.query\(\n    `INSERT INTO homeroom_bot_dm_projects \(app_id, user_id, origin\) VALUES \(\$1, \$2, \$3\)/);
   assert.match(made, /SELECT created_at FROM homeroom_bot_dm_projects WHERE app_id = \$1 AND origin = 'import'/);
   // The bot's wake is only for a first version it builds.
   assert.match(src, /if \(botBuilds\) settingsModule\(\)\.noteIssueActivity\(/);
@@ -918,6 +923,8 @@ test('a typing event carries only the kinds of work the screen words, and what t
   assert.equal(dm.typingDoing({ kind: 'request' }), null, 'a request is named by its number');
   assert.deepEqual(dm.typingDoing({ kind: 'code', project: 'x'.repeat(200) }).project.length, 61, 'a short name');
   assert.deepEqual(dm.typingDoing({ kind: 'code', project: '' }), { kind: 'code' });
+  // #6581: the answer's words are never shown while it is written.
+  assert.deepEqual(dm.typingDoing({ kind: 'writing' }), { kind: 'writing' });
   assert.equal(dm.typingDoing({ kind: 'Reading request #12' }), null, 'never words');
   assert.equal(dm.typingDoing(null), null);
   // A person's typing route never says what anybody is doing.

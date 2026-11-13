@@ -1,4 +1,6 @@
 import { SectionHeading, StatusLine } from '@/components/ui/field';
+import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { SwitchRow } from '@/components/ui/switch';
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
@@ -47,6 +49,19 @@ import { LocalAgentsList } from '../local-agents-list';
  * The look is "Baseplate" (request #6278): white cards on a light warm grey
  * plate, sun yellow for what needs you, ink for where you are.
  *
+ * Look (default Standard, the same device store) offers the five looks of
+ * the one frame (lib/skin.ts FRAME_SKINS, the directions the 2026-11-06
+ * screen tour kept): each sets its id as data-skin and app.css draws it,
+ * light and dark. It is an admin's preview while the looks are drawn screen
+ * by screen (Home so far): #settings-look-section ships hidden and
+ * settings.js _renderAdminSection lifts the class only for a REAL admin
+ * (App._realIsAdmin), as it does for the admin-preview section. A
+ * `?skin=<look>` pin in the address still works for anyone who knows it.
+ * New look and a look of the menu are exclusive (one data-skin on <html>);
+ * settings.js paints and saves both through window.Skin. The option values
+ * are FRAME_SKINS, in its order (tests/glass-skin.test.js holds the two
+ * together); each name is read by a whole literal id.
+ *
  * #907 Local coding agent lives in the same pane (not the CLI section) because
  * it is a preview of the same feature the dev chat's "Run on" selector
  * exposes, and because a lease is NOT a credential: revoking a CLI token is a
@@ -63,15 +78,22 @@ export function ExperimentalSection() {
         <SectionHeading title={t('settings:experimental.title')}>
           {t('settings:experimental.intro')}
         </SectionHeading>
+        {/* Two neutral wrappers (looks v2), nothing in the standard look:
+            ui-card round the four switches, one card under a look, and
+            ui-swrow round each switch with its sentence, a row of it with
+            the switch at the end (app.css, SETTINGS). */}
+        <div className="ui-card">
         <InterfaceModeControl />
-        <SwitchRow id="ai-progress-estimate">
-          {t('settings:experimental.progressEstimate.label')}
-        </SwitchRow>
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-          {t('settings:experimental.progressEstimate.description')}
-        </p>
-        <StatusLine id="ai-progress-estimate-status" size="xs" />
-        <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+        <div className="ui-swrow">
+          <SwitchRow id="ai-progress-estimate">
+            {t('settings:experimental.progressEstimate.label')}
+          </SwitchRow>
+          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+            {t('settings:experimental.progressEstimate.description')}
+          </p>
+          <StatusLine id="ai-progress-estimate-status" size="xs" />
+        </div>
+        <div className="ui-swrow mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
           <SwitchRow id="session-bridge-enabled">
             {t('settings:experimental.sessionBridge.label')}
           </SwitchRow>
@@ -83,12 +105,27 @@ export function ExperimentalSection() {
           </p>
           <StatusLine id="session-bridge-status" size="xs" />
         </div>
-        <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+        <div className="ui-swrow mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
           <SwitchRow id="new-look-enabled">
             {t('settings:experimental.newLook.label')}
           </SwitchRow>
           <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
             {t('settings:experimental.newLook.description')}
+          </p>
+        </div>
+        </div>
+        <div id="settings-look-section" className="hidden ui-card ui-fields mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+          <Label className="mb-1" htmlFor="settings-look">{t('settings:experimental.look.label')}</Label>
+          <Select id="settings-look" variant="plain">
+            <option value="">{t('settings:experimental.look.standard')}</option>
+            <option value="glass">{t('settings:experimental.look.glass')}</option>
+            <option value="paper">{t('settings:experimental.look.paper')}</option>
+            <option value="pastel">{t('settings:experimental.look.pastel')}</option>
+            <option value="mosaic">{t('settings:experimental.look.mosaic')}</option>
+            <option value="sunrise">{t('settings:experimental.look.sunrise')}</option>
+          </Select>
+          <p className="ui-hint text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+            {t('settings:experimental.look.description')}
           </p>
         </div>
       </div>
@@ -100,7 +137,7 @@ export function ExperimentalSection() {
             components={[<span className="font-mono" />]}
           />
         </SectionHeading>
-        <div id="settings-local-agents-list" className="space-y-2">
+        <div id="settings-local-agents-list" className="ui-card space-y-2">
           <LocalAgentsList />
         </div>
         <StatusLine id="settings-local-agents-status" size="xs" />

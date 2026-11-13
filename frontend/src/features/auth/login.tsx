@@ -77,7 +77,8 @@ import { CodeBoxes } from './code-boxes';
 import { NativeLoginDetailsLink } from './native-login-details';
 import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
 import { SignupOptIn } from './signup-opt-in';
-import { TermsNotice } from './waitlist-shared';
+import { TermsNotice, useWaitlistOptions } from './waitlist-shared';
+import { newAccountsWait } from '../guest/guest-data';
 import {
   AUTH_SCREEN_IDS,
   blockedOffline,
@@ -390,11 +391,16 @@ export type ReleaseAccount = {
 /**
  * The same lookup, with `new_account` beside the address. A GET, so it spends
  * nothing: no link, no session. Null on anything unexpected, and anything
- * but a literal `true` is not a new account.
+ * but a literal `true` is not a new account. `fromAdmitMail`: the read the
+ * "You're in" mail's page makes as it opens, which Admin › Journey records as
+ * that page opened (src/routes/public-api.js).
  */
-export async function releaseAccountFromToken(token: string): Promise<ReleaseAccount | null> {
+export async function releaseAccountFromToken(
+  token: string,
+  { fromAdmitMail = false }: { fromAdmitMail?: boolean } = {},
+): Promise<ReleaseAccount | null> {
   try {
-    const res = await fetch(`/api/public/waitlist/more/${encodeURIComponent(token)}`);
+    const res = await fetch(`/api/public/waitlist/more/${encodeURIComponent(token)}${fromAdmitMail ? '?from=admit' : ''}`);
     if (!res.ok) return null;
     const data = await res.json();
     const email = typeof data?.email === 'string' ? data.email.trim().toLowerCase() : '';
@@ -478,6 +484,9 @@ export function LoginScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.login, false);
   const t = useMessages('auth');
+  // #6633: the email step says nothing of a waitlist once an admin has
+  // switched it off. The waitlist's words until the options arrive.
+  const accountsWait = newAccountsWait(useWaitlistOptions());
   // The screen's interior mounts on its first reveal, not in the prerender —
   // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
   // window.UsernodeReact.mount) before it wires or reveals the screen, so the
@@ -1590,32 +1599,45 @@ export function LoginScreen() {
               {t('auth:login.submit')}
             </Button>
             <TermsNotice verb="signing in" />
+            {/*
+                The rest of board 2's action group: `gap: 10px` under the 16 the
+                form's own `gap-4` already draws between the card and the primary
+                button. Three separately-hidden wrappers rather than one flex
+                column, because #forgot-link-wrap and #otp-link-wrap are ids the
+                inventory resolves and each carries its own `hidden`.
+
+                `.auth-ways` is a neutral wrapper that holds the two inside the
+                form, as its last child (11 Nov 2026). It draws nothing here:
+                `-mt-4` takes back the one `gap-4` the form would put before
+                it, so each line stands 10px under the one before, exactly
+                where it stood as the form's next sibling. It is there for
+                the looks (app.css, "Version 2 lays each stand-alone page
+                out"), which show these two ways over the Sign in button:
+                `order` places a form's own children, so the form keeps its
+                box, where it used to be `display: contents`, which an older
+                Safari drops from the accessibility tree with its role.
+            */}
+            <div className="auth-ways -mt-4">
+              <p id="forgot-link-wrap" className={hiddenLast(!base, 'mt-2.5')}>
+                <a
+                  id="forgot-password-link"
+                  href={`#${RECOVERY_ROUTE}`}
+                  className={PILL_LINK}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    openRecovery();
+                  }}
+                >
+                  {t('auth:login.forgot')}
+                </a>
+              </p>
+              <p id="otp-link-wrap" className={hiddenLast(!base, 'mt-2.5')}>
+                <a id="otp-link" href="#signup" className={PILL_LINK}>
+                  {t('auth:login.withEmailCode')}
+                </a>
+              </p>
+            </div>
           </form>
-          {/*
-              The rest of board 2's action group: `gap: 10px` under the 16 the
-              form's own `gap-4` already draws between the card and the primary
-              button. Three separately-hidden wrappers rather than one flex
-              column, because #forgot-link-wrap and #otp-link-wrap are ids the
-              inventory resolves and each carries its own `hidden`.
-          */}
-          <p id="forgot-link-wrap" className={hiddenLast(!base, 'mt-2.5')}>
-            <a
-              id="forgot-password-link"
-              href={`#${RECOVERY_ROUTE}`}
-              className={PILL_LINK}
-              onClick={(e) => {
-                e.preventDefault();
-                openRecovery();
-              }}
-            >
-              {t('auth:login.forgot')}
-            </a>
-          </p>
-          <p id="otp-link-wrap" className={hiddenLast(!base, 'mt-2.5')}>
-            <a id="otp-link" href="#signup" className={PILL_LINK}>
-              {t('auth:login.withEmailCode')}
-            </a>
-          </p>
           {/*
               #2979: the password step no longer ends on a tertiary line — the
               "Have an activation code? Register" foot pin (#register-link)
@@ -1658,7 +1680,7 @@ export function LoginScreen() {
               onKeyDown={returnKeyHandler({ submit: () => { if (!cooldownLeft) void otpRequestCode(); } })}
             >
               <p className={STEP_P}>
-                {t('auth:login.otp.lead')}
+                {accountsWait ? t('auth:login.otp.lead') : t('auth:login.otp.leadOpen')}
               </p>
               {/*
                   One field, one card — the same white grouped card the

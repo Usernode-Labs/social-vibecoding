@@ -1,0 +1,88 @@
+      async resolveClientOutputFile(template, title) {
+        let fileName;
+        if (template.suggestedFilename)
+          fileName = await this.resolveClientFilename(template.suggestedFilename);
+        else
+          fileName = await this._context.outputFile(template, { origin: "llm" });
+        await import_fs52.default.promises.mkdir(import_path46.default.dirname(fileName), { recursive: true });
+        const relativeName = this._printablePath(fileName);
+        const printableLink = `- [${title}](${relativeName})`;
+        return { fileName, relativeName, printableLink };
+      }
+      async resolveClientFilename(filename) {
+        return await this._context.workspaceFile(filename, this._clientWorkspace);
+      }
+
+        }
+        const snapshotToFile = this._includeSnapshot !== "explicit" || !!this._includeSnapshotFileName;
+        const ariaFormat = this._includeSnapshot === "none" ? "none" : this._json && !snapshotToFile ? "json" : "text";
+
+// packages/playwright-core/src/tools/backend/screenshot.ts
+function inferTypeFromFilename(filename) {
+  if (!filename)
+    return void 0;
+  switch (import_path48.default.extname(filename).toLowerCase()) {
+    case ".png":
+      return "png";
+    case ".jpg":
+    case ".jpeg":
+      return "jpeg";
+    case ".webp":
+      return "webp";
+  }
+  return void 0;
+}
+var import_path48, z23, screenshotSchema, screenshot, screenshot_default;
+var init_screenshot = __esm({
+  "packages/playwright-core/src/tools/backend/screenshot.ts"() {
+    "use strict";
+    import_path48 = __toESM(require("path"));
+    init_stringUtils();
+    init_tool();
+    init_snapshot();
+    z23 = require("./utilsBundle").z;
+    screenshotSchema = optionalElementSchema.extend({
+      type: z23.enum(["png", "jpeg", "webp"]).optional().describe("Image format for the screenshot. If unset, inferred from the filename extension, otherwise png."),
+      filename: z23.string().optional().describe("File name to save the screenshot to. Relative file names are resolved against the workspace root. If not specified, the screenshot is saved into the output directory as `page-{timestamp}.{png|jpeg|webp}`."),
+      fullPage: z23.boolean().optional().describe("When true, takes a screenshot of the full scrollable page, instead of the currently visible viewport. Cannot be used with element screenshots."),
+      scale: z23.enum(["css", "device"]).default("css").describe('Image resolution scale. "css" produces a screenshot sized in CSS pixels (smaller, consistent across devices). "device" produces a high-resolution screenshot using device pixels (larger, accounts for the device pixel ratio). Default is css.')
+    });
+    screenshot = defineTabTool({
+      capability: "core",
+      schema: {
+        name: "browser_take_screenshot",
+        title: "Take a screenshot",
+        description: "Take a screenshot of the current page. Use browser_snapshot for actions by default. With the vision capability enabled, use screenshot coordinates with the coordinate-based mouse tools for elements not exposed in the accessibility snapshot.",
+        inputSchema: screenshotSchema,
+        type: "readOnly"
+      },
+      handle: async (tab2, params2, response2) => {
+        if (params2.fullPage && params2.target)
+          throw new Error("fullPage cannot be used with element screenshots.");
+        const fileType = params2.type ?? inferTypeFromFilename(params2.filename) ?? "png";
+        const options = {
+          type: fileType,
+          quality: fileType === "jpeg" ? 90 : void 0,
+          scale: params2.scale,
+          ...tab2.actionTimeoutOptions,
+          ...params2.fullPage !== void 0 && { fullPage: params2.fullPage }
+        };
+        const screenshotTargetLabel = params2.target ? params2.element || "element" : params2.fullPage ? "full page" : "viewport";
+        const target = params2.target ? await tab2.targetLocator({ element: params2.element, target: params2.target }) : null;
+        const data = target ? await target.locator.screenshot(options) : await tab2.page.screenshot(options);
+        const resolvedFile = await response2.resolveClientOutputFile({ prefix: target ? "element" : "page", ext: fileType, suggestedFilename: params2.filename }, `Screenshot of ${screenshotTargetLabel}`);
+        response2.addCode(`// Screenshot ${screenshotTargetLabel} and save it as ${resolvedFile.relativeName}`);
+        if (target)
+          response2.addCode(`await page.${target.resolved}.screenshot(${formatObject({ ...options, path: resolvedFile.relativeName })});`);
+        else
+          response2.addCode(`await page.screenshot(${formatObject({ ...options, path: resolvedFile.relativeName })});`);
+        await response2.addFileResult(resolvedFile, data);
+        if (!params2.filename)
+          await response2.registerImageResult(data, fileType);
+      }
+    });
+    screenshot_default = [
+      screenshot
+    ];
+  }
+});

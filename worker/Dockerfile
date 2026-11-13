@@ -5,13 +5,15 @@
 # So the gate's esbuild is compiled here from the same version's source with
 # a patched Go, and only that one binary reaches the image below.
 ARG ESBUILD_VERSION=0.25.12
-FROM golang:1.27.3-bookworm AS esbuild-build
+FROM golang:1.27.3-trixie AS esbuild-build
 ARG ESBUILD_VERSION
 RUN CGO_ENABLED=0 GOTOOLCHAIN=local GOBIN=/out \
     go install -trimpath "github.com/evanw/esbuild/cmd/esbuild@v${ESBUILD_VERSION}" \
   && test "$(/out/esbuild --version)" = "${ESBUILD_VERSION}"
 
-FROM node:22.23.4-bookworm-slim
+# Debian 13 (trixie), as capture's image: Debian 12 left full security
+# support for LTS in mid-2026 (12 Nov 2026).
+FROM node:22.23.4-trixie-slim
 # Pin npm and replace its affected Undici bundle until npm ships the patch.
 RUN npm install --global npm@11.21.1 undici@6.29.1 \
   && rm -rf /usr/local/lib/node_modules/npm/node_modules/undici \
@@ -37,8 +39,8 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends \
 
 # ── The shots browser's system font (#4087) ────────────────────────────
 # The shell asks for Tailwind's font-sans stack (ui-sans-serif, system-ui,
-# sans-serif). On a Mac that is San Francisco with real weights; on bookworm
-# slim it fell to a face with no bold weights, so every heading, label and
+# sans-serif). On a Mac that is San Francisco with real weights; on Debian's
+# slim image it fell to a face with no bold weights, so every heading, label and
 # button in the before/after shots came out regular, in another typeface.
 # fonts-inter ships Inter in every static weight (Thin to Black), and
 # fonts-local.conf points system-ui, -apple-system, BlinkMacSystemFont,
@@ -50,7 +52,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fontconfig fonts-inter \
   && rm -rf /var/lib/apt/lists/* \
   && fc-cache -f \
-  && test "$(fc-match -f '%{family[0]}|%{style[0]}' 'system-ui:weight=205')" = 'Inter|Extra Bold'
+  && test "$(fc-match -f '%{family[0]}|%{style[0]}' 'system-ui:weight=205')" = 'Inter|ExtraBold'
 
 # ── Local Postgres for in-loop builds and repository SQL checks ────────
 # INLOOP_DATABASE_URL (src/services/in-loop-browser.js) points at
@@ -58,10 +60,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # actually exist INSIDE this container, or every backend app crashes with
 # ECONNREFUSED the moment the agent boots it for the in-loop visual
 # check. The same server backs repository SQL validation during proposal runs,
-# so it deliberately matches production's PostgreSQL 17 rather than using
-# bookworm's frozen PostgreSQL 15. The PostgreSQL project's apt repository
-# supplies 17 (+contrib, for common app extensions like pgcrypto/uuid-ossp).
-# We pre-initialize a node-owned
+# so it deliberately matches production's PostgreSQL 17. Debian 13 ships 17
+# itself, with contrib inside it (postgresql-17 provides postgresql-contrib-17,
+# for common app extensions like pgcrypto/uuid-ossp), so it comes from
+# Debian's own archive and security updates: on Debian 12 it took the
+# PostgreSQL project's apt repository. We pre-initialize a node-owned
 # data dir at image-build time; both coding runners start it lazily on
 # build turns and recreates the `inloop` database fresh each turn, so
 # scout/sync-only sessions pay zero runtime cost.
@@ -74,11 +77,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN mkdir -p /etc/postgresql-common/createcluster.conf.d \
   && echo 'create_main_cluster = false' \
        > /etc/postgresql-common/createcluster.conf.d/no-main-cluster.conf \
-  && install -d /usr/share/postgresql-common/pgdg \
-  && curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
-       --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-  && echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main' \
-       > /etc/apt/sources.list.d/pgdg.list \
   && apt-get update && apt-get install -y --no-install-recommends \
     postgresql-17 postgresql-contrib-17 \
   && rm -rf /var/lib/apt/lists/*
@@ -178,20 +176,24 @@ COPY --from=esbuild-build /out/esbuild /usr/local/bin/esbuild
 # node switch below). The browser launches LAZILY — only when the agent
 # actually calls a browser tool — so turns that never reach for it pay
 # no runtime cost; scout/sync never wire the MCP server at all.
-ARG PLAYWRIGHT_MCP_VERSION=0.0.41
+# The Chromium is Playwright's own build (Chrome for Testing), which the image
+# audit cannot see as a distro package; scripts/security-*.js read its version
+# off the image and report the Chromium advisories that apply to it.
+ARG PLAYWRIGHT_MCP_VERSION=0.0.85
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
 RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
   && cd /usr/local/lib/node_modules/@playwright/mcp \
   && npx playwright install --with-deps chromium \
-  && command -v mcp-server-playwright \
-  && mcp-server-playwright --version
-# Shots are saved at the browser's device density (3 on a phone, 2 on a
-# desktop), but this MCP version hard-codes browser_take_screenshot's scale to
-# CSS pixels. The patch edits that one tool, and refuses a version whose code
-# no longer matches; verify-shots-browser-mcp.js below proves the saved
-# density in a real browser. See the script's header for why not a pin bump.
-COPY patch-playwright-mcp-screenshot.js /usr/local/bin/patch-playwright-mcp-screenshot.js
-RUN node /usr/local/bin/patch-playwright-mcp-screenshot.js
+  && command -v playwright-mcp \
+  && playwright-mcp --version
+# The MCP's bundled tools are edited so the shots and the in-loop browser
+# keep working as they are written for: a screenshot answers with its image
+# (and, in a shots run taken at density, saves at device scale), close-ups,
+# the settle wait, and an action's answer that carries the page snapshot.
+# The patch refuses a version whose code no longer matches;
+# verify-shots-browser-mcp.js below proves the result in a real browser.
+COPY patch-playwright-mcp.js /usr/local/bin/patch-playwright-mcp.js
+RUN node /usr/local/bin/patch-playwright-mcp.js
 
 COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh
@@ -337,15 +339,15 @@ WORKDIR /home/node/workspace
 ENV SOCIAL_VIBECODING_DRIFT_CHECK=off
 
 # Build-time smoke test: launch the MCP's bundled Chromium headless (as
-# node, same channel + sandbox setting + SwiftShader flags worker-run.sh seeds) and close
-# it. A future MCP pin bump that reintroduces a channel/revision mismatch
+# node, same channel + sandbox setting + SwiftShader flags worker-run.sh seeds),
+# get a software WebGL context in a page, and close it. A future MCP pin bump that reintroduces a channel/revision mismatch
 # — the failure mode behind #688 — fails the image build loudly here,
 # instead of silently degrading every build turn to "skipped the
 # screenshot check". Then (#4087) the same Chromium renders the shell's font
 # stack, and bare system-ui, at weights 400/650/700/800 and must report Inter
 # Regular/Bold/Bold/ExtraBold through CDP CSS.getPlatformFontsForNode.
 RUN cd /usr/local/lib/node_modules/@playwright/mcp \
-  && node -e "require('playwright').chromium.launch({channel:'chromium',headless:true,chromiumSandbox:false,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']}).then(b=>b.close()).catch(e=>{console.error(e);process.exit(1);})" \
+  && node -e "require('playwright').chromium.launch({channel:'chromium',headless:true,chromiumSandbox:false,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']}).then(async(b)=>{const p=await b.newPage();if(!(await p.evaluate(()=>!!document.createElement('canvas').getContext('webgl'))))throw new Error('no WebGL context');await b.close();}).catch(e=>{console.error(e);process.exit(1);})" \
   && node /usr/local/bin/verify-shots-browser-fonts.js
 
 # Validate the actual shots MCP config against the installed package.

@@ -18,7 +18,8 @@ const { Pool } = require('pg');
 
 const overlap = require('../src/services/homeroom-bot-overlap');
 const voice = require('../src/services/homeroom-bot-voice');
-const live = require('../src/services/homeroom-bot-live');
+const realWs = require('../src/services/ws');
+const botCards = require('../src/services/bot-cards');
 
 const BOARD = [
   { number: 6207, title: 'Main Chat: only what you said there', body: "A request's news lives in its own thread.", stage: 'up_for_vote' },
@@ -140,19 +141,16 @@ test('#6211: one note per pair, the day\'s ten, and the choice it offers', { tim
      VALUES ('Todo List', 'todo-list', 'running', $1, 'https://github.com/usernode-bot/todo-list', 'public', 'public') RETURNING id, slug`,
     [evan.id],
   );
-  // The notes a thread hears: what ws.sendBotMessage stores, as the platform does.
+  // The notes a thread hears: what ws.sendBotMessage stores, as the platform
+  // does (step 3: a card with its message, in one transaction).
   const sent = [];
   const ws = {
     broadcast() {},
-    async sendBotMessage(_p, appId, message) {
-      const { rows: [row] } = await pool.query(
-        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
-         VALUES ($1, $2, $3, 'message', $4, $5, $6) RETURNING id`,
-        [appId, message.user.id, message.content, JSON.stringify(message.metadata || {}),
-          message.thread?.type || null, message.thread?.ref || null],
-      );
-      sent.push({ id: Number(row.id), ...message });
-      return { id: Number(row.id) };
+    async sendBotMessage(p, appId, message) {
+      const out = await realWs.sendBotMessage(p, appId, message);
+      const { rows: [row] } = await pool.query('SELECT metadata FROM chat_messages WHERE id = $1', [out.id]);
+      sent.push({ id: Number(out.id), ...message, metadata: out.cardId || message.metadata ? row.metadata : undefined, cardId: out.cardId || null });
+      return out;
     },
   };
   const overlapOf = (other, kind = 'part_of') => ({
@@ -180,7 +178,9 @@ test('#6211: one note per pair, the day\'s ten, and the choice it offers', { tim
     assert.deepEqual(rows, [{
       low_issue: 6207, high_issue: 6210, issue_number: 6210, kind: 'part_of',
       offer_id: sent[0].metadata.homeroomBot.offer.id,
-    }]);
+    }], 'the pair names its card, written with the note');
+    const { rows: [card] } = await pool.query('SELECT chat_message_id FROM bot_cards WHERE id = $1', [sent[0].cardId]);
+    assert.equal(Number(card.chat_message_id), sent[0].id);
   });
 
   await t.test('a project with ten notes in the day claims no more', async () => {
@@ -218,7 +218,7 @@ test('#6211: one note per pair, the day\'s ten, and the choice it offers', { tim
       requester: { userId: evan.id, username: evan.username }, ws: failing, domain: 'app.onhomeroom.com', deps: { ws: failing },
     }), false);
     assert.equal((await pool.query("SELECT COUNT(*)::int AS n FROM bot_cards WHERE kind = 'overlap'")).rows[0].n, cards,
-      'its offer is dropped');
+      'no card: it is written with its note or not at all');
     assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM homeroom_bot_overlap_offers')).rows[0].n, before,
       'and its pair, so a later read can offer it');
   });
@@ -236,31 +236,29 @@ test('#6211: one note per pair, the day\'s ten, and the choice it offers', { tim
 
   // ── The question loses its buttons once the build starts ───────────────
 
-  await t.test('#6535: an overlap question asked before the build starts loses its buttons, and a tap records nothing', async () => {
+  await t.test('#6535, step 3: an overlap question asked before the build starts loses its buttons, and a tap records nothing', async () => {
     sent.length = 0;
     assert.equal(await offer(6600, overlapOf(6601)), true);
     const note = sent[0];
     assert.equal(note.metadata.homeroomBot.offer.status, 'open');
     assert.deepEqual(note.metadata.homeroomBot.actions.map((a) => a.id), ['yes', 'first', 'no']);
     const offerId = note.metadata.homeroomBot.offer.id;
-    const frames = [];
-    const seen = ws.broadcast;
-    ws.broadcast = (appId, frame) => frames.push([appId, frame]);
-    // The plan's own row is later than the question.
-    assert.equal(await live.retireOverlapOffers(pool, {
-      appId: app.id, issueNumber: 6600, beforeMessageId: Number(note.id) + 1, deps: { ws },
-    }), 1);
-    ws.broadcast = seen;
+    // The request's standing moves from waiting on its plan to building
+    // (bot-cards.js retireFor, which work-state's refresh calls on a move).
+    const pushes = await botCards.retireFor(pool, {
+      appId: app.id, issueNumber: 6600,
+      prev: { stage: 'waiting_for_you', why: 'plan', reason: null },
+      standing: { stage: 'building', why: null, reason: null, standing: { asks: {} } },
+    });
     const { rows: [closed] } = await pool.query('SELECT metadata FROM chat_messages WHERE id = $1', [note.id]);
     assert.deepEqual(closed.metadata.homeroomBot.actions, [], 'the buttons go for everyone');
-    assert.deepEqual(closed.metadata.homeroomBot.othersActions, []);
-    assert.equal(closed.metadata.homeroomBot.offer.status, 'expired');
-    assert.equal((await pool.query('SELECT status FROM bot_cards WHERE id = $1', [offerId])).rows[0].status, 'expired');
-    assert.equal(frames.length, 1, 'everybody reading hears it');
-    assert.equal(frames[0][0], app.id);
-    assert.equal(frames[0][1].type, 'chat_message_updated');
-    assert.equal(frames[0][1].id, Number(note.id));
-    assert.deepEqual(frames[0][1].thread, { type: 'issue', ref: 6600 });
+    assert.deepEqual([closed.metadata.homeroomBot.offer.status, closed.metadata.homeroomBot.offer.retired], ['retired', 'building']);
+    assert.deepEqual((await pool.query('SELECT status, retired_reason FROM bot_cards WHERE id = $1', [offerId])).rows[0],
+      { status: 'retired', retired_reason: 'building' });
+    assert.equal(pushes.length, 1, 'everybody reading hears it');
+    assert.deepEqual([pushes[0].kind, pushes[0].routing.appId], ['room', app.id]);
+    assert.deepEqual([pushes[0].data.type, pushes[0].data.id, pushes[0].data.thread],
+      ['chat_message_updated', Number(note.id), { type: 'issue', ref: 6600 }]);
     // A tap from a screen that has not drawn again does nothing at all.
     const out = await voice.actOnOffer(pool, {}, {
       offerId, userId: evan.id, choice: 'first', key: `offer:${offerId}`, deps: { ws },
@@ -268,13 +266,15 @@ test('#6211: one note per pair, the day\'s ten, and the choice it offers', { tim
     assert.deepEqual(out, { decision: 'already' });
     assert.equal(sent.length, 1, 'no line is posted on the other request');
 
-    // A question at the plan row's own id, or after it, is not overtaken.
+    // Another request's question, and one whose request did not move, stay.
     sent.length = 0;
     assert.equal(await offer(6610, overlapOf(6611)), true);
     const stays = sent[0];
-    assert.equal(await live.retireOverlapOffers(pool, {
-      appId: app.id, issueNumber: 6610, beforeMessageId: Number(stays.id), deps: { ws },
-    }), 0, 'only a question before the plan row closes');
+    assert.deepEqual(await botCards.retireFor(pool, {
+      appId: app.id, issueNumber: 6610,
+      prev: { stage: 'waiting_for_you', why: 'plan', reason: null },
+      standing: { stage: 'waiting_for_you', why: 'plan', reason: null, standing: { asks: {} } },
+    }), [], 'nothing moved: nothing retires');
     const { rows: [open] } = await pool.query('SELECT metadata FROM chat_messages WHERE id = $1', [stays.id]);
     assert.equal(open.metadata.homeroomBot.offer.status, 'open');
     assert.deepEqual(open.metadata.homeroomBot.actions.map((a) => a.id), ['yes', 'first', 'no']);
@@ -285,14 +285,15 @@ test('#6211: one note per pair, the day\'s ten, and the choice it offers', { tim
   const realProposeClose = move.proposeClose;
   t.after(() => { move.proposeClose = realProposeClose; });
 
+  // A note with its card, as offerOverlap writes it.
+  const noteWith = async (kind, args) => {
+    const msg = await realWs.sendBotMessage(pool, app.id, {
+      user: bot, content: 'note', thread: { type: 'issue', ref: args.issueNumber }, card: { kind, forUserId: evan.id, args },
+    });
+    return { card: { id: msg.cardId }, msg };
+  };
   const tap = async ({ kind, choice, args }) => {
-    const card = await voice.threadOffer(pool, { app, kind: 'overlap', forUserId: evan.id, args });
-    const { rows: [msg] } = await pool.query(
-      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
-       VALUES ($1, $2, 'note', 'message', $3, 'issue', $4) RETURNING id`,
-      [app.id, bot.id, JSON.stringify({ homeroomBot: { kind: 'voice', ...card.metadata } }), args.issueNumber],
-    );
-    await voice.tieThreadOffer(pool, card.id, msg.id);
+    const { card, msg } = await noteWith('overlap', args);
     sent.length = 0;
     const decisions = [];
     const mayor = {
@@ -352,15 +353,9 @@ test('#6211: one note per pair, the day\'s ten, and the choice it offers', { tim
   });
 
   await t.test('the third choice is refused for any other offer', async () => {
-    const card = await voice.threadOffer(pool, { app, kind: 'close_request', forUserId: evan.id, args: { issueNumber: 6207 } });
-    const { rows: [msg] } = await pool.query(
-      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
-       VALUES ($1, $2, 'note', 'message', $3, 'issue', $4) RETURNING id`,
-      [app.id, bot.id, JSON.stringify({ homeroomBot: { kind: 'voice', ...card.metadata } }), 6207],
-    );
-    await voice.tieThreadOffer(pool, card.id, msg.id);
+    const { card, msg } = await noteWith('close_request', { issueNumber: 6207 });
     const replies = { async tapVoiceOffer() { throw new Error('never reached'); } };
-    const out = await voice.decideOffer(pool, {}, { app, user: evan, messageId: msg.id, choice: 'first', deps: { replies } });
+    const out = await voice.decideOffer(pool, {}, { app, user: evan, messageId: msg.id, offerId: card.id, choice: 'first', deps: { replies } });
     assert.equal(out.ok, false);
     assert.equal(out.status, 400);
   });

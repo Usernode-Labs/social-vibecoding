@@ -18,6 +18,8 @@ const P = Object.freeze({
   jun: { userId: 900105, name: 'jun' },
   sable: { userId: 900106, name: 'sable' },
   rafa: { userId: 900107, name: 'rafa' },
+  ines: { userId: 900108, name: 'ines' },
+  noor: { userId: 900109, name: 'noor_b' },
 });
 
 const step = (key, state, at = null, note = null) => ({ key, state, at, note });
@@ -39,9 +41,13 @@ function firstMilePerson(p, steps, extra = {}) {
     door: 'admitted', steps, furthest: done.length ? done[done.length - 1].key : null,
     stuckAt: stuck ? stuck.key : null, stuckReason: stuck ? stuck.note : null,
     daysSince: 3, failedAttempts: 0, repeatedTaps: 0, tour: null, welcome: null,
-    mail: null, onboard: p ? onboard(5) : null, ...extra,
+    mail: null, onboard: p ? onboard(5) : null,
+    signupMethod: null, waitlist: null, mailPage: null, fromEmail: null, invite: null, ...extra,
   };
 }
+
+// How a demo person came in, built the way the real reading builds it.
+const cameIn = (row) => journey.cameInFacts({ released_at: '2026-10-05T09:10:00Z', ...row });
 
 function cohorts() {
   return {
@@ -51,6 +57,7 @@ function cohorts() {
       { day: '2026-09-24', admitted: 3, withAccount: 3 },
     ],
     otherWay: { people: 1 },
+    invited: { people: 2 },
   };
 }
 
@@ -71,6 +78,25 @@ function firstMile(day) {
       mail: journey.notRecorded('No admit mail in this cohort was tracked: tracking began on 7 Oct 2026.'),
       notRecorded: {} };
   }
+  if (day === 'invited') {
+    const now = new Date('2026-10-08T12:00:00Z');
+    const invite = { invite_id: 1, invited_by: P.mira.name, invite_project: 'Tally', invite_project_slug: 'tally' };
+    const people = [
+      journey.invitedMilePerson({
+        ...invite, user_id: P.ines.userId, username: P.ines.name, account_at: '2026-10-06T20:02:00Z',
+        invite_status: 'joined', invite_redeemed_at: '2026-10-06T20:02:00Z', invite_joined_at: '2026-10-06T20:02:05Z',
+        invite_opened_at: '2026-10-06T20:00:00Z', invite_how: 'signed_up', opened_at: '2026-10-06T20:03:00Z',
+        first_act_at: '2026-10-06T20:09:00Z', first_act_kind: 'app', has_platform_access: false, signup_method: 'phone',
+      }, now),
+      journey.invitedMilePerson({
+        ...invite, user_id: P.noor.userId, username: P.noor.name, account_at: '2026-10-07T08:40:00Z',
+        invite_status: 'queued', invite_redeemed_at: '2026-10-07T08:40:00Z', invite_how: 'signed_up',
+        has_platform_access: false, signup_method: 'google',
+      }, now),
+    ].map((p) => ({ ...p, daysSince: 1, onboard: null }));
+    return { demo: true, cohort: day, people, steps: journey.firstMileCounts(people),
+      mail: journey.notRecorded('Invited people are sent no admit mail.'), notRecorded: {} };
+  }
   if (day === 'other_way') {
     const people = [allDone(P.rafa, '2026-09-20T10:00:00Z', {
       door: 'activation code',
@@ -85,35 +111,47 @@ function firstMile(day) {
   const D = '2026-10-05T09:10:00Z';
   const people = [
     firstMilePerson(P.mira, [
-      step('admitted', 'done', D), step('mail_sent', 'done', D, 'clicked the link'), step('code_asked', 'done', '2026-10-05T18:31:00Z', 'its sign-in link'),
+      step('admitted', 'done', D), step('mail_sent', 'done', D, 'clicked the link'),
+      step('mail_page', 'done', '2026-10-05T18:31:00Z', 'signed in'), step('code_asked', 'done', '2026-10-05T18:31:00Z', 'its sign-in link'),
       step('account', 'done', '2026-10-05T18:32:00Z'), step('access', 'done', '2026-10-05T18:32:00Z'),
       step('opened', 'done', '2026-10-05T18:34:00Z'), step('username', 'done'),
       step('join', 'done', '2026-10-05T18:36:00Z', 'joined'),
       step('first_act', 'done', '2026-10-05T18:52:00Z', 'message'),
     ], { mail: { opened: true, clicked: true }, tour: { ended: 'finish', step: 3, at: '2026-10-05T18:40:00Z' }, onboard: onboard(3),
+      ...cameIn({ signup_method: 'mail_link', waitlist_joined_at: '2026-08-21T16:00:00Z', waitlist_source: 'form', waitlist_discovery: 'friend',
+        answered_follow_up: true, mail_page_at: '2026-10-05T18:31:00Z', mail_page_outcome: 'signed_in', mail_link_at: '2026-10-05T18:31:00Z',
+        mail_sends_before_follow: 1 }),
       cameFrom: cameFrom(inviteFrom('discord.com', 'copied', 'Pixel Garden', '2026-10-05T08:00:00Z')) }),
     firstMilePerson(P.tobi, [
-      step('admitted', 'done', D), step('mail_sent', 'done', D, 'opened'), step('code_asked', 'done', '2026-10-06T07:48:00Z', 'a sign-in code'),
+      step('admitted', 'done', D), step('mail_sent', 'done', D, 'opened'),
+      step('mail_page', 'done', '2026-10-06T07:47:00Z', 'link expired'), step('code_asked', 'done', '2026-10-06T07:48:00Z', 'a sign-in code'),
       step('account', 'done', '2026-10-06T07:49:00Z'), step('access', 'done', '2026-10-06T07:49:00Z'),
       step('opened', 'done', '2026-10-06T07:51:00Z'), step('username', 'done'),
       step('join', 'done', '2026-10-06T07:52:00Z', 'skipped'),
       step('first_act', 'stuck', null, 'Inside, no act yet'),
     ], { mail: { opened: true, clicked: false }, failedAttempts: 2, repeatedTaps: 1, tour: { ended: 'skip', step: 1, at: '2026-10-06T07:53:00Z' }, onboard: onboard(1),
+      ...cameIn({ signup_method: 'email_code', waitlist_joined_at: '2026-09-02T09:00:00Z', waitlist_source: 'partner:landing',
+        answered_follow_up: false, mail_page_at: '2026-10-06T07:47:00Z', mail_page_outcome: 'link_expired' }),
       cameFrom: cameFrom(inviteFrom('discord.com', 'copied', 'Pixel Garden', '2026-10-05T08:10:00Z'),
         waitlistFrom('none', 'x', 'launch', null, '2026-10-05T12:00:00Z')) }),
     firstMilePerson(P.lena, [
-      step('admitted', 'done', D), step('mail_sent', 'done', D, 'clicked the link'), step('code_asked', 'done', '2026-10-05T12:20:00Z', 'its sign-in link'),
+      step('admitted', 'done', D), step('mail_sent', 'done', D, 'clicked the link'),
+      step('mail_page', 'done', '2026-10-05T12:20:00Z', 'signed in'), step('code_asked', 'done', '2026-10-05T12:20:00Z', 'its sign-in link'),
       step('account', 'done', '2026-10-05T12:22:00Z'), step('access', 'done', '2026-10-05T12:22:00Z'),
       step('opened', 'done', '2026-10-05T12:25:00Z'), step('username', 'done'),
       step('join', 'stuck', null, 'Join screen shown, not answered'), step('first_act', 'not_yet'),
     ], { mail: { opened: true, clicked: true }, onboard: NO_CARD,
+      ...cameIn({ signup_method: 'mail_link', waitlist_joined_at: '2026-09-30T11:00:00Z', waitlist_source: 'app',
+        mail_page_at: '2026-10-05T12:20:00Z', mail_page_outcome: 'signed_in', mail_link_at: '2026-10-05T12:20:00Z',
+        mail_sends_before_follow: 1 }),
       cameFrom: cameFrom(inviteFrom('none', null, 'Pixel Garden', '2026-10-05T09:00:00Z')) }),
     firstMilePerson(null, [
       step('admitted', 'done', D), step('mail_sent', 'done', D, 'no open seen'),
-      step('code_asked', 'stuck', null, 'Admitted, never followed the mail'),
+      step('mail_page', 'stuck', null, "Never opened the mail's page"), step('code_asked', 'not_yet'),
       step('account', 'not_yet'), step('access', 'not_yet'), step('opened', 'not_yet'),
       step('username', 'not_yet'), step('join', 'not_yet'), step('first_act', 'not_yet'),
-    ], { mail: { opened: false, clicked: false }, cameFrom: cameFrom(null, null) }),
+    ], { mail: { opened: false, clicked: false }, cameFrom: cameFrom(null, null),
+      ...cameIn({ waitlist_joined_at: '2026-07-30T08:00:00Z', waitlist_source: 'form', waitlist_discovery: 'x' }) }),
   ];
   return {
     demo: true,
@@ -263,6 +301,9 @@ function person(userId) {
     userId: Number(userId) || P.tobi.userId,
     name: P.tobi.name,
     cohort: '2026-10-05',
+    cameIn: (({ signupMethod, waitlist, mailPage, fromEmail, invite }) => ({
+      door: 'admitted', signupMethod, waitlist, mailPage, fromEmail, invite,
+    }))(firstMile().people[1]),
     firstMile: firstMile().people[1],
     cameFrom: cameFrom(inviteFrom('discord.com', 'copied', 'Pixel Garden', '2026-10-05T08:10:00Z'),
       waitlistFrom('none', 'x', 'launch', null, '2026-10-05T12:00:00Z')),

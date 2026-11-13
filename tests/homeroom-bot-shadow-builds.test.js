@@ -230,11 +230,14 @@ test('a run records what started its read: its queue reason, and for a change wh
   });
   assert.equal(h.calls.queries.some((q) => /homeroom_bot_queue/.test(q.s)), false, 'the queue is the request machine\'s');
   const insert = h.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.match(insert.s, /payer_user_id, read_reason, builder\)/);
-  // read_reason, then (5 Nov 2026) the builder a hand-off named.
-  assert.equal(insert.params[insert.params.length - 2], 'changed:github', 'the issue itself moved since the last read');
-  assert.equal(insert.params[insert.params.length - 1], null, 'no builder named');
+  assert.match(insert.s, /payer_user_id, read_reason, builder, look_kind\)/);
+  // read_reason, then (5 Nov 2026) the builder a hand-off named, then (step
+  // 5, 11 Nov 2026) the kind of a look that read nothing: a read has none.
+  assert.equal(insert.params[insert.params.length - 3], 'changed:github', 'the issue itself moved since the last read');
+  assert.equal(insert.params[insert.params.length - 2], null, 'no builder named');
+  assert.equal(insert.params[insert.params.length - 1], null, 'a read is a read');
   assert.equal(bot.readReasonOf({ reason: 'changed', changed_by: 'discussion' }), 'changed:discussion');
+  assert.equal(bot.readReasonOf({ reason: 'changed', changed_by: 'voice' }), 'changed:voice', 'the voice judged a comment changes the ask');
   assert.equal(bot.readReasonOf({ reason: 'retry_failed', changed_by: 'github' }), 'retry_failed', 'only a change says what changed');
   assert.equal(bot.readReasonOf({ reason: 'changed' }), 'changed', 'a row queued before changed_by');
   assert.equal(bot.readReasonOf({}), null);

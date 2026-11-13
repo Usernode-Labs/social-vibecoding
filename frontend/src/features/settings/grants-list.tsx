@@ -53,7 +53,7 @@ function controller(): any {
  * figure/ground, so the row is the surface and needs no border, which is also
  * what every other card on this screen does.
  */
-const ROW_CLASS = 'rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
+const ROW_CLASS = 'ui-mini rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
 
 /*
  * #1957: the way back. A revoked row used to be the badge and nothing else —
@@ -167,7 +167,7 @@ export function GrantsListView({ phase, grants }: GrantsState) {
   if (phase === 'loading') return <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('core:common.loading')}</p>;
   if (phase === 'error') return <p className="text-xs text-red-700 dark:text-red-400">{t('settings:grants.loadFailed')}</p>;
   if (!grants.length) {
-    return <p className="text-xs text-zinc-500 dark:text-zinc-500">{t('settings:grants.empty')}</p>;
+    return <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('settings:grants.empty')}</p>;
   }
   return (
     <>

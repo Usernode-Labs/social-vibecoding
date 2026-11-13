@@ -31,6 +31,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const firstSession = require('../services/first-session');
+const releaseMailSetting = require('../services/release-mail-setting');
 const signInProviders = require('../services/sign-in-providers');
 const phoneAuth = require('../services/firebase-phone-auth');
 const { clientIp } = require('../services/client-ip');
@@ -70,6 +71,9 @@ const mediaStore = require('../services/media-store');
 // is the same for everyone who asks, and a shared link can bring a crowd.
 const OVERVIEW_TTL_MS = 30 * 1000;
 const OVERVIEW_CACHE_MAX = 500;
+// The public directory (GET /api/public/apps), kept as long: one answer for
+// everybody, from the heaviest query a page load makes.
+const DIRECTORY_TTL_MS = 30 * 1000;
 const { loadMobileAppUrls } = require('../services/mobile-store-links');
 
 // The ONE body POST /api/public/waitlist/resend ever returns. Frozen and
@@ -136,10 +140,34 @@ function publicApiRoutes(config) {
 
   // GET /api/public/apps — every view-public, non-self-hosted app with its
   // contributors embedded.
+  //
+  // Kept for a short while (#6591): the list is the same for everyone who
+  // asks, its query aggregates every app's activity, members and changes
+  // (1.5 to 2 seconds on production), and the shell reads it on every page
+  // load. One read per DIRECTORY_TTL_MS serves them all, and requests that
+  // arrive while it runs share it. A read that fails is kept for nobody.
+  const directoryCache = new Map();
+  function readDirectory(includeWallets) {
+    const key = includeWallets ? 'wallets' : 'plain';
+    const hit = directoryCache.get(key);
+    if (hit && (hit.pending || hit.expiresAt > Date.now())) return hit.read;
+    const entry = { pending: true, expiresAt: 0, read: null };
+    entry.read = listPublicApps(pool, { includeWallets }).then((apps) => {
+      entry.pending = false;
+      entry.expiresAt = Date.now() + DIRECTORY_TTL_MS;
+      return apps;
+    }, (err) => {
+      if (directoryCache.get(key) === entry) directoryCache.delete(key);
+      throw err;
+    });
+    directoryCache.set(key, entry);
+    return entry.read;
+  }
+
   router.get('/api/public/apps', async (req, res) => {
     const includeWallets = wantsWallets(req);
     try {
-      res.json({ apps: await listPublicApps(pool, { includeWallets }) });
+      res.json({ apps: await readDirectory(includeWallets) });
     } catch (err) {
       log.error('public-api', 'apps list failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -324,6 +352,10 @@ function publicApiRoutes(config) {
       waitlist_url: waitlistUrl(config),
       marketing_url: siteUrl(config),
       story_landing: await firstSession.storyLandingEnabled(pool),
+      // #6633: whether a new account waits to be admitted (Admin ›
+      // Waitlist). The signed-out pages say "Create account" instead of
+      // "Join the waitlist" when it is off. On when it cannot be read.
+      waitlist_enabled: await releaseMailSetting.waitlistEnabled(pool),
       sign_in_providers: await signInProviders.offeredProviders(pool, config),
       // Phone-number sign-in (services/firebase-phone-auth.js): offered
       // only when its four Firebase values are set and the flag is on.
@@ -331,6 +363,9 @@ function publicApiRoutes(config) {
       phone_sign_in: phoneAuth.offered(config),
       terms_link: await currentTermsLink(),
       privacy_link: privacyNoticeUrl(config),
+      // Where to write about your data (Settings › Privacy's usage data
+      // block): to be left out of screen usage data, or anything else.
+      data_protection_email: config.dataProtectionEmail || 'dataprotection@onhomeroom.com',
       child_safety_link: childSafetyUrl(config),
       account_deletion_link: accountDeletionUrl(config),
       // The same, from the Homeroom app's own sheets (the bridge's
@@ -397,6 +432,9 @@ function publicApiRoutes(config) {
     try {
       const { created, moreToken, submittedAt } = await waitlist.joinWaitlist(pool, {
         email,
+        // Admin › Journey's "where they signed up": Homeroom's own page, or
+        // the partner whose key this is.
+        source: req.waitlistIntegrator ? `partner:${req.waitlistIntegrator.label || 'unknown'}` : 'form',
         // A trusted integrator proxies real people, so its own server
         // address is not the signup's address. Recording the proxy for
         // every agency-sourced row is what this prefers away from; an
@@ -413,7 +451,7 @@ function publicApiRoutes(config) {
         // full address, plus the page's short utm and ref tags. A
         // referrer_host that is present but empty or unreadable is 'none'
         // (looked for, none given); an absent one is not recorded.
-        source: {
+        arrival: {
           referrerHost: Object.prototype.hasOwnProperty.call(req.body || {}, 'referrer_host')
             ? (arrivalSource.hostOf(req.body?.referrer_host) || 'none')
             : null,
@@ -759,6 +797,10 @@ function publicApiRoutes(config) {
     try {
       const row = await waitlist.getSignupByMoreToken(pool, req.params.token);
       if (!row) return res.status(404).json({ error: 'Unknown or expired link.' });
+      // The "You're in" mail's own page reading this as it opens
+      // (features/auth/landing.tsx): Admin › Journey's "Opened the mail's
+      // page". A scanner's fetch of the mail's link does not run the page.
+      if (req.query.from === 'admit' && row.released_at) await releaseLinks.notePageOpened(pool, row.id);
       const answers = row.answers && typeof row.answers === 'object' ? row.answers : {};
       const status = signupStatus(row);
       // ?view=status answers the poll alone: the screen re-reads this route

@@ -1,5 +1,6 @@
 /**
- * Settings → Accessibility: text size and high contrast (#3969).
+ * Settings → Accessibility: text size and high contrast (#3969), reduce
+ * motion (#6510), and whether project cards play their animated previews.
  *
  * A page of one part, right after Appearance in Preferences, so the two
  * reading controls are visible without opening Appearance first. It follows
@@ -28,8 +29,10 @@ import { useCallback, useState } from 'react';
 import { SectionHeading } from '@/components/ui/field';
 import { Switch } from '@/components/ui/switch';
 
+import { onPreviewsPref, previewsOn, setPreviewsOn } from '../../../lib/card-previews';
 import { useMessages } from '../../../lib/i18n/react';
 import { useIsomorphicLayoutEffect, useWindowEvent } from '../../../lib/legacy-dom';
+import { radioGroupKeys } from '../../../lib/radio-group';
 
 // Order of the three segments in the DOM, also the storage contract:
 // Normal removes the key; Large and Larger store their value.
@@ -37,13 +40,26 @@ const TEXT_SIZES = ['normal', 'large', 'larger'] as const;
 type TextSize = (typeof TEXT_SIZES)[number];
 
 const SIZE_SEG_CLASS =
-  'theme-seg flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors';
+  'theme-seg ui-row ui-row-sm flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors';
 
 const SIZE_LABELS: Record<TextSize, string> = {
   normal: 'settings:accessibility.textSize.normal',
   large: 'settings:accessibility.textSize.large',
   larger: 'settings:accessibility.textSize.larger',
 };
+
+/**
+ * The radio mark a row wears under one of the frame's looks (looks v2: the
+ * choices are radio rows in a card there). Never drawn by the standard look
+ * (`ui-look-only`, app.css), whose segment says which one is chosen by its own fill.
+ */
+function RadioMark({ on }: { on: boolean }) {
+  return (
+    <span aria-hidden="true" className={on ? 'ui-chk ui-chk-on ui-look-only' : 'ui-chk ui-look-only'}>
+      {on ? <span className="h-2 w-2 rounded-full bg-[color:var(--accent-ink)]" /> : null}
+    </span>
+  );
+}
 
 /**
  * The Normal / Large / Larger segmented control. Three things re-read the
@@ -76,13 +92,16 @@ function TextSizeControl() {
     },
     [sync],
   );
+  // One tab stop, and the arrow keys move the pick (#6510).
+  const keys = radioGroupKeys(TEXT_SIZES, size, choose);
 
   return (
     <div
       id="settings-text-size-track"
       role="radiogroup"
       aria-label={t('settings:accessibility.textSize.controlName')}
-      className="relative flex p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium"
+      onKeyDown={keys.onKeyDown}
+      className="ui-card ui-radios relative flex p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium"
     >
       {TEXT_SIZES.map((s) => (
         <button
@@ -90,10 +109,12 @@ function TextSizeControl() {
           type="button"
           role="radio"
           aria-checked={size === s ? 'true' : 'false'}
+          tabIndex={keys.tabIndex(s)}
           data-text-size-option={s}
           className={size === s ? `${SIZE_SEG_CLASS} theme-seg-active` : SIZE_SEG_CLASS}
           onClick={() => choose(s)}
         >
+          <RadioMark on={size === s} />
           {t(SIZE_LABELS[s])}
         </button>
       ))}
@@ -122,6 +143,8 @@ function HighContrastRow() {
 
   return (
     <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+      {/* A neutral wrapper (looks v2): one card's switch row under a look. */}
+      <div className="ui-card ui-swrow">
       <label className="flex items-center gap-2 cursor-pointer select-none">
         <Switch
           id="settings-high-contrast"
@@ -139,6 +162,102 @@ function HighContrastRow() {
       <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
         {t('settings:accessibility.contrast.description')}
       </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Reduce motion (#6510): the same switch row as High contrast, through the
+ * same head module. On, it writes data-motion="reduce" on <html>, which every
+ * reduced-motion rule in app.css and native.css has a twin for, Tailwind's
+ * motion-reduce:/motion-safe: variants read (scripts/build-tailwind.js), and
+ * ../../../lib/reduced-motion.ts answers for script. Off is not "allow": the
+ * device's own prefers-reduced-motion still applies, which the description
+ * says.
+ */
+function ReduceMotionRow() {
+  const t = useMessages('settings');
+  const [on, setOn] = useState(false);
+
+  const sync = useCallback(() => setOn(!!window.Display?.getMotion?.()), []);
+
+  useIsomorphicLayoutEffect(() => {
+    sync();
+    window.Display?.onChange?.(sync);
+  }, [sync]);
+
+  useWindowEvent('usernode:settings-section', sync);
+
+  return (
+    <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+      {/* The same neutral wrapper as High contrast (looks v2): one card's switch row under a look. */}
+      <div className="ui-card ui-swrow">
+      <label className="flex items-center gap-2 cursor-pointer select-none">
+        <Switch
+          id="settings-reduce-motion"
+          checked={on}
+          onChange={(e) => {
+            const next = e.currentTarget.checked;
+            window.Display?.setMotion?.(next);
+            setOn(next);
+          }}
+        />
+        <span className="text-sm text-zinc-800 dark:text-zinc-200">
+          {t('settings:accessibility.motion.label')}
+        </span>
+      </label>
+      <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+        {t('settings:accessibility.motion.description')}
+      </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Play previews": a project card's short, silent loop plays when you point
+ * at the card, or on a phone for the card you stop on
+ * (../../../lib/card-previews.ts). On by default, kept on this device, and
+ * never playing anyway under reduced motion or Data Saver. Like the switch
+ * above it, the first render is off and storage is read in an effect, so the
+ * prerendered markup matches.
+ */
+function CardPreviewsRow() {
+  const t = useMessages('settings');
+  const [on, setOn] = useState(false);
+
+  const sync = useCallback(() => setOn(previewsOn()), []);
+
+  useIsomorphicLayoutEffect(() => {
+    sync();
+    return onPreviewsPref(sync);
+  }, [sync]);
+
+  useWindowEvent('usernode:settings-section', sync);
+
+  return (
+    <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+      {/* The same neutral wrapper as High contrast (looks v2): one card's switch row under a look. */}
+      <div className="ui-card ui-swrow">
+      <label className="flex items-center gap-2 cursor-pointer select-none">
+        <Switch
+          id="settings-card-previews"
+          checked={on}
+          onChange={(e) => {
+            const next = e.currentTarget.checked;
+            setPreviewsOn(next);
+            setOn(next);
+          }}
+        />
+        <span className="text-sm text-zinc-800 dark:text-zinc-200">
+          {t('settings:accessibility.previews.label')}
+        </span>
+      </label>
+      <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+        {t('settings:accessibility.previews.description')}
+      </p>
+      </div>
     </div>
   );
 }
@@ -155,6 +274,8 @@ export function AccessibilitySection() {
           <TextSizeControl />
         </div>
         <HighContrastRow />
+        <ReduceMotionRow />
+        <CardPreviewsRow />
       </div>
     </div>
   );

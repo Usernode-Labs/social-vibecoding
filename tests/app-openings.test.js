@@ -69,8 +69,9 @@ function routePool({ blocked = false, shares = true } = {}) {
           moderation_suspended_at: null,
         }] };
       }
-      if (/SELECT usage_analytics FROM users/.test(text)) {
-        return { rows: [{ usage_analytics: shares }] };
+      // The Journey left-out list: person 7 objected to being recorded, or nobody did.
+      if (/SELECT value FROM platform_settings WHERE key = \$1/.test(text)) {
+        return { rows: shares ? [] : [{ value: JSON.stringify([{ userId: 7, reason: 'objected', note: '' }]) }] };
       }
       if (/FROM user_app_blocks/.test(text)) {
         return { rows: blocked ? [{ app_id: 22 }] : [] };
@@ -155,7 +156,7 @@ test('opening collection is authenticated, access-guarded, awaited and idempoten
   });
 });
 
-test('an opening is dropped, with a 2xx, for somebody who does not share usage analytics (#5097)', async () => {
+test('an opening is dropped, with a 2xx, for somebody who objected to being recorded', async () => {
   const pool = routePool({ shares: false });
   await withRoute(pool, { id: 7 }, async (base) => {
     const { response, body } = await post(base, { openingId: OPENING_ID, occurredAt: new Date().toISOString() });

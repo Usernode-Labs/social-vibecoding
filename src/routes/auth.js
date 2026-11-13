@@ -1,3 +1,4 @@
+const { readSessionCookie, setSessionCookie, clearSessionCookies, protectedCookieName } = require('../services/browser-session-cookies');
 const appAllowance = require('../services/app-allowance');
 const appLimit = require('../services/app-limit');
 const crypto = require('crypto');
@@ -40,7 +41,6 @@ const contactPreferences = require('../services/contact-preferences');
 const linkedPhones = require('../services/linked-phones');
 const linkedBrowsers = require('../services/linked-browsers');
 const uiTelemetry = require('../services/ui-telemetry');
-const usageAnalytics = require('../services/usage-analytics');
 const { verificationKeyFor } = require('../services/wallet-signing-key');
 // One shape for the profile block, shared with PATCH /api/me/profile so
 // /api/auth/me and the write echo identical objects (#982).
@@ -51,6 +51,7 @@ const {
   withTransaction,
 } = require('../services/cli-auth');
 const { revokeNativeSessionCredentials } = require('../services/native-session-revocation');
+const { sessionTokenIsLive } = require('../services/web-session-auth');
 // The SAME predicate the CLI 404 gates use (routes/cli-auth.js), so the
 // capability this route advertises can never disagree with what that
 // surface actually serves.
@@ -109,7 +110,12 @@ function roleFields(isAdmin, adminReadonly) {
 // Previously this was `NODE_ENV !== 'development'`, which silently dropped the
 // cookie on any dev box reached over LAN HTTP (mobile testing) because
 // NODE_ENV was usually unset => secure=true => browser refuses cookie on HTTP.
-const SECURE_COOKIE = process.env.NODE_ENV === 'production';
+// Read per call, so the signup cookie's writer and reader always agree.
+const secureCookie = () => process.env.NODE_ENV === 'production';
+// The email code's signup continuation, spent by set-password. Secure, it is
+// `__Host-usernode_signup` (browser-session-cookies.js protectedCookieName),
+// so it is Path=/ and an app on a sibling host cannot plant one; the bare
+// name is plain-HTTP development's only, and never read in production.
 const SIGNUP_COOKIE = 'usernode_signup';
 
 // Ordinary credential exchanges may only mint a session from a signed-out
@@ -152,12 +158,7 @@ const SESSION_MINT_PATHS = [
 ];
 
 function createSessionCookie(res, token, expiresAt) {
-  res.cookie('session', token, {
-    httpOnly: true,
-    secure: SECURE_COOKIE,
-    sameSite: 'lax',
-    expires: expiresAt,
-  });
+  setSessionCookie(res, token, expiresAt);
   require('../services/browser-api-cache').setSessionCacheCookie(res, token, expiresAt);
 }
 
@@ -175,23 +176,26 @@ async function createSession(queryable, userId, req = null) {
   return { token, expiresAt };
 }
 
+function signupCookieName() {
+  return protectedCookieName(SIGNUP_COOKIE, secureCookie());
+}
+
+// The clear repeats the attributes: a browser drops a `__Host-` cookie only
+// for a Set-Cookie that is itself Secure, Path=/ and without a Domain.
+function signupCookieOptions() {
+  return { httpOnly: true, secure: secureCookie(), sameSite: 'lax', path: '/' };
+}
+
 function createSignupCookie(res, token, expiresAt) {
-  res.cookie(SIGNUP_COOKIE, token, {
-    httpOnly: true,
-    secure: SECURE_COOKIE,
-    sameSite: 'lax',
-    path: '/api/auth/otp',
-    expires: expiresAt,
-  });
+  res.cookie(signupCookieName(), token, { ...signupCookieOptions(), expires: expiresAt });
 }
 
 function clearSignupCookie(res) {
-  res.clearCookie(SIGNUP_COOKIE, {
-    httpOnly: true,
-    secure: SECURE_COOKIE,
-    sameSite: 'lax',
-    path: '/api/auth/otp',
-  });
+  res.clearCookie(signupCookieName(), signupCookieOptions());
+}
+
+function readSignupCookie(req) {
+  return req.cookies?.[signupCookieName()];
 }
 
 function authRoutes(config) {
@@ -207,16 +211,10 @@ function authRoutes(config) {
   // protocol; every current native mint call remains routed through
   // fetchSessionMint until then.
   router.post(SESSION_MINT_PATHS, async (req, res, next) => {
-    const token = req.cookies?.session;
+    const token = readSessionCookie(req);
     if (!token) return next();
     try {
-      const { rows } = await pool.query(
-        `SELECT 1 FROM sessions
-          WHERE token = $1 AND expires_at > NOW()
-          LIMIT 1`,
-        [token]
-      );
-      if (rows.length === 0) return next();
+      if (!(await sessionTokenIsLive(pool, token))) return next();
       return res.status(409).json({
         error: 'Sign out before signing in again.',
         code: 'logout_required',
@@ -543,7 +541,7 @@ function authRoutes(config) {
   router.get('/api/auth/username-available', usernameCheckLimiter, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
-      const userId = await emailSignup.pendingUsernameChoice(pool, req.cookies?.[SIGNUP_COOKIE]);
+      const userId = await emailSignup.pendingUsernameChoice(pool, readSignupCookie(req));
       if (!userId) return res.status(401).json({ error: 'Your signup session expired. Request a new code.', code: 'invalid_signup_session' });
       const check = usernames.validateUsername(typeof req.query.username === 'string' ? req.query.username : '');
       if (!check.ok) return res.json({ ok: true, available: false, error: check.error });
@@ -570,7 +568,7 @@ function authRoutes(config) {
     }
     try {
       const completed = await emailSignup.completePassword(pool, {
-        signupToken: req.cookies?.[SIGNUP_COOKIE],
+        signupToken: readSignupCookie(req),
         password,
         // The handle the set-password step asks a new account for (QA
         // 2026-09-24 Q12). Required since #3575 for an account that has
@@ -747,7 +745,7 @@ function authRoutes(config) {
   });
 
   router.post('/api/auth/logout', sameOriginBrowserOnly, async (req, res) => {
-    const token = req.cookies?.session;
+    const token = readSessionCookie(req);
     if (token) {
       try {
         await withTransaction(pool, async (client) => {
@@ -774,8 +772,7 @@ function authRoutes(config) {
         return res.status(500).json({ error: 'Internal server error' });
       }
     }
-    res.clearCookie('session');
-    res.clearCookie(require('../services/browser-api-cache').SCOPE_COOKIE, { path: '/' });
+    clearSessionCookies(res);
     res.json({ ok: true });
   });
 
@@ -1003,10 +1000,21 @@ function authRoutes(config) {
     // #3624: whether this person builds through the Homeroom bot's DM
     // (everyone with platform access). The create dialog asks for a longer
     // description when it is true. Unreadable means false.
+    // #6632: with the bot for verified accounts only, somebody let in but
+    // not verified has `homeroomBotDm` false and `homeroomBotVerify` naming
+    // the signals that count, so the screens can ask them to verify without
+    // a round trip. Null for everybody else.
     let homeroomBotDm = false;
+    let homeroomBotVerify = null;
     try {
       const settings = await require('../services/homeroom-bot').readSettings(pool);
-      homeroomBotDm = !req.user.isSynthetic && require('../services/homeroom-bot-dm').hasBot(settings, req.user);
+      const botDm = require('../services/homeroom-bot-dm');
+      if (!req.user.isSynthetic) {
+        homeroomBotDm = await botDm.botWorksFor(pool, settings, req.user);
+        if (!homeroomBotDm && botDm.hasBot({ ...settings, worksFor: 'everyone' }, req.user)) {
+          homeroomBotVerify = { signals: require('../services/homeroom-bot-verified').signalsOf(settings) };
+        }
+      }
     } catch {}
     res.json({
       user: {
@@ -1015,14 +1023,9 @@ function authRoutes(config) {
         // Browser-check accounts authenticate normally to exercise protected
         // screens, but their scripted journeys must not enter product UI
         // analytics. The client waits for this server-owned decision.
-        // People who objected to being recorded answer false too (#3369).
+        // People who objected to being recorded (services/usage-analytics.js)
+        // answer false too.
         uiTelemetryEligible: await uiTelemetry.isRecordable(pool, req.user),
-        // The shell's one Google Analytics sign_up (#6314). A browser-check
-        // account is not somebody signing up.
-        analyticsCounted: await uiTelemetry.countsInGoogleAnalytics(pool, req.user),
-        justSignedUp: uiTelemetry.isEligibleUser(req.user)
-          && !req.user.isSynthetic
-          && await require('../services/usage-analytics').justSignedUp(pool, req.user.id),
         isAdmin: req.user.isAdmin,
         // View-only admin role (issue #311). `isAdmin` still drives every
         // client read/visibility gate; `canAdminWrite` drives mutating
@@ -1031,6 +1034,7 @@ function authRoutes(config) {
         canAdminWrite: !!req.user.canAdminWrite,
         role: !req.user.isAdmin ? 'user' : (req.user.adminReadonly ? 'view_admin' : 'admin'),
         homeroomBotDm,
+        homeroomBotVerify,
         // Derived per-user app-creation affordance. Kept for the home-screen
         // treatment; the numbers below explain that state in the create
         // dialog. A null used/remaining value means the count query was not
@@ -1452,7 +1456,7 @@ function authRoutes(config) {
   // which signs that phone out and stops its notifications. Only the
   // signed-in account's own phones: any other id is a 404.
   async function currentNativeCredential(req) {
-    const token = req.cookies?.session;
+    const token = readSessionCookie(req);
     if (!token) return null;
     const { rows } = await pool.query(
       'SELECT native_session_credential_reference FROM sessions WHERE token = $1 AND user_id = $2',
@@ -1500,7 +1504,7 @@ function authRoutes(config) {
     res.set('Cache-Control', 'private, no-store');
     try {
       const browsers = await linkedBrowsers.listLinkedBrowsers(pool, req.user.id, {
-        currentToken: req.cookies?.session || null,
+        currentToken: readSessionCookie(req) || null,
       });
       res.json({ browsers });
     } catch (err) {
@@ -1514,15 +1518,14 @@ function authRoutes(config) {
     const sessionId = req.params.id;
     if (!linkedBrowsers.isBrowserSessionId(sessionId)) return res.status(404).json({ error: 'Not found' });
     try {
-      const currentToken = req.cookies?.session || null;
+      const currentToken = readSessionCookie(req) || null;
       const { signedOut, current } = await linkedBrowsers.signOutBrowser(pool, req.user.id, sessionId, { currentToken });
       if (!signedOut) return res.status(404).json({ error: 'Not found' });
       log.info('settings', 'Browser session signed out', { userId: req.user.id, current });
       // The browser in your hands was signed out with it: drop its cookies
       // as /api/auth/logout does, so the page it reloads to is signed out.
       if (current) {
-        res.clearCookie('session');
-        res.clearCookie(require('../services/browser-api-cache').SCOPE_COOKIE, { path: '/' });
+        clearSessionCookies(res);
       }
       res.json({ ok: true, current });
     } catch (err) {
@@ -1573,37 +1576,6 @@ function authRoutes(config) {
       res.json({ ok: true, locale: normalized });
     } catch (err) {
       log.error('settings', 'Failed to save locale preference', { userId: req.user.id, err: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // "Share usage analytics" (#5097), Settings > Privacy. Off unless the
-  // person switches it on (services/usage-analytics.js names what it
-  // covers). The answer carries uiTelemetryEligible, /api/auth/me's
-  // decision recomputed, so the shell can start or stop sending at once.
-  router.get('/api/me/usage-analytics', async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    try {
-      const enabled = await usageAnalytics.sharesUsageAnalytics(pool, req.user.id);
-      res.set('Cache-Control', 'no-store');
-      res.json({ enabled, uiTelemetryEligible: enabled && await uiTelemetry.isRecordable(pool, req.user) });
-    } catch (err) {
-      log.error('settings', 'Failed to read the usage analytics choice', { userId: req.user.id, err: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  router.put('/api/me/usage-analytics', sameOriginBrowserOnly, async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    const { enabled } = req.body || {};
-    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be true or false' });
-    try {
-      const stored = await usageAnalytics.setUsageAnalytics(pool, req.user.id, enabled);
-      if (stored === null) return res.status(404).json({ error: 'Account not found' });
-      log.info('settings', 'Usage analytics choice saved', { userId: req.user.id, enabled: stored });
-      res.json({ ok: true, enabled: stored, uiTelemetryEligible: stored && await uiTelemetry.isRecordable(pool, req.user) });
-    } catch (err) {
-      log.error('settings', 'Failed to save the usage analytics choice', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -2342,4 +2314,5 @@ function authRoutes(config) {
 
 // Apple and Google sign-in (routes/sign-in-providers.js) mints the same
 // session, with the same cookie, and answers with the same role fields.
-module.exports = { authRoutes, createSession, createSessionCookie, roleFields };
+module.exports = { authRoutes, createSession, createSessionCookie, roleFields,
+  createSignupCookie, clearSignupCookie, readSignupCookie };

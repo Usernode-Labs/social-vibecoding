@@ -133,6 +133,29 @@ function applyShellBuildHeader(res, env = process.env) {
  * worker cached on their previous visit to the same hostname.
  */
 function applyShellDocumentHeaders(res, filePath, env = process.env) {
+  const builtAt = stampShellDocumentBuild(res, filePath, env);
+  res.setHeader('Content-Security-Policy', shellFrameAncestors(env));
+  return builtAt;
+}
+
+/**
+ * Who may frame the shell: the platform itself and, for a preview of
+ * Homeroom (which the production shell frames from another origin), the
+ * production platform, whose host a preview inherits as USERNODE_DOMAIN.
+ *
+ * Any other page that framed it could overlay the signed-in shell: on a
+ * shared site the Lax session cookie rides into a same-site frame, and the
+ * framed page's own requests are same-origin, so no CSRF rule sees them.
+ * A route with an embedding policy of its own (project-embed.js) sets its
+ * own header and is not a shell document.
+ */
+function shellFrameAncestors(env = process.env) {
+  const domain = String(env.USERNODE_DOMAIN || '').trim().toLowerCase();
+  const platform = /^[a-z0-9.-]+(?::\d{1,5})?$/.test(domain) ? ` https://${domain}` : '';
+  return `frame-ancestors 'self'${platform}`;
+}
+
+function stampShellDocumentBuild(res, filePath, env) {
   const id = applyShellBuildHeader(res, env);
   if (!id) return null;
   if (env.USERNODE_ENV === 'staging') res.setHeader(SHELL_BUILD_POLICY_HEADER, 'latest');
@@ -204,6 +227,7 @@ module.exports = {
   shellBuildId,
   applyShellBuildHeader,
   applyShellDocumentHeaders,
+  shellFrameAncestors,
   SHELL_BUILD_HEADER,
   SHELL_BUILD_TIME_HEADER,
   SHELL_BUILD_POLICY_HEADER,

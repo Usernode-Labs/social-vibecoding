@@ -945,11 +945,11 @@ function adminRoutes(config) {
   const journeyDemo = (req) => IS_STAGING && req.query.demo === '1';
   // `cohort` narrows a reading to one admit cohort: an admit day, or
   // other_way. Absent means everyone; anything else is refused.
-  const badCohort = { status: 400, error: 'cohort must be an admit day in YYYY-MM-DD, or other_way.' };
+  const badCohort = { status: 400, error: 'cohort must be an admit day in YYYY-MM-DD, other_way, or invited.' };
   const journeyCohort = (req) => {
     const raw = req.query.cohort;
     if (raw == null || raw === '') return { day: null };
-    const day = raw === 'other_way' ? 'other_way' : journey.parseDay(raw);
+    const day = raw === 'other_way' || raw === 'invited' ? raw : journey.parseDay(raw);
     return day ? { day } : null;
   };
   const journeyMembers = async (day, ctx) => {
@@ -1004,8 +1004,9 @@ function adminRoutes(config) {
 
   router.get('/api/admin/journey/first-mile', journeyRead('first mile', (req) => journeyDemoData.firstMile(req.query.admitted),
     async (req, ctx) => {
-      const day = req.query.admitted === 'other_way' ? 'other_way' : journey.parseDay(req.query.admitted);
-      if (!day) return { status: 400, error: 'admitted must be an admit day in YYYY-MM-DD, or other_way.' };
+      const day = req.query.admitted === 'other_way' || req.query.admitted === 'invited'
+        ? req.query.admitted : journey.parseDay(req.query.admitted);
+      if (!day) return { status: 400, error: 'admitted must be an admit day in YYYY-MM-DD, other_way, or invited.' };
       return journey.firstMile(pool, { day, ...ctx });
     }));
 
@@ -1052,8 +1053,9 @@ function adminRoutes(config) {
   router.get('/api/admin/journey/next-steps', journeyRead('next steps', () => journeyDemoData.nextSteps(),
     async (req, ctx) => {
       if (req.query.admitted == null) return journey.newcomerNextSteps(pool, ctx);
-      const day = req.query.admitted === 'other_way' ? 'other_way' : journey.parseDay(req.query.admitted);
-      if (!day) return { status: 400, error: 'admitted must be an admit day in YYYY-MM-DD, or other_way.' };
+      const day = req.query.admitted === 'other_way' || req.query.admitted === 'invited'
+        ? req.query.admitted : journey.parseDay(req.query.admitted);
+      if (!day) return { status: 400, error: 'admitted must be an admit day in YYYY-MM-DD, other_way, or invited.' };
       const mile = await journey.firstMile(pool, { day, ...ctx });
       const to = ctx.now;
       const from = new Date(to.getTime() - journey.NEWCOMER_DAYS * journey.DAY_MS);
@@ -1704,6 +1706,20 @@ function adminRoutes(config) {
       // let the truncated download fail loudly rather than look complete.
       if (!res.headersSent) return res.status(500).json({ error: 'Internal server error' });
       return res.end();
+    }
+  });
+
+  // #6643: changes held for an admin (services/release-holds.js): the ones
+  // still waiting, oldest first, and what became of the ones before.
+  // Read-only, so it stays on the plain adminMiddleware gate: an admin
+  // answers a hold by voting on the change itself. `note` is the reason an
+  // admin wrote with their No, served as JSON data for admins.
+  router.get('/api/admin/release-holds', async (req, res) => {
+    try {
+      res.json(await require('../services/release-holds').listForAdmin(pool, { viewerId: req.user?.id ?? null }));
+    } catch (err) {
+      log.error('admin', 'Read release holds failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 

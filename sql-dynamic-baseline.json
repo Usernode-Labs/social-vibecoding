@@ -446,9 +446,30 @@
     {
       "source": "src/routes/issues.js",
       "kind": "structural-template",
+      "fingerprint": "962ddf272d961c66b853",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.user_id, cs.status, cs.shared_at, cs.last_activity_at, cs.created_at, u.username, ${workedOnSql()} AS worked_on FROM chat_sessions cs LEFT JOI"
+    },
+    {
+      "source": "src/routes/issues.js",
+      "kind": "structural-template",
       "fingerprint": "c0bc113c71f01ab97e4d",
       "count": 1,
       "preview": "`SELECT UNNEST(cs.linked_issues) AS n, cs.id, cs.user_id, cs.status, cs.shared_at, cs.last_activity_at, cs.created_at, u.username, ${workedOnSql()} AS worked_on"
+    },
+    {
+      "source": "src/routes/issues.js",
+      "kind": "structural-template",
+      "fingerprint": "d1370a75774417b16bfa",
+      "count": 1,
+      "preview": "`SELECT cs.id FROM chat_sessions cs WHERE cs.id = ANY($2::int[]) AND ${OWED_PROPOSALS_WHERE}`"
+    },
+    {
+      "source": "src/routes/issues.js",
+      "kind": "structural-template",
+      "fingerprint": "ddc8eea393265b6579ae",
+      "count": 1,
+      "preview": "`SELECT id FROM chat_sessions WHERE app_id = $1 AND user_id = $2 AND created_from_issue_number = $3 AND status <> 'archived' AND NOT ${planRecordSql('')} ORDER "
     },
     {
       "source": "src/routes/issues.js",
@@ -572,16 +593,16 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
-      "fingerprint": "7248257d5821cbfa4f70",
+      "fingerprint": "974dbc333f746ae0a00c",
       "count": 1,
-      "preview": "`SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND ${c"
+      "preview": "`SELECT s.version, s.content, s.content_html, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at FROM chat_session_specs s JOIN chat_sessions cs ON cs."
     },
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
-      "fingerprint": "974dbc333f746ae0a00c",
+      "fingerprint": "9e134adc759194b62a60",
       "count": 1,
-      "preview": "`SELECT s.version, s.content, s.content_html, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at FROM chat_session_specs s JOIN chat_sessions cs ON cs."
+      "preview": "`SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, (SELECT COUNT(*)::int FROM pr_votes pv WHERE pv.session_id = cs.id AND pv.vote = 'yes' AND ${c"
     },
     {
       "source": "src/routes/sessions.js",
@@ -894,9 +915,9 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "157017d7b5984923ede2",
+      "fingerprint": "06cdc1594753c76a99bd",
       "count": 1,
-      "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.status = 'merged' ${prCursorSql} ORDER BY COALESCE(cs.merged_at, cs.created_at) DESC, cs.id DESC LIMIT $${prPa"
+      "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.status = 'merged' ${noNewerMergedTwin()} ${prCursorSql} ORDER BY COALESCE(cs.merged_at, cs.created_at) DESC, c"
     },
     {
       "source": "src/routes/votes.js",
@@ -908,6 +929,13 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
+      "fingerprint": "3bb592f2e4ccdb94f841",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
       "fingerprint": "61a5b0d7edd56fa67c61",
       "count": 1,
       "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.id = $3 AND (cs.status IN ('promoted', 'merging', 'merged') OR (cs.status IN ('active', 'paused') AND (cs.user"
@@ -915,9 +943,9 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "9b0fbd9314c7fcc4f53e",
+      "fingerprint": "9933dac1a7d146f5f7b1",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
+      "preview": "`SELECT COUNT(*) FILTER (WHERE t >= $2::timestamptz)::int AS shipped_week, COUNT(*) FILTER (WHERE t < $2::timestamptz AND t >= $2::timestamptz - interval '7 day"
     },
     {
       "source": "src/routes/votes.js",
@@ -946,6 +974,13 @@
       "fingerprint": "ed2a6965e24f99bc2d8f",
       "count": 1,
       "preview": "`WITH current_session AS ( SELECT id, approval_epoch FROM chat_sessions WHERE id = $1 AND status IN ('promoted', 'merging') FOR UPDATE ), v AS ( INSERT INTO pr_"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "f86a7ee8733fdfb03c37",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS total FROM chat_sessions cs WHERE cs.app_id = $1 AND cs.status = 'merged' ${noNewerMergedTwin()}`"
     },
     {
       "source": "src/routes/workshop-overview.js",
@@ -1431,25 +1466,18 @@
       "preview": "`SELECT p.app_id, p.about_number FROM private_threads p WHERE p.user_id = $1 AND ${planHoldActiveSql('p')}`"
     },
     {
-      "source": "src/services/homeroom-bot-progress.js",
-      "kind": "structural-template",
-      "fingerprint": "eee0d0058ae8c27e0b96",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.app_id, a.slug, CASE WHEN cs.status = 'merged' AND cs.live_at IS NULL THEN 'merging' ELSE cs.status END AS status, cs.check_state, cs.check_ph"
-    },
-    {
-      "source": "src/services/homeroom-bot-reply-status.js",
-      "kind": "runtime-built-identifier",
-      "fingerprint": "748340c4403e63509b60",
-      "count": 1,
-      "preview": "REQUEST_ROWS_SQL"
-    },
-    {
       "source": "src/services/homeroom-bot-reply-status.js",
       "kind": "runtime-expression",
       "fingerprint": "9f8cd532c33acde0b9cc",
       "count": 1,
       "preview": "place.type === 'chat' ? `SELECT 1 FROM chat_messages m JOIN users u ON u.id = m.user_id WHERE m.app_id = $1 AND m.thread_type = 'message' AND m.thread_ref = $2 "
+    },
+    {
+      "source": "src/services/homeroom-bot-reply-status.js",
+      "kind": "structural-template",
+      "fingerprint": "05f2da355febd1d1a175",
+      "count": 1,
+      "preview": "`SELECT reply.reply_id, reply.reply_at, reply.reply_user_id FROM (SELECT $1::int AS app_id, $2::int AS issue_number) m LEFT JOIN LATERAL ( SELECT created_at FRO"
     },
     {
       "source": "src/services/homeroom-bot-reply-status.js",
@@ -1471,13 +1499,6 @@
       "fingerprint": "c88f14f4f226912f6e1e",
       "count": 1,
       "preview": "`SELECT ${require('../app-access').nonSecretAppColumnList()} FROM apps WHERE id = $1`"
-    },
-    {
-      "source": "src/services/homeroom-bot-track.js",
-      "kind": "runtime-built-identifier",
-      "fingerprint": "748340c4403e63509b60",
-      "count": 1,
-      "preview": "REQUEST_ROWS_SQL"
     },
     {
       "source": "src/services/homeroom-bot-voice.js",
@@ -1837,6 +1858,34 @@
       "preview": "overrides.map(r => r.statement).join(';\\n')"
     },
     {
+      "source": "src/services/release-holds.js",
+      "kind": "structural-template",
+      "fingerprint": "32b772d3655bf79a7000",
+      "count": 1,
+      "preview": "`SELECT rh.session_id, rh.id, rh.rules, rh.created_at, rh.notified_at, ${approvedSql('cs')} AS approved, ${authorIsAdminSql('cs')} AS author_admin FROM release_"
+    },
+    {
+      "source": "src/services/release-holds.js",
+      "kind": "structural-template",
+      "fingerprint": "71b41b31a4083bef9e14",
+      "count": 1,
+      "preview": "`SELECT rh.id, rh.rules, rh.created_at, rh.notified_at, ${approvedSql('cs')} AS approved, ${authorIsAdminSql('cs')} AS author_admin FROM release_holds rh JOIN c"
+    },
+    {
+      "source": "src/services/release-holds.js",
+      "kind": "structural-template",
+      "fingerprint": "d118f486610ae7fcd139",
+      "count": 1,
+      "preview": "`${LIST_SQL} WHERE NOT (rh.status = 'waiting' AND cs.status IN ('promoted', 'merging') AND NOT ${approvedSql('cs')}) AND NOT (rh.status = 'waiting' AND cs.statu"
+    },
+    {
+      "source": "src/services/release-holds.js",
+      "kind": "structural-template",
+      "fingerprint": "f1e2859a73fbc6cd119b",
+      "count": 1,
+      "preview": "`${LIST_SQL} WHERE rh.status = 'waiting' AND cs.status IN ('promoted', 'merging') AND NOT ${approvedSql('cs')} ORDER BY rh.created_at ASC LIMIT 200`"
+    },
+    {
       "source": "src/services/report-ai.js",
       "kind": "structural-template",
       "fingerprint": "6300e3c7db647c91a87a",
@@ -1937,9 +1986,9 @@
     {
       "source": "src/services/shots-public.js",
       "kind": "runtime-expression",
-      "fingerprint": "4e2eeb1379f378d39be7",
+      "fingerprint": "a2ab91727c9d261b8fff",
       "count": 1,
-      "preview": "stillsSql(OPEN_SCOPE)"
+      "preview": "stillsSql(live ? MERGED_SCOPE : OPEN_SCOPE)"
     },
     {
       "source": "src/services/shots-public.js",
@@ -2003,6 +2052,13 @@
       "fingerprint": "d664a2029343883317f2",
       "count": 1,
       "preview": "ITEMS_SQL"
+    },
+    {
+      "source": "src/services/threads.js",
+      "kind": "structural-template",
+      "fingerprint": "ceaf327ad2eb29657681",
+      "count": 1,
+      "preview": "`SELECT w.session_id FROM work_states w WHERE w.session_id = ANY($1::int[]) AND ${APPROVED_SQL('w')}`"
     },
     {
       "source": "src/services/topochain/challenge-onboarding.js",
@@ -2278,11 +2334,18 @@
       "preview": "`DELETE FROM ${t.sql} WHERE ${quoteIdent(c.name)} = $1::integer`"
     },
     {
-      "source": "src/services/vote-digest.js",
-      "kind": "runtime-built-identifier",
-      "fingerprint": "9d1082139d72c4cb203f",
+      "source": "src/services/web-session-auth.js",
+      "kind": "structural-template",
+      "fingerprint": "44c8f68b9ae0d78364e7",
       "count": 1,
-      "preview": "PENDING_SQL"
+      "preview": "`SELECT 1 FROM sessions s WHERE s.token = $1 AND s.expires_at > NOW() AND ${nativeWebSessionIsLive('s')} AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = s.us"
+    },
+    {
+      "source": "src/services/work-state.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "e07f8fc99a563b8a567b",
+      "count": 1,
+      "preview": "STANDING_SQL"
     },
     {
       "source": "src/services/work-state.js",
@@ -2290,6 +2353,20 @@
       "fingerprint": "e291c7da7e5ce11b4cf9",
       "count": 1,
       "preview": "REQUEST_FACTS_SQL"
+    },
+    {
+      "source": "src/services/work-state.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "efa4a36d01d42c3c8181",
+      "count": 1,
+      "preview": "VOTES_IN_SQL"
+    },
+    {
+      "source": "src/services/work-state.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "f20155d3c2a832a82323",
+      "count": 1,
+      "preview": "CHANGE_FACTS_SQL"
     },
     {
       "source": "src/services/worker-eviction.js",
@@ -2504,7 +2581,7 @@
     {
       "source": "src/workflow/rules/merge-claim.ts",
       "kind": "structural-template",
-      "fingerprint": "de7dfef88f84d5e7b6ae",
+      "fingerprint": "5cc8f21c2ca8e885df0e",
       "count": 1,
       "preview": "`SELECT cs.check_state, cs.checks_commit_sha, cs.unit_suite_fresh_sha, cs.shots_state, cs.shots_detail, a.locked, a.main_check_state, a.main_check_sha, a.main_c"
     },

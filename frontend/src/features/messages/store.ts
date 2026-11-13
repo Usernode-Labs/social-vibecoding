@@ -50,14 +50,6 @@ export interface Typist {
   bot?: boolean;
   /** What the bot says it is doing now (its typing event's `doing`); null while it thinks. */
   doing?: BotDoing | null;
-  /**
-   * 4 Nov 2026 (#6302): the answer written so far, held across the doing
-   * changes that follow it (a tool step, a wordless "thinking"), so the card
-   * does not drop the words and draw them again as each round streams. It
-   * goes with the entry when the typing stops, or when a newer answer
-   * replaces it.
-   */
-  draft?: string;
 }
 
 /**
@@ -69,22 +61,16 @@ export interface BotDoing {
   kind: string;
   number?: number;
   project?: string;
-  /** Homeroom bot parity, P1: the answer so far, while it is written (kind 'writing'). */
-  text?: string;
-  /**
-   * #6405: where `text` starts in the whole answer, when the server sent only
-   * its newest part (kind 'writing'). Absent when `text` is all of it.
-   */
-  from?: number;
+  /** #6354: the page Homeroom is opening to copy (kind 'capturing'). */
+  page?: string;
 }
 
-/** The longest answer-so-far a working card shows (the server sends its newest 1800 characters). */
-export const MAX_BOT_DRAFT_CHARS = 2000;
-
-/** #6405: the most of an answer the card holds, the server's own reply limit (homeroom-bot-mayor.js MAX_REPLY_CHARS). */
-export const MAX_BOT_HELD_DRAFT_CHARS = 8000;
-
-/** The `doing` of a typing event, or null: only a kind word, a request number, a short name, and the answer being written. */
+/**
+ * The `doing` of a typing event, or null: only a kind word, a request
+ * number and a short name. #6581, step 4 (11 Nov 2026): never words. The
+ * answer appears once, whole, as the bot's message; a word shown is never
+ * replaced or wiped, so none is shown before it is final.
+ */
 export function botDoingOf(raw: unknown): BotDoing | null {
   if (!raw || typeof raw !== 'object') return null;
   const value = raw as Record<string, unknown>;
@@ -92,59 +78,25 @@ export function botDoingOf(raw: unknown): BotDoing | null {
   if (!kind) return null;
   const number = Number(value.number);
   const project = typeof value.project === 'string' ? value.project.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
-  const text = kind === 'writing' && typeof value.text === 'string' ? value.text.trim().slice(-MAX_BOT_DRAFT_CHARS) : '';
-  // #6405: where a cut answer's newest words start in the whole answer.
-  const from = kind === 'writing' && Number.isSafeInteger(value.from) && Number(value.from) > 0 ? Number(value.from) : null;
   return {
     kind,
     ...(Number.isSafeInteger(number) && number > 0 ? { number } : {}),
     ...(project ? { project } : {}),
-    ...(text ? { text } : {}),
-    ...(text && from !== null ? { from } : {}),
   };
 }
 
 /**
  * 4 Nov 2026 (#6302): the Homeroom bot's entry on the typing line, from what
- * its newest event says, with the answer written so far kept from `prior`
- * unless this event writes a newer one. The server names a new doing as each
- * tool step starts (and sends none while it thinks), so building the entry
- * from the event alone erased the draft between rounds and the card flashed
- * between its words and "Thinking"/"Reading request #…". The draft leaves
- * with the entry when typing stops, which is also when the bot's message
- * takes the card's place.
- *
- * #6405: the answer only ever grows. A tail the server cut from part-way
- * through is stitched under the words already held (`from`), so the card
- * keeps the answer's first word instead of sliding its opening with every
- * update; and a shorter rewrite (the correction pass's "Ref", at first)
- * leaves the fuller answer up until it overtakes it. A step with no words of
- * its own keeps the last one named, rather than dropping back to "Thinking".
+ * its newest event says. The server names a new doing as each tool step
+ * starts and sends none while it thinks, so a step with no name of its own
+ * keeps the last one named, rather than dropping back to "Thinking". No
+ * words are held: the bot's message takes the card's place when the typing
+ * stops.
  */
 export function botTypist(prior: Typist | undefined, shown: string, doing: BotDoing | null): Typist {
-  const priorDraft = prior?.draft || '';
-  let draft = priorDraft;
-  const written = doing?.kind === 'writing' && doing.text ? doing.text : '';
-  if (written) {
-    const from = typeof doing?.from === 'number' ? doing.from : null;
-    if (from !== null && priorDraft.length >= from) {
-      // A cut tail continues the answer held.
-      draft = priorDraft.slice(0, from) + written.replace(/^…\s*/, '');
-    } else if (from !== null && priorDraft.length >= MAX_BOT_HELD_DRAFT_CHARS) {
-      // Past what the card holds: keep all of it, rather than drop to a tail.
-      draft = priorDraft;
-    } else {
-      // A whole answer, or one whose tail starts past what this reader has.
-      draft = written;
-    }
-    // Never shrink: a rewrite shorter than the words held, and the start of
-    // them, leaves the held words in place.
-    if (priorDraft && draft.length < priorDraft.length && priorDraft.startsWith(draft)) draft = priorDraft;
-    draft = draft.slice(0, MAX_BOT_HELD_DRAFT_CHARS);
-  }
   // The furthest step named this turn, kept through a wordless one.
   const held = doing ?? prior?.doing ?? null;
-  return { name: shown, unnamed: false, bot: true, doing: held, ...(draft ? { draft } : {}) };
+  return { name: shown, unnamed: false, bot: true, doing: held };
 }
 
 interface InternalState extends MessagesSnapshot {
@@ -612,7 +564,25 @@ function resolvePendingChannel(): void {
  * second request failed is worse than one that draws what it has. The Apps
  * filter then shows nothing, which is the honest report of what arrived.
  */
-export async function loadAppDiscussions(): Promise<void> {
+let discussionsRead: Promise<void> | null = null;
+
+/**
+ * `join` is for a read that says nothing new happened: the store filling at
+ * sign-in, and the screen opening. On a page load that lands on Messages the
+ * two ask in the same moment, and the second takes the first one's request
+ * rather than making its own (#6591). A read after something changed (a
+ * block, a reconnect, a refresh) never joins: it asks the server.
+ */
+export function loadAppDiscussions({ join = false }: { join?: boolean } = {}): Promise<void> {
+  if (join && discussionsRead) return discussionsRead;
+  const read = readAppDiscussions();
+  discussionsRead = read;
+  const settle = () => { if (discussionsRead === read) discussionsRead = null; };
+  read.then(settle, settle);
+  return read;
+}
+
+async function readAppDiscussions(): Promise<void> {
   try {
     const query = browserDemo() ? '?demo=1' : '';
     const response = await fetch(`/api/messages/app-discussions${query}`);
@@ -1159,7 +1129,7 @@ export function route(
       if (!nextRoot) publish({ thread: null });
     }
     if (!state.listLoaded) void loadConversations();
-    if (!state.discussionsLoaded) void loadAppDiscussions();
+    if (!state.discussionsLoaded) void loadAppDiscussions({ join: true });
     if (nextId && (!state.active || state.active.id !== nextId || focusChanged)) void loadThread(nextId, focusChanged);
     else if (nextId && nextRoot && threadChanged) void loadReplyThread(nextId, nextRoot);
     if (nextSlug && state.discussionContext?.slug !== nextSlug) void loadDiscussion(nextSlug);
@@ -1187,7 +1157,7 @@ export function route(
   // #2718: beside the conversations, never instead of them. It is a separate
   // request with its own failure, so a slow or broken discussions read costs
   // the Apps filter and nothing else — see loadAppDiscussions.
-  void loadAppDiscussions();
+  void loadAppDiscussions({ join: true });
   if (nextId) void loadThread(nextId);
   else publish({ active: null, messages: [], nextBefore: null, loadingThread: false });
   if (nextSlug) void loadDiscussion(nextSlug);
@@ -2124,6 +2094,17 @@ export async function answerBotQuestion(question: ConversationMessage, answer: s
  * Rejects when a `server` press was refused (a 409: decided already).
  */
 export async function tapBotAction(message: ConversationMessage, action: HomeroomBotAction): Promise<void> {
+  // #6632: Verify, under the bot's "I work for verified accounts": the
+  // verify sheet with the bot's wording; Settings where there is no sheet.
+  if (action.type === 'open' && action.id === 'verify_account') {
+    const ask = (window as unknown as { UsernodeReact?: { verifyIdentity?: { askForBot?: (signals?: string[]) => Promise<boolean> } } })
+      .UsernodeReact?.verifyIdentity?.askForBot;
+    if (typeof ask === 'function') {
+      const signals = (message.metadata?.homeroomBot as { signals?: string[] } | undefined)?.signals;
+      void ask(Array.isArray(signals) ? signals : undefined);
+      return;
+    }
+  }
   if (action.type === 'open') {
     openAppTarget(action.target);
     return;
@@ -3390,7 +3371,7 @@ export function initializeMessagesStore(): () => void {
   // #2783: the app channels too, so a `#name` for one chips in any chat — an
   // app's own discussion included — before Messages has ever been opened.
   // And the messages this account left unsent on the device (restoreUnsent).
-  const onAuthed = () => { void loadConversations(); void loadAppDiscussions(); void restoreUnsent(); };
+  const onAuthed = () => { void loadConversations(); void loadAppDiscussions({ join: true }); void restoreUnsent(); };
   // A reaction kept while offline was answered (reactionAnswered).
   const onAction = (event: Event) => { reactionAnswered((event as CustomEvent<ActionOutcome>).detail); };
   window.addEventListener('online', onOnline);
@@ -3418,7 +3399,7 @@ export function initializeMessagesStore(): () => void {
   // opening populated and opening on a spinner.
   if (window.App?.user) void loadConversations();
   else document.addEventListener('sv:authed', onAuthed, { once: true });
-  if (window.App?.user) void loadAppDiscussions();
+  if (window.App?.user) void loadAppDiscussions({ join: true });
   if (window.App?.user) void restoreUnsent();
   // #2387 / #2967: the two layout preferences, read after mount so the first
   // render matches the prerendered shell. The folded sections are the third,

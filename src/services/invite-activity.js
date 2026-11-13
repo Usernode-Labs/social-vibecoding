@@ -61,6 +61,7 @@ const crypto = require('crypto');
 const events = require('./events');
 const log = require('./logger');
 const arrivalSource = require('./arrival-source');
+const { protectedCookieName, requestCookieSecure } = require('./browser-session-cookies');
 
 const KINDS = Object.freeze(['invite_opened', 'member_joined', 'first_message']);
 // A first message counts as a hello for this long after joining. Past it, the
@@ -72,6 +73,13 @@ const HELLO_WITHIN_DAYS = 30;
 // once, HttpOnly, and only ever stored as its SHA-256. It names nobody and
 // says nothing about where the browser is; it only tells this browser's
 // second open from somebody else's first.
+//
+// BROWSER_COOKIE and SOURCE_COOKIE are bare names. Secure (always in
+// production, else over HTTPS: browser-session-cookies.js
+// requestCookieSecure) each is `__Host-<name>`, Path=/ with no Domain, so an
+// app on a sibling host cannot plant one. Writer and readers decide from
+// their own request, and never read the bare name where the prefixed one is
+// due.
 const BROWSER_COOKIE = 'hr_iv';
 const BROWSER_COOKIE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 const BROWSER_VALUE_RE = /^[A-Za-z0-9_-]{22,64}$/;
@@ -97,10 +105,11 @@ function setSourceCookie(req, res, source) {
   const host = source.referrerHost === 'none' ? 'none' : arrivalSource.hostOf(source.referrerHost);
   if (host !== 'none' && !host) return;
   const via = arrivalSource.cleanVia(source.via) || '';
-  res.cookie(SOURCE_COOKIE, `${host}|${via}`, {
+  const secure = requestCookieSecure(req);
+  res.cookie(protectedCookieName(SOURCE_COOKIE, secure), `${host}|${via}`, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: req.secure || req.headers?.['x-forwarded-proto'] === 'https',
+    secure,
     maxAge: SOURCE_COOKIE_MAX_AGE_MS,
     path: '/',
   });
@@ -108,7 +117,7 @@ function setSourceCookie(req, res, source) {
 
 /** The source this request's browser carries, or null when it carries none. */
 function sourceFrom(req) {
-  const value = req?.cookies?.[SOURCE_COOKIE];
+  const value = req?.cookies?.[protectedCookieName(SOURCE_COOKIE, requestCookieSecure(req))];
   if (typeof value !== 'string' || !value) return null;
   const [rawHost, rawVia] = value.split('|');
   const host = rawHost === 'none' ? 'none' : arrivalSource.hostOf(rawHost);
@@ -116,11 +125,14 @@ function sourceFrom(req) {
   return { referrerHost: host, via: arrivalSource.cleanVia(rawVia) };
 }
 
-/** This request's browser, as the hash an open is kept by, or null. */
-function browserFrom(req) {
-  const value = req?.cookies?.[BROWSER_COOKIE];
+function browserHash(value) {
   if (typeof value !== 'string' || !BROWSER_VALUE_RE.test(value)) return null;
   return crypto.createHash('sha256').update(`invite-open:${value}`).digest('hex');
+}
+
+/** This request's browser, as the hash an open is kept by, or null. */
+function browserFrom(req) {
+  return browserHash(req?.cookies?.[protectedCookieName(BROWSER_COOKIE, requestCookieSecure(req))]);
 }
 
 /** This request's browser, given a cookie first when it has none. */
@@ -128,16 +140,18 @@ function ensureBrowser(req, res) {
   const known = browserFrom(req);
   if (known) return known;
   const value = crypto.randomBytes(24).toString('base64url');
-  res.cookie(BROWSER_COOKIE, value, {
+  const secure = requestCookieSecure(req);
+  const name = protectedCookieName(BROWSER_COOKIE, secure);
+  res.cookie(name, value, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: req.secure || req.headers?.['x-forwarded-proto'] === 'https',
+    secure,
     maxAge: BROWSER_COOKIE_MAX_AGE_MS,
-    path: '/api',
+    path: '/',
   });
   // The rest of this request reads it as if it had arrived with it.
-  if (req.cookies) req.cookies[BROWSER_COOKIE] = value;
-  return browserFrom({ cookies: { [BROWSER_COOKIE]: value } });
+  if (req.cookies) req.cookies[name] = value;
+  return browserHash(value);
 }
 
 /** Whether this browser was counted for the link `token` before. */
@@ -323,7 +337,7 @@ function bellChanged(userId) {
  * their row, with their account, so opening the link again stays quiet.
  * Never throws. Resolves the ids of the notices it changed.
  */
-async function settleOpen(pool, { makerId, appId, userId, browser = null }) {
+async function settleOpen(pool, { makerId, appId, userId, browser = null, keepNotice = false }) {
   const touched = new Set();
   let client = null;
   try {
@@ -333,7 +347,7 @@ async function settleOpen(pool, { makerId, appId, userId, browser = null }) {
     const rows = await openersOf(client, { makerId, appId, userId, browser });
     if (rows.length) {
       for (const id of await mergeOpeners(client, rows, { userId, browser })) touched.add(id);
-      if (rows[0].notification_id != null) {
+      if (!keepNotice && rows[0].notification_id != null) {
         touched.add(Number(rows[0].notification_id));
         await client.query('UPDATE community_invite_opens SET notification_id = NULL WHERE id = $1', [rows[0].id]);
       }
@@ -349,6 +363,26 @@ async function settleOpen(pool, { makerId, appId, userId, browser = null }) {
   }
   if (touched.size) bellChanged(makerId);
   return [...touched];
+}
+
+/**
+ * `userId` signed up or in carrying link `token` (community-invites.js
+ * redeemCarried / dropCarried): the open this browser made signed out
+ * becomes theirs, so Admin › Journey can say when they opened the link. Not
+ * a join, so the open stays on the maker's notice as it was; a join through
+ * the link settles it later (noteJoined). Never throws.
+ */
+async function claimOpen(pool, { token, userId, browser = null }) {
+  if (!userId || !browser || typeof token !== 'string' || !token) return [];
+  try {
+    const { rows } = await pool.query('SELECT created_by, app_id FROM community_invites WHERE token = $1', [token]);
+    const invite = rows[0];
+    if (!invite || invite.created_by == null || Number(invite.created_by) === Number(userId)) return [];
+    return await settleOpen(pool, { makerId: invite.created_by, appId: invite.app_id, userId, browser, keepNotice: true });
+  } catch (err) {
+    log.warn('invite-activity', 'Could not claim an open on a sign-in', { err: err.message });
+    return [];
+  }
 }
 
 /**
@@ -583,6 +617,7 @@ module.exports = {
   BROWSER_COOKIE,
   SOURCE_COOKIE,
   browserFrom,
+  claimOpen,
   ensureBrowser,
   setSourceCookie,
   sourceFrom,

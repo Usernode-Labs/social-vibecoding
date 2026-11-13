@@ -35,6 +35,9 @@ import { MessageButton } from './message-button';
 import { FriendButton } from '../friends/friend-button';
 import type { FriendState } from '../friends/api';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
+import { Av, Card, GroupLink, PageBody, Row, Sec, Sub } from '@/components/ui/kit';
+import { isFrameSkin, useLiveSkin } from '../../lib/skin';
+import { useFrameFlag } from '../frame/frame-flag';
 
 function PublicAvatar({ profile }: { profile: any }): ReactNode {
   const { initial, url } = publicAvatarView(profile);
@@ -72,15 +75,83 @@ export function PublicProfileCard({
   allowReport,
   allowMessage = false,
   friendship = null,
+  preview = false,
 }: {
   profile: any;
   allowReport: boolean;
   allowMessage?: boolean;
   friendship?: { userId: number; state: FriendState } | null;
+  /** The owner's "What's on it" preview inside Edit profile: always the standard card. */
+  preview?: boolean;
 }): ReactNode {
   // Subscribed: the social chips' labels are read by the view helper.
-  useMessages('profile');
+  const t = useMessages('profile');
   const socialLinks = verifiedSocialLinksView(profile);
+  // UNDER A LOOK the card is a page of the frame (the version 2 tour's s51,
+  // s52): the person's picture and name as its head with their handle under
+  // it, the friend button and Message as its actions (the product's own
+  // buttons, wearing the kit's: looks.json), their bio in the column with
+  // Report user under it, and their verified accounts beside it. The owner's
+  // preview inside Edit profile (`preview`) keeps the standard card below: it
+  // is a card in a dialog, not a page.
+  const frame = isFrameSkin(useLiveSkin()) && !preview;
+  // While the page is up the screen gives it the frame's page area (app.css).
+  useFrameFlag('person-frame', frame);
+  const { url: avatarUrl } = publicAvatarView(profile);
+  if (frame) {
+    const handle = `@${profile.username}`;
+    const name = profile.displayName || profile.username;
+    const acts = friendship || allowMessage ? (
+      <>
+        {friendship ? <FriendButton userId={friendship.userId} username={profile.username} initialState={friendship.state} /> : null}
+        {allowMessage ? <MessageButton username={profile.username} /> : null}
+      </>
+    ) : undefined;
+    // The verified accounts stand beside the words. With no bio there are no
+    // words to stand beside, so they lead the one column instead of sitting
+    // alone at the far side of an empty page.
+    const verified = socialLinks.length ? (
+      <Sec label={t('profile:frame.public.verified')}>
+        <Card>
+          {socialLinks.map((link) => (
+            <Row
+              key={link.key}
+              href={link.href}
+              // Another site: a real link in a new tab, as the standard card's chip is.
+              target="_blank"
+              lead={<Av size={32} name={link.key === 'github' ? 'G' : 'X'} />}
+              title={link.key === 'github' ? t('profile:frame.public.github') : t('profile:frame.public.x')}
+              line={link.key === 'github' ? String(profile.links?.github || '') : `@${String(profile.links?.x || '').replace(/^@/, '')}`}
+              go
+            />
+          ))}
+        </Card>
+      </Sec>
+    ) : null;
+    return (
+      <PageBody
+        data-public-profile-frame={profile.username}
+        lead={<Av size={56} name={profile.displayName || profile.username} src={avatarUrl || null} />}
+        title={name}
+        purpose={handle}
+        acts={acts}
+        side={profile.bio ? verified : null}
+      >
+        {profile.bio ? (
+          <Sec label={t('profile:frame.public.about')}>
+            <Card pad><Sub size={15} as="p">{profile.bio}</Sub></Card>
+          </Sec>
+        ) : verified}
+        {allowReport ? (
+          <div id="public-profile-report">
+            <GroupLink bad onClick={() => openReport({ targetType: 'user', target: profile.username, label: `@${profile.username}` })}>
+              {t('profile:public.report')}
+            </GroupLink>
+          </div>
+        ) : null}
+      </PageBody>
+    );
+  }
   return (
     <>
       <article

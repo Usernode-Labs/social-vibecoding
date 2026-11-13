@@ -167,7 +167,7 @@ async function join(pool, { userId, rawEmail, ip = null, send }) {
   if (!email) throw new MemberWaitlistError('invalid_email', 'Enter a valid email address.');
   if (await heldByAnother(pool, userId, email)) throw new MemberWaitlistError('email_in_use', IN_USE, 409);
 
-  await waitlist.joinWaitlist(pool, { email, ip });
+  await waitlist.joinWaitlist(pool, { email, ip, source: 'app' });
   const { rows } = await pool.query('SELECT email, email_confirmed FROM users WHERE id = $1', [userId]);
   const own = rows[0] && rows[0].email_confirmed && waitlist.normalizeEmail(rows[0].email) === email;
   if (own) {
@@ -210,8 +210,8 @@ async function joinWithPhone(pool, { userId, ip = null }) {
   // At most one phone row per account (waitlist_signups_phone_row_unique):
   // a second tap, or two at once, inserts nothing.
   await pool.query(
-    `INSERT INTO waitlist_signups (email, ip, linked_user_id, confirmed_at, more_token)
-     VALUES (NULL, $2, $1, NOW(), $3)
+    `INSERT INTO waitlist_signups (email, ip, linked_user_id, confirmed_at, more_token, source)
+     VALUES (NULL, $2, $1, NOW(), $3, 'app')
      ON CONFLICT DO NOTHING`,
     [userId, ip, crypto.randomBytes(24).toString('hex')]
   );

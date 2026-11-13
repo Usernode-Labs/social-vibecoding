@@ -843,6 +843,18 @@
     "text": "Not shared yet",
     "description": "Status beside the word \"Change\" at the top of a change's page. The change is still being built and only its owner can see it."
   },
+  "page.hero.status.approvedChecking": {
+    "text": "Approved · checking the latest version",
+    "description": "Status beside the word \"Change\" at the top of a change's page. The change has the votes its project's rule needs, and Homeroom's own checks are still running on its latest version."
+  },
+  "page.hero.status.approvedGithub": {
+    "text": "Approved · waiting on GitHub's checks",
+    "description": "Status beside the word \"Change\" at the top of a change's page. The change has the votes its project's rule needs and Homeroom's checks passed, and GitHub's own required checks are still running before it merges."
+  },
+  "page.hero.status.approvedFailing": {
+    "text": "Approved · checks failing",
+    "description": "Status beside the word \"Change\" at the top of a change's page. The change has the votes its project's rule needs, but its checks are failing, so it cannot go live until they are fixed."
+  },
   "page.hero.status.merging": {
     "text": "Going live",
     "description": "Status beside the word \"Change\" at the top of a change's page. The change was approved and is being merged into the project."
@@ -1938,6 +1950,66 @@
   "step.adminYes": {
     "text": "Needs one admin to vote yes",
     "description": "Line under the \"Admin approval\" step in a proposal's list of steps, while no administrator has voted Yes yet."
+  },
+  "hold.pill": {
+    "text": "Held for an admin",
+    "description": "Short status label on a proposed change's card and page, in the warning shown while the change is held until a platform administrator approves it."
+  },
+  "hold.pillOther": {
+    "text": "Needs another admin",
+    "description": "Short status label on a proposed change's card and page, in the warning shown while the change is held until a platform administrator approves it, when the change's author is an administrator and so a different administrator has to approve it."
+  },
+  "hold.title": {
+    "text": "This change needs an admin’s approval",
+    "description": "Heading of the warning on a proposed change's card and page, in the warning shown while the change is held until a platform administrator approves it. The reasons are listed under it."
+  },
+  "hold.titleOther": {
+    "text": "This change needs another admin’s approval",
+    "description": "Heading of the warning on a proposed change's card and page, in the warning shown while the change is held until a platform administrator approves it, when the change's author is an administrator and so a different administrator has to approve it."
+  },
+  "hold.asked": {
+    "text": "An admin has been asked. Votes still count.",
+    "description": "Last line of the warning on a proposed change's card and page, in the warning shown while the change is held until a platform administrator approves it: the administrators were notified, and members can keep voting meanwhile."
+  },
+  "hold.willAsk": {
+    "text": "An admin is asked once it is up for a vote.",
+    "description": "Last line of the warning on a proposed change's card and page, in the warning shown while the change is held until a platform administrator approves it, before the change has been proposed to the group: administrators are notified when it is."
+  },
+  "hold.step": {
+    "text": "Held until an admin votes yes.",
+    "description": "Line under the \"Admin approval\" step in a proposal's list of steps, while the change is held and no administrator has voted Yes. One or more reason sentences follow it."
+  },
+  "hold.stepOther": {
+    "text": "Held until another admin votes yes.",
+    "description": "Line under the \"Admin approval\" step in a proposal's list of steps, while the change is held and its author is an administrator, so a different administrator has to vote Yes. One or more reason sentences follow it."
+  },
+  "hold.rule.wallet": {
+    "text": "It lets the app send tokens.",
+    "description": "One reason a proposed change is held for an administrator's approval: the change makes the app able to send the person's tokens from their wallet."
+  },
+  "hold.rule.people": {
+    "text": "It starts keeping data about people.",
+    "description": "One reason a proposed change is held for an administrator's approval: the change makes the app store information about the people who use it."
+  },
+  "hold.rule.secret": {
+    "text": "It adds a private key for an outside service.",
+    "description": "One reason a proposed change is held for an administrator's approval: the change declares a secret key the app uses to reach a service outside Homeroom."
+  },
+  "hold.rule.capability": {
+    "text": "It asks for a device capability such as location.",
+    "description": "One reason a proposed change is held for an administrator's approval: the change makes the app ask for access to something on the person's device, like their location, camera or microphone."
+  },
+  "hold.rule.script": {
+    "text": "It loads a script from another site.",
+    "description": "One reason a proposed change is held for an administrator's approval: the change makes the app load code from a website other than Homeroom."
+  },
+  "hold.rule.content": {
+    "text": "The Content rules check flagged it.",
+    "description": "One reason a proposed change is held for an administrator's approval: Homeroom's automatic review found something that may break the platform's content or data rules. Content rules is the name of that check."
+  },
+  "hold.rule.unread": {
+    "text": "It could not be read in full.",
+    "description": "One reason a proposed change is held for an administrator's approval: the change was too large, or could not be loaded, for Homeroom's automatic reading of it, so a person has to look."
   },
   "step.shots.failed": {
     "text": "Couldn’t take screenshots",
@@ -4375,6 +4447,14 @@
     "text": "Withdraw",
     "description": "Row in the ⋯ menu of a governance proposal's card, shown to the person who made it: takes the proposal back so it is no longer voted on. A verb."
   },
+  "governance.menu.edit": {
+    "text": "Edit proposal",
+    "description": "Row in the ⋯ menu of a card-picture proposal's card, shown to the person who proposed it while the vote waits: opens the picture editor to replace the waiting picture."
+  },
+  "governance.menu.editTitle": {
+    "text": "Replace the picture this waiting proposal carries",
+    "description": "Tooltip of the \"Edit proposal\" row in a card-picture proposal's ⋯ menu. \"Replace\" is a verb."
+  },
   "governance.menu.withdrawTitle": {
     "text": "Withdraw this proposal (removes it from the vote panel)",
     "description": "Tooltip of the \"Withdraw\" row in a governance proposal's ⋯ menu."
@@ -5560,12 +5640,8 @@
     "description": "Status tag on a proposal's card and row label in the ledger on its page: the proposal passed its vote and Homeroom's checks, but GitHub has not merged it because the required checks GitHub runs on it are still running, or failed and are being run again on today's main. The platform tries again by itself, so nobody has to act. \"GitHub\" is a product name and stays as it is."
   },
   "badge.reason.githubChecks.detail": {
-    "text": "GitHub's required checks on this change are still running, or are being run again on today's main. Homeroom tries again at {{time}}.",
-    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page. {{time}} is a clock time such as 10:45, shown in the viewer's own time zone. \"Homeroom\" is the name of the platform and stays as it is. \"GitHub\" is a product name and stays as it is."
-  },
-  "badge.reason.githubChecks.detailSoon": {
-    "text": "GitHub's required checks on this change are still running, or are being run again on today's main. Homeroom tries again in a few minutes.",
-    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page, when the next try's time has passed or was not recorded. \"Homeroom\" is the name of the platform and stays as it is. \"GitHub\" is a product name and stays as it is."
+    "text": "GitHub is building and scanning the release images for this change, which usually takes about 6 minutes. It merges as soon as they pass.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page. \"GitHub\" is a product name and stays as it is."
   },
   "badge.reason.githubChecksFailing.label": {
     "text": "GitHub's checks are failing",
@@ -5622,6 +5698,10 @@
   "badge.reason.shots.retryingFaultDetail": {
     "text": "Something on Homeroom’s side stopped these screenshots, so it takes them again on its own.",
     "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots failed for a reason on Homeroom's own side (not the proposal's), and Homeroom takes them again once by itself. \"Homeroom\" is the product's name. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
+  },
+  "badge.reason.shots.retryingGithubDetail": {
+    "text": "GitHub didn’t answer. Trying again in a few minutes.",
+    "description": "Tooltip of the status tag on a proposal's card, and text of the matching ledger row on its page: taking the screenshots could not start because GitHub did not answer, and Homeroom tries again once by itself shortly. \"GitHub\" is the code host's name. \"Screenshots\" are the pictures Homeroom takes of what a proposal changes, before and after."
   },
   "badge.reason.shots.enforcedDetail": {
     "text": "Voting and merging wait for before & after screenshots of the current proposal commit.",
@@ -6210,6 +6290,14 @@
   "shots.sentence.retryingFault": {
     "text": "Trying the screenshots again. Something on Homeroom’s side stopped these screenshots, so it takes them again on its own.",
     "description": "Line on a change's page, under \"What changes for you\", when taking the screenshots failed for a reason on Homeroom's own side (not the proposal's) and Homeroom takes them again once by itself. Homeroom is the product's name."
+  },
+  "shots.sentence.retryingGithub": {
+    "text": "Couldn’t take the screenshots: GitHub didn’t answer. Trying again in a few minutes.",
+    "description": "Line on a change's page, under \"What changes for you\", when taking the screenshots could not start because GitHub did not answer, and Homeroom tries again once by itself shortly. \"GitHub\" is the code host's name."
+  },
+  "shots.sentence.githubDown": {
+    "text": "Couldn’t take the screenshots: GitHub didn’t answer. Take them again in a few minutes.",
+    "description": "Line on a change's page, under \"What changes for you\", when taking the screenshots could not start because GitHub did not answer, and Homeroom does not try again by itself. \"GitHub\" is the code host's name."
   },
   "shots.sentence.couldNot": {
     "text": "Couldn’t take the screenshots. The screenshot agent could not take the before & after screenshots.",
@@ -8367,45 +8455,25 @@
     "text": "Nobody is working on this yet.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. \"This\" is the request."
   },
-  "request.status.lead.botQuestion": {
-    "text": "Waiting for an answer to Homeroom bot's question.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it asked a question on the request and waits for someone to answer it."
+  "request.status.lead.stands": {
+    "text": "{{stage}}.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands, when its stage has no second line. {{stage}} is the stage's own words, already translated, the same words every screen uses for it (for example Reading it, Up for a vote, or Waiting for you to decide)."
   },
-  "request.status.lead.botPlanWaiting": {
-    "text": "@{{username}}'s plan is ready. Any member can build it below.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands, for anyone but the person who asked for it. Homeroom bot wrote a plan for the change, drawn right below this card, and any member of the community may press its Build it button. {{username}} is the person who asked for it, after an @."
+  "request.status.lead.standsLine": {
+    "text": "{{stage}} · {{line}}",
+    "description": "The one sentence on the status card of a request's page that says where the request stands: its stage, then what that means now. {{stage}} and {{line}} are already translated, the same words every screen uses (for example Ready to build and Number 2 in line). Keep the dot between them as a separator."
   },
-  "request.status.lead.botPlanYours": {
-    "text": "Your plan is ready. Build it is on the plan below.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands, read by the person who asked for it while Homeroom bot's plan for it waits for Build it. The plan, with its Build it button, is drawn right below this card. \"Build it\" is the name of that button: keep it as the button reads."
-  },
-  "request.status.lead.botPlanWaitingUnnamed": {
-    "text": "The plan is ready. Any member can build it below.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands, when the person who asked for it cannot be named. Homeroom bot wrote a plan for the change, drawn right below this card, and any member of the community may press its Build it button."
-  },
-  "request.status.lead.botHeld": {
-    "text": "Homeroom bot will start when one of its changes here is voted in or closed.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it already has as many changes waiting for a vote on this project as it may, so it starts on this request when one of them is approved or closed. \"Here\" is the project."
-  },
-  "request.status.lead.botHeldTurn": {
-    "text": "Homeroom bot will start when one of the changes it is building here is done.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it is already building as many changes on this project at once as it may, so it starts on this request when one of those builds is done. \"Here\" is the project."
-  },
-  "request.status.lead.upForVote": {
-    "text": "Up for a vote.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and waits for the group's vote; used when how many more yes votes it needs is not known."
+  "request.status.lead.standsSaid": {
+    "text": "{{stage}}. {{said}}",
+    "description": "The status card of a request's page, when Homeroom bot handed the request back with a reason of its own: the stage, as a sentence, then the bot's reason. {{stage}} is already translated (for example Waiting for you to decide). {{said}} is \"Homeroom bot:\" followed by the bot's own sentence, already ending in its own full stop."
   },
   "request.status.lead.upForVoteNeeds_one": {
     "text": "Up for a vote: needs 1 more yes.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and waits for the group's vote; it needs one more yes vote. English spells the one out; a translation may use {{count}}."
+    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and up for the group's vote; it needs one more yes vote. English spells the one out; a translation may use {{count}}."
   },
   "request.status.lead.upForVoteNeeds_other": {
     "text": "Up for a vote: needs {{count}} more yes.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and waits for the group's vote; it needs {{count}} more yes votes. \"Yes\" is the vote, as a noun."
-  },
-  "request.status.lead.upForVoteChecksFailing": {
-    "text": "Up for a vote, but a test is failing. It needs a fix before it can go live.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is up for the group's vote, but one of its tests failed, so it cannot go live until its author fixes it; the card counts no yes votes while that is so."
+    "description": "The one sentence on the status card of a request's page that says where the request stands. The change that fulfils the request is built and up for the group's vote; it needs {{count}} more yes votes. \"Yes\" is the vote, as a noun."
   },
   "request.status.lead.reviewYours": {
     "text": "Your change for this is waiting for approval.",
@@ -8418,50 +8486,6 @@
   "request.status.lead.review": {
     "text": "A change for this is waiting for approval.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. Somebody's change (a proposal that fulfils the request) is up for the group's vote, and its author is not named. \"Change\" is a noun."
-  },
-  "request.status.lead.botQueued": {
-    "text": "Homeroom bot will build this next.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; the request is next in its queue. \"Build\" is a verb."
-  },
-  "request.status.lead.botOnHoldUntil": {
-    "text": "Homeroom bot has this on hold until {{date}}.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant, which builds changes; it has the request in its queue but holds it until {{date}}, a short month and day, and nothing needs to be done meanwhile."
-  },
-  "request.status.lead.botWaitsPlan": {
-    "text": "Homeroom bot is waiting for your plan.",
-    "description": "The one sentence on the status card of a request's page while the viewer, who asked for it, works on it with Homeroom bot (the platform's assistant) in a private thread: the bot builds nothing until they post a plan on it or let it go ahead."
-  },
-  "request.status.lead.waitingDecide": {
-    "text": "Waiting for you to decide. {{reason}}",
-    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and handed it back for a person to decide. {{reason}} is the bot's own sentence on why, which ends with a full stop."
-  },
-  "request.status.lead.waitingDecidePlain": {
-    "text": "Waiting for you to decide.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and handed it back for a person to decide, without having given a reason."
-  },
-  "request.status.lead.waitingDetail": {
-    "text": "Waiting for more detail from you. {{reason}}",
-    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and needs more detail before it can build anything. {{reason}} is the bot's own sentence on what is missing, which ends with a full stop."
-  },
-  "request.status.lead.waitingDetailPlain": {
-    "text": "Waiting for more detail from you.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and needs more detail before it can build anything, without having given a reason."
-  },
-  "request.status.lead.waitingDone": {
-    "text": "It may already work. {{reason}}",
-    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and thinks what it asks for may already work, so somebody should check before building. {{reason}} is the bot's own sentence on why, which ends with a full stop."
-  },
-  "request.status.lead.waitingDonePlain": {
-    "text": "It may already work. Close it, or say what is missing.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands: Homeroom bot (the platform's assistant) read the request and thinks what it asks for may already work. Somebody can close the request, or say what is still missing from it."
-  },
-  "request.status.lead.botReading": {
-    "text": "Homeroom bot is reading this.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant; it has started on the request and is reading it before building."
-  },
-  "request.status.lead.botBuilding": {
-    "text": "Homeroom bot is building this.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. \"Homeroom bot\" is the name of the platform's assistant; it is writing the change that fulfils the request."
   },
   "request.status.lead.autoSolving": {
     "text": "An auto-solve run is working on this.",
@@ -8819,14 +8843,6 @@
     "text": "Syncing with main: Homeroom asks for votes when it is caught up and its checks pass.",
     "description": "A change page's Votes card: the change conflicts with main and Homeroom is resolving that now, so nobody is asked to vote yet."
   },
-  "page.votes.note.githubChecks": {
-    "text": "Approved. It merges once GitHub's required checks pass.",
-    "description": "A change page's Votes card: the change has the yes it needs, and its merge waits for the required checks GitHub runs on it (still running, or being run again on today's main). \"GitHub\" is a product name and stays as it is."
-  },
-  "page.votes.note.githubChecksFailing": {
-    "text": "Approved, but GitHub's required checks failed again. It merges once they pass.",
-    "description": "A change page's Votes card: the change has the yes it needs, but the required checks GitHub runs on it failed again after Homeroom brought it up to date with main. \"GitHub\" is a product name and stays as it is."
-  },
   "page.votes.note.goingLive": {
     "text": "It’s going live.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page while the approved change is being applied to the running app."
@@ -8899,10 +8915,6 @@
     "text": "You voted no.",
     "description": "Line on the Votes card of a change's page: the viewer's own current vote is No."
   },
-  "page.votes.facts.yourProposal": {
-    "text": "Proposing it counts as your yes.",
-    "description": "Line on the Votes card of a change the viewer proposed, on a project whose rule counts proposing a change as a Yes from its author, who has not voted themselves."
-  },
   "page.votes.facts.notVoted": {
     "text": "You haven’t voted.",
     "description": "Line on the Votes card of a change's page: the viewer can vote on this change and has not."
@@ -8972,7 +8984,7 @@
     "description": "One sentence of the line under the figure on the Votes card of a change's page: the change has the votes it needs but its automated checks fail, and someone else has to fix it. {{author}} is their username."
   },
   "page.votes.note.liveOnceTested": {
-    "text": "It goes live once testing passes.",
+    "text": "It goes live once its checks pass.",
     "description": "One sentence of the line under the figure on the Votes card of a change's page when the change has the votes it needs and its automated checks have not passed yet."
   },
   "page.votes.figure.noVote": {
@@ -9018,6 +9030,66 @@
   "page.testing.figure.passed": {
     "text": "All checks passed",
     "description": "The large figure on the Testing card of a change's page once every automated check passed."
+  },
+  "page.testing.figure.passedHomeroom": {
+    "text": "Homeroom's checks passed",
+    "description": "The large figure on the Testing card of a change's page once every automated check Homeroom runs passed, while GitHub's own required checks are what the merge still waits on. \"Homeroom\" is the product's own name and GitHub is a product name; both stay as they are."
+  },
+  "page.testing.label.passedHomeroom": {
+    "text": "Tested: Homeroom's checks passed",
+    "description": "Accessible description of the progress bar on the Testing card of a change's page once every automated check Homeroom runs passed, while GitHub's own required checks are still what the merge waits on."
+  },
+  "page.merge.name": {
+    "text": "Merging",
+    "description": "Title of the card under Votes and Tested on a change's page while an approved, tested change waits to be merged or is being merged."
+  },
+  "page.merge.figure.githubChecks": {
+    "text": "Waiting on GitHub's checks",
+    "description": "The large figure on the Merging card of a change's page while GitHub's own required checks are still running, or are being run again on today's main, before GitHub will merge the change. \"GitHub\" is a product name and stays as it is."
+  },
+  "page.merge.figure.githubWait": {
+    "text": "Waiting on GitHub",
+    "description": "The large figure on the Merging card of a change's page when GitHub held the merge back for a moment (it was busy, or refused it for a reason nobody has to act on). \"GitHub\" is a product name and stays as it is."
+  },
+  "page.merge.figure.failing": {
+    "text": "GitHub's checks failed",
+    "description": "The large figure on the Merging card of a change's page when GitHub's own required checks failed again after Homeroom brought the change up to date with main. \"GitHub\" is a product name and stays as it is."
+  },
+  "page.merge.figure.merging": {
+    "text": "Merging now",
+    "description": "The large figure on the Merging card of a change's page while the merge itself is under way."
+  },
+  "page.merge.label.githubChecks": {
+    "text": "Merging: waiting on GitHub's checks",
+    "description": "Accessible description of the progress bar on the Merging card of a change's page while GitHub's own required checks are what the merge waits on. \"GitHub\" is a product name and stays as it is."
+  },
+  "page.merge.label.githubWait": {
+    "text": "Merging: waiting on GitHub",
+    "description": "Accessible description of the progress bar on the Merging card of a change's page when GitHub held the merge back for a moment. \"GitHub\" is a product name and stays as it is."
+  },
+  "page.merge.label.failing": {
+    "text": "Merging: GitHub's checks failed",
+    "description": "Accessible description of the progress bar on the Merging card of a change's page when GitHub's own required checks failed again after Homeroom brought the change up to date with main."
+  },
+  "page.merge.label.merging": {
+    "text": "Merging now",
+    "description": "Accessible description of the progress bar on the Merging card of a change's page while the merge itself is under way."
+  },
+  "page.merge.note.githubChecks": {
+    "text": "Approved and tested by Homeroom. GitHub is now building and scanning the release images, which usually takes about 6 minutes. It merges as soon as they pass.",
+    "description": "The line under the Merging card of a change's page while GitHub's own required checks are what holds the merge. \"Homeroom\" is the product's own name and GitHub is a product name; both stay as they are."
+  },
+  "page.merge.note.githubChecksProgress": {
+    "text": "GitHub's checks: {{done}} of {{total}} done.",
+    "description": "The last sentence under the Merging card of a change's page while GitHub's own required checks are still running: how many of the checks GitHub requires before a merge have finished, and how many there are, such as 7 of 10. Shown only when Homeroom could read them from GitHub. \"GitHub\" is a product name and stays as it is."
+  },
+  "page.merge.note.githubWait": {
+    "text": "Approved and tested. GitHub held the merge back for a moment.",
+    "description": "The line under the Merging card of a change's page when GitHub held the merge back for a moment (it was busy, or refused it for a reason nobody has to act on). \"GitHub\" is a product name and stays as it is."
+  },
+  "page.merge.note.failing": {
+    "text": "GitHub's required checks failed again after Homeroom brought the change up to date with main. Its author has to fix them, and it merges once they pass.",
+    "description": "The line under the Merging card of a change's page when GitHub's own required checks failed again after Homeroom brought the change up to date with main. \"GitHub\" is a product name and \"main\" is the name of the project's main line of code; both stay as they are. \"Its author\" is the person who made the change."
   },
   "page.testing.figure.skipped": {
     "text": "Not tested",
@@ -9594,5 +9666,25 @@
   "governance.menu.copyLinkDone": {
     "text": "Link copied",
     "description": "Brief notice after pressing Copy link on a governance vote's page: the link is on the clipboard."
+  },
+  "track.plan": {
+    "text": "Plan",
+    "description": "One of the five stages of a change's progress line (Plan, Build, Checks, Vote, Live), drawn under every request and change. Keep it to one short word."
+  },
+  "track.build": {
+    "text": "Build",
+    "description": "One of the five stages of a change's progress line (Plan, Build, Checks, Vote, Live), drawn under every request and change. Keep it to one short word."
+  },
+  "track.checks": {
+    "text": "Checks",
+    "description": "One of the five stages of a change's progress line (Plan, Build, Checks, Vote, Live), drawn under every request and change. Keep it to one short word."
+  },
+  "track.vote": {
+    "text": "Vote",
+    "description": "One of the five stages of a change's progress line (Plan, Build, Checks, Vote, Live), drawn under every request and change. Keep it to one short word."
+  },
+  "track.live": {
+    "text": "Live",
+    "description": "One of the five stages of a change's progress line (Plan, Build, Checks, Vote, Live), drawn under every request and change. Keep it to one short word."
   }
 }

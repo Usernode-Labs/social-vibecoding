@@ -2,6 +2,14 @@
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "social-vibecoding-platform.browserSiteIsolation" -}}
+{{- $mode := .Values.config.browserSiteIsolation -}}
+{{- if not (and (kindIs "string" $mode) (has $mode (list "legacy" "strict"))) -}}
+{{- fail "config.browserSiteIsolation must be legacy or strict" -}}
+{{- end -}}
+{{- $mode -}}
+{{- end -}}
+
 {{- define "social-vibecoding-platform.fullname" -}}
 {{- default (printf "%s-%s" .Release.Name (include "social-vibecoding-platform.name" .)) .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
@@ -190,16 +198,19 @@ administrative connection and a psql).
       {{- end -}}
     {{- end -}}
   {{- end -}}
-  {{- with .Values.config.mediaStorage -}}
-    {{- if .endpoint -}}
-      {{- if not (regexMatch "^https?://[^/]+$" .endpoint) -}}
-        {{- fail "config.mediaStorage.endpoint must be a scheme and host, e.g. https://hel1.your-objectstorage.com" -}}
-      {{- end -}}
-      {{- if empty .bucket -}}
-        {{- fail "config.mediaStorage.bucket is required when config.mediaStorage.endpoint is set" -}}
-      {{- end -}}
-      {{- if and $.Values.secrets.create (or (empty $.Values.secrets.mediaStorageAccessKey) (empty $.Values.secrets.mediaStorageSecretKey)) -}}
-        {{- fail "secrets.mediaStorageAccessKey and secrets.mediaStorageSecretKey are required when config.mediaStorage.endpoint is set" -}}
+  {{- /* The two object stores: config.<store> {endpoint, bucket} and secrets.<store>AccessKey / SecretKey. */ -}}
+  {{- range $store := list "mediaStorage" "appFileStorage" -}}
+    {{- with index $.Values.config $store -}}
+      {{- if .endpoint -}}
+        {{- if not (regexMatch "^https?://[^/]+$" .endpoint) -}}
+          {{- fail (printf "config.%s.endpoint must be a scheme and host, e.g. https://hel1.your-objectstorage.com" $store) -}}
+        {{- end -}}
+        {{- if empty .bucket -}}
+          {{- fail (printf "config.%s.bucket is required when config.%s.endpoint is set" $store $store) -}}
+        {{- end -}}
+        {{- if and $.Values.secrets.create (or (empty (index $.Values.secrets (printf "%sAccessKey" $store))) (empty (index $.Values.secrets (printf "%sSecretKey" $store)))) -}}
+          {{- fail (printf "secrets.%sAccessKey and secrets.%sSecretKey are required when config.%s.endpoint is set" $store $store $store) -}}
+        {{- end -}}
       {{- end -}}
     {{- end -}}
   {{- end -}}

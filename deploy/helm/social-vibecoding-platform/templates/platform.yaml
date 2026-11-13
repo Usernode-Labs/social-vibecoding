@@ -242,6 +242,9 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: GIT_SHA, value: {{ .Values.release.sourceRevision | quote }}}
             - {name: USERNODE_DOMAIN, value: {{ .Values.config.domain | quote }}}
             - {name: USERNODE_APPS_DOMAIN, value: {{ default .Values.config.domain .Values.config.appsDomain | quote }}}
+            - {name: USERNODE_LEGACY_APPS_DOMAIN, value: {{ .Values.config.legacyAppsDomain | default "" | quote }}}
+            - {name: USERNODE_PREVIEWS_DOMAIN, value: {{ .Values.config.previewsDomain | default "" | quote }}}
+            - {name: BROWSER_SITE_ISOLATION, value: {{ include "social-vibecoding-platform.browserSiteIsolation" . | quote }}}
             - {name: APP_GATE, value: {{ .Values.config.appGate | default "on" | quote }}}
             - {name: APP_HOST_SIGNIN, value: {{ .Values.config.appHostSignin | default "on" | quote }}}
             - {name: APP_OFFLINE_CACHE, value: {{ .Values.config.appOfflineCache | default "on" | quote }}}
@@ -250,6 +253,10 @@ the chart's context plus processRole: "" (all: serves and stands for leader),
             - {name: PLATFORM_INTERNAL_URL, value: {{ .Values.config.internalUrl | quote }}}
             - {name: MEDIA_STORAGE_ENDPOINT, value: {{ .Values.config.mediaStorage.endpoint | default "" | quote }}}
             - {name: MEDIA_STORAGE_BUCKET, value: {{ .Values.config.mediaStorage.bucket | default "" | quote }}}
+            # App file uploads (src/services/app-files.js). The names are the
+            # MinIO sidecar's from before Kubernetes; any S3 endpoint works.
+            - {name: MINIO_ENDPOINT, value: {{ .Values.config.appFileStorage.endpoint | default "" | quote }}}
+            - {name: STORAGE_BUCKET, value: {{ .Values.config.appFileStorage.bucket | default "" | quote }}}
             - {name: USERNODE_PLATFORM_REPO, value: {{ .Values.config.platformRepository | quote }}}
             # Homeroom's own git host (services/git-host.js): app repositories
             # since GitHub suspended the account that held them. Its token is

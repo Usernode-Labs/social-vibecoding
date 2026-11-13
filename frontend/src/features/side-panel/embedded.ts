@@ -261,8 +261,14 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
   });
   // A page that publishes a head (a request's or a change's bar, #6431) is
   // reported on the same turn as a title: the two are the same page's.
+  // #6608: the route comes from the head ITSELF — the page it was drawn for —
+  // never from wherever this document is when the publish arrives. A bar
+  // still mounted from the page the viewer left republishes after the route
+  // has moved, and taking `route()` there would let the old pill adopt the
+  // new heading; it carries the old route, so `flush` reports none.
   panelHeadStore.subscribe(() => {
-    headRoute = route();
+    const v = panelHeadStore.get();
+    headRoute = (v && v.route) || route();
     schedule();
   });
 

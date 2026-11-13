@@ -38,6 +38,10 @@
 // happen: a daily digest of the previous day's counts per kind, or one kind
 // past its hourly threshold; `detail` carries which, and the figures
 // (services/platform-incident-alerts.js).
+// 'release_hold' (#6643) asks full admins for their vote on a change held
+// for an admin's approval; session_id is the change, `detail` the rules it
+// tripped (services/release-holds.js, which writes it and reads it back when
+// an admin answers). The author never gets one: their own yes does not count.
 // 'channel_message' is a person's message in the discussion of a private
 // project of 8 people or fewer, to the rest of its people: one row per
 // discussion that folds later messages into a count in `detail`
@@ -120,7 +124,7 @@ const STAGE_BELL_SQL = `(n.conversation_message_id IS NULL
 const APP_ACCESS_SQL = `EXISTS (
  SELECT 1 FROM users notification_viewer
  WHERE notification_viewer.id = n.user_id AND notification_viewer.anonymised_at IS NULL
-  AND (n.kind NOT IN ('openrouter_key_review', 'platform_limit', 'platform_incident')
+  AND (n.kind NOT IN ('openrouter_key_review', 'platform_limit', 'platform_incident', 'release_hold')
        OR (notification_viewer.is_admin AND NOT notification_viewer.admin_readonly))
   AND (n.app_id IS NULL OR EXISTS (
    SELECT 1 FROM apps notification_app WHERE notification_app.id = n.app_id
@@ -2271,6 +2275,24 @@ async function markReadForApp(pool, userId, appId) {
   return rowCount || 0;
 }
 
+// The app-less counterpart to markReadForApp (#6579): backs the Unread tab's
+// "Across Homeroom" group Mark read. Clears every unread row this user has
+// that belongs to no app, including ones a client has not paged in, while
+// leaving every app's rows and the plain messages the Messages tab owns
+// untouched. Idempotent via the read_at IS NULL guard; returns rows cleared so
+// the route can decide whether to fan out a cross-tab refresh.
+async function markReadForNoApp(pool, userId) {
+  if (!userId) return 0;
+  const { rowCount } = await pool.query(
+    `UPDATE notifications AS n
+        SET read_at = NOW()
+      WHERE n.user_id = $1 AND n.app_id IS NULL AND n.read_at IS NULL
+        AND NOT ${PLAIN_MESSAGE_SQL}`,
+    [userId]
+  );
+  return rowCount || 0;
+}
+
 // Per-conversation counterpart to markReadForApp. Conversation ids never
 // fall back to app ids: the two notification domains remain disjoint even if
 // their integer primary keys happen to be equal.
@@ -2608,6 +2630,7 @@ module.exports = {
   markReadForAction,
   markReadForAgentSession,
   markReadForApp,
+  markReadForNoApp,
   markReadForConversation,
   markReadForMessage,
   unreadMessageIdsForUser,

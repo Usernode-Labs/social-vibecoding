@@ -195,6 +195,11 @@ export interface WaitlistOptions {
    *  the waitlist. Only false keeps the waitlist landing; absent (the options
    *  not loaded yet, or an older server) is the story, the default. */
   story_landing?: boolean;
+  /** Whether a new account waits to be admitted (Admin › Waitlist, #6633).
+   *  Only false is "let in at once"; absent (the options not loaded yet, or
+   *  an older server) is the waitlist, the default. Read through
+   *  guest-data's newAccountsWait. */
+  waitlist_enabled?: boolean;
   /** Which of Apple and Google the sign-in sheet offers beside the email
    *  code (src/services/sign-in-providers.js): those an admin set up and
    *  switched on. Absent or empty, the email code only. */
@@ -208,6 +213,11 @@ export interface WaitlistOptions {
    *  Settings › About links to it (#5094, #5106). Always served; absent only
    *  before the options arrive, when the notice names it without a link. */
   privacy_link?: string | null;
+  /** Where people write about their data (src/config.js
+   *  dataProtectionEmail): Settings › Privacy's usage data block offers it
+   *  for being left out of screen usage data. Absent before the options
+   *  arrive, when the block shows the default address. */
+  data_protection_email?: string | null;
   /** The Child Safety Standards and the account-deletion page, absolute
    *  (src/services/marketing-links.js): the other two legal pages the terms
    *  name, which Settings › About lists beside them (#6043). Always served;

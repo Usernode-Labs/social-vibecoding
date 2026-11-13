@@ -84,6 +84,7 @@ import { LeaderboardScreen } from './features/leaderboard';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
 import { ParkedStrip, PlatformTabs, SkipToNavigation, StripBack } from './features/nav';
+import { FrameApp } from './features/frame/frame-app';
 import { SidePanel } from './features/side-panel';
 import { AgentSessionScreen } from './features/agent-session';
 import { AiScreen } from './features/ai';
@@ -97,6 +98,7 @@ import { StagingOverlay, VisualCompareOverlay } from './features/staging';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
 import { LanguageNotice } from './features/shell/language-notice';
 import { LegacyPortals } from './lib/legacy-portals';
+import { IllustrationEditorHost } from './features/apps/illustration-editor-bridge';
 import { NavDrawer } from './features/nav-drawer/nav-drawer';
 import { Island } from './lib/island-boundary';
 import { assetUrl } from './lib/asset-url';
@@ -467,6 +469,15 @@ export function Shell() {
       <Island name="ParkedStrip"><ParkedStrip /></Island>
       <Island name="PlatformTabs"><PlatformTabs /></Island>
       {/*
+          THE FRAME'S OWN CHROME (features/frame/frame-app.tsx): the sidebar,
+          bar and phone tab bar the 2026-11-06 screen tour draws, shown in
+          place of the header and the tab bar above while the device's look
+          is one of the frame's five (an admin's preview). It renders
+          nothing on the first render and nothing under the standard look,
+          so the prerendered document does not know it exists.
+      */}
+      <Island name="FrameApp"><FrameApp /></Island>
+      {/*
           #platform-side-strip-top — the header's back controls, drawn in the
           column of system chrome down an iPhone Duo's edge (features/nav/
           strip-back.tsx). Ships hidden; app.css draws it only while
@@ -600,7 +611,7 @@ export function Shell() {
           no root to leak, and no `createRoot` on a live container. See
           lib/legacy-portals.tsx.
       */}
-      <Island name="LegacyPortals"><LegacyPortals /></Island>
+      <Island name="LegacyPortals"><LegacyPortals /><IllustrationEditorHost /></Island>
       {/*
           PlatformUI — the platform's single wrapper over the native kit
           (toasts, alerts, confirms, sheets). Loaded FIRST in the bundle:

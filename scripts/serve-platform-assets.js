@@ -35,6 +35,7 @@ const path = require('path');
 const appHostConfig = require('../src/services/app-host-config');
 const offlineCache = require('../src/services/offline-cache');
 const wakingPage = require('../src/services/preview-waking-page');
+const searchRobots = require('../src/services/search-robots');
 
 const PORT = Number(process.env.PORT || 3000);
 const ROOT = path.join(__dirname, '..', 'public');
@@ -86,7 +87,11 @@ function resolveAsset(pathname) {
 // hosting is that a fix lands on the next page load; a cached copy with a
 // long TTL would quietly opt every app out of it.
 function send(res, status, headers, body, method) {
-  res.writeHead(status, { 'Cache-Control': 'public, max-age=0, must-revalidate', ...headers });
+  // Shared plumbing, the same bytes on every app host: never a page for a
+  // search engine (src/services/search-robots.js).
+  res.writeHead(status, {
+    'Cache-Control': 'public, max-age=0, must-revalidate', 'X-Robots-Tag': searchRobots.NOINDEX, ...headers,
+  });
   if (method === 'HEAD' || body === null) return res.end();
   return res.end(body);
 }
@@ -99,9 +104,17 @@ function send(res, status, headers, body, method) {
 // asks the platform to wake the preview, polls, and reloads once the app
 // answers. Any other host keeps the plain 404 below.
 function sleepingPreview(req, res, method) {
-  const host = wakingPage.previewHost(req.headers.host, process.env.USERNODE_APPS_DOMAIN);
+  // A preview on the previews domain (services/previews-domain.js), or one
+  // not rebuilt yet on the apps domain, or on the old apps domain while apps
+  // move (its next build moves it: services/apps-domain-move.js), sleeps
+  // and wakes there too.
+  const host = [
+    process.env.USERNODE_PREVIEWS_DOMAIN,
+    process.env.USERNODE_APPS_DOMAIN,
+    process.env.USERNODE_LEGACY_APPS_DOMAIN,
+  ].filter(Boolean).map((domain) => wakingPage.previewHost(req.headers.host, domain)).find(Boolean) || null;
   if (!host) return false;
-  const headers = { 'Cache-Control': 'no-store', 'Retry-After': '10' };
+  const headers = { 'Cache-Control': 'no-store', 'Retry-After': '10', 'X-Robots-Tag': searchRobots.NOINDEX };
   if (method === 'GET' && wakingPage.wantsDocument(req.headers)) {
     const page = wakingPage.renderWakingPage({ wakeUrl: wakingPage.wakeUrlFor(process.env.USERNODE_DOMAIN, host) });
     res.writeHead(503, { ...headers, 'Content-Type': 'text/html; charset=utf-8' });
@@ -156,6 +169,7 @@ const server = http.createServer((req, res) => {
       // is on relative paths, so this only matters to callers still naming
       // an absolute origin during the transition.
       'Access-Control-Allow-Origin': '*',
+      'X-Robots-Tag': searchRobots.NOINDEX,
     };
     // While offline apps are on (APP_OFFLINE_CACHE, services/offline-cache.js)
     // the files may be used stale and refreshed behind, so an app opened

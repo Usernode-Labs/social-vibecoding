@@ -9,11 +9,11 @@
   },
   "sheet.markAppRead": {
     "text": "Mark read",
-    "description": "Small button beside an app's name on the notifications sheet's Unread filter. It marks every unread notification from that app as read."
+    "description": "Small button beside a group's name on the notifications sheet's Unread filter: an app's name, or \"Across Homeroom\" for notifications that belong to no app. It marks every unread notification in that group as read."
   },
   "sheet.markAppReadLabel": {
     "text": "Mark all from {{app}} as read",
-    "description": "Accessible name of that button. {{app}} is the project's name."
+    "description": "Accessible name of that button. {{app}} is the group's name: a project's, or \"Across Homeroom\"."
   },
   "sheet.markOlder": {
     "text": "Mark everything older than a week as read",
@@ -218,42 +218,6 @@
   "sheet.tab.all": {
     "text": "All",
     "description": "Filter button at the top of the notifications sheet: shows every notification, read ones included."
-  },
-  "sheet.needsYou": {
-    "text": "Needs you",
-    "description": "Small label over the project groups on the notifications sheet's Unread tab that hold something waiting on the reader (an approval, a decision, a friend request), shown only when other groups follow under \"Everything else\"."
-  },
-  "sheet.everythingElse": {
-    "text": "Everything else",
-    "description": "Small label over the remaining project groups on the notifications sheet's Unread tab, under the \"Needs you\" groups: the rows that only tell the reader what happened."
-  },
-  "sheet.catchUp.needsYou_one": {
-    "text": "{{count}} needs you",
-    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab: one notification or invite is waiting on the reader. May stand alone."
-  },
-  "sheet.catchUp.needsYou_other": {
-    "text": "{{count}} need you",
-    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab: {{count}} notifications or invites are waiting on the reader. May stand alone."
-  },
-  "sheet.catchUp.needsYouAtLeast_one": {
-    "text": "At least {{count}} needs you",
-    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab, while older unread notifications have not loaded yet: one is known to wait on the reader and there may be more. May stand alone."
-  },
-  "sheet.catchUp.needsYouAtLeast_other": {
-    "text": "At least {{count}} need you",
-    "description": "Start of the one-line summary over the groups on the notifications sheet's Unread tab, while older unread notifications have not loaded yet: {{count}} are known to wait on the reader and there may be more. May stand alone."
-  },
-  "sheet.catchUp.unread_one": {
-    "text": "{{count}} unread",
-    "description": "End of the one-line summary over the groups on the notifications sheet's Unread tab: how many notifications are unread in all, counting any that need the reader. May stand alone."
-  },
-  "sheet.catchUp.unread_other": {
-    "text": "{{count}} unread",
-    "description": "End of the one-line summary over the groups on the notifications sheet's Unread tab: how many notifications are unread in all, counting any that need the reader. May stand alone."
-  },
-  "sheet.catchUp.unreadCapped": {
-    "text": "99+ unread",
-    "description": "End of the one-line summary over the groups on the notifications sheet's Unread tab, when more than 99 are unread: the same capped number the bell's badge shows. May stand alone."
   },
   "sheet.today": {
     "text": "Today",
@@ -759,6 +723,14 @@
     "text": "Platform limit",
     "description": "First line of a notification to an administrator about a server-wide limit, when its details cannot be read."
   },
+  "row.releaseHold.label": {
+    "text": "Needs your approval",
+    "description": "First line of a notification sent to platform administrators: a proposed change is held until one of them approves it. The change's name is on the line below."
+  },
+  "row.releaseHold.body": {
+    "text": "Held until an admin votes yes",
+    "description": "Second line of the \"Needs your approval\" notification when the held change has no name to show."
+  },
   "row.limit.unknown.body": {
     "text": "the server is nearing one of its limits",
     "description": "Second line of the \"Platform limit\" notification to an administrator, when its details cannot be read. Lower case, as a note under the heading."
@@ -902,6 +874,14 @@
   "row.incident.signal.body": {
     "text": "Homeroom filed request #{{number}} on its own board from its own records.",
     "description": "Second line of the \"A platform problem needs a person\" notification to an administrator. {{number}} is the request's number on Homeroom's own board."
+  },
+  "row.incident.private.label": {
+    "text": "A private platform request needs a person",
+    "description": "First line of a notification to an administrator: Homeroom found a problem in itself that only administrators should see (for example a security finding in its dependencies) and filed a private request for a person."
+  },
+  "row.incident.private.body": {
+    "text": "Homeroom filed it privately: only administrators can see it, under Private requests in its Workshop.",
+    "description": "Second line of the \"A private platform request needs a person\" notification to an administrator. \"Private requests\" is the name of the section at the end of Homeroom's own Workshop page."
   },
   "row.kudos.label": {
     "text": "Kudos",

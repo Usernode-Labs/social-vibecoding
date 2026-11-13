@@ -48,10 +48,16 @@ type JsonRecord = Record<string, unknown>;
 
 export class MessagesApiError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /** The server's code for a refusal, when it gave one (a bot card's tap: expired, retired, already_decided, ...). */
+  readonly code: string | null;
+  /** Why, for a code that has one (a retired card's reason). */
+  readonly reason: string | null;
+  constructor(status: number, message: string, code: string | null = null, reason: string | null = null) {
     super(message);
     this.name = 'MessagesApiError';
     this.status = status;
+    this.code = code;
+    this.reason = reason;
   }
 }
 
@@ -315,6 +321,9 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       ...(goesLive ? { goesLive } : {}),
       // Why its buttons were closed, said in their place.
       ...(text(pick(bot, 'closedWhy')) ? { closedWhy: text(pick(bot, 'closedWhy')).slice(0, 120) } : {}),
+      // Step 3: an offer expired, or retired because what it was about moved on, and why.
+      ...(pick(bot, 'expired') === true ? { expired: true } : {}),
+      ...(text(pick(bot, 'retired')) ? { retired: text(pick(bot, 'retired')).slice(0, 40) } : {}),
       // One request, one story: the thread it is in, the moment it rings
       // as, and the names its label and its push use.
       ...(strictId(pick(bot, 'threadRootId')) ? { threadRootId: strictId(pick(bot, 'threadRootId'))! } : {}),
@@ -673,7 +682,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (pick(body, 'code') === 'contact_restricted') {
       throw new MessagesApiError(response.status, t('messages:api.contactRestricted'));
     }
-    throw new MessagesApiError(response.status, errorText(body) || text(pick(body, 'message'), t('messages:api.requestFailed', { status: response.status })));
+    throw new MessagesApiError(
+      response.status,
+      errorText(body) || text(pick(body, 'message'), t('messages:api.requestFailed', { status: response.status })),
+      text(pick(body, 'code')) || null,
+      text(pick(body, 'reason')) || null,
+    );
   }
   return data as T;
 }
@@ -906,6 +920,26 @@ export async function startBotThread(input: { project: string | null; kind: stri
   const rootId = strictId(pick(data, 'rootId'));
   if (!rootId) throw new Error(text(pick(data, 'error')) || 'The thread could not be started');
   return { conversationId: strictId(pick(data, 'conversationId')) || 0, rootId };
+}
+
+/**
+ * The chat products this account has connected Homeroom to, as Settings ›
+ * Connectors lists them, for a new thread's "who works on it"
+ * (./thread-builder.tsx). Each is the name its client chose and whether its
+ * sign-in still holds. A staging copy has none unless the page carries one of
+ * Settings' own `?demo=connectors-…` flags, which rides along here the way it
+ * does there (`?demo=1` already rides on every read, in `request`).
+ */
+export async function listConnectors(): Promise<Array<{ clientName: string; live: boolean }>> {
+  let flag = '';
+  try { flag = new URLSearchParams(window.location.search).get('demo') || ''; } catch { flag = ''; }
+  const path = flag.startsWith('connectors-') ? `/api/me/connectors?demo=${encodeURIComponent(flag)}` : '/api/me/connectors';
+  const data = record(await request<unknown>(path, { cache: 'no-store' }));
+  const rows = pick(data, 'connectors');
+  return (Array.isArray(rows) ? rows : []).map((row) => {
+    const one = record(row);
+    return { clientName: text(pick(one, 'client_name')), live: pick(one, 'status') !== 'expired' };
+  });
 }
 
 /** Open a design thread for a captured screen: where it is, to open it. */

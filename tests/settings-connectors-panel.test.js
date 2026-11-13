@@ -120,6 +120,7 @@ test('the fixtures cover every state the panel can be reviewed in', () => {
   for (const flag of [
     '1', 'connectors-claude', 'connectors-claude-shown',
     'connectors-chatgpt', 'connectors-unknown', 'connectors-spent', 'connectors-attention',
+    'connectors-reconnect',
   ]) {
     assert.ok(demoConnectorState(flag), `?demo=${flag} resolves`);
   }
@@ -421,7 +422,10 @@ async function published(demoFlag, payloadOverride) {
   await Settings._loadConnectors();
   const last = states[states.length - 1];
   const tool = (key) => last.tools.find((entry) => entry.key === key);
-  return { Settings, nodes, states, last, tool };
+  // `payload` is what the panel actually read. The demo fixtures date their
+  // rows from Date.now() at call time, so a second call to demoConnectorState()
+  // can land a second later and give an expectation the panel never rendered.
+  return { Settings, nodes, states, last, tool, payload };
 }
 
 test('?demo=1 sorts its two connections onto Claude and ChatGPT, in page order', async () => {
@@ -458,17 +462,90 @@ test('the name decides the card: Anthropic, Codex and OpenAI', async () => {
 });
 
 test('connectors-attention: the expired row is on its card, and only live rows count', async () => {
-  const { tool, nodes, Settings } = await published('connectors-attention');
+  const { tool, nodes, Settings, payload } = await published('connectors-attention');
   assert.equal(tool('claude').status, 'working');
   assert.equal(tool('chatgpt').status, 'attention');
   const [row] = tool('chatgpt').connections;
-  assert.match(row.detail, /^Sign-in ran out .*\. Follow the steps to connect again\.$/);
+  assert.equal(row.detail, message('settings:connectors.row.expired', { when: new Date(payload.connectors[1].expired_at).toLocaleString() }));
+  assert.equal(row.reconnect, false, 'no ChatGPT step signs in again, so no Reconnect');
+  assert.equal(tool('claude').connections[0].reconnect, false, 'a live row has none either');
   assert.equal(row.capabilities, message('settings:connectors.capabilities.expiredReadWrite'));
 
   // The nav's count, the tip line and the cases are about what is connected now.
   assert.equal(Settings._navStatusText('connectors'), '1 connected');
   assert.deepEqual(cases(nodes), { local: true, web: true, chat: true });
   assert.ok(hintLine(nodes), 'the Claude connection keeps the tip line');
+});
+
+// #6137: Reconnect skips the steps a still-configured tool has already done.
+function reconnectDom() {
+  const { Settings, context } = harness({ connectors: [], hint: null });
+  const cards = new Map();
+  const focused = [];
+  const scrolled = [];
+  const step = (key) => {
+    const li = { key, scrollIntoView: (opts) => scrolled.push([key, opts]) };
+    return { key, closest: (sel) => (sel === 'li' ? li : null), focus: (opts) => focused.push([key, opts]) };
+  };
+  context.document.querySelector = (sel) => {
+    let m = /^#connector-tool-(\w+) details$/.exec(sel);
+    if (m) {
+      if (!cards.has(m[1])) cards.set(m[1], { open: false });
+      return cards.get(m[1]);
+    }
+    m = /^\[data-connector-step-tick="(\w+:\d+)"\]$/.exec(sel);
+    return m ? step(m[1]) : null;
+  };
+  return { Settings, cards, focused, scrolled };
+}
+
+test('connectors-reconnect: an expired Claude row offers Reconnect and says so', async () => {
+  const { tool, payload } = await published('connectors-reconnect');
+  assert.equal(tool('claude').status, 'attention');
+  const [row] = tool('claude').connections;
+  assert.equal(row.reconnect, true);
+  const fixture = payload.connectors[0];
+  assert.equal(row.detail, message('settings:connectors.row.expiredReconnect', { when: new Date(fixture.expired_at).toLocaleString() }));
+});
+
+test('an expired row from another agent keeps the steps line and no Reconnect', async () => {
+  const lapsed = { ...demoConnectorState('connectors-attention').connectors[1], client_name: 'Some other MCP client' };
+  const { tool } = await published(null, { connectors: [lapsed], hint: null });
+  const [row] = tool('generic').connections;
+  assert.equal(row.reconnect, false);
+  assert.equal(row.detail, message('settings:connectors.row.expired', { when: new Date(lapsed.expired_at).toLocaleString() }));
+});
+
+test('Reconnect opens the tool\'s card on the step that signs in again', () => {
+  const expected = { claude: 'claude:5', codex: 'codex:2' };
+  for (const [tool, key] of Object.entries(expected)) {
+    const dom = reconnectDom();
+    assert.equal(dom.Settings._reconnectConnector(tool), true);
+    assert.equal(dom.cards.get(tool).open, true, `${tool}'s guide opens`);
+    // JSON: the option objects are made inside the vm's own realm.
+    assert.equal(JSON.stringify(dom.scrolled), JSON.stringify([[key, { block: 'center' }]]), `${tool} lands on ${key}`);
+    assert.equal(JSON.stringify(dom.focused), JSON.stringify([[key, { preventScroll: true }]]), 'focus follows without a second scroll');
+  }
+});
+
+test('Reconnect for ChatGPT, another agent, or a tool the page does not know, does nothing', () => {
+  for (const tool of ['chatgpt', 'generic', 'nope']) {
+    const dom = reconnectDom();
+    assert.equal(dom.Settings._reconnectConnector(tool), false);
+    assert.equal(dom.cards.size, 0);
+    assert.equal(dom.scrolled.length, 0);
+  }
+});
+
+test('the steps Reconnect lands on are the guides\' sign-in steps', () => {
+  // The step numbers are positions in the rendered guides; pin each to the
+  // step's own title so a reordered guide cannot strand Reconnect elsewhere.
+  const steps = fs.readFileSync(path.join(ROOT, 'frontend/src/features/settings/connector-setup-steps.tsx'), 'utf8');
+  assert.match(steps, /n=\{5\} title=\{t\('settings:connectors\.claudeSteps\.save\.title'\)\}/);
+  assert.match(CONNECTORS_TSX, /n=\{2\} title=\{t\('settings:connectors\.codex\.signIn\.title'\)\} track="codex"/);
+  for (const tool of ['claude', 'codex']) {
+    assert.ok(CONNECTORS_TSX.includes(`<ToolCard id="connector-tool-${tool}" tool="${tool}">`), `${tool}'s card is the id Reconnect opens`);
+  }
 });
 
 test('an expired ChatGPT beside nothing else counts as nothing connected', async () => {

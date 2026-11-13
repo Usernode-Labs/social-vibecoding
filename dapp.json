@@ -128,7 +128,7 @@
       "key": "CONTENT_REVIEW_MODE",
       "group": "Platform",
       "default": "advisory",
-      "description": "The Content rules check on every proposal (#2722): a model reads the proposal's diff against the conventions' Content rules section. off: no row. advisory (default): a flag shows on the checks but does not stop the merge. blocking: a flag fails the checks, so the proposal cannot merge until the content is fixed. Fails open on any error."
+      "description": "The Content rules check on every proposal (#2722): a model reads the diff against the conventions' Content rules section. off: no row. advisory (default): a flag shows on the checks but does not stop the merge. blocking: a flag fails the checks, so it cannot merge until the content is fixed. admin (#6642): the checks pass, but it merges only once an admin votes yes. Fails open on any error."
     },
     {
       "key": "TOKEN_ORDER_CHECK_MODE",
@@ -1130,6 +1130,12 @@
       "expectText": "Re-run checks"
     },
     {
+      "name": "#6593: an approved change held on GitHub's required checks says GitHub is building and scanning the release images, not that a try failed",
+      "path": "/#app/usernode-2d5619/dev/changes/900099",
+      "expectSelector": "[data-change-gate=\"merge\"] .dev-change-gate-note",
+      "expectText": "building and scanning the release images"
+    },
+    {
       "name": "#4455: one row under the summary: \"Built for\", then the request as a chip with its number bold and its title after it",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000013",
       "expectSelector": "#gc-thread-head .dev-change-root .dev-request-ask ~ .dev-change-addresses > .dev-change-chips > .dev-change-chips-lead + .dev-change-chips-first > a.dev-ws-chip.dev-topic-issue[href*=\"/dev/issues/900017\"] > b + span",
@@ -1543,7 +1549,7 @@
     {
       "name": "#apps, Discover's old address, opens Home on its Communities to join (One Home, #6361: the directory is Home's)",
       "path": "/#apps",
-      "expectSelector": "#home-screen:not(.hidden) #home-body #home-join-section:not([hidden]) > h2.home-area-label",
+      "expectSelector": "#home-screen:not(.hidden) #home-body #home-join-section:not([hidden]):not(:has([data-home-join],[data-guest-card-footer])) > h2.home-area-label",
       "expectText": "Communities to join"
     },
     {
@@ -3740,7 +3746,7 @@
     {
       "name": "Challenge detail page is reachable by deep link and draws its rail (?shot=challenge-detail)",
       "path": "/?shot=challenge-detail#leaderboard/challenges",
-      "expectSelector": "#tc-se-detail-overlay:not(.hidden) #tc-se-detail-panel [role=progressbar][aria-valuetext]"
+      "expectSelector": "#tc-se-detail-overlay:not(.hidden) #tc-se-detail-panel:has([role=progressbar][aria-valuetext]):has([data-challenge-task])"
     },
     {
       "name": "Imported proposal mid-build shows the Preview building pill (#866, #2585)",
@@ -3928,7 +3934,7 @@
     {
       "name": "Admin Waitlist is a first-class menu section (#1179), with its Landing panel loaded",
       "path": "/#admin/waitlist",
-      "expectSelector": "#admin-topo-content:has(#admin-topo-wl-story .text-xs):has(#admin-topo-wl-search)",
+      "expectSelector": "#admin-topo-content:has(#admin-topo-wl-switch .text-xs):has(#admin-topo-wl-story .text-xs):has(#admin-topo-wl-search)",
       "expectText": "Signed-out visitors"
     },
     {
@@ -4014,9 +4020,9 @@
       "expectText": "Verdict"
     },
     {
-      "name": "Homeroom bot dashboard says it works for everyone on every app but the paused ones (#2684, #3710), beside its side builds, who asked not to be tagged (#3347), and how much it works on at once (#3624)",
+      "name": "Homeroom bot dashboard says it works for everyone on every app but the paused ones (#2684, #3710), beside its side builds, who asked not to be tagged (#3347), how much it works on at once (#3624), and who it works for: everyone let in, or verified accounts only (#6632)",
       "path": "/#admin/homeroom-bot",
-      "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-side-builds):has(#admin-homeroom-bot-optouts):has(#admin-homeroom-bot-live-at-once):has(#admin-homeroom-bot-per-person) #admin-homeroom-bot-intro",
+      "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-side-builds):has(#admin-homeroom-bot-optouts):has(#admin-homeroom-bot-live-at-once):has(#admin-homeroom-bot-per-person):has(#admin-homeroom-bot-works-for #admin-homeroom-bot-works-for-everyone) #admin-homeroom-bot-intro",
       "expectText": "acts on every app but the"
     },
     {
@@ -4598,6 +4604,12 @@
       "expectText": "Waiting on an admin"
     },
     {
+      "name": "#6643: a change held for an admin says so on its card, with the reason",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban [data-proposal-row=\"9000097\"] [data-release-hold]",
+      "expectText": "It lets the app send tokens."
+    },
+    {
       "name": "#2061: an automatic step says nobody has to act",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban [data-proposal-row=\"9000091\"] [data-req-headline]",
@@ -4630,7 +4642,7 @@
       "name": "#2219: Settings does not promise a revoke takes effect while the app is still open",
       "path": "/?demo=1#settings/app-permissions",
       "expectSelector": "[data-settings-section=\"app-permissions\"]:not(.hidden) #app-permissions-section",
-      "expectText": "the next time it opens"
+      "expectText": "If an app is open in this tab, revoking closes it"
     },
     {
       "name": "#2236: a note a coding agent posted through the connector wears a via agent chip beside the author on the topic's discussion",
@@ -4968,6 +4980,12 @@
       "expectText": "Staging demo app"
     },
     {
+      "name": "#homeroom-bot/new is Homeroom bot's plus pressed for you: a new thread already set to who works on it, here your own Claude Code, whose send opens Claude Code instead of messaging the bot",
+      "path": "/?demo=1#homeroom-bot/new?with=claude-code",
+      "expectSelector": "[data-bot-new-thread-pane][data-bot-new-thread-own=\"claude-code\"]:has([data-bot-new-thread-builder=\"claude-code\"][data-picked]) [data-bot-new-thread-open=\"claude-code\"]",
+      "expectText": "Open hands this to Claude Code"
+    },
+    {
       "name": "A request Homeroom bot is building says where it is on its own page, as its thread in the chat does: its status word and try, where it is and why, and the five steps with the one it is on lit (16 Oct 2026)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900018",
       "expectSelector": "#gc-thread-head .dev-request-root .dev-request-track[data-request-track=building] [data-bot-track=building]:has([data-bot-track-bar=building] [data-bot-track-step=build][data-state=now]) [data-bot-activity-eyebrow]",
@@ -5016,33 +5034,33 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out, 3 loads: the landing shows its story or pitch, with its project cards led by Featured's row, with no Pin or Join on a card (#6433), and not \"could not load\" (#6003, #6015)",
+      "name": "Signed out, 3 loads: the landing shows its story or pitch, with its project cards led by Featured's row, with no Pin or Join on a card (#6433), a kind chip for every kind a project has incl. Money, Health & fitness and Food & drink (#6585), and not \"could not load\" (#6003, #6015)",
       "path": "/?shot=anon#landing",
       "repeat": 3,
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-home-join-featured] [data-guest-featured]):not(:has([data-home-pin],[data-home-join],[data-guest-card-footer],[data-guest-suggested-app],[data-guest-retry])) :is([data-landing-story] h1, div:not(.hidden) > h1)",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-home-join-featured] [data-guest-featured]):has([data-home-join-kind=\"money\"]):has([data-home-join-kind=\"health\"]):has([data-home-join-kind=\"food\"]):not(:has([data-home-pin],[data-home-join],[data-guest-card-footer],[data-guest-suggested-app],[data-guest-retry])) :is([data-landing-story] h1, div:not(.hidden) > h1)",
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out, 3 loads: #apps opens the same Home, its community cards each a picture and one link to its page with no Try it on the card, not \"could not load\" (#6015; One Home, #6361)",
+      "name": "Signed out, 3 loads: #apps opens the same searchable Home (#6507), its community cards each a picture and one link to its page with no Try it on the card, not \"could not load\" (#6015; One Home, #6361)",
       "path": "/?shot=anon#apps",
       "repeat": 3,
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden):not(:has([data-guest-retry])) [data-guest-discover] [data-guest-card]:has(> [data-guest-card-cover]):not(:has([data-guest-try])) a[data-guest-card-link][href^=\"/app/\"]",
+      "expectSelector": "#auth-landing-screen:not(.hidden):not(:has([data-guest-retry])) [data-guest-discover]:has([data-guest-search]) [data-guest-card]:has(> [data-guest-card-cover]):not(:has([data-guest-try])) a[data-guest-card-link][href^=\"/app/\"]",
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out: the sign-in sheet opens (#6003)",
+      "name": "Signed out: the sign-in sheet offers Email code and Password before sending a code (#6003, #6553)",
       "path": "/?shot=anon&login=1",
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen [data-sign-in-sheet] #sign-in-sheet-title",
+      "expectSelector": "#auth-landing-screen [data-sign-in-sheet]:has(#sign-in-sheet-title) [data-sign-in-sheet-method] [data-sign-in-sheet-method-password]",
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out: a public project's page loads (#6003), with Pin beside Join, unpressed (One Home, #6361: it pins to this device's Home)",
+      "name": "Signed out: a public project's page loads (#6003) under the signed-out site's own bar, as one page with no tabs: the project card with Join then Share, and no Pin (the hand-off of 11 Nov 2026; #6433)",
       "path": "/app/staging-landing-open?shot=anon",
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden) [data-guest-project=\"staging-landing-open\"] [data-guest-join-project] + button[data-guest-pin-project][aria-pressed=\"false\"]",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header[data-guest-top] [data-landing-sign-in]:not(.hidden)) [data-guest-project=\"staging-landing-open\"]:not(:has([data-guest-pin-project], [data-guest-tab])) [data-guest-project-band] [data-project-card-actions] > [data-guest-join-project] + button[data-guest-share]",
       "allowConsoleErrors": true
     },
     {

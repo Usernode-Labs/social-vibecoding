@@ -43,6 +43,7 @@
  */
 
 import { Fragment, memo, useCallback, useEffect, useId, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from 'react';
+import { reducedMotion } from '../../../lib/reduced-motion';
 
 import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/ui/grouped-list';
@@ -82,13 +83,13 @@ import { gridStore } from '../../home/grid-store';
 import { homePinsStore, setHomePin } from '../../home/home-pins-store';
 import { useSidebarRows } from '../../nav/sidebar-rows';
 import type { StagedObject } from '../../messages/types';
-import { devWorkshopStore, voteSavedStore } from '../card/cards-store';
+import { devKanbanStore, devWorkshopStore, voteSavedStore } from '../card/cards-store';
 import { DevKanban, StageStrip, syncStrip } from '../card/dev-kanban';
 import { DevActionsRow, DevPlusMenu } from '../actions-row';
 import { useDevActions } from '../actions-store';
 import { callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
-import type { ActionRef, DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
+import type { ActionRef, DevCardModel, DevKanbanView, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
 import { composeNoReason, VotePicker } from '../card/dev-card';
 import type { NoChoice } from '../../review-flow/vote-sheet';
@@ -97,8 +98,8 @@ import { communityScopeStore, describe as describeCommunity, openSwitcher } from
 import { registerLevel } from '../../workshop/tab-ladder';
 import { firstUnseenIndex, markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import {
-  ApprovalLine, CommunityCard, HubCardClose, ShareItCard, canLeave,
-  communityPending, leaveCommunity, useCommunity,
+  ApprovalLine, CommunityCard, HubCardClose, ShareItCard, approvalStep, canLeave,
+  communityPending, leaveCommunity, openInviteLinks, reloadCommunity, ruleHasWait, useCommunity,
 } from './community-card';
 import {
   FirstVersionCard, ForYouCard, FromVersionsCard, HubSkeleton, RecentlyLive, TopicsCard, UpdateCard, hubAlone, owesVote,
@@ -107,12 +108,28 @@ import { CommunityAsk } from '../../notify-ask/community-ask';
 import { useHubDismissed } from './hub-dismissed';
 import { ProjectDiscussion } from './project-discussion';
 import {
-  channelPlace, findChannel, isChannelPlace, isPlaceKey, placeHandle, placeHref, unreadTotal, type PlaceKey,
+  channelPlace, findChannel, isChannelPlace, isPlaceKey, liveTopics, placeHandle, placeHref, unreadTotal, type PlaceKey,
 } from './places';
 import { PlaceBar } from './place-bar';
 import { PlacesTray, useEdgeSwipe } from './places-tray';
 import { drawerStore } from '../../nav-drawer/drawer-store';
 import { ProjectPlaces } from './project-places';
+import {
+  ProjectAllItemsFrame, ProjectFrameHead, ProjectHubFrame, ProjectTopicsFrame, ProjectWorkshopFrame, type ProjectTab,
+} from './frame/project-frame';
+import { placeRows } from './project-places';
+import { kanbanFiltersStore, type KanbanFiltersState } from '../kanban-filters-store';
+import { ruleSentence } from './community-card';
+import { THIS_WEEK_NEW_MAX, THIS_WEEK_SEEN } from './week-pages';
+import { FirstChangeCard, useFirstChange } from './first-change';
+import { slotCounts, useBotSlots } from './bot-slots';
+import { weekName, weekRange } from './week-pages';
+import { liveSinceLine } from './hub-cards';
+import { offerJoin } from '../../../lib/join-required';
+import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
+import { deskLine, deskWords, useDesk } from '../../ai/desk';
+import { projectTabAddress } from '../../ai/filter-address';
+import { changeHref } from '../../../lib/change-href';
 import { ProjectReviewFlow } from '../../review-flow/review-flow';
 import { clearPlace, publishPlace, registerPlaceOpener, registerTrayToggle, trayButton } from './place-store';
 import { PlanPage } from './plan-page';
@@ -821,7 +838,7 @@ function useThemeReorderMotion(listRef: { current: HTMLElement | null }, themes:
   const capture = () => {
     const list = listRef.current;
     if (!list || typeof window === 'undefined'
-      || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) return;
+      || reducedMotion()) return;
     const tops = new Map<string, number>();
     list.querySelectorAll<HTMLElement>(':scope > [data-ws-theme]').forEach((el) => {
       tops.set(el.dataset.wsTheme || '', el.getBoundingClientRect().top);
@@ -3079,6 +3096,15 @@ export function DevWorkshop(): ReactNode {
   // about which app this is, and no second fetch: the controller publishes
   // both `app_icon_*` columns here already.
   const app = useStoreState(improveStore);
+  // Under one of the frame's looks the page is the kit's (./frame/project-
+  // frame.tsx): the places are its tabs and the Hub is groups of one row.
+  // Your work is read only then; Topics is a page the kit adds, held here.
+  const frame = isFrameSkin(useLiveSkin());
+  const desk = useDesk(frame ? v.slug : null);
+  // The kit's Workshop asks a newcomer who should build, as the Your work card does (./first-change.tsx).
+  const frameFirst = useFirstChange(frame ? v.slug || '' : '', desk);
+  const frameSlots = useBotSlots(frame ? v.slug : null);
+  const [frameTopics, setFrameTopics] = useState(false);
   const hostRef = useRef<HTMLDivElement>(null);
   const [sortKey, setSortKey] = useState<SortKey>('people');
   // Which themes are unfolded, keyed by id. The FIRST theme opens by
@@ -3105,6 +3131,10 @@ export function DevWorkshop(): ReactNode {
   // #4457: the item whose page is open in the panel beside the list (wide
   // windows only; ./side-panel.tsx), as the kind and id AppView opens.
   const [sideItem, setSideItem] = useState<TopicRef | null>(null);
+  // All items in the kit shows the board's own search and filters
+  // (frameAll, below). Here with the other hooks: the kit's branch sits
+  // after the page's early returns.
+  const frameFilters = useStoreState<KanbanFiltersState>(kanbanFiltersStore);
   const sideWide = useMediaFlag(WORKSHOP_SIDE_QUERY);
   // Whether the Workshop tab's Your work shows every row or its first
   // WORKSHOP_WORK_FIRST.
@@ -3753,6 +3783,303 @@ export function DevWorkshop(): ReactNode {
     return null;
   };
 
+  /* ── The page in the one frame (./frame/project-frame.tsx) ──
+     Under one of the frame's looks the places are the page's tabs and the
+     Hub is the kit's, from what this Hub reads: the same votes owed, the
+     same work with Homeroom bot, the channel's last line, the last changes
+     live, the topics, who is around and the approval rule. A place not yet
+     drawn in the kit keeps its own body under the kit's head. Topics is a
+     page the kit adds (the tour's s25); it lists the channels this page's
+     places already name, and opening one is that place. */
+  const frameTopicList = frame ? liveTopics(community?.places) : [];
+  const frameTabs: ProjectTab[] = frame ? [
+    { key: 'status', label: t('project:places.list.hub') },
+    { key: 'needs', label: t('project:places.list.needsYou'), count: owed },
+    { key: 'workshop', label: t('project:places.list.workshop') },
+    ...(community?.channel ? [{
+      key: 'discussion',
+      label: t('project:frame.hub.channel', { handle: community.channel.handle || 'general' }),
+      count: Number(community.channel.unread_count) || 0,
+    }] : []),
+    ...(frameTopicList.length ? [{ key: 'topics', label: t('project:places.list.topics') }] : []),
+  ] : [];
+  const frameTab = frameTopics || tab.startsWith('c:') ? 'topics'
+    : tab === 'all' || tab === 'bot' || tab === 'plan' ? 'workshop' : tab;
+  const pickFrameTab = (key: string) => {
+    if (key === 'topics') { setFrameTopics(true); scrollToHead(hostRef.current); return; }
+    setFrameTopics(false);
+    if (key === tabRef.current) scrollToHead(hostRef.current);
+    else openTab(key as TabKey);
+  };
+  const inviteHere = community?.is_member ? () => { openInviteLinks(); } : null;
+  // Join, for someone signed in who is not in yet: the hero's own Join
+  // (lib/join-required.ts offerJoin asks, joins and re-reads the hub).
+  const joinHere = community && !community.is_member && (window as any).App?.user
+    ? () => { void offerJoin({ code: 'join_required', app: { slug, name: projectName } }).finally(() => { void reloadCommunity(slug); }); }
+    : null;
+  // A topic's channel lights Topics but is the product's own page under
+  // the head (its figures, its signals, its room), so the head says so and
+  // app.css leaves the body on show.
+  const frameHead = { tabs: frameTabs, tab: frameTab, page: tab.startsWith('c:') && !frameTopics ? 'channel' : undefined, onTab: pickFrameTab, onInvite: inviteHere, onJoin: joinHere };
+  // The approval rule, as the Overview's own line says it where the card is
+  // narrow (./community-card.tsx ApprovalLine, RuleWords): the sentence,
+  // the wait after it, and Rules for whoever may change it.
+  const frameRule = () => {
+    const approval = community?.approval || null;
+    if (!approval || !community) return null;
+    const approvers = Array.isArray(approval.approvers) ? approval.approvers : null;
+    const line = ruleSentence(approval, community, approvers);
+    return {
+      id: line.short,
+      values: line.values,
+      faces: line.names ? line.names.map((name) => ({ name, color: swatchFor(name) })) : null,
+      wait: (ruleHasWait(approval) ? approvalStep(approval, community, approvers).wait : '') || null,
+      onRules: community.can_manage ? () => { window.UsernodeReact?.dialogs?.whoDecides?.open({ slug }); } : null,
+    };
+  };
+  const frameWorkshopUp = frame && !frameTopics && tab === 'workshop' && !weekUp;
+  // ALL ITEMS IN THE KIT (version 2 of the tour's s29): the kit's head,
+  // its two groupings as tabs, the board's own search and filters, and the
+  // categories' order. The list under it is this page's own (the theme
+  // cards, or the board by stage), which app.css lays in the kit's content
+  // column.
+  const frameAllUp = frame && !frameTopics && tab === 'all';
+  const frameAll = (): ReactNode => (
+    <ProjectAllItemsFrame
+      {...frameHead}
+      project={projectName}
+      group={group === 'stage' ? 'stage' : 'category'}
+      onGroup={(key) => { callAppView('_setWorkshopGroup', key); }}
+      query={frameFilters.q}
+      querySeq={frameFilters.seq}
+      // The board reads its search box (AppView._onKanbanSearchInput), which
+      // stays mounted behind the kit's field: the text goes through it.
+      onQuery={(next) => {
+        const box = hostRef.current ? hostRef.current.querySelector<HTMLInputElement>('#dev-kanban-search') : null;
+        if (!box) return;
+        box.value = next;
+        callAppView('_onKanbanSearchInput');
+      }}
+      filters={frameFilters.mounted ? {
+        count: frameFilters.count,
+        chips: frameFilters.chips,
+        quick: frameFilters.quick || null,
+        onOpen: () => { callAppView('_openKanbanFiltersDialog'); },
+        onDismiss: (key) => { callAppView('_dismissKanbanFilter', key); },
+        onQuick: (key) => { callAppView('_toggleKanbanQuickFilter', key); },
+      } : null}
+      sort={group !== 'stage' && themes.length ? {
+        key: sortKey,
+        options: SORTS.map((option) => ({ key: option.key, label: t(option.label) })),
+        onSort: (key) => { if (key !== sortKey) captureThemeTops(); setSortKey(key as SortKey); },
+      } : null}
+    />
+  );
+  const frameWorkshop = (): ReactNode => {
+    const d = v.dashboard;
+    const slots = frameSlots.view && (frameSlots.view.acts || frameSlots.view.slots.length) ? frameSlots.view : null;
+    const counts = slots ? slotCounts(slots) : null;
+    // The Overview's figures, as DashTiles draws them: each opens what it
+    // counts when it counts something (the votes figure the one waiting
+    // item's page, or All items).
+    const stage = (key: 'open' | 'unclaimed' | 'shipped') => () => { callAppView('openWorkshopStage', key); openTab('all'); };
+    const votes = () => {
+      const refs = v.dashboard?.votesWaitingRefs || [];
+      if (refs.length === 1) callAppView('openTopic', refs[0].kind, refs[0].id);
+      else openTab('all');
+    };
+    const paced = !!d && !d.partial && d.shippedPrevWeekToDate > 0;
+    const line = deskLine(desk);
+    const liveOf = (week: (typeof weeks)[number]) => (week.counts && week.counts.closed ? { count: week.counts.closed, partial: !!week.counts.partial } : null);
+    const weekOf = (week: (typeof weeks)[number], open: boolean) => ({
+      key: sinceWeekStateKey(week),
+      name: weekName(week),
+      range: week.title || week.key === 'lastWeek' || week.live ? weekRange(week.startMs, week.endMs, week.live) : null,
+      fresh: week.fresh.filter((r) => !!r.brief).length,
+      live: liveOf(week),
+      onOpen: open ? () => openWeekPage(sinceWeekStateKey(week)) : null,
+    });
+    const GLYPH: Record<string, string> = { request: 'chat', change: 'edit', live: 'rocket', vote: 'vote' };
+    const itemOf = (row: WorkCardRow, fresh: boolean) => {
+      const b = row.brief!;
+      const ref = topicRef(row.card);
+      const state = row.card.pill?.state || null;
+      const going = b.kind === 'live' && !!state && (state.key === 'deploying' || state.key === 'delivery_pending' || state.key === 'merging');
+      const at = Number(row.at) || 0;
+      // Build it, on a new request nobody has picked up (freshAct, above).
+      const a = fresh && !b.mine && !b.requested && b.kind === 'request' ? primaryAct(row.card) : null;
+      const fn = a && a.act ? a.act.fn : '';
+      const actLabel = fn === 'askBotToBuild' || fn === 'chooseIssueWork' ? t('project:workshop.fresh.buildIt')
+        : fn === 'workOnIssueWithBot' ? t('project:workshop.fresh.workOnIt') : '';
+      return {
+        key: row.key,
+        title: row.card.title.text || row.card.title.title || '',
+        href: openHref(slug, row.card),
+        glyph: going ? 'refresh' : GLYPH[b.kind] || 'edit',
+        fresh,
+        you: !!b.mine,
+        going,
+        stuck: b.kind === 'live' && state && !going && state.tone === 'blocked' ? state.label : null,
+        ago: at > 0 ? agoStamp(at).text : null,
+        on: !!ref && sideKey === `${ref.kind}:${ref.id}`,
+        onOpen: ref ? (event: ReactMouseEvent<HTMLAnchorElement>) => openItem(event, ref) : undefined,
+        act: a && a.act && actLabel ? {
+          label: actLabel,
+          title: a.title || a.label,
+          onPress: (button: HTMLElement) => { callAppView(a.act!.fn, ...(a.act!.args || []), ...(a.passNode ? [button] : [])); },
+        } : null,
+      };
+    };
+    const cards = (rows: ListRow[]) => rows.filter((r): r is WorkCardRow => r.t === 'card' && !!r.brief);
+    return (
+      <ProjectWorkshopFrame
+        {...frameHead}
+        purpose={t('project:frame.place.workshop', { project: projectName })}
+        overview={d ? {
+          onAll: () => openTab('all'),
+          filtered: !!v.meta.filtered,
+          facts: [
+            { value: d.open, label: t('project:workshop.dash.open', { count: d.open }), onClick: d.open > 0 ? stage('open') : null },
+            { value: d.unclaimed, label: t('project:workshop.dash.unclaimed'), onClick: d.unclaimed > 0 ? stage('unclaimed') : null },
+            {
+              value: d.votesWaiting,
+              label: t('project:workshop.dash.votes', { count: d.votesWaiting }),
+              tone: d.votesWaiting ? 'wait' as const : undefined,
+              sub: owed > 0 ? t('project:workshop.dash.onYou', { count: owed }) : null,
+              subAsks: owed > 0,
+              onClick: d.votesWaiting > 0 ? votes : null,
+            },
+            {
+              value: d.partial && d.shippedWeek ? `${d.shippedWeek}+` : d.shippedWeek,
+              label: t('project:workshop.dash.shipped'),
+              tone: d.shippedWeek ? 'ok' as const : undefined,
+              sub: paced ? t('project:workshop.dash.fromLastWeek', { count: d.shippedPrevWeekToDate }) : null,
+              onClick: d.shippedWeek > 0 ? stage('shipped') : null,
+            },
+          ],
+        } : null}
+        first={v.mine?.viewer && frameFirst.show ? <FirstChangeCard slug={slug} onClose={frameFirst.close} /> : null}
+        work={v.mine?.viewer ? {
+          line: line ? t(line.id, line.values) : null,
+          words: deskWords(desk),
+          href: projectTabAddress(slug),
+          hint: t('project:workshop.desk.open', { project: projectName }),
+        } : null}
+        happened={weeks.length || v.since ? {
+          onClear: v.since ? clearSince : null,
+          clearOff: !sinceRows.length,
+          none: !!v.since && !sinceRows.length,
+          thisWeek: thisWeek ? {
+            ...weekOf(thisWeek, false),
+            items: [
+              ...cards(thisWeek.fresh).slice(0, THIS_WEEK_NEW_MAX).map((row) => itemOf(row, true)),
+              ...cards(thisWeek.seen).slice(0, THIS_WEEK_SEEN).map((row) => itemOf(row, false)),
+            ],
+            onAll: thisWeek.fresh.length || thisWeek.seen.length || thisWeek.line ? () => openWeekPage(sinceWeekStateKey(thisWeek)) : null,
+          } : null,
+          weeks: pastWeeks.slice(0, weeksShown).map((week) => weekOf(week, true)),
+          onEarlier: weeksShown < pastWeeks.length ? () => setWeeksShown(weeksShown + WEEKS_STEP) : null,
+          started: !(weeksShown < pastWeeks.length) && firstWeek && pastWeeks.length ? t('project:since.projectStarted', { date: weekDate(firstWeek) }) : null,
+        } : null}
+        slots={slots && counts ? {
+          title: t('project:frame.workshop.building', { used: counts.building, cap: slots.buildCap ?? counts.building }),
+          line: factsLine([
+            counts.voting ? t('project:botSlots.doorVotes', { count: counts.voting }) : null,
+            slots.waiting.length ? t('project:botSlots.doorWaiting', { count: slots.waiting.length }) : null,
+          ]) || null,
+          onOpen: () => openTab('bot'),
+        } : null}
+        rule={frameRule()}
+        below={slug ? <PrivateRequests slug={slug} /> : null}
+      />
+    );
+  };
+  const frameHub = (): ReactNode => {
+    const channel = community?.channel || null;
+    const recent = channel ? (channel.recent || []).map((m) => ({ content: m.content as string | null, by: m.by, at: m.created_at as string | null })) : [];
+    if (channel && !recent.length && channel.last_at) recent.push({ content: channel.last_message || '', by: channel.last_by, at: channel.last_at });
+    const said = (m: { content: string | null }) => String(m.content || '').replace(/\s+/g, ' ').trim();
+    const last = [...recent].reverse().find((m) => said(m)) || recent[recent.length - 1] || null;
+    const lastAgo = last && last.at ? agoStamp(last.at).text : '';
+    const first = owedRows.find((row) => row.t === 'card') || null;
+    const firstTitle = first && first.t === 'card' ? first.card.title.text || first.card.title.title || '' : '';
+    const claims = Math.max(0, Number(v.dashboard?.unclaimed) || 0);
+    const activeCount = Number(community?.activity?.active_week) || 0;
+    const active = (community?.activity?.active_people || []).filter((person) => person && person.username).slice(0, 5);
+    const names = listText(active.map((person) => person.username));
+    const rest = Math.max(0, activeCount - active.length);
+    const liveRows = (v.recentLive || []).slice(0, 3);
+    return (
+      <ProjectHubFrame
+        {...frameHead}
+        name={projectName}
+        purpose={community?.description || null}
+        tile={{ src: own ? app.iconUrl || null : null, emoji: own ? app.iconEmoji || null : null }}
+        onOpenApp={!actions.selfHosted ? () => { (window as any).App?.openAppTab?.(slug, 'app'); } : null}
+        // As the Hub's own card (./hub-cards.tsx ForYouCard): the row while
+        // any vote is owed, seen or not, else the quiet line, which says
+        // nothing on a project nobody else is in unless requests wait.
+        needs={owedRows.length ? {
+          count: owed,
+          line: owed > 0
+            ? (owed > 1 && firstTitle ? t('project:hub.forYou.needs.firstAndMore', { title: firstTitle, count: owed - 1 }) : firstTitle)
+            : t('project:hub.needs.skipped', { count: owedRows.length }),
+          join: owed > 0 && !canPost,
+        } : null}
+        quiet={owedRows.length || (alone && !claims) ? null : { claims, alone }}
+        onNeeds={() => openTab('needs')}
+        onWorkshop={v.mine?.viewer ? () => openTab('workshop') : null}
+        general={channel ? {
+          handle: channel.handle || 'general',
+          last: !!last,
+          said: last ? said(last) : '',
+          by: last ? last.by || null : null,
+          ago: lastAgo,
+          unread: Number(channel.unread_count) || 0,
+        } : null}
+        onGeneral={() => openTab('discussion')}
+        topics={frameTopicList.map((topic) => ({
+          key: channelPlace(topic.handle), name: topic.name || topic.handle, handle: topic.handle, icon: topic.icon || '', about: topic.about || '', unread: Math.max(0, Number(topic.unread) || 0),
+        }))}
+        onTopic={(key) => openTab(key as TabKey)}
+        live={liveRows.map((row) => {
+          const ago = row.at ? agoStamp(row.at).text : '';
+          return {
+            key: row.key,
+            title: row.title,
+            line: row.going
+              ? (row.who ? t('project:hub.recent.byGoing', { who: row.who }) : t('project:hub.recent.going'))
+              : row.who && ago ? t('project:hub.recent.byAgo', { who: row.who, ago }) : row.who || ago || null,
+            src: row.picture || null,
+            href: changeHref(slug, row.sessionId, row.prNumber),
+          };
+        })}
+        ownLive={!liveRows.length && ownLive && liveSinceLine(ownLive.since) ? {
+          name: ownLive.name,
+          line: liveSinceLine(ownLive.since),
+          onOpen: () => { (window as any).App?.openAppTab?.(slug, 'app'); },
+        } : null}
+        onAllLive={() => openTab('workshop')}
+        people={activeCount ? {
+          title: t('project:hub.people.active', { count: activeCount }),
+          line: active.length ? (rest ? t('project:hub.people.namesAndMore', { names, count: rest }) : names) : null,
+          faces: active.map((person) => ({ name: person.username, color: swatchFor(person.username) })),
+          more: rest,
+        } : null}
+        audience={{
+          kind: community?.audience || 'invited',
+          title: community?.audience_label || '',
+          line: community && community.audience !== 'solo' ? t('project:communityCard.people.members', { count: Number(community.member_count) || 0 }) : null,
+        }}
+      />
+    );
+  };
+  const framePurpose = tab === 'workshop' || tab === 'all' || tab === 'bot' || tab === 'plan'
+    ? t('project:frame.place.workshop', { project: projectName })
+    : tab === 'needs' ? t('project:frame.place.needs', { project: projectName })
+      : tab === 'discussion' ? t('project:frame.place.general', { project: projectName })
+        : t('project:frame.place.channel', { project: projectName });
+
   return (
     <div
       ref={hostRef}
@@ -3767,6 +4094,22 @@ export function DevWorkshop(): ReactNode {
       // host's classes are written by useWorkshopHostState.
       data-ws-side-open={sideOpen ? '' : undefined}
     >
+      {/* Under one of the frame's looks the kit's page comes first, and
+          app.css puts the bar away and, where the kit draws the whole place
+          (the Hub, Topics), the body below as well: they stay mounted, as
+          written, behind the kit's page. */}
+      {frame && frameTopics ? (
+        <ProjectTopicsFrame
+          {...frameHead}
+          general={community?.channel ? placeRows(community?.places, owed).general : null}
+          topics={placeRows(community?.places, owed).topics}
+          onOpen={(key) => { setFrameTopics(false); openTab(key as TabKey); }}
+        />
+      ) : null}
+      {frame && !frameTopics && tab === 'status' && !pending ? frameHub() : null}
+      {frameWorkshopUp ? frameWorkshop() : null}
+      {frameAllUp ? frameAll() : null}
+      {frame && !frameTopics && tab !== 'status' && !frameWorkshopUp && !frameAllUp ? <ProjectFrameHead {...frameHead} title={tab === 'workshop' && weekUp ? weekName(weekUp) : pageTitle(tab)} purpose={framePurpose} /> : null}
       {band}
       {tray}
       {/* Everything but the bar lives in here. It is what carries the
@@ -3803,7 +4146,9 @@ export function DevWorkshop(): ReactNode {
           // opens Needs you at its first card when votes are already
           // waiting on the new member, and otherwise stays on this hub.
           onJoinedByInvite={() => { if (owesVote(v.queue)) openTab('needs'); }}
-          menu={(
+          // The hero's ⋯, or the project card's for somebody who has not
+          // joined (./community-card.tsx): the same one node either way.
+          menu={(place) => (
             <DevPlusMenu
               illustrationApp={actions.illustrationApp}
               canManageIllustration={actions.canManageIllustration}
@@ -3812,6 +4157,10 @@ export function DevWorkshop(): ReactNode {
               canCollaborate={actions.canCollaborate}
               showsMembers={actions.showsMembers}
               inHero
+              onCard={place === 'card'}
+              // SEE WHAT VISITORS SEE (11 Nov 2026): a member's, on a public
+              // project; the platform's own has no page for visitors.
+              visitorView={!actions.selfHosted && community?.is_member && community.audience === 'open' ? { slug } : null}
               // #4666: who can see it and how its changes are approved, one
               // row and one sheet (features/dialogs/who-decides.tsx), for
               // whoever may propose it. It took "Make it public" and "Make it
@@ -3937,7 +4286,7 @@ export function DevWorkshop(): ReactNode {
           last update went down. Nothing on a project nobody has made a
           version of. See ./hub-cards.tsx FromVersionsCard. */}
       {slug ? <FromVersionsCard slug={slug} data={community} /> : null}
-      {slug ? <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} own={ownLive} ident={recentIdent} /> : null}
+      {slug ? <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} own={ownLive} ident={recentIdent} month={community?.activity?.shipped_month} /> : null}
       {/* Start a new change was the hub's last line; it is the hero's ⋯
           now (../actions-row.tsx), as well as the Homeroom menu's. */}
       </>

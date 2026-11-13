@@ -3792,7 +3792,7 @@ test('an empty board still gets the All items pane, and the note names the ⋯ a
   // BUG g, the first half: the note told the viewer to press a "+" that was
   // not on screen. On the hub the ⋯ it names is in the hero above it (drawn
   // once the community record has answered, which this render has not).
-  assert.match(WORKSHOP, /menu=\{\(\s*<DevPlusMenu[\s\S]*?inHero\b[\s\S]*?\/>\s*\)\}/, 'the ⋯ the note names is the hub hero\'s');
+  assert.match(WORKSHOP, /menu=\{\(place\) => \(\s*<DevPlusMenu[\s\S]*?inHero\b[\s\S]*?\/>\s*\)\}/, 'the ⋯ the note names is the hub hero\'s');
   assert.doesNotMatch(status, /Press <span[^>]*>⋯<\/span> on the hub/, 'so on the hub it does not say where');
 });
 
@@ -4037,8 +4037,10 @@ test('the ⋯ is the hub hero’s: once, at the end of its actions, and no page 
   // The same props the toolbar row reads, from the same store, so the gates
   // (import on canCollaborate, the members row, Fork for a read-only viewer)
   // are the ones the menu always had.
+  // A function of where it is drawn: the hero, or the project card for
+  // somebody who has not joined (the hand-off of 11 Nov 2026), one node either way.
   assert.match(WORKSHOP,
-    /menu=\{\(\s*<DevPlusMenu\s+illustrationApp=\{actions\.illustrationApp\}\s+canManageIllustration=\{actions\.canManageIllustration\}\s+selfHosted=\{actions\.selfHosted\}\s+readOnly=\{actions\.readOnly\}\s+canCollaborate=\{actions\.canCollaborate\}\s+showsMembers=\{actions\.showsMembers\}\s+inHero\b[\s\S]*?onWhoDecides=\{community\?\.can_manage[\s\S]*?onLeave=\{canLeave\(community\)[\s\S]*?\/>\s*\)\}/);
+    /menu=\{\(place\) => \(\s*<DevPlusMenu\s+illustrationApp=\{actions\.illustrationApp\}\s+canManageIllustration=\{actions\.canManageIllustration\}\s+selfHosted=\{actions\.selfHosted\}\s+readOnly=\{actions\.readOnly\}\s+canCollaborate=\{actions\.canCollaborate\}\s+showsMembers=\{actions\.showsMembers\}\s+inHero\b[\s\S]*?onWhoDecides=\{community\?\.can_manage[\s\S]*?onLeave=\{canLeave\(community\)[\s\S]*?\/>\s*\)\}/);
   assert.equal((WORKSHOP.match(/<DevPlusMenu\b/g) || []).length, 1, 'rendered in one place on this surface');
 });
 
@@ -4053,7 +4055,10 @@ test('the ⋯ is drawn as Invite’s pill, a circle, and its menu hangs over the
   const decls = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
   // Invite's fill (`pillNeutral`), on the button itself, as a 32px circle.
   assert.match(ACTIONS_ROW, /const HERO_BTN_CLS = 'dev-ws-plus-btn dev-ws-plus-btn-hero un-touch-target '\s*\+ 'bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100';/);
-  assert.match(ACTIONS_ROW, /className=\{inHero \? HERO_BTN_CLS : 'dev-ws-plus-btn un-touch-target'\}/, 'still a 44px hit box');
+  assert.match(ACTIONS_ROW, /className=\{onCard \? CARD_BTN_CLS : inHero \? HERO_BTN_CLS : 'dev-ws-plus-btn un-touch-target'\}/, 'still a 44px hit box');
+  // On the project card it is the card's round glass button, 50px (52px from 768px).
+  assert.match(ACTIONS_ROW, /const CARD_BTN_CLS = 'dev-ws-plus-btn dev-ws-plus-btn-card un-touch-target bg-white\/15 hover:bg-white\/25 text-white';/);
+  assert.match(decls, /\.dev-ws-plus-btn\.dev-ws-plus-btn-card \{ width: 50px; height: 50px; \}/);
   assert.match(decls, /\.dev-ws-hero \.dev-ws-plus-btn \{ width: 32px; height: 32px; \}/);
   // A ⋯, not a "+": on the hub it holds the project's settings as much as
   // anything to add, and a "+" beside Invite read as "add a member".
@@ -5189,6 +5194,58 @@ test('#2182, 5 Nov 2026: a signed-in viewer\'s Your work is one row under Overvi
   assert.equal(AppView._workshopView().mine.bot, true);
 });
 
+test('10 Nov 2026: somebody who has made nothing here is asked who should build, in Your work\'s place', () => {
+  const FIRST = 'frontend/src/features/dev-board/workshop/first-change.tsx';
+  const first = loadTsx(FIRST, { stubs: { '../../messages/api': { listConnectors: () => new Promise(() => {}) } } });
+  const desk = (over = {}) => ({ ready: true, needs: 0, progress: 0, waiting: 0, first: null, ...over });
+  const none = { rows: [], next: null };
+  assert.equal(first.firstChangeFor(desk(), none), true, 'nothing of theirs now, and nothing before');
+  assert.equal(first.firstChangeFor(desk(), { rows: [{ kind: 'vote' }, { kind: 'vote' }], next: null }), true, 'a vote is taking part, not making');
+  assert.equal(first.firstChangeFor(desk(), { rows: [{ kind: 'request' }], next: null }), false, 'a request of theirs, once');
+  assert.equal(first.firstChangeFor(desk(), { rows: [{ kind: 'change' }], next: null }), false);
+  assert.equal(first.firstChangeFor(desk(), { rows: [{ kind: 'solo' }], next: null }), false, 'a private thread about the project counts');
+  assert.equal(first.firstChangeFor(desk(), { rows: [{ kind: 'vote' }], next: '2026-10-01T00:00:00.000Z' }), false, 'more History than was read: not called empty');
+  assert.equal(first.firstChangeFor(desk({ progress: 1 }), none), false, 'something of theirs is being built');
+  assert.equal(first.firstChangeFor(desk({ waiting: 1 }), none), false);
+  assert.equal(first.firstChangeFor(desk({ needs: 1 }), none), false, 'something asks for them: Your work says what');
+  assert.equal(first.firstChangeFor(desk({ ready: false }), none), false, 'the desk unread');
+  assert.equal(first.firstChangeFor(desk(), null), false, 'History unread, or its read failed: Your work is the safe answer');
+
+  const html = renderToHtml(createElement(first.FirstChangeCard, { slug: 'demo-app', onClose() {} }));
+  assert.match(html, /<section class="dev-ws-strip dev-ws-first" data-ws-first-change="">/, 'a card of the Workshop\'s own');
+  assert.match(html, new RegExp(`<span class="dev-ws-head-title">${message('project:workshop.first.title')}</span>`));
+  assert.match(html, /data-ws-card-close="first"/, 'closed for good, like the hub\'s cards');
+  const rows = [...html.matchAll(/<a [^>]*href="([^"]+)"[^>]*data-ws-first-builder="([^"]+)"/g)].map((m) => [m[2], m[1].replace(/&amp;/g, '&')]);
+  assert.deepEqual(rows, [
+    ['homeroom', '#homeroom-bot/new?project=demo-app'],
+    ['claude-code', '#homeroom-bot/new?project=demo-app&with=claude-code'],
+    ['chatgpt', '#homeroom-bot/new?project=demo-app&with=chatgpt'],
+  ], 'three links, each to a new thread set to this project and that builder');
+  assert.doesNotMatch(html, /data-ws-first-setup/, 'no Set up until the connections are read');
+  for (const id of ['project:workshop.first.text', 'project:workshop.first.homeroom.sub']) {
+    assert.ok(html.includes(message(id)), id);
+  }
+  assert.ok(html.includes(message('project:workshop.first.own', { product: 'Claude' })));
+  assert.ok(html.includes(message('project:workshop.first.own', { product: 'ChatGPT' })));
+
+  const src = read(FIRST);
+  assert.match(src, /const empty = desk\.ready && desk\.needs \+ desk\.progress \+ desk\.waiting === 0;/);
+  assert.match(src, /if \(!slug \|\| !empty \|\| closed \|\| readOnly\) return undefined;/, 'History is asked only when the desk is empty, the card open, and a change theirs to start');
+  assert.match(src, /fetch\(`\/api\/ai\/history\?project=\$\{encodeURIComponent\(slug\)\}`, \{ credentials: 'same-origin' \}\)/);
+  // A staging preview's ?demo=1 lists sample projects, never the one on
+  // screen, so they cannot say somebody made nothing here: Your work stays,
+  // as two declared checks of the demo's Workshop expect (dapp.json).
+  assert.match(src, /new URLSearchParams\(window\.location\.search\)\.get\('demo'\) === '1'\) return Promise\.resolve\(null\);\n\s+const read = fetch\(/, 'asked before anything is read');
+  const DAPP_CHECKS = JSON.parse(read('dapp.json')).tests;
+  assert.ok(DAPP_CHECKS.some((check) => /\?demo=1&ws=workshop#app\//.test(check.path) && /\[data-ws-dashboard\] \+ \[data-ws-desk\]/.test(check.expectSelector || '')),
+    'the demo Workshop\'s Your work has a declared check');
+  assert.match(src, /return \{ show: !closed && !readOnly && firstChangeFor\(desk, made\), close \};/);
+  assert.match(read('frontend/src/features/dev-board/workshop/your-work.tsx'),
+    /const first = useFirstChange\(slug, useDesk\(slug\)\);\n\s+if \(first\.show\) return <FirstChangeCard slug=\{slug\} onClose=\{first\.close\} \/>;/);
+  assert.match(read('frontend/src/features/dev-board/workshop/hub-dismissed.ts'), /export type HubCard = 'share' \| 'start' \| 'first' \| `update:\$\{string\}`;/);
+  assert.match(read('src/routes/ai-work.js'), /router\.get\('\/api\/ai\/history', async \(req, res\) => \{/);
+});
+
 test('#2182: a guest has no Your work to be told about', () => {
   const AppView = makeAppView({ App: { user: null, currentApp: 'demo-app', currentSubTab: 'forum' } });
   seed(AppView);
@@ -5295,7 +5352,7 @@ test('#1933: the declared check reads the chip off a demo issue card on the boar
 
 // ─── #2227: your own governance proposal is your work too ─────────────
 
-test('a propose-to-close you opened yourself is not owed a vote from you', () => {
+test('a propose-to-close you opened yourself is owed a vote from you too', () => {
   const AppView = makeAppView();
   seed(AppView);
   // Three rows in review: a code proposal of mine, a governance
@@ -5313,14 +5370,14 @@ test('a propose-to-close you opened yourself is not owed a vote from you', () =>
       created_at: at(2), last_message_at: at(2), up_count: 0, down_count: 0, my_vote: null },
   ];
   const v = AppView._workshopView();
-  // A propose-to-close you opened is not owed a vote from you — the same
-  // de-dup the code proposal gets, since "waiting on you" asks whether you
-  // have voted, not whose it is. (It was also "What you are working on"'s;
-  // your work is the Homeroom bot tab's now, 5 Nov 2026.)
-  assert.ok(!plain(v.votes.rows).some((r) => r.key.includes('gov:71')),
-    'your own governance proposal is not also owed a vote from you');
+  // 11 Nov 2026: opening a decision is not your yes (governance-rules.ts),
+  // so a propose-to-close you opened is owed your vote like anyone's, as is
+  // your own code proposal: "waiting on you" asks whether you have voted,
+  // not whose it is.
+  assert.ok(plain(v.votes.rows).some((r) => r.key.includes('gov:71')),
+    'your own governance proposal is owed a vote from you');
   assert.ok(plain(v.votes.rows).some((r) => r.key.includes('gov:72')),
-    'but somebody else’s still is');
+    'and somebody else’s still is');
 });
 
 test('the tab strip and the head pin as one band (#2339 follow-up)', () => {

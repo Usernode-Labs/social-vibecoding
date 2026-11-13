@@ -23,6 +23,7 @@ const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const { message } = require('./lib/platform-i18n');
+const { withWords } = require('./lib/work-words');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -43,8 +44,9 @@ globalThis.window = {
 const NOW = new Date('2026-10-16T12:00:00Z');
 const ago = (minutes) => new Date(NOW.getTime() - minutes * 60000).toISOString();
 const links = (extra = {}) => ({ request: '#app/plant-pal/dev/i/12', proposal: null, project: '#app/plant-pal', ...extra });
-// A work state as the server stores it (services/work-state.js).
-const at = (stage, extra = {}) => ({ stage, why: null, reason: null, line: null, whoseMove: null, since: null, ...extra });
+// A work state as the server stores it (services/work-state.js), with the
+// words it sends with it (11 Nov 2026: tests/lib/work-words.js).
+const at = (stage, extra = {}) => withWords({ stage, why: null, reason: null, line: null, whoseMove: null, since: null, ...extra });
 const track = (extra = {}) => ({
   key: `plant-pal#${extra.issueNumber || 12}`, appSlug: 'plant-pal', appName: 'Plant Pal', iconUrl: null, iconEmoji: null,
   issueNumber: 12, title: 'Dark mode', firstVersion: false, work: at('building'), step: 'build', waitingOn: null,
@@ -144,10 +146,13 @@ test('every word the module asks for is in the catalog', () => {
     const key = id.slice('messages:'.length);
     assert.ok(catalog[key] || catalog[`${key}_one`], `${id} is in the catalog`);
   }
-  // The stage words and second lines are lib/work-state.ts's, in core.
+  // 11 Nov 2026: the stage words and second lines are the server's, sent
+  // with the standing (`words`); lib/work-state.ts keeps only the ten plain
+  // stage words, for a payload that has none, all in core.
   const words = read('frontend/src/lib/work-state.ts');
   const coreIds = [...words.matchAll(/'(core:work\.[a-zA-Z_.]+)'/g)].map((m) => m[1]);
-  assert.ok(coreIds.length > 40, 'the ten stages, the whys, the reasons and the lines');
+  assert.equal(new Set(coreIds).size, 10, 'the ten plain stage words, and no whys, reasons or lines');
+  assert.ok(coreIds.every((id) => id.startsWith('core:work.stage.')));
   const coreCatalog = JSON.parse(read('frontend/locales/en/core.json'));
   for (const id of new Set(coreIds)) {
     const key = id.slice('core:'.length);
@@ -161,9 +166,10 @@ test('every word the module asks for is in the catalog', () => {
 
 // #6402: a checking change says about how long is left, or that it waits to
 // sync with main; a run with no estimate says nothing on the second line.
+// 11 Nov 2026: in the words the server sends, which survive normalization.
 test('a checking change words its wait, and its minutes survive normalization', () => {
   const { lineWords, normalizeWorkState } = loadTsx('frontend/src/lib/work-state.ts');
-  const checking = (line) => normalizeWorkState({ stage: 'checking', line });
+  const checking = (line) => normalizeWorkState(withWords({ stage: 'checking', line }));
   assert.deepEqual(lineWords(checking({ code: 'checks_running', minutes: 2 })),
     { id: 'core:work.line.checksRunning', values: { count: 2 } });
   assert.equal(lineWords(checking({ code: 'checks_running' })), null, 'no estimate, no line');
@@ -255,7 +261,7 @@ test('a thread\'s card is the track once the viewer\'s tracks have one for the r
   assert.match(head, /<div className="dev-request-track" data-request-track=\{r\.trackPending \? 'pending' : track\.work\.stage\} inert=\{!!r\.trackPending\}>\s*<TrackCard track=\{track\} title=\{r\.title\} links=\{trackLinks\(track, \{ request: false \}\)\} pictures \/>/, 'the request\'s page draws the same card');
   // Polish board #12: one row of steps on the page, the track card's, and
   // the card unseen while the page is drawn from the board's older row.
-  assert.match(head, /<RequestStatus s=\{r\.status\} specs=\{specs\} tracked=\{!!track\} \/>/);
+  assert.match(head, /<RequestStatus s=\{r\.status\} specs=\{specs\} tracked=\{!!track\} frame=\{frame\} \/>/);
   assert.match(head, /\{s\.closed \|\| tracked \? null : \(\s*<ol className="dev-request-steps">/);
   assert.match(read('public/css/app.css'), /\.dev-request-track\[data-request-track="pending"\] \{ visibility: hidden; \}/);
 });

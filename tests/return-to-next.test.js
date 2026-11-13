@@ -403,7 +403,7 @@ test('OpenRouter: Return in the key tests and saves it; in the filter it goes on
   const src = read('frontend/src/features/settings/sections/openrouter.tsx');
   assert.match(src, /<div id="settings-openrouter-personal-controls" onKeyDown=\{returnKeyHandler\(\{ submit: saveKey \}\)\}>/);
   assert.match(src, /pressButton\(document\.getElementById\('settings-openrouter-save'\)\);/);
-  assert.match(src, /<div id="settings-openrouter-models-wrap" className="hidden mt-4" onKeyDown=\{returnKeyHandler\(\)\}>/);
+  assert.match(src, /<div id="settings-openrouter-models-wrap" className="ui-card ui-fields hidden mt-4" onKeyDown=\{returnKeyHandler\(\)\}>/);
 });
 
 test('wallet Send: the address goes on to the amount, and the amount sends', () => {

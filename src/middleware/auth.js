@@ -1,3 +1,4 @@
+const { readSessionCookie, setSessionCookie } = require('../services/browser-session-cookies');
 const { nativeWebSessionIsLive } = require('../services/web-session-auth');
 const { bindStreamSession } = require('../services/http-stream-access');
 const { setSessionCacheCookie, stampApiIdentity } = require('../services/browser-api-cache');
@@ -118,9 +119,6 @@ const PUBLIC_PATHS = [
   // body would arrive where a script was expected, leaving the whole app
   // unstyled. Static JS only, no data access.
   '/usernode-tailwind/',
-  // The Google Analytics frame (#6314): a static page the shell frames for
-  // signed-out visitors too. Whole file name, no data access.
-  '/analytics-frame.html',
   // PWA shell assets (#487). The service-worker script, manifest and
   // icons must be fetchable without a session: the browser requests them
   // from login.html (pre-auth) and during background SW update checks,
@@ -307,7 +305,6 @@ const STAGING_SESSION_DAYS = 7;
 // the right default: a staging container with no app identity cannot
 // safely accept an identity minted for some other app.
 const SELF_APP_ID = process.env.USERNODE_APP_ID;
-const SECURE_COOKIE = process.env.NODE_ENV === 'production';
 
 // Browser sessions now follow the mobile session's active-lease model: a
 // device that keeps using Homeroom stays signed in, while an abandoned device
@@ -366,12 +363,7 @@ async function renewCookieSession(pool, res, token, row) {
     if (rows.length !== 1) return null;
 
     const persistedExpiry = new Date(rows[0].expires_at);
-    res.cookie('session', token, {
-      httpOnly: true,
-      secure: SECURE_COOKIE,
-      sameSite: 'lax',
-      expires: persistedExpiry,
-    });
+    setSessionCookie(res, token, persistedExpiry);
     setSessionCacheCookie(res, token, persistedExpiry);
     return persistedExpiry;
   } catch (err) {
@@ -411,7 +403,7 @@ function authMiddleware(config) {
       return next();
     }
 
-    const cookieToken = req.cookies?.session;
+    const cookieToken = readSessionCookie(req);
 
     // Cookie path — identical in prod and staging once a session exists.
     if (cookieToken) {
@@ -648,12 +640,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
     return null;
   }
 
-  res.cookie('session', sessionToken, {
-    httpOnly: true,
-    secure: SECURE_COOKIE,
-    sameSite: 'lax',
-    expires: expiresAt,
-  });
+  setSessionCookie(res, sessionToken, expiresAt);
   setSessionCacheCookie(res, sessionToken, expiresAt);
   if (req) bindStreamSession(req, sessionToken);
   res.setHeader?.('Cache-Control', 'private, no-store');

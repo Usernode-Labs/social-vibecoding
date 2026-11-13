@@ -178,7 +178,7 @@ test('the File it promise is kept, or not promised at all', { timeout: 180000 },
     const note = seen[1].messages[seen[1].messages.length - 1];
     assert.equal(note.role, 'user');
     assert.match(note.content, /^\[Homeroom check, not from them: your reply says a drafted request with File it is under it\./);
-    assert.match(note.content, /you did not call offer_request in this turn/);
+    assert.match(note.content, /no draft is open in this conversation, so nothing is under it/);
     assert.match(note.content, /Call offer_request now with the project, title and details/);
     // The reply goes out as the offer's confirm card.
     assert.ok(sent.messageId);
@@ -206,10 +206,15 @@ test('the File it promise is kept, or not promised at all', { timeout: 180000 },
       [['reply', { text: 'Tap File it below.' }]],
     ]));
     const { content, metadata } = await messageOf(sent.messageId);
-    assert.equal(metadata.homeroomBot.kind, 'chat', 'no confirm card went out');
-    assert.ok(!metadata.homeroomBot.actions, 'no buttons');
+    assert.notEqual(metadata?.homeroomBot?.kind, 'confirm', 'no confirm card went out');
+    assert.ok(!metadata?.homeroomBot?.actions, 'no buttons');
     assert.ok(!content.includes('File it'), 'nothing promised');
-    assert.ok(content.startsWith('I haven\'t drafted it yet'), 'the instead line leads');
+    // Step 2 (one reply checker): what is shown false is cut, and nothing is
+    // said in its place. With nothing true left, the chat's own last resort
+    // answers, never a fixed "I haven't drafted it" line.
+    assert.doesNotMatch(content, /I haven't/);
+    assert.equal(content, mayor.BROKEN_TEXT);
+    assert.ok((await lastTurnFailures(ola)).includes('claims:drafted'));
     assert.equal(await actionOf(ola), null, 'no offer row');
   });
 
