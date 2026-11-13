@@ -157,7 +157,9 @@ export function ChallengesSectionView({ painted, challenges: all, limit }: HomeP
     <Section
       id="home-challenges-section"
       slot="challenges"
-      label={challenges ? challenges.heading : t('home:challenges.heading')}
+      // #6650: in the For you column the card is titled "Challenges", as its
+      // neighbours are titled by what they hold.
+      label={challenges && !limit ? challenges.heading : t('home:challenges.heading')}
       action={challenges?.seeAll ? <SeeAllLink /> : null}
       painted={painted}
       holdLabel

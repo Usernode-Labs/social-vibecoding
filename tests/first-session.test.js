@@ -152,7 +152,7 @@ test('every id the tour points at is one the shell ships', () => {
   // card the tour points at, and dapp.json's checks select it by this id.
   const pinned = read('frontend/src/features/home/pinned-communities.tsx');
   assert.equal((pinned.match(/<section id="home-communities-section"/g) || []).length, 1);
-  assert.equal((read('frontend/src/features/home/for-you.tsx').match(/<section id="home-new-project"/g) || []).length, 1);
+  assert.equal((read('frontend/src/features/home/for-you.tsx').match(/<section\s+id="home-new-project"/g) || []).length, 1);
   // Signed in only: the landing draws the same section, in the same
   // document, without the id.
   assert.equal((read('frontend/src/features/home/communities-to-join.tsx').match(/<section id=\{signedIn \? 'home-join-section' : undefined\}/g) || []).length, 1);

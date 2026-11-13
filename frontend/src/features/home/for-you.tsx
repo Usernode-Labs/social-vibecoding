@@ -36,7 +36,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import {
-  BallotIcon, ChatIcon, CheckIcon, CodeIcon, LightBulbIcon, PlusIcon, TrophyIcon,
+  ArrowUpTrayIcon, ChatIcon, CheckIcon, ChevronRightIcon, GitBranchIcon, PlusIcon,
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -49,15 +49,16 @@ import { gridStore } from './grid-store';
 import { ChallengesSection } from './panels/sections';
 
 // Cards are the plane colour, 20px, one hairline (AGENTS.md).
-export const CARD = 'flex min-w-0 flex-col gap-3 rounded-[20px] bg-[color:var(--dc-sheet-solid)] p-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
-// A title inside a card is a sentence (AGENTS.md): 15 over 13.
-const TITLE = 'm-0 text-[15px] font-[650] leading-5 text-zinc-900 dark:text-zinc-100';
-const SUB = 'm-0 text-[13px] leading-[1.125rem] text-zinc-500 dark:text-zinc-400';
+const CARD_SHELL = 'flex min-w-0 flex-col rounded-[20px] bg-[color:var(--dc-sheet-solid)] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
+export const CARD = `${CARD_SHELL} gap-3 p-4`;
+// The canvas's card titles (#6650): 17px bold, a 12px line under them.
+const TITLE = 'm-0 text-[17px] font-bold leading-6 text-zinc-900 dark:text-zinc-100';
+const SUB = 'm-0 text-xs leading-4 text-zinc-500 dark:text-zinc-400';
 const HEAD_LINK = 'shrink-0 text-[13px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target';
-const PRIMARY = 'inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-zinc-900 px-4 text-[15px] font-semibold text-white no-underline transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white';
-const ROW = 'flex min-h-[44px] items-center gap-3 rounded-xl px-2 py-1.5 text-zinc-900 no-underline hover:bg-zinc-500/[0.06] dark:text-zinc-100';
-const ICON = 'app-icon-tile flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[10px] text-base font-bold [&_.text-3xl]:text-xl';
-const CHIP_ICON = 'flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-zinc-500/10 text-zinc-600 dark:text-zinc-300';
+const PRIMARY = 'inline-flex h-[52px] w-full items-center justify-center gap-2 rounded-full bg-zinc-900 px-5 text-base font-semibold text-white no-underline transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white';
+const ROW = 'flex min-h-[44px] items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-zinc-900 no-underline hover:bg-zinc-500/[0.06] dark:text-zinc-100';
+const ICON = 'app-icon-tile flex h-[34px] w-[34px] shrink-0 items-center justify-center overflow-hidden rounded-[10px] text-base font-bold [&_.text-3xl]:text-xl';
+const CHIP_ICON = 'flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-[#f7f5ef] text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300';
 
 function win(): any {
   return typeof window !== 'undefined' ? (window as any) : {};
@@ -114,20 +115,43 @@ export function SlotsLine({ allowance }: { allowance: Allowance | null }) {
   if (remaining > 0) {
     return (
       <p className="m-0 flex items-center justify-center gap-2 text-[13px] text-zinc-600 dark:text-zinc-300" data-home-slots={String(remaining)}>
-        <span className="h-2 w-2 shrink-0 rounded-full bg-[color:var(--state-ok)]" aria-hidden="true" />
-        {t('home:forYou.newProject.slots', { count: remaining })}
+        <span className="h-2 w-2 shrink-0 rounded-full bg-[#2e9d5b]" aria-hidden="true" />
+        <span>
+          <b className="font-bold text-zinc-900 dark:text-zinc-100">{formatCount(remaining)}</b>{' '}
+          {t('home:forYou.newProject.slotsWord', { count: remaining })}
+        </span>
       </p>
     );
   }
   return (
-    <p className="m-0 text-center text-[13px] leading-[1.125rem] text-zinc-600 dark:text-zinc-300" data-home-slots="0">
+    <p className="m-0 text-center text-[13px] leading-[1.45] text-zinc-600 dark:text-zinc-300" data-home-slots="0">
       {t('home:forYou.newProject.noSlots')}{' '}
       <a href="#profile?slots" className="font-semibold text-[color:var(--accent)] hover:underline">
         {t('home:forYou.newProject.requestSlots')}
-      </a>
+      </a>{' '}
+      {t('home:forYou.newProject.requestSlotsWhy')}
     </p>
   );
 }
+
+// The fan above the New project title (#6650): five faces, the middle one
+// largest, tilted outwards, then the dashed + that is the project to come.
+const FAN = [
+  { size: 'h-[38px] w-[38px] rounded-[10px]', tilt: '-rotate-12' },
+  { size: 'h-11 w-11 rounded-xl', tilt: '-rotate-[8deg]' },
+  { size: 'h-14 w-14 rounded-[15px]', tilt: '' },
+  { size: 'h-11 w-11 rounded-xl', tilt: 'rotate-[8deg]' },
+  { size: 'h-[38px] w-[38px] rounded-[10px]', tilt: 'rotate-12' },
+] as const;
+// When the viewer has fewer than five apps of their own to show, the fan is
+// filled with these, so the card never opens on an empty strip.
+const FAN_FILL = [
+  { emoji: '📚', bg: 'bg-amber-100 dark:bg-amber-900/40' },
+  { emoji: '🍳', bg: 'bg-rose-100 dark:bg-rose-900/40' },
+  { emoji: '🎓', bg: 'bg-sky-100 dark:bg-sky-900/40' },
+  { emoji: '🐑', bg: 'bg-emerald-100 dark:bg-emerald-900/40' },
+  { emoji: '🎮', bg: 'bg-violet-100 dark:bg-violet-900/40' },
+] as const;
 
 export function NewProjectCard() {
   const t = useMessages('home');
@@ -138,36 +162,44 @@ export function NewProjectCard() {
     void readJson<Allowance>('/api/me/app-allowance').then((body) => { if (live && body) setAllowance(body); });
     return () => { live = false; };
   }, []);
-  // A few of the viewer's own apps fanned out above the line: what a
-  // project turns into. Their pinned apps' faces, as the grid draws them.
-  const faces = useMemo(() => grid.items.filter((it) => !it.app.demo).slice(0, 4).map((it) => it.app), [grid.items]);
+  // The viewer's own apps first (their pinned faces, as the grid draws
+  // them), then the fill.
+  const faces = useMemo(() => grid.items.slice(0, FAN.length).map((it) => it.app), [grid.items]);
   // Home.canCreate(): the account's own flag, which ?shot=create-enabled and
   // ?shot=create-disabled pin for the declared checks (home.js).
   const enabled = !!win().Home?.canCreate?.();
   const locked = t('home:communities.newLocked', { hint: t('home:create.disabledHint') });
   return (
-    <section id="home-new-project" className={CARD} aria-labelledby="home-new-project-title">
-      {faces.length ? (
-        <div className="flex items-end gap-1.5" aria-hidden="true">
-          {faces.map((app, i) => (
-            <span key={app.slug} className={i % 2 ? 'rotate-[6deg]' : '-rotate-[6deg]'}>
-              <span className={ICON} data-icon={app.icon.kind}>
-                {app.icon.kind === 'image'
-                  ? <img src={app.icon.src} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
-                  : app.icon.kind === 'emoji' ? <span className="text-xl leading-none">{app.icon.emoji}</span> : app.icon.letter}
-              </span>
+    <section
+      id="home-new-project"
+      className="flex min-w-0 flex-col gap-3.5 overflow-hidden rounded-[20px] bg-[#f6f2fc] px-5 pb-5 pt-[22px] shadow-[inset_0_0_0_1px_#d9d0ec] dark:bg-[#201b2f] dark:shadow-[inset_0_0_0_1px_#3a3152]"
+      aria-labelledby="home-new-project-title"
+    >
+      <div className="flex items-end gap-2" aria-hidden="true">
+        {FAN.map((slot, i) => {
+          const app = faces[i];
+          const box = `flex shrink-0 items-center justify-center overflow-hidden ${slot.size} ${slot.tilt}`;
+          if (!app) {
+            const fill = FAN_FILL[i];
+            return <span key={`fill-${i}`} className={`${box} ${fill.bg} text-xl`}>{fill.emoji}</span>;
+          }
+          return (
+            <span key={app.slug} className={`app-icon-tile ${box} font-bold`} data-icon={app.icon.kind}>
+              {app.icon.kind === 'image'
+                ? <img src={app.icon.src} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
+                : app.icon.kind === 'emoji' ? <span className="text-xl leading-none">{app.icon.emoji}</span> : app.icon.letter}
             </span>
-          ))}
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border-2 border-dashed border-zinc-300 text-zinc-500 dark:border-zinc-600 dark:text-zinc-400">
-            <PlusIcon className="h-4 w-4" aria-hidden="true" />
-          </span>
-        </div>
-      ) : null}
+          );
+        })}
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border-2 border-dashed border-[#b9abd9] text-[#7a68b0] dark:border-[#5f5190] dark:text-[#b9aaec]">
+          <PlusIcon className="h-5 w-5" strokeWidth="2.4" aria-hidden="true" />
+        </span>
+      </div>
       <div>
-        <h2 id="home-new-project-title" className="m-0 text-[17px] font-bold leading-6 text-zinc-900 dark:text-zinc-100">
+        <h2 id="home-new-project-title" className="m-0 text-[22px] font-bold leading-[1.2] tracking-[-0.01em] text-zinc-900 dark:text-zinc-100">
           {t('home:forYou.newProject.title')}
         </h2>
-        <p className={`${SUB} mt-1`}>{t('home:forYou.newProject.text')}</p>
+        <p className="m-0 mt-1.5 text-sm leading-[1.45] text-zinc-600 dark:text-zinc-300">{t('home:forYou.newProject.text')}</p>
       </div>
       <button
         type="button"
@@ -180,7 +212,7 @@ export function NewProjectCard() {
         // why, as the old New project tile did.
         onClick={() => { win().App?.showCreateModal?.(); }}
       >
-        <PlusIcon className="h-4 w-4" aria-hidden="true" />
+        <PlusIcon className="h-[18px] w-[18px]" strokeWidth="2.6" aria-hidden="true" />
         {t('home:forYou.newProject.button')}
       </button>
       <SlotsLine allowance={allowance} />
@@ -195,56 +227,73 @@ export interface NeedsItem {
   id?: number | string;
   title?: string;
   advisory?: boolean;
+  uncounted?: boolean;
   app?: { slug?: string; name?: string; icon_url?: string | null; icon_emoji?: string | null };
 }
 
-/** Pure: the feed → the two counts the bar draws, and the next two. */
-export function needsSplit(items: readonly NeedsItem[] | null, total: number) {
-  const list = items || [];
-  const advisory = list.filter((it) => it.advisory).length;
-  // The feed is bounded; the count is not. What the feed does not hold is
-  // counted as deciding, which is what a vote is unless it says otherwise.
-  const decide = Math.max(0, total - advisory);
-  return { decide, advisory: Math.min(advisory, total), next: list.slice(0, 2) };
+/** A feed item whose vote does not decide: advisory, or recorded but not counted. */
+export function isAdvisory(item: NeedsItem): boolean {
+  return !!(item.advisory || item.uncounted);
 }
 
-export function NeedsCardView({ count, items }: { count: number; items: readonly NeedsItem[] | null }) {
+/**
+ * Pure: the badge's count and the feed → the card's numbers. Once the feed
+ * is read, it is the one source: its length is the count (the Needs you
+ * page lists exactly those), and its items say which decide and which are
+ * advisory, so the bar, the tags on the next two and "Start reviewing · N"
+ * agree. Until then, the badge's count, all of it on the deciding side.
+ */
+export function needsSplit(items: readonly NeedsItem[] | null, badge: number) {
+  if (!items) return { count: badge, decide: badge, advisory: 0, next: [] as NeedsItem[] };
+  const advisory = items.filter(isAdvisory).length;
+  return { count: items.length, decide: items.length - advisory, advisory, next: items.slice(0, 2) };
+}
+
+export function NeedsCardView({ count: badge, items }: { count: number; items: readonly NeedsItem[] | null }) {
   const t = useMessages('home');
-  const { decide, advisory, next } = needsSplit(items, count);
+  const { count, decide, advisory, next } = needsSplit(items, badge);
+  if (!count) return null;
   return (
-    <section id="home-needs-card" className={`${CARD} bg-violet-50/60 shadow-[inset_0_0_0_1px_rgba(10,110,224,0.22)] dark:bg-violet-950/25`} aria-labelledby="home-needs-title" data-home-needs={String(count)}>
+    <section
+      id="home-needs-card"
+      className="flex min-w-0 flex-col gap-3 rounded-[20px] bg-[#f6f9ff] p-4 shadow-[inset_0_0_0_1px_#cddcf5] dark:bg-[#161f33] dark:shadow-[inset_0_0_0_1px_#2a3b5f]"
+      aria-labelledby="home-needs-title"
+      data-home-needs={String(count)}
+    >
       <div className="flex items-end gap-3">
         <div className="min-w-0 flex-1">
-          <p className="m-0 text-xs font-bold uppercase tracking-[0.06em] text-violet-700 dark:text-violet-400">{t('home:forYou.needs.label')}</p>
-          <h2 id="home-needs-title" className={`${TITLE} mt-0.5`}>{t('home:forYou.needs.title')}</h2>
+          <p className="m-0 text-xs font-bold uppercase tracking-[0.08em] text-[#2a62c2] dark:text-[#7aa6f0]">{t('home:forYou.needs.label')}</p>
+          <h2 id="home-needs-title" className="m-0 mt-0.5 text-lg font-bold leading-6 text-zinc-900 dark:text-zinc-100">{t('home:forYou.needs.title')}</h2>
         </div>
-        <span className="text-[34px] font-bold leading-none tabular-nums text-violet-700 dark:text-violet-400" aria-hidden="true">{count > 99 ? '99+' : count}</span>
+        <span className="text-[34px] font-bold leading-none tracking-[-0.03em] tabular-nums text-[#2a62c2] dark:text-[#7aa6f0]" aria-hidden="true">{count > 99 ? '99+' : count}</span>
       </div>
       <div>
         <div className="flex h-2 gap-[3px]" role="img" aria-label={t('home:forYou.needs.split', { decide, advisory })}>
-          {decide ? <span className="rounded-full bg-violet-600 dark:bg-violet-500" style={{ flex: decide }} /> : null}
-          {advisory ? <span className="rounded-full bg-violet-200 dark:bg-violet-900" style={{ flex: advisory }} /> : null}
+          {decide ? <span className="rounded-full bg-[#5b8fe6]" style={{ flex: decide }} /> : null}
+          {advisory ? <span className="rounded-full bg-[#c6d8f6] dark:bg-[#2c4170]" style={{ flex: advisory }} /> : null}
         </div>
         <div className="mt-1.5 flex justify-between text-xs text-zinc-600 dark:text-zinc-300">
-          <span>{t('home:forYou.needs.decide', { count: decide })}</span>
-          {advisory ? <span>{t('home:forYou.needs.advisory', { count: advisory })}</span> : null}
+          <span><b className="font-bold text-zinc-900 dark:text-zinc-100">{decide}</b> {t('home:forYou.needs.decideWord', { count: decide })}</span>
+          {advisory ? <span><b className="font-bold text-zinc-900 dark:text-zinc-100">{advisory}</b> {t('home:forYou.needs.advisoryWord', { count: advisory })}</span> : null}
         </div>
       </div>
       {next.length ? (
         <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
           {next.map((item, i) => (
             <li key={`${item.kind || 'item'}:${item.id ?? i}`}>
-              <a href="#needs" className="flex min-h-[44px] items-center gap-2.5 rounded-xl bg-white px-2.5 py-1.5 text-zinc-900 no-underline shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-100">
-                <SmallIcon slug={item.app?.slug || ''} name={item.app?.name || ''} iconUrl={item.app?.icon_url} iconEmoji={item.app?.icon_emoji} />
+              <a href="#needs" className="flex min-h-[44px] items-center gap-2.5 rounded-xl bg-white px-2.5 py-[7px] text-zinc-900 no-underline shadow-[inset_0_0_0_1px_#e1e8f5] dark:bg-zinc-900 dark:text-zinc-100 dark:shadow-[inset_0_0_0_1px_#2e3443]">
+                <span className="[&_.app-icon-tile]:h-[30px] [&_.app-icon-tile]:w-[30px] [&_.app-icon-tile]:rounded-lg">
+                  <SmallIcon slug={item.app?.slug || ''} name={item.app?.name || ''} iconUrl={item.app?.icon_url} iconEmoji={item.app?.icon_emoji} />
+                </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-xs text-zinc-500 dark:text-zinc-400">{item.app?.name || ''}</span>
-                  <span className="block truncate text-[14px] font-semibold leading-5">{item.title || ''}</span>
+                  <span className="block truncate text-sm font-bold leading-[1.3]">{item.title || ''}</span>
                 </span>
-                <span className={item.advisory
-                  ? 'shrink-0 rounded-full bg-zinc-500/10 px-2 py-0.5 text-[11px] font-bold text-zinc-600 dark:text-zinc-300'
-                  : 'shrink-0 rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-bold text-violet-800 dark:bg-violet-900/60 dark:text-violet-200'}
+                <span className={isAdvisory(item)
+                  ? 'shrink-0 rounded-full bg-zinc-500/10 px-2 py-[3px] text-[11px] font-bold text-zinc-600 dark:text-zinc-300'
+                  : 'shrink-0 rounded-full bg-[#dce7fb] px-2 py-[3px] text-[11px] font-bold text-[#0b4fae] dark:bg-[#21345a] dark:text-[#9cc0ff]'}
                 >
-                  {item.advisory ? t('home:forYou.needs.tagAdvisory') : t('home:forYou.needs.tagDecides')}
+                  {isAdvisory(item) ? t('home:forYou.needs.tagAdvisory') : t('home:forYou.needs.tagDecides')}
                 </span>
               </a>
             </li>
@@ -254,7 +303,7 @@ export function NeedsCardView({ count, items }: { count: number; items: readonly
       <a
         href="#needs"
         id="home-needs-review"
-        className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-violet-600 px-4 text-[15px] font-semibold text-white no-underline hover:bg-violet-500"
+        className="inline-flex h-11 w-full items-center justify-center rounded-full bg-[#2a62c2] px-[18px] text-sm font-semibold text-white no-underline hover:bg-[#2457b0] dark:bg-[#3d78e0]"
         aria-label={t('home:communities.needsNamed', { count })}
       >
         {t('home:forYou.needs.review', { count })}
@@ -303,8 +352,8 @@ export function activityParts(c: Pick<ActivityCommunity, 'messages' | 'merged' |
 
 const KIND_ICON = {
   messages: ChatIcon,
-  merged: CheckIcon,
-  requests: LightBulbIcon,
+  merged: GitBranchIcon,
+  requests: ArrowUpTrayIcon,
 } as const;
 
 const KIND_MESSAGE = {
@@ -328,8 +377,8 @@ export function ActivityCardView({ communities, more, onMarkRead }: {
 }) {
   const t = useMessages('home');
   return (
-    <section id="home-activity-card" className={CARD} aria-labelledby="home-activity-title">
-      <div className="flex items-start gap-2">
+    <section id="home-activity-card" className={`${CARD_SHELL} gap-1 px-3 pb-2.5 pt-4`} aria-labelledby="home-activity-title">
+      <div className="flex items-start gap-2.5 px-1.5 pb-1.5">
         <div className="min-w-0 flex-1">
           <h2 id="home-activity-title" className={TITLE}>{t('home:forYou.activity.title')}</h2>
           <p className={`${SUB} mt-0.5`}>{t('home:forYou.activity.since')}</p>
@@ -338,7 +387,7 @@ export function ActivityCardView({ communities, more, onMarkRead }: {
           {t('home:forYou.activity.markRead')}
         </button>
       </div>
-      <ul className="-mx-2 m-0 flex list-none flex-col p-0">
+      <ul className="m-0 flex list-none flex-col p-0">
         {communities.map((c) => (
           <li key={c.slug}>
             <a
@@ -349,24 +398,28 @@ export function ActivityCardView({ communities, more, onMarkRead }: {
             >
               <SmallIcon slug={c.slug} name={c.name} iconUrl={c.iconUrl} iconEmoji={c.iconEmoji} />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[15px] font-[650] leading-5">{c.name}</span>
-                <span className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-[13px] leading-[1.125rem] text-zinc-600 dark:text-zinc-300">
-                  {activityParts(c).map(({ kind, count }) => {
+                <span className="block truncate text-sm font-bold leading-5">{c.name}</span>
+                <span className="flex flex-wrap gap-x-1.5 gap-y-0.5 text-xs leading-4 text-zinc-600 dark:text-zinc-300">
+                  {activityParts(c).map(({ kind, count }, i) => {
                     const Icon = KIND_ICON[kind];
                     return (
-                      <span key={kind} className="inline-flex items-center gap-1" data-activity-kind={kind}>
-                        <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden="true" />
-                        {t(KIND_MESSAGE[kind], { count })}
+                      <span key={kind} className="inline-flex items-center gap-1.5">
+                        {i ? <span aria-hidden="true">·</span> : null}
+                        <span className="inline-flex items-center gap-1" data-activity-kind={kind}>
+                          <Icon className="h-[13px] w-[13px] shrink-0" strokeWidth="2.2" aria-hidden="true" />
+                          {t(KIND_MESSAGE[kind], { count })}
+                        </span>
                       </span>
                     );
                   })}
                 </span>
               </span>
+              <ChevronRightIcon className="h-4 w-4 shrink-0 text-zinc-400 dark:text-zinc-500" aria-hidden="true" />
             </a>
           </li>
         ))}
       </ul>
-      {more > 0 ? <p className={SUB}>{t('home:forYou.activity.more', { count: more })}</p> : null}
+      {more > 0 ? <p className={`${SUB} px-2 pt-1`}>{t('home:forYou.activity.more', { count: more })}</p> : null}
     </section>
   );
 }
@@ -408,10 +461,10 @@ function WorkRow({ icon, label, sub, value, href }: { icon: ReactNode; label: st
       <a href={href} className={ROW}>
         <span className={CHIP_ICON} aria-hidden="true">{icon}</span>
         <span className="min-w-0 flex-1">
-          <span className="block text-[15px] font-[650] leading-5">{label}</span>
-          {sub ? <span className="block truncate text-[13px] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">{sub}</span> : null}
+          <span className="block text-sm font-bold leading-5">{label}</span>
+          {sub ? <span className="block truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400">{sub}</span> : null}
         </span>
-        <span className="text-[17px] font-bold tabular-nums">{formatCount(value)}</span>
+        <span className="text-lg font-bold tabular-nums">{formatCount(value)}</span>
       </a>
     </li>
   );
@@ -420,40 +473,39 @@ function WorkRow({ icon, label, sub, value, href }: { icon: ReactNode; label: st
 export function WorkCardView({ work, owed }: { work: WorkBody; owed: number }) {
   const t = useMessages('home');
   return (
-    <section id="home-work-card" className={CARD} aria-labelledby="home-work-title">
-      <div className="flex items-baseline gap-2">
+    <section id="home-work-card" className={`${CARD_SHELL} gap-2.5 p-4`} aria-labelledby="home-work-title">
+      <div className="flex items-baseline gap-2.5">
         <h2 id="home-work-title" className={`${TITLE} flex-1`}>{t('home:forYou.work.title')}</h2>
         <a href="#profile" className={HEAD_LINK}>{t('home:forYou.work.profile')}</a>
       </div>
-      <a href="#profile" className="flex items-center gap-3 rounded-2xl bg-zinc-500/[0.07] px-3.5 py-3 text-zinc-900 no-underline dark:text-zinc-100">
-        <TrophyIcon className="h-5 w-5 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
+      <a href="#profile" className="flex items-center gap-3 rounded-[14px] bg-[#f7f5ef] px-3.5 py-3 text-zinc-900 no-underline dark:bg-zinc-800 dark:text-zinc-100">
         <span className="min-w-0 flex-1">
           <span className="block text-xs text-zinc-500 dark:text-zinc-400">{t('home:forYou.work.points')}</span>
-          <span className="block text-[26px] font-bold leading-8 tabular-nums tracking-tight">{formatCount(work.points)}</span>
+          <span className="block text-[26px] font-bold leading-8 tabular-nums tracking-[-0.02em]">{formatCount(work.points)}</span>
         </span>
         {work.pointsWeek > 0 ? (
-          <span className="shrink-0 text-xs font-bold text-[color:var(--state-ok)]" data-home-points-week={String(work.pointsWeek)}>
+          <span className="shrink-0 rounded-full bg-[#dcf2e4] px-[9px] py-1 text-xs font-bold text-[#1f7a45] dark:bg-[#183a27] dark:text-[#6fd39a]" data-home-points-week={String(work.pointsWeek)}>
             {t('home:forYou.work.pointsWeek', { points: formatCount(work.pointsWeek), count: work.pointsWeek })}
           </span>
         ) : null}
       </a>
-      <ul className="-mx-2 m-0 flex list-none flex-col p-0">
+      <ul className="m-0 flex list-none flex-col p-0">
         <WorkRow
-          icon={<CodeIcon className="h-4 w-4" aria-hidden="true" />}
+          icon={<GitBranchIcon className="h-4 w-4" strokeWidth="2.1" aria-hidden="true" />}
           label={t('home:forYou.work.changes')}
           sub={work.changes.waiting ? t('home:forYou.work.changesWaiting', { count: work.changes.waiting }) : null}
           value={work.changes.total}
           href="#profile?tab=changes"
         />
         <WorkRow
-          icon={<LightBulbIcon className="h-4 w-4" aria-hidden="true" />}
+          icon={<ArrowUpTrayIcon className="h-4 w-4" strokeWidth="2.1" aria-hidden="true" />}
           label={t('home:forYou.work.requests')}
           sub={work.requests.open ? t('home:forYou.work.requestsOpen', { count: work.requests.open }) : null}
           value={work.requests.total}
           href="#profile?tab=requests"
         />
         <WorkRow
-          icon={<BallotIcon className="h-4 w-4" aria-hidden="true" />}
+          icon={<CheckIcon className="h-4 w-4" strokeWidth="2.2" aria-hidden="true" />}
           label={t('home:forYou.work.votes')}
           sub={owed ? t('home:forYou.work.votesOwed', { count: owed }) : null}
           value={work.votes.cast}

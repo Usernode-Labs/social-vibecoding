@@ -1003,14 +1003,6 @@
     "text": "New project",
     "description": "Button on Home's New project card: opens the dialog that starts a new project."
   },
-  "forYou.newProject.slots_one": {
-    "text": "{{count}} project slot available",
-    "description": "Line under the New project button on Home: how many more projects the viewer can make. Singular; {{count}} is the number."
-  },
-  "forYou.newProject.slots_other": {
-    "text": "{{count}} project slots available",
-    "description": "Line under the New project button on Home: how many more projects the viewer can make. Plural; {{count}} is the number."
-  },
   "forYou.newProject.noSlots": {
     "text": "No project slots left.",
     "description": "Line under the New project button on Home when the viewer has used every project slot. A link to ask for more follows it."
@@ -1030,22 +1022,6 @@
   "forYou.needs.split": {
     "text": "Votes that decide: {{decide}}. Advisory votes: {{advisory}}.",
     "description": "Accessible description of the bar on Home's Needs you card that splits the waiting votes in two. {{decide}} counts the votes whose result the viewer's vote counts towards; {{advisory}} counts the ones where it is only advice."
-  },
-  "forYou.needs.decide_one": {
-    "text": "{{count}} decides",
-    "description": "Under the bar on Home's Needs you card: how many waiting votes the viewer's vote counts towards. Singular."
-  },
-  "forYou.needs.decide_other": {
-    "text": "{{count}} decide",
-    "description": "Under the bar on Home's Needs you card: how many waiting votes the viewer's vote counts towards. Plural."
-  },
-  "forYou.needs.advisory_one": {
-    "text": "{{count}} advisory",
-    "description": "Under the bar on Home's Needs you card: how many waiting votes where the viewer's vote is only advice. Singular."
-  },
-  "forYou.needs.advisory_other": {
-    "text": "{{count}} advisory",
-    "description": "Under the bar on Home's Needs you card: how many waiting votes where the viewer's vote is only advice. Plural."
   },
   "forYou.needs.tagDecides": {
     "text": "Decides",
@@ -1186,5 +1162,33 @@
   "join.headingDiscover": {
     "text": "Discover communities",
     "description": "Heading over the cards of public communities at the bottom of a signed-in viewer's Home: the ones they have not joined or pinned."
+  },
+  "forYou.newProject.slotsWord_one": {
+    "text": "project slot available",
+    "description": "Line under the New project button on Home, after the number in bold: the viewer can make one more project. Singular; the number is drawn before it."
+  },
+  "forYou.newProject.slotsWord_other": {
+    "text": "project slots available",
+    "description": "Line under the New project button on Home, after the number in bold: how many more projects the viewer can make. Plural; the number is drawn before it."
+  },
+  "forYou.newProject.requestSlotsWhy": {
+    "text": "to build your own ideas.",
+    "description": "Ends the line under the New project button on Home when no project slots are left, after the \"Request project slots\" link: what more slots are for."
+  },
+  "forYou.needs.decideWord_one": {
+    "text": "decides",
+    "description": "Under the bar on Home's Needs you card, after the number in bold: how many waiting votes the viewer's vote counts towards. Singular."
+  },
+  "forYou.needs.decideWord_other": {
+    "text": "decide",
+    "description": "Under the bar on Home's Needs you card, after the number in bold: how many waiting votes the viewer's vote counts towards. Plural."
+  },
+  "forYou.needs.advisoryWord_one": {
+    "text": "advisory",
+    "description": "Under the bar on Home's Needs you card, after the number in bold: how many waiting votes where the viewer's vote is only advice. Singular."
+  },
+  "forYou.needs.advisoryWord_other": {
+    "text": "advisory",
+    "description": "Under the bar on Home's Needs you card, after the number in bold: how many waiting votes where the viewer's vote is only advice. Plural."
   }
 }

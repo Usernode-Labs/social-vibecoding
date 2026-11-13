@@ -144,39 +144,48 @@ test('routes: signed in only, and Mark all read is a same-origin POST', async ()
 test('the slots line: how many are left, or a way to ask for more', () => {
   const two = renderComponent(FOR_YOU, 'SlotsLine', { allowance: { quota: { used: 1, limit: 3, remaining: 2 } } });
   assert.match(two, /data-home-slots="2"/);
-  assert.match(two, /2 project slots available/);
+  assert.match(two, /<b[^>]*>2<\/b> project slots available/);
   const one = renderComponent(FOR_YOU, 'SlotsLine', { allowance: { quota: { used: 2, limit: 3, remaining: 1 } } });
-  assert.match(one, /1 project slot available/);
+  assert.match(one, /<b[^>]*>1<\/b> project slot available/);
   const none = renderComponent(FOR_YOU, 'SlotsLine', { allowance: { quota: { used: 3, limit: 3, remaining: 0 } } });
   assert.match(none, /No project slots left\./);
-  assert.match(none, /<a href="#profile\?slots"[^>]*>Request project slots<\/a>/);
+  assert.match(none, /<a href="#profile\?slots"[^>]*>Request project slots<\/a> to build your own ideas\./);
   assert.equal(renderComponent(FOR_YOU, 'SlotsLine', { allowance: null }), '');
   assert.equal(renderComponent(FOR_YOU, 'SlotsLine', { allowance: { quota: { used: 9, limit: null, remaining: null } } }), '', 'no limit, no line');
 });
 
-test('Needs you: the split, the next two, and the way in', () => {
-  const { needsSplit } = loadTsx(FOR_YOU);
+test('Needs you: the feed decides the numbers, so the bar, the tags and the count agree', () => {
+  const { needsSplit, isAdvisory } = loadTsx(FOR_YOU);
   const items = [
     { kind: 'proposal', id: 1, title: 'Widen every page', app: { slug: 'bio', name: 'Biomarkers' } },
     { kind: 'proposal', id: 2, title: 'Second', advisory: true, app: { slug: 'x', name: 'X' } },
     { kind: 'governance', id: 3, title: 'Third', app: { slug: 'y', name: 'Y' } },
+    { kind: 'proposal', id: 4, title: 'Fourth', uncounted: true, app: { slug: 'z', name: 'Z' } },
   ];
-  assert.deepEqual(needsSplit(items, 13).decide, 12);
-  assert.deepEqual(needsSplit(items, 13).advisory, 1);
-  assert.equal(needsSplit(items, 13).next.length, 2);
-  assert.deepEqual(needsSplit(null, 4), { decide: 4, advisory: 0, next: [] });
+  // Before the feed: the badge's count, all deciding.
+  assert.deepEqual(needsSplit(null, 9), { count: 9, decide: 9, advisory: 0, next: [] });
+  // After it: the feed is the one source, whatever the badge said (the
+  // screenshot of #6650's first cut read "0 decide, 9 advisory" over two rows
+  // tagged Decides, a badge of 9 against a feed with more advisory items).
+  const split = needsSplit(items, 9);
+  assert.equal(split.count, 4);
+  assert.equal(split.decide, 2);
+  assert.equal(split.advisory, 2);
+  assert.equal(split.next.length, 2);
+  assert.equal(isAdvisory(items[3]), true, 'a vote recorded but not counted is not one that decides');
 
   const html = renderComponent(FOR_YOU, 'NeedsCardView', { count: 13, items });
   assert.match(html, /id="home-needs-card"/);
-  assert.match(html, /data-home-needs="13"/);
+  assert.match(html, /data-home-needs="4"/);
   assert.match(html, /Decisions waiting for your vote/);
-  assert.match(html, /12 decide/);
-  assert.match(html, /1 advisory/);
+  assert.match(html, /<b[^>]*>2<\/b> decide/);
+  assert.match(html, /<b[^>]*>2<\/b> advisory/);
   assert.match(html, /Widen every page/);
   assert.match(html, />Decides</);
   assert.match(html, />Advisory</);
   assert.doesNotMatch(html, /Third/, 'only the next two');
-  assert.match(html, /<a href="#needs" id="home-needs-review"[^>]*>Start reviewing · 13<\/a>/);
+  assert.match(html, /<a href="#needs" id="home-needs-review"[^>]*>Start reviewing · 4<\/a>/);
+  assert.equal(renderComponent(FOR_YOU, 'NeedsCardView', { count: 3, items: [] }), '', 'an empty feed draws no card');
 });
 
 test('New in your communities: what happened, only the kinds that did', () => {
@@ -198,6 +207,7 @@ test('New in your communities: what happened, only the kinds that did', () => {
   assert.match(html, /href="\/app\/oath\/workshop"/);
   assert.match(html, /2 new messages/);
   assert.match(html, /1 change went live/);
+  assert.match(html, /data-activity-kind="merged"/);
   assert.match(html, /1 new message</);
   assert.doesNotMatch(html, /data-activity-kind="requests"/);
   assert.match(html, /2 more communities have news\./);

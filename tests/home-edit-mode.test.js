@@ -143,7 +143,7 @@ test('#6650: no Create tile at rest or while editing; New project is the For you
   Home.render();
   assert.equal(model().create, null, 'and none in edit mode: Add apps is the heading button');
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/home/for-you.tsx'), 'utf8'),
-    /<section id="home-new-project"/);
+    /<section\s+id="home-new-project"/);
 });
 
 // ── the remove button's action ────────────────────────────────────────
