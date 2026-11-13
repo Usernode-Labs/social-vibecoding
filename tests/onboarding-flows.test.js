@@ -110,6 +110,38 @@ test('how far they got: in, waiting, the mail not followed, or too early to say'
   assert.deepEqual(out.rules, { recentDays: 28, tooNewDays: 7, returnDays: 2 });
 });
 
+test('an account made while waiting, not opened since being let in, is the waitlist\'s loss; a join the platform applied is not an act', () => {
+  const waitlist = { joinedAt: '2026-08-20T10:00:00Z', waitedDays: 40, discovery: null };
+  const idle = [done('account'), done('access'), open('opened'), open('first_act')];
+  const at = (key, when, note) => ({ key, state: 'done', at: when, note: note || null });
+  const out = assembled([
+    // Signed up in August, let in in October, never back.
+    person({ userId: 1, name: 'away', accountAt: '2026-08-21T10:00:00Z', releasedAt: '2026-10-01T10:00:00Z', accessAt: '2026-10-01T10:00:00Z', waitlist, steps: idle }),
+    // The same, let in three days ago.
+    person({ userId: 2, name: 'fresh', accountAt: '2026-08-21T10:00:00Z', releasedAt: '2026-11-10T10:00:00Z', accessAt: '2026-11-10T10:00:00Z', waitlist, steps: idle }),
+    // The same, and came back.
+    person({ userId: 3, name: 'back', accountAt: '2026-08-21T10:00:00Z', releasedAt: '2026-10-01T10:00:00Z', accessAt: '2026-10-01T10:00:00Z', waitlist }),
+    // Made the account from the admit mail, minutes after being let off, and never opened it.
+    person({ userId: 4, name: 'from_mail', accountAt: '2026-10-01T10:20:00Z', releasedAt: '2026-10-01T10:00:00Z', accessAt: '2026-10-01T10:20:00Z', waitlist, steps: idle }),
+    // A queued invite, joined for them at the moment they were let in.
+    person({ userId: 5, name: 'queued', accountAt: '2026-09-10T10:00:00Z', releasedAt: '2026-10-01T10:00:00Z', accessAt: '2026-10-01T10:00:00.000Z', waitlist,
+      steps: [done('account'), done('access'), { key: 'opened', state: 'skipped' }, at('first_act', '2026-10-01T10:00:00.000Z', 'joined')] }),
+    // Joined a community themselves, a day after being let in.
+    person({ userId: 6, name: 'joiner', accountAt: '2026-09-10T10:00:00Z', releasedAt: '2026-10-01T10:00:00Z', accessAt: '2026-10-01T10:00:00Z', waitlist,
+      steps: [done('account'), done('access'), done('opened'), at('first_act', '2026-10-02T09:00:00Z', 'joined')] }),
+    // Never on the waitlist: an old account given access later is not this.
+    person({ userId: 7, name: 'old_hand', accountAt: '2026-05-01T10:00:00Z', accessAt: '2026-08-01T10:00:00Z', steps: idle }),
+  ]);
+  const by = Object.fromEntries(out.people.map((p) => [p.n, p]));
+  assert.deepEqual([by.away.got, by.away.noAccount, by.away.first, by.away.lane], ['away', false, 'none', 'none']);
+  assert.deepEqual([by.fresh.got, by.fresh.tooNew, by.fresh.noAccount], ['new', true, false], 'this week: too early to say, with an account');
+  assert.deepEqual([by.back.got, by.back.first], ['in', 'app'], 'came back: in, like anyone else');
+  assert.deepEqual([by.from_mail.got, by.from_mail.opened], ['in', false], 'signed up on being let in: a loss after signing up');
+  assert.deepEqual([by.queued.got, by.queued.first], ['away', 'none'], 'the platform joined them; they did nothing');
+  assert.deepEqual([by.joiner.got, by.joiner.first], ['in', 'joined']);
+  assert.equal(by.old_hand.got, 'in');
+});
+
 test('projects are private or public by their audience, and a lane lapses after four weeks', () => {
   const apps = [
     { slug: 'garden', name: 'Garden', audience: 'invited', platform: false, madeAt: '2026-09-01T10:00:00Z', madeBy: { name: 'ana' } },
@@ -179,7 +211,7 @@ test('the demo is whole, made up, the same every time, and follows the real lane
     assert.deepEqual([again.lane, again.out], [p.lane, p.out]);
   }
   for (const lane of ['none', 'pub', 'share', 'both']) assert.ok(a.people.some((p) => p.lane === lane), `somebody in ${lane}`);
-  for (const got of ['in', 'new', 'waiting', 'mail_ignored', 'mail_none']) assert.ok(a.people.some((p) => p.got === got), got);
+  for (const got of ['in', 'new', 'away', 'waiting', 'mail_ignored', 'mail_none']) assert.ok(a.people.some((p) => p.got === got), got);
   assert.ok(a.people.some((p) => p.out === 'lapsed'), 'somebody lapsed');
   const keys = new Set(a.people.map((p) => p.k));
   assert.equal(keys.size, a.people.length, 'one thread each');

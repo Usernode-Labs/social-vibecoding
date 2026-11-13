@@ -80,7 +80,14 @@ function demo() {
         src: pick(['x', 'x', 'friend', 'event', 'other', 'unrecorded']), mail: [chance(0.6), chance(0.2)],
         arr: chance(0.25) ? { t: 'rec', l: pick(['X', 'Reddit', 'Campaign: launch']) } : (chance(0.2) ? { t: 'noref' } : null),
       });
-      if (chance(0.55)) {
+      if (chance(0.14)) {
+        // Signed up while waiting, let in later, not back since.
+        Object.assign(p, {
+          acct: '2026-09-02', access: cohort, got: p.tooNew ? 'new' : 'away', stuck: 'opened',
+          stuckReason: 'Has access, never opened Homeroom', mail: [chance(0.4), false],
+        });
+        people.push(p);
+      } else if (chance(0.55)) {
         p.noAccount = true;
         p.got = p.tooNew ? 'new' : (chance(0.25) ? 'mail_none' : 'mail_ignored');
         p.stuck = p.got === 'mail_none' ? 'mail_sent' : 'code_asked';

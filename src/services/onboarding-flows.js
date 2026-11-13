@@ -22,6 +22,12 @@
 //     day in an app within RECENT_DAYS. Before that they are 'lapsed'.
 //   * Somebody let off the waitlist within TOO_NEW_DAYS who has not made an
 //     account yet is 'new', too early to say, not lost.
+//   * Somebody who signed up while they were waiting, was let off the
+//     waitlist later and has not opened Homeroom since is 'away': the
+//     waitlist's loss, not a loss after making an account. In their first
+//     TOO_NEW_DAYS they are 'new' as well.
+//   * A queued invite's join, applied by the platform the moment a person is
+//     let in, is not something they did, so it is not a first act.
 
 const journey = require('./journey');
 
@@ -30,6 +36,12 @@ const RECENT_DAYS = 28;
 const TOO_NEW_DAYS = 7;
 // "Came back to" a project: its app used on this many days or more.
 const RETURN_DAYS = 2;
+// An account made at least this long before the person was let off the
+// waitlist was made while they waited, not on being let in.
+const PRE_ADMIT_MS = 60 * 60 * 1000;
+// A join recorded within this long of access being granted, by someone who
+// has never opened Homeroom, is the platform applying a queued invite.
+const SYSTEM_JOIN_MS = 60 * 1000;
 
 // What people answer when the waitlist asks where they heard of Homeroom.
 // Anything else they typed is 'other'.
@@ -148,11 +160,20 @@ function assemble({ mile, flows, stages, last, waiting, early = null, now = new 
     } else if (!stepDone(m, 'account')) got = 'acct';
 
     const firstAct = step(m, 'first_act');
+    const opened = step(m, 'opened');
+    const openedDone = !!opened && opened.state === 'done';
+    const systemJoin = !!firstAct && firstAct.state === 'done' && firstAct.note === 'joined' && !openedDone
+      && !!firstAct.at && !!m.accessAt
+      && Math.abs(new Date(firstAct.at).getTime() - new Date(m.accessAt).getTime()) <= SYSTEM_JOIN_MS;
     let first = 'none';
-    if (got === 'in' && firstAct && firstAct.state === 'done') {
+    if (got === 'in' && firstAct && firstAct.state === 'done' && !systemJoin) {
       first = firstAct.note === 'app' ? 'app' : (firstAct.note === 'joined' ? 'joined' : 'spoke');
     }
-    const opened = step(m, 'opened');
+    // Signed up while waiting, let in later, not back since: the waitlist's
+    // loss (or, this week, too early to say), not a loss after signing up.
+    const hadAccount = !!m.releasedAt && !!m.accountAt
+      && new Date(m.releasedAt).getTime() - new Date(m.accountAt).getTime() >= PRE_ADMIT_MS;
+    if (got === 'in' && hadAccount && !openedDone && first === 'none') got = tooNew ? 'new' : 'away';
 
     const st = sg ? [['A', 'arrive'], ['E', 'explore'], ['V', 'activate'], ['B', 'belong'], ['U', 'use'], ['S', 'stay']]
       .filter(([, key]) => sg[key] === true).map(([ch]) => ch).join('') : '';
@@ -204,7 +225,7 @@ function assemble({ mile, flows, stages, last, waiting, early = null, now = new 
       stuck: m.stuckAt || null,
       stuckReason: m.stuckReason || null,
       first,
-      opened: opened && opened.state === 'done',
+      opened: openedDone,
       st, kinds,
       days: m.daysSince,
       failed: m.failedAttempts || 0,

@@ -67,6 +67,10 @@ test('nothing is drawn as inferred: the reading settles private or public, lapse
   assert.match(engine, /'got:new':\{l:'Let off this week, too early to say'[^}]*neutral:true\}/);
   assert.match(engine, /if\(!on&&!\(N\[Y\.id\]\|\|\{\}\)\.neutral\)/, 'a card that is too early to judge is not a loss');
   assert.match(engine, /'out:lapsed'/);
+  // Signed up while waiting and not back since being let in: an end card in Getting in, not "Made an account".
+  assert.match(engine, /'got:away':\{l:'Had an account, has not come back'/);
+  assert.match(engine, /order:\['got:in','got:mail','got:away','got:waiting','got:nomail','got:new'\]/);
+  assert.match(engine, /function isIn\(p\)\{return p\.got==='in'\|\|p\.got==='acct';\}/, 'so their thread stops there');
   assert.match(engine, /var EARLY=\(DATA\.early&&DATA\.early\.label\)\|\|'Earlier members';/, 'the early group is named by the reading');
   assert.match(engine, /s1Btn\.hidden=!count\(ALL,function\(p\)\{return p\.s1;\}\);/, 'no toggle when nobody is early');
   for (const view of ['whole', 'priv', 'pub', 'share', 'drop']) assert.match(engine, new RegExp(`id:'${view}'`), `the ${view} view`);

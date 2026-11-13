@@ -60,7 +60,7 @@ function tally(arr,fn){var m={},o=[];arr.forEach(function(x){var k=fn(x);if(k==n
 var N={
  'src:season1':{l:EARLY}, 'src:unrecorded':{l:'Not recorded',kind:'ghost'}, 'src:x':{l:'Said: X'}, 'src:friend':{l:'Said: a friend'}, 'src:event':{l:'Said: an event'}, 'src:other':{l:'Said: somewhere else'}, 'src:invite':{l:"A member's invite link",w:"Member's invite link"},
  'door:direct':{l:'Let in directly',s:'Directly'}, 'door:waitlist':{l:'Joined the waitlist',s:'Waitlist'}, 'door:invite':{l:'Opened an invite link',w:'By invite link'},
- 'got:in':{l:'Made an account'}, 'got:new':{l:'Let off this week, too early to say',w:'Too early to say',kind:'ghost',neutral:true}, 'got:waiting':{l:'Has an account, waiting for access',w:'Waiting for access'}, 'got:mail':{l:'Ignored the admit mail',w:'Ignored admit mail'}, 'got:nomail':{l:'No admit mail sent'},
+ 'got:in':{l:'Made an account'}, 'got:new':{l:'Let off this week, too early to say',w:'Too early to say',kind:'ghost',neutral:true}, 'got:away':{l:'Had an account, has not come back',w:'Had an account, not back'}, 'got:waiting':{l:'Has an account, waiting for access',w:'Waiting for access'}, 'got:mail':{l:'Ignored the admit mail',w:'Ignored admit mail'}, 'got:nomail':{l:'No admit mail sent'},
  'first:app':{l:'Tried an app'}, 'first:spoke':{l:'Spoke, voted or asked',w:'Spoke or voted'}, 'first:joined':{l:'Joined a community'}, 'first:none':{l:'Opened, did nothing'}, 'first:never':{l:'Never opened it'},
  'made:yes':{l:'Made an app'}, 'made:no':{l:"Used others' apps"},
  'dw:c':{l:'Waited 6 weeks or more',w:'6+ weeks'}, 'dw:na':{l:'Wait not recorded',kind:'ghost'},
@@ -83,14 +83,14 @@ var N={
  'deep:live':{l:'Their change went live'}, 'deep:voice':{l:'Votes or gives feedback'}, 'deep:use':{l:'Uses it'},
  'rh:stay':{l:'Active two weeks running'}, 'rh:not':{l:'Not yet'},
  'wait:none':{l:'No waitlist'}, 'wait:a':{l:'Under 2 weeks'}, 'wait:b':{l:'2 to 5 weeks'}, 'wait:c':{l:'6 weeks or more'},
- 'far:admit':{l:'Admitted, never signed in'}, 'far:new':{l:'Let off this week'}, 'far:queued':{l:'Signed up, not let in'}, 'far:account':{l:'Made an account'}, 'far:opened':{l:'Opened Homeroom'}, 'far:acted':{l:'Did one thing'},
+ 'far:admit':{l:'Admitted, never signed in'}, 'far:new':{l:'Let off this week'}, 'far:away':{l:'Let in, already had an account'}, 'far:queued':{l:'Signed up, not let in'}, 'far:account':{l:'Made an account'}, 'far:opened':{l:'Opened Homeroom'}, 'far:acted':{l:'Did one thing'},
  'why:openmail':{l:"Opened the mail, didn't sign in"}, 'why:unopened':{l:'Never opened the mail'}, 'why:untracked':{l:'Mail opens not tracked',kind:'ghost'}, 'why:nomail':{l:'No admit mail on record'},
- 'why:queued':{l:'Invited, waiting to be let in'}, 'why:new':{l:'Too early to say',kind:'ghost'}, 'why:lapsed':{l:'Was taking part, nothing in four weeks'}, 'why:neveropen':{l:'Has access, never opened it'}, 'why:noact':{l:'Looked, did nothing'},
+ 'why:queued':{l:'Invited, waiting to be let in'}, 'why:new':{l:'Too early to say',kind:'ghost'}, 'why:away':{l:'Has not come back since'}, 'why:lapsed':{l:'Was taking part, nothing in four weeks'}, 'why:neveropen':{l:'Has access, never opened it'}, 'why:noact':{l:'Looked, did nothing'},
  'why:solo':{l:'Made an app, never shared'}, 'why:joined':{l:'Joined a community only'}, 'why:explored':{l:'Explored apps, then stopped'}, 'why:tried':{l:'Opened an app briefly'}
 };
 
 /* ---------- per-person node functions ---------- */
-function gotNode(p){ if(p.got==='new')return 'got:new'; if(p.got==='mail_ignored')return 'got:mail'; if(p.got==='mail_none')return 'got:nomail'; if(p.got==='waiting')return 'got:waiting'; return 'got:in'; }
+function gotNode(p){ if(p.got==='new')return 'got:new'; if(p.got==='away')return 'got:away'; if(p.got==='mail_ignored')return 'got:mail'; if(p.got==='mail_none')return 'got:nomail'; if(p.got==='waiting')return 'got:waiting'; return 'got:in'; }
 function isIn(p){return p.got==='in'||p.got==='acct';}
 function firstNode(p){ if(!isIn(p))return null; if(p.got==='acct'||p.stuck==='opened')return 'first:never'; return 'first:'+p.first; }
 function acted(p){var f=firstNode(p);return !!f&&f!=='first:never'&&f!=='first:none';}
@@ -110,9 +110,10 @@ function lastNode(p){var d=p.lastC;return d==null?'lc:3':(d<14?'lc:0':(d<35?'lc:
 function appNode(p){ if(!p.pubApp)return 'app:none'; return TOPAPPS.indexOf(p.pubApp)>=0?'app:'+p.pubApp:'app:other'; }
 function deepNode(p){ return has(p,'U')?'deep:live':(p.contribFlag?'deep:voice':'deep:use'); }
 function waitNode(p){ if(p.door!=='waitlist'||p.wait==null)return 'wait:none'; return p.wait<14?'wait:a':(p.wait<42?'wait:b':'wait:c'); }
-function farNode(p){ if(p.got==='new')return 'far:new'; if(p.got==='mail_ignored'||p.got==='mail_none')return 'far:admit'; if(p.got==='waiting')return 'far:queued'; var f=firstNode(p); if(f==='first:never')return 'far:account'; if(f==='first:none')return 'far:opened'; return 'far:acted'; }
+function farNode(p){ if(p.got==='new')return 'far:new'; if(p.got==='away')return 'far:away'; if(p.got==='mail_ignored'||p.got==='mail_none')return 'far:admit'; if(p.got==='waiting')return 'far:queued'; var f=firstNode(p); if(f==='first:never')return 'far:account'; if(f==='first:none')return 'far:opened'; return 'far:acted'; }
 function whyNode(p){
   if(p.got==='new')return 'why:new';
+  if(p.got==='away')return 'why:away';
   if(p.got==='mail_none')return 'why:nomail';
   if(p.got==='mail_ignored'){ if(!p.mail||p.mail[0]==null)return 'why:untracked'; return p.mail[0]?'why:openmail':'why:unopened'; }
   if(p.got==='waiting')return 'why:queued';
@@ -185,7 +186,7 @@ var VIEWS=[
    {t:'Arrived from',short:'w',node:arrNode,order:['src:season1','src:unrecorded'].concat(ARR_ORDER,['src:x','src:friend','src:other','src:event','src:invite'])},
    {t:'Door',short:'w',cgap:26,gapsBefore:{'door:invite':56},node:function(p){return 'door:'+p.door;},order:['door:direct','door:waitlist','door:invite']},   // the gap lines the invite card up with its pass-through, under the wait cards
    {t:'Time on waitlist',short:'w',detail:true,node:function(p){ if(p.door!=='waitlist')return 'dwp:'+p.door; return p.wait==null?'dw:na':(p.wait<14?'dw:a':(p.wait<42?'dw:b':'dw:c')); },order:['dwp:direct','dw:c','dw:b','dw:a','dw:na','dw:waiting','dwp:invite'],phantoms:['dw:waiting']},
-   {t:'Getting in',short:'w',cgap:26,node:gotNode,order:['got:in','got:mail','got:waiting','got:nomail','got:new']},
+   {t:'Getting in',short:'w',cgap:26,node:gotNode,order:['got:in','got:mail','got:away','got:waiting','got:nomail','got:new']},
    {t:'Admit mail',short:'w',detail:true,node:function(p){ var g=gotNode(p); if(g==='got:in')return 'gmp:in'; if(g!=='got:mail')return null; if(!p.mail||p.mail[0]==null)return 'gm:untracked'; return p.mail[0]?'gm:opened':'gm:unopened'; },order:['gmp:in','gm:unopened','gm:opened','gm:untracked']},
    {t:'First session',short:'w',node:firstNode,order:['first:app','first:spoke','first:joined','first:none','first:never']},
    {t:'Made or joined',short:'w',node:function(p){ if(!acted(p))return null; if(sharedPriv(p))return 'mk:shared'; if(madePriv(p))return 'mk:solo'; if(p.made.length)return 'mk:pub'; if(joinedPriv(p))return 'mk:joined'; return 'made:no'; },order:['mk:pub','mk:solo','mk:shared','mk:joined','made:no']},
@@ -241,8 +242,8 @@ var VIEWS=[
    {t:'Arrived from',gap:.6,node:arrNode,order:ARR_ORDER.concat(['src:x','src:friend','src:other','src:event','src:unrecorded','src:season1','src:invite'])},
    {t:'Door',gap:.8,node:function(p){return 'door:'+p.door;},order:['door:waitlist','door:direct','door:invite']},
    {t:'Time on the waitlist',node:waitNode,order:['wait:c','wait:b','wait:a','wait:none']},
-   {t:'Got as far as',node:farNode,order:['far:admit','far:new','far:queued','far:account','far:opened','far:acted']},
-   {t:'What the record shows',node:whyNode,order:['why:unopened','why:openmail','why:untracked','why:nomail','why:new','why:queued','why:neveropen','why:noact','why:tried','why:explored','why:joined','why:solo','why:lapsed']}
+   {t:'Got as far as',node:farNode,order:['far:admit','far:away','far:new','far:queued','far:account','far:opened','far:acted']},
+   {t:'What the record shows',node:whyNode,order:['why:unopened','why:openmail','why:untracked','why:nomail','why:away','why:new','why:queued','why:neveropen','why:noact','why:tried','why:explored','why:joined','why:solo','why:lapsed']}
   ]}
 ];
 VIEWS=['whole','priv','pub','share','drop'].map(function(id){return VIEWS.filter(function(v){return v.id===id;})[0];});
@@ -813,7 +814,9 @@ function story(p){
   else if(p.door==='invite')a=p.inv.by+' invited them to '+p.inv.n+' (a '+(p.inv.aud==='private'?'private':'public')+' app).'+(p.inv.how==='was_signed_in'?' They were already signed in.':' They made a new account from the link.');
   else{ a=(p.s1?'Came from '+EARLY+': account made '+p.acct+(p.access?', given access '+p.access:'')+'.':SRC.unrecorded+'. Let in directly'+(p.access?' on '+p.access:'')+', with no waitlist admit.'); if(p.inv)a+=' Later joined '+p.inv.n+' through '+p.inv.by+'\u2019s invite link.'; }
   rows.push(['Came in',a]);
-  if(p.got==='new')rows.push(['Getting in','Let off the waitlist '+plural(p.days,'day','days')+' ago and has not made an account yet. Too early to say.']);
+  var mailWords=p.mail&&p.mail[0]?'Opened the admit mail'+(p.mail[1]?' and clicked it':' but did not click it'):(p.mail&&p.mail[0]===false?'Never opened the admit mail':'No admit mail open is on record');
+  if(p.got==='new')rows.push(['Getting in',p.noAccount?'Let off the waitlist '+plural(p.days,'day','days')+' ago and has not made an account yet. Too early to say.':'Signed up while waiting (account made '+p.acct+'), was let off the waitlist '+plural(p.days,'day','days')+' ago and has not opened Homeroom since. Too early to say.']);
+  else if(p.got==='away')rows.push(['Getting in','Signed up while waiting (account made '+p.acct+') and was let off the waitlist later. Has not opened Homeroom since, '+plural(p.days,'day','days')+' on. '+mailWords+'.']);
   else if(p.got==='mail_ignored')rows.push(['Getting in',(p.mail&&p.mail[0]?'Opened the admit mail'+(p.mail[1]?' and clicked it':' but did not click it'):(p.mail&&p.mail[0]===false?'Never opened the admit mail':'Mail opens were not tracked for this batch'))+'. Has not signed in, '+plural(p.days,'day','days')+' on.']);
   else if(p.got==='mail_none')rows.push(['Getting in','Admitted, but no admit mail is on record. '+plural(p.days,'day','days')+' on.']);
   else if(p.got==='waiting')rows.push(['Getting in','Signed up from the invite and is still waiting for access, '+plural(p.days,'day','days')+' on.']);
@@ -891,6 +894,8 @@ function says(id){
     if(newInv.length||wl.length)out.push(say(of(count(newInv,reached),newInv.length),'share',of(count(newInv,reached),newInv.length)+' people who first came through a member’s invite link are taking part now, against '+of(count(wl,reached),wl.length)+' from the waitlist.','Where to double down'));
     var tooNew=count(wl,function(p){return p.got==='new';}),settled=wl.length-tooNew,noAcct=count(wl,function(p){return p.got==='mail_ignored'||p.got==='mail_none';});
     if(wl.length)out.push(say(of(noAcct,settled),'none',of(noAcct,settled)+' people let off the waitlist more than a week ago have not made an account: '+count(wl,function(p){return p.got==='mail_ignored';})+' have not followed the admit mail and '+count(wl,function(p){return p.got==='mail_none';})+' have no admit mail on record.'+(tooNew?' '+tooNew+' more were let off this week and are too early to say.':''),'Where people get lost'));
+    var away=P.filter(function(p){return p.got==='away';});
+    if(away.length)out.push(say(String(away.length),'none',plural(away.length,'person','people')+' already had an account when they were let off the waitlist and '+(away.length===1?'has':'have')+' not opened Homeroom since. '+count(away,function(p){return p.mail&&p.mail[0];})+' opened the admit mail and '+count(away,function(p){return p.mail&&p.mail[1];})+' clicked it. They are the waitlist\u2019s loss, not a loss after signing up.','Where people get lost'));
     var act=P.filter(acted);
     out.push(say(of(count(act,reached),act.length),'pub',of(count(act,reached),act.length)+' people who did anything in their first session are taking part now. '+count(act,function(p){return p.out==='lapsed';})+' were and have done nothing in four weeks, and '+count(act,function(p){return p.lane==='none'&&p.out!=='lapsed';})+' went quiet before they got that far.','Where they get deeper'));
     var pv=P.filter(function(p){return p.priv;});
@@ -936,7 +941,9 @@ function says(id){
     var d=P.filter(function(p){return p.lane==='none';}),adm=d.filter(function(p){return farNode(p)==='far:admit';});
     out.push(say(of(adm.length,d.length),'none',of(adm.length,d.length)+' people here were let off the waitlist and never made an account. '+count(adm,function(p){return whyNode(p)==='why:openmail';})+' opened the admit mail, '+count(adm,function(p){return whyNode(p)==='why:unopened';})+' never opened it, and '+count(adm,function(p){return whyNode(p)==='why:nomail';})+' have no admit mail on record.'));
     out.push(say(String(count(d,function(p){return p.out==='lapsed';})),'none',plural(count(d,function(p){return p.out==='lapsed';}),'person was','people were')+' taking part and have done nothing in the last four weeks.'));
-    if(count(d,function(p){return p.got==='new';}))out.push(say(String(count(d,function(p){return p.got==='new';})),null,plural(count(d,function(p){return p.got==='new';}),'person was','people were')+' let off the waitlist this week and have not made an account yet. They are here because nothing has happened, not because they left.'));
+    if(count(d,function(p){return p.got==='new';}))out.push(say(String(count(d,function(p){return p.got==='new';})),null,plural(count(d,function(p){return p.got==='new';}),'person was','people were')+' let off the waitlist this week and have not come in yet. They are here because nothing has happened, not because they left.'));
+    var awayD=d.filter(function(p){return p.got==='away';});
+    if(awayD.length)out.push(say(String(awayD.length),'none',plural(awayD.length,'person','people')+' already had an account when they were let off the waitlist and '+(awayD.length===1?'has':'have')+' not opened Homeroom since. '+count(awayD,function(p){return p.mail&&p.mail[0];})+' opened the admit mail and '+count(awayD,function(p){return p.mail&&p.mail[1];})+' clicked it.'));
     var wd=d.filter(function(p){return p.door==='waitlist'&&p.wait!=null;}).map(function(p){return p.wait;}),wi=P.filter(function(p){return p.door==='waitlist'&&p.lane!=='none'&&p.wait!=null;}).map(function(p){return p.wait;});
     if(wd.length)out.push(say(median(wd)+' days','none','People off the waitlist who are here waited a median of '+median(wd)+' days to be let in'+(wi.length?', against '+median(wi)+' for the '+wi.length+' who are taking part':'')+'.'));
     out.push(say(String(count(d,function(p){return farNode(p)==='far:account'||farNode(p)==='far:opened';})),'none',count(d,function(p){return farNode(p)==='far:account';})+' have access and never opened Homeroom, and '+count(d,function(p){return farNode(p)==='far:opened';})+' opened it and did nothing.'));
@@ -993,7 +1000,7 @@ function tables(id){
     rows.sort(function(a,b){return order.indexOf(a[0].split('|')[0])-order.indexOf(b[0].split('|')[0])||b[1]-a[1];});
     el=table([['Got as far as'],['What the record shows'],['People','num'],['From the waitlist','num'],['Median days since','num'],['What would test it']],rows.map(function(r){
       var ids=r[0].split('|'),a=d.filter(function(p){return farNode(p)===ids[0]&&whyNode(p)===ids[1];});
-      var test={'why:openmail':'A clearer button and a second mail','why:unopened':'Subject line, sender, a reminder','why:untracked':'Nothing to test: not tracked then','why:nomail':'Check why no admit mail went out','why:new':'Nothing yet: let off this week','why:lapsed':'What brought them back before','why:queued':'Let invitees of a private app straight in','why:neveropen':'A nudge after access is granted','why:noact':'What the first screen offers','why:tried':'A reason to return to the app they tried','why:explored':'What they came back for','why:joined':'A first thing to do after joining','why:solo':'The invite step on the made screen'}[ids[1]]||'';
+      var test={'why:openmail':'A clearer button and a second mail','why:unopened':'Subject line, sender, a reminder','why:untracked':'Nothing to test: not tracked then','why:nomail':'Check why no admit mail went out','why:new':'Nothing yet: let off this week','why:away':'An admit mail for people who already have an account','why:lapsed':'What brought them back before','why:queued':'Let invitees of a private app straight in','why:neveropen':'A nudge after access is granted','why:noact':'What the first screen offers','why:tried':'A reason to return to the app they tried','why:explored':'What they came back for','why:joined':'A first thing to do after joining','why:solo':'The invite step on the made screen'}[ids[1]]||'';
       return h('tr',null,h('th',{scope:'row',text:N[ids[0]].l}),td(N[ids[1]].l),td(a.length,'num'),td(count(a,function(p){return p.door==='waitlist';}),'num'),td(median(a.map(function(p){return p.days;}).filter(function(x){return x!=null;})),'num'),td(test));
     }));
     note='The last column is a suggestion for what to try, not a finding.';
@@ -1160,7 +1167,8 @@ function facts(){
    'Private and public: each app’s audience as it is today. An app only its people can see is private; one anyone can see is public. An app that was opened up later reads as public for everything that happened in it.',
    'A contribution is a vote on a change or a request, feedback, a request filed, or a change of their own. It counts for the app it was on.',
    'Lanes: a person is in a private app when their invite brought someone into one, or when they joined one and did something. A person is on public apps when they contribute to one or come back to one (use it on two or more days). Either counts only while they are active: a contribution or a day in an app in the last '+recent+' days. After that they are lapsed and drawn as dropped off.',
-   'Too early to say: somebody let off the waitlist in the last '+fresh+' days who has no account yet. They are drawn in grey and are not counted as lost.',
+   'Too early to say: somebody let off the waitlist in the last '+fresh+' days who has no account yet, or who had one already and has not opened Homeroom since. They are drawn in grey and are not counted as lost.',
+   'Had an account, has not come back: somebody who signed up while they were still waiting, was let off the waitlist later and has not opened Homeroom since. They are counted with the waitlist\u2019s losses, not as people who made an account and then did nothing. A join the platform applied for a queued invite at the moment someone was let in is not counted as something they did.',
    'Engaged rows go by contribution: Builds often is six or more changes of their own live, Builds is one to five or a change that went live with someone else’s yes, Voices is votes, feedback or a proposal, Uses only is none of those. Columns go by app-days over all time: none, 1 to 9, 10 to 29, 30 or more.',
    'Marks on the cards: a step is from one card to the next card its people reach. A clay tag counts the people lost at that step, a green check means over 90% go on, and a grey minus means the card is itself an end.',
    'Small numbers: most counts here are small. Treat a difference of a few people as noise.'
