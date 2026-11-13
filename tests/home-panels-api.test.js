@@ -1110,19 +1110,21 @@ test('dapp.json checks the new state, and the reader keeps it', () => {
   assert.ok(kept.some((t) => t.path === '/?demo=1' && /home-challenge-card \[role=progressbar\]/.test(t.expectSelector)),
     'the existing challenges-widget check still runs');
 
-  // Home shows a pick, not the whole list: Next challenges is the open ones,
-  // at most three. The in-place "See all N" toggle is gone (See all is a link
-  // to the Challenges tab now), so the two checks assert the pick itself: the
-  // `few` route's two open challenges both show, and the default route stops
-  // at three, in the tab's order (the check's name still says "furthest
-  // along first", which the demo's part-filled This week row also is).
+  // Home shows a pick, not the whole list: the For you column's Challenges
+  // card (#6650) is the open ones, at most two. The in-place "See all N"
+  // toggle is gone (See all is a link to the Challenges tab now), so the two
+  // checks assert the pick itself: the `few` route's two open challenges both
+  // show, and the default route, which has three open, stops at two, in the
+  // tab's order (the check's name still says "furthest along first", which
+  // the demo's part-filled This week row also is).
   const allShown = kept.find((t) => t.path === '/?demo=1&challenges=few');
   assert.ok(allShown, 'the all-shown check must survive the manifest reader');
   assert.match(allShown.expectSelector, /home-challenge-card/);
   assert.match(allShown.expectSelector, /data-rows="2"/);
   assert.ok(kept.some((t) => t.path === '/?demo=1'
-    && /data-rows="3"/.test(t.expectSelector) && /:first-child/.test(t.expectSelector)),
-    'and the default route declares the cap of three');
+    && /#home-for-you /.test(t.expectSelector)
+    && /data-rows="2"/.test(t.expectSelector) && /:first-child/.test(t.expectSelector)),
+    'and the default route declares the cap of two, in the For you column');
 });
 
 // QA 2026-09-24 Q17: Home's season progress counts every challenge in the
