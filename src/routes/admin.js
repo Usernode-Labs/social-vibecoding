@@ -66,6 +66,8 @@ const onboarding = require('../services/onboarding');
 const journeyLeftOut = require('../services/journey-left-out');
 const journey = require('../services/journey');
 const journeyDemoData = require('../services/journey-demo');
+const onboardingFlows = require('../services/onboarding-flows');
+const onboardingFlowsDemo = require('../services/onboarding-flows-demo');
 const usernames = require('../services/usernames');
 // The CSV writer the topochain admin's two exports share: quoting plus the
 // spreadsheet formula-injection guard, documented where it is defined.
@@ -1010,6 +1012,12 @@ function adminRoutes(config) {
   // cohort, and a reader narrows it by the people it already has.
   router.get('/api/admin/journey/flows', journeyRead('flows', () => journeyDemoData.flows(),
     async (req, ctx) => journey.flows(pool, ctx)));
+
+  // Admin › Onboarding flows: one row per person with their whole path, for
+  // the flow chart (services/onboarding-flows.js). Everyone over all time:
+  // it takes no week and no cohort, and the page narrows it itself.
+  router.get('/api/admin/onboarding-flows', journeyRead('onboarding flows', () => onboardingFlowsDemo.demo(),
+    async (req, ctx) => onboardingFlows.reading(pool, ctx)));
 
   router.get('/api/admin/journey/first-mile', journeyRead('first mile', (req) => journeyDemoData.firstMile(req.query.admitted),
     async (req, ctx) => {

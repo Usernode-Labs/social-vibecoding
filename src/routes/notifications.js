@@ -422,6 +422,21 @@ function stagingMockNotifications() {
       sessionId: 990111,
       prTitle: '[Mock] Bigger buttons on phones', prNumber: 9903, headlessIssueNumber: null,
     },
+    // A change the hold rules could not read in full, as a full admin's bell
+    // shows it (services/release-holds.js): told, not held, so no warning
+    // sign and no ask. Already read and the oldest row, so it sits at the end
+    // of the older ones and moves nothing a declared check expects on top.
+    {
+      ...base,
+      id: 990232, kind: 'release_hold',
+      createdAt: new Date(now - 13 * 24 * 60 * 60 * 1000).toISOString(),
+      readAt: new Date(now - 12 * 24 * 60 * 60 * 1000).toISOString(),
+      sourceUsername: 'staging-demo-user',
+      detail: 'notice:unread',
+      sessionId: 9000098,
+      sessionTitle: '[Mock] A large change that was not read in full',
+      prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
   ];
 }
 

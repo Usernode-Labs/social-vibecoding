@@ -499,7 +499,14 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M7 4.5v6.75a5 5 0 0 0 10 0V4.5M5 20h14',
     'M6 4.5v15M18 4.5v15M6 12h12',
     'M7.5 7.5H11V11H7.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75M16.5 7.5H20V11h-3.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75',
-    'M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z',    // ── Audit D08: the ⋯ menu's line icons ────────────────────────────
+    'M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z',    // ── #6653: the composer's strikethrough ────────────────────────────
+    //
+    // StrikethroughIcon (the S and the line through it) draws in a channel's
+    // formatting row and its right-click menu, which mount only once a
+    // channel is open. LinkIcon is already on this list above.
+    'M16.5 6.4c-.9-1.2-2.5-1.9-4.4-1.9-2.6 0-4.3 1.2-4.3 3.1 0 2.4 2.6 3 5.1 3.6M8 17.6c.9 1.2 2.5 1.9 4.4 1.9 2.7 0 4.6-1.3 4.6-3.2 0-1.2-.6-2-1.8-2.6',
+    'M4.5 12h15',
+    // ── Audit D08: the ⋯ menu's line icons ────────────────────────────
     //
     // Star (kudos), archive, chart-bar (campaign), bell-slash (mute) and
     // arrows-right-left (merge, split, break up) draw only in an open ⋯ menu

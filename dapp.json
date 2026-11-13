@@ -3133,9 +3133,9 @@
       "expectText": "#general"
     },
     {
-      "name": "#6035: a community channel's message box wears the formatting row, Bold through Bulleted list, above the field",
+      "name": "#6035/#6653: a community channel's message box wears the formatting row, Bold through Insert link, above the field",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-composer-card > .messages-format-bar[role=\"toolbar\"] > .messages-format-btn[data-format=\"bold\"] ~ .messages-format-btn[data-format=\"bullet\"]"
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-composer-card > .messages-format-bar[role=\"toolbar\"] > .messages-format-btn[data-format=\"bold\"] ~ .messages-format-btn[data-format=\"strike\"] ~ .messages-format-btn[data-format=\"bullet\"] ~ .messages-format-btn[data-format=\"link\"]"
     },
     {
       "name": "#2783: ...while #123 in a message still reads as an issue reference, not a channel",
@@ -4100,6 +4100,12 @@
       "path": "/?demo=1#admin/journey",
       "expectSelector": "#admin-journey-north-star",
       "expectText": "Active groups"
+    },
+    {
+      "name": "Admin Onboarding flows draws every person as a thread, in five views",
+      "path": "/?demo=1#admin/onboarding-flows",
+      "expectSelector": "#admin-onboarding-flows [data-tab=\"drop\"]",
+      "expectText": "Drop-offs"
     },
     {
       "name": "Analytics states the week's platform-key LLM spend (#1788)",
