@@ -1459,6 +1459,16 @@ async function compareScreens(pool, { runId, verdict, signal }, injected = {}) {
     if (typeof diff.unchangedStories === 'function') {
       stories = shotsFiles.markUnchanged(stories, diff.unchangedStories(screens));
     }
+    // A change folded onto another one's screen kept its own after shot, but
+    // the card draws the first change's: say so beside it. Injected comparers
+    // may return screens without the field.
+    if (typeof shotsFiles.markFolded === 'function') {
+      const folded = new Set();
+      for (const screen of screens) {
+        if (screen && Array.isArray(screen.foldedAfter)) for (const id of screen.foldedAfter) folded.add(id);
+      }
+      if (folded.size) stories = shotsFiles.markFolded(stories, folded);
+    }
     return { ...verdict, screens, stories };
   } catch (error) {
     if (signal?.aborted) throw error;
