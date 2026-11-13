@@ -2,8 +2,9 @@
 // the Look menu's looks (Settings › Experimental › Look, an admin's
 // preview). The head's window.Skin keeps the choice on the device and sets
 // data-skin="brand" on <html> before first paint; app.css draws the look
-// from that attribute in light mode only. It keeps the standard pages and
-// redraws them in the website's colours and typefaces.
+// from that attribute, in light and in dark. It keeps the standard pages
+// and redraws them in the website's colours and typefaces. Its rules are
+// written once for both modes and read each mode's own colours.
 //
 // The id is the old New look's, whose own switch was removed on 13 Nov
 // 2026: a device that had that switch on shows this look.
@@ -151,7 +152,12 @@ test('the look\'s name is English source with a description', () => {
 // ── The app.css rules ────────────────────────────────────────────────────
 
 const HEADING = '/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING';
-const FLAG = 'html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"])';
+// The look is on where the shell and a framed app agree about the tone, as
+// the frame's looks scope their pages. Where they disagree it steps aside.
+const FLAG = 'html[data-skin="brand"]';
+const LIGHT = `${FLAG}:not(.dark):not([data-app-tone="dark"])`;
+const DARK = `${FLAG}.dark:not([data-app-tone="light"])`;
+const EITHER = `${FLAG}:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"]))`;
 
 // The look's block: from its heading to the end of the sheet.
 function lookBlock() {
@@ -204,16 +210,30 @@ function lookRules() {
   return rules;
 }
 const ruleFor = (needle) => lookRules().filter((rule) => rule.selectors.some((sel) => sel.includes(needle)));
+// The one rule whose only selector is exactly this.
+const ruleAt = (selector) => lookRules().find((rule) => rule.selectors.length === 1 && rule.selectors[0] === selector);
+// A custom property's value in a rule body.
+const valueOf = (body, name) => {
+  const m = body.match(new RegExp(`${name}:\\s*([^;]+);`));
+  return m ? m[1].trim() : null;
+};
 
-test('every rule of the look is scoped to the flag, in light mode only', () => {
+test('every rule of the look is scoped to the flag, in one of its two modes or in either', () => {
   let selectors = 0;
+  const seen = { light: 0, dark: 0, either: 0 };
   for (const rule of lookRules()) {
     for (const sel of rule.selectors) {
       selectors += 1;
-      assert.ok(sel.startsWith(FLAG), `"${sel}" must start from the flag, outside dark mode and dark apps`);
+      // The longest scope first: the light one is a prefix of none of the others.
+      if (sel.startsWith(EITHER)) seen.either += 1;
+      else if (sel.startsWith(DARK)) seen.dark += 1;
+      else if (sel.startsWith(LIGHT)) seen.light += 1;
+      else assert.fail(`"${sel}" must start from the flag, in light, in dark, or in either`);
     }
   }
-  assert.ok(selectors > 60, 'the block is read whole');
+  assert.ok(selectors > 100, 'the block is read whole');
+  assert.ok(seen.either > seen.light + seen.dark, 'most of the look is written once, for both modes');
+  assert.ok(seen.light > 10 && seen.dark > 10, 'and each mode has its own tokens and its own utility ramp');
 });
 
 test('the block lives last and redeclares none of the counted wallpaper tokens', () => {
@@ -225,60 +245,117 @@ test('the block lives last and redeclares none of the counted wallpaper tokens',
   }
 });
 
-test('a card differs from the page by its fill: a deeper cream page, white cards, no outline', () => {
-  const root = lookRules().find((rule) => rule.selectors.length === 1 && rule.selectors[0] === FLAG);
-  assert.ok(root, 'the look sets its tokens on <html>');
-  assert.match(root.body, /--bg-secondary:\s*#f6f2d8;/, 'the page');
-  assert.match(root.body, /--bg-primary:\s*#ffffff;/, 'a card');
-  assert.match(root.body, /--dc-sheet-solid:\s*#ffffff;/);
-  assert.doesNotMatch(root.body, /#fffeea/, 'not the website\'s own cream: white cards would not stand out on it');
+// The look's own colours, one set per mode. A rule for either mode names no
+// colour of the page, the cards, the bars or the sky: it reads these.
+const LOOK_VARS = ['--bl-page', '--bl-card', '--bl-raise', '--bl-label', '--bl-tile-ink', '--bl-bar', '--bl-side',
+  '--bl-sun', '--bl-sun-lit', '--bl-on-sun', '--bl-wash', '--bl-sky', '--bl-count', '--bl-on-count', '--bl-solid',
+  '--bl-on-solid', '--bl-tint-sun', '--bl-tint-sky', '--bl-tint-leaf', '--bl-on-tint', '--bl-edge', '--bl-pic-line',
+  '--bl-lift', '--bl-raise-edge', '--bl-pill-edge', '--bl-pill-edge-down'];
+
+test('each mode sets every one of the look\'s colours, and the shared rules read them', () => {
+  const light = ruleAt(LIGHT);
+  const dark = ruleAt(DARK);
+  assert.ok(light && dark, 'one token rule per mode, on <html>');
+  for (const name of LOOK_VARS) {
+    assert.ok(valueOf(light.body, name), `light sets ${name}`);
+    assert.ok(valueOf(dark.body, name), `dark sets ${name}`);
+  }
+  // Nothing is read that a mode forgot to set, and nothing is set unread.
+  const read_ = new Set([...lookBlock().matchAll(/var\((--bl-[a-z-]+)\)/g)].map((m) => m[1]));
+  assert.deepEqual([...read_].sort(), [...LOOK_VARS].sort());
+  // The product's tokens every surface draws from move in both modes too.
+  for (const token of ['--bg-primary', '--bg-secondary', '--bg-tertiary', '--bg-input', '--dc-strip', '--dc-sheet',
+    '--dc-sheet-solid', '--dc-strip-solid', '--border', '--border-light', '--text-primary', '--text-secondary',
+    '--text-muted', '--text-faint', '--accent', '--accent-ink', '--lit-ink', '--lit-tint', '--brand-ink']) {
+    assert.ok(valueOf(light.body, token), `light sets ${token}`);
+    assert.ok(valueOf(dark.body, token), `dark sets ${token}`);
+  }
+  // A rule for either mode carries no colour of its own for those roles.
+  for (const rule of lookRules()) {
+    if (!rule.selectors.every((sel) => sel.startsWith(EITHER))) continue;
+    for (const colour of ['#f6f2d8', '#141a11', '#20281c', '#37477b', '#232c4f', '#1a63c4', '#143a75', '#7fbcf7']) {
+      assert.ok(!rule.body.includes(colour), `"${rule.selectors[0]}" names ${colour}: read the mode's variable instead`);
+    }
+  }
+});
+
+test('a card differs from the page by its fill, in both modes, with no outline', () => {
+  const light = ruleAt(LIGHT).body;
+  const dark = ruleAt(DARK).body;
+  // Light: white cards on a deeper cream.
+  assert.equal(valueOf(light, '--bl-page'), '#f6f2d8');
+  assert.equal(valueOf(light, '--bl-card'), '#ffffff');
+  assert.equal(valueOf(light, '--bg-secondary'), '#f6f2d8', 'the page');
+  assert.equal(valueOf(light, '--bg-primary'), '#ffffff', 'a card');
+  assert.doesNotMatch(light, /#fffeea/, 'not the website\'s own cream: white cards would not stand out on it');
+  // Dark: the dark of the website's ink, and a card one step lighter. The
+  // surfaces climb from the page, as in the standard dark.
+  assert.equal(valueOf(dark, '--bl-page'), '#141a11');
+  assert.equal(valueOf(dark, '--bl-card'), '#20281c');
+  assert.equal(valueOf(dark, '--bg-primary'), '#141a11', 'the page');
+  assert.equal(valueOf(dark, '--bg-secondary'), '#20281c', 'a card');
+  assert.equal(valueOf(dark, '--text-primary'), '#f6f2d8', 'words are the cream the light page is made of');
   // The outline every card is drawn with is a hairline too faint to read as
-  // one; the fill and a soft lift say where a card ends.
-  const line = lookRules().find((rule) => /--app-sheet-line:/.test(rule.body));
-  assert.ok(line, 'the look sets the sheet line');
-  assert.match(line.selectors[0], /:not\(\[data-contrast="more"\]\)$/, 'More contrast keeps its darker lines');
-  const alpha = Number(line.body.match(/--app-sheet-line:\s*rgba\(18, 26, 14, ([\d.]+)\)/)[1]);
-  assert.ok(alpha <= 0.08, 'faint');
+  // one; the fill and a lift say where a card ends.
+  for (const [mode, ink] of [[LIGHT, '18, 26, 14'], [DARK, '246, 242, 216']]) {
+    const line = ruleAt(`${mode}:not([data-contrast="more"])`);
+    assert.ok(line, 'the look sets the sheet line, and leaves More contrast its own');
+    const alpha = Number(valueOf(line.body, '--app-sheet-line').match(new RegExp(`^rgba\\(${ink}, ([\\d.]+)\\)$`))[1]);
+    assert.ok(alpha <= 0.08, 'faint');
+  }
   const cards = ruleFor('.dev-ws-strip').find((rule) => /box-shadow:/.test(rule.body));
   assert.ok(cards, 'cards take a lift');
-  assert.match(cards.body, /box-shadow:\s*inset 0 0 0 1px var\(--app-sheet-line\), 0 1px 2px rgba\([^)]*\), 0 14px 30px -22px/);
+  assert.match(cards.body, /box-shadow:\s*inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift\);/);
   for (const sel of ['.messages-section-card', '.home-challenge-card', '.shadow-\\[inset_0_0_0_1px_var\\(--app-sheet-line\\)\\]']) {
-    assert.ok(cards.selectors.some((s) => s.endsWith(sel)), `${sel} is one of them`);
+    assert.ok(cards.selectors.some((s) => s === `${EITHER} ${sel}`), `${sel} is one of them`);
   }
+  assert.match(valueOf(light, '--bl-lift'), /^0 1px 2px rgba\(18, 26, 14, [\d.]+\), 0 14px 30px -22px rgba\(18, 26, 14, [\d.]+\)$/);
+  assert.match(valueOf(dark, '--bl-lift'), /^0 1px 2px rgba\(0, 0, 0, [\d.]+\), 0 14px 30px -22px rgba\(0, 0, 0, [\d.]+\)$/, 'a shadow has to out-darken a dark page');
   // The pane a screen stands on is the page itself, flat.
   const strip = ruleFor('.dc-lift-strip')[0];
-  assert.match(strip.body, /background-color:\s*#f6f2d8;/);
+  assert.match(strip.body, /background-color:\s*var\(--bl-page\);/);
   assert.match(strip.body, /box-shadow:\s*none;/);
 });
 
-test('the sidebar is the deep sky with white words, and the row you are on is sun', () => {
+test('the sidebar is blue with white words, and the row you are on is sun', () => {
   const css = lookBlock();
   const media = css.match(/@media \(min-width: 768px\) \{([\s\S]*?)\n\}\n/);
   assert.ok(media, 'the sidebar\'s rules apply from 768px, where the bar is a sidebar');
-  const bar = ruleFor('#platform-tabs').find((rule) => rule.selectors[0] === `${FLAG} #platform-tabs`);
-  assert.ok(bar, 'the bar itself');
-  assert.match(bar.body, /background:\s*#1a63c4;/);
+  const bar = ruleAt(`${EITHER} #platform-tabs`);
+  assert.ok(bar, 'the bar itself, for either mode');
+  assert.match(bar.body, /background:\s*var\(--bl-side\);/);
+  assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-side'), '#1a63c4', 'the deep sky');
+  assert.equal(valueOf(ruleAt(DARK).body, '--bl-side'), '#143a75', 'deeper in dark, so it does not glare beside a dark page');
   // Its rows draw from the tokens, so hover and focus follow without a rule each.
   assert.match(bar.body, /--text-primary:\s*rgba\(255, 255, 255, 0\.94\);/);
   assert.match(bar.body, /--lit-tint:\s*rgba\(255, 255, 255, 0\.24\);/, 'what is hovered is a wash of white');
   assert.match(bar.body, /--lit-ink:\s*#ffffff;/);
-  const here = ruleFor('[aria-current="page"]').find((rule) => /background:\s*#ffee6f;/.test(rule.body) && rule.selectors[0].includes('#platform-tabs'));
+  const here = ruleFor('[aria-current="page"]').find((rule) => /background:\s*var\(--bl-sun\);/.test(rule.body) && rule.selectors[0].includes('#platform-tabs'));
   assert.ok(here, 'the lit row');
-  assert.match(here.body, /color:\s*#121a0e;/, 'ink on sun');
+  assert.match(here.body, /color:\s*var\(--bl-on-sun\);/, 'ink on sun');
   assert.match(here.selectors[0], /\.platform-rail-community:not\(\[data-rail-open\]\)/, 'a community whose places are open is not lit; its place is');
+  for (const mode of [LIGHT, DARK]) {
+    assert.equal(valueOf(ruleAt(mode).body, '--bl-sun'), '#ffee6f');
+    assert.equal(valueOf(ruleAt(mode).body, '--bl-on-sun'), '#121a0e');
+  }
   assert.ok(ruleFor('.platform-rail-nest-in::before').some((rule) => /background:\s*rgba\(255, 255, 255, 0\.45\);/.test(rule.body)),
     'the faint bar beside a community\'s nested rows');
 });
 
-test('the top bar is navy, darker than the sidebar, and a community\'s bar keeps its own colour', () => {
+test('the top bar is navy, not the sidebar\'s blue, and a community\'s bar keeps its own colour', () => {
   const painted = lookRules().filter((rule) => rule.selectors.some((sel) => /#platform-header#platform-header(::before)?$/.test(sel)));
   assert.ok(painted.length >= 2, 'the top-level bar is restyled');
   for (const rule of painted) {
     for (const sel of rule.selectors) assert.match(sel, /:not\(\[data-community-tint\]\)/, `"${sel}" must leave a project's bar its community's colour`);
   }
   const bar = painted.find((rule) => /background-color:/.test(rule.body));
-  assert.match(bar.body, /background-color:\s*#37477b;/);
+  assert.match(bar.body, /background-color:\s*var\(--bl-bar\);/);
   assert.match(bar.body, /--brand-ink:\s*#ffffff;/, 'white words');
+  assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-bar'), '#37477b');
+  assert.equal(valueOf(ruleAt(DARK).body, '--bl-bar'), '#232c4f');
+  for (const mode of [LIGHT, DARK]) {
+    assert.notEqual(valueOf(ruleAt(mode).body, '--bl-bar'), valueOf(ruleAt(mode).body, '--bl-side'), 'the two read as two pieces');
+  }
   // A phone browser's own rule for the bar is two ids and a `body` deep.
   assert.match(bar.selectors[0], /body:has\(#platform-tabs\) #platform-header#platform-header$/, 'deep enough to outrank it');
   // No other rule that reaches a community's bar gives it a fill.
@@ -290,24 +367,61 @@ test('the top bar is navy, darker than the sidebar, and a community\'s bar keeps
   }
 });
 
-test('on a phone the tab bar is the deep sky and its marker sun', () => {
+test('on a phone the tab bar is the sidebar\'s blue and its marker sun', () => {
   const css = lookBlock();
   assert.match(css, /@media \(max-width: 767\.98px\) \{/);
-  const bar = lookRules().find((rule) => rule.selectors[0] === `${FLAG} .platform-tabs`);
-  assert.match(bar.body, /--lit-tint:\s*#ffee6f;/, 'the marker draws from the lit tint');
-  assert.match(bar.body, /--lit-ink:\s*#121a0e;/, 'and the tab on it is ink');
-  assert.ok(ruleFor('.platform-tabs::before').some((rule) => /background:\s*#1a63c4;/.test(rule.body)));
+  const bar = ruleAt(`${EITHER} .platform-tabs`);
+  assert.match(bar.body, /--lit-tint:\s*var\(--bl-sun\);/, 'the marker draws from the lit tint');
+  assert.match(bar.body, /--lit-ink:\s*var\(--bl-on-sun\);/, 'and the tab on it is ink');
+  assert.ok(ruleFor('.platform-tabs::before').some((rule) => /background:\s*var\(--bl-side\);/.test(rule.body)));
 });
 
-test('one accent for "do this", and the old blue as words is the deep sky', () => {
-  const pill = ruleFor('.bg-violet-600').find((rule) => /background-color:\s*#ffee6f;/.test(rule.body));
+test('one accent for "do this", and the old blue as words is the sky', () => {
+  const pill = ruleFor('.bg-violet-600').find((rule) => /background-color:\s*var\(--bl-sun\);/.test(rule.body));
   assert.ok(pill, 'the main button is a sun pill');
-  assert.match(pill.body, /box-shadow:\s*inset 0 0 0 1px #121a0e, 0 2px 0 #121a0e;/, 'on the website\'s ink outline and hard foot');
+  assert.match(pill.body, /box-shadow:\s*var\(--bl-pill-edge\);/);
+  assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-pill-edge'), 'inset 0 0 0 1px #121a0e, 0 2px 0 #121a0e', 'on the website\'s ink outline and hard foot');
+  assert.match(valueOf(ruleAt(DARK).body, '--bl-pill-edge'), /^0 2px 0 #[0-9a-f]{6}$/, 'in dark the foot alone: an ink outline would vanish');
   const words = ruleFor('.text-violet-600')[0];
-  assert.match(words.body, /color:\s*#1a63c4;/);
+  assert.match(words.body, /color:\s*var\(--bl-sky\);/);
+  assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-sky'), '#1a63c4', 'the deep sky on a white card');
+  assert.equal(valueOf(ruleAt(DARK).body, '--bl-sky'), '#7fbcf7', 'a light sky, which reads on a dark card');
+  // Dark wears its own utilities for the same words.
+  assert.ok(words.selectors.includes(`${DARK} .dark\\:text-violet-400`));
   const count = ruleFor('.dev-ws-foryou-pill:not([data-ws-channel-unread])')[0];
-  assert.match(count.body, /background:\s*#1a63c4;/);
-  assert.match(count.body, /color:\s*#ffffff;/);
+  assert.match(count.body, /background:\s*var\(--bl-count\);/);
+  assert.match(count.body, /color:\s*var\(--bl-on-count\);/);
+});
+
+test('each mode repaints the zinc utilities it wears, and only those', () => {
+  const light = lookRules().filter((rule) => rule.selectors.every((sel) => sel.startsWith(LIGHT) && !sel.startsWith(EITHER)));
+  const dark = lookRules().filter((rule) => rule.selectors.every((sel) => sel.startsWith(DARK)));
+  const names = (rules) => rules.flatMap((rule) => rule.selectors).join('\n');
+  for (const cls of ['.bg-zinc-100', '.text-zinc-500', '.border-zinc-200']) assert.ok(names(light).includes(` ${cls}`), `light repaints ${cls}`);
+  for (const cls of ['.dark\\:bg-zinc-900', '.dark\\:bg-zinc-800', '.dark\\:text-zinc-400', '.dark\\:border-zinc-800']) {
+    assert.ok(names(dark).includes(` ${cls}`), `dark repaints ${cls}`);
+  }
+  // A light rule that named a dark: utility, or the reverse, would paint the
+  // other mode's elements: an element carries both classes.
+  assert.doesNotMatch(names(light), /\.dark\\:/, 'no light rule names a dark: utility');
+  for (const sel of names(dark).split('\n')) {
+    if (/\.(bg|text|border)-zinc-\d/.test(sel.replace(/\.dark\\:[a-z\\:-]+\d+(\\\/\d+)?/g, ''))) assert.fail(`"${sel}" is a dark rule that names a light utility`);
+  }
+});
+
+test('More contrast keeps its stronger muted words and lines under the look', () => {
+  for (const [mode, cls] of [[LIGHT, '.text-zinc-500'], [DARK, '.dark\\:text-zinc-500']]) {
+    const tokens = ruleAt(`${mode}[data-contrast="more"]`);
+    assert.ok(tokens, 'the mode restates the tokens the standard rule deepens');
+    for (const token of ['--text-muted', '--text-faint', '--border', '--border-light']) assert.ok(valueOf(tokens.body, token), token);
+    assert.equal(valueOf(tokens.body, '--app-sheet-line'), null, 'the sheet line is left to the standard rule');
+    assert.ok(lookRules().some((rule) => rule.selectors[0].startsWith(`${mode}[data-contrast="more"] `) && rule.selectors[0].includes(cls)),
+      `and the muted utility ${cls}`);
+  }
+  // They come after the tokens and the ramps they restate.
+  const block = lookBlock();
+  assert.ok(block.indexOf(`${DARK}[data-contrast="more"] {`) > block.indexOf(`${DARK} .dark\\:text-zinc-500`));
+  assert.ok(block.indexOf(`${LIGHT}[data-contrast="more"] {`) > block.indexOf(`${LIGHT} .text-zinc-500`));
 });
 
 test('a label over a group is sentence case', () => {

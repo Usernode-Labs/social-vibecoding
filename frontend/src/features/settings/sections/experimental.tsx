@@ -53,9 +53,9 @@ import { LocalAgentsList } from '../local-agents-list';
  * src/head.html) offers the looks (lib/skin.ts MENU_SKINS): each sets its
  * id as data-skin on <html> before first paint and app.css draws it. The
  * first, `brand`, keeps the standard pages and redraws them in the
- * website's colours and typefaces, in light mode only. The five after it
- * are the looks of the one frame (FRAME_SKINS, the directions the
- * 2026-11-06 screen tour kept), light and dark. The menu is an admin's
+ * website's colours and typefaces. The five after it are the looks of the
+ * one frame (FRAME_SKINS, the directions the 2026-11-06 screen tour
+ * kept). All six are drawn in light and dark. The menu is an admin's
  * preview while the looks are drawn screen by screen:
  * #settings-look-section ships hidden and settings.js _renderAdminSection
  * lifts the class only for a REAL admin (App._realIsAdmin), as it does for
