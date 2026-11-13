@@ -3558,9 +3558,9 @@ const GroupChat = {
   },
 
   // The stages at which a card's request is still going (homeroom-bot-chat.js
-  // CARD_STAGES), or waiting on approval that may come in at any time, or on
-  // the project's first version going live.
-  _BOT_CARD_GOING: new Set(['waiting_first_version', 'reading', 'waiting', 'building', 'checking', 'proposed', 'approved', 'fixing']),
+  // CARD_STAGES), or waiting on approval that may come in at any time, on
+  // the project's first version going live, or on its requester's own plan.
+  _BOT_CARD_GOING: new Set(['waiting_first_version', 'reading', 'waiting', 'waiting_plan', 'building', 'checking', 'proposed', 'approved', 'fixing']),
 
   // Whether one card still has somewhere to go.
   _botCardGoing(card) {
