@@ -574,6 +574,42 @@ const FIRST_MILE_INVITED_SQL = `WITH ${ADMITTED_CTE}
      AND ${REAL_PERSON_SQL}
    ORDER BY iv.invite_redeemed_at, u.id`;
 
+// Everyone's first mile in one read, for the onboarding flows: each person
+// let off the waitlist (as their admit cohort has them), and every other real
+// person who has access or followed an invite link, whenever that was. The
+// cohort queries above cover one admit day, or the last weeks; a chart of the
+// whole funnel needs the people from before them too. $1 the most rows to
+// return, $2 now.
+const EVERYONE_MAX = 5000;
+const FIRST_MILE_EVERYONE_SQL = `WITH ${ADMITTED_CTE}
+  SELECT x.* FROM (
+    SELECT a.signup_id, a.email, a.released_at, 'admitted'::text AS door,
+           ${INVITE_COLUMNS}, ${PERSON_FACTS}
+      FROM admitted a
+      LEFT JOIN users u ON u.id = a.linked_user_id
+      ${INVITE_JOIN}
+      ${PERSON_JOINS}
+     WHERE a.released_at <= $2::timestamptz
+       AND ${NEWCOMER_OR_NO_ACCOUNT}
+    UNION ALL
+    SELECT NULL::bigint AS signup_id, NULL::text AS email, NULL::timestamptz AS released_at,
+           CASE WHEN iv.invite_id IS NOT NULL THEN 'invite_link' ELSE 'code_wallet_or_grant' END AS door,
+           ${INVITE_COLUMNS}, ${PERSON_FACTS}
+      FROM users u
+      LEFT JOIN admitted a ON FALSE
+      ${INVITE_JOIN}
+      ${PERSON_JOINS}
+     WHERE (u.has_platform_access OR iv.invite_id IS NOT NULL)
+       AND u.created_at <= $2::timestamptz
+       AND NOT EXISTS (
+         SELECT 1 FROM admitted a2
+          WHERE a2.linked_user_id = u.id AND a2.released_at <= $2::timestamptz
+            AND (u.platform_access_granted_at IS NULL OR u.platform_access_granted_at >= a2.released_at))
+       AND ${REAL_PERSON_SQL}
+  ) x
+  ORDER BY COALESCE(x.released_at, x.access_at, x.account_at), x.user_id, x.signup_id
+  LIMIT $1::int`;
+
 // Still on the waitlist: joined and not let off yet. One row per person (a
 // sign-up, or the account it is linked to), the longest wait first. An
 // account that already has access some other way is not waiting; a test
@@ -1221,6 +1257,93 @@ async function firstMile(pool, { day, now = new Date(), leftOutIds = [] } = {}) 
   };
 }
 
+/**
+ * Everyone's first mile (FIRST_MILE_EVERYONE_SQL): each person as their
+ * cohort's first mile has them, with the dates the onboarding flows place
+ * them by (`releasedAt`, `accountAt`, `accessAt`, `inviteAt`). Somebody
+ * invited and not let in yet has the invite's first mile. Each carries
+ * `cameFrom`, the two recorded sources; there is no `onboard` here, which a
+ * caller that needs it reads from the cohort.
+ */
+async function everyoneMile(pool, { now = new Date(), leftOutIds = [] } = {}) {
+  const { rows } = await pool.query(FIRST_MILE_EVERYONE_SQL, [EVERYONE_MAX, now, ...realPersonParams(leftOutIds)]);
+  const cameFromRecords = await cameFromFor(pool, {
+    userIds: rows.map((r) => r.user_id).filter((v) => v != null),
+    signupIds: rows.map((r) => r.signup_id).filter((v) => v != null),
+  });
+  const t = (v) => (v ? new Date(v) : null);
+  const people = rows.map((row) => {
+    const invitedOnly = row.invite_id != null && !row.released_at && !row.has_platform_access;
+    return {
+      ...(invitedOnly ? invitedMilePerson(row, now) : firstMilePerson(row, now)),
+      invitedOnly,
+      releasedAt: t(row.released_at),
+      accountAt: t(row.account_at),
+      accessAt: t(row.access_at),
+      inviteAt: t(row.invite_redeemed_at),
+      cameFrom: cameFromOf(cameFromRecords, { userId: row.user_id, signupId: row.signup_id }),
+    };
+  });
+  return { people, cut: rows.length >= EVERYONE_MAX };
+}
+
+/** When each person last contributed and last used an app (LAST_ACTS_SQL), by user id. */
+async function lastActs(pool, { now = new Date(), leftOutIds = [] } = {}) {
+  const { rows } = await pool.query(LAST_ACTS_SQL, [EVERYONE_MAX, now, ...realPersonParams(leftOutIds)]);
+  const byUser = new Map();
+  for (const r of rows) {
+    byUser.set(Number(r.user_id), {
+      lastContribAt: r.last_contrib_at ? new Date(r.last_contrib_at) : null,
+      lastAppDay: r.last_app_day || null,
+    });
+  }
+  return byUser;
+}
+
+/**
+ * The people still on the waitlist, counted: how long they have waited so
+ * far, how far each got, what they said brought them, which form they joined
+ * through and the month they joined. No names: the cohort's first mile has
+ * the people.
+ */
+async function waitingSummary(pool, { now = new Date(), leftOutIds = [] } = {}) {
+  const { rows } = await pool.query(FIRST_MILE_WAITING_SQL, [WAITING_MAX, now, ...realPersonParams(leftOutIds)]);
+  const people = rows.map((row) => waitingMilePerson(row, now));
+  const total = rows.length ? Number(rows[0].total) || rows.length : 0;
+  const tally = (keyOf) => {
+    const m = new Map();
+    for (const p of people) { const k = keyOf(p); if (k != null) m.set(k, (m.get(k) || 0) + 1); }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  };
+  const waits = people.map((p) => p.waitlist.waitedDays).filter((d) => d != null).sort((a, b) => a - b);
+  const done = (p, key) => p.steps.some((st) => st.key === key && st.state === 'done');
+  const bucket = (d) => (d < 14 ? 'under_2_weeks' : d < 42 ? '2_to_5_weeks' : d < 91 ? '6_to_12_weeks' : '3_months_or_more');
+  const order = ['under_2_weeks', '2_to_5_weeks', '6_to_12_weeks', '3_months_or_more'];
+  const waited = new Map(order.map((k) => [k, 0]));
+  for (const d of waits) waited.set(bucket(d), waited.get(bucket(d)) + 1);
+  const months = new Map();
+  for (const p of people) {
+    const m = p.waitlist.joinedAt ? new Date(p.waitlist.joinedAt).toISOString().slice(0, 7) : null;
+    if (m) months.set(m, (months.get(m) || 0) + 1);
+  }
+  return {
+    people: total,
+    counted: people.length,
+    medianDays: waits.length ? waits[Math.floor((waits.length - 1) / 2)] : null,
+    longestDays: waits.length ? waits[waits.length - 1] : null,
+    waited: order.filter((k) => waited.get(k)).map((k) => [k, waited.get(k)]),
+    far: [
+      ['confirmed', people.filter((p) => done(p, 'wl_confirmed')).length],
+      ['answered', people.filter((p) => done(p, 'wl_answered')).length],
+      ['account', people.filter((p) => done(p, 'wl_account')).length],
+      ['none', people.filter((p) => !done(p, 'wl_confirmed') && !done(p, 'wl_answered') && !done(p, 'wl_account')).length],
+    ],
+    said: tally((p) => p.waitlist.discovery || 'not_said'),
+    form: tally((p) => p.waitlist.source || 'not_recorded'),
+    months: [...months.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)),
+  };
+}
+
 // ── Stages, per week ───────────────────────────────────────────────────
 //
 // One yes or no per real person for the week [$1, $2); Stay also reads the
@@ -1267,6 +1390,32 @@ const OWN_CHANGE = `cs.pr_number IS NOT NULL
       AND cs.source IS DISTINCT FROM 'maintenance'
       AND cs.cloned_from_session_id IS NULL
       AND COALESCE(cs.branch_name, '') NOT LIKE 'rename/%'`;
+
+// When each real person last contributed (a vote on a change or a request,
+// feedback, a request filed, a change of their own, or one of theirs going
+// live) and the last day they used an app for 30 seconds or more. $1 the
+// most rows to return, $2 now.
+const LAST_ACTS_SQL = `WITH real AS (
+    SELECT u.id FROM users u WHERE ${REAL_PERSON_SQL}
+  ), c AS (
+    SELECT pv.user_id, pv.created_at AS at FROM pr_votes pv
+    UNION ALL SELECT ivx.user_id, ivx.created_at FROM issue_votes ivx
+    UNION ALL SELECT frx.user_id, frx.created_at FROM feedback_reports frx
+    UNION ALL SELECT i.created_by, i.created_at FROM issues i
+    UNION ALL SELECT ${CHANGE_PERSON_SQL}, cs.created_at FROM chat_sessions cs WHERE ${OWN_CHANGE}
+    UNION ALL SELECT ${CHANGE_PERSON_SQL}, cs.merged_at FROM chat_sessions cs
+               WHERE ${OWN_CHANGE} AND cs.status = 'merged' AND cs.merged_at IS NOT NULL
+  )
+  SELECT r.id AS user_id, lc.at AS last_contrib_at, to_char(la.day, 'YYYY-MM-DD') AS last_app_day
+    FROM real r
+    LEFT JOIN (SELECT c.user_id, MAX(c.at) AS at FROM c
+                WHERE c.at <= $2::timestamptz GROUP BY c.user_id) lc ON lc.user_id = r.id
+    LEFT JOIN (SELECT aa.user_id, MAX(aa.date) AS day FROM app_activity aa
+                WHERE aa.seconds_spent >= 30 AND aa.date <= ($2::timestamptz AT TIME ZONE 'UTC')::date
+                GROUP BY aa.user_id) la ON la.user_id = r.id
+   WHERE lc.at IS NOT NULL OR la.day IS NOT NULL
+   ORDER BY r.id
+   LIMIT $1::int`;
 
 const STAGES_SQL = `WITH real AS (
     SELECT u.id, u.username FROM users u WHERE ${REAL_PERSON_SQL}
@@ -3567,6 +3716,12 @@ module.exports = {
   invitedMileSteps,
   invitedMilePerson,
   mailPageFact,
+  FIRST_MILE_EVERYONE_SQL,
+  LAST_ACTS_SQL,
+  EVERYONE_MAX,
+  everyoneMile,
+  lastActs,
+  waitingSummary,
   FLOWS_AUDIENCE_SQL,
   FLOWS_APPS_SQL,
   FLOWS_PEOPLE_SQL,

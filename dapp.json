@@ -4095,6 +4095,12 @@
       "expectText": "Active groups"
     },
     {
+      "name": "Admin Onboarding flows draws every person as a thread, in five views",
+      "path": "/?demo=1#admin/onboarding-flows",
+      "expectSelector": "#admin-onboarding-flows [data-tab=\"drop\"]",
+      "expectText": "Drop-offs"
+    },
+    {
       "name": "Analytics states the week's platform-key LLM spend (#1788)",
       "path": "/?demo=1#admin/analytics",
       "expectText": "LLM spend this week"
