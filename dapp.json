@@ -835,7 +835,7 @@
       "name": "Guest back arrow returns to the app directory (#1028)",
       "path": "/?shot=anon-back#landing",
       "expectSelector": "#auth-landing-screen:not(.hidden) #app-viewer.hidden[data-anon-back=\"done\"]",
-      "expectText": "On Homeroom, communities make apps together.",
+      "expectText": "The app library anyone can edit.",
       "allowConsoleErrors": true
     },
     {
@@ -1850,7 +1850,7 @@
       "name": "Landing tells the story and asks people to get started (first session)",
       "path": "/?shot=anon#landing",
       "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header [data-landing-sign-in]:not(.hidden)) [data-guest-discover] [data-landing-story] h1",
-      "expectText": "On Homeroom, communities make apps together.",
+      "expectText": "The app library anyone can edit.",
       "allowConsoleErrors": true
     },
     {
@@ -2005,10 +2005,17 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Landing has Sign in and Sign up in its bar, and one button to make an account under the story (first session)",
+      "name": "Landing has Sign in and one filled button in its bar, and under the story no button, only the door to private communities (first session)",
       "path": "/?shot=anon#landing",
-      "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header button[data-landing-sign-up]):has([data-landing-story] button[data-landing-story-join]):not(:has([data-landing-story] a)) #landing-header [data-landing-sign-in]:not(.hidden)",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header button[data-landing-sign-up]):has([data-landing-story] a[data-landing-story-private][href=\"/communities\"]):not(:has([data-landing-story] button)) #landing-header [data-landing-sign-in]:not(.hidden)",
       "expectText": "Sign in",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Signed out: /communities is the page about private communities, in the guest Discover's place, with the approval rules and its own way in",
+      "path": "/communities?shot=anon",
+      "expectSelector": "#auth-landing-screen:not(.hidden):not(:has([data-guest-discover])) [data-guest-groups]:has(button[data-guest-groups-start]):has(a[data-guest-groups-back][href=\"/\"]) [data-guest-groups-rule=\"you_or_the_group\"] h3",
+      "expectText": "You or the group",
       "allowConsoleErrors": true
     },
     {

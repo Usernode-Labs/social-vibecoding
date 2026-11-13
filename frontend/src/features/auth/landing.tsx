@@ -77,9 +77,10 @@ import {
   type SignInResume,
   spendReleaseLink,
 } from './sign-in-sheet';
-import { Story } from './story';
+import { COMMUNITIES_PATH, Story } from './story';
 import { cardCover, morph, projectHero } from '../guest/card-morph';
 import { devicePinsStore, loadDevicePins, toggleDevicePin } from '../guest/device-pins';
+import { GuestCommunities } from '../guest/guest-communities';
 import { GuestDiscover } from '../guest/guest-discover';
 import { LandingFrame } from '../guest/frame/landing-frame';
 import { type GuestIntent, GuestProject } from '../guest/guest-project';
@@ -661,6 +662,27 @@ export const SIGNING_IN_MAX_MS = 20_000;
 export const APPS_ATTEMPTS = 3;
 export const APPS_RETRY_MS = 1000;
 
+/** The directory's `month` (src/services/public-app-directory.js publicMonthActivity). */
+export interface MonthActivity {
+  changes: number;
+  contributors: number;
+}
+
+/**
+ * The two figures off a directory payload, or null when it carries none or
+ * they are not numbers. A month with no change in it is null too: "0
+ * changes" under the headline says the wrong thing about the place, and a
+ * zero says nothing (AGENTS.md, "let zero say nothing").
+ */
+export function monthActivityOf(data: unknown): MonthActivity | null {
+  const month = data && typeof data === 'object' ? (data as { month?: unknown }).month : null;
+  if (!month || typeof month !== 'object') return null;
+  const changes = Number((month as { changes?: unknown }).changes);
+  const contributors = Number((month as { contributors?: unknown }).contributors);
+  if (!Number.isFinite(changes) || !Number.isFinite(contributors) || changes < 1 || contributors < 1) return null;
+  return { changes: Math.floor(changes), contributors: Math.floor(contributors) };
+}
+
 /**
  * The read of the public directory, GET /api/public/apps, made for the
  * landing (loadLandingApps below). `show` is told when an attempt starts
@@ -671,7 +693,7 @@ export const APPS_RETRY_MS = 1000;
  * real session guard.
  */
 export function createAppsReader(
-  show: { failed(failed: boolean): void; apps(list: PublicApp[]): void },
+  show: { failed(failed: boolean): void; apps(list: PublicApp[]): void; month?(month: MonthActivity | null): void },
   wait: (ms: number) => Promise<unknown> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 ): () => Promise<void> {
   let inFlight: Promise<void> | null = null;
@@ -709,6 +731,9 @@ export function createAppsReader(
           //   * it IS the guest Discover (features/guest/guest-discover.tsx):
           //     every card there is a row of it.
           show.apps(list);
+          // The short story's two figures ride beside the list (./story.tsx,
+          // "This month"); null when the server could not read them.
+          show.month?.(monthActivityOf(data));
           show.failed(false);
           return;
         } catch {
@@ -991,6 +1016,8 @@ export function LandingScreen() {
   // it could not be.
   const [apps, setApps] = useState<GuestApp[] | null>(null);
   const [appsFailed, setAppsFailed] = useState(false);
+  // The short story's "This month" figures, which come with that read.
+  const [month, setMonth] = useState<MonthActivity | null>(null);
   // What a visitor tried to do on a project's page (Join, Vote, Ask, the
   // chat, an app that needs an account): the sign-in sheet titled for it.
   const [intent, setIntent] = useState<GuestIntent | null>(null);
@@ -1019,6 +1046,13 @@ export function LandingScreen() {
     () => typeof location !== 'undefined' && onInviteLink(location.pathname),
   );
   useEffect(() => { setOnInvitePath(onInviteLink(location.pathname)); }, []);
+  // The page about private communities has an address of its own
+  // (./story.tsx COMMUNITIES_PATH), read in the first render for the same
+  // reason the invite path is.
+  const [onGroupsPath, setOnGroupsPath] = useState(
+    () => typeof location !== 'undefined' && location.pathname === COMMUNITIES_PATH,
+  );
+  useEffect(() => { setOnGroupsPath(location.pathname === COMMUNITIES_PATH); }, []);
 
   // Non-render state, mirroring the legacy module's fields one for one.
   const st = useRef({
@@ -1098,6 +1132,10 @@ export function LandingScreen() {
   const storyFront = storyOn && inApp && !linkedSlug && !discoverLink && !gate;
   // The guest pages (Discover, a project's page) and their bar.
   const guestPages = guestOn && !storyFront;
+  // …and, at its own address, the page about private communities in
+  // Discover's place (../guest/guest-communities.tsx). A project's page or a
+  // members' link's sheet named by the hash still comes first.
+  const groupsPage = guestPages && onGroupsPath && !guestProject && !linkPending && !gate;
   // Discover inside the app, reached from the story: its bar has a back.
   const appDiscover = storyOn && inApp && discoverLink;
   // The project's name, when the link is for a public one.
@@ -1351,6 +1389,7 @@ export function LandingScreen() {
       st.appsList = list;
       setApps(list as GuestApp[]);
     },
+    month: setMonth,
   }), [st]);
   const loadLandingApps = useCallback(() => readApps(), [readApps]);
 
@@ -1833,7 +1872,11 @@ export function LandingScreen() {
             className={guestTop ? 'un-touch-target items-center justify-center -my-2 min-h-11 px-3.5 text-[15px] font-semibold' : 'un-touch-target items-center justify-center hidden md:inline-flex -my-2 min-h-11 px-3.5 text-[15px] font-semibold'}
             onClick={() => { noteSignUpFrom('header_sign_up'); setSheet('start'); }}
           >
-            {t('auth:guest.header.signUp')}
+            {/* While new accounts wait the button says what pressing it does
+                (13 Nov 2026): the short story's own "Join the waitlist"
+                button is gone, and "Sign up" over a waiting room was the
+                other half of two names for one thing. */}
+            {accountsWait ? t('auth:guest.hero.joinWaitlist') : t('auth:guest.header.signUp')}
           </Button>
         </div>
       </header>
@@ -2294,6 +2337,12 @@ export function LandingScreen() {
               onAllCommunities={onBack}
             />
           ) : null}
+          {/* At `/communities`, the page about private communities, in the
+              guest Discover's place under either drawing of it. */}
+          {groupsPage ? (
+            <GuestCommunities waitlist={accountsWait} onStart={() => setSheet('start')} />
+          ) : (
+            <>
           {/* The same page in the one frame, ahead of the standard one, which
               app.css puts away while this is up. An account still in line
               looks around on it too. */}
@@ -2323,13 +2372,15 @@ export function LandingScreen() {
                   compact
                   primaryClass={PRIMARY_PILL}
                   welcomeEmail={releaseEmail}
-                  waitlist={accountsWait}
+                  month={month}
                   onStart={() => setSheet('start')}
                   onSignIn={() => setSheet('signin')}
                 />
               )}
             />
           ) : null}
+            </>
+          )}
         </div>
       </div>
       {/*

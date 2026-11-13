@@ -374,11 +374,18 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M8.25 9L12 5.25 15.75 9',
     'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z',
     'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
-    // THE LIGHTBULB and THE BALLOT (three paths) LEFT this list with the
-    // guest landing's hero (Evan, 22 Oct 2026): the "Want to join in?"
-    // card's points moved into the short story over the guest Discover, which
-    // the landing prerenders, so "Vote on what changes" and "Ask for what you
-    // want" draw them in the cold document.
+    // THE LIGHTBULB and THE BALLOT (three paths) ARE BACK on this list
+    // (13 Nov 2026). They left it on 22 Oct 2026, when the short story over
+    // the guest Discover, which the landing prerenders, drew them beside
+    // "Vote on what changes" and "Ask for what you want". That story's
+    // points are numbered now (features/auth/story.tsx), so nothing in the
+    // cold document draws either: the lightbulb's other users and the
+    // ballot's (the page about private communities among them) render
+    // behind state or at their own address.
+    'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
+    'M9 3.75H6.912a2.25 2.25 0 00-2.15 1.588L2.35 13.177a2.25 2.25 0 00-.1.661V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 00-2.15-1.588H15',
+    'M2.25 13.5h3.86a2.25 2.25 0 012.012 1.244l.256.512a2.25 2.25 0 002.013 1.244h3.218a2.25 2.25 0 002.013-1.244l.256-.512a2.25 2.25 0 012.013-1.244h3.859',
+    'M12 3v8.25m0 0l-3-3m3 3l3-3',
     // SparklesIcon left this list with #6019, when the AI tab drew it on the
     // bar, and came back when that tab took the bot's own line picture
     // (HomeroomBotIcon, 29 Oct 2026). Its other users (the Needs-you rail, an

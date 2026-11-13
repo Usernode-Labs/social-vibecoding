@@ -1779,7 +1779,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 733 → 734: +1 (#6643): a change held for an admin says so on its card,
   // with the reason. No existing check opens that demo card's warning, and
   // a hold is a state no other route reaches. 734 leaves 146 slots.
-  checkCap.assertPinned(DAPP.tests.length, 734);
+  // 734 → 735: +1 (private communities' page): the signed-out page at
+  // `/communities` is a pathname of its own, which no check of the landing
+  // loads, so nothing could take it in a :has(); the landing's own door to
+  // it rides the existing "one filled button in its bar" check. 735 leaves
+  // 145 slots.
+  checkCap.assertPinned(DAPP.tests.length, 735);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

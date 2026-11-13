@@ -51,9 +51,9 @@
  */
 
 import { guestSearchFrom, withGuestSearch } from './search-history';
-import { type AnchorHTMLAttributes, type MouseEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type AnchorHTMLAttributes, type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
-import { ArrowRightShortIcon, SearchIcon, UserIcon } from '@/components/ui/icons';
+import { ArrowRightShortIcon, SearchIcon, UserIcon, XIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -354,6 +354,26 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
     setQuery(value);
     try { window.history.replaceState(withGuestSearch(window.history.state, value), ''); } catch { /* History unavailable: search still works. */ }
   };
+  // THE SEARCH IS BEHIND A BUTTON (Evan, 13 Nov 2026): a full-width field
+  // between the story and the communities pushed the first cards down for
+  // something most first visits never use. The round button on the
+  // Communities heading shows the field, in the place it always had (over
+  // the pins, which it filters too), and puts the cursor in it; the field's
+  // × empties it and puts it away, and so does Escape. A search kept on the
+  // history entry (Back from a project's page) shows the field with it. The
+  // field stays in the document while it is put away, so the declared check
+  // that asks whether this Home can be searched still finds it.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const focusSearch = useRef(false);
+  const searchShown = searchOpen || !!query;
+  useEffect(() => {
+    if (!searchShown || !focusSearch.current) return;
+    focusSearch.current = false;
+    searchRef.current?.focus();
+  }, [searchShown]);
+  const openSearch = () => { focusSearch.current = true; setSearchOpen(true); };
+  const closeSearch = () => { changeQuery(''); setSearchOpen(false); };
 
   const device = useStoreStateLocal();
   useEffect(() => { loadDevicePins(); }, []);
@@ -391,18 +411,33 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
   return (
     <div data-guest-discover="" className="flex flex-col gap-5">
       {hero}
-      <div className="flex flex-col gap-2 px-4">
-        <label className="flex h-11 items-center gap-2 rounded-[14px] bg-white px-3.5 text-zinc-400 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-500">
+      {/* Nothing in this stack while the search is put away and the device
+          has pinned nothing: then it is out of the page's rhythm too, so the
+          story is not followed by an empty gap. */}
+      <div className={searchShown || pinnedApps.length || pinnedCommunities.length ? 'flex flex-col gap-2 px-4' : 'hidden'}>
+        <label className={searchShown ? SEARCH_FIELD : `${SEARCH_FIELD} hidden`}>
           <SearchIcon className="h-[18px] w-[18px] shrink-0" />
           <input
+            ref={searchRef}
             type="search"
             data-guest-search=""
             value={query}
             onChange={(e) => changeQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape') closeSearch(); }}
             placeholder={th('home:search.placeholder')}
             aria-label={th('home:search.label')}
             className="h-11 min-w-0 flex-1 bg-transparent text-base text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
           />
+          <button
+            type="button"
+            data-guest-search-close=""
+            aria-label={t('auth:guest.search.close')}
+            title={t('auth:guest.search.close')}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+            onClick={closeSearch}
+          >
+            <XIcon className="h-4 w-4" />
+          </button>
         </label>
 
         {pinnedApps.length ? (
@@ -451,6 +486,19 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
             exclude={EMPTY}
             signedIn={false}
             query={q}
+            headingAction={searchShown ? null : (
+              <button
+                type="button"
+                data-guest-search-open=""
+                aria-expanded={false}
+                aria-label={t('auth:guest.search.open')}
+                title={t('auth:guest.search.open')}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-zinc-900 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                onClick={openSearch}
+              >
+                <SearchIcon className="h-5 w-5" />
+              </button>
+            )}
           />
         </div>
       )}
@@ -459,6 +507,10 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
 }
 
 const EMPTY: ReadonlySet<string> = new Set();
+
+// The search field's box. The × at its end is the field's own height, so the
+// box keeps less room after it than before the magnifying glass.
+const SEARCH_FIELD = 'flex h-11 items-center gap-2 rounded-[14px] bg-white ps-3.5 text-zinc-400 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-500';
 
 function useStoreStateLocal() {
   return useStoreState(devicePinsStore);

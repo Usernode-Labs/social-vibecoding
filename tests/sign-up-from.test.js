@@ -61,8 +61,13 @@ test('every way an account is made records the sign-up with the button it came f
 
 test('each button notes itself as its sheet opens', () => {
   const where = {
-    'frontend/src/features/auth/story.tsx': ['hero', 'story', 'story_sign_in'],
+    // The short story has no button of its own since 13 Nov 2026: `hero` is
+    // the same button where the page is drawn in one of the looks.
+    'frontend/src/features/auth/story.tsx': ['story', 'story_sign_in'],
+    'frontend/src/features/guest/frame/landing-frame.tsx': ['hero'],
     'frontend/src/features/auth/landing.tsx': ['header_sign_in', 'header_sign_up', 'link'],
+    // The page about private communities, from either of its two buttons.
+    'frontend/src/features/guest/guest-communities.tsx': ['groups'],
   };
   for (const [file, kinds] of Object.entries(where)) {
     const text = read(file);

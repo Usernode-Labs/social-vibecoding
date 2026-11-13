@@ -216,8 +216,39 @@ async function listPublicApps(pool, { includeWallets = true, slug = null } = {})
   return apps.map((app) => shapeApp(app, byApp.get(app.id), includeWallets));
 }
 
+// The signed-out landing's two figures (frontend/src/features/auth/story.tsx,
+// "This month"): how many changes went live across the public directory in
+// the last 30 days, and how many people made them. The same apps as the
+// list's WHERE clause above and the same "went live" rule as its merged
+// counts, so the hero cannot count a change the cards under it would not.
+// A person is counted once however many changes they made or apps they made
+// them in; an account that is not a person (users.is_synthetic) is not.
+async function publicMonthActivity(pool) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS changes,
+            COUNT(DISTINCT cs.user_id) FILTER (WHERE u.is_synthetic IS NOT TRUE)::int AS contributors
+       FROM chat_sessions cs
+       JOIN apps a ON a.id = cs.app_id
+       LEFT JOIN users u ON u.id = cs.user_id
+      WHERE cs.status = 'merged' AND cs.live_at IS NOT NULL
+        AND COALESCE(cs.merged_at, cs.created_at) >= NOW() - INTERVAL '30 days'
+        AND NOT a.self_hosted
+        AND a.moderation_suspended_at IS NULL
+        AND a.view_visibility = 'public'
+        AND a.status <> ALL($1::text[])
+        AND a.directory_review_status <> ALL($2::text[])`,
+    [HIDDEN_APP_STATUSES, FLAGGED_STATES]
+  );
+  const row = rows[0] || {};
+  return {
+    changes: Number(row.changes) || 0,
+    contributors: Number(row.contributors) || 0,
+  };
+}
+
 module.exports = {
   listPublicApps,
+  publicMonthActivity,
   isPublicDirectoryApp,
   guestReady,
   descriptionOf,
