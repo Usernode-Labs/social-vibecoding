@@ -131,6 +131,41 @@ function CapabilityRow({ app, item }: { app: PermissionAppView; item: Permission
   );
 }
 
+/**
+ * #6512 item 4: the app's name, and Revoke all once it holds two or more
+ * active permissions (with one, the row's own Revoke is the same act). It
+ * hands Settings the active capabilities as they are drawn now and the same
+ * live "is it open in this tab" question a single revoke does.
+ */
+function AppHead({ app }: { app: PermissionAppView }) {
+  const t = useMessages('settings');
+  const active = app.items.filter((item) => !item.revoked).map((item) => item.capability);
+  return (
+    <div className="mb-1 flex items-center gap-2">
+      <div className="min-w-0 flex-1 truncate font-medium text-zinc-900 dark:text-zinc-100">{app.appName}</div>
+      {active.length >= 2 ? (
+        <button
+          type="button"
+          aria-label={t('settings:appPermissions.revokeAllLabel', { app: app.appName })}
+          data-role="revoke-all"
+          className="shrink-0 rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-0.5 font-medium text-red-700 dark:text-red-400 transition-colors touch-target-32"
+          onClick={() => {
+            const target = {
+              slug: app.appSlug,
+              name: app.appName,
+              isOpen: () => isLiveApp(app.appSlug),
+              close: () => closeLiveApp(app.appSlug),
+            };
+            void controller()?._onPermissionRevokeAll?.(app.appId, active, target);
+          }}
+        >
+          {t('settings:appPermissions.revokeAll')}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function AppPermissionsListView(state: AppPermissionsState) {
   const t = useMessages('settings');
   if (state.phase === 'idle') return null;
@@ -151,7 +186,7 @@ export function AppPermissionsListView(state: AppPermissionsState) {
     <>
       {state.apps.map((app) => (
         <div key={app.appId} className={ROW_CLASS}>
-          <div className="font-medium text-zinc-900 mb-1 dark:text-zinc-100">{app.appName}</div>
+          <AppHead app={app} />
           {app.items.map((item) => (
             <CapabilityRow key={item.capability} app={app} item={item} />
           ))}
