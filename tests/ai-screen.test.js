@@ -1128,7 +1128,17 @@ test('the way into the bot\'s chat: each address and each door names a place in 
   }
   // The page takes the router's ask once, in its column.
   const src = read('frontend/src/features/ai/index.tsx');
-  assert.match(src, /if \(!ask \|\| ask\.seq === askTaken\.current \|\| !visible \|\| !\(wide \|\| phone\)\) return;\s+askTaken\.current = ask\.seq;\s+how\.current = 'row';\s+if \(ask\.close\) closeColumn\(\);\s+else if \(ask\.item\) openItem\(ask\.item\);\s+else if \(ask\.at\) showAt\(ask\.at\);/);
+  // A refresh on `#homeroom-bot/thread/<id>` (or that link in a new tab): on
+  // a wide window a thread's ask waits until the page knows the bot's chat,
+  // since `showAt` puts the thread in the store by that id and nothing else
+  // opens the column. Main, a page and a phone's thread are taken at once.
+  assert.match(src, /if \(!ask \|\| ask\.seq === askTaken\.current \|\| !visible \|\| !\(wide \|\| phone\)\) return;\s+if \(ask\.at\?\.threadRootId && !botId && !phone\) return;\s+askTaken\.current = ask\.seq;\s+how\.current = 'row';\s+if \(ask\.close\) closeColumn\(\);\s+else if \(ask\.item\) openItem\(ask\.item\);\s+else if \(ask\.at\) showAt\(ask\.at\);\s+\}, \[ask, visible, wide, phone, botId\]\);/);
+  assert.match(src, /if \(botId && next\.threadRootId\) embed\(botId, next\);/, 'which is where the waited-for id is used');
+  // The detail an address names (`/thread/<id>/design/<v>`) is reopened after
+  // that ask, in the same commit: taken first, the thread's ask would close it.
+  const askAt = src.indexOf('askTaken.current = ask.seq;');
+  const restoreAt = src.indexOf('const restored = useRef<string | null>(null);');
+  assert.ok(askAt > 0 && restoreAt > askAt, 'the detail is restored after the ask is taken');
   assert.match(read('frontend/src/features/ai/door.ts'), /host\.ai = \{ \.\.\.\(host\.ai \|\| \{\}\), openAt: askBotTab,/);
 });
 
