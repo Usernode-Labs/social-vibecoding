@@ -786,35 +786,25 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
-      // New look (an experiment) and the Look menu (the frame's five looks,
-      // an admin's preview), both kept on the device by the head's
-      // window.Skin: the change is the save, and the look applies at once.
-      // They are exclusive (one data-skin on <html>), so each change
-      // repaints both controls. The menu's options are the frame's looks;
-      // anything else stored (New look, nothing) reads as Standard there.
-      const lookToggle = document.getElementById('new-look-enabled');
+      // The Look menu (an admin's preview of the looks), kept on the device
+      // by the head's window.Skin: the change is the save, and the look
+      // applies at once. Its options are every look there is ('brand',
+      // which keeps the standard pages, and the frame's five); nothing
+      // stored reads as Standard. New look's switch, which set 'brand' on
+      // its own, is gone: that look is the menu's first option now.
       const lookSelect = document.getElementById('settings-look');
       const paintLooks = () => {
         const skin = window.Skin?.get?.();
-        if (lookToggle) lookToggle.checked = skin === 'brand';
         if (lookSelect) {
           lookSelect.value = Array.from(lookSelect.options).some((o) => o.value === skin) ? skin : '';
         }
       };
-      if (lookToggle) {
-        lookToggle.addEventListener('change', (e) => {
-          window.Skin?.set?.(e.target.checked ? 'brand' : 'standard');
-          paintLooks();
-        });
-      }
       if (lookSelect) {
         lookSelect.addEventListener('change', (e) => {
           window.Skin?.set?.(e.target.value || 'standard');
           paintLooks();
         });
-      }
-      if (lookToggle || lookSelect) {
-        // Another tab changing it repaints the controls here too.
+        // Another tab changing it repaints the menu here too.
         window.Skin?.onChange?.(paintLooks);
       }
 
@@ -1950,8 +1940,6 @@
       if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
       const bridgeStatus = document.getElementById('session-bridge-status');
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
-      const look = document.getElementById('new-look-enabled');
-      if (look) look.checked = window.Skin?.get?.() === 'brand';
       const lookMenu = document.getElementById('settings-look');
       if (lookMenu) {
         const stored = window.Skin?.get?.();
@@ -3633,8 +3621,9 @@
         ?? (typeof App !== 'undefined' && !!App.user?.isAdmin);
       // A device left in one of the menu's looks keeps the menu whoever is
       // signed in (an admin's device in other hands, an admin who lost the
-      // role): the look is stored on the device and the menu is what
-      // clears it. New look has its own switch and does not count.
+      // role, a device that had the old New look switch on, which stored
+      // 'brand'): the look is stored on the device and the menu is what
+      // clears it.
       const lookSection = document.getElementById('settings-look-section');
       if (lookSection) {
         const lookMenu = document.getElementById('settings-look');

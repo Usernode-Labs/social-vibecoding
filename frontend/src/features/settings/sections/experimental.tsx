@@ -42,25 +42,28 @@ import { LocalAgentsList } from '../local-agents-list';
  * New Needs you used to be a switch here too. The review flow is what every
  * Needs you draws now, so there is nothing to turn on.
  *
- * New look (default OFF) is kept on the DEVICE as well. The head's
- * window.Skin (src/head.html) stores it and sets data-skin="brand" on <html>
- * before first paint; app.css draws the look from that attribute, in light
- * mode only. settings.js paints and saves the switch through window.Skin.
- * The look is "Baseplate" (request #6278): white cards on a light warm grey
- * plate, sun yellow for what needs you, ink for where you are.
+ * New look used to be a switch here too ("Baseplate", request #6278: white
+ * cards on a warm grey plate). Its look was redrawn on 13 Nov 2026 as
+ * "Paper, simplified, with brand styling" and moved into the Look menu
+ * below, so the switch is gone. The look keeps its id, `brand`: a device
+ * that had the switch on shows the redrawn look, and the menu shows there
+ * (settings.js _renderAdminSection) so it can go back to Standard.
  *
- * Look (default Standard, the same device store) offers the five looks of
- * the one frame (lib/skin.ts FRAME_SKINS, the directions the 2026-11-06
- * screen tour kept): each sets its id as data-skin and app.css draws it,
- * light and dark. It is an admin's preview while the looks are drawn screen
- * by screen (Home so far): #settings-look-section ships hidden and
- * settings.js _renderAdminSection lifts the class only for a REAL admin
- * (App._realIsAdmin), as it does for the admin-preview section. A
- * `?skin=<look>` pin in the address still works for anyone who knows it.
- * New look and a look of the menu are exclusive (one data-skin on <html>);
- * settings.js paints and saves both through window.Skin. The option values
- * are FRAME_SKINS, in its order (tests/glass-skin.test.js holds the two
- * together); each name is read by a whole literal id.
+ * Look (default Standard, kept on the DEVICE by the head's window.Skin,
+ * src/head.html) offers the looks (lib/skin.ts MENU_SKINS): each sets its
+ * id as data-skin on <html> before first paint and app.css draws it. The
+ * first, `brand`, keeps the standard pages and redraws them in the
+ * website's colours and typefaces, in light mode only. The five after it
+ * are the looks of the one frame (FRAME_SKINS, the directions the
+ * 2026-11-06 screen tour kept), light and dark. The menu is an admin's
+ * preview while the looks are drawn screen by screen:
+ * #settings-look-section ships hidden and settings.js _renderAdminSection
+ * lifts the class only for a REAL admin (App._realIsAdmin), as it does for
+ * the admin-preview section. A `?skin=<look>` pin in the address still
+ * works for anyone who knows it. settings.js paints and saves the menu
+ * through window.Skin. The option values are MENU_SKINS, in its order
+ * (tests/glass-skin.test.js holds the two together); each name is read by
+ * a whole literal id.
  *
  * #907 Local coding agent lives in the same pane (not the CLI section) because
  * it is a preview of the same feature the dev chat's "Run on" selector
@@ -79,7 +82,7 @@ export function ExperimentalSection() {
           {t('settings:experimental.intro')}
         </SectionHeading>
         {/* Two neutral wrappers (looks v2), nothing in the standard look:
-            ui-card round the four switches, one card under a look, and
+            ui-card round the three switches, one card under a look, and
             ui-swrow round each switch with its sentence, a row of it with
             the switch at the end (app.css, SETTINGS). */}
         <div className="ui-card">
@@ -105,19 +108,12 @@ export function ExperimentalSection() {
           </p>
           <StatusLine id="session-bridge-status" size="xs" />
         </div>
-        <div className="ui-swrow mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
-          <SwitchRow id="new-look-enabled">
-            {t('settings:experimental.newLook.label')}
-          </SwitchRow>
-          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-            {t('settings:experimental.newLook.description')}
-          </p>
-        </div>
         </div>
         <div id="settings-look-section" className="hidden ui-card ui-fields mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
           <Label className="mb-1" htmlFor="settings-look">{t('settings:experimental.look.label')}</Label>
           <Select id="settings-look" variant="plain">
             <option value="">{t('settings:experimental.look.standard')}</option>
+            <option value="brand">{t('settings:experimental.look.brand')}</option>
             <option value="glass">{t('settings:experimental.look.glass')}</option>
             <option value="paper">{t('settings:experimental.look.paper')}</option>
             <option value="pastel">{t('settings:experimental.look.pastel')}</option>

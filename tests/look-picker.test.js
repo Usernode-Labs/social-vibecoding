@@ -24,9 +24,19 @@ test('it is one small control: a glyph, and under it the system\'s own menu of l
   const html = view({ variant: 'frame', skin: 'glass' });
   assert.match(html, /^<label class="fr-ib fr-look" title="Look" data-look-picker="frame"><svg[^>]*>.*?<\/svg><select aria-label="Look">/s);
   assert.deepEqual([...html.matchAll(/<option value="([a-z]+)"( selected="")?>([^<]+)<\/option>/g)].map((m) => [m[1], m[3], !!m[2]]), [
-    ['standard', 'Standard', false], ['glass', 'Glass', true],
+    ['standard', 'Standard', false], ['brand', 'Paper, simplified, with brand styling', false], ['glass', 'Glass', true],
     ['paper', 'Paper', false], ['pastel', 'Pastel', false], ['mosaic', 'Mosaic', false], ['sunrise', 'Sunrise', false],
-  ], 'Standard, then the five looks in the tour\'s order, the device\'s own chosen');
+  ], 'Standard, then brand and the five looks in the tour\'s order, the device\'s own chosen');
+});
+
+test('brand keeps the platform\'s header, and the menu there reads it', () => {
+  // "Paper, simplified, with brand styling" is not a look of the frame, so
+  // the picker under it is the shell's. It used to read as Standard there,
+  // when New look had a switch of its own.
+  const html = view({ variant: 'shell', skin: 'brand' });
+  assert.match(html, /<option value="brand" selected="">Paper, simplified, with brand styling<\/option>/);
+  assert.doesNotMatch(html, /<option value="standard" selected="">/);
+  assert.match(view({ variant: 'shell', skin: 'neon' }), /<option value="standard" selected="">/, 'an unknown look reads as Standard');
 });
 
 test('under the standard look it is drawn with the header\'s own classes, beside its bell', () => {

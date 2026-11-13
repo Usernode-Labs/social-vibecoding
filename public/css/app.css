@@ -29939,7 +29939,7 @@ html[data-skin]:where(:not([data-skin="brand"])) #notifications-sheet .notificat
    wherever it reads a token. A solid sheet (--dc-sheet, the dialog's own
    card; --dc-sheet-solid: a menu, a pinned head) takes the look's opaque
    surface where the look's own is see-through (--fr-solid, from
-   looks.json "opaque"): both float over other text with no blur behind. The exception for the New look ("brand", the
+   looks.json "opaque"): both float over other text with no blur behind. The exception for the brand look ("brand", the
    last block of this sheet, which is not a look of the frame) sits inside
    :where(), so the rule weighs one attribute and More contrast
    (html…[data-contrast="more"], two) still sets its inks over any look.
@@ -31017,33 +31017,42 @@ html[data-skin="sunrise"][data-skin] .fr-barline{border-bottom:0}
 }
 /* looks:end */
 
-/* ── THE NEW LOOK, AN EXPERIMENT (Settings › Experimental, off by default) ──
+/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING (Settings ›
+   Experimental › Look, an admin's preview) ──
    Every rule here is scoped to html[data-skin="brand"], which the head's
    window.Skin sets from the device's stored choice before this sheet
    applies; without it not one rule below matches. Light shell only, and not
    over a dark app either (:not(.dark), :not([data-app-tone="dark"])): dark
    is the standard dark either way.
 
-   The look is "Baseplate" (request #6278): bricks on a baseplate.
-   - A light warm grey ground, the plate, with white cards and white bars
-     on it. A community's own header colour stays on its pages.
-   - One palette: warm greys, and an ink (#1d231c) for text.
-   - One job per colour. Sun (#ffd95a, on a darker #d6a92a edge) means
-     "do this": the main action, Join, and the votes waiting for you. Ink
-     means "you are here" or "selected": the lit tab, the lit row, the
-     chosen chip. The old blue's other jobs (links, text, quieter fills) go
-     to ink.
-   - Geist for words, Young Serif for page titles, Geist Mono for counts.
+   The id is the old New look's ("Baseplate", request #6278), whose switch
+   is gone. This is that look redrawn (13 Nov 2026): the Paper look's manner
+   on the STANDARD pages, in the website's colours and typefaces.
+   - Same pages. It is not a look of the frame: no page changes its markup
+     or its layout, so every rule here is paint.
+   - Figure and ground. The page is one deeper cream and a card is plain
+     white with a soft lift and no outline, so a card differs from the page
+     by its fill. (The website's own cream, #fffeea, is too close to white
+     for that without the ink outline its cards wear.)
+   - A frame around the page: a deep sky sidebar with white words, and a
+     navy top bar, darker than the sidebar so the two read as two pieces. A
+     community's own header colour stays on its pages.
+   - One job per colour. Sun (#ffee6f) means "you are here" on the sidebar
+     and the tab bar, and "do this" on the main button, which also wears
+     the website's ink outline and hard foot. Deep sky (#1a63c4) is a link,
+     and a count that asks for you. Ink (#121a0e) is text.
+   - Geist for words, Young Serif for titles, Geist Mono for counts. A
+     label over a group is sentence case, not small caps.
    - The website's own figures in two empty states.
 
    Appended last on purpose. The declarations other rules count (the home
-   washes, the wallpaper, the sheet fill) are not redeclared: the ground
-   and the bars are painted over them instead. */
+   washes, the wallpaper, the sheet fill) are not redeclared: the ground,
+   the bars and the planes are painted over them instead. */
 @font-face {
   font-family: 'Geist';
   /* Absolute: the build-scoped copy of this sheet (/b/<sha>/css/app.css)
      serves only .js and .css, so a relative url would 404 there. A browser
-     without the new look never matches a rule that names Geist, so it never
+     without this look never matches a rule that names Geist, so it never
      downloads the file. The same holds for the two faces below. */
   src: url('/fonts/geist/Geist-Variable.woff2') format('woff2');
   font-weight: 100 900;
@@ -31066,51 +31075,54 @@ html[data-skin="sunrise"][data-skin] .fr-barline{border-bottom:0}
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
   font-family: 'Geist', ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  background-color: #f4f4f0;
-  /* Surfaces: white cards on the plate. */
+  background-color: #f6f2d8;
+  /* Surfaces: white cards on the cream page. */
   --bg-primary: #ffffff;
-  --bg-secondary: #f4f4f0;
-  --bg-tertiary: #e9e9e3;
-  --bg-input: #f4f4f0;
-  --dc-strip: #f4f4f0;
+  --bg-secondary: #f6f2d8;
+  --bg-tertiary: #ece8cc;
+  --bg-input: #ffffff;
+  --dc-strip: #f6f2d8;
   --dc-sheet: #ffffff;
   --dc-sheet-raise: #ffffff;
-  --dc-raised: #f4f4f0;
+  --dc-raised: #f6f2d8;
   --dc-sheet-solid: #ffffff;
-  --dc-strip-solid: #f4f4f0;
-  --border: #dcdcd5;
-  --border-light: #e9e9e3;
+  --dc-strip-solid: #f6f2d8;
+  --border: rgba(18, 26, 14, 0.14);
+  --border-light: rgba(18, 26, 14, 0.08);
   /* Ink and its warm greys. */
-  --text-primary: #1d231c;
-  --text-secondary: #3d4039;
-  --text-muted: #62655d;
-  --text-faint: #8d9088;
-  /* The old blue's jobs that are not "do this" go to ink: links, text,
-     outlines and the quieter fills. Sun is given out by name below. */
-  --accent: #1d231c;
-  --accent-light: #3d4039;
+  --text-primary: #121a0e;
+  --text-secondary: #41483c;
+  --text-muted: #595f52;
+  --text-faint: #858a7c;
+  /* The old blue's jobs that are not a link or a count go to ink: text,
+     outlines, a switch that is on and the quieter fills. Sun and the deep
+     sky are given out by name below. */
+  --accent: #121a0e;
+  --accent-light: #41483c;
   --accent-ink: #ffffff;
-  --accent-tint: rgba(29, 35, 28, 0.06);
-  --accent-tint-ink: #1d231c;
-  --accent-wash: #fff5d1;
-  --accent-wash-ink: #5c4400;
-  /* Lit things elsewhere (steps, tags, the theme switch) on a pale warm
-     grey; the tab and the row you are on are ink, below. */
-  --lit-ink: #1d231c;
-  --lit-tint: #e9e9e3;
-  --lit-line: rgba(29, 35, 28, 0.14);
-  /* The header's own ink on the top-level screens. A project's bar sets
-     its own on #platform-header (white on the project's colour). */
-  --brand-ink: #1d231c;
-  --brand-tint: #f4f4f0;
-  --brand-line: #dcdcd5;
+  --accent-tint: rgba(18, 26, 14, 0.06);
+  --accent-tint-ink: #121a0e;
+  --accent-wash: #fff6ac;
+  --accent-wash-ink: #121a0e;
+  /* Lit things on the page (steps, tags, the theme switch) on a pale sun.
+     The sidebar and the bars set their own below. */
+  --lit-ink: #121a0e;
+  --lit-tint: #fff6ac;
+  --lit-line: transparent;
+  /* The header's ink where it is read off the bar (a place bar, a sheet's
+     head). Both bars set white on themselves below. */
+  --brand-ink: #121a0e;
+  --brand-tint: #ffffff;
+  --brand-line: rgba(18, 26, 14, 0.1);
 }
-/* Hairlines in ink at 8%, unless high contrast asked for darker ones. */
+/* Hairlines in ink at 7%, unless high contrast asked for darker ones. A
+   card's own outline is this faint too: its fill and lift say where it
+   ends. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-contrast="more"]) {
-  --app-sheet-line: rgba(29, 35, 28, 0.08);
+  --app-sheet-line: rgba(18, 26, 14, 0.07);
 }
 
-/* THE PLATE. The wallpaper is drawn on <body> by the route rule (one id
+/* THE PAGE. The wallpaper is drawn on <body> by the route rule (one id
    deep); `:has(#platform-tabs)` is always true in the shell and makes this
    rule one id deep as well, so it wins by its classes. The tile zoom paints
    the moving view from --un-zoom-bg, so it follows. --home-ground moves with
@@ -31118,181 +31130,338 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-contras
    launch cover and the washes end on it. The scroller's fixed layer repaints
    the wallpaper; it is flat here too. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) body:has(#platform-tabs) {
-  --home-ground: #f4f4f0;
-  --un-zoom-bg: #f4f4f0;
-  background: #f4f4f0;
+  --home-ground: #f6f2d8;
+  --un-zoom-bg: #f6f2d8;
+  background: #f6f2d8;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) body::before {
-  background: #f4f4f0;
+  background: #f6f2d8;
+}
+/* A screen that paints itself with the wallpaper (Make it, the made
+   screen, sign-in) does so in its own style attribute, which only
+   !important outranks: it is the flat page here too. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [style*="--home-wallpaper"] {
+  background: #f6f2d8 !important;
+}
+/* The planes over the page. A strip (the pane a screen stands on) is the
+   page itself, flat, so the page reads as one ground with cards on it; a
+   sheet (a conversation, a session) is a white card. Neither is frosted:
+   there is nothing behind them to blur. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dc-lift-strip {
+  background-color: #f6f2d8;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dc-lift-session {
+  background-color: #ffffff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
-/* THE BARS are white. On the top-level screens the header is a flat bar
-   with a hairline foot and square corners, not the faked glass with the
-   rounded notch. A project's bar (html[data-community-tint]) keeps its
-   community's colour. The doubled id outranks the route rules (two ids
-   deep) by its classes. The tab bar keeps its own layer, filled flat. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-community-tint]) #platform-header#platform-header {
-  background-color: #ffffff;
+/* THE TOP BAR is navy with white words on the top-level screens: a flat
+   bar with square corners, not the faked glass with the rounded notch. A
+   project's bar (html[data-community-tint]) keeps its community's colour.
+   `body:has(#platform-tabs)`, always true in the shell, and the doubled id
+   outrank the route rules: the deepest of them, a phone browser's (two ids
+   and a `body`), gives the bar the sheet's white. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-community-tint]) body:has(#platform-tabs) #platform-header#platform-header {
+  --brand-ink: #ffffff;
+  --brand-tint: rgba(255, 255, 255, 0.16);
+  --brand-line: rgba(255, 255, 255, 0.3);
+  background-color: #37477b;
+  color: #ffffff;
   clip-path: none;
   border-end-start-radius: 0;
   border-end-end-radius: 0;
-  box-shadow: inset 0 -1px 0 rgba(29, 35, 28, 0.08);
-}
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-community-tint]) #platform-header#platform-header::before {
-  display: none;
-}
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tabs::before {
-  background: #ffffff;
-}
-
-/* YOU ARE HERE: ink. On a phone the lit tab sits on the sliding marker;
-   from 768px the lit row of the sidebar is the tab itself. The places of a
-   project (its Hub, Workshop, channels) light the same way, in the drawer,
-   the tray and the sidebar's nest. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tabs-marker {
-  background: #1d231c;
   box-shadow: none;
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab[aria-current="page"] {
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-community-tint]) body:has(#platform-tabs) #platform-header#platform-header::before {
+  display: none;
+}
+/* On either bar, the navy one or a community's own, everything read off
+   the bar is white: its muted words, and what is lit on it (the sidebar's
+   switch while the sidebar is open) is a wash of white, not the page's
+   pale sun. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-header {
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.86);
+  --text-muted: rgba(255, 255, 255, 0.82);
+  --text-faint: rgba(255, 255, 255, 0.62);
+  --lit-ink: #ffffff;
+  --lit-tint: rgba(255, 255, 255, 0.2);
+  --lit-line: transparent;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-header :is(.text-zinc-950, .text-zinc-900, .text-zinc-800, .text-zinc-700) {
   color: #ffffff;
 }
-@media (min-width: 768px) {
-  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab[aria-current="page"] {
-    background: #1d231c;
-  }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-header :is(.text-zinc-600, .text-zinc-500, .text-zinc-400) {
+  color: rgba(255, 255, 255, 0.82);
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-place[aria-current="page"] {
-  background: #1d231c;
-  color: #ffffff;
+/* A project's tile on the bar is a white tile: its letter keeps its own
+   grey, not the bar's white. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-header .app-icon-tile {
+  color: #595f52;
 }
 
-/* DO THIS: sun with ink words, on a darker edge. The shell's primary
-   button, Join, starting a conversation, and the counts of votes waiting
-   for you. */
+/* THE SIDEBAR (from 768px) is the deep sky, with white words. Its rows
+   draw from the tokens, so they are moved on the bar itself: what is lit
+   or hovered there is a wash of white. The row you are on is named below. */
+@media (min-width: 768px) {
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-tabs {
+    --text-primary: rgba(255, 255, 255, 0.94);
+    --text-secondary: rgba(255, 255, 255, 0.88);
+    --text-muted: rgba(255, 255, 255, 0.72);
+    --text-faint: rgba(255, 255, 255, 0.32);
+    --lit-ink: #ffffff;
+    --lit-tint: rgba(255, 255, 255, 0.24);
+    --lit-line: transparent;
+    --accent: #ffffff;
+    background: #1a63c4;
+    box-shadow: none;
+  }
+  /* A row being dragged keeps the bar's own fill behind it. */
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-tabs .platform-rail-community.un-reorder-ghost {
+    background: #1a63c4;
+  }
+  /* Its glyphs are as bright as its words. */
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-tabs :is(.platform-tab-glyph, .dev-ws-place-glyph, .platform-rail-sub-glyph, .platform-rail-settings) {
+    color: rgba(255, 255, 255, 0.9);
+  }
+  /* YOU ARE HERE: sun, with ink words. A community's own row is not lit
+     while its places are open under it; the place is. */
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community:not([data-rail-open]), .dev-ws-place, .platform-rail-sub)[aria-current="page"] {
+    background: #ffee6f;
+    color: #121a0e;
+    box-shadow: none;
+  }
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community:not([data-rail-open]), .dev-ws-place, .platform-rail-sub)[aria-current="page"] :is(.platform-tab-glyph, .dev-ws-place-glyph, .platform-rail-sub-glyph, .platform-rail-settings-glyph) {
+    color: #121a0e;
+  }
+  /* A count that asks for you: white, with ink figures. A channel's unread
+     count stays the quiet one. */
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-tabs :is(.platform-rail-votes, .platform-tab-all-votes, .platform-tab-votes, .dev-ws-place-count, .platform-rail-sub-count) {
+    background: #ffffff;
+    color: #121a0e;
+    font-variant-numeric: tabular-nums;
+  }
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-tabs :is(.platform-rail-sub-count, :is([data-place="discussion"], [data-place^="c:"]) > .dev-ws-place-count) {
+    background: rgba(255, 255, 255, 0.3);
+    color: #ffffff;
+  }
+  /* A label over a group of rows: sentence case. */
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-tabs :is(.platform-rail-head, .platform-rail-head-label, .platform-side-apps-head, .dev-ws-places-head) {
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  /* The faint bar beside a community's nested rows. */
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-tabs .platform-rail-nest-in::before {
+    background: rgba(255, 255, 255, 0.45);
+  }
+  /* A community's tile keeps its edge on the blue, and its letter its own
+     ink (the row's white would vanish on the tile). */
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-tabs .platform-rail-tile {
+    color: #595f52;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+  }
+  /* The gear sits on the You row: while that row is lit it is read on sun. */
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-tabs:has(#platform-tab-me[aria-current="page"]) .platform-rail-settings {
+    color: #121a0e;
+  }
+}
+/* ON A PHONE the tab bar is the deep sky and its marker is sun; the tab
+   you are on is ink, on the marker. */
+@media (max-width: 767.98px) {
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tabs {
+    --text-primary: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.9);
+    --lit-ink: #121a0e;
+    --lit-tint: #ffee6f;
+    --lit-line: transparent;
+  }
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tabs::before {
+    background: #1a63c4;
+  }
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tabs .platform-tab:not([aria-current="page"]) {
+    color: rgba(255, 255, 255, 0.92);
+  }
+  /* A community's page lights no drawn tab (its own, Communities, is not
+     on the bar) and the marker rests under Home, as in the standard look:
+     Home is read on the marker there. */
+  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tabs:has(#platform-tab-workshop[aria-current="page"]) #platform-tab-home {
+    color: #121a0e;
+  }
+}
+
+/* DO THIS: the one sun pill, on the website's ink outline and hard foot.
+   The shell's primary button, Join, and starting a conversation. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-violet-600,
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty button,
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .card-add-btn[data-join]:not([data-join="joined"]) {
-  background-color: #ffd95a;
+  background-color: #ffee6f;
   border-color: transparent;
-  color: #1d231c;
-  box-shadow: 0 2px 0 #d6a92a;
+  color: #121a0e;
+  box-shadow: inset 0 0 0 1px #121a0e, 0 2px 0 #121a0e;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .hover\:bg-violet-500:hover,
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty button:hover {
-  background-color: #ffe07a;
+  background-color: #fff6ac;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-violet-600:active,
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty button:active,
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .card-add-btn[data-join]:active {
-  box-shadow: 0 0 0 #d6a92a;
+  box-shadow: inset 0 0 0 1px #121a0e, 0 0 0 #121a0e;
   transform: translateY(1px);
 }
+/* A count that asks for you, off the sidebar: deep sky, white figures. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab-votes,
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab-all-votes,
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-rail-votes,
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-foryou-pill:not([data-ws-channel-unread]) {
-  background: #ffd95a;
-  color: #1d231c;
+  background: #1a63c4;
+  color: #ffffff;
   font-variant-numeric: tabular-nums;
 }
-/* The old blue as words and pale fills: ink, and a pale sun. */
+/* The old blue as words is the deep sky, and as a pale fill a pale sun. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-violet-500,
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-violet-600,
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-violet-700 {
-  color: #1d231c;
-}
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) a.text-violet-600,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) a.text-violet-700 {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-thickness: 1px;
+  color: #1a63c4;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-violet-50,
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-violet-100 {
-  background-color: #fff5d1;
+  background-color: #fff6ac;
+}
+/* A chosen chip is sun with ink words; an unchosen one is a white card on
+   the page. The chip idiom is a round button whose chosen state is the
+   solid inversion (zinc-900 with white words): the chip primitive, the
+   bell's Unread and All, the board's filters. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) button.bg-zinc-900.text-white.rounded-full,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) button[aria-pressed="true"].bg-zinc-900,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-chip[aria-pressed="true"] {
+  background-color: #ffee6f;
+  color: #121a0e;
 }
 
-/* WARM GREYS. The zinc ramp is a cool grey; on the warm plate its common
-   fills, words and lines take the warm one. The chosen chip (zinc-900) is
-   the ink. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-50 { background-color: #f7f7f3; }
+/* WARM GREYS. The zinc ramp is a cool grey; on the cream page its common
+   fills, words and lines take a warm one. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-50 { background-color: #f4f1dc; }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-100,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .hover\:bg-zinc-100:hover { background-color: #ebebe5; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .hover\:bg-zinc-100:hover { background-color: #ece8cc; }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-200,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .hover\:bg-zinc-200:hover { background-color: #e2e2dc; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-900 { background-color: #1d231c; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-900 { color: #1d231c; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-800 { color: #2c3029; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-700 { color: #3d4039; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-600 { color: #4d5049; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-500 { color: #62655d; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-400 { color: #8d9088; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .border-zinc-200 { border-color: #e2e2dc; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .border-zinc-300 { border-color: #cfd0c9; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .hover\:bg-zinc-200:hover { background-color: #e3dfc1; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-900 { background-color: #121a0e; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-950,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-900 { color: #121a0e; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-800 { color: #2a3125; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-700 { color: #41483c; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-600 { color: #4d5347; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-500 { color: #595f52; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-400 { color: #858a7c; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .border-zinc-200 { border-color: rgba(18, 26, 14, 0.1); }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .border-zinc-300 { border-color: rgba(18, 26, 14, 0.18); }
 
-/* BRICKS: white cards on the plate, with a hairline and a soft shadow. */
+/* CARDS: plain white on the page, with a soft lift. The outline every
+   card is drawn with is the faint hairline above. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\],
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-section-card,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty {
-  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(29, 35, 28, 0.05), 0 8px 20px -14px rgba(29, 35, 28, 0.22);
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-strip,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .home-challenge-card,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .home-discover-card {
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(18, 26, 14, 0.06), 0 14px 30px -22px rgba(18, 26, 14, 0.3);
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-strip {
+  background-color: #ffffff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .app-icon-tile,
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .home-discover-card {
-  border-color: rgba(29, 35, 28, 0.08);
-}
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .home-discover-card {
-  box-shadow: 0 1px 2px rgba(29, 35, 28, 0.05), 0 8px 20px -14px rgba(29, 35, 28, 0.22);
+  border-color: rgba(18, 26, 14, 0.07);
 }
 /* Unread conversations: coral, the colour of people talking. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab-badge {
   background: #ff8a78;
-  color: #1d231c;
+  color: #121a0e;
   font-variant-numeric: tabular-nums;
 }
 
+/* LABELS over a group are sentence case, as the Paper look sets its
+   captions: the section label of a grouped list, Home's and Messages'. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .uppercase,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-section-head,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-thread-kicker,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .msgx-picker-head,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dc-drafts-head,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-topic-h,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-topic-sub,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-details-sub,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-eyebrow,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-places-head,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-lane-title,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .community-switcher-title,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .community-switcher-section,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .shots-noticed-head,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .st-spec-head {
+  text-transform: none;
+  letter-spacing: 0;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .uppercase.tracking-\[0\.06em\],
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .home-area-label > span:first-child,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-section-head,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-head-label {
+  font-size: 13px;
+  font-weight: 650;
+  color: #41483c;
+}
+
 /* A PROJECT'S HUB. Open app is ink: it goes somewhere, it does not ask for
-   you. Invite and the ⋯ beside it are white bricks. */
+   you. Invite and the ⋯ beside it are white. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-open-app[data-ws-community-open-app] {
-  background: #1d231c;
+  background: #121a0e;
   color: #ffffff;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-community-invite],
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-plus-btn-hero {
   background: #ffffff;
-  color: #1d231c;
-  box-shadow: inset 0 0 0 1px rgba(29, 35, 28, 0.10), 0 1px 2px rgba(29, 35, 28, 0.06);
+  color: #121a0e;
+  box-shadow: inset 0 0 0 1px rgba(18, 26, 14, 0.1), 0 1px 2px rgba(18, 26, 14, 0.06);
 }
 /* For you: each row's glyph on the pale tint of its job (sun for what
    waits on you, sky for your own work, grass for the conversation), and the
    channel's unread count in ink. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-hub-needs] .dev-ws-foryou-row > :first-child {
-  background: #fff5d1;
-  color: #1d231c;
+  background: #fff6ac;
+  color: #121a0e;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-mine-card] > :first-child {
-  background: #e6f0fb;
-  color: #1d231c;
+  background: #e3eefb;
+  color: #121a0e;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-channel="preview"] > :first-child {
-  background: #e3f5e8;
-  color: #1d231c;
+  background: #e2f2dc;
+  color: #121a0e;
 }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-foryou-pill[data-ws-channel-unread] {
-  background: #1d231c;
+  background: #121a0e;
   color: #ffffff;
 }
 /* Pictures of a change: a hairline, drawn over the picture so an image
    filling the box does not hide it. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-recent-pic,
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-media-view {
-  outline: 1px solid rgba(29, 35, 28, 0.10);
+  outline: 1px solid rgba(18, 26, 14, 0.1);
   outline-offset: -1px;
 }
 
-/* TYPE BY ROLE. A page's title in the serif (not the header's own name,
-   and not the small line the made screen keeps in an h1); the Workshop's
-   counts in mono, so the figures line up. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) h1:not(#platform-header h1):not(#first-session-made-title) {
+/* TYPE BY ROLE. A page's title in the serif, the top bar's too (not the
+   small line the made screen keeps in an h1); the Workshop's counts in
+   mono, so the figures line up. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) h1:not(#first-session-made-title),
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-hero-name {
   font-family: 'Young Serif', Georgia, 'Times New Roman', serif;
   font-weight: 400;
   letter-spacing: -0.005em;
@@ -31305,7 +31474,7 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-dash-cell
 
 /* MOMENTS. The website's own figures above two empty states: Messages
    before the first conversation, and Homeroom bot when nothing needs you.
-   Background images, so the experiment off never loads them. */
+   Background images, so a browser without this look never loads them. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty::before {
   content: "";
   display: block;
