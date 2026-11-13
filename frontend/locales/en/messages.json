@@ -5136,16 +5136,48 @@
     "description": "The AI tab's main view: button at the foot of the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show; closes it. Picks apply as they are made."
   },
   "ai.search.open": {
-    "text": "Search your threads",
-    "description": "The Homeroom bot tab, beside the round plus at the top: the name and tooltip of the round search button, which opens a box that narrows every list on the page to the threads whose title, number or project matches what is typed."
+    "text": "Search threads and messages",
+    "description": "The Homeroom bot tab, beside the round plus at the top: the name and tooltip of the round search button, which opens a box that narrows every list on the page to the threads whose title, number or project matches what is typed, and lists the messages in the person's chat with Homeroom bot that contain it."
   },
   "ai.search.label": {
-    "text": "Search your threads",
-    "description": "The Homeroom bot tab: placeholder and accessible name of the search box under the heading, which narrows every list on the page to the threads whose title, number or project matches what is typed."
+    "text": "Search threads and messages",
+    "description": "The Homeroom bot tab: placeholder and accessible name of the search box under the heading, which narrows every list on the page to the threads whose title, number or project matches what is typed, and lists the messages in the person's chat with Homeroom bot that contain it."
   },
   "ai.search.none": {
+    "text": "Nothing in your threads or messages matches “{{query}}”",
+    "description": "The Homeroom bot tab: shown in place of the lists when the search box's text matches no thread on the page and no message in the person's chat with Homeroom bot. {{query}} is what the person typed."
+  },
+  "ai.search.noneThreads": {
     "text": "No threads match “{{query}}”",
-    "description": "The Homeroom bot tab: shown in place of the lists when the search box's text matches no thread on the page. {{query}} is what the person typed."
+    "description": "The Homeroom bot tab: shown in place of the lists when the search box's text matches no thread on the page and the person's messages were not searched: what they typed is a single character, too short to search messages for, or the search of their messages could not be read. {{query}} is what the person typed."
+  },
+  "ai.search.messages_one": {
+    "text": "In your messages · {{count}}",
+    "description": "The Homeroom bot tab, while searching: small caps label over the card that lists the messages in the person's chat with Homeroom bot that contain what they typed, under the threads that match. {{count}} is how many messages are listed; a translation may use it in this singular form too."
+  },
+  "ai.search.messages_other": {
+    "text": "In your messages · {{count}}",
+    "description": "The Homeroom bot tab, while searching: small caps label over the card that lists the messages in the person's chat with Homeroom bot that contain what they typed, under the threads that match. {{count}} is how many messages are listed."
+  },
+  "ai.search.inChat": {
+    "text": "Your chat with Homeroom bot",
+    "description": "The Homeroom bot tab, while searching: on the row of a message the search found, where that message is when it was written in the person's chat with Homeroom bot itself and not in one of its threads (a message in a thread shows the thread's name there instead)."
+  },
+  "ai.search.rowYou": {
+    "text": "You: {{snippet}} · {{place}} · {{date}}",
+    "description": "The Homeroom bot tab, while searching: accessible name and tooltip of the row of a message the person wrote that the search found; the row is a link that opens the message. {{snippet}} is a short piece of the message round the words searched for, {{place}} is the name of the thread it is in or the words for the chat itself, {{date}} is the day it was written, for example 3 Nov."
+  },
+  "ai.search.rowBot": {
+    "text": "Homeroom bot: {{snippet}} · {{place}} · {{date}}",
+    "description": "The Homeroom bot tab, while searching: accessible name and tooltip of the row of a message Homeroom bot wrote that the search found; the row is a link that opens the message. {{snippet}} is a short piece of the message round the words searched for, {{place}} is the name of the thread it is in or the words for the chat itself, {{date}} is the day it was written, for example 3 Nov."
+  },
+  "ai.search.more": {
+    "text": "These are the newest matches. Type more to narrow them down.",
+    "description": "The Homeroom bot tab, while searching: line under the list of messages the search found, shown when more messages matched than the list holds."
+  },
+  "ai.search.failed": {
+    "text": "Your messages could not be searched.",
+    "description": "The Homeroom bot tab, while searching: note shown when the search of the person's messages with Homeroom bot could not be read (offline, or a server error); the threads on the page are still searched. A Try again button follows it."
   },
   "ai.live.number": {
     "text": "#{{number}}",

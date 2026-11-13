@@ -1074,6 +1074,13 @@
       "preview": "HISTORY_THREADS_SQL"
     },
     {
+      "source": "src/services/ai-search.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "9662e9958db993e75ad7",
+      "count": 1,
+      "preview": "SEARCH_SQL"
+    },
+    {
       "source": "src/services/ai-work.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "8222ba675aea28082113",

@@ -2156,11 +2156,12 @@ test('#6398: the search narrows every list by title, number or project, hides Ma
   assert.doesNotMatch(matched, /data-ai-group-rest=""/, 'every match shows, with no fold over it');
   assert.match(matched, /Release note 7/);
 
-  // Nothing matches: one short note in place of every list.
+  // Nothing matches: one short note in place of every list. With no search
+  // of the messages (this caller hands the lists none) it speaks of threads.
   const none = html({ query: 'zzz' });
   assert.match(none, /<div class="[^"]*" data-ai-search-empty=""><p class="[^"]*">No threads match “zzz”<\/p><\/div>/);
-  assert.ok(none.includes(message('messages:ai.search.none', { query: 'zzz' })));
-  assert.doesNotMatch(none, /data-ai-list="(?:work|busy|live|history)"/, 'every card folds away');
+  assert.ok(none.includes(message('messages:ai.search.noneThreads', { query: 'zzz' })));
+  assert.doesNotMatch(none, /data-ai-list="(?:work|busy|live|history|found)"/, 'every card folds away');
   assert.doesNotMatch(none, /data-ai-main-row/, 'and Main Chat is hidden');
 
   // Before the lists are read, the skeleton stays and no note is shown.
@@ -2180,9 +2181,119 @@ test('#6398: the search narrows every list by title, number or project, hides Ma
   assert.match(button, /h-10 w-10[^"]*rounded-full/, 'the plus\'s own round button');
   assert.match(src, /query=\{searchOpen \? query : ''\}/, 'the box\'s text is passed to the lists');
   assert.match(src, /data-ai-search=""/, 'the box the More projects panel has');
-  assert.equal(message('messages:ai.search.open'), 'Search your threads');
-  assert.equal(message('messages:ai.search.label'), 'Search your threads');
-  assert.equal(message('messages:ai.search.none', { query: 'releases' }), 'No threads match “releases”');
+  assert.equal(message('messages:ai.search.open'), 'Search threads and messages');
+  assert.equal(message('messages:ai.search.label'), 'Search threads and messages');
+  assert.equal(message('messages:ai.search.none', { query: 'releases' }), 'Nothing in your threads or messages matches “releases”');
+  assert.equal(message('messages:ai.search.noneThreads', { query: 'releases' }), 'No threads match “releases”');
+});
+
+// 13 Nov 2026: a tester typed "improve" and was told no thread matched,
+// although they had written "I want to improve my app." to the bot. The
+// search also reads what was said in the person's chat with Homeroom bot
+// and its threads (GET /api/ai/search, ./search.ts), and lists the messages
+// that match under the threads that do, each a link to that message.
+test('the search lists the messages that match under the threads, each a link to its message with the found words marked', () => {
+  const { renderComponent } = require('./lib/render-tsx');
+  const LISTS = 'frontend/src/features/ai/lists.tsx';
+  const all = {
+    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    rows: [], progress: [thread(3, 6011, 'building', { app, title: 'Improve the release notes', href: '#app/garden/dev/issues/6011' })],
+    waiting: [], live: [], openRow() {}, openThread() {},
+  };
+  const year = new Date().getFullYear();
+  const hit = (over) => ({
+    messageId: 71, rootId: null, threadTitle: null, mine: true,
+    snippet: 'I want to improve my app.', ranges: [[10, 17]], at: `${year}-11-03T12:00:00.000Z`, ...over,
+  });
+  const answered = (q, rows, more = false) => ({ q, rows, more, state: 'answered' });
+  const html = (extra) => renderComponent(LISTS, 'AiLists', { ...all, ...extra });
+
+  // Nothing of it without a search: the prerender, and the page at rest.
+  const rest = html({ query: '', found: answered('improve', [hit()]) });
+  assert.doesNotMatch(rest, /data-ai-list="found"|<mark/, 'no search, no found messages, whatever was answered before');
+  assert.match(rest, /data-ai-main-row=""/);
+
+  // A thread and two messages match: the thread's card first, then the
+  // messages' own card under its own heading, one row each.
+  const found = answered('improve', [
+    hit(),
+    hit({ messageId: 88, rootId: 60, threadTitle: 'A calendar for the garden', mine: false, snippet: '…so we could improve it later', ranges: [[13, 20]] }),
+  ]);
+  const both = html({ query: 'improve', found });
+  assert.ok(both.indexOf('data-ai-list="busy"') > 0 && both.indexOf('data-ai-list="busy"') < both.indexOf('data-ai-list="found"'), 'the messages come after the matching threads');
+  assert.equal(message('messages:ai.search.messages', { count: 2 }), 'In your messages · 2');
+  const card = both.slice(both.indexOf('data-ai-sheet="found"'));
+  assert.match(card, /<h2 class="[^"]*\buppercase\b[^"]*">In your messages · 2<\/h2>/, 'the small caps section label the other cards wear');
+  const rows = [...card.matchAll(/<a href="([^"]+)" class="([^"]*)" title="([^"]*)" aria-label="([^"]*)" data-ai-found="(chat|thread)">(.*?)<\/a>/g)];
+  assert.equal(rows.length, 2, 'one row a message, each a real link');
+  const [chat, inThread] = rows;
+  // The chat itself: the chat at that message; a thread: the thread at it.
+  assert.equal(chat[1], '#homeroom-bot/main/m/71');
+  assert.equal(chat[5], 'chat');
+  assert.equal(inThread[1], '#homeroom-bot/thread/60/m/88');
+  assert.equal(inThread[5], 'thread');
+  // The found words are a <mark>, the rest plain text.
+  assert.match(chat[6], /I want to <mark class="[^"]*">improve<\/mark> my app\./);
+  assert.match(inThread[6], /…so we could <mark class="[^"]*">improve<\/mark> it later/);
+  const mark = /<mark class="([^"]*)">/.exec(chat[6])[1];
+  assert.match(mark, /bg-\[color:var\(--accent-tint\)\]/, 'the mark is tinted by a token, which follows the theme');
+  assert.doesNotMatch(mark, /#[0-9a-f]{3,8}\b|yellow/i, 'no literal colour');
+  // Where it is and its day, and the link's whole name.
+  const day = new Date(`${year}-11-03T12:00:00.000Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  assert.equal(message('messages:ai.search.inChat'), 'Your chat with Homeroom bot');
+  assert.ok(chat[6].includes('>Your chat with Homeroom bot<'), 'a message in the chat itself says so');
+  assert.ok(inThread[6].includes('>A calendar for the garden<'), 'a message in a thread names the thread');
+  assert.ok(chat[6].includes(`>${day}<`), 'its day');
+  assert.equal(chat[4], `You: I want to improve my app. · Your chat with Homeroom bot · ${day}`);
+  assert.equal(inThread[4], `Homeroom bot: …so we could improve it later · A calendar for the garden · ${day}`);
+  assert.equal(chat[3], chat[4], 'the tooltip says the same');
+  // The row is the list's own quiet row, not a new one.
+  const src = read(LISTS);
+  assert.match(src, /function FoundRow[\s\S]*?className=\{LIVE_ROW\}/, 'the quiet row Live this week and History draw');
+  assert.ok(chat[2].includes('min-h-[40px]') && chat[2].includes('md:min-h-[32px]'));
+  assert.doesNotMatch(card, /data-ai-found-more/, 'nothing about more matches when these are all');
+
+  // Only messages match: no thread card, no "nothing matches" note.
+  const onlyMessages = html({ query: 'my app', found: answered('my app', [hit({ ranges: [[18, 24]] })]) });
+  assert.doesNotMatch(onlyMessages, /data-ai-list="(?:work|busy|live|history)"/);
+  assert.doesNotMatch(onlyMessages, /data-ai-search-empty/, 'a message matched, so the page does not say nothing did');
+  assert.match(onlyMessages, /data-ai-list="found"/);
+
+  // More matched than the rows sent: one line under them says so.
+  const capped = html({ query: 'improve', found: answered('improve', [hit()], true) });
+  assert.ok(capped.includes(`data-ai-found-more="">${message('messages:ai.search.more')}<`));
+  assert.equal(message('messages:ai.search.more'), 'These are the newest matches. Type more to narrow them down.');
+
+  // The note that nothing matched waits for the messages' answer.
+  const waiting = html({ query: 'zzz', found: null });
+  assert.doesNotMatch(waiting, /data-ai-search-empty|data-ai-list="found"/, 'nothing new is drawn while the messages are being read');
+  const earlier = html({ query: 'zzz', found: answered('zz', []) });
+  assert.doesNotMatch(earlier, /data-ai-search-empty/, 'an answer to an earlier query is not this one\'s');
+  const nothing = html({ query: ' zzz ', found: answered('zzz', []) });
+  assert.match(nothing, /data-ai-search-empty=""><p class="[^"]*">Nothing in your threads or messages matches “zzz”<\/p>/);
+  // The last answer stays drawn while the next one is read, so the list does not blink.
+  const stale = html({ query: 'improve m', found: answered('improve', [hit()]) });
+  assert.match(stale, /data-ai-list="found"/);
+  assert.doesNotMatch(stale, /data-ai-search-empty/);
+
+  // One character is too short to ask the server: the note speaks of threads only.
+  const short = html({ query: 'z', found: { q: 'z', rows: [], more: false, state: 'unasked' } });
+  assert.match(short, /data-ai-search-empty=""><p class="[^"]*">No threads match “z”<\/p>/);
+
+  // The messages could not be read: said plainly, with Try again; the threads still answer.
+  const failed = html({ query: 'improve', found: { q: 'improve', rows: [], more: false, state: 'failed' } });
+  assert.match(failed, /data-ai-list="busy"/, 'the threads are still searched');
+  assert.match(failed, /data-ai-search-failed="" role="status"><p class="[^"]*">Your messages could not be searched\.<\/p><button type="button"[^>]*data-ai-search-retry="">Try again<\/button>/);
+  assert.doesNotMatch(failed, /data-ai-search-empty/);
+  const failedBare = html({ query: 'zzz', found: { q: 'zzz', rows: [], more: false, state: 'failed' } });
+  assert.match(failedBare, /No threads match “zzz”/, 'no thread matched; the messages are not claimed');
+  assert.match(failedBare, /data-ai-search-failed=""/);
+
+  // The page (index.tsx) asks only for what the open box says, and hands both faces the answer.
+  const page = read('frontend/src/features/ai/index.tsx');
+  assert.match(page, /const search = useBotSearch\(searchOpen \? query : '', \{/);
+  assert.equal((page.match(/found=\{search\.found\}/g) || []).length, 2, 'the standard list and the look\'s');
+  assert.equal((page.match(/onFoundRetry=\{search\.retry\}/g) || []).length, 2);
 });
 
 // #6389: the person's own change, made through a coding agent, whose votes
