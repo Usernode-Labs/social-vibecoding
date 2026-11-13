@@ -2542,11 +2542,12 @@ test('every App permissions button and field is named for its app and permission
   });
   const named = (html) => [...html.matchAll(/<(?:button|input)[^>]*aria-label="([^"]*)"/g)].map((m) => m[1]);
   assert.deepEqual(named(device), [
+    'Revoke all permissions for Snap Cam',
     'Revoke Camera for Snap Cam',
     'Revoke Location for Snap Cam',
     'Re-enable Microphone for Snap Cam',
-  ], 'three buttons in one app, three different names');
-  assert.equal((device.match(/<button/g) || []).length, 3, 'no button is left with the bare word');
+  ], 'four buttons in one app, four different names');
+  assert.equal((device.match(/<button/g) || []).length, 4, 'no button is left with the bare word');
 
   const ai = grantRows({
     phase: 'ready',
@@ -2571,6 +2572,7 @@ test('every App permissions button and field is named for its app and permission
   // The visible word leads each name (WCAG 2.5.3, Label in Name).
   for (const [label, word] of [
     ['appPermissions.revokeLabel', 'appPermissions.revoke'],
+    ['appPermissions.revokeAllLabel', 'appPermissions.revokeAll'],
     ['appPermissions.reEnableLabel', 'appPermissions.reEnable'],
     ['grants.revokeLabel', 'grants.revoke'],
     ['grants.reenableLabel', 'grants.reenable'],
