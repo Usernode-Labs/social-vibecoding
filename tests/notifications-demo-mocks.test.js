@@ -183,7 +183,7 @@ test('staging + ?demo=1: twenty-four mock rows prepend, and only the unread ones
       'one request\'s story: its two notifications fold into one card');
     for (const n of older) {
       assert.ok(Date.parse(n.readAt) > Date.parse(n.createdAt), 'read after it arrived');
-      assert.match(n.prTitle || n.storyTitle, /^\[Mock\]/, 'obviously fake');
+      assert.match(n.prTitle || n.storyTitle || n.sessionTitle, /^\[Mock\]/, 'obviously fake');
       assert.equal(n.appId, 0, 'in the demo project');
     }
     assert.ok(
