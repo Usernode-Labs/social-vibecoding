@@ -41,6 +41,10 @@ const CHOICES = ['standard', ...FRAME_SKINS] as const;
 
 // The platform header's own disc, as its bell wears it (#2798: no fill at rest).
 const SHELL = 'relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-transparent text-[color:var(--brand-ink)] transition-colors hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)] cursor-pointer';
+// The look label carries no un-touch-target: its ::after hit box would paint
+// over the select and take every press, so the select brings its own 44px
+// square instead (#6648).
+const SHELL_LOOK = 'relative w-7 h-7 flex items-center justify-center rounded-full border border-transparent text-[color:var(--brand-ink)] transition-colors hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)] cursor-pointer';
 
 // One listener on window.Theme for every picker mounted (the head module
 // keeps what it is handed for the page's life).
@@ -79,11 +83,11 @@ export function LookPickerView({ variant, skin, onPick, dark, onDark }: {
   const fold = frame && !!onDark;
   return (
     <>
-    <label className={frame ? (fold ? 'fr-ib fr-look fr-d' : 'fr-ib fr-look') : SHELL} title={label} data-look-picker={variant}>
+    <label className={frame ? (fold ? 'fr-ib fr-look fr-d' : 'fr-ib fr-look') : SHELL_LOOK} title={label} data-look-picker={variant}>
       <Icon name="layers" size={20} />
       <select
         aria-label={label}
-        className={frame ? undefined : 'absolute inset-0 h-full w-full cursor-pointer opacity-0'}
+        className={frame ? undefined : 'absolute left-1/2 top-1/2 h-11 w-11 -translate-x-1/2 -translate-y-1/2 cursor-pointer opacity-0'}
         value={value}
         onChange={(event) => onPick(event.target.value as Skin)}
       >
