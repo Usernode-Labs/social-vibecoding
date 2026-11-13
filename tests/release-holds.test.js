@@ -25,7 +25,7 @@ test('each rule reads only what a change adds', () => {
   assert.deepEqual(holds.tripped({ diff: file('public/app.js', ['+  await usernode.sendTransaction(to, amount);']) }), ['wallet']);
   assert.deepEqual(holds.tripped({ diff: file('public/app.js', ['-  await usernode.sendTransaction(to, amount);']) }), [],
     'taking a wallet send out holds nothing');
-  assert.deepEqual(holds.tripped({ diff: file('server.js', ['+  CREATE TABLE IF NOT EXISTS tips (', '+    user_id INTEGER NOT NULL,', '+    amount INTEGER);']) }), ['people']);
+  assert.deepEqual(holds.tripped({ diff: file('server.js', ['+  CREATE TABLE IF NOT EXISTS tips (', '+    user_id INTEGER NOT NULL,', '+    email TEXT,', '+    amount INTEGER);']) }), ['people']);
   assert.deepEqual(holds.tripped({ diff: file('server.js', ['+  CREATE TABLE IF NOT EXISTS scores (', '+    points INTEGER);']) }), [],
     'a table with no person column is not data about people');
   assert.deepEqual(holds.tripped({ diff: file('dapp.json', ['+    { "key": "STRIPE_KEY", "private": true }']) }), ['secret']);
@@ -36,6 +36,38 @@ test('each rule reads only what a change adds', () => {
   assert.deepEqual(holds.tripped({ diff: file('public/index.html', ['+<script src="/usernode-bridge/v1/bridge.js"></script>']) }), [],
     'the centrally hosted files are relative paths');
   assert.deepEqual(holds.tripped({ diff: '', contentFlagged: true }), ['content']);
+});
+
+test('the people rule holds a new table for contact or personal columns, not for saying whose a row is', () => {
+  const table = (...columns) => holds.tripped({ diff: file('server.js', ['+  await pool.query(`CREATE TABLE IF NOT EXISTS spots (', ...columns.map((c) => `+    ${c},`), '+    created_at TIMESTAMPTZ DEFAULT NOW()', '+  )`);']) });
+  // Whose row it is: what the platform hands every app about its person.
+  assert.deepEqual(table('id SERIAL PRIMARY KEY', 'user_id INTEGER NOT NULL', 'username TEXT', 'usernode_pubkey TEXT'), []);
+  assert.deepEqual(table('place_id INTEGER', 'ribbon TEXT', 'name TEXT', 'added_by INTEGER'), []);
+  // Contact and personal details, however the column is named.
+  for (const column of ['email TEXT', 'contact_email TEXT', 'phone_number TEXT', 'full_name TEXT', 'first_name TEXT',
+    'date_of_birth DATE', 'birthday DATE', 'home_address TEXT', 'wallet_address TEXT', '"email" TEXT', 'postal_code TEXT']) {
+    assert.deepEqual(table('user_id INTEGER', column), ['people'], column);
+  }
+  // A word inside another word is not that word.
+  assert.deepEqual(table('emailed_at TIMESTAMPTZ', 'headphones BOOLEAN', 'zipped BOOLEAN'), []);
+  // One line, and a column typed with a comma of its own.
+  assert.deepEqual(holds.tripped({ diff: file('db.sql', ['+CREATE TABLE tips (id SERIAL, amount NUMERIC(10,2), phone TEXT);']) }), ['people']);
+  assert.deepEqual(holds.tripped({ diff: file('db.sql', ['+CREATE TABLE tips (id SERIAL, amount NUMERIC(10,2), user_id INTEGER);']) }), []);
+  // The word has to be a column of the new table, not anywhere in the file.
+  assert.deepEqual(holds.tripped({ diff: file('server.js', [
+    '+  await pool.query(`CREATE TABLE IF NOT EXISTS scores (points INTEGER, user_id INTEGER)`);',
+    '+  // the address bar keeps the room',
+    "+  const { rows } = await pool.query('SELECT email FROM invites WHERE id = $1', [id]);",
+  ]) }), []);
+  // The table ends at its closing bracket: the code after it is not columns.
+  assert.deepEqual(holds.tripped({ diff: file('server.js', [
+    '+  await db.exec(`CREATE TABLE IF NOT EXISTS scores (', '+    points INTEGER', '+  )`)', '+  const invite = {', '+    email: req.body.email,', '+  }',
+  ]) }), []);
+  // Two tables in one file: the second one's column still counts.
+  assert.deepEqual(holds.tripped({ diff: file('server.js', [
+    '+  CREATE TABLE IF NOT EXISTS a (', '+    id SERIAL', '+  );',
+    '+  CREATE TABLE IF NOT EXISTS b (', '+    id SERIAL,', '+    phone TEXT', '+  );',
+  ]) }), ['people']);
 });
 
 test('a test file trips nothing, and several rules come back in the listed order', () => {
