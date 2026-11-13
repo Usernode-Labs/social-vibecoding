@@ -64,7 +64,7 @@ test('a lane holds only while the person is active', () => {
   assert.equal(flows.classify({ ...base, recent: false }).out, 'none', 'never in a lane is not lapsed');
 });
 
-test('the door is the invite when it came first, else the waitlist, else let in directly', () => {
+test('the door is the invite when it was followed before they were in, else the waitlist, else let in directly', () => {
   const invite = { by: 'ben', project: 'Garden', slug: 'garden', how: 'signed_up', status: 'joined', openedAt: '2026-09-30T09:00:00Z' };
   const out = assembled([
     person({ userId: 1, name: 'direct' }),
@@ -73,6 +73,9 @@ test('the door is the invite when it came first, else the waitlist, else let in 
     person({ userId: 4, name: 'inside_first', invite, inviteAt: '2026-10-20T09:00:00Z' }),
     person({ userId: 5, name: 'both_ways', invite, inviteAt: '2026-08-20T09:00:00Z', releasedAt: '2026-09-28T10:00:00Z', waitlist: { joinedAt: '2026-09-01T10:00:00Z', waitedDays: 27, discovery: null } }),
     person({ userId: 6, name: 'typed', releasedAt: '2026-09-28T10:00:00Z', waitlist: { joinedAt: '2026-09-01T10:00:00Z', waitedDays: 27, discovery: 'a podcast' } }),
+    // Signed up through a link: queued on the waitlist a moment before the
+    // invite was recorded, and let in a week later.
+    person({ userId: 7, name: 'queued_invitee', invite, inviteAt: '2026-09-21T10:00:05Z', releasedAt: '2026-09-28T10:00:00Z', waitlist: { joinedAt: '2026-09-21T10:00:00Z', waitedDays: 7, discovery: 'Friend' } }),
   ]);
   const by = Object.fromEntries(out.people.map((p) => [p.n, p]));
   assert.deepEqual([by.direct.door, by.direct.src], ['direct', 'unrecorded']);
@@ -80,6 +83,8 @@ test('the door is the invite when it came first, else the waitlist, else let in 
   assert.deepEqual([by.invited.door, by.invited.src, by.invited.linkJoin], ['invite', 'invite', false]);
   assert.deepEqual([by.inside_first.door, by.inside_first.linkJoin], ['direct', true], 'an invite followed from inside is not the door');
   assert.equal(by.both_ways.door, 'invite', 'the invite came before they joined the waitlist');
+  assert.deepEqual([by.queued_invitee.door, by.queued_invitee.src, by.queued_invitee.wait], ['invite', 'invite', 7],
+    'a waitlist row of their own does not make the waitlist their door');
   assert.equal(by.typed.src, 'other', 'anything else they typed');
   assert.deepEqual(by.invited.inv, { by: 'ben', n: 'Garden', aud: 'private', how: 'signed_up', status: 'joined', seen: true });
 });

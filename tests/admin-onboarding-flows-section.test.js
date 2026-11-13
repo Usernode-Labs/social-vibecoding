@@ -96,6 +96,10 @@ test('its styles are scoped to the section and use no untuned palette', () => {
   assert.doesNotMatch(block, /fonts\.googleapis|@import/, 'no cross-origin assets');
   assert.doesNotMatch(block, /safe-area-inset/, 'the section sits inside the page, clear of the screen\'s edges');
   assert.match(block, /#admin-onboarding-flows \.scroller\{[^}]*direction:ltr/, 'the drawing reads left to right in every language');
+  // Focusing a card must not scroll the drawing's box: it moves by its transform alone.
+  assert.match(block, /#admin-onboarding-flows \.scroller\{[^}]*overflow:hidden;overflow:clip;/);
+  assert.match(read(ENGINE), /\[sc,root\]\.forEach\(function\(box\)\{listen\(box,'scroll',function\(\)\{if\(box\.scrollLeft\|\|box\.scrollTop\)\{box\.scrollLeft=0;box\.scrollTop=0;\}\}\);\}\);/,
+    'and where a browser scrolls it anyway, it is put back');
   for (const src of [read(SECTION), read(ENGINE)]) assert.doesNotMatch(src, /\b(gray|indigo)-\d/);
 });
 
