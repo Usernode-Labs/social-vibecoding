@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
+import { radioGroupKeys } from '../../lib/radio-group';
 import { t as translate } from '../../lib/i18n/runtime';
 import { deviceTimeZone, postCreateApp } from '../dialogs/post-create-app';
 import type { CreateAudience } from '../first-session/make';
@@ -62,6 +63,8 @@ export function MakeSheet({ project, onClose, onMade }: {
   const t = useMessages('messages');
   const [name, setName] = useState(project.name);
   const [audience, setAudience] = useState<CreateAudience>('invited');
+  // One tab stop, and the arrow keys move the pick (#6510).
+  const audienceKeys = radioGroupKeys(MAKE_AUDIENCES, audience, setAudience);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const titleId = useId();
@@ -117,7 +120,7 @@ export function MakeSheet({ project, onClose, onMade }: {
           </label>
           <fieldset className="mt-4">
             <legend className="pb-1.5 text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400">{t('messages:bot.make.audienceLabel')}</legend>
-            <div className="overflow-hidden rounded-[20px] bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-800" role="radiogroup">
+            <div className="overflow-hidden rounded-[20px] bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-800" role="radiogroup" onKeyDown={audienceKeys.onKeyDown}>
               {MAKE_AUDIENCES.map((option, i) => {
                 const on = audience === option;
                 return (
@@ -126,6 +129,7 @@ export function MakeSheet({ project, onClose, onMade }: {
                     type="button"
                     role="radio"
                     aria-checked={on}
+                    tabIndex={audienceKeys.tabIndex(option)}
                     data-bot-make-audience={option}
                     onClick={() => setAudience(option)}
                     className={`flex w-full items-center gap-3 px-3 py-2.5 text-start ${i ? 'shadow-[inset_0_1px_0_var(--app-sheet-line)]' : ''}`}

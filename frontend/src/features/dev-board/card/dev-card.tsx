@@ -55,6 +55,7 @@ import { Alert } from '@/components/ui/alert';
 import { Bars3Icon, CheckIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, Glyph, PencilSquareIcon, WarningTriangleIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { useMessages } from '../../../lib/i18n/react';
+import { radioGroupKeys } from '../../../lib/radio-group';
 import { t as translate } from '../../../lib/i18n/runtime';
 import { useStoreState } from '../../../lib/use-store-state';
 import { clampPopoverHeight, placeUnderAnchor } from '../../../lib/anchor-popover';
@@ -1003,6 +1004,8 @@ export function VotePicker({
   // The reason list's own name, and its four answers' words.
   const whyHeadId = `${reasonId}-why`;
   const why = whyTexts(t);
+  // One tab stop, and the arrow keys move the pick (#6510).
+  const whyKeys = radioGroupKeys(NO_CHOICES, noChoice, onNoChoice);
   // #3977: an approval's two sides are its own words, with no tally (it is
   // one person's to give) and no "Still yes": nobody is asked to vote.
   const yesWord = approve
@@ -1052,7 +1055,7 @@ export function VotePicker({
         // A No says why: the answer it picks is the reason it sends, and the
         // vote button stays off until one is picked. The heading is the
         // group's name, so the buttons need no visible question.
-        <div className="dev-vote-why" role="radiogroup" aria-labelledby={whyHeadId}>
+        <div className="dev-vote-why" role="radiogroup" aria-labelledby={whyHeadId} onKeyDown={whyKeys.onKeyDown}>
           <span className="sr-only" id={whyHeadId}>{t('project:card.vote.picker.noLabel')}</span>
           {NO_CHOICES.map((key) => (
             <button
@@ -1062,6 +1065,7 @@ export function VotePicker({
               aria-checked={noChoice === key}
               className="dev-vote-why-opt"
               data-vote-why={key}
+              tabIndex={whyKeys.tabIndex(key)}
               onClick={() => onNoChoice(key)}
             >{why[key]}</button>
           ))}
