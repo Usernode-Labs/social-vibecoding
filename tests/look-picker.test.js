@@ -31,11 +31,31 @@ test('it is one small control: a glyph, and under it the system\'s own menu of l
 
 test('under the standard look it is drawn with the header\'s own classes, beside its bell', () => {
   const html = view({ variant: 'shell', skin: 'standard' });
-  assert.match(html, /^<label class="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target [^"]*" title="Look" data-look-picker="shell">/);
-  assert.match(html, /<select aria-label="Look" class="absolute inset-0 h-full w-full cursor-pointer opacity-0">/);
+  assert.match(html, /^<label class="relative w-7 h-7 flex items-center justify-center rounded-full [^"]*" title="Look" data-look-picker="shell">/);
+  assert.doesNotMatch(html, /<label[^>]*un-touch-target/, 'the label brings no hit box of its own');
+  assert.match(html, /<select aria-label="Look" class="absolute left-1\/2 top-1\/2 h-11 w-11 -translate-x-1\/2 -translate-y-1\/2 cursor-pointer opacity-0">/);
   assert.match(html, /<option value="standard" selected="">Standard<\/option>/);
   assert.doesNotMatch(html, /fr-ib|fr-look/, 'not the kit\'s disc: the kit\'s rules exist only under a look');
   assert.match(html, /<svg class="fr-ic" width="20" height="20"/, 'the glyph sizes itself, with or without the kit');
+});
+
+test('under the standard look the menu itself takes the press', () => {
+  // .un-touch-target::after is a 44px box painted above the invisible select,
+  // so on the label every press stopped there and the menu never opened
+  // (#6648). The select now carries the same 44px square, centred on the
+  // 28px disc.
+  const html = view({ variant: 'shell', skin: 'standard' });
+  const label = html.match(/<label class="([^"]*)" title="Look" data-look-picker="shell">/);
+  assert.ok(label, 'the shell variant draws its label');
+  assert.doesNotMatch(label[1], /un-touch-target/, 'no hit box sits over the select');
+  const select = html.match(/<select aria-label="Look" class="([^"]*)">/);
+  assert.ok(select, 'the system\'s own menu is still the control');
+  assert.match(select[1], /\bh-11\b/);
+  assert.match(select[1], /\bw-11\b/);
+  assert.match(select[1], /left-1\/2/, 'centred on the disc');
+  assert.match(select[1], /top-1\/2/, 'centred on the disc');
+  assert.match(select[1], /-translate-x-1\/2/, 'centred on the disc');
+  assert.match(select[1], /-translate-y-1\/2/, 'centred on the disc');
 });
 
 test('real admins only, and never on the first render', () => {
