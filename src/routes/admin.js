@@ -1004,6 +1004,13 @@ function adminRoutes(config) {
   router.get('/api/admin/journey/cohorts', journeyRead('cohorts', () => journeyDemoData.cohorts(),
     async (req, ctx) => journey.cohorts(pool, ctx)));
 
+  // Who is in which project and whom they brought (journey.flows): each
+  // project's audience, each person's footprint project by project, and the
+  // invites they sent. Over all time, for everyone: it takes no week and no
+  // cohort, and a reader narrows it by the people it already has.
+  router.get('/api/admin/journey/flows', journeyRead('flows', () => journeyDemoData.flows(),
+    async (req, ctx) => journey.flows(pool, ctx)));
+
   router.get('/api/admin/journey/first-mile', journeyRead('first mile', (req) => journeyDemoData.firstMile(req.query.admitted),
     async (req, ctx) => {
       const day = NAMED_COHORTS.has(req.query.admitted)

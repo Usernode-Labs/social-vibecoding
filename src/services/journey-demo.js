@@ -64,6 +64,40 @@ function cohorts() {
 
 // Everyone in a demo cohort reached every step: the earlier cohort and the
 // one person who came in another way.
+// Who is in which project and whom they brought, from sample rows shaped
+// like the queries' and assembled by the real reading.
+function flows() {
+  const apps = [
+    { id: 1, slug: 'supper-club', name: 'Supper Club', created_at: '2026-09-25T10:00:00Z', platform: false, audience: 'invited', members: 3, maker_id: P.mira.userId, maker: P.mira.name },
+    { id: 2, slug: 'trail-log', name: 'Trail Log', created_at: '2026-09-26T10:00:00Z', platform: false, audience: 'open', members: 6, maker_id: P.okafor.userId, maker: P.okafor.name },
+    { id: 3, slug: 'chore-wheel', name: 'Chore Wheel', created_at: '2026-10-06T10:00:00Z', platform: false, audience: 'solo', members: 1, maker_id: P.tobi.userId, maker: P.tobi.name },
+  ];
+  const row = (p, appId, facts = {}) => ({
+    user_id: p.userId, username: p.name, app_id: appId, days: 0, first_day: null, last_day: null,
+    changes: 0, live: 0, votes: 0, requests: 0, feedback: 0, messages: 0, made: false, member: true, invited_by: null,
+    total: 6, ...facts,
+  });
+  const rows = [
+    row(P.mira, 1, { made: true, days: 9, first_day: '2026-09-25', last_day: '2026-10-12', changes: 4, live: 3, messages: 12 }),
+    row(P.mira, 2, { member: false, days: 2, first_day: '2026-10-01', last_day: '2026-10-03', votes: 1 }),
+    row(P.okafor, 2, { made: true, days: 14, first_day: '2026-09-26', last_day: '2026-10-13', changes: 6, live: 5, messages: 20 }),
+    row(P.tobi, 1, { invited_by: P.mira.name, days: 5, first_day: '2026-10-06', last_day: '2026-10-12', votes: 2, messages: 7 }),
+    row(P.tobi, 3, { made: true, days: 1, first_day: '2026-10-06', last_day: '2026-10-06', changes: 1 }),
+    row(P.lena, 2, { days: 6, first_day: '2026-10-05', last_day: '2026-10-13', changes: 1, live: 1, votes: 3, requests: 1, feedback: 1 }),
+  ];
+  const sent = [
+    { user_id: P.mira.userId, username: P.mira.name, app_id: 1, links: 2, shared: 1, direct: 1, opened: 4,
+      first_at: '2026-09-27T09:00:00Z', opens_since: '2026-09-27T09:05:00Z' },
+    { user_id: P.tobi.userId, username: P.tobi.name, app_id: 3, links: 1, shared: 0, direct: 0, opened: 0,
+      first_at: '2026-10-07T09:00:00Z', opens_since: '2026-09-27T09:05:00Z' },
+  ];
+  const reached = [
+    { maker_id: P.mira.userId, app_id: 1, user_id: P.tobi.userId, username: P.tobi.name, status: 'joined', how: 'link', at: '2026-10-06T08:00:00Z' },
+    { maker_id: P.mira.userId, app_id: 1, user_id: P.jun.userId, username: P.jun.name, status: 'invited', how: 'direct', at: '2026-10-08T08:00:00Z' },
+  ];
+  return { demo: true, ...journey.flowsReading({ apps, rows, sent, reached }) };
+}
+
 const allDone = (p, at, extra = {}) => firstMilePerson(p, journey.FIRST_MILE_STEPS
   .map((key) => step(key, 'done', key === 'username' ? null : at)), { daysSince: 11, ...extra });
 
@@ -668,5 +702,5 @@ function firstSession(day, all = false) {
 
 module.exports = {
   cohorts, firstMile, stages, activeGroups, trustChecks, coverage, loops, nextSteps, person, summary, leftOut,
-  creation, pairs, firstSession,
+  creation, pairs, firstSession, flows,
 };
