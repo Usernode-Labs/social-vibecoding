@@ -48,6 +48,7 @@ import './admin-incidents.tsx';
 import './admin-node.tsx';
 import './admin-apps-usage.tsx';
 import './admin-journey.tsx';
+import './admin-onboarding-flows.tsx';
 import './admin-analytics.tsx';
 import './admin-estimator.tsx';
 import './admin-merges.tsx';
