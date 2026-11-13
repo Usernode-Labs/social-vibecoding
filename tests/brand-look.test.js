@@ -161,6 +161,20 @@ function lookBlock() {
   return css.slice(at);
 }
 
+// The sheet before the look's block, less the one other block that may name
+// the look's typefaces: the signed-out pages wear the website's look too,
+// between two marks of their own. Where that block is absent, nothing is cut.
+function outsideTheLooks() {
+  const css = read('public', 'css', 'app.css');
+  const before = css.slice(0, css.indexOf(HEADING));
+  const a = before.indexOf("/* ── THE WEBSITE'S LOOK ON THE SIGNED-OUT PAGES");
+  if (a < 0) return before;
+  const end = "/* the website's look on the signed-out pages: end */";
+  const b = before.indexOf(end, a);
+  assert.ok(b > a, 'the signed-out pages\' look is one block between its two marks');
+  return before.slice(0, a) + before.slice(b + end.length);
+}
+
 // A selector list, split at its top-level commas (not those inside :is()).
 function splitSelectors(head) {
   const out = [];
@@ -309,10 +323,8 @@ test('Geist loads from our own origin by an absolute path, and only for this loo
   const block = lookBlock();
   assert.match(block, /@font-face\s*\{[^}]*font-family:\s*'Geist'[^}]*url\('\/fonts\/geist\/Geist-Variable\.woff2'\)/,
     'the face points at the self-hosted file by an absolute, same-origin path');
-  const css = read('public', 'css', 'app.css');
-  const before = css.slice(0, css.indexOf(HEADING));
   // Nothing else names the family (the Brand kit look, which also set it, was retired on 12 Nov 2026).
-  assert.ok(!/Geist/.test(before), 'nothing outside this look names Geist');
+  assert.ok(!/Geist/.test(outsideTheLooks()), 'nothing outside this look and the signed-out pages\' names Geist');
 });
 
 test('/fonts/ is a public static prefix, like /vendor/', () => {
@@ -342,9 +354,7 @@ test('Geist Mono and Young Serif load from our own origin, with their licences b
     const licence = path.join(ROOT, 'public', path.dirname(file), 'LICENSE.txt');
     assert.match(fs.readFileSync(licence, 'utf8'), /SIL Open Font License/, `the OFL travels with ${family}`);
   }
-  const css = read('public', 'css', 'app.css');
-  const before = css.slice(0, css.indexOf(HEADING));
-  assert.ok(!/Young Serif/.test(before), 'nothing outside this look names Young Serif');
+  assert.ok(!/Young Serif/.test(outsideTheLooks()), 'nothing outside this look and the signed-out pages\' names Young Serif');
 });
 
 test('the empty-state figures are committed beside their provenance, and drawn only by this look', () => {
