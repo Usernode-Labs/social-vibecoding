@@ -27,6 +27,12 @@
 //   4. The hold lifts when a plan is posted on the request, when they tap
 //      Let the bot build it now (POST /api/apps/:slug/issues/:number/bot-go),
 //      or once the thread has been quiet for 7 days.
+//   5. A thread about a change is finished with its change (13 Nov 2026):
+//      merged and live, or closed, it leaves Needs you for History, where it
+//      says how the change ended; the change still opens the same thread.
+//      Merged and not live yet, it stays. Writing in it, or opening one
+//      about a change that has already ended, lists it again, and so does
+//      the closed change being reopened.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/private-thread-about-postgres.test.js
 
@@ -370,6 +376,84 @@ test('a private thread about a request or a change, and the hold, against the fu
     assert.equal(made.status, 200);
     assert.equal(made.body.holds, false);
     assert.equal((await root(made.body.rootId)).content, 'New thread about #22 Old idea. Only you can see it.');
+  });
+
+  await t.test('a thread about a change is finished with its change: live or closed, it is History\'s', async () => {
+    const aiHistory = require('../src/services/ai-history');
+    const TITLE = 'Night mode by schedule';
+    // What the bot tab reads for `who`: the thread's row, whether Needs you
+    // lists it, and its History row.
+    const read = async (who, rootId, title = TITLE) => {
+      const work = await aiWork.workFor(pool, { user: who, deps: { bot: botUser } });
+      const history = await aiHistory.historyFor(pool, { user: who, kind: 'solo', deps: { bot: botUser } });
+      const row = work.private.find((p) => p.rootId === rootId);
+      return {
+        done: row ? row.resultDone === true : null,
+        needs: aiWork.listsOf([], work).needsYou.some((r) => r.title === title && r.number == null),
+        past: history.rows.find((r) => r.rootId === rootId) || null,
+      };
+    };
+    // The lifecycle is the workflow's to write (the guard on chat_sessions).
+    const move = async (id, sql) => {
+      const tx = await pool.connect();
+      try {
+        await tx.query('BEGIN');
+        await tx.query(`SELECT set_config('app.wf_writer', 'transition', true)`);
+        await tx.query(`UPDATE chat_sessions SET ${sql} WHERE id = $1`, [id]);
+        await tx.query('COMMIT');
+      } catch (err) {
+        await tx.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally { tx.release(); }
+    };
+    const samChat = await conversations.ensureAdmittedDirect(pool, botUser.id, sam.id);
+
+    // Up for a vote: Sam's thread about it is Needs you's, as it was.
+    assert.deepEqual(await read(sam, samChange), { done: false, needs: true, past: null });
+    // Merged and not live yet: still his to see.
+    await move(change.id, `status = 'merged', merged_at = NOW(), live_at = NULL`);
+    assert.deepEqual(await read(sam, samChange), { done: false, needs: true, past: null }, 'going live is not live');
+    // Live: it leaves Needs you, and History has it, saying so.
+    await move(change.id, 'live_at = NOW()');
+    const live = await read(sam, samChange);
+    assert.deepEqual({ done: live.done, needs: live.needs }, { done: true, needs: false });
+    assert.deepEqual({ kind: live.past.kind, outcome: live.past.outcome, title: live.past.title, app: live.past.app.slug },
+      { kind: 'solo', outcome: 'live', title: TITLE, app: 'pa-plants' });
+    const { rows: [{ live_at: liveAt }] } = await pool.query('SELECT live_at FROM chat_sessions WHERE id = $1', [change.id]);
+    assert.equal(live.past.at, new Date(liveAt).toISOString(), 'dated by when the change went live');
+    const { rows: [kept] } = await pool.query('SELECT state, done_at FROM private_threads WHERE root_message_id = $1', [samChange]);
+    assert.deepEqual(kept, { state: 'open', done_at: null }, 'read from the change, never written to the thread');
+    // The change still opens the same thread.
+    const again = await open(sam, 406, 'change');
+    assert.deepEqual({ rootId: again.body.rootId, reused: again.body.reused }, { rootId: samChange, reused: true });
+    // Writing in it brings it back, as writing in a done thread does.
+    await conversations.sendMessage(pool, sam, samChat.conversationId, { content: 'One more thing about sunrise.', thread_root_id: samChange });
+    assert.deepEqual(await read(sam, samChange), { done: false, needs: true, past: null }, 'theirs again once they write in it');
+    // And Mark done closes it like any other thread.
+    assert.equal((await privateThreads.markDone(pool, { user: sam, rootId: samChange, bot: botUser })).state, 'done');
+    assert.equal((await read(sam, samChange)).needs, false);
+
+    // A thread opened about a change that is already live is a new
+    // conversation: it is listed.
+    const late = await open(ada, 406, 'change');
+    assert.equal(late.status, 200);
+    assert.deepEqual(await read(ada, late.body.rootId), { done: false, needs: true, past: null }, 'opened after it went live');
+
+    // Closed without merging: History's too, as Closed; reopened, it is back.
+    const { rows: [other] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, pr_number, is_headless)
+       VALUES ($1, $2, 'dusk', 'promoted', 'Dim at dusk', 407, FALSE) RETURNING id`,
+      [app.id, sam.id],
+    );
+    const onOther = await open(ada, 407, 'change');
+    assert.equal(onOther.status, 200);
+    assert.deepEqual(await read(ada, onOther.body.rootId, 'Dim at dusk'), { done: false, needs: true, past: null });
+    await move(other.id, `status = 'archived', archived_at = NOW()`);
+    const closed = await read(ada, onOther.body.rootId, 'Dim at dusk');
+    assert.deepEqual({ done: closed.done, needs: closed.needs, outcome: closed.past && closed.past.outcome },
+      { done: true, needs: false, outcome: 'closed' });
+    await move(other.id, `status = 'paused', archived_at = NULL`);
+    assert.deepEqual(await read(ada, onOther.body.rootId, 'Dim at dusk'), { done: false, needs: true, past: null }, 'a reopened change brings its thread back');
   });
 
   await t.test('the opening line, pure', () => {
