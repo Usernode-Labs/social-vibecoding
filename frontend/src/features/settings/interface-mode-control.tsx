@@ -20,7 +20,7 @@ export function InterfaceModeControl() {
   useWindowEvent('usernode:settings-section', sync);
 
   return (
-    <div data-interface-mode={mode} className="mb-6 pb-6 border-b border-zinc-200 dark:border-zinc-800">
+    <div data-interface-mode={mode} className="ui-swrow mb-6 pb-6 border-b border-zinc-200 dark:border-zinc-800">
       <label className="flex items-center gap-2 cursor-pointer select-none">
         <Switch
           checked={mode === 'advanced'}

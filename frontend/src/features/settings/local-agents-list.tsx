@@ -30,7 +30,7 @@ function controller(): any {
 }
 
 /** Matches ROW_CLASS in ./grants-list.tsx — one row language on this screen. */
-const ROW_CLASS = 'rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
+const ROW_CLASS = 'ui-mini rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
 
 function AgentRow({ agent }: { agent: LocalAgentView }) {
   const t = useMessages('settings');

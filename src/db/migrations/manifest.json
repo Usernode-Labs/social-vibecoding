@@ -347,9 +347,19 @@
       "schemaSha256": "78d3ae3f376fe9865019e30705c9c0891901250f20b4035875b5109bbadc3b8b"
     },
     {
+      "id": "platform-signals-private-requests",
+      "sha256": "4dd6fc1ede8187ec60ac8f649c1e8a02b1959d77df22dd85dcc91e063489e56b",
+      "schemaSha256": "3e464e042703fcc68849b9d2c20f205285398fe8d786701642990ba60b175845"
+    },
+    {
+      "id": "release-holds",
+      "sha256": "8a3cd4c3bd9da7b25c9f3efd85471c5fa9c1797c2c059e479627615ac72b7038",
+      "schemaSha256": "342b4e500204d177606226ca31d64e4a3030231959d896cfa84c82b5b8cd16b8"
+    },
+    {
       "id": "user-timezone",
       "sha256": "22f84d61daba3c9e9987b4376fb64be9d83da8d8e1716c245601b868bd33d5a8",
-      "schemaSha256": "8d650b66ac944711444bd1a0e91fb7c3bdb0030d8f4e3fb3939b004b398038c2"
+      "schemaSha256": "1fb9c9da2515bec1a5f4d55fca9dbd12f090b6c252e52031d0bdf5b758435937"
     }
   ]
 }

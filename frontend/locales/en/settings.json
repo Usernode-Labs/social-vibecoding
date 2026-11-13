@@ -1371,6 +1371,10 @@
     "text": "Try Homeroom's new look: white cards on a light grey background, the Geist typeface with a serif for titles, and colours that each have a job: yellow for what needs you, black for where you are. Light mode only. On for this browser.",
     "description": "Explanation under the New look switch in Settings, Experimental. Geist is the name of a typeface; keep it as is. Homeroom is the product name. Yellow and black name the colours of the highlights on screen."
   },
+  "experimental.look.fold": {
+    "text": "Look and theme",
+    "description": "Accessible name and tooltip of a round button in the top bar on a phone, which only admins see. It opens a small menu with two rows: Look (the visual style) and Theme (light or dark)."
+  },
   "experimental.look.label": {
     "text": "Look",
     "description": "Label of a menu in Settings, Experimental, which only admins see. It chooses the visual style Homeroom is drawn in on this browser."
@@ -1382,14 +1386,6 @@
   "experimental.look.glass": {
     "text": "Glass",
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (frosted glass panels floating on the wallpaper). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.look.brandkit": {
-    "text": "Brand kit",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (the brand's cream page, a serif for titles and one yellow button). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.look.workbench": {
-    "text": "Workbench",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (dense one-line rows for people who work in it all day). A proper name; translate it as a short name, not a sentence."
   },
   "experimental.look.paper": {
     "text": "Paper",
@@ -1407,16 +1403,8 @@
     "text": "Sunrise",
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (white cards and a peach-to-lavender main button). A proper name; translate it as a short name, not a sentence."
   },
-  "experimental.look.today": {
-    "text": "Today",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (large headings and big cards, like an app store's front page). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.look.playground": {
-    "text": "Playground",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (chunky rounded blocks and heavy friendly type). A proper name; translate it as a short name, not a sentence."
-  },
   "experimental.look.description": {
-    "text": "Try one of nine looks for Homeroom, in light and dark. Each has its own typeface, colours and shapes. Not every screen is drawn in them yet; admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",
+    "text": "Try one of five looks for Homeroom, in light and dark. Each has its own typeface, colours and shapes. Not every screen is drawn in them yet; admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",
     "description": "Explanation under the Look menu in Settings, Experimental, which only admins see while the looks are being drawn. Homeroom is the product name; Home is its first screen."
   },
   "experimental.localAgents.title": {
@@ -1490,6 +1478,14 @@
   "accessibility.contrast.description": {
     "text": "Darker text and clearer lines, in light and dark.",
     "description": "Explanation under the High contrast switch in Settings > Accessibility."
+  },
+  "accessibility.motion.label": {
+    "text": "Reduce motion",
+    "description": "Label of a switch in Settings > Accessibility: turns off most animations, slides and moving effects across Homeroom."
+  },
+  "accessibility.motion.description": {
+    "text": "Turns off most animations, slides and moving effects, so screens change in place. When this is off, Homeroom follows your device's own reduce motion setting.",
+    "description": "Explanation under the Reduce motion switch in Settings > Accessibility."
   },
   "accessibility.previews.label": {
     "text": "Play previews on project cards",
@@ -1983,6 +1979,18 @@
     "text": "Revoke",
     "description": "Red button beside a permission of an app in Settings > App device permissions: takes that permission away from the app."
   },
+  "appPermissions.note.camera": {
+    "text": "Lets this app use your camera while it is open, once your browser allows it too.",
+    "description": "Small grey line under the Camera permission of an app in Settings > App device permissions: says plainly what this permission lets the app do. Shown on revoked rows too, so it describes the permission rather than what the app can do right now; the browser must also allow the camera."
+  },
+  "appPermissions.note.microphone": {
+    "text": "Lets this app hear you and the sounds around you while it is open, once your browser allows it too.",
+    "description": "Small grey line under the Microphone permission of an app in Settings > App device permissions: says plainly what this permission lets the app do. Shown on revoked rows too, so it describes the permission rather than what the app can do right now; the browser must also allow the microphone."
+  },
+  "appPermissions.note.screen": {
+    "text": "Each time it asks, your browser lets you choose a screen, window or tab. The app sees only what you choose, until you stop sharing.",
+    "description": "Small grey line under the Screen sharing permission of an app in Settings > App device permissions. The browser shows its own picker every time the app asks to share, and the app sees only the screen, window or tab the person picks there."
+  },
   "blockedApps.title": {
     "text": "Blocked apps",
     "description": "Heading of the section in Settings that lists the apps this person has blocked."
@@ -2014,6 +2022,10 @@
   "blockedApps.unblockFailed": {
     "text": "Could not unblock this app.",
     "description": "Error in Settings > Blocked apps when removing a block failed and the server gave no reason."
+  },
+  "blockedApps.blockedAt": {
+    "text": "Blocked {{when}}",
+    "description": "Small grey line under an app's name in Settings > Blocked apps saying when the person blocked it. {{when}} is either how long ago (\"3d ago\", \"just now\") or, after a week, a date such as \"Jun 16\"."
   },
   "tour.title": {
     "text": "Welcome tour",
@@ -2852,12 +2864,12 @@
     "description": "Not shown on screen. Extra search words for \"Developer console\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.accessibility": {
-    "text": "text size font bigger larger zoom read contrast high normal accessible vision",
+    "text": "text size font bigger larger zoom read contrast high normal accessible vision motion animation reduce",
     "description": "Not shown on screen. Extra search words for \"Accessibility\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.language": {
-    "text": "locale translate english auto device time zone timezone clock",
-    "description": "Not shown on screen. Extra search words for \"Language\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
+    "text": "language languages locale translate translation english auto device time zone timezone clock region bahasa idioma langue sprache lingua taal dil 语言 言語 언어 язык لغة",
+    "description": "Not shown on screen. Extra search words for \"Language\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words. The non-English words are the word for \"language\" in other languages, so someone whose screen is in the wrong language can still find this page: keep them."
   },
   "nav.keywords.alerts": {
     "text": "notifications sound push phone mute bell chime",
@@ -4911,80 +4923,8 @@
     "text": "Your choice could not be saved on this device. Try again.",
     "description": "Error below the mode switch when browser storage refuses a save."
   },
-  "frame.purpose.account": {
-    "text": "Your profile and how you sign in.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Account."
-  },
-  "frame.purpose.linkedAccounts": {
-    "text": "A connected account helps check that one person is not making many, because Homeroom pays for your AI credit.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Linked accounts."
-  },
-  "frame.purpose.contactPrivacy": {
-    "text": "Who can reach you, who can find you, and what Homeroom may send you.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Privacy."
-  },
-  "frame.purpose.phones": {
-    "text": "The phones and browsers signed in to your account. Unlink any you no longer use or do not recognize.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Linked devices."
-  },
-  "frame.purpose.wallet": {
-    "text": "The wallet linked to your account for this season's challenges.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Homeroom Wallet."
-  },
-  "frame.purpose.ai": {
-    "text": "What is left of this week's allowance, where it went, and which model does the work.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: AI usage & models."
-  },
-  "frame.purpose.connectors": {
-    "text": "Work on your apps from a Claude or ChatGPT chat, or from your own terminal, without using your weekly credit.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Connectors & CLI."
-  },
-  "frame.purpose.agentFiles": {
-    "text": "Personal files the coding agent follows on every build or plan you start, in any app.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Agent instructions & skills."
-  },
-  "frame.purpose.theme": {
-    "text": "How Homeroom looks on this browser.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Appearance."
-  },
-  "frame.purpose.accessibility": {
-    "text": "Make Homeroom easier to read on this browser.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Accessibility."
-  },
-  "frame.purpose.language": {
-    "text": "The language of Homeroom's own screens. Apps use it as their default and may offer their own choice.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Language."
-  },
-  "frame.purpose.alerts": {
-    "text": "Choose what reaches your phone and this browser.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Notifications."
-  },
-  "frame.purpose.appPermissions": {
-    "text": "What apps on Homeroom may use on your behalf, and which apps you have blocked.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: App permissions."
-  },
-  "frame.purpose.developer": {
-    "text": "Tools for people building and testing apps.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Developer."
-  },
-  "frame.purpose.tour": {
-    "text": "Take the welcome tour again.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Welcome tour."
-  },
-  "frame.purpose.guide": {
-    "text": "The places of Homeroom, and how a change gets voted in.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: User guide."
-  },
-  "frame.purpose.usernode": {
-    "text": "The Homeroom app on this phone, and its diagnostics.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Homeroom app."
-  },
-  "frame.purpose.about": {
-    "text": "Which build of Homeroom this is, and what is being improved.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: About."
-  },
-  "frame.purpose.experimental": {
-    "text": "Features still being tried. Switch one on to see it; switch it off to go back.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Experimental."
+  "frame.head.purpose": {
+    "text": "Your account, your preferences and your tools.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the title Settings at the head of the page, above the list of sections and the open section."
   }
 }

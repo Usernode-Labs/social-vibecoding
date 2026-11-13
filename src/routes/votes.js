@@ -16,6 +16,7 @@ const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
 const notifications = require('../services/notifications');
 const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
+const releaseHolds = require('../services/release-holds');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const listTestResults = require('../services/list-test-results');
@@ -605,6 +606,18 @@ function stagingMockProposals(viewer) {
         ],
       },
       merge_requirements_at: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
+    },
+    // #6643: held for an admin. The step is there before the votes are in,
+    // and the card's warning says why and that an admin has been asked.
+    {
+      ...mk(9000097, 900197,
+        '[Mock] #6643: held for an admin, because it lets the app send tokens',
+        7, 2, 0, 3, { required: 3 }),
+      releaseHold: {
+        id: 9000097, rules: ['wallet', 'people'], approved: false, needsAnotherAdmin: false,
+        heldAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+        askedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      },
     },
     {
       ...mk(9000093, 900193,
@@ -3643,6 +3656,17 @@ function voteRoutes(config) {
         });
         return res.json({ ok: true, merged: false, unchanged: true, ...readyCard });
       }
+      // #6643: a full admin's vote on a change held for an admin. Their No
+      // closes the change and the request it was built for, with their
+      // sentence as the reason, so there is nothing left to count or merge
+      // here. Their Yes is read by the merge gate off the vote itself.
+      const holdVote = await releaseHolds.onVote({
+        pool, session, user: req.user, vote, reason: recordedReason,
+      });
+      if (holdVote?.closed) {
+        require('../services/ws').pushSessionUpdate({ action: 'vote_update', sessionId: session.id, appSlug: session.app_slug });
+        return res.json({ ok: true, closed: true, merged: false, ...readyCard });
+      }
       // #3977: a No's line on Homeroom bot's own change, while it is up for
       // a vote, goes to the bot as this voter's reply in the change's
       // discussion, and its follow-up is queued first to fix what the line
@@ -4650,6 +4674,7 @@ function voteRoutes(config) {
         const freshnessSvc = require('../services/proposal-freshness');
         const integrationSvc = require('../services/integration');
         const requirementsSvc = require('../services/merge-requirements');
+        const holdsBySession = await releaseHolds.forSessions(pool, rows.map((r) => r.id));
         for (const row of rows) {
           row.freshness = freshnessSvc.readFreshness(row);
           // #6521: whether the last verdict describes this version, the same
@@ -4666,8 +4691,12 @@ function voteRoutes(config) {
           // #2061: the whole ordered list of what is still required, rather
           // than only what is currently wrong. The card's tags say the second;
           // nothing said the first, so two of the seven gates had no UI at all.
+          // #6643: the hold, when the change is held for an admin: the card's
+          // warning block reads it, and the requirements list its step.
+          row.releaseHold = holdsBySession.get(Number(row.id)) || row.releaseHold || null;
           row.mergeRequirements = requirementsSvc.readRequirements({
             ...row,
+            release_hold: row.releaseHold,
             shotsEnforced: row.shotsEnforced,
             app_main_check_state: mainCheck.state,
             app_main_check_sha: mainCheck.sha,
@@ -5179,7 +5208,7 @@ function voteRoutes(config) {
       // topic view (my_vote resolves to null for them). `repo_url` for
       // whether its code is on the git host (services/code-missing.js).
       const gatedApp = await appAccess.getAppForUser(
-        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, locked, repo_url`
       );
       if (!gatedApp) return res.status(404).json({ error: 'App not found' });
 
@@ -5220,6 +5249,28 @@ function voteRoutes(config) {
         // #4452: how long testing usually takes here, for the change page's
         // one testing bar and its time left (services/checks-estimate.js).
         proposal.checks_estimate = await require('../services/checks-estimate').forApp(pool, gatedApp.id);
+        // #6604: the page's before/after, for a change with no verified
+        // shots yet (services/visuals.js). The board's /promoted rows carry
+        // this aggregate; a change page opened by its own read alone needs it
+        // here, or its legacy "All N screens" card disappeared.
+        {
+          const { rows: [vis] } = await pool.query(
+            `SELECT jsonb_object_agg(
+                      sv.kind || '_' || sv.capture_index || '_' || sv.media,
+                      jsonb_build_object(
+                        'id', sv.id,
+                        'path', sv.captured_path,
+                        'viewport', sv.captured_viewport,
+                        'commit', sv.commit_hash,
+                        'scenarioId', sv.scenario_id,
+                        'scenarioFingerprint', sv.scenario_fingerprint,
+                        'fellBack', sv.before_fell_back))
+               FROM session_visuals sv WHERE sv.session_id = $1`,
+            [proposal.id]
+          ).catch(() => ({ rows: [{ jsonb_object_agg: null }] }));
+          proposal.visuals = require('../services/visuals')
+            .shapeAgg(vis && vis.jsonb_object_agg, visualHeadForSession(proposal));
+        }
         // #6234: Homeroom bot fixing its own change's failing checks, for the
         // Testing card (services/homeroom-bot-progress.js changeBotFix);
         // null for any change of a person's.
@@ -5356,8 +5407,10 @@ function voteRoutes(config) {
         proposal.integration = require('../services/integration').readIntegration(proposal);
         proposal.shotsEnforced = !!config.shots?.enforce
           && !!(proposal.shots_detail && typeof proposal.shots_detail === 'object');
+        proposal.releaseHold = (await releaseHolds.forSessions(pool, [proposal.id])).get(Number(proposal.id)) || proposal.releaseHold || null;
         proposal.mergeRequirements = require('../services/merge-requirements').readRequirements({
           ...proposal,
+          release_hold: proposal.releaseHold,
           shotsEnforced: proposal.shotsEnforced,
           app_main_check_state: mainCheck.state,
           app_main_check_sha: mainCheck.sha,
@@ -5406,6 +5459,7 @@ function voteRoutes(config) {
       // owns or that is shared), so the demo generators answer them the same
       // way; a 404 in the network log is a console error, which fails every
       // declared check on the route.
+      let demoRow = false;
       if (!proposal && IS_STAGING && req.query.demo === '1') {
         const sessionMocks = require('./sessions');
         proposal = stagingMockMerged(req.user).find((m) => m.id === id)
@@ -5414,9 +5468,40 @@ function voteRoutes(config) {
           || sessionMocks.stagingMockSharedSessions().find((m) => m.id === id)
           || sessionMocks.stagingMockOwnSessions(req.user?.id, config.selfAppSlug).find((m) => m.id === id)
           || null;
+        demoRow = !!proposal;
       }
 
       if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+      // #6604: a change's page draws from THIS read alone now — the board is
+      // not loaded behind it in the side panel or on its own page — so a
+      // staging ?demo=1 row must carry the same derived merge fields the
+      // board's list rows do. The list derives them for every row
+      // (GET .../promoted); one resolved from the generators above skipped
+      // that pass, so its steps sheet had no gates and its merge step read as
+      // if there were none.
+      if (demoRow) {
+        const freshnessSvc = require('../services/proposal-freshness');
+        const integrationSvc = require('../services/integration');
+        const requirementsSvc = require('../services/merge-requirements');
+        const mainCheck = await require('../services/main-watch').mergePause(pool, gatedApp.id);
+        proposal.freshness = proposal.freshness || freshnessSvc.readFreshness(proposal);
+        proposal.checks_on_head = sessionChecksOnHead(proposal);
+        proposal.integration = proposal.integration || integrationSvc.readIntegration(proposal);
+        proposal.shotsEnforced = !!config.shots?.enforce
+          && !!(proposal.shots_detail && typeof proposal.shots_detail === 'object');
+        proposal.mergeRequirements = requirementsSvc.readRequirements({
+          ...proposal,
+          release_hold: proposal.releaseHold || null,
+          shotsEnforced: proposal.shotsEnforced,
+          app_main_check_state: mainCheck.state,
+          app_main_check_sha: mainCheck.sha,
+          app_main_check_resumed_sha: mainCheck.resumedSha,
+          app_main_check_paused: mainCheck.paused,
+          app_main_check_paused_sha: mainCheck.pausedSha,
+          app_main_check_confirming: mainCheck.confirming,
+          app_main_check_failing_test: mainCheck.failingTest,
+        });
+      }
       if (IS_STAGING && req.query.demo === '1' && proposal.checks_estimate == null) {
         proposal = { ...proposal, checks_estimate: require('../services/checks-estimate').DEMO_ESTIMATE };
       }
@@ -5458,7 +5543,32 @@ function voteRoutes(config) {
       }
       // `?results=failing`: the proposal page's own read, which lists passing
       // checks only when their fold is opened (services/list-test-results.js).
-      res.json({ proposal: listTestResults.forItem(req, proposal) });
+      // #6604: the change's page draws from this read alone now — the board
+      // is not loaded behind it — so the project-level vote context the
+      // board's /promoted answer carries rides along here too. Without it the
+      // Votes card lost its "any of N members" line and an admin lost the
+      // admin-merge affordance on a change opened cold or in the side panel.
+      let context = null;
+      try {
+        const { active: activeUsers, majority } = await getActiveUserStats(pool, gatedApp.id);
+        const gov = await require('../services/governance').getGovernance(pool, gatedApp.id);
+        context = {
+          slug: req.params.slug,
+          majority,
+          activeUsers,
+          // Same demo override /promoted applies (see its comment): a
+          // prod-cloned staging app is locked, and ?demo=1 exists to review
+          // states a lock would suppress.
+          locked: !!gatedApp.locked && !(IS_STAGING && req.query.demo === '1'),
+          approverPolicy: gov.approverPolicy,
+          approvalsRequired: gov.approvalsRequired,
+          isAppAdmin: await appAdmins.isAppAdmin(pool, gatedApp.id, req.user?.id),
+        };
+      } catch (err) {
+        // Best-effort: the page still draws from the proposal row.
+        log.warn('votes', 'Could not read the vote context', { message: err.message });
+      }
+      res.json({ proposal: listTestResults.forItem(req, proposal), context });
     } catch (err) {
       log.error('votes', 'Failed to get proposal by id', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -6071,24 +6181,52 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
     // majority gate above still has to pass — the admin yes is an extra
     // condition, not a replacement. Toggled via the home-card lock icon
     // (admin-only); see POST /api/apps/:slug/lock in routes/apps.js.
-    if (await isAppLocked(pool, session.app_id)) {
+    // #6643: a change held for an admin needs the same thing a locked app
+    // does, an admin's yes, with one difference: the author's own yes never
+    // lifts their own hold (services/release-holds.js). Either reason alone
+    // switches the step on; a held change on a locked app answers the
+    // stricter of the two.
+    const releaseHold = await releaseHolds.gateFor(pool, session.id).catch(() => null);
+    const appLocked = await isAppLocked(pool, session.app_id);
+    if (appLocked || releaseHold) {
       // Epoch-scoped, like every other tally: an admin's yes survives the
       // platform's own sync exactly as the group's approvals do.
-      const adminYes = await hasAdminYesVote(pool, session.id);
+      const adminYes = releaseHold ? releaseHold.approved : await hasAdminYesVote(pool, session.id);
+      const holdContext = releaseHold
+        ? { held: true, holdRules: releaseHold.rules, holdNeedsAnotherAdmin: releaseHold.needsAnotherAdmin }
+        : {};
       if (!adminYes) {
-        log.info('votes', 'Threshold + window met but app is locked; awaiting admin yes', {
+        log.info('votes', releaseHold
+          ? 'Threshold + window met but the change is held; awaiting an admin yes'
+          : 'Threshold + window met but app is locked; awaiting admin yes', {
           sessionId: session.id, yesCount, required,
         });
-        dstep({ phase: 'gate:lock', level: 'warn', message: 'App is locked and has no admin yes vote yet, so the merge is blocked.', detail: { locked: true, adminYes: false } });
-        gateTrace.context({ locked: true }).stop('admin_yes', 'waiting', {
-          note: 'This app is locked, so an admin has to vote yes as well',
+        dstep({
+          phase: 'gate:lock', level: 'warn',
+          message: releaseHold
+            ? 'The change is held for an admin and has no qualifying admin yes vote yet, so the merge is blocked.'
+            : 'App is locked and has no admin yes vote yet, so the merge is blocked.',
+          detail: { locked: appLocked, held: !!releaseHold, rules: releaseHold ? releaseHold.rules : undefined, adminYes: false },
+        });
+        gateTrace.context({ locked: appLocked, ...holdContext }).stop('admin_yes', 'waiting', {
+          note: releaseHold
+            ? (releaseHold.needsAnotherAdmin
+              ? 'This change is held, and its author is an admin, so another admin has to vote yes'
+              : 'This change is held, so an admin has to vote yes')
+            : 'This app is locked, so an admin has to vote yes as well',
         });
         gateSave();
-        dend('blocked', 'Blocked: locked app awaiting an admin yes vote.');
+        dend('blocked', releaseHold
+          ? 'Blocked: held change awaiting an admin yes vote.'
+          : 'Blocked: locked app awaiting an admin yes vote.');
         return { merged: false, yesCount, needed: required, awaitingAdmin: true };
       }
-      dstep({ phase: 'gate:lock', message: 'App is locked, and an admin yes vote is present.', detail: { locked: true, adminYes: true } });
-      gateTrace.context({ locked: true }).pass('admin_yes');
+      dstep({
+        phase: 'gate:lock',
+        message: releaseHold ? 'The change is held, and an admin yes vote is present.' : 'App is locked, and an admin yes vote is present.',
+        detail: { locked: appLocked, held: !!releaseHold, adminYes: true },
+      });
+      gateTrace.context({ locked: appLocked, ...holdContext }).pass('admin_yes');
     } else {
       dstep({ phase: 'gate:lock', message: 'App is not locked, so there is no admin-yes requirement.' });
       // Not applicable rather than satisfied: an admin-approval row on an
@@ -6396,6 +6534,24 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
     dstep({ phase: 'gate:checks', message: `Checks gate: state = ${checkState}.`, detail: { checkState } });
     gateTrace.pass('checks', { checkState });
 
+    // #6642: a change the Content rules review flagged on this exact head
+    // waits for a full admin's yes while CONTENT_REVIEW_MODE is `admin`.
+    // It sits after the checks because the flag is one of their rows: until
+    // they settle on the reviewed head there is no verdict to hold on. An
+    // admin's force is that admin's approval, as it is for a locked app.
+    const contentHold = force ? null
+      : require('../services/content-review').adminHold(checkRows[0]?.test_results, reviewedHead);
+    if (contentHold && !(await hasAdminYesVote(pool, session.id))) {
+      log.info('votes', 'Content rules flag is waiting for an admin yes', { sessionId: session.id });
+      dstep({ phase: 'gate:content', level: 'warn', message: 'The Content rules review flagged this head and no admin has voted yes, so the merge is blocked.', detail: { reason: contentHold.reason } });
+      gateTrace.context({ contentHold: true }).stop('admin_yes', 'waiting', {
+        note: `The Content rules review flagged this change, so an admin has to vote yes as well. ${contentHold.reason}`,
+      });
+      gateSave();
+      dend('blocked', 'Blocked: flagged by the Content rules review, awaiting an admin yes vote.');
+      return { merged: false, yesCount, needed: required, awaitingAdmin: true };
+    }
+
     // #2380: when enforcement is enabled, a required shots run is an
     // exact-head merge gate. This is not pixel-regression approval: the hard
     // replay and relevance reviewer have already done their bounded jobs.
@@ -6646,6 +6802,7 @@ function githubChecksOf(message) {
 //   reopened   {}                 closed on GitHub, reopened: it can be merged again
 //   closed     { message }        closed on GitHub, and could not be reopened
 //   refused    { kind, message }  conflict | draft | blocked | base_moved | base_not_main | github_busy
+//   already_on_main { message }   the git host merged nothing: main already has all of it
 // An import is only ever merged into main (src/workflow/rules/pr-base.ts):
 // its pull request's base is read before GitHub is asked, one based on any
 // other branch is refused, and every `merged` names the branch it went into
@@ -6807,6 +6964,12 @@ async function attemptMerge(config, pool, sessionId, {
     // queue to resolve.
     if (codeMissing.isError(err)) {
       return { outcome: 'refused', kind: 'blocked', codeMissing: true, message: `${label} wasn't merged. ${codeMissing.REASON}` };
+    }
+    // Everything in it is on main already (services/native-merge.js): no
+    // answer to this head will ever be a merge, so it is not a refusal to
+    // try again (request 6549). The proposal machine closes it.
+    if (err && err.alreadyOnMain) {
+      return { outcome: 'already_on_main', message: `${label} has nothing left to merge: everything in it is already on main.` };
     }
     if (busy(err)) {
       const said = String((err && err.message) || '').slice(0, 300);

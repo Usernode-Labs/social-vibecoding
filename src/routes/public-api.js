@@ -31,6 +31,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const firstSession = require('../services/first-session');
+const releaseMailSetting = require('../services/release-mail-setting');
 const signInProviders = require('../services/sign-in-providers');
 const phoneAuth = require('../services/firebase-phone-auth');
 const { clientIp } = require('../services/client-ip');
@@ -70,6 +71,9 @@ const mediaStore = require('../services/media-store');
 // is the same for everyone who asks, and a shared link can bring a crowd.
 const OVERVIEW_TTL_MS = 30 * 1000;
 const OVERVIEW_CACHE_MAX = 500;
+// The public directory (GET /api/public/apps), kept as long: one answer for
+// everybody, from the heaviest query a page load makes.
+const DIRECTORY_TTL_MS = 30 * 1000;
 const { loadMobileAppUrls } = require('../services/mobile-store-links');
 
 // The ONE body POST /api/public/waitlist/resend ever returns. Frozen and
@@ -136,10 +140,34 @@ function publicApiRoutes(config) {
 
   // GET /api/public/apps — every view-public, non-self-hosted app with its
   // contributors embedded.
+  //
+  // Kept for a short while (#6591): the list is the same for everyone who
+  // asks, its query aggregates every app's activity, members and changes
+  // (1.5 to 2 seconds on production), and the shell reads it on every page
+  // load. One read per DIRECTORY_TTL_MS serves them all, and requests that
+  // arrive while it runs share it. A read that fails is kept for nobody.
+  const directoryCache = new Map();
+  function readDirectory(includeWallets) {
+    const key = includeWallets ? 'wallets' : 'plain';
+    const hit = directoryCache.get(key);
+    if (hit && (hit.pending || hit.expiresAt > Date.now())) return hit.read;
+    const entry = { pending: true, expiresAt: 0, read: null };
+    entry.read = listPublicApps(pool, { includeWallets }).then((apps) => {
+      entry.pending = false;
+      entry.expiresAt = Date.now() + DIRECTORY_TTL_MS;
+      return apps;
+    }, (err) => {
+      if (directoryCache.get(key) === entry) directoryCache.delete(key);
+      throw err;
+    });
+    directoryCache.set(key, entry);
+    return entry.read;
+  }
+
   router.get('/api/public/apps', async (req, res) => {
     const includeWallets = wantsWallets(req);
     try {
-      res.json({ apps: await listPublicApps(pool, { includeWallets }) });
+      res.json({ apps: await readDirectory(includeWallets) });
     } catch (err) {
       log.error('public-api', 'apps list failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -324,6 +352,10 @@ function publicApiRoutes(config) {
       waitlist_url: waitlistUrl(config),
       marketing_url: siteUrl(config),
       story_landing: await firstSession.storyLandingEnabled(pool),
+      // #6633: whether a new account waits to be admitted (Admin ›
+      // Waitlist). The signed-out pages say "Create account" instead of
+      // "Join the waitlist" when it is off. On when it cannot be read.
+      waitlist_enabled: await releaseMailSetting.waitlistEnabled(pool),
       sign_in_providers: await signInProviders.offeredProviders(pool, config),
       // Phone-number sign-in (services/firebase-phone-auth.js): offered
       // only when its four Firebase values are set and the flag is on.

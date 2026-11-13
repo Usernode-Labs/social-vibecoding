@@ -903,7 +903,7 @@ test('the nav components render what the module shapes, and nothing else', () =>
   assert.match(nav.slice(0, 1200), /'font-medium text-zinc-600 dark:text-zinc-300/,
     'the other rows stay at the lighter weight');
   assert.doesNotMatch(nav.slice(0, 1200), /violet/, 'the action accent no longer marks where you are');
-  assert.match(navTsx, /className=\{item\.className\}/,
+  assert.match(navTsx, /className=\{`ui-row ui-row-sm \$\{item\.className\}`\}/,
     'the component renders that string rather than recomputing it');
 
   // Section links on desktop, a LIST on mobile. dapp.json selects on
@@ -945,7 +945,7 @@ test('UX audit: the section list is the pane\'s sheet, and scrolls on its own', 
     /id="settings-sidebar-col" class="hidden lg:block lg:w-56 shrink-0 dc-lift dc-lift-session settings-side-sheet"/,
     'the column wears the pane\'s own lift, after the width classes the breakpoint test reads');
   assert.match(navTsx,
-    /className="sticky top-0 z-10 -mt-2\.5 pt-2\.5 pb-3 bg-\[color:var\(--dc-sheet-solid\)\]"/,
+    /className="ui-search sticky top-0 z-10 -mt-2\.5 pt-2\.5 pb-3 bg-\[color:var\(--dc-sheet-solid\)\]"/,
     '"Find a setting" is held at the sheet\'s top, on an opaque plane');
   const css = read('public/css/app.css');
   const block = css.slice(css.indexOf('#settings-sidebar-col {'));
@@ -2084,7 +2084,7 @@ test('the credential list renders its three host states', () => {
   // empty line would mismatch on hydration — a console error on #settings, and
   // a console error on any route fails proposal checks.
   assert.equal(cliRows({ phase: 'idle', tokens: [] }), '');
-  assert.equal(shellMarkup().includes('<div id="cli-tokens-list" class="space-y-2"></div>'),
+  assert.equal(shellMarkup().includes('<div id="cli-tokens-list" class="ui-card space-y-2"></div>'),
     true, 'and the prerendered document agrees');
   // Loading is the bare text node the module used to write with textContent.
   assert.match(cliRows({ phase: 'loading', tokens: [] }), /Loading credentials…/);
@@ -2190,7 +2190,7 @@ test('the permissions list renders its host states, and idle draws nothing', () 
   // `idle` is the PRERENDER state: the shipped host is an empty div, and a
   // first render that drew a line would mismatch on hydration.
   assert.equal(grantRows({ phase: 'idle', grants: [] }), '');
-  assert.equal(shellMarkup().includes('<div id="llm-grants-list" class="space-y-2"></div>'),
+  assert.equal(shellMarkup().includes('<div id="llm-grants-list" class="ui-card space-y-2"></div>'),
     true, 'and the prerendered document agrees');
   assert.match(grantRows({ phase: 'loading', grants: [] }), /Loading…/);
   assert.match(grantRows({ phase: 'error', grants: [] }), /Failed to load app permissions\./);
@@ -2219,6 +2219,71 @@ test('App permissions reads in the muted ink and its empty lists say what will a
     assert.match(message(`settings:${key}.empty`), /appears here.*(revoke|unblock) it at any time\./,
       `${key}'s empty line says what will appear and that it can be undone`);
   }
+});
+
+// #6512 item 11: a plain line under the capabilities that see or hear the
+// person, and only those. Screen sharing is delegated by the frame's `allow`
+// and getDisplayMedia opens the browser's picker every time, so its line says
+// the person picks what is shared, never that the app sees "your screen".
+test('camera, microphone and screen sharing carry a plain note; the other permissions do not (#6512)', () => {
+  const html = renderComponent('frontend/src/features/settings/app-permissions-list.tsx', 'AppPermissionsListView', {
+    phase: 'ready',
+    apps: [{
+      appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam',
+      items: [
+        { capability: 'geolocation', label: 'Location', revoked: false },
+        { capability: 'microphone', label: 'Microphone', revoked: false },
+        { capability: 'camera', label: 'Camera', revoked: false },
+        { capability: 'display-capture', label: 'Screen sharing', revoked: true },
+        { capability: 'usb', label: 'USB devices', revoked: false },
+      ],
+    }, {
+      appId: 8, appName: 'Quiet Cam', appSlug: 'quiet-cam',
+      items: [
+        { capability: 'microphone', label: 'Microphone', revoked: true },
+        { capability: 'camera', label: 'Camera', revoked: true },
+      ],
+    }],
+  });
+  const notes = [...html.matchAll(/data-role="capability-note"[^>]*>([^<]*)</g)].map((m) => m[1]);
+  assert.deepEqual(notes, [
+    message('settings:appPermissions.note.microphone'),
+    message('settings:appPermissions.note.camera'),
+    message('settings:appPermissions.note.screen'),
+    message('settings:appPermissions.note.microphone'),
+    message('settings:appPermissions.note.camera'),
+  ], 'one note each, under its own row (revoked rows too), and none on location or USB');
+  // Shown beside Re-enable as well, so a note says what the permission lets
+  // the app do, never what it can do now, and that the browser decides too.
+  for (const id of ['camera', 'microphone']) {
+    const text = message(`settings:appPermissions.note.${id}`);
+    assert.match(text, /^Lets this app .* while it is open, once your browser allows it too\.$/, `${id} note is true on a revoked row`);
+    assert.doesNotMatch(text, /can turn on/, `${id} note claims no live access`);
+  }
+  assert.match(html, /data-role="capability-note" class="mt-0\.5 block text-zinc-500 dark:text-zinc-400"/,
+    'the note is the muted secondary line, not a pill');
+  const screen = message('settings:appPermissions.note.screen');
+  assert.match(screen, /choose a screen, window or tab/);
+  assert.match(screen, /sees only what you choose/);
+  assert.doesNotMatch(screen, /everything|whole screen|all of your screen/i, 'the person picks what is shared');
+});
+
+// #6512 item 9: a blocked app says when it was blocked.
+test('a blocked app shows when it was blocked, and a row without a stamp shows nothing (#6512)', () => {
+  const BLOCKED = 'frontend/src/features/settings/sections/blocked-apps.tsx';
+  const at = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const html = renderComponent(BLOCKED, 'BlockedAppRow', {
+    app: { slug: 'noisy', name: 'Noisy App', created_at: at }, busy: null, onUnblock: () => {},
+  });
+  assert.match(html, /Noisy App/);
+  assert.match(html, new RegExp(`<time data-role="blocked-at" dateTime="${at.replace(/\./g, '\\.')}" title="[^"]+" class="mt-0\\.5 block text-\\[13px\\] text-zinc-500 dark:text-zinc-400">Blocked 3d ago</time>`));
+  assert.match(html, />Unblock</);
+  const bare = renderComponent(BLOCKED, 'BlockedAppRow', {
+    app: { slug: 'noisy', name: 'Noisy App' }, busy: null, onUnblock: () => {},
+  });
+  assert.doesNotMatch(bare, /blocked-at/);
+  assert.match(read('src/services/app-blocks.js'), /SELECT a\.slug, a\.name, b\.created_at FROM user_app_blocks/,
+    'the list already returns the stamp the row reads');
 });
 
 /**

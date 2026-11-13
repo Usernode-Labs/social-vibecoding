@@ -42,6 +42,7 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { reducedMotion } from '../../lib/reduced-motion';
 
 import { BookmarkIcon, BookmarkSolidIcon } from '@/components/ui/icons';
 
@@ -214,7 +215,7 @@ export function foldLive<V extends StoryRowView>(
 
 function stillMotion(): boolean {
   return typeof window === 'undefined' || typeof window.matchMedia !== 'function'
-    || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    || reducedMotion();
 }
 
 type Snapshot = Map<Element, DOMRect>;

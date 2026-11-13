@@ -1280,6 +1280,24 @@ const PLATFORM_ORIGIN = (process.env.USERNODE_PLATFORM_ORIGIN || '')
 // platform injects, and not written in here either: every project made from
 // the same starter is then the same code. Unset only outside the platform.
 const APP_SLUG = process.env.USERNODE_APP_SLUG || '';
+// The addresses this app is really served at, for the canonical its pages
+// send (search engines: one address per page). Worked out from the two
+// values above and nothing else: <slug>.<platform host> where apps sit
+// beside the platform, <slug>.<its parent domain> where the platform has a
+// name of its own. A request's Host is only ever COMPARED with these, never
+// written out: anybody can send a Host, and a cached page must not name
+// another site as its real address. A preview or a custom domain matches
+// neither, and sends no canonical.
+const CANONICAL_HOSTS = (() => {
+  try {
+    if (!/^[a-z0-9-]+$/.test(APP_SLUG)) return [];
+    const platformHost = new URL(PLATFORM_ORIGIN).hostname.toLowerCase();
+    const parent = platformHost.split('.').slice(1).join('.');
+    return [APP_SLUG + '.' + platformHost].concat(parent.includes('.') ? [APP_SLUG + '.' + parent] : []);
+  } catch (_) {
+    return [];
+  }
+})();
 
 app.get(/^\\/usernode-(?:bridge|native|tailwind)\\//, async (req, res) => {
   try {
@@ -1412,6 +1430,14 @@ app.get('*', (req, res) => {
     <a href="\${PLATFORM_ORIGIN}\${appPath}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Homeroom</a>
   </div>
 </body>\`);
+  }
+  // One address per page for a search engine: this page without its query
+  // string (a token, a page number, saved view state). Only at one of the
+  // app's own addresses, and only for a plain path. A page that IS a
+  // different page per parameter sets its own canonical instead.
+  const pageHost = String(req.headers.host || '').toLowerCase();
+  if (CANONICAL_HOSTS.includes(pageHost) && /^\\/[A-Za-z0-9\\-._~!$&'()*+,;=:@\\/%]*$/.test(req.path)) {
+    res.set('Link', '<https://' + pageHost + req.path + '>; rel="canonical"');
   }
   ${server.sendPage}
 });

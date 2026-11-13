@@ -15,7 +15,10 @@
 
 import type { MouseEvent, ReactNode } from 'react';
 
+import { Card, Lead, Row, Sec } from '@/components/ui/kit';
+
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
 import { t as translate } from '../../../lib/i18n/runtime';
 import type { PlaceChannel } from './community-card';
 import { channelPlace, placeHref } from './places';
@@ -53,7 +56,8 @@ export function TopicHead({ slug, topic, survivor = null, onRequests, onSurvivor
   onSurvivor?: () => void;
 }): ReactNode {
   // The line is worded by topicLine, read as it renders; subscribe it.
-  useMessages('project');
+  const t = useMessages('project');
+  const frame = isFrameSkin(useLiveSkin());
   const line = topicLine(topic, survivor);
   const press = (event: MouseEvent<HTMLAnchorElement>, run?: () => void) => {
     const nav = (window as unknown as { NavLink?: { isNativeClick?: (e: unknown) => boolean } }).NavLink;
@@ -72,6 +76,49 @@ export function TopicHead({ slug, topic, survivor = null, onRequests, onSurvivor
       {children}
     </a>
   );
+  // UNDER A LOOK the line is the kit's group beside the room, as #general's
+  // is (./channel-head.tsx): This channel, what the topic is for, then its
+  // requests as a row that opens them. The same words and the same doors.
+  if (frame) {
+    const merged = topic.state === 'merged' && survivor && onSurvivor;
+    if (!merged && !line.about && !line.link) return null;
+    return (
+      <div className="fr dev-ws-topic-head" data-ws-topic-head={topic.handle} data-frame-side="">
+        <Sec label={t('project:frame.channel.this')}>
+          <Card>
+            {merged ? (
+              <Row
+                lead={<Lead icon="hash" />}
+                wrap="all"
+                sm={false}
+                title={(
+                  <RichMessage
+                    id="project:places.topicHead.mergedIntoLink"
+                    values={{ channel: survivor }}
+                    components={[
+                      <a className="dev-ws-topic-head-link" href={placeHref(slug, channelPlace(survivor))} onClick={(e) => press(e, onSurvivor)} />,
+                    ]}
+                  />
+                )}
+              />
+            ) : null}
+            {!merged && line.about ? <Row lead={<Lead icon="hash" />} title={line.about} wrap="all" sm={false} /> : null}
+            {!merged && line.link ? (
+              <Row
+                lead={<Lead icon="chat" />}
+                // The words carry their own arrow ("14 requests ›"), so the row draws none.
+                title={line.link}
+                sm
+                data-ws-topic-requests={topic.handle}
+                href={`/app/${encodeURIComponent(slug)}/board`}
+                onClick={(e) => press(e as MouseEvent<HTMLAnchorElement>, onRequests)}
+              />
+            ) : null}
+          </Card>
+        </Sec>
+      </div>
+    );
+  }
   return (
     <p className="dev-ws-topic-head" data-ws-topic-head={topic.handle}>
       {topic.state === 'merged' && survivor && onSurvivor ? (

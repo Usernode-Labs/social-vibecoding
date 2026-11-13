@@ -32,11 +32,13 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { reducedMotion } from '../../lib/reduced-motion';
 import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/ui/grouped-list';
 import { InfoCircleIcon, ShieldCheckIcon, XIcon } from '@/components/ui/icons';
+import { Btn, Icon, k } from '@/components/ui/kit';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { presetName, type PresetKey } from './model';
@@ -44,10 +46,6 @@ import { PlaysOut, PresetTiles, type Viewer } from './parts';
 
 /** The sheet's slide, each way (`duration-200` below). */
 export const SHEET_SLIDE_MS = 200;
-
-function reducedMotion(): boolean {
-  try { return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
-}
 
 /** A mouse, not a finger: only there does the ⓘ's tip open on hover (#5266). */
 function hasHover(): boolean {
@@ -235,6 +233,63 @@ export function MakeRuleLine({ preset, onPick, who }: { preset: PresetKey; onPic
               <li className="mt-1"><RichMessage id="onboarding:firstSession.make.next.rule" components={[bold]} /></li>
             </ul>
           </div>
+        ) : null}
+      </div>
+      {open && typeof document !== 'undefined'
+        ? createPortal(
+          <PresetsSheet now={preset} viewer={viewer} onPick={onPick} onGone={() => setOpen(false)} />,
+          document.body,
+        )
+        : null}
+    </>
+  );
+}
+
+/**
+ * The same line under one of the frame's looks (version 2 of the screen
+ * tour's s42, features/first-session/frame/make-frame.tsx): two of the
+ * kit's rows in one card, beside the form. The first says who can change
+ * the project, with Change, which opens the sheet above as the line does.
+ * The second is the ⓘ's "What happens next": a row cannot hover, so it
+ * opens the note's four lines in place, under it, and closes them again.
+ * Same state, same sheet, same words; only the drawing is the kit's.
+ */
+export function MakeRuleRows({ preset, onPick, who }: { preset: PresetKey; onPick: (key: PresetKey) => void; who: string }) {
+  const t = useMessages('onboarding');
+  const [open, setOpen] = useState(false);
+  // Closed on the first render, as the tip is.
+  const [nextOpen, setNextOpen] = useState(false);
+  const viewer: Viewer = { isCreator: true, creator: who || null };
+  const bold = <b />;
+  return (
+    <>
+      <div className={k('card')} data-make-rule={preset}>
+        <div className={k('row')}>
+          <span className={k('lead')} aria-hidden="true"><Icon name="shield" /></span>
+          <span className={k('tx')}><span className={k('t')}>{presetName(preset, viewer)}</span></span>
+          <Btn small kind="quiet" data-make-rule-change="" onClick={() => { setNextOpen(false); setOpen(true); }}>
+            {t('onboarding:firstSession.make.rule.change')}
+          </Btn>
+        </div>
+        <button
+          type="button"
+          className={k('row')}
+          data-make-rule-info=""
+          aria-expanded={nextOpen}
+          aria-controls="make-rule-tip"
+          onClick={() => setNextOpen((was) => !was)}
+        >
+          <span className={k('lead')} aria-hidden="true"><Icon name="info" /></span>
+          <span className={k('tx')}><span className={k('t')}>{t('onboarding:firstSession.make.next.title')}</span></span>
+          <Icon name={nextOpen ? 'cd' : 'cr'} size={18} className="go" />
+        </button>
+        {nextOpen ? (
+          <ul id="make-rule-tip" role="note" data-make-rule-tip="" className={k('bullets')}>
+            <li><RichMessage id="onboarding:firstSession.make.next.readyMade" components={[bold]} /></li>
+            <li><RichMessage id="onboarding:firstSession.make.next.custom" components={[bold]} /></li>
+            <li><RichMessage id="onboarding:firstSession.make.next.invite" components={[bold]} /></li>
+            <li><RichMessage id="onboarding:firstSession.make.next.rule" components={[bold]} /></li>
+          </ul>
         ) : null}
       </div>
       {open && typeof document !== 'undefined'

@@ -165,7 +165,7 @@ test('#4378: closing the sheet or Not now records that the person was asked, whi
   const src = read('frontend/src/features/auth/verify-identity.tsx');
   assert.match(src, /if \(outcome === 'dismissed' \|\| outcome === 'not-now'\) noteAsked\(\);/);
   assert.match(src, /localStorage\.setItem\(ASKED_KEY, '1'\)/);
-  assert.match(src, /bridge\.verifyIdentity = \{ ask: askToVerifyIdentity, askForPublic: askToVerifyForPublic, askForCredits: askToVerifyForCredits \};/);
+  assert.match(src, /bridge\.verifyIdentity = \{ ask: askToVerifyIdentity, askForPublic: askToVerifyForPublic, askForCredits: askToVerifyForCredits, askForBot: askToVerifyForBot \};/);
 });
 
 test('Home\'s card: for a member held to the rule, once asked at a public step, hidden here by "Not now"', () => {

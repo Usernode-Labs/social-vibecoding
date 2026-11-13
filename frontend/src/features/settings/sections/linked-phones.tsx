@@ -64,12 +64,12 @@ const BROWSERS_ENDPOINT = '/api/me/browser-sessions';
 /** A device last used longer ago than this says "Not used since …". */
 const STALE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 
-const GROUP_HEAD = 'text-xs font-semibold text-zinc-700 dark:text-zinc-300';
-const GROUP_NOTE = 'text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1 leading-relaxed';
-const ROW_FIRST = 'flex items-start justify-between gap-3 py-2.5';
+const GROUP_HEAD = 'ui-cap text-xs font-semibold text-zinc-700 dark:text-zinc-300';
+const GROUP_NOTE = 'ui-note text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1 leading-relaxed';
+const ROW_FIRST = 'ui-row flex items-start justify-between gap-3 py-2.5';
 const ROW_NEXT = `${ROW_FIRST} border-t border-zinc-200 dark:border-zinc-800`;
-const UNLINK_CLASS = 'shrink-0 rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400 transition-colors touch-target-32 disabled:opacity-50';
-const CANCEL_CLASS = 'shrink-0 rounded px-2 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800 transition-colors touch-target-32 disabled:opacity-50';
+const UNLINK_CLASS = 'ui-link ui-link-bad shrink-0 rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400 transition-colors touch-target-32 disabled:opacity-50';
+const CANCEL_CLASS = 'ui-link ui-link-mut shrink-0 rounded px-2 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800 transition-colors touch-target-32 disabled:opacity-50';
 
 function parse(value: unknown): LinkedPhone[] | null {
   if (!value || typeof value !== 'object') return null;
@@ -171,14 +171,14 @@ interface DeviceRowProps {
 function DeviceRow({ first, name, here, detail, asking, busy, actionLabel, cancelLabel, onAction, onCancel, attrs }: DeviceRowProps) {
   return (
     <div className={first ? ROW_FIRST : ROW_NEXT} {...attrs}>
-      <div className="min-w-0">
-        <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+      <div className="ui-row-tx min-w-0">
+        <div className="ui-row-t text-sm font-semibold text-zinc-800 dark:text-zinc-200">
           {name}
           {here ? (
-            <span className="ms-2 text-xs font-normal text-zinc-500 dark:text-zinc-400">{here}</span>
+            <span className="ui-pill ms-2 text-xs font-normal text-zinc-500 dark:text-zinc-400">{here}</span>
           ) : null}
         </div>
-        <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{detail}</div>
+        <div className="ui-row-s text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{detail}</div>
       </div>
       <div className="flex shrink-0 items-center gap-1">
         {asking ? (
@@ -303,9 +303,9 @@ export function LinkedPhonesSection() {
         </SectionHeading>
         <h4 className={GROUP_HEAD}>{t('settings:phones.group.phones')}</h4>
         <p className={GROUP_NOTE}>{t('settings:phones.phonesNote')}</p>
-        <div id="settings-phones-list" className="flex flex-col">
+        <div id="settings-phones-list" className="ui-card flex flex-col">
           {phones && !phones.length ? (
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 py-2.5">{t('settings:phones.empty')}</p>
+            <p className="ui-empty text-xs text-zinc-500 dark:text-zinc-400 py-2.5">{t('settings:phones.empty')}</p>
           ) : null}
           {(phones || []).map((phone, index) => {
             const asking = confirming === phone.id;
@@ -333,9 +333,9 @@ export function LinkedPhonesSection() {
         </div>
         <h4 className={`${GROUP_HEAD} mt-5`}>{t('settings:phones.group.browsers')}</h4>
         <p className={GROUP_NOTE}>{t('settings:phones.browsers.note')}</p>
-        <div id="settings-browsers-list" className="flex flex-col">
+        <div id="settings-browsers-list" className="ui-card flex flex-col">
           {browsers && !browsers.length ? (
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 py-2.5">{t('settings:phones.browsers.empty')}</p>
+            <p className="ui-empty text-xs text-zinc-500 dark:text-zinc-400 py-2.5">{t('settings:phones.browsers.empty')}</p>
           ) : null}
           {(browsers || []).map((browser, index) => {
             const asking = confirming === browser.id;

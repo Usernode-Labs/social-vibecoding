@@ -25,6 +25,7 @@
 import { type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { k } from '@/components/ui/kit';
 import { PLANE_FILL } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { useMessages } from '../../lib/i18n/react';
@@ -46,7 +47,11 @@ import { WeekShareSheet } from './week-share-sheet';
 import { appSlotsLine, useAppAllowance } from '../dialogs/app-allowance';
 import { isFrameSkin, useLiveSkin } from '../../lib/skin';
 import { useVisibility } from '../../lib/visibility-store';
-import { YouFrame } from './frame/you-frame';
+import { YouFrame, YouLoading, type YouShell } from './frame/you-frame';
+import { YouFriends } from './frame/you-friends';
+import { YouHistory } from './frame/you-history';
+import type { YouTab } from './frame/you-tabs';
+import { walletSheetStore } from '../header/wallet-sheet-store';
 import { useFramePage } from '../frame/frame-page-store';
 
 /** The round picture, or the initial-in-a-circle fallback — the idiom the rest
@@ -396,33 +401,61 @@ function ProfileSkeleton(): ReactNode {
 
 /**
  * The You tab under one of the frame's looks: the kit's page
- * (./frame/you-frame.tsx) from this screen's own view, with the two facts
- * the standard rows read for themselves (the App slots line, and whether
- * the viewer is an admin).
+ * (./frame/you-frame.tsx) from this screen's own view, with the facts the
+ * standard rows read for themselves (the App slots line, whether the viewer
+ * is an admin, whether Settings holds the wallet). Its tabs are the store's
+ * `tab` (./profile.js showTab): Overview here, Changes, Requests and Votes
+ * from the bot's History (./frame/you-history.tsx), Friends from this view's
+ * own lists (./frame/you-friends.tsx).
  */
-function YouInFrame({ view, publicStatus }: { view: any; publicStatus: string }): ReactNode {
+function YouInFrame({ view, tab, friendsPending, friendsStatus }: { view: any; tab: YouTab; friendsPending: number | null; friendsStatus: string }): ReactNode {
   const allowance = useAppAllowance();
   const admin = useVisibility('switcher-row-admin', false);
-  // The bar says You, as the tab does (the standard header says Profile).
+  const wallet = (useStoreState(walletSheetStore) as { visible: boolean }).visible;
+  // The bar says You, as the tab does (the standard header says Profile),
+  // and names the tab that is up after it, with the way back to the Overview.
   const tc = useMessages('core');
-  useFramePage([tc('core:tabs.me')], null);
+  const t = useMessages('profile');
+  const tm = useMessages('messages');
+  const here = tab === 'changes' ? tm('messages:ai.history.kind.change')
+    : tab === 'requests' ? tm('messages:ai.history.kind.request')
+      : tab === 'votes' ? tm('messages:ai.history.kind.vote')
+        : tab === 'friends' ? t('profile:friends.title') : null;
+  useFramePage(here ? [tc('core:tabs.me'), here] : [tc('core:tabs.me')], here ? toOverview : null);
+  const shell: YouShell = {
+    identity: view.identity,
+    tab,
+    onTab: (next) => Profile.showTab(next),
+    onEdit: () => Profile.showEditSheet(),
+    onFeedback: () => Profile.showFeedback(),
+  };
+  if (tab === 'changes' || tab === 'requests' || tab === 'votes') return <YouHistory shell={shell} kind={HISTORY_KIND[tab]} />;
+  if (tab === 'friends') {
+    return (
+      <YouFriends
+        shell={shell}
+        view={view.friends ?? { loaded: false, incoming: [], friends: [], outgoing: [] }}
+        pendingId={friendsPending}
+        status={friendsStatus}
+      />
+    );
+  }
   return (
     <YouFrame
-      identity={view.identity}
+      shell={shell}
       stats={view.stats}
       activity={view.activity}
       rows={view.rows}
       slots={appSlotsLine(allowance.quota, allowance.requestedAt as string | null)}
       admin={admin}
-      publicPage={view.publicControls && !view.publicControls.moderationDisabled ? { href: view.publicControls.openHref, published: view.publicControls.published, line: view.publicControls.visibility, status: publicStatus, onCopy: () => { void Profile.copyPublicLink(view.publicControls.openHref); } } : null}
-      onEdit={() => Profile.showEditSheet()}
-      onFriends={() => Profile.showFriends()}
+      wallet={wallet}
       onSlots={() => Profile.showAppSlots()}
-      onFeedback={() => Profile.showFeedback()}
       onShareWeek={() => Profile.showWeekShare()}
     />
   );
 }
+const toOverview = () => Profile.showTab('overview');
+const HISTORY_KIND = { changes: 'change', requests: 'request', votes: 'vote' } as const;
 
 export function ProfileRoot(): ReactNode {
   const state = useStoreState(profileStore);
@@ -434,7 +467,8 @@ export function ProfileRoot(): ReactNode {
   const view = buildProfileView(state);
 
   if (view.kind === 'empty') return null;
-  if (view.kind === 'loading') return <ProfileSkeleton />;
+  // Under a look the page waits at the kit's shape (./frame/you-frame.tsx).
+  if (view.kind === 'loading') return frame ? <YouLoading /> : <ProfileSkeleton />;
   // signedOut is checked BEFORE error — see buildProfileView. A lapsed session
   // is a normal state, and the connection-error copy blames the network for it.
   if (view.kind === 'signedOut') {
@@ -463,6 +497,8 @@ export function ProfileRoot(): ReactNode {
     );
   }
   if (view.kind === 'publicNotFound') {
+    // Under a look the one line is the kit's lone line (the tour's o26).
+    if (frame) return <div className={k('lone')} data-profile-unavailable="">{t('profile:public.unavailable')}</div>;
     return (
       <div className="text-sm text-zinc-500 py-12 text-center dark:text-zinc-400 lg:max-w-2xl lg:mx-auto">{t('profile:public.unavailable')}</div>
     );
@@ -526,7 +562,7 @@ export function ProfileRoot(): ReactNode {
           Your contributions, which closed the screen, is gone: Your changes
           lists every merged one.
       */}
-      {frame ? <YouInFrame view={view} publicStatus={state.publicStatus || ''} /> : (
+      {frame ? <YouInFrame view={view} tab={(state.tab || 'overview') as YouTab} friendsPending={state.friendsPending ?? null} friendsStatus={state.friendsStatus || ''} /> : (
       <div className="lg:grid lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:grid-rows-[auto_1fr] lg:gap-x-6 lg:items-start">
         <div className="lg:col-start-1 lg:row-start-1">
           <IdentityCard identity={view.identity} />

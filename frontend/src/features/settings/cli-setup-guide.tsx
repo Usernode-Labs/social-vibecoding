@@ -96,7 +96,7 @@ export function CliSetupGuide({
 }: { id?: string; proposalPrompt?: string; promptHelp?: string } = {}) {
   const t = useMessages('settings');
   return (
-    <div id={id} className="mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
+    <div id={id} className="ui-card ui-guide mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
       <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings:cli.guide.title')}</h3>
       <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
         {t('settings:cli.guide.intro')}

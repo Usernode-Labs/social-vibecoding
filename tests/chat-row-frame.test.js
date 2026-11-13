@@ -19,7 +19,7 @@ const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const CHAT = 'frontend/@/components/ui/chat.tsx';
-const FRAME = ['glass', 'brandkit', 'workbench', 'paper', 'pastel', 'mosaic', 'sunrise', 'today', 'playground'];
+const FRAME = ['glass', 'paper', 'pastel', 'mosaic', 'sunrise'];
 const skin = (look) => ({ '../../../src/lib/skin': { useLiveSkin: () => look, isFrameSkin: (s) => FRAME.includes(s) } });
 const load = (look) => loadTsx(CHAT, { stubs: skin(look), cache: false });
 const face = createElement('span', { className: 'h-11 w-11 rounded-xl', color: '#6fb3a8' }, 'E');
@@ -43,7 +43,7 @@ test('the same person going on is the same post: no face, no name, the time kept
 
 test('the bot\'s picture is the kit\'s tile, and a day\'s label the kit\'s', () => {
   const bot = row('glass', { avatar: createElement('img', { src: '/brand/homeroom-mark.png', alt: '' }) });
-  assert.match(bot, /<span class="fr-tile" style="--fr-ts:32px;--fr-tc:#fff" aria-hidden="true"><img src="\/brand\/homeroom-mark\.png" alt=""/);
+  assert.match(bot, /<span class="fr-tile" style="--fr-ts:32px;--fr-tc:var\(--fr-sunk\)" aria-hidden="true"><img src="\/brand\/homeroom-mark\.png" alt=""/);
   assert.equal(renderToHtml(createElement(load('glass').DaySeparator, null, 'Yesterday')), '<div class="fr-day">Yesterday</div>');
 });
 

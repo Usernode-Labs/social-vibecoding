@@ -1356,6 +1356,16 @@ const Notifications = {
     // #4296: an unexpected events alert opens the section that lists them.
     // A platform signal opens its request on Homeroom's own board.
     const signal = item.kind === 'platform_incident' ? parsePlatformIncidentDetail(item.detail) : null;
+    const privateSlug = signal && signal.type === 'private' ? window.PlatformTarget?.slug?.() : null;
+    if (privateSlug) {
+      // A private request has no page: it opens in place in the Workshop's
+      // Private requests section.
+      Notifications._dismissSheetForNav();
+      window.UsernodeReact?.devBoard?.showPrivateRequest?.(privateSlug, signal.privateRequestId);
+      if (typeof AppView !== 'undefined' && AppView._landOnTab) AppView._landOnTab(privateSlug, 'workshop');
+      window.location.hash = `#app/${encodeURIComponent(privateSlug)}/workshop`;
+      return;
+    }
     const platformSlug = signal && signal.type === 'signal' ? window.PlatformTarget?.slug?.() : null;
     if (platformSlug) {
       Notifications._dismissSheetForNav();
@@ -1600,6 +1610,8 @@ const Notifications = {
         'pr_merged', 'proposal_vote', 'vote_digest', 'revision_recheck', 'change_ready',
         // #4787: a change the viewer voted on going live opens that change,
         // the same way the author's own "Live" row does.
+        // #6643: an admin asked to approve a held change opens that change.
+        'release_hold',
         'voted_change_merged',
       ]);
       const toProposals = proposalKinds.has(item.kind);
@@ -2378,13 +2390,18 @@ function parsePlatformLimitDetail(detail) {
 const PLATFORM_INCIDENT_DIGEST_RE = /^digest:(\d{1,5}):((?:[a-z][a-z0-9_]{0,23}=\d{1,5})(?:,[a-z][a-z0-9_]{0,23}=\d{1,5})*)?$/;
 const PLATFORM_INCIDENT_HOUR_RE = /^hour:([a-z][a-z0-9_]{0,23}):(\d{1,5})$/;
 // services/platform-signals.js: "signal:<n>", a problem the platform found in
-// itself and filed as request #n on its own board, for a person to fix.
+// itself and filed as request #n on its own board, for a person to fix; and
+// "private:<id>", one it filed as private request <id> (a security finding),
+// which only admins see, in the Workshop's Private requests.
 const PLATFORM_INCIDENT_SIGNAL_RE = /^signal:(\d{1,9})$/;
+const PLATFORM_INCIDENT_PRIVATE_RE = /^private:(\d{1,10})$/;
 
 function parsePlatformIncidentDetail(detail) {
   const s = String(detail || '');
   const sig = PLATFORM_INCIDENT_SIGNAL_RE.exec(s);
   if (sig) return { type: 'signal', issueNumber: Number(sig[1]) };
+  const priv = PLATFORM_INCIDENT_PRIVATE_RE.exec(s);
+  if (priv) return { type: 'private', privateRequestId: Number(priv[1]) };
   const h = PLATFORM_INCIDENT_HOUR_RE.exec(s);
   if (h) return { type: 'hour', kind: h[1], n: Number(h[2]) };
   const d = PLATFORM_INCIDENT_DIGEST_RE.exec(s);
@@ -3387,6 +3404,16 @@ function rowWords(n) {
   if (n.kind === 'platform_incident') {
     const alert = parsePlatformIncidentDetail(n.detail);
     const words = (kind) => String(kind).replace(/_/g, ' ');
+    if (alert && alert.type === 'private') {
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: '\u{1F512}',
+        label: t('notifications:row.incident.private.label'),
+        segments: [{ t: 'text', v: t('notifications:row.incident.private.body') }],
+      };
+    }
     if (alert && alert.type === 'signal') {
       return {
         ...base,
@@ -3493,6 +3520,19 @@ function rowWords(n) {
       icon: '\u{1F5F3}️',
       by: n.sourceUsername || null,
       ...headline(t('notifications:row.proposed.label'), prLabel || t('notifications:row.proposed.aChange')),
+    };
+  }
+
+  // #6643: a change held until an admin approves it (services/release-
+  // holds.js), for full admins. The warning sign is the point of the row: it
+  // is the one ask in the bell that something risky waits on this reader.
+  if (n.kind === 'release_hold') {
+    return {
+      ...base,
+      needsYou: true,
+      icon: '\u26A0\uFE0F',
+      by: n.sourceUsername || null,
+      ...headline(t('notifications:row.releaseHold.label'), prLabel || n.sessionTitle || t('notifications:row.releaseHold.body')),
     };
   }
 

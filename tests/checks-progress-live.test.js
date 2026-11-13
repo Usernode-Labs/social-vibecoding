@@ -469,8 +469,12 @@ function makeAppView() {
 test('refreshDevData keeps the vote roster for every kind except a vote', () => {
   const AppView = makeAppView();
   AppView._devTopic = { kind: 'proposal', id: 9 };
+  AppView._proposals = [{ id: 9, status: 'promoted' }];
   let loads = 0;
+  let reads = 0;
   AppView._loadDevData = async () => { loads += 1; };
+  AppView._readTopicRow = async () => { reads += 1; return { id: 9, status: 'promoted' }; };
+  AppView._tellChangePage = () => {};
   AppView._refreshTopicOnDemandRow = async () => {};
   AppView._renderTopicHead = () => {};
   for (const kind of ['session', 'checks', 'checks-poll']) {
@@ -486,7 +490,9 @@ test('refreshDevData keeps the vote roster for every kind except a vote', () => 
   AppView.refreshDevData('vote');
   assert.equal(AppView._voteRoster[9], ready, 'the tally stays on screen while it is re-read');
   assert.equal(AppView._voteRosterStale.has(9), true, 'and is marked for a re-read');
-  assert.equal(loads, 4, 'the data still refreshes on every kind');
+  // #6604: the page's own row is re-read on every kind, and the board is not.
+  assert.equal(reads, 4, 'the change row is re-read on every kind');
+  assert.equal(loads, 0, 'and the board is not loaded behind one thread');
 });
 
 test('a pending checks_ready patches the cached row and repaints WITHOUT refetching', () => {
@@ -993,7 +999,11 @@ test('a roster already on screen is never replaced by a loading line', async () 
   AppView._invalidateVoteRoster(null);
 
   const src = APP_VIEW_SRC;
-  assert.match(src, /if \(kind === 'vote' && AppView\._devTopic\) AppView\._invalidateVoteRoster\(AppView\._devTopic\.id\);/);
+  // #6604: the rule lives where the read is now — a direct vote invalidates
+  // the roster for the change on screen, and _refreshTopicLive does the same
+  // for a live vote burst.
+  assert.match(src, /if \(kind === 'vote'\) AppView\._invalidateVoteRoster\(shown\.id\);/);
+  assert.match(src, /if \(voted && review\) AppView\._invalidateVoteRoster\(id\);/);
   assert.match(src, /AppView\._invalidateVoteRoster\(ref\.id\);/, 'arriving at a topic re-reads rather than blanking');
   // The only remaining delete is inside the helper, for an entry that was
   // never loaded and so has nothing worth keeping.

@@ -370,7 +370,7 @@ async function getWsVisibility(pool, { appId = null, appSlug = null } = {}) {
 // 10s TTL cache so the view-public fast path costs ~zero DB work.
 
 const platformJwt = require('./platform-jwt');
-const { USERNODE_DOMAIN, USERNODE_APPS_DOMAIN, USERNODE_LEGACY_APPS_DOMAIN } = require('./caddy');
+const { USERNODE_DOMAIN, USERNODE_APPS_DOMAIN, USERNODE_LEGACY_APPS_DOMAIN, USERNODE_PREVIEWS_DOMAIN } = require('./caddy');
 
 // The single-use sign-in code the apex /__access/authorize route mints from
 // a real platform session (services/edge-gate.js handleAuthorize); the
@@ -395,15 +395,22 @@ function parseAppHost(rawHost) {
   const host = String(rawHost || '').trim().toLowerCase().replace(/:\d+$/, '');
   if (host === USERNODE_DOMAIN) return null;
   // While apps move to another domain (services/apps-domain-move.js), a
-  // preview not rebuilt yet still serves at the old one.
-  const suffix = ['.' + USERNODE_APPS_DOMAIN, ...(USERNODE_LEGACY_APPS_DOMAIN ? ['.' + USERNODE_LEGACY_APPS_DOMAIN] : [])]
-    .find((s) => host.endsWith(s));
+  // preview not rebuilt yet still serves at the old one; so does one not
+  // rebuilt since previews got a domain of their own
+  // (services/previews-domain.js), on the apps domain.
+  const suffix = [
+    ...(USERNODE_PREVIEWS_DOMAIN ? ['.' + USERNODE_PREVIEWS_DOMAIN] : []),
+    '.' + USERNODE_APPS_DOMAIN,
+    ...(USERNODE_LEGACY_APPS_DOMAIN ? ['.' + USERNODE_LEGACY_APPS_DOMAIN] : []),
+  ].find((s) => host.endsWith(s));
   if (!suffix) return null;
   const label = host.slice(0, -suffix.length);
   // Only single-level subdomains are routable (the Caddy wildcard
   // matches one label).
   if (!label || label.includes('.')) return null;
   const staging = label.match(/^([a-z0-9-]+?)--s\d+(?:--[a-z0-9]+)?$/);
+  // The previews domain serves previews only, never a production app.
+  if (!staging && suffix === '.' + USERNODE_PREVIEWS_DOMAIN) return null;
   const slug = staging ? staging[1] : label;
   if (!/^[a-z0-9-]+$/.test(slug)) return null;
   return { slug, label, host };

@@ -4606,6 +4606,9 @@ const App = {
         shownRead = AppView.refreshShownTopic({
           kinds: b.kinds, ids: b.ids, numbers: b.numbers, slugs: b.slugs,
           unnamed: b.unnamed, devRead: !!out,
+          // #6604: one resync ask per path for this burst, however many
+          // surfaces the burst reached.
+          resynced: new Set(),
         });
       } catch { shownRead = null; }
     }

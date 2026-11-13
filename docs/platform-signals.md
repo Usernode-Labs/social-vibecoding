@@ -40,10 +40,18 @@ then `file`.
 | `project_deploys` | `apps.last_failure`, 3+ projects at one step in a day | bot |
 | `alert` | Alertmanager (pushed) | infra; bot for Homeroom's own deployments |
 | `alerting_silent` | no Watchdog heartbeat for 2 hours | infra |
-| `security` | trusted daily Homeroom security-audit artifact | bot when a fix is published, otherwise a person |
-| `security_audit` | failed, incomplete, missing or stale daily audit | a person |
+| `security` | trusted daily Homeroom security-audit artifact, one row per upgrade (private) | bot when a fix is published, otherwise a person |
+| `security_audit` | failed, incomplete, missing or stale daily audit (private) | a person |
 
-Security requests are native Homeroom requests. The observer reuses this clock,
+The two security kinds are private (`private: true` in `KINDS`): each files a
+private request (#5048, `private_requests`), which only full admins see, never a
+request on the board. One `security` row is one upgrade, not one advisory. When
+the bot can make the upgrade, it gets a request of its own on the board that
+names only the packages, versions and components (the row's public tier);
+the advisories, severity and target stay in the private tier. That request
+closing (its merge) does not close the row: only a clean audit, or an admin
+closing the private request, does, and a person is told if the audit still
+finds the problem 36 hours after it closed. The observer reuses this clock,
 table, deduplication and bot queue; CI publishes data without issue-write or
 production credentials. See [dependency regressions and security alerts](security/regression-gates-and-alerts.md).
 

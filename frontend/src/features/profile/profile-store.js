@@ -88,6 +88,7 @@ function factLine(parts) {
  * @property {boolean} friendsOpen          — the Friends card is up (UI overhaul)
  * @property {boolean} appSlotsOpen         — the App allowance card is up (#6446)
  * @property {boolean} weekShareOpen        — the "Share your week" card is up (#6464)
+ * @property {string} tab                   — under a look, which of You's tabs is up (./frame/you-tabs.ts)
  */
 
 export const profileStore = createStore(/** @type {ProfileState} */ ({
@@ -107,6 +108,8 @@ export const profileStore = createStore(/** @type {ProfileState} */ ({
   friendsOpen: false,
   appSlotsOpen: false,
   weekShareOpen: false,
+  // Under a look, which of You's tabs is up (./frame/you-tabs.ts).
+  tab: 'overview',
 }));
 
 /** Only ever render an http(s) URL as a real anchor. Escaping alone would not
@@ -262,6 +265,12 @@ export function identityView(state) {
     initial: initialOf(u),
     name: displayNameOf(u),
     handle,
+    // The kit's You page (./frame/you-frame.tsx) leads with the @handle and
+    // says the facts under it, so it reads the two apart: the handle whether
+    // or not a display name is set, and the facts without it.
+    username: u.username ? `@${u.username}` : null,
+    displayName: handle ? displayNameOf(u) : null,
+    about: factLine(facts.filter((fact) => fact !== handle)),
     sub: factLine(facts),
     bio: u.bio || null,
     chips: verifiedSocialLinksView(u),

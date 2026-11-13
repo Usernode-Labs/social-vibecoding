@@ -92,54 +92,184 @@ const WHERE = {
   capture: 'capture/Dockerfile', starter: 'src/services/template.js',
 };
 
-function itemsFrom(result, previous, app, now) {
-  const prior = new Map(previous.filter((r) => r.kind === 'security').map((r) => [r.subject?.advisory, r]));
+// One finding per advisory, component, package and version: a repeat (a
+// retained finding seen again) keeps the higher severity, any published fix
+// and the earlier exception expiry.
+function mergeFindings(raw) {
+  const byIdentity = new Map();
+  for (const value of raw) {
+    if (!COMPONENTS.includes(value.component)) throw new Error('Invalid retained security component');
+    const f = { ...finding(value), component: value.component };
+    const key = `${f.id}:${f.component}:${f.package}:${f.version}`;
+    const old = byIdentity.get(key);
+    byIdentity.set(key, old ? { ...f,
+      severity: LEVELS[Math.max(LEVELS.indexOf(old.severity), LEVELS.indexOf(f.severity))],
+      fixedVersion: f.fixedVersion || old.fixedVersion,
+      ...(old.acceptedUntil && (!f.acceptedUntil || old.acceptedUntil < f.acceptedUntil) ? { acceptedUntil: old.acceptedUntil } : {}),
+    } : f);
+  }
+  return [...byIdentity.values()];
+}
+
+// The upgrades: packages linked by the advisories they share, each with its
+// findings. One Chromium release fixes a dozen advisories, and a request per
+// advisory filed a dozen requests for one bump (17 on 11 Nov 2026); Debian's
+// openssl and libssl3 come from one source package and share every advisory,
+// so they are one upgrade too. Pure.
+function upgradesOf(findings) {
+  const parent = new Map();
+  const root = (p) => {
+    let r = p;
+    while (parent.get(r) !== r) r = parent.get(r);
+    for (let x = p; x !== r;) { const next = parent.get(x); parent.set(x, r); x = next; }
+    return r;
+  };
+  const byAdvisory = new Map();
+  for (const f of findings) {
+    if (!parent.has(f.package)) parent.set(f.package, f.package);
+    const first = byAdvisory.get(f.id);
+    if (first === undefined) byAdvisory.set(f.id, f.package);
+    else parent.set(root(f.package), root(first));
+  }
   const groups = new Map();
+  for (const f of findings) {
+    const r = root(f.package);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(f);
+  }
+  return [...groups.values()].map((list) => {
+    const sorted = list.sort((a, b) => `${a.package}:${a.component}:${a.version}:${a.id}`.localeCompare(`${b.package}:${b.component}:${b.version}:${b.id}`));
+    return { packages: [...new Set(sorted.map((f) => f.package))].sort(), findings: sorted };
+  });
+}
+
+// Which earlier request an upgrade continues: the oldest one that named any
+// of its packages, so an upgrade that gains a package keeps its request and
+// its target date. A key two upgrades both claim (one upgrade split in two)
+// stays with the first, and the other is new. Pure.
+function keysFor(upgrades, prior) {
+  const used = new Set();
+  const oldest = [...prior.values()].sort((a, b) => new Date(a.first_seen_at) - new Date(b.first_seen_at));
+  return upgrades.map((u) => {
+    const named = new Set(u.packages);
+    const old = oldest.find((r) => !used.has(r.subject.upgrade) && (r.subject.packages || []).some((p) => named.has(p)));
+    let key = old ? old.subject.upgrade : u.packages[0];
+    if (used.has(key)) key = u.packages.find((p) => !used.has(p)) || `${u.packages[0]}#${used.size}`;
+    used.add(key);
+    return { key, old: old && old.subject.upgrade === key ? old : null };
+  });
+}
+
+function listWords(list) {
+  return list.length < 2 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+}
+
+// What to upgrade, one line per installed version that has a published fix:
+// the public tier, which the bot's request on the board shows. The shared
+// evidence scrubber removes @mentions, so an npm scope is spelled out as
+// typed data and the bot still knows exactly which package. Pure.
+function upgradeLines(findings) {
+  const byVersion = new Map();
+  for (const f of findings) {
+    if (!f.fixedVersion) continue;
+    const key = `${f.package}\u0000${f.version}`;
+    if (!byVersion.has(key)) byVersion.set(key, { package: f.package, version: f.version, components: new Set(), fixes: new Set() });
+    const v = byVersion.get(key);
+    v.components.add(f.component);
+    v.fixes.add(f.fixedVersion);
+  }
+  const packageName = (name) => name.replace(/^@([^/]+)\//, 'npm scope $1, package ');
+  return [...byVersion.values()].map((v) => `${listWords([...v.components].sort())}: ${packageName(v.package)} ${v.version}, `
+    + `upgrade to ${[...v.fixes].sort().join(' or ')} or later.`);
+}
+
+const LISTED_ADVISORIES = 30;
+
+// The request's private lines: one per installed version, with the
+// components that run it, the fix and its advisories. Pure.
+function privateLines(findings) {
+  const byVersion = new Map();
+  for (const f of findings) {
+    const key = `${f.package}\u0000${f.version}`;
+    if (!byVersion.has(key)) byVersion.set(key, { package: f.package, version: f.version, components: new Set(), fixes: new Set(), ids: new Map(), until: null });
+    const v = byVersion.get(key);
+    v.components.add(f.component);
+    if (f.fixedVersion) v.fixes.add(f.fixedVersion);
+    const was = v.ids.get(f.id);
+    if (!was || LEVELS.indexOf(f.severity) > LEVELS.indexOf(was)) v.ids.set(f.id, f.severity);
+    if (f.acceptedUntil && (!v.until || f.acceptedUntil < v.until)) v.until = f.acceptedUntil;
+  }
+  return [...byVersion.values()].map((v) => {
+    const ids = [...v.ids].sort((a, b) => LEVELS.indexOf(b[1]) - LEVELS.indexOf(a[1]) || a[0].localeCompare(b[0]));
+    const listed = ids.slice(0, LISTED_ADVISORIES).map(([id, severity]) => `${id} (${severity})`).join(', ');
+    const more = ids.length > LISTED_ADVISORIES ? ` and ${ids.length - LISTED_ADVISORIES} more` : '';
+    const fix = v.fixes.size ? `fixed in ${[...v.fixes].sort().join(' or ')}` : 'no published fix';
+    const until = v.until ? `; reviewed exception until ${v.until}` : '';
+    return `${v.package} ${v.version} in ${listWords([...v.components].sort())}, ${fix}${until}: ${listed}${more}.`;
+  });
+}
+
+function itemsFrom(result, previous, app, now) {
+  const security = previous.filter((r) => r.kind === 'security' && r.subject);
+  const prior = new Map(security.filter((r) => typeof r.subject.upgrade === 'string').map((r) => [r.subject.upgrade, r]));
+  // Requests filed per advisory before findings were grouped by upgrade:
+  // what they knew is kept (the audit may be incomplete the first time) and
+  // so is the target they set.
+  const legacyDue = new Map(security.filter((r) => typeof r.subject.advisory === 'string' && Number.isFinite(Date.parse(r.subject.dueAt)))
+    .map((r) => [r.subject.advisory, Date.parse(r.subject.dueAt)]));
+  const raw = [];
   // Missing/incomplete/stale data retains every known finding, including rows
   // already clearing. Re-raising them cancels an unconfirmed resolution.
-  if (!result.complete) for (const [id, row] of prior) groups.set(id, row.subject?.findings || []);
-  for (const c of result.report?.components || []) for (const f of c.findings) {
-    const values = groups.get(f.id) || [];
-    groups.set(f.id, [...values, { ...f, component: c.component }]);
-  }
+  if (!result.complete) for (const row of security) raw.push(...(row.subject.findings || []));
+  for (const c of result.report?.components || []) for (const f of c.findings) raw.push({ ...f, component: c.component });
+  const upgrades = upgradesOf(mergeFindings(raw));
+  const keys = keysFor(upgrades, prior);
+  const auditRun = result.run ? `https://github.com/${result.report?.repository || 'Usernode-Labs/social-vibecoding'}/actions/runs/${result.run.id}` : null;
   const items = [];
-  for (const [id, raw] of groups) {
-    const byPackage = new Map();
-    for (const value of raw) {
-      if (!COMPONENTS.includes(value.component)) throw new Error('Invalid retained security component');
-      const f = { ...finding(value), component: value.component };
-      const key = `${f.component}:${f.package}:${f.version}`;
-      const old = byPackage.get(key);
-      byPackage.set(key, old ? { ...f,
-        severity: LEVELS[Math.max(LEVELS.indexOf(old.severity), LEVELS.indexOf(f.severity))],
-        fixedVersion: f.fixedVersion || old.fixedVersion,
-        ...(old.acceptedUntil && (!f.acceptedUntil || old.acceptedUntil < f.acceptedUntil) ? { acceptedUntil: old.acceptedUntil } : {}),
-      } : f);
-    }
-    const findings = [...byPackage.values()].sort((a, b) => `${a.component}:${a.package}:${a.version}`.localeCompare(`${b.component}:${b.package}:${b.version}`));
-    if (!findings.length) continue;
+  upgrades.forEach(({ packages, findings }, i) => {
+    const { key, old } = keys[i];
     const severity = LEVELS[Math.max(...findings.map((f) => LEVELS.indexOf(f.severity)))];
-    const old = prior.get(id);
     const first = old?.first_seen_at ? new Date(old.first_seen_at).getTime() : now;
     let due = first + (severity === 'CRITICAL' ? DAY : 7 * DAY);
     if (Number.isFinite(Date.parse(old?.subject?.dueAt))) due = Math.min(due, Date.parse(old.subject.dueAt));
-    for (const f of findings) if (f.acceptedUntil) due = Math.min(due, Date.parse(f.acceptedUntil));
+    for (const f of findings) {
+      if (f.acceptedUntil) due = Math.min(due, Date.parse(f.acceptedUntil));
+      if (legacyDue.has(f.id)) due = Math.min(due, legacyDue.get(f.id));
+    }
     const fixer = findings.some((f) => f.fixedVersion) ? 'bot' : 'person';
-    const materialKey = createHash('sha256').update(JSON.stringify({ findings, due, fixer })).digest('hex');
-    // The shared evidence scrubber removes @mentions. Spell out an npm
-    // scope as typed data so the bot still knows exactly which package.
-    const packageName = (name) => name.replace(/^@([^/]+)\//, 'npm scope $1, package ');
-    const lines = findings.map((f) => `${f.component}: ${packageName(f.package)} ${f.version}; fixed in ${f.fixedVersion || 'no published version'}${f.acceptedUntil ? `; reviewed exception until ${f.acceptedUntil}` : ''}.`);
-    lines.push(`Severity: ${severity}. Remediation target: ${new Date(due).toISOString().slice(0, 10)}${due < now ? ' (overdue)' : ''}.`);
-    if (result.run) lines.push(`Audit: https://github.com/${result.report?.repository || 'Usernode-Labs/social-vibecoding'}/actions/runs/${result.run.id}`);
-    items.push({ kind: 'security', key: id, appId: app.id, fixer, title: `Security: ${id} affects Homeroom`,
-      subject: { advisory: id, severity, findings, dueAt: new Date(due).toISOString(), materialKey,
+    const components = [...new Set(findings.map((f) => f.component))].sort();
+    // An npm scope's @ would read as a mention in a title and is scrubbed
+    // from a body, so the words name a package without it; the public lines
+    // spell it out exactly.
+    const named = (name) => name.replace(/^@/, '');
+    // The key keeps an earlier request's identity, and may name a package
+    // the images no longer have (Debian 12's libperl5.36, kept by the Perl
+    // 5.40 group through perl and perl-base): the title names one found now.
+    const head = packages.includes(key) ? key : packages[0];
+    const lead = packages.length > 1 ? `${named(head)} and ${packages.length - 1} related package${packages.length > 2 ? 's' : ''}` : named(head);
+    const where = listWords(components);
+    const title = `Upgrade ${lead} in ${where}`;
+    // The title counts as a change, so a request filed under an old one is
+    // rewritten with the new.
+    const materialKey = createHash('sha256').update(JSON.stringify({ findings, due, fixer, title })).digest('hex');
+    items.push({ kind: 'security', key, appId: app.id, fixer, title,
+      subject: { upgrade: key, packages, severity, findings, dueAt: new Date(due).toISOString(), materialKey,
         publishedKey: old?.subject?.publishedKey, publishedFixer: old?.subject?.publishedFixer,
         noFile: !['HIGH', 'CRITICAL'].includes(severity) },
-      summary: `${id} affects Homeroom's dependencies. ${result.complete ? 'The audit is complete.' : 'Known findings are retained until a complete current audit can confirm resolution.'}`,
-      done: 'A complete current audit no longer finds this advisory in any of the five Homeroom components.',
-      evidence: { lines, where: [...new Set(findings.map((f) => WHERE[f.component]))] } });
-  }
+      // The summary, the done line and the public lines are what the bot's
+      // upgrade request on the board says, so they name what to upgrade and
+      // nothing else; the advisories, the severity and the target are in the
+      // private tier, which only the private request shows.
+      summary: `Homeroom's ${where} ${components.length === 1 ? 'image runs' : 'images run'} versions of ${listWords(packages.map(named))} that have newer releases to move to.`,
+      done: 'A complete current audit no longer finds the old versions in any of Homeroom\'s components.',
+      evidence: { lines: upgradeLines(findings), where: components.map((c) => WHERE[c]) },
+      evidencePrivate: { lines: [
+        `Severity: ${severity}. Remediation target: ${new Date(due).toISOString().slice(0, 10)}${due < now ? ' (overdue)' : ''}.`,
+        result.complete ? 'The audit is complete.' : 'The audit is not complete: known findings are kept until a complete current audit can confirm resolution.',
+        ...privateLines(findings),
+        ...(auditRun ? [`Audit run: ${auditRun}.`] : []),
+      ] } });
+  });
   const health = previous.find((r) => r.kind === 'security_audit');
   let delay = result.delay || 0;
   if (result.reason === 'running' && Number.isFinite(Date.parse(result.run?.run_started_at))) {

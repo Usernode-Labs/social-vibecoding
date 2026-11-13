@@ -1,6 +1,7 @@
 'use strict';
 
 const { readSessionCookie, protectedCookieName } = require('../services/browser-session-cookies');
+const { sessionTokenIsLive } = require('../services/web-session-auth');
 
 /**
  * Apple and Google sign-in (services/sign-in-providers.js has the whole
@@ -113,15 +114,10 @@ function signInProviderRoutes(config) {
   const pool = getPool(config);
 
   // The ordinary sign-in routes refuse to mint a session over a live one
-  // (routes/auth.js SESSION_MINT_PATHS); these GETs make the same check.
-  async function liveSession(req) {
-    const token = readSessionCookie(req);
-    if (!token) return false;
-    const { rows } = await pool.query(
-      'SELECT 1 FROM sessions WHERE token = $1 AND expires_at > NOW() LIMIT 1',
-      [token]
-    );
-    return rows.length > 0;
+  // (routes/auth.js SESSION_MINT_PATHS); these GETs make the same check,
+  // with the same meaning of live as the auth middleware (#6619).
+  function liveSession(req) {
+    return sessionTokenIsLive(pool, readSessionCookie(req));
   }
 
   // The trip runs on the canonical origin, the one registered with the
@@ -144,6 +140,9 @@ function signInProviderRoutes(config) {
       // in, project invites to it are claimed, and the included OpenRouter
       // key is made. Each is best effort and never throws.
       await waitlist.linkUserByEmail(pool, { userId: result.userId, email: result.email, newAccount: true });
+      // #6633: with the waitlist switched off, the account just made is let
+      // in at once, before its waitlist spot and any invite it carries.
+      await waitlist.admitIfOpen(pool, result.userId);
       await require('../services/email-invites').claimEmailInvites(pool, { userId: result.userId, email: result.email });
       await managedOpenRouter.ensureIncludedKey({
         pool, userId: result.userId, config, reason: `signup_${provider}`,

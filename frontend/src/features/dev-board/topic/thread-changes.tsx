@@ -657,6 +657,18 @@ export function ChangeSectionSkeleton(): ReactNode {
           <Skeleton shape="block" className="h-5 w-24 rounded-full" />
         </div>
         <Skeleton className="mt-2.5 h-3.5 w-3/5" />
+        {/* #6604: the summary's lines, a before/after pair and the two cards
+            below them, at the size they are once loaded, so the page does not
+            change height as they fill in. */}
+        <div className="mt-2 flex flex-col gap-1.5">
+          <Skeleton className="h-2.5 w-full" />
+          <Skeleton className="h-2.5 w-11/12" />
+          <Skeleton className="h-2.5 w-3/5" />
+        </div>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <Skeleton shape="block" className="h-24 rounded-xl" />
+          <Skeleton shape="block" className="h-24 rounded-xl" />
+        </div>
         <ChangeGatesSkeleton />
       </SkeletonGroup>
     </section>
@@ -667,8 +679,8 @@ export function ChangeSectionSkeleton(): ReactNode {
 function ChangeGatesSkeleton(): ReactNode {
   return (
     <div className="dev-change-pair">
-      <Skeleton shape="block" className="h-16 rounded-2xl" />
-      <Skeleton shape="block" className="h-16 rounded-2xl" />
+      <Skeleton shape="block" className="h-20 rounded-2xl" />
+      <Skeleton shape="block" className="h-20 rounded-2xl" />
     </div>
   );
 }

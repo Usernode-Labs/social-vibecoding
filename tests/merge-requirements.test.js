@@ -44,6 +44,20 @@ test('a gate that does not apply is omitted, not greyed', () => {
     ['approvals', 'explicit', 'admin_yes', 'integration', 'checks', 'platform_env', 'main_healthy', 'github']);
 });
 
+test('a change the Content rules review flagged gets the admin row on an unlocked app (#6642)', () => {
+  // The gate records it after the checks, where the flag is read, so the
+  // steps before it stay done and the row carries the reviewer's sentence.
+  const t = requirements.trace().context({ locked: false, selfHosted: false });
+  t.pass('approvals').pass('integration').pass('checks');
+  t.context({ contentHold: true }).stop('admin_yes', 'waiting', { note: 'flagged, so an admin has to vote yes as well' });
+  const list = requirements.describe(t.toRecord());
+  assert.deepEqual(list.map((g) => `${g.key}:${g.state}`),
+    ['approvals:done', 'admin_yes:waiting', 'integration:done', 'checks:done', 'main_healthy:pending', 'github:pending']);
+  const row = list.find((g) => g.key === 'admin_yes');
+  assert.equal(row.actor, 'admin');
+  assert.match(row.detail.note, /an admin has to vote yes/);
+});
+
 test('everything after the refusal is "pending", never "done"', () => {
   // The whole reconstruction rests on this: evaluation stops at the first
   // refusal, so a gate it never reached must not read as satisfied.

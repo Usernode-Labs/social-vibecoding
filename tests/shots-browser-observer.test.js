@@ -333,7 +333,10 @@ test('an oversized park answer is still recognized and never reaches the agent',
   h.parker.close();
 });
 
-test('a failed or timed-out park keeps the pointer dirty, so the next screenshot parks again', async () => {
+test('a failed or timed-out park keeps the pointer dirty, so the next screenshot parks again', async (t) => {
+  // The park deadline is advanced by hand: a busy runner must not let 20ms of
+  // real time settle the first park before its error answer is read.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const h = parkerHarness({ timeoutMs: 20 });
   h.parker.input.write(call(1, 'browser_click', { element: 'a', ref: 'e1' }) + call(2, 'browser_take_screenshot'));
   await h.tick();
@@ -345,7 +348,8 @@ test('a failed or timed-out park keeps the pointer dirty, so the next screenshot
   await h.tick();
   assert.equal(h.names().at(-1), 'browser_mouse_move_xy', 'the next screenshot retries the park');
   const lateId = h.forwarded.at(-1).id;
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  t.mock.timers.tick(20);
+  await h.tick();
   assert.equal(h.names().at(-1), 'browser_take_screenshot', 'a timeout lets the screenshot through');
   h.parker.input.write(call(4, 'browser_take_screenshot'));
   await h.tick();

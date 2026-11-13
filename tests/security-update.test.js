@@ -19,7 +19,7 @@ test('image runtime policy rejects vulnerable patches and unreviewed major migra
     const source = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
     const stages = source.match(/^FROM node:.+$/gm);
     assert.ok(stages.length, file);
-    for (const stage of stages) assert.match(stage, /^FROM node:22\.23\.4-(?:alpine|bookworm-slim)(?: AS \S+)?$/, file);
+    for (const stage of stages) assert.match(stage, /^FROM node:22\.23\.4-(?:alpine|trixie-slim)(?: AS \S+)?$/, file);
     assert.equal((source.match(/RUN npm install --global npm@11\.21\.1/g) || []).length, stages.length, file);
   }
 });

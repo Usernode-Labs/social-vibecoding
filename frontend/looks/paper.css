@@ -1,45 +1,125 @@
 /* H · Paper. The work sits on one white sheet laid on the wallpaper; navigation rests on the wallpaper beside it. Groups are quiet grey panels, with no outlines anywhere. */
-.hr{--surface:#fff;--sunk:#f3f3f7;--ink:#14151f;--mut:#5d5f72;--faint:#9092a4;--line:rgba(20,21,31,.1);--line2:rgba(20,21,31,.07);
-  --acc:#2563eb;--acc-ink:#fff;--acc-t:#e0eaff;--lit:#14151f;--lit-t:rgba(20,21,31,.07);
+/* tokens: --sunk is a panel on the sheet, --ctl a control on a panel, --well a control straight on the sheet */
+.hr{--surface:#fff;--sunk:#f2f2f6;--ctl:#fff;--well:#ebebf1;--ink:#14151f;--mut:#555768;--faint:#6f7183;--line:rgba(20,21,31,.09);--line2:rgba(20,21,31,.07);
+  --acc:#2360e8;--acc-ink:#fff;--acc-t:#e1eaff;--lit:#14151f;--lit-t:rgba(20,21,31,.07);
+  --lift:0 1px 2px rgba(20,21,31,.07),0 6px 14px -8px rgba(20,21,31,.22);
+  --sh:0 2px 6px rgba(20,21,31,.06),0 28px 64px -28px rgba(20,21,31,.42);
   --f:"Instrument Sans",system-ui,-apple-system,"Segoe UI",sans-serif;font-family:var(--f)}
-.hr.dark{--surface:#14151f;--sunk:#1f2130;--ink:#eff0f6;--mut:#a7a9bd;--faint:#73758a;--line:rgba(255,255,255,.11);--line2:rgba(255,255,255,.07);
-  --acc:#7aa5ff;--acc-ink:#06112b;--acc-t:#182a52;--lit:#eff0f6;--lit-t:rgba(255,255,255,.09)}
+.hr.dark{--surface:#15161f;--sunk:#1f212d;--ctl:#2c2e3e;--well:#252734;--ink:#eff0f6;--mut:#a9abbe;--faint:#8c8ea3;--line:rgba(255,255,255,.09);--line2:rgba(255,255,255,.07);
+  --acc:#7aa5ff;--acc-ink:#06112b;--acc-t:#1b2e58;--lit:#eff0f6;--lit-t:rgba(255,255,255,.09);
+  --lift:0 1px 2px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.06);
+  --sh:0 2px 6px rgba(0,0,0,.4),0 28px 64px -24px rgba(0,0,0,.85)}
+
+/* ---- navigation, on the wallpaper ---- */
 .app{grid-template-columns:248px minmax(0,1fr)}
-.side{border-right:0;padding:18px 12px 14px}
-.brand{font-size:18px;margin-bottom:14px}
-.nv{height:38px;padding:0 10px;font-weight:550}
-.nv.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(20,21,31,.08),0 8px 18px -12px rgba(20,21,31,.35)}.nv.on .ic{color:var(--ink)}
+.side{border-right:0;padding:18px 12px 14px;gap:2px}
+.brand{font-size:18px;margin-bottom:14px;padding:0 10px}
+.nv{height:38px;padding:0 10px;font-weight:550;font-size:14.5px;border-radius:11px}
+.nv.on{background:var(--ctl);color:var(--ink);font-weight:650;box-shadow:var(--lift)}.nv.on .ic{color:var(--ink)}
 .cap{font-size:13px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--mut)}
-.sidefoot{border-top:0}
-.colm{margin:10px 10px 10px 0;height:calc(100% - 20px);border-radius:22px;background:var(--surface);box-shadow:0 0 0 1px var(--line2),0 30px 60px -44px rgba(20,21,31,.6);overflow:hidden}
+.side .cap{padding:18px 10px 8px}
+.sidefoot{border-top:0;padding-top:8px}
+.nv.me .ic{color:var(--faint)}
+
+/* ---- the sheet ---- */
+.colm{margin:10px 10px 10px 0;height:calc(100% - 20px);border-radius:22px;background:var(--surface);box-shadow:0 1px 2px rgba(20,21,31,.05),0 24px 56px -36px rgba(20,21,31,.45);overflow:hidden}
+.dark .colm{box-shadow:0 0 0 1px rgba(255,255,255,.05),0 24px 56px -30px rgba(0,0,0,.9)}
 .noside .colm{margin:10px}
 .phone .colm,.phone .noside .colm{margin:0;height:100%;border-radius:0;box-shadow:none}
 .full .colm{height:auto}
-.bar{border-bottom:1px solid var(--line2)}
+.bar{height:56px;border-bottom:1px solid var(--line2)}
+.phone .bar{height:52px}
+.phone .ib{width:40px;height:40px}
 .ib .dot{box-shadow:0 0 0 2px var(--surface)}
 .banner{background:var(--sunk);color:var(--ink);border-bottom:0}
 .inner{padding:36px 40px 48px}
-.title{font-size:34px;font-weight:700;letter-spacing:-.03em}
-.phone .title{font-size:26px}
-.purpose{font-size:16px}
-.tabs{border-bottom:1px solid var(--line2)}
-.tab.on{color:var(--ink)}.tab.on::after{background:var(--ink)}
+.phone .inner{padding:20px 16px 32px}
+.head{margin-bottom:28px}
+.phone .head{margin-bottom:24px}
+.title{font-size:34px;font-weight:700;letter-spacing:-.03em;line-height:1.12}
+.phone .title{font-size:26px;letter-spacing:-.025em}
+.sheet .title{font-size:24px;letter-spacing:-.02em}
+.purpose{font-size:16px;line-height:1.45}
+.phone .purpose{font-size:15px}
+.tabs{border-bottom:1px solid var(--line2);gap:28px}
+.tab{font-size:14.5px}
+.tab.on{color:var(--ink);font-weight:650}.tab.on::after{background:var(--ink);border-radius:2px}
 .stack{gap:28px}
+.sec{gap:10px}
+.link{font-size:13px}
+
+/* ---- panels and what sits on them ---- */
 .card{background:var(--sunk);box-shadow:none;border-radius:16px}
 .row+.row{border-top:1px solid var(--line)}
-.row.on{background:var(--lit-t)}
-.lead{background:var(--surface);border-radius:11px}
-.pill{background:var(--surface)}
-.pill.act{background:var(--acc)}
-.btn.quiet{background:var(--sunk)}.card .btn.quiet,.card .btn.line{background:var(--surface);box-shadow:none}
-.tog{background:var(--surface)}.tog.on{background:var(--acc)}
-.inp{background:var(--surface);border-radius:12px}
-.search .inp{background:var(--sunk);box-shadow:none}
-.pic{background:var(--surface)}
+.row .t{font-weight:600;letter-spacing:-.005em}
+.row.on{background:var(--ctl);border-radius:16px;box-shadow:inset 0 0 0 4px var(--sunk)}
+.row.on+.row,.row+.row.on{border-top-color:transparent}
+.row.on .lead{background:var(--sunk)}
+.row .go{color:var(--faint);opacity:.75}
+.lead{background:var(--ctl);border-radius:11px}
+.avs .av{box-shadow:0 0 0 2px var(--sunk)}
+.avs .more{background:var(--ctl)}
+.at .n{box-shadow:0 0 0 2px var(--sunk)}
+.pill{background:var(--well)}.card .pill,.sheet .card .pill{background:var(--ctl)}
+.pill.act,.card .pill.act{background:var(--acc)}
+.card .pill.wait{background:var(--wait-t)}.card .pill.ok{background:var(--ok-t)}.card .pill.bad{background:var(--bad-t)}
+.btn{font-weight:600;letter-spacing:-.005em}
+.btn.quiet,.btn.line{background:var(--well);color:var(--ink);box-shadow:none}
+.card .btn.quiet,.card .btn.line{background:var(--ctl);box-shadow:none}
+.btn.bad{box-shadow:none}
+.phone .btn.sm{height:40px;padding:0 16px}
+.phone .bar .btn.sm{height:36px}
+.tog{background:rgba(20,21,31,.2);box-shadow:none}.dark .tog{background:rgba(255,255,255,.22)}
+.tog::after{box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.tog.on,.dark .tog.on{background:var(--acc)}
+.dark .tog.on::after{background:#06112b}
+.chk{box-shadow:inset 0 0 0 2px var(--faint);background:var(--ctl)}.chk.on{background:var(--acc)}
+.inp{background:var(--well);border-radius:12px;box-shadow:none}
+.card .inp{background:var(--ctl)}
+.inp.focus,.card .inp.focus{background:var(--ctl);box-shadow:inset 0 0 0 2px var(--acc)}
+.dark .inp.focus{background:var(--surface)}
+.inp.err{box-shadow:inset 0 0 0 2px var(--bad)}
+.inp .ic{color:var(--mut)}
+.search .inp{background:var(--well);box-shadow:none}
+.field label{font-weight:600}
+.pic{background:var(--ctl);box-shadow:none}
+.pic i{background:var(--line)}.pic i.blk{background:var(--sunk)}
+.pic.new{box-shadow:inset 0 0 0 2px var(--ok)}
 .track .st::before{background:var(--line)}
+.track .st.done::before{background:var(--mut)}
 .ballot .bar2{background:var(--line)}
-.note{border-radius:16px;background:var(--sunk);color:var(--ink)}.note .ic{color:var(--acc)}
-.composer{background:var(--sunk);box-shadow:none}
-.sheet{background:var(--surface);border-radius:22px}.sheet .x{background:var(--sunk)}
-.phone .tabbar{background:var(--surface)}
-.fact .v{font-size:26px}
+.fact .v{font-size:26px;letter-spacing:-.025em}
+.fact+.fact{border-left-color:var(--line)}
+.phone .facts .fact:nth-child(n+3){border-top-color:var(--line)}
+.phone .facts.f5 .fact+.fact{border-left-color:var(--line)}
+.note{border-radius:16px;background:var(--sunk);color:var(--ink);padding:14px 16px}.note .ic{color:var(--acc)}
+.note.wait{background:var(--wait-t);color:var(--wait)}.note.ok{background:var(--ok-t);color:var(--ok)}.note.bad{background:var(--bad-t);color:var(--bad)}
+.note.wait .ic,.note.ok .ic,.note.bad .ic{color:inherit}
+.day{letter-spacing:.04em;font-weight:600;color:var(--faint)}
+.post .when,.mono{color:var(--faint)}
+.evt .ei{color:var(--mut)}
+
+/* ---- composer, split, sheets ---- */
+.composer{background:var(--well);box-shadow:none;padding-left:12px}
+.colm>.composer{width:min(1056px,calc(100% - 80px));margin:0 auto 16px}
+.phone .colm>.composer{width:auto;margin:0 12px 12px}
+.composer .send{background:transparent;color:var(--mut)}
+.composer .send.go{background:var(--acc);color:var(--acc-ink)}
+.composer .ic{color:var(--mut)}.composer .send.go .ic{color:inherit}
+.dhead{border-bottom:1px solid var(--line2)}
+.pane+.pane{border-left:1px solid var(--line2)}
+.sheet{background:var(--surface);border-radius:22px;box-shadow:var(--sh)}
+.dark .sheet{--surface:#1b1d29;--sunk:#262835;--ctl:#33364a;--well:#2b2d3c;box-shadow:var(--sh),0 0 0 1px rgba(255,255,255,.06)}
+.sheet .x{background:var(--well)}
+.phone .sheet{border-radius:22px 22px 0 0}
+.ov.right .sheet{border-radius:0;box-shadow:var(--sh)}
+.phone .ov.right .sheet{border-radius:22px 22px 0 0}
+.foot{color:var(--mut)}
+
+/* ---- phone ---- */
+.phone .tabbar{background:var(--surface);border-top:1px solid var(--line2)}
+.tb.on{color:var(--ink);background:var(--lit-t);font-weight:700}
+.tb .n{top:-1px;left:calc(50% + 8px);box-shadow:0 0 0 2px var(--surface)}
+.phone .dock{background:var(--surface);border-top:1px solid var(--line2)}
+.phone .facts.f5 .fact .l{white-space:normal;line-height:1.2}
+.phone .barline{border-bottom-color:var(--line2)}

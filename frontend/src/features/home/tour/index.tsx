@@ -168,6 +168,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { reducedMotion } from '../../../lib/reduced-motion';
 
 import { Button } from '@/components/ui/button';
 
@@ -441,7 +442,7 @@ function bringIntoView(target: HTMLElement): void {
 function backToTopOfHome(): void {
   const home = document.getElementById('home-screen');
   if (!home || home.classList.contains('hidden')) return;
-  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const reduced = reducedMotion();
   home.scrollIntoView({ block: 'start', behavior: reduced ? 'auto' : 'smooth' });
 }
 

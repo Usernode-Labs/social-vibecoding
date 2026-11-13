@@ -275,6 +275,115 @@ function shouldCreateGithubTwin(kind) {
 // them naturally. Strictly a no-op in production.
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
+// Staging: the [Mock] rows carry no topic_attribute_votes, so a few get a
+// synthetic priority / assignee / category summary. BOTH the board's list and
+// a request opened by its own number apply it, so the chips read the same
+// whichever way the page was reached (#6604).
+function stagingMockAttrs(viewer) {
+  return new Map([
+      // Clear leader on all fields; the viewer is their own assignee.
+      [900001, {
+        priority: { top: 'high', count: 3, myValue: null },
+        assignee: { top: viewer, count: 2, myValue: viewer },
+        // #504: a clear category leader (count 3) so the chip + colour
+        // and the category filter dropdown are reviewable.
+        category: { top: 'bug', count: 3, myValue: null },
+      }],
+      // A tie (count 1 vs 1) — the earlier-suggested value wins the chip.
+      [900003, {
+        priority: { top: 'low', count: 1, myValue: null },
+        assignee: { top: 'staging-demo-user', count: 1, myValue: null },
+        category: { top: 'docs', count: 1, myValue: null },
+      }],
+      // #489: a third assignee whose first letter (M) differs from the
+      // others (S), so the deterministic initial-avatar colouring is
+      // reviewable across several visibly-distinct avatars on the board.
+      [900006, {
+        priority: { top: 'medium', count: 2, myValue: null },
+        assignee: { top: 'maya-builder', count: 3, myValue: null },
+        // A second, distinct category leader so the filter has choices.
+        category: { top: 'feature', count: 2, myValue: null },
+      }],
+      // #780: a CUSTOM category leader, matching one of the two demo
+      // entries listCategories() appends in staging — so the custom chip
+      // colour, and narrowing the board by a custom category in the
+      // filter bar, are both reviewable in a preview.
+      [900007, {
+        priority: { top: 'high', count: 1, myValue: null },
+        assignee: { top: 'staging-demo-user', count: 1, myValue: null },
+        category: { top: 'staging-demo-perf', count: 2, myValue: null },
+      }],
+      // 900002 deliberately left untouched → muted "Set priority" /
+      // "Unassigned" / "Set category"; opening its assignee dropdown
+      // pre-fills the viewer's own username.
+    ]);
+}
+
+// Staging: the [Mock] rows have no chat_sessions rows behind them, so the
+// "In progress" chip variants get a synthetic worked-on summary. BOTH the
+// board's list and a request opened by its own number apply it, so the card
+// reads the same whichever way the page was reached (#6604).
+function stagingMockInProgress(viewer) {
+  const hoursAgoIso = (hrs) => new Date(Date.now() - hrs * 3600 * 1000).toISOString();
+  const hoursAheadIso = (hrs) => new Date(Date.now() + hrs * 3600 * 1000).toISOString();
+  const mkMockClaim = (username, mine, hrs) => ({
+    username, userId: mine && viewer ? viewer.id : 0, mine,
+    claimedAt: hoursAgoIso(hrs), expiresAt: hoursAheadIso(7 * 24 - hrs),
+  });
+  const mkMockSession = (sessionId, username, status, hrs, busy) => ({
+    sessionId, username, mine: false, status, busy: !!busy,
+    lastActivityAt: hoursAgoIso(hrs),
+  });
+  return new Map([
+    // #1112 `in_review`: the session was promoted, so the work is
+    // waiting on reviewers rather than on an agent. CLICKABLE styling
+    // (synthetic proposal target — clicking lands on the topic view's
+    // not-found fallback, same visual-review-only caveat as the
+    // synthetic myPrSessionId above).
+    [900007, {
+      count: 1, users: ['staging-tester'], peopleTotal: 1, mine: false, claims: [],
+      sessions: [mkMockSession(900007, 'staging-tester', 'promoted', 4, false)],
+      target: { kind: 'proposal', sessionId: 900007 },
+    }],
+    // #1112 `working` with a live turn: two active sessions, the
+    // most-recent one busy, so the chip renders emerald with its
+    // spinner and a "+1" for the second person. NON-clickable
+    // (private-work) styling.
+    [900006, {
+      count: 2, users: ['maya-builder', 'staging-tester'], peopleTotal: 2, mine: false,
+      claims: [],
+      sessions: [
+        mkMockSession(900106, 'maya-builder', 'active', 0.2, true),
+        mkMockSession(900206, 'staging-tester', 'active', 3, false),
+      ],
+      target: null,
+    }],
+    // #1112 `claimed`, with the VIEWER among the claimers — reviews
+    // the multi-claimer "+1" plus the "Release my claim" button state.
+    [900004, {
+      count: 0, users: [], peopleTotal: 2, mine: true, sessions: [],
+      claims: [mkMockClaim((viewer && viewer.username) || 'staging-tester', true, 2), mkMockClaim('maya-builder', false, 5)],
+      target: null,
+    }],
+    // #1112 `claimed` by someone else — the viewer's button stays
+    // "Claim this issue" and the admin per-claim clear is reviewable
+    // in the topic view.
+    [900008, {
+      count: 0, users: [], peopleTotal: 1, mine: false, sessions: [],
+      claims: [mkMockClaim('maya-builder', false, 8)],
+      target: null,
+    }],
+    // #1112 `paused`: one session, paused, last touched 5 days ago —
+    // two days short of the 7-day self-clear, which is exactly the
+    // case the topic head's dated sentence exists to explain.
+    [900014, {
+      count: 1, users: ['maya-builder'], peopleTotal: 1, mine: false, claims: [],
+      sessions: [mkMockSession(900114, 'maya-builder', 'paused', 5 * 24, false)],
+      target: null,
+    }],
+  ]);
+}
+
 // Whether requests can be read and written here. Requests are Homeroom's
 // own rows (services/requests.js) since GitHub suspended the account that
 // filed them, so always, except on a staging copy without GitHub, which keeps
@@ -1509,7 +1618,11 @@ function issueRoutes(config) {
         const out = await require('../services/homeroom-bot-dm').askBotToBuild(pool, {
           app, user: req.user, issueNumber: n, readAgain: req.body?.readAgain === true,
         });
-        if (!out.ok) return res.status(out.status || 400).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
+        if (!out.ok) {
+          return res.status(out.status || 400).json({
+            error: out.error, ...(out.code ? { code: out.code } : {}), ...(out.signals ? { signals: out.signals } : {}),
+          });
+        }
         return res.json(out);
       } catch (err) {
         log.error('issues', 'Asking Homeroom bot to build failed', { message: err.message, slug: req.params.slug });
@@ -2773,64 +2886,7 @@ function issueRoutes(config) {
         // newest-on-top (#617) demos, and an in-progress mark would move
         // them out of the Issues column. Request-time, read-only, no-op
         // in production.
-        const hoursAgoIso = (hrs) => new Date(Date.now() - hrs * 3600 * 1000).toISOString();
-        const hoursAheadIso = (hrs) => new Date(Date.now() + hrs * 3600 * 1000).toISOString();
-        const mkMockClaim = (username, mine, hrs) => ({
-          username, userId: mine ? req.user.id : 0, mine,
-          claimedAt: hoursAgoIso(hrs), expiresAt: hoursAheadIso(7 * 24 - hrs),
-        });
-        const mkMockSession = (sessionId, username, status, hrs, busy) => ({
-          sessionId, username, mine: false, status, busy: !!busy,
-          lastActivityAt: hoursAgoIso(hrs),
-        });
-        const mockInProgress = new Map([
-          // #1112 `in_review`: the session was promoted, so the work is
-          // waiting on reviewers rather than on an agent. CLICKABLE styling
-          // (synthetic proposal target — clicking lands on the topic view's
-          // not-found fallback, same visual-review-only caveat as the
-          // synthetic myPrSessionId above).
-          [900007, {
-            count: 1, users: ['staging-tester'], peopleTotal: 1, mine: false, claims: [],
-            sessions: [mkMockSession(900007, 'staging-tester', 'promoted', 4, false)],
-            target: { kind: 'proposal', sessionId: 900007 },
-          }],
-          // #1112 `working` with a live turn: two active sessions, the
-          // most-recent one busy, so the chip renders emerald with its
-          // spinner and a "+1" for the second person. NON-clickable
-          // (private-work) styling.
-          [900006, {
-            count: 2, users: ['maya-builder', 'staging-tester'], peopleTotal: 2, mine: false,
-            claims: [],
-            sessions: [
-              mkMockSession(900106, 'maya-builder', 'active', 0.2, true),
-              mkMockSession(900206, 'staging-tester', 'active', 3, false),
-            ],
-            target: null,
-          }],
-          // #1112 `claimed`, with the VIEWER among the claimers — reviews
-          // the multi-claimer "+1" plus the "Release my claim" button state.
-          [900004, {
-            count: 0, users: [], peopleTotal: 2, mine: true, sessions: [],
-            claims: [mkMockClaim(req.user.username, true, 2), mkMockClaim('maya-builder', false, 5)],
-            target: null,
-          }],
-          // #1112 `claimed` by someone else — the viewer's button stays
-          // "Claim this issue" and the admin per-claim clear is reviewable
-          // in the topic view.
-          [900008, {
-            count: 0, users: [], peopleTotal: 1, mine: false, sessions: [],
-            claims: [mkMockClaim('maya-builder', false, 8)],
-            target: null,
-          }],
-          // #1112 `paused`: one session, paused, last touched 5 days ago —
-          // two days short of the 7-day self-clear, which is exactly the
-          // case the topic head's dated sentence exists to explain.
-          [900014, {
-            count: 1, users: ['maya-builder'], peopleTotal: 1, mine: false, claims: [],
-            sessions: [mkMockSession(900114, 'maya-builder', 'paused', 5 * 24, false)],
-            target: null,
-          }],
-        ]);
+        const mockInProgress = stagingMockInProgress(req.user);
         for (const issue of issues) {
           const m = mockInProgress.get(issue.number);
           if (m && !issue.in_progress) issue.in_progress = m;
@@ -2881,43 +2937,7 @@ function issueRoutes(config) {
         // 900002 stays untouched (Unassigned) so opening ITS dropdown shows
         // the name box PRE-FILLED with the viewer's username.
         const viewer = (req.user && req.user.username) || 'staging-tester';
-        const mockAttrs = new Map([
-          // Clear leader on all fields; the viewer is their own assignee.
-          [900001, {
-            priority: { top: 'high', count: 3, myValue: null },
-            assignee: { top: viewer, count: 2, myValue: viewer },
-            // #504: a clear category leader (count 3) so the chip + colour
-            // and the category filter dropdown are reviewable.
-            category: { top: 'bug', count: 3, myValue: null },
-          }],
-          // A tie (count 1 vs 1) — the earlier-suggested value wins the chip.
-          [900003, {
-            priority: { top: 'low', count: 1, myValue: null },
-            assignee: { top: 'staging-demo-user', count: 1, myValue: null },
-            category: { top: 'docs', count: 1, myValue: null },
-          }],
-          // #489: a third assignee whose first letter (M) differs from the
-          // others (S), so the deterministic initial-avatar colouring is
-          // reviewable across several visibly-distinct avatars on the board.
-          [900006, {
-            priority: { top: 'medium', count: 2, myValue: null },
-            assignee: { top: 'maya-builder', count: 3, myValue: null },
-            // A second, distinct category leader so the filter has choices.
-            category: { top: 'feature', count: 2, myValue: null },
-          }],
-          // #780: a CUSTOM category leader, matching one of the two demo
-          // entries listCategories() appends in staging — so the custom chip
-          // colour, and narrowing the board by a custom category in the
-          // filter bar, are both reviewable in a preview.
-          [900007, {
-            priority: { top: 'high', count: 1, myValue: null },
-            assignee: { top: 'staging-demo-user', count: 1, myValue: null },
-            category: { top: 'staging-demo-perf', count: 2, myValue: null },
-          }],
-          // 900002 deliberately left untouched → muted "Set priority" /
-          // "Unassigned" / "Set category"; opening its assignee dropdown
-          // pre-fills the viewer's own username.
-        ]);
+        const mockAttrs = stagingMockAttrs(viewer);
         for (const issue of issues) {
           const m = mockAttrs.get(issue.number);
           if (m && (!issue.priority || !issue.priority.top) && (!issue.assignee || !issue.assignee.top)) {
@@ -3068,6 +3088,17 @@ function issueRoutes(config) {
       const attrs = (await topicAttrs.summarizeForTargets(
         pool, app.id, 'issue', [number], req.user.id
       )).get(number) || topicAttrs.emptySummary();
+      // #6604: the page reads this row on its own now, without the board's
+      // list, so the same staging [Mock] chips the list seeds are applied
+      // here — a request opened by number shows its category and priority.
+      if (IS_STAGING) {
+        const m = stagingMockAttrs((req.user && req.user.username) || 'staging-tester').get(number);
+        if (m && (!attrs.priority || !attrs.priority.top) && (!attrs.assignee || !attrs.assignee.top)) {
+          attrs.priority = m.priority;
+          attrs.assignee = m.assignee;
+          attrs.category = m.category;
+        }
+      }
       // #2431: for a CLOSED issue this is the whole answer to "what closed
       // this?" — the merged change that linked it. Same resolver the list
       // uses, so both pages name the same proposal.
@@ -3136,6 +3167,83 @@ function issueRoutes(config) {
       delete issueFields.mockAddressedBy;
       delete issueFields.mockClosedVia;
 
+      // #6604: a request's page draws from THIS read alone now — the board's
+      // list is not loaded behind it — so the work state its card shows has
+      // to be composed here, exactly as the list composes it: the live
+      // sessions that linked this request, the manual claims still in their
+      // window, the viewer's own dev chat, and a headless run. Without them a
+      // paused request read "Nobody is working on this yet" and its
+      // "Continue work" / "Create new proposal" buttons were missing.
+      if (issue.state !== 'closed') {
+        const { rows: inProgressRows } = await pool.query(
+          `SELECT cs.id, cs.user_id, cs.status, cs.shared_at,
+                  cs.last_activity_at, cs.created_at, u.username,
+                  ${workedOnSql()} AS worked_on
+             FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
+            WHERE cs.app_id = $1 AND cs.is_headless = FALSE
+              AND $2::int = ANY(cs.linked_issues)
+              AND u.is_synthetic IS NOT TRUE
+              AND NOT ${planRecordSql('cs')}
+              AND (cs.status IN ('active','promoted','merging')
+                   OR (cs.status = 'paused'
+                       AND cs.last_activity_at > NOW() - make_interval(days => $3)))`,
+          [app.id, number, IN_PROGRESS_PAUSED_WINDOW_DAYS]
+        );
+        const { rows: claimRows } = await pool.query(
+          `SELECT ic.user_id, ic.claimed_at, u.username
+             FROM issue_claims ic JOIN users u ON u.id = ic.user_id
+            WHERE ic.app_id = $1 AND ic.github_issue_number = $2
+            ORDER BY ic.claimed_at ASC`,
+          [app.id, number]
+        );
+        const claimNow = Date.now();
+        const lastAt = chat && chat.last_at;
+        const claims = claimRows
+          .filter((c) => claimIsLive(c.claimed_at, lastAt, claimNow))
+          .map((c) => ({ ...c, expires_at: claimExpiresAt(c.claimed_at, lastAt).toISOString() }));
+        issueFields.in_progress = composeInProgress(inProgressRows, claims, req.user.id)
+          || (IS_STAGING && req.query.demo === '1' ? stagingMockInProgress(req.user).get(number) : null)
+          || null;
+
+        const { rows: headlessRows } = await pool.query(
+          `SELECT cs.id, cs.headless_status, cs.headless_outcome,
+                  cs.staging_url, cs.pr_number, u.username, cs.user_id
+             FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
+            WHERE cs.app_id = $1 AND cs.is_headless = TRUE
+              AND cs.headless_issue_number = $2
+              AND cs.headless_status IN ('generating', 'ready')
+              AND u.is_synthetic IS NOT TRUE
+            ORDER BY cs.created_at DESC
+            LIMIT 1`,
+          [app.id, number]
+        );
+        const h = headlessRows[0] || null;
+        issueFields.headless = h ? {
+          sessionId: h.id,
+          status: h.headless_status,
+          outcome: h.headless_outcome,
+          username: h.username,
+          mine: h.user_id === req.user.id,
+          mySessionId: null,
+          stagingUrl: h.staging_url || null,
+          prNumber: h.pr_number || null,
+        } : null;
+
+        const { rows: prSessionRows } = await pool.query(
+          `SELECT id FROM chat_sessions
+            WHERE app_id = $1 AND user_id = $2
+              AND created_from_issue_number = $3
+              AND status <> 'archived'
+              AND NOT ${planRecordSql('')}
+            ORDER BY created_at DESC
+            LIMIT 1`,
+          [app.id, req.user.id, number]
+        );
+        issueFields.myPrSessionId = (prSessionRows[0] && prSessionRows[0].id)
+          || (IS_STAGING && req.query.demo === '1' && number === 900007 ? number : null)
+          || null;
+      }
+
       return res.json({
         issue: {
           state: 'open',
@@ -3146,14 +3254,14 @@ function issueRoutes(config) {
           created_by_username: (creatorRows[0] && creatorRows[0].username)
             || creatorFromSourceLine(issue.body)
             || ghLogin,
-          headless: null,
-          in_progress: null,
+          in_progress: issueFields.in_progress ?? null,
+          headless: issueFields.headless ?? null,
           bot,
           botAwaits,
           botHold,
           standing,
           track,
-          myPrSessionId: null,
+          myPrSessionId: issueFields.myPrSessionId ?? null,
           addressed_by: addressed,
           closed_via: closedVia,
           chatCount: (chat && chat.cnt) || 0,

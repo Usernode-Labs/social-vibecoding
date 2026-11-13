@@ -51,6 +51,7 @@ const {
   withTransaction,
 } = require('../services/cli-auth');
 const { revokeNativeSessionCredentials } = require('../services/native-session-revocation');
+const { sessionTokenIsLive } = require('../services/web-session-auth');
 // The SAME predicate the CLI 404 gates use (routes/cli-auth.js), so the
 // capability this route advertises can never disagree with what that
 // surface actually serves.
@@ -213,13 +214,7 @@ function authRoutes(config) {
     const token = readSessionCookie(req);
     if (!token) return next();
     try {
-      const { rows } = await pool.query(
-        `SELECT 1 FROM sessions
-          WHERE token = $1 AND expires_at > NOW()
-          LIMIT 1`,
-        [token]
-      );
-      if (rows.length === 0) return next();
+      if (!(await sessionTokenIsLive(pool, token))) return next();
       return res.status(409).json({
         error: 'Sign out before signing in again.',
         code: 'logout_required',
@@ -1005,10 +1000,21 @@ function authRoutes(config) {
     // #3624: whether this person builds through the Homeroom bot's DM
     // (everyone with platform access). The create dialog asks for a longer
     // description when it is true. Unreadable means false.
+    // #6632: with the bot for verified accounts only, somebody let in but
+    // not verified has `homeroomBotDm` false and `homeroomBotVerify` naming
+    // the signals that count, so the screens can ask them to verify without
+    // a round trip. Null for everybody else.
     let homeroomBotDm = false;
+    let homeroomBotVerify = null;
     try {
       const settings = await require('../services/homeroom-bot').readSettings(pool);
-      homeroomBotDm = !req.user.isSynthetic && require('../services/homeroom-bot-dm').hasBot(settings, req.user);
+      const botDm = require('../services/homeroom-bot-dm');
+      if (!req.user.isSynthetic) {
+        homeroomBotDm = await botDm.botWorksFor(pool, settings, req.user);
+        if (!homeroomBotDm && botDm.hasBot({ ...settings, worksFor: 'everyone' }, req.user)) {
+          homeroomBotVerify = { signals: require('../services/homeroom-bot-verified').signalsOf(settings) };
+        }
+      }
     } catch {}
     res.json({
       user: {
@@ -1028,6 +1034,7 @@ function authRoutes(config) {
         canAdminWrite: !!req.user.canAdminWrite,
         role: !req.user.isAdmin ? 'user' : (req.user.adminReadonly ? 'view_admin' : 'admin'),
         homeroomBotDm,
+        homeroomBotVerify,
         // Derived per-user app-creation affordance. Kept for the home-screen
         // treatment; the numbers below explain that state in the create
         // dialog. A null used/remaining value means the count query was not

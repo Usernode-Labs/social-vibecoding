@@ -22,6 +22,9 @@ const USERNODE_APPS_DOMAIN = process.env.USERNODE_APPS_DOMAIN || USERNODE_DOMAIN
 // The apps domain this one replaced, while apps and previews move off it
 // (services/apps-domain-move.js). Empty when nothing is moving.
 const USERNODE_LEGACY_APPS_DOMAIN = require('./apps-domain-move').legacyAppsDomain();
+// Where previews live when they have a domain of their own
+// (services/previews-domain.js); '' keeps them on the apps domain.
+const USERNODE_PREVIEWS_DOMAIN = require('./previews-domain').previewsDomain();
 
 function assertAppHostname(hostname, platformDomain = USERNODE_DOMAIN) {
   if (hostname.toLowerCase() === platformDomain.toLowerCase()) {
@@ -60,7 +63,7 @@ function productionHostname(slug) {
 // `s<id>` -> `usernode-staging-<slug>--<id>`, matching the container name the
 // platform already assigns. `sessionLabel` is `s${session.id}`.
 function stagingHostname(slug, sessionLabel) {
-  return assertAppHostname(`${slug}--${sessionLabel}.${USERNODE_APPS_DOMAIN}`);
+  return assertAppHostname(`${slug}--${sessionLabel}.${USERNODE_PREVIEWS_DOMAIN || USERNODE_APPS_DOMAIN}`);
 }
 
 // Where an app was before its domain moved, or null when nothing is moving.
@@ -271,6 +274,7 @@ module.exports = {
   USERNODE_DOMAIN,
   USERNODE_APPS_DOMAIN,
   USERNODE_LEGACY_APPS_DOMAIN,
+  USERNODE_PREVIEWS_DOMAIN,
   assertAppHostname,
   CERT_WARM_TIMEOUT_MS,
   CERT_PROBE_SLOW_MS,

@@ -64,8 +64,8 @@ test('the badge renders as read-only text, not as a pressable control', () => {
     'addressable per provider');
   // Tailwind extracts by regex over source text, so the tints must be whole
   // literals rather than assembled at runtime.
-  assert.match(VIEW, /emerald: 'bg-emerald-500\/10 text-emerald-700 dark:text-emerald-400'/);
-  assert.match(VIEW, /amber: 'bg-amber-500\/10 text-amber-800 dark:text-amber-400'/);
+  assert.match(VIEW, /emerald: 'ui-pill-ok bg-emerald-500\/10 text-emerald-700 dark:text-emerald-400'/);
+  assert.match(VIEW, /amber: 'ui-pill-wait bg-amber-500\/10 text-amber-800 dark:text-amber-400'/);
 });
 
 test('the heading still truncates beside it', () => {

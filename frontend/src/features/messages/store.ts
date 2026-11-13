@@ -564,7 +564,25 @@ function resolvePendingChannel(): void {
  * second request failed is worse than one that draws what it has. The Apps
  * filter then shows nothing, which is the honest report of what arrived.
  */
-export async function loadAppDiscussions(): Promise<void> {
+let discussionsRead: Promise<void> | null = null;
+
+/**
+ * `join` is for a read that says nothing new happened: the store filling at
+ * sign-in, and the screen opening. On a page load that lands on Messages the
+ * two ask in the same moment, and the second takes the first one's request
+ * rather than making its own (#6591). A read after something changed (a
+ * block, a reconnect, a refresh) never joins: it asks the server.
+ */
+export function loadAppDiscussions({ join = false }: { join?: boolean } = {}): Promise<void> {
+  if (join && discussionsRead) return discussionsRead;
+  const read = readAppDiscussions();
+  discussionsRead = read;
+  const settle = () => { if (discussionsRead === read) discussionsRead = null; };
+  read.then(settle, settle);
+  return read;
+}
+
+async function readAppDiscussions(): Promise<void> {
   try {
     const query = browserDemo() ? '?demo=1' : '';
     const response = await fetch(`/api/messages/app-discussions${query}`);
@@ -1111,7 +1129,7 @@ export function route(
       if (!nextRoot) publish({ thread: null });
     }
     if (!state.listLoaded) void loadConversations();
-    if (!state.discussionsLoaded) void loadAppDiscussions();
+    if (!state.discussionsLoaded) void loadAppDiscussions({ join: true });
     if (nextId && (!state.active || state.active.id !== nextId || focusChanged)) void loadThread(nextId, focusChanged);
     else if (nextId && nextRoot && threadChanged) void loadReplyThread(nextId, nextRoot);
     if (nextSlug && state.discussionContext?.slug !== nextSlug) void loadDiscussion(nextSlug);
@@ -1139,7 +1157,7 @@ export function route(
   // #2718: beside the conversations, never instead of them. It is a separate
   // request with its own failure, so a slow or broken discussions read costs
   // the Apps filter and nothing else — see loadAppDiscussions.
-  void loadAppDiscussions();
+  void loadAppDiscussions({ join: true });
   if (nextId) void loadThread(nextId);
   else publish({ active: null, messages: [], nextBefore: null, loadingThread: false });
   if (nextSlug) void loadDiscussion(nextSlug);
@@ -2076,6 +2094,17 @@ export async function answerBotQuestion(question: ConversationMessage, answer: s
  * Rejects when a `server` press was refused (a 409: decided already).
  */
 export async function tapBotAction(message: ConversationMessage, action: HomeroomBotAction): Promise<void> {
+  // #6632: Verify, under the bot's "I work for verified accounts": the
+  // verify sheet with the bot's wording; Settings where there is no sheet.
+  if (action.type === 'open' && action.id === 'verify_account') {
+    const ask = (window as unknown as { UsernodeReact?: { verifyIdentity?: { askForBot?: (signals?: string[]) => Promise<boolean> } } })
+      .UsernodeReact?.verifyIdentity?.askForBot;
+    if (typeof ask === 'function') {
+      const signals = (message.metadata?.homeroomBot as { signals?: string[] } | undefined)?.signals;
+      void ask(Array.isArray(signals) ? signals : undefined);
+      return;
+    }
+  }
   if (action.type === 'open') {
     openAppTarget(action.target);
     return;
@@ -3342,7 +3371,7 @@ export function initializeMessagesStore(): () => void {
   // #2783: the app channels too, so a `#name` for one chips in any chat — an
   // app's own discussion included — before Messages has ever been opened.
   // And the messages this account left unsent on the device (restoreUnsent).
-  const onAuthed = () => { void loadConversations(); void loadAppDiscussions(); void restoreUnsent(); };
+  const onAuthed = () => { void loadConversations(); void loadAppDiscussions({ join: true }); void restoreUnsent(); };
   // A reaction kept while offline was answered (reactionAnswered).
   const onAction = (event: Event) => { reactionAnswered((event as CustomEvent<ActionOutcome>).detail); };
   window.addEventListener('online', onOnline);
@@ -3370,7 +3399,7 @@ export function initializeMessagesStore(): () => void {
   // opening populated and opening on a spinner.
   if (window.App?.user) void loadConversations();
   else document.addEventListener('sv:authed', onAuthed, { once: true });
-  if (window.App?.user) void loadAppDiscussions();
+  if (window.App?.user) void loadAppDiscussions({ join: true });
   if (window.App?.user) void restoreUnsent();
   // #2387 / #2967: the two layout preferences, read after mount so the first
   // render matches the prerendered shell. The folded sections are the third,

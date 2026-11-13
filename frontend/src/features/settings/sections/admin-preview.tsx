@@ -20,12 +20,15 @@ export function AdminPreviewSection() {
         <SectionHeading title={t('settings:adminPreview.title')}>
           {t('settings:adminPreview.intro')}
         </SectionHeading>
-        <SwitchRow id="view-as-non-admin">
-          {t('settings:adminPreview.toggle.label')}
-        </SwitchRow>
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-          {t('settings:adminPreview.toggle.description')}
-        </p>
+        {/* A neutral wrapper (looks v2); see ./dev-console.tsx. */}
+        <div className="ui-card ui-swrow">
+          <SwitchRow id="view-as-non-admin">
+            {t('settings:adminPreview.toggle.label')}
+          </SwitchRow>
+          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+            {t('settings:adminPreview.toggle.description')}
+          </p>
+        </div>
       </div>
     </div>
   );

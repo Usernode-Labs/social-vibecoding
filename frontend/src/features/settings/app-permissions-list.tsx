@@ -34,19 +34,55 @@ function controller(): any {
 }
 
 /** Matches ROW_CLASS in ./grants-list.tsx — one row language on this screen. */
-const ROW_CLASS = 'rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
+const ROW_CLASS = 'ui-mini rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
+
+/**
+ * #6512: what the riskier capabilities actually let an app do, in a line
+ * under the row. Only these three: they see or hear the person and what is
+ * around them, where a USB or MIDI device is a thing they plugged in on
+ * purpose and location is already named by its label. Microphone is here
+ * with the camera because it hears the room as well as the person, and
+ * nothing on screen shows what it picked up.
+ *
+ * Each note says what the PERMISSION lets the app do, so it stays true on a
+ * revoked row beside Re-enable, and it says the browser must allow it too:
+ * the grant here only delegates the capability to the frame.
+ *
+ * Screen sharing is worded for how it is granted: the frame's `allow` only
+ * DELEGATES `display-capture`, and `getDisplayMedia` opens the browser's own
+ * picker on every call, so the app sees the screen, window or tab the
+ * person picks there, never "your screen" on its own say-so.
+ */
+function capabilityNote(t: ReturnType<typeof useMessages>, capability: string): string {
+  switch (capability) {
+    case 'camera': return t('settings:appPermissions.note.camera');
+    case 'microphone': return t('settings:appPermissions.note.microphone');
+    case 'display-capture': return t('settings:appPermissions.note.screen');
+    default: return '';
+  }
+}
 
 function CapabilityRow({ app, item }: { app: PermissionAppView; item: PermissionItem }) {
   const t = useMessages('settings');
+  const note = capabilityNote(t, item.capability);
   return (
     <div className="flex items-center gap-2 py-1">
-      <span
-        className={item.revoked
-          ? 'min-w-0 flex-1 truncate text-zinc-400 line-through dark:text-zinc-500'
-          : 'min-w-0 flex-1 truncate text-zinc-700 dark:text-zinc-300'}
-      >
-        {item.label}
-      </span>
+      <div className="min-w-0 flex-1">
+        <span
+          className={item.revoked
+            ? 'block truncate text-zinc-400 line-through dark:text-zinc-500'
+            : 'block truncate text-zinc-700 dark:text-zinc-300'}
+        >
+          {item.label}
+        </span>
+        {/* 12px like the label above it (ROW_CLASS is text-xs): the "15 over 13"
+            rule is ListRow's, and a 13px note would outsize its own label. */}
+        {note ? (
+          <span data-role="capability-note" className="mt-0.5 block text-zinc-500 dark:text-zinc-400">
+            {note}
+          </span>
+        ) : null}
+      </div>
       {item.revoked ? (
         // The way back, for the same reason grants-list.tsx grew one (#1957):
         // re-approving otherwise depends on the app asking again, and an app
@@ -95,9 +131,8 @@ function CapabilityRow({ app, item }: { app: PermissionAppView; item: Permission
   );
 }
 
-export function AppPermissionsList() {
+export function AppPermissionsListView(state: AppPermissionsState) {
   const t = useMessages('settings');
-  const state = useStoreState<AppPermissionsState>(appPermissionsStore);
   if (state.phase === 'idle') return null;
   if (state.phase === 'loading') {
     return <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('core:common.loading')}</p>;
@@ -124,4 +159,8 @@ export function AppPermissionsList() {
       ))}
     </>
   );
+}
+
+export function AppPermissionsList() {
+  return <AppPermissionsListView {...useStoreState<AppPermissionsState>(appPermissionsStore)} />;
 }

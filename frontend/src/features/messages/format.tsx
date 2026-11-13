@@ -160,7 +160,7 @@ export function UserAvatar({ user, title, size = 'md', shape = 'circle' }: {
   if (frame) {
     const px = size === 'sm' ? 24 : size === 'lg' ? 40 : 32;
     if (user?.bot) return <KitTile size={px} src={BOT_AVATAR} name={label} />;
-    return <KitAv size={px} name={label} src={user?.avatarUrl} color={swatchFor(label)} />;
+    return <KitAv size={px} name={label} initials={initials(label)} src={user?.avatarUrl} color={swatchFor(label)} />;
   }
   const sizeClass = size === 'sm' ? 'w-7 h-7 text-[10px]' : size === 'lg' ? 'w-11 h-11 text-sm' : 'w-9 h-9 text-xs';
   const square = shape === 'square';

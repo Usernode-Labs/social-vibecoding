@@ -1352,6 +1352,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // and the card owed from the row once this commits.
       const readyMade = appTemplates.isReadyMade(template);
       const owesFirstVersion = !readyMade && !!homeroomBotDm.normalizeBrief(req.body.brief);
+      // #6632: a described project's first version is the bot building for
+      // its maker. With the bot for verified accounts only, an unverified
+      // maker is asked to verify before anything is made (the client opens
+      // the verify sheet and sends the create again).
+      if (owesFirstVersion) {
+        const locked = await require('../services/homeroom-bot-verified').refusalFor(pool, req.user);
+        if (locked) return res.status(locked.status).json({ error: locked.error, code: locked.code, signals: locked.signals });
+      }
       // A ready-made app whose starter directory has an original is a
       // version of it (docs/plans/versions.md, services/originals.js
       // linkFor): of a running original, where versions are on, one that

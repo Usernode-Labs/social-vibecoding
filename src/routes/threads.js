@@ -210,7 +210,11 @@ function threadsRoutes() {
       const out = await require('../services/private-threads').startAbout(pool, {
         user: req.user, app: found.app, kind, number: Number(req.params.number),
       });
-      if (!out.ok) return res.status(out.status || 400).json({ error: out.error });
+      if (!out.ok) {
+        return res.status(out.status || 400).json({
+          error: out.error, ...(out.code ? { code: out.code, signals: out.signals || [] } : {}),
+        });
+      }
       return res.json({ rootId: out.rootId, conversationId: out.conversationId, href: out.href, holds: out.holds, reused: out.reused });
     } catch (err) {
       log.error('threads', 'private thread start failed', { message: err.message, userId: req.user?.id });

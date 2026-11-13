@@ -16,7 +16,11 @@
  *
  * The glow is the attribute GLOW_ATTR for GLOW_MS, drawn by GLOW_RULES in the
  * replayed document: a fade-in and a fading 4px accent ring, or a static
- * outline with prefers-reduced-motion.
+ * outline with prefers-reduced-motion. The replayed document is the app's,
+ * which never carries the shell's Reduce motion setting (#6510), so the
+ * replay puts GLOW_STILL_RULE in that document while the setting (or the
+ * device) asks for less motion, and takes it out again (`syncStillGlow`,
+ * called by ./live-band.tsx on every rebuild and every change).
  */
 
 export const GLOW_ATTR = 'data-usernode-new';
@@ -30,6 +34,22 @@ export const GLOW_RULES: string[] = [
   `[${GLOW_ATTR}] { animation: usernode-live-glow ${GLOW_MS}ms ease-out both; }`,
   `@media (prefers-reduced-motion: reduce) { [${GLOW_ATTR}] { animation: none; outline: 4px solid rgba(${ACCENT}, 0.9); outline-offset: -2px; } }`,
 ];
+
+/** The reduced-motion glow outside the media query, for the shell's own Reduce motion setting. */
+export const GLOW_STILL_RULE = `[${GLOW_ATTR}] { animation: none; outline: 4px solid rgba(${ACCENT}, 0.9); outline-offset: -2px; }`;
+const STILL_ATTR = 'data-usernode-still-glow';
+
+/** Put GLOW_STILL_RULE in the replayed document, or take it out: one <style>, never two. */
+export function syncStillGlow(doc: Document | null | undefined, still: boolean): void {
+  if (!doc || !doc.documentElement) return;
+  const style = doc.querySelector(`style[${STILL_ATTR}]`);
+  if (!still) { style?.remove(); return; }
+  if (style) return;
+  const el = doc.createElement('style');
+  el.setAttribute(STILL_ATTR, '');
+  el.textContent = GLOW_STILL_RULE;
+  (doc.head || doc.documentElement).appendChild(el);
+}
 
 /** An element's own text, not its children's: collapsed and cut to 60. */
 export function directText(el: Element): string {

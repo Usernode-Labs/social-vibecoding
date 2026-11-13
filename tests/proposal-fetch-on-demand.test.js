@@ -269,16 +269,16 @@ test('a mismatched cache is not refreshed on its own', async () => {
     'the cache belongs to another topic — _findTopicItem would reject it anyway');
 });
 
-test('the refresh is wired between the list load and the repaint', () => {
-  // The order is the whole fix: refresh the lists, THEN top up the row they
-  // could not supply, THEN paint. Painting first would show the stale row
-  // for one frame and painting without the top-up is the bug itself.
+test('a shown topic refreshes its own row, not the board', () => {
+  // #6604: the topic branch re-reads what is shown — a change's row through
+  // _refreshTopicLive, an issue's or decision's through _refreshTopicOwnRow —
+  // instead of loading the whole board behind one thread.
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
   const branch = src.slice(src.indexOf("if (App.currentSubTab === 'topic')"));
-  // #2782: the branch now returns its promise and passes `opts` (a vote's
-  // refresh asks for a fresh load), so it ends at the next branch's guard.
   const head = branch.slice(0, branch.indexOf("if (App.currentSubTab !== 'forum')"));
-  assert.match(head, /_loadDevData\((?:opts)?\)[\s\S]*_refreshTopicOnDemandRow\(\)[\s\S]*_renderTopicHead\(\)/,
-    'load -> top up -> paint, in that order');
+  assert.doesNotMatch(head, /_loadDevData/, 'no board load behind a thread');
+  assert.match(head, /_refreshTopicLive\(\{[\s\S]*?ids: new Set\(\[Number\(shown\.id\)\]\)/,
+    'a change page re-reads its own row');
+  assert.match(head, /_refreshTopicOwnRow\(\)/, 'an issue or decision re-reads its own row');
 });
