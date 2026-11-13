@@ -56,7 +56,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Btn, Card, CapSub, ChallengeArt, Count, GroupLink, HCard, Icon, Lead, Mut, Note, PageBody, Pill, Row, RowArrow, Search, Sec, SecNote, ShowAll, Sub, Tile, k } from '@/components/ui/kit';
 import { resolveIllustration } from '../../../lib/challenge-illustrations';
 import { useCommunityColor } from '../../../lib/community-color';
-import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { useVisibility } from '../../../lib/visibility-store';
 import { liveAppLabel, useLiveAppSlugs } from '../../app-frame/live-apps';
@@ -301,7 +301,7 @@ function PinnedApps({ grid: standardGrid }: { grid?: React.ReactNode }) {
       ) : null}
       {grid.emptyQuery !== null ? (
         <SecNote>
-          <RichMessage id="home:grid.noMatches" values={{ query: grid.emptyQuery }} components={[<span className={k('acc')} />]} />
+          {t('home:grid.noMatches', { query: grid.emptyQuery })}
         </SecNote>
       ) : null}
       {grid.resultsHeading ? <CapSub>{grid.resultsHeading}</CapSub> : null}

@@ -197,7 +197,7 @@ test('a search shows Home\'s own results: its heading, its no-match line, and a 
   assert.match(found, /<h3 class="fr-cap fr-sub">1 result<\/h3><div class="fr-card"><div class="fr-tiles">/);
   assert.doesNotMatch(found, />Edit</, 'a search is not the shelf');
   const none = group(render({}, homeStubs({ query: 'zz', grid: { view: 'search', emptyQuery: 'zz' } })), 'home-frame-apps');
-  assert.match(none, /<p class="fr-secnote">No apps match “zz”\. Clear the search and try <span class="fr-acc">Discover communities<\/span> below\.<\/p>/);
+  assert.match(none, /<p class="fr-secnote">None of your apps match “zz”\.<\/p>/);
   const failed = group(render({}, homeStubs({ grid: { notice: { text: 'Couldn\'t load your apps', tone: 'error' } } })), 'home-frame-apps');
   assert.match(failed, /<div class="fr-note fr-bad">.*?Couldn&#x27;t load your apps.*?<button type="button" class="fr-btn fr-quiet fr-sm">Try again<\/button>/s);
 });
