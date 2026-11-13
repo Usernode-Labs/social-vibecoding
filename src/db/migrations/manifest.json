@@ -357,9 +357,14 @@
       "schemaSha256": "342b4e500204d177606226ca31d64e4a3030231959d896cfa84c82b5b8cd16b8"
     },
     {
+      "id": "release-hold-notices",
+      "sha256": "787953b2ba2b54988c0ef53422acf44366e98d0ebd8d4be7daf148f36e84dbc4",
+      "schemaSha256": "025a3702a827c62429e965fa3c9c9b820fa0fa7203d45f672073a7141e7126c1"
+    },
+    {
       "id": "home-activity-seen",
       "sha256": "dfc1467dab85ecaf5682a66c553795459d3f41fd2ebe2d14067fe65fa93a9058",
-      "schemaSha256": "4087ac383c7ddd44319e7e66538c7c8b5eb3e5a22ff6f24e4bf74a484cd81157"
+      "schemaSha256": "95ed5cbbaf7338d72a04166ab14d29e33db4bbecf7638a9994d42404adda5a51"
     }
   ]
 }
