@@ -118,9 +118,11 @@ test('a failed or offline load keeps its own answer', () => {
 test('a search that matched nothing keeps its own answer', () => {
   const html = renderGrid({ ready: true, view: 'search', emptyQuery: 'zzz' });
   assert.ok(!html.includes(SENTENCE), 'the search line names the query instead');
-  assert.match(html, /No apps match/);
-  // ...and points at the section below by its heading (#4184).
-  assert.match(html, /try <span[^>]*>Discover communities<\/span> below\./);
+  // It names no section: Home has no "Discover communities" since One Home
+  // (#6361), and the same search already filters the communities below, so
+  // "clear the search" was the wrong advice (#5928).
+  assert.match(html, /None of your apps match “zzz”\.<\/div>/);
+  assert.doesNotMatch(html, /Discover communities|Clear the search/);
 });
 
 // ── 3. Home.render() reaches that state for an account with no apps ───

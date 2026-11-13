@@ -28,8 +28,16 @@
     "description": "Read by screen readers while the grid of app tiles on Home is still loading."
   },
   "grid.noMatches": {
-    "text": "No apps match “{{query}}”. Clear the search and try <0>Discover communities</0> below.",
-    "description": "Shown in place of Home's app tiles when the search finds none of the viewer's apps. {{query}} is what the person typed. The numbered tag highlights the name of the section further down the Home screen; use the same words as that section's heading."
+    "text": "None of your apps match “{{query}}”.",
+    "description": "Shown in place of Home's app tiles when the search finds none of the viewer's apps. {{query}} is what the person typed. The same search also filters the communities listed further down the Home screen."
+  },
+  "search.none": {
+    "text": "No community matches “{{query}}” either.",
+    "description": "Shown on Home under the line saying none of the viewer's apps match the search, when no community matches it either: none they are in and none they could join. {{query}} is what the person typed. A button offering to make it follows."
+  },
+  "search.make": {
+    "text": "Make “{{idea}}”",
+    "description": "Button on Home shown when the search matches no app and no community. {{idea}} is what the person typed. Pressing it opens the screen for making a new project, with those words filled in as the idea."
   },
   "grid.showAll_one": {
     "text": "Show all {{count}} app",
