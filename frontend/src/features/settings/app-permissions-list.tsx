@@ -90,6 +90,7 @@ function CapabilityRow({ app, item }: { app: PermissionAppView; item: Permission
         // file's Re-enable, because the two sections sit next to each other.
         <Button
           type="button"
+          aria-label={t('settings:appPermissions.reEnableLabel', { permission: item.label, app: app.appName })}
           data-role="re-enable"
           layout="shrink"
           variant="compact"
@@ -107,6 +108,9 @@ function CapabilityRow({ app, item }: { app: PermissionAppView; item: Permission
         */
         <button
           type="button"
+          // #6512: an app's rows each say "Revoke", so the name a screen
+          // reader hears says which permission and which app.
+          aria-label={t('settings:appPermissions.revokeLabel', { permission: item.label, app: app.appName })}
           data-role="revoke"
           className="rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-0.5 font-medium text-red-700 dark:text-red-400 transition-colors touch-target-32"
           onClick={() => {
@@ -118,6 +122,7 @@ function CapabilityRow({ app, item }: { app: PermissionAppView; item: Permission
             const target = {
               slug: app.appSlug,
               name: app.appName,
+              permission: item.label,
               isOpen: () => isLiveApp(app.appSlug),
               close: () => closeLiveApp(app.appSlug),
             };

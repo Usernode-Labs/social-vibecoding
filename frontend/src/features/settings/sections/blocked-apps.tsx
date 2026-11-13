@@ -23,7 +23,7 @@ export function BlockedAppRow({ app, busy, onUnblock }: {
       <span className="ui-row-t block break-words">{app.name}</span>
       {when.text ? <time data-role="blocked-at" dateTime={app.created_at ?? undefined} title={when.title} className="mt-0.5 block text-[13px] text-zinc-500 dark:text-zinc-400">{t('settings:blockedApps.blockedAt', { when: when.text })}</time> : null}
     </div>
-    <Button type="button" layout="shrink" disabled={!!busy} onClick={() => onUnblock(app)}>{busy === app.slug ? t('settings:blockedApps.unblocking') : t('settings:blockedApps.unblock')}</Button>
+    <Button type="button" layout="shrink" aria-label={busy === app.slug ? undefined : t('settings:blockedApps.unblockLabel', { app: app.name })} disabled={!!busy} onClick={() => onUnblock(app)}>{busy === app.slug ? t('settings:blockedApps.unblocking') : t('settings:blockedApps.unblock')}</Button>
   </div>;
 }
 function BlockedAppsList() {

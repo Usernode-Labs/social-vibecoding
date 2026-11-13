@@ -5312,7 +5312,9 @@
     // frame goes. The AI section can honestly promise immediate because its
     // gate is a server-side check on every call.
     //
-    // `target` (#6512) is `{ slug, name, isOpen, close }`: whether the app
+    // `target` (#6512) is `{ slug, name, permission, isOpen, close }`: the
+    // app's name and the permission's label, which the dialog's title says
+    // so the question names what is being revoked; whether the app
     // is open in THIS tab (on screen or kept running behind it), and how to
     // close it. The frame store is per tab, so another tab or device is out
     // of reach here. The dialog asks with what is open when it is shown;
@@ -5327,7 +5329,9 @@
       const isOpen = () => !!(target && typeof target.isOpen === 'function' && target.isOpen());
       const openAtAsk = isOpen();
       const ok = await ConfirmModal.show({
-        title: tr('settings:appPermissions.revoke.confirmTitle'),
+        title: target && target.name && target.permission
+          ? tr('settings:appPermissions.revoke.confirmTitleNamed', { permission: target.permission, app: target.name })
+          : tr('settings:appPermissions.revoke.confirmTitle'),
         message: openAtAsk
           ? tr('settings:appPermissions.revoke.confirmMessageOpen', { app: target.name })
           : tr('settings:appPermissions.revoke.confirmMessage'),
