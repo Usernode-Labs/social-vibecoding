@@ -2423,12 +2423,13 @@ test('a blocked app shows when it was blocked, and a row without a stamp shows n
  * whether the app is open in this tab; `openWhileDeleting` changes it while
  * the DELETE is out.
  */
-async function runPermissionRevoke({ open = false, openWhileDeleting, confirm = true, ok = true } = {}) {
+async function runPermissionRevoke({ open = false, openWhileDeleting, confirm = true, ok = true, permission } = {}) {
   const calls = { dialog: null, fetches: [], status: [], rendered: 0, closed: 0, forgot: [], order: [] };
   let live = open;
   const target = {
     slug: 'snap-cam',
     name: 'Snap Cam',
+    ...(permission ? { permission } : {}),
     isOpen: () => live,
     close: () => { calls.closed += 1; calls.order.push('close'); live = false; },
   };
@@ -2522,6 +2523,71 @@ test('the Revoke button hands Settings a live question, not a snapshot, of wheth
   const live = read('frontend/src/features/app-frame/live-apps.tsx');
   assert.match(live, /export function isLiveApp\(slug: string\): boolean \{\s*return !!slug && liveAppSlugs\(appFrameStore\.get\(\)\)\.includes\(slug\);/,
     'open means the same frames the green dot reads: the mounted one and the kept ones');
+});
+
+// #6512 item 14: the page's row buttons all read "Revoke", "Re-enable" or
+// "Unblock". Each one's accessible name says what it acts on, and starts with
+// the word on the button so speech control still finds it by what is shown.
+test('every App permissions button and field is named for its app and permission (#6512)', async () => {
+  const device = renderComponent('frontend/src/features/settings/app-permissions-list.tsx', 'AppPermissionsListView', {
+    phase: 'ready',
+    apps: [{
+      appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam',
+      items: [
+        { capability: 'camera', label: 'Camera', revoked: false },
+        { capability: 'geolocation', label: 'Location', revoked: false },
+        { capability: 'microphone', label: 'Microphone', revoked: true },
+      ],
+    }],
+  });
+  const named = (html) => [...html.matchAll(/<(?:button|input)[^>]*aria-label="([^"]*)"/g)].map((m) => m[1]);
+  assert.deepEqual(named(device), [
+    'Revoke Camera for Snap Cam',
+    'Revoke Location for Snap Cam',
+    'Re-enable Microphone for Snap Cam',
+  ], 'three buttons in one app, three different names');
+  assert.equal((device.match(/<button/g) || []).length, 3, 'no button is left with the bare word');
+
+  const ai = grantRows({
+    phase: 'ready',
+    grants: [grantView(), grantView({ appId: 12, appName: 'Old App', appSlug: 'old-app', revoked: true })],
+  });
+  assert.deepEqual(named(ai), [
+    'Cap for Demo App, in dollars a day',
+    'Revoke AI access for Demo App',
+    'Re-enable AI access for Old App',
+  ]);
+
+  const BLOCKED = 'frontend/src/features/settings/sections/blocked-apps.tsx';
+  const blocked = renderComponent(BLOCKED, 'BlockedAppRow', {
+    app: { slug: 'noisy', name: 'Noisy App' }, busy: null, onUnblock: () => {},
+  });
+  assert.deepEqual(named(blocked), ['Unblock Noisy App']);
+  const busy = renderComponent(BLOCKED, 'BlockedAppRow', {
+    app: { slug: 'noisy', name: 'Noisy App' }, busy: 'noisy', onUnblock: () => {},
+  });
+  assert.deepEqual(named(busy), [], 'while it works the button says Unblocking, and the name must not hide that');
+
+  // The visible word leads each name (WCAG 2.5.3, Label in Name).
+  for (const [label, word] of [
+    ['appPermissions.revokeLabel', 'appPermissions.revoke'],
+    ['appPermissions.reEnableLabel', 'appPermissions.reEnable'],
+    ['grants.revokeLabel', 'grants.revoke'],
+    ['grants.reenableLabel', 'grants.reenable'],
+    ['blockedApps.unblockLabel', 'blockedApps.unblock'],
+  ]) {
+    assert.ok(message(`settings:${label}`).startsWith(message(`settings:${word}`) + ' '), `${label} starts with the button's word`);
+  }
+  assert.ok(message('settings:grants.capFieldLabel').startsWith('Cap '), 'the cap field keeps its visible word');
+
+  // The confirmation names what is being revoked; a caller that cannot say
+  // (no label) still gets the plain question.
+  const asked = await runPermissionRevoke({ permission: 'Camera' });
+  assert.equal(asked.dialog.title, 'Revoke Camera for Snap Cam?');
+  const plain = await runPermissionRevoke();
+  assert.equal(plain.dialog.title, message('settings:appPermissions.revoke.confirmTitle'));
+  assert.match(read('frontend/src/features/settings/app-permissions-list.tsx'), /name: app\.appName,\s*permission: item\.label,/,
+    'the row hands Settings the label the title says');
 });
 
 test('a revoked app permission offers Re-enable; an active one offers Revoke (#1957)', () => {

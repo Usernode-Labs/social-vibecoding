@@ -679,6 +679,10 @@
     "text": "Re-enable",
     "description": "Button on a revoked app's row in Settings > App AI permissions: gives the app back its permission to use AI."
   },
+  "grants.reenableLabel": {
+    "text": "Re-enable AI access for {{app}}",
+    "description": "Screen-reader name of the Re-enable button on a revoked app in Settings > App AI permissions. {{app}} is the app."
+  },
   "grants.spentToday": {
     "text": "${{spent}} / ${{cap}} today",
     "description": "Figure on an app's row in Settings > App AI permissions: what the app has spent today out of its daily cap. {{spent}} and {{cap}} are amounts in US dollars such as 0.12; the dollar signs are part of the text."
@@ -687,6 +691,10 @@
     "text": "Cap $",
     "description": "Label directly before a number field on an app's row in Settings > App AI permissions: the most the app may spend per day, in US dollars. The dollar sign reads as the unit of the field that follows."
   },
+  "grants.capFieldLabel": {
+    "text": "Cap for {{app}}, in dollars a day",
+    "description": "Screen-reader name of the daily spending cap field on an app in Settings > App AI permissions. {{app}} is the app."
+  },
   "grants.useOwnKey": {
     "text": "Use my own key past the weekly budget",
     "description": "Checkbox label on an app's row in Settings > App AI permissions: lets the app keep using AI on the person's own Anthropic API key once the daily budget is used up."
@@ -694,6 +702,10 @@
   "grants.revoke": {
     "text": "Revoke",
     "description": "Button on an app's row in Settings > App AI permissions: withdraws that app's permission to use AI on the person's budget."
+  },
+  "grants.revokeLabel": {
+    "text": "Revoke AI access for {{app}}",
+    "description": "Screen-reader name of the Revoke button on an app in Settings > App AI permissions. {{app}} is the app."
   },
   "usage.title": {
     "text": "Usage",
@@ -1955,9 +1967,17 @@
     "text": "Re-enable",
     "description": "Button beside a struck-through permission of an app in Settings > App device permissions: gives the app back a permission the person revoked."
   },
+  "appPermissions.reEnableLabel": {
+    "text": "Re-enable {{permission}} for {{app}}",
+    "description": "Screen-reader name of the Re-enable button beside a revoked permission in Settings > App device permissions. {{permission}} is the permission (Camera, Location) and {{app}} is the app."
+  },
   "appPermissions.revoke": {
     "text": "Revoke",
     "description": "Red button beside a permission of an app in Settings > App device permissions: takes that permission away from the app."
+  },
+  "appPermissions.revokeLabel": {
+    "text": "Revoke {{permission}} for {{app}}",
+    "description": "Screen-reader name of the Revoke button beside a permission in Settings > App device permissions. {{permission}} is the permission (Camera, Location) and {{app}} is the app."
   },
   "appPermissions.note.camera": {
     "text": "Lets this app use your camera while it is open, once your browser allows it too.",
@@ -2002,6 +2022,10 @@
   "blockedApps.unblock": {
     "text": "Unblock",
     "description": "Button on an app's row in Settings > Blocked apps: removes the block so the app is shown and can be opened again."
+  },
+  "blockedApps.unblockLabel": {
+    "text": "Unblock {{app}}",
+    "description": "Screen-reader name of the Unblock button on a row in Settings > Blocked apps. {{app}} is the blocked app."
   },
   "blockedApps.unblocking": {
     "text": "Unblocking…",
@@ -4062,6 +4086,10 @@
   "appPermissions.revoke.confirmTitle": {
     "text": "Revoke this permission?",
     "description": "Title of the confirmation dialog before taking away one device permission (camera, microphone, location…) from an app, in Settings."
+  },
+  "appPermissions.revoke.confirmTitleNamed": {
+    "text": "Revoke {{permission}} for {{app}}?",
+    "description": "Title of the confirmation shown before revoking one device permission from an app in Settings. {{permission}} is the permission (Camera, Location) and {{app}} is the app."
   },
   "appPermissions.revoke.confirmMessage": {
     "text": "Anywhere the app is already open, it keeps this permission until it is closed. On another device, opening the app again within a minute may bring the permission back until it is closed again.",
