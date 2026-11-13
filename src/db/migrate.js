@@ -172,6 +172,9 @@ async function migrate(config) {
   // Homeroom), so Needs you has the row that says what it waits on, its page
   // the Votes card and the bot's plain reply.
   await seedStagingOwnChangeWaitingOnFix(pool);
+  // #6651's shots: the capture member's own change still waiting on a vote,
+  // which the badge counts and Needs you must list.
+  await seedStagingOwnChangeWaitingOnVote(pool);
   // #6599's shots: the capture member's own built draft, ready to put up for a vote.
   await seedStagingReadyDraftChange(pool);
   // #6225's shots: a change of the capture member's up for a vote that
@@ -3199,6 +3202,96 @@ async function seedStagingMergedThreads(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging merged-thread seeding failed', { message: err.message });
+  }
+}
+
+// #6651's shots: the capture member's own change, still waiting on a vote
+// because the only Yes is from somebody who does not approve. Needs you lists
+// it (and its count says one) instead of saying nothing waits, which a fresh
+// staging copy has no way to show: the state needs a second member's vote on
+// an approver project. Obviously fake, idempotent by session id, and a no-op
+// outside staging.
+async function seedStagingOwnChangeWaitingOnVote(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const SESSION_ID = 999_999_989;
+  try {
+    const people = await pool.query(
+      "SELECT id, username FROM users WHERE username IN ('usernode-capture', 'usernode-capture-admin', 'homeroom_bot')",
+    );
+    if (!people.rows.length) return;
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const approver = people.rows.find((row) => row.username === 'usernode-capture-admin');
+    const voter = people.rows.find((row) => row.username === 'homeroom_bot');
+    if (!member || !approver || !voter) return;
+    const app = await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by)
+       VALUES (900094, 'Staging demo: credit reason', 'staging-demo-needs-vote-waiting',
+               'running', 'members', 'public', $1)
+       ON CONFLICT (id) DO NOTHING
+       RETURNING id`,
+      [member.id],
+    );
+    const appId = app.rows[0]?.id || (await pool.query(
+      'SELECT id FROM apps WHERE id = 900094',
+    )).rows[0]?.id;
+    if (!appId) return;
+    // An approver project: only its roster's Yes counts.
+    await pool.query(
+      `UPDATE apps SET approver_policy = 'invited', approvals_required = 1 WHERE id = $1`,
+      [appId],
+    );
+    await pool.query(
+      `INSERT INTO app_approvers (app_id, user_id, status) VALUES ($1, $2, 'member')
+       ON CONFLICT (app_id, user_id) DO NOTHING`,
+      [appId, approver.id],
+    );
+    // The feed lists a project the viewer is a MEMBER of (community_members),
+    // and creating the app directly does not join its creator.
+    await pool.query(
+      `INSERT INTO community_members (community_id, user_id)
+       SELECT community_id, $1 FROM apps WHERE id = $2 AND community_id IS NOT NULL
+       ON CONFLICT DO NOTHING`,
+      [member.id, appId],
+    );
+    const number = 900094;
+    const title = 'Staging demo: show the reason beside each credit';
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1::int, $2::int, $3::text, 'Staging demo: obviously fake. Its change waits on a vote.', $4::int,
+              NOW() - INTERVAL '3 days', NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1::int AND number = $2::int)`,
+      [appId, number, title, member.id],
+    );
+    const session = await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, session_title, pr_title, pr_number, status, linked_issues,
+          promoted_at, external_agent, check_state, check_phase, mergeability,
+          integration_merges_clean, approval_epoch, created_at, last_activity_at)
+       SELECT $1::int, $2::int, $3::int, 'staging-fixture/own-change-waiting-on-vote', $4::text, $4::text,
+              $5::int, 'promoted', ARRAY[$6::int]::int[], NOW() - INTERVAL '1 day',
+              'claude-code', 'passing', 'done', 'clean', TRUE, 0, NOW() - INTERVAL '2 days',
+              NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE id = $1::int)
+        RETURNING id`,
+      [SESSION_ID, appId, member.id, title, number, number],
+    );
+    if (!session.rows.length) return;
+    // The only Yes is from somebody the project did not invite to approve.
+    await pool.query(
+      `INSERT INTO pr_votes (session_id, user_id, vote, approval_epoch, created_at)
+       SELECT $1::int, $2::int, 'yes', 0, NOW() - INTERVAL '20 hours'
+        WHERE NOT EXISTS (SELECT 1 FROM pr_votes WHERE session_id = $1::int AND user_id = $2::int AND approval_epoch = 0)`,
+      [SESSION_ID, voter.id],
+    );
+    // Open for votes, as the work-state sweep derives it: the gate is not met.
+    await pool.query(
+      `INSERT INTO work_states (app_id, item_kind, item_ref, issue_number, session_id, stage, since, vote_open)
+       VALUES ($1::int, 'change', $2::int, $3::int, $2::int, 'up_for_vote', NOW() - INTERVAL '1 day', TRUE)
+       ON CONFLICT (app_id, item_kind, item_ref) DO NOTHING`,
+      [appId, SESSION_ID, number],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging own-change waiting-on-vote seeding failed', { message: err.message });
   }
 }
 
