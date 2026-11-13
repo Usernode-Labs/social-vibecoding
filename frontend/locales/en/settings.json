@@ -1971,6 +1971,14 @@
     "text": "Each time it asks, your browser lets you choose a screen, window or tab. The app sees only what you choose, until you stop sharing.",
     "description": "Small grey line under the Screen sharing permission of an app in Settings > App device permissions. The browser shows its own picker every time the app asks to share, and the app sees only the screen, window or tab the person picks there."
   },
+  "appPermissions.revokeAll": {
+    "text": "Revoke all",
+    "description": "Red button beside an app's name in Settings > App device permissions, shown when the app has two or more permissions: takes all of them away from that app in one step."
+  },
+  "appPermissions.revokeAllLabel": {
+    "text": "Revoke all permissions for {{app}}",
+    "description": "Screen-reader name of the Revoke all button beside an app's name in Settings > App device permissions. {{app}} is the app."
+  },
   "blockedApps.title": {
     "text": "Blocked apps",
     "description": "Heading of the section in Settings that lists the apps this person has blocked."
@@ -4098,6 +4106,38 @@
   "appPermissions.status.reenabled": {
     "text": "Re-enabled. It applies the next time the app opens.",
     "description": "Status under the list of device permissions granted to apps, in Settings > App device permissions, after a revoked permission was given back to an app."
+  },
+  "appPermissions.revokeAll.confirmTitle": {
+    "text": "Revoke every permission for {{app}}?",
+    "description": "Title of the confirmation shown before revoking all of an app's device permissions at once in Settings. {{app}} is the app."
+  },
+  "appPermissions.revokeAll.confirmMessage": {
+    "text": "Anywhere the app is already open, it keeps these permissions until it is closed. On another device, opening the app again within a minute may bring them back until it is closed again.",
+    "description": "Body of the confirmation shown before revoking all of an app's device permissions, when the app is not open in this browser tab."
+  },
+  "appPermissions.revokeAll.confirmMessageOpen": {
+    "text": "{{app}} is open in this tab, so revoking closes it now and anything not saved in it may be lost. Anywhere else it is open, it keeps these permissions until it is closed. On another device, opening the app again within a minute may bring them back until it is closed again.",
+    "description": "Body of the confirmation shown before revoking all of an app's device permissions, when the app is open in this browser tab. {{app}} is the app."
+  },
+  "appPermissions.revokeAll.confirmButton": {
+    "text": "Revoke all",
+    "description": "Confirm button of the dialog that revokes all of an app's device permissions at once."
+  },
+  "appPermissions.revokeAll.confirmButtonClose": {
+    "text": "Revoke all and close app",
+    "description": "Confirm button of the dialog that revokes all of an app's device permissions, when the app is open in this tab and will be closed."
+  },
+  "appPermissions.status.revokedAll": {
+    "text": "All revoked. Anywhere the app is already open, it keeps the permissions until it is closed. On another device, opening the app again within a minute may bring them back until it is closed again.",
+    "description": "Status line in Settings > App device permissions after every permission of one app was revoked and the app was not open in this tab."
+  },
+  "appPermissions.status.revokedAllClosed": {
+    "text": "All revoked, and {{app}} was closed in this tab.",
+    "description": "Status line in Settings > App device permissions after every permission of one app was revoked and the app, open in this tab, was closed. {{app}} is the app."
+  },
+  "appPermissions.status.revokedSome": {
+    "text": "Not every permission could be revoked. Any that still show Revoke are still allowed.",
+    "description": "Error line in Settings > App device permissions when Revoke all took away some of an app's permissions but at least one request failed."
   },
   "agentFiles.status.tooLarge": {
     "text": "\"{{file}}\" is too large. The limit is 48 KB per file.",

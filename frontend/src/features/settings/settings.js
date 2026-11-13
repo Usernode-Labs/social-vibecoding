@@ -5361,6 +5361,66 @@
       }
     },
 
+    // Revoke every active capability of one app (#6512 item 4), from the
+    // Revoke all button beside its name. There is no bulk endpoint and none
+    // is needed: each capability goes through the same DELETE a single
+    // revoke uses, one after another, and a failed one does not stop the
+    // rest, because taking back three of four is better than stopping at
+    // the first refusal. What follows a success is _onPermissionRevoke's:
+    // the cached grant set is dropped, then the app is closed if it is open
+    // in this tab NOW, since its frame holds whatever was just revoked. A
+    // partial result says so as an error, and the list is drawn again so
+    // the rows that still show Revoke are the ones still allowed.
+    async _onPermissionRevokeAll(appId, capabilities, target) {
+      const status = (t, k) => this._setAppPermissionsStatus(t, k);
+      const list = Array.isArray(capabilities) ? capabilities.filter(Boolean) : [];
+      if (!list.length) return;
+      const isOpen = () => !!(target && typeof target.isOpen === 'function' && target.isOpen());
+      const name = (target && target.name) || '';
+      const openAtAsk = isOpen();
+      const ok = await ConfirmModal.show({
+        title: tr('settings:appPermissions.revokeAll.confirmTitle', { app: name }),
+        message: openAtAsk
+          ? tr('settings:appPermissions.revokeAll.confirmMessageOpen', { app: name })
+          : tr('settings:appPermissions.revokeAll.confirmMessage'),
+        confirmLabel: openAtAsk
+          ? tr('settings:appPermissions.revokeAll.confirmButtonClose')
+          : tr('settings:appPermissions.revokeAll.confirmButton'),
+        danger: true,
+      });
+      if (!ok) return;
+      if (this._isDemoGrant(appId)) { status(tr('settings:appPermissions.status.demoData'), 'info'); return; }
+      let revoked = 0;
+      let failure = '';
+      for (const capability of list) {
+        try {
+          const r = await fetch(
+            `/api/me/permission-grants/${appId}/${encodeURIComponent(capability)}`,
+            { method: 'DELETE', credentials: 'same-origin' }
+          );
+          if (r.ok) { revoked += 1; continue; }
+          const j = await r.json().catch(() => ({}));
+          failure = j.error || tr('settings:appPermissions.status.revokeFailed');
+        } catch (err) {
+          failure = tr('settings:appPermissions.status.networkError', { reason: err.message });
+        }
+      }
+      if (!revoked) { status(failure, 'error'); return; }
+      const appView = typeof window !== 'undefined' ? window.AppView : null;
+      if (target && target.slug && appView && typeof appView.forgetToken === 'function') {
+        appView.forgetToken(target.slug);
+      }
+      const closed = isOpen() && typeof target.close === 'function';
+      if (closed) target.close();
+      if (revoked < list.length) status(tr('settings:appPermissions.status.revokedSome'), 'error');
+      else {
+        status(closed
+          ? tr('settings:appPermissions.status.revokedAllClosed', { app: name })
+          : tr('settings:appPermissions.status.revokedAll'), 'ok');
+      }
+      this._renderAppPermissions();
+    },
+
     // The way back from Revoke, for the same reason the AI rows grew one
     // (#1957): re-approving otherwise depends on the app asking again, and
     // an app that never asks again never opens the prompt. The grant POST is
