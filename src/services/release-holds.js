@@ -43,7 +43,55 @@ const NOTE_MAX = 1000;
 // (services/app-permissions.js), as they are spelled there.
 const { GATED_NAMES } = require('./app-permissions');
 const CAPABILITY = new RegExp(`"(${GATED_NAMES.join('|')})"`);
-const PERSON_COLUMN = /\b(user_id|username|email|phone|wallet_address|usernode_pubkey|full_name|birth(day|date)?|address)\b/i;
+// A column that holds a person's contact or personal details, by the words in
+// its name ("email", "contact_email", "phone_number", "date_of_birth",
+// "home_address"). Saying WHOSE a row is does not count: user_id, username
+// and usernode_pubkey are what the platform hands every app about its
+// signed-in person, and nearly every table carries one of them.
+const PERSON_WORD = /^(e?mail|phone|mobile|birth(day|date)?|dob|address|street|postcode|zip)$/;
+const PERSON_PAIR = /(^|_)((full|first|last|real|legal)_name|date_of_birth|postal_code|zip_code)(_|$)/;
+function isPersonColumn(name) {
+  const n = String(name || '').toLowerCase();
+  return PERSON_PAIR.test(n) || n.split('_').some((w) => PERSON_WORD.test(w));
+}
+
+// The columns of the tables a file's added lines create: the first word of
+// each top-level piece between a CREATE TABLE's own brackets. A person word
+// anywhere else in the file (a query, a comment, a route, the code after the
+// statement) is not a column of a new table, so it holds nothing. A table
+// whose closing bracket is not among the added lines is read to the end of
+// what was added, or TABLE_BODY_LINES, whichever comes first.
+const TABLE_BODY_LINES = 200;
+function newTableColumns(added) {
+  const columns = [];
+  for (let i = 0; i < added.length; i += 1) {
+    const start = /\bCREATE\s+TABLE\b/i.exec(added[i]);
+    if (!start) continue;
+    let depth = 0;
+    let piece = '';
+    let done = false;
+    const flush = () => {
+      const word = /^\s*["`\[]?([A-Za-z_][A-Za-z0-9_]*)/.exec(piece);
+      if (word) columns.push(word[1]);
+      piece = '';
+    };
+    let j = i;
+    for (; j < added.length && j - i < TABLE_BODY_LINES && !done; j += 1) {
+      const text = j === i ? added[j].slice(start.index + start[0].length) : added[j];
+      if (j > i && /\bCREATE\s+TABLE\b/i.test(text)) break;
+      for (const ch of text) {
+        if (ch === '(') { depth += 1; if (depth === 1) continue; }
+        if (ch === ')') { depth -= 1; if (depth === 0) { flush(); done = true; break; } }
+        if (depth === 1 && ch === ',') flush();
+        else if (depth >= 1) piece += ch;
+      }
+      if (depth === 1) flush();
+    }
+    i = Math.max(i, j - 1);
+  }
+  return columns;
+}
+
 const TEST_FILE = /(^|\/)(tests?|__tests__|fixtures)\/|\.(test|spec)\.[cm]?[jt]sx?$/;
 
 // The rules, in the order every surface lists them. `key` is what the row
@@ -57,9 +105,7 @@ const RULES = Object.freeze([
   Object.freeze({
     key: 'people',
     words: 'It starts keeping data about people',
-    read: (c) => c.files.some((f) => !TEST_FILE.test(f.path)
-      && f.added.some((l) => /\bCREATE\s+TABLE\b/i.test(l))
-      && f.added.some((l) => PERSON_COLUMN.test(l) && !/\bCREATE\s+TABLE\b/i.test(l))),
+    read: (c) => c.files.some((f) => !TEST_FILE.test(f.path) && newTableColumns(f.added).some(isPersonColumn)),
   }),
   Object.freeze({
     key: 'secret',

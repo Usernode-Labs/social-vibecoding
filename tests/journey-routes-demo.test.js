@@ -41,6 +41,7 @@ test('every Journey route has a labelled demo payload with the real shape', asyn
     creation: '/api/admin/journey/creation',
     pairs: '/api/admin/journey/pairs',
     firstSession: '/api/admin/journey/first-session',
+    flows: '/api/admin/journey/flows',
   };
   for (const [key, p] of Object.entries(paths)) {
     const res = await fetch(`${base}${p}${p.includes('?') ? '&' : '?'}demo=1`);
