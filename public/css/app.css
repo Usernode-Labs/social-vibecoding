@@ -2149,6 +2149,46 @@ form.agent-session-composer:focus-within {
 .messages-format-btn svg { width: 18px; height: 18px; stroke-width: 1.8; }
 .messages-format-btn:hover { background: var(--messages-surface-2); }
 .messages-format-btn:disabled { opacity: .35; }
+/* #6653: the field that asks for a web address sits in the formatting row's
+   place, with the row's own sizes: a 32px field and two 32px buttons, above
+   the same hairline the row draws. */
+.messages-format-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 4px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--app-sheet-line);
+}
+.messages-format-link input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--app-sheet-line);
+  background: var(--messages-surface);
+  color: var(--text-primary);
+  font-size: 15px;
+}
+.messages-format-link input::placeholder { color: var(--text-secondary); }
+.messages-format-link button {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  transition: background 150ms;
+}
+.messages-format-link button:hover:not(:disabled) { background: var(--messages-surface-2); }
+.messages-format-link button.messages-format-link-add {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.messages-format-link button.messages-format-link-add:hover:not(:disabled) { background: var(--accent-light); }
+.messages-format-link button.messages-format-link-add:disabled { opacity: .35; }
 /* #6035: the draft drawn as it will be sent, above the field. It appears
    only once the message carries formatting, so a plain message's box keeps
    its one row; the field below still holds the source that gets sent. It is
@@ -2208,6 +2248,33 @@ form.agent-session-composer:focus-within {
 .messages-composer-menu button svg { width: 18px; height: 18px; stroke-width: 1.8; flex: 0 0 auto; }
 .messages-composer-menu button:hover:not(:disabled) { background: var(--messages-surface-2); }
 .messages-composer-menu button:disabled { opacity: .35; }
+/* #6653: the right-click menu over selected words. The same card as the "+"
+   menu beside the field, placed where the pointer is by the composer. */
+.messages-select-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 200px;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--messages-surface);
+  box-shadow: 0 7px 20px rgba(0, 0, 0, .16);
+}
+.messages-select-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 12px;
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 15px;
+  text-align: start;
+  white-space: nowrap;
+}
+.messages-select-menu button svg { width: 18px; height: 18px; stroke-width: 1.8; flex: 0 0 auto; }
+.messages-select-menu button:hover:not(:disabled) { background: var(--messages-surface-2); }
+.messages-select-menu button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.messages-select-menu hr { margin: 4px 6px; border: 0; border-top: 1px solid var(--app-sheet-line); }
 .messages-send {
   display: inline-flex;
   align-items: center;

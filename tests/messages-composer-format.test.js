@@ -22,7 +22,7 @@ const { loadTsx } = require('./lib/render-tsx');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
 const COMPOSER = read('frontend/src/features/messages/composer.tsx');
-const { applyFormat, hasFormatting } = loadTsx('frontend/src/features/messages/composer-format.ts');
+const { applyFormat, hasFormatting, normalizeLinkUrl } = loadTsx('frontend/src/features/messages/composer-format.ts');
 
 test('bold, italic and underline wrap the selection and select the same words', () => {
   const bold = applyFormat('hello world', 0, 5, 'bold');
@@ -119,6 +119,52 @@ test('hasFormatting tells a formatted draft from a plain one', () => {
   }
 });
 
+// #6653: strikethrough, a link, and Copy on selected words.
+test('strike wraps the selection and a second press takes the markers off', () => {
+  const struck = applyFormat('hello world', 0, 5, 'strike');
+  assert.equal(struck.value, '~~hello~~ world');
+  assert.equal(struck.value.slice(struck.start, struck.end), 'hello');
+  assert.equal(applyFormat(struck.value, 2, 7, 'strike').value, 'hello world');
+
+  const caret = applyFormat('one two', 4, 4, 'strike');
+  assert.equal(caret.value, 'one ~~~~two');
+  assert.deepEqual([caret.start, caret.end], [6, 6]);
+});
+
+test('link wraps the selected words as a markdown link and selects them', () => {
+  const result = applyFormat('hello world', 6, 11, 'link', 'https://a.example');
+  assert.equal(result.value, 'hello [world](https://a.example)');
+  assert.equal(result.value.slice(result.start, result.end), 'world');
+
+  const spaces = applyFormat('say  hi  now', 3, 9, 'link', 'https://a.example');
+  assert.equal(spaces.value, 'say  [hi](https://a.example)  now');
+  assert.equal(spaces.value.slice(spaces.start, spaces.end), 'hi');
+
+  const bracket = applyFormat('a [b] c', 2, 5, 'link', 'https://a.example');
+  assert.equal(bracket.value, 'a [\\[b\\]](https://a.example) c');
+  assert.equal(bracket.value.slice(bracket.start, bracket.end), '\\[b\\]');
+
+  const caret = applyFormat('one ', 4, 4, 'link', 'https://a.example');
+  assert.equal(caret.value, 'one https://a.example');
+  assert.deepEqual([caret.start, caret.end], [21, 21]);
+
+  assert.equal(applyFormat('hello', 0, 5, 'link', null).value, 'hello');
+});
+
+test('a link address is normalized, and only a web address is accepted', () => {
+  assert.equal(normalizeLinkUrl('a.example/x'), 'https://a.example/x');
+  assert.equal(normalizeLinkUrl('http://a.example/x'), 'http://a.example/x');
+  assert.equal(normalizeLinkUrl('https://a.example/x(1)'), 'https://a.example/x%281%29');
+  for (const bad of ['javascript:alert(1)', 'data:text/html,x', 'mailto:a@b.example', 'a b', '', '   ']) {
+    assert.equal(normalizeLinkUrl(bad), null, `${JSON.stringify(bad)} is not a web address`);
+  }
+});
+
+test('a draft with a link in it shows the preview', () => {
+  assert.equal(hasFormatting('[the docs](https://a.example)'), true);
+  assert.equal(hasFormatting('see [note] here'), false);
+});
+
 test('the result is cut at the composer’s 8000 characters', () => {
   const long = 'x'.repeat(8000);
   const result = applyFormat(long, 7990, 8000, 'bold');
@@ -139,11 +185,35 @@ test('the composer shows the row only for a channel, named from the catalog', ()
 });
 
 test('a press keeps the field focused and takes Ctrl/Cmd+B and I', () => {
-  assert.match(COMPOSER, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\} onClick=\{\(\) => formatSelected\(kind\)\}/);
+  assert.match(COMPOSER, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\} onClick=\{\(\) => \(kind === 'link' \? openLinkField\(\) : formatSelected\(kind\)\)\}/);
   assert.match(COMPOSER, /input\.focus\(\{ preventScroll: true \}\)/);
   assert.match(COMPOSER, /function onFormatKey\(/);
   assert.match(COMPOSER, /key !== 'b' && key !== 'i'/);
   assert.match(COMPOSER, /if \(onFormatKey\(event\)\) return;/);
+});
+
+test('right-clicking selected words opens the format menu, and the row gains Strike and Link', () => {
+  // #6653: the menu is a channel's alone, never for a touch long press, and
+  // never with nothing selected: those keep the browser's own menu.
+  assert.match(COMPOSER, /onContextMenu=\{onTextareaContextMenu\}/);
+  assert.match(COMPOSER, /if \(!isChannel \|\| dictating \|\| lastPointer\.current === 'touch'\) return;/);
+  assert.match(COMPOSER, /if \(start === null \|\| end === null \|\| start === end\) return;/);
+  assert.match(COMPOSER, /event\.preventDefault\(\);\s*menuRange\.current = \{ start, end \};\s*setSelMenu\(\{ x: event\.clientX, y: event\.clientY \}\);/);
+  assert.match(COMPOSER, /className="messages-select-menu" role="menu"/);
+  assert.match(COMPOSER, /navigator\.clipboard\?\.writeText/);
+  assert.match(COMPOSER, /document\.execCommand\('copy'\)/);
+
+  // The row carries Strike after Underline and a Link at its end, and the
+  // link field takes the row's place.
+  assert.match(COMPOSER, /\{ kind: 'strike', label: 'messages:composer\.format\.strike', Icon: StrikethroughIcon \}/);
+  assert.match(COMPOSER, /\{ kind: 'link', label: 'messages:composer\.format\.link', Icon: LinkIcon \}/);
+  assert.match(COMPOSER, /className="messages-format-link"/);
+  assert.match(COMPOSER, /style=\{linkOpen \? \{ display: 'none' \} : undefined\}/);
+  assert.match(COMPOSER, /applyFormat\(input\.value\.slice\(0, 8000\), range\.start, range\.end, 'link', url\)/);
+
+  for (const id of ['strike', 'link', 'copy', 'menu', 'linkField', 'linkPlaceholder', 'linkAdd', 'linkCancel']) {
+    assert.ok(message(`messages:composer.format.${id}`), `${id} is in the messages catalog`);
+  }
 });
 
 test('a formatted draft is drawn as it will be sent, above the field', () => {

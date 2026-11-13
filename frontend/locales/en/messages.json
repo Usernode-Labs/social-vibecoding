@@ -2095,6 +2095,38 @@
     "text": "Bulleted list",
     "description": "Tooltip and accessible name of a formatting button above a channel's message box: turns the selected lines, or the cursor's line, into bullet points. Pressing it again removes the bullets."
   },
+  "composer.format.strike": {
+    "text": "Strikethrough",
+    "description": "Tooltip and accessible name of a formatting button above a channel's message box, and of the same row in the right-click menu: draws a line through the selected text, or starts struck-through text at the cursor. Pressing it again removes the line."
+  },
+  "composer.format.link": {
+    "text": "Insert link",
+    "description": "Tooltip and accessible name of a formatting button above a channel's message box, and of the same row in the right-click menu: asks for a web address and makes the selected text a link to it."
+  },
+  "composer.format.copy": {
+    "text": "Copy",
+    "description": "Row in the right-click menu over selected text in a channel's message box: puts the selected words on the clipboard."
+  },
+  "composer.format.menu": {
+    "text": "Format selected text",
+    "description": "Accessible name of the small menu that opens when selected text in a channel's message box is right-clicked; it holds the formatting actions and Copy."
+  },
+  "composer.format.linkField": {
+    "text": "Web address",
+    "description": "Accessible name of the field that replaces a channel's formatting row while inserting a link: the web address the selected words should link to."
+  },
+  "composer.format.linkPlaceholder": {
+    "text": "https://",
+    "description": "Placeholder inside the web address field shown while inserting a link in a channel's message box; it shows the shape of an address."
+  },
+  "composer.format.linkAdd": {
+    "text": "Add link",
+    "description": "Button beside the web address field that turns the selected words into a link to the typed address."
+  },
+  "composer.format.linkCancel": {
+    "text": "Cancel",
+    "description": "Button beside the web address field that closes it and leaves the message unchanged."
+  },
   "composer.format.preview": {
     "text": "Preview",
     "description": "Small label and accessible name of the live preview inside a community channel's message box: it shows the message being written with its formatting applied, as it will look once sent."
