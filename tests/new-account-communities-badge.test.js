@@ -205,9 +205,10 @@ test('the tab reads its number from tabVotes, and the counts route carries the f
   // you tile does not (#5296): it says the tab's number, `badgeNeeds`, the
   // sum of the tab's own `votesWaiting`, because a page saying 14 under a
   // tab that said 13 was the bug. (It was the Communities list's Needs you
-  // row until One Home, #6361.)
+  // row until One Home, #6361, and is the For you column's Needs you card
+  // since #6650.)
   assert.match(read('frontend/src/features/workshop/community-scope.ts'), /badgeNeeds \+= votesWaiting\(info\[s\]\);/);
-  assert.match(read('frontend/src/features/home/pinned-communities.tsx'), /const \{ badgeNeeds \} = useStoreState\(communityScopeStore\)/);
+  assert.match(read('frontend/src/features/home/for-you.tsx'), /const \{ badgeNeeds \} = useStoreState\(communityScopeStore\)/);
   for (const file of [
     'frontend/src/features/workshop/community-switcher.tsx',
     'frontend/src/features/app-context/app-context-sheet.tsx',

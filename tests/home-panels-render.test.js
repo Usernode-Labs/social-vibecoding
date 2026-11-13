@@ -1656,8 +1656,9 @@ test('the blocks span the whole column — no half-width cap', () => {
   const css = read('public/css/app.css');
   assert.doesNotMatch(css, /--home-panel-max-w:|var\(--home-panel-max-w\)/);
   assert.doesNotMatch(css.match(/\.home-panel \{[^}]*\}/)[0], /max-width/);
-  // The column above them is the one width bound, and it is unchanged.
-  assert.match(css.match(/\.home-column \{[^}]*\}/)[0], /max-width:\s*64rem/);
+  // The column above them is the one width bound (80rem since #6650, for
+  // Home's two columns).
+  assert.match(css.match(/\.home-column \{[^}]*\}/)[0], /max-width:\s*80rem/);
   // Still left-aligned, and never centred by auto side margins: the blocks'
   // left edge lines up with the grid's first column above them.
   assert.doesNotMatch(css.match(/\.home-panel \{[^}]*\}/)[0], /margin(-left|-right)?:\s*auto/);
@@ -1742,9 +1743,13 @@ test('index.html stacks the two section hosts below the grid, in order', () => {
   const grid = INDEX.indexOf('id="app-list"');
   assert.ok(grid > 0, 'the launcher grid is there');
   const at = (id) => INDEX.indexOf(`id="${id}"`);
-  // One Home (#6361): Pinned communities, Challenges, then Communities to
-  // join. Discover's lane is no section of Home's any more.
-  const order = ['home-communities-section', 'home-challenges-section', 'home-join-section'];
+  // One Home (#6361): Pinned communities, then Communities to join.
+  // Discover's lane is no section of Home's any more. #6650: Challenges is a
+  // section of the For you column, which comes before the content in the
+  // markup (a reversed row draws it on the right, or above when they wrap).
+  assert.ok(at('home-for-you') > 0 && at('home-for-you') < at('home-challenges-section')
+    && at('home-challenges-section') < grid, 'Challenges sits in the For you column, before the grid');
+  const order = ['home-communities-section', 'home-join-section'];
   let prev = grid;
   for (const id of order) {
     const here = at(id);

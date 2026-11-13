@@ -1389,6 +1389,20 @@
       "preview": "`SELECT COUNT(*) FILTER (WHERE vote = '${yesVal}') AS yes, COUNT(*) FILTER (WHERE vote = '${noVal}') AS no${wantOther ? `, COUNT(*) FILTER (WHERE vote = '${yesV"
     },
     {
+      "source": "src/services/home-for-you.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "455fe6b3966d7d9e4c45",
+      "count": 1,
+      "preview": "MY_REQUEST_COUNTS_SQL"
+    },
+    {
+      "source": "src/services/home-for-you.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "a9caa3f22362aa8430ad",
+      "count": 1,
+      "preview": "SUMMARY_COUNTS_SQL"
+    },
+    {
       "source": "src/services/home-pins.js",
       "kind": "structural-template",
       "fingerprint": "d7a070a025b2937f44aa",

@@ -104,10 +104,11 @@ test('a render never publishes editing in the search view', () => {
   assert.equal(model().editing, false, 'a search is a transient list, not the shelf');
 });
 
-test('while editing the grid shows EVERY tile and no expander', () => {
-  const { Home, model, moreCount } = makeHome();
-  // Rows 0-2 full and one app on row 3, on a budget of three rows: the
-  // resting grid holds row 3 back with "Show all 11 apps".
+test('while editing the grid shows EVERY tile and no See all', () => {
+  const { Home, model } = makeHome();
+  // Rows 0-2 full and one app on row 3. #6650: two rows at most, whatever
+  // the budget, so the resting grid shows rows 0 and 1 with See all in the
+  // last cell of row 1: seven apps and the tile.
   Home._apps = mine(11);
   Home._layouts = { 4: [
     ...Array.from({ length: 10 }, (_, i) => ({ type: 'app', slug: `app-${i}`, col: i % 4, row: Math.floor(i / 4) })),
@@ -116,44 +117,33 @@ test('while editing the grid shows EVERY tile and no expander', () => {
   Home.visibleRowBudget = () => 3;
   Home._editing = false;
   Home.render();
-  assert.equal(model().items.length, 10, 'collapsed without edit mode');
-  assert.ok(moreCount() > 0, 'the expander is up');
+  assert.equal(model().items.length, 7, 'collapsed without edit mode');
+  assert.equal(model().seeAll.count, 11, 'See all names every app');
 
   Home._editing = true;
   Home.render();
   const state = model();
   assert.equal(state.editing, true);
   assert.equal(state.items.length, 11, 'edit mode shows every tile, so all are reachable');
-  assert.equal(moreCount(), 0, 'and nothing is held back');
-  assert.equal(state.create.heldBack, false, 'the trailing New project tile ends the grid in edit mode too (#6522)');
+  assert.equal(state.seeAll, null, 'and nothing is held back');
+  assert.equal(state.create, null, 'the grid ends on the apps: New project is the For you column\'s card (#6650)');
   // ...and leaving puts the collapse back.
   Home._editing = false;
   Home.render();
-  assert.equal(model().items.length, 10);
-  assert.ok(moreCount() > 0);
+  assert.equal(model().items.length, 7);
+  assert.ok(model().seeAll);
 });
 
-test('#6522: the trailing Create tile is there at rest and while editing, for any normal account', () => {
+test('#6650: no Create tile at rest or while editing; New project is the For you column\'s card', () => {
   const { Home, model } = makeHome();
   Home._apps = mine(2);
   Home.render();
-  assert.ok(model().create && typeof model().create === 'object', 'a normal account gets the Create tile at rest');
+  assert.equal(model().create, null, 'no Create tile at rest');
   Home._editing = true;
   Home.render();
-  assert.ok(model().create && typeof model().create === 'object', 'and keeps it in edit mode: Add apps is the heading button too');
-  // The tile is never held back while editing (#4669), so the compact entry
-  // and the tile cannot both draw.
-  assert.equal(model().create.heldBack, false, 'the grid draws its own tile in edit mode');
-  // A private member makes no apps until they are let in off the waitlist,
-  // so they get no Create tile in either mode.
-  const { Home: H2, model: m2, sandbox } = makeHome();
-  sandbox.App.user.privateMember = true;
-  H2._apps = mine(2);
-  H2.render();
-  assert.equal(m2().create, null, 'a private member gets no Create tile at rest');
-  H2._editing = true;
-  H2.render();
-  assert.equal(m2().create, null, 'and none in edit mode');
+  assert.equal(model().create, null, 'and none in edit mode: Add apps is the heading button');
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/home/for-you.tsx'), 'utf8'),
+    /<section id="home-new-project"/);
 });
 
 // ── the remove button's action ────────────────────────────────────────

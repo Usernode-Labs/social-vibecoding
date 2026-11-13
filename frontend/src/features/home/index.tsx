@@ -94,8 +94,7 @@ import { SearchIcon } from '@/components/ui/icons';
 import { AppGrid } from './app-grid';
 import { openAddAppsSheet } from './add-apps-sheet';
 import { AppsMore } from './apps-more';
-import { CreateCompact } from './create-tile';
-import { ChallengesSection } from './panels/sections';
+import { HomeForYou } from './for-you';
 import { HomeJoin } from './home-join';
 import { PinnedCommunities } from './pinned-communities';
 import { HomeSearchMake } from './search-make';
@@ -272,6 +271,18 @@ export function HomeScreen() {
             there.
         */}
         {frame ? null : <WidgetStrip />}
+        {/*
+            TWO COLUMNS (#6650, app.css .home-split). The For you column
+            (./for-you.tsx) is FIRST in the markup and the row is reversed:
+            on a wide window it is the third on the right; on a narrow one
+            it wraps above the content, never under a scroll of tiles. The
+            content keeps the areas' own order, Pinned apps, Pinned
+            communities, then Communities to join, as siblings, which is how
+            the declared checks select them.
+        */}
+        <div className="home-split">
+        <HomeForYou />
+        <div className="home-main">
         {/* One Home (#6361): no continue card. The change you last worked on
             is a row of the bell and of Homeroom bot's list. */}
         {/*
@@ -358,24 +369,21 @@ export function HomeScreen() {
                   <span className="whitespace-nowrap">{t('home:edit.done')}</span>
                 </button>
               </span>
-            ) : (canEdit || grid.create?.heldBack) ? (
+            ) : canEdit ? (
               /* #5871: "Edit" is edit mode's own door. A hold on a tile used
                  to start it beside the tile's menu, so one press showed both;
                  a hold is the menu alone now, and arranging is asked for
                  here (or from the menu's "Edit My apps"). Shown only on the
                  grid view with a tile of your own to arrange. */
               <span className="flex items-center gap-4">
-                {canEdit ? (
-                  <button
-                    type="button"
-                    className="home-edit-start shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
-                    aria-label={t('home:edit.startLabel')}
-                    onClick={() => { (window as any).Home?.setEditing?.(true); }}
-                  >
-                    <span className="whitespace-nowrap">{t('home:edit.start')}</span>
-                  </button>
-                ) : null}
-                {grid.create?.heldBack ? <CreateCompact view={grid.create} /> : null}
+                <button
+                  type="button"
+                  className="home-edit-start shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target"
+                  aria-label={t('home:edit.startLabel')}
+                  onClick={() => { (window as any).Home?.setEditing?.(true); }}
+                >
+                  <span className="whitespace-nowrap">{t('home:edit.start')}</span>
+                </button>
               </span>
             ) : null}
           >
@@ -456,8 +464,10 @@ export function HomeScreen() {
             GitHub and X. Nothing in the prerender, like the card above.
         */}
         {frame ? null : <VerifyCard />}
-        <ChallengesSection />
+        {/* Challenges moved to the For you column (#6650). */}
         <HomeJoin />
+        </div>
+        </div>
         {/*
             THE "YOU" AREA IS GONE, and Profile did not go with it. A fifth
             area held one row — an avatar, "Profile", "Your points, settings

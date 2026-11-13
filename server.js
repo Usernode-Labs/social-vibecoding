@@ -732,6 +732,7 @@ app.use(require('./src/routes/moderation').moderationRoutes(config));
 app.use(require('./src/routes/app-blocks').appBlockRoutes(config));
 app.use(require('./src/routes/community-pins').communityPinRoutes(config));
 app.use(require('./src/routes/home-pins').homePinRoutes(config));
+app.use(require('./src/routes/home-for-you').homeForYouRoutes(config));
 app.use(require('./src/routes/weekly-digest').weeklyDigestRoutes(config));
 app.use(require('./src/services/account-deletion-runtime').trackResponse);
 app.use(require('./src/routes/account-deletion').accountDeletionRoutes(config));

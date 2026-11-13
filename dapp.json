@@ -1496,28 +1496,28 @@
       "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"] ~ [data-standings-tab=\"topochain\"]) #challenges-root:not(.hidden) #tc-se-grid"
     },
     {
-      "name": "New project is the last tile of Home's My apps again, and New community stays the last of Pinned communities (#6522; both were One Home's, #6361)",
+      "name": "#6650: New project is a card of Home's For you column, ready with project slots, and the app grid no longer ends on a New project tile",
       "path": "/?demo=1&shot=create-enabled",
-      "expectSelector": "#home-body #home-apps-section:not([hidden]):has(#home-create-tile[data-panel-slot=\"create\"][data-create-enabled=\"true\"]) ~ #home-communities-section:not([hidden]) #home-new-community[data-panel-slot=\"create\"][data-create-enabled=\"true\"]:last-child",
-      "expectText": "New community"
+      "expectSelector": "#home-body:not(:has(#home-create-tile)) .home-split > #home-for-you:not([hidden]) #home-new-project #home-new-project-btn[data-panel-slot=\"create\"][data-create-enabled=\"true\"]",
+      "expectText": "New project"
     },
     {
-      "name": "The New community tile is present but locked without app quota, still the last of Pinned communities (One Home, #6361)",
+      "name": "#6650: the New project card is present but locked without app quota, and Pinned communities no longer ends on New community",
       "path": "/?demo=1&shot=create-disabled",
-      "expectSelector": "#home-communities-section:not([hidden]) #home-new-community[data-panel-slot=\"create\"][data-create-enabled=\"false\"][aria-label^=\"New community. \"]:last-child:not([disabled])",
-      "expectText": "New community"
+      "expectSelector": "#home-body:not(:has(#home-new-community)) #home-for-you:not([hidden]) #home-new-project-btn[data-panel-slot=\"create\"][data-create-enabled=\"false\"]:not([disabled])",
+      "expectText": "New project"
     },
     {
-      "name": "One Home (#6361): Home's last section is Communities to join, after Pinned apps and Pinned communities, and Home draws no Discover lane or continue card",
+      "name": "One Home (#6361): Home's last section is Discover communities (#6650), after Pinned apps and Pinned communities in the content column, and Home draws no Discover lane or continue card",
       "path": "/?demo=1",
-      "expectSelector": "#home-body:not(:has(#home-discover-section)):not(:has(#home-continue-card)) #home-apps-section ~ #home-communities-section ~ #home-join-section:not([hidden]) > h2.home-area-label",
-      "expectText": "Communities to join"
+      "expectSelector": "#home-body:not(:has(#home-discover-section)):not(:has(#home-continue-card)) .home-main > #home-apps-section ~ #home-communities-section ~ #home-join-section:not([hidden]) > h2.home-area-label",
+      "expectText": "Discover communities"
     },
     {
-      "name": "The launcher grid shows two rows by default, with a way to the rest",
+      "name": "The launcher grid shows two rows at most, its last cell See all, beside the For you column's cards on what is new in each community (by kind) and on your work (#6650)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body #home-apps-section #home-apps-more:not(.hidden) button",
-      "expectText": "Show all"
+      "expectSelector": "#home-body:has(#home-for-you:not([hidden]) #home-activity-card a[data-home-activity] [data-activity-kind]):has(#home-for-you #home-work-card) #home-apps-section #app-list > #home-apps-see-all[data-home-see-all]",
+      "expectText": "See all"
     },
     {
       "name": "Each home area is introduced by its own label (#1478; One Home #6361 calls the first Pinned apps)",
@@ -1550,7 +1550,7 @@
       "name": "#apps, Discover's old address, opens Home on its Communities to join (One Home, #6361: the directory is Home's)",
       "path": "/#apps",
       "expectSelector": "#home-screen:not(.hidden) #home-body #home-join-section:not([hidden]):not(:has([data-home-join],[data-guest-card-footer])) > h2.home-area-label",
-      "expectText": "Communities to join"
+      "expectText": "Discover communities"
     },
     {
       "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
@@ -3247,10 +3247,10 @@
       "expectText": "Go to community"
     },
     {
-      "name": "#communities, the old Communities screen, opens Home: beside the sidebar's search glyph, Pinned communities offers Needs you with the votes waiting (One Home, #6361; #3051, D)",
+      "name": "#communities, the old Communities screen, opens Home: beside the sidebar's search glyph, the For you column offers Needs you with the votes waiting (#6650; One Home, #6361; #3051, D)",
       "path": "/?demo=1#communities",
-      "expectSelector": "body:has(#platform-rail-search) #home-screen:not(.hidden) #home-communities-section:not([hidden]) a#home-needs-tile[href=\"#needs\"][data-home-needs]",
-      "expectText": "Needs you"
+      "expectSelector": "body:has(#platform-rail-search) #home-screen:not(.hidden) #home-for-you:not([hidden]) #home-needs-card[data-home-needs] a#home-needs-review[href=\"#needs\"]",
+      "expectText": "Start reviewing"
     },
     {
       "name": "Needs you (#needs) is the review flow, one change's page in the pane with its vote bar (#6276; One Home, #6361)",

@@ -158,6 +158,13 @@ export interface HomeGridState {
    */
   create: CreateTileView | null;
   /**
+   * "See all N apps" (#6650): the collapsed grid's last tile, in the last
+   * cell of its last row, or null when every tile is on show (and before the
+   * first paint, so the prerender agrees). `count` is every app the viewer
+   * has; pressing it shows them all for the rest of the visit.
+   */
+  seeAll?: { count: number; placement: GridPlacement } | null;
+  /**
    * EDIT MODE (#4669): the launcher is being arranged. The tiles wiggle, each
    * one shows its remove button, and the trailing tile is "Add apps" rather
    * than "New project". False in the search view even while the flag holds —
@@ -176,6 +183,7 @@ export const INITIAL_GRID: HomeGridState = {
   emptyQuery: null,
   notice: null,
   create: null,
+  seeAll: null,
   editing: false,
 };
 

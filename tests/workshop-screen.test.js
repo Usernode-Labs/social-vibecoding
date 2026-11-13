@@ -570,7 +570,8 @@ test('#needs is the Needs you page; #communities and #workshop land on Home, or 
   // The vote digest opens it, and Home's tile does while a vote waits.
   assert.match(read('frontend/src/features/notifications/notifications.js'),
     /item\.kind === 'vote_digest' && !item\.appSlug\) \{[\s\S]{0,200}window\.location\.hash = '#needs';/);
-  assert.match(read('frontend/src/features/home/pinned-communities.tsx'), /href="#needs"\s+id="home-needs-tile"/);
+  // #6650: the Needs you card in Home's For you column.
+  assert.match(read('frontend/src/features/home/for-you.tsx'), /href="#needs"\s+id="home-needs-review"/);
   // The app menu keeps the SCOPED entrance, the project's own hub (#2761).
   assert.match(sheetTsx, /communityRowHref\(slug: string \| null \| undefined, owed: number \| null\): string \{[\s\S]*?: `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub`;[\s\S]*?href=\{communityRowHref\(slug, owed\)\}/,
     "and the app's menu links out to it, scoped");

@@ -60,7 +60,7 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 
-import { CopyIcon, LockIcon, UserGroupIcon } from '@/components/ui/icons';
+import { CopyIcon, LockIcon, Squares2X2Icon, UserGroupIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
@@ -421,6 +421,44 @@ function AppCardTile({ app, style, yours, live, editing }: {
  * already showed. A failed load and a search that matched nothing keep their
  * own lines.
  */
+/**
+ * The collapsed grid's last tile (#6650): a white face with the grid glyph,
+ * the app card's own geometry, so it lines up with its neighbours. Pressing
+ * it shows every tile for the rest of the visit, as "Show all N apps" did.
+ */
+export function SeeAllTile({ count, style }: { count: number; style?: string }) {
+  const t = useMessages('home');
+  const node = useRef<HTMLButtonElement | null>(null);
+  // The cell as an ATTRIBUTE, as ./create-tile.tsx writes it (the header
+  // above says why React's style prop will not do).
+  useIsomorphicLayoutEffect(() => {
+    const el = node.current;
+    if (!el) return;
+    if (style) el.setAttribute('style', style);
+    else el.removeAttribute('style');
+  }, [style]);
+  return (
+    <button
+      ref={node}
+      type="button"
+      id="home-apps-see-all"
+      className="group relative flex select-none flex-col items-center gap-1.5 rounded-xl p-2 text-center sm:p-3"
+      data-home-see-all={String(count)}
+      onClick={() => {
+        const home = controller();
+        if (!home) return;
+        home._appsExpanded = true;
+        home.render();
+      }}
+    >
+      <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white text-zinc-700 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] transition-colors group-hover:text-violet-600 dark:bg-zinc-900 dark:text-zinc-200 dark:group-hover:text-violet-400">
+        <Squares2X2Icon className="h-7 w-7" aria-hidden="true" />
+      </span>
+      <span className="app-card-title text-zinc-600 dark:text-zinc-300">{t('home:grid.seeAll', { count })}</span>
+    </button>
+  );
+}
+
 export function AppGrid() {
   const t = useMessages('home');
   const state = useStoreState(gridStore);
@@ -539,6 +577,12 @@ export function AppGrid() {
       */}
       {state.create && !state.create.heldBack ? (
         <CreateTile view={state.create} style={placementStyle(state.create.placement)} />
+      ) : null}
+      {/* "See all N apps" (#6650): the collapsed grid's last cell, the way
+          to the rest of the shelf. Its cell comes from the same paint as
+          the tiles'. */}
+      {state.seeAll ? (
+        <SeeAllTile count={state.seeAll.count} style={placementStyle(state.seeAll.placement)} />
       ) : null}
     </div>
   );
