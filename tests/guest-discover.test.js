@@ -679,51 +679,110 @@ test('the overview it reads carries no names, and the page draws none', () => {
 
 // ─── the story's short version ────────────────────────────────────
 
-test('the short story heads Discover: welcome, headline, one line, what an account adds, and one button that says what it does', () => {
-  const html = renderComponent(STORY, 'Story', { compact: true, waitlist: true, primaryClass: 'pill', onStart() {}, onSignIn() {} });
+test('the short story heads Discover: the headline, the Wikipedia line, three numbered points and a closing line, with no button of its own', () => {
+  const html = renderComponent(STORY, 'Story', { compact: true, primaryClass: 'pill', onStart() {}, onSignIn() {} });
   assert.deepEqual(text(html), [
     'Welcome to Homeroom',
-    'On Homeroom, communities make apps together.',
-    message('auth:guest.hero.line'),
-    message('auth:guest.join.vote.title'),
-    message('auth:guest.join.vote.body'),
-    message('auth:guest.join.ask.title'),
-    message('auth:guest.join.ask.body'),
-    message('auth:guest.join.make.title'),
-    message('auth:guest.join.make.body'),
-    message('auth:guest.hero.joinWaitlist'),
+    'The app library anyone can edit.',
+    'Community apps you build together. Like Wikipedia, but for software.',
+    '1', message('auth:guest.hero.change.title'), message('auth:guest.hero.change.body'),
+    '2', message('auth:guest.hero.vote.title'), message('auth:guest.hero.vote.body'),
+    '3', message('auth:guest.hero.owned.title'), message('auth:guest.hero.owned.body'),
+    message('auth:guest.hero.start'),
+    // The phone's closing line, whose second half is the door to the page
+    // about private communities.
+    'Try any app below, or', 'start a private community for your own group', '.',
+    message('auth:guest.hero.private.title'),
+    message('auth:guest.hero.private.body'),
   ]);
-  // The three points, between the line and the button: each title, and its
-  // line from md only, so a phone keeps the apps near the first screen.
-  assert.ok(html.indexOf('data-landing-story-points') < html.indexOf('data-landing-story-join'));
+  assert.equal(message('auth:guest.hero.headline'), 'The app library anyone can edit.');
+  assert.equal(message('auth:guest.hero.change.title'), 'Anyone can make a change');
+  assert.equal(message('auth:guest.hero.vote.title'), 'Community votes on it');
+  assert.equal(message('auth:guest.hero.owned.title'), 'Software owned by its communities');
+  assert.equal(message('auth:guest.hero.start'), 'Want to get started? Try any of the apps below, or make an account to make your own app.');
+  // The three points, numbered because they are a sequence: each title, and
+  // its line from md only, so a phone keeps the apps near the first screen.
+  assert.match(html, /<ol data-landing-story-points="" class="mt-4 flex flex-col gap-2\.5 md:mt-6 md:gap-3\.5">/);
   assert.equal([...html.matchAll(/<li /g)].length, 3);
-  assert.equal([...html.matchAll(/class="hidden text-\[13px\] leading-\[18px\] text-zinc-500 md:block dark:text-zinc-400"/g)].length, 3);
-  assert.match(html, /<ul data-landing-story-points="" class="mt-5 grid w-full grid-cols-3 gap-3 md:max-w-\[820px\] md:gap-6">/);
-  assert.equal(message('auth:guest.hero.joinWaitlist'), 'Join the waitlist');
-  // Once new accounts no longer wait, the same button says Create account.
-  assert.equal(message('auth:guest.hero.signUp'), 'Create account');
-  const open = renderComponent(STORY, 'Story', { compact: true, primaryClass: 'pill', onStart() {}, onSignIn() {} });
-  assert.ok(text(open).includes(message('auth:guest.hero.signUp')));
-  assert.ok(!text(open).includes(message('auth:guest.hero.joinWaitlist')));
+  assert.equal([...html.matchAll(/class="hidden text-\[15px\] leading-\[21px\] text-\[color:var\(--site-muted\)\] md:block"/g)].length, 3);
+  // The numerals are for the eye; the list says the order to a screen reader.
+  assert.equal([...html.matchAll(/aria-hidden="true">[123]<\/span>/g)].length, 3);
   assert.match(html, /data-landing-story="" data-landing-story-compact=""/);
-  // One Sign in on the page, the bar's: no Continue and no Sign in line of
-  // its own under the short story.
-  assert.doesNotMatch(html, /data-landing-story-start|data-landing-story-how|data-landing-story-signin/);
-  // On the page itself, no card, and short: the words, then a small picture
-  // beside them from md only.
-  assert.doesNotMatch(html, /rounded-\[20px\]|bg-white/);
-  assert.match(html, /class="hidden md:block h-auto w-\[200px\] shrink-0"/);
-  assert.ok(html.indexOf('<h1') < html.lastIndexOf('/brand/people.png'), 'the words first, the picture after');
-  // One thing to press in it, a filled button sized to its words, which
-  // opens the story's sheet; still no Sign in of its own (the bar's).
-  assert.deepEqual([...html.matchAll(/<button[^>]*>/g)].map((m) => m[0]), ['<button type="button" data-landing-story-join="" class="pill mt-5 h-11 w-auto px-5 text-[15px]">']);
-  assert.doesNotMatch(html, /<a\s/);
+  // DRAWN IN THE WEBSITE'S LOOK (13 Nov 2026): a sky band edge to edge, a
+  // white window in it opened by a strip of three dots, the headline and the
+  // points' titles in the site's serif, sun discs for the numerals. Every
+  // colour is one of the look's variables (public/css/app.css), so the short
+  // story names no colour of the app's palette and no dark class.
+  assert.match(html, /<div data-landing-story="" data-landing-story-compact="" class="site-band \[--band:var\(--site-sky\)\] [^"]*"><div data-landing-story-window="" class="border border-\[color:var\(--site-line\)\] bg-\[var\(--site-panel\)\]"><div class="[^"]*" aria-hidden="true">(?:<span class="[^"]*"><\/span>){3}<\/div>/);
+  assert.match(html, /<h1 class="font-\[family-name:var\(--site-serif\)\] font-normal [^"]*">The app library anyone can edit\.<\/h1>/);
+  assert.equal([...html.matchAll(/<span class="flex h-7 w-7 [^"]*bg-\[var\(--site-sun\)\][^"]*text-\[color:var\(--site-on-sun\)\]" aria-hidden="true">/g)].length, 3);
+  {
+    const src = read(STORY);
+    const compact = src.slice(src.indexOf('if (compact) {'), src.indexOf('const s = fitStyle(fit);'));
+    assert.doesNotMatch(compact, /\b(?:text|bg|border|shadow)-(?:zinc|violet|white|black)\b/);
+    assert.doesNotMatch(compact, /\bdark:/);
+    const css = read('public/css/app.css');
+    for (const name of new Set([...compact.matchAll(/var\((--site-[a-z-]+)\)/g)].map((m) => m[1]))) {
+      assert.match(css, new RegExp(`#auth-landing-screen \\{[^}]*${name}:`), `${name} is declared`);
+    }
+  }
+  // "Welcome to Homeroom" is a wide screen's: on a phone the wordmark is
+  // directly above the headline.
+  assert.match(html, /<div class="[^"]* hidden md:block">Welcome to Homeroom<\/div><h1 /);
+  // The closing line is two: a wide screen's points at the apps below, a
+  // phone's carries the door the wide screen has as a card.
+  assert.match(html, /<p data-landing-story-next="" class="[^"]*\bhidden\b[^"]*\bmd:block\b[^"]*">Want to get started\?/);
+  assert.match(html, /<p data-landing-story-next="" class="[^"]*\bmd:hidden\b[^"]*">Try any app below, or <a href="\/communities" data-landing-story-private="" class="[^"]*">start a private community for your own group<\/a>\.<\/p>/);
+  // NOTHING TO PRESS BUT THE DOOR (13 Nov 2026): no button of its own, no
+  // Continue, no Sign in line. Making an account is the bar's one button.
+  assert.doesNotMatch(html, /<button/);
+  assert.doesNotMatch(html, /data-landing-story-join|data-landing-story-start|data-landing-story-how|data-landing-story-signin/);
+  assert.doesNotMatch(read(STORY), /data-landing-story-join|noteSignUpFrom\('hero'\)/);
   assert.doesNotMatch(read(LANDING), /data-landing-story-sign-up/);
-  // The landing says it from the one switch, Admin › Waitlist's (#6633): the
+  assert.deepEqual([...html.matchAll(/<a [^>]*href="([^"]+)"/g)].map((m) => m[1]), ['/communities', '/communities'], 'both links are the door, a phone\'s and a wide screen\'s');
+  assert.equal(loadTsx(STORY).COMMUNITIES_PATH, '/communities');
+  // Beside the words from md: the picture, then the door as a card. No
+  // figures until the directory's read has brought them.
+  assert.match(html, /<div class="hidden w-\[320px\] shrink-0 flex-col items-center gap-3\.5 md:flex"><img src="\/brand\/people\.png"/);
+  assert.ok(html.indexOf('<h1') < html.lastIndexOf('/brand/people.png'), 'the words first, the picture after');
+  assert.match(html, /<a href="\/communities" data-landing-story-private="" class="flex w-full items-center [^"]* no-underline [^"]*">/);
+  assert.doesNotMatch(html, /data-landing-story-month/);
+  assert.doesNotMatch(html, new RegExp(message('auth:guest.hero.month.title')));
+
+  // THIS MONTH: the changes that went live across the public apps and the
+  // people who made them, once the read has them. A card beside the words
+  // from md; on a phone one line under the Wikipedia line.
+  const lived = renderComponent(STORY, 'Story', { compact: true, primaryClass: 'pill', onStart() {}, month: { changes: 1409, contributors: 87 } });
+  assert.equal([...lived.matchAll(/data-landing-story-month=""/g)].length, 2);
+  assert.match(lived, /<p data-landing-story-month="" class="[^"]*\bmd:hidden\b[^"]*"><span>This month<\/span><span><strong class="font-semibold [^"]*">1,409<\/strong> changes<\/span><span><strong class="font-semibold [^"]*">87<\/strong> contributors<\/span><\/p>/);
+  // …drawn as one of the site's little windows: a sun strip with its three
+  // dots and the title, the two figures in the serif under it.
+  assert.match(lived, /<div data-landing-story-month="" class="w-full border [^"]*"><div class="[^"]*bg-\[var\(--site-sun\)\][^"]*"><span class="flex gap-1" aria-hidden="true">(?:<span class="[^"]*"><\/span>){3}<\/span>This month<\/div><div class="grid grid-cols-2"><p class="[^"]*"><strong class="block font-\[family-name:var\(--site-serif\)\] [^"]*">1,409<\/strong> changes<\/p><p class="[^"]*\bborder-s\b[^"]*"><strong class="block font-\[family-name:var\(--site-serif\)\] [^"]*">87<\/strong> contributors<\/p><\/div><\/div>/);
+  // One of each is said in the singular.
+  const one = renderComponent(STORY, 'Story', { compact: true, primaryClass: 'pill', onStart() {}, month: { changes: 1, contributors: 1 } });
+  assert.match(one, />1<\/strong> change<\/span>/);
+  assert.match(one, />1<\/strong> contributor<\/span>/);
+
+  // The landing hands it the figures that ride beside the directory, and
+  // reads them off the payload in one place: nothing for a month with no
+  // change in it, a missing object, or figures that are not numbers.
+  assert.match(read(LANDING), /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+month=\{month\}/);
+  assert.match(read(LANDING), /show\.month\?\.\(monthActivityOf\(data\)\);/);
+  const { monthActivityOf } = loadTsx(LANDING);
+  assert.deepEqual(monthActivityOf({ apps: [], month: { changes: 1409, contributors: 87 } }), { changes: 1409, contributors: 87 });
+  assert.equal(monthActivityOf({ apps: [], month: null }), null);
+  assert.equal(monthActivityOf({ apps: [] }), null, 'an older server');
+  assert.equal(monthActivityOf({ month: { changes: 0, contributors: 0 } }), null, 'a zero says nothing');
+  assert.equal(monthActivityOf({ month: { changes: 'many', contributors: 3 } }), null);
+  assert.equal(monthActivityOf(null), null);
+
+  // THE BAR'S BUTTON IS THE ONE WAY TO MAKE AN ACCOUNT, and says what
+  // pressing it does from the one switch, Admin › Waitlist's (#6633): the
   // public options' `waitlist_enabled`, and the waitlist's words until they
-  // arrive, so the first paint is what the prerendered document says. The
-  // button notes itself as the way in (features/auth/sign-up-from.ts).
-  assert.match(read(LANDING), /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+waitlist=\{accountsWait\}/);
+  // arrive, so the first paint is what the prerendered document says.
+  assert.match(read(LANDING), /\{accountsWait \? t\('auth:guest\.hero\.joinWaitlist'\) : t\('auth:guest\.header\.signUp'\)\}/);
+  assert.equal(message('auth:guest.hero.joinWaitlist'), 'Join the waitlist');
+  assert.equal(message('auth:guest.header.signUp'), 'Sign up');
   assert.match(read(LANDING), /const accountsWait = newAccountsWait\(waitlistPayload\);/);
   assert.doesNotMatch(read(LANDING), /waitlist=\{NEW_ACCOUNTS_WAIT\}/);
   const { NEW_ACCOUNTS_WAIT, newAccountsWait } = loadTsx(DATA);
@@ -732,17 +791,19 @@ test('the short story heads Discover: welcome, headline, one line, what an accou
   assert.equal(newAccountsWait({}), true, 'an older server');
   assert.equal(newAccountsWait({ waitlist_enabled: true }), true);
   assert.equal(newAccountsWait({ waitlist_enabled: false }), false, 'only an explicit off');
-  // The frame and the email step read the same switch (two readers here: the
-  // landing's frame and the story; the gated frame is gone with looks v2).
+  // The frame, the page about private communities and the email step read
+  // the same switch (two `waitlist` readers here: the landing's frame and
+  // that page; the gated frame is gone with looks v2).
   assert.equal([...read(LANDING).matchAll(/waitlist=\{accountsWait\}/g)].length, 2);
+  assert.match(read(LANDING), /<GuestCommunities waitlist=\{accountsWait\} onStart=\{\(\) => setSheet\('start'\)\} \/>/);
   assert.match(read('frontend/src/features/auth/login.tsx'), /const accountsWait = newAccountsWait\(useWaitlistOptions\(\)\);/);
   assert.match(read('frontend/src/features/auth/login.tsx'), /\{accountsWait \? t\('auth:login\.otp\.lead'\) : t\('auth:login\.otp\.leadOpen'\)\}/);
   assert.doesNotMatch(message('auth:login.otp.leadOpen'), /waitlist/i);
   assert.doesNotMatch(read(LANDING), /<GuestDiscover[^>]*\bwaitlist=/, 'the card that read it is gone');
-  assert.match(read(STORY), /onClick=\{\(\) => \{ noteSignUpFrom\('hero'\); onStart\(\); \}\}/);
-  // The line invites a look; it does not promise that nothing needs an
-  // account, since a lot of the apps do.
+  // The looks' frame keeps the page it held when it was drawn (its own
+  // headline, line and button; tests/landing-frame.test.js).
   assert.equal(message('auth:guest.hero.line'), "Look around and try what we're making.");
+  assert.equal(message('auth:guest.hero.signUp'), 'Create account');
   // No examples: the real apps follow it.
   assert.doesNotMatch(html, /For example/);
   // Nothing to fit, so no steps: the layout effect leaves it alone.
@@ -908,14 +969,48 @@ test('the landing\'s declared checks hold Discover and the bar\'s Sign in, folde
   assert.equal(story.path, '/?shot=anon#landing');
   assert.match(story.expectSelector, /#landing-header \[data-landing-sign-in\]:not\(\.hidden\)/);
   assert.match(story.expectSelector, /\[data-guest-discover\] \[data-landing-story\] h1$/);
-  // The bar's Sign in and Sign up, and one button in the short story: its
-  // join button, and nothing else to press there.
-  const one = manifest.tests.find((t) => /^Landing has Sign in and Sign up in its bar, and one button to make an account under the story/.test(t.name));
+  assert.equal(story.expectText, 'The app library anyone can edit.');
+  // The bar's Sign in and its one filled button, and under the short story
+  // no button at all: the one thing to press there is the door to the page
+  // about private communities.
+  const one = manifest.tests.find((t) => /^Landing has Sign in and one filled button in its bar, and under the story no button, only the door to private communities/.test(t.name));
   assert.ok(one);
-  assert.match(one.expectSelector, /:has\(#landing-header button\[data-landing-sign-up\]\):has\(\[data-landing-story\] button\[data-landing-story-join\]\):not\(:has\(\[data-landing-story\] a\)\) #landing-header \[data-landing-sign-in\]:not\(\.hidden\)$/);
-  // Its one other button is pinned by the story's own test above, under the
-  // runner's selector cap (`MAX_TEST_SELECTOR_LEN`).
+  assert.match(one.expectSelector, /:has\(#landing-header button\[data-landing-sign-up\]\):has\(\[data-landing-story\] a\[data-landing-story-private\]\[href="\/communities"\]\):not\(:has\(\[data-landing-story\] button\)\) #landing-header \[data-landing-sign-in\]:not\(\.hidden\)$/);
+  // Under the runner's selector cap (`MAX_TEST_SELECTOR_LEN`).
   assert.ok(one.expectSelector.length <= 256);
+  // And the page behind that door, at its own address, in Discover's place.
+  const groups = manifest.tests.find((t) => t.path === '/communities?shot=anon');
+  assert.ok(groups, 'the page about private communities has a declared check');
+  assert.match(groups.expectSelector, /^#auth-landing-screen:not\(\.hidden\):not\(:has\(\[data-guest-discover\]\)\) \[data-guest-groups\]:has\(button\[data-guest-groups-start\]\)/);
+  assert.equal(groups.expectText, 'You or the group');
+});
+
+// ─── the search, behind a button ──────────────────────────────────
+
+test('the search is put away until its button is pressed, and stays in the document for the check that asks for it', () => {
+  const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
+  // At rest: the field is in the document and hidden, with the whole stack
+  // it heads (this device has pinned nothing), and the round button rides
+  // the Communities heading.
+  assert.match(html, /<div class="hidden"><label class="flex h-11 items-center gap-2 rounded-\[14px\] bg-white ps-3\.5 [^"]* hidden">/);
+  assert.match(html, /<input type="search" data-guest-search="" /);
+  assert.match(html, /<h2 class="home-area-label [^"]*"><span [^>]*>Communities<\/span><button type="button" data-guest-search-open="" aria-expanded="false" aria-label="Search apps and communities" title="Search apps and communities" class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white /);
+  // The field's own × puts it away again.
+  assert.match(html, /<button type="button" data-guest-search-close="" aria-label="Close search" title="Close search" class="flex h-11 w-11 shrink-0 /);
+  const src = read(DISCOVER);
+  assert.match(src, /const searchShown = searchOpen \|\| !!query;/, 'a search kept on the history entry shows the field with it');
+  assert.match(src, /const openSearch = \(\) => \{ focusSearch\.current = true; setSearchOpen\(true\); \};/);
+  assert.match(src, /const closeSearch = \(\) => \{ changeQuery\(''\); setSearchOpen\(false\); \};/);
+  assert.match(src, /onKeyDown=\{\(e\) => \{ if \(e\.key === 'Escape'\) closeSearch\(\); \}\}/);
+  assert.match(src, /headingAction=\{searchShown \? null : \(/, 'one control at a time: the button, or the field with its ×');
+  // The signed-in Home draws the same section with no button: its own search
+  // leads the page.
+  assert.match(read(JOIN), /<SectionHeading action=\{headingAction\}>\{heading\}<\/SectionHeading>/);
+  assert.doesNotMatch(read('frontend/src/features/home/home-join.tsx'), /headingAction/);
+  // The declared check that asks whether this Home can be searched still
+  // finds the field.
+  const manifest = JSON.parse(read('dapp.json'));
+  assert.ok(manifest.tests.some((t) => /\[data-guest-discover\]:has\(\[data-guest-search\]\)/.test(t.expectSelector || '')));
 });
 
 
@@ -970,4 +1065,58 @@ test('See what visitors see: the visitor\'s own page under a bar with the way ba
   assert.match(src, /<GuestProject\s+app=\{overview\.app\}\s+initialOverview=\{overview\}\s+preview\s+onIntent=\{inert\}\s+onOpenInside=\{open\}\s+onShare=\{inert\}\s+onAllCommunities=\{inert\}/);
   assert.match(src, /if \(e\.key === 'Escape'\) onClose\(\);/);
   assert.equal(message('project:visitorView.inert'), 'Visitors are asked to sign in here');
+});
+
+test('the list wears the website\'s look signed out only: repainted by its own hooks under the landing, its classes left alone', () => {
+  const css = read('public/css/app.css');
+  const a = css.indexOf("/* ── THE WEBSITE'S LOOK ON THE SIGNED-OUT PAGES");
+  // With the landing's own rules, between its two marks: well before the
+  // looks' hand-written blocks and generated section, which have to stay
+  // together and directly before the new look's block, itself appended last
+  // (tests/frame-app.test.js, tests/looks-css.test.js).
+  const b = css.indexOf("/* the website's look on the signed-out pages: end */");
+  assert.ok(a > 0 && b > a && b < css.indexOf("THE BELL'S SHEET") && b < css.indexOf('/* looks:begin'), 'the block sits before the looks and the new look');
+  const block = css.slice(a, b);
+  // A band's colour runs edge to edge as a border image let out to the
+  // sides, never as a viewport-sized shadow; its reach is the usable box's
+  // width, the one width the sheet reads (tests/usable-box.test.js).
+  assert.match(block, /#auth-landing-screen \.site-band \{\s+background-color: var\(--band\);\s+border-image: conic-gradient\(var\(--band\) 0 0\) fill 0 \/ 0 \/ 0 var\(--platform-usable-w\);\s+\}/);
+  assert.doesNotMatch(block, /100v(?:w|max)/);
+  // Every rule of the block is under the landing's root (or names it), so
+  // the same chips and cards on the signed-in Home are untouched.
+  const selectors = [...block.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/(^|\})\s*([^{}@]+)\{/g)].map((m) => m[2].trim()).filter(Boolean);
+  assert.ok(selectors.length > 15);
+  for (const selector of selectors) {
+    // Split a selector list on its own commas, not on those inside :is().
+    let depth = 0;
+    let part = '';
+    const parts = [];
+    for (const ch of selector) {
+      if (ch === '(') depth += 1;
+      if (ch === ')') depth -= 1;
+      if (ch === ',' && depth === 0) { parts.push(part); part = ''; } else part += ch;
+    }
+    parts.push(part);
+    for (const one of parts) assert.match(one, /#auth-landing-screen/, one.trim());
+  }
+  // The heading is a title in the serif; the search and the chips are
+  // outlined and the chosen chip is ink; a card is a white face on an ink
+  // outline with its name in the serif.
+  assert.match(block, /\[data-home-join-section\] > \.home-area-label > span:first-child \{\s+font-family: var\(--site-serif\);/);
+  assert.match(block, /:is\(\[data-guest-search-open\], \[data-home-join-kind\]\) \{\s+background-color: var\(--site-panel\);\s+color: var\(--site-ink\);\s+box-shadow: inset 0 0 0 1px var\(--site-line\);/);
+  assert.match(block, /\[data-home-join-kind\]\[aria-pressed="true"\] \{\s+background-color: var\(--site-chosen\);\s+color: var\(--site-chosen-ink\);/);
+  assert.match(block, /:is\(\[data-guest-card\], \[data-guest-featured\]\) \{\s+border: 1px solid var\(--site-line\);\s+border-radius: 14px;/);
+  assert.match(block, /\[data-guest-card-link\] \{\s+font-family: var\(--site-serif\);/);
+  // The bar's button is a sun pill with ink words on every signed-out page.
+  assert.match(block, /#auth-landing-screen #landing-header \[data-landing-sign-up\],\s+#auth-landing-screen \[data-guest-groups\] \.bg-violet-600 \{\s+background-color: var\(--site-sun\);\s+color: var\(--site-on-sun\);/);
+  // The hooks it paints by are the components' own, and the shared
+  // components carry no class of the look.
+  const discover = read(DISCOVER);
+  for (const hook of ['data-guest-search-open', 'data-guest-search=', 'data-guest-card=', 'data-guest-featured=', 'data-guest-card-link', 'data-guest-card-about']) assert.ok(discover.includes(hook), hook);
+  const join = read('frontend/src/features/home/communities-to-join.tsx');
+  for (const hook of ['data-home-join-section', 'data-home-join-kind', 'guest-join-featured-label', 'data-home-join-rest']) assert.ok(join.includes(hook), hook);
+  assert.doesNotMatch(join, /--site-/);
+  // The faces it names are the ones the stylesheet already declares.
+  assert.match(css, /@font-face \{\s+font-family: 'Young Serif';/);
+  assert.match(css, /@font-face \{\s+font-family: 'Geist';/);
 });

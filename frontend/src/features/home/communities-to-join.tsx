@@ -25,7 +25,7 @@
  * GET /api/public/apps, which answers every public project at once today,
  * so "more" pages through it here.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Chip, ChipRail } from '@/components/ui/chip';
@@ -45,7 +45,7 @@ export function joinOrder(apps: readonly GuestApp[]): GuestApp[] {
   return [...featured, ...sortApps(apps, 'trending').filter((a) => !first.has(a.slug))];
 }
 
-export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onRetry }: {
+export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onRetry, headingAction }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** The directory could not be read: say so, with a way to try again. */
@@ -57,6 +57,8 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   query: string;
   /** Read the directory again, from the line that says it could not be. */
   onRetry?: () => void;
+  /** A control at the end of the heading's row: the visitor's search button (../guest/guest-discover.tsx). */
+  headingAction?: ReactNode;
 }) {
   const t = useMessages('home');
   const ta = useMessages('auth');
@@ -109,7 +111,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
     // it); the landing draws the same section signed out, in the same
     // document, so it goes without one there.
     <section id={signedIn ? 'home-join-section' : undefined} data-home-join-section="" className="px-3 pb-6" aria-busy={apps ? undefined : true}>
-      <SectionHeading>{heading}</SectionHeading>
+      <SectionHeading action={headingAction}>{heading}</SectionHeading>
       {!query && kinds.length ? (
         <ChipRail role="group" aria-label={ta('auth:guest.categories.label')} className="-mx-3 gap-2 px-3 pt-1 pb-3">
           <Chip size="bar" className="min-h-11" selected={!kind} data-home-join-kind="all" onClick={() => setKind(null)}>
