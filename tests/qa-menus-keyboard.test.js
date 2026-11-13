@@ -354,8 +354,9 @@ test('the conversation composer and the New thread box share the rule, and say i
   for (const [name, src, text] of [['composer.tsx', composer, 'value'], ['new-thread.tsx', newThread, 'words']]) {
     assert.match(src, /import \{ enterSends, useEnterSends \} from '\.\.\/\.\.\/lib\/enter-sends';/, name);
     assert.match(src, /const enterKey = useEnterSends\(\);/, name);
-    // The hint: a keyboard device, text in the box, and not beside the count.
-    assert.ok(src.includes(`const keysHint = enterKey && ${text}.length > 0 && !nearLimit;`), name);
+    // The hint: a keyboard device, text already on a second line (so the first
+    // keystroke never moves the box, #4202), and not beside the count.
+    assert.ok(src.includes(`const keysHint = enterKey && ${text}.includes('\\n') && !nearLimit;`), name);
     assert.ok(src.includes('{keysHint ? <p className="mt-1 px-3 text-end text-[11px] leading-[15px] text-zinc-500 dark:text-zinc-400" data-enter-hint="">{t(\'messages:composer.newLineHint\')}</p> : null}'), name);
     // The tooltip names the key only where the key sends.
     assert.ok(src.includes("aria-label={t('messages:composer.send')} title={enterKey ? t('messages:composer.sendShortcut') : undefined}"), name);

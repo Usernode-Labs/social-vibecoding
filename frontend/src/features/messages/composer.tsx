@@ -798,7 +798,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const planReply = reply?.sender.bot && reply.metadata?.homeroomBot?.kind === 'plan' ? reply.metadata.homeroomBot : null;
   // Where the count turns amber, and the only length a phone shows it at.
   const nearLimit = value.length > 7600;
-  const keysHint = enterKey && value.length > 0 && !nearLimit;
+  const keysHint = enterKey && value.includes('\n') && !nearLimit;
   // #6035, Drea: the draft as it will be sent, drawn by the same renderer a
   // sent message is. It is shown once the draft carries formatting, so a
   // plain message's box stays the one row it was; the field keeps the
@@ -924,15 +924,18 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={dictating || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={t('messages:composer.send')} title={enterKey ? t('messages:composer.sendShortcut') : undefined}><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
-      {/* What the keys do, said where there is a keyboard and once there is
-          text to break: an empty box stays the one row it was, and a touch
-          device, where Enter is a new line already, never draws it. It
-          gives its line to the count once the text nears the limit, and it
-          is in the count's own muted ink. */}
+      {/* What the keys do, said where there is a keyboard and only once the
+          text already runs to a second line (typed with Shift + Enter, or
+          pasted): the box has grown by then, so the first keystroke still
+          does not push the composer up by a line (#4202). A touch device,
+          where Enter is a new line already, never draws it. It gives its
+          line to the count once the text nears the limit, and it is in the
+          count's own muted ink. */}
       {keysHint ? <p className="mt-1 px-3 text-end text-[11px] leading-[15px] text-zinc-500 dark:text-zinc-400" data-enter-hint="">{t('messages:composer.newLineHint')}</p> : null}
       {/* The count's line is not laid out until the text nears the limit
           (`data-near-limit`, app.css): on a phone since #3735, and at every
-          width since #4202, so an empty card is one row. */}
+          width since #4202, so the card stays one row and the first
+          keystroke does not push the composer up by a line. */}
       <div className="messages-composer-count mt-1 px-1 flex justify-end h-[15px]" data-near-limit={nearLimit ? '' : undefined} aria-hidden={!value.length}><span className={`text-[10px] leading-[15px] ${nearLimit ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
       </div>
     </ChatComposerBar>

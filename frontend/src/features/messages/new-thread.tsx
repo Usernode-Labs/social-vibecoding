@@ -369,8 +369,9 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
 
   // Where the count turns amber, as in every other box.
   const nearLimit = words.length > 7600;
-  // What the keys do, as under every message box (./composer.tsx).
-  const keysHint = enterKey && words.length > 0 && !nearLimit;
+  // What the keys do, once the text runs to a second line, as under every
+  // message box (./composer.tsx).
+  const keysHint = enterKey && words.includes('\n') && !nearLimit;
 
   return (
     <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:newThread.title')} data-bot-new-thread-pane="" data-bot-new-thread-own={own || undefined} data-bot-new-thread-setup={setup ? builder : undefined}>
