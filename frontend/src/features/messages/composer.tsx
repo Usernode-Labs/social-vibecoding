@@ -1,10 +1,10 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 
 import { ChatComposerBar } from '@/components/ui/chat';
-import { ArrowUpIcon, ArrowUpTrayIcon, BoldIcon, HeadingIcon, ItalicIcon, ListBulletIcon, PaperClipIcon, PlusIcon, QuoteIcon, UnderlineIcon } from '@/components/ui/icons';
+import { ArrowUpIcon, ArrowUpTrayIcon, BoldIcon, CopyIcon, HeadingIcon, ItalicIcon, LinkIcon, ListBulletIcon, PaperClipIcon, PlusIcon, QuoteIcon, StrikethroughIcon, UnderlineIcon } from '@/components/ui/icons';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import * as api from './api';
-import { applyFormat, hasFormatting, type FormatKind } from './composer-format';
+import { applyFormat, hasFormatting, normalizeLinkUrl, type FormatKind } from './composer-format';
 import { waitingFor } from './waiting-for';
 import { channels, draftAttachmentsFor, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setDraftAttachments, setReply, takePendingAttach, takePendingShare, useMessagesSnapshot, type ComposerScope } from './store';
 import { mirrorsReplies } from './bot-question';
@@ -32,9 +32,21 @@ const FORMAT_BUTTONS: Array<{ kind: FormatKind; label: string; Icon: typeof Bold
   { kind: 'bold', label: 'messages:composer.format.bold', Icon: BoldIcon },
   { kind: 'italic', label: 'messages:composer.format.italic', Icon: ItalicIcon },
   { kind: 'underline', label: 'messages:composer.format.underline', Icon: UnderlineIcon },
+  { kind: 'strike', label: 'messages:composer.format.strike', Icon: StrikethroughIcon },
   { kind: 'heading', label: 'messages:composer.format.heading', Icon: HeadingIcon },
   { kind: 'quote', label: 'messages:composer.format.quote', Icon: QuoteIcon },
   { kind: 'bullet', label: 'messages:composer.format.bullets', Icon: ListBulletIcon },
+  { kind: 'link', label: 'messages:composer.format.link', Icon: LinkIcon },
+];
+
+// #6653: the same inline marks on selected words, offered where the pointer
+// is, plus Copy. Every row is one action; the menu has no primary.
+const SELECT_MENU_ACTIONS: Array<{ kind: FormatKind; label: string; Icon: typeof BoldIcon }> = [
+  { kind: 'bold', label: 'messages:composer.format.bold', Icon: BoldIcon },
+  { kind: 'italic', label: 'messages:composer.format.italic', Icon: ItalicIcon },
+  { kind: 'underline', label: 'messages:composer.format.underline', Icon: UnderlineIcon },
+  { kind: 'strike', label: 'messages:composer.format.strike', Icon: StrikethroughIcon },
+  { kind: 'quote', label: 'messages:composer.format.quote', Icon: QuoteIcon },
 ];
 
 /** The reference alone, as the server takes it: the staged title stays here. */
@@ -133,6 +145,18 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const [addOpen, setAddOpen] = useState(false);
   const addRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // #6653: selected words can be formatted from a right-click menu, and a
+  // link asks for its address in the formatting row's place.
+  const [selMenu, setSelMenu] = useState<{ x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuRange = useRef<{ start: number; end: number } | null>(null);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkValue, setLinkValue] = useState('');
+  const linkRange = useRef<{ start: number; end: number } | null>(null);
+  const linkInputRef = useRef<HTMLInputElement>(null);
+  // A phone's long press keeps its own text menu (the Android double menu
+  // app-grid.tsx documents), so only a pointer that is not touch opens ours.
+  const lastPointer = useRef('');
   // #1408: grow with the message, up to the max-height already in app.css.
   useAutoGrow(inputRef, value);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -145,6 +169,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // A scope change is still the one place the composer reads a draft back.
   useEffect(() => {
     setValue(draftFor(scope)); setAttachments(draftAttachmentsFor(scope)); setChip(null, null); setPrompt(null); setError(''); setAskReply(false);
+    setSelMenu(null); setLinkOpen(false); menuRange.current = null; linkRange.current = null;
   }, [scope]);
 
   /**
@@ -488,6 +513,158 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     updateValue(result.value);
   }
 
+  // ── #6653: formatting what is selected, from a right-click menu ──────
+  //
+  // The menu and the link field both go through the same `applyFormat` the
+  // row uses, so pressing an item twice unwraps exactly as the button does.
+  // A menu closes before its edit, and the range it held is put back first:
+  // the textarea keeps its selection while the menu has focus.
+  const restoreRange = (range: { start: number; end: number } | null) => {
+    const input = inputRef.current;
+    if (!input || !range) return false;
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(range.start, range.end);
+    return true;
+  };
+
+  function openLinkField() {
+    const input = inputRef.current;
+    const start = input?.selectionStart ?? value.length;
+    const end = input?.selectionEnd ?? start;
+    linkRange.current = { start, end };
+    setSelMenu(null);
+    setLinkValue('');
+    setLinkOpen(true);
+  }
+
+  function applyLink(raw: string) {
+    const input = inputRef.current;
+    const url = normalizeLinkUrl(raw);
+    if (!input || !url) return;
+    const range = linkRange.current
+      || { start: input.selectionStart ?? input.value.length, end: input.selectionEnd ?? input.value.length };
+    const result = applyFormat(input.value.slice(0, 8000), range.start, range.end, 'link', url);
+    formatCaret.current = { start: result.start, end: result.end };
+    linkRange.current = null;
+    setLinkOpen(false);
+    input.focus({ preventScroll: true });
+    updateValue(result.value);
+  }
+
+  function cancelLink() {
+    const range = linkRange.current;
+    setLinkOpen(false);
+    linkRange.current = null;
+    restoreRange(range);
+  }
+
+  function runMenuFormat(kind: FormatKind) {
+    const range = menuRange.current;
+    setSelMenu(null);
+    if (restoreRange(range)) formatSelected(kind);
+  }
+
+  function linkFromMenu() {
+    linkRange.current = menuRange.current;
+    setSelMenu(null);
+    setLinkValue('');
+    setLinkOpen(true);
+  }
+
+  async function copySelection() {
+    const range = menuRange.current;
+    const input = inputRef.current;
+    setSelMenu(null);
+    if (!input || !range) return;
+    const words = input.value.slice(range.start, range.end);
+    restoreRange(range);
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('no clipboard');
+      await navigator.clipboard.writeText(words);
+    }
+    catch {
+      // The older path, and the one a refused permission leaves: the words
+      // are already selected in the field. No "Copied" line is shown.
+      try { document.execCommand('copy'); } catch { /* nothing more to try */ }
+    }
+  }
+
+  function onTextareaContextMenu(event: ReactMouseEvent<HTMLTextAreaElement>) {
+    // A channel's box only: a direct message keeps the browser's menu, and a
+    // long press on a phone keeps the phone's own text menu.
+    if (!isChannel || dictating || lastPointer.current === 'touch') return;
+    const input = event.currentTarget;
+    const start = input.selectionStart;
+    const end = input.selectionEnd;
+    if (start === null || end === null || start === end) return;
+    event.preventDefault();
+    menuRange.current = { start, end };
+    setSelMenu({ x: event.clientX, y: event.clientY });
+  }
+
+  // The menu sits at the pointer's bottom-left, kept inside the viewport,
+  // and flips below the pointer when there is no room above it. Measured in
+  // a layout effect, so it never paints where it does not belong.
+  useLayoutEffect(() => {
+    const element = menuRef.current;
+    if (!selMenu || !element) return;
+    const rect = element.getBoundingClientRect();
+    const pad = 8;
+    const left = Math.max(pad, Math.min(selMenu.x, window.innerWidth - rect.width - pad));
+    let top = selMenu.y - rect.height;
+    if (top < pad) top = selMenu.y + 4;
+    top = Math.max(pad, Math.min(top, window.innerHeight - rect.height - pad));
+    element.style.left = `${left}px`;
+    element.style.top = `${top}px`;
+  }, [selMenu]);
+
+  // The menu is a menu from the keyboard too: the first item takes focus,
+  // the arrows move, Escape closes and gives the field back. A press
+  // outside, a scroll or a resize closes it.
+  useEffect(() => {
+    if (!selMenu) return undefined;
+    const element = menuRef.current;
+    const items = () => Array.from(element?.querySelectorAll<HTMLElement>('[role="menuitem"]') || []);
+    items()[0]?.focus({ preventScroll: true });
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setSelMenu(null);
+        inputRef.current?.focus({ preventScroll: true });
+        return;
+      }
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      const list = items();
+      if (!list.length) return;
+      event.preventDefault();
+      const at = list.indexOf(document.activeElement as HTMLElement);
+      const step = event.key === 'ArrowDown' ? 1 : -1;
+      list[(at + step + list.length) % list.length]?.focus({ preventScroll: true });
+    };
+    const onDown = (event: PointerEvent) => {
+      if (!element?.contains(event.target as Node)) setSelMenu(null);
+    };
+    const close = () => setSelMenu(null);
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    window.addEventListener('blur', close);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('blur', close);
+    };
+  }, [selMenu]);
+
+  // The link field takes the caret when it opens, so the address can be
+  // typed straight away.
+  useLayoutEffect(() => {
+    if (linkOpen) linkInputRef.current?.focus({ preventScroll: true });
+  }, [linkOpen]);
+
   function insertMention(username: string) {
     const input = inputRef.current;
     const cursor = input?.selectionStart ?? value.length;
@@ -651,6 +828,25 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
           </div>
         </div>
       ) : null}
+      {selMenu ? (
+        <div ref={menuRef} className="messages-select-menu" role="menu" aria-label={t('messages:composer.format.menu')} style={{ left: `${selMenu.x}px`, top: `${selMenu.y}px` }} onMouseDown={(event) => event.preventDefault()}>
+          {SELECT_MENU_ACTIONS.map(({ kind, label, Icon }) => (
+            <button key={kind} type="button" role="menuitem" onClick={() => runMenuFormat(kind)}>
+              <Icon aria-hidden="true" />
+              <span>{t(label)}</span>
+            </button>
+          ))}
+          <button type="button" role="menuitem" onClick={linkFromMenu}>
+            <LinkIcon aria-hidden="true" />
+            <span>{t('messages:composer.format.link')}</span>
+          </button>
+          <hr />
+          <button type="button" role="menuitem" onClick={() => { void copySelection(); }}>
+            <CopyIcon aria-hidden="true" />
+            <span>{t('messages:composer.format.copy')}</span>
+          </button>
+        </div>
+      ) : null}
       {preview ? (
         <div className="messages-format-preview" role="group" aria-label={t('messages:composer.format.preview')}>
           <span className="messages-format-preview-label" aria-hidden="true">{t('messages:composer.format.preview')}</span>
@@ -659,10 +855,30 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
           </div>
         </div>
       ) : null}
+      {isChannel && linkOpen ? (
+        <div className="messages-format-link">
+          <input
+            ref={linkInputRef}
+            type="url"
+            inputMode="url"
+            dir="auto"
+            value={linkValue}
+            onChange={(event) => setLinkValue(event.target.value)}
+            placeholder={t('messages:composer.format.linkPlaceholder')}
+            aria-label={t('messages:composer.format.linkField')}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') { event.preventDefault(); applyLink(linkValue); }
+              else if (event.key === 'Escape') { event.preventDefault(); cancelLink(); }
+            }}
+          />
+          <button type="button" className="messages-format-link-cancel" onMouseDown={(event) => event.preventDefault()} onClick={cancelLink}>{t('messages:composer.format.linkCancel')}</button>
+          <button type="button" className="messages-format-link-add" onMouseDown={(event) => event.preventDefault()} onClick={() => applyLink(linkValue)} disabled={!normalizeLinkUrl(linkValue)}>{t('messages:composer.format.linkAdd')}</button>
+        </div>
+      ) : null}
       {isChannel ? (
-        <div className="messages-format-bar" role="toolbar" aria-label={t('messages:composer.format.bar')}>
+        <div className="messages-format-bar" role="toolbar" aria-label={t('messages:composer.format.bar')} style={linkOpen ? { display: 'none' } : undefined}>
           {FORMAT_BUTTONS.map(({ kind, label, Icon }) => (
-            <button key={kind} type="button" className="messages-format-btn" data-format={kind} onMouseDown={(event) => event.preventDefault()} onClick={() => formatSelected(kind)} disabled={dictating} aria-label={t(label)} title={t(label)}>
+            <button key={kind} type="button" className="messages-format-btn" data-format={kind} onMouseDown={(event) => event.preventDefault()} onClick={() => (kind === 'link' ? openLinkField() : formatSelected(kind))} disabled={dictating} aria-label={t(label)} title={t(label)}>
               <Icon aria-hidden="true" />
             </button>
           ))}
@@ -690,7 +906,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} dir="auto" value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); else if (onFormatKey(event)) return; }} onBlur={() => notifyTyping(false, threadRootId)} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : (prompt || t('messages:composer.placeholder'))} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
+        <textarea ref={inputRef} dir="auto" value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); else if (onFormatKey(event)) return; }} onBlur={() => notifyTyping(false, threadRootId)} onPointerDown={(event) => { lastPointer.current = event.pointerType; }} onContextMenu={onTextareaContextMenu} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : (prompt || t('messages:composer.placeholder'))} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
         <SpeakButton scope={`messages:${scope}`} getText={() => inputRef.current?.value || ''} onText={updateValue} maxLength={8000} onBusyChange={setDictating} disabled={!boxShown} />
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={dictating || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={t('messages:composer.send')}><ArrowUpIcon aria-hidden="true" /></button>
       </div>
