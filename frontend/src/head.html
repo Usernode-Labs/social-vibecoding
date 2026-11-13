@@ -459,10 +459,14 @@
     // off by default). The same head-blocking pattern as window.Display:
     // the stored choice lands on <html> before app.css, whose rules read
     // it, is applied, so a look never flashes in after first paint.
-    //   'homeroom:skin'  → 'brand'  the new look (light mode only)
+    //   'homeroom:skin'  → 'brand'  "Paper, simplified, with brand
+    //                      styling": the standard pages in the website's
+    //                      colours and typefaces (light mode only). The
+    //                      id is the old New look's, whose switch is gone.
     //                    → 'glass', 'paper', 'pastel', 'mosaic',
     //                      'sunrise'  the five looks of the one frame
-    //                      (light and dark; an admin's preview)
+    //                      (light and dark)
+    //                      All six are the Look menu's, an admin's preview.
     //                    → anything else, a retired look's id among them
     //                      ('brandkit', 'workbench', 'today', 'playground',
     //                      gone 12 Nov 2026), reads as the standard look
@@ -479,9 +483,10 @@
     // parameter out of the address, so a reload keeps what was picked.
     window.Skin = (function () {
       const SKIN_KEY = 'homeroom:skin';
-      // 'brand' is New look; the five after it are the looks of the one
-      // frame (the 2026-11-06 screen tour), in the tour's order. The same
-      // list, less 'brand', is FRAME_SKINS in src/lib/skin.ts.
+      // 'brand' keeps the standard pages; the five after it are the looks
+      // of the one frame (the 2026-11-06 screen tour), in the tour's order.
+      // The same list is MENU_SKINS in src/lib/skin.ts and, less 'brand',
+      // its FRAME_SKINS.
       const SKINS = ['brand', 'glass', 'paper', 'pastel', 'mosaic', 'sunrise'];
       const _listeners = [];
 

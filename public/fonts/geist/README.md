@@ -1,10 +1,12 @@
 # public/fonts/geist — the Geist typeface, self-hosted
 
 Geist is the sans-serif of the Homeroom brand kit. The shell uses it only for
-the **new look**, an experiment that is off by default (Settings ›
-Experimental; the head's `window.Skin` sets `data-skin="brand"` on `<html>`).
-The `@font-face` in `public/css/app.css` is used only by rules scoped to that
-attribute, so a browser with the experiment off never downloads the file.
+the **brand look** ("Paper, simplified, with brand styling"), one of the
+looks of Settings › Experimental › Look, off by default (the head's
+`window.Skin` sets `data-skin="brand"` on `<html>`; until 13 Nov 2026 the
+New look's own switch did). The `@font-face` in `public/css/app.css` is used
+only by rules scoped to that attribute, so a browser without the look never
+downloads the file.
 
 Served from our own origin, like `public/vendor/`, so the shell still makes
 no cross-origin asset requests.
