@@ -5,8 +5,9 @@
  * ONE PINNED GRID: these used to fill a second section of their own, Pinned
  * communities, under Pinned apps. They are tiles of the one Pinned grid now
  * (`#app-list`, ./home.js `Home.onHome`): a community pinned here puts its
- * app's tile beside the apps you pinned, and a tap on any tile asks which you
- * meant, the app or its community (./pin-chooser.tsx). home.js reads this
+ * app's tile beside the apps you pinned. A tap on a tile opens the app, and
+ * the open app's header has the way to its community
+ * (../header/in-app-actions.tsx). home.js reads this
  * store through `window.HomePinsStore` (published at the bottom), the way
  * tests and the legacy half reach `HomeGridStore`.
  *

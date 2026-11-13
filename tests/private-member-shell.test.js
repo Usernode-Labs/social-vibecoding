@@ -35,7 +35,7 @@ test('the private member\'s walk: the three cards every newcomer gets, and no wa
   assert.deepEqual(steps.map((s) => [s.title, s.text]), [
     ['Welcome to Homeroom', 'Best Brunch lives here, on Home.'],
     ['Homeroom bot', 'It\'s in the Homeroom bot tab. Ask it to make any changes to Best Brunch.'],
-    ['Communities', 'Tap Best Brunch and choose Go to community for its hub. Invite people and decide what changes.'],
+    ['Communities', 'Open Best Brunch, then use the people button at the top for its hub. Invite people and decide what changes.'],
   ]);
   // The group's app from a ready-made starter: its example on the bot card.
   const fromStarter = homeWalkSteps({ slug: 'best-brunch', name: 'Best Brunch', example: 'add a price range to each place' });

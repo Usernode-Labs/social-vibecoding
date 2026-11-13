@@ -295,9 +295,11 @@ is no replay plan to write and nothing to verify locally.
   (`home_community_pins`, `services/home-pins.js`, `/api/me/home-pins`):
   a community and its app are one tile (`Home.onHome` in
   `features/home/home.js`), wearing the votes its community waits on you
-  for, and a tap asks which you meant, Open app or Go to community
-  (`features/home/pin-chooser.tsx`: a popover under the tile, placed like
-  the vote popover, or the kit's sheet on touch); the grid ends on Needs
+  for, and a tap opens the app, as an app icon does everywhere. The way to
+  its community is on the open app: the header's Community button
+  (`features/header/in-app-actions.tsx`: a people glyph on a phone, the
+  word from `sm`, wearing the votes waiting on you), which opens the hub,
+  whose Open app is the way back; the grid ends on Needs
   you (while a vote waits), All communities (the sheet of the ones you are
   in that have no tile) and New community; then Challenges as a sideways
   row, then **Communities to join** (the public directory: **Featured**,

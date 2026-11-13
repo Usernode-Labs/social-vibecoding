@@ -5,7 +5,8 @@
 // `Home.onHome`), the tile wears the votes its community waits on you for,
 // Needs you and All communities end the grid before New community, taking a
 // tile off unpins both of the pins that can put it there, and a tap on a tile
-// opens the chooser (pin-chooser.tsx) instead of the app.
+// opens the app, whose header has the Community button
+// (features/header/in-app-actions.tsx; tests/in-app-actions.test.js).
 //
 // home.js runs here as classic script text in a vm (./helpers/home-modules
 // strips its imports), with the two stores it reads off `window` faked: the
@@ -207,19 +208,15 @@ test('a stored arrangement is not repaired before the pins are read', () => {
   assert.equal(Home._layouts[4].length, 2);
 });
 
-test('the grid opens the chooser on a tap, and the chooser offers the app and its community', () => {
+test('a tap on a tile opens the app, with no chooser in between', () => {
   const grid = read('frontend/src/features/home/app-grid.tsx');
-  assert.match(grid, /openPinChooser\(\{ slug: app\.slug, name: app\.name, votes: app\.votes \}, el\)/);
-  assert.doesNotMatch(grid, /\(window as any\)\.App\?\.navigateToApp\(app\.slug\);\n\s*\}\}/,
-    'a tap no longer opens the app straight away');
-  assert.match(grid, /<PinChooser \/>/);
-  const chooser = read('frontend/src/features/home/pin-chooser.tsx');
-  assert.match(chooser, /placeUnderAnchor\(/, 'placed like the vote popover');
-  assert.match(chooser, /useAnchoredDismiss\(/, 'dismissed like the vote popover');
-  assert.match(chooser, /kit\.sheet\(/, 'a bottom sheet on touch, like the vote sheet');
-  assert.match(chooser, /data-pin-choice="app"/);
-  assert.match(chooser, /data-pin-choice="community"/);
-  assert.match(chooser, /win\(\)\?\.Home\?\.openHub\?\.\(slug\)/);
+  assert.match(grid, /const open = \(\) => \{ \(window as any\)\.App\?\.navigateToApp\(app\.slug\); \};/);
+  assert.match(grid, /if \(!app\.clickable\) return;\n\s*open\(\);/);
+  assert.doesNotMatch(grid, /PinChooser|pin-chooser/);
+  assert.equal(fs.existsSync(path.join(ROOT, 'frontend/src/features/home/pin-chooser.tsx')), false,
+    'the tap chooser was tried and dropped: the community has its button on the open app');
+  // The door to the community is the running app's header button.
+  assert.match(read('frontend/src/features/header/in-app-actions.tsx'), /id="header-in-app-community"/);
 });
 
 test('Home draws one Pinned section: the Pinned communities section is retired', () => {
@@ -227,6 +224,5 @@ test('Home draws one Pinned section: the Pinned communities section is retired',
   assert.doesNotMatch(index, /<PinnedCommunities \/>/);
   const home = JSON.parse(read('frontend/locales/en/home.json'));
   assert.equal(home['grid.heading'].text, 'Pinned');
-  assert.equal(home['chooser.openApp'].text, 'Open app');
-  assert.equal(home['chooser.community'].text, 'Go to community');
+  assert.equal(Object.keys(home).some((key) => key.startsWith('chooser.')), false);
 });

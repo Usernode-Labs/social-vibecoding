@@ -33,7 +33,7 @@ test('the walk on Home: three cards, each ringing one place, with Next, and Done
   assert.deepEqual(steps.map((s) => [s.screen, s.target, s.title, s.text]), [
     ['home', '#app-list .app-card[data-slug="sunday-run-club"]', 'Welcome to Homeroom', 'Sunday Run Club lives here, on Home.'],
     ['home', '#platform-tab-ai', 'Homeroom bot', 'It\'s in the Homeroom bot tab. Ask it to make any changes to Sunday Run Club.'],
-    ['home', '#app-list .app-card[data-slug="sunday-run-club"]', 'Communities', 'Tap Sunday Run Club and choose Go to community for its hub. Invite people and decide what changes.'],
+    ['home', '#app-list .app-card[data-slug="sunday-run-club"]', 'Communities', 'Open Sunday Run Club, then use the people button at the top for its hub. Invite people and decide what changes.'],
   ]);
   assert.deepEqual(homeWalkSteps({ slug: 'sunday-run-club', name: 'Sunday Run Club', example: null }), steps, 'null is no example');
   // A project made from a ready-made starter: its example change, in
@@ -42,7 +42,7 @@ test('the walk on Home: three cards, each ringing one place, with Next, and Done
   assert.deepEqual(best.map((s) => [s.target, s.title, s.text]), [
     ['#app-list .app-card[data-slug="best-eats"]', 'Welcome to Homeroom', 'Best Eats lives here, on Home.'],
     ['#platform-tab-ai', 'Homeroom bot', 'Ask it for changes, like “add a cheap eats tier”.'],
-    ['#app-list .app-card[data-slug="best-eats"]', 'Communities', 'Tap Best Eats and choose Go to community for its hub. Invite people and decide what changes.'],
+    ['#app-list .app-card[data-slug="best-eats"]', 'Communities', 'Open Best Eats, then use the people button at the top for its hub. Invite people and decide what changes.'],
   ]);
   const plain = homeWalkSteps({ slug: 'best-eats', name: 'Best Eats' });
   assert.deepEqual(best.map(({ text, ...rest }) => rest), plain.map(({ text, ...rest }) => rest), 'only the words change');
@@ -52,8 +52,9 @@ test('the walk on Home: three cards, each ringing one place, with Next, and Done
   assert.equal(steps[0].target, tileOf('sunday-run-club'), 'the tile in Home\'s own grid, never a Discover card');
   // One Home (#6361): no Communities tab; its community's own tile on Home,
   // which its maker's membership pinned (one-home-pins.sql). The one Pinned
-  // grid draws a community and its app as ONE tile, whose tap offers Go to
-  // community, so the third card rings the project's tile too.
+  // grid draws a community and its app as ONE tile; its tap opens the app,
+  // whose header has the Community button, so the third card rings the
+  // project's tile too.
   const { communityTileOf } = loadTsx(`${DIR}/tour-steps.ts`);
   assert.equal(steps[2].target, communityTileOf('sunday-run-club'));
   assert.equal(communityTileOf('sunday-run-club'), tileOf('sunday-run-club'));

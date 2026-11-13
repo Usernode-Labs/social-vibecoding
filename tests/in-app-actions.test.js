@@ -89,13 +89,50 @@ test('the project\'s page keeps Suggest: its Hub, places and requests are the sa
   assert.equal(render({ tab: 'other' }), '', 'not a project screen');
 });
 
-test('Suggest shows on its own, and the vote pill is gone (#5419)', () => {
-  // Even with owed votes in the store, the header carries no pill: the count
-  // lives on the mark's menu row and the Communities tab's Needs you feed.
+test('the vote pill stays gone (#5419): the count rides the Community button, never a control of its own', () => {
+  // #5419 took the "N to vote" pill off this bar: a second control asking
+  // for a vote. With owed votes in the store there is still no such pill;
+  // the number is a small mark on the one button that goes to the community.
   const html = render({});
   assert.match(html, /id="header-in-app-suggest"/);
   assert.doesNotMatch(html, /header-in-app-to-vote/);
-  assert.doesNotMatch(html, /to vote/);
+  assert.doesNotMatch(html, />\d+ to vote</, 'no visible "N to vote" words on the bar');
+});
+
+test('a running app\'s header has the Community button: its hub, one tap away', () => {
+  const html = render({});
+  const tag = html.match(/<a id="header-in-app-community"[^>]*>/)?.[0] ?? '';
+  assert.ok(tag, 'the button is drawn on the App tab');
+  assert.match(tag, /href="#app\/recipe-box\/dev\/hub"/, 'a real link to the hub');
+  assert.match(tag, /aria-label="Go to community, 2 to vote"/, 'named with the votes waiting');
+  assert.match(tag, /data-votes="2"/);
+  // Shown on a phone too (no bare `hidden`), as the glyph alone: the word
+  // comes back from sm.
+  const classes = tag.match(/class="([^"]+)"/)?.[1] ?? '';
+  assert.doesNotMatch(classes, /(^| )hidden( |$)/, 'the button is displayed on a phone');
+  assert.match(classes, /(^| )inline-flex( |$)/);
+  assert.match(html, /<span class="hidden sm:inline">Community<\/span>/);
+  // The number: on the disc's corner on a phone, inside the pill from sm.
+  assert.match(html, /sm:hidden absolute[^"]*"[^>]*>2<\/span>/);
+  assert.match(html, /hidden sm:flex[^"]*"[^>]*>2<\/span>/);
+  // A plain click is the door to the hub (Home.openHub names the place).
+  assert.match(COMPONENT, /win\.Home\.openHub\(slug\);/);
+  assert.match(COMPONENT, /if \(win\.NavLink\?\.isNativeClick\?\.\(event\)\) return;/);
+});
+
+test('with nothing waiting the Community button says nothing more, and an unchosen community owes nothing', () => {
+  for (const scope of [{ needs: 0 }, { needs: 3, unchosen: true }]) {
+    const html = render({}, scope);
+    const tag = html.match(/<a id="header-in-app-community"[^>]*>/)?.[0] ?? '';
+    assert.match(tag, /aria-label="Go to community"/, JSON.stringify(scope));
+    assert.doesNotMatch(tag, /data-votes=/);
+    assert.doesNotMatch(html, /sm:hidden absolute/, 'no number at zero');
+  }
+});
+
+test('the Community button is the App tab\'s: on the project\'s own page you are already there', () => {
+  assert.doesNotMatch(render({ tab: 'dev' }), /header-in-app-community/);
+  assert.match(render({ tab: 'dev' }), /id="header-in-app-suggest"/);
 });
 
 test('Suggest is hidden on a phone and returns below sm (#5367)', () => {

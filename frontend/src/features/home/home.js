@@ -361,8 +361,9 @@ const Home = {
   // Home had two pinned sections: Pinned apps (this grid, the apps above)
   // and Pinned communities (GET /api/me/home-pins, a list of its own). A
   // community and its app are one to one, so they are one grid now: a
-  // community pinned on Home puts its app's tile here, and a tap on any tile
-  // asks which of the two you meant (./pin-chooser.tsx). The pins are read
+  // community pinned on Home puts its app's tile here. A tap opens the app,
+  // and the open app's header carries the Community button
+  // (../header/in-app-actions.tsx). The pins are read
   // off ./home-pins-store.ts's `window.HomePinsStore` at call time; with no
   // store (a test sandbox, signed out) there are none and the grid is
   // exactly the apps above.

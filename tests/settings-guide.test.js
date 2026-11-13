@@ -111,8 +111,9 @@ test('the words stay true: the tabs as the bar names them, and no rule it did no
   assert.equal(message('home:grid.heading'), 'Pinned');
   assert.equal(message('home:communities.all'), 'All communities');
   assert.equal(message('home:create.label'), 'New community');
-  assert.equal(message('home:chooser.openApp'), 'Open app');
-  assert.equal(message('home:chooser.community'), 'Go to community');
+  // The people button the guide names is the running app's header button.
+  assert.match(message('settings:guide.place.apps.body'), /the people button at the top goes to its community/);
+  assert.equal(message('core:header.inApp.communityLabel'), 'Go to community');
   assert.equal(message('home:join.heading'), 'Communities to join');
   assert.equal(message('home:communities.needs'), 'Needs you');
   assert.equal(message('project:communityCard.openApp'), 'Open app');

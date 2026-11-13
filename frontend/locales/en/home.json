@@ -21,7 +21,7 @@
   },
   "grid.heading": {
     "text": "Pinned",
-    "description": "Heading over the grid of tiles on the Home screen: the apps and communities this person keeps a tile for. A tap on a tile asks whether to open the app or its community. The same word as in \"Pin to Home\"."
+    "description": "Heading over the grid of tiles on the Home screen: the apps and communities this person keeps a tile for. A tap on a tile opens its app. The same word as in \"Pin to Home\"."
   },
   "grid.loading": {
     "text": "Loading your apps",
@@ -1262,25 +1262,5 @@
   "frame.challengesGoing_other": {
     "text": "still open",
     "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). Plural of frame.challengesGoing_one."
-  },
-  "chooser.label": {
-    "text": "{{name}}: open the app or its community",
-    "description": "Accessible name of the small panel that opens when a tile in the Pinned grid on Home is tapped. It offers Open app and Go to community. {{name}} is the project's name."
-  },
-  "chooser.openApp": {
-    "text": "Open app",
-    "description": "First choice in the panel a tap on a Pinned tile on Home opens: opens the project's app. The same words as the Open app button on a community's hub."
-  },
-  "chooser.community": {
-    "text": "Go to community",
-    "description": "Second choice in the panel a tap on a Pinned tile on Home opens: opens the project's community hub, where its changes are proposed and voted on."
-  },
-  "chooser.communityVotes_one": {
-    "text": "Go to community, {{count}} to vote",
-    "description": "The Go to community choice on a phone's plain list of choices, when the community has votes waiting on the viewer. {{count}} is how many."
-  },
-  "chooser.communityVotes_other": {
-    "text": "Go to community, {{count}} to vote",
-    "description": "The Go to community choice on a phone's plain list of choices, when the community has votes waiting on the viewer. {{count}} is how many."
   }
 }

@@ -5,8 +5,9 @@
  * under Pinned apps: a grid of ringed community tiles that opened each hub,
  * then All communities, Needs you and New community. The two sections are
  * ONE Pinned grid now (`#app-list`, ./home.js `Home.onHome`): a community
- * pinned on Home puts its app's tile beside the apps you pinned, a tap on any
- * tile asks whether you meant the app or its community (./pin-chooser.tsx),
+ * pinned on Home puts its app's tile beside the apps you pinned, a tap on a
+ * tile opens the app, whose header has the Community button
+ * (../header/in-app-actions.tsx),
  * and Needs you and All communities end that grid (./app-grid.tsx
  * TrailingTile). Its New community tile went with it: the grid's own New
  * project tile opens the same dialog.

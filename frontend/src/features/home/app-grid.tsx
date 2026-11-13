@@ -74,7 +74,6 @@ import { openAddAppsSheet } from './add-apps-sheet';
 import { CreateTile } from './create-tile';
 import { gridStore, type GridItem, type GridPlacement, type HomeAppView, type IconView, type TrailingTileView } from './grid-store';
 import { importDevicePins, loadHomePins, wireHomePins } from './home-pins-store';
-import { openPinChooser, PinChooser } from './pin-chooser';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
@@ -193,11 +192,11 @@ function AppCardTile({ app, style, yours, live, editing }: {
     return controller()?._wireCardLongPressMenu?.(node.current);
   }, [app.slug, app.demo, yours]);
 
-  // ONE PINNED GRID: a tap asks which you meant, the app or its community
-  // (./pin-chooser.tsx), on every tile alike.
-  const choose = (el: HTMLElement) => {
-    openPinChooser({ slug: app.slug, name: app.name, votes: app.votes }, el);
-  };
+  // ONE PINNED GRID: a tap opens the app, as an app icon does everywhere.
+  // The way to its community is on the open app itself: the Community button
+  // in the header (../header/in-app-actions.tsx). A tile's hold or
+  // right-click menu has Go to community too.
+  const open = () => { (window as any).App?.navigateToApp(app.slug); };
 
   // See the header note: the cell is an attribute so the CSSOM cannot fold
   // `grid-column` + `grid-row` into a `grid-area` shorthand. Layout effect,
@@ -281,7 +280,7 @@ function AppCardTile({ app, style, yours, live, editing }: {
           e.preventDefault();
           // #4669: while the grid is being arranged, a tile's own activation
           // is off — arranging must never open an app by mistake.
-          if (!e.repeat && app.clickable && !editing) choose(e.currentTarget);
+          if (!e.repeat && app.clickable && !editing) open();
         }
       }}
       onClick={(e) => {
@@ -298,7 +297,7 @@ function AppCardTile({ app, style, yours, live, editing }: {
         // a door.
         if (editing) return;
         if (!app.clickable) return;
-        choose(e.currentTarget);
+        open();
       }}
     >
       <div className={app.showRetry ? 'relative w-14 h-14 shrink-0 grayscale-[0.75]' : 'relative w-14 h-14 shrink-0'}>
@@ -580,7 +579,6 @@ export function AppGrid() {
   });
 
   return (
-    <>
     <div
       ref={listRef}
       id="app-list"
@@ -659,10 +657,5 @@ export function AppGrid() {
         <CreateTile view={state.create} style={placementStyle(state.create.placement)} />
       ) : null}
     </div>
-    {/* The chooser a tap opens (./pin-chooser.tsx): nothing while closed, and a
-        portal to the body or the kit sheet while open, so the children of
-        the grid are what they were. */}
-    <PinChooser />
-    </>
   );
 }

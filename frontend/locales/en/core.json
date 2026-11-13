@@ -243,6 +243,22 @@
     "text": "Suggest an improvement",
     "description": "Accessible name of the header's Suggest button while an app is running: opens the form for suggesting an improvement to the app on screen."
   },
+  "header.inApp.community": {
+    "text": "Community",
+    "description": "Small button in the header while an app is running, shown as a word from tablet width up: opens the community behind the app on screen, where its changes are proposed and voted on."
+  },
+  "header.inApp.communityLabel": {
+    "text": "Go to community",
+    "description": "Accessible name and tooltip of the header's Community button while an app is running: opens the community behind the app on screen. The same words as the app menu's own row."
+  },
+  "header.inApp.communityVotes_one": {
+    "text": "Go to community, {{count}} to vote",
+    "description": "Accessible name of the header's Community button while an app is running, when the community has a vote waiting on the viewer. {{count}} is how many."
+  },
+  "header.inApp.communityVotes_other": {
+    "text": "Go to community, {{count}} to vote",
+    "description": "Accessible name of the header's Community button while an app is running, when the community has votes waiting on the viewer. {{count}} is how many."
+  },
   "chromeless.openAppLabel": {
     "text": "Open this app on Homeroom",
     "description": "Accessible name of the floating pill shown when an app is displayed without Homeroom's own header and tabs: opens the same app inside Homeroom."

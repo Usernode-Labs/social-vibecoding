@@ -140,8 +140,9 @@ export function HomeScreen() {
   // ONE PINNED GRID: Pinned is the one section of pins, the apps you pinned
   // and the communities you pinned together (home.js `Home.onHome`), so a new
   // member's first join already puts a tile here. It was Pinned apps over
-  // Pinned communities, two sections, until a tap on a tile learned to ask
-  // which of the two you meant (./pin-chooser.tsx).
+  // Pinned communities, two sections. A tap on a tile opens the app, and the
+  // open app's header has the way to its community
+  // (../header/in-app-actions.tsx).
   // It is hidden only when the loaded grid has nothing at all to show:
   // an account at rest with no apps still draws the trailing New project tile
   // (#6522), so an empty grid whose create view Home.render() hands it keeps

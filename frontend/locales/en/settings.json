@@ -2028,8 +2028,8 @@
     "description": "Row title in Settings > User guide: the second step for someone new."
   },
   "guide.start.open.body": {
-    "text": "Open a community's hub and select Open app, or select its tile under Pinned on Home and choose Open app. Inside it, select the Homeroom logo to open its menu.",
-    "description": "Paragraph in Settings > User guide. \"Open app\" is a button on a community's hub and a choice a Pinned tile offers; \"Pinned\" is the name of a section of the Home screen."
+    "text": "Open a community's hub and select Open app, or select its tile under Pinned on Home. Inside it, select the Homeroom logo to open its menu.",
+    "description": "Paragraph in Settings > User guide. \"Open app\" is a button on a community's hub; \"Pinned\" is the name of a section of the Home screen."
   },
   "guide.start.suggest.title": {
     "text": "Suggest your first improvement",
@@ -2056,8 +2056,8 @@
     "description": "Row title in Settings > User guide, about the Pinned section of the home screen. Same word as that section's heading."
   },
   "guide.place.apps.body": {
-    "text": "Pinned on Home holds the apps and communities you pin and the apps you help build. Select a tile, then Open app or Go to community. To start your own project, select New community: it asks what the app should do and what to call it, then makes it, just for you until you invite people.",
-    "description": "Paragraph in Settings > User guide. \"Pinned\" is a section of the Home screen; \"Open app\" and \"Go to community\" are the choices a tap on one of its tiles offers; \"New community\" is the tile on Home that starts a project."
+    "text": "Pinned on Home holds the apps and communities you pin and the apps you help build. Select a tile to open its app. While the app is open, the people button at the top goes to its community. To start your own project, select New community: it asks what the app should do and what to call it, then makes it, just for you until you invite people.",
+    "description": "Paragraph in Settings > User guide. \"Pinned\" is a section of the Home screen; the people button is the header's Community button while an app is open; \"New community\" is the tile on Home that starts a project."
   },
   "guide.place.appMenu.title": {
     "text": "The Homeroom menu",

@@ -1676,8 +1676,8 @@
     "description": "Third card of the walk on Home, pointing at the project's community tile under Pinned communities on Home, which opens its hub."
   },
   "firstSession.walk.communities.text": {
-    "text": "Tap {{app}} and choose Go to community for its hub. Invite people and decide what changes.",
-    "description": "Third card of the walk on Home, pointing at the project's tile in the Pinned grid on Home: a tap on it offers Open app and Go to community, which opens the hub. {{app}} is the project's name. \"Go to community\" is the words of that choice."
+    "text": "Open {{app}}, then use the people button at the top for its hub. Invite people and decide what changes.",
+    "description": "Third card of the walk on Home, pointing at the project's tile in the Pinned grid on Home: a tap on it opens the app, whose header has a people button that opens the community's hub. {{app}} is the project's name."
   },
   "firstSession.walk.goToCommunity": {
     "text": "Go to community",
