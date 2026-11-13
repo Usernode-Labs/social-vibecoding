@@ -82,6 +82,7 @@ test('every Journey route answers, refuses bad input, and is admins only', { tim
     creation: '/api/admin/journey/creation',
     pairs: '/api/admin/journey/pairs',
     firstSession: '/api/admin/journey/first-session',
+    flows: '/api/admin/journey/flows',
   };
   const shapes = {};
   for (const [key, p] of Object.entries(paths)) {
