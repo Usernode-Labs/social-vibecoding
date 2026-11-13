@@ -119,15 +119,17 @@ function assemble({ mile, flows, stages, last, waiting, early = null, now = new 
     const apps = fp ? fp.apps : [];
     const appOf = (a) => appBySlug.get(a.slug) || null;
 
-    // The door: the invite, when it came before they were in; else the
-    // waitlist, when they were let off it; else they were let in directly.
-    const inviteFirst = !!m.invite && m.inviteAt
+    // The door: the invite, when they followed it before they were in; else
+    // the waitlist, when they were let off it; else they were let in
+    // directly. Journey's own rule for one person (cameIn.door). Somebody who
+    // signs up through an invite link is queued on the waitlist until they
+    // are let in, so a waitlist row of their own does not make the waitlist
+    // their door; an invite followed from inside is not a door at all.
+    const inviteFirst = !!m.invite && !!m.inviteAt
       && (!m.accessAt || new Date(m.inviteAt).getTime() <= new Date(m.accessAt).getTime());
-    const waitJoined = m.releasedAt && m.waitlist && m.waitlist.joinedAt ? new Date(m.waitlist.joinedAt).getTime() : null;
     let door = 'direct';
-    if (inviteFirst && (waitJoined == null || new Date(m.inviteAt).getTime() <= waitJoined)) door = 'invite';
+    if (inviteFirst) door = 'invite';
     else if (m.releasedAt) door = 'waitlist';
-    else if (inviteFirst) door = 'invite';
 
     const s1 = earlyUntil != null && !!m.accountAt && new Date(m.accountAt).getTime() <= earlyUntil;
     const said = m.waitlist && m.waitlist.discovery ? String(m.waitlist.discovery).toLowerCase() : null;

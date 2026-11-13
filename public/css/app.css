@@ -13687,7 +13687,7 @@ html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: 
   --share-fill:#E1F5EE; --pub-fill:#EEEDFE; --drop-fill:#FBEBE2;
   --sel:#1c1c1e; --thread-op:.8;
   --font-display:inherit; --font-body:inherit; --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  position:relative; height:calc(100dvh - 13rem); min-height:560px; overflow:hidden; border-radius:1rem;
+  position:relative; height:calc(100dvh - 13rem); min-height:560px; overflow:hidden; overflow:clip; border-radius:1rem;
   background:var(--surface); color:var(--fg); font-size:15px; line-height:1.55;
 }
 html.dark #admin-onboarding-flows {
@@ -13777,7 +13777,7 @@ html.dark #admin-onboarding-flows {
 #admin-onboarding-flows .legend .box.hatch{background:repeating-linear-gradient(135deg,var(--node) 0 2px,transparent 2px 4.5px);outline:1px solid var(--node);outline-offset:-1px}
 #admin-onboarding-flows .viewline{color:var(--muted);max-width:92ch}
 #admin-onboarding-flows .viewline b{color:var(--fg);font-weight:600}
-#admin-onboarding-flows .scroller{position:absolute;inset:0;overflow:hidden;background:var(--surface);touch-action:none;direction:ltr;-webkit-user-select:none;user-select:none}
+#admin-onboarding-flows .scroller{position:absolute;inset:0;overflow:hidden;overflow:clip;background:var(--surface);touch-action:none;direction:ltr;-webkit-user-select:none;user-select:none}
 #admin-onboarding-flows .stage{position:absolute;inset-inline-start:0;top:0;transform-origin:0 0;will-change:transform}
 #admin-onboarding-flows .of-flow{display:block;width:100%;user-select:none;-webkit-user-select:none;touch-action:none}
 #admin-onboarding-flows .thread{fill:none;stroke-linecap:butt;stroke-linejoin:round;opacity:var(--thread-op)}

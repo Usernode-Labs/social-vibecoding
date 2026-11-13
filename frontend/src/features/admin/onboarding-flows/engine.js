@@ -1056,6 +1056,10 @@ function fitStage(L){stage.style.width=L.W+'px';}
 var VIEWP=(function(){
   var sc=byId('scroller'),x=0,y=0,k=1,moved=false,ptrs=new Map(),gest=null,dragged=false,busy=false;
   sc.style.cursor='grab';
+  /* The chart moves by its transform alone. Focusing a card (a click in some browsers, the Tab key in all) makes the
+     browser scroll it into view inside any box that can scroll, hidden overflow included, which threw the drawing to a
+     corner. The stylesheet clips these boxes; where a browser still scrolls one, put it back. */
+  [sc,root].forEach(function(box){listen(box,'scroll',function(){if(box.scrollLeft||box.scrollTop){box.scrollLeft=0;box.scrollTop=0;}});});
   function apply(){stage.style.transform='translate('+x.toFixed(1)+'px,'+y.toFixed(1)+'px) scale('+k.toFixed(4)+')';}
   function clamp(){
     if(!cur)return; var vw=sc.clientWidth,vh=sc.clientHeight,w=cur.W*k,hh=cur.H*k,keep=90;
