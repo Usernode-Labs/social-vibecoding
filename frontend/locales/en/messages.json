@@ -2067,6 +2067,14 @@
     "text": "Send message",
     "description": "Accessible name of the arrow button beside the message box: sends the message."
   },
+  "composer.sendShortcut": {
+    "text": "Send (Enter)",
+    "description": "Tooltip on the arrow button beside a message box, shown on a device with a keyboard: pressing the Enter key sends the message. Enter is the key's name."
+  },
+  "composer.newLineHint": {
+    "text": "Shift + Enter for a new line",
+    "description": "Small muted line under a message box while it holds text, shown on a device with a keyboard, where Enter sends the message: holding Shift and pressing Enter starts a new line instead. Shift and Enter are key names."
+  },
   "composer.format.bar": {
     "text": "Formatting",
     "description": "Accessible name of the row of formatting buttons above a community channel's message box; it groups the six buttons that format the message being written."

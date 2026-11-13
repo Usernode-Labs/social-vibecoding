@@ -206,6 +206,9 @@ test('its box is the conversation composer\'s card, piece for piece', () => {
     "aria-label={t('messages:composer.send')}",
     '<ArrowUpIcon aria-hidden="true" />',
     '<div className="messages-composer-count mt-1 px-1 flex justify-end h-[15px]"',
+    // The same keys: Enter sends where there is a keyboard, and the box says so.
+    '{keysHint ? <p className="mt-1 px-3 text-end text-[11px] leading-[15px] text-zinc-500 dark:text-zinc-400" data-enter-hint="">',
+    "title={enterKey ? t('messages:composer.sendShortcut') : undefined}",
   ]) {
     assert.ok(composer.includes(piece), `the conversation composer draws ${piece}`);
     assert.ok(src.includes(piece), `and so does the blank thread's`);
