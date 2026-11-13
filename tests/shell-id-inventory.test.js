@@ -398,6 +398,9 @@ const ADDED_IDS = {
   'settings-reduce-motion': 'The Reduce motion switch in Settings > Accessibility (features/settings/sections/accessibility.tsx): writes data-motion="reduce" on <html> through the head module (window.Display). Ships off in the prerender and reads the stored setting in an effect, like #settings-high-contrast beside it.',
   // ── Card preview loops: Settings > Accessibility ───────────────────
   'settings-card-previews': 'The Play previews switch in Settings > Accessibility (features/settings/sections/accessibility.tsx): whether project cards play their short, silent preview loops (lib/card-previews.ts). Ships off in the prerender and reads the device setting in an effect, like #settings-high-contrast beside it.',
+  'settings-high-contrast-note': 'The sentence under the High contrast switch (features/settings/sections/accessibility.tsx), named by the switch\'s aria-describedby so a screen reader reads it with the switch (#6510).',
+  'settings-reduce-motion-note': 'The sentence under the Reduce motion switch, named by the switch\'s aria-describedby (#6510).',
+  'settings-card-previews-note': 'The sentence under the Play previews switch, named by the switch\'s aria-describedby (#6510).',
   // ── #6371: This week, the page the weekly digest opens ─────────────
   'weekly-digest-screen': 'This week (frontend/src/features/weekly-digest/index.tsx, #week): what each project did in the last seven days, which the Friday "Your weekly digest is ready" row opens. Ships hidden and empty; the read runs from its controller\'s open(), so the prerender and the first client render agree. App.REACT_SCREEN_IDS lists it, as it lists #workshop-screen.',
   // ── One Home (#6361): Home's sections for communities ─────────────

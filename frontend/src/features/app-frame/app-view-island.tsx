@@ -20,6 +20,12 @@
  * - **`data-app-surface`.** `AppView._setSurface` keeps writing the attribute
  *   imperatively, for the same reason: the rendered value is constant, so React
  *   never overwrites what it wrote. Its default stays `platform`.
+ *
+ * It is the page's main landmark (#6510), as every other screen's root is a
+ * `<main>`: the project page and a running app were the one screen a screen
+ * reader's jump-to-main could not find. A role and not the element, because
+ * tests pin this node as a `div`. The screens take turns (the rest carry
+ * `hidden`), so it is never one of two.
  */
 
 import { useRef, type ReactNode } from 'react';
@@ -40,6 +46,7 @@ export function AppViewIsland(): ReactNode {
   return (
     <div
       id="app-view"
+      role="main"
       className="hidden flex flex-col"
       data-app-surface="platform"
       style={{ flex: "1", minHeight: "0", height: "0" }}
