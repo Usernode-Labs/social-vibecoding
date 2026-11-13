@@ -252,3 +252,51 @@ test('the column ships hidden and holds Challenges; Home lays it out first in a 
   assert.match(css, /\.home-for-you:not\(\[hidden\]\) \{[^}]*display: grid;/);
   assert.match(css, /\.home-main > section:not\(\[hidden\]\) ~ \.home-section-rule:not\(\[hidden\]\)/);
 });
+
+test('the phone card: three numbers, centred, each opening its own detail, and no button under them', () => {
+  const { activityTotal } = loadTsx(FOR_YOU);
+  const communities = [
+    { slug: 'oath', name: 'Oath of Ember', messages: 2, merged: 0, requests: 0 },
+    { slug: 'home', name: 'Homeroom', messages: 1, merged: 1, requests: 0 },
+    { slug: 'geo', name: 'Geometry Jump', messages: 0, merged: 0, requests: 1 },
+  ];
+  assert.deepEqual(activityTotal(communities, 0), { total: 5, places: 3 });
+  assert.deepEqual(activityTotal(communities, 2), { total: 5, places: 5 });
+
+  const work = { points: 1240, pointsWeek: 180, changes: { total: 12, waiting: 3 }, requests: { total: 5, open: 2 }, votes: { cast: 48 } };
+  const needs = { count: 13, decide: 9, advisory: 4, next: [{ kind: 'proposal', id: 1, title: 'Widen every page', app: { slug: 'bio', name: 'Biomarkers' } }] };
+  const activity = { communities, more: 0, onMarkRead() {} };
+  const closed = renderComponent(FOR_YOU, 'GlanceCardView', { needs, activity, work, owed: 13 });
+  assert.match(closed, /id="home-glance-card"/);
+  assert.match(closed, /grid-cols-3/);
+  assert.equal((closed.match(/<button type="button" class="[^"]*items-center justify-center[^"]*text-center/g) || []).length, 3, 'three centred tiles');
+  assert.match(closed, /data-glance="needs"[\s\S]*>13<\/b>[\s\S]*decisions/);
+  assert.match(closed, /data-glance="new"[\s\S]*>5<\/b>[\s\S]*in 3 communities/);
+  assert.match(closed, /data-glance="work"[\s\S]*>1,240<\/b>[\s\S]*\+180 this week/);
+  assert.match(closed, /<div id="home-glance-detail" hidden="">\s*<\/div>/, 'nothing open at first');
+  assert.doesNotMatch(closed, /Start reviewing|View profile/, 'no button under the tiles');
+
+  const needsOpen = renderComponent(FOR_YOU, 'GlanceCardView', { needs, activity, work, owed: 13, initialOpen: 'needs' });
+  assert.match(needsOpen, /data-glance="needs"[^>]*aria-expanded="true"|aria-expanded="true"[^>]*data-glance="needs"/);
+  assert.match(needsOpen, /<b[^>]*>9<\/b> decide/);
+  assert.match(needsOpen, /href="#needs"[\s\S]*Widen every page/);
+  const newOpen = renderComponent(FOR_YOU, 'GlanceCardView', { needs, activity, work, owed: 13, initialOpen: 'new' });
+  assert.match(newOpen, /Oath of Ember[\s\S]*Geometry Jump/);
+  assert.match(newOpen, /id="home-glance-read"[^>]*>Mark all read</);
+  const workOpen = renderComponent(FOR_YOU, 'GlanceCardView', { needs, activity, work, owed: 13, initialOpen: 'work' });
+  assert.match(workOpen, /href="#profile\?tab=changes"[\s\S]*href="#profile\?tab=requests"[\s\S]*href="#profile\?tab=votes"/);
+
+  // No work (a private member): two tiles.
+  const two = renderComponent(FOR_YOU, 'GlanceCardView', { needs, activity, work: null, owed: 13 });
+  assert.match(two, /grid-cols-2/);
+  assert.doesNotMatch(two, /data-glance="work"/);
+  const quiet = renderComponent(FOR_YOU, 'GlanceCardView', { needs, activity: { communities: [], more: 0, onMarkRead() {} }, work, owed: 0, initialOpen: 'new' });
+  assert.match(quiet, /all caught up/);
+  assert.match(quiet, /You(&#x27;|')re all caught up\./);
+
+  // Phone only: the full cards step aside below 640px and the phone card
+  // steps in, never both.
+  const css = read('public/css/app.css');
+  assert.match(css, /\.home-for-you-full \{\s*display: contents;/);
+  assert.match(css, /@media \(max-width: 639\.98px\) \{\s*\.home-for-you-full \{\s*display: none;\s*\}\s*\.home-for-you > \.home-for-you-glance \{\s*display: flex;/);
+});

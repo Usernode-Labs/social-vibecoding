@@ -214,6 +214,13 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
   // count glyphs are the same pair the app's own Workshop tab uses, which is
   // the point: the number on a row and the pane it counts wear one mark.
   const expected = [
+    // ── Home's For you column (#6650) ────────────────────────────────────
+    //
+    // GitBranchIcon (one path) marks a change that went live in New in your
+    // communities and the viewer's Changes in Your work. Both cards draw
+    // only once a signed-in viewer's numbers have loaded, so it never
+    // prerenders.
+    'M6 3.5a2.5 2.5 0 110 5 2.5 2.5 0 010-5zM6 15.5a2.5 2.5 0 110 5 2.5 2.5 0 010-5zM18 9.5a2.5 2.5 0 110 5 2.5 2.5 0 010-5zM6 8.5v7M8.3 7.2c4 .8 7 2 7.4 3.3',
     // ── The project card's preview loop (11 Nov 2026) ───────────────────
     //
     // PauseIcon is drawn only once a loop plays, after the island mounts

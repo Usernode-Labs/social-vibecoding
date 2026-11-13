@@ -4845,6 +4845,24 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
 .home-for-you #home-challenges-section .home-panel-rows > * {
   width: auto;
 }
+/* The column's cards for Needs you, what is new and Your work (#6650):
+   three cards in their own grid cells on anything wider than a phone, one
+   card of numbers on a phone (#home-glance-card), never both. */
+.home-for-you-full {
+  display: contents;
+}
+.home-for-you > .home-for-you-glance {
+  display: none;
+  grid-column: 1 / -1;
+}
+@media (max-width: 639.98px) {
+  .home-for-you-full {
+    display: none;
+  }
+  .home-for-you > .home-for-you-glance {
+    display: flex;
+  }
+}
 /* A line between the content column's areas (#6650): Pinned apps, Pinned
    communities and Communities to join each start under a hairline, drawn
    only when an area is on show above it. */

@@ -246,7 +246,9 @@ test('Home for a private member: no New project or Your work cards, no Challenge
   const forYou = read('frontend/src/features/home/for-you.tsx');
   assert.match(forYou, /const privateMember = viewer && !!win\(\)\.App\?\.user\?\.privateMember;/);
   assert.match(forYou, /\{viewer && !privateMember \? <NewProjectCard \/> : null\}/);
-  assert.match(forYou, /\{viewer && !privateMember \? <WorkCard \/> : null\}/);
+  // Your work is never read for them, so neither its card nor the phone
+  // card's Points tile is drawn.
+  assert.match(forYou, /const work = useWork\(viewer && !privateMember\);/);
   const panels = read('src/routes/home-panels.js');
   assert.match(panels, /const PRIVATE_MEMBER_PANELS = new Set\(\['discover'\]\);/);
   assert.match(panels, /if \(req\.user\.privateMember && !PRIVATE_MEMBER_PANELS\.has\(panel\.key\)\) continue;/);

@@ -1190,5 +1190,61 @@
   "forYou.needs.advisoryWord_other": {
     "text": "advisory",
     "description": "Under the bar on Home's Needs you card, after the number in bold: how many waiting votes where the viewer's vote is only advice. Plural."
+  },
+  "forYou.glance.decisions_one": {
+    "text": "decision",
+    "description": "Under the Needs you number on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: the word after the number. Singular."
+  },
+  "forYou.glance.decisions_other": {
+    "text": "decisions",
+    "description": "Under the Needs you number on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: the word after the number. Plural."
+  },
+  "forYou.glance.new": {
+    "text": "New",
+    "description": "Small label over the number of new things on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: messages, changes that went live and requests in the viewer's communities."
+  },
+  "forYou.glance.inCommunities_one": {
+    "text": "in {{count}} community",
+    "description": "Under the New number on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: how many communities the new things are in. Singular."
+  },
+  "forYou.glance.inCommunities_other": {
+    "text": "in {{count}} communities",
+    "description": "Under the New number on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: how many communities the new things are in. Plural."
+  },
+  "forYou.glance.caughtUp": {
+    "text": "all caught up",
+    "description": "Under the New number on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side when nothing is new."
+  },
+  "forYou.glance.caughtUpLine": {
+    "text": "You're all caught up.",
+    "description": "Shown in the opened New part of Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side when nothing is new since the viewer last marked it read."
+  },
+  "forYou.glance.noVotes": {
+    "text": "No votes are waiting for you.",
+    "description": "Shown in the opened Needs you part of Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side when no vote waits on the viewer."
+  },
+  "forYou.glance.needsAria_one": {
+    "text": "{{count}} decision needs your vote. Show it.",
+    "description": "Accessible name of the Needs you button on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: pressing it opens the vote waiting under the numbers. Singular."
+  },
+  "forYou.glance.needsAria_other": {
+    "text": "{{count}} decisions need your vote. Show them.",
+    "description": "Accessible name of the Needs you button on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: pressing it opens the votes waiting under the numbers. Plural."
+  },
+  "forYou.glance.newAria_one": {
+    "text": "{{count}} new thing in your communities. Show it.",
+    "description": "Accessible name of the New button on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: pressing it opens what is new under the numbers. Singular."
+  },
+  "forYou.glance.newAria_other": {
+    "text": "{{count}} new things in your communities. Show them.",
+    "description": "Accessible name of the New button on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: pressing it opens what is new under the numbers. Plural."
+  },
+  "forYou.glance.workAria_one": {
+    "text": "Your work: {{points}} point. Show your changes, requests and votes.",
+    "description": "Accessible name of the Points button on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: pressing it opens the viewer's changes, requests and votes. {{points}} is the number, already formatted. Singular."
+  },
+  "forYou.glance.workAria_other": {
+    "text": "Your work: {{points}} points. Show your changes, requests and votes.",
+    "description": "Accessible name of the Points button on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: pressing it opens the viewer's changes, requests and votes. {{points}} is the number, already formatted. Plural."
   }
 }

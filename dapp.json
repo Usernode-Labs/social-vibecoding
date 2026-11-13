@@ -1516,7 +1516,7 @@
     {
       "name": "The launcher grid shows two rows at most, its last cell See all, beside the For you column's cards on what is new in each community (by kind) and on your work (#6650)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body:has(#home-for-you:not([hidden]) #home-activity-card a[data-home-activity] [data-activity-kind]):has(#home-for-you #home-work-card) #home-apps-section #app-list > #home-apps-see-all[data-home-see-all]",
+      "expectSelector": "#home-body:has(#home-for-you:not([hidden]) #home-activity-card a[data-home-activity] [data-activity-kind]):has(#home-work-card):has(#home-glance-card [data-glance=\"work\"]) #home-apps-section #app-list > #home-apps-see-all[data-home-see-all]",
       "expectText": "See all"
     },
     {
