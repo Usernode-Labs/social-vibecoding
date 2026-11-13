@@ -4496,7 +4496,10 @@ export function DevWorkshop(): ReactNode {
         // A project's Needs you drawn by the review flow, the same one the
         // Communities tab draws. ../../review-flow/. Its back, "‹ <community>",
         // leaves the run for the community's hub, never an earlier change.
-        <ProjectReviewFlow slug={slug} onDone={() => openTab('status')} />
+        // It reads the feed again when a change's state moves, so it lists a
+        // vote when the count above (`owed`) starts to count it; `project`
+        // is the name its empty line says nothing waits in.
+        <ProjectReviewFlow slug={slug} onDone={() => openTab('status')} project={projectName} />
       ) : null}
       {/* WHENEVER THE TAB IS UP, not only while there is a theme to draw. This
           was `tab === 'all' && themes.length`, and the second half was #2090:
