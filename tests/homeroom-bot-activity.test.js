@@ -859,21 +859,22 @@ test('only the bot\'s DM keeps the cards current, beside its tray', () => {
   assert.match(screen, /\{botDm \? <BotWorkSync [^\n]*\n[^\n]*\n\s*\{botDm \? <BotActivitySync conversationId=\{conversationId\} newsKey=\{newestBotMessageId\(snap\.messages\)\} \/> : null\}/);
 });
 
-test('the staging preview\'s declared check follows the demo DM to the Homeroom bot tab, Main Chat its list\'s first row', () => {
+test('the staging preview\'s declared check follows the demo DM to the Homeroom bot tab, which has New chat and no Main Chat row', () => {
   // 1 Nov 2026: the chat with the bot is the Homeroom bot tab's alone. Its
   // Activity bar was drawn over it on the Messages screen only, where it is
   // no longer drawn: the tab's own lists say what needs you and what is in
-  // progress. Its check now follows the demo DM's Messages address to the
-  // tab: Main Chat, lit, first, with the demo chat in the column beside it.
+  // progress. Its check follows the demo DM's Messages address to the tab.
+  // 14 Nov 2026: there it finds no Main Chat row and no Main Chat head, and
+  // New chat, the labelled button beside search, in the page's head.
   const tests = JSON.parse(read('dapp.json')).tests;
   assert.ok(!tests.some((t) => t.id === 'homeroom-bot-dm-activity-tray'), 'the bar\'s check is retired');
-  const check = tests.find((t) => t.id === 'homeroom-bot-main-chat-row');
+  assert.ok(!tests.some((t) => t.id === 'homeroom-bot-main-chat-row'), 'and so is Main Chat\'s row\'s');
+  const check = tests.find((t) => t.id === 'homeroom-bot-new-chat');
   assert.equal(check.path, '/?demo=1#messages/910005', 'its old address, which lands on the tab');
-  // #6207: Main Chat holds no request's news, so the check no longer waits for a news row in it.
-  assert.match(check.expectSelector, /^#ai-screen:not\(\.hidden\):has\(#ai-main-pane\[data-ai-column=main\] > \[data-ai-main-head\] \+ \.messages-layout\[data-main-chat\]\)/);
-  assert.match(check.expectSelector, /\[data-ai-sheet=main\] > \[data-ai-main-row\]\[data-ai-lit\]\[aria-current=true\]$/);
+  assert.match(check.expectSelector, /^#ai-screen:not\(\.hidden\):not\(:has\(\[data-ai-main-row\], \[data-ai-main-head\]\)\)/);
+  assert.match(check.expectSelector, /\[data-ai-hero\] > button\[data-ai-search-toggle\] \+ button\[data-ai-new-chat\]$/);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
-  assert.equal(check.expectText, 'Main Chat');
+  assert.equal(check.expectText, 'New chat');
   for (const file of ['frontend/src/features/ai/**', 'src/services/staging-messages.js', 'src/routes/conversations.js']) {
     assert.ok(check.impact.includes(file), file);
   }

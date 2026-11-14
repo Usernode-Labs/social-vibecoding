@@ -60,10 +60,12 @@ test('the bot\'s own private threads, a person\'s message and a message about no
   assert.equal(requestPageOf(null), null);
 });
 
-test('it opens beside the bot page in Main Chat\'s place when the panel takes it, else the page, which goes back', () => {
+test('it opens beside the bot page, in its column, when the panel takes it, else the page, which goes back', () => {
   const source = read(PAGE);
-  assert.match(source, /sidePanel\?\.take\?\.\(page\.route, \{ place: page\.place, label: page\.label \}\)/);
-  assert.match(source, /'usernode:messages-object-selected'/, 'Main Chat\'s composer carries the request, as the list\'s rows do');
+  assert.match(source, /if \(w\.UsernodeReact\?\.sidePanel\?\.take\?\.\(page\.route, \{ place: page\.place, label: page\.label \}\)\) return;/);
+  // 14 Nov 2026: Main Chat's composer carried the request; there is no Main
+  // Chat, so opening a request's page attaches it to nothing.
+  assert.doesNotMatch(source, /messages-object-selected|conversationId/);
   assert.match(source, /Improve\?\.enterTopicFrom\?\.\(window\.location\.hash/);
   assert.match(source, /AppView\?\._landOnHub\?\.\(page\.place\.slug\)/, 'a door to a project\'s hub lands on the hub');
   assert.match(source, /window\.location\.hash = page\.route;/);
@@ -71,17 +73,17 @@ test('it opens beside the bot page in Main Chat\'s place when the panel takes it
 
 test('every way into a request\'s story goes to its page', () => {
   const news = read(NEWS);
-  assert.match(news, /function tap\(\) \{\n {4}if \(page\) openRequestPage\(page, message\.conversationId\);/);
+  assert.match(news, /function tap\(\) \{\n {4}if \(page\) openRequestPage\(page\);/);
   assert.match(news, /else openThreadAt\(rootId, /, 'only news that names no page (sent before it named its project) opens where it is told');
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /onClick=\{\(\) => \(story \? openRequestPage\(story, conversationId\) : openThread\(/, 'the "↳ in …" label');
+  assert.match(row, /onClick=\{\(\) => \(story \? openRequestPage\(story\) : openThread\(/, 'the "↳ in …" label');
   // The activity drawer, which opened its rows the same way, is gone (5 Nov 2026).
   assert.doesNotMatch(read('frontend/src/features/messages/bot-strip.tsx'), /openRequestPage|openThreadAt/, 'no door of its own');
   const store = read(STORE);
   const open = store.slice(store.indexOf('export function openThread(rootId: number)'));
-  assert.match(open.slice(0, 600), /const page = requestPageFor\(findRow\(rootId\)\);\n {2}if \(page\) \{ openRequestPage\(page, conversationId\); return; \}/, 'a thread opened by id');
+  assert.match(open.slice(0, 600), /const page = requestPageFor\(findRow\(rootId\)\);\n {2}if \(page\) \{ openRequestPage\(page\); return; \}/, 'a thread opened by id');
   const load = store.slice(store.indexOf('export async function loadReplyThread('));
-  assert.match(load.slice(0, 2400), /const story = requestPageFor\(page\.root \|\| findRow\(rootId\)\);\n {4}if \(story\) \{\n {6}closeThread\(\);\n {6}openRequestPage\(story, conversationId\);/, 'a link to an old thread');
+  assert.match(load.slice(0, 2400), /const story = requestPageFor\(page\.root \|\| findRow\(rootId\)\);\n {4}if \(story\) \{\n {6}closeThread\(\);\n {6}openRequestPage\(story\);/, 'a link to an old thread');
   const pane = read('frontend/src/features/messages/index.tsx');
   assert.match(pane, /if \(botChat && kind === 'direct' && requestPageOf\(root\)\) return null;/, 'and the pane never draws one');
 });
@@ -92,12 +94,13 @@ test('the store asks only in the chat with the bot', () => {
   assert.match(fn, /state\.active\?\.kind !== 'direct' \|\| !threadsAllowed\(state\.active\)\) return null;/);
 });
 
-test('"See progress" opens Main Chat at the request, never inside a thread of its own', () => {
+test('"See progress" opens the request\'s page, never Main Chat or a thread of the request\'s own', () => {
   const store = read(STORE);
   const fn = store.slice(store.indexOf('export async function openBotRequest('), store.indexOf('/** What the composer\'s box asks'));
-  assert.match(fn, /const ask = track\?\.askId && !known\?\.threadRootId \? track\.askId : null;/);
-  // 1 Nov 2026: on the Homeroom bot tab, Main Chat at that message.
-  assert.match(fn, /if \(at\) openBotTab\(\{ threadRootId: null, focusMessageId: at \}\);/);
+  // 14 Nov 2026: it opened Main Chat at the last thing said about the
+  // request. A request's news is on its page, so that is where it goes.
+  assert.match(fn, /const page = requestPage\(\{ appSlug: slug, issueNumber: Number\(number\) \}\);\n {2}if \(page\) openRequestPage\(page\);/);
+  assert.doesNotMatch(fn, /focusMessageId: at|threadRootId: null/);
   assert.doesNotMatch(fn, /openThreadAt\(track\.rootId/);
   // A plan said in the private thread its request started in opens there, at the plan.
   assert.match(fn, /if \(track\?\.askId && track\.askThreadId\) \{\s*openBotTab\(\{ threadRootId: track\.askThreadId, focusMessageId: track\.askId \}\);\s*return;\s*\}/);

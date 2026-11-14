@@ -56,7 +56,7 @@ test('the hand-drawn truncated titles carry their text as the hint', () => {
   assert.match(messages, /className="messages-thread-name" title=\{threadName \|\| undefined\}/);
   // Main Chat's column hints the whole head block, so the name's own markup
   // stays as it was.
-  assert.match(messages, /className="min-w-0 flex-1" title=\{mainTitle \|\| undefined\}>\s*<div className="messages-thread-name min-w-0 truncate" data-reply-title="">/);
+  assert.match(messages, /className="min-w-0 flex-1" title=\{aloneTitle \|\| undefined\}>\s*<div className="messages-thread-name min-w-0 truncate" data-reply-title="">/);
   assert.match(messages, /className="min-w-0 truncate" title=\{replyTitle\}>/);
 
   const header = read('frontend/src/features/header/header-title.tsx');

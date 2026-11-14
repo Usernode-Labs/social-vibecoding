@@ -89,17 +89,17 @@ test('every native-kit modal, sheet, alert and menu wears the look by one rule',
   assert.ok(css.indexOf(`${LOOK} .un-modal:has(> :is(#profile-app-slots-sheet, #profile-week-share-sheet, #profile-feedback-sheet)) {`) > b);
 });
 
-test('the bar on a phone: a line that does not fit goes under the first row, and a page may keep its parent\'s name', () => {
+test('the bar on a phone: a page may keep its parent\'s name, and no line stands under the bar (it was Main Chat\'s)', () => {
   const frame = read('frontend/src/features/frame/frame-app.tsx');
-  assert.match(frame, /const read = \(\) => setLineUnder\(el\.scrollWidth > el\.clientWidth \+ 1\);/, 'measured on the line itself');
-  assert.match(frame, /<span ref=\{lineRef\} className=\{k\('cs p', lineUnder && 'off'\)\} data-frame-crumb-line="" aria-hidden=\{lineUnder \? 'true' : undefined\}>/, 'the line in the crumb stays as the measure, at no height, and is not said twice');
-  assert.match(frame, /<\/header>\n\s+\{lineUnder && crumbLine \? <div className=\{k\('barline'\)\} data-frame-crumb-line="under">\{crumbLine\}<\/div> : null\}\n\s+<main className=\{k\('pagearea'\)\}/);
+  // 14 Nov 2026: the line under the title was Main Chat's alone; it and the
+  // row it moved to when it did not fit went with Main Chat.
+  assert.doesNotMatch(frame, /lineUnder|crumbLine|data-frame-crumb-line/);
+  assert.match(frame, /<\/header>\n\s+<main className=\{k\('pagearea'\)\}/);
   assert.match(frame, /const kept = page\.crumb && page\.phoneUp && crumbs\.length > 1 \? crumbs\.length - 2 : crumbs\.length - 1;/);
   assert.match(frame, /k\('ci', i === crumbs\.length - 1 && 'here', i === kept && 'keep'\)/);
-  assert.match(kitCss, /\n\.phone \.barline\{display:block;flex:none;padding:0 12px 8px;font:500 12px\/1\.35 var\(--f\);color:var\(--mut\);border-bottom:1px solid var\(--line\)\}/);
-  assert.match(kitCss, /\n\.crumb \.cs\.off\{height:0\}/);
+  assert.doesNotMatch(kitCss, /\.barline|\.crumb \.cs\.off/);
   assert.match(kitCss, /\n\.phone \.crumb>\.keep\{color:var\(--ink\)\}/);
-  assert.ok(css.includes('html[data-skin] :where(.fr.fr-shell:not(.fr-shell-under)) .fr-barline { background: color-mix(in srgb, var(--fr-ground) 90%, transparent); }'));
+  assert.doesNotMatch(css, /\.fr-barline/);
   assert.match(read('frontend/src/features/leaderboard/frame/challenges-frame.tsx'), /framePageStore\.set\(\{ crumb, onBack: shellBack, phoneUp: true \}\);/, 'Challenges and Standings: the bar says You, the title says Challenges');
 });
 

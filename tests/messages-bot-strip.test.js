@@ -392,7 +392,7 @@ test('every line opens its request\'s page the same way; news naming no page, it
   assert.doesNotMatch(line(old), /data-bot-news-open="inline"/);
   const source = read(NEWS);
   // 31 Oct 2026: the request's own page (./bot-request-page.test.js).
-  assert.match(source, /if \(page\) openRequestPage\(page, message\.conversationId\);/);
+  assert.match(source, /if \(page\) openRequestPage\(page\);/);
   assert.match(source, /const rootId = newsThread\(message\) \?\? \(earlier\[0\]\?\.id \|\| message\.id\);/);
   assert.match(source, /else openThreadAt\(rootId, rootId === message\.id \? null : message\.id\);/);
   assert.doesNotMatch(source, /else setOpen\(true\)|full\(\)/, 'nothing opens in place');

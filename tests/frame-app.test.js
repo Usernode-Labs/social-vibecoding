@@ -26,13 +26,12 @@ const INFO = {
   'game-corner': { slug: 'game-corner', name: 'Game Corner', iconUrl: null, iconEmoji: '🎮', iconColor: '#3b2d8f', needs: 0 },
   lobby: { slug: 'lobby', name: 'Lobby', iconUrl: null, iconEmoji: null, iconColor: null, needs: 9, unchosen: true },
 };
-function stubs({ tab = 'home', screen = 'home-screen', bot = false, messages = 2, ai = 18, slug = null, page = { crumb: null, onBack: null }, place = null, railOpen = true, botHead = { on: false, level: 0, title: '', sub: '' } } = {}) {
+function stubs({ tab = 'home', screen = 'home-screen', bot = false, messages = 2, ai = 18, slug = null, page = { crumb: null, onBack: null }, place = null, railOpen = true } = {}) {
   return {
     '../dev-board/workshop/place-store': { placeStore: fixedStore({ slug: place ? slug : null, place: place || 'status', owed: 0, unread: 0, tray: false }), openPlace() {} },
     '../dev-board/workshop/places': { placeName: (key) => ({ status: 'Hub', needs: 'Needs you', workshop: 'Workshop', discussion: '#general' }[key] || key) },
     './frame-page-store': { framePageStore: fixedStore(page) },
     '../nav/nav-store.js': { navStore: fixedStore({ tab, screen, bot, messages, ai, railOpen, viewer: 'snait' }) },
-    '../nav-drawer/bot-drawer': { botDrawerStore: fixedStore(botHead) },
     '../nav/rail-communities': { useRailCommunities: () => ['homeroom', 'game-corner', 'lobby'] },
     '../workshop/community-scope': { communityScopeStore: fixedStore({ slug, info: INFO, list: Object.keys(INFO) }), goToCommunity() {} },
     '../../lib/visibility-store': { useVisibility: (id, initial) => initial },
@@ -106,19 +105,20 @@ test('the bar says where you are, with search and the bell; the phone\'s tab bar
   assert.match(bar, />Bot<span class="fr-n">18<\/span>/, 'the bar has room for one short word');
 });
 
-test('a long place name is cut before the bar\'s buttons, and a phone\'s bar says Main Chat\'s line under its title', () => {
+test('a long place name is cut before the bar\'s buttons, and the bar draws no line under its title', () => {
   const css = read('public', 'css', 'app.css');
   // The crumb's words are a box of their own that may shrink: without it a
   // request's, a project's or a Settings section's name ran under the look
   // picker and the bell on a phone, in every look.
   assert.ok(css.includes('html[data-skin] .fr-crumb .fr-cn,html[data-skin] .fr-crumb .fr-cs{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3}'));
-  // The standard phone header says "Only you can see this chat" under
-  // "Main Chat" (nav-drawer/bot-drawer.ts); the kit's bar reads the same
-  // store, on a phone only (from 768px the chat's own head says it).
-  const main = chrome({ tab: 'messages', bot: true, botHead: { on: true, level: 1, title: 'Main Chat', sub: 'Only you can see this chat' } });
-  assert.match(main, /<span class="fr-cw"><span class="fr-cn">[^<]*<\/span><span class="fr-cs fr-p" data-frame-crumb-line="">Only you can see this chat<\/span><\/span>/);
-  assert.doesNotMatch(chrome({ tab: 'messages', bot: true, botHead: { on: true, level: 0, title: '', sub: 'Only you can see this chat' } }), /data-frame-crumb-line/, 'not on the list');
+  // 14 Nov 2026: the one line the bar drew under its title was Main Chat's
+  // "Only you can see this chat". Main Chat is gone, and a thread says that
+  // it is theirs alone in its own head, so the bar has no second line and
+  // reads no store for one.
+  assert.doesNotMatch(chrome({ tab: 'messages', bot: true }), /data-frame-crumb-line/);
   assert.doesNotMatch(chrome({ tab: 'messages' }), /data-frame-crumb-line/);
+  assert.doesNotMatch(read(FRAME_APP), /bot-drawer|crumbLine|barline/);
+  assert.doesNotMatch(css, /\.fr-barline/);
 });
 
 test('the bar hides and shows the sidebar with the standard header\'s own toggle', () => {

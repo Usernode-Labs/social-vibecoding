@@ -421,9 +421,10 @@ export function openDetail(input: {
       window.setTimeout(go, 32);
     }
   }
-  // #6248: a draft goes to the thread it was said in, or to Main.
+  // #6248: a draft goes to the thread it was said in (the page itself for
+  // one with no thread, which none has since Main Chat went).
   if (kind === 'draft' && typeof window !== 'undefined' && !/^#homeroom-bot(?:\/|$)/.test(window.location.hash)) {
-    window.location.hash = valid(ref.rootId) ? `homeroom-bot/thread/${ref.rootId}` : 'homeroom-bot/main';
+    window.location.hash = valid(ref.rootId) ? `homeroom-bot/thread/${ref.rootId}` : 'homeroom-bot';
   }
 }
 

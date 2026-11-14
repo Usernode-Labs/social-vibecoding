@@ -2213,10 +2213,10 @@
       "expectText": "by this time last week"
     },
     {
-      "name": "Workshop: Your work is one row under Overview, opening Homeroom bot narrowed to this project",
+      "name": "Workshop: Your work is a row under Overview, opening Homeroom bot narrowed to this project, and under it New chat about the project, which opens a new chat with the bot set to it",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-dashboard] + [data-ws-desk] > a[data-ws-desk-open][href=\"#homeroom-bot?project=usernode-2d5619\"]",
-      "expectText": "Your work"
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-dashboard] + [data-ws-desk] > a[data-ws-desk-open][href=\"#homeroom-bot?project=usernode-2d5619\"] ~ a[data-ws-desk-new][href=\"#homeroom-bot/new?project=usernode-2d5619\"]",
+      "expectText": "New chat about"
     },
     {
       "name": "Hub: For you's Workshop row opens the project's Workshop",
@@ -4936,24 +4936,10 @@
       "expectText": "Invitation pending"
     },
     {
-      "name": "Main Chat with Homeroom bot is the conversation (#6207, 3 Nov 2026): a request the bot offers to file stays a message with File it and Not now, and no Write my own (#3624), quoting the message it answers (#3707), and no request's news is drawn there: that is on the request's page",
+      "name": "The old Main Chat address still lands (14 Nov 2026: every conversation with Homeroom bot is a thread): #homeroom-bot/main opens the thread the old Main Chat messages were moved under, or a new chat when there were none, alone in the column with the chat mounted threads only, and no request's news is drawn there: that is on the request's page (#6207)",
       "path": "/?demo=1#homeroom-bot/main",
-      "expectSelector": "#ai-main-pane .messages-thread-scroll:not(:has([data-request-tag])) .messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)",
-      "expectText": "Main Chat",
-      "id": "homeroom-bot-dm-question",
-      "visual": true,
-      "impact": [
-        "frontend/src/features/messages/**",
-        "src/services/homeroom-bot-dm.js",
-        "src/services/staging-messages.js"
-      ]
-    },
-    {
-      "name": "The Homeroom bot tab's list starts with Main Chat, the chat with the bot itself, drawn lit while it is the chat in the column beside the list, under its own name and that only you can see it (1 Nov 2026: the chat is the tab's alone; its Messages address lands here)",
-      "path": "/?demo=1#messages/910005",
-      "expectSelector": "#ai-screen:not(.hidden):has(#ai-main-pane[data-ai-column=main] > [data-ai-main-head] + .messages-layout[data-main-chat]) [data-ai-sheet=main] > [data-ai-main-row][data-ai-lit][aria-current=true]",
-      "expectText": "Main Chat",
-      "id": "homeroom-bot-main-chat-row",
+      "expectSelector": "#ai-screen:not(.hidden) #ai-main-pane[data-ai-column] > .messages-layout[data-bot-threads] > .messages-reply-pane .messages-reply-scroll:not(:has([data-request-tag]))",
+      "id": "homeroom-bot-old-main-address",
       "visual": true,
       "impact": [
         "frontend/src/features/ai/**",
@@ -4963,10 +4949,24 @@
       ]
     },
     {
-      "name": "#6207 (3 Nov 2026): Main Chat holds no request's news: no row about a request (a first version's news stays, having no request page yet), since a request's news is on its page, where its row on the Homeroom bot page goes",
-      "path": "/?demo=1#homeroom-bot/main",
-      "expectSelector": "#ai-main-pane[data-ai-column=main] .messages-thread-scroll:not(:has([data-request-tag]))",
-      "expectText": "Main Chat"
+      "name": "The Homeroom bot tab has no Main Chat row: its head has New chat, a labelled button beside search, and its lists are the threads you are in (14 Nov 2026; the chat is the tab's alone, and the demo chat's old Messages address lands here)",
+      "path": "/?demo=1#messages/910005",
+      "expectSelector": "#ai-screen:not(.hidden):not(:has([data-ai-main-row], [data-ai-main-head])) [data-ai-sheet=head] [data-ai-hero] > button[data-ai-search-toggle] + button[data-ai-new-chat]",
+      "expectText": "New chat",
+      "id": "homeroom-bot-new-chat",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/ai/**",
+        "frontend/src/features/messages/**",
+        "src/services/staging-messages.js",
+        "src/routes/conversations.js"
+      ]
+    },
+    {
+      "name": "#homeroom-bot/new?project=<slug> is New chat about a project (the second row of its Workshop's Your work card): What do you want to do?, with that project already on its chip, in the column beside the lists",
+      "path": "/?demo=1#homeroom-bot/new?project=usernode-2d5619",
+      "expectSelector": "#ai-main-pane[data-ai-column=new] [data-bot-new-thread-pane]:has([data-bot-new-thread-project=\"usernode-2d5619\"]) [data-bot-new-thread-start]",
+      "expectText": "New chat"
     },
     {
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",

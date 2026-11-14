@@ -52,18 +52,49 @@ function load() {
   return { mod, calls };
 }
 
-test('the "+" is in both headers, and is nothing without the chat it opens beside', () => {
-  const { mod } = load();
-  assert.equal(renderToHtml(createElement(mod.NewThreadButton, { conversationId: null, className: 'x' })), '');
-  const html = renderToHtml(createElement(mod.NewThreadButton, { conversationId: 7, className: 'messages-thread-action' }));
+test('New chat is the Homeroom bot tab\'s labelled button, beside search, and is drawn before anything is read', () => {
+  // 14 Nov 2026: where the "+" disc was. Every conversation with the bot is
+  // a thread and there is no Main Chat to type into, so this is how one
+  // starts; the bot chat's header in Messages, which had a "+" too, is no
+  // longer drawn anywhere.
+  const { NewChatButton } = loadTsx('frontend/src/features/ai/new-chat-button.tsx');
   const label = message('messages:newThread.start');
-  assert.match(html, new RegExp(`^<button type="button" class="messages-thread-action" aria-label="${label}" title="${label}" data-bot-new-thread="">`));
-  assert.match(html, /<svg/);
+  assert.equal(label, 'New chat');
+  assert.equal(message('messages:newThread.title'), 'New chat', 'and the screen it opens is called the same');
+  const html = renderToHtml(createElement(NewChatButton, { onOpen() {} }));
+  assert.match(html, /^<button type="button" title="New chat" data-bot-new-thread="" data-ai-new-chat="" class="rounded-full bg-violet-600 [^"]*"><svg/, 'the page\'s one filled button, in the accent');
+  assert.match(html, /<svg[^>]*aria-hidden="true"[^>]*>[\s\S]*<\/svg><span>New chat<\/span><\/button>$/, 'a plus, then its words');
   const ai = read('frontend/src/features/ai/index.tsx');
   const hero = ai.slice(ai.indexOf('const hero = ('), ai.indexOf('</section>', ai.indexOf('const hero = (')));
-  assert.match(hero, /<NewThreadButton\n\s+conversationId=\{botId \|\| null\}\n\s+onOpen=\{openBlank\}/, 'in the Homeroom bot tab\'s header');
-  const messages = read('frontend/src/features/messages/index.tsx');
-  assert.match(messages, /\{botDm \? <NewThreadButton conversationId=\{active\.id\} className="messages-thread-action" \/> : null\}/, 'and the bot chat\'s in Messages');
+  assert.match(hero, /data-ai-search-toggle=""[\s\S]*<\/button>\n\s+<NewChatButton onOpen=\{openNewChat\} \/>/, 'in the Homeroom bot tab\'s head, after search');
+  assert.doesNotMatch(read('frontend/src/features/messages/index.tsx'), /NewThreadButton/);
+  assert.doesNotMatch(read(NEW_THREAD), /NewThreadButton/);
+  // Where the heading is too narrow for the words, the disc alone, and the
+  // words stay its name (app.css, by the heading's own width).
+  const css = read('public/css/app.css');
+  assert.match(css, /#ai-screen \[data-ai-hero\] \[data-ai-new-chat\] \{ padding-inline: 14px 16px; \}\n@container \(max-width: 400px\) \{\n  #ai-screen \[data-ai-hero\] \[data-ai-new-chat\] \{ padding-inline: 0; \}\n  #ai-screen \[data-ai-hero\] \[data-ai-new-chat\] > span \{\n    position: absolute; width: 1px; height: 1px;/);
+});
+
+test('New chat opens set to a project: the one chip picked, else the project last left, else Any project; a page in the column is carried', () => {
+  const ai = read('frontend/src/features/ai/index.tsx');
+  const fn = ai.slice(ai.indexOf('  function newChatPreset(): NewThreadPreset {'), ai.indexOf('  const openNewChat = () => {'));
+  assert.match(fn, /const project = picked\.length === 1 \? picked\[0\] : communityScopeStore\.get\(\)\.slug \|\| null;\n\s+return \{ project, builder: 'homeroom' \};/);
+  // What a row opened in the column (a request, a change, a decision) goes
+  // into the new chat's box, with its own project: it used to ride in Main
+  // Chat's box (#6212).
+  assert.match(fn, /const route = column\?\.at === 'page' \? column\.route : null;/);
+  assert.match(fn, /if \(about\) return \{ project: about\.appSlug, builder: 'homeroom', object: about \};/);
+  assert.match(ai, /const openNewChat = \(\) => \{\n\s+const preset = newChatPreset\(\);\n\s+if \(!botId \|\| !\(wide \|\| phone\)\) \{ go\(botNewAddress\(\{ project: preset\.project \}\)\); return; \}\n\s+openBlank\(\);\n\s+startNewThread\(botId, preset\);\n\s+\};/);
+  // An address that names no project takes the page's own; one that names it keeps it.
+  assert.match(ai, /const own = named\.project \? null : newChatPreset\(\);\n\s+openBlank\(\);\n\s+startNewThread\(botId, own \? \{ \.\.\.own, builder: named\.builder \} : named\);/);
+  // The panel takes what it was opened set to, again when it is already open.
+  const { mod, calls } = load();
+  mod.startNewThread(7, { project: 'run-club', builder: 'homeroom' });
+  assert.deepEqual(calls, [['closeThread']], 'a thread open there gives way; nothing is made or read');
+  const html = renderToHtml(createElement(mod.NewThreadPanel, { conversationId: 7 }));
+  assert.match(html, /data-bot-new-thread-project="run-club"/);
+  assert.match(html, /<div class="messages-thread-name">New chat<\/div>/);
+  mod.closeNewThread();
 });
 
 const stripTags = (text) => text.replace(/<\/?\d+>/g, '');
@@ -147,12 +178,12 @@ test('the project is chosen from the "Your communities" rows, Any project first'
 
 test('the thread is made on the first send, through a same-origin door, and the message goes into it', () => {
   const src = read(NEW_THREAD);
-  assert.match(src, /const kind: ChangeKind = startOf\(content, starts\)\?\.kind \|\| 'any';\n\s+const made = await api\.startBotThread\(\{ project: project \|\| null, kind \}\);\n\s+await api\.sendMessage\(conversationId, \{ content, threadRootId: made\.rootId, attachmentIds: attachments\.map\(\(item\) => item\.id\), idempotencyKey: key\(\) \}\);\n\s+closeNewThread\(\);\n\s+openThread\(made\.rootId\);/);
+  assert.match(src, /const kind: ChangeKind = startOf\(content, starts\)\?\.kind \|\| 'any';\n\s+const made = await api\.startBotThread\(\{ project: project \|\| null, kind \}\);\n\s+await api\.sendMessage\(conversationId, \{\n\s+content, threadRootId: made\.rootId, attachmentIds: attachments\.map\(\(item\) => item\.id\), idempotencyKey: key\(\),\n\s+\.\.\.\(object \? \{ object: referenceOf\(object\) \} : \{\}\),\n\s+\}\);\n\s+closeNewThread\(\);\n\s+openThread\(made\.rootId\);/);
   assert.match(read('frontend/src/features/messages/api.ts'), /request<unknown>\('\/api\/conversations\/homeroom-bot\/new-thread', \{ method: 'POST'/);
   assert.match(read('src/routes/conversations.js'), /router\.post\('\/api\/conversations\/homeroom-bot\/new-thread', conversationActionLimiter, sameOriginBrowserOnly,/);
 });
 
-test('a started thread is headed by what it is for, never as a request, and takes Main Chat\'s place in the tab', () => {
+test('a started thread is headed by what it is for, never as a request, and a new chat takes the tab\'s column', () => {
   const { mod } = load();
   const t = (id) => message(id);
   assert.equal(mod.startedThreadTitle(t, 'fix'), 'Fix something broken');
@@ -189,8 +220,8 @@ test('files are dropped, pasted or picked in a blank thread, and ride its first 
   }
   assert.doesNotMatch(src, /messages:newThread\.(attach|drop|upload)/, 'no new catalog text');
   // Send is enabled by files alone, and held while an upload runs.
-  assert.match(src, /disabled=\{busy \|\| dictating \|\| uploading > 0 \|\| \(!words\.trim\(\) && !attachments\.length\)\}/);
-  assert.match(src, /if \(busy \|\| dictating \|\| uploading \|\| \(!content && !attachments\.length\)\) return;/);
+  assert.match(src, /disabled=\{busy \|\| dictating \|\| uploading > 0 \|\| \(!words\.trim\(\) && !attachments\.length && !object\)\}/);
+  assert.match(src, /if \(busy \|\| dictating \|\| uploading \|\| \(!content && !attachments\.length && !object\)\) return;/);
   assert.match(src, /attachmentIds: attachments\.map\(\(item\) => item\.id\)/);
 });
 
@@ -306,12 +337,14 @@ test('a pick of the person\'s own opens the product with their own words in the 
   assert.ok(builder.builderLink('claude-code', 'x'.repeat(builder.HANDOFF_MAX), null));
   // In the panel, the hand-off comes before anything is made, and Homeroom bot's send is the one pinned above.
   const src = read(NEW_THREAD);
-  assert.match(src, /if \(busy \|\| dictating \|\| uploading \|\| \(!content && !attachments\.length\)\) return;\n\s+if \(own\) \{ handOff\(content\); return; \}\n\s+setBusy\(true\);/);
+  assert.match(src, /if \(busy \|\| dictating \|\| uploading \|\| \(!content && !attachments\.length && !object\)\) return;\n\s+if \(own\) \{ handOff\(content\); return; \}\n\s+setBusy\(true\);/);
   const handOff = src.slice(src.indexOf('const handOff = '), src.indexOf('const send = '));
   assert.doesNotMatch(handOff, /startBotThread|sendMessage/, 'no thread and no message in Homeroom');
   assert.match(handOff, /const link = builderLink\(own, content, project \|\| null\);/);
   assert.match(handOff, /const tab = window\.open\(link, '_blank'\);\n\s+if \(!tab\) \{ setError\(t\('messages:newThread\.builder\.blocked'\)\); return; \}\n\s+try \{ tab\.opener = null; \}/, 'a blocked tab keeps the words and says so');
   assert.match(handOff, /if \(attachments\.length\) \{ setError\(t\('messages:newThread\.builder\.files', \{ builder: ownName \}\)\); return; \}/, 'files cannot ride a link');
+  assert.match(handOff, /if \(object\) \{ setError\(t\('messages:newThread\.builder\.item', \{ builder: ownName \}\)\); return; \}/, 'nor an attached item');
+  assert.equal(message('messages:newThread.builder.item', { builder: 'Claude Code' }), 'The attached item can’t be handed to Claude Code. Remove it, or pick Homeroom bot.');
   assert.match(src, /className="messages-send messages-send-open"[^\n]*data-bot-new-thread-open=\{own\}>\n\s+<span>\{t\('messages:newThread\.builder\.openShort'\)\}<\/span>\n\s+<ArrowTopRightOnSquareIcon aria-hidden="true" \/>/, 'it says Open, beside the leaving-arrow');
   assert.match(src, /\{own \? <p className="messages-composer-hint" data-bot-new-thread-handoff="">\{t\('messages:newThread\.builder\.handoff', \{ builder: ownName \}\)\}<\/p> : null\}/);
   assert.equal(message('messages:newThread.builder.placeholder'), 'Your prompt');

@@ -122,4 +122,3 @@
 .tb .n{top:-1px;left:calc(50% + 8px);box-shadow:0 0 0 2px var(--surface)}
 .phone .dock{background:var(--surface);border-top:1px solid var(--line2)}
 .phone .facts.f5 .fact .l{white-space:normal;line-height:1.2}
-.phone .barline{border-bottom-color:var(--line2)}

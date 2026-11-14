@@ -4,16 +4,12 @@
  * request used to open a thread of the chat's own beside it: the request's
  * card again, its updates, and a box to "Reply about this request…". That
  * was a second view of a thread that already has one, the request's public
- * page, and it was reachable from nowhere else: not Main Chat, and not the
- * bot page's list of threads. So a thread in this chat is now only one the
- * person started (or a draft the bot opened for them, which the list shows
- * with a lock), and everything about a request opens the request's page:
- * beside the bot page on a desktop, in Main Chat's place (the side panel,
- * as the list's rows do), else the page itself.
- *
- * What still waits on the person in the chat (a question to answer, a plan
- * to build, a button to press) is drawn whole in Main Chat, where they answer
- * it (./bot-news-line.tsx asksInChat), so nothing is left only in a thread.
+ * page, and it was reachable from nowhere else: not the bot page's list of
+ * threads. So a thread in this chat is only one the person started (or one
+ * the bot opened for them, which the list shows with a lock), and
+ * everything about a request opens the request's page: beside the bot page
+ * on a desktop, in its column (the side panel, as the list's rows do), else
+ * the page itself.
  */
 
 import { t } from '../../lib/i18n/runtime';
@@ -26,7 +22,7 @@ export interface RequestPage {
   label: string;
   /** Its project, as the side panel's header names it. */
   place: { slug: string; name: string };
-  /** The request, as Main Chat's composer can carry it. Null for a first version. */
+  /** The request's number. Null for a first version. */
   issueNumber: number | null;
 }
 
@@ -81,22 +77,15 @@ export function requestPageOf(message: ConversationMessage | null | undefined): 
 
 /**
  * Open a request's page from the chat with the bot. Beside the bot page on a
- * desktop the side panel takes it, in Main Chat's place, and Main Chat's
- * composer carries the request (as the list's rows do: features/ai/); anywhere
- * else the page itself, which goes back to where it was opened from.
+ * desktop the side panel takes it, in the page's column (as the list's rows
+ * do: features/ai/); anywhere else the page itself, which goes back to where
+ * it was opened from.
  */
-export function openRequestPage(page: RequestPage, conversationId: number | null = null): void {
+export function openRequestPage(page: RequestPage): void {
   if (typeof window === 'undefined') return;
   const w = window as any;
   try {
-    if (w.UsernodeReact?.sidePanel?.take?.(page.route, { place: page.place, label: page.label })) {
-      if (conversationId && page.issueNumber) {
-        window.dispatchEvent(new CustomEvent('usernode:messages-object-selected', {
-          detail: { type: 'issue', appSlug: page.place.slug, issueNumber: page.issueNumber, title: page.label, conversationId, source: 'list' },
-        }));
-      }
-      return;
-    }
+    if (w.UsernodeReact?.sidePanel?.take?.(page.route, { place: page.place, label: page.label })) return;
   } catch {
     /* the page instead */
   }
