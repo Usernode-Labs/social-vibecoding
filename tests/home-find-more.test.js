@@ -382,16 +382,19 @@ test('index.html stacks the three home areas in order', () => {
   // made every one of them feel optional. Then Create moved INTO Your apps as
   // the grid's trailing tile (the prototype's scrHome): not a widget with a
   // stored cell, but a tile whose cell is derived from the grid it ends.
-  // One Home (#6361): Pinned apps, Pinned communities, Challenges as a
-  // sideways row, then Communities to join; Discover's lane went with it.
+  // One Home (#6361): Pinned apps, Pinned communities, then Communities to
+  // join; Discover's lane went with it. #6650: Challenges is a section of
+  // the For you column, which comes FIRST in the markup (a reversed row puts
+  // it on the right, and above the content when the two wrap).
+  const forYou = INDEX.indexOf('id="home-for-you"');
   const grid = INDEX.indexOf('id="home-apps-section"');
   const communities = INDEX.indexOf('id="home-communities-section"');
   const challenges = INDEX.indexOf('id="home-challenges-section"');
   const join = INDEX.indexOf('id="home-join-section"');
   assert.ok(grid > 0, 'the launcher grid is present');
+  assert.ok(forYou > 0 && forYou < challenges && challenges < grid, 'Challenges sits in the For you column, before the content');
   assert.ok(communities > grid, 'Pinned communities comes after Pinned apps');
-  assert.ok(challenges > communities, 'Challenges after Pinned communities');
-  assert.ok(join > challenges, 'Communities to join last');
+  assert.ok(join > communities, 'Communities to join last');
   assert.equal(INDEX.indexOf('id="home-discover-section"'), -1, 'no Discover lane on Home');
   assert.equal(INDEX.indexOf('id="home-create-section"'), -1,
     'Create app is no longer a section of its own');
@@ -422,6 +425,8 @@ test('the apps grid is four columns at every width, two rows by default', () => 
     /\{t\('home:grid\.showAll', \{ count: moreCount \}\)\}/
   );
   assert.equal(message('home:grid.showAll', { count: 9 }), 'Show all 9 apps');
+  // #6650: the folded grid's way on is its own last tile, See all.
+  assert.equal(message('home:grid.seeAll', { count: 9 }), 'See all 9 apps');
   assert.equal(INDEX.indexOf('id="home-apps-more"') > 0, true,
     'the expander has a host outside #app-list');
 });
@@ -492,7 +497,7 @@ test('the home feed is a 1024px centred column', () => {
 
   const css = read('public/css/app.css');
   const rule = css.match(/\.home-column \{[^}]*\}/)[0];
-  assert.match(rule, /max-width:\s*64rem/, '64rem = 1024px');
+  assert.match(rule, /max-width:\s*80rem/, "80rem = 1280px: Home's two columns (#6650)");
   assert.match(rule, /margin-inline-start:\s*auto/);
   assert.match(rule, /margin-inline-end:\s*auto/);
   // The old per-box bound is gone for good.
@@ -541,11 +546,15 @@ test('Create an app is the launcher grid\'s trailing tile, for every account', (
   // there.
   assert.doesNotMatch(PANELS_SRC, /createView\(panel\) \{/, 'the panels no longer build it');
   assert.doesNotMatch(PANELS_SRC, /create: 'home-create-section'/, 'and it has no section host');
-  // The only thing that withholds the tile is a collapsed grid it would add
-  // a row to (#3047) — and there it is not gone: the view is still built, and
-  // the Show-all line draws the compact New project entry for it (#4757).
-  assert.match(HOME_SRC, /create = \{\n\s+enabled: canCreate,\n\s+hint: message\(Home\.CREATE_DISABLED_HINT\),\n\s+heldBack: createHidden,/,
-    'Home.render() builds it on the grid paint, from the same canCreate');
+  // #6650: it is the New project card of Home's For you column now, on
+  // every Home but a private member's (who makes nothing until let in), and
+  // the same canCreate decides its treatment; the grid ends on the apps.
+  const forYou = read('frontend/src/features/home/for-you.tsx');
+  assert.match(forYou, /const enabled = !!win\(\)\.Home\?\.canCreate\?\.\(\);/,
+    'the card reads the same canCreate');
+  assert.match(forYou, /data-create-enabled=\{String\(enabled\)\}/);
+  assert.match(forYou, /\{viewer && !privateMember \? <NewProjectCard \/> : null\}/);
+  assert.doesNotMatch(HOME_SRC, /heldBack: createHidden/, 'Home.render() builds no grid tile');
   assert.doesNotMatch(HOME_SRC, /data-panel-slot="/,
     'and the grid still plants no widget slots: the tile is a component, not a slot');
   // The server's registry still lists it (a cached older shell renders its

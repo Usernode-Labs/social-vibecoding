@@ -1700,8 +1700,8 @@
     "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first, title: points at the New community tile on Home, which starts a new project."
   },
   "firstSession.tour.look.make.text": {
-    "text": "New community starts a community and its app.",
-    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first: text about the tile on Home labelled \"New community\". Write New community as that tile is named."
+    "text": "New project starts a project and its community.",
+    "description": "Card of the short tour a new member is walked through after joining or making a project, for a member who chose to look around first: text about the New project card on Home. Write New project as that card's button is named."
   },
   "firstSession.tour.look.discover.title": {
     "text": "Find a community to join",

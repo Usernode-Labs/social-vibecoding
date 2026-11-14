@@ -106,14 +106,15 @@ const APP = {
 // ── 1. one render pass publishes both halves ──────────────────────────
 
 test('Home.render() pushes the expander count and the strip together', () => {
-  const { Home, chromeStore } = makeHome();
+  const { Home, chromeStore, sandbox } = makeHome();
   // Cross-realm: the store lives in the vm context, so round-trip through
   // JSON rather than comparing prototypes.
   const chromeNow = () => JSON.parse(JSON.stringify(chromeStore.get()));
   assert.deepEqual(chromeNow(), INITIAL_CHROME, 'nothing published before a render');
 
   // Nine apps against a two-row, four-column default: one row is held back,
-  // so the expander names all nine.
+  // so See all names all nine. #6650: See all is the grid's last tile, so
+  // the line under it publishes no count.
   Home._apps = Array.from({ length: 9 }, (_, i) => ({ ...APP, slug: `app-${i}`, name: `App ${i}` }));
   Home._layout = null;
   Home._shortcutSupport = { mechanism: 'widget' };
@@ -122,7 +123,9 @@ test('Home.render() pushes the expander count and the strip together', () => {
   Home.render();
 
   const chrome = chromeNow();
-  assert.equal(chrome.moreCount, 9, 'the expander names every app, not just the hidden ones');
+  assert.equal(chrome.moreCount, 0, '#6650: the line under the grid stays empty');
+  const grid = JSON.parse(JSON.stringify(sandbox.gridStore.get()));
+  assert.equal(grid.seeAll.count, 9, 'See all names every app, not just the hidden ones');
   assert.equal(chrome.strip.active, true, 'the strip rides the SAME push');
   assert.deepEqual(chrome.strip.tiles.map((t) => t.id), ['w1']);
 });
@@ -359,9 +362,11 @@ test('nothing on the home screen is an innerHTML host any more', () => {
   // empty <section> left for a module to find by id and fill.
   const island = read('frontend/src/features/home/index.tsx');
   for (const tag of ['<AppGrid />', '<AppsMore />', '<WidgetStrip />',
-    '<PinnedCommunities />', '<ChallengesSection />', '<HomeJoin />']) {
+    '<PinnedCommunities />', '<HomeForYou />', '<HomeJoin />']) {
     assert.ok(island.includes(tag), `the island mounts ${tag}`);
   }
+  // #6650: Challenges is a section of the For you column, which mounts it.
+  assert.ok(read('frontend/src/features/home/for-you.tsx').includes('<ChallengesSection limit={2} />'));
   // One Home (#6361): Discover's lane and the continue card left Home; its
   // Communities to join is the directory now.
   assert.ok(!island.includes('<DiscoverSection />'), 'no Discover lane on Home');
@@ -405,7 +410,7 @@ test('the panel sections publish through a store, on one paint', () => {
   // grid's trailing tile, and it arrives on the grid model in the same paint.
   assert.equal('create' in state, false, 'no create block in the panels model');
   const grid = JSON.parse(JSON.stringify(sandbox.gridStore.get()));
-  assert.ok(grid.create && typeof grid.create === 'object',
-    '#6522: the grid carries its trailing New project tile again');
-  assert.equal(typeof grid.create.enabled, 'boolean', 'the view is a real create view, not a placeholder');
+  // #6650: New project is a card of Home's For you column (for-you.tsx);
+  // the grid ends on the viewer's own apps.
+  assert.equal(grid.create, null, 'the grid carries no New project tile');
 });

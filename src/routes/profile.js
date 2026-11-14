@@ -1556,6 +1556,9 @@ function profileRoutes(config) {
 
 module.exports = {
   profileRoutes,
+  // Home's Your work card (services/home-for-you.js) reads Profile's own
+  // counts, so the two screens cannot disagree.
+  SUMMARY_COUNTS_SQL,
   // Exported for tests.
   validateAvatarUpload,
   parseProfileFields,

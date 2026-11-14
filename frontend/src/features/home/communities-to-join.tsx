@@ -113,13 +113,16 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   if (query && !list.length) return null;
   // Nothing drawn on a card depends on being signed in (#6609): a member and
   // a visitor get the same card, and Join is the project page's.
-  const heading = signedIn ? t('home:join.heading') : t('home:join.headingSignedOut');
+  // #6650: signed in, the section is Discover communities, under its own line.
+  const heading = signedIn ? t('home:join.headingDiscover') : t('home:join.headingSignedOut');
   return (
     // The id is the signed-in Home's (the tours and the declared checks find
     // it); the landing draws the same section signed out, in the same
     // document, so it goes without one there.
-    <section id={signedIn ? 'home-join-section' : undefined} data-home-join-section="" className="px-3 pb-6" aria-busy={apps ? undefined : true}>
+    <section id={signedIn ? 'home-join-section' : undefined} data-home-join-section="" className={signedIn ? 'home-section-rule px-3 pb-6' : 'px-3 pb-6'} aria-busy={apps ? undefined : true}>
       <SectionHeading>{heading}</SectionHeading>
+      {/* #6650: signed in, the heading says what the section is for. */}
+      {signedIn ? <p className="m-0 -mt-1 pb-1 text-[13px] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">{t('home:join.sub')}</p> : null}
       {!query && kinds.length ? (
         <FadeRail role="group" aria-label={ta('auth:guest.categories.label')} className="-mx-3 gap-2 px-3 pt-1 pb-3">
           <Chip size="bar" className="min-h-11" selected={!kind} data-home-join-kind="all" onClick={() => setKind(null)}>

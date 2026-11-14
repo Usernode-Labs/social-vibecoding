@@ -1006,5 +1006,257 @@
   "frame.purpose": {
     "text": "Your apps and your communities.",
     "description": "Home drawn in the one frame, under any of its looks (an admin's preview in Settings > Experimental). The one sentence under the page title, saying what Home holds."
+  },
+  "forYou.label": {
+    "text": "For you",
+    "description": "Accessible name of Home's For you column (beside the app tiles on a wide screen, above them on a narrow one): the cards that ask for the viewer (New project, Needs you, what is new, their work, challenges)."
+  },
+  "forYou.newProject.title": {
+    "text": "Have an idea for an app?",
+    "description": "Title of the New project card in Home's For you column (beside the app tiles on a wide screen, above them on a narrow one)."
+  },
+  "forYou.newProject.text": {
+    "text": "Describe it, build it with Homeroom bot, and share it with your communities.",
+    "description": "Sentence under the title of the New project card on Home: what making a project involves."
+  },
+  "forYou.newProject.button": {
+    "text": "New project",
+    "description": "Button on Home's New project card: opens the dialog that starts a new project."
+  },
+  "forYou.newProject.noSlots": {
+    "text": "No project slots left. <0>Request project slots</0> to build your own ideas.",
+    "description": "Line under the New project button on Home when the viewer has used every project slot. The words inside <0> are a link to the card where they ask for more."
+  },
+  "forYou.needs.label": {
+    "text": "Needs you",
+    "description": "Small label at the top of Home's Needs you card, over its title."
+  },
+  "forYou.needs.title": {
+    "text": "Decisions waiting for your vote",
+    "description": "Title of Home's Needs you card: the votes waiting on the viewer across their projects."
+  },
+  "forYou.needs.split": {
+    "text": "Votes that decide: {{decide}}. Advisory votes: {{advisory}}.",
+    "description": "Accessible description of the bar on Home's Needs you card that splits the waiting votes in two. {{decide}} counts the votes whose result the viewer's vote counts towards; {{advisory}} counts the ones where it is only advice."
+  },
+  "forYou.needs.tagDecides": {
+    "text": "Decides",
+    "description": "Tag on a decision listed on Home's Needs you card: the viewer's vote counts towards the result."
+  },
+  "forYou.needs.tagAdvisory": {
+    "text": "Advisory",
+    "description": "Tag on a decision listed on Home's Needs you card: the viewer's vote is advice only."
+  },
+  "forYou.needs.review_one": {
+    "text": "Start reviewing · {{count}}",
+    "description": "Button at the bottom of Home's Needs you card: opens Needs you, one decision at a time. {{count}} is how many wait. Singular."
+  },
+  "forYou.needs.review_other": {
+    "text": "Start reviewing · {{count}}",
+    "description": "Button at the bottom of Home's Needs you card: opens Needs you, one decision at a time. {{count}} is how many wait. Plural."
+  },
+  "forYou.activity.title": {
+    "text": "New in your communities",
+    "description": "Title of the card in Home's For you column (beside the app tiles on a wide screen, above them on a narrow one) that lists what happened in the viewer's communities."
+  },
+  "forYou.activity.since": {
+    "text": "Activity since your last visit",
+    "description": "Line under the title of Home's New in your communities card: the card counts what is new since the viewer last marked it read."
+  },
+  "forYou.activity.markRead": {
+    "text": "Mark all read",
+    "description": "Button on Home's New in your communities card: clears the card, so it counts again from now."
+  },
+  "forYou.activity.messages_one": {
+    "text": "{{count}} new message",
+    "description": "One part of a row on Home's New in your communities card: messages in the community's channel the viewer has not read. Singular."
+  },
+  "forYou.activity.messages_other": {
+    "text": "{{count}} new messages",
+    "description": "One part of a row on Home's New in your communities card: messages in the community's channel the viewer has not read. Plural."
+  },
+  "forYou.activity.merged_one": {
+    "text": "{{count}} change went live",
+    "description": "One part of a row on Home's New in your communities card: changes to the community's project that were voted in and went live. Singular."
+  },
+  "forYou.activity.merged_other": {
+    "text": "{{count}} changes went live",
+    "description": "One part of a row on Home's New in your communities card: changes to the community's project that were voted in and went live. Plural."
+  },
+  "forYou.activity.requests_one": {
+    "text": "{{count}} new request",
+    "description": "One part of a row on Home's New in your communities card: requests (ideas and bug reports) somebody filed. Singular."
+  },
+  "forYou.activity.requests_other": {
+    "text": "{{count}} new requests",
+    "description": "One part of a row on Home's New in your communities card: requests (ideas and bug reports) somebody filed. Plural."
+  },
+  "forYou.activity.more_one": {
+    "text": "{{count}} more community has news.",
+    "description": "Line at the end of Home's New in your communities card: communities with news the card had no room for. Singular."
+  },
+  "forYou.activity.more_other": {
+    "text": "{{count}} more communities have news.",
+    "description": "Line at the end of Home's New in your communities card: communities with news the card had no room for. Plural."
+  },
+  "forYou.work.title": {
+    "text": "Your work",
+    "description": "Title of the card in Home's For you column (beside the app tiles on a wide screen, above them on a narrow one) with the viewer's points, changes, requests and votes."
+  },
+  "forYou.work.profile": {
+    "text": "View profile",
+    "description": "Link in the corner of Home's Your work card: opens the viewer's profile."
+  },
+  "forYou.work.points": {
+    "text": "Points",
+    "description": "Small label over the viewer's points total on Home's Your work card."
+  },
+  "forYou.work.pointsWeek_one": {
+    "text": "+{{points}} this week",
+    "description": "Beside the points total on Home's Your work card: points earned in the last seven days. {{points}} is the number, already formatted; {{count}} is the same number, for the plural. Singular."
+  },
+  "forYou.work.pointsWeek_other": {
+    "text": "+{{points}} this week",
+    "description": "Beside the points total on Home's Your work card: points earned in the last seven days. {{points}} is the number, already formatted; {{count}} is the same number, for the plural. Plural."
+  },
+  "forYou.work.changes": {
+    "text": "Changes",
+    "description": "Row on Home's Your work card: the changes the viewer proposed. The number is on the right."
+  },
+  "forYou.work.changesWaiting_one": {
+    "text": "{{count}} waiting for a vote",
+    "description": "Under Changes on Home's Your work card: how many of the viewer's changes are up for a vote. Singular."
+  },
+  "forYou.work.changesWaiting_other": {
+    "text": "{{count}} waiting for a vote",
+    "description": "Under Changes on Home's Your work card: how many of the viewer's changes are up for a vote. Plural."
+  },
+  "forYou.work.requests": {
+    "text": "Requests",
+    "description": "Row on Home's Your work card: the requests the viewer filed. The number is on the right."
+  },
+  "forYou.work.requestsOpen_one": {
+    "text": "{{count}} still open",
+    "description": "Under Requests on Home's Your work card: how many of the viewer's requests are not done yet. Singular."
+  },
+  "forYou.work.requestsOpen_other": {
+    "text": "{{count}} still open",
+    "description": "Under Requests on Home's Your work card: how many of the viewer's requests are not done yet. Plural."
+  },
+  "forYou.work.votes": {
+    "text": "Votes cast",
+    "description": "Row on Home's Your work card: how many votes the viewer has cast. The number is on the right."
+  },
+  "forYou.work.votesOwed_one": {
+    "text": "{{count}} more needs you",
+    "description": "Under Votes cast on Home's Your work card: how many votes still wait on the viewer. Singular."
+  },
+  "forYou.work.votesOwed_other": {
+    "text": "{{count}} more need you",
+    "description": "Under Votes cast on Home's Your work card: how many votes still wait on the viewer. Plural."
+  },
+  "grid.seeAll_one": {
+    "text": "See all {{count}} app",
+    "description": "Last tile of the folded grid of app tiles on Home: shows every tile. {{count}} is how many apps the viewer has. Singular."
+  },
+  "grid.seeAll_other": {
+    "text": "See all {{count}} apps",
+    "description": "Last tile of the folded grid of app tiles on Home: shows every tile. {{count}} is how many apps the viewer has. Plural."
+  },
+  "communities.fewer": {
+    "text": "Show fewer",
+    "description": "Last tile of Pinned communities on Home while every community is on show: folds the section back to two rows."
+  },
+  "join.sub": {
+    "text": "Communities you haven't pinned yet",
+    "description": "Line under the heading of the public communities at the bottom of Home, for a signed-in viewer."
+  },
+  "communities.seeAll": {
+    "text": "See all communities",
+    "description": "Last tile of Pinned communities on Home when there is more to see than two rows: shows every pinned community, then the ones the viewer is in but has not pinned. Pressing it again folds the section back to two rows."
+  },
+  "join.headingDiscover": {
+    "text": "Discover communities",
+    "description": "Heading over the cards of public communities at the bottom of a signed-in viewer's Home: the ones they have not joined or pinned."
+  },
+  "forYou.newProject.slots_one": {
+    "text": "<0>{{n}}</0> project slot available",
+    "description": "Line under the New project button on Home: the viewer can make one more project. {{n}} is the number, drawn in bold. Singular."
+  },
+  "forYou.newProject.slots_other": {
+    "text": "<0>{{n}}</0> project slots available",
+    "description": "Line under the New project button on Home: how many more projects the viewer can make. {{n}} is the number, drawn in bold. Plural."
+  },
+  "forYou.needs.decideWord_one": {
+    "text": "decides",
+    "description": "Under the bar on Home's Needs you card, after the number in bold: how many waiting votes the viewer's vote counts towards. Singular."
+  },
+  "forYou.needs.decideWord_other": {
+    "text": "decide",
+    "description": "Under the bar on Home's Needs you card, after the number in bold: how many waiting votes the viewer's vote counts towards. Plural."
+  },
+  "forYou.needs.advisoryWord_one": {
+    "text": "advisory",
+    "description": "Under the bar on Home's Needs you card, after the number in bold: how many waiting votes where the viewer's vote is only advice. Singular."
+  },
+  "forYou.needs.advisoryWord_other": {
+    "text": "advisory",
+    "description": "Under the bar on Home's Needs you card, after the number in bold: how many waiting votes where the viewer's vote is only advice. Plural."
+  },
+  "forYou.glance.decisions_one": {
+    "text": "decision",
+    "description": "Under the Needs you number on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: the word after the number. Singular."
+  },
+  "forYou.glance.decisions_other": {
+    "text": "decisions",
+    "description": "Under the Needs you number on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: the word after the number. Plural."
+  },
+  "forYou.glance.new": {
+    "text": "New",
+    "description": "Small label over the number of new things on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: messages, changes that went live and requests in the viewer's communities."
+  },
+  "forYou.glance.inCommunities_one": {
+    "text": "in {{count}} community",
+    "description": "Under the New number on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: how many communities the new things are in. Singular."
+  },
+  "forYou.glance.inCommunities_other": {
+    "text": "in {{count}} communities",
+    "description": "Under the New number on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: how many communities the new things are in. Plural."
+  },
+  "forYou.glance.caughtUp": {
+    "text": "all caught up",
+    "description": "Under the New number on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side when nothing is new."
+  },
+  "forYou.glance.caughtUpLine": {
+    "text": "You're all caught up.",
+    "description": "Shown in the opened New part of Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side when nothing is new since the viewer last marked it read."
+  },
+  "forYou.glance.noVotes": {
+    "text": "No votes are waiting for you.",
+    "description": "Shown in the opened Needs you part of Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side when no vote waits on the viewer."
+  },
+  "forYou.glance.needsAria_one": {
+    "text": "{{count}} decision needs your vote. Show it.",
+    "description": "Accessible name of the Needs you button on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: pressing it opens the vote waiting under the numbers. Singular."
+  },
+  "forYou.glance.needsAria_other": {
+    "text": "{{count}} decisions need your vote. Show them.",
+    "description": "Accessible name of the Needs you button on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: pressing it opens the votes waiting under the numbers. Plural."
+  },
+  "forYou.glance.newAria_one": {
+    "text": "{{count}} new thing in your communities. Show it.",
+    "description": "Accessible name of the New button on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: pressing it opens what is new under the numbers. Singular."
+  },
+  "forYou.glance.newAria_other": {
+    "text": "{{count}} new things in your communities. Show them.",
+    "description": "Accessible name of the New button on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: pressing it opens what is new under the numbers. Plural."
+  },
+  "forYou.glance.workAria_one": {
+    "text": "Your work: {{points}} point. Show your changes, requests and votes.",
+    "description": "Accessible name of the Points button on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: pressing it opens the viewer's changes, requests and votes. {{points}} is the number, already formatted. Singular."
+  },
+  "forYou.glance.workAria_other": {
+    "text": "Your work: {{points}} points. Show your changes, requests and votes.",
+    "description": "Accessible name of the Points button on Home's For you card on a phone, which shows Needs you, what is new and the viewer's work as three numbers side by side: pressing it opens the viewer's changes, requests and votes. {{points}} is the number, already formatted. Plural."
   }
 }

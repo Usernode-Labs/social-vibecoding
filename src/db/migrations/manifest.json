@@ -375,6 +375,11 @@
       "id": "bot-chat-threads-only",
       "sha256": "229aab21e369f6bcaa24538bb7df2ffc9c901c35cda8e616acdda6b65408e9ec",
       "schemaSha256": "b5893a86e58a422c5fd31e28e17279737fc7531c5f9a517921c56e3e51b96e6c"
+    },
+    {
+      "id": "home-activity-seen",
+      "sha256": "dfc1467dab85ecaf5682a66c553795459d3f41fd2ebe2d14067fe65fa93a9058",
+      "schemaSha256": "866fc02100f51f2a4b873d62468108eebc0891b9f09ef1abcfb696db2440a5d5"
     }
   ]
 }

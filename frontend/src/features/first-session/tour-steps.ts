@@ -237,8 +237,9 @@ export function homeWalkSteps({ slug, name, example = null }: HomeWalkProject): 
  * "Look around first" (decision E, #4072): it used to land on Home with
  * nothing explained. Four cards on Home, each pointing at one place and
  * leading on with Next, so nobody is taken anywhere. One Home (#6361) put
- * all three of the first on Home itself: New community, where a community
- * and its app start whenever they want one, then the communities to join
+ * all three of the first on Home itself: New project (the For you column's
+ * card since #6650), where a project and its community start whenever they
+ * want one, then the communities to join
  * under it, then Pinned communities, where the ones you join go; and last
  * the AI tab.
  */
@@ -246,7 +247,8 @@ export function lookAroundSteps(): TourStep[] {
   return [
     {
       screen: 'home',
-      target: '#home-new-community',
+      // #6650: the New project card of Home's For you column.
+      target: '#home-new-project',
       ringed: true,
       title: translate('onboarding:firstSession.tour.look.make.title'),
       text: translate('onboarding:firstSession.tour.look.make.text'),

@@ -238,12 +238,17 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
   assert.match(read('frontend/src/features/home/index.tsx'), /<AppsMore \/>\s+<\/section>[\s\S]*<PinnedCommunities \/>\s+[\s\S]*<WaitlistCard \/>/);
 });
 
-test('Home for a private member: no New community tile, no Challenges or Create panels', () => {
-  const home = read('frontend/src/features/home/home.js');
-  assert.match(home, /if \(App\.user\?\.privateMember\) create = null;/);
-  // One Home (#6361): making something is Pinned communities' tile, which a
-  // private member is not offered.
-  assert.match(read('frontend/src/features/home/pinned-communities.tsx'), /const offerCreate = state\.ready && !win\?\.App\?\.user\?\.privateMember;/);
+test('Home for a private member: no New project or Your work cards, no Challenges or Create panels', () => {
+  // #6650: the launcher grid holds no Create tile for anyone; making
+  // something is the For you column's New project card, which a private
+  // member is not offered (nor Your work, which counts public work).
+  assert.doesNotMatch(read('frontend/src/features/home/home.js'), /create = \{/);
+  const forYou = read('frontend/src/features/home/for-you.tsx');
+  assert.match(forYou, /const privateMember = viewer && !!win\(\)\.App\?\.user\?\.privateMember;/);
+  assert.match(forYou, /\{viewer && !privateMember \? <NewProjectCard \/> : null\}/);
+  // Your work is never read for them, so neither its card nor the phone
+  // card's Points tile is drawn.
+  assert.match(forYou, /const work = useWork\(viewer && !privateMember\);/);
   const panels = read('src/routes/home-panels.js');
   assert.match(panels, /const PRIVATE_MEMBER_PANELS = new Set\(\['discover'\]\);/);
   assert.match(panels, /if \(req\.user\.privateMember && !PRIVATE_MEMBER_PANELS\.has\(panel\.key\)\) continue;/);

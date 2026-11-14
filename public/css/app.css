@@ -4759,9 +4759,101 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    re-introduce a per-box width bound. */
 .home-column {
   width: 100%;
-  max-width: 64rem; /* 1024px */
+  max-width: 80rem; /* 1280px: room for Home's two columns (#6650) */
   margin-inline-start: auto;
   margin-inline-end: auto;
+}
+
+/* HOME'S TWO COLUMNS (#6650). Under the search bar, the content (Pinned
+   apps, Pinned communities, Communities to join) takes about two thirds and
+   the For you column (#home-for-you: New project, Needs you, what is new,
+   your work, challenges) the third on the right. The column is FIRST in the
+   markup and the row is reversed, so it sits on the right while both fit
+   and, once they do not, wraps ABOVE the content rather than below it: what
+   asks for you is never under a scroll of tiles. Its cards share its width
+   as a grid, so where it spans the page (a tablet, a phone) they pair up;
+   Challenges always takes a whole row. */
+.home-split {
+  display: flex;
+  flex-direction: row-reverse;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  column-gap: 2rem;
+}
+.home-split > .home-main {
+  flex: 2 1 40rem;
+  min-width: 0;
+}
+.home-split > .home-for-you {
+  flex: 1 1 20rem;
+  min-width: 0;
+}
+.home-for-you:not([hidden]) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(18.75rem, 100%), 1fr));
+  gap: 1.125rem;
+  align-items: stretch;
+  padding: 1rem 0.75rem 0;
+}
+.home-for-you > .home-for-you-wide,
+.home-for-you > #home-challenges-section {
+  grid-column: 1 / -1;
+}
+/* Challenges in the column: a card like its neighbours, titled as they are
+   (17px, not the small-caps label of the content's areas), holding at most
+   two challenge cards, side by side when the column is wide and stacked
+   when it is narrow, instead of the sideways row Home drew them in under
+   Pinned communities. */
+.home-for-you #home-challenges-section {
+  padding: 0.25rem 1rem 1rem;
+  border-radius: 20px;
+  background: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+.home-for-you #home-challenges-section .home-area-label > span:first-child {
+  font-size: 17px;
+  line-height: 1.5rem;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+  color: inherit;
+}
+.home-for-you #home-challenges-section .home-panel-rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(17.5rem, 100%), 1fr));
+  gap: 0.625rem;
+  overflow: visible;
+  margin-inline: 0;
+  padding-inline: 0;
+}
+.home-for-you #home-challenges-section .home-panel-rows > * {
+  width: auto;
+}
+/* The column's cards for Needs you, what is new and Your work (#6650):
+   three cards in their own grid cells on anything wider than a phone, one
+   card of numbers on a phone (#home-glance-card), never both. */
+.home-for-you-full {
+  display: contents;
+}
+.home-for-you > .home-for-you-glance {
+  display: none;
+  grid-column: 1 / -1;
+}
+@media (max-width: 639.98px) {
+  .home-for-you-full {
+    display: none;
+  }
+  .home-for-you > .home-for-you-glance {
+    display: flex;
+  }
+}
+/* A line between the content column's areas (#6650): Pinned apps, Pinned
+   communities and Communities to join each start under a hairline, drawn
+   only when an area is on show above it. */
+.home-main > section:not([hidden]) ~ .home-section-rule:not([hidden]) {
+  border-top: 1px solid var(--app-sheet-line);
+  margin-top: 1rem;
+  padding-top: 0.5rem;
 }
 
 /* ── Home-screen sections (#911) ────────────────────────────

@@ -51,6 +51,7 @@ const INITIAL_GRID = {
   emptyQuery: null,
   notice: null,
   create: null,
+  seeAll: null,
   editing: false,
 };
 

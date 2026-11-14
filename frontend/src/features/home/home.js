@@ -950,6 +950,9 @@ const Home = {
     // The trailing "Create an app" tile — null in the search view, which is a
     // transient list of matches rather than the launcher.
     let create = null;
+    // "See all N apps", the collapsed grid's last tile (#6650): null unless
+    // rows are held back.
+    let seeAll = null;
 
     if (query) {
       // Active search over YOUR apps: one flat grid of matches. Section
@@ -995,7 +998,12 @@ const Home = {
       // over-protected a tall window (two rows of tiles and then a gulf) and
       // said nothing about a short one. See Home.visibleRowBudget.
       const canvas = HomeLayout.canvasItems(layout);
-      const rowBudget = Home.visibleRowBudget();
+      // #6650: TWO ROWS AT MOST, whatever the screen holds. Home's For you
+      // column and Pinned communities sit beside and under the grid now,
+      // and two rows ending on "See all N apps" is the section's shape on
+      // every screen. The measured budget is still taken (a resize compares
+      // against it) but never widens the window past HomeLayout.DEFAULT_ROWS.
+      const rowBudget = Math.min(Home.visibleRowBudget(), HomeLayout.DEFAULT_ROWS);
       Home._rowBudget = rowBudget;
       // The bound is "N rows that actually hold apps", not "row index < N"
       // — see HomeLayout.defaultRowBound. On a packed canvas the two are the
@@ -1017,18 +1025,23 @@ const Home = {
       }
       const hiddenRows = !editing && !Home._appsExpanded
         && canvas.some((it) => it.row > rowBound);
-      const shown = hiddenRows
+      // SEE ALL IS THE LAST TILE (#6650). A collapsed grid gives the last
+      // cell of its last row to "See all N apps" (./app-grid.tsx), so the
+      // way to the rest ends the shelf where an app would, rather than a
+      // line under it. The tile in that cell, if any, goes behind it with
+      // the hidden rows. Never while editing: every tile is there to move.
+      const seeAllCell = hiddenRows ? { col: cols - 1, row: rowBound } : null;
+      const shown = (hiddenRows
         ? canvas.filter((it) => it.row <= rowBound)
-        : canvas;
+        : canvas
+      ).filter((it) => !seeAllCell || it.row !== seeAllCell.row || it.col !== seeAllCell.col);
       // THE CREATE TILE GOES BEHIND "SHOW ALL" TOO (#3047). When the last row
       // the collapsed grid shows is full, the tile would start a row of its
       // own — a third row under two rows of eight apps. It is held back with
       // the hidden rows instead, and the expander appears for it even when
       // every app already fits: a launcher of exactly eight apps shows two
       // rows and "Show all 8 apps", and the tile ends the expanded grid.
-      const createHidden = !editing && !Home._appsExpanded
-        && HomeLayout.createTileCollapsed(shown, cols, rowBound);
-      const collapsed = hiddenRows || createHidden;
+      const collapsed = hiddenRows;
       const overflow = collapsed ? [] : HomeLayout.overflowItems(layout);
       const parts = shown.map((it) => Home.gridItemView(it, cols, false));
       // Items past the 8-row canvas render after it in plain flow, packed
@@ -1071,22 +1084,15 @@ const Home = {
       //
       // Present for EVERY account: `canCreate` decides its treatment, never
       // its presence — the locked tile opens the dialog that prints the quota.
-      const placed = items.filter((it) => it.placement).map((it) => it.placement);
-      const flows = !placed.length || items.some((it) => !it.placement);
-      create = {
-        enabled: canCreate,
-        hint: message(Home.CREATE_DISABLED_HINT),
-        heldBack: createHidden,
-        placement: createHidden || flows
-          ? null
-          : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
-      };
-      // A private member makes no apps until they are let in off the
-      // waitlist (their Home's waitlist card says so), so no tile at all —
-      // in edit mode too (#4669): the mode's own entry, "Add other apps", is the
-      // button beside the heading, not this tile, so the trailing tile keeps
-      // exactly the presence it has at rest.
-      if (App.user?.privateMember) create = null;
+      // THE GRID NO LONGER ENDS ON NEW PROJECT (#6650). Making something
+      // is the New project card of Home's For you column
+      // (./for-you.tsx), beside the grid on a wide screen and above it on a
+      // narrow one, so the shelf is the viewer's apps and nothing else;
+      // `create` stays null. Its place at the end of a collapsed grid is
+      // See all's.
+      seeAll = seeAllCell
+        ? { count: moreCount, placement: { ...seeAllCell, w: 1, h: 1 } }
+        : null;
     }
 
     // The search view is a flat, transient list — it must not inherit the
@@ -1099,7 +1105,7 @@ const Home = {
     // only row sizing, exactly as before. Written BEFORE the innerHTML so the
     // first layout of the new children already has its tracks.
     gridStore.set({
-      ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null, create, editing,
+      ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null, create, seeAll, editing,
     });
     // ...and, in the same push, the two hosts outside it: "Show all N apps"
     // and the iOS widget-editing strip. The strip renders ABOVE the grid, in
@@ -1107,7 +1113,9 @@ const Home = {
     // explicit cell placement #app-list uses. Its reorder recognizer is
     // attached by ./widget-strip.tsx's effect, which calls _wireWidgetStrip —
     // that function attaches listeners, it writes no markup.
-    Home._renderAppsMore(moreCount);
+    // #6650: the way to the rest is the grid's own See all tile now, so the
+    // line under it stays empty.
+    Home._renderAppsMore(0);
     // Discover / Challenges, painted from the widgets cache
     // (#911) — no network. Their hosts are fixed sections OUTSIDE #app-list,
     // so the grid's wholesale innerHTML re-render above cannot disturb them;

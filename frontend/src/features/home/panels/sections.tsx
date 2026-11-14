@@ -146,13 +146,20 @@ const CHALLENGES_SKELETON = (
 // label keeps its box (so nothing moves) and shows no words until the view
 // says which. (The counter that once rode here was dropped with the season
 // progress; see ./challenges.tsx.)
-export function ChallengesSectionView({ painted, challenges }: HomePanelsState) {
+export function ChallengesSectionView({ painted, challenges: all, limit }: HomePanelsState & { limit?: number }) {
   const t = useMessages('home');
+  // #6650: in Home's For you column the section draws at most `limit`
+  // cards; "See all" in its heading still goes to every challenge.
+  const challenges = all && limit && all.rows.length > limit
+    ? { ...all, rows: all.rows.slice(0, limit) }
+    : all;
   return (
     <Section
       id="home-challenges-section"
       slot="challenges"
-      label={challenges ? challenges.heading : t('home:challenges.heading')}
+      // #6650: in the For you column the card is titled "Challenges", as its
+      // neighbours are titled by what they hold.
+      label={challenges && !limit ? challenges.heading : t('home:challenges.heading')}
       action={challenges?.seeAll ? <SeeAllLink /> : null}
       painted={painted}
       holdLabel
@@ -163,6 +170,6 @@ export function ChallengesSectionView({ painted, challenges }: HomePanelsState) 
   );
 }
 
-export function ChallengesSection() {
-  return <ChallengesSectionView {...useStoreState(panelsStore)} />;
+export function ChallengesSection({ limit }: { limit?: number } = {}) {
+  return <ChallengesSectionView {...useStoreState(panelsStore)} limit={limit} />;
 }

@@ -32,7 +32,7 @@ test('the column it spans is capped and centred', () => {
   const i = CSS.indexOf('\n.home-column {');
   assert.ok(i >= 0);
   const body = CSS.slice(i, CSS.indexOf('\n}', i));
-  assert.match(body, /max-width: 64rem;/);
+  assert.match(body, /max-width: 80rem;/);
   assert.match(body, /margin-inline-start: auto;/);
   assert.match(body, /margin-inline-end: auto;/);
   // Same column as the content below, so the edges line up.

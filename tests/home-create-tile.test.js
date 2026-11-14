@@ -23,8 +23,11 @@
 //   5. The section it replaced is gone, and the declared checks follow it.
 //
 // ONE HOME (#6361) took this tile off the grid and left making a project to
-// Pinned communities' New community tile; #6522 brought it back, so the
-// properties above hold again (the New community tile stays where it is).
+// Pinned communities' New community tile; #6522 brought it back. #6650 took
+// both away: making something is the New project card of Home's For you
+// column (features/home/for-you.tsx), and a collapsed grid ends on See all.
+// The tile's component stays, and what is still pinned below is what it
+// draws when handed a view; Home.render() hands it none.
 //
 // Run with: node --test tests/home-create-tile.test.js
 
@@ -192,22 +195,20 @@ const mine = (n) => Array.from({ length: n }, (_, i) => ({
   is_favorited: true, favorite_order: i, is_collaborator: false,
 }));
 
-test('#3047: the expander appears for the tile alone, naming every app', () => {
+test('#6650: a collapsed grid ends on See all, in its last cell, naming every app', () => {
   const HOME = HOME_SRC;
-  // #4669 added the `!editing` half: edit mode shows every tile and its
-  // trailing tile, so the collapsed-grid gates step aside while it holds.
-  assert.match(HOME, /const createHidden = !editing && !Home\._appsExpanded\s*&& HomeLayout\.createTileCollapsed\(shown, cols, rowBound\);/);
-  assert.match(HOME, /const collapsed = hiddenRows \|\| createHidden;/);
+  // The grid never ends on New project now (the For you column's card,
+  // features/home/for-you.tsx): only rows held back fold it, and the last
+  // cell of the last row shown is See all's.
+  assert.match(HOME, /const seeAllCell = hiddenRows \? \{ col: cols - 1, row: rowBound \} : null;/);
+  assert.match(HOME, /const collapsed = hiddenRows;/);
   assert.match(HOME, /moreCount = collapsed \? \(canvas\.length \+ HomeLayout\.overflowItems\(layout\)\.length\) : 0;/);
-  // #4757: a held-back tile is no longer dropped — the view is pushed with
-  // heldBack and no placement, and index.tsx's My apps heading draws the
-  // compact entry (#5825; apps-more.tsx drew it before).
-  assert.match(HOME, /create = \{/);
-  assert.match(HOME, /heldBack: createHidden,/);
-  assert.match(HOME, /placement: createHidden \|\| flows/);
-  // The shot links that pin the tile's treatments open the grid, so the tile
-  // they exist to show is on screen whatever the viewport's budget.
-  assert.match(HOME, /shot === 'home-apps' \|\| shot === 'create-enabled' \|\| shot === 'create-disabled'/);
+  assert.match(HOME, /seeAll = seeAllCell\s*\? \{ count: moreCount, placement: \{ \.\.\.seeAllCell, w: 1, h: 1 \} \}\s*: null;/);
+  // The line under the grid publishes no count: See all is the way on.
+  assert.match(HOME, /Home\._renderAppsMore\(0\);/);
+  // Two rows at most, whatever the viewport would hold.
+  assert.match(HOME, /const rowBudget = Math\.min\(Home\.visibleRowBudget\(\), HomeLayout\.DEFAULT_ROWS\);/);
+  assert.doesNotMatch(HOME, /createTileCollapsed\(shown/);
 });
 
 // ── #4757/#5825: the compact entry rides the My apps heading ──────────
@@ -303,22 +304,14 @@ test('the compact entry draws the locked treatment, and opens the same dialog', 
   }
 });
 
-test('#5825: the My apps heading carries the compact entry exactly when the tile is held back', () => {
+test('#6650: the My apps heading carries Edit alone; making something is the For you column\'s', () => {
   const source = read(HOME_INDEX);
-  // The non-editing branch of the heading's action: `heldBack` decides it,
-  // and the button is the same component the grid draws as a tile.
-  // #5871: it shares the seat with "Edit", which starts edit mode, so the
-  // seat is drawn when either is due and each decides for itself.
-  assert.match(source,
-    /\) : \(canEdit \|\| grid\.create\?\.heldBack\) \? \(/,
-    'the heading has an action when Edit or the held-back tile needs one');
-  assert.match(source,
-    /\{grid\.create\?\.heldBack \? <CreateCompact view=\{grid\.create\} \/> : null\}/,
-    'the heading draws the compact entry when the grid holds its tile back');
-  assert.match(source, /import \{ CreateCompact \} from '\.\/create-tile';/);
-  // Edit mode keeps its own action, checked first — Add apps and Done, never
-  // New project beside them.
+  assert.match(source, /\) : canEdit \? \(/, 'the heading has an action only when Edit is due');
+  assert.doesNotMatch(source, /CreateCompact/, 'no compact New project entry on the heading');
+  assert.doesNotMatch(source, /grid\.create\?\.heldBack/);
+  // Edit mode keeps its own action, checked first: Add apps and Done.
   assert.match(source, /action=\{grid\.editing \? \(/);
+  assert.match(read('frontend/src/features/home/for-you.tsx'), /id="home-new-project-btn"/);
 });
 
 test('#5825: the Show-all line is the expander alone, at the right end', () => {
@@ -352,25 +345,27 @@ test('without a held-back tile, or with a count, the line is the expander alone'
 
 // #6522: Home.render() hands the grid its Create view again, and the three
 // cases that decide whether it is there at all.
-test('#6522: a normal account\'s render yields the Create view, search and private members none', () => {
+// #6650: Home.render() hands the grid no Create view (New project is the For
+// you column's card); a collapsed grid hands it See all instead.
+test('#6650: the render yields no Create view, and See all only while rows are held back', () => {
   const { Home, model } = makeHome();
   Home._apps = mine(2);
   Home.render();
-  const create = model().create;
-  assert.ok(create && typeof create === 'object', 'a normal account gets the trailing New project tile');
-  assert.equal(typeof create.enabled, 'boolean');
-  assert.equal(create.heldBack, false, 'with two apps the tile fits its own cell');
+  assert.equal(model().create, null, 'the grid ends on the viewer\'s own apps');
+  assert.equal(model().seeAll, null, 'every tile is on show: no See all');
+
+  Home._apps = mine(9);
+  Home._layout = null;
+  Home.render();
+  const seeAll = JSON.parse(JSON.stringify(model().seeAll));
+  assert.deepEqual(seeAll, { count: 9, placement: { col: 3, row: 1, w: 1, h: 1 } },
+    'the last cell of the second row, naming every app');
+  assert.ok(!model().items.some((it) => it.placement && it.placement.col === 3 && it.placement.row === 1),
+    'the app that was in that cell waits behind it');
 
   Home._query = 'App 1';
   Home.render();
-  assert.equal(model().create, null, 'the search view is a flat list of matches: no create control');
-
-  // A private member makes no apps until they are let in off the waitlist.
-  const { Home: privateHome, model: privateModel, sandbox } = makeHome();
-  sandbox.App.user.privateMember = true;
-  privateHome._apps = mine(2);
-  privateHome.render();
-  assert.equal(privateModel().create, null, 'a private member gets no trailing tile');
+  assert.equal(model().seeAll, null, 'the search view is a flat list of matches');
 });
 
 test('the tile draws both states, and never the disabled attribute', () => {
@@ -450,24 +445,22 @@ test('the Create section is retired everywhere it was mounted', () => {
   assert.doesNotMatch(read('scripts/audit-react-ownership.mjs'), /sel: '#home-create-section'/);
 });
 
-test('the declared Create checks select both New project and New community, in their two places (#6522)', () => {
+test('the declared Create checks select the For you column\'s New project button, enabled and locked (#6650)', () => {
   const declared = JSON.parse(read('dapp.json')).tests || [];
   const creates = declared.filter((t) => /data-panel-slot=\\?"create\\?"|data-panel-slot="create"/.test(t.expectSelector || ''));
   assert.equal(creates.length, 2, 'the enabled and the locked treatment');
   for (const t of creates) {
-    // The New community tile is still the last of Pinned communities…
-    assert.match(t.expectSelector, /#home-communities-section:not\(\[hidden\]\) #home-new-community\[data-panel-slot="create"\]\[data-create-enabled="(true|false)"\]/);
-    assert.match(t.expectSelector, /:last-child/);
-    assert.equal(t.expectText, 'New community');
+    assert.match(t.expectSelector, /#home-for-you:not\(\[hidden\]\) (#home-new-project )?#home-new-project-btn\[data-panel-slot="create"\]\[data-create-enabled="(true|false)"\]/);
+    assert.equal(t.expectText, 'New project');
   }
   const paths = creates.map((t) => t.path).sort();
   assert.deepEqual(paths, ['/?demo=1&shot=create-disabled', '/?demo=1&shot=create-enabled']);
-  // …and the enabled check folds in the grid's own trailing tile, which is
-  // back on My apps (#6522), without a :not(:has()) guard asserting it gone.
+  // The grid's trailing tile and Pinned communities' New community tile are
+  // gone, and the checks say so.
   const enabled = creates.find((t) => t.path === '/?demo=1&shot=create-enabled');
-  assert.match(enabled.expectSelector,
-    /#home-apps-section:not\(\[hidden\]\):has\(#home-create-tile\[data-panel-slot="create"\]\[data-create-enabled="true"\]\)/);
-  assert.doesNotMatch(enabled.expectSelector, /:not\(:has\(#home-create-tile\)\)/);
+  assert.match(enabled.expectSelector, /:not\(:has\(#home-create-tile\)\)/);
+  const locked = creates.find((t) => t.path === '/?demo=1&shot=create-disabled');
+  assert.match(locked.expectSelector, /:not\(:has\(#home-new-community\)\)/);
   // No check still anchors on the retired section (a :not(:has()) guard that
   // says it is gone is the one allowed mention).
   for (const t of declared) {
