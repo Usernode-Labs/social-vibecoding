@@ -127,6 +127,12 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
     case 'turn_byok':
       if (!oversize) require('./worker').receiveTurnByok(payload);
       return;
+    // #6674: what Homeroom bot is doing, as the pod that runs it said. Kept
+    // only so a read of its status handled here can answer; nothing goes to
+    // a socket (the typing event itself crossed the bus as usual).
+    case 'bot_typing':
+      if (!oversize) require('./bot-typing-mirror').note(payload);
+      return;
     default:
       log.warn('ws', 'unknown bus kind', { kind });
   }

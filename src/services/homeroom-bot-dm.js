@@ -1125,10 +1125,43 @@ async function pushTyping(pool, botId, conversationId, typing, ws, threadRootId 
         ...(typing && answering ? { answering } : {}),
       }, { excludeUserId: botId, actorUserId: botId });
     });
+    // 14 Nov 2026 (#6674): a page that comes back asks what the bot is doing
+    // now, and that read can land on another pod. Best-effort, like the push
+    // itself: a few dozen bytes, and a failed publish costs only the copy.
+    try {
+      require('./ws-bus').publish('bot_typing', null, {
+        conversationId,
+        threadRootId: threadRootId || null,
+        typing,
+        doing: typing ? doing : null,
+        answering: typing ? answering : null,
+      });
+    } catch (err) {
+      log.warn('homeroom-bot-dm', 'Typing mirror publish failed', { conversationId, typing, err: err.message });
+    }
   } catch (err) {
     // Ephemeral: a missed typing event costs nothing the answer needs.
     log.warn('homeroom-bot-dm', 'Typing event failed', { conversationId, typing, err: err.message });
   }
+}
+
+/**
+ * #6674: what the bot is doing in one place now. This process's own typing
+ * state answers when it holds the place; otherwise the copy another pod
+ * published (`bot-typing-mirror`). `{ typing: false }` when it is not working
+ * there, and then nothing else is said.
+ */
+function botWorkingNow(conversationId, threadRootId = null) {
+  const id = Number(conversationId);
+  if (!Number.isSafeInteger(id) || id <= 0) return { typing: false };
+  const root = Number.isSafeInteger(Number(threadRootId)) && Number(threadRootId) > 0 ? Number(threadRootId) : null;
+  const entry = typingNow.get(typingPlace(id, root));
+  if (entry && entry.holders.size) {
+    return { typing: true, doing: entry.doing || null, answering: entry.answering || null };
+  }
+  const mirrored = require('./bot-typing-mirror').get(id, root);
+  if (!mirrored) return { typing: false };
+  return { typing: true, doing: mirrored.doing || null, answering: mirrored.answering || null };
 }
 
 function sendTyping(pool, botId, conversationId, typing, ws, threadRootId = null, doing = null, answering = null) {
@@ -6936,6 +6969,7 @@ module.exports = {
   TYPING_RENEW_MS,
   TYPING_MAX_MS,
   startTyping,
+  botWorkingNow,
   whileTyping,
   typingDoing,
   DOING_KINDS,

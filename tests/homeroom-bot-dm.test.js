@@ -1089,3 +1089,70 @@ test('news the card and the tray show is never a DM message of its own; what nee
     assert.equal(dm.cardOnly(kind, {}), false, kind);
   }
 });
+
+// ── #6674: what the bot is doing, as another process can answer ─────────
+//
+// A page coming back to the app asks the server what the bot is doing, and
+// that read can land on a pod that never ran the bot's typing loop. Every
+// typing event is published to the other instances, and this process answers
+// from its own state first.
+
+test('the bot\'s typing is published to the other instances, place and all', async (t) => {
+  const bus = require('../src/services/ws-bus');
+  const real = bus.publish;
+  const published = [];
+  bus.publish = (kind, routing, data) => { published.push({ kind, routing, data }); };
+  t.after(() => { bus.publish = real; });
+  const { ws } = typingHarness(t);
+  let finish;
+  let handed;
+  const answering = dm.whileTyping({}, { botId: 2, conversationId: 51, threadRootId: 9001, ws }, (typing) => {
+    handed = typing;
+    return new Promise((resolve) => { finish = resolve; });
+  });
+  await settle();
+  assert.deepEqual(published.at(-1), {
+    kind: 'bot_typing',
+    routing: null,
+    data: { conversationId: 51, threadRootId: 9001, typing: true, doing: null, answering: null },
+  }, 'the first typing, in the place it types');
+  await handed.doing({ kind: 'code', project: 'Ear Trainer' });
+  assert.deepEqual(published.at(-1).data, {
+    conversationId: 51, threadRootId: 9001, typing: true,
+    doing: { kind: 'code', project: 'Ear Trainer' }, answering: null,
+  }, 'what it is doing rides along');
+  finish('done');
+  await answering;
+  await settle();
+  assert.deepEqual(published.at(-1).data, {
+    conversationId: 51, threadRootId: 9001, typing: false, doing: null, answering: null,
+  }, 'and a stop forgets the place');
+});
+
+test('what the bot is doing now is this process\'s state first, and another instance\'s copy otherwise', async (t) => {
+  const mirror = require('../src/services/bot-typing-mirror');
+  mirror._reset();
+  t.after(() => mirror._reset());
+  const { ws } = typingHarness(t);
+  mirror.note({ conversationId: 61, threadRootId: 7, typing: true, doing: { kind: 'request', number: 12 }, answering: 88 });
+  assert.deepEqual(dm.botWorkingNow(61, 7), { typing: true, doing: { kind: 'request', number: 12 }, answering: 88 },
+    'another instance said so');
+  assert.deepEqual(dm.botWorkingNow(61, null), { typing: false }, 'another place is not working');
+  assert.deepEqual(dm.botWorkingNow(62, 7), { typing: false }, 'another conversation is not working');
+
+  let finish;
+  let handed;
+  const answering = dm.whileTyping({}, { botId: 2, conversationId: 61, threadRootId: 7, ws }, (typing) => {
+    handed = typing;
+    return new Promise((resolve) => { finish = resolve; });
+  });
+  await settle();
+  await handed.doing({ kind: 'drawing' });
+  assert.deepEqual(dm.botWorkingNow(61, 7), { typing: true, doing: { kind: 'drawing' }, answering: null },
+    'this process knows better than the copy');
+  mirror._reset();
+  finish('done');
+  await answering;
+  await settle();
+  assert.deepEqual(dm.botWorkingNow(61, 7), { typing: false }, 'stopped');
+});
