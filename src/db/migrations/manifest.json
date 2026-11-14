@@ -360,6 +360,16 @@
       "id": "release-hold-notices",
       "sha256": "787953b2ba2b54988c0ef53422acf44366e98d0ebd8d4be7daf148f36e84dbc4",
       "schemaSha256": "025a3702a827c62429e965fa3c9c9b820fa0fa7203d45f672073a7141e7126c1"
+    },
+    {
+      "id": "user-timezone",
+      "sha256": "22f84d61daba3c9e9987b4376fb64be9d83da8d8e1716c245601b868bd33d5a8",
+      "schemaSha256": "1f9e69bb624ad8113d3c51d5d5cf2b0ca9dc8690cd841506f5f1e5cb06ad0bef"
+    },
+    {
+      "id": "conversation-drafts",
+      "sha256": "bfb84fc6fbcb0d1b28422dc23384f236e7d6c79c317403953e038dc4daa00178",
+      "schemaSha256": "4d4d42c5bbff283662b84925b75e248f09099b7881985e25b3acaa79172c1a45"
     }
   ]
 }

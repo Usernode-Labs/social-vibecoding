@@ -47,6 +47,7 @@ import { TrackBadge, TrackBar, trackShort } from '../../messages/bot-track';
 import type { BotSlotEntry, BotSlotsView } from '../../messages/types';
 import { PageBack } from './page-back';
 import type { TopicRef } from './work-row';
+import { inZone } from '../../../lib/time-zone';
 
 type OpenItem = (event: ReactMouseEvent<HTMLAnchorElement>, ref: TopicRef) => void;
 
@@ -338,7 +339,7 @@ export function BotSlotsBody({ view, openKey = null, onOpen }: { view: BotSlotsV
   const week = view.week;
   const resets = week?.resetsAt ? new Date(week.resetsAt) : null;
   const resetsText = resets && !Number.isNaN(resets.getTime())
-    ? resets.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
+    ? resets.toLocaleString(undefined, inZone({ weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }))
     : null;
   const rowProps = (section: Section) => ({ section, slug: view.app.slug, openKey, onOpen });
   return (

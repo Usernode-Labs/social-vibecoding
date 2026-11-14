@@ -702,6 +702,13 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               </p>
             );
           })()}
+          {r.similar && slug ? (
+            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-request-twin={r.similar.number}>
+              <RichMessage id="project:topic.request.twin" values={{ number: r.similar.number, title: r.similar.title }} components={[
+                <a key="twin" className="font-semibold text-violet-700 hover:underline dark:text-violet-300" href={`#app/${encodeURIComponent(slug)}/dev/issues/${r.similar.number}`} />,
+              ]} />
+            </p>
+          ) : null}
           {/* Under a look: "The request" over its card, and who asked and
               when at the card's top (the head above, which the kit's page
               puts away with the title). */}

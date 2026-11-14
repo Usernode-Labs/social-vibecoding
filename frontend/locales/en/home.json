@@ -911,9 +911,29 @@
     "text": "Featured",
     "description": "Small heading over the communities the platform features, the first group of cards in Communities to join on Home (signed in or out)."
   },
+  "join.featuredKind": {
+    "text": "Featured in {{kind}}",
+    "description": "Small heading over the communities the platform features, in Communities to join on Home (signed in or out), when a kind is chosen from the chips above. {{kind}} is the chosen chip's name, such as Games or Tools."
+  },
   "join.more": {
     "text": "More communities",
-    "description": "Small heading over the community cards after Featured in Communities to join on Home (signed in or out): every community of the chosen kind that Featured does not show, most used first. Not shown while searching, with nothing featured, or when every community of the kind is featured."
+    "description": "Small heading over the community cards after Featured in Communities to join on Home (signed in or out): every community of the chosen kind that Featured does not show, in the chosen order. Not shown while searching, with nothing featured, or when every community of the kind is featured."
+  },
+  "join.sort.label": {
+    "text": "Sort communities",
+    "description": "Accessible name of the small menu beside the More communities heading in Communities to join on Home: orders the community cards there. It offers New, Popular and Most active."
+  },
+  "join.sort.new": {
+    "text": "New",
+    "description": "One choice of the sort menu in Communities to join on Home: the most recently made communities first."
+  },
+  "join.sort.popular": {
+    "text": "Popular",
+    "description": "One choice of the sort menu in Communities to join on Home: the communities with the most members first."
+  },
+  "join.sort.active": {
+    "text": "Most active",
+    "description": "One choice of the sort menu in Communities to join on Home: the communities with the most people active lately first. It is the starting order."
   },
   "join.members_one": {
     "text": "{{count}} member",

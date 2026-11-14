@@ -1797,7 +1797,11 @@
   },
   "ask.off": {
     "text": "Notifications are off for Homeroom",
-    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. What the card says when the phone's settings refused notifications."
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. What the card says only when the phone reported that notifications were refused."
+  },
+  "ask.unsure": {
+    "text": "We couldn’t check notifications on this phone. Tap Notify me to try again.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. What the card says under its title when the phone's answer could not be read after Notify me; the button stays to try again."
   },
   "ask.turnOn": {
     "text": "Turn on notifications",

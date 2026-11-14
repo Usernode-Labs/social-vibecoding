@@ -454,6 +454,11 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2',
     'M5 7a4 4 0 108 0 4 4 0 10-8 0z',
     'M16 11l2 2 4-4',
+    // The hub's Invite card (community-card.tsx InviteHeroCard) draws a person
+    // and a plus on its button; the card is drawn once the community's read
+    // is back, so it renders behind state. Its body and head are the two
+    // paths above.
+    'M19 8v6M22 11h-6',
     'M11.5 15H7a4 4 0 00-4 4v2',
     'M6 7a4 4 0 108 0 4 4 0 10-8 0z',
     'M21.38 16.63a2.12 2.12 0 00-3-3l-4.01 4a2 2 0 00-.51.86l-.84 2.87a.5.5 0 00.62.62l2.87-.84a2 2 0 00.86-.51z',

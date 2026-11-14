@@ -76,6 +76,9 @@ test('the client and the server agree on which private thread stays out of Main 
   // Main draws only the "+" thread's opener line out, live or read.
   const index = read('frontend/src/features/messages/index.tsx');
   assert.match(index, /if \(botDm && isPlusThreadOpener\(message\)\) continue;/);
+  // #6668: the thread pane skips that line too, so a "+" thread opens on what
+  // the person wrote instead of on the bot's "New thread.".
+  assert.match(index, /\{root && !\(botChat && isPlusThreadOpener\(root\)\) \? <MessageRow /);
   // The stream, the preview and the unread count all leave the plus thread out.
   const server = read('src/services/conversations.js');
   assert.match(server, /const PLUS_THREAD_OPENER = `COALESCE\(m\.metadata->'homeroomBot'->>'kind' = 'opened_thread'\s+AND m\.reply_to_id IS NULL, FALSE\)`;/);

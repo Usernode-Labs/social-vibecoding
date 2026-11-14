@@ -32,6 +32,8 @@ const botTools = require('./bot-tools');
 const claims = require('./reply-claims');
 const log = require('./logger');
 const turnEngine = require('./homeroom-bot-turn-engine');
+// A person's Stop of the turn (task 2148).
+const botStop = require('./homeroom-bot-stop');
 const { withoutEmDashes } = require('./em-dashes');
 const replyHtml = require('./homeroom-bot-html');
 const { STEPS: TRACK_STEPS, NOT_STARTED: TRACK_NOT_STARTED, standingOf } = require('./homeroom-bot-track');
@@ -1261,6 +1263,8 @@ async function answer(pool, config, {
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     failures: [],
     avoid: [],
+    // Their Stop (homeroom-bot-stop.js): a request in flight is cut off.
+    signal: deps.stop?.signal || null,
   };
   const tools = [];
   // The turn's rounds, moved by the turn engine (its limit is MAX_ROUNDS).
@@ -1422,6 +1426,8 @@ async function answer(pool, config, {
         retryOutputTokens: DESIGN_RETRY_OUTPUT_TOKENS,
         timeoutMs: DESIGN_REQUEST_TIMEOUT_MS,
       }),
+      // Their Stop, looked at before each request and each call (the engine).
+      signal: t.signal,
       where: (n) => `d${n}`,
       done: () => !!replyText,
       beforeRound: ({ rounds }) => {
@@ -1595,6 +1601,10 @@ async function answer(pool, config, {
         }
         // #6581, #6307: the requests and projects a tool returned are real.
         claims.noteTool(checkTurn, result);
+        // What it did that stays done, for the line a Stop says. A read
+        // refused as late did nothing; a screen it drew is saved only with
+        // its answer, which a stopped turn never sends.
+        if (!lateRead) await deps.stop?.note?.(name, args, result);
         return result;
       },
       afterCalls: async () => {
@@ -1612,10 +1622,24 @@ async function answer(pool, config, {
     await turnEngine.runRounds(turnRounds, designTurn);
   } catch (err) {
     error = mayor.codeOf(err);
-    log.warn('design-bot', 'A design turn failed', { userId: user.id, messageId: message.id, code: error });
+    if (!botStop.isStop(err)) log.warn('design-bot', 'A design turn failed', { userId: user.id, messageId: message.id, code: error });
   } finally {
     // #6260: the platform grant, if the model read a board, lasts this turn.
     try { await board.grant?.close?.(); } catch {}
+  }
+  // Task 2148: the person stopped this turn (homeroom-bot-stop.js). No
+  // version is saved and no answer sent: one line says so in this thread,
+  // with what the turn had already done that stays done, as written and
+  // under the answer's own key. Recorded with what it cost and no error.
+  if (deps.stop?.signal?.aborted) {
+    await mayor.recordTurn(pool, {
+      userId: user.id, conversationId, messageId: message.id, model: t.model, rounds: turnRounds.rounds, tools,
+      inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, costUsd: t.usage.costUsd,
+      error: null, failures: t.failures, fallback: 'stopped',
+    });
+    await turnEngine.chargeTurn(pool, bot.id, t.usage.costUsd, { what: 'a design turn', category: 'design-bot' });
+    log.info('design-bot', 'A design turn was stopped by the person', { userId: user.id, messageId: message.id, rounds: turnRounds.rounds });
+    return say(botStop.stoppedText(deps.stop.did));
   }
   const changed = !!html && html !== (current?.html || '');
   // 1 Nov 2026, #6141: words that end a turn with nothing shown are not sent
@@ -1754,6 +1778,8 @@ async function draw(pool, config, { bot, user, settings, conversationId, message
       bot, userId: user.id, content: NO_THREAD_TEXT, idempotencyKey: mayor.answerKey(message.id), replyToId: message.id, moment: 'reply',
     });
   }
+  // Task 2148: the thread opened for it stays, whatever a Stop then ends.
+  if (!inThread) await deps.stop?.add?.({ did: 'opened a thread for the screen', stays: 'it stays open' });
   // 1 Nov 2026: a thread opened for it from Main Chat is where it draws, so
   // the bot's typing, and its working card, go there too (homeroom-bot-dm.js
   // whileTyping moveTo). Best-effort: a card left behind costs no drawing.

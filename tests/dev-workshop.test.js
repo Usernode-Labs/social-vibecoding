@@ -4053,13 +4053,14 @@ test('a read-only viewer of the self-hosted app gets no ⋯', async () => {
 
 test('the ⋯ is drawn as Invite’s pill, a circle, and its menu hangs over the cards', () => {
   const decls = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
-  // Invite's fill (`pillNeutral`), on the button itself, as a 32px circle.
+  // Invite's fill (`pillNeutral`), on the button itself, as a circle.
   assert.match(ACTIONS_ROW, /const HERO_BTN_CLS = 'dev-ws-plus-btn dev-ws-plus-btn-hero un-touch-target '\s*\+ 'bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100';/);
   assert.match(ACTIONS_ROW, /className=\{onCard \? CARD_BTN_CLS : inHero \? HERO_BTN_CLS : 'dev-ws-plus-btn un-touch-target'\}/, 'still a 44px hit box');
   // On the project card it is the card's round glass button, 50px (52px from 768px).
   assert.match(ACTIONS_ROW, /const CARD_BTN_CLS = 'dev-ws-plus-btn dev-ws-plus-btn-card un-touch-target bg-white\/15 hover:bg-white\/25 text-white';/);
   assert.match(decls, /\.dev-ws-plus-btn\.dev-ws-plus-btn-card \{ width: 50px; height: 50px; \}/);
-  assert.match(decls, /\.dev-ws-hero \.dev-ws-plus-btn \{ width: 32px; height: 32px; \}/);
+  // Bigger on the hub: 48px with a hairline ring, a control of its own.
+  assert.match(decls, /\.dev-ws-hero \.dev-ws-plus-btn \{ width: 48px; height: 48px; box-shadow: inset 0 0 0 1px var\(--app-sheet-line\); \}/);
   // A ⋯, not a "+": on the hub it holds the project's settings as much as
   // anything to add, and a "+" beside Invite read as "add a member".
   assert.match(ACTIONS_ROW, /<EllipsisHorizontalIcon className="dev-ws-plus-glyph" aria-hidden="true" \/>/);

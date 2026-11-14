@@ -469,6 +469,8 @@ const BOT_DM_OFFER_KEY = 'staging-hrbot-offer';
 // row stands behind it: the action endpoint answers the demo without one.
 const BOT_DM_DEMO_ACTION_ID = 990001;
 const BOT_DM_ASK_KEY = 'staging-hrbot-ask';
+// The demo chat's one saved draft (conversation_drafts): a fixed id, so it is written once.
+const BOT_DM_DRAFT_ID = 'dstagingdemo1';
 // #6305: one request offered on several projects, from one card.
 const BOT_DM_FILE_MANY_KEY = 'staging-hrbot-file-many';
 const BOT_DM_FILE_MANY_FILED_KEY = 'staging-hrbot-file-many-filed';
@@ -862,6 +864,17 @@ async function ensureBotDmFixture(pool, user) {
      ON CONFLICT (user_id, legacy_id) DO UPDATE SET conversation_id = EXCLUDED.conversation_id`,
     [user.id, BOT_DM_LEGACY_ID, opened.conversationId]
   );
+  // 14 Nov 2026: one saved draft in the demo's chat (conversation_drafts,
+  // routes/conversations.js bot-drafts), so the list above the box has a row
+  // to show without the bot being mid-answer, which a staging copy cannot
+  // reach. Obviously fake, the viewer's own, written once. A read that
+  // fails (a copy without the table yet) leaves the fixture as it was.
+  await pool.query(
+    `INSERT INTO conversation_drafts (user_id, conversation_id, thread_root_id, draft_id, content)
+     VALUES ($1, $2, 0, $3, $4)
+     ON CONFLICT DO NOTHING`,
+    [user.id, opened.conversationId, BOT_DM_DRAFT_ID, 'Staging demo: and could it remember my choice next time?'],
+  ).catch(() => {});
   return opened.conversationId;
 }
 

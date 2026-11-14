@@ -409,7 +409,7 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, s.created_at, s.last_seen_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.review_flow_enabled, u.private_member_since, u.locale, u.has_platform_access, u.is_synthetic,
+          `SELECT s.user_id, s.expires_at, s.created_at, s.last_seen_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.review_flow_enabled, u.private_member_since, u.locale, u.timezone, u.has_platform_access, u.is_synthetic,
              ${nativeWebSessionIsLive('s')} AS native_session_valid
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
@@ -488,6 +488,9 @@ function authMiddleware(config) {
             // Platform-level language preference (issue #757): a BCP-47
             // tag or null when unset. Surfaced via /api/auth/me.
             locale: rows[0].locale || null,
+            // #6479: the IANA zone this person's times are shown in, or
+            // null for Auto (the device's own). Surfaced via /api/auth/me.
+            timeZone: rows[0].timezone || null,
             // Platform-access gate (onboarding flow alignment): FALSE for
             // new signups until an admin releases them off the waitlist.
             hasPlatformAccess: !!rows[0].has_platform_access,
@@ -603,7 +606,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
   // personas by their fixed ids, seeded with their fixture roles. Username
   // match is defense-in-depth against a token naming another row's id.
   const findUser = async () => (await pool.query(
-    'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
+    'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, session_bridge_enabled, locale, timezone, has_platform_access FROM users WHERE id = $1',
     [payload.id]
   )).rows[0];
   let userRow;
@@ -659,6 +662,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
     aiProgressEstimate: !!userRow.ai_progress_estimate,
     sessionBridgeEnabled: !!userRow.session_bridge_enabled,
     locale: userRow.locale || null,
+    timeZone: userRow.timezone || null,
     hasPlatformAccess: !!userRow.has_platform_access,
     privateMember: isPrivateMember(userRow),
   };
