@@ -375,9 +375,11 @@ function deriveFacts(row, { now = new Date() } = {}) {
   if (status === 'promoted' && out) out = withUpdate(out, { coming: row.update_coming, failed: row.update_failed });
   // A private thread of the requester's holds it for their plan: nothing
   // queued overtakes that until a change is up (1 Nov 2026).
-  if (row.awaiting_plan === true && !status && (!out || out.stage === 'reading')) {
-    return state('planning', { since: row.request_at || row.run_at, line: { code: 'planning_with_you' }, whoseMove: 'requester' });
-  }
+  const planHeld = row.awaiting_plan === true && !status;
+  const planning = (line = {}) => state('planning', {
+    since: row.request_at || row.run_at, line: { code: 'planning_with_you', ...line }, whoseMove: 'requester',
+  });
+  if (planHeld && (!out || out.stage === 'reading')) return planning();
   // 16 Oct 2026: ready, but a person has the request now (a claim, or a
   // change of their own under way): the bot leaves it alone, so it is
   // theirs, not a wait for a slot.
@@ -391,6 +393,14 @@ function deriveFacts(row, { now = new Date() } = {}) {
       line: { code: 'claimed', by: personBuilding || claimFirst }, whoseMove: 'builder',
     });
   }
+  // 13 Nov 2026: the same hold on a request that had already reached the
+  // build line (its build waits its turn, or one of the project's limits
+  // holds it). The lane starts no build and takes no held verdict back up
+  // while the thread holds it (rules/bot-loop.ts BUILD_CANDIDATES_SQL,
+  // READ_CANDIDATES_SQL), so it waits for its requester, not for a slot: it
+  // read "Ready to build · Number 1 in line" beside Let the bot build it
+  // now. `ready` says a build is waiting behind the hold (botWorkOf).
+  if (planHeld && out && out.stage === 'building' && READY.has(out.line?.code)) return planning({ ready: true });
   if (out) return out;
 
   // A change somebody made for it, when Homeroom bot has none of its own:
@@ -774,7 +784,11 @@ function botWorkOf(item) {
       if (BOT_NOT_STARTED.has(code) || (code === 'reply' && item.line.soon)) return null;
       return { what: 'reading', since };
     case 'planning':
-      return code === 'planning_with_you' ? null : { what: 'building', since };
+      // Held for its requester's plan: nothing of the bot's is under way.
+      // One whose build already waits behind the hold (`ready`) is still the
+      // bot's, in its queue, so asking it to build it again is refused.
+      if (code === 'planning_with_you') return item.line.ready ? { what: 'queued', since } : null;
+      return { what: 'building', since };
     case 'building':
       if (code === 'held_builds' || code === 'held_waiting') {
         return { what: 'queued', since, held: true, ...(code === 'held_builds' ? { turn: true } : {}) };

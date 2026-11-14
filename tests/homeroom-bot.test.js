@@ -1213,7 +1213,7 @@ test('a first version on a live app gets its card when it is queued, under the k
   await bot.refreshApp(pool, app, { github, capRoom, bot: { id: 77 }, settings: { mode: 'shadow' }, dm });
   assert.equal(started.length, 1);
   assert.equal(started[0].idempotencyKey, 'hrbot-activity-r9-1', 'the key runTriage starts the card under');
-  assert.match(started[0].content, /Waiting for a free builder/);
+  assert.match(started[0].content, /I'll start on this by myself as soon as I have a free slot\./);
   // On a shadow app (no capRoom) nobody gets a card.
   started.length = 0;
   await bot.refreshApp(pool, app, { github, bot: { id: 77 }, settings: { mode: 'shadow' }, dm });

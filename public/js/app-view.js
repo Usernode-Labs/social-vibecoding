@@ -6876,11 +6876,19 @@ const AppView = {
 
   // The standing's words as the status card's sentence: its stage, and its
   // second line after it. Homeroom bot's own sentence (its reason) follows as
-  // a sentence of its own.
+  // a sentence of its own. 13 Nov 2026: a request waiting its turn says
+  // whose line it is and that it starts by itself, where a row's label says
+  // "Number 1 in line": a tester could not tell whether that line was the
+  // bot's, another person's or theirs.
   _standingSays(words) {
     const t = PlatformI18n.t;
     const stage = t(words.stage.id, words.stage.values || {});
     if (!words.line) return t('changes:request.status.lead.stands', { stage });
+    if (words.line.id === 'core:work.line.queuedAt') {
+      const place = Number(words.line.values && words.line.values.place) || 1;
+      return t('changes:request.status.lead.botLineAt', { stage, place });
+    }
+    if (words.line.id === 'core:work.line.queued') return t('changes:request.status.lead.botLine', { stage });
     const line = t(words.line.id, words.line.values || {});
     return words.line.id === 'core:work.line.said'
       ? t('changes:request.status.lead.standsSaid', { stage, said: line })

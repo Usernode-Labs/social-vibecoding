@@ -318,6 +318,39 @@ test('a private thread about a request or a change, and the hold, against the fu
        VALUES ($1, 18, 'live', 'ready', NOW(), 'build it') RETURNING id`, [app.id]);
     await instance(18, 'building', { build: { runId: run.id, phase: 'waiting', since: new Date().toISOString(), key: null } });
     assert.deepEqual(await buildable(), [], 'no build of it starts');
+
+    // 13 Nov 2026: and it says so, whatever it had reached. A tester's read
+    // "Ready to build · Number 1 in line" beside Let the bot build it now:
+    // the queue's words, for a build her own thread held. Its stored work
+    // state is the hold now, drawn as the one still waiting to be read is.
+    const workState = require('../src/services/work-state');
+    const stands = async () => {
+      await workState.refresh(pool, [{ appId: app.id, issueNumber: 18 }]);
+      return (await workState.forItems(pool, [{ appId: app.id, issueNumber: 18 }]))[0];
+    };
+    const atLine = await stands();
+    assert.deepEqual([atLine.stage, atLine.line, atLine.whoseMove], ['planning', { code: 'planning_with_you', ready: true }, 'requester']);
+    assert.equal(workState.says(atLine), 'Planning · Planning it with you in a private thread');
+    assert.deepEqual(atLine.words.line, { id: 'core:work.line.planningWithYou' });
+    // Her bot tab's row, and what she is told when she asks.
+    const { rows: tab } = await pool.query(aiWork.THREADS_SQL, [ada.id, false, false, aiWork.THREADS_MAX, aiWork.LIVE_DAYS]);
+    const tab18 = tab.find((r) => Number(r.number) === 18);
+    const shown = aiWork.arrange([{ ...tab18, change_status: null }], ada.id, new Date(), botUser.id, await aiWork.statesFor(pool, [tab18]));
+    assert.equal(aiWork.threadSays(shown.waiting[0]), 'Planning · Planning it with you in a private thread');
+    const told = (await progress.requestStates(pool, { userId: ada.id, settings: { mode: 'shadow', perPerson: 2 } }))
+      .find((s) => Number(s.row.app_id) === app.id && Number(s.row.issue_number) === 18)?.state;
+    assert.equal(told?.doing, progress.PLAN_WAIT);
+    assert.equal(told.waitingOn, 'them');
+    // Her card under the message that asked for it, in the project's chat.
+    assert.equal(require('../src/services/homeroom-bot-chat').cardStageOfWork(atLine), 'waiting_plan');
+    // Without her hold the same build is in the bot's line, and says so.
+    await pool.query('UPDATE private_threads SET holds_bot = FALSE WHERE root_message_id = $1', [adaRoot]);
+    const inLine = await stands();
+    assert.deepEqual([inLine.stage, inLine.line, inLine.whoseMove], ['building', { code: 'queued', place: 1 }, 'bot']);
+    assert.equal(workState.says(inLine), 'Ready to build · Number 1 in line');
+    assert.deepEqual(await buildable(), [18], 'and it may start');
+    await pool.query('UPDATE private_threads SET holds_bot = TRUE WHERE root_message_id = $1', [adaRoot]);
+    assert.equal((await stands()).stage, 'planning');
     await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [run.id]);
     await queue(18);
   });
