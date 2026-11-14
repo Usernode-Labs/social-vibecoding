@@ -260,7 +260,7 @@ export function BotNewsLine({ message, focused = false, earlier = [], updates: u
   const page = requestPageOf(message);
   const rootId = newsThread(message) ?? (earlier[0]?.id || message.id);
   function tap() {
-    if (page) openRequestPage(page, message.conversationId);
+    if (page) openRequestPage(page);
     else openThreadAt(rootId, rootId === message.id ? null : message.id);
   }
 

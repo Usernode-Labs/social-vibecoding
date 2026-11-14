@@ -2,10 +2,9 @@
  * Homeroom bot's lists under a look (version 2, 11 Nov 2026): the content
  * of the standard page (./lists.tsx AiLists) in the first tour's layout.
  *
- *   [tile] Homeroom bot                         (search) (+)
+ *   [tile] Homeroom bot                  (search) ( + New chat )
  *          Needs you: 18 · In progress: 12
  *   ( All ) ( Homeroom ) ( Game Corner ) ( 15 more ⌄ )     ← tabs, a toggle each
- *   [ Main Chat ]                                           ← a card of its own
  *   NEEDS YOU · 18                   ← a labelled group, one card
  *     [tile] Homeroom
  *      ☑ #6370  Email templates: keep…            (Vote)
@@ -244,13 +243,12 @@ function useHeld(lines: Line[]) {
 }
 
 export function AiFrameList({
-  heroLine, main, query = '', found, onFoundRetry, onQuery, searchOpen, onSearch, searchRef, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live,
+  heroLine, query = '', found, onFoundRetry, onQuery, searchOpen, onSearch, searchRef, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live,
   openRow, openThread, onDone, picked: pickedIn = [], onPick, appFor, onNew,
   history = null, historyKind = null, onHistoryKind, openHistory, historyRef,
 }: {
   /** The one sentence under the title: the counts, as the page's own heading says them (./model.ts heroWords). */
   heroLine: Phrase | null;
-  main: { lit: boolean; unread: number; open: () => void };
   /** What the search box says, '' while it is closed (#6398). */
   query?: string;
   /** 13 Nov 2026: the messages that match it (./search.ts useBotSearch); null while the first answer is on its way. */
@@ -328,9 +326,8 @@ export function AiFrameList({
             >
               <Icon name="search" size={18} />
             </button>
-            <button type="button" className={k('ib more')} aria-label={t('messages:newThread.start')} title={t('messages:newThread.start')} data-bot-new-thread="" onClick={onNew}>
-              <Icon name="plus" size={18} />
-            </button>
+            {/* New chat: the page's one primary, labelled (14 Nov 2026). */}
+            <Btn small icon="plus" data-bot-new-thread="" data-ai-new-chat="" onClick={onNew}>{t('messages:newThread.start')}</Btn>
           </div>
         </div>
         {searchOpen ? (
@@ -385,23 +382,6 @@ export function AiFrameList({
         ) : null}
 
         <div className={k('stack')}>
-          {/* #6398: Main Chat steps aside while a search is on. */}
-          {searching ? null : (
-            <Card className="main">
-              <button
-                type="button"
-                className={k('row sm', main.lit && 'on')}
-                onClick={main.open}
-                data-ai-main-row=""
-                data-ai-lit={main.lit ? '' : undefined}
-                aria-current={main.lit ? 'true' : undefined}
-              >
-                <Tile size={28} name={t('messages:store.header.main')} src={BOT_AVATAR} />
-                <span className={k('tx')}><span className={k('t')}>{t('messages:store.header.main')}</span></span>
-                {main.unread > 0 ? <span className={k('meta')} data-ai-main-unread="">{t('messages:ai.main.new', { count: main.unread })}</span> : null}
-              </button>
-            </Card>
-          )}
           {/* 13 Nov 2026: no thread and, once the messages have answered, no message either (./lines.ts noneWords). */}
           {noMatches ? <Card pad><span data-ai-search-empty="">{noneWords}</span></Card> : null}
 

@@ -173,7 +173,7 @@ export function aboutThreadTitle(kind: 'request' | 'change', number: number, tit
 }
 
 /**
- * Pure: a private thread's name over it in Main Chat's column, as the
+ * Pure: a private thread's name over it in the bot tab's column, as the
  * Homeroom bot tab's list names it (services/ai-work.js shapePrivate): a
  * design thread by its screen; a thread off the bot's "+" by the viewer's
  * first words in it (1 Nov 2026: one the bot opened to draw a screen, by

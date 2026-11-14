@@ -457,7 +457,6 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 .botpage .tabs{margin-top:-8px;overflow-x:auto;scrollbar-width:none}
 .botpage .search{margin-bottom:16px}
 .tab>.ic{margin-left:-4px}
-.card.main .row{min-height:52px;width:100%}
 .rowx{display:flex;align-items:center;min-width:0;padding-right:8px}
 .rowx>.row{flex:1;padding-right:4px}
 .list .row{position:relative;width:100%}
@@ -522,14 +521,9 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 .lookrow{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;padding:0 12px;border-radius:12px;font-size:15px;font-weight:550;color:var(--ink);position:relative;width:100%;text-align:left}
 .lookrow .v{color:var(--mut);font-weight:500}
 .lookrow select{position:absolute;top:0;left:0;width:100%;height:100%;opacity:0}
-/* left-overs D: a phone's bar says the crumb it keeps in the ink (it may not be the last: .here), and a line
-   under the title that does not fit beside the bar's buttons stands under the bar's first row, where it wraps; .sro is said to a screen reader and not drawn */
+/* left-overs D: a phone's bar says the crumb it keeps in the ink (it may not be the last: .here); .sro is said to a screen reader and not drawn */
 .phone .crumb>.keep{color:var(--ink)}
 .sro{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
-.crumb .cs.off{height:0}
-.barline{display:none}
-.phone .barline{display:block;flex:none;padding:0 12px 8px;font:500 12px/1.35 var(--f);color:var(--mut);border-bottom:1px solid var(--line)}
-.phone .bar:has(+.barline){border-bottom-color:transparent}
 /* left-overs D: a picture card with a control of its own (Join) is a group: the door over a foot */
 .fcard .fdoor{display:flex;flex-direction:column;flex:1;min-width:0;color:inherit;text-decoration:none}
 .fcard>.fm{margin:0;padding:0 12px 12px;font-size:13px;color:var(--mut)}

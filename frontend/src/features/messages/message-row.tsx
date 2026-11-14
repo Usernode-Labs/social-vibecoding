@@ -649,7 +649,7 @@ export const MessageRow = memo(function MessageRow({
             type="button"
             className="block max-w-full truncate text-start text-[0.8125rem] font-medium text-zinc-500 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-100"
             data-bot-thread-label={message.threadRootId}
-            onClick={() => (story ? openRequestPage(story, conversationId) : openThread(message.threadRootId as number))}
+            onClick={() => (story ? openRequestPage(story) : openThread(message.threadRootId as number))}
           >{inChatLabel}</button>
         ) : null}
         {/* #5680: in a conversation the words sit in a bubble on their
