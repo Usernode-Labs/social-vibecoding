@@ -94,6 +94,21 @@ test('Needs you is one group with one card: a project\'s name, then one line a r
   assert.match(render({ lit: 'page:app/homeroom/dev/issues/5998' }), /class="fr-row fr-sm fr-item fr-on"[^>]*data-ai-lit="" aria-current="true"/);
 });
 
+test('#6672: Needs you lifts a project by its newest activity, so a recent private chat is not last', () => {
+  const html = render({
+    owed: 2,
+    rows: [
+      need('need:question:1', 'Which part should zoom in?', corner, 402, { at: '2026-11-11T12:00:00Z' }),
+      need('private:3', 'Keep a vote in view', homeroom, 6198, { pill: null, rootId: 77, threadId: null, at: '2026-11-14T12:00:00Z' }),
+    ],
+  });
+  const work = html.slice(html.indexOf('data-ai-list="work"'), html.indexOf('data-ai-list="busy"'));
+  assert.deepEqual(titles(work), ['Homeroom', 'Keep a vote in view', 'Game Corner', 'Which part should zoom in?'],
+    'the project talked in today comes before the one quiet for three days');
+  assert.match(read(LIST), /const needs = useHeld\(recentGroupsFirst\(freshFirst\(needLines\)\)\);/,
+    'the drawn order is the new-first pass, then the projects by recency, then held');
+});
+
 test('a project folds after its first rows behind its own Show more; what is new leads and is said', () => {
   const rows = Array.from({ length: 8 }, (_, i) => need(`need:decide:${i}`, `Row ${i}`, homeroom, 100 + i, i === 7 ? { unread: 1 } : {}));
   const html = render({ rows, owed: 8, progress: [] });
