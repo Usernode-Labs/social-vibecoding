@@ -87,7 +87,10 @@ test('the questions are an arm of the feed and of its counts', () => {
   const src = read('src/routes/workshop-overview.js');
   assert.match(src, /owed_questions AS \(\s+SELECT q\.app_id, COUNT\(\*\)::int AS n,\s+array_agg\('question:' \|\| q\.id\) AS keys/,
     'counted where the votes are, under keys the seen record takes');
-  assert.match(src, /\(COALESCE\(op\.n, 0\) \+ COALESCE\(og\.n, 0\) \+ COALESCE\(oq\.n, 0\)\) AS needs/);
+  assert.match(src, /\+ COALESCE\(oq\.n, 0\)\) AS needs/,
+    'the question count is not gated: a question is the viewer\'s wherever it is');
+  assert.equal((src.match(/CASE WHEN \$\{CAN_TAKE_PART_SQL\} THEN COALESCE\(o[pg]\.n, 0\) ELSE 0 END\)/g) || []).length, 4,
+    'only the two vote counts are gated (#6664), in the counts and in the outer filter');
   assert.match(src, /SELECT 'needs', 'question', q\.app_id, q\.id,/, 'and listed with the rows behind the counts');
   const [item] = overview.shapeNeedsFeed([{
     kind: 'question', id: 9, title: 'Newest first?', author: 'homeroom_bot', number: 7,

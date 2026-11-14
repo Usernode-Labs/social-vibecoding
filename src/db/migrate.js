@@ -95,6 +95,10 @@ async function migrate(config) {
   await seedSelfApp(pool, config);
   await seedTermsVersions(pool);
   await seedStagingPrivateRequest(pool);
+  // #6664's shots: a project anyone may see but only its collaborators may
+  // take part in, with a vote waiting that the capture member can see and
+  // cannot cast. Obviously fake, staging only.
+  await seedStagingCollabOnlyVote(pool);
   // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
   // a slot, handed back, never read, an operator task), for its shots.
   await seedStagingBotWaitingRows(pool);
@@ -1880,6 +1884,59 @@ async function seedStagingPrivateRequest(pool) {
   } catch (err) {
     log.warn('db', 'Staging private request seeding failed', { message: err.message });
   }
+}
+
+// #6664's shots: a project that lets anyone see it but only its collaborators
+// take part (view_visibility 'public', collab_visibility 'private'), with one
+// change waiting on a vote. The shots' member fixture (usernode-capture) is a
+// member of its community and NOT one of its collaborators, so the vote used
+// to show on her sidebar and in Needs you while pressing Yes was refused; this
+// change leaves it out of both. Rows for the fixture account and an obviously
+// fake author; nothing here is a signal the code reads to decide anything, and
+// a staging copy never acts on the change. Idempotent by slug and branch,
+// strictly a no-op outside staging.
+async function seedStagingCollabOnlyVote(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+    const member = (await tx.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
+    if (!member) { await tx.query('ROLLBACK'); return; }
+    const author = (await tx.query(
+      `INSERT INTO users (username, password, has_platform_access)
+       VALUES ('staging-demo-collab-author', 'staging-demo-not-a-login', TRUE)
+       ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username
+       RETURNING id`)).rows[0];
+    await tx.query(
+      `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+       SELECT 'Staging demo: Trading journal', 'staging-demo-collab-only', 'running', $1, 'public', 'private'
+        WHERE NOT EXISTS (SELECT 1 FROM apps WHERE slug = 'staging-demo-collab-only')`, [member.id]);
+    const app = (await tx.query(
+      "SELECT id, community_id FROM apps WHERE slug = 'staging-demo-collab-only'")).rows[0];
+    await tx.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')
+       ON CONFLICT DO NOTHING`, [app.id, author.id]);
+    // A member of the community, deliberately without an app_collaborators row.
+    await tx.query(
+      `INSERT INTO community_members (community_id, user_id, source) VALUES ($1, $2, 'joined')
+       ON CONFLICT DO NOTHING`, [app.community_id, member.id]);
+    await tx.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, session_title, pr_number, pr_title,
+                                  linked_issues, status, shared_at, promoted_at, check_state,
+                                  integration_merges_clean, pr_summary_md)
+       SELECT $1, $2, 'staging-fixture/collab-only-vote',
+              'Staging demo: a vote on a collaborators-only project',
+              96664, 'Staging demo: add a monthly summary', '{}'::int[], 'promoted', NOW(), NOW(),
+              'passing', TRUE,
+              'Obviously fake: a change waiting on a vote in a project only its collaborators take part in.'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions
+                           WHERE app_id = $1 AND branch_name = 'staging-fixture/collab-only-vote')`,
+      [app.id, author.id]);
+    await tx.query('COMMIT');
+  } catch (err) {
+    await tx.query('ROLLBACK');
+    log.warn('db', 'Staging collaborator-only vote seed failed', { message: err.message });
+  } finally { tx.release(); }
 }
 
 // #6158: the Homeroom bot tab's Waiting rows now say what each request waits
