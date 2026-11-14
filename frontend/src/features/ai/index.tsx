@@ -548,24 +548,6 @@ export function AiScreen(): ReactNode {
     window.addEventListener('hashchange', back);
     return () => window.removeEventListener('hashchange', back);
   }, []);
-  // A reload or a copied link reopens the detail the address names (#6230).
-  const restored = useRef<string | null>(null);
-  useEffect(() => {
-    if (!mounted || !botId || typeof window === 'undefined') return;
-    const hash = window.location.hash;
-    if (restored.current === hash) return;
-    restored.current = hash;
-    const at = botDetailAt(hash);
-    if (!at) return;
-    if (at.kind === 'plan') openDetail({ kind: 'plan', ref: { sessionId: at.sessionId }, version: at.version });
-    else if (at.kind === 'shots') openDetail({ kind: 'shots', ref: { changeId: at.changeId }, version: null });
-    else {
-      const where = botTabAt(hash);
-      if (where?.threadRootId) {
-        openDetail({ kind: 'design', ref: { conversationId: botId, rootId: where.threadRootId }, version: at.version });
-      }
-    }
-  }, [mounted, botId]);
   const botRow = mounted ? snap.conversations.find((item) => item.homeroomBot && item.kind !== 'channel') : null;
   const unread = Math.max(0, Number(botRow?.unreadCount) || 0);
 
@@ -685,16 +667,50 @@ export function AiScreen(): ReactNode {
   // message in either, from any door into the chat; a bare `#homeroom-bot`
   // closes what is open. Each once, once the page knows whether it is a
   // phone's.
+  //
+  // A THREAD'S ASK WAITS FOR THE CHAT IT IS IN. On a cold load (a refresh on
+  // `#homeroom-bot/thread/<id>`, that address in a new tab, the first visit
+  // from a bell row) the page knows its width before it knows which chat is
+  // the bot's. Taken then, `showAt` could not put the thread in the store,
+  // and since #6425 nothing else does: the chat is mounted but not active
+  // until the column is open, and the column needs the store's thread. So
+  // the address named a thread over the lists alone. Main and a page need no
+  // chat id, and are taken at once; so is a phone's thread, whose drawer
+  // slides in first and whose pane embeds the thread when the chat is known
+  // (./phone-drawer.tsx MainPane).
   const ask = useBotTabAsk();
   const askTaken = useRef(0);
   useEffect(() => {
     if (!ask || ask.seq === askTaken.current || !visible || !(wide || phone)) return;
+    if (ask.at?.threadRootId && !botId && !phone) return;
     askTaken.current = ask.seq;
     how.current = 'row';
     if (ask.close) closeColumn();
     else if (ask.item) openItem(ask.item);
     else if (ask.at) showAt(ask.at);
-  }, [ask, visible, wide, phone]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ask, visible, wide, phone, botId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A reload or a copied link reopens the detail the address names (#6230).
+  // Declared after the ask above on purpose: both run in the commit that
+  // learns the bot's chat, and a thread's ask closes any detail that is not
+  // its own, so a design named by `/thread/<id>/design/<v>` is opened after
+  // its thread, not before it.
+  const restored = useRef<string | null>(null);
+  useEffect(() => {
+    if (!mounted || !botId || typeof window === 'undefined') return;
+    const hash = window.location.hash;
+    if (restored.current === hash) return;
+    restored.current = hash;
+    const at = botDetailAt(hash);
+    if (!at) return;
+    if (at.kind === 'plan') openDetail({ kind: 'plan', ref: { sessionId: at.sessionId }, version: at.version });
+    else if (at.kind === 'shots') openDetail({ kind: 'shots', ref: { changeId: at.changeId }, version: null });
+    else {
+      const where = botTabAt(hash);
+      if (where?.threadRootId) {
+        openDetail({ kind: 'design', ref: { conversationId: botId, rootId: where.threadRootId }, version: at.version });
+      }
+    }
+  }, [mounted, botId]);
   // 10 Nov 2026: `#homeroom-bot/new…` is the "+" pressed for you, with the
   // project and who works on it already set when the address names them
   // (./door.ts botNewAt). It opens beside the chat, so it has a count of its
