@@ -4936,9 +4936,10 @@
       "expectText": "Invitation pending"
     },
     {
-      "name": "The old Main Chat address still lands (14 Nov 2026: every conversation with Homeroom bot is a thread): #homeroom-bot/main opens the thread the old Main Chat messages were moved under, or a new chat when there were none, alone in the column with the chat mounted threads only, and no request's news is drawn there: that is on the request's page (#6207)",
+      "name": "The old Main Chat address still lands (14 Nov 2026: every conversation with Homeroom bot is a thread): #homeroom-bot/main opens Earlier chat, the thread the old Main Chat messages were moved under (a new chat when there were none), alone in the column with the chat mounted threads only. A request the bot offered to file there is still a message with File it and Not now, and no Write my own (#3624), quoting the message it answers (#3707), and no request's news is drawn there: that is on the request's page (#6207)",
       "path": "/?demo=1#homeroom-bot/main",
-      "expectSelector": "#ai-screen:not(.hidden) #ai-main-pane[data-ai-column] > .messages-layout[data-bot-threads] > .messages-reply-pane .messages-reply-scroll:not(:has([data-request-tag]))",
+      "expectSelector": "#ai-screen:not(.hidden) #ai-main-pane[data-ai-column] > .messages-layout[data-bot-threads] > .messages-reply-pane:has([data-reply-head=alone]) .messages-reply-scroll:not(:has([data-request-tag])) .messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)",
+      "expectText": "Earlier chat",
       "id": "homeroom-bot-old-main-address",
       "visual": true,
       "impact": [
