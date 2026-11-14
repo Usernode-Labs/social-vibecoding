@@ -4,7 +4,8 @@
  * The server keeps its allowances on UTC boundaries: the weekly AI credits
  * and kudos reset on Monday 00:00 UTC, the shared daily budget at midnight
  * UTC. The copy used to say exactly that, which left everyone not on UTC to
- * do the arithmetic. So the words now name the reader's local moment —
+ * do the arithmetic. So the words now name the reader's local moment (in
+ * the zone picked in Settings › Language, #6479, else the device's) —
  * "Resets Sunday at 8:00 PM", "They reset at 9:00 AM" — and the exact UTC
  * instant goes on `title`, one hover from certain.
  *
@@ -24,6 +25,7 @@
  */
 
 import { t } from './i18n/runtime';
+import { getTimeZone } from './time-zone';
 
 export type ResetCadence = 'weekly' | 'daily';
 
@@ -65,9 +67,12 @@ function resolve(cadence: ResetCadence, opts: ResetOptions = {}): Date {
  */
 export function resetMoment(cadence: ResetCadence, opts: ResetOptions = {}): { day: string; time: string } {
   const at = resolve(cadence, opts);
+  // #6479: in the zone picked in Settings › Language, else the device's.
+  const timeZone = getTimeZone();
+  const zone: Intl.DateTimeFormatOptions = timeZone ? { timeZone } : {};
   return {
-    day: new Intl.DateTimeFormat(opts.locale, { weekday: 'long' }).format(at),
-    time: new Intl.DateTimeFormat(opts.locale, { hour: 'numeric', minute: '2-digit' }).format(at),
+    day: new Intl.DateTimeFormat(opts.locale, { ...zone, weekday: 'long' }).format(at),
+    time: new Intl.DateTimeFormat(opts.locale, { ...zone, hour: 'numeric', minute: '2-digit' }).format(at),
   };
 }
 

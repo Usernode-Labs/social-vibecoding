@@ -2207,6 +2207,11 @@ form.agent-session-composer:focus-within {
    disabled; with an empty field and no file staged it reads as the same
    faded disc Messages' own Send is. */
 .messages-composer-card:not([data-gc-files]):has(textarea:placeholder-shown) .messages-send { opacity: .35; }
+/* Task 2148: Stop, in Send's place while Homeroom bot works on the viewer's
+   message and the box is empty (features/messages/bot-stop.ts). The empty
+   field fades Send; a Stop that can be pressed is not faded, and one on its
+   way ("Stopping", disabled) is, by the rule for a disabled Send above. */
+.messages-composer-card:not([data-gc-files]):has(textarea:placeholder-shown) .messages-send.messages-send-stop:not(:disabled) { opacity: 1; }
 /* #3735: ONE COMPACT LINE ON A PHONE. Below 768px the card is the "+", the
    field and the send disc on a single 44px row, and it grows only with what
    is typed, up to the field's 140px ceiling as everywhere. It was about 75px:
@@ -19937,8 +19942,11 @@ a.dev-ws-hero-pending {
    draws the fill), a circle. Its menu hangs below it over the cards under
    the hero, so the hero lifts while the menu is open, as it does for the
    Join popup. */
-.dev-ws-hero .dev-ws-plus-btn { width: 32px; height: 32px; }
-.dev-ws-hero .dev-ws-plus-glyph { width: 18px; height: 18px; }
+/* A BIGGER ⋯ (request 6654): 32px with an 18px glyph read as a detail and
+   was easy to miss. 48px, bolder dots and a hairline ring, so it stands as a
+   control of its own beside Open app. */
+.dev-ws-hero .dev-ws-plus-btn { width: 48px; height: 48px; box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
+.dev-ws-hero .dev-ws-plus-glyph { width: 24px; height: 24px; stroke-width: 2.6; }
 .dev-ws-hero:has(#dev-plus-menu:not(.hidden)) { position: relative; z-index: 5; }
 /* It hangs from the ⋯'s LEFT edge and opens rightward, into the column: the
    ⋯ is near the row's start (after Open app and Invite), and a menu opening
@@ -19976,6 +19984,60 @@ a.dev-ws-hero-pending {
 .dev-ws-hero-lineage { display: block; font-size: 13px; line-height: 18px; color: var(--text-muted); }
 .dev-ws-hero-lineage-link { color: var(--text-secondary); font-weight: 600; text-decoration: none; }
 .dev-ws-hero-lineage-link:hover { text-decoration: underline; }
+/* INVITE, AS A CARD (community-card.tsx InviteHeroCard, request 6654):
+   Home's New project card on the hub. A lilac card: faces of people already
+   here fanned out with an open seat after them, a question, what an invite
+   does, one full-width dark button and how many are in. Under the hero on a
+   phone; beside it on a wide window ("THE HUB IN TWO COLUMNS" below). */
+.dev-ws-invite-hero {
+  display: flex; flex-direction: column; gap: 10px; min-width: 0;
+  padding: 20px 20px 16px; border-radius: 20px;
+  background: #f6f2fc; box-shadow: inset 0 0 0 1px #d9d0ec;
+}
+.dark .dev-ws-invite-hero { background: #201b2f; box-shadow: inset 0 0 0 1px #3a3152; }
+.dev-ws-invite-hero-fan { display: flex; align-items: center; margin-bottom: 2px; }
+.dev-ws-invite-hero-face {
+  flex: none; width: 40px; height: 40px; margin-inline-end: -10px;
+  display: grid; place-items: center; border-radius: 999px;
+  font-size: 15px; font-weight: 700; color: #fff;
+  box-shadow: 0 0 0 2.5px #f6f2fc;
+}
+.dark .dev-ws-invite-hero-face { box-shadow: 0 0 0 2.5px #201b2f; }
+.dev-ws-invite-hero-face:nth-child(odd) { transform: rotate(-5deg); }
+.dev-ws-invite-hero-face:nth-child(even) { transform: rotate(5deg); }
+.dev-ws-invite-hero-seat {
+  margin-inline-end: 0; transform: none !important;
+  background: #fff; color: #6b4fb3; font-size: 20px; font-weight: 500;
+  border: 1.5px dashed #b9a7e3; box-shadow: none;
+}
+.dark .dev-ws-invite-hero-seat { background: #2a2340; color: #cdbdf5; border-color: #5a4b85; box-shadow: none; }
+.dev-ws-invite-hero-title { margin: 0; font-size: 18px; font-weight: 750; line-height: 23px; letter-spacing: -0.01em; color: var(--text-primary); }
+.dev-ws-invite-hero-text { margin: 0; font-size: 14px; line-height: 20px; color: var(--text-secondary); }
+.dev-ws-invite-hero-btn { margin-top: 4px; background: #18181b; }
+.dev-ws-invite-hero-btn:hover { background: #27272a; }
+.dark .dev-ws-invite-hero-btn { background: #fafafa; color: #18181b; }
+.dark .dev-ws-invite-hero-btn:hover { background: #e4e4e7; }
+.dev-ws-invite-hero-count { margin: 0; font-size: 13px; line-height: 18px; text-align: center; color: var(--text-muted); }
+/* THE HUB IN TWO COLUMNS (request 6654). On a wide window the hub was one
+   760px column with a wide empty margin either side. Its page is 1080px
+   there, and two pairs sit side by side in equal halves: the hero with the
+   Invite card, and For you with Topics. Everything else keeps the full
+   width, in the order it is written. Each pair is side by side only when
+   both are there and adjacent, so a hub without topics, or without the
+   Invite card, is one column as before. Not under a look (`data-skin`),
+   whose kit has a column of its own. */
+@media (min-width: 1100px) {
+  html:not([data-skin]) #dev-workshop:has(> .dev-ws[data-ws-tab="status"]) { max-width: 1080px; }
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 16px; align-content: start; align-items: start;
+  }
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > * { grid-column: 1 / -1; }
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero:has(+ .dev-ws-invite-hero),
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you]:has(+ [data-ws-hub-topics]) { grid-column: 1; }
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero + .dev-ws-invite-hero,
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics] { grid-column: 2; }
+}
 @media (min-width: 768px) {
   .dev-ws-hero-summary {
     display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-auto-flow: row dense;
@@ -23588,6 +23650,20 @@ html[data-side-strip="left"] #platform-header {
   padding-left: calc(1rem + var(--platform-strip-w, 0px));
 }
 
+/* THE NOTIFICATION SHEET IS FIXED TOO, so it is not in the body's content
+   box: like the header, its ground spans the screen while its content
+   stops beside the column. Every control moves together — the close disc,
+   Mark all read, the search field, the tabs and the rows' ends — and on
+   the Duo's wider inner screen, where the sheet docks as a side panel,
+   the panel keeps its 26rem width and its content gets the padding
+   instead. */
+html[data-side-strip="right"] #notifications-sheet {
+  padding-right: var(--platform-strip-w, 0px);
+}
+html[data-side-strip="left"] #notifications-sheet {
+  padding-left: var(--platform-strip-w, 0px);
+}
+
 /* The strip's own pieces (features/nav/strip-back.tsx, side-apps.tsx)
    exist only here. */
 .platform-side-strip-top,
@@ -24191,6 +24267,16 @@ html[data-side-strip="left"] #platform-header {
   html[data-side-corner="left"] #platform-header {
     margin-left: calc(-1 * var(--platform-corner-w, 0px));
     padding-left: calc(1rem + 84px);
+  }
+  /* The bell's sheet, fixed like the header, keeps its ground and moves its
+     content by the corner's own width rather than the header's 84px: the
+     sheet's 16px row padding plus that width already clears the pill, and
+     84px on a 466px screen would squeeze every row. */
+  html[data-side-corner="right"] #notifications-sheet {
+    padding-right: var(--platform-corner-w, 0px);
+  }
+  html[data-side-corner="left"] #notifications-sheet {
+    padding-left: var(--platform-corner-w, 0px);
   }
   /* The five cells stay left of the corner; the bar's ground does not. */
   html[data-side-corner="right"] #platform-tabs {

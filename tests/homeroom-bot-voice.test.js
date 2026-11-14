@@ -562,6 +562,10 @@ test('the prompt says where it is, lists only what it can do, and holds it to wh
   assert.match(prompt, /the limit is\s+yours/);
   assert.match(prompt, /Read one message of this thread in full \(read_message\)\./);
   assert.match(prompt, /Today is 2026-10-10/);
+  // #6670: a reworked draft is the whole request, never a note against an earlier one.
+  assert.match(prompt, /Write it as a request in its own right/);
+  const offer = tools.find((t) => t.function.name === 'offer_request').function;
+  assert.match(offer.parameters.properties.details.description, /replaces or revises an earlier draft/);
   assert.doesNotMatch(prompt, /—/, 'no em dashes in what it is told either');
 });
 

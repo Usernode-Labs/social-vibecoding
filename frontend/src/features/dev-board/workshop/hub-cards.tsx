@@ -90,6 +90,7 @@ import {
   askToFit, goTo, upstreamAction, useUpstream, useVersionsSummary,
   type UpstreamState, type VersionsSummary,
 } from '../../versions/upstream';
+import { dayNumber, getTimeZoneSnapshot, inZone, zonedDay } from '../../../lib/time-zone';
 
 /** How often the hub reads the project again while its first version is being built. */
 export const FIRST_VERSION_POLL_MS = 15000;
@@ -782,8 +783,8 @@ export const HUB_TOPICS_SHOWN = 6;
  * Workshop and #general, and this card to each live topic's channel, a row
  * a topic, drawn as the Discussion's row is: its icon, its name and #handle,
  * what it is about, and how much is new in it. The first few are listed and
- * the rest wait behind "Show N more", as the sidebar folds them. A wide
- * window lists the topics in its sidebar and draws no card.
+ * the rest wait behind "Show N more", as the sidebar folds them. Drawn at
+ * every width since request 6654: a wide window puts it beside For you.
  */
 export function TopicsCard({ data, onOpen }: {
   data: CommunityPayload | null;
@@ -951,12 +952,13 @@ export interface RecentOwn {
 
 const DAY_FORMATS = new Map<string, Intl.DateTimeFormat>();
 function dayWords(date: Date, withYear: boolean): string {
-  const key = withYear ? 'year' : 'day';
+  // #6479: the zone picked in Settings › Language is part of the key.
+  const key = `${withYear ? 'year' : 'day'}|${getTimeZoneSnapshot()}`;
   let format = DAY_FORMATS.get(key);
   if (!format) {
-    format = new Intl.DateTimeFormat(undefined, withYear
+    format = new Intl.DateTimeFormat(undefined, inZone(withYear
       ? { year: 'numeric', month: 'long', day: 'numeric' }
-      : { month: 'long', day: 'numeric' });
+      : { month: 'long', day: 'numeric' }));
     DAY_FORMATS.set(key, format);
   }
   return format.format(date);
@@ -971,10 +973,9 @@ export function liveSinceLine(value: string | null | undefined, now: number = Da
   const at = value ? new Date(value) : null;
   if (!at || Number.isNaN(at.getTime())) return '';
   const today = new Date(now);
-  const sameDay = at.getFullYear() === today.getFullYear() && at.getMonth() === today.getMonth()
-    && at.getDate() === today.getDate();
+  const sameDay = dayNumber(at) === dayNumber(today);
   if (sameDay || at.getTime() > now) return translate('project:hub.recent.own.today');
-  return translate('project:hub.recent.own.since', { date: dayWords(at, at.getFullYear() !== today.getFullYear()) });
+  return translate('project:hub.recent.own.since', { date: dayWords(at, zonedDay(at).year !== zonedDay(today).year) });
 }
 
 /** The app's own card opens the app, as the First version card's Open app does. */

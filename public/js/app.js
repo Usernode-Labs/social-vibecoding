@@ -3617,6 +3617,9 @@ const App = {
           case 'conversation_read':
           case 'conversation_membership_changed':
           case 'conversation_typing':
+          // The viewer's own saved drafts in the chat with Homeroom bot
+          // changed on another tab or device (features/messages/bot-drafts.ts).
+          case 'conversation_drafts_changed':
             // The global socket is transport only. The React-owned Messages
             // store applies member-scoped events without a legacy DOM write.
             window.UsernodeReact?.messages?.handleEvent?.(data);

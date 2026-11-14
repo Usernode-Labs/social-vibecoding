@@ -405,9 +405,21 @@ test('every conversation with Homeroom bot is a thread', { timeout: 170000 }, as
     const fayChat = await chatOf(fay);
     const fayThread = await privateThreads.startThread(pool, { user: fay, ungated: true });
 
+    // A draft saved in Main Chat while the bot worked there (place 0) moves
+    // with it; one saved in a thread stays in its thread.
+    await pool.query(
+      `INSERT INTO conversation_drafts (user_id, conversation_id, thread_root_id, draft_id, content)
+       VALUES ($1, $2, 0, 'dmainsaved', 'and one more thing'), ($3, $4, $5, 'dthreadsaved', 'kept where it is')`,
+      [eve.id, chat, fay.id, fayChat, fayThread.rootId]);
+    const draftsAt = async (userId) => (await pool.query(
+      `SELECT thread_root_id, draft_id FROM conversation_drafts WHERE user_id = $1 ORDER BY draft_id`, [userId])).rows;
+
     const done = await earlierChat.moveAll(pool, { batch: 2 });
     assert.ok(done.people >= 1 && done.moved >= 5);
     const rootId = await privateThreads.earlierRootFor(pool, eve.id);
+    assert.deepEqual(await draftsAt(eve.id), [{ thread_root_id: rootId, draft_id: 'dmainsaved' }],
+      'a draft saved in Main Chat is listed in Earlier chat');
+    assert.deepEqual(await draftsAt(fay.id), [{ thread_root_id: fayThread.rootId, draft_id: 'dthreadsaved' }]);
     assert.equal(rootId, hello, 'the earliest message still there to read leads the thread');
     assert.equal((await threadOf(rootId)).kind, 'earlier');
     const now = await snapshot();
@@ -595,6 +607,10 @@ test('the staging demo\'s chat with Homeroom bot is threads', { timeout: 120000 
   const bot = await require('../src/services/homeroom-bot-dm').botAccount(pool);
   assert.equal((await privateThreads.stateOf(pool, { user: viewer, rootId: firstVersion.rootId, bot })).title, firstVersion.title);
   assert.equal((await privateThreads.stateOf(pool, { user: viewer, rootId: earlier.rootId, bot })).title, 'Earlier chat');
+  // The demo's one saved draft sits in Earlier chat, once.
+  assert.deepEqual((await pool.query(
+    `SELECT thread_root_id, draft_id FROM conversation_drafts WHERE user_id = $1`, [viewer.id])).rows,
+  [{ thread_root_id: earlier.rootId, draft_id: 'dstagingdemo1' }]);
   assert.equal((await privateThreads.stateOf(pool, { user: viewer, rootId: hello.rootId, bot })).title, undefined,
     'a hello is named by its words, as any other thread');
   const firstLines = await thread(firstVersion.rootId);

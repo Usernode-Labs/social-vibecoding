@@ -101,7 +101,7 @@ export function newAccountsWait(options: { waitlist_enabled?: boolean } | null |
 }
 
 /** The sorts Discover offers, in the order its control shows them. */
-export const SORTS = ['trending', 'new', 'built'] as const;
+export const SORTS = ['trending', 'new', 'built', 'popular'] as const;
 export type GuestSort = (typeof SORTS)[number];
 
 /**
@@ -126,18 +126,20 @@ function createdAt(app: GuestApp): number {
 }
 
 /**
- * The directory in a sort's order, and only that: Popular is the most people
- * active first, whether or not a visitor can try it. Putting the tryable
- * first (21 Oct 2026) led the list with test and diagnostic apps nobody
- * uses, above a game 42 people play (Evan's review of the live page, 21 Oct
- * 2026); what a visitor can try is Featured's job, and its cards carry Try
- * it wherever they sort. Ties keep the directory's own order.
+ * The directory in a sort's order, and only that: `'trending'` is the most
+ * people active lately first, whether or not a visitor can try it, and
+ * `'popular'` is the most members. Putting the tryable first (21 Oct 2026)
+ * led the list with test and diagnostic apps nobody uses, above a game 42
+ * people play (Evan's review of the live page, 21 Oct 2026); what a visitor
+ * can try is Featured's job, and its cards carry Try it wherever they sort.
+ * Ties keep the directory's own order.
  */
 export function sortApps(apps: readonly GuestApp[], sort: GuestSort): GuestApp[] {
   const indexed = apps.map((app, i) => ({ app, i }));
   const key = (app: GuestApp): number => {
     if (sort === 'new') return createdAt(app);
     if (sort === 'built') return buildersOf(app);
+    if (sort === 'popular') return app.member_count || 0;
     return app.active_users || 0;
   };
   indexed.sort((a, b) => key(b.app) - key(a.app) || a.i - b.i);

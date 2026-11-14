@@ -10,6 +10,7 @@
  * Nothing here draws: a glyph is a name (`Glyph`), and each face has its own
  * icon for it.
  */
+import { dayNumber, inZone, zonedDay } from '../../lib/time-zone';
 import { getDateLocale } from '../../lib/i18n/runtime';
 import { useMessages } from '../../lib/i18n/react';
 import { tabLacks, useTabBuild } from '../../lib/tab-build';
@@ -110,11 +111,11 @@ type Say = (id: string, values?: Record<string, string | number>) => string;
 function dayOf(at: string | null, t: Say): string {
   if (!at) return '';
   const d = new Date(at);
-  const today = new Date();
-  const days = Math.round((new Date(today.toDateString()).getTime() - new Date(d.toDateString()).getTime()) / 86400000);
+  // #6479: calendar days in the zone picked in Settings > Language.
+  const days = dayNumber(new Date(Date.now())) - dayNumber(d);
   if (days <= 0) return t('messages:ai.short.today');
   if (days === 1) return t('messages:ai.short.yesterday');
-  return d.toLocaleDateString(undefined, { weekday: 'short' });
+  return d.toLocaleDateString(undefined, inZone({ weekday: 'short' }));
 }
 
 /**
@@ -125,13 +126,15 @@ function dayOf(at: string | null, t: Say): string {
 export function dayHeading(at: string | null | undefined, t: Say, locale: string | undefined): string {
   const d = new Date(String(at || ''));
   if (!Number.isFinite(d.getTime())) return '';
-  const today = new Date();
-  const days = Math.round((new Date(today.toDateString()).getTime() - new Date(d.toDateString()).getTime()) / 86400000);
+  const today = new Date(Date.now());
+  // #6479: calendar days in the zone picked in Settings > Language, the same
+  // zone ./model.ts dayKey groups by, so a heading names its group's day.
+  const days = dayNumber(today) - dayNumber(d);
   if (days <= 0) return t('messages:ai.short.today');
   if (days === 1) return t('messages:ai.short.yesterday');
   // The year too, only when it is another one (as History's months say it).
-  const other = d.getFullYear() !== today.getFullYear();
-  return d.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', ...(other ? { year: 'numeric' } : {}) });
+  const other = zonedDay(d).year !== zonedDay(today).year;
+  return d.toLocaleDateString(locale, inZone({ weekday: 'long', day: 'numeric', month: 'long', ...(other ? { year: 'numeric' } : {}) }));
 }
 
 /** What the page hands its list, whichever face draws it (./lists.tsx AiLists says each). */

@@ -562,6 +562,17 @@ test('the filter: the three projects that need you most as chips, then any picke
 
   const lists = read('frontend/src/features/ai/lists.tsx');
   assert.match(lists, /<FadeRail role="group" aria-label=\{t\('messages:ai\.filter\.label'\)\} data-ai-project-chips="" className="min-w-0 flex-1">/);
+  // The chip primitive's own fade rail (#6660), which Home's kind chips use:
+  // the first render carries no mask and no edge marks, so a prerender and its
+  // hydration match; a caller's spacing wins over the rail's own through `cn`.
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const { FadeRail, ChipRail: PlainRail } = loadTsx('frontend/@/components/ui/chip.tsx');
+  const rail = renderToHtml(createElement(FadeRail, { className: 'px-1 pb-2', 'data-x': 'y' }, 'A'));
+  assert.doesNotMatch(rail, /mask-image|WebkitMaskImage|data-fade/, 'nothing fades until an effect has measured the row');
+  assert.match(rail, /class="[^"]*\bpx-1 pb-2"/);
+  assert.doesNotMatch(rail, /class="[^"]*\bpx-4\b[^"]*"/, 'the caller\'s padding replaces the rail\'s');
+  assert.match(rail, /data-x="y"/);
+  assert.equal(typeof PlainRail, 'function', 'the plain rail stays for callers that only clip');
   assert.match(lists, /\{rail\.map\(\(app\) => \(/, 'the rail draws the chips railProjects gives it');
   // More stands outside the rail, so a narrow rail never scrolls it away,
   // and it is a menu button, not a toggle.

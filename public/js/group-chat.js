@@ -3753,20 +3753,27 @@ const GroupChat = {
     // (#6103) — the same rule lib/timestamp.ts reads. The device default
     // stands where the runtime predates it, or where this file is evaluated
     // without one (a bare test sandbox).
-    const locale = typeof PlatformI18n !== 'undefined' && PlatformI18n.dateLocale
-      ? PlatformI18n.dateLocale() : undefined;
+    const i18n = typeof PlatformI18n !== 'undefined' ? PlatformI18n : null;
+    const locale = i18n && i18n.dateLocale ? i18n.dateLocale() : undefined;
+    // The zone the account picked (#6479), and the day an instant falls on
+    // in it; the device's own where none is picked or the runtime predates it.
+    const timeZone = i18n && i18n.timeZone ? i18n.timeZone() : undefined;
+    const zone = timeZone ? { timeZone } : {};
+    const dayOf = (x) => (i18n && i18n.zonedDay
+      ? i18n.zonedDay(x)
+      : { year: x.getFullYear(), month: x.getMonth() + 1, day: x.getDate() });
     // No zero-padded hour (polish N5): "4:14 AM", as lib/timestamp.ts.
-    const time = d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
+    const time = d.toLocaleTimeString(locale, { ...zone, hour: 'numeric', minute: '2-digit' });
     const title = d.toLocaleString(locale, {
-      year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+      ...zone, year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     });
-    const sameDay = d.getFullYear() === today.getFullYear()
-      && d.getMonth() === today.getMonth()
-      && d.getDate() === today.getDate();
+    const a = dayOf(d);
+    const b = dayOf(today);
+    const sameDay = a.year === b.year && a.month === b.month && a.day === b.day;
     if (sameDay) return { text: time, title };
-    const date = d.toLocaleDateString(locale, d.getFullYear() === today.getFullYear()
-      ? { month: 'short', day: 'numeric' }
-      : { year: 'numeric', month: 'short', day: 'numeric' });
+    const date = d.toLocaleDateString(locale, a.year === b.year
+      ? { ...zone, month: 'short', day: 'numeric' }
+      : { ...zone, year: 'numeric', month: 'short', day: 'numeric' });
     return { text: `${date}, ${time}`, title };
   },
 

@@ -10,6 +10,7 @@ import { openBotMessage, openFirstVersion } from '../ai/where';
 import { navStore } from '../nav/nav-store.js';
 import { messagesDrawerApplies } from '../nav-drawer/messages-drawer';
 import * as api from './api';
+import { botDraftsChanged, resyncBotDrafts } from './bot-drafts';
 import { WORK_CHANGED_EVENT, inMainStream, openAppTarget, threadsAllowed } from './bot-shared';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
 import { platformHubServed, platformSlug, subscribePlatformSlug } from './channel-hub';
@@ -53,6 +54,12 @@ export interface Typist {
   bot?: boolean;
   /** What the bot says it is doing now (its typing event's `doing`); null while it thinks. */
   doing?: BotDoing | null;
+  /**
+   * Task 2148: the viewer's message the bot is answering, when that answer
+   * can be stopped (its typing event's `answering`, services/homeroom-bot-
+   * dm.js pushTyping). The composer's Stop sends it back (./bot-stop.ts).
+   */
+  answering?: number;
 }
 
 /**
@@ -96,10 +103,14 @@ export function botDoingOf(raw: unknown): BotDoing | null {
  * words are held: the bot's message takes the card's place when the typing
  * stops.
  */
-export function botTypist(prior: Typist | undefined, shown: string, doing: BotDoing | null): Typist {
+export function botTypist(prior: Typist | undefined, shown: string, doing: BotDoing | null, answering: number | null = null): Typist {
   // The furthest step named this turn, kept through a wordless one.
   const held = doing ?? prior?.doing ?? null;
-  return { name: shown, unnamed: false, bot: true, doing: held };
+  // Task 2148: the message it answers, as its newest event names it; an
+  // event that names none keeps the one before (every event of an answer
+  // that can be stopped names it).
+  const answered = answering ?? prior?.answering ?? null;
+  return { name: shown, unnamed: false, bot: true, doing: held, ...(answered ? { answering: answered } : {}) };
 }
 
 interface InternalState extends MessagesSnapshot {
@@ -3094,6 +3105,8 @@ function showing(): boolean {
 export async function resync(): Promise<void> {
   void flushQueued();
   void loadAppDiscussions();
+  // The saved drafts on screen in the chat with Homeroom bot (./bot-drafts.ts).
+  resyncBotDrafts();
   const reads = [loadConversations(true)];
   const conversationId = state.route.conversationId;
   if (conversationId && onScreen(conversationId)) {
@@ -3154,6 +3167,12 @@ export function handleEvent(raw: ConversationEvent): void {
       }
       break;
     }
+    case 'conversation_drafts_changed':
+      // Another tab or device of the viewer's saved, sent or deleted a draft
+      // in their chat with Homeroom bot: the list on screen there is read
+      // again (./bot-drafts.ts). The event carries no words.
+      botDraftsChanged(event);
+      break;
     case 'conversation_read':
       void loadConversations(true);
       // The reader's OWN other tabs, and only those: the event goes to every
@@ -3225,7 +3244,7 @@ export function handleEvent(raw: ConversationEvent): void {
         // nobody else's event carries that.
         const prior = current.find((each) => each.name === shown);
         const entry: Typist = botPeer
-          ? botTypist(prior?.bot ? prior : undefined, shown, botDoingOf(event.doing))
+          ? botTypist(prior?.bot ? prior : undefined, shown, botDoingOf(event.doing), api.strictId(event.answering) || null)
           : { name: shown, unnamed: [...holders.values()].every(Boolean) };
         next = isShown ? current.map((each) => (each.name === shown ? entry : each)) : [...current, entry];
       }

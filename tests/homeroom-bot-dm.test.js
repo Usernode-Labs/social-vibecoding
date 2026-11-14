@@ -1053,7 +1053,8 @@ test('"typing" goes out before the answer starts, bounded', () => {
   // 1 Nov 2026: the work is handed what says what it is doing, and what moves it.
   assert.ok(fn.indexOf('stop.ready') < fn.indexOf('return await work(typing);'), 'the answer waits for its typing event');
   assert.match(fn, /setTimeout\(resolve, TYPING_FIRST_WAIT_MS\)/, 'but never long');
-  assert.match(src, /created\.first = sendTyping\(pool, botId, id, true, io, root\);/);
+  // Task 2148: and it names the message a stoppable answer is for, from its first event.
+  assert.match(src, /created\.first = sendTyping\(pool, botId, id, true, io, root, null, answered\);/);
   assert.match(src, /stop\.ready = entry\.first \|\| Promise\.resolve\(\);/);
 });
 

@@ -2071,6 +2071,110 @@
     "text": "Send (Enter)",
     "description": "Tooltip on the arrow button beside a message box, shown on a device with a keyboard: pressing the Enter key sends the message. Enter is the key's name."
   },
+  "composer.stop": {
+    "text": "Stop Homeroom bot",
+    "description": "Accessible name and tooltip of the square button that takes the send button's place in the chat with Homeroom bot while the bot is working on the person's message and the message box is empty: pressing it stops the bot's answer. Homeroom bot is the bot's name."
+  },
+  "composer.stopping": {
+    "text": "Stopping",
+    "description": "Accessible name and tooltip of the same button after it was pressed, while the bot's answer is being stopped. The button cannot be pressed in this state."
+  },
+  "composer.stopFailed": {
+    "text": "Homeroom bot wasn’t stopped. Try again.",
+    "description": "Error under the message box in the chat with Homeroom bot when pressing the stop button did not reach the server. Homeroom bot is the bot's name."
+  },
+  "composer.saveDraft": {
+    "text": "Save draft",
+    "description": "Visible text of the button that takes Send's place beside the message box in the chat with Homeroom bot while the bot is working and words are typed: a verb, saves the typed message for later instead of sending it."
+  },
+  "composer.saveAsDraft": {
+    "text": "Save as draft",
+    "description": "Accessible name of the same \"Save draft\" button beside the message box in the chat with Homeroom bot while the bot is working: saves the typed message for later."
+  },
+  "composer.saveTitle": {
+    "text": "Save this as a draft. It stays here until you send it",
+    "description": "Tooltip of the \"Save draft\" button beside the message box in the chat with Homeroom bot while the bot is working, on a device without a keyboard. No final full stop."
+  },
+  "composer.saveTitleShortcut": {
+    "text": "Save this as a draft (Enter). It stays here until you send it",
+    "description": "Tooltip of the \"Save draft\" button beside the message box in the chat with Homeroom bot while the bot is working, on a device with a keyboard: pressing the Enter key saves the draft. Enter is the key's name. No final full stop."
+  },
+  "composer.saveNote": {
+    "text": "Homeroom bot is still working, so this will be <0>saved as a draft, not sent</0>. Send it from your drafts when it finishes.",
+    "description": "Note above the message box in the chat with Homeroom bot when the person types while the bot is working on their earlier message. Keep the <0> tags around the emphasised words. Homeroom bot is the bot's name."
+  },
+  "drafts.label": {
+    "text": "Saved drafts",
+    "description": "Accessible name of the list of saved drafts above the message box in the chat with Homeroom bot: messages typed while the bot was working and kept for later."
+  },
+  "drafts.heading_one": {
+    "text": "<0>Saved drafts ({{count}})</0><1>· on all your devices</1>",
+    "description": "Line at the top of the list of saved drafts above the message box in the chat with Homeroom bot (messages typed while the bot was working and kept for later). The <0> part is a small upper-case heading; {{count}} is how many drafts are saved. The <1> part is a note beside it: the drafts are stored with the account, so they show on every device the person uses. Keep both pairs of tags, and the middle dot that opens the note."
+  },
+  "drafts.heading_other": {
+    "text": "<0>Saved drafts ({{count}})</0><1>· on all your devices</1>",
+    "description": "Line at the top of the list of saved drafts above the message box in the chat with Homeroom bot (messages typed while the bot was working and kept for later). The <0> part is a small upper-case heading; {{count}} is how many drafts are saved. The <1> part is a note beside it: the drafts are stored with the account, so they show on every device the person uses. Keep both pairs of tags, and the middle dot that opens the note."
+  },
+  "drafts.locked": {
+    "text": "sending unlocks when Homeroom bot finishes",
+    "description": "Note at the right of the \"Saved drafts\" heading in the chat with Homeroom bot while the bot is working: drafts cannot be sent yet. Lower case, no full stop. Homeroom bot is the bot's name."
+  },
+  "drafts.ready": {
+    "text": "Ready to send",
+    "description": "Note at the right of the \"Saved drafts\" heading in the chat with Homeroom bot once the bot has finished: the drafts can be sent now."
+  },
+  "drafts.send": {
+    "text": "Send this draft",
+    "description": "Accessible name of the send button on one row in the list of saved drafts above the message box in the chat with Homeroom bot (messages typed while the bot was working and kept for later)."
+  },
+  "drafts.sendBusyTitle": {
+    "text": "Homeroom bot is still working. You can send this when it finishes",
+    "description": "Tooltip of the disabled send button on a saved draft in the chat with Homeroom bot while the bot is working. No final full stop. Homeroom bot is the bot's name."
+  },
+  "drafts.sendTitle": {
+    "text": "Send this draft now",
+    "description": "Tooltip of the send button on one row in the list of saved drafts above the message box in the chat with Homeroom bot (messages typed while the bot was working and kept for later)."
+  },
+  "drafts.edit": {
+    "text": "Edit this draft",
+    "description": "Accessible name of the pencil button on one row in the list of saved drafts above the message box in the chat with Homeroom bot (messages typed while the bot was working and kept for later)."
+  },
+  "drafts.editTitle": {
+    "text": "Put this draft back in the box to edit",
+    "description": "Tooltip of the pencil button on a saved draft in the chat with Homeroom bot: the text returns to the message box."
+  },
+  "drafts.delete": {
+    "text": "Delete this draft",
+    "description": "Tooltip and accessible name of the bin button on one row in the list of saved drafts above the message box in the chat with Homeroom bot (messages typed while the bot was working and kept for later)."
+  },
+  "drafts.full_one": {
+    "text": "That’s {{count}} saved draft. Send or delete one first",
+    "description": "Toast in the chat with Homeroom bot when the person tries to save a message for later and the list of saved drafts is full. {{count}} is the limit. No final full stop."
+  },
+  "drafts.full_other": {
+    "text": "That’s {{count}} saved drafts. Send or delete one first",
+    "description": "Toast in the chat with Homeroom bot when the person tries to save a message for later and the list of saved drafts is full. {{count}} is the limit. No final full stop."
+  },
+  "drafts.saved": {
+    "text": "Draft saved. Send it whenever you’re ready",
+    "description": "Toast in the chat with Homeroom bot after the person saved a typed message for later while the bot was working. No final full stop."
+  },
+  "drafts.keptTyped": {
+    "text": "Kept what you had typed as another draft",
+    "description": "Toast in the chat with Homeroom bot when the person sent or opened a saved draft while other text was in the message box: that text was saved as a draft of its own. No final full stop."
+  },
+  "drafts.deleted": {
+    "text": "Draft deleted",
+    "description": "Toast in the chat with Homeroom bot after the person deleted a saved draft. No final full stop."
+  },
+  "drafts.saveFailed": {
+    "text": "Could not save that draft.",
+    "description": "Toast in the chat with Homeroom bot when a message could not be saved for later: the server could not be reached or refused it."
+  },
+  "drafts.deleteFailed": {
+    "text": "Could not delete that draft.",
+    "description": "Toast in the chat with Homeroom bot when a saved draft could not be deleted: the server could not be reached or refused it."
+  },
   "composer.newLineHint": {
     "text": "Shift + Enter for a new line",
     "description": "Small muted line under a message box while its text runs to more than one line, shown on a device with a keyboard, where Enter sends the message: holding Shift and pressing Enter starts a new line instead. Shift and Enter are key names."
@@ -4893,11 +4997,11 @@
   },
   "ai.row.botCouldntFix": {
     "text": "{{project}} · #{{number}} · Homeroom bot couldn't fix it",
-    "description": "The AI tab's main view, Needs you: tooltip of the row of the person's own change after Homeroom bot took over its fix and its last attempt failed."
+    "description": "The AI tab's main view, Needs you: tooltip of the row of the person's own change after Homeroom bot took over its fix and its last attempt failed, or of the change Homeroom bot made for a request they asked for, after it handed the fix back."
   },
   "ai.row.botCouldntFixPr": {
     "text": "{{project}} · PR {{number}} · Homeroom bot couldn't fix it",
-    "description": "The AI tab's main view, Needs you: the same tooltip on a project whose code is on GitHub, where a change's number is its pull request's (\"PR 12\")."
+    "description": "The AI tab's main view, Needs you: the same tooltip on a project whose code is on GitHub, where a change's number is its pull request's (\"PR 12\"). Also covers the change Homeroom bot made for a request they asked for, after it handed the fix back."
   },
   "ai.row.voteFreesSlot": {
     "text": "{{project}} · #{{number}} · Your vote helps free a build slot",
@@ -4997,7 +5101,7 @@
   },
   "ai.pill.askAgain": {
     "text": "Ask again",
-    "description": "The AI tab's main view, Needs you: the pill on the person's own change after Homeroom bot took over its fix and its last attempt failed. Opens the change, where the bot can be asked again in its thread. A verb."
+    "description": "The AI tab's main view, Needs you: the pill on the person's own change after Homeroom bot took over its fix and its last attempt failed, or on the change Homeroom bot made for a request they asked for, after it handed the fix back. Opens the change, where the bot can be asked again in its thread. A verb."
   },
   "ai.pill.needsYou": {
     "text": "Take a look",
@@ -5201,7 +5305,7 @@
   },
   "ai.why.botCouldntFix": {
     "text": "Homeroom bot couldn't fix it. Ask it again, or fix it yourself",
-    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for the person's own change after Homeroom bot took over its fix and its last attempt failed."
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for the person's own change after Homeroom bot took over its fix and its last attempt failed, or for the change Homeroom bot made for a request they asked for, after it handed the fix back."
   },
   "ai.why.fixTests": {
     "text": "Tests failing",

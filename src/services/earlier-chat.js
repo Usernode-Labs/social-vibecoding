@@ -42,6 +42,10 @@
 // under the same thread by the next run. People are taken a batch at a time.
 //
 // A person with nothing to move gets no thread.
+//
+// SAVED DRAFTS MOVE TOO. A draft saved in Main Chat while the bot worked
+// there (conversation_drafts, thread_root_id 0) is listed above Earlier
+// chat's box after the move, in the same transaction.
 
 const log = require('./logger');
 const conversations = require('./conversations');
@@ -111,6 +115,18 @@ async function moveInTransaction(db, { conversationId, userId }) {
       [Number(userId), Number(conversationId), rootId],
     );
   }
+  // Drafts saved in Main Chat go with it (conversation_drafts, place 0: what
+  // a person typed while the bot was answering there, kept to send later).
+  // They are unsent words, so they sit above Earlier chat's box as they sat
+  // above Main's. One already under the thread with the same id stays as it is.
+  await db.query(
+    `UPDATE conversation_drafts d SET thread_root_id = $3
+      WHERE d.user_id = $1 AND d.conversation_id = $2 AND d.thread_root_id = 0
+        AND NOT EXISTS (SELECT 1 FROM conversation_drafts e
+                         WHERE e.user_id = d.user_id AND e.conversation_id = d.conversation_id
+                           AND e.thread_root_id = $3 AND e.draft_id = d.draft_id)`,
+    [Number(userId), Number(conversationId), rootId],
+  );
   // Everything after the first message goes under it, in the order it was
   // said. A deleted placeholder from before the first message stays put: it
   // shows nothing, and would otherwise sort ahead of the thread's start.

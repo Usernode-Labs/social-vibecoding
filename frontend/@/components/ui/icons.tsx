@@ -480,6 +480,13 @@ export const TagIcon = stroked(
 // a check for Assigned to you, a pen for Created by you. New glyphs, so not
 // transcribed from older markup: lucide's user-check and user-pen, on the
 // same 24 grid at the same 2px stroke as UserIcon.
+/** A person and a plus: invite somebody (the hub's Invite card, community-card.tsx InviteHeroCard). */
+export const UserPlusIcon = stroked('UserPlusIcon', [
+  'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2',
+  'M5 7a4 4 0 108 0 4 4 0 10-8 0z',
+  'M19 8v6M22 11h-6',
+]);
+
 export const UserCheckIcon = stroked('UserCheckIcon', [
   'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2',
   'M5 7a4 4 0 108 0 4 4 0 10-8 0z',

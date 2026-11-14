@@ -406,6 +406,60 @@ export async function cardAction(messageId: number, action: string, value?: unkn
   }));
 }
 
+/**
+ * Task 2148: Stop, while Homeroom bot is working on the viewer's message
+ * `messageId` in their chat with it (the message its typing event named).
+ * Resolves whether an answer is being stopped: false when it had already
+ * ended. Throws when the server could not be asked.
+ */
+export async function stopBotAnswer(conversationId: number, messageId: number): Promise<boolean> {
+  const data = record(await request<unknown>(`/api/conversations/${conversationId}/bot-stop`, {
+    method: 'POST', body: JSON.stringify({ messageId }),
+  }));
+  return pick(data, 'stopping') === true;
+}
+
+/**
+ * A saved draft in the chat with Homeroom bot (./bot-drafts.ts): words typed
+ * while the bot was working, kept on the server until their writer sends,
+ * edits or deletes them.
+ */
+export interface SavedDraft {
+  id: string;
+  text: string;
+  savedAt: string | null;
+}
+
+function normalizeDrafts(data: unknown): SavedDraft[] {
+  return array(pick(record(data), 'drafts')).map((item) => {
+    const row = record(item);
+    return { id: text(pick(row, 'id')), text: text(pick(row, 'text')), savedAt: text(pick(row, 'savedAt', 'saved_at')) || null };
+  }).filter((draft) => draft.id && draft.text);
+}
+
+function botDraftsPath(conversationId: number, threadRootId: number | null, draftId?: string): string {
+  const base = `/api/conversations/${conversationId}/bot-drafts${draftId ? `/${encodeURIComponent(draftId)}` : ''}`;
+  return threadRootId ? `${base}?threadRootId=${threadRootId}` : base;
+}
+
+/** The viewer's saved drafts for their chat with Homeroom bot, or one of its threads, oldest first. */
+export async function listBotDrafts(conversationId: number, threadRootId: number | null = null): Promise<SavedDraft[]> {
+  // The server's list is the truth, never the worker's copy of it.
+  return normalizeDrafts(await request<unknown>(botDraftsPath(conversationId, threadRootId), { cache: 'no-store' }));
+}
+
+/** Save one draft there. Resolves the list as the server now has it. */
+export async function saveBotDraft(conversationId: number, threadRootId: number | null, draft: SavedDraft): Promise<SavedDraft[]> {
+  return normalizeDrafts(await request<unknown>(`/api/conversations/${conversationId}/bot-drafts`, {
+    method: 'POST', body: JSON.stringify({ ...draft, ...(threadRootId ? { threadRootId } : {}) }),
+  }));
+}
+
+/** Delete one draft there. Resolves the list as the server now has it. */
+export async function deleteBotDraft(conversationId: number, threadRootId: number | null, draftId: string): Promise<SavedDraft[]> {
+  return normalizeDrafts(await request<unknown>(botDraftsPath(conversationId, threadRootId, draftId), { method: 'DELETE' }));
+}
+
 export function normalizeMember(input: unknown): ConversationMember {
   const row = record(input);
   const user = normalizeUser(record(pick(row, 'user') ?? row));

@@ -141,3 +141,28 @@ test('#3247: with an href the words are a link in the accent; without one the ro
   assert.match(linked, /\+500/);
   assert.match(linked, /data-activity-when/);
 });
+
+test('#6479: with a zone picked, a timed activity reads in that zone and a date-only credit keeps its UTC day', () => {
+  const zone = loadTsx('frontend/src/lib/time-zone.ts', { cache: false });
+  const row = loadTsx(ROW, { cache: false, stubs: { '../../lib/time-zone': zone } });
+  const iso = '2026-10-02T16:32:00.000Z';
+  const d = new Date(iso);
+  try {
+    zone.setTimeZone('Asia/Tokyo');
+    // 16:32 UTC is 01:32 on Saturday the 3rd in Tokyo.
+    const day = new Intl.DateTimeFormat(undefined, { timeZone: 'Asia/Tokyo', weekday: 'short', month: 'short', day: 'numeric' }).format(d);
+    const time = new Intl.DateTimeFormat(undefined, { timeZone: 'Asia/Tokyo', hour: 'numeric', minute: '2-digit' }).format(d);
+    assert.equal(row.activityWhen(iso, { now: NOW }).text, `${day} · ${time}`);
+    assert.match(day, /3/, `the calendar day is Tokyo's, got ${day}`);
+
+    zone.setTimeZone('America/Los_Angeles');
+    const la = new Intl.DateTimeFormat(undefined, { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }).format(d);
+    assert.ok(row.activityWhen(iso, { now: NOW }).text.endsWith(` · ${la}`), 'and moves when the zone does');
+
+    const credit = row.activityWhen('2026-10-02T12:00:00.000Z', { now: NOW, precision: 'day' });
+    const utcDay = new Intl.DateTimeFormat(undefined, { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date('2026-10-02T12:00:00.000Z'));
+    assert.equal(credit.text, utcDay, 'a credit for a whole day keeps its day');
+  } finally {
+    zone.setTimeZone(null);
+  }
+});

@@ -26,6 +26,7 @@ import { confirmAction } from '../../lib/confirm';
 import { useMenuKeyboard } from '../../lib/menu-keys';
 import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
 import { agoStamp, timeOfDay } from '../../lib/timestamp';
+import { getTimeZone, getTimeZoneSnapshot, inZone, zonedDay } from '../../lib/time-zone';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
@@ -1702,9 +1703,14 @@ function isCardMessage(message: ConversationMessage): boolean {
     && !message.reply && !message.pending && !message.failed;
 }
 
-function dayKey(message: ConversationMessage): string {
+// #6479: the day in the zone the stamps are written in (the one picked in
+// Settings › Language, else the device's), so a separator and the stamps
+// under it never name two different days.
+export function dayKey(message: ConversationMessage): string {
   const date = new Date(message.createdAt);
-  return Number.isNaN(date.getTime()) ? '' : date.toDateString();
+  if (Number.isNaN(date.getTime())) return '';
+  const { year, month, day } = zonedDay(date);
+  return `${year}-${month}-${day}`;
 }
 
 /**
@@ -1718,17 +1724,25 @@ function readyNamesRequest(message: ConversationMessage): boolean {
   return isReadyMessage(message) && !!meta?.appSlug && Number.isInteger(n) && n > 0 && !meta?.firstVersion;
 }
 
-function dayLabel(message: ConversationMessage): string {
+export function dayLabel(message: ConversationMessage, now: Date = new Date(Date.now())): string {
   const date = new Date(message.createdAt);
   if (Number.isNaN(date.getTime())) return '';
-  const today = new Date();
-  if (date.toDateString() === today.toDateString()) return translate('messages:thread.day.today');
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) return translate('messages:thread.day.yesterday');
-  return date.toLocaleDateString(undefined, date.getFullYear() === today.getFullYear()
-    ? { month: 'short', day: 'numeric' }
-    : { month: 'short', day: 'numeric', year: 'numeric' });
+  const day = zonedDay(date);
+  const today = zonedDay(now);
+  const same = (a: { year: number; month: number; day: number }, b: typeof a) =>
+    a.year === b.year && a.month === b.month && a.day === b.day;
+  if (same(day, today)) return translate('messages:thread.day.today');
+  // The calendar day before today's, counted on the calendar rather than by
+  // subtracting 24 hours, so a daylight-saving night cannot skip it.
+  const before = new Date(Date.UTC(today.year, today.month - 1, today.day - 1));
+  if (same(day, { year: before.getUTCFullYear(), month: before.getUTCMonth() + 1, day: before.getUTCDate() })) {
+    return translate('messages:thread.day.yesterday');
+  }
+  const timeZone = getTimeZone();
+  return date.toLocaleDateString(undefined, {
+    ...(timeZone ? { timeZone } : {}),
+    month: 'short', day: 'numeric', ...(day.year === today.year ? {} : { year: 'numeric' }),
+  });
 }
 
 /**
@@ -2085,6 +2099,8 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
  */
 function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const t = useMessages('messages');
+  // #6479: the separators' days are read in this zone; useMessages re-renders on a change.
+  const zoneKey = getTimeZoneSnapshot();
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
   const scroller = useRef<HTMLDivElement>(null);
@@ -2186,7 +2202,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         || readyNamesRequest(message),
     });
     return { plans, blocks };
-  }, [botDm, snap.messages, lineAt, botWork]);
+  }, [botDm, snap.messages, lineAt, botWork, zoneKey]);
 
   useIsomorphicLayoutEffect(() => {
     if (!conversationId) return;
@@ -3066,7 +3082,7 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
     const which = Math.max(1, tryStarts.filter((start) => start <= at).length);
     if (which === lastTry) return null;
     lastTry = which;
-    const date = new Date(tryStarts[which - 1]).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    const date = new Date(tryStarts[which - 1]).toLocaleDateString(undefined, inZone({ day: 'numeric', month: 'short' }));
     return (
       <div className="messages-reply-count" data-bot-try={which}>
         <span>{t('messages:bot.track.tryDivider', { number: String(which), date })}</span>
@@ -3159,8 +3175,12 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
       ) : null}
       <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll chat-transcript" aria-live="polite">
         {/* The root's Reply quotes it into THIS thread's composer (#2387): its
-            own threadRootId is null, being the main stream's message. */}
-        {root ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} /> : null}
+            own threadRootId is null, being the main stream's message.
+            #6668: a thread opened from the bot's "+" opens on what the person
+            wrote, not on the bot's "New thread." line, as Main Chat leaves that
+            line out (#6250). The root still names the thread; it is only not
+            drawn. */}
+        {root && !(botChat && isPlusThreadOpener(root)) ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} /> : null}
         {pieces.map((item) => <MessageRow key={item.clientKey || item.id} message={{ ...item, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === item.id} />)}
         {/* An error stands in place of the thread (#5219 review): with one,
             the count line would say "No replies yet", which is a different
