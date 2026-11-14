@@ -166,14 +166,85 @@ test('one story: a bell row or push tap opens the request\'s thread in the chat 
   // Or the card the detail names.
   assert.equal(N._conversationHref(row({ kind: 'build_needs_you', conversationMessageId: 80, detail: D({ moment: 'needs_you', threadRootId: 76 }) })),
     '#homeroom-bot/thread/76');
-  // Or the message itself (the chat opens its thread from it).
-  assert.equal(N._conversationHref(row({ kind: 'build_live', conversationMessageId: 80, detail: 'hrbot:live:Plant Pal' })), '#homeroom-bot/main/m/80');
-  assert.equal(N._conversationHref(row({ kind: 'build_live', detail: null })), '#homeroom-bot/main');
+  // Or the message itself. 14 Nov 2026: Main Chat is gone, and a message
+  // that is not a reply is its own thread's first message, so it opens as
+  // that thread; with no message at all, the Homeroom bot page.
+  assert.equal(N._conversationHref(row({ kind: 'build_live', conversationMessageId: 80, detail: 'hrbot:live:Plant Pal' })), '#homeroom-bot/thread/80');
+  assert.equal(N._conversationHref(row({ kind: 'build_live', detail: null })), '#homeroom-bot');
+  assert.doesNotMatch(fs.readFileSync(require.resolve('../frontend/src/features/notifications/notifications.js'), 'utf8'),
+    /#homeroom-bot\/main/, 'nothing opens Main Chat');
   // A moment that rang as a message (an older row) lands the same way; a
   // person's message still opens the chat (the Messages store and the router
   // take a Messages address of the bot's chat to its tab).
-  assert.equal(N._conversationHref(row({ kind: 'conversation_message', conversationMessageId: 80, detail: 'hrbot:question:Plant Pal' })), '#homeroom-bot/main/m/80');
+  assert.equal(N._conversationHref(row({ kind: 'conversation_message', conversationMessageId: 80, detail: 'hrbot:question:Plant Pal' })), '#homeroom-bot/thread/80');
   assert.equal(N._conversationHref(row({ kind: 'conversation_message', conversationMessageId: 80, detail: null })), '#messages/9');
+});
+
+// 14 Nov 2026: the weekly account notices and the bring-a-friend nudge were
+// messages in Main Chat; Main Chat is gone, and they are bell rows with no
+// chat message behind them (src/services/homeroom-bot-notices.js,
+// src/services/invite-nudge.js). Each says what it said and opens somewhere
+// useful: where building time is shown, the Homeroom bot page, or the
+// project's hub, where Invite is.
+test('the account notices and the invite nudge are bell rows: their words and where each opens', () => {
+  const N = loadBell();
+  const notices = require('../src/services/homeroom-bot-notices');
+  const row = (extra) => ({ id: 1, createdAt: AT, kind: 'build_stopped', sourceUsername: 'homeroom_bot', ...extra });
+  // Close to this week's building time: headed by what it is about, not "On hold".
+  const low = row({ detail: notices.detailFor('allowance_low') });
+  assert.equal(N._conversationHref(low), '#settings/usage');
+  const lowView = N._rowView(low);
+  assert.deepEqual([lowView.label, lowView.segments[0].v, lowView.tone || null],
+    ['Building time', 'You\'re close to this week\'s building time.', null]);
+  assert.equal(message('notifications:row.bot.subject.buildingTimeLow'), notifyCopy.botMomentCopy(low.detail).body);
+  assert.equal(message('notifications:row.bot.label.buildingTime'), notifyCopy.botMomentCopy(low.detail).bellLabel);
+  // On hold until Monday, their own time: several requests are counted.
+  const held = row({ detail: notices.detailFor('allowance', { appName: 'Plant Pal', appSlug: 'plant-pal', count: 2 }), appSlug: 'plant-pal' });
+  assert.equal(N._conversationHref(held), '#settings/usage');
+  const heldView = N._rowView(held);
+  assert.deepEqual([heldView.label, heldView.segments[0].v, heldView.note, heldView.tone],
+    ['On hold', '2 requests on hold', 'Until Monday: this week\'s building time is used up.', 'hold']);
+  // One held request is named, and opens that request.
+  const one = row({
+    detail: notices.detailFor('allowance', { appName: 'Plant Pal', appSlug: 'plant-pal', count: 1, issueNumber: 4, requestTitle: 'Dark mode' }),
+    appSlug: 'plant-pal',
+  });
+  assert.equal(N._conversationHref(one), '#homeroom-bot/request/plant-pal/4');
+  assert.equal(N._rowView(one).segments[0].v, 'Dark mode');
+  // On hold until Monday, the bot's own budget: the Homeroom bot page.
+  const paused = row({ detail: notices.detailFor('paused') });
+  assert.equal(N._conversationHref(paused), '#homeroom-bot');
+  assert.deepEqual([N._rowView(paused).label, N._rowView(paused).note],
+    ['On hold', 'Until Monday: Homeroom bot\'s budget for this week is used up.']);
+  // The words the phone's push says are the same ones.
+  for (const [kind, body] of [
+    ['allowance_low', 'You\'re close to this week\'s building time.'],
+    ['allowance', 'On hold until Monday: your building time for this week is used up.'],
+    ['paused', 'On hold until Monday: I\'ve used my budget for this week.'],
+  ]) {
+    assert.equal(notifyCopy.botMomentCopy(notices.detailFor(kind)).body, body, kind);
+  }
+
+  // The bring-a-friend nudge: by the first thing they did, and it opens the hub.
+  const nudge = (detail, appName = 'Run Club') => N._rowView({
+    id: 2, createdAt: AT, kind: 'invite_nudge', detail, appName, appSlug: 'run-club', sourceUsername: 'homeroom_bot',
+  });
+  const ask = 'It\'s better with your people: invite one or two friends? They can use it straight away and help shape it.';
+  for (const [act, words] of [
+    ['vote', 'You voted in Run Club'], ['message', 'You posted in Run Club'], ['request', 'You asked for a change in Run Club'],
+    ['change', 'You made a change in Run Club'], ['app', 'You used Run Club'], ['something-new', 'You\'re new in Run Club'],
+  ]) {
+    const view = nudge(act);
+    assert.deepEqual([view.label, view.segments[0].v, view.by], [words, ask, null], act);
+    assert.doesNotMatch(`${view.label} ${view.segments[0].v}`, /—|notifications:/);
+  }
+  assert.equal(nudge('vote', '').label, 'You voted in a project', 'a project whose name is not known');
+  // What the row says is what the chat card said (homeroom-bot-dm.js inviteNudgeText).
+  const said = dm.inviteNudgeText({ act: 'vote', appName: 'Run Club' });
+  assert.ok(said.startsWith(`${nudge('vote').label}.`) && said.includes('invite one or two friends?')
+    && said.endsWith('They can use it straight away and help shape it.'));
+  const src = fs.readFileSync(require.resolve('../frontend/src/features/notifications/notifications.js'), 'utf8');
+  assert.match(src, /if \(item\.kind === 'invite_nudge' && item\.appSlug\) \{\n\s+Notifications\._dismissSheetForNav\(\);\n\s+try \{ window\.AppView\?\._landOnHub\?\.\(item\.appSlug\); \} catch \{[^\n]*\n\s+window\.location\.hash = `#app\/\$\{encodeURIComponent\(item\.appSlug\)\}\/workshop`;/);
 });
 
 test('4 Nov 2026 (#6290): a moment about a request opens that request\'s own thread, not Main Chat', () => {
@@ -199,7 +270,7 @@ test('4 Nov 2026 (#6290): a moment about a request opens that request\'s own thr
   assert.equal(N._conversationHref(row({
     kind: 'build_stopped', conversationMessageId: 80, storyIssueNumber: 6256,
     detail: D({ moment: 'stopped', said: 'build_other', issueNumber: 6256 }),
-  })), '#homeroom-bot/main/m/80');
+  })), '#homeroom-bot/thread/80');
   // The bot's reply on a request's thread names it by the row's story.
   assert.equal(N._conversationHref(row({
     kind: 'conversation_reply', conversationMessageId: 80, sourceUsername: 'homeroom_bot',

@@ -747,6 +747,14 @@
     "text": "Opens Homeroom bot, showing your work in {{project}}",
     "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's tooltip. {{project}} is the project's name."
   },
+  "workshop.desk.newChat": {
+    "text": "New chat about {{project}}",
+    "description": "The second row of the Your work card on a project's Workshop tab, under the Your work row, with a plus before it: opens a new chat with Homeroom bot (the platform's own assistant) that is already set to this project. The row's title. {{project}} is the project's name."
+  },
+  "workshop.desk.newChatSub": {
+    "text": "Ask Homeroom bot for a change, a fix or an answer",
+    "description": "The line under the title of the New chat row on a project's Workshop tab (\"New chat about Garden club\"): what the person can ask Homeroom bot for in the chat it opens."
+  },
   "workshop.desk.both": {
     "text": "Needs you: <0>{{needs}}</0> · In progress: {{progress}}",
     "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end, in the Homeroom bot tab's own words: how many things wait on the person, and how many are being worked on. <0></0> marks the number that asks for them, drawn in the accent."

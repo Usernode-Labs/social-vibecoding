@@ -6,10 +6,13 @@
 // it; this reads what it lists, for one person, across every project they
 // can see:
 //
-//   private  their private threads in the chat with Homeroom bot that have
-//            gone nowhere yet: the threads they started (services/
-//            private-threads.js) and the drafts the bot opened for them, each
-//            with the project it is for, if it has one;
+//   private  their private threads in the chat with Homeroom bot: the threads
+//            they started (services/private-threads.js), the drafts the bot
+//            opened for them and (14 Nov 2026: Main Chat is gone, and every
+//            conversation there is a thread) the bot's hello, a project's
+//            first version and Earlier chat, each with the project it is
+//            for, if it has one, and how many of its messages are new to
+//            them (`unread`);
 //   threads  the public threads they are in, by the rule a thread's
 //            followers are worked out by (threads.js FOLLOWERS_SQL, read the
 //            other way round; threadsInSql): they asked for it, built a
@@ -294,6 +297,9 @@ SELECT m.id AS root_id, m.content, m.created_at, p.kind, p.state, p.result_ref, 
        -- what it drafts, never by the bot's line that opened it.
        m.metadata->'homeroomBot'->>'projectIdea' AS project_idea,
        m.metadata->'homeroomBot'->>'draftTitle' AS draft_title,
+       -- 14 Nov 2026: a first version's thread is named by its project, the
+       -- one its first message names when the project itself is gone.
+       m.metadata->'homeroomBot'->>'appName' AS root_app_name,
        (SELECT MAX(r.created_at) FROM conversation_messages r
          WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL) AS last_at,
        -- Filed (or posted) as a request that has finished: live for longer
@@ -648,9 +654,14 @@ function shapePrivate(row) {
   // 1 Nov 2026 (C1): a thread about a request or a change by its title (its
   // number rides in `about`, and the tab draws it as a request's row is
   // drawn); a "+" thread by their first words; a design by its screen.
+  // 14 Nov 2026: Earlier chat and a project's first version by what they
+  // are ("Earlier chat", "Plant Pal, first version": private-threads.js
+  // kindTitle), never by their first words.
   const about = row.about_kind && Number(row.about_number) > 0
     ? { kind: row.about_kind, number: Number(row.about_number) } : null;
-  const named = about && row.about_title ? row.about_title
+  const byKind = require('./private-threads').kindTitle({ kind: row.kind, appName: row.name || row.root_app_name || null });
+  const named = byKind ? byKind
+    : about && row.about_title ? row.about_title
     : row.project_idea ? row.project_idea
       : row.draft_title ? row.draft_title
         : row.kind === 'ask' && row.first_own ? row.first_own
@@ -788,6 +799,26 @@ async function tracksFor(pool, { user, limit = 100, deps = {} }) {
 const appIdOf = (apps, slug) => Number(apps.find((a) => a.slug === slug)?.id) || 0;
 
 /**
+ * The person's private threads with Homeroom bot, as the tab lists them,
+ * each with how many of its messages are new to them (`unread`, by the
+ * thread's own cursor: private-threads.js unreadFor). 14 Nov 2026: the tab's
+ * badge is the sum over their threads that are not done (conversations.js
+ * serializeConversation reads the same predicate), so opening a thread
+ * clears its share of it.
+ */
+async function privateFor(pool, { user, deps = {} }) {
+  const dm = deps.dm || require('./homeroom-bot-dm');
+  const bot = deps.bot !== undefined ? deps.bot : await dm.botAccount(pool);
+  if (!bot) return [];
+  const { rows } = await pool.query(PRIVATE_SQL, [user.id, bot.id, PRIVATE_MAX, LIVE_DAYS]);
+  const privates = rows.map(shapePrivate);
+  const unread = await (deps.privateThreads || require('./private-threads'))
+    .unreadFor(pool, user.id, privates.map((p) => p.rootId));
+  for (const p of privates) p.unread = unread.get(p.rootId) || 0;
+  return privates;
+}
+
+/**
  * #6667: marks the thread rows where Homeroom bot made the change, its fix
  * was handed back to a person, and the viewer asked for its request, so
  * `standing` moves them to Needs you. Only the viewer's own requests with a
@@ -819,22 +850,20 @@ async function markBotHandedOff(pool, rows, viewerId, bot, states, deps = {}) {
 async function workFor(pool, { user, showSelfHosted = false, deps = {} }) {
   const dm = deps.dm || require('./homeroom-bot-dm');
   const bot = deps.bot || await dm.botAccount(pool);
-  const [{ rows: threadRows }, privateRows] = await Promise.all([
+  const [{ rows: threadRows }, privates] = await Promise.all([
     pool.query(THREADS_SQL, [user.id, !!showSelfHosted, !!user.isAdmin, THREADS_MAX, LIVE_DAYS]),
-    bot ? pool.query(PRIVATE_SQL, [user.id, bot.id, PRIVATE_MAX, LIVE_DAYS]).then((r) => r.rows) : Promise.resolve([]),
+    privateFor(pool, { user, deps: { ...deps, bot: bot || null } }),
   ]);
   const [states, viewers] = await Promise.all([statesFor(pool, threadRows), viewerFacts(pool, threadRows, user.id)]);
   await markBotHandedOff(pool, threadRows, user.id, bot, states, deps);
   const lists = arrange(threadRows, user.id, new Date(), bot ? bot.id : null, states, viewers);
   // #6262: how many messages in each listed thread are new to the viewer.
-  // Private threads are not `threads` rows and keep no cursor here: Main
-  // Chat's own "N new" covers them.
   const listed = [...lists.needs, ...lists.next, ...lists.waiting, ...lists.live];
   const unread = await (deps.threadReads || require('./thread-reads'))
     .unreadFor(pool, user.id, listed.map((t) => t.threadId));
   for (const t of listed) t.unread = unread.get(t.threadId) || 0;
   return {
-    private: privateRows.map(shapePrivate),
+    private: privates,
     ...lists,
   };
 }
@@ -1009,6 +1038,7 @@ module.exports = {
   statesFor,
   viewerFacts,
   tracksFor,
+  privateFor,
   workFor,
   threadSays,
   listsOf,

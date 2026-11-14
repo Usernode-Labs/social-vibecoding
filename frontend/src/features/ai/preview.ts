@@ -32,7 +32,7 @@ export function openPreview(at: { conversationId: number; rootId: number; versio
 /**
  * #6248: open the preview of a request draft the bot offered to file. It is
  * read only: the card keeps File it and Not now. Off the bot's tab it goes
- * there first, to the thread the draft was said in (or Main).
+ * there first, to the thread the draft was said in.
  */
 export function openDraftPreview(at: { conversationId: number; rootId: number | null; actionId: number; copy?: PreviewDraftCopy }): void {
   openDetail({

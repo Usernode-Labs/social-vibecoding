@@ -1485,6 +1485,14 @@ const Notifications = {
       window.location.hash = `#app/${encodeURIComponent(item.appSlug)}`;
       return;
     }
+    // 14 Nov 2026: the bring-a-friend nudge opens the project's hub, where
+    // Invite is. A door to the hub says so first (AppView._landOnHub).
+    if (item.kind === 'invite_nudge' && item.appSlug) {
+      Notifications._dismissSheetForNav();
+      try { window.AppView?._landOnHub?.(item.appSlug); } catch { /* the page opens on what it remembers */ }
+      window.location.hash = `#app/${encodeURIComponent(item.appSlug)}/workshop`;
+      return;
+    }
     // #4396: a project the reader joined while it was made is open: the
     // row opens the app itself, which is what there now is to see.
     if (item.kind === 'project_opened' && item.appSlug) {
@@ -2337,7 +2345,14 @@ function conversationNotificationHref(n) {
     const detail = parseBotDetail(n.detail) || {};
     const slug = BOT_SLUG_RE.test(String(n.appSlug || '')) ? String(n.appSlug) : (detail.appSlug || '');
     const issue = storyIssueOf(n) || detail.issueNumber;
-    return slug && valid(Number(issue)) ? `#homeroom-bot/request/${slug}/${Number(issue)}` : null;
+    if (slug && valid(Number(issue))) return `#homeroom-bot/request/${slug}/${Number(issue)}`;
+    // 14 Nov 2026: Homeroom bot's account notices are bell rows with no chat
+    // message behind them (src/services/homeroom-bot-notices.js). The two
+    // about the reader's own building time open where it is shown, in
+    // Settings; the bot's own budget opens the Homeroom bot page.
+    if (detail.moment === 'on_hold' && (detail.said === 'low' || detail.said === 'allowance')) return '#settings/usage';
+    if (detail.moment === 'on_hold' && detail.said === 'paused') return '#homeroom-bot';
+    return null;
   }
   if (!valid(conversationId)) return null;
   const messageId = Number(n.conversationMessageId);
@@ -2362,8 +2377,11 @@ function conversationNotificationHref(n) {
     const slug = BOT_SLUG_RE.test(String(n.appSlug || '')) ? String(n.appSlug) : (detail.appSlug || '');
     const issue = storyIssueOf(n) || detail.issueNumber;
     if (slug && valid(Number(issue))) return `#homeroom-bot/request/${slug}/${Number(issue)}`;
-    if (valid(messageId)) return `#homeroom-bot/main/m/${messageId}`;
-    return '#homeroom-bot/main';
+    // 14 Nov 2026: Main Chat is gone and every message is in a thread. A
+    // message that is not a reply (no root above) is its own thread's first
+    // message, so it opens as that thread.
+    if (valid(messageId)) return `#homeroom-bot/thread/${messageId}`;
+    return '#homeroom-bot';
   }
   if (['conversation_mention', 'conversation_reply', 'conversation_reaction'].includes(n.kind)
       && valid(messageId)) {
@@ -2946,6 +2964,13 @@ function botMomentLine(detail, message) {
   else if (d.issueNumber) subject = t('notifications:row.bot.subject.request', { number: d.issueNumber });
   else subject = d.appName || t('notifications:row.bot.name');
   let label = t(BOT_LABEL_IDS[d.moment]);
+  // 14 Nov 2026: the week's building time nearly spent. Nothing is on hold
+  // yet, so the row is headed by what it is about, over the notice itself
+  // (homeroom-bot-notify-copy.js bellLabelFor and botMomentCopy say the same).
+  if (d.moment === 'on_hold' && d.said === 'low') {
+    label = t('notifications:row.bot.label.buildingTime');
+    subject = t('notifications:row.bot.subject.buildingTimeLow');
+  }
   if (d.moment === 'needs_you' && d.said === 'decide_others') {
     label = d.deciders
       ? t('notifications:row.bot.ask.waitingOn', { people: d.deciders })
@@ -3058,7 +3083,8 @@ function rowTone(n, view) {
   if (view.needsYou) return 'needs';
   if (n.kind === 'stale_pr' && n.detail === 'blocked') return 'blocked';
   const bot = view.botMoment ? parseBotDetail(n.detail) : null;
-  return bot && bot.moment === 'on_hold' ? 'hold' : null;
+  // Nearly out of building time is not a hold yet (said `low`).
+  return bot && bot.moment === 'on_hold' && bot.said !== 'low' ? 'hold' : null;
 }
 
 function rowView(n) {
@@ -3066,6 +3092,28 @@ function rowView(n) {
   const tone = rowTone(n, view);
   return tone ? { ...view, tone } : view;
 }
+
+// The bring-a-friend nudge's first line, by the first thing the reader did in
+// the project (invite_nudges.act, the row's `detail`): with the project's
+// name, and without it. Each is a whole message.
+const INVITE_NUDGE_IDS = [
+  {
+    vote: 'notifications:row.inviteNudge.voted',
+    message: 'notifications:row.inviteNudge.posted',
+    request: 'notifications:row.inviteNudge.asked',
+    change: 'notifications:row.inviteNudge.changed',
+    app: 'notifications:row.inviteNudge.used',
+    other: 'notifications:row.inviteNudge.plain',
+  },
+  {
+    vote: 'notifications:row.inviteNudge.votedUnnamed',
+    message: 'notifications:row.inviteNudge.postedUnnamed',
+    request: 'notifications:row.inviteNudge.askedUnnamed',
+    change: 'notifications:row.inviteNudge.changedUnnamed',
+    app: 'notifications:row.inviteNudge.usedUnnamed',
+    other: 'notifications:row.inviteNudge.plainUnnamed',
+  },
+];
 
 /**
  * The leaked-link guard's `detail` ("<inviteId>:<joins>",
@@ -4027,6 +4075,24 @@ function rowWords(n) {
         : headline(asked ? t('notifications:row.inviteLink.asked')
           : (count > 1 ? t('notifications:row.inviteLink.saidHiWithOthers', { count: count - 1 })
             : t('notifications:row.inviteLink.saidHi')), messageWords(n.messageContent))),
+    };
+  }
+
+  // 14 Nov 2026: the bring-a-friend nudge (src/services/invite-nudge.js),
+  // once a bot message in Main Chat and now a bell row: Homeroom bot asks
+  // somebody new to a project, after the first thing they did there, to
+  // invite a friend or two. `detail` is that first act. The meta line names
+  // the project; the row opens its hub, where Invite is (_onItemClick).
+  if (n.kind === 'invite_nudge') {
+    const project = n.appName || '';
+    const id = INVITE_NUDGE_IDS[project ? 0 : 1][String(n.detail || '')] || INVITE_NUDGE_IDS[project ? 0 : 1].other;
+    return {
+      ...base,
+      wrap: true,
+      icon: '\u{1F44B}',
+      by: null,
+      bot: true,
+      ...headline(t(id, { project }), t('notifications:row.inviteNudge.ask')),
     };
   }
 

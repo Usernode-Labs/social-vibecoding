@@ -172,13 +172,18 @@ SELECT m.id, m.thread_root_id, m.sender_id, m.content, m.created_at,
                 root.metadata->'homeroomBot'->>'aboutTitle') AS about_title,
        (SELECT d.title FROM design_threads d WHERE d.private_thread_id = p.id) AS design_title,
        root.metadata->'homeroomBot'->>'projectIdea' AS project_idea,
-       root.metadata->'homeroomBot'->>'draftTitle' AS draft_title
+       root.metadata->'homeroomBot'->>'draftTitle' AS draft_title,
+       root.metadata->'homeroomBot'->>'appName' AS root_app_name,
+       (SELECT a.name FROM apps a WHERE a.id = p.app_id) AS name,
+       root.id AS root_id
   FROM conversation_direct_pairs pair
   JOIN conversations c ON c.id = pair.conversation_id AND c.kind = 'direct'
   JOIN conversation_members mine
     ON mine.conversation_id = c.id AND mine.user_id = $1 AND mine.status = 'member'
   JOIN conversation_messages m ON m.conversation_id = c.id
-  LEFT JOIN conversation_messages root ON root.id = m.thread_root_id
+  -- 14 Nov 2026: every message is in a thread; one that is not a reply is
+  -- its own thread's first message.
+  JOIN conversation_messages root ON root.id = COALESCE(m.thread_root_id, m.id)
   LEFT JOIN private_threads p ON p.root_message_id = root.id AND p.user_id = $1
  WHERE pair.user_low_id = LEAST($1::int, $2::int)
    AND pair.user_high_id = GREATEST($1::int, $2::int)
@@ -195,7 +200,7 @@ SELECT m.id, m.thread_root_id, m.sender_id, m.content, m.created_at,
 /** Pure: a thread's name for a match in it, as the tab's list names that thread. */
 function threadTitleOf(row) {
   if (row.private_id != null) {
-    return aiWork.shapePrivate({ ...row, root_id: row.thread_root_id, content: row.root_content }).title || '';
+    return aiWork.shapePrivate({ ...row, root_id: row.root_id ?? row.thread_root_id, content: row.root_content }).title || '';
   }
   // A thread that grew from something said in the chat: its first words.
   return aiWork.firstLine(plainText(aiWork.firstLine(row.root_content, 400)));
@@ -205,7 +210,8 @@ function threadTitleOf(row) {
 function shapeHit(row, q, userId) {
   const { snippet, ranges } = snippetOf(row.content, q);
   if (!snippet) return null;
-  const rootId = row.thread_root_id == null ? null : Number(row.thread_root_id);
+  // The thread the match is in: its own, when it is a thread's first message.
+  const rootId = Number(row.root_id ?? row.thread_root_id) || null;
   return {
     messageId: Number(row.id),
     rootId,

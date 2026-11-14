@@ -311,7 +311,7 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
   const settingsOn = { mode: 'on', perPerson: 2 };
   const SCREEN = '<main class="seeds"><h1>Swap seeds</h1><div class="card">Tomatoes</div></main>';
 
-  await t.test('a "+" thread holds a design: Main Chat\'s draw_screen hands version 1 to the design bot', async () => {
+  await t.test('a "+" thread holds a design: the chat\'s draw_screen hands version 1 to the design bot', async () => {
     const started = await privateThreads.startThread(pool, { user: ada, project: 'dt-seed-swap', kind: 'design', deps });
     assert.equal(started.ok, true, JSON.stringify(started));
     const asked = (await conversations.sendMessage(pool, ada, started.conversationId, {
@@ -336,7 +336,7 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     // The Mayor's round, then the design bot's own prompt.
     assert.equal(seen[0][0].role, 'system');
     assert.match(seen[1][0].content, /This thread has no screen yet\. It is for a screen of the app Seed swap\./);
-    assert.match(seen[1][0].content, /WHAT MAIN CHAT ASKED YOU TO DRAW\nThe seeds they can swap, as cards/);
+    assert.match(seen[1][0].content, /WHAT YOU WERE ASKED TO DRAW\nThe seeds they can swap, as cards/);
     // #6257: the first drawing may ask first, so its last line says so; the
     // clear brief here still draws in the turn (the next scripted call).
     assert.match(seen[1][0].content, /THERE IS NO SCREEN YET: draw it with write_screen, or ask first as FIRST SCREEN says\.$/);
@@ -383,13 +383,20 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     assert.match(v2.html, /Tomatoes <button class="swap">Swap<\/button>/);
   });
 
-  await t.test('Main Chat holds no design: draw_screen opens a thread, says so in Main in one line, and draws there', async () => {
+  // 14 Nov 2026: Main Chat is gone, and every message is in a thread (one
+  // in no other is its own thread's first), so a screen asked for is drawn in
+  // the thread it was asked in. Nothing opens a second thread for it, and no
+  // line is said anywhere else.
+  await t.test('a screen asked for is drawn in the thread it was asked in, with no line anywhere else', async () => {
+    const dmSvc = require('../src/services/homeroom-bot-dm');
     const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
     const asked = (await conversations.sendMessage(pool, ada, opened.conversationId, { content: 'show me what a seed calendar could look like' })).message;
+    const where = await dmSvc.threadDeps(pool, { userId: ada.id, conversationId: opened.conversationId, message: asked });
+    assert.equal(where.threadRootId, asked.id, 'a message in no other thread is its own thread\'s first');
     const sent = await mayor.runDmTurn(pool, config, {
       bot, user: ada, settings: settingsOn, conversationId: opened.conversationId, message: asked,
       deps: {
-        ...drawDeps, apiKey: 'sk-test',
+        ...drawDeps, ...where, apiKey: 'sk-test',
         chat: scripted([
           [['draw_screen', { what: 'A calendar of when to sow each seed', title: 'Seed calendar' }]],
           [['write_screen', { title: 'Seed calendar', size: 'desktop', html: '<h1>Sow in March</h1>', note: 'A calendar' }]],
@@ -398,23 +405,38 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
       },
     });
     const { rows: [answer] } = await pool.query('SELECT thread_root_id, idempotency_key FROM conversation_messages WHERE id = $1', [sent.messageId]);
-    assert.ok(answer.thread_root_id, 'answered in a thread');
+    assert.equal(answer.thread_root_id, asked.id, 'answered under what they asked');
     assert.equal(answer.idempotency_key, mayor.answerKey(asked.id), 'under the key the DM\'s answers use');
-    const { rows: [line] } = await pool.query('SELECT id, sender_id, content, thread_root_id, reply_to_id, metadata FROM conversation_messages WHERE id = $1', [answer.thread_root_id]);
-    assert.equal(line.sender_id, bot.id);
-    assert.equal(line.thread_root_id, null, 'the thread hangs off a line in Main');
-    assert.equal(line.reply_to_id, asked.id, 'which quotes what they asked');
-    assert.equal(line.content, 'I\'m drawing "Seed calendar" in a new thread. Only you can see it.');
-    assert.deepEqual([line.metadata.homeroomBot.kind, line.metadata.homeroomBot.changeKind, line.metadata.homeroomBot.designTitle], ['opened_thread', 'design', 'Seed calendar']);
-    const { rows: mainLines } = await pool.query(
+    const { rows: outside } = await pool.query(
       'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND thread_root_id IS NULL AND sender_id = $2 AND id > $3',
       [opened.conversationId, bot.id, asked.id],
     );
-    assert.equal(mainLines.length, 1, 'one line in Main');
-    const drawn = await designs.designFor(pool, { userId: ada.id, rootId: line.id });
-    assert.deepEqual([drawn.kind, drawn.surface, drawn.app, drawn.width, drawn.latest], ['ask', 'new', null, 1280, 1], 'a new project\'s screen, at the desktop size');
-    const v1 = await designs.versionOf(pool, { userId: ada.id, rootId: line.id });
+    assert.equal(outside.length, 0, 'no line of the bot\'s outside the thread');
+    const drawn = await designs.designFor(pool, { userId: ada.id, rootId: asked.id });
+    assert.deepEqual([drawn.kind, drawn.surface, drawn.app, drawn.width, drawn.latest], ['idea', 'new', null, 1280, 1], 'a new project\'s screen, at the desktop size');
+    const v1 = await designs.versionOf(pool, { userId: ada.id, rootId: asked.id });
     assert.match(v1.html, /<link rel="stylesheet" href="\/usernode-native\/v1\/native\.css">/, 'drawn with the native kit');
+    // A turn told of no thread at all (a caller from before) still draws in
+    // one: it opens a thread for the screen, whose row is written with its line.
+    const loose = (await conversations.sendMessage(pool, ada, opened.conversationId, { content: 'and a seed list' })).message;
+    const sentLoose = await mayor.runDmTurn(pool, config, {
+      bot, user: ada, settings: settingsOn, conversationId: opened.conversationId, message: loose,
+      deps: {
+        ...drawDeps, apiKey: 'sk-test',
+        chat: scripted([
+          [['draw_screen', { what: 'A list of seeds', title: 'Seed list' }]],
+          [['write_screen', { title: 'Seed list', size: 'phone', html: '<h1>Seeds</h1>', note: 'A list' }]],
+          [['reply', { text: 'A first list.' }]],
+        ]),
+      },
+    });
+    const { rows: [inNew] } = await pool.query('SELECT thread_root_id FROM conversation_messages WHERE id = $1', [sentLoose.messageId]);
+    const { rows: [line] } = await pool.query(
+      `SELECT m.sender_id, m.thread_root_id, m.content, m.metadata, p.kind
+         FROM conversation_messages m JOIN private_threads p ON p.root_message_id = m.id WHERE m.id = $1`, [inNew.thread_root_id]);
+    assert.deepEqual([line.sender_id, line.thread_root_id, line.content, line.kind],
+      [bot.id, null, 'I\'m drawing "Seed list" in a new thread. Only you can see it.', 'ask']);
+    assert.deepEqual([line.metadata.homeroomBot.kind, line.metadata.homeroomBot.changeKind, line.metadata.homeroomBot.designTitle], ['opened_thread', 'design', 'Seed list']);
   });
 
   // #6257: "Can we open a thread to work on a design change together?" drew a

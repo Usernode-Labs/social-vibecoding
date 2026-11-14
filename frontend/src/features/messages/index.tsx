@@ -1,6 +1,6 @@
 import { openReport } from '../dialogs/report';
 import {
-  Fragment, createContext, memo, useDeferredValue, useCallback, useContext, useEffect, useMemo, useRef, useState,
+  Fragment, memo, useDeferredValue, useCallback, useEffect, useMemo, useRef, useState,
   type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -36,11 +36,11 @@ import { NO_PLAN_LAYOUT, asksWithQuestionsCard, isPlanMessage, planLayout } from
 import { botMeta } from './bot-question';
 import { isReadyMessage } from './bot-ready';
 import {
-  alsoInChat, botRequestNames, botThreadTitle, changeBlocks, dotText, threadsAllowed, type ChangeBlock,
+  botRequestNames, botThreadTitle, changeBlocks, dotText, threadsAllowed, type ChangeBlock,
 } from './bot-shared';
 import { BotWorkSync, loadBotWork, newestBotMessageId, useBotWork, useWorkChanged } from './bot-work';
 import {
-  PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, newProjectInvited, privateThreadTitle, privateThreadWords,
+  PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, newProjectInvited, privateThreadTitle, privateThreadWords, serverThreadName,
   usePrivateThread,
 } from './private-thread-bar';
 import { requestPageOf } from './request-page';
@@ -52,7 +52,6 @@ import { firstRowInView, scrollCorrection, type MeasuredRow, type SavedPlace } f
 import { ThreadDoneMenu } from './private-thread-done';
 import { MessageComposer } from './composer';
 import { InboxToEnd } from './inbox-to-end';
-import { WelcomeBack } from './welcome-back';
 import { dropOnComposer, useComposerDropReady } from './pane-drop';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { useMessagesDrawer } from './phone-drawer';
@@ -109,7 +108,7 @@ import { typingLine } from './typing-line';
 import { BotWorkingCard, typingBesides, workingBot } from './bot-working';
 import { DesignPane, DesignViewSwitch, isDesignRoot, isDesignThread, setDesignView, useDesignView } from './design-pane';
 import { openPreview, usePreview } from '../ai/preview';
-import { NewThreadButton, NewThreadPanel, startedThreadTitle, useNewThread } from './new-thread';
+import { NewThreadPanel, startedThreadTitle, useNewThread } from './new-thread';
 import { issueRefHref } from './channels';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { PageBackButton } from '../dev-board/workshop/page-back';
@@ -1667,8 +1666,6 @@ function ThreadHeader() {
       </button>
       )}
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label={t('messages:header.groupMembers')} title={t('messages:header.groupMembers')}><UserGroupIcon aria-hidden="true" /></button> : null}
-      {/* #6071 follow-up: a new thread with Homeroom bot (./new-thread.tsx). */}
-      {botDm ? <NewThreadButton conversationId={active.id} className="messages-thread-action" /> : null}
       <FullWidthToggle />
       <div className="relative" ref={menuWrapRef}>
         <button ref={menuBtnRef} type="button" onClick={() => setMenu((open) => !open)} className="messages-thread-action" aria-label={t('messages:header.actions')} aria-haspopup="menu" aria-expanded={menu}><EllipsisHorizontalIcon aria-hidden="true" /></button>
@@ -2094,14 +2091,6 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
 
 
 /**
- * #6426: whether this embedded thread is Main Chat, where the "Welcome
- * back" card shows. EmbeddedConversation provides it and ConversationThread
- * reads it here, so the thread's signature and its one-copy gate stay as
- * #3494 left them.
- */
-const MainChatContext = createContext(false);
-
-/**
  * The open conversation. `embedded` is the copy a community's page mounts
  * (#3494, EmbeddedConversation below): the same thread, drawn without this
  * screen's header because the page's own header and tabs already name it.
@@ -2112,7 +2101,6 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const t = useMessages('messages');
   // #6479: the separators' days are read in this zone; useMessages re-renders on a change.
   const zoneKey = getTimeZoneSnapshot();
-  const mainChat = useContext(MainChatContext);
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
   const scroller = useRef<HTMLDivElement>(null);
@@ -2167,16 +2155,6 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // and #4564 its rows draw as change blocks (see the memo below).
   const botDm = !!snap.active && snap.active.id === conversationId && snap.active.kind === 'direct'
     && snap.active.membershipStatus === 'member' && snap.active.homeroomBot === true;
-  // #6426: Main Chat's "Welcome back" card takes the place of the bot's
-  // leftover suggested replies on its newest main-stream message.
-  const [welcomeShown, setWelcomeShown] = useState(false);
-  const newestMainBotId = useMemo(() => {
-    for (let index = snap.messages.length - 1; index >= 0; index -= 1) {
-      const message = snap.messages[index];
-      if (message.sender.bot && !message.threadRootId) return message.id;
-    }
-    return null;
-  }, [snap.messages]);
   // THE BOT'S CHAT OPENS AT ITS FINAL SHAPE (./open-hold.ts): its rows are
   // laid out but hidden, under the spinner, until its tray has answered and
   // the screen is full or nothing older is left. `shownFor` is the
@@ -2370,8 +2348,8 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   // #6148: and a linked window too short to scroll reads its newer pages in
   // the same way, until the screen fills or it reaches the present: with
   // nothing to scroll, the reader cannot reach its foot to ask. A pane with
-  // no height is not short but hidden (under a thread on a phone, or in
-  // Main Chat's column): it reads nothing until it is shown.
+  // no height is not short but hidden (under a thread on a phone): it reads
+  // nothing until it is shown.
   useIsomorphicLayoutEffect(() => {
     const el = scroller.current;
     if (!el || !el.clientHeight) return;
@@ -2473,10 +2451,9 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     // One request, one row: news drawn inside a newer row about its request.
     if (newsFold?.hidden.has(message.id)) continue;
     const day = dayKey(message);
-    // #6207: Main Chat is the conversation; a request's news is on its page.
+    // #6207: a request's news is on its page, never in the chat's stream.
     if (botDm && isRequestNews(message)) continue;
-    // #6250: only the line that opens a thread from the bot's "+" is the
-    // thread's own, not Main Chat's; one the bot opened from Main stays.
+    // #6250: the line that opens a thread from New chat is the thread's own.
     if (botDm && isPlusThreadOpener(message)) continue;
     const asks = asking(message);
     const settled = botDm && isBotNews(message) && !asks && !!newsStatusOf(message, botWork)?.settled;
@@ -2514,17 +2491,11 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     // the run of replies to that thread with nothing else said between them
     // on the same day. A deleted reply is gone from the run; the next message
     // after the card carries its own name.
-    //
-    // One request, one story: in the chat with Homeroom bot the replies the
-    // main stream lists are the moments that ring (`alsoInChat`), each drawn
-    // whole, buttons and all, under its "↳ in …" label (./message-row.tsx),
-    // not as a line about the thread.
-    const moment = botDm && alsoInChat(message);
-    if (message.threadRootId && !moment) {
+    if (message.threadRootId) {
       const run = [message];
       while (index + 1 < snap.messages.length) {
         const next = snap.messages[index + 1];
-        if (next.threadRootId !== message.threadRootId || dayKey(next) !== day || (botDm && alsoInChat(next))) break;
+        if (next.threadRootId !== message.threadRootId || dayKey(next) !== day) break;
         run.push(next);
         index += 1;
       }
@@ -2538,8 +2509,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     // A failed or unsent row is its own line: it carries a status of its own.
     // So is a platform line (a Homeroom line kept as the root of a thread),
     // which has no author to share a name with the row above.
-    // A moment carries its own label and name: never a continuation line.
-    const grouped = !moment && !!previous && !previous.failed && !message.failed
+    const grouped = !!previous && !previous.failed && !message.failed
       && !previous.system && !message.system
       && groupsWithPrevious(
         { author: previous.sender.id, at: previous.createdAt },
@@ -2556,14 +2526,14 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       threadOpen={snap.route.threadRootId === message.id}
       focused={flashId === message.id}
       planCardId={plans.cardOf.get(message.id) ?? null}
-      hidePrompts={(plans.answersOpen || asksWithQuestionsCard(message) || (welcomeShown && message.id === newestMainBotId)) && !!message.sender.bot}
+      hidePrompts={(plans.answersOpen || asksWithQuestionsCard(message)) && !!message.sender.bot}
       // #4564: this row's part of its change's block, in the bot's DM alone.
       block={blocks?.get(message.id) ?? null}
       botChat={botDm}
       quoteAgain={quoteAgain}
     />);
     if (botDm && message.sender.bot && message.reply) quoted = message.reply.id;
-    previous = moment ? null : message;
+    previous = message;
     const length = runs.get(index);
     const runKey = String(message.clientKey || message.id);
     if (length && !expandedRuns.has(runKey)) {
@@ -2673,7 +2643,6 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title={t('messages:thread.jumpToLatest')} onClick={jumpToLatest} />
       </TranscriptOverlay>
       <ChatStatusLine className="messages-typing">{typingLine(t, typing)}</ChatStatusLine>
-      {mainChat && botDm && conversationId ? <WelcomeBack conversationId={conversationId} onShown={setWelcomeShown} /> : null}
       <MessageComposer />
       {drop.dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
     </section>
@@ -2790,17 +2759,16 @@ function writeReplyWidth(px: number): void {
   try { window.localStorage.setItem(REPLY_WIDTH_KEY, String(Math.round(px))); } catch { /* the default next time */ }
 }
 
-function ReplyThreadPanel({ inMain = false, onBack = null }: {
+function ReplyThreadPanel({ alone = false, onBack = null }: {
   /**
-   * 31 Oct 2026: open in Main Chat's column on the Homeroom bot tab, the
-   * only place the chat with the bot is drawn. The thread covers the chat
-   * there (app.css `[data-main-chat]`). 1 Nov 2026: alone, under its own
-   * head: its title and "Only you can see this thread". 6 Nov 2026 (#6425):
-   * it closes with its own ✕, which leaves the lists alone, or shows Main
-   * Chat again when Main was open just before; a phone's drawer keeps its
-   * back arrow to the list and no ✕.
+   * 31 Oct 2026: open in the column of the Homeroom bot tab, the only place
+   * the chat with the bot is drawn, and (14 Nov 2026) drawn there as its
+   * threads only: the thread fills the column (app.css `[data-bot-threads]`),
+   * alone under its own head, its title and "Only you can see this thread".
+   * 6 Nov 2026 (#6425): it closes with its own ✕, which leaves the lists
+   * alone; a phone's drawer keeps its back arrow to the list and no ✕.
    */
-  inMain?: boolean;
+  alone?: boolean;
   /** A phone's drawer: the back arrow that leads the head, to the list. */
   onBack?: (() => void) | null;
 } = {}) {
@@ -3049,13 +3017,32 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
   const where = started ? (started.appName || started.appSlug || t('messages:newThread.anyProject'))
     : request ? request.project : active ? (kind === 'channel' ? `#${active.channelKey || active.title}` : active.title) : '';
   const replies = thread?.messages || [];
-  // 1 Nov 2026: in Main Chat's column a thread is named as the tab's list
-  // names it (./private-thread-bar.tsx privateThreadTitle).
-  const mainTitle = inMain
-    ? privateThreadTitle(root, replies, meId) || (started ? startedThreadTitle(t, started.changeKind) : t('messages:replies.title'))
+  // 1 Nov 2026: alone in the bot tab's column a thread is named as the tab's
+  // list names it (./private-thread-bar.tsx privateThreadTitle). 14 Nov
+  // 2026: by the server's name for it when it has one ("Earlier chat",
+  // "Plant Pal, first version"), never by the first words under it.
+  const aloneTitle = alone
+    ? serverThreadName(privateRoot, privateWhere)
+      || privateThreadTitle(root, replies, meId) || (started ? startedThreadTitle(t, started.changeKind) : t('messages:replies.title'))
     : null;
   // #6118: the name the reply header ellipsises, computed once for its hint.
   const replyTitle = started ? startedThreadTitle(t, started.changeKind) : request ? botThreadTitle(request) : t('messages:replies.title');
+  // A plan in a request's thread carries the step of the card it hangs off (./bot-plan.tsx).
+  const cardId = root && isActivityMessage(root) ? root.id : null;
+  // 14 Nov 2026: A FIRST VERSION'S PLAN IS A REPLY OF ITS OWN THREAD. With no
+  // Main Chat, a project's first version has one thread: the line that says
+  // it is being set up, then its activity card, its plan and the card Build
+  // it moves under the plan, each a reply. They used to be messages of the
+  // main stream, which read them together (planLayout): the card above its
+  // plan is not drawn, the plan carries its step, and a card Build it moved
+  // is drawn where it went. A thread that hangs off no card reads its own
+  // replies the same way, as the stream they now are. Drawn one by one, the
+  // card stood above the plan as a strip of its own and the plan had no step.
+  const flatPlans = botChat && !cardId
+    ? planLayout(replies.map((message) => (message.threadRootId ? { ...message, threadRootId: null } : message)))
+    : NO_PLAN_LAYOUT;
+  const carried = (message: ConversationMessage) => botChat && !cardId
+    && (flatPlans.hidden.has(message.id) || isMovedActivity(message));
   // #5219: on a request's thread the request's public discussion rides
   // along, and the two read in one transcript, in the order they were said.
   // Ties keep the DM replies first (the sort is stable); a reply still in
@@ -3065,7 +3052,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
     | { kind: 'reply'; message: ConversationMessage }
     | { kind: 'discussion'; message: DiscussionMessage };
   const merged: MergedRow[] = [
-    ...replies.map((message) => ({ kind: 'reply' as const, message })),
+    ...replies.filter((message) => !carried(message)).map((message) => ({ kind: 'reply' as const, message })),
     ...(discussion?.messages || []).map((message) => ({ kind: 'discussion' as const, message })),
   ];
   if (merged.length > 1) {
@@ -3077,8 +3064,6 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
         ...inFlight);
     }
   }
-  // A plan in a request's thread carries the step of the card it hangs off (./bot-plan.tsx).
-  const cardId = root && isActivityMessage(root) ? root.id : null;
   // One request, one story: a story from before threads opens on its oldest
   // piece (./bot-request.ts storyRootIn), and the pieces after it, still in
   // the main stream, are drawn under it, whole.
@@ -3087,6 +3072,7 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
     ? snap.messages.filter((item) => item.id > root.id && !item.threadRootId && !item.thread && isBotNews(item) && requestKey(item.metadata?.homeroomBot || {}) === storyKey)
     : [];
   let previous: MergedRow | null = null;
+  let newLineDrawn = false;
   // Which try each entry belongs to: one divider where a try begins.
   const tryStarts = track && track.tryStarts.length > 1 ? track.tryStarts.map((at) => Date.parse(at)).filter(Number.isFinite) : [];
   let lastTry = 0;
@@ -3127,18 +3113,18 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
         onPointerDown={onReplyResizeStart}
         onKeyDown={onReplyResizeKey}
       />
-      <header className="messages-thread-header" data-reply-head={inMain ? 'main' : undefined}>
-        {inMain && onBack ? (
+      <header className="messages-thread-header" data-reply-head={alone ? 'alone' : undefined}>
+        {alone && onBack ? (
           <button type="button" className="messages-thread-action messages-thread-back" data-reply-back=""
             aria-label={t('messages:ai.drawer.back')} title={t('messages:ai.drawer.back')} onClick={onBack}>
             <ChevronLeftIcon aria-hidden="true" />
           </button>
         ) : null}
-        {inMain ? (
-          // 1 Nov 2026: the thread alone in Main Chat's place, under its own
-          // name and the line that says it is theirs alone.
-          <div className="min-w-0 flex-1" title={mainTitle || undefined}>
-            <div className="messages-thread-name min-w-0 truncate" data-reply-title="">{mainTitle}</div>
+        {alone ? (
+          // 1 Nov 2026: the thread alone in the column, under its own name
+          // and the line that says it is theirs alone.
+          <div className="min-w-0 flex-1" title={aloneTitle || undefined}>
+            <div className="messages-thread-name min-w-0 truncate" data-reply-title="">{aloneTitle}</div>
             <div className="messages-thread-sub flex min-w-0 items-center gap-1" data-private-thread-sub="">
               <LockIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
               <span className="truncate">{t('messages:ai.thread.sub')}</span>
@@ -3154,12 +3140,12 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
           </div>
         )}
         {/* #6071: in a design thread, the way to its preview: on a phone the
-            switch back to it. 1 Nov 2026 (C1): in Main Chat's column, any
+            switch back to it. 1 Nov 2026 (C1): in the bot tab's column, any
             thread holding a design (a version said anywhere in it) has
             Preview, which opens the design as the tab's own column
             (../ai/preview.ts), while it is not open already. */}
         {isDesignRoot(root) && !snap.route.embedded ? <DesignViewSwitch onView={setDesignView} /> : null}
-        {inMain && preview?.rootId !== rootId && isDesignThread(root, replies) ? (
+        {alone && preview?.rootId !== rootId && isDesignThread(root, replies) ? (
           <button type="button" className="messages-thread-action messages-thread-preview" data-reply-preview=""
             onClick={() => openPreview({ conversationId, rootId, version: null })}>
             <span className="text-[13px] font-semibold">{t('messages:design.pane.showPreview')}</span>
@@ -3171,19 +3157,19 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
             onChanged={(state) => setPrivateWhere({ ...privateWhere, state })} />
         ) : null}
         {/* On a phone the Messages screen's header bar has the way back
-            (app.css hides this one there, polish N16), and in Main Chat's
-            column the drawer's own back arrow leads the head instead, so no
-            ✕ is drawn. 6 Nov 2026 (#6425): on a desktop the ✕ closes the
-            thread, leaving the lists alone or Main Chat when it was open. */}
-        {inMain && onBack ? null : (
+            (app.css hides this one there, polish N16), and in the bot tab's
+            drawer its own back arrow leads the head instead, so no ✕ is
+            drawn. 6 Nov 2026 (#6425): on a desktop the ✕ closes the thread,
+            leaving the lists alone. */}
+        {alone && onBack ? null : (
           <button type="button" className="messages-thread-action" data-reply-close="" aria-label={t('messages:replies.close')} title={t('messages:replies.close')} onClick={() => closeThread()}>
             <XIcon aria-hidden="true" />
           </button>
         )}
       </header>
-      {/* Its head says it is theirs alone in Main Chat's column; under it,
-          where it went once it was filed or posted. */}
-      {privateMine && !(inMain && privateWhere?.state === 'open') ? (
+      {/* Its head says it is theirs alone in the bot tab's column; under
+          it, where it went once it was filed or posted. */}
+      {privateMine && !(alone && privateWhere?.state === 'open') ? (
         <PrivateThreadNote where={privateWhere} rootId={privateRoot}
           onChanged={(state) => { if (privateWhere) setPrivateWhere({ ...privateWhere, state }); }} />
       ) : null}
@@ -3191,9 +3177,9 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
         {/* The root's Reply quotes it into THIS thread's composer (#2387): its
             own threadRootId is null, being the main stream's message.
             #6668: a thread opened from the bot's "+" opens on what the person
-            wrote, not on the bot's "New thread." line, as Main Chat leaves that
-            line out (#6250). The root still names the thread; it is only not
-            drawn. */}
+            wrote, not on the bot's "New thread." line (Main Chat left that
+            line out too, #6250). The root still names the thread; it is only
+            not drawn. */}
         {root && !(botChat && isPlusThreadOpener(root)) ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} /> : null}
         {pieces.map((item) => <MessageRow key={item.clientKey || item.id} message={{ ...item, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === item.id} />)}
         {/* An error stands in place of the thread (#5219 review): with one,
@@ -3235,9 +3221,12 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
             );
           previous = entry;
           // B19 follow-up: the "New" line above the first reply not read when it opened.
-          const line = firstUnread && message.id === firstUnread
+          // (Above the first reply drawn from there on: the one it names may be
+          // a card its plan carries, which is not drawn.)
+          const line = firstUnread && !newLineDrawn && message.id >= firstUnread
             ? <NewMessagesDivider key="unread-line" ref={unreadLine} /> : null;
-          const row = <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped && !divider} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === message.id} planCardId={cardId && isPlanMessage(message) ? cardId : null} />;
+          if (line) newLineDrawn = true;
+          const row = <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped && !divider} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === message.id} planCardId={isPlanMessage(message) ? cardId || flatPlans.cardOf.get(message.id) || null : null} />;
           return divider || line ? <Fragment key={message.clientKey || message.id}>{divider}{line}{row}</Fragment> : row;
         })}
         {threadWorking ? <BotWorkingCard typist={threadWorking} /> : null}
@@ -3397,16 +3386,18 @@ export function ChannelLoading(): ReactNode {
   );
 }
 
-export function EmbeddedConversation({ conversationId, active, at = null, mainChat = false, onBack = null }: {
+export function EmbeddedConversation({ conversationId, active, at = null, threadsOnly = false, onBack = null }: {
   conversationId: number;
   active: boolean;
   /**
-   * 31 Oct 2026: this copy is Main Chat on the AI tab, a column of 400 to
-   * 720px (or a phone's drawer): a thread opened in it covers the chat
-   * rather than squeezing in beside it. 1 Nov 2026: alone, under its own
-   * head (ReplyThreadPanel `inMain`).
+   * 14 Nov 2026: this copy is the chat with Homeroom bot on its tab
+   * (features/ai/), a column of 400 to 720px (or a phone's drawer), where
+   * every conversation is a thread. The conversation's own stream is never
+   * read, drawn, marked read or scrolled (store.ts loadThreadsOnly): only
+   * the one thread open, alone under its own head (ReplyThreadPanel
+   * `alone`), and New chat's screen live here.
    */
-  mainChat?: boolean;
+  threadsOnly?: boolean;
   /** A phone's drawer: the thread's back arrow, to the tab's list. */
   onBack?: (() => void) | null;
   /**
@@ -3430,24 +3421,52 @@ export function EmbeddedConversation({ conversationId, active, at = null, mainCh
   };
   useEffect(() => {
     if (!active || messagesOpen) return undefined;
-    embed(conversationId, take());
+    embed(conversationId, take(), { threadsOnly });
     return () => release(conversationId);
-  }, [active, messagesOpen, conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [active, messagesOpen, conversationId, threadsOnly]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!active || messagesOpen) return;
     const next = take();
-    if (next) embed(conversationId, next);
+    if (next) embed(conversationId, next, { threadsOnly });
   }, [at]); // eslint-disable-line react-hooks/exhaustive-deps
-  // #6071 follow-up: a blank thread from Homeroom bot's "+", in the thread's place.
+  // #6071 follow-up: a new chat with Homeroom bot, in the thread's place.
   const blank = useNewThread(conversationId) && here && !snap.route.threadRootId;
-  return (
-    <MainChatContext.Provider value={mainChat}>
-      <div className={`messages-layout messages-layout-embedded${here && (snap.route.threadRootId || blank) ? ' messages-has-reply-thread' : ''}${blank ? ' messages-has-blank-thread' : ''}`} data-main-chat={mainChat ? '' : undefined}>
-        {here ? <ConversationThread embedded /> : <ChannelLoading />}
-        {here && snap.route.threadRootId ? <ReplyThreadPanel inMain={mainChat} onBack={onBack} /> : null}
+  if (threadsOnly) {
+    return (
+      <div className={`messages-layout messages-layout-embedded messages-has-reply-thread${blank ? ' messages-has-blank-thread' : ''}`} data-bot-threads="">
+        {here ? <BotThreadsSync conversationId={conversationId} /> : null}
+        {here && snap.route.threadRootId ? <ReplyThreadPanel alone onBack={onBack} /> : null}
         {blank ? <NewThreadPanel conversationId={conversationId} /> : null}
       </div>
-    </MainChatContext.Provider>
+    );
+  }
+  return (
+    <div className={`messages-layout messages-layout-embedded${here && (snap.route.threadRootId || blank) ? ' messages-has-reply-thread' : ''}${blank ? ' messages-has-blank-thread' : ''}`}>
+      {here ? <ConversationThread embedded /> : <ChannelLoading />}
+      {here && snap.route.threadRootId ? <ReplyThreadPanel onBack={onBack} /> : null}
+      {blank ? <NewThreadPanel conversationId={conversationId} /> : null}
+    </div>
+  );
+}
+
+/**
+ * What the chat with Homeroom bot keeps current while one of its threads is
+ * drawn with no stream beside it (EmbeddedConversation `threadsOnly`): where
+ * each request stands (./bot-work.tsx) and the bot's activity cards
+ * (./bot-activity.tsx), which a thread's plan, its tries and its cards read.
+ * The conversation's own transcript mounted both; here the open thread's
+ * newest message from the bot is the news that moves them on. Renders
+ * nothing.
+ */
+function BotThreadsSync({ conversationId }: { conversationId: number }) {
+  const snap = useMessagesSnapshot();
+  const thread = snap.thread && snap.thread.conversationId === conversationId ? snap.thread : null;
+  const newsKey = thread ? newestBotMessageId(thread.messages) : null;
+  return (
+    <>
+      <BotWorkSync conversationId={conversationId} newsKey={newsKey} />
+      <BotActivitySync conversationId={conversationId} newsKey={newsKey} />
+    </>
   );
 }
 

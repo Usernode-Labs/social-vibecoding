@@ -16,10 +16,11 @@ import type { ConversationMessage, HomeroomBotActivityOutcome, HomeroomBotJob, H
  * Every request the bot works on for someone has one story: an activity
  * card in their chat with the bot, which is the root of that request's own
  * reply thread (services/homeroom-bot-activity.js). Its quiet step lines,
- * questions, plan, answers and ending are replies in that thread, and the
- * four moments that ring (needs you, ready to try, stopped, live) are also
- * listed in the main chat (`alsoInChat`), drawn there as the full message
- * under a "↳ in {request} · {project}" label that opens the thread.
+ * questions, plan, answers and ending are replies in that thread. (14 Nov
+ * 2026: the four moments that ring were also listed in Main Chat, under a
+ * "↳ in {request} · {project}" label, by an `alsoInChat` stamp. There is no
+ * Main Chat to list them in, nothing writes the stamp, and nothing here
+ * reads it.)
  *
  * A direct chat between people keeps no threads (#2387): a thread is how a
  * room keeps a side conversation out of everyone's way, and a DM has no one
@@ -34,30 +35,13 @@ export function threadsAllowed(conversation: { kind?: string; homeroomBot?: bool
   return conversation.kind !== 'direct' || conversation.homeroomBot === true;
 }
 
-/** A thread reply the bot also lists in the main chat: one of the four moments that ring. */
-export function alsoInChat(message: {
-  threadRootId?: number | null;
-  threadRoot?: { plusThread?: boolean } | null;
-  metadata?: { homeroomBot?: { alsoInChat?: boolean } | null } | null;
-}): boolean {
-  if (!message.threadRootId || message.metadata?.homeroomBot?.alsoInChat !== true) return false;
-  // #6250: a thread started from the bot's "+" stays out of Main Chat, its
-  // replies included. One the bot opened from Main has no such mark, and its
-  // moments are Main's too, as the way to its row in the list.
-  return message.threadRoot?.plusThread !== true;
-}
-
 /**
  * Whether a message is a position in the main stream, as the server counts
- * unread and moves the read cursor: a message of the conversation itself, or
- * a thread reply it also lists there (`alsoInChat`).
+ * unread and moves the read cursor: a message of the conversation itself,
+ * never a reply in one of its threads.
  */
-export function inMainStream(message: {
-  threadRootId?: number | null;
-  threadRoot?: { plusThread?: boolean } | null;
-  metadata?: { homeroomBot?: { alsoInChat?: boolean } | null } | null;
-}): boolean {
-  return !message.threadRootId || alsoInChat(message);
+export function inMainStream(message: { threadRootId?: number | null }): boolean {
+  return !message.threadRootId;
 }
 
 /** What a request's thread is called, from any of its messages' metadata. */
@@ -87,14 +71,6 @@ export function botThreadTitle(names: BotRequestNames): string {
   if (names.firstVersion) return t('messages:bot.job.firstVersion', { project: names.project });
   if (names.title) return names.title;
   return names.number ? t('messages:bot.activity.requestNumber', { number: String(names.number) }) : names.project;
-}
-
-/** "↳ in Dark mode · Plant Pal": the label over a moment the main chat also shows. */
-export function botThreadLabel(names: BotRequestNames): string {
-  if (names.firstVersion) return t('messages:row.botThread.inFirstVersion', { project: names.project });
-  if (names.title) return t('messages:row.botThread.in', { request: names.title, project: names.project });
-  if (names.number) return t('messages:row.botThread.inNumbered', { number: String(names.number), project: names.project });
-  return t('messages:row.botThread.inProject', { project: names.project });
 }
 
 /** public/js/app.js dispatches this on `homeroom_bot_work_changed` and on a socket reconnect. */

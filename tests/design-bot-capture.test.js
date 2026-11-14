@@ -151,9 +151,11 @@ test('a page with no demo route answers with the fallback, and the prompt says t
 
 test('the prompt lists the pages it can copy, and the working card names the page', () => {
   const prompt = designBot.designPrompt({ username: 'evan', homeroom: true });
-  for (const name of ['Homeroom bot page', 'Main Chat', 'Messages', 'Communities', 'Workshop', 'project page', 'request page']) {
+  for (const name of ['Homeroom bot page', 'Messages', 'Communities', 'Workshop', 'project page', 'request page']) {
     assert.ok(prompt.includes(name), `the prompt lists ${name}`);
   }
+  // 14 Nov 2026: Main Chat is gone, so it is no page to copy.
+  assert.ok(!prompt.includes('Main Chat'));
   assert.match(prompt, /capture_page first/);
   assert.deepEqual(mayor.doingFor('capture_page', { page: 'Homeroom bot page' }), { kind: 'capturing', page: 'Homeroom bot page' });
   assert.deepEqual(mayor.doingFor('capture_page', {}), { kind: 'capturing' });

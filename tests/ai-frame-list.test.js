@@ -1,10 +1,11 @@
 // Homeroom bot's lists under a look (frontend/src/features/ai/frame-
 // list.tsx), version 2 (11 Nov 2026; the mockups' s08, s09 and s14): the
 // content of the standard page (./lists.tsx) in the first tour's layout.
-// The head with the bot's tile and the two round buttons, the projects as
-// tabs, Main Chat's card, then four labelled groups of one card each (Needs
-// you, Waiting & in progress, Live this week, History), every row one line
-// under its project's name. Both faces draw the rows ./lines.ts builds.
+// The head with the bot's tile, the search disc and New chat (14 Nov 2026:
+// labelled, the page's one primary; there is no Main Chat card), the projects
+// as tabs, then four labelled groups of one card each (Needs you, Waiting &
+// in progress, Live this week, History), every row one line under its
+// project's name. Both faces draw the rows ./lines.ts builds.
 //
 // Run with: node --test tests/ai-frame-list.test.js
 
@@ -32,7 +33,7 @@ const thread = (id, title, app, stage) => ({
 });
 const base = {
   heroLine: { id: 'messages:ai.hero.both', values: { needs: 3, next: 2 } },
-  main: { lit: false, unread: 0, open() {} }, lit: null, ready: true, owed: 2,
+  lit: null, ready: true, owed: 2,
   rows: [need('need:question:1', 'Which part should zoom in?', corner, 402), need('need:decide:2', 'Pick a direction', homeroom, 5998), need('private:3', 'Keep a vote in view', homeroom, 6198, { pill: null, rootId: 77 })],
   progress: [thread(6311, 'Fix the close button', homeroom, 'building'), thread(403, 'Daily streaks', corner, 'checking')],
   waiting: [], live: [], openRow() {}, openThread() {}, onDone() {}, picked: [], onPick() {}, onNew() {}, query: '', onQuery() {}, searchOpen: false, onSearch() {},
@@ -40,11 +41,13 @@ const base = {
 const render = (over) => renderComponent(LIST, 'AiFrameList', { ...base, ...over }, { cache: false });
 const titles = (html) => [...html.matchAll(/<span class="fr-t">([^<]+)/g)].map((m) => m[1]);
 
-test('the head: the bot\'s tile, the title with the counts, and two round buttons (search, new thread)', () => {
+test('the head: the bot\'s tile, the title with the counts, the search disc and New chat, labelled', () => {
   const html = render();
   assert.match(html, /^<div class="fr fr-pane" data-ai-frame-list=""><div class="fr-scroll fr-botpage"><div class="fr-head" data-ai-hero=""><span class="fr-tile"[^>]*><img[^>]*><\/span><div class="fr-tx"><h1 class="fr-title">Homeroom bot<\/h1><p class="fr-purpose" data-ai-hero-sub="">/);
-  assert.match(html, /<div class="fr-acts"><button type="button" class="fr-ib fr-more" aria-label="Search threads and messages" title="Search threads and messages" aria-expanded="false" data-ai-search-toggle="">.*?<\/button><button type="button" class="fr-ib fr-more" aria-label="New thread" title="New thread" data-bot-new-thread="">/s);
-  assert.doesNotMatch(html, /fr-btn"[^>]*>.*?New thread<\/button>/s, 'no labelled New thread button: it is the + in the head');
+  // 14 Nov 2026: New chat is the page's one primary, a kit button with a
+  // plus and its words, where the round "+" was.
+  assert.match(html, /<div class="fr-acts"><button type="button" class="fr-ib fr-more" aria-label="Search threads and messages" title="Search threads and messages" aria-expanded="false" data-ai-search-toggle="">.*?<\/button><button type="button" class="fr-btn fr-sm" data-bot-new-thread="" data-ai-new-chat=""><svg[^>]*>.*?<\/svg>New chat<\/button><\/div>/s);
+  assert.doesNotMatch(html, /New thread/);
   assert.doesNotMatch(html, /data-ai-search=""/, 'the search field is drawn only while it is open');
   const open = render({ searchOpen: true });
   assert.match(open, /<div class="fr-search"><label class="fr-inp">.*?<input type="search" class="fr-v" placeholder="Search threads and messages" aria-label="Search threads and messages" data-ai-search="" value=""\/>/s);
@@ -65,12 +68,15 @@ test('the projects are tabs that toggle, as the standard chips do: All, the busi
   assert.match(src, /<ProjectPicker sheet=\{phone\} anchor=\{more\} ranked=\{ranked\} picked=\{picked\} onToggle=\{toggle\}/);
 });
 
-test('Main Chat is one small row in a card of its own, with what is new in words', () => {
+test('there is no Main Chat card: the groups follow the projects, and a private thread\'s row carries its own new mark', () => {
+  // 14 Nov 2026: every conversation with the bot is a thread.
   const html = render();
-  assert.match(html, /<div class="fr-card fr-main"><button type="button" class="fr-row fr-sm" data-ai-main-row=""><span class="fr-tile"[^>]*>.*?<\/span><span class="fr-tx"><span class="fr-t">Main Chat<\/span><\/span><\/button><\/div>/s);
-  assert.doesNotMatch(html, /Ask anything, across every project/, 'no sentence under it');
-  assert.match(render({ main: { lit: true, unread: 2, open() {} } }), /class="fr-row fr-sm fr-on" data-ai-main-row="" data-ai-lit="" aria-current="true">.*?<span class="fr-meta" data-ai-main-unread="">2 new<\/span>/s);
-  assert.doesNotMatch(render({ query: 'zoom', searchOpen: true }), /data-ai-main-row/, 'it steps aside while a search is on');
+  assert.doesNotMatch(html, /data-ai-main-row|data-ai-main-unread|fr-card fr-main|Main Chat/);
+  assert.match(html, /<div class="fr-stack"><section class="fr-sec" data-ai-list="work">/, 'Needs you leads the stack');
+  assert.doesNotMatch(read(LIST), /main\.(lit|unread|open)|store\.header\.main|ai\.main\.new/);
+  // A private thread with something new is new like any thread (#6262).
+  const fresh = render({ rows: [need('private:3', 'Keep a vote in view', homeroom, 6198, { pill: null, rootId: 77, threadId: null, unread: 2 })] });
+  assert.match(fresh, />All<span class="fr-n" aria-label="1 new">1<\/span>/);
 });
 
 test('Needs you is one group with one card: a project\'s name, then one line a row ending in its one word', () => {
@@ -146,10 +152,9 @@ test('History: its kinds as small buttons inside the card, months as rows, Earli
   assert.doesNotMatch(render({ history, query: 'zzz', searchOpen: true }), /data-ai-frame-history/, 'a search with nothing finished in it folds the group away');
 });
 
-test('one project picked: the same lists narrowed to it, no project names over the rows, Main Chat still first', () => {
+test('one project picked: the same lists narrowed to it, no project names over the rows', () => {
   const html = render({ picked: ['homeroom'] });
   assert.match(html, /class="fr-tab fr-on" aria-pressed="true" data-ai-chip="homeroom"><span class="fr-tile" style="--fr-ts:18px[^"]*"[^>]*>.*?<\/span>Homeroom</, 'the project\'s tile before its name, as on the standard chip');
-  assert.match(html, /data-ai-main-row/);
   assert.doesNotMatch(html, /data-ai-project-head|Which part should zoom in|Daily streaks/);
   assert.match(html, /<h2 class="fr-cap">Needs you · 1<\/h2>/, 'the group counts what is shown');
   assert.match(html, /<h2 class="fr-cap">Waiting &amp; in progress · 1<\/h2>/);
@@ -185,7 +190,8 @@ test('a search lists the messages that match under the threads, as kit rows that
   const group = html.slice(html.indexOf('data-ai-list="found"'));
   assert.match(group, /<h2 class="fr-cap">In your messages · 2<\/h2>/, 'the group\'s label, as every group\'s');
   const rows = [...group.matchAll(/<a class="fr-row fr-sm fr-item" href="([^"]+)" title="[^"]*" aria-label="([^"]*)" data-ai-found="(chat|thread)">(.*?)<\/a>/g)];
-  assert.deepEqual(rows.map((m) => [m[1], m[3]]), [['#homeroom-bot/main/m/71', 'chat'], ['#homeroom-bot/thread/60/m/88', 'thread']]);
+  assert.deepEqual(rows.map((m) => [m[1], m[3]]), [['#homeroom-bot/m/71', 'chat'], ['#homeroom-bot/thread/60/m/88', 'thread']],
+    'a message whose thread the answer does not name asks the tab which it is in (ai/where.ts)');
   assert.match(rows[0][4], /<span class="fr-t" data-ai-found-words="">Could it <mark class="[^"]*var\(--fr-acc-t\)[^"]*">zoom<\/mark> in on the map\?<\/span><span class="fr-s" data-ai-found-place="">Your chat with Homeroom bot<\/span>/);
   assert.match(rows[1][4], /<span class="fr-s" data-ai-found-place="">Map ideas<\/span>/);
   assert.match(rows[0][2], /^You: Could it zoom in on the map\? · Your chat with Homeroom bot · /);
@@ -203,23 +209,23 @@ test('a search lists the messages that match under the threads, as kit rows that
 test('the page draws this list in place of its own under a look, from the same rows, presses and search', () => {
   const src = read('frontend', 'src', 'features', 'ai', 'index.tsx');
   assert.match(src, /const frame = isFrameSkin\(useSkin\(\)\);/, 'after mount only: useSkin answers standard on the first render');
-  assert.match(src, /\{frame \? \(\s*<AiFrameList\s+heroLine=\{heroLine\}\s+main=\{\{ lit: lit === 'main', unread, open: openMain \}\}\s+query=\{searchOpen \? query : ''\}\s+onQuery=\{setQuery\}\s+searchOpen=\{searchOpen\}\s+onSearch=\{setSearchOpen\}\s+searchRef=\{searchRef\}/);
+  assert.match(src, /\{frame \? \(\s*<AiFrameList\s+heroLine=\{heroLine\}\s+query=\{searchOpen \? query : ''\}\s+onQuery=\{setQuery\}\s+searchOpen=\{searchOpen\}\s+onSearch=\{setSearchOpen\}\s+searchRef=\{searchRef\}/);
   assert.match(src, /failed=\{failed\}\s+onRetry=\{\(\) => setMoved\(\(n\) => n \+ 1\)\}\s+rows=\{rows\}\s+owed=\{owed\}/);
   assert.match(src, /openRow=\{openRow\}\s+openThread=\{openThread\}\s+onDone=\{[^\n]+\}\s+picked=\{picked\}\s+onPick=\{pick\}/);
   assert.match(src, /history=\{history\}\s+historyKind=\{historyKind\}\s+onHistoryKind=\{pickKind\}\s+openHistory=\{openHistory\}\s+historyRef=\{historyRef\}\s+\/>/);
   assert.match(src, /data-frame-list=\{frame \? '' : undefined\}/);
-  assert.match(src, /useFramePage\(frame && phone && visible && level === 1 && !threadUp \? \[mainTitle\] : null, listAgain\)/,
-    'on a phone the frame\'s bar names the open chat and goes back to the list');
+  assert.doesNotMatch(src, /useFramePage\(/, 'the frame\'s bar named Main Chat on a phone; a thread and a new chat name themselves');
   const list = read(LIST);
   assert.doesNotMatch(list, /\bfetch\(|useEffect\(/, 'nothing is read or kept in the list itself');
   assert.match(list, /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found \}\);/, 'the rows are the ones the standard list draws');
   assert.match(read('frontend/src/features/ai/lists.tsx'), /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found \}\);/);
 });
 
-test('the list\'s + starts the blank thread, as the standard "+" does', () => {
+test('the list\'s New chat opens the same new chat as the standard head\'s', () => {
   const src = read('frontend', 'src', 'features', 'ai', 'index.tsx');
-  assert.match(src, /onNew=\{\(\) => \{ openBlank\(\); if \(botId\) startNewThread\(botId\); \}\}/);
-  assert.match(read('frontend', 'src', 'features', 'messages', 'new-thread.tsx'), /onClick=\{\(\) => \{ onOpen\?\.\(\); startNewThread\(conversationId\); \}\}/, 'the same two halves, in the same order');
+  assert.match(src, /onNew=\{openNewChat\}/);
+  assert.match(src, /<NewChatButton onOpen=\{openNewChat\} \/>/, 'one door, set to the same project');
+  assert.match(read(LIST), /<Btn small icon="plus" data-bot-new-thread="" data-ai-new-chat="" onClick=\{onNew\}>\{t\('messages:newThread\.start'\)\}<\/Btn>/);
 });
 
 test('the two panes: the list a narrow page alone, 520px beside an open item; the phone keeps its Ask bar', () => {
@@ -228,7 +234,7 @@ test('the two panes: the list a narrow page alone, 520px beside an open item; th
   assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\]:not\(\[data-ai-open\]\) > \.fr-pane > \.fr-scroll \{ max-width: 784px; margin-inline: auto; \}/, 'with nothing open beside it the list is the kit\'s narrow page');
   assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\] \.ai-main-pane \{ top: var\(--fr-shell-top\); background: none;[^}]*border-inline-start: 1px solid var\(--fr-line\);/);
   assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\] #ai-main-divider \{ display: none; \}/, 'the width is the frame\'s, so the handle steps aside');
-  assert.match(css, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) #ai-screen\[data-frame-list\] \.ai-main-pane \.messages-layout\[data-main-chat\] \.chat-transcript \{ padding-inline: max\(32px, calc\(\(100% - 720px\) \/ 2\)\); \}/);
+  assert.match(css, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) #ai-screen\[data-frame-list\] \.ai-main-pane \.messages-layout\[data-bot-threads\] \.chat-transcript \{ padding-inline: max\(32px, calc\(\(100% - 720px\) \/ 2\)\); \}/);
   assert.match(css, /html\[data-skin\] body:has\(#ai-screen\[data-frame-list\]:not\(\.hidden\)\) \{ --ai-main-w: max\(360px, calc\(var\(--platform-usable-w\) - 520px\)\); \}/);
   assert.doesNotMatch(css, /html\[data-skin\] #ai-screen\[data-frame-list\] \.ai-askbar,\s*html\[data-skin\] #ai-screen\[data-frame-list\] \.ai-askbar-gap \{ display: none; \}/, 'version 2: the Ask Homeroom bot bar is back over the phone\'s tab bar');
   assert.match(css, /html\[data-skin\] #ai-screen\[data-frame-list\] \.ai-askbar-card \{ flex-direction: row;/);
@@ -239,7 +245,7 @@ test('what the first tour invented is gone: its words left the catalog, and the 
   assert.deepEqual(Object.keys(en).filter((key) => key.startsWith('frame.bot.')), []);
   const list = read(LIST);
   assert.doesNotMatch(list, /frame\.bot\.|Track\b/);
-  for (const id of ['ai.search.open', 'newThread.start', 'ai.filter.all', 'ai.filter.more', 'ai.main.new', 'ai.work.titleCount', 'ai.busy.title', 'ai.up.stillCount', 'ai.live.title', 'ai.history.title', 'ai.work.showMore', 'ai.history.earlier', 'ai.search.messages', 'ai.search.more', 'ai.search.failed', 'ai.filter.emptyProject']) {
+  for (const id of ['ai.search.open', 'newThread.start', 'ai.filter.all', 'ai.filter.more', 'ai.work.titleCount', 'ai.busy.title', 'ai.up.stillCount', 'ai.live.title', 'ai.history.title', 'ai.work.showMore', 'ai.history.earlier', 'ai.search.messages', 'ai.search.more', 'ai.search.failed', 'ai.filter.emptyProject']) {
     assert.match(list, new RegExp(`'messages:${id.replace(/\./g, '\\.')}'`), id);
   }
   // What the search says when nothing matched is decided once for both faces (lines.ts).
@@ -250,12 +256,10 @@ test('what the first tour invented is gone: its words left the catalog, and the 
   assert.match(list, /data-ai-search-empty="">\{noneWords\}</);
 });
 
-test('s10: Main Chat\'s head in the column is the kit\'s, with the standard head\'s lock before its line', () => {
+test('s10: the column draws no head of its own: Main Chat\'s is gone, and a thread and a new chat bring theirs', () => {
   const src = read('frontend', 'src', 'features', 'ai', 'index.tsx');
-  assert.match(src, /<div className=\{kit\('dhead'\)\}>/, 'the open item\'s head is the kit\'s');
-  assert.match(src, /<div className=\{kit\('s'\)\}><span className=\{kit\('inl'\)\}><KitIcon name="lock" size=\{13\} \/>\{t\('messages:ai\.main\.sub'\)\}<\/span><\/div>/);
-  assert.match(src, /<button type="button" className=\{kit\('ib'\)\} data-ai-main-close="" aria-label=\{t\('messages:ai\.main\.close'\)\} onClick=\{closeColumn\}>/);
-  assert.match(src, /<div className=\{kit\('t'\)\} id="ai-main-title">/, 'the id the standard head has');
+  assert.doesNotMatch(src, /kit\('dhead'\)|data-ai-main-head|data-ai-main-close|ai-main-title|messages:ai\.main\./);
+  assert.match(src, /\{conversationUp \? <EmbeddedConversation conversationId=\{botId!\} active=\{visible && columnOpen\} at=\{at\} threadsOnly \/> : null\}\n\s+<\/aside>/);
 });
 
 test('s11: a request in the column stands under the kit\'s open-item head; on a phone its page keeps the two back chips', () => {

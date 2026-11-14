@@ -385,10 +385,14 @@ test('saved drafts in the chat with Homeroom bot, against the full PostgreSQL sc
 
 test('the staging demo chat carries one saved draft, written once', { skip: !process.env.TEST_DATABASE_URL }, async () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src/services/staging-messages.js'), 'utf8');
-  // The seed is the viewer's own row in the demo chat itself (thread 0), under
-  // a fixed id, so a second visit writes nothing; a copy without the table
-  // keeps its fixture.
+  // The seed is the viewer's own row under a fixed id, so a second visit
+  // writes nothing; a copy without the table keeps its fixture. 14 Nov 2026:
+  // it sits in the demo's Earlier chat thread, since no screen draws the
+  // chat's own place (0) any more, and a copy seeded there is moved.
+  // tests/bot-chat-threads-postgres.test.js runs the seed and reads the row.
   assert.match(src, /const BOT_DM_DRAFT_ID = 'dstagingdemo1';/);
-  assert.match(src, /INSERT INTO conversation_drafts \(user_id, conversation_id, thread_root_id, draft_id, content\)\s+VALUES \(\$1, \$2, 0, \$3, \$4\)\s+ON CONFLICT DO NOTHING/);
-  assert.match(src, /\[user\.id, opened\.conversationId, BOT_DM_DRAFT_ID, 'Staging demo: and could it remember my choice next time\?'\],\s+\)\.catch\(\(\) => \{\}\);/);
+  assert.match(src, /const draftRoot = await require\('\.\/private-threads'\)\.earlierRootFor\(pool, user\.id\)\.catch\(\(\) => null\);/);
+  assert.match(src, /UPDATE conversation_drafts SET thread_root_id = \$3\s+WHERE user_id = \$1 AND conversation_id = \$2 AND thread_root_id = 0 AND draft_id = \$4/);
+  assert.match(src, /INSERT INTO conversation_drafts \(user_id, conversation_id, thread_root_id, draft_id, content\)\s+SELECT \$1, \$2, \$3, \$4::varchar, \$5\s+WHERE NOT EXISTS/);
+  assert.match(src, /\[user\.id, opened\.conversationId, draftRoot, BOT_DM_DRAFT_ID, 'Staging demo: and could it remember my choice next time\?'\],\s+\)\.catch\(\(\) => \{\}\);/);
 });

@@ -21,10 +21,11 @@ const RAIL_FULL = 212;
 //   --ai-main-auto: max(400px, calc(var(--ai-room) - var(--list-pane-w)))
 //   --ai-main-w: max(320px, min(...))
 // The room is the window less the rail. While something is open beside the
-// list, the list is the inbox's measure (352px) and Main takes the rest;
+// list, the list is the inbox's measure (352px) and the thread takes the rest;
 // with nothing open, the list is the centred 672px single column
 // (`max-w-2xl`, frontend/src/features/ai/index.tsx). At 1280: room 1068,
-// the list 352 and Main 716.
+// the list 352 and the thread 716. (14 Nov 2026: what opens beside the list
+// is a thread; Main Chat, which used to, is gone.)
 const AI_ROOM = DESKTOP - RAIL_FULL;
 const AI_MAIN_MIN = 400;
 const AI_LIST_MIN = 352;
@@ -60,17 +61,11 @@ const WIDTHS = Object.freeze({
   }),
   'homeroom-bot': Object.freeze({
     name: 'the Homeroom bot page',
-    phone: Object.freeze({ list: PHONE_FULL, mainChat: PHONE_FULL, drawer: true }),
+    phone: Object.freeze({ list: PHONE_FULL, thread: PHONE_FULL, drawer: true }),
     desktop: Object.freeze({
-      list: AI_LIST_DESKTOP, mainChat: AI_MAIN_DESKTOP, mainChatMin: 320, singleColumn: AI_LIST_CONTENT_MAX,
+      list: AI_LIST_DESKTOP, thread: AI_MAIN_DESKTOP, threadMin: 320, singleColumn: AI_LIST_CONTENT_MAX,
     }),
     source: ':root --list-pane-w (22rem, 352px), #ai-screen --ai-list-min and --ai-main-auto, max-w-2xl (672px)',
-  }),
-  'main-chat': Object.freeze({
-    name: 'Main Chat',
-    phone: Object.freeze({ thread: PHONE_FULL, drawer: true }),
-    desktop: Object.freeze({ thread: AI_MAIN_DESKTOP, besideList: AI_LIST_DESKTOP }),
-    source: '#ai-screen --ai-main-w (716px at 1280, the room less --list-pane-w)',
   }),
   messages: Object.freeze({
     name: 'Messages',

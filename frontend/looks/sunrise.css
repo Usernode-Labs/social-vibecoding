@@ -65,4 +65,3 @@
 .phone .tb.on{border-radius:14px}
 .row.on{box-shadow:inset 3px 0 0 #ff93bb}
 .bar .btn:not(.quiet):not(.line){background:var(--ink);color:var(--surface);box-shadow:none}
-.phone .barline{border-bottom:0}

@@ -744,8 +744,11 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     // B05 (audit 2 Nov 2026): the draft is right where the plan is, not one
     // thread away, and the plan offers no Build it while it waits.
     const { rows: [where] } = await pool.query('SELECT thread_root_id, reply_to_id FROM conversation_messages WHERE id = $1', [out.messageId]);
-    assert.equal(where.thread_root_id, null, 'the draft is not in a thread of its own');
-    assert.equal(Number(where.reply_to_id), Number(sent.messageId), 'it answers what they wrote');
+    // 14 Nov 2026: every message is in a thread. The draft is under what
+    // they wrote, in that message's thread (its own here: it was sent with
+    // none named), never in a second thread opened for the draft.
+    assert.equal(Number(where.thread_root_id), Number(sent.messageId), 'the draft answers what they wrote, under it');
+    assert.equal(where.reply_to_id, null, 'in a thread, what it answers is the line above it');
     const { rows: opened } = await pool.query(
       `SELECT 1 FROM conversation_messages WHERE conversation_id = $1 AND metadata->'homeroomBot'->>'kind' = 'opened_draft'`,
       [card.conversation_id],

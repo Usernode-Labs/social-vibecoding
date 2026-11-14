@@ -211,7 +211,8 @@ test('the prompt: a thread with no screen yet is drawn; one with a version is ed
   const none = designBot.designPrompt({ username: 'ada', surface: 'new', brief: 'A seed calendar' });
   assert.match(none, /This thread has no screen yet\. It is for a screen of a new project, not made yet\. Draw it with write_screen/);
   assert.match(none, /the native kit \(native\.css\)/);
-  assert.match(none, /WHAT MAIN CHAT ASKED YOU TO DRAW\nA seed calendar/);
+  assert.match(none, /WHAT YOU WERE ASKED TO DRAW\nA seed calendar/);
+  assert.doesNotMatch(none, /Main Chat|MAIN CHAT/, '14 Nov 2026: there is no Main Chat to name');
   assert.match(none, /THERE IS NO SCREEN YET: draw it with write_screen\.$/);
   assert.match(none, /Content rules: nothing sexual, violent,\n  or about weapons or gambling/, 'its content rules kept');
   assert.doesNotMatch(none, /—/);
@@ -275,7 +276,7 @@ test('their pictures: as pictures for a model that reads them, else in the words
   assert.equal(designBot.withPictures(history, [6, 7], []), history);
 });
 
-test('Main Chat draws a screen in place of the screen picker: draw_screen, no Pick the screen', () => {
+test('the chat draws a screen in place of the screen picker: draw_screen, in the thread the turn is in', () => {
   const mayor = require('../src/services/homeroom-bot-mayor');
   const draw = mayor.TOOLS.find((t) => t.function.name === 'draw_screen');
   assert.ok(draw, 'draw_screen');
@@ -289,9 +290,12 @@ test('Main Chat draws a screen in place of the screen picker: draw_screen, no Pi
   const src = read('src/services/homeroom-bot-mayor.js');
   // The chat is a profile on the turn engine: its rounds end with a reply or a screen handed over.
   assert.match(src, /done: \(\) => !!ctx\.reply \|\| !!ctx\.drawScreen,/, 'the turn ends with it');
-  assert.match(src, /if \(ctx\.drawScreen\) \{\n(?:\s+\/\/[^\n]*\n)*\s+const where = ctx\.projectThread \? [^\n]+\n\s+return \(deps\.designBot \|\| require\('\.\/design-bot'\)\)\.draw\(pool, config, \{/);
-  // B01: drawn in the new project's thread when this turn opened one.
-  assert.match(src, /const where = ctx\.projectThread \? \{ \.\.\.deps, threadRootId: ctx\.projectThread\.rootId, threadRequest: null \} : deps;/);
+  // 14 Nov 2026: every message is in a thread, so it is drawn in the thread
+  // the turn is in; nothing opens one from Main Chat first.
+  assert.match(src, /if \(ctx\.drawScreen\) \{\n\s+return \(deps\.designBot \|\| require\('\.\/design-bot'\)\)\.draw\(pool, config, \{\n\s+bot, user, settings, conversationId, message, ask: ctx\.drawScreen, deps,\n/);
+  assert.doesNotMatch(src, /ctx\.projectThread/);
+  assert.doesNotMatch(draw.function.description, /Main Chat/);
+  assert.match(draw.function.description, /shows it small in this thread with Open preview/);
   assert.match(read('src/services/homeroom-bot-dm.js'), /const design = await \(deps\.designThreads \|\| require\('\.\/design-threads'\)\)\.threadOf\(/,
     'a thread that holds a design is the design bot\'s');
   assert.doesNotMatch(read('src/services/design-threads.js'), /p\.kind = 'design'/, 'any private thread can hold one');
@@ -369,7 +373,7 @@ test('a version said in a thread is drawn small, with Open preview; nothing is r
   assert.match(row, /<DesignVersionCard conversationId=\{conversationId\} rootId=\{message\.threadRootId\} version=\{designVersion\}/);
   // And the thread's head opens it at the newest, while it is not open.
   const index = read('frontend/src/features/messages/index.tsx');
-  assert.match(index, /\{inMain && preview\?\.rootId !== rootId && isDesignThread\(root, replies\) \? \(/);
+  assert.match(index, /\{alone && preview\?\.rootId !== rootId && isDesignThread\(root, replies\) \? \(/);
 });
 
 test('a thread about a request is named by it, in its head and in the list', () => {

@@ -77,4 +77,3 @@
 /* (the tour fades the page out over the tab bar, a composer or a dock; in the product the page area is an empty frame the screens sit in, so there is nothing of the page in it to fade) */
 .phone .dock{border-top:0;background:transparent;padding:4px 12px 12px}
 .sheet .inp.focus{background:var(--surface)}
-.phone .barline{border-bottom:0}

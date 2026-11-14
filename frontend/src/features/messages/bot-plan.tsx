@@ -184,9 +184,11 @@ export const NO_PLAN_LAYOUT: PlanLayout = { hidden: new Set(), cardOf: new Map()
  *   - the newest plan, waiting or built, reads the newest card's state.
  *
  * One request, one story: a plan posted in its request's thread (the card
- * is the thread's root, and the main chat may also show the plan there) hides
- * no card, since the card is the way into the thread, and reads the state of
- * the card it hangs off.
+ * is the thread's root) hides no card, since the card is the way into the
+ * thread, and reads the state of the card it hangs off. A first version's
+ * thread hangs off no card: its pane hands its replies over with no thread
+ * above them, and they are read as the stream they were (14 Nov 2026,
+ * ./index.tsx ReplyThreadPanel).
  */
 export function planLayout(messages: readonly ConversationMessage[]): PlanLayout {
   const plans = new Map<string, ConversationMessage>();

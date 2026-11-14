@@ -6,7 +6,7 @@ import type { Typist } from './store';
  * answer can take minutes.
  *
  * While the bot is working on the viewer's message in the place on screen
- * (its main chat, or the thread that is open) and the box holds nothing to
+ * (the thread that is open: every chat with the bot is one) and the box holds nothing to
  * send, the send button is Stop. A press asks the server to end that answer
  * (api.stopBotAnswer); until the bot's typing clears there, or
  * STOPPING_MAX_MS pass, the button is a disabled "Stopping".

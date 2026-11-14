@@ -2,15 +2,16 @@
 
 // The AI tab's main view (#6019 follow-up): frontend/src/features/ai/.
 // Plan v3: "what needs you comes first, then your private threads, with a
-// lock on the tile, then Up next: what's moving without you, soonest first.
-// Ask Homeroom bot opens Main." 29 Oct 2026 (Evan): Needs you (it holds
+// lock on the tile, then Up next: what's moving without you, soonest first."
+// 14 Nov 2026: there is no Main Chat; every conversation with the bot is a
+// thread, and New chat (and the phone's Ask bar) starts one. 29 Oct 2026 (Evan): Needs you (it holds
 // other people's threads too), In progress (being worked on), Waiting (on
 // someone else; "Up next" until 30 Oct), each the bot's own word where it
 // works on the request; and a thread opens on this page. 30 Oct 2026: one
 // line a row, grouped by project, with chips to narrow them (./lists.tsx;
 // the three projects that need you most and a More for the rest); on a
-// phone the list and Main Chat are one drawer; Homeroom bot's status answer
-// reads the same lists.
+// phone the list and one thread (or a new chat) are one drawer; Homeroom
+// bot's status answer reads the same lists.
 //
 // What this pins:
 //   1. Needs you's order: the Needs you feed, the bot's plans waiting to be
@@ -19,16 +20,17 @@
 //   2. In progress and Waiting: what goes in each, in what order, and the
 //      words each row says, the bot's stages and claims among them.
 //   3. The screen's first render is the prerender: hidden, the bot's name,
-//      no rows; the lists load in effects, Main is docked only after mount.
-//   4. The routes: #homeroom-bot is the page, #homeroom-bot/main and
-//      #homeroom-bot/thread/<id> are Main and a thread in its column (1 Nov
-//      2026: never the Messages screen); #ai, the old address, lands there,
-//      and so does a Messages address of the bot's chat (./door.ts).
-//   5. A request, a change or a decision opens beside the list in Main's
-//      place (the side panel drawn as the page's column), or on its page
-//      with a way back here. 1 Nov 2026: Main Chat is the list's first row;
-//      the column is docked from 768px and holds Main or one thread, alone,
-//      and the row of whichever it is is lit.
+//      New chat, no rows; the lists load in effects, the column is docked
+//      only after mount.
+//   4. The routes: #homeroom-bot is the page, #homeroom-bot/thread/<id> a
+//      thread in its column (1 Nov 2026: never the Messages screen), and
+//      #homeroom-bot/new a new chat; #ai, the old address, lands there, and
+//      so do a Messages address of the bot's chat and the old Main Chat
+//      address, which the server resolves to a thread (./door.ts, ./where.ts).
+//   5. A request, a change or a decision opens beside the list (the side
+//      panel drawn as the page's column), or on its page with a way back
+//      here. The column is docked from 768px and holds one thread or a new
+//      chat, alone, and the row of whichever thread it is is lit.
 //   6. While the page is up, its lists are read again when a thread they
 //      list moves (./live.ts): which socket events count, one read a burst,
 //      none while the browser tab is hidden.
@@ -152,7 +154,7 @@ test('Needs you: the feed, then the bot\'s plans waiting for Build it, then priv
   // Private threads: a lock on the tile, and where they stand.
   assert.deepEqual([rows[5].who, words(rows[5].sub)], ['solo', 'Only you · Not in a community yet']);
   assert.deepEqual([rows[6].who, words(rows[6].sub)], ['me', 'Only you · Garden club · Not posted yet']);
-  assert.equal(rows[5].rootId, 91, 'a private thread opens in Main');
+  assert.equal(rows[5].rootId, 91, 'a private thread opens in the column');
   assert.equal(needHref({ kind: 'proposal', id: 1, number: 2, href: '#somewhere' }), '#somewhere', 'a card that says where it goes');
   assert.equal(needsYou(null, null).length, 0);
   assert.equal(needsYou(null, { private: [], next: [], waiting: [], live: [] }).length, 0, 'an older server, with no plans');
@@ -257,7 +259,7 @@ test('#6245: a row pressed in an opened group keeps its place, and a live refres
     rootId: null,
   }));
   const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
-    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 8,
+    hero: null, ready: true, owed: 8,
     rows: eight, lit: 'page:app/garden/dev/changes/7', progress: [], waiting: [], live: [],
     openRow() {}, openThread() {},
   });
@@ -314,7 +316,7 @@ test('#6262: threads with something new get a dot, a bold title and a count', ()
   });
   const { renderComponent } = require('./lib/render-tsx');
   const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
-    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 3,
+    hero: null, ready: true, owed: 3,
     rows: [line('need:proposal:1', 'New one', app, 2), line('need:proposal:2', 'Old one', app, 0),
       line('need:proposal:3', 'Other project', games, 1)],
     lit: null, progress: [], waiting: [], live: [], openRow() {}, openThread() {},
@@ -327,7 +329,7 @@ test('#6262: threads with something new get a dot, a bold title and a count', ()
   assert.match(html, /data-ai-chip="garden"[\s\S]*?data-ai-fresh=""/, 'a chip carries its number');
   // Nothing new: no dot, no Earlier line, no pill anywhere.
   const quiet = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
-    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 2,
+    hero: null, ready: true, owed: 2,
     rows: [line('need:proposal:1', 'One', app, 0), line('need:proposal:3', 'Two', games, 0)],
     lit: null, progress: [], waiting: [], live: [], openRow() {}, openThread() {},
   });
@@ -373,7 +375,7 @@ test('#6408: Live this week folds after its first few rows whatever is new', () 
   }));
   const { renderComponent } = require('./lib/render-tsx');
   const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
-    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    hero: null, ready: true, owed: 0,
     rows: [], lit: null, progress: [], waiting: [], live, openRow() {}, openThread() {},
   });
   const sheet = html.slice(html.indexOf('data-ai-sheet="live"'));
@@ -383,7 +385,7 @@ test('#6408: Live this week folds after its first few rows whatever is new', () 
   // None of the folded rows new: the plain words, as every other list says them.
   const older = live.map((t) => ({ ...t, unread: 0 }));
   const calm = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
-    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    hero: null, ready: true, owed: 0,
     rows: [], lit: null, progress: [], waiting: [], live: older, openRow() {}, openThread() {},
   });
   const calmSheet = calm.slice(calm.indexOf('data-ai-sheet="live"'));
@@ -418,7 +420,7 @@ test('#6312: the fold\'s box keeps the room a new row\'s dot stands in, folded o
     threadId: Number(key.replace(/\D/g, '')) + 40,
   });
   const html = renderComponent(LISTS, 'AiLists', {
-    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    hero: null, ready: true, owed: 0,
     rows: many.map((r, i) => line(`need:proposal:${i + 1}`, `Row ${i + 1}`, i === 6 ? 1 : 0)),
     lit: null, progress: [], waiting: [], live: [], openRow() {}, openThread() {},
   });
@@ -436,7 +438,7 @@ test('#6312: the fold\'s box keeps the room a new row\'s dot stands in, folded o
 
   // The Still waiting fold clips the same way, so it keeps the same room.
   const still = renderComponent(LISTS, 'AiLists', {
-    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0, rows: [],
+    hero: null, ready: true, owed: 0, rows: [],
     progress: [], live: [], openRow() {}, openThread() {},
     waiting: [thread(1, 71, 'vote'), thread(2, 72, 'not_read'), thread(3, 73, 'operator')],
   });
@@ -481,7 +483,7 @@ test('6 Nov 2026: Needs you and Waiting & in progress split each project by day,
     pill: { id: 'messages:ai.pill.vote' }, href: '#app/garden/dev/issues/1', rootId: null,
   });
   const html = renderComponent(LISTS, 'AiLists', {
-    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 3,
+    hero: null, ready: true, owed: 3,
     rows: [line('need:proposal:1', 'Today one', today), line('need:proposal:3', 'Yesterday one', yesterday),
       line('need:proposal:2', 'Today two', today), line('need:proposal:4', 'Older one', older)],
     lit: null,
@@ -518,7 +520,7 @@ test('6 Nov 2026: Needs you and Waiting & in progress split each project by day,
     next: null, ready: true, loading: false, failed: false, more() {}, retry() {},
   };
   const withHistory = renderComponent(LISTS, 'AiLists', {
-    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    hero: null, ready: true, owed: 0,
     rows: [], progress: [], waiting: [], live: [thread(3, 73, 'live', { at: today })],
     history, openRow() {}, openThread() {}, openHistory() {},
   });
@@ -784,7 +786,7 @@ test('#6158: a Waiting row says what it waits on, and the rows nobody is moving 
   // the ones that are moving stay in the section above it.
   const { renderComponent } = require('./lib/render-tsx');
   const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
-    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, rows: [], owed: 0,
+    hero: null, ready: true, rows: [], owed: 0,
     progress: [], live: [], openRow() {}, openThread() {},
     waiting: [thread(1, 71, 'queued', { work: { line: { code: 'queued', place: 2 } } }), thread(2, 72, 'not_read'), thread(3, 73, 'operator')],
   });
@@ -843,7 +845,7 @@ test('#6237: a change on a GitHub-hosted project is "PR N" on the bot tab\'s row
   // The rendered row's number cell says PR; "#6230" is nowhere on the page.
   const { renderComponent } = require('./lib/render-tsx');
   const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
-    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, rows: [], owed: 0,
+    hero: null, ready: true, rows: [], owed: 0,
     progress: [], waiting: [change], live: [], openRow() {}, openThread() {},
   });
   assert.match(html, />PR 6230</, 'the number cell');
@@ -1073,22 +1075,25 @@ test('the first render is the prerender: hidden, the bot\'s name, no rows; lists
   // Data only once the screen is shown to somebody signed in.
   assert.match(src, /if \(!visible \|\| typeof window === 'undefined' \|\| !\(window as any\)\.App\?\.user\) return undefined;/);
   assert.match(src, /readJson<AiWork>\(`\/api\/ai\/work\$\{qs\}`, init\)/);
-  // Main docked beside it only on a wide window, after mount.
+  // The column docked beside it only on a wide window, after mount.
   assert.match(src, /const \[wide, setWide\] = useState\(false\);/);
   assert.match(src, /\{docked \? \(\s*<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"/);
   // #6425: nothing is drawn beside the lists; the chat is mounted only when
   // the column is open, or a thread asked for is still to be put there.
   assert.match(src, /const columnOpen = docked && !!column;/);
   assert.match(src, /const conversationUp = columnOpen \|\| !!at\?\.threadRootId;/);
-  assert.match(src, /<EmbeddedConversation conversationId=\{botId!\} active=\{visible && columnOpen\} at=\{at\} mainChat \/>/);
-  assert.match(src, /void loadConversations\(\);/, 'and the list is read, so Main\'s row says what is new while it is closed');
-  // Ask Homeroom bot opens Main; a private thread opens in the column, and
-  // before the page knows its width, by its address.
-  assert.match(src, /<a\s+href="#homeroom-bot\/main"\s+className="messages-composer-card ai-askbar-card"/);
+  // 14 Nov 2026: threads only. Nothing of the conversation's own stream is
+  // read, drawn or marked read (messages/store.ts loadThreadsOnly).
+  assert.match(src, /<EmbeddedConversation conversationId=\{botId!\} active=\{visible && columnOpen\} at=\{at\} threadsOnly \/>/);
+  assert.match(src, /void loadConversations\(\);/, 'and the list of conversations is read, for the tab\'s badge');
+  // Ask Homeroom bot opens a new chat; a private thread opens in the column,
+  // and before the page knows its width, by its address.
+  assert.match(src, /<a\s+href=\{botNewAddress\(null\)\}\s+className="messages-composer-card ai-askbar-card"/);
   assert.match(src, /if \(!\(wide \|\| phone\)\) \{ go\(botTabAddress\(next\)\); return; \}/);
   // What the column shows is read from the store after mount only.
   assert.match(src, /const column: Column = !mounted \|\| !botId \? null/);
-  assert.match(src, /const botRow = mounted \? snap\.conversations\.find/);
+  // No Main Chat to count what is new: a thread's row carries its own.
+  assert.doesNotMatch(src, /botRow|mainOpen|openMain|at: 'main'/);
 });
 
 test('a page drawn before sign-in is confirmed asks again once it is, and its Ask bar starts at the rail', () => {
@@ -1101,15 +1106,18 @@ test('a page drawn before sign-in is confirmed asks again once it is, and its As
   assert.match(src, /\}, \[visible, wide, phone, botId, session\]\);/);
   assert.match(read('public/js/app.js'), /document\.dispatchEvent\(new CustomEvent\('sv:session', \{\s+detail: \{ user: App\.user, verifiedSession: true \},/,
     'the confirmation it waits for');
-  // A wide window whose Main is not docked (yet, or at all) keeps the bar
+  // A wide window whose column is not docked (yet, or at all) keeps the bar
   // on the page, clear of the sidebar.
   assert.match(read('public/css/app.css'), /#ai-screen \.ai-askbar \{\s+position: fixed;\s+(\/\*[^*]*\*+([^/*][^*]*\*+)*\/\s+)?inset-inline-start: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter, 0px\)\);\s+inset-inline-end: var\(--platform-gutter, 0px\);/);
 });
 
-test('#homeroom-bot is the page; /main and /thread/<id> are Main and a thread in its column; #ai lands there', () => {
+test('#homeroom-bot is the page; /thread/<id> is a thread in its column; the old /main is resolved to one; #ai lands there', () => {
   const app = read('public/js/app.js');
   // 1 Nov 2026: every address is the page's, and says where in its chat.
-  assert.match(app, /if \(parts\[0\] === 'homeroom-bot'\) \{[\s\S]*?App\.setChromeless\(false\);\s+App\.navigateToAi\(\);\s+(?:\/\/[^\n]*\n\s+)*if \(parts\.length === 1\) \{\s+window\.UsernodeReact\?\.ai\?\.closeColumn\?\.\(\);\s+\}\s+if \(parts\[1\] === 'request' \|\| parts\[1\] === 'change' \|\| parts\[1\] === 'decision'\) \{\s+window\.UsernodeReact\?\.ai\?\.openItem\?\.\('#' \+ parts\.join\('\/'\)\);\s+\}\s+if \(parts\[1\] === 'main' \|\| parts\[1\] === 'thread' \|\| parts\[1\] === 'm'\) \{\s+const at = App\._messagesExtras\(parts\[1\] === 'main' \? parts\.slice\(2\) : parts\.slice\(1\)\);\s+window\.UsernodeReact\?\.ai\?\.openAt\?\.\(\{/);
+  assert.match(app, /if \(parts\[0\] === 'homeroom-bot'\) \{[\s\S]*?App\.setChromeless\(false\);\s+App\.navigateToAi\(\);\s+(?:\/\/[^\n]*\n\s+)*if \(parts\.length === 1\) \{\s+window\.UsernodeReact\?\.ai\?\.closeColumn\?\.\(\);\s+\}\s+if \(parts\[1\] === 'request' \|\| parts\[1\] === 'change' \|\| parts\[1\] === 'decision'\) \{\s+window\.UsernodeReact\?\.ai\?\.openItem\?\.\('#' \+ parts\.join\('\/'\)\);\s+\}\s+if \(parts\[1\] === 'main' \|\| parts\[1\] === 'thread' \|\| parts\[1\] === 'm'\) \{\s+const at = App\._messagesExtras\(parts\[1\] === 'main' \? parts\.slice\(2\) : parts\.slice\(1\)\);\s+if \(at\.threadRootId\) \{\s+window\.UsernodeReact\?\.ai\?\.openAt\?\.\(\{/);
+  // 14 Nov 2026: an address with no thread is from before (Main Chat, or a
+  // message named alone): the tab asks the server which thread it is now.
+  assert.match(app, /\} else \{\s+(?:\/\/[^\n]*\n\s+)*window\.UsernodeReact\?\.ai\?\.openOld\?\.\('#' \+ parts\.join\('\/'\)\);\s+\}/);
   assert.doesNotMatch(app, /messages\.openBotThread\(root\)/, 'never the Messages screen');
   assert.match(app, /case 'homeroom-bot':[^\n]*\n\s+case 'ai': return 'ai-screen';/);
   // The old address is an alias: rewritten in place, then routed as the new one.
@@ -1122,12 +1130,20 @@ test('#homeroom-bot is the page; /main and /thread/<id> are Main and a thread in
 test('the way into the bot\'s chat: each address and each door names a place in it, on its tab', () => {
   const door = loadTsx('frontend/src/features/ai/door.ts');
   const plain = (v) => JSON.parse(JSON.stringify(v));
-  assert.equal(door.botTabAddress(null), '#homeroom-bot/main');
+  // 14 Nov 2026: a place is a thread; with none, the page itself (there is
+  // no Main Chat), and a message named alone is `/m/<id>`, whose thread the
+  // tab asks the server for.
+  assert.equal(door.botTabAddress(null), '#homeroom-bot');
   assert.equal(door.botTabAddress({ threadRootId: 139 }), '#homeroom-bot/thread/139');
   assert.equal(door.botTabAddress({ threadRootId: 139, focusMessageId: 150 }), '#homeroom-bot/thread/139/m/150');
-  assert.equal(door.botTabAddress({ focusMessageId: 150 }), '#homeroom-bot/main/m/150');
+  assert.equal(door.botTabAddress({ focusMessageId: 150 }), '#homeroom-bot/m/150');
   assert.equal(door.botTabAddress({ threadRootId: 139, focusMessageId: 139 }), '#homeroom-bot/thread/139', 'the root is no message to land on in its own thread');
-  assert.equal(door.botTabAddress({ threadRootId: -4 }), '#homeroom-bot/main', 'nothing that is not an id');
+  assert.equal(door.botTabAddress({ threadRootId: -4 }), '#homeroom-bot', 'nothing that is not an id');
+  // An address from before names the same place: the chat itself was Main Chat.
+  assert.equal(door.BOT_OLD_MAIN, '#homeroom-bot/main');
+  assert.equal(door.botOldAddress(null), '#homeroom-bot/main');
+  assert.equal(door.botOldAddress({ focusMessageId: 150 }), '#homeroom-bot/m/150');
+  assert.equal(door.botOldAddress({ threadRootId: 139 }), '#homeroom-bot/thread/139');
   assert.deepEqual(plain(door.botTabAt('#homeroom-bot/thread/139/m/150')), { threadRootId: 139, focusMessageId: 150 });
   assert.deepEqual(plain(door.botTabAt('#homeroom-bot/main')), { threadRootId: null, focusMessageId: null });
   assert.deepEqual(plain(door.botTabAt('#homeroom-bot/m/150')), { threadRootId: null, focusMessageId: 150 });
@@ -1136,7 +1152,7 @@ test('the way into the bot\'s chat: each address and each door names a place in 
   assert.equal(door.botTabFromMessages('#messages/2', 2), '#homeroom-bot/main');
   assert.equal(door.botTabFromMessages('#messages/2/thread/139', 2), '#homeroom-bot/thread/139');
   assert.equal(door.botTabFromMessages('messages/2/thread/139/m/141', 2), '#homeroom-bot/thread/139/m/141');
-  assert.equal(door.botTabFromMessages('#messages/2/m/141', 2), '#homeroom-bot/main/m/141');
+  assert.equal(door.botTabFromMessages('#messages/2/m/141', 2), '#homeroom-bot/m/141');
   assert.equal(door.botTabFromMessages('#messages/3/thread/139', 2), null, 'any other chat is Messages\'');
   assert.equal(door.botTabFromMessages('#messages/2', null), null, 'nor while which chat is the bot\'s is not known');
   assert.equal(door.botTabFromMessages('#messages/app/garden', 2), null);
@@ -1154,9 +1170,10 @@ test('the way into the bot\'s chat: each address and each door names a place in 
   // A refresh on `#homeroom-bot/thread/<id>` (or that link in a new tab): on
   // a wide window a thread's ask waits until the page knows the bot's chat,
   // since `showAt` puts the thread in the store by that id and nothing else
-  // opens the column. Main, a page and a phone's thread are taken at once.
-  assert.match(src, /if \(!ask \|\| ask\.seq === askTaken\.current \|\| !visible \|\| !\(wide \|\| phone\)\) return;\s+if \(ask\.at\?\.threadRootId && !botId && !phone\) return;\s+askTaken\.current = ask\.seq;\s+how\.current = 'row';\s+if \(ask\.close\) closeColumn\(\);\s+else if \(ask\.item\) openItem\(ask\.item\);\s+else if \(ask\.at\) showAt\(ask\.at\);\s+\}, \[ask, visible, wide, phone, botId\]\);/);
-  assert.match(src, /if \(botId && next\.threadRootId\) embed\(botId, next\);/, 'which is where the waited-for id is used');
+  // opens the column. A page and a phone's thread are taken at once.
+  assert.match(src, /if \(!ask \|\| ask\.seq === askTaken\.current \|\| !visible \|\| !\(wide \|\| phone\)\) return;\s+if \(ask\.at\?\.threadRootId && !botId && !phone\) return;\s+askTaken\.current = ask\.seq;\s+if \(ask\.close\) closeColumn\(\);\s+else if \(ask\.item\) openItem\(ask\.item\);\s+else if \(ask\.at\) showAt\(ask\.at\);\s+\}, \[ask, visible, wide, phone, botId\]\);/);
+  assert.match(src, /if \(botId\) embed\(botId, next, \{ threadsOnly: true \}\);/, 'which is where the waited-for id is used');
+  assert.match(src, /const showAt = \(next: BotAt\) => \{\s+if \(!next\.threadRootId\) return;/, 'a place with no thread is nothing to show');
   // The detail an address names (`/thread/<id>/design/<v>`) is reopened after
   // that ask, in the same commit: taken first, the thread's ask would close it.
   const askAt = src.indexOf('askTaken.current = ask.seq;');
@@ -1168,20 +1185,24 @@ test('the way into the bot\'s chat: each address and each door names a place in 
 test('every door into the bot\'s chat lands on its tab, never the Messages screen', () => {
   const store = read('frontend/src/features/messages/store.ts');
   // open(), openAddress(), the bot doors, a quote and a request's See progress.
-  assert.match(store, /if \(validId\(conversationId\) && conversationId === botConversationId\(\)\) \{ openBotTab\(null\); return; \}/);
+  // 14 Nov 2026: a door that only knows the chat opens a new one.
+  assert.match(store, /if \(validId\(conversationId\) && conversationId === botConversationId\(\)\) \{ goBotAddress\(botNewAddress\(null\)\); return; \}/);
   assert.match(store, /if \(\/\^#homeroom-bot\(\?:\\\/\|\$\)\/\.test\(href\)\) \{ goBotAddress\(href\); return; \}/);
   assert.match(store, /const botTab = botTabFromMessages\(href, botConversationId\(\)\);\s+if \(botTab\) \{ goBotAddress\(botTab\); return; \}/);
   const openBot = store.slice(store.indexOf('export async function openBot('), store.indexOf('export async function openBotRequest('));
-  assert.match(openBot, /openBotTab\(null\);/);
-  assert.doesNotMatch(openBot, /\bopen\(id\)/);
-  assert.match(store, /if \(at\) openBotTab\(\{ threadRootId: null, focusMessageId: at \}\);/, 'See progress, at the request\'s message');
+  assert.match(openBot, /goBotAddress\(thread\.href\);/, 'the thread about a change');
+  assert.match(openBot, /goBotAddress\(botNewAddress\(\{ project: slug \}\)\);/, 'else a new chat set to its project');
+  assert.doesNotMatch(openBot, /\bopen\(id\)|openBotTab\(null\)/);
+  assert.match(store, /if \(track\?\.askId && track\.askThreadId\) \{\s+openBotTab\(\{ threadRootId: track\.askThreadId, focusMessageId: track\.askId \}\);/, 'See progress, at its plan\'s thread');
+  assert.match(store, /await openBotMessage\(validId\(messageId\) \? Number\(messageId\) : null\);/, 'a quote, in the thread its message is in');
+  assert.match(store, /const href = botOldAddress\(\{ threadRootId: state\.route\.threadRootId, focusMessageId: state\.route\.focusMessageId \}\);/, 'a cold Messages link, by the old address the tab resolves');
   assert.match(store, /openBotThread: \(rootId: number\) => \{ openBotTab\(\{ threadRootId: rootId, focusMessageId: null \}\); \},/);
   // A cold link: once the store learns the chat is the bot's, as for a channel.
   assert.match(store, /if \(active\.homeroomBot && active\.kind !== 'channel'\) \{\s+noteBotConversation\(active\.id\);\s+if \(state\.route\.open && !state\.route\.embedded\) \{\s+publish\(\{ active \}\);\s+if \(botToTab\(\)\) return;/);
   assert.match(store, /channelToHub\(\);\s+botToTab\(\);/, 'and when the list lands');
   // Design threads, bell rows and the first session name the tab.
   assert.match(read('src/services/design-threads.js'), /href: `#homeroom-bot\/thread\/\$\{Number\(opened\.messageId\)\}`,/);
-  assert.match(read('frontend/src/features/first-session/index.tsx'), /else if \(screen === 'bot' && conversationId\) window\.location\.hash = '#homeroom-bot\/main';/);
+  assert.match(read('frontend/src/features/first-session/index.tsx'), /else if \(screen === 'bot' && conversationId\) void openFirstVersion\(slug\);/);
   // The inbox does not list it.
   const { buildInbox } = loadTsx('frontend/src/features/messages/inbox.ts');
   const entries = buildInbox({ conversations: [
@@ -1191,58 +1212,70 @@ test('every door into the bot\'s chat lands on its tab, never the Messages scree
   assert.deepEqual(entries.map((e) => e.key), ['person:3']);
 });
 
-test('the screen renders as the prerender does: hidden, the bot\'s name, Needs you, the Ask bar, no rows', () => {
+test('the screen renders as the prerender does: hidden, the bot\'s name, New chat, Needs you, the Ask bar, no rows', () => {
   const { renderComponent } = require('./lib/render-tsx');
   const html = renderComponent('frontend/src/features/ai/index.tsx', 'AiScreen', {});
   // (React hoists the bot's picture as an image preload ahead of it.)
   assert.match(html, /^(<link rel="preload" as="image" href="\/brand\/homeroom-mark\.png"\/>)?<main id="ai-screen" class="hidden flex-1 overflow-y-auto platform-safe-scroll" data-page-bounce=""/);
   assert.match(html, /<h1 class="[^"]*">Homeroom bot<\/h1>/);
   assert.match(html, /Needs you/);
-  assert.match(html, /<a href="#homeroom-bot\/main" class="messages-composer-card ai-askbar-card" aria-label="Ask Homeroom bot">/);
+  assert.match(html, /<a href="#homeroom-bot\/new" class="messages-composer-card ai-askbar-card" aria-label="Ask Homeroom bot">/);
   assert.ok(!html.includes('data-ai-line'), 'no rows before the effects read them');
   assert.ok(!html.includes('ai-drawer'), 'and no drawer before mount, on a phone either');
-  assert.ok(!html.includes('data-ai-main=""'), 'and Main is not docked before mount');
-  // 1 Nov 2026: Main Chat is the list's first row, from the first render, lit only once mounted.
-  assert.match(html, /<div class="[^"]*" data-ai-sheet="main"><button type="button" class="[^"]*" data-ai-main-row=""><img [^>]*\/><span class="[^"]*">Main Chat<\/span><\/button><\/div>/);
+  assert.ok(!html.includes('data-ai-main=""'), 'and the column is not docked before mount');
+  // 14 Nov 2026: no Main Chat row. New chat is in the head from the first
+  // render, after search: it needs nothing read.
+  assert.doesNotMatch(html, /data-ai-main-row|data-ai-sheet="main"|Main Chat/);
+  assert.match(html, /data-ai-search-toggle="">.*?<\/button><button type="button" title="New chat" data-bot-new-thread="" data-ai-new-chat="" class="[^"]*bg-violet-600[^"]*"><svg[^>]*>.*?<\/svg><span>New chat<\/span><\/button><\/section>/s);
   assert.ok(!html.includes('data-ai-lit'), 'nothing is lit before the page knows what its column shows');
 });
 
-test('Main Chat is the list\'s first row: the bot\'s mark, its name, what is new in words, lit while in the column', () => {
+test('there is no Main Chat row: Needs you leads the lists, a private thread\'s row carries its own new mark, and the thread in the column is the lit row', () => {
   const { renderComponent } = require('./lib/render-tsx');
   const rows = [
-    { key: 'private:139', title: 'A weekly email', app: null, who: 'solo', sub: { id: 'messages:ai.row.privateIdea' }, pill: null, href: null, rootId: 139 },
-    { key: 'private:730', title: 'A darker header', app: null, who: 'solo', sub: { id: 'messages:ai.row.privateIdea' }, pill: null, href: null, rootId: 730 },
+    { key: 'private:139', title: 'A weekly email', app: null, who: 'solo', sub: { id: 'messages:ai.row.privateIdea' }, pill: null, href: null, rootId: 139, threadId: null, unread: 0 },
+    { key: 'private:730', title: 'A darker header', app: null, who: 'solo', sub: { id: 'messages:ai.row.privateIdea' }, pill: null, href: null, rootId: 730, threadId: null, unread: 0 },
   ];
-  const props = (main, lit = null) => ({
-    hero: null, main: { open() {}, ...main }, lit, ready: true, rows, owed: 0, progress: [], waiting: [], live: [], openRow() {}, openThread() {},
+  const props = (lit = null, list = rows) => ({
+    hero: null, lit, ready: true, rows: list, owed: 0, progress: [], waiting: [], live: [], openRow() {}, openThread() {},
   });
   const LISTS = 'frontend/src/features/ai/lists.tsx';
-  const lit = renderComponent(LISTS, 'AiLists', props({ lit: true, unread: 2 }));
-  // First, before Needs you; its unread count in words.
-  assert.ok(lit.indexOf('data-ai-main-row') < lit.indexOf('data-ai-list="work"'), 'the first row');
-  assert.match(lit, /data-ai-main-row="" data-ai-lit="" aria-current="true">/);
-  assert.match(lit, /<span class="[^"]*" data-ai-main-unread="">2 new<\/span>/);
-  assert.equal(message('messages:ai.main.new', { count: 1 }), '1 new');
-  const quiet = renderComponent(LISTS, 'AiLists', props({ lit: false, unread: 0 }, 'private:730'));
-  assert.doesNotMatch(quiet, /data-ai-main-row="" data-ai-lit/, 'Main is not lit while a thread is in the column');
-  assert.doesNotMatch(quiet, /data-ai-main-unread/, 'and nothing new says nothing');
+  // 14 Nov 2026: every conversation with the bot is a thread, so the list
+  // has no row for the chat itself; the title's sheet is followed by Needs you.
+  const none = renderComponent(LISTS, 'AiLists', props());
+  assert.doesNotMatch(none, /data-ai-main-row|data-ai-main-unread|data-ai-sheet="main"|Main Chat/);
+  assert.match(none, /data-ai-sheet="head">[\s\S]*?<\/div><div class="[^"]*" data-ai-sheet="open">/, 'Needs you follows the head');
+  assert.throws(() => message('messages:ai.main.new', { count: 1 }));
+  assert.throws(() => message('messages:store.header.main'));
+  const quiet = renderComponent(LISTS, 'AiLists', props('private:730'));
   // The thread in the column is the lit row, where you are, and only it.
   assert.equal((quiet.match(/data-ai-lit=""/g) || []).length, 1);
   assert.match(quiet, /data-ai-line="private" data-ai-lit="" aria-current="true"><span[^>]*>[\s\S]*?A darker header/);
-  // #6424: the lit card itself is tinted, and the row inside it draws no
-  // smaller box with its own corners, so no uneven ring shows round the blue.
-  const litSheet = lit.match(/<div class="([^"]*)" data-ai-sheet="main"><button type="button" class="([^"]*)"/);
-  assert.ok(litSheet, 'Main Chat\'s card is first');
-  assert.match(litSheet[1], /bg-\[color:var\(--lit-tint\)\]/, 'the open chat\'s card takes the lit tint');
-  assert.doesNotMatch(litSheet[2], /rounded-md|--lit-tint/, 'and its row draws no tinted box of its own');
-  const quietSheet = quiet.match(/<div class="([^"]*)" data-ai-sheet="main"/);
-  assert.ok(quietSheet, 'Main Chat\'s card');
-  assert.match(quietSheet[1], /bg-\[color:var\(--dc-sheet-solid\)\]/, 'unlit, the card is the plane fill as before');
   const src = read(LISTS);
   assert.match(src, /const LIT_ROW = '[^']*bg-\[color:var\(--lit-tint\)\] text-\[color:var\(--lit-ink\)\]';/, 'the lit tint and ink, as the rail\'s rows are');
-  // The page lights what the column shows (./column.ts): Main, a thread, a
-  // page (#6218), or nothing while a blank thread holds it.
-  assert.match(read('frontend/src/features/ai/index.tsx'), /const shown = columnKey\(column\);\s+const lit = shown === 'new' \? null : shown;/);
+  assert.doesNotMatch(src, /MainChatRow|MAIN_LIT|main\.(lit|unread|open)/);
+  // A private thread's own new mark (no Main Chat counts it): the server's
+  // count on its row, as any thread's (#6262).
+  const { needsYou, freshCount } = loadTsx(MODEL);
+  const work = { private: [
+    { rootId: 139, title: 'A weekly email', kind: 'ask', app: null, at: null, unread: 2 },
+    { rootId: 730, title: 'A darker header', kind: 'ask', app: null, at: null },
+  ], needs: [], next: [], waiting: [], live: [] };
+  const made = needsYou([], work);
+  assert.deepEqual(made.map((row) => [row.rootId, row.threadId, row.unread]), [[139, null, 2], [730, null, 0]], 'absent from an older server reads as none');
+  assert.equal(freshCount(made), 1);
+  assert.match(read(MODEL), /unread: Math\.max\(0, Number\(p\.unread\) \|\| 0\),/);
+  const fresh = renderComponent(LISTS, 'AiLists', props(null, made));
+  assert.match(fresh, /data-ai-fresh=""/, 'counted on the chips as what is new');
+  // The page lights what the column shows (./column.ts): a thread, a page
+  // (#6218), or nothing while a new chat holds it.
+  const index = read('frontend/src/features/ai/index.tsx');
+  assert.match(index, /const shown = columnKey\(column\);\s+const lit = shown === 'new' \? null : shown;/);
+  // Opening a private thread clears its mark at once, by its first message,
+  // until the lists are read again (the thread marks itself read when drawn).
+  assert.match(index, /if \(rootId\) setSeenRoots\(\(had\) => \(had\.has\(rootId\) \? had : new Set\(\[\.\.\.had, rootId\]\)\)\);/);
+  assert.match(index, /\(row\.threadId && seenThreads\.has\(row\.threadId\)\) \|\| \(!row\.threadId && row\.rootId && seenRoots\.has\(row\.rootId\)\) \? \{ \.\.\.row, unread: 0 \} : row/);
+  assert.match(index, /const keep = openRoot && had\.has\(openRoot\) \? \[openRoot\] : \[\];/, 'a reply that lands later is new again');
 });
 
 // #6160 (2 Nov 2026): In progress and Waiting were two sections inside the
@@ -1267,7 +1300,7 @@ test('#6160: Waiting & in progress is a card of its own between Needs you and Li
   ];
   const live = [{ ...row(9, app, 'live'), group: 'live' }];
   const props = (extra = {}) => ({
-    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, rows: [], owed: 0,
+    hero: null, ready: true, rows: [], owed: 0,
     progress: [], waiting: [], live: [], openRow() {}, openThread() {}, ...extra,
   });
   const html = renderComponent(LISTS, 'AiLists', props({ progress, waiting, live }));
@@ -1379,7 +1412,7 @@ test('#6153: a design thread filed as a request is the request\'s row, which ope
   // The row opens the thread (index.tsx openThread), and is lit while it is in the column.
   const { renderComponent } = require('./lib/render-tsx');
   const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
-    hero: null, main: { open() {}, lit: false, unread: 0 }, lit: 'private:731', ready: true, rows: [], owed: 0,
+    hero: null, lit: 'private:731', ready: true, rows: [], owed: 0,
     progress: [row], waiting: [], live: [], openRow() {}, openThread() {},
   });
   assert.match(html, /data-ai-line="building" data-ai-lit="" aria-current="true">[\s\S]*?Design: Ear Trainer 14/);
@@ -1448,7 +1481,7 @@ test('#6271: a private thread marked done this week is Live this week\'s, and on
   const { renderComponent } = require('./lib/render-tsx');
   const solo = { rootId: 806, title: 'An app for our garden plot rota', kind: 'idea', app: null, at: null, state: 'done', doneAt: '2026-11-02T12:00:00Z' };
   const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
-    hero: null, main: { open() {}, lit: false, unread: 0 }, lit: 'private:801', ready: true, rows: [], owed: 0,
+    hero: null, lit: 'private:801', ready: true, rows: [], owed: 0,
     progress: [], waiting: [], live: liveThisWeek({ ...work, private: [...work.private, solo] }, now), openRow() {}, openThread() {},
   });
   assert.match(html, /data-ai-line="closed"[^>]*[\s\S]*?M12 15v2m-6 4h12/, 'drawn with the lock glyph');
@@ -1460,15 +1493,19 @@ test('#6271: a private thread marked done this week is Live this week\'s, and on
   assert.ok(html.indexOf('data-ai-line="live"') < html.indexOf('data-ai-line="closed"'), 'under the project after its live row');
 });
 
-test('the column from 768px: Main, or one thread alone under its own head; a page the panel holds puts Main back under it', () => {
+test('the column from 768px: one thread, or a new chat, alone under its own head; a page the panel holds gives the lists back when it closes', () => {
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /const WIDE = '\(min-width: 768px\)';/);
-  // Main's bar only over Main; a thread or a blank one has its own head.
-  assert.match(src, /\{threadUp \? null : \(\s*<header className="ai-main-head" data-ai-main-head="">/);
-  assert.match(src, /data-ai-column=\{columnOpen \? \(threadUp \? 'thread' : 'main'\) : undefined\}/);
-  // A place in the chat: the panel gives the column back, a blank thread goes, Main closes a thread.
+  // No bar of the column's own: a thread and a new chat bring their heads.
+  assert.doesNotMatch(src, /ai-main-head|data-ai-main-head|data-ai-main-close|ai-main-title/);
+  assert.match(src, /data-ai-column=\{columnOpen && threadUp \? \(blank \? 'new' : 'thread'\) : undefined\}/);
+  // The column is a thread, a new chat or a page: nothing else, so nothing
+  // is open beside the lists until one of them is asked for.
+  assert.match(src, /: panelRoute \? \{ at: 'page', route: panelRoute \}\s+: blank \? \{ at: 'new' \}\s+: openRoot \? \{ at: 'thread', rootId: openRoot \} : null;/);
+  assert.match(src, /: phone \? \(level === 1 \? \(openRoot \? \{ at: 'thread', rootId: openRoot \} : blank \? \{ at: 'new' \} : null\) : null\)/);
+  // A thread asked for: the panel gives the column back, a new chat goes.
   // 1 Nov 2026 (C1): and a design's preview goes, unless it is that thread's.
-  assert.match(src, /const showAt = \(next: BotAt\) => \{\s+sidePanel\(\)\?\.close\?\.\(\);\s+closeNewThread\(\);\s+if \(!detail \|\| detail\.kind === 'design'\) \{\s+if \(!next\.threadRootId \|\| next\.threadRootId !== detail\?\.ref\.rootId\) closeDetail\(\);\s+\}\s+if \(!next\.threadRootId && openRoot\) closeThread\(\);\s+setAt\(\{ \.\.\.next \}\);\s+(?:\/\/[^\n]*\n\s+)*if \(botId && next\.threadRootId\) embed\(botId, next\);\s+(?:\/\/[^\n]*\n\s+)*setMainOpen\(!next\.threadRootId \|\| column\?\.at === 'main'\);\s+if \(phone\) setLevel\(1\);\s+\};/);
+  assert.match(src, /const showAt = \(next: BotAt\) => \{\s+if \(!next\.threadRootId\) return;\s+sidePanel\(\)\?\.close\?\.\(\);\s+closeNewThread\(\);\s+if \(!detail \|\| detail\.kind === 'design'\) \{\s+if \(next\.threadRootId !== detail\?\.ref\.rootId\) closeDetail\(\);\s+\}\s+setAt\(\{ \.\.\.next \}\);\s+(?:\/\/[^\n]*\n\s+)*if \(botId\) embed\(botId, next, \{ threadsOnly: true \}\);\s+if \(phone\) setLevel\(1\);\s+\};/);
   assert.match(src, /openPage\(row\.href, row\.app, row\.title, aboutRow\(row\)\);/);
   assert.match(src, /if \(openPublic\(href, app, title\)\) underPanel\(\);/);
   // 3 Nov 2026: the address is the column's, written by one effect (#6215).
@@ -1480,28 +1517,32 @@ test('the column from 768px: Main, or one thread alone under its own head; a pag
   const css = read('public/css/app.css');
   assert.match(css, /@media \(max-width: 1023\.98px\) \{[^}]*?\*\/\s+body:not\(:has\(#ai-screen:not\(\.hidden\)\)\) #platform-side-panel \{\s+display: none;\s+\}\s+\}\s+@media \(max-width: 767\.98px\) \{\s+#platform-side-panel \{\s+display: none;\s+\}\s+\}/);
   assert.match(css, /@media \(max-width: 1023\.98px\) \{\s+body:has\(#ai-screen:not\(\.hidden\)\) \{ --ai-list-min: 280px; \}\s+\}/);
+  assert.doesNotMatch(css, /\.ai-main-head|data-main-chat/, 'Main Chat\'s head and its hidden stream went with it');
 });
 
 test('the tab\'s bare address closes what is open beside the lists (#6425)', () => {
   // Pressing the tab, or Back to `#homeroom-bot`, asks the page to close the
-  // column; a link to Main, a thread or an item still opens it.
+  // column; a link to a thread or an item still opens it.
   const app = read('public/js/app.js');
   assert.match(app, /if \(parts\.length === 1\) \{\s+window\.UsernodeReact\?\.ai\?\.closeColumn\?\.\(\);\s+\}/);
   const door = read('frontend/src/features/ai/door.ts');
-  assert.match(door, /export function askBotClose\(\): void \{\s+seq \+= 1;\s+asked = \{ at: null, item: null, close: true, seq \};/);
+  // Except the second pass of a link to a new chat, whose own address the
+  // page has since replaced with the bare tab's (tests/ai-where.test.js).
+  assert.match(door, /export function askBotClose\(\): void \{\s+if \(asked\?\.fresh && typeof window !== 'undefined'\s+&& isNewChatEcho\([^\n]+\)\) return;\s+seq \+= 1;\s+asked = \{ at: null, item: null, close: true, seq \};/);
   assert.match(door, /closeColumn: askBotClose/);
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /if \(ask\.close\) closeColumn\(\);/);
   assert.match(src, /if \(ask\.item\) openItem\(ask\.item\);\s+else if \(ask\.at\) showAt\(ask\.at\);/);
 });
 
-test('a thread opens on this page: beside the list in Main\'s place, or on its page with a way back here', () => {
+test('a thread opens on this page: beside the list in its column, or on its page with a way back here', () => {
   const src = read('frontend/src/features/ai/index.tsx');
-  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"\s+aria-labelledby=\{threadUp \? undefined : 'ai-main-title'\}\s+data-ai-main=""/);
-  assert.match(src, /<span id="ai-main-title"[^>]*>\s+\{t\('messages:store\.header\.main'\)\}/);
-  assert.match(src, /\{t\('messages:ai\.main\.sub'\)\}/);
-  assert.equal(message('messages:ai.main.sub'), 'Only you can see this chat');
-  assert.equal(message('messages:store.header.main'), 'Main Chat', 'Main Chat, over it, in Messages and in the drawer alike');
+  assert.match(src, /<aside\s+id="ai-main-pane"\s+ref=\{mainRef\}\s+className="ai-main-pane"\s+data-ai-main=""/);
+  // The column has no name of its own (it was Main Chat's): a thread says
+  // "Only you can see this thread" in its own head.
+  assert.doesNotMatch(src, /aria-labelledby|messages:ai\.main\.|messages:store\.header\.main/);
+  assert.throws(() => message('messages:ai.main.sub'));
+  assert.equal(message('messages:ai.thread.sub'), 'Only you can see this thread');
   // The panel takes it wherever it can (a wide window), with the row's project and title; its page otherwise.
   assert.match(src, /if \(sidePanel\(\)\?\.take\?\.\(href\.replace\(\/\^#\/, ''\), \{ place: app, label \}\)\) return true;/);
   assert.match(src, /if \(isTopicHref\(href\)\) improve\(\)\?\.enterTopicFrom\?\.\(BOT_PAGE\);\s+go\(href\);/,
@@ -1530,7 +1571,7 @@ test('a thread opens on this page: beside the list in Main\'s place, or on its p
   assert.match(app, /\(App\._isMessagesThread\(\) \? 'messages' : App\._isBotTopic\(\) \? 'ai' : 'workshop'\)/, 'it keeps Homeroom bot lit');
 });
 
-test('on a phone the list and Main Chat are one drawer, as Messages\' are; a request opens on its page', () => {
+test('on a phone the list and one thread (or a new chat) are one drawer, as Messages\' are; a request opens on its page', () => {
   const src = read('frontend/src/features/ai/index.tsx');
   const drawer = read('frontend/src/features/ai/phone-drawer.tsx');
   // Messages' own slide and landing rule.
@@ -1541,52 +1582,55 @@ test('on a phone the list and Main Chat are one drawer, as Messages\' are; a req
   assert.match(drawer, /<div className="ai-drawer-list" inert=\{level === 1\} aria-hidden=\{level === 1 \? true : undefined\}>\{list\}<\/div>/);
   assert.match(drawer, /<div className="ai-drawer-pane" inert=\{level === 0\} aria-hidden=\{level === 0 \? true : undefined\}>\{pane\}<\/div>/);
   assert.ok(!drawer.includes('ai-drawer-peek'), 'nothing peeks beside the list (3 Nov 2026)');
-  // Only Main Chat: no page in a frame (Evan, 30 Oct: "the Messages approach").
+  // Only threads: no page in a frame (Evan, 30 Oct: "the Messages approach").
   assert.ok(!drawer.includes('<iframe'), 'a request is never drawn in the drawer');
-  assert.match(src, /setAt\(\{ \.\.\.next \}\);\s+(?:\/\/[^\n]*\n\s+)*if \(botId && next\.threadRootId\) embed\(botId, next\);[\s\S]{0,220}?setMainOpen\([^;]*\);\s+if \(phone\) setLevel\(1\);/, 'a row slides the column in, at it');
-  assert.match(src, /onClick=\{\(e\) => \{ if \(phone\) \{ e\.preventDefault\(\); openMain\(\); \} \}\}/, 'and so does the Ask bar');
-  // Main Chat draws no bar of its own: the platform header names it (3 Nov 2026).
-  assert.ok(!drawer.includes('ai-drawer-head'), 'one header: the platform\'s');
-  assert.match(drawer, /return botId \? <EmbeddedConversation conversationId=\{botId\} active=\{active\} at=\{at\} mainChat onBack=\{onBack\} \/> : null;/);
-  assert.match(src, /pane=\{<MainPane botId=\{botId\} active=\{visible\} at=\{at\} onBack=\{toList\} \/>\}/);
+  assert.match(src, /setAt\(\{ \.\.\.next \}\);\s+(?:\/\/[^\n]*\n\s+)*if \(botId\) embed\(botId, next, \{ threadsOnly: true \}\);\s+if \(phone\) setLevel\(1\);/, 'a row slides the column in, at it');
+  assert.match(src, /onClick=\{\(e\) => \{ if \(phone\) \{ e\.preventDefault\(\); openNewChat\(\); \} \}\}/, 'and the Ask bar slides a new chat in');
+  // One header: the platform's, which names the tab; a thread draws its own head.
+  assert.ok(!drawer.includes('ai-drawer-head'));
+  assert.match(drawer, /return botId \? <EmbeddedConversation conversationId=\{botId\} active=\{active\} at=\{at\} threadsOnly onBack=\{onBack\} \/> : null;/);
+  assert.match(src, /canOpen=\{threadUp\}\s+pane=\{<ThreadPane botId=\{botId\} active=\{visible\} at=\{at\} onBack=\{toList\} \/>\}/);
   assert.match(src, /data-ai-drawer=\{phone \? level : undefined\}/);
   assert.match(drawer, /const PHONE_QUERY = '\(max-width: 767\.98px\)';/);
 });
 
-test('on a phone the list is always the whole screen, and Main Chat\'s name and arrow are the platform header\'s (3 Nov 2026)', () => {
+test('on a phone the list is always the whole screen, and its second level is a thread or a new chat, never empty (14 Nov 2026)', () => {
   const drawer = read('frontend/src/features/ai/phone-drawer.tsx');
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(drawer, /export const FULL_AT: readonly \[number, number\] = \[0, 1\];/, 'the column rests a whole screen to the right');
   assert.match(drawer, /const at = FULL_AT;/);
   assert.ok(!drawer.includes('OPENED_KEY'), 'no per-device switch into a drawer that peeks');
   assert.match(drawer, /const offset = drag \?\? at\[level\];/, 'rest, drag and landing all read the one table');
-  assert.match(drawer, /const lands = landingIn\(at, p\.from, now, \(e\.clientX - p\.x\) \* dirSign\(\)\) as 0 \| 1;\s+botDepth\.slide\(lands\);\s+onLevel\(lands\);/);
-  // The header moves with the strip.
-  assert.match(drawer, /useEffect\(\(\) => \{ botDepth\.slide\(level\); \}, \[level\]\);/);
-  assert.match(drawer, /setDrag\(next\);\s+botDepth\.set\(next\);/);
-  // The screen says when the header is Main Chat's: a phone, on show, no private thread.
-  assert.match(src, /publishBotDrawer\(\{ on: phone && visible && !threadUp, level, title: mainTitle, sub: mainSub \}\);/);
-  assert.match(src, /useEffect\(\(\) => registerBotBack\(\(\) => toListRef\.current\(\)\), \[\]\);/);
-  const store = read('frontend/src/features/nav-drawer/bot-drawer.ts');
-  assert.match(store, /export const botDepth = createDepthChannel\(0, 1\);/);
+  assert.match(drawer, /const lands = landingIn\(at, p\.from, now, \(e\.clientX - p\.x\) \* dirSign\(\)\) as 0 \| 1;\s+onLevel\(lands\);/);
+  // There is no Main Chat to its right: with no thread and no new chat the
+  // list does not pan toward an empty level, and the page slides back to the
+  // list once the thread or the new chat closes.
+  assert.match(drawer, /if \(level === 0 && !canOpen\) return;/);
+  assert.match(src, /if \(phone && level === 1 && !threadUp && !at\?\.threadRootId\) setLevel\(0\);/, 'a thread asked for before the chat is known is on its way, not gone');
+  // The platform header is the tab's plain one at both levels: the header's
+  // "Main Chat" and its arrow went with Main Chat, and so did their store.
+  assert.doesNotMatch(src, /publishBotDrawer|registerBotBack|bot-drawer/);
+  assert.doesNotMatch(drawer, /botDepth|bot-drawer/);
+  assert.ok(!fs.existsSync(path.join(__dirname, '..', 'frontend/src/features/nav-drawer/bot-drawer.ts')));
   const header = read('frontend/src/features/nav-drawer/header-drawer.tsx');
-  assert.match(header, /return on \? 'communities' : messages \? 'messages' : bot \? 'bot' : null;/);
-  assert.match(header, /if \(mode === 'bot'\) return <BackDisc mode=\{mode\} label=\{t\('core:header\.drawer\.toBot'\)\} onBack=\{botBack\} \/>;/);
+  assert.match(header, /return on \? 'communities' : messages \? 'messages' : null;/);
+  assert.doesNotMatch(header, /mode === 'bot'|toBot/);
   const css = read('public/css/app.css');
   assert.match(css, /\.ai-drawer:not\(\[data-peek\]\) \.ai-drawer-list \{ width: 100%; \}/);
   assert.match(css, /\.ai-drawer:not\(\[data-peek\]\) \.ai-drawer-thread \{ inset-inline-start: 100%; \}/);
-  assert.equal(message('core:header.drawer.toBot'), 'Back to the list');
+  assert.throws(() => message('core:header.drawer.toBot'));
+  assert.equal(message('messages:ai.drawer.back'), 'Back to the list', 'a thread\'s own arrow');
 });
 
-test('what a row opens rides along in Main Chat\'s composer, and only there', () => {
+test('what a row opened in the column rides along into a new chat\'s box, and nowhere else', () => {
   const src = read('frontend/src/features/ai/index.tsx');
-  // #6212 (3 Nov 2026): what the column shows decides it (./column.ts attachmentFor).
-  assert.match(src, /const what = attachmentFor\(before, column, was\);/);
-  assert.match(src, /window\.dispatchEvent\(new CustomEvent\('usernode:messages-object-selected', \{\s+detail: \{ \.\.\.about, conversationId: botId, source: 'list' \},\s+\}\)\);/);
-  assert.match(src, /\} else if \(what === 'clear'\) \{\s+window\.dispatchEvent\(new CustomEvent\('usernode:messages-object-cleared', \{ detail: \{ conversationId: botId \} \}\)\);/);
-  const composer = read('frontend/src/features/messages/composer.tsx');
-  assert.match(composer, /const \{ conversationId: to, source, \.\.\.object \} = detail;\s+if \(to != null && to !== conversationId\) return;/,
-    'a composer under another conversation, mounted under a hidden screen, keeps what it had');
+  // #6212 (3 Nov 2026) attached it to Main Chat's box as the column moved.
+  // 14 Nov 2026: there is no Main Chat. The page keeps what the row opened
+  // and hands it to New chat, which draws it as a chip in its own box.
+  assert.doesNotMatch(src, /attachmentFor|messages-object-selected|messages-object-cleared/);
+  assert.match(src, /opened\.current = route \? \{ route, about \} : null;/);
+  assert.match(src, /const about = route \? \(opened\.current\?\.route === route \? opened\.current\.about : null\) \|\| aboutRoute\(route\) : null;\s+if \(about\) return \{ project: about\.appSlug, builder: 'homeroom', object: about \};/);
+  assert.doesNotMatch(read('frontend/src/features/ai/column.ts'), /attachmentFor|ColumnHow/);
   const { aboutRow } = loadTsx('frontend/src/features/ai/index.tsx');
   assert.deepEqual(aboutRow({ href: '#app/garden/dev/issues/12', title: 'Dark mode', app }), { type: 'issue', appSlug: 'garden', issueNumber: 12, title: 'Dark mode' });
   assert.deepEqual(aboutRow({ key: 'need:governance:4', href: '#app/garden/dev/governance/4', title: 'Rename', app }),
@@ -1611,16 +1655,17 @@ test('beside this page the panel is the page\'s own column: its × and the proje
   assert.match(panel, /\(window as any\)\.AppView\?\._landOnHub\?\.\(slug\)/, 'which opens on its Hub');
   assert.equal(message('agent:sidePanel.close'), 'Close panel');
   const index = read('frontend/src/features/ai/index.tsx');
-  // The page starts on the lists alone; Main Chat's row, or a link to it,
-  // opens it, and × puts it away again.
-  assert.match(index, /const \[mainOpen, setMainOpen\] = useState\(false\);/);
-  assert.match(index, /: mainOpen \? \{ at: 'main' \} : null;/);
+  // The page starts on the lists alone; a row, New chat or a link opens the
+  // column, and its own × (a thread's, the new chat's, the panel's) or the
+  // tab pressed puts it away again.
+  assert.doesNotMatch(index, /mainOpen|setMainOpen|at: 'main'/, 'no Main Chat to stand open beside the lists');
   assert.match(index, /const columnOpen = docked && !!column;/);
-  assert.match(index, /const closeColumn = \(\) => \{\s+if \(!docked\) return;\s+sidePanel\(\)\?\.close\?\.\(\);\s+closeNewThread\(\);\s+if \(openRoot\) closeThread\(\);\s+closeDetail\(\);\s+setMainOpen\(false\);\s+setAt\(null\);\s+\};/);
+  assert.match(index, /const closeColumn = \(\) => \{\s+if \(phone\) \{ setLevel\(0\); setAt\(null\); return; \}\s+if \(!docked\) return;\s+sidePanel\(\)\?\.close\?\.\(\);\s+closeNewThread\(\);\s+if \(openRoot\) closeThread\(\);\s+closeDetail\(\);\s+setAt\(null\);\s+\};/,
+    'on a phone the tab pressed slides the list back');
   assert.doesNotMatch(index, /backTo/, 'no chip to name what the page goes back to');
   assert.match(index, /data-ai-open=\{columnOpen \? '' : undefined\}/);
-  assert.match(index, /data-ai-main-close=""/);
-  assert.equal(message('messages:ai.main.close'), 'Close Main Chat');
+  assert.doesNotMatch(index, /data-ai-main-close/);
+  assert.throws(() => message('messages:ai.main.close'));
   const controller = read('frontend/src/features/side-panel/controller.ts');
   assert.match(controller, /export const BESIDE_AI_CLASS = 'side-panel-beside-ai';/);
   assert.match(controller, /classList\.toggle\(BESIDE_AI_CLASS, isBesideAi\(\)\)/);
@@ -1694,7 +1739,7 @@ test('beside the bot page a request or a change has one header, so its own bar i
     'the Workshop\'s panel is untouched');
 });
 
-test('Main\'s column is held inside the window, and the panel takes its place at its width', () => {
+test('the column is held inside the window, and the panel takes its place at its width', () => {
   const css = read('public/css/app.css');
   // A width chosen beside an app on a wide monitor must not run Main under
   // the rail; with none chosen, Main takes the room the list does not need
@@ -1718,9 +1763,9 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   assert.doesNotMatch(css, /--side-panel-chosen-w/, 'one width no longer sizes both columns');
   // A wider Main holds its words to the 720px it used to be, so plan cards
   // and replies keep a readable line; below that the gutter is the part's own.
-  assert.match(css, /#ai-screen \.ai-main-pane \.messages-layout\[data-main-chat\] :is\(\.chat-transcript, \.chat-status, \.chat-composer-bar\) \{\s+padding-inline: max\(0px, calc\(\(100% - 720px\) \/ 2\)\);\s+\}/,
-    'Main\'s transcript, status line and composer are centred inside a wide column');
-  assert.match(css, /#ai-screen \.ai-main-pane \.messages-layout\[data-main-chat\] \.chat-composer-bar \{\s+padding-inline: max\(12px, calc\(\(100% - 720px\) \/ 2\)\);\s+\}/,
+  assert.match(css, /#ai-screen \.ai-main-pane \.messages-layout\[data-bot-threads\] :is\(\.chat-transcript, \.chat-status, \.chat-composer-bar\) \{\s+padding-inline: max\(0px, calc\(\(100% - 720px\) \/ 2\)\);\s+\}/,
+    'a thread\'s transcript, status line and composer are centred inside a wide column');
+  assert.match(css, /#ai-screen \.ai-main-pane \.messages-layout\[data-bot-threads\] \.chat-composer-bar \{\s+padding-inline: max\(12px, calc\(\(100% - 720px\) \/ 2\)\);\s+\}/,
     'and never narrow its own 12px gutter');
   // 6 Nov 2026 (#6425): the lane is kept only while a column is open.
   assert.match(css, /#ai-screen\[data-ai-docked\]\[data-ai-open\] \{ padding-inline-end: var\(--ai-main-w\); \}/);
@@ -1736,11 +1781,10 @@ test('Main\'s column is held inside the window, and the panel takes its place at
   // preview pads it, its ✕ at its top. Off the Duo both are 0.
   assert.match(css, /html\[data-side-strip="right"\] body:has\(#ai-screen:not\(\.hidden\)\) \{\s+--ai-edge: var\(--platform-strip-w, 0px\);\s+\}/);
   assert.match(css, /#ai-screen \.ai-main-pane \{[^}]*inset-inline-end: 0;[^}]*width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
-  assert.match(css, /#ai-screen \.ai-main-head \{[^}]*padding-block: 12px; padding-inline: 18px calc\(18px \+ var\(--ai-edge, 0px\)\);/, 'its name stops beside the column, its hairline runs under it');
-  // A thread in Main Chat's place has its own head, which pads by the column too (1 Nov 2026).
-  assert.match(css, /#ai-screen \.ai-main-pane \.messages-thread-header\[data-reply-head="main"\] \{\s+padding-inline-end: calc\(16px \+ var\(--ai-edge, 0px\)\);\s+\}/,
+  // A thread alone in the column has its own head, which pads by the Duo's column (1 Nov 2026).
+  assert.match(css, /#ai-screen \.ai-main-pane \.messages-thread-header\[data-reply-head="alone"\] \{\s+padding-inline-end: calc\(16px \+ var\(--ai-edge, 0px\)\);\s+\}/,
     'a thread\'s title stops beside the column, not under the clock');
-  assert.match(read('frontend/src/features/messages/index.tsx'), /<header className="messages-thread-header" data-reply-head=\{inMain \? 'main' : undefined\}>/);
+  assert.match(read('frontend/src/features/messages/index.tsx'), /<header className="messages-thread-header" data-reply-head=\{alone \? 'alone' : undefined\}>/);
   assert.doesNotMatch(css, /\.messages-layout \{[^}]*padding-inline-end: var\(--ai-edge/, 'the chat runs under the column, below its head');
   assert.match(css, /#ai-screen \.ai-preview-pane \{[^}]*inset-inline-end: 0;[^}]*width: calc\(var\(--ai-preview-w\) \+ var\(--ai-edge, 0px\)\);\s+padding-inline-end: var\(--ai-edge, 0px\);/);
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel \{\s+width: calc\(var\(--ai-main-w\) \+ var\(--ai-edge, 0px\)\);/);
@@ -1996,8 +2040,8 @@ test('#6147: the right column, its preview and its divider start 8px below the h
 
 // #6207/#6210/#6212/#6215/#6218 (3 Nov 2026): what the column beside the
 // list shows is one answer (frontend/src/features/ai/column.ts), and the lit
-// row, the address and Main's attachment are all read from it.
-test('one column state: where each row goes, the row it lights, its address and Main\'s attachment', () => {
+// row and the address are read from it.
+test('one column state: where each row goes, the row it lights and its address', () => {
   const column = loadTsx('frontend/src/features/ai/column.ts');
   const plain = (v) => JSON.parse(JSON.stringify(v));
   // Every row goes to its own place: a private thread, else its page (a ▷ plan row too).
@@ -2006,29 +2050,21 @@ test('one column state: where each row goes, the row it lights, its address and 
   assert.equal(column.rowColumn({ rootId: null, href: null }), null);
   // A row is lit by the column it opens.
   assert.equal(column.rowKey({ href: '#app/garden/dev/issues/410' }), column.columnKey({ at: 'page', route: 'app/garden/dev/issues/410' }));
-  assert.equal(column.columnKey({ at: 'main' }), 'main');
   assert.equal(column.columnKey({ at: 'thread', rootId: 7 }), 'private:7');
+  assert.equal(column.columnKey({ at: 'new' }), 'new');
   assert.equal(column.columnKey(null), null);
   // The address names what is open (#6215); a reload reopens it.
-  assert.equal(column.columnAddress({ at: 'main' }), '#homeroom-bot/main');
+  assert.equal(column.columnAddress({ at: 'new' }), '#homeroom-bot', 'a new chat is the tab itself: nothing is saved yet');
   assert.equal(column.columnAddress({ at: 'thread', rootId: 139 }), '#homeroom-bot/thread/139');
   assert.equal(column.columnAddress({ at: 'page', route: 'app/usernode-2d5619/dev/issues/6214' }), '#homeroom-bot/request/usernode-2d5619/6214');
   assert.equal(column.columnAddress({ at: 'page', route: 'app/garden/dev/changes/2151' }), '#homeroom-bot/change/garden/2151');
   assert.equal(column.columnAddress({ at: 'page', route: 'app/garden/dev/governance/7' }), '#homeroom-bot/decision/garden/7');
   assert.equal(column.columnAddress({ at: 'page', route: 'app/garden/workshop' }), '#homeroom-bot', 'a page that is no item is the tab');
   assert.equal(column.columnAddress(null), '#homeroom-bot', 'the lists alone, on a phone or a desktop');
-  // #6425: a close to nothing leaves Main's attachment as it was.
-  assert.equal(column.attachmentFor({ at: 'page', route: 'app/garden/dev/issues/6149' }, null, 'back'), 'none');
-  // #6212: the attachment follows what you are looking at.
-  const decide = { at: 'page', route: 'app/garden/dev/governance/5813' };
-  const plan = { at: 'page', route: 'app/garden/dev/issues/6149' };
-  assert.equal(column.attachmentFor(decide, plan, 'row'), 'attach', 'Decide row then a ▷ row: the plan\'s request, never #5813');
-  assert.equal(column.attachmentFor(decide, { at: 'main' }, 'back'), 'keep', '‹ Main Chat from the page keeps it');
-  assert.equal(column.attachmentFor(decide, { at: 'main' }, 'row'), 'clear', 'the Main Chat row clears it');
-  assert.equal(column.attachmentFor(decide, { at: 'thread', rootId: 3 }, 'row'), 'clear', 'a private thread clears it');
-  assert.equal(column.attachmentFor({ at: 'main' }, { at: 'main' }, 'row'), 'none');
-  // The composer never lets the list take off an item the person chose (#6212).
-  assert.match(read('frontend/src/features/messages/composer.tsx'), /if \(objectFrom\.current !== 'list'\) return;/);
+  // 14 Nov 2026: there is no Main Chat for the column to be, and so no
+  // attachment in its box to move as the column moves (#6212's attachmentFor).
+  assert.equal(column.attachmentFor, undefined);
+  assert.doesNotMatch(read('frontend/src/features/ai/column.ts'), /at: 'main'/);
   // The page reads it once; nothing else keeps a copy.
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /: panelRoute \? \{ at: 'page', route: panelRoute \}/);
@@ -2042,11 +2078,11 @@ test('one column state: where each row goes, the row it lights, its address and 
   assert.match(read('frontend/src/features/ai/lines.ts'), /lit: !!lit && rowKey\(th\) === lit,/);
 });
 
-test('#6218: the row whose page is open beside the list is lit, and Main Chat is not', () => {
+test('#6218: the row whose page is open beside the list is lit, and no other', () => {
   const { renderComponent } = require('./lib/render-tsx');
   const LISTS = 'frontend/src/features/ai/lists.tsx';
   const props = (extra = {}) => ({
-    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, rows: [], owed: 0,
+    hero: null, ready: true, rows: [], owed: 0,
     progress: [], waiting: [], live: [], openRow() {}, openThread() {}, ...extra,
   });
   const need = {
@@ -2091,7 +2127,7 @@ test('#6227: a Vote row opens and lights its change\'s request page, whatever it
   assert.equal(needHref({ kind: 'proposal', id: 3, number: 6216, app }), '#app/garden/dev/changes/6216');
   // A ballot is still decided on its request's page, unchanged.
   assert.equal(needHref({ kind: 'ballot', id: 4, number: 408, ballot: { number: 401 }, app }), '#app/garden/dev/issues/401');
-  // Main's composer attaches the request the row opened, not the change.
+  // A new chat opened beside it carries the request the row opened, not the change.
   const { aboutRow } = loadTsx('frontend/src/features/ai/index.tsx');
   assert.deepEqual(JSON.parse(JSON.stringify(aboutRow(row))),
     { type: 'issue', appSlug: 'garden', issueNumber: 6215, title: 'Show the reason' });
@@ -2102,7 +2138,7 @@ test('an item in the bot page\'s column has an address of its own, and its own p
   const plain = (v) => JSON.parse(JSON.stringify(v));
   assert.deepEqual(plain(door.botItemAt('#homeroom-bot/request/usernode-2d5619/6214')), { kind: 'request', slug: 'usernode-2d5619', number: 6214 });
   assert.deepEqual(plain(door.botItemAt('#ai/change/usernode-2d5619/2151')), { kind: 'change', slug: 'usernode-2d5619', number: 2151 });
-  assert.equal(door.botItemAt('#homeroom-bot/main'), null, 'a chat place is not an item');
+  assert.equal(door.botItemAt('#homeroom-bot/thread/5'), null, 'a chat place is not an item');
   assert.equal(door.botItemRoute({ kind: 'decision', slug: 'garden', number: 7 }), 'app/garden/dev/governance/7');
   assert.equal(door.pageLinkFor('app/usernode-2d5619/dev/issues/6214'), '/app/usernode-2d5619/dev/issues/6214');
   assert.equal(door.botTabAt('#homeroom-bot/request/usernode-2d5619/6214'), null);
@@ -2111,19 +2147,19 @@ test('an item in the bot page\'s column has an address of its own, and its own p
   assert.match(src, /improve\(\)\?\.enterTopicFrom\?\.\(BOT_PAGE\);\s+window\.location\.replace\(`#\$\{route\}`\);/,
     'a replace, not a push, so Back does not bounce to it again');
   assert.match(read('frontend/src/features/ai/door.ts'), /openItem: \(hash: string\) => \{ const item = botItemAt\(hash\); if \(item\) askBotItem\(item\); \}/);
-  // A request reopened from its address is attached to Main once the chat has loaded.
+  // A request reopened from its address is what a new chat opened beside it carries.
   const { aboutRoute } = loadTsx('frontend/src/features/ai/index.tsx');
   assert.deepEqual(plain(aboutRoute('app/garden/dev/issues/12')), { type: 'issue', appSlug: 'garden', issueNumber: 12, title: null });
   assert.equal(aboutRoute('app/garden/dev/governance/3'), null);
 });
 
 // #6398 (6 Nov 2026, Evan: "offer a search icon here, next to the plus, to
-// search through your threads"). A round search button beside the plus opens
+// search through your threads"). A round search button beside New chat opens
 // a box under the heading; every list narrows to the threads whose title,
 // number ("6011" or "#6011") or project name contains what was typed, a
-// section with no match folds away, Main Chat steps aside, and one short note
-// says when nothing matched at all.
-test('#6398: the search narrows every list by title, number or project, hides Main Chat, and says when nothing matches', () => {
+// section with no match folds away, and one short note says when nothing
+// matched at all.
+test('#6398: the search narrows every list by title, number or project, and says when nothing matches', () => {
   const { renderComponent } = require('./lib/render-tsx');
   const LISTS = 'frontend/src/features/ai/lists.tsx';
   const games = { slug: 'games', name: 'Game corner', icon_url: null, icon_emoji: null };
@@ -2137,7 +2173,7 @@ test('#6398: the search narrows every list by title, number or project, hides Ma
     app: a, title, group, href: `#app/${a.slug}/dev/issues/${number}`,
   });
   const all = {
-    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 2,
+    hero: null, ready: true, owed: 2,
     rows: [
       need('need:proposal:1', 'Releases: make the migration job cheaper', app, 6010),
       need('need:proposal:2', 'Dark mode', games, 403),
@@ -2149,9 +2185,8 @@ test('#6398: the search narrows every list by title, number or project, hides Ma
   };
   const html = (extra) => renderComponent(LISTS, 'AiLists', { ...all, ...extra });
 
-  // No search: every row, Main Chat first, nothing folded away.
+  // No search: every row, nothing folded away.
   const plain = html({ query: '' });
-  assert.match(plain, /data-ai-main-row=""/, 'Main Chat is drawn with an empty search');
   for (const title of ['make the migration', 'Dark mode', 'reuse image scan', 'Seed the garden', 'Ship the seed']) {
     assert.ok(plain.includes(title), title);
   }
@@ -2160,7 +2195,6 @@ test('#6398: the search narrows every list by title, number or project, hides Ma
   const byTitle = html({ query: 'migration' });
   assert.match(byTitle, /make the migration job cheaper/);
   assert.doesNotMatch(byTitle, /Dark mode|reuse image scan|Seed the garden|Ship the seed/, 'only the matching row');
-  assert.doesNotMatch(byTitle, /data-ai-main-row/, 'Main Chat steps aside while you search');
   assert.doesNotMatch(byTitle, /data-ai-list="busy"/, 'In progress & waiting has no match, so its card is gone');
   assert.doesNotMatch(byTitle, /data-ai-list="live"/, 'nor Live this week');
   assert.equal(message('messages:ai.work.titleCount', { count: 1 }), 'Needs you · 1');
@@ -2195,23 +2229,22 @@ test('#6398: the search narrows every list by title, number or project, hides Ma
   assert.match(none, /<div class="[^"]*" data-ai-search-empty=""><p class="[^"]*">No threads match “zzz”<\/p><\/div>/);
   assert.ok(none.includes(message('messages:ai.search.noneThreads', { query: 'zzz' })));
   assert.doesNotMatch(none, /data-ai-list="(?:work|busy|live|history|found)"/, 'every card folds away');
-  assert.doesNotMatch(none, /data-ai-main-row/, 'and Main Chat is hidden');
 
   // Before the lists are read, the skeleton stays and no note is shown.
   const loading = html({ query: 'zzz', ready: false });
   assert.match(loading, /data-ai-loading=""/);
   assert.doesNotMatch(loading, /data-ai-search-empty/);
 
-  // The button and the box (index.tsx): the search button sits beside the
-  // plus, with the app's magnifying glass, and the box's text is what the
+  // The button and the box (index.tsx): the search button sits beside New
+  // chat, with the app's magnifying glass, and the box's text is what the
   // lists narrow to.
   const src = read('frontend/src/features/ai/index.tsx');
   const toggle = src.indexOf('data-ai-search-toggle=""');
-  assert.ok(toggle > 0 && toggle < src.indexOf('<NewThreadButton'), 'the search button is beside the plus, before it');
+  assert.ok(toggle > 0 && toggle < src.indexOf('<NewChatButton'), 'the search button is beside New chat, before it');
   const button = src.slice(src.lastIndexOf('<button', toggle), src.indexOf('</button>', toggle));
   assert.match(button, /aria-label=\{t\('messages:ai\.search\.open'\)\}/, 'it is named for what it does');
   assert.match(button, /<SearchIcon aria-hidden="true" \/>/);
-  assert.match(button, /h-10 w-10[^"]*rounded-full/, 'the plus\'s own round button');
+  assert.match(button, /h-10 w-10[^"]*rounded-full/, 'a round button, the height of New chat beside it');
   assert.match(src, /query=\{searchOpen \? query : ''\}/, 'the box\'s text is passed to the lists');
   assert.match(src, /data-ai-search=""/, 'the box the More projects panel has');
   assert.equal(message('messages:ai.search.open'), 'Search threads and messages');
@@ -2229,7 +2262,7 @@ test('the search lists the messages that match under the threads, each a link to
   const { renderComponent } = require('./lib/render-tsx');
   const LISTS = 'frontend/src/features/ai/lists.tsx';
   const all = {
-    hero: null, main: { open() {}, lit: false, unread: 0 }, ready: true, owed: 0,
+    hero: null, ready: true, owed: 0,
     rows: [], progress: [thread(3, 6011, 'building', { app, title: 'Improve the release notes', href: '#app/garden/dev/issues/6011' })],
     waiting: [], live: [], openRow() {}, openThread() {},
   };
@@ -2244,7 +2277,6 @@ test('the search lists the messages that match under the threads, each a link to
   // Nothing of it without a search: the prerender, and the page at rest.
   const rest = html({ query: '', found: answered('improve', [hit()]) });
   assert.doesNotMatch(rest, /data-ai-list="found"|<mark/, 'no search, no found messages, whatever was answered before');
-  assert.match(rest, /data-ai-main-row=""/);
 
   // A thread and two messages match: the thread's card first, then the
   // messages' own card under its own heading, one row each.
@@ -2260,8 +2292,10 @@ test('the search lists the messages that match under the threads, each a link to
   const rows = [...card.matchAll(/<a href="([^"]+)" class="([^"]*)" title="([^"]*)" aria-label="([^"]*)" data-ai-found="(chat|thread)">(.*?)<\/a>/g)];
   assert.equal(rows.length, 2, 'one row a message, each a real link');
   const [chat, inThread] = rows;
-  // The chat itself: the chat at that message; a thread: the thread at it.
-  assert.equal(chat[1], '#homeroom-bot/main/m/71');
+  // A thread: the thread at that message. One whose thread the answer does
+  // not name (14 Nov 2026: every message is in one; an older answer) is the
+  // message alone, and the tab asks the server which thread it is in.
+  assert.equal(chat[1], '#homeroom-bot/m/71');
   assert.equal(chat[5], 'chat');
   assert.equal(inThread[1], '#homeroom-bot/thread/60/m/88');
   assert.equal(inThread[5], 'thread');
@@ -2355,7 +2389,7 @@ test('#6389: Needs you says what your own change waits on instead of Vote', () =
   assert.equal(whyOf(plainVote), null);
 });
 
-test('10 Nov 2026: `#homeroom-bot/new` is the "+" pressed for you, and may name the project and who works on it', () => {
+test('10 Nov 2026: `#homeroom-bot/new` is New chat pressed for you, and may name the project and who works on it', () => {
   const door = loadTsx('frontend/src/features/ai/door.ts');
   const plain = (v) => JSON.parse(JSON.stringify(v));
   assert.equal(door.botNewAddress(null), '#homeroom-bot/new');
@@ -2365,7 +2399,7 @@ test('10 Nov 2026: `#homeroom-bot/new` is the "+" pressed for you, and may name 
   assert.deepEqual(plain(door.botNewAt('#homeroom-bot/new?project=run-club-1a2b3c&with=chatgpt')), { project: 'run-club-1a2b3c', builder: 'chatgpt' });
   assert.deepEqual(plain(door.botNewAt('#homeroom-bot/new')), { project: null, builder: 'homeroom' });
   assert.deepEqual(plain(door.botNewAt('#homeroom-bot/new?project=..%2Fx&with=root')), { project: null, builder: 'homeroom' }, 'an address is anybody\'s to write');
-  assert.equal(door.botNewAt('#homeroom-bot/main'), null);
+  assert.equal(door.botNewAt('#homeroom-bot/thread/5'), null);
   assert.equal(door.botNewAt('#homeroom-bot/new/extra'), null);
   assert.equal(door.botTabAt('#homeroom-bot/new?project=run-club-1a2b3c'), null, 'not a place in the chat');
   assert.deepEqual([...door.BOT_NEW_BUILDERS], [...loadTsx('frontend/src/features/messages/thread-builder.tsx', { stubs: { './api': {} } }).BUILDERS], 'the builders a thread knows');
@@ -2376,9 +2410,10 @@ test('10 Nov 2026: `#homeroom-bot/new` is the "+" pressed for you, and may name 
   assert.match(doorSrc, /openNew: \(hash: string\) => \{ const fresh = botNewAt\(hash\); if \(fresh\) askBotNew\(fresh\); \}/);
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /if \(!ask\?\.fresh \|\| ask\.seq === freshTaken\.current \|\| !visible \|\| !\(wide \|\| phone\) \|\| !botId\) return;\n\s+freshTaken\.current = ask\.seq;/, 'it waits for the chat, and is not marked taken until then');
-  assert.match(src, /openBlank\(\);\n\s+startNewThread\(botId, ask\.fresh\);/, 'the same two halves the "+" runs, with what the address named');
+  assert.match(src, /const named = ask\.fresh;\n\s+const own = named\.project \? null : newChatPreset\(\);\n\s+openBlank\(\);\n\s+startNewThread\(botId, own \? \{ \.\.\.own, builder: named\.builder \} : named\);/,
+    'the same two halves New chat runs, with what the address named; one that names no project takes the page\'s');
   const thread = read('frontend/src/features/messages/new-thread.tsx');
-  assert.match(thread, /export function startNewThread\(conversationId: number, fresh\?: NewThreadPreset \| null\): void \{\n\s+if \(!conversationId\) return;\n\s+closeThread\(\);\n\s+preset = fresh \|\| null;/, 'the "+" itself clears what an earlier door named');
+  assert.match(thread, /export function startNewThread\(conversationId: number, fresh\?: NewThreadPreset \| null\): void \{\n\s+if \(!conversationId\) return;\n\s+closeThread\(\);\n\s+const held = takeCarried\(\);/, 'what a door carried for it is taken here');
   assert.match(thread, /const \[project, setProject\] = useState\(\(\) => preset\?\.project \|\| ''\);/);
   assert.match(thread, /const \[builder, setBuilder\] = useState<Builder>\(\(\) => preset\?\.builder \|\| 'homeroom'\);/);
 });

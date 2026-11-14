@@ -25,7 +25,7 @@
   },
   "tabs.ai": {
     "text": "Homeroom bot",
-    "description": "Tab in the main navigation: opens the person's page with Homeroom bot, the AI that builds what people ask for (their private chat with it and their work across projects). The bot's own name. On a phone it sits under an icon in a bar of five, in one of its two wider seats; keep it within about twelve characters."
+    "description": "Tab in the main navigation: opens the person's page with Homeroom bot, the AI that builds what people ask for (their private threads with it and their work across projects). The bot's own name. On a phone it sits under an icon in a bar of five, in one of its two wider seats; keep it within about twelve characters."
   },
   "tabs.unreadAi": {
     "text": "Unread messages from the Homeroom bot",
@@ -622,10 +622,6 @@
   "header.drawer.toPlace": {
     "text": "Back to {{place}}",
     "description": "On a phone, the header's back arrow on a page under one of a community's places (All items, under the Workshop): goes up to that place. {{place}} is the place's name, such as Workshop. Its accessible name and tooltip."
-  },
-  "header.drawer.toBot": {
-    "text": "Back to the list",
-    "description": "On a phone, the header's back arrow in Main Chat, the person's private chat with Homeroom bot: slides back to the Homeroom bot tab's list of what needs them and what is in progress. Its accessible name and tooltip."
   },
   "header.drawer.messages": {
     "text": "Messages",

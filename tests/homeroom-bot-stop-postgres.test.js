@@ -197,7 +197,7 @@ test('Stop in the chat with Homeroom bot, against the full PostgreSQL schema', {
     let pressed = null;
     script = async (request) => {
       requests += 1;
-      if (requests === 1) return callsOf(1, [['start_project_thread', { idea: 'a plant watering reminder' }]]);
+      if (requests === 1) return callsOf(1, [['close_thread', {}]]);
       // The bot is writing its answer when she presses Stop; the request
       // still comes back, with the reply the turn was about to send.
       pressed = await press(ada, conversationId, { messageId });
@@ -210,23 +210,22 @@ test('Stop in the chat with Homeroom bot, against the full PostgreSQL schema', {
     assert.equal(requests, 2, 'nothing more was asked of the model');
 
     const said = await botSaid(messageId);
-    // The thread's own line (what the turn had done), and the one line of the Stop.
-    assert.equal(said.length, 2);
-    assert.match(said[0].content, /^New thread, for a new project: a plant watering reminder\./);
-    const line = said[1];
-    assert.equal(line.content, 'Stopped. I had already opened a thread for the new project; it stays open.');
+    // The one line of the Stop, with what the turn had done.
+    assert.equal(said.length, 1);
+    const line = said[0];
+    assert.equal(line.content, 'Stopped. I had already marked this thread done; it stays done.');
     assert.equal(line.idempotency_key, `hrbot-mayor-${messageId}`, 'under the answer\'s own key');
-    assert.equal(Number(line.reply_to_id), messageId, 'quoting what she wrote');
-    assert.equal(line.thread_root_id, null, 'where she wrote it, not in the thread the turn opened');
+    assert.equal(line.reply_to_id, null, 'right under what she wrote, which starts the thread: nothing to quote');
+    assert.equal(Number(line.thread_root_id), messageId, 'in the thread her message started (14 Nov 2026: every message is in one)');
     assert.ok(!said.some((m) => /first screen/.test(m.content)), 'the reply it was writing is not sent');
 
     // Recorded as a turn that cost what it cost; the model did not fail.
     const turns = await turnOf(messageId);
     assert.equal(turns.length, 1);
-    assert.deepEqual([turns[0].rounds, turns[0].tools, turns[0].error, turns[0].fallback], [2, ['start_project_thread'], null, 'stopped']);
+    assert.deepEqual([turns[0].rounds, turns[0].tools, turns[0].error, turns[0].fallback], [2, ['close_thread'], null, 'stopped']);
     assert.ok(turns[0].cost > 0);
     // What it did was kept as it was done (the work's checkpoint).
-    assert.deepEqual(checkpoints.at(-1).did, [{ did: 'opened a thread for the new project', stays: 'it stays open' }]);
+    assert.deepEqual(checkpoints.at(-1).did, [{ did: 'marked this thread done', stays: 'it stays done' }]);
     // Her machine holds the mark; the answer's work was not cancelled.
     const i = await instance(ada);
     assert.deepEqual([i.state, i.data.current.stop], ['answering', true]);
@@ -246,10 +245,10 @@ test('Stop in the chat with Homeroom bot, against the full PostgreSQL schema', {
     assert.deepEqual(await runAnswer(ada, conversationId, messageId, { tries: 2 }), { sent: true, later: null, skipped: 'answered' });
     assert.equal(await dm.sayCouldNotAnswer(pool, { userId: ada.id, conversationId, messageId, deps: { bot } }), null);
     assert.equal(await dm.sayStopped(pool, { userId: ada.id, conversationId, messageId, deps: { bot } }), null);
-    assert.equal((await botSaid(messageId)).length, 2);
+    assert.equal((await botSaid(messageId)).length, 1);
     // Pressed again: harmless.
     assert.deepEqual(await press(ada, conversationId, { messageId }), { status: 200, body: { ok: true, stopping: true } });
-    assert.equal((await botSaid(messageId)).length, 2);
+    assert.equal((await botSaid(messageId)).length, 1);
     await forget(ada);
   });
 
@@ -313,7 +312,7 @@ test('Stop in the chat with Homeroom bot, against the full PostgreSQL schema', {
     await forget(ada);
   });
 
-  await t.test('a screen handed to the designer: its typing moves with it, and a Stop there says so in the thread it opened', async () => {
+  await t.test('a screen handed to the designer: it draws in her thread, and a Stop there says so in it', async () => {
     pushed.length = 0;
     const messageId = await write(ada, conversationId, 'draw me a plant list screen');
     let requests = 0;
@@ -328,21 +327,20 @@ test('Stop in the chat with Homeroom bot, against the full PostgreSQL schema', {
     const out = await runAnswer(ada, conversationId, messageId);
     assert.deepEqual(out, { sent: true, later: null, skipped: null });
     const said = await botSaid(messageId);
-    const root = said.find((m) => m.thread_root_id == null);
-    const line = said.find((m) => /^Stopped\./.test(m.content));
-    assert.ok(root, 'the thread opened for the drawing has its line in Main');
-    assert.equal(line.content, 'Stopped. I had already opened a thread for the screen; it stays open.');
-    assert.equal(Number(line.thread_root_id), Number(root.id), 'said where the working card was: in the thread it drew in');
-    assert.equal(line.idempotency_key, `hrbot-mayor-${messageId}`);
-    const { rows: [thread] } = await pool.query('SELECT id FROM private_threads WHERE root_message_id = $1', [root.id]);
-    assert.ok(thread, 'its private thread stays');
+    // 14 Nov 2026: her message is in a thread already (every message is), so
+    // the designer draws there. No thread is opened for the screen, and the
+    // one line of the Stop is said where the working card was.
+    assert.deepEqual(said.map((m) => [m.content, Number(m.thread_root_id), m.idempotency_key]),
+      [['Stopped. Nothing was filed or changed.', messageId, `hrbot-mayor-${messageId}`]]);
+    const { rows: [thread] } = await pool.query('SELECT id FROM private_threads WHERE root_message_id = $1', [messageId]);
+    assert.ok(thread, 'her thread stays');
     const { rows: versions } = await pool.query('SELECT version FROM design_versions WHERE private_thread_id = $1', [thread.id]);
     assert.equal(versions.length, 0, 'no version of the screen was saved');
-    // The designer's turn is recorded as stopped too (Main's own turn went through).
+    // The designer's turn is recorded as stopped too (the turn that handed it the screen went through).
     const turns = await turnOf(messageId);
     assert.deepEqual(turns.map((r) => [r.error, r.fallback]), [[null, null], [null, 'stopped']]);
-    // Its typing moved to the new thread, still naming her message.
-    const there = pushed.filter((p) => p.type === 'conversation_typing' && p.typing && Number(p.threadRootId) === Number(root.id));
+    // Its typing stayed in her thread, still naming her message.
+    const there = pushed.filter((p) => p.type === 'conversation_typing' && p.typing && Number(p.threadRootId) === messageId);
     assert.ok(there.length >= 1);
     assert.ok(there.every((p) => p.answering === messageId));
     await forget(ada);

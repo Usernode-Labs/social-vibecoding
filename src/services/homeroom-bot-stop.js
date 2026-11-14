@@ -131,8 +131,6 @@ const LASTING = Object.freeze({
       ? { did: `filed your report as request #${n}`, stays: 'it stays filed' }
       : { did: 'sent your report to the Homeroom team', stays: 'it stays sent' };
   },
-  start_project_thread: (_args, result) => (result?.ok
-    ? { did: 'opened a thread for the new project', stays: 'it stays open' } : null),
   close_thread: (_args, result) => (result?.ok ? { did: 'marked this thread done', stays: 'it stays done' } : null),
   add_to_build: (args, result) => {
     if (!result?.ok) return null;

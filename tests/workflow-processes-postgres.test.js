@@ -1044,8 +1044,14 @@ test('workflow machines in a process of their own, and through its crash', { tim
   });
 
   const conversationsSvc = require('../src/services/conversations');
+  // 14 Nov 2026: every message in the chat with the bot is in a thread, so
+  // the answer to a message is under it (its thread; its own, when it is in
+  // no other), and quotes nothing.
   const dmAnswers = async (conversationId, messageId) => (await pool.query(
-    `SELECT content, idempotency_key FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND reply_to_id = $3 ORDER BY id`,
+    `SELECT a.content, a.idempotency_key FROM conversation_messages a
+       JOIN conversation_messages q ON q.id = $3
+      WHERE a.conversation_id = $1 AND a.sender_id = $2 AND a.id > q.id
+        AND a.thread_root_id = COALESCE(q.thread_root_id, q.id) ORDER BY a.id`,
     [conversationId, replyBot.id, messageId])).rows;
   async function dmToTheBot({ crashAt } = {}) {
     const person = { ...(await user()), hasPlatformAccess: true };

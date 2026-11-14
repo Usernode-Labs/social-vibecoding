@@ -138,6 +138,20 @@ function demoHistory({ before = null, project = null, kind = null } = {}, now = 
   return { rows: page, next: rest && page.length ? page[page.length - 1].at : null };
 }
 
+// `?demo=1` on staging: the threads of the demo's own chat with Homeroom bot
+// (services/staging-messages.js ensureBotDmFixture, made first if it is not
+// there yet), as the tab lists a person's private threads. Never throws: a
+// fixture that could not be made lists nothing of its own.
+async function demoPrivate(pool, user) {
+  try {
+    await require('../services/staging-messages').ensureBotDmFixture(pool, user);
+    return await aiWork.privateFor(pool, { user });
+  } catch (err) {
+    log.warn('ai-work', 'Could not read the staging demo\'s threads', { message: err.message });
+    return [];
+  }
+}
+
 function aiWorkRoutes(config = {}) {
   const router = Router();
   const pool = getPool();
@@ -146,11 +160,58 @@ function aiWorkRoutes(config = {}) {
     res.set('Cache-Control', 'private, no-store');
     try {
       if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
-      if (IS_STAGING && req.query.demo === '1') return res.json(demoWork());
+      if (IS_STAGING && req.query.demo === '1') {
+        // 14 Nov 2026: Main Chat is gone, so the demo's own chat with
+        // Homeroom bot is reached from this list: its threads (a hello, a
+        // first version, Earlier chat and the private ones, services/
+        // staging-messages.js) lead the obviously fake rows, each with its
+        // real id, so it opens, and its own unread.
+        const demo = demoWork();
+        const mine = await demoPrivate(pool, req.user);
+        return res.json({ ...demo, private: [...mine, ...demo.private] });
+      }
       const showSelfHosted = !!req.user.isAdmin || !!config.selfAppPublicVoting;
       return res.json(await aiWork.workFor(pool, { user: req.user, showSelfHosted }));
     } catch (err) {
       log.error('ai-work', 'Failed to read the AI tab\'s work', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/ai/where (14 Nov 2026): where something is in the signed-in
+  // person's OWN chat with Homeroom bot, now that every message there is in
+  // a thread (services/private-threads.js whereFor). It takes no
+  // conversation and no user: whose chat is read is who is signed in.
+  //   ?message=<id>                   the thread that message is in
+  //   ?project=<slug>&firstVersion=1  that project's first-version thread
+  //   → { rootId: number | null, earlierRootId: number | null }
+  // `rootId` is the thread's first message (the message's own id when it is
+  // one), or null: a message that is not in their chat with the bot
+  // (somebody else's among them), or a project with no such thread.
+  // `earlierRootId` is their Earlier chat thread, always answered, or null.
+  // A browser's read, not a connector's: it is on no list
+  // (services/cli-api-policy.js is fail-closed). Never cached.
+  //
+  // `?demo=1` on staging reads the demo's own chat, made first if it is not
+  // there yet, as the tab's other reads of it do.
+  router.get('/api/ai/where', appChatReadLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      if (IS_STAGING && req.query.demo === '1') {
+        await require('../services/staging-messages').ensureBotDmFixture(pool, req.user).catch((err) => {
+          log.warn('ai-work', 'Staging bot DM fixture failed', { message: err.message });
+        });
+      }
+      const raw = typeof req.query.message === 'string' ? req.query.message : null;
+      const message = raw != null && /^[1-9][0-9]{0,9}$/.test(raw) ? Number(raw) : null;
+      if (raw != null && message == null) return res.status(400).json({ error: 'Invalid message' });
+      const project = typeof req.query.project === 'string' && req.query.project ? req.query.project.slice(0, 255) : null;
+      return res.json(await require('../services/private-threads').whereFor(pool, {
+        user: req.user, message, project, firstVersion: req.query.firstVersion === '1',
+      }));
+    } catch (err) {
+      log.error('ai-work', 'Failed to read where something is in the chat with Homeroom bot', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

@@ -598,7 +598,7 @@ test('the store clears the mark wherever a conversation closes, and Mark unread 
   assert.match(STORE, /publish\(\{ active, messages, nextBefore: page\.nextBefore, nextAfter: page\.nextAfter, loadingThread: false, online: true, unreadMark \}\);[\s\S]{0,1500}readMainWhenThere\(conversationId\)/,
     'published with the transcript, before the read');
   assert.match(STORE, /thread: null, nextAfter: null, unreadMark: null,\s*\}\);\s*\}\s*\/\*\*\s*\* #3494/, 'close()');
-  assert.match(STORE, /discussionContext: null, discussionError: null, unreadMark: null,\s*\}\);\s*void loadConversations\(\);\s*void loadThread\(conversationId\);/, 'embed()');
+  assert.match(STORE, /discussionContext: null, discussionError: null, unreadMark: null,\n[\s\S]{0,260}\}\);\s*void loadConversations\(\);\s*void loadThread\(conversationId\);/, 'embed()');
   assert.match(STORE, /nextAfter: null,\s*(?:\/\/[^\n]*\n\s*)*unreadMark: null,/, 'route()');
   assert.match(STORE, /\{ unreadMark: \{ conversationId, lastReadId: messageId - 1, count: unreadCount \} \}/, 'Mark unread');
 });
