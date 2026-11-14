@@ -636,6 +636,23 @@ test('the filter: the three projects that need you most as chips, then any picke
   assert.equal(message('messages:ai.filter.note.needs', { count: 3 }), '3 need you');
   assert.equal(message('messages:ai.filter.note.live', { count: 2 }), '2 live this week');
   assert.equal(message('messages:ai.filter.group.busy'), 'In progress or waiting');
+
+  // #6675: the menu stays inside the window. Its right edge lines up with the
+  // More chip's when there is room; a chip near the window's left edge (a
+  // narrow list column, as reported) slides it right to 8px in rather than
+  // leaving the search box and project names off screen.
+  const { pickerMenuBox } = loadTsx('frontend/src/features/ai/picker-box.ts');
+  assert.deepEqual(pickerMenuBox({ right: 900, bottom: 100 }, 1280), { top: 108, left: 540, width: 360 },
+    'right edges together under the chip, 8px under it');
+  assert.equal(pickerMenuBox({ right: 260, bottom: 100 }, 1280).left, 8, 'a chip near the left edge starts the menu 8px in');
+  assert.equal(pickerMenuBox({ right: 1300, bottom: 100 }, 1280).left, 912, 'a chip past the right edge stays 8px in from it');
+  assert.deepEqual(pickerMenuBox({ right: 200, bottom: 100 }, 300), { top: 108, left: 8, width: 284 },
+    'a window narrower than the menu narrows it to the window less 16px');
+  assert.match(picker, /const box = pickerMenuBox\(anchor, window\.innerWidth\);/,
+    'the menu measures against the window it is hung in');
+  assert.match(picker, /const style = \{ top: `\$\{box\.top\}px`, left: `\$\{box\.left\}px` \};/,
+    'placed by its left edge, which the helper has already kept inside the window');
+  assert.doesNotMatch(picker, /right:/, 'and never by a right offset, which is what let it hang off the left');
 });
 
 test('In progress and Waiting each leave out a thread the feed lists, by its request or its change', () => {
