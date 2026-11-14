@@ -633,11 +633,12 @@ const LOOK_TOOL = Object.freeze({
 });
 
 /** The words of a refusal or a result of the look for the model. */
-async function waitForLook(pool, id, { waitMs = INLINE_WAIT_MS, pollMs = POLL_MS, sleep = null } = {}) {
+async function waitForLook(pool, id, { waitMs = INLINE_WAIT_MS, pollMs = POLL_MS, sleep = null, signal = null } = {}) {
   const pause = sleep || ((ms) => new Promise((resolve) => { const t = setTimeout(resolve, ms); t.unref?.(); }));
   const until = Date.now() + Math.max(0, waitMs);
   let row = await loadLook(pool, id);
-  while (row && row.state === 'running' && Date.now() < until) {
+  // `signal`: the person stopped the turn that waits (homeroom-bot-stop.js).
+  while (row && row.state === 'running' && Date.now() < until && !signal?.aborted) {
     // eslint-disable-next-line no-await-in-loop
     await pause(Math.min(pollMs, Math.max(0, until - Date.now())));
     // eslint-disable-next-line no-await-in-loop
@@ -697,7 +698,15 @@ async function runTool(pool, ctx, args) {
     pollMs: Number.isFinite(deps.lookPollMs) ? deps.lookPollMs : POLL_MS,
     // Its own key: a test's no-op `sleep` for the model's retries would make this a busy loop.
     sleep: deps.lookSleep || null,
+    // Task 2148: the turn's Stop ends the wait, never the look.
+    signal: ctx.stopSignal || null,
   });
+  // Stopped while the look still runs: it ends on its own, and its findings
+  // are not posted into a chat whose turn the person stopped.
+  if (row && row.state === 'running' && ctx.stopSignal?.aborted) {
+    ctx.lookRunning = true;
+    return { ok: true, running: true, project: name, stopped: true };
+  }
   if (row && row.state === 'running') {
     // Still going: it finishes on its own and is posted here, unless it ended just now.
     const { rows } = await pool.query(

@@ -964,13 +964,18 @@ function typingDoing(what) {
 
 const sameDoing = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
 
-async function pushTyping(pool, botId, conversationId, typing, ws, threadRootId = null, doing = null) {
+// Task 2148: `answering` is the message of theirs this typing is the answer
+// to, when that answer can be stopped (their DM machine's work,
+// homeroom-bot-stop.js): the composer's Stop names it, so a Stop only ever
+// ends the answer the person was looking at.
+async function pushTyping(pool, botId, conversationId, typing, ws, threadRootId = null, doing = null, answering = null) {
   try {
     await conversations.withLockedAudience(pool, { id: botId }, conversationId, (audience) => {
       ws.pushConversationEvent(audience, {
         type: 'conversation_typing', conversationId, userId: botId, typing,
         ...(threadRootId ? { threadRootId } : {}),
         ...(typing && doing ? { doing } : {}),
+        ...(typing && answering ? { answering } : {}),
       }, { excludeUserId: botId, actorUserId: botId });
     });
   } catch (err) {
@@ -979,10 +984,10 @@ async function pushTyping(pool, botId, conversationId, typing, ws, threadRootId 
   }
 }
 
-function sendTyping(pool, botId, conversationId, typing, ws, threadRootId = null, doing = null) {
+function sendTyping(pool, botId, conversationId, typing, ws, threadRootId = null, doing = null, answering = null) {
   const place = typingPlace(conversationId, threadRootId);
   const prior = typingSends.get(place) || Promise.resolve();
-  const next = prior.then(() => pushTyping(pool, botId, conversationId, typing, ws, threadRootId, doing));
+  const next = prior.then(() => pushTyping(pool, botId, conversationId, typing, ws, threadRootId, doing, answering));
   typingSends.set(place, next);
   next.then(() => { if (typingSends.get(place) === next) typingSends.delete(place); });
   return next;
@@ -992,9 +997,10 @@ function sendTyping(pool, botId, conversationId, typing, ws, threadRootId = null
  * Show the bot typing in one conversation until the returned stop() is
  * called, or TYPING_MAX_MS passes. Never throws. `stop.doing(what)` says
  * what it is doing now (typingDoing; null: thinking): at once, if it
- * changed, and on every renewal after.
+ * changed, and on every renewal after. `answering`: the message of theirs
+ * a stoppable answer is for (pushTyping), said on every event.
  */
-function startTyping(pool, { botId, conversationId, threadRootId = null, ws = null }) {
+function startTyping(pool, { botId, conversationId, threadRootId = null, ws = null, answering = null }) {
   const id = Number(conversationId);
   if (!botId || !Number.isSafeInteger(id) || id <= 0) {
     const none = async () => {};
@@ -1004,9 +1010,10 @@ function startTyping(pool, { botId, conversationId, threadRootId = null, ws = nu
   const root = Number.isSafeInteger(Number(threadRootId)) && Number(threadRootId) > 0 ? Number(threadRootId) : null;
   const place = typingPlace(id, root);
   const io = ws || require('./ws');
+  const answered = Number.isSafeInteger(Number(answering)) && Number(answering) > 0 ? Number(answering) : null;
   let entry = typingNow.get(place);
   if (!entry) {
-    const created = { holders: new Map(), timer: null, doing: null, doingBy: null };
+    const created = { holders: new Map(), timer: null, doing: null, doingBy: null, answering: answered, answeringBy: null };
     created.end = () => {
       clearInterval(created.timer);
       if (typingNow.get(place) === created) typingNow.delete(place);
@@ -1021,21 +1028,24 @@ function startTyping(pool, { botId, conversationId, threadRootId = null, ws = nu
         return;
       }
       // One renewal at a time: a slow database never queues them up.
-      if (!typingSends.has(place)) sendTyping(pool, botId, id, true, io, root, created.doing);
+      if (!typingSends.has(place)) sendTyping(pool, botId, id, true, io, root, created.doing, created.answering);
     }, TYPING_RENEW_MS);
     created.timer.unref?.();
     typingNow.set(place, created);
-    created.first = sendTyping(pool, botId, id, true, io, root);
+    created.first = sendTyping(pool, botId, id, true, io, root, null, answered);
     entry = created;
   }
   const holder = Symbol('typing');
   entry.holders.set(holder, Date.now() + TYPING_MAX_MS);
+  // The answer this typing is for is the newest holder's that names one.
+  if (answered) { entry.answering = answered; entry.answeringBy = holder; }
   const stop = async () => {
     // Already timed out, or another answer is still being written.
     if (!entry.holders.delete(holder)) return;
     if (entry.holders.size) {
       // What this answer was doing is not what the one still going is.
       if (entry.doingBy === holder) { entry.doing = null; entry.doingBy = null; }
+      if (entry.answeringBy === holder) { entry.answering = null; entry.answeringBy = null; }
       return;
     }
     await entry.end();
@@ -1048,7 +1058,7 @@ function startTyping(pool, { botId, conversationId, threadRootId = null, ws = nu
     if (!entry.holders.has(holder) || typingNow.get(place) !== entry || sameDoing(next, entry.doing)) return Promise.resolve();
     entry.doing = next;
     entry.doingBy = next ? holder : null;
-    return sendTyping(pool, botId, id, true, io, root, next);
+    return sendTyping(pool, botId, id, true, io, root, next, entry.answering);
   };
   return stop;
 }
@@ -1062,9 +1072,10 @@ const TYPING_FIRST_WAIT_MS = 2000;
  * doing now (startTyping's stop.doing); `moveTo(threadRootId)` carries the
  * typing, and what it last said it was doing, to another thread of the
  * same conversation where the answer goes on (null: the main chat).
+ * `answering`: the message a stoppable answer is for (startTyping).
  */
-async function whileTyping(pool, { botId, conversationId, threadRootId = null, ws = null }, work) {
-  let stop = startTyping(pool, { botId, conversationId, threadRootId, ws });
+async function whileTyping(pool, { botId, conversationId, threadRootId = null, ws = null, answering = null }, work) {
+  let stop = startTyping(pool, { botId, conversationId, threadRootId, ws, answering });
   let here = Number(threadRootId) || null;
   // What it last said it is doing, for the place it moves to.
   let said = null;
@@ -1088,7 +1099,7 @@ async function whileTyping(pool, { botId, conversationId, threadRootId = null, w
       const there = Number(rootId) || null;
       if (there === here) return;
       const was = stop;
-      stop = startTyping(pool, { botId, conversationId, threadRootId: there, ws });
+      stop = startTyping(pool, { botId, conversationId, threadRootId: there, ws, answering });
       here = there;
       if (said) await stop.doing(said);
       await was();
@@ -4815,7 +4826,9 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
   const threadRootId = Number(message.threadRootId ?? message.thread_root_id) || null;
   // 1 Nov 2026: and what it is doing as it works (deps.doing: typing's
   // stop.doing), for the working card the screen draws in its place.
-  return whileTyping(pool, { botId: bot.id, conversationId, threadRootId, ws: deps.ws },
+  // Task 2148: an answer the person can stop names their message on its
+  // typing events, which is what the composer's Stop sends back.
+  return whileTyping(pool, { botId: bot.id, conversationId, threadRootId, ws: deps.ws, answering: deps.stop ? message.id : null },
     (typing) => answerUserMessage(pool, config, {
       bot, user, settings, conversationId, message, deps: { ...deps, doing: typing.doing, moveTyping: typing.moveTo },
     }));
@@ -4848,9 +4861,15 @@ async function heardInDm(db, { user, conversationId, messageId, membership, memb
  * claimed offer by its item, a report by the checkpoint `once`). Throws on a
  * failure a retry can cure. Resolves { sent, later }: `later` is the try the
  * machine asks next, when the model could not answer.
+ *
+ * Task 2148: `stop` is the watch for the person's Stop of this answer
+ * (homeroom-bot-stop.js watch: { signal, did, note, add }). The turn ends
+ * at its next safe point and says one line in the answer's place; a Stop
+ * that came before this try began (while it waited to run, or to be tried
+ * again: `retried`) is said here, with nothing done again.
  */
 async function answerOwed(pool, config, {
-  userId, conversationId, messageId, attempt = 0, workKey, once = null, also = [], deps = {},
+  userId, conversationId, messageId, attempt = 0, workKey, once = null, also = [], stop = null, retried = false, deps = {},
 }) {
   const bot = deps.bot || await botAccount(pool);
   if (!bot) return { sent: false, skipped: 'no_bot' };
@@ -4858,6 +4877,13 @@ async function answerOwed(pool, config, {
     // Said already, by an attempt a restart cut short: if what it said was
     // "I'll get back to you", the later try it promised is still owed.
     return { sent: true, skipped: 'answered', later: await laterPromised(pool, { messageId, attempt }) };
+  }
+  if (stop?.signal?.aborted) {
+    // What an earlier try did is known only as far as it was kept: with
+    // nothing kept after one, the line names nothing and rules nothing out.
+    const did = retried && !(stop.did || []).length ? null : stop.did;
+    const said = await sayStopped(pool, { userId, conversationId, messageId, attempt, did, deps: { ...deps, bot } });
+    return { sent: !!said, later: null, stopped: true };
   }
   const { rows: [u] } = await pool.query(
     `SELECT id, username, is_synthetic, has_platform_access, is_admin, private_member_since FROM users
@@ -4875,6 +4901,7 @@ async function answerOwed(pool, config, {
   // retried and then says it could not (dm.sorry), never counted as said.
   const turnDeps = {
     ...deps, bot, workKey, once, strict: true, onLater: (n) => { later = n; },
+    ...(stop ? { stop } : {}),
     // 31 Oct 2026: their earlier messages whose answer this one took over
     // (the bot-dm machine's `also`): the turn answers them too.
     ...(Array.isArray(also) && also.length ? { alsoUnanswered: also } : {}),
@@ -4931,6 +4958,25 @@ async function sayCouldNotAnswer(pool, { userId, conversationId, messageId, atte
   // A later try's: it had promised to come back, so it says it could not.
   return sendDm(pool, {
     bot, userId: Number(userId), content: attempt ? mayor.DEFERRED_GAVE_UP_TEXT : mayor.BROKEN_TEXT,
+    idempotencyKey: mayor.answerKey(messageId, attempt), replyToId: Number(messageId), moment: 'reply',
+  });
+}
+
+/**
+ * Task 2148: the one line a stopped answer says when no turn is there to say
+ * it (a Stop before the try began, after it deferred, or of one that failed
+ * for good): under the answer's own key, so it is nothing when an answer or
+ * the turn's own line did go out. `did`: what it had done that stays done
+ * (homeroom-bot-stop.js stoppedText; null when there is no record). Throws
+ * on a failure.
+ */
+async function sayStopped(pool, { userId, conversationId, messageId, attempt = 0, did = null, deps = {} }) {
+  const bot = deps.bot || await botAccount(pool);
+  if (!bot) return null;
+  if (await answeredAlready(pool, { botId: bot.id, conversationId, messageId, attempt })) return null;
+  const mayor = deps.mayor || require('./homeroom-bot-mayor');
+  return sendDm(pool, {
+    bot, userId: Number(userId), content: require('./homeroom-bot-stop').stoppedText(did),
     idempotencyKey: mayor.answerKey(messageId, attempt), replyToId: Number(messageId), moment: 'reply',
   });
 }
@@ -6819,6 +6865,7 @@ module.exports = {
   answerOwed,
   answeredAlready,
   sayCouldNotAnswer,
+  sayStopped,
   normalizeBrief,
   firstVersionIssue,
   firstVersionStartedText,
