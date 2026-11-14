@@ -112,10 +112,10 @@ test('a plan or a question waiting on its maker: one button that says so, and no
   assert.match(question, /data-ws-first-version-action="answer"[^>]*>Answer the question<\/button>/);
   assert.equal(hub.firstVersionAction(building({ waits_on: 'plan' })), 'review');
   assert.equal(hub.firstVersionAction(building({ waits_on: 'question' })), 'answer');
-  // The chat is theirs: their DM when the record names it, else the bot's door.
+  // The chat is theirs: the project's first-version thread (14 Nov 2026).
   const src = read(HUB);
-  assert.match(src, /if \(action === 'review' \|\| action === 'answer'\) \{\s*if \(fv\.conversation_id\) openConversation\(fv\.conversation_id\);\s*else void openBot\(\);/);
-  assert.match(src, /import \{ open as openConversation, openBot \} from '\.\.\/\.\.\/messages\/store';/);
+  assert.match(src, /if \(action === 'review' \|\| action === 'answer'\) \{[\s\S]{0,160}void openFirstVersion\(slug\);/);
+  assert.match(src, /import \{ openFirstVersion \} from '\.\.\/\.\.\/ai\/where';/);
 });
 
 test('#4391/#4393: while the first-session tour runs, no Review the plan: the bot is working on it', () => {

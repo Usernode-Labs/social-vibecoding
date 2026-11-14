@@ -132,6 +132,9 @@ function proposalHref(slug, sessionId, prNumber = null) {
 // What a request filed or queued while its project's first version is not
 // live says it waits for (cardText).
 const FIRST_VERSION_WAIT_WORDS = 'Waiting for the first version to go live. I\'ll start on this as soon as it does.';
+// What a card started for a queued request says it waits for: the bot's own
+// line, which starts by itself (cardText).
+const QUEUED_WORDS = 'I\'ll start on this by myself as soon as I have a free slot.';
 
 // #6133: the week's building time is nearly gone. Said quietly in a
 // request's thread when a look or a build starts (noteLowAllowance), and on
@@ -174,8 +177,10 @@ function cardText({ appName, issueNumber, issueTitle, firstVersion }, dm, {
   if (filed) return `${line}\n\nFiled. ${waits || 'This card follows it from here.'}${low}`;
   if (waits) return `${line}\n\n${waits}${low}`;
   // Started when the request is queued, before anything has begun on it
-  // (homeroom-bot.js refreshApp): waiting is said, not left silent.
-  if (queued) return `${line}\n\nWaiting for a free builder. This card follows it from here.${low}`;
+  // (homeroom-bot.js refreshApp): waiting is said, not left silent. 13 Nov
+  // 2026: and whose line it is. "Waiting for a free builder" read as a wait
+  // for another person; it is the bot's own line, and it starts by itself.
+  if (queued) return `${line}\n\n${QUEUED_WORDS} This card follows it from here.${low}`;
   const it = firstVersion ? 'the first version' : 'this';
   return joined
     ? `${line}\n\nI started on ${it} earlier and I'm still working on it. This card updates as I go.`
@@ -242,7 +247,7 @@ async function sendCard(pool, {
     } : {}),
     idempotencyKey: key,
     // #3707: news about a request they started in the DM points back at it,
-    // said in Main when that is under an earlier card (outsideCardThread).
+    // never under an earlier card of the request's (outsideCardThread).
     replyToId: started,
     ...(typeof dm.outsideCardThread === 'function' ? await dm.outsideCardThread(pool, started) : {}),
   });
@@ -336,7 +341,7 @@ async function startCard(pool, {
     if (!app?.id || !bot?.id || !requester?.userId || !Number.isInteger(n) || n <= 0 || !jobKey) return null;
     const dm = dmModule(deps);
     const s = settings || await settingsModule(deps).readSettings(pool);
-    if (!dm.hasBot(s, requester)) return null;
+    if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, s, requester))) return null;
     const payer = payerUserId === undefined ? requester.userId : payerUserId;
     const existing = await requestCard(pool, { userId: requester.userId, appId: app.id, issueNumber: n });
     // One story per request: every request gets a card, however it was
@@ -486,7 +491,7 @@ async function noteLowAllowance(pool, {
     const dm = dmModule(deps);
     if (typeof dm.noteStep !== 'function') return null;
     const s = settings || await settingsModule(deps).readSettings(pool);
-    if (!dm.hasBot(s, requester)) return null;
+    if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, s, requester))) return null;
     if (typeof dm.overWeeklyAllowance === 'function'
         && await dm.overWeeklyAllowance(pool, s, requester.userId).catch(() => false)) return null;
     if (typeof dm.allowanceLow !== 'function'
@@ -522,7 +527,7 @@ async function cardUnderPlan(pool, { app, issueNumber, runId, planMessageId, req
     if (!app?.id || !bot?.id || !requester?.userId || !Number.isInteger(n) || n <= 0 || !Number.isInteger(run) || run <= 0) return null;
     const dm = dmModule(deps);
     const s = settings || await settingsModule(deps).readSettings(pool);
-    if (!dm.hasBot(s, requester)) return null;
+    if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, s, requester))) return null;
     const existing = await requestCard(pool, { userId: requester.userId, appId: app.id, issueNumber: n });
     if (existing && existing.messageId > Number(planMessageId)) {
       return { messageId: existing.messageId, conversationId: existing.conversationId, duplicate: true, continued: true };
@@ -670,6 +675,19 @@ const HELD_LINES = new Set(['held_builds', 'held_waiting', 'claimed']);
 const NOT_GOING = new Set(['live', 'closed', 'stopped']);
 const HANDED_BACK = new Set(['decide', 'already_works', 'needs_detail']);
 
+/**
+ * Pure (13 Nov 2026): a card waiting its turn, in the bot's own words: its
+ * stage, then whose line it waits in and that it starts by itself. "Ready
+ * to build · Number 1 in line" did not say whether it waited for the bot,
+ * for another person or for its requester. Null for any other state.
+ */
+function queueWords(work) {
+  if (!work || work.line?.code !== 'queued') return null;
+  const place = Number(work.line.place) || 0;
+  const line = place ? `Number ${place} in my own line` : 'Waiting its turn in my own line';
+  return `${require('./work-state').stageSays(work)} · ${line}; I'll start by myself`;
+}
+
 function entryOfWork(work) {
   if (!work || NOT_GOING.has(work.stage)) return null;
   if (work.stage === 'waiting_for_you' && HANDED_BACK.has(work.why)) return null;
@@ -695,7 +713,7 @@ function entryOfWork(work) {
     step,
     of: step ? track.STEPS.length : null,
     stepName: null,
-    doing: workState.says(work),
+    doing: queueWords(work) || workState.says(work),
     since: work.since || null,
     ...(typicalKey ? { typicalMinutes: progressModule({}).typicalMinutes(typicalKey) } : {}),
     ...(work.whoseMove === 'requester' ? { waitingOn: 'them' } : work.whoseMove === 'group' ? { waitingOn: 'the group' } : {}),
@@ -1246,7 +1264,7 @@ async function catchUpCards(pool, { user, settings = null, deps = {}, now = new 
     const s = settings || await botSvc.readSettings(pool);
     // As the tray: nothing is under way while the bot is off, or on a
     // staging copy, which never acts.
-    if (!dm.hasBot(s, user) || s.mode === 'off' || liveSvc.isStaging()) return none;
+    if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, s, user)) || s.mode === 'off' || liveSvc.isStaging()) return none;
     const added = await whileHolding(pool, userId, async () => {
       const states = await progressModule(deps).requestStates(pool, { userId, settings: s, now });
       const quietReasons = [botSvc.APP_AGAIN_REASON].filter(Boolean);
@@ -1427,6 +1445,7 @@ module.exports = {
   DEMO_UNDER_WAY,
   cardText,
   FIRST_VERSION_WAIT_WORDS,
+  QUEUED_WORDS,
   jobCardKey,
   requestCard,
   continueCard,
@@ -1436,6 +1455,7 @@ module.exports = {
   thanksText,
   outcomeOf,
   entryOfWork,
+  queueWords,
   changeOutcomeOf,
   endedAt,
   linksOf,

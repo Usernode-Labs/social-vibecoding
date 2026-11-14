@@ -111,7 +111,8 @@ export function ContactPreferencesSection() {
       <SectionHeading title={t('settings:privacy.contact.title')} blurbClassName="dark:text-zinc-400">
         {t('settings:privacy.contact.intro')}
       </SectionHeading>
-      <div className="space-y-4">
+      {/* ui-card: a name only (looks v2), the kit's card of switch rows under a look. */}
+      <div className="ui-card space-y-4">
         <div>
           <PrivacySwitch
             id="settings-contact-marketing-email"
@@ -148,10 +149,13 @@ export function ContactPreferencesSection() {
               onChange={(e) => void change('marketingSms', e.currentTarget.checked)}
             />
           </div>
-        ) : loaded ? (
-          <p data-settings-contact-no-phone="" className={HELP}>{t('settings:privacy.contact.marketingSms.noPhone')}</p>
         ) : null}
       </div>
+      {/* Under the switches, not among them: the same 16px in the standard
+          look, and a note under the card under one of the frame's looks. */}
+      {!prefs.phone && loaded ? (
+        <p data-settings-contact-no-phone="" className={`ui-note mt-4 ${HELP}`}>{t('settings:privacy.contact.marketingSms.noPhone')}</p>
+      ) : null}
       {error ? <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
       <SaveStatus saved={saved} />
     </div>

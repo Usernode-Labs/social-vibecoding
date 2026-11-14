@@ -2073,7 +2073,7 @@ async function generateShortDescription({ name, brief, max = 90, apiKey, telemet
   if (!activeClient) throw new Error('LLM not initialized');
   const text = String(brief || '').trim();
   if (!text) throw new Error('Nothing to describe');
-  const system = `You write the one-line description shown under a new app's name on its page and in a directory of apps. From the app's name and its creator's longer description, write one plain sentence fragment saying what the app is or does, for people deciding whether to open it: at most ${max} characters, no trailing period, no quotes, no markdown, no emoji. Never repeat the app's name.
+  const system = `You write the one-line description shown under a new app's name on its page and in a directory of apps. From the app's name and its creator's longer description, write one plain line in two parts: what the app is, then what you do there, as in "A recipe helper: get exact dough weights and a bake schedule". Keep it short enough to read on one line of a card, at most ${max} characters, no trailing period, no quotes, no markdown, no emoji. Prefer saying what a person does there over a vague label. Never repeat the app's name.
 
 Respond with ONLY a JSON object: {"description": "..."}. No prose before or after.`;
   const { response: resp, model } = await helperMessage({

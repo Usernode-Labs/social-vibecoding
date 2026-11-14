@@ -42,12 +42,12 @@ const HOSTILE_SOURCES = KINDS
 const MARKER = /\{\{\s*(#if|#unless|else|\/if|\/unless)\b[^}]*\}\}/g;
 const STRUCTURE_TAG = /<\/?(table|tbody|thead|tfoot|tr|td|th|p|div|h[1-6]|li|ul|ol|img)\b/i;
 
-test('there are 15 seeded kinds and every one has html', () => {
-  assert.equal(KINDS.length, 15);
+test('there are 16 seeded kinds and every one has html', () => {
+  assert.equal(KINDS.length, 16);
   for (const [name, html] of SOURCES) assert.equal(typeof html, 'string', name);
 });
 
-test('for all 15 seeds and the layout, replacing every block with itself is byte-identical', () => {
+test('for all 16 seeds and the layout, replacing every block with itself is byte-identical', () => {
   for (const [name, source] of [...SOURCES, ...HOSTILE_SOURCES]) {
     const blocks = editableBlocks(source);
     assert.ok(blocks.length > 0, `${name} has editable text`);

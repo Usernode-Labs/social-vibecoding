@@ -243,8 +243,11 @@ const App = {
   // screen selector must not restore another session's display-only state.
   _sessionCacheScope() {
     try {
-      const value = document.cookie.split(';').map(s => s.trim())
-        .find(s => s.startsWith('usernode_api_scope='))?.slice('usernode_api_scope='.length);
+      const name = typeof location !== 'undefined' && location.protocol === 'http:'
+        ? 'usernode_api_scope' : '__Host-usernode_api_scope';
+      const values = document.cookie.split(';').map(s => s.trim()).filter(s => s.startsWith(name + '='));
+      if (values.length !== 1) return null;
+      const value = values[0].slice(name.length + 1);
       return /^[a-f0-9]{64}$/.test(value || '') ? value : null;
     } catch (err) { return null; }
   },
@@ -3614,6 +3617,9 @@ const App = {
           case 'conversation_read':
           case 'conversation_membership_changed':
           case 'conversation_typing':
+          // The viewer's own saved drafts in the chat with Homeroom bot
+          // changed on another tab or device (features/messages/bot-drafts.ts).
+          case 'conversation_drafts_changed':
             // The global socket is transport only. The React-owned Messages
             // store applies member-scoped events without a legacy DOM write.
             window.UsernodeReact?.messages?.handleEvent?.(data);
@@ -4603,6 +4609,9 @@ const App = {
         shownRead = AppView.refreshShownTopic({
           kinds: b.kinds, ids: b.ids, numbers: b.numbers, slugs: b.slugs,
           unnamed: b.unnamed, devRead: !!out,
+          // #6604: one resync ask per path for this burst, however many
+          // surfaces the burst reached.
+          resynced: new Set(),
         });
       } catch { shownRead = null; }
     }
@@ -5968,16 +5977,16 @@ const App = {
       }
       if (parts[0] === 'homeroom-bot') {
         // #6019: the Homeroom bot tab. `#homeroom-bot` is its own page
-        // (features/ai/): what needs you, your private threads, In progress,
-        // with Main Chat, the chat with the bot, the list's first row.
+        // (features/ai/): what needs you, your private threads, In progress.
         // 1 Nov 2026: the chat is this page's alone, in the column beside the
-        // list (or a phone's drawer), never the Messages screen's. Its
-        // addresses say where in it: `main`, `thread/<id>`, either with
-        // `m/<id>` (features/ai/door.ts), handed to the page, which takes
-        // each once. A request, a change or a decision opened in that column
-        // has an address of its own too (`request|change|decision/<slug>/<n>`):
-        // the page opens it there, or on its own page where the column does
-        // not fit.
+        // list (or a phone's drawer), never the Messages screen's. 14 Nov
+        // 2026: every conversation in it is a thread. Its addresses say
+        // where: `thread/<id>`, with `m/<id>` for a message of it
+        // (features/ai/door.ts), handed to the page, which takes each once.
+        // A request, a change or a decision opened in that column has an
+        // address of its own too (`request|change|decision/<slug>/<n>`): the
+        // page opens it there, or on its own page where the column does not
+        // fit.
         App.setChromeless(false);
         App.navigateToAi();
         // 6 Nov 2026 (#6425): on a desktop the tab's own page is its lists
@@ -5992,15 +6001,26 @@ const App = {
         }
         if (parts[1] === 'main' || parts[1] === 'thread' || parts[1] === 'm') {
           const at = App._messagesExtras(parts[1] === 'main' ? parts.slice(2) : parts.slice(1));
-          window.UsernodeReact?.ai?.openAt?.({
-            threadRootId: at.threadRootId || null,
-            focusMessageId: at.focusMessageId || null,
-          });
+          if (at.threadRootId) {
+            window.UsernodeReact?.ai?.openAt?.({
+              threadRootId: at.threadRootId,
+              focusMessageId: at.focusMessageId || null,
+            });
+          } else {
+            // AN ADDRESS FROM BEFORE (14 Nov 2026). `main` was Main Chat,
+            // which is gone: it opens the thread the person's old Main Chat
+            // messages were moved under, or a new chat when they had none.
+            // `main/m/<id>` and `m/<id>` name a message without its thread:
+            // the server says which thread it is in now. Either way the
+            // address is rewritten in place (features/ai/where.ts), with no
+            // step for Back and no second pass through here.
+            window.UsernodeReact?.ai?.openOld?.('#' + parts.join('/'));
+          }
         }
-        // 10 Nov 2026: `new` is the bot's "+" pressed for you, a blank thread
-        // that may come already set (`?project=<slug>&with=<builder>`,
-        // features/ai/door.ts botNewAt): a project's Workshop asking a
-        // newcomer who should build.
+        // 10 Nov 2026: `new` is New chat pressed for you, a new chat that
+        // may come already set (`?project=<slug>&with=<builder>`,
+        // features/ai/door.ts botNewAt): a project's Workshop row, or its
+        // card asking a newcomer who should build.
         if (parts[1] === 'new') {
           window.UsernodeReact?.ai?.openNew?.('#' + parts.join('/') + (fragQuery ? '?' + fragQuery : ''));
         }
@@ -8080,8 +8100,8 @@ const App = {
   },
 
   // #6019 follow-up: the Homeroom bot tab's own page (features/ai/), a tab
-  // root like the Workshop. Main, the chat with the bot, is in its column
-  // (1 Nov 2026: no longer a level under it on the Messages screen). The
+  // root like the Workshop. A thread of the chat with the bot is in its
+  // column (1 Nov 2026: no longer a level on the Messages screen). The
   // page keeps no state of its own to leave, so nothing has to exit it: the
   // next screen's reveal hides it.
   navigateToAi() {
@@ -10233,7 +10253,7 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
     case 'settings': return 'settings-screen';
     case 'admin': return 'admin-screen';
     case 'messages': return 'messages-screen';
-    case 'homeroom-bot':                     // the Homeroom bot tab's own page, Main Chat and its threads
+    case 'homeroom-bot':                     // the Homeroom bot tab's own page, and a thread of its chat
     case 'ai': return 'ai-screen';           // in its column included (1 Nov 2026; #ai: its old address)
     case 'chat': return 'messages-screen';   // Global Chat's, removed: the inbox
     case 'agent': return 'agent-session-screen';

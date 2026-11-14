@@ -405,6 +405,13 @@ test('more of the words on a setting\'s controls find it', () => {
   // The words already there stay.
   assert.ok(finds('theme', 'dark light'));
   assert.ok(finds('language', 'locale'));
+  // #6511 item 10: someone whose screen is in the wrong language types the
+  // word for "language" in their own, or "bahasa".
+  assert.ok(finds('language', 'language'));
+  assert.ok(finds('language', 'bahasa'));
+  assert.ok(finds('language', 'idioma'));
+  assert.ok(finds('language', 'sprache'));
+  assert.ok(finds('language', '语言'));
 });
 
 test('the new text is in the catalog', () => {

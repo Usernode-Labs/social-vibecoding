@@ -48,12 +48,13 @@ export function isBotNews(message: ConversationMessage): boolean {
 
 /**
  * Pure (#6207, 3 Nov 2026): whether a message is a request's news, which
- * Main Chat no longer draws. Main holds what you said there and the bot's
- * replies to it; a request's news is on that request's page, where its row
- * goes (its plan with Build it, the bot's posts, its progress). A first
- * version's news stays: it has no request page yet. The server leaves the
- * same messages out of Main's stream (services/conversations.js
- * REQUEST_NEWS); this is for one that arrives live.
+ * the chat's own stream does not draw: a request's news is on that
+ * request's page, where its row goes (its plan with Build it, the bot's
+ * posts, its progress). A first version's news is not a request's: it has
+ * no request page yet. The server leaves the same messages out of the
+ * conversation's own stream (services/conversations.js REQUEST_NEWS); this
+ * is for one that arrives live. (The rule was Main Chat's, which is gone
+ * since 14 Nov 2026; the stream it describes is drawn on no screen.)
  */
 export function isRequestNews(message: ConversationMessage): boolean {
   return isBotNews(message) && !message.metadata?.homeroomBot?.firstVersion;
@@ -61,9 +62,10 @@ export function isRequestNews(message: ConversationMessage): boolean {
 
 /**
  * Pure (#6250, 4 Nov 2026): the bot's line that opens a private thread from
- * its "+", which Main Chat does not draw. A private thread's origin decides
- * (Evan, 4 Nov): only one started from the "+" stays out of Main Chat. One
- * the bot opened from Main quotes the message it answered, so its line
+ * its "+" (New chat), which the chat's own stream does not draw. The rule
+ * was Main Chat's, gone since 14 Nov 2026: a private thread's origin decided
+ * (Evan, 4 Nov) what Main showed of it, and only one started from the "+"
+ * stayed out. One the bot opened from Main quotes the message it answered, so its line
  * carries a reply (`message.reply`) and stays, as the way to its row in the
  * list; one opened from a request's page or a captured screen has its own
  * kind (`opened_about`, `opened_design`) and stays too. The server leaves the

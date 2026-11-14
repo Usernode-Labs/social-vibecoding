@@ -72,11 +72,13 @@ test('B8: the doors that open the chat with Homeroom bot, and what they are call
   assert.match(read('frontend/src/features/first-session/made.tsx'), /data-first-session-plan-chat=""[^>]*>\s*\{t\('onboarding:firstSession\.made\.goToChat'\)\}/);
   assert.equal(require('./lib/platform-i18n').message('onboarding:firstSession.made.goToChat'), 'Go to chat');
   const store = read('frontend/src/features/messages/store.ts');
-  assert.match(store, /openBot: \(reference\?: StagedObject \| null\) => \{ void openBot\(reference\); \},/);
-  // B8: Ask for changes attaches the change on the composer when it names
-  // its project (tests/ask-for-changes-attach.test.js); anything less is
-  // chosen in the Share item dialog, as Share stages one.
-  assert.match(store, /else if \(reference\) pendingShare = reference;/);
+  assert.match(store, /openBot: \(reference\?: BotDoorReference \| null\) => \{ void openBot\(reference\); \},/);
+  // B8, 14 Nov 2026: Ask for changes opens the thread about the change, or
+  // a new chat carrying it (tests/ask-for-changes-attach.test.js): the door
+  // never opens Main Chat, which is gone, nor the Share item dialog.
+  const door = store.slice(store.indexOf('export async function openBot('), store.indexOf('export async function openBotRequest('));
+  assert.match(door, /goBotAddress\(botNewAddress\(\{ project: slug \}\)\);/);
+  assert.doesNotMatch(door, /pendingShare|openBotTab\(null\)/);
   // (The four starters' pages said the same; they were deleted with the
   // create dialog, tests/app-templates.test.js.)
 });

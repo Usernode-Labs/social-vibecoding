@@ -36,7 +36,7 @@ test('the sidebar slides in and out on the compositor, and not at all for reduce
   const src = read('frontend/src/features/nav/rail-slide.ts');
   const { RAIL_SLIDE } = loadTsx('frontend/src/features/nav/rail-slide.ts');
   assert.deepEqual({ ...RAIL_SLIDE }, { duration: 200, easing: 'cubic-bezier(0.2, 0, 0, 1)' });
-  assert.match(src, /window\.matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches/);
+  assert.match(src, /\|\| reducedMotion\(\)/, 'the device or the Reduce motion setting (#6510)');
   assert.match(src, /!window\.matchMedia\?\.\('\(min-width: 768px\)'\)\.matches/, 'a phone has no fold');
   // One layout change, then transforms: the store change is committed
   // synchronously between the two measurements.

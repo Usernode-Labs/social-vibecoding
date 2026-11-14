@@ -11,11 +11,13 @@
  * `.dev-ws-page-back*` in app.css, so the two cannot drift apart.
  */
 
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { useCallback, useMemo, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 
 import { ChevronLeftIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
+import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
+import { useFramePage } from '../../frame/frame-page-store';
 
 type BackButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'className' | 'type' | 'children'> & {
   /** Where it goes, as the reader knows it: "Back to <label>". */
@@ -51,6 +53,17 @@ export function PageBack({ label, title, onBack, eyebrow = true }: {
    */
   eyebrow?: boolean;
 }): ReactNode {
+  // Under a look the frame's bar is this bar: it says the page under its
+  // parent ("Workshop", then "Last week") and its arrow goes back the same
+  // way, and the kit's head carries the title, so this one is put away by
+  // app.css (A PAGE UNDER THE WORKSHOP) and stays in the document. On a
+  // phone the bar keeps the parent's name: the head already says the page's.
+  const frame = isFrameSkin(useLiveSkin());
+  const back = useRef(onBack);
+  back.current = onBack;
+  const goBack = useCallback(() => back.current(), []);
+  const crumb = useMemo(() => (frame ? [label, title] : null), [frame, label, title]);
+  useFramePage(crumb, frame ? goBack : null, true);
   return (
     <div className="dev-ws-pagehead" data-ws-pagehead="">
       <PageBackButton label={label} onBack={onBack} data-ws-page-back="" />

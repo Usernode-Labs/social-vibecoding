@@ -18,8 +18,9 @@
 //             closed with nothing built;
 //   vote      a change they voted on, once merged or closed, or a group
 //             decision they opened or voted on, once decided;
-//   solo      a private thread with Homeroom bot: marked done, put away, or
-//             filed (or posted) as a request that has since finished.
+//   solo      a private thread with Homeroom bot: marked done, put away,
+//             filed (or posted) as a request that has since finished, or
+//             about a change that is live or closed.
 //
 // A thread they only wrote in or followed is not theirs to remember, so it
 // is not listed. In a private project they are no longer in, only what they
@@ -120,8 +121,10 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.cl
 
 // $1 viewer, $2 the most rows, $3 before (or NULL), $4 a project's slug (or
 // NULL), $5 the days a done thread stays in Live this week. Their private
-// threads that finished: marked done more than that week ago, put away, or
-// filed (or posted) as a request that has since closed or gone live.
+// threads that finished: marked done more than that week ago, put away,
+// filed (or posted) as a request that has since closed or gone live, or
+// about a change that is live or closed (ai-work.js ABOUT_CHANGE_END_SQL: at
+// once, since the change's own row is the lists' and the thread is not).
 const HISTORY_PRIVATE_SQL = `
 SELECT * FROM (
 SELECT p.id, p.root_message_id AS root_id, p.kind, p.state, p.result_ref, p.done_at, p.updated_at,
@@ -134,14 +137,17 @@ SELECT p.id, p.root_message_id AS root_id, p.kind, p.state, p.result_ref, p.done
        (SELECT d.title FROM design_threads d WHERE d.private_thread_id = p.id) AS design_title,
        m.metadata->'homeroomBot'->>'projectIdea' AS project_idea,
        m.metadata->'homeroomBot'->>'draftTitle' AS draft_title,
+       -- A first version's thread by its project, the one its first message
+       -- names when the project itself is gone (ai-work.js PRIVATE_SQL).
+       m.metadata->'homeroomBot'->>'appName' AS root_app_name,
        (SELECT f.content FROM conversation_messages f
          WHERE f.thread_root_id = m.id AND f.sender_id = $1 AND f.deleted_at IS NULL
          ORDER BY f.id LIMIT 1) AS first_own,
-       fin.at AS result_at, fin.outcome AS result_outcome,
+       fin.at AS result_at, fin.outcome AS result_outcome, abt.outcome AS about_outcome,
        CASE
          WHEN p.state = 'done' THEN p.done_at
          WHEN p.state = 'dropped' THEN p.updated_at
-         ELSE fin.at
+         ELSE COALESCE(fin.at, abt.at)
        END AS at
   FROM private_threads p
   JOIN conversation_messages m ON m.id = p.root_message_id AND m.deleted_at IS NULL
@@ -166,11 +172,14 @@ SELECT p.id, p.root_message_id AS root_id, p.kind, p.state, p.result_ref, p.done
     ORDER BY (f.outcome = 'shipped') DESC, f.at DESC
     LIMIT 1
   ) fin ON TRUE
+  -- How the change it is about ended: live, or closed.
+  LEFT JOIN LATERAL (${aiWork.ABOUT_CHANGE_END_SQL}) abt ON TRUE
  WHERE p.user_id = $1
    AND ($4::text IS NULL OR a.slug = $4)
    AND ((p.state = 'done' AND p.done_at <= NOW() - make_interval(days => $5))
         OR p.state = 'dropped'
-        OR (p.state IN ('filed', 'posted') AND fin.at IS NOT NULL))
+        OR (p.state IN ('filed', 'posted') AND fin.at IS NOT NULL)
+        OR abt.at IS NOT NULL)
 ) done
  WHERE at IS NOT NULL AND ($3::timestamptz IS NULL OR at < $3)
  ORDER BY at DESC, id DESC
@@ -229,9 +238,11 @@ function pastOf(row, viewerId, botId = null) {
 
 /** Pure: a finished private thread as a History row. */
 function privatePastOf(row) {
+  // A thread about a change ends as its change did: "Live Oct 24", or "Closed".
   const outcome = row.state === 'done' ? 'done'
     : row.state === 'dropped' ? 'put_away'
-      : row.result_outcome === 'shipped' ? 'filed_shipped' : 'filed_closed';
+      : row.about_outcome === 'live' || row.about_outcome === 'closed' ? row.about_outcome
+        : row.result_outcome === 'shipped' ? 'filed_shipped' : 'filed_closed';
   const shaped = aiWork.shapePrivate(row);
   return {
     key: `private:${Number(row.root_id)}`,

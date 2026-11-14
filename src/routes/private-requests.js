@@ -6,7 +6,10 @@
 // `private_requests` and `private_request_comments` tables, which are
 // staging:private, and nowhere else. No GitHub issue, no chat thread (a
 // thread is read by every viewer of the app), no board feed entry, no
-// Homeroom bot build (it works on a public branch).
+// Homeroom bot build (it works on a public branch). Admins file them here;
+// so does the platform's signal service for a private kind of problem (the
+// dependency audit's findings, services/platform-signals.js), which gives
+// the bot a separate request on the board naming only the upgrade to make.
 //
 // Every route answers 404 to anyone who is not a platform admin, the same
 // answer an id that does not exist gets, so a non-admin cannot even learn

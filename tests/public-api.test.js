@@ -266,6 +266,45 @@ test('apps list: include_wallets=0 omits wallet_address everywhere', async () =>
   } finally { await srv.close(); }
 });
 
+// #6591: the directory's query is the heaviest a page load makes and its
+// answer is the same for everybody, so it is read once for a short while.
+test('apps list: read once and kept, per wallets choice; a failed read is kept for nobody', async () => {
+  const pool = makeMockPool();
+  const srv = await startTestServer(pool);
+  const listReads = () => pool.calls.filter((c) => /last_deploy_at DESC NULLS LAST/i.test(c.sql)).length;
+  try {
+    const [a, b] = await Promise.all([
+      get(srv.baseUrl, '/api/public/apps?include_wallets=0'),
+      get(srv.baseUrl, '/api/public/apps?include_wallets=0'),
+    ]);
+    const c = await get(srv.baseUrl, '/api/public/apps?include_wallets=0');
+    assert.equal(listReads(), 1, 'two requests at once and one after share one read');
+    assert.deepEqual(b.body, a.body);
+    assert.deepEqual(c.body, a.body);
+    // With wallets is its own answer, never the one without them.
+    const withWallets = await get(srv.baseUrl, '/api/public/apps');
+    assert.equal(listReads(), 2);
+    assert.ok(withWallets.body.apps[0].contributors.some((x) => 'wallet_address' in x));
+    assert.ok(a.body.apps[0].contributors.every((x) => !('wallet_address' in x)));
+  } finally { await srv.close(); }
+
+  const failing = makeMockPool();
+  const query = failing.query;
+  let fail = true;
+  failing.query = async (sql, params) => {
+    if (fail && /last_deploy_at DESC NULLS LAST/i.test(String(sql))) throw new Error('db down');
+    return query(sql, params);
+  };
+  const srv2 = await startTestServer(failing);
+  try {
+    assert.equal((await get(srv2.baseUrl, '/api/public/apps')).status, 500);
+    fail = false;
+    const again = await get(srv2.baseUrl, '/api/public/apps');
+    assert.equal(again.status, 200);
+    assert.ok(again.body.apps.length > 0);
+  } finally { await srv2.close(); }
+});
+
 test('apps list: include_wallets=1 (and unset) keeps wallet_address', async () => {
   const srv = await startTestServer(makeMockPool());
   try {
@@ -628,13 +667,37 @@ test('waitlist options: the seven question maps are served untouched beside it',
     }
     assert.deepEqual(
       Object.keys(body).sort(),
-      [...Object.keys(expected), 'account_deletion_link', 'child_safety_link', 'data_protection_email', 'marketing_url', 'native_sign_in_providers', 'phone_sign_in', 'privacy_link', 'sign_in_providers', 'story_landing', 'terms_link', 'waitlist_url'].sort(),
+      [...Object.keys(expected), 'account_deletion_link', 'child_safety_link', 'data_protection_email', 'marketing_url', 'native_sign_in_providers', 'phone_sign_in', 'privacy_link', 'sign_in_providers', 'story_landing', 'terms_link', 'waitlist_enabled', 'waitlist_url'].sort(),
       'the public payload grew or lost a field'
     );
     // And the service's own constants are unmutated by the spread: the live
     // maps still equal the pre-request snapshot.
     assert.deepEqual(questions.publicOptions(), expected);
   } finally { await srv.close(); }
+});
+
+test('waitlist options: whether new accounts wait is on unless an admin switched the waitlist off (#6633)', async () => {
+  const on = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(on.baseUrl, '/api/public/waitlist/options');
+    assert.equal(body.waitlist_enabled, true, 'no stored setting is the waitlist');
+  } finally { await on.close(); }
+
+  const base = makeMockPool();
+  const stored = {
+    ...base,
+    query: async (sql, params = []) => {
+      if (/FROM platform_settings s/.test(String(sql)) && params[0] === 'waitlist_enabled') {
+        return { rows: [{ value: 'false', updated_at: new Date(), updated_by: 'admin' }] };
+      }
+      return base.query(sql, params);
+    },
+  };
+  const off = await startTestServer(stored);
+  try {
+    const { body } = await get(off.baseUrl, '/api/public/waitlist/options');
+    assert.equal(body.waitlist_enabled, false);
+  } finally { await off.close(); }
 });
 
 test('waitlist options: the never-public fields are still absent', async () => {

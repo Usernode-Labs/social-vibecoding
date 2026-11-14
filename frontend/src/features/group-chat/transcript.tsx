@@ -65,6 +65,8 @@ import {
 import { confirmAction } from '../../lib/confirm';
 import { projectChangesOnGithub } from '../../lib/change-ref';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { isFrameSkin, useLiveSkin } from '../../lib/skin';
+import { Icon as KitIcon } from '@/components/ui/kit';
 import { t as translate } from '../../lib/i18n/runtime';
 import { timeOfDay } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
@@ -1256,6 +1258,20 @@ function isBotPlan(spec: { sharedBy: string; sharedByUnknown?: boolean; botNote?
 }
 
 /**
+ * What happened is said with a glyph. The standard look draws the emoji
+ * each line names; under one of the frame's looks (version 2 of the tour's
+ * s32 to s35) the line is the kit's event line (looks.json "wear": evt),
+ * whose glyph is one of the kit's own stroked icons in the line's grey. A
+ * glyph with no icon of its own (the bullet of a plain notice) stays as it
+ * is. The look is read once per line, before anything a line returns on.
+ */
+const EVENT_ICONS: Record<string, string> = { '📋': 'file', '✋': 'hand', '👀': 'eye', '✅': 'check', '🗳️': 'vote', '🎉': 'rocket' };
+function useEventGlyph(): (glyph: string) => ReactNode {
+  const frame = isFrameSkin(useLiveSkin());
+  return (glyph) => (frame && EVENT_ICONS[glyph] ? <KitIcon name={EVENT_ICONS[glyph]} size={16} /> : glyph);
+}
+
+/**
  * #4453: something that happened on a request — a claim, a spec posted, a
  * notice — as one quiet line with a glyph, where the stream reached it.
  * `.gc-msg-system` keeps the module's row hooks (tap-to-quote's row
@@ -1267,6 +1283,7 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
   const claim = /^(\S+) claimed this (?:issue|request)$/.exec((msg.systemText || '').trim());
   const t = useMessages('project');
   const tChat = useMessages('chat');
+  const drawn = useEventGlyph();
   let glyph = '•';
   let text: ReactNode = msg.systemText;
   // Each line is one whole message, with <0> around who did it.
@@ -1301,7 +1318,7 @@ const RequestEvent = memo(function RequestEvent({ msg, onRead }: { msg: Transcri
   }
   return (
     <div className="gc-msg-system dev-request-event" data-msg-id={msg.id ?? ''} data-request-event={spec || gh ? 'spec' : claim ? 'claim' : 'notice'}>
-      <span className="dev-request-event-glyph" aria-hidden="true">{glyph}</span>
+      <span className="dev-request-event-glyph" aria-hidden="true">{drawn(glyph)}</span>
       <span className="dev-request-event-text">
         {text}
         {msg.repeat && msg.repeat > 1 ? (
@@ -1456,12 +1473,13 @@ const ChangeEvent = memo(function ChangeEvent({ msg, changeId = null, tag = null
 }) {
   const t = useMessages('project');
   const tChat = useMessages('chat');
+  const drawn = useEventGlyph();
   const line = changeLine(msg);
   if (!line) return null;
   const sessionId = Number(changeId || msg.event?.sessionId || msg.voteRef?.sessionId || controller()?.activeThread?.ref || 0);
   return (
     <div className="gc-msg-system dev-request-event" data-msg-id={msg.id ?? ''} data-change-event={line.kind} data-change-event-on={changeId || undefined}>
-      <span className="dev-request-event-glyph" aria-hidden="true">{line.glyph}</span>
+      <span className="dev-request-event-glyph" aria-hidden="true">{drawn(line.glyph)}</span>
       <span className="dev-request-event-text">
         {/* A line the page words is one whole message: <0> is who did it,
             <1> a vote's reason. */}

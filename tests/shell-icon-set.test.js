@@ -454,6 +454,11 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2',
     'M5 7a4 4 0 108 0 4 4 0 10-8 0z',
     'M16 11l2 2 4-4',
+    // The hub's Invite card (community-card.tsx InviteHeroCard) draws a person
+    // and a plus on its button; the card is drawn once the community's read
+    // is back, so it renders behind state. Its body and head are the two
+    // paths above.
+    'M19 8v6M22 11h-6',
     'M11.5 15H7a4 4 0 00-4 4v2',
     'M6 7a4 4 0 108 0 4 4 0 10-8 0z',
     'M21.38 16.63a2.12 2.12 0 00-3-3l-4.01 4a2 2 0 00-.51.86l-.84 2.87a.5.5 0 00.62.62l2.87-.84a2 2 0 00.86-.51z',
@@ -492,7 +497,14 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M7 4.5v6.75a5 5 0 0 0 10 0V4.5M5 20h14',
     'M6 4.5v15M18 4.5v15M6 12h12',
     'M7.5 7.5H11V11H7.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75M16.5 7.5H20V11h-3.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75',
-    'M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z',    // ── Audit D08: the ⋯ menu's line icons ────────────────────────────
+    'M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z',    // ── #6653: the composer's strikethrough ────────────────────────────
+    //
+    // StrikethroughIcon (the S and the line through it) draws in a channel's
+    // formatting row and its right-click menu, which mount only once a
+    // channel is open. LinkIcon is already on this list above.
+    'M16.5 6.4c-.9-1.2-2.5-1.9-4.4-1.9-2.6 0-4.3 1.2-4.3 3.1 0 2.4 2.6 3 5.1 3.6M8 17.6c.9 1.2 2.5 1.9 4.4 1.9 2.7 0 4.6-1.3 4.6-3.2 0-1.2-.6-2-1.8-2.6',
+    'M4.5 12h15',
+    // ── Audit D08: the ⋯ menu's line icons ────────────────────────────
     //
     // Star (kudos), archive, chart-bar (campaign), bell-slash (mute) and
     // arrows-right-left (merge, split, break up) draw only in an open ⋯ menu

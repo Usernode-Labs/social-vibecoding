@@ -1,33 +1,31 @@
-/* I · Pastel. The wallpaper's three washes become the cards: each group takes lavender, pink or peach in turn. Navigation is one capsule at the top. */
-.hr{--surface:#fff;--sunk:rgba(40,33,74,.07);--ink:#231d45;--mut:#625c84;--faint:#9590b3;--line:rgba(35,29,69,.1);--line2:rgba(35,29,69,.08);
+/* I · Pastel. The wallpaper's three washes become the cards: each group takes lavender, pink or peach in turn. Navigation is a rounded white panel on the left. */
+.hr{--surface:#fff;--sunk:rgba(40,33,74,.07);--ink:#231d45;--mut:#585279;--faint:#6c668e;--line:rgba(35,29,69,.1);--line2:rgba(35,29,69,.08);
   --acc:#4f46e5;--acc-ink:#fff;--acc-t:#e4e2ff;--lit:#231d45;--lit-t:rgba(35,29,69,.08);--t1:#ece3f6;--t2:#fbe2ec;--t3:#fde6de;--in:rgba(255,255,255,.72);
   --soft:0 10px 30px -18px rgba(35,29,69,.45);
   --f:"DM Sans",system-ui,-apple-system,"Segoe UI",sans-serif;font-family:var(--f)}
-.hr.dark{--surface:#1c1a35;--sunk:rgba(255,255,255,.08);--ink:#f2f0fb;--mut:#b1add0;--faint:#7a769b;--line:rgba(255,255,255,.12);--line2:rgba(255,255,255,.08);
+.hr.dark{--surface:#1c1a35;--sunk:rgba(255,255,255,.08);--ink:#f2f0fb;--mut:#bcb8d9;--faint:#9a96bb;--line:rgba(255,255,255,.12);--line2:rgba(255,255,255,.08);
   --acc:#9a93ff;--acc-ink:#0d0a2e;--acc-t:#2a2760;--lit:#f2f0fb;--lit-t:rgba(255,255,255,.1);--t1:#2b2346;--t2:#3a1f33;--t3:#3b241d;--in:rgba(255,255,255,.1);
   --soft:0 10px 30px -18px rgba(0,0,0,.8)}
-.app{grid-template-columns:minmax(0,1fr);grid-template-rows:84px minmax(0,1fr)}
-.app.noside,.phone .app{grid-template-rows:minmax(0,1fr)}
-.full .app{grid-template-rows:84px auto}.full .app.noside,.full.phone .app{grid-template-rows:auto}
-.side{flex-direction:row;align-items:center;gap:4px;justify-self:center;align-self:center;height:56px;padding:0 8px 0 14px;border:0;border-radius:999px;background:var(--surface);box-shadow:var(--soft)}
-.brand{margin:0 14px 0 0;padding:0;height:auto;font-size:17px;font-weight:700}
-.side .cap,.side .nv.rec{display:none}
-.nv{height:40px;padding:0 16px;border-radius:999px;font-weight:600;gap:8px}
-.nv .nm{flex:none}
+.app{grid-template-columns:256px minmax(0,1fr)}
+.side{margin:12px 0 12px 12px;padding:14px 10px 10px;gap:2px;border:0;border-radius:28px;background:var(--surface);box-shadow:var(--soft)}
+.brand{height:40px;padding:0 10px;margin-bottom:10px;font-size:17px;font-weight:700}
+.side .cap{font-size:13px;font-weight:700;color:var(--mut);padding:18px 14px 6px}
+.nv{height:40px;padding:0 12px;border-radius:999px;font-weight:600;gap:10px}
+.nv.rec .tile{border-radius:50%}
 .nv.on{background:var(--ink);color:var(--surface)}.nv.on .ic{color:var(--surface)}
 .nv.on .n{background:var(--surface);color:var(--ink)}
-.sidefoot{margin:0 0 0 6px;border:0;padding:0}.sidefoot .nv .ic{display:none}.sidefoot .nv{padding:0 14px 0 8px}
-.colm{height:auto;min-height:0}
-.bar{height:44px;border-bottom:0;padding:0 40px}
+.sidefoot{border-top:1px solid var(--line2);padding-top:8px}
+.bar{height:60px;border-bottom:0;padding:0 32px}
 .phone .bar{height:52px;padding:0 12px}.noside .bar{height:64px}
-.banner{margin:0 40px;border:0;border-radius:16px;background:var(--surface);color:var(--ink);box-shadow:var(--soft)}
+.banner{margin:0 32px;border:0;border-radius:16px;background:var(--surface);color:var(--ink);box-shadow:var(--soft)}
 .phone .banner{margin:0 12px}
 .inner{padding:12px 32px 56px}
-.title{font-size:42px;font-weight:700;letter-spacing:-.035em;line-height:1.05}
+.title{font-size:40px;font-weight:700;letter-spacing:-.03em;line-height:1.08}
 .phone .title{font-size:30px}
-.purpose{font-size:17px;margin-top:10px}
+.purpose{font-size:17px;margin-top:10px}.phone .purpose{font-size:16px}
 .tabs{border-bottom:0;gap:8px;margin:-4px 0 26px}
 .phone .tabs{gap:6px;margin-right:-16px}
+.phone .tab{height:40px}
 .tab{height:36px;padding:0 16px;border-radius:999px;background:var(--surface);color:var(--mut);font-size:14px}
 .tab.on{background:var(--ink);color:var(--surface)}.tab.on::after{display:none}
 .tab.on .n{background:var(--surface);color:var(--ink)}
@@ -62,3 +60,20 @@
 .phone .tabbar{margin:0 12px 12px;height:62px;padding:6px;border-top:0;border-radius:999px;background:var(--surface);box-shadow:var(--soft)}
 .tb{border-radius:999px}.tb.on{background:var(--ink);color:var(--surface)}
 .stage{border-radius:26px}
+
+/* ---- refinements ---- */
+.card{box-shadow:inset 0 0 0 1px rgba(35,29,69,.05)}
+.dark .card{box-shadow:inset 0 0 0 1px var(--line2)}
+.dark .side,.dark .tab,.dark .search .inp,.dark .composer,.dark .note,.dark .banner,.dark.phone .tabbar,.dark .head .btn.quiet,.dark .head .btn.line{box-shadow:var(--soft),inset 0 0 0 1px var(--line)}
+.dark .tab.on{box-shadow:none}
+.dark .row.on{background:rgba(255,255,255,.14)}
+.card .btn.line{background:var(--in)}
+.phone .ib{width:40px;height:40px}
+.phone .btn.sm{height:40px;padding:0 16px}
+.phone .tb .n{top:1px;left:calc(50% + 5px);min-width:18px;height:18px;padding:0 5px;box-shadow:0 0 0 2px var(--surface)}
+.phone .tb.on .n{box-shadow:0 0 0 2px var(--ink)}
+.phone .facts.f5 .fact{padding:12px 4px 12px 10px}.phone .facts.f5 .fact:first-child{padding-left:14px}
+.phone .pane+.pane{border-left:0}
+/* (the tour fades the page out over the tab bar, a composer or a dock; in the product the page area is an empty frame the screens sit in, so there is nothing of the page in it to fade) */
+.phone .dock{border-top:0;background:transparent;padding:4px 12px 12px}
+.sheet .inp.focus{background:var(--surface)}

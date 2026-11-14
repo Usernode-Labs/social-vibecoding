@@ -7,7 +7,8 @@
 // the order written, a later try is the instance's own timer, a tap is
 // decided once, and what a place or a DM owes others (reports, held answers,
 // hellos) is said once. The [main] bugs fixed are named where each is pinned
-// (workflow-foundation's trace-bot-replies.md §5).
+// (workflow-foundation's trace-bot-replies.md §5). Task 2148: a person's Stop
+// marks the answer under way and leaves its work to end it (D-stop).
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/workflow-bot-replies-postgres.test.js
 
@@ -64,7 +65,8 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
   // Fake work: each call recorded; `answer` per kind.
   const work = { calls: [], answer: new Map() };
   const fake = (kind) => ({
-    maxAttempts: 2, backoffMs: () => 0, leaseMs: 600,
+    // A loaded check machine must not lose a claim and run a hello again.
+    maxAttempts: 2, backoffMs: () => 0, leaseMs: 10000,
     async run({ input, key }) {
       work.calls.push({ kind, key, input });
       const a = work.answer.get(kind);
@@ -403,6 +405,146 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
     assert.equal((await inst('bot-dm', dmKey(carl))).state, 'idle');
   });
 
+  // Task 2148: the person's Stop. `at`: when they pressed it.
+  const stopOf = (u, messageId, more = {}) => ({ userId: u.id, conversationId: 1, messageId, at: new Date().toISOString(), ...more });
+  const stopSent = (u, messageId, more) => send('bot-dm', dmKey(u), 'StopRequested', stopOf(u, messageId, more));
+  const stopHeard = async (u, messageId, more = {}) => {
+    const id = await rt.append('bot-dm', dmKey(u), { type: 'StopRequested', payload: stopOf(u, messageId, more) },
+      { requestKey: `t-${++rk}`, source: { kind: 'route' } });
+    await rt.drain();
+    return (await pool.query('SELECT result, reason, reply FROM wf_events WHERE id = $1', [id])).rows[0];
+  };
+  const { stopAsked } = require('../src/workflow/bot-dm/services.ts');
+
+  await t.test('D-stop: a Stop marks the answer under way and leaves its work to end it; nothing is cancelled, twice is harmless', async () => {
+    reset();
+    const fay = await user('fay');
+    let gate;
+    const held = new Promise((r) => { gate = r; });
+    work.answer.set(dm.WORK.answer, async (input) => { if (input.messageId === 501) { await held; return { sent: true, stopped: true }; } return { sent: true }; });
+    // Nobody to stop: no instance is made for a Stop.
+    assert.deepEqual([(await stopSent(fay, 501)).result, (await stopSent(fay, 501)).reason], ['rejected', 'not_answering']);
+    assert.equal(await inst('bot-dm', dmKey(fay)), undefined);
+    await rt.append('bot-dm', dmKey(fay), { type: 'Wrote', payload: { userId: fay.id, conversationId: 1, messageId: 501, attempt: 0 } },
+      { requestKey: `t-${++rk}`, source: { kind: 'route' } });
+    await rt.drain();
+    const first = rt.runServices();
+    try {
+      await until(() => calls(dm.WORK.answer).length === 1, 'the answer to 501 started');
+      assert.equal(await stopAsked(pool, { userId: fay.id, messageId: 501, attempt: 0 }), false, 'not stopped yet');
+      // A Stop of some other answer, in some other conversation, pressed long
+      // ago (asked again after a rollout), or sent under another person's
+      // instance stops nothing.
+      assert.equal((await stopHeard(fay, 999)).reason, 'not_this_answer');
+      assert.equal((await stopHeard(fay, 501, { conversationId: 2 })).reason, 'not_this_answer');
+      assert.equal((await stopHeard(fay, 501, { at: new Date(Date.now() - dm.STOP_FRESH_MS - 60000).toISOString() })).reason, 'too_late');
+      assert.equal((await stopHeard(fay, 501, { userId: ada.id })).reason, 'key_mismatch');
+      assert.equal(await stopAsked(pool, { userId: fay.id, messageId: 501, attempt: 0 }), false);
+      // Theirs, of this answer, pressed now.
+      const heard = await stopHeard(fay, 501);
+      assert.deepEqual([heard.result, heard.reply], ['accepted', { ok: true, stopping: true }]);
+      let i = await inst('bot-dm', dmKey(fay));
+      assert.deepEqual([i.state, i.data.current], ['answering', { messageId: 501, conversationId: 1, attempt: 0, stop: true }]);
+      // Its work reads the mark (services.ts stopAsked), for this try of this message only.
+      assert.equal(await stopAsked(pool, { userId: fay.id, messageId: 501, attempt: 0 }), true);
+      assert.equal(await stopAsked(pool, { userId: fay.id, messageId: 501, attempt: 1 }), false);
+      assert.equal(await stopAsked(pool, { userId: fay.id, messageId: 502, attempt: 0 }), false);
+      assert.equal(await stopAsked(pool, { userId: ada.id, messageId: 501, attempt: 0 }), false);
+      // The work is left running: nothing is cancelled, so the turn is never
+      // still going after the chat says it stopped.
+      const { rows: [item] } = await pool.query(
+        `SELECT status, result FROM wf_work WHERE machine = 'bot-dm' AND key = $1 AND work_key = 'msg:501'`, [dmKey(fay)]);
+      assert.equal(item.status, 'running');
+      assert.equal(item.result?.cancelled, undefined);
+      // Pressed twice: taken again, and nothing changes.
+      assert.equal((await stopHeard(fay, 501)).result, 'accepted');
+      i = await inst('bot-dm', dmKey(fay));
+      assert.equal(i.data.current.stop, true);
+      // What they write meanwhile waits its turn, as ever.
+      await rt.append('bot-dm', dmKey(fay), { type: 'Wrote', payload: { userId: fay.id, conversationId: 1, messageId: 502, attempt: 0 } },
+        { requestKey: `t-${++rk}`, source: { kind: 'route' } });
+      await rt.drain();
+      assert.deepEqual(calls(dm.WORK.answer).map((c) => c.input.messageId), [501], 'the next answer waits for the stopped one to end');
+    } finally {
+      gate();
+      await first;
+    }
+    await settle();
+    assert.deepEqual(calls(dm.WORK.answer).map((c) => c.input.messageId), [501, 502], 'then the next message is answered');
+    assert.equal(calls(dm.WORK.stopped).length, 0, 'the turn said it stopped itself: no second line');
+    assert.equal(calls(dm.WORK.sorry).length, 0, 'and no apology');
+    const after = await inst('bot-dm', dmKey(fay));
+    assert.deepEqual([after.state, after.data.current, after.data.done], ['idle', null, 502]);
+    // The answer ended before the Stop landed: nothing is stopped, nothing said.
+    assert.deepEqual([(await stopSent(fay, 502)).result, (await stopSent(fay, 502)).reason], ['rejected', 'not_answering']);
+    assert.equal(calls(dm.WORK.stopped).length, 0);
+  });
+
+  await t.test('D-stop-later: a stopped answer is never asked again: one that deferred, one waiting to be tried, one that failed for good each say so once', async () => {
+    reset();
+    const gus = await user('gus');
+    let gate;
+    const held = new Promise((r) => { gate = r; });
+    // 601 defers ("I'll get back to you") after the Stop was pressed.
+    work.answer.set(dm.WORK.answer, async (input) => { if (input.messageId === 601) { await held; } return { sent: true, later: input.messageId === 601 || input.messageId === 602 ? input.attempt + 1 : null }; });
+    await rt.append('bot-dm', dmKey(gus), { type: 'Wrote', payload: { userId: gus.id, conversationId: 1, messageId: 601, attempt: 0 } },
+      { requestKey: `t-${++rk}`, source: { kind: 'route' } });
+    await rt.drain();
+    const first = rt.runServices();
+    try {
+      await until(() => calls(dm.WORK.answer).length === 1, 'the answer to 601 started');
+      assert.equal((await stopHeard(gus, 601)).result, 'accepted');
+    } finally {
+      gate();
+      await first;
+    }
+    await settle();
+    let i = await inst('bot-dm', dmKey(gus));
+    assert.deepEqual([i.state, i.data.later, i.deadline_at], ['idle', null, null], 'no later try, no timer');
+    assert.deepEqual(calls(dm.WORK.stopped).map((c) => [c.key, c.input.messageId, c.input.attempt]), [['stopped:601:d1', 601, 1]],
+      'said under the key of the try that will not run');
+    assert.deepEqual(calls(dm.WORK.answer).map((c) => c.key), ['msg:601']);
+
+    // 602 deferred before any Stop: it waits to be tried again. A Stop then
+    // drops the try with its timer, and says so.
+    await wrote(gus, 602);
+    i = await inst('bot-dm', dmKey(gus));
+    assert.deepEqual([i.state, i.data.later?.messageId, i.data.later?.attempt], ['trying_later', 602, 1]);
+    assert.ok(i.deadline_at, 'a later try is due');
+    assert.equal((await stopSent(gus, 601)).reason, 'not_this_answer');
+    const heard = await stopSent(gus, 602);
+    assert.deepEqual([heard.result, heard.reply], ['accepted', { ok: true, stopping: true }]);
+    i = await inst('bot-dm', dmKey(gus));
+    assert.deepEqual([i.state, i.data.later, i.deadline_at], ['idle', null, null]);
+    assert.deepEqual(calls(dm.WORK.stopped).map((c) => c.key), ['stopped:601:d1', 'stopped:602:d1']);
+    await rt.fireTimers();
+    await settle();
+    assert.deepEqual(calls(dm.WORK.answer).map((c) => c.key), ['msg:601', 'msg:602'], 'the dropped try never runs');
+    assert.equal((await stopSent(gus, 602)).reason, 'not_answering', 'pressed again: nothing to stop');
+    assert.equal(calls(dm.WORK.stopped).length, 2);
+
+    // 603 is stopped and then its work fails for good: the one line is that
+    // it stopped, never that it could not answer.
+    let gate3;
+    const held3 = new Promise((r) => { gate3 = r; });
+    work.answer.set(dm.WORK.answer, async (input) => { if (input.messageId === 603) { await held3; throw new Error('boom'); } return { sent: true }; });
+    await rt.append('bot-dm', dmKey(gus), { type: 'Wrote', payload: { userId: gus.id, conversationId: 1, messageId: 603, attempt: 0 } },
+      { requestKey: `t-${++rk}`, source: { kind: 'route' } });
+    await rt.drain();
+    const third = rt.runServices();
+    try {
+      await until(() => calls(dm.WORK.answer).filter((c) => c.input.messageId === 603).length === 1, 'the answer to 603 started');
+      assert.equal((await stopHeard(gus, 603)).result, 'accepted');
+    } finally {
+      gate3();
+      await third;
+    }
+    await settle();
+    assert.deepEqual(calls(dm.WORK.stopped).map((c) => c.key), ['stopped:601:d1', 'stopped:602:d1', 'stopped:603']);
+    assert.equal(calls(dm.WORK.sorry).length, 0, 'no apology for an answer they stopped');
+    assert.equal((await inst('bot-dm', dmKey(gus))).state, 'idle');
+  });
+
   await t.test('D-tap: a tap is decided once in the person\'s DM, its act is work (bug 14)', async () => {
     reset();
     const opened = await require('../src/services/conversations').ensureAdmittedDirect(pool, bot.id, ada.id);
@@ -448,8 +590,24 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
     await platform.greet(pool, { userId: dee.id, kind: 'joiner', appId: other.id });
     await platform.greet(pool, { userId: dee.id, kind: 'tour' });
     await settle();
-    assert.deepEqual(calls(dm.WORK.hello).map((c) => [c.input.kind, c.key]),
-      [['joiner', `hello:joiner:${app.id}`], ['joiner', `hello:joiner:${other.id}`], ['tour', 'hello:tour']],
+    // One settle pass is not proof: a lost lease, a busy claim or a full
+    // kind returns 0 while hellos are still owed. Wait for all three to be
+    // said and applied (each wf_work row `settled`), and for the DM idle.
+    await until(async () => {
+      await settle();
+      const { rows } = await pool.query(
+        `SELECT status FROM wf_work WHERE kind = $1 AND machine = $2 AND key = $3`, [dm.WORK.hello, dm.MACHINE, dmKey(dee)]);
+      return rows.length === 3 && rows.every((r) => r.status === 'settled')
+        && (await inst(dm.MACHINE, dmKey(dee)))?.state === 'idle'
+        && calls(dm.WORK.hello).length >= 3;
+    }, 'the three hellos said and the person\'s DM idle');
+    const hellos = calls(dm.WORK.hello);
+    assert.equal(hellos.length, 3, 'one hello per trigger, and none said twice');
+    // The run order of independent work items is not the claim: compare the
+    // (kind, key) pairs as a set, still requiring each trigger's own key once.
+    const byKey = (a, b) => a[1].localeCompare(b[1]);
+    assert.deepEqual(hellos.map((c) => [c.input.kind, c.key]).sort(byKey),
+      [['joiner', `hello:joiner:${app.id}`], ['joiner', `hello:joiner:${other.id}`], ['tour', 'hello:tour']].sort(byKey),
       'each trigger owes its own; the send keeps one hello per person (sendDm\'s claim)');
   });
 

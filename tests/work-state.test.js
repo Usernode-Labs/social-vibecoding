@@ -232,6 +232,45 @@ test('a private thread holding it for the requester\'s plan wins over waiting in
   assert.deepEqual([held.stage, held.line, held.whoseMove], ['planning', { code: 'planning_with_you' }, 'requester']);
 });
 
+// 13 Nov 2026: a tester's request read "Ready to build · Number 1 in line"
+// beside Let the bot build it now. Its build had reached the line, and their
+// own private thread held it: the lane starts no such build, so it waited
+// for them, and the queue's words were false.
+test('a private thread holds a request that had reached the build line too: it waits for its requester, not for a slot', () => {
+  const ready = { verdict: 'ready', build_ok: null, build_waiting_at: ago(4), build_place: 1 };
+  const queued = derive(ready);
+  assert.deepEqual([queued.stage, queued.line, queued.whoseMove], ['building', { code: 'queued', place: 1 }, 'bot']);
+  assert.equal(ws.says(queued), 'Ready to build · Number 1 in line', 'with no hold, the line');
+  const held = derive({ ...ready, awaiting_plan: true });
+  assert.deepEqual([held.stage, held.line, held.whoseMove], ['planning', { code: 'planning_with_you', ready: true }, 'requester']);
+  assert.equal(ws.says(held), 'Planning · Planning it with you in a private thread', 'the reading stage\'s own words');
+  assert.deepEqual(ws.phrasesOf(held), ws.phrasesOf(derive({ queue_id: 3, enqueued_at: ago(5), verdict: null, mode: null, awaiting_plan: true })),
+    'every screen draws it as it draws a held request still waiting to be read');
+  // One of the project's limits holding the build is the same: its turn is
+  // not taken back up while the thread holds it.
+  for (const cap of ['builds_per_app', 'proposals_per_app']) {
+    const capped = { verdict: 'ready', build_ok: null, cap_suppressed: cap };
+    assert.equal(derive(capped).stage, 'building', cap);
+    assert.deepEqual(derive({ ...capped, awaiting_plan: true }).line, { code: 'planning_with_you', ready: true }, cap);
+  }
+  // It is nobody's wait and no work under way: not busy, in Waiting, and the
+  // bot is not "on it" for the page, though its build is still in the bot's
+  // queue, so asking the bot to build it again is refused.
+  assert.equal(ws.busyNow(held), false);
+  assert.equal(ws.placeFor(held, { requester: true }), 'waiting');
+  assert.deepEqual(ws.botWorkOf(held), { what: 'queued', since: held.since });
+  assert.equal(ws.botWorkOf(derive({ queue_id: 3, enqueued_at: ago(5), verdict: null, mode: null, awaiting_plan: true })), null);
+  // A build that started is the bot's: the hold is over by then. A person's
+  // claim on a ready request is still theirs.
+  const started = derive({ ...ready, build_waiting_at: null, build_session_id: 9, build_started_at: ago(2), awaiting_plan: true });
+  assert.deepEqual([started.line, started.whoseMove], [null, 'bot'], 'the bot writing its own plan for a build under way');
+  const claimed = derive({ ...ready, awaiting_plan: true, claimed_by: 'ada', claimed_at: ago(40) });
+  assert.deepEqual(claimed.line, { code: 'claimed', by: 'ada' });
+  // A change up for a vote is never held.
+  assert.equal(derive({ proposal_session_id: 50, proposal_at: ago(60), checks_sha: 'a', reviewed_head_sha: 'a', verdict: 'ready', build_ok: true,
+    proposal_status: 'promoted', check_state: 'passing', awaiting_plan: true }).stage, 'up_for_vote');
+});
+
 test('a change with no request of its own', () => {
   assert.equal(ws.deriveChange({ status: 'active', last_activity_at: ago(1) }).stage, 'building');
   assert.equal(ws.deriveChange({ status: 'promoted', check_state: 'pending' }).stage, 'checking');

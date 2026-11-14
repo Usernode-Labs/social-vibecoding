@@ -472,7 +472,7 @@ export function Shell() {
           THE FRAME'S OWN CHROME (features/frame/frame-app.tsx): the sidebar,
           bar and phone tab bar the 2026-11-06 screen tour draws, shown in
           place of the header and the tab bar above while the device's look
-          is one of the frame's nine (an admin's preview). It renders
+          is one of the frame's five (an admin's preview). It renders
           nothing on the first render and nothing under the standard look,
           so the prerendered document does not know it exists.
       */}

@@ -216,7 +216,9 @@ test('a live or merged standing never draws Vote', () => {
   // Every screen that draws the feed drops it on the push.
   const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
   assert.match(read('frontend/src/features/workshop/index.tsx'), /const feed = withoutClosedVote\(state\.feed, \(event as CustomEvent\)\.detail\);/);
-  assert.match(read('frontend/src/features/home/frame/home-frame.tsx'), /setFeed\(\(now\) => withoutClosedVote\(now, \(event as CustomEvent\)\.detail\)\)/);
+  // Home under a look draws no feed of its own any more (looks v2): its Needs
+  // you tile is the header's count, as on the standard Home.
+  assert.doesNotMatch(read('frontend/src/features/home/frame/home-frame.tsx'), /needs-feed|setFeed/);
   assert.match(read('public/js/app.js'), /new CustomEvent\('homeroom-bot-work-changed', \{ detail: data \}\)/);
 });
 
@@ -232,12 +234,12 @@ test('the request card\'s words are the standing\'s phrase ids', () => {
   const s = { kind: 'request', stage: 'building', line: { code: 'queued', place: 3 }, whoseMove: 'bot', words, mine: true };
   const yours = plain(av._requestStatusView(issue({ standing: s })));
   assert.deepEqual(yours.words, { stage: words.stage, line: words.line });
-  assert.equal(yours.lead, message('changes:request.status.lead.standsLine', {
-    stage: message('core:work.stage.readyToBuild'), line: message('core:work.line.queuedAt', { place: 3 }),
-  }));
+  // 13 Nov 2026: a place in line is said as a sentence that names whose line.
+  assert.equal(yours.lead, message('changes:request.status.lead.botLineAt', { stage: message('core:work.stage.readyToBuild'), place: 3 }));
+  assert.equal(yours.lead, 'Ready to build. Number 3 in Homeroom bot’s line; it starts by itself.');
   const theirs = plain(av._requestStatusView(issue({ standing: { ...s, mine: false } })));
   assert.deepEqual(theirs.words.stage, words.stageOthers, 'anyone else reads anyone else\'s words');
-  assert.equal(theirs.lead, 'Building · Number 3 in line');
+  assert.equal(theirs.lead, 'Building. Number 3 in Homeroom bot’s line; it starts by itself.');
   // Whatever ids the server sends are the ones said: the card picks none.
   const sent = { ...s, words: { stage: { id: 'core:work.stage.syncing' }, stageOthers: { id: 'core:work.stage.syncing' }, line: null } };
   assert.equal(av._requestStatusView(issue({ standing: sent })).lead, 'Syncing with main.');

@@ -32,6 +32,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { HistoryKind } from './filter-address';
 import type { AiApp, Phrase } from './model';
+import { inZone, zonedDay } from '../../lib/time-zone';
 
 export interface HistoryRow {
   key: string;
@@ -64,7 +65,9 @@ export interface HistoryPage {
 export function monthKey(at: string | null | undefined): string {
   const d = new Date(String(at || ''));
   if (!Number.isFinite(d.getTime())) return '';
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  // #6479: the zone picked in Settings › Language, else the device's.
+  const { year, month } = zonedDay(d);
+  return `${year}-${String(month).padStart(2, '0')}`;
 }
 
 /** Pure: the rows by month, newest month first, each month's rows in their order. */
@@ -83,15 +86,15 @@ export function byMonth<T extends { at: string | null }>(rows: readonly T[]): { 
 /** Pure: a month's name in the interface's language: "October", or "October 2025" in another year. */
 export function monthName(at: string, locale: string | undefined, now = new Date()): string {
   const d = new Date(at);
-  const other = d.getFullYear() !== now.getFullYear();
-  return d.toLocaleDateString(locale, { month: 'long', ...(other ? { year: 'numeric' } : {}) });
+  const other = zonedDay(d).year !== zonedDay(now).year;
+  return d.toLocaleDateString(locale, inZone({ month: 'long', ...(other ? { year: 'numeric' } : {}) }));
 }
 
 /** Pure: a day as History's rows say it, "Oct 24". */
 export function shortDay(at: string | null | undefined, locale: string | undefined): string {
   const d = new Date(String(at || ''));
   if (!Number.isFinite(d.getTime())) return '';
-  return d.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString(locale, inZone({ month: 'short', day: 'numeric' }));
 }
 
 const VOTE_WORDS: Record<string, Record<'yes' | 'no', string>> = {

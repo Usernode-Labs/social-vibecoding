@@ -112,7 +112,9 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // 'platform_incident' (#4296) is its sibling: errors that should not
     // happen, as a daily digest or one kind past its hourly line
     // (services/platform-incident-alerts.js), for the same admins.
-    kinds: Object.freeze(['issue_opened', 'app_health', 'platform_limit', 'platform_incident']),
+    // 'release_hold' (#6643) asks full admins for their vote on a change
+    // held for an admin's approval. Its seed row is a migration.
+    kinds: Object.freeze(['issue_opened', 'app_health', 'platform_limit', 'platform_incident', 'release_hold']),
   }),
   Object.freeze({
     key: 'lightweight_activity',

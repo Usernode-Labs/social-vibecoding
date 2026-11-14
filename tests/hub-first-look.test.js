@@ -108,11 +108,12 @@ test('tapping the picture or the words opens the maker\'s chat with Homeroom bot
     'the door first, empty, over the picture');
   assert.match(html, /<button[^>]*data-ws-first-look-watch=""[^>]*>Watch Homeroom bot build it<\/button><\/div><\/section>$/,
     'Watch keeps its place, and its own tap');
-  // It opens the maker's own conversation, or the chat with the bot, as the
-  // First version card's Review the plan does.
+  // It opens the project's first-version thread with the bot (14 Nov 2026:
+  // not Main Chat, which is gone), as the First version card's Review the
+  // plan does.
   const src = read(HUB);
   const card = src.slice(src.indexOf('export function FirstVersionCard('), src.indexOf('/* ── First look'));
-  assert.match(card, /onOpen=\{\(\) => \{\n\s+if \(fv\.conversation_id\) openConversation\(fv\.conversation_id\);\n\s+else void openBot\(\);/);
+  assert.match(card, /onOpen=\{\(\) => \{ void openFirstVersion\(slug\); \}\}/);
   // The door lies under the Watch button, and only a hover tint and the
   // focus ring show it.
   const css = read('public/css/app.css');

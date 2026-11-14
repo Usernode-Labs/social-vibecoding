@@ -125,8 +125,10 @@ const MAX_APPROVAL_READS = 10;
 
 // What a card says about where its request stands (cardsOf). A request:
 // waiting_first_version (queued, held until the project's first version is
-// live), reading (waiting for or being read), waiting (ready, waiting for a
-// free builder), building, question (the bot asked one, in its chat), checking
+// live), reading (waiting for or being read), waiting (ready, waiting in the
+// bot's own line for a free slot), waiting_plan (held by its requester's
+// private thread with the bot: it waits for them, never for a slot),
+// building, question (the bot asked one, in its chat), checking
 // (built, its checks running), proposed (built, waiting for approval),
 // approved (approved, going live), live, closed, person (left to the group),
 // stopped (it did not finish). A fix: fixing (posted, the bot's follow-up
@@ -134,7 +136,7 @@ const MAX_APPROVAL_READS = 10;
 // answered / person / stopped when the follow-up ended without a change.
 const CARD_STAGES = Object.freeze([
   'waiting_first_version',
-  'reading', 'waiting', 'building', 'question', 'checking', 'proposed', 'approved', 'live', 'closed', 'person', 'stopped',
+  'reading', 'waiting', 'waiting_plan', 'building', 'question', 'checking', 'proposed', 'approved', 'live', 'closed', 'person', 'stopped',
   'fixing', 'asked', 'answered',
 ]);
 
@@ -171,7 +173,7 @@ async function botFor(pool, { app, user, settings = null, deps = {} }) {
   try {
     if (!app?.id || !user?.id || user.isSynthetic) return null;
     const s = settings || await botModule(deps).readSettings(pool);
-    if (!dmModule(deps).hasBot(s, user)) return null;
+    if (!(await require('./homeroom-bot-verified').worksFor(dmModule(deps), pool, s, user))) return null;
     return { builds: !!liveModule(deps).isLiveFor(s, app), settings: s };
   } catch (err) {
     log.warn('homeroom-bot-chat', 'Could not read whether Homeroom bot answers here', { app: app?.slug, err: err.message });
@@ -366,7 +368,9 @@ function cardStageOfWork(work) {
   const code = work.line?.code || null;
   switch (work.stage) {
     case 'reading': return 'reading';
-    case 'planning': return code === 'retry_plan' || code === 'planning_with_you' ? 'waiting' : 'building';
+    // 13 Nov 2026: held for its requester's plan is a stage of its own. It
+    // was the card's `waiting`, whose sentence is about the bot's line.
+    case 'planning': return code === 'planning_with_you' ? 'waiting_plan' : code === 'retry_plan' ? 'waiting' : 'building';
     case 'waiting_for_you': return work.why === 'question' || work.why === 'plan' ? 'question' : 'person';
     case 'building': return READY_LINES.has(code) ? 'waiting' : code === 'update_queued' ? 'checking' : 'building';
     case 'checking': return 'checking';

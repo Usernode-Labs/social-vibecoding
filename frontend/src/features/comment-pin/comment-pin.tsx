@@ -64,6 +64,7 @@ import {
   type ClipboardEvent, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode,
 } from 'react';
 import { flushSync } from 'react-dom';
+import { reducedMotion } from '../../lib/reduced-motion';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -72,6 +73,7 @@ import {
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
+import { radioGroupKeys } from '../../lib/radio-group';
 import { listText } from '../../lib/i18n/runtime';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { isRepoAddress } from '../../lib/repo-link.js';
@@ -95,6 +97,8 @@ import {
 } from './post';
 
 export const HOST_ID = 'comment-pin-host';
+// Where a request can go, in the order the two choices are drawn.
+const TARGETS: readonly Target[] = ['app', 'platform'];
 const BOX_WIDTH = 360;
 /** A control on a phone: a 44px target round a 32px grey disc, seen and
  *  hit. The sheet's ✕ was a 16px grey glyph in a 32px box, easy to miss and
@@ -115,9 +119,6 @@ const HEADER_BAND = 60;
 const KEYBOARD_SETTLE_MS = 800;
 /** How long the mode takes to leave: the picture growing back over the page (app.css `.comment-mode-leaving`). */
 const LEAVE_MS = 200;
-const reducedMotion = (): boolean => {
-  try { return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
-};
 /** Whether this screen is a phone: the same narrow-touch test the shell's
  *  keyboard handling uses. A narrow desktop window keeps the desktop flow. */
 function isPhone(): boolean {
@@ -1617,18 +1618,25 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     </div>
   ) : null;
 
+  // Where the request goes is one tab stop, and the arrow keys move the
+  // pick (#6510). Nothing moves while it is sending: its radios are disabled.
+  const targetKeys = radioGroupKeys(TARGETS, target, (value) => {
+    if (draft && !draft.sending) update(draft.key, { chosen: value });
+  });
+
   // The box's head: where the request goes, then its controls.
   const head = draft && target ? (
     <div className={phone ? '-me-1.5 flex items-center gap-0.5' : 'flex min-h-[30px] items-center gap-1.5'}>
       {app ? (
-        <div className="flex min-w-0 items-center gap-1 text-[13px]" role="radiogroup" aria-label={t('devchat:commentPin.target.groupLabel')}>
+        <div className="flex min-w-0 items-center gap-1 text-[13px]" role="radiogroup" aria-label={t('devchat:commentPin.target.groupLabel')} onKeyDown={targetKeys.onKeyDown}>
           <span className="text-zinc-500 dark:text-zinc-400">{t('devchat:commentPin.target.to')}</span>
-          {([['app', app.name], ['platform', 'Homeroom']] as Array<[Target, string]>).map(([value, label]) => (
+          {TARGETS.map((value) => [value, value === 'app' ? app.name : 'Homeroom'] as const).map(([value, label]) => (
             <button
               key={value}
               type="button"
               role="radio"
               aria-checked={target === value}
+              tabIndex={targetKeys.tabIndex(value)}
               id={`comment-pin-to-${value}`}
               disabled={draft.sending}
               onClick={() => update(draft.key, { chosen: value })}

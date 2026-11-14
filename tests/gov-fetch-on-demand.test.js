@@ -298,7 +298,7 @@ test('_renderTopicSubView still works when the gov row IS cached (no regression)
     },
   });
   // The row IS cached: preloaded the way a settled board load leaves it
-  // (#4524 — the page paints from these at once, so no by-id fetch runs).
+  // (#4524 — the page paints from these at once).
   AppView._devDataSlug = 'demo';
   AppView._govProposals = [row];
   AppView._loadDevData = async () => true;
@@ -310,7 +310,9 @@ test('_renderTopicSubView still works when the gov row IS cached (no regression)
   await AppView._renderTopicSubView(content, { kind: 'gov', id: 9100060 });
 
   assert.equal(mounted, 1, 'thread mounted from the cached row');
-  assert.equal(fetched, 0, 'no needless by-id fetch');
+  // #6604: the page paints from the cached row at once and then refreshes its
+  // head from ONE by-id read, instead of reloading the board.
+  assert.equal(fetched, 1, 'one by-id read refreshes the head');
   assert.deepEqual(switchTabCalls, [], 'no bounce');
 });
 

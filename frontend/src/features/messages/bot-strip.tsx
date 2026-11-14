@@ -11,6 +11,7 @@ import { useResolvedCommunityColor } from '../../lib/community-color';
 import { requestHue, requestKey } from './bot-request';
 import { ENDED_STAGES, trackLine, trackShort, trackStateWord } from './bot-track';
 import type { BotTrack, HomeroomBotWork } from './types';
+import { dayNumber } from '../../lib/time-zone';
 
 /*
  * The pieces a request's line in the chat with Homeroom bot is drawn with
@@ -86,7 +87,9 @@ export function stripGroups(work: HomeroomBotWork | null, now: Date = new Date()
     else if (held) model.progress.push(row('progress', [trackStateWord(track), trackShort(track)].join(' · ')));
     else if (ENDED_STAGES.has(stage)) {
       const at = Date.parse(track.since || '');
-      if (!Number.isFinite(at) || at < startOfDay(now).getTime()) continue;
+      // #6479: today in the zone picked in Settings › Language, as the chat's
+      // own Today divider reads it (else the device's, as startOfDay).
+      if (!Number.isFinite(at) || dayNumber(new Date(at)) < dayNumber(now)) continue;
       model.done.push(row('done', endedWords(trackEnding(track), track, trackLine(track))));
     } else model.progress.push(row('progress', trackLine(track)));
   }

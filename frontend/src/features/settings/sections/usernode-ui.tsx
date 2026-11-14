@@ -78,7 +78,12 @@ export function UnSection(
   },
 ): ReactNode {
   return (
-    <div id={id} className="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-800">
+    // `ui-card ui-unsec` draw nothing in the standard look: under a look the
+    // part is one card headed by its name (app.css, SETTINGS). Names on the
+    // part's own box, and no wrapper round its children: the standard sheet
+    // styles the paragraph that follows a heading (`h3 + p`), so a wrapper
+    // between the two changed a part that opens with a note.
+    <div id={id} className="ui-card ui-unsec mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-800">
       <SectionHeading title={title}>{description || undefined}</SectionHeading>
       {children}
     </div>
@@ -96,7 +101,8 @@ export function UnP({ note }: { note: UnNote }): ReactNode {
   return <p className={NOTE_CLASS[note.tone || 'muted']}>{note.text}</p>;
 }
 
-const ROW_BASE = 'flex items-center gap-2 mt-1 text-sm w-full text-start';
+// `ui-unrow` draws nothing in the standard look: it names the row for a look (app.css, SETTINGS).
+const ROW_BASE = 'ui-unrow flex items-center gap-2 mt-1 text-sm w-full text-start';
 const ROW_TAP = ' rounded-md -mx-1 px-1 py-1 transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800';
 
 export function UnRow({ row }: { row: UnStatusRow }): ReactNode {

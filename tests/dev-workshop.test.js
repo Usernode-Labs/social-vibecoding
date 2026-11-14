@@ -1766,7 +1766,7 @@ test('#4896: an unstarted project the bot builds for asks what to change, and it
   assert.doesNotMatch(without, /data-ws-start-here-bot|Tell Homeroom bot/);
 });
 
-test('#4896: the button opens the chat with Homeroom bot with this project attached, as Ask for changes attaches a change', async () => {
+test('#4896: the button opens a new chat with Homeroom bot already set to this project', async () => {
   assert.match(WORKSHOP, /import \{ openBot \} from '\.\.\/\.\.\/messages\/store';/);
   assert.match(WORKSHOP, /onClick=\{\(\) => \{ void openBot\(startHereBotReference\(slug, name\)\); \}\}/);
   assert.match(WORKSHOP, /if \(bot && !readOnly && slug\) \{/, 'never for a viewer who may not start a change');
@@ -1774,15 +1774,24 @@ test('#4896: the button opens the chat with Homeroom bot with this project attac
   const ref = plain(startHereBotReference('demo-app', 'Geneva hikes'));
   assert.deepEqual(ref, { type: 'app', appSlug: 'demo-app', title: 'Geneva hikes' });
   assert.equal(plain(startHereBotReference('demo-app', '')).title, null);
-  // A reference naming its project is attached on the bot chat's composer
-  // directly, the box asking "What should change?": no Share item dialog.
-  const fakeApi = new Proxy({ async openBotConversation() { return 77; } },
+  // 14 Nov 2026: it attached the project in Main Chat's box. There is no
+  // Main Chat: a reference that is a project opens a new chat set to it
+  // (#homeroom-bot/new?project=<slug>), with nothing attached.
+  const fakeApi = new Proxy({},
     { get: (t, k) => (k in t ? t[k] : () => { throw new Error(`api.${String(k)} not stubbed`); }) });
-  const store = loadTsx('frontend/src/features/messages/store.ts', { stubs: { './api': fakeApi } });
+  const went = [];
+  const carry = loadTsx('frontend/src/features/messages/new-chat-carry.ts');
+  const store = loadTsx('frontend/src/features/messages/store.ts', {
+    stubs: {
+      './api': fakeApi,
+      './new-chat-carry': carry,
+      '../ai/door': { ...loadTsx('frontend/src/features/ai/door.ts'), goBotAddress: (href) => went.push(href) },
+    },
+  });
   assert.equal(store.stagedComplete(ref), true);
   await store.openBot(ref);
-  assert.equal(store.takePendingShare(), undefined, 'no Share item dialog');
-  assert.deepEqual(plain(store.takePendingAttach(77)), { object: ref, placeholder: 'What should change?' });
+  assert.deepEqual(went, ['#homeroom-bot/new?project=demo-app']);
+  assert.equal(carry.takeCarried(), null, 'a project is the chat\'s chip, not an item in its box');
 });
 
 test('"try taking this one next" names an open issue nobody is on', () => {
@@ -3729,7 +3738,7 @@ test('the band in the community\'s colour is the place bar, not the old pill: no
   assert.doesNotMatch(WORKSHOP, /useTabMarker|data-ws-tab-marker|role="tablist" aria-label="Workshop sections"|ProjectBand/);
   assert.ok(!fs.existsSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/workshop/project-band.tsx')),
     'the four tabs are retired');
-  assert.match(WORKSHOP, /<PlaceBar\s+name=\{projectName\}\s+place=\{tab\}\s+owed=\{owed\}/);
+  assert.match(WORKSHOP, /<PlaceBar\s+place=\{tab\}/);
   assert.ok(!/dev-ws-pagebar/.test(WORKSHOP),
     'All items has no back bar of its own: its way back is in its pinned head (#4486)');
   const bar = read('frontend/src/features/dev-board/workshop/place-bar.tsx');
@@ -4053,13 +4062,14 @@ test('a read-only viewer of the self-hosted app gets no ⋯', async () => {
 
 test('the ⋯ is drawn as Invite’s pill, a circle, and its menu hangs over the cards', () => {
   const decls = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
-  // Invite's fill (`pillNeutral`), on the button itself, as a 32px circle.
+  // Invite's fill (`pillNeutral`), on the button itself, as a circle.
   assert.match(ACTIONS_ROW, /const HERO_BTN_CLS = 'dev-ws-plus-btn dev-ws-plus-btn-hero un-touch-target '\s*\+ 'bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100';/);
   assert.match(ACTIONS_ROW, /className=\{onCard \? CARD_BTN_CLS : inHero \? HERO_BTN_CLS : 'dev-ws-plus-btn un-touch-target'\}/, 'still a 44px hit box');
   // On the project card it is the card's round glass button, 50px (52px from 768px).
   assert.match(ACTIONS_ROW, /const CARD_BTN_CLS = 'dev-ws-plus-btn dev-ws-plus-btn-card un-touch-target bg-white\/15 hover:bg-white\/25 text-white';/);
   assert.match(decls, /\.dev-ws-plus-btn\.dev-ws-plus-btn-card \{ width: 50px; height: 50px; \}/);
-  assert.match(decls, /\.dev-ws-hero \.dev-ws-plus-btn \{ width: 32px; height: 32px; \}/);
+  // Bigger on the hub: 48px with a hairline ring, a control of its own.
+  assert.match(decls, /\.dev-ws-hero \.dev-ws-plus-btn \{ width: 48px; height: 48px; box-shadow: inset 0 0 0 1px var\(--app-sheet-line\); \}/);
   // A ⋯, not a "+": on the hub it holds the project's settings as much as
   // anything to add, and a "+" beside Invite read as "add a member".
   assert.match(ACTIONS_ROW, /<EllipsisHorizontalIcon className="dev-ws-plus-glyph" aria-hidden="true" \/>/);
@@ -5192,6 +5202,45 @@ test('#2182, 5 Nov 2026: a signed-in viewer\'s Your work is one row under Overvi
   // says to ask it (AppView._botDoor).
   AppView._ghIssuesMeta = { ...(AppView._ghIssuesMeta || {}), homeroomBot: { typicalMinutes: 8 } };
   assert.equal(AppView._workshopView().mine.bot, true);
+});
+
+test('14 Nov 2026: under Your work, New chat about the project opens a new chat with Homeroom bot set to it', () => {
+  // Main Chat is gone: every conversation with the bot is a thread, so a
+  // project's own door to the bot starts one, already about the project
+  // (frontend/src/features/dev-board/workshop/your-work.tsx NewChatRow).
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
+  AppView._mySessions = [];
+  const html = workshopHtml(AppView, 'workshop');
+  const card = html.slice(html.indexOf('<section class="dev-ws-strip dev-ws-desk" data-ws-desk="">'));
+  const desk = card.slice(0, card.indexOf('</section>'));
+  // The Your work row first, unchanged; a hairline; then the new row.
+  assert.match(desk, /^<section class="dev-ws-strip dev-ws-desk" data-ws-desk=""><a [^>]*href="#homeroom-bot\?project=demo-app"[^>]*data-ws-desk-open=""/);
+  assert.match(desk, /<\/a><div class="mx-1 border-t border-\[color:var\(--app-sheet-line\)\]" aria-hidden="true"><\/div><a [^>]*href="#homeroom-bot\/new\?project=demo-app"[^>]*data-ws-desk-new=""/,
+    'a link (the browser\'s own ways to open it work) to New chat, set to this project');
+  assert.equal((desk.match(/<a /g) || []).length, 2, 'two rows, and no third');
+  const row = desk.slice(desk.indexOf('data-ws-desk-new=""'));
+  // A plus tile where the first row has the bot's picture, then 15 over 13.
+  assert.match(row, /<span class="grid h-\[34px\] w-\[34px\] shrink-0 place-items-center rounded-\[10px\] [^"]*"><svg[^>]*aria-hidden="true"/);
+  const name = AppView.appData?.name || 'demo-app';
+  assert.equal(message('project:workshop.desk.newChat', { project: 'Garden club' }), 'New chat about Garden club');
+  assert.equal(message('project:workshop.desk.newChatSub'), 'Ask Homeroom bot for a change, a fix or an answer');
+  assert.ok(row.includes(`New chat about ${name}`.replace(/&/g, '&amp;')), 'named for the project');
+  assert.ok(row.includes('Ask Homeroom bot for a change, a fix or an answer'));
+  assert.doesNotMatch(row, /rounded-full|bg-violet/, 'no pill on the row: the row itself is the door');
+  const src = read('frontend/src/features/dev-board/workshop/your-work.tsx');
+  assert.match(src, /href=\{botNewAddress\(\{ project: slug \}\)\}/, 'the tab\'s own address for a new chat (ai/door.ts)');
+  // The first-change card keeps its own rows: its Homeroom bot row is this
+  // same door, so the new row is not drawn beside it.
+  assert.match(src, /if \(first\.show\) return <FirstChangeCard slug=\{slug\} onClose=\{first\.close\} \/>;\n\s+return \(\n\s+<section className="dev-ws-strip dev-ws-desk" data-ws-desk="">\n\s+<YourWorkRow [^\n]+\n\s+<div [^\n]+\n\s+<NewChatRow slug=\{slug\} name=\{name\} className="rounded-\[14px\] px-1 py-2" \/>\n\s+<\/section>/);
+  assert.doesNotMatch(read('frontend/src/features/dev-board/workshop/first-change.tsx'), /NewChatRow|desk\.newChat/);
+  // No Homeroom bot row under a project in the sidebar or its places list.
+  assert.doesNotMatch(read('frontend/src/features/dev-board/workshop/project-places.tsx'), /botNewAddress|desk\.newChat/);
+  assert.doesNotMatch(read('frontend/src/features/nav/rail-nest.tsx'), /botNewAddress|desk\.newChat/);
+  // The demo Workshop's declared check finds both rows.
+  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^Workshop: Your work is a row under Overview/.test(t.name));
+  assert.match(check.expectSelector, /> a\[data-ws-desk-open\]\[href="#homeroom-bot\?project=usernode-2d5619"\] ~ a\[data-ws-desk-new\]\[href="#homeroom-bot\/new\?project=usernode-2d5619"\]$/);
 });
 
 test('10 Nov 2026: somebody who has made nothing here is asked who should build, in Your work\'s place', () => {

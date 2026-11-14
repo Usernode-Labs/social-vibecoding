@@ -1662,6 +1662,9 @@ const AppView = {
   TOKEN_FRESH_MS: 60 * 1000,
   _tokenInflight: {},
   _tokenFresh: null,
+  // #6512: bumped per app by forgetToken, so a mint that was already on its
+  // way when a permission was revoked cannot write its old grant set back.
+  _tokenEpoch: {},
 
   // Resolves the token string for `slug`, or null on any failure. Never
   // rejects, and never touches iframeToken/iframeTokenSlug — a prewarm for
@@ -1676,7 +1679,9 @@ const AppView = {
     }
     const inflight = AppView._tokenInflight[slug];
     if (inflight) return inflight;
-    const p = (async () => {
+    const epoch = AppView._tokenEpoch[slug] || 0;
+    let p = null;
+    p = (async () => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), AppView.TOKEN_REQUEST_TIMEOUT_MS);
       try {
@@ -1686,17 +1691,71 @@ const AppView = {
         if (!token) return null;
         // #2219: the grant set rides the mint, so the launch path stays at
         // one round trip. Cached with the token and expiring with it.
+        // #6512: unless forgetToken ran meanwhile; then this answer predates
+        // a revoke, and its caller gets the token with no grant set cached.
+        if ((AppView._tokenEpoch[slug] || 0) !== epoch) return token;
         AppView._tokenFresh = { slug, token, permissions: permissions || null, at: Date.now() };
         return token;
       } catch {
         return null;
       } finally {
         clearTimeout(timer);
-        delete AppView._tokenInflight[slug];
+        // Only this mint's own entry: forgetToken may have detached it, and a
+        // newer mint for the same app may hold the slot by now.
+        if (!p || AppView._tokenInflight[slug] === p) delete AppView._tokenInflight[slug];
       }
     })();
     AppView._tokenInflight[slug] = p;
     return p;
+  },
+
+  // #6512: a device permission was revoked for `slug` (Settings > App device
+  // permissions). The grant set cached with the last mint is now wrong, and
+  // the next launch inside TOKEN_FRESH_MS would hand it to a new frame's
+  // `allow`, giving the revoked capability straight back. Drop it, detach
+  // any mint already in flight (the epoch keeps it from caching its answer),
+  // and drop the held grant set for that app, so the next open re-mints and
+  // reads the server's answer. The held token stays: it carries no grants,
+  // and a frame built before the re-mint gets the ungated base, failing
+  // closed.
+  //
+  // Every Homeroom tab in this browser keeps its own cache, so the forget
+  // is also posted to the others (GRANTS_CHANNEL); one that hears it forgets
+  // without posting again. A frame already open in another tab is left
+  // alone: that tab's person did not see the dialog that would close it.
+  forgetToken(slug, { fromOtherTab = false } = {}) {
+    if (!slug) return;
+    AppView._tokenEpoch[slug] = (AppView._tokenEpoch[slug] || 0) + 1;
+    delete AppView._tokenInflight[slug];
+    if (AppView._tokenFresh && AppView._tokenFresh.slug === slug) AppView._tokenFresh = null;
+    if (AppView.iframePermissionsSlug === slug) AppView.iframePermissions = null;
+    if (fromOtherTab) return;
+    const channel = AppView._grantsChannel();
+    if (!channel) return;
+    try { channel.postMessage({ kind: 'forget', slug }); } catch { /* best effort */ }
+  },
+
+  // #6512: the channel forgetToken tells this browser's other tabs on, opened
+  // once (the listener is attached at load, below the object) and null where
+  // BroadcastChannel is missing. Same-origin only, which is every Homeroom tab.
+  GRANTS_CHANNEL: 'homeroom-app-grants',
+  _grantsChannelState: undefined,
+  _grantsChannel() {
+    if (AppView._grantsChannelState !== undefined) return AppView._grantsChannelState;
+    let channel = null;
+    try {
+      if (typeof window !== 'undefined' && typeof window.BroadcastChannel === 'function') {
+        channel = new window.BroadcastChannel(AppView.GRANTS_CHANNEL);
+        channel.onmessage = (event) => {
+          const data = event && event.data;
+          if (data && data.kind === 'forget' && typeof data.slug === 'string') {
+            AppView.forgetToken(data.slug, { fromOtherTab: true });
+          }
+        };
+      }
+    } catch { channel = null; }
+    AppView._grantsChannelState = channel;
+    return channel;
   },
 
   // True when a token for `slug` is already in hand, i.e. beginLaunch can
@@ -2275,8 +2334,14 @@ const AppView = {
   // goes inert on its own.
   _launchRetry: null,
 
+  // The device's reduced motion, or Settings › Accessibility › Reduce motion
+  // (#6510): the head module's one answer, with the media query alone where
+  // that module is absent.
   _reduceMotion() {
     try {
+      if (window.Display && typeof window.Display.reducedMotion === 'function') {
+        return window.Display.reducedMotion();
+      }
       return !!(window.matchMedia
         && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     } catch { return false; }
@@ -4170,15 +4235,22 @@ const AppView = {
   _liveDay(at, now = new Date(), locale) {
     const when = new Date(at);
     if (!Number.isFinite(when.getTime())) return null;
-    const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-    // Rounded: a day across a clock change is 23 or 25 hours long.
-    const days = Math.round((midnight(when) - midnight(now)) / 86400000);
+    // #6479: calendar days, and the words, in the zone picked in Settings ›
+    // Language (else the device's), as messages/bot-ready.tsx liveDay.
+    const timeZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
+    const zone = timeZone ? { timeZone } : {};
+    const dayOf = (d) => {
+      const z = PlatformI18n.zonedDay ? PlatformI18n.zonedDay(d)
+        : { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
+      return Math.round(Date.UTC(z.year, z.month - 1, z.day) / 86400000);
+    };
+    const days = dayOf(when) - dayOf(now);
     if (when.getTime() > now.getTime()) {
       if (days === 0) return { kind: 'today', day: null };
       if (days === 1) return { kind: 'tomorrow', day: null };
-      if (days < 7) return { kind: 'weekday', day: new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(when) };
+      if (days < 7) return { kind: 'weekday', day: new Intl.DateTimeFormat(locale, { ...zone, weekday: 'long' }).format(when) };
     }
-    return { kind: 'date', day: new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(when) };
+    return { kind: 'date', day: new Intl.DateTimeFormat(locale, { ...zone, month: 'long', day: 'numeric' }).format(when) };
   },
 
   /** Try it, on the first version's screen: its change's preview, as its ready card's Try it opens it. */
@@ -4214,28 +4286,33 @@ const AppView = {
    * 14 Oct 2026: a stopped first version's Try again (_firstVersionStoppedView):
    * the build's thread in its maker's chat with Homeroom bot, where the bot's
    * Try again is; else the message itself, whose link lands inside its
-   * thread; else the chat (openBotChat). The address goes through Messages'
-   * openAddress, as a bell row's does, so it opens even when it is the one
-   * already in the bar.
+   * thread; else the project's first-version thread (openBotChat). The
+   * address goes through Messages' openAddress, as a bell row's does, so it
+   * opens even when it is the one already in the bar.
    */
   openFirstVersionThread(slug, conversationId, threadRootId, messageId) {
     const valid = (value) => Number.isInteger(value) && value > 0;
-    if (!valid(conversationId)) return AppView.openBotChat(slug, null);
+    if (!valid(conversationId) || (!valid(threadRootId) && !valid(messageId))) return AppView.openBotChat(slug, conversationId);
     const href = valid(threadRootId) ? `#messages/${conversationId}/thread/${threadRootId}`
-      : valid(messageId) ? `#messages/${conversationId}/m/${messageId}`
-        : `#messages/${conversationId}`;
+      : `#messages/${conversationId}/m/${messageId}`;
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
     if (messages && typeof messages.openAddress === 'function') messages.openAddress(href);
     else location.hash = href;
     return undefined;
   },
 
-  /** The first-version screen's button: the viewer's DM with the Homeroom bot. */
-  openBotChat(_slug, conversationId) {
+  /**
+   * The first-version screen's button. 14 Nov 2026: every conversation with
+   * Homeroom bot is a thread, so this opens the project's first-version
+   * thread (the server says which), or the Homeroom bot page when it has
+   * none; with no project, a new chat.
+   */
+  openBotChat(slug, conversationId) {
     const id = Number.isInteger(conversationId) && conversationId > 0 ? conversationId : null;
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
-    if (messages && typeof messages.open === 'function') messages.open(id);
-    else location.hash = id ? `#messages/${id}` : '#messages';
+    if (slug && messages && typeof messages.openBotFirstVersion === 'function') messages.openBotFirstVersion(slug);
+    else if (messages && typeof messages.open === 'function') messages.open(id);
+    else location.hash = '#homeroom-bot';
   },
 
   _stopFirstVersionWatch() {
@@ -5351,6 +5428,42 @@ const AppView = {
   // remaining height with the composer pinned to the bottom.
   _devTopic: null, // { kind: 'issue'|'proposal'|'gov', id } while open
 
+  // #6604: while another thread is being opened, the one on screen stays up
+  // (marked `aria-busy`) until the new one has its item and its own read, or
+  // TOPIC_SWAP_CAP_MS passes. Without it the panel emptied, then painted its
+  // change line over a skeleton, then its cards — three heights, so the page
+  // scrolled by itself.
+  TOPIC_SWAP_CAP_MS: 1500,
+  _topicSwap: null,
+  _holdTopicSwap(content, ref, previous) {
+    AppView._topicSwap = null;
+    if (!previous || !previous.id) return;
+    if (previous.kind === ref.kind && Number(previous.id) === Number(ref.id)) return;
+    let slot = null;
+    try { slot = document.getElementById('dev-topic-thread'); } catch (_) { slot = null; }
+    // Nothing of the previous thread is on screen: no hold needed.
+    if (!slot || !slot.firstElementChild) return;
+    const hold = { content, slot, timer: null };
+    hold.timer = setTimeout(() => AppView._releaseTopicSwap(hold.content), AppView.TOPIC_SWAP_CAP_MS);
+    AppView._topicSwap = hold;
+    try { slot.setAttribute('aria-busy', 'true'); } catch (_) { /* detached */ }
+  },
+  // Let go of the held thread. The sub-view is mounted BEFORE this (its hosts
+  // must exist for the thread); what the hold delays is the head being
+  // published, which happens at the first paint.
+  _releaseTopicSwap() {
+    const hold = AppView._topicSwap;
+    if (!hold) return;
+    AppView._topicSwap = null;
+    clearTimeout(hold.timer);
+    try { hold.slot.removeAttribute('aria-busy'); } catch (_) { /* detached */ }
+  },
+  // Let go of a held thread without painting it: the page it was for missed,
+  // or the viewer left before it had content.
+  _dropTopicSwap() {
+    AppView._releaseTopicSwap();
+  },
+
   // #6608: what the topic head was last really painted for — the kind, the
   // id and the project's slug. It is how a repaint tells "this topic closed
   // or merged away mid-view" (keep the last render readable) from "the route
@@ -5388,14 +5501,44 @@ const AppView = {
     if (AppView._findTopicItem()) return;
     const react = AppView._reactDevBoard();
     if (react) react.publishTopicHead?.({ card: null, body: null, item: null, loading: true });
+    // #6604: a request's or a decision's thread mounts on its ref alone,
+    // before its row exists, so it can start reading in the same tick. While
+    // that row is still in flight it IS this topic's thread, not a previous
+    // page to drop: unmounting it here leaves the page's stream empty for
+    // good, because the paint that follows mounts a thread only when none
+    // was mounted. A live repaint during the load is what found this.
     // The previous thread's stream goes with the body: the same pair
-    // `mountThread` runs before a remount (GroupChat.renderThread).
-    if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) {
+    // `mountThread` runs before a remount (GroupChat.renderThread). A thread
+    // that is already this topic's own is not the previous one, and stays: a
+    // request's or a decision's is mounted on its ref alone, before its row
+    // is in hand (_renderTopicSubView), and the paint that follows the row
+    // does not mount it again. Dropped here by a repaint in that gap, the
+    // page drew its head and no replies at all.
+    if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread
+        && !AppView._topicThreadIsOpen(t, slug)) {
       const prev = document.getElementById('gc-thread-messages');
       if (prev) GroupChat._react?.()?.unmountTranscript?.(prev);
       GroupChat.unmountThread();
     }
     AppView._paintedTopic = null;
+  },
+
+  // The thread each kind of topic page mounts (_mountTopicThread). A shared
+  // in-flight dev session uses the same 'session' namespace as a promoted
+  // proposal: the thread key is the chat_sessions id either way, which is
+  // what makes comments carry over when the session is later promoted.
+  _TOPIC_THREAD_TYPES: new Map([
+    ['issue', 'issue'], ['proposal', 'session'], ['gov', 'governance'], ['session', 'session'],
+  ]),
+
+  // Whether the thread open in the group chat is topic `t`'s own, in project
+  // `slug`: the same kind of thread, on the same id, in the same project.
+  _topicThreadIsOpen(t, slug) {
+    if (typeof GroupChat === 'undefined' || !t || !slug) return false;
+    const open = GroupChat.activeThread;
+    if (!open || GroupChat.appSlug !== slug) return false;
+    return open.type === AppView._TOPIC_THREAD_TYPES.get(t.kind)
+      && Number(open.ref) === Number(t.id);
   },
 
   // #1036: the address of the app's dev page — what every "← Back" in a
@@ -5410,6 +5553,9 @@ const AppView = {
   },
 
   async _renderTopicSubView(content, ref) {
+    // #6604: what was on screen before this page, so a thread the reader was
+    // already on can stay up until the next one has content.
+    const previousTopic = AppView._devTopic;
     // #4367: `dev/changes/<N>` names a change by its pull request's number.
     // Look up the session it is, with the page's skeleton up; a number this
     // app has no change for is the same miss as a bad session id.
@@ -5527,7 +5673,12 @@ const AppView = {
     // the topic head (#2916, features/dev-board/topic/topic-back.tsx), which
     // scrolls with the page and carries the NavLink-guarded click; the header
     // draws no arrow on this route. See features/dev-board/topic-frame.tsx.
+    // #6604: the thread already on screen stays up until this one has its
+    // item and its own read (or 1.5 s), so the panel is not emptied and
+    // refilled in stages. The sub-view mounts first — its hosts have to exist
+    // for the thread — and the first paint publishes the new head.
     AppView._reactDevBoard()?.mountTopicSubView(content);
+    AppView._holdTopicSwap(content, ref, previousTopic);
     // #6608: a different topic that is not loaded yet drops the previous
     // page now, rather than after this project's reads land.
     AppView._clearTopicHeadBody();
@@ -5561,18 +5712,20 @@ const AppView = {
       return;
     }
 
-    // ── Fast open (#4524): the page draws when ITS OWN item is in hand ──
+    // ── Fast open (#4524, #6604): the page draws when ITS OWN item is in
+    // hand, and the board is NOT loaded behind it ──
     //
-    // The board load used to gate everything here: _loadDevData ran to
-    // completion before the topic even looked for its item, and on an app
-    // this browser had not opened recently the slowest board read (a cold
-    // /github-issues) gated the page for seconds. Now the board load runs
-    // on UNAWAITED, and the page paints from whichever resolves the item
-    // first — the board (which may already hold it, same app) or the
-    // item's own single fetch, started in the same instant. Board details
-    // that come from the lists ("in progress", headless) can appear a
-    // moment later, when the board settles and the head repaints from its
-    // row. Nothing here changes what the page shows once loaded.
+    // The board load used to gate everything here, then (#4524) ran on
+    // UNAWAITED beside the item read. Unawaited was still a whole board —
+    // nine reads, about 1 MB — competing with the two reads the page needs,
+    // and in the side panel it is what made an open take seconds on a busy
+    // server (#6604). A thread page now asks for its item, its own row and
+    // its thread, and nothing else; the board loads when the Workshop itself
+    // is shown (AppView._loadDevFeed).
+    //
+    // The item's single fetch starts at once. A row the board already holds
+    // paints immediately and the item read refreshes the head; a cold open
+    // paints from the item read alone.
     const appSlug = AppView.appData && AppView.appData.slug;
     const attemptId = window.UITelemetry?.attempt?.('topic_load', {
       screen: 'app_detail', appSlug, timeoutMs: 12_000, abandonOnHide: true,
@@ -5592,7 +5745,6 @@ const AppView = {
     };
     let painted = false;
     let concluded = false;
-    let boardDone = false;
     let itemDone = false;
     let ok = false;
     let finish;
@@ -5603,19 +5755,32 @@ const AppView = {
     // "Only you can see this change" notice reads the row's status.
     let threadMounted = ref.kind === 'issue' || ref.kind === 'gov';
     if (threadMounted) AppView._mountTopicThread();
+    // #6604: an issue's thread read starts in the same tick as the item
+    // read, so the two go out together instead of one after the other.
+    if (ref.kind === 'issue' && appSlug) {
+      try {
+        window.UsernodeReact?.devBoard?.prefetchThread?.(appSlug, ref.id);
+      } catch (_) { /* the mounted thread reads it itself */ }
+    }
     // Paint at most once: from the same-app lists or an on-demand cache if
     // they already resolve the item, otherwise from the single fetch.
-    const paint = () => {
+    // `fresh` says the row was read for this page rather than left over
+    // from the board.
+    const paint = (fresh) => {
       if (painted || concluded) return true;
       if (!live()) {
         concluded = true;
         cancelAttempt();
+        AppView._dropTopicSwap();
         finish();
         return true;
       }
       const item = AppView._findTopicItem();
       if (!item) return false;
       painted = true;
+      AppView._releaseTopicSwap(content);
+      const shown = AppView._devTopic;
+      if (shown) shown.rowFresh = !!fresh;
       // #2605: a link that asked for this change's Build panel predates the
       // move, and the panel is the dev session's own page now. Checked here,
       // once the item has resolved, because whether the change HAS a build
@@ -5640,6 +5805,14 @@ const AppView = {
         AppView._mountTopicThread();
       }
       AppView._renderTopicHead();
+      // #6604: the thread shell creates #gc-thread-head as it mounts, and on
+      // a fast item read that can be a frame after this paint. Publish the
+      // head once the slot is there rather than waiting for a live event.
+      if (!document.getElementById('gc-thread-head')) {
+        const again = () => { if (live()) AppView._renderTopicHead(); };
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(again);
+        else setTimeout(again, 0);
+      }
       note('success');
       finish();
       return true;
@@ -5650,6 +5823,7 @@ const AppView = {
     const onMiss = () => {
       concluded = true;
       note('failure', { errorCode: 'not_found' });
+      AppView._dropTopicSwap();
       // Missing ref (an issue GitHub no longer serves, archived session, bad
       // link, or a proposal that genuinely doesn't exist / is inaccessible)
       // — fall back to the card list.
@@ -5673,10 +5847,11 @@ const AppView = {
     };
     const settle = () => {
       if (painted || concluded) return;
-      if (!boardDone || !itemDone) return;
+      if (!itemDone) return;
       if (!live()) {
         concluded = true;
         cancelAttempt();
+        AppView._dropTopicSwap();
         finish();
         return;
       }
@@ -5685,51 +5860,31 @@ const AppView = {
     };
     // The Completed list is keyset-paginated, so a merged proposal beyond
     // the first page (deep link, shared URL, or one paged-in then lost when
-    // _loadDevData reset _merged) won't be in any cached list, and a CLOSED
-    // issue is not in _ghIssues's open list. The single fetch answers both —
-    // and since the page no longer waits for the board, it is also what
-    // paints a cold open. The fetchers are best-effort and swallow their own
-    // errors, so a rejection here is not expected; treat it as a miss all
-    // the same.
+    // a board load reset _merged) won't be in any cached list, and a CLOSED
+    // issue is not in _ghIssues's open list. The single fetch answers both,
+    // and is what paints a cold open.
     //
     // A page painted from a list row the board read BEFORE is drawn from an
-    // old copy (polish board #12): what moves in it — where Homeroom bot's
-    // work stands, the request's track card — waits for the board's reload
-    // below, rather than saying "Its checks are running" until it lands.
-    // `rowFresh` is false only for that paint; every other page is drawn
-    // from a read made for it.
-    const topic = AppView._devTopic;
-    if (topic) topic.rowFresh = false;
-    if (paint()) {
+    // old copy (polish board #12): the item read then refreshes the head, so
+    // what moves in it — where Homeroom bot's work stands, the request's
+    // track card — arrives a moment later rather than never.
+    // `rowFresh` is false only for that first paint.
+    if (AppView._boardListsCurrent() && AppView._findTopicItem()) paint(false);
+    // One read for this item, always: it refreshes a row the lists answered
+    // with and is what paints a cold open.
+    Promise.resolve(AppView._fetchTopicItem(ref)).then((row) => {
+      ok = !!row;
       itemDone = true;
-    } else {
-      if (topic) topic.rowFresh = true;
-      AppView._fetchTopicItem(ref).finally(() => {
-        itemDone = true;
-        paint();
-        settle();
-      });
-    }
-    AppView._loadDevData().then((loaded) => {
-      ok = loaded;
-      boardDone = true;
-      if (painted) {
-        // The board's list row carries what the single-item row cannot
-        // (who is working on an open request, the checks badge): repaint
-        // from it now that the board is in. A page held back for it repaints
-        // either way: a failed reload leaves the row there is.
-        const held = !!topic && topic.rowFresh === false;
-        if (topic) topic.rowFresh = true;
-        if ((ok || held) && live()) AppView._renderTopicHead();
-        return;
+      if (!painted) {
+        paint(true);
+      } else if (ok && live()) {
+        const shown = AppView._devTopic;
+        if (shown) shown.rowFresh = true;
+        AppView._renderTopicHead();
       }
-      if (concluded) return;
-      paint();
       settle();
     }, () => {
-      boardDone = true;
-      if (concluded || painted) return;
-      paint();
+      itemDone = true;
       settle();
     });
     // Resolves after the first paint or the fallback, so openTopic's
@@ -5974,8 +6129,59 @@ const AppView = {
    * PLACE, where there is no `_devTopic` and must not be one: opening a
    * card inline is not navigation.
    */
-  _findItem(kind, id) {
-    const t = { kind, id };
+  // #6604: the page's own item read is the row it draws from. _findItem
+  // prefers the list caches, so replace the copy a current list still holds;
+  // otherwise the head would repaint the board's older row a moment later.
+  _putCachedRow(kind, row) {
+    if (!row) return;
+    const put = (list, match) => {
+      if (!Array.isArray(list)) return;
+      const i = list.findIndex(match);
+      if (i >= 0) list[i] = row;
+    };
+    if (kind === 'issue') {
+      if (!AppView._boardListsCurrent()) return;
+      put(AppView._ghIssues, (x) => x && Number(x.number) === Number(row.number));
+      return;
+    }
+    if (kind === 'proposal') {
+      for (const list of [AppView._proposals, AppView._mySessions, AppView._sharedSessions, AppView._merged]) {
+        put(list, (x) => x && Number(x.id) === Number(row.id));
+      }
+      return;
+    }
+    if (kind === 'gov') {
+      for (const list of [AppView._govProposals, AppView._merged]) {
+        put(list, (x) => x && Number(x.id) === Number(row.id));
+      }
+    }
+  },
+
+  // #6604: the project-level vote context a change page used to inherit from
+  // the board's /promoted answer, now carried by its own read. Merged into
+  // the context _loadDevData builds, never replacing a fresher board value
+  // with nothing (a field the answer omits keeps what is there).
+  _applyVoteContext(ctx) {
+    if (!ctx || typeof ctx !== 'object') return;
+    const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+    if (ctx.slug && ctx.slug !== slug) return;
+    const cur = AppView._proposalsCtx || {};
+    const next = { ...cur };
+    const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+    if (num(ctx.majority) != null) next.majority = Math.max(1, num(ctx.majority));
+    if (num(ctx.activeUsers) != null) next.activeUsers = Math.max(0, num(ctx.activeUsers));
+    if (typeof ctx.locked === 'boolean') next.locked = ctx.locked;
+    if (ctx.approverPolicy) next.approverPolicy = ctx.approverPolicy;
+    if (ctx.approvalsRequired !== undefined) next.approvalsRequired = ctx.approvalsRequired;
+    if (typeof ctx.isAppAdmin === 'boolean') next.isAppAdmin = ctx.isAppAdmin;
+    AppView._proposalsCtx = next;
+    if (AppView.voteState) {
+      if (next.majority != null) AppView.voteState.majority = next.majority;
+      if (next.activeUsers != null) AppView.voteState.activeUsers = next.activeUsers;
+    }
+  },
+
+  _findItem(kind, id) {    const t = { kind, id };
     // The one-shot caches are keyed differently (`_topicIssue` carries its
     // own slug; proposal and governance ids are global and the caches are
     // cleared per topic), so they need no guard here — only the LIST caches
@@ -6097,6 +6303,11 @@ const AppView = {
       if (!row) return null;
       AppView._overlayPendingVote(row);
       AppView._topicProposal = row;
+      AppView._putCachedRow('proposal', row);
+      // #6604: this read is a change page's ONLY read (the board is not
+      // loaded behind it), so the project-level vote context the board's
+      // /promoted answer carries comes with it.
+      AppView._applyVoteContext(data.context);
       // Keep the inline vote/kudos controls in sync so the discussion
       // thread's activity row renders its tally + per-viewer state, just
       // like a row loaded via the list (loadMoreMerged does the same).
@@ -6142,6 +6353,7 @@ const AppView = {
       const row = data.proposal || null;
       if (!row) return null;
       AppView._topicGov = row;
+      AppView._putCachedRow('gov', row);
       return row;
     } catch {
       return null;
@@ -6163,20 +6375,36 @@ const AppView = {
   async _fetchIssueByNumber(number) {
     if (!AppView.appData || !number) return null;
     const slug = AppView.appData.slug;
+    // #6604: a topic open and a live burst ask for the same request at the
+    // same moment; one read answers both, instead of two going out.
+    const key = `${slug}:${number}`;
+    const reads = AppView._issueRowReads || (AppView._issueRowReads = new Map());
+    const running = reads.get(key);
+    if (running) return running;
+    const read = (async () => {
+      try {
+        const res = await fetch(`/api/apps/${slug}/github-issues/${number}${AppView._demoQS()}`);
+        if (!res.ok) return null;
+        const data = await res.json();
+        const row = data.issue || null;
+        if (!row || row.number !== number) return null;
+        if (!AppView.appData || AppView.appData.slug !== slug) return null;
+        AppView._topicIssue = row;
+        AppView._topicIssueSlug = slug;
+        AppView._putCachedRow('issue', row);
+        return row;
+      } catch {
+        return null;
+      }
+    })();
+    reads.set(key, read);
     try {
-      const res = await fetch(`/api/apps/${slug}/github-issues/${number}${AppView._demoQS()}`);
-      if (!res.ok) return null;
-      const data = await res.json();
-      const row = data.issue || null;
-      if (!row || row.number !== number) return null;
-      if (!AppView.appData || AppView.appData.slug !== slug) return null;
-      AppView._topicIssue = row;
-      AppView._topicIssueSlug = slug;
-      return row;
-    } catch {
-      return null;
+      return await read;
+    } finally {
+      if (reads.get(key) === read) reads.delete(key);
     }
   },
+  _issueRowReads: null,
 
   // #665/#2327: pure predicate behind _renderTopicHead's repaint guard.
   // A live refresh must not remount whichever inline title editor is open
@@ -6493,6 +6721,12 @@ const AppView = {
   // the assignee chip, the work note, its "Also:", the admins' Claims line
   // and the thread's claim line); the status card says it once, and the
   // thread's claim line reads as what happened.
+  _twinOf(issue) {
+    const number = Number(issue?.similar?.number);
+    return Number.isSafeInteger(number) && number > 0 && number !== Number(issue.number)
+      ? { number, title: String(issue.similar.title || '') } : null;
+  },
+
   _requestView(issue) {
     const n = issue.number;
     const top = issue.category && issue.category.top;
@@ -6514,6 +6748,7 @@ const AppView = {
       askedTime: stamp.text,
       askedTitle: stamp.title,
       title: issue.title || '',
+      similar: AppView._twinOf(issue),
       titleEditing: canEditTitle && AppView._editingIssueTitle === n ? { issue: n, initial: issue.title || '' } : null,
       bodyHtml: words.text.trim() ? AppView._issueBodyHtml({ body: words.text }) : '',
       bodyMarkdown: words.text,
@@ -6660,11 +6895,19 @@ const AppView = {
 
   // The standing's words as the status card's sentence: its stage, and its
   // second line after it. Homeroom bot's own sentence (its reason) follows as
-  // a sentence of its own.
+  // a sentence of its own. 13 Nov 2026: a request waiting its turn says
+  // whose line it is and that it starts by itself, where a row's label says
+  // "Number 1 in line": a tester could not tell whether that line was the
+  // bot's, another person's or theirs.
   _standingSays(words) {
     const t = PlatformI18n.t;
     const stage = t(words.stage.id, words.stage.values || {});
     if (!words.line) return t('changes:request.status.lead.stands', { stage });
+    if (words.line.id === 'core:work.line.queuedAt') {
+      const place = Number(words.line.values && words.line.values.place) || 1;
+      return t('changes:request.status.lead.botLineAt', { stage, place });
+    }
+    if (words.line.id === 'core:work.line.queued') return t('changes:request.status.lead.botLine', { stage });
     const line = t(words.line.id, words.line.values || {});
     return words.line.id === 'core:work.line.said'
       ? t('changes:request.status.lead.standsSaid', { stage, said: line })
@@ -7100,7 +7343,7 @@ const AppView = {
         rows.push({
           label: PlatformI18n.t('changes:page.menu.askForChanges'), icon: 'generate',
           title: PlatformI18n.t('changes:page.menu.askForChangesTitle'),
-          act: () => AppView.askBotForChanges(item.id, item.session_title || item.pr_title || null),
+          act: () => AppView.askBotForChanges(item.id, item.session_title || item.pr_title || null, item.pr_number),
         });
       }
       if (body.build) {
@@ -8473,7 +8716,10 @@ const AppView = {
     }
     // A change has no fixed deadline, only these two clocks (statusPillState).
     if ((pill.key === 'merge_countdown' || pill.key === 'reject_countdown') && Number.isFinite(pill.countdown)) {
+      // In the zone picked in Settings › Language (#6479), else the device's.
+      const timeZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
       const when = new Intl.DateTimeFormat(PlatformI18n.dateLocale(), {
+        ...(timeZone ? { timeZone } : {}),
         weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
       }).format(new Date(pill.countdown));
       facts.push({ key: 'ends', text: PlatformI18n.t('changes:page.votes.facts.ends', { when }) });
@@ -10202,18 +10448,13 @@ const AppView = {
       });
       return;
     }
-    // 'session' (a shared in-flight dev session) uses the same 'session'
-    // thread namespace as promoted proposals — the thread key is the
-    // chat_sessions id either way, which is exactly what makes comments
-    // carry over when the session is later promoted.
-    const typeMap = { issue: 'issue', proposal: 'session', gov: 'governance', session: 'session' };
     // Every topic thread — including merged proposals — mounts with a live,
     // editable composer. Merging settles the vote, not the conversation:
     // people keep posting follow-ups after a proposal lands. The WS handler
     // accepts session-thread posts on merged sessions (existence-only gate),
     // so there is no read-only lock or "voting closed" notice here.
     GroupChat.mountThread({
-      type: typeMap[t.kind],
+      type: AppView._TOPIC_THREAD_TYPES.get(t.kind),
       ref: t.id,
       container: slot,
       fullHeight: true,
@@ -10311,12 +10552,61 @@ const AppView = {
     } else {
       AppView._devTopicAsked = null;
     }
+    // #6604: the item and the thread read start TOGETHER, before anything on
+    // screen is replaced, so a slow server is paid once rather than twice in
+    // a row. `known` is a row already in hand (the board's lists), which the
+    // panel has always painted from without a read.
+    const slugForReads = (AppView.appData && AppView.appData.slug) || App.currentApp;
+    const known = AppView._findItem(kind, id);
     AppView._topicProposal = null;
     AppView._topicGov = null;
     AppView._topicIssue = null;
     AppView._topicIssueSlug = null;
     AppView._editingIssueTitle = null;
     AppView._editingSessionTitle = null;
+    // A row that was in hand stays in hand through the clear above.
+    if (known) {
+      if (kind === 'issue') {
+        AppView._topicIssue = known;
+        AppView._topicIssueSlug = slugForReads;
+      } else if (kind === 'proposal' || kind === 'session') {
+        AppView._topicProposal = known;
+      } else {
+        AppView._topicGov = known;
+      }
+    }
+    const itemRead = known ? Promise.resolve(known) : (async () => {
+      if (kind === 'gov') return AppView._fetchGovProposalById(id);
+      if (kind === 'issue') return AppView._fetchIssueByNumber(id);
+      return AppView._fetchProposalById(id);
+    })();
+    let threadRead = null;
+    if (kind === 'issue' && slugForReads) {
+      try {
+        threadRead = window.UsernodeReact?.devBoard?.prefetchThread?.(slugForReads, id) || null;
+      } catch (_) { threadRead = null; }
+    }
+    // Keep the thread the reader was on until the new one has content (or
+    // TOPIC_SWAP_CAP_MS), so the panel is not emptied and refilled in stages.
+    const previous = AppView._devTopic;
+    let slot = null;
+    try { slot = document.getElementById('dev-topic-thread'); } catch (_) { slot = null; }
+    const held = !!AppView._devTopicInPanel && !!previous && !!slot && !!slot.firstElementChild
+      && (previous.kind !== kind || Number(previous.id) !== Number(id));
+    let timedOut = false;
+    if (held) {
+      try { slot.setAttribute('aria-busy', 'true'); } catch (_) { /* detached */ }
+      timedOut = !(await Promise.race([
+        Promise.all([
+          Promise.resolve(itemRead).catch(() => null),
+          Promise.resolve(threadRead).catch(() => null),
+        ]).then(() => true),
+        new Promise((resolve) => setTimeout(() => resolve(false), AppView.TOPIC_SWAP_CAP_MS)),
+      ]));
+      try { slot.removeAttribute('aria-busy'); } catch (_) { /* detached */ }
+    } else {
+      await itemRead;
+    }
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
     AppView._devTopic = { kind, id };
     // #6608: switching the panel to another project's change must not leave
@@ -10345,11 +10635,17 @@ const AppView = {
       threadMounted = true;
       AppView._mountTopicThread();
     }
-    if (!AppView._findTopicItem()) {
-      if (kind === 'gov') await AppView._fetchGovProposalById(id);
-      else if (kind === 'issue') await AppView._fetchIssueByNumber(id);
-      else await AppView._fetchProposalById(id);
+    // The cap passed with the item still on the wire: mount now (the thread
+    // keeps its place) and paint when the read lands.
+    if (timedOut && !AppView._findTopicItem()) {
+      Promise.resolve(itemRead).then(() => {
+        if (!current()) return;
+        if (!threadMounted) { threadMounted = true; AppView._mountTopicThread(); }
+        AppView._renderTopicHead();
+      });
+      return;
     }
+    await itemRead;
     if (!current() || !AppView._findTopicItem()) return;
     if (!threadMounted) AppView._mountTopicThread();
     AppView._renderTopicHead();
@@ -10963,33 +11259,21 @@ const AppView = {
     }
     if (App.currentSubTab === 'topic') {
       if (live) return AppView._refreshTopicLive(live);
-      // Refresh the header card / roster in place; the mounted thread
-      // is left alone (it receives live messages directly). The roster's
-      // cache entry is dropped HERE rather than in `_renderTopicHead`,
-      // which repaints far more often than the data changes — a vote
-      // arriving over the WS is a refresh, a repaint is not.
-      // Only a VOTE invalidates the roster. Every other refresh (a checks
-      // phase event, a sync-status change) used to delete it too, so the
-      // head republished with `roster: {phase: 'loading'}` — "Loading
-      // votes…" — and then again when the roster refetch landed: two paints
-      // per event, the first one blank. The roster now stays on screen until
-      // a vote actually moves it.
-      if (kind === 'vote' && AppView._devTopic) AppView._invalidateVoteRoster(AppView._devTopic.id);
-      // #2782: re-read the roster now rather than after the whole board load
-      // below (seven requests, GitHub issues among them) — it is the one part
-      // of the page a vote changes, and it has its own endpoint.
-      if (kind === 'vote' && AppView._devTopic && AppView._devTopic.kind === 'proposal') {
-        const open = AppView._findTopicItem();
-        if (open && ['promoted', 'merging'].includes(open.status)) AppView._loadVoteRoster(open.id);
+      // #6604: a direct caller ('vote', 'tryAgain', 'recheck') re-reads what
+      // is SHOWN — this change's row, or this issue's / decision's own row —
+      // instead of reloading the whole board behind one thread. The roster
+      // rules below are _refreshTopicLive's own for a change page.
+      const shown = AppView._devTopic;
+      if (shown && (shown.kind === 'proposal' || shown.kind === 'session')) {
+        // A vote is the one refresh that revalidates the roster; it is left
+        // on screen while it is re-read, never blanked (#1715).
+        if (kind === 'vote') AppView._invalidateVoteRoster(shown.id);
+        return AppView._refreshTopicLive({
+          kinds: new Set([kind === 'vote' ? 'vote' : 'other']),
+          ids: new Set([Number(shown.id)]),
+        });
       }
-      // _refreshTopicOnDemandRow between the two: _loadDevData refreshes the
-      // lists, and a topic the lists do not hold would otherwise repaint
-      // from a snapshot frozen when the page opened. It no-ops for every
-      // topic the lists do cover.
-      return AppView._loadDevData(opts)
-        .then(() => AppView._refreshTopicOnDemandRow())
-        .then(() => AppView._renderTopicHead())
-        .then(() => { AppView._refreshOpenChangeFromBoard(); });
+      return Promise.resolve(AppView._refreshTopicOwnRow()).then(() => true);
     }
     if (App.currentSubTab !== 'forum') return undefined;
     const parts = live ? AppView._partsForLive(live) : null;
@@ -11107,6 +11391,13 @@ const AppView = {
         let row = null;
         do {
           entry.queued = false;
+          // #6604: a burst that lands while the page's own open read is in
+          // flight queues ONE read after it (the loop), rather than joining a
+          // snapshot taken before the event.
+          const running = AppView._issueRowReads && AppView._issueRowReads.get(key);
+          if (running) {
+            try { await running; } catch (_) { /* best-effort, null on failure */ }
+          }
           row = await AppView._fetchIssueByNumber(id);
         } while (entry.queued);
         // The panel closed, or moved to another item, while the fetch was in
@@ -11129,6 +11420,21 @@ const AppView = {
     })();
     AppView._requestRowRefresh = entry;
     return entry.done;
+  },
+
+  // #6604: the one read a topic that is not a change needs when its own live
+  // burst arrives — the request's row, or the decision's — in place of the
+  // board load that used to answer for it.
+  async _refreshTopicOwnRow() {
+    const t = AppView._devTopic;
+    if (!t) return false;
+    if (t.kind === 'issue') return AppView._refreshOpenRequestRow();
+    if (t.kind === 'gov') {
+      const row = await AppView._fetchGovProposalById(t.id);
+      if (row && AppView._devTopic === t) AppView._renderTopicHead();
+      return !!row;
+    }
+    return false;
   },
 
   // 11 Nov 2026 (one model): a `work_state` push (services/work-state.js
@@ -11198,7 +11504,15 @@ const AppView = {
     const liveReads = typeof window !== 'undefined' && window.UsernodeReact
       && window.UsernodeReact.liveReads;
     const threadRead = (path) => {
-      if (liveReads && typeof liveReads.resync === 'function') liveReads.resync('thread', path);
+      if (!liveReads || typeof liveReads.resync !== 'function') return;
+      // #6604: one burst asks for a path once, however many surfaces it
+      // reached (the topic sub-view and this flush both run).
+      const seen = live.resynced;
+      if (seen && typeof seen.has === 'function') {
+        if (seen.has(path)) return;
+        seen.add(path);
+      }
+      liveReads.resync('thread', path);
     };
     const enc = encodeURIComponent(slug);
     if (t.kind === 'issue') {
@@ -11281,10 +11595,10 @@ const AppView = {
     const changePage = t.kind === 'proposal' || t.kind === 'session';
     if (live.ids && !live.ids.has(id)) return true;
     if (!changePage) {
-      // An issue or governance page: the board load is what refreshes it.
-      await AppView._loadDevData();
-      await AppView._refreshTopicOnDemandRow();
-      AppView._renderTopicHead();
+      // #6604: an issue or governance page re-reads ITS OWN row, not the
+      // board. The board is nine reads and about 1 MB; a live burst that
+      // lands while somebody reads one request paid for all of it.
+      await AppView._refreshTopicOwnRow();
       return true;
     }
     const open = AppView._findTopicItem();
@@ -11876,12 +12190,28 @@ const AppView = {
 
   prefetchDevData(slug) {
     if (!slug || AppView.appData?.slug !== slug) return;
+    // #6604: a document showing one thread (the side panel, a topic's own
+    // page) does not need the board, and loading it there fired nine reads
+    // beside the two that matter. The Workshop loads it when it is shown.
+    if (typeof App !== 'undefined' && (App.embeddedPanel || AppView._routeShowsThread())) return;
     // Already loaded for this app — the caches are warm and re-fetching here
     // would be a request nobody is waiting for.
     if (AppView._devDataReady) return;
     try {
       Promise.resolve(AppView._loadDevData()).catch(() => {});
     } catch (err) { /* never let a preload break an app open */ }
+  },
+
+  // Is the address on screen a thread's own page (`#app/<slug>/dev/issues/…`
+  // and its siblings)? The side panel's document is one of these.
+  _routeShowsThread() {
+    let route = '';
+    try {
+      route = location.hash
+        ? location.hash.replace(/^#/, '').split('?')[0]
+        : location.pathname.replace(/^\/+/, '');
+    } catch (_) { return false; }
+    return /\/dev\/(issues|changes|proposals|sessions|gov)\//.test(route);
   },
 
   // Fetch + cache everything the dev surfaces render from (the same
@@ -12846,7 +13176,7 @@ const AppView = {
       }
       const cat = it.category && it.category.top ? AppView._categoryMeta(it.category.top) : null;
       return {
-        ...base, kind: 'request', noun: 'request', n: Number(it.number) || null,
+        ...base, kind: 'request', noun: 'request', n: Number(it.number) || null, twin: AppView._twinOf(it),
         category: cat ? cat.label : '', replies: Number(it.chatCount) || 0,
         stage: ws && ws.key !== 'claimed' && ws.key !== 'in_review' ? 'worked' : (ws && ws.key === 'in_review' ? 'vote' : 'request'),
         // Nobody has taken it (the Workshop's "Nobody is on these"), so a
@@ -15892,10 +16222,21 @@ const AppView = {
     }
     if (f.needsVote) {
       if (kind === 'proposal') {
-        // Same condition as the card's pulsing "Vote" badge (isUnvoted). A
-        // project's first version needs nobody's vote (D1).
+        // The card's pulsing "Vote" badge's condition (isUnvoted), narrowed.
+        // A project's first version needs nobody's vote (D1).
         // #6594: its votes are in, so it asks nobody for one.
-        if (!(it.status === 'promoted' && !it.my_vote && it.first_version !== true && it.votes_in !== true)) return false;
+        // And only once its vote is open (`vote_open`, the stored work
+        // state's answer on the /promoted row, routes/votes.js): the rule
+        // the Needs you page lists by (GET /api/workshop/needs-feed,
+        // VOTE_OPEN_SQL). A change still being checked, or whose shots are
+        // still being taken, was counted here as waiting on your vote while
+        // the page said nothing was. It stays on the board with its own
+        // status and its card's own Vote pill (statusPillState is not asked
+        // this), and its own page still takes an early vote. A row without
+        // the field (an older saved copy, a demo row) reads as open, so a
+        // vote is never hidden for want of it.
+        if (!(it.status === 'promoted' && !it.my_vote && it.first_version !== true && it.votes_in !== true
+          && it.vote_open !== false)) return false;
       } else if (kind === 'gov') {
         if (it.my_vote) return false;
       } else {
@@ -18600,7 +18941,11 @@ const AppView = {
       approveSolo: AppView._approveSolo(p),
     };
     const live = AppView._withLiveState(gates, p);
-    const s = AppView._summarizeRequirements(live, viewer);
+    // #6643: held for an admin. An author who is an admin cannot lift their
+    // own hold, so the admin step is not theirs to clear.
+    const hold = AppView._holdSpec(p);
+    const s = AppView._summarizeRequirements(live,
+      hold && hold.other && viewer.isAuthor ? { ...viewer, isAdmin: false } : viewer);
     // A held admin force merge says where it is instead of whose turn it is:
     // the vote steps it skips are done, and the one it waits on is named.
     const forced = block && block.forced && typeof block.forced === 'object' ? block.forced : null;
@@ -18626,12 +18971,40 @@ const AppView = {
       // Not remembered per viewer: a remembered "closed" would hide the one
       // case the rule exists for.
       open: forced ? (forced.step === 'stopped' && s.needsViewer) : s.needsViewer,
+      ...(hold ? { hold } : {}),
       gates: live.map((g, i) => ({
         key: g.key, label: g.label, actor: g.actor, state: g.state,
         skipped: !!(g.detail && g.detail.skipped === 'force'),
         note: lines[i],
         action: AppView._requirementAction(g, viewer),
       })),
+    };
+  },
+
+  // #6643: the warning a held change's card carries (services/release-
+  // holds.js): what the change does that needs an admin, and that an admin
+  // has been asked. Null once an admin has approved it, or with no hold.
+  _HOLD_RULE_IDS: {
+    wallet: 'changes:hold.rule.wallet',
+    people: 'changes:hold.rule.people',
+    secret: 'changes:hold.rule.secret',
+    capability: 'changes:hold.rule.capability',
+    script: 'changes:hold.rule.script',
+    content: 'changes:hold.rule.content',
+    unread: 'changes:hold.rule.unread',
+  },
+  _holdSpec(p) {
+    const h = p && p.releaseHold;
+    if (!h || h.approved) return null;
+    const reasons = (Array.isArray(h.rules) ? h.rules : [])
+      .map((k) => AppView._HOLD_RULE_IDS[k]).filter(Boolean).map((id) => PlatformI18n.t(id));
+    const other = !!h.needsAnotherAdmin;
+    return {
+      other,
+      pill: other ? PlatformI18n.t('changes:hold.pillOther') : PlatformI18n.t('changes:hold.pill'),
+      title: other ? PlatformI18n.t('changes:hold.titleOther') : PlatformI18n.t('changes:hold.title'),
+      reasons,
+      asked: h.askedAt ? PlatformI18n.t('changes:hold.asked') : PlatformI18n.t('changes:hold.willAsk'),
     };
   },
 
@@ -18686,7 +19059,16 @@ const AppView = {
         if (g.state === 'done' || !reached) return null;
         return AppView._explicitCopy(detail.reason || p.explicit_approval_reason).line;
       }
-      case 'admin_yes': return g.state === 'done' || !reached ? null : PlatformI18n.t('changes:step.adminYes');
+      case 'admin_yes': {
+        if (g.state === 'done' || !reached) return null;
+        // #6643: held for an admin, with what it does that needs one.
+        if (detail.held) {
+          const hold = AppView._holdSpec(p);
+          const lead = detail.needsAnotherAdmin ? PlatformI18n.t('changes:hold.stepOther') : PlatformI18n.t('changes:hold.step');
+          return hold && hold.reasons.length ? [lead, ...hold.reasons].join(' ') : lead;
+        }
+        return PlatformI18n.t('changes:step.adminYes');
+      }
       case 'integration': return AppView._integrationLine(g, p, o.viewer);
       case 'checks': {
         const integration = gates.find((x) => x && x.key === 'integration');
@@ -24203,21 +24585,25 @@ const AppView = {
   },
 
   /**
-   * B8: "Ask for changes" on a change Homeroom bot built: the viewer's chat
-   * with it, with this change attached on the composer and the caret in the
-   * box (messages/store.ts openBot). The page names the change's project, so
-   * nothing is asked of them first; the server reads its live title.
+   * B8: "Ask for changes" on a change Homeroom bot built. 14 Nov 2026: the
+   * viewer's private thread about this change (messages/store.ts openBot,
+   * by its pull request's `number`), started or found; a change with no
+   * number yet opens a new chat set to its project, with the change
+   * attached in its box and the caret there. The page names the change's
+   * project, so nothing is asked of them first; the server reads its live
+   * title.
    */
-  askBotForChanges(sessionId, title) {
+  askBotForChanges(sessionId, title, number) {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
     const app = AppView.appData || {};
     const reference = {
       type: 'proposal', sessionId: Number(sessionId), title: title || null,
       appId: Number(app.id) > 0 ? Number(app.id) : undefined,
       appSlug: app.slug || App.currentApp || undefined,
+      number: Number(number) > 0 ? Number(number) : undefined,
     };
     if (messages && typeof messages.openBot === 'function') messages.openBot(reference);
-    else location.hash = '#messages';
+    else location.hash = '#homeroom-bot';
   },
 
   /** B8: whether Homeroom bot builds requests here, for this viewer ({ typicalMinutes }), or null. */
@@ -24428,8 +24814,7 @@ const AppView = {
    */
   _scrollToLandedCard(el) {
     if (!el) return;
-    const reduced = typeof matchMedia === 'function'
-      && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduced = AppView._reduceMotion();
     if (typeof el.scrollIntoView === 'function') {
       el.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
     }
@@ -26004,7 +26389,8 @@ const AppView = {
     // detail differs.
     const heldUntil = p.integration && p.integration.heldUntil ? Date.parse(p.integration.heldUntil) : NaN;
     const heldSoon = !Number.isFinite(heldUntil) || heldUntil <= Date.now();
-    const heldTime = heldSoon ? null : new Date(heldUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const heldZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
+    const heldTime = heldSoon ? null : new Date(heldUntil).toLocaleTimeString([], { ...(heldZone ? { timeZone: heldZone } : {}), hour: '2-digit', minute: '2-digit' });
     if (served.includes('github_busy')) {
       out.push({
         key: 'github_busy',
@@ -27412,7 +27798,7 @@ const AppView = {
         ? `<button type="button" data-shots-stop="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.stopShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.stop')}</button>`
         : '';
       const override = state === 'overridden' && shots.overriddenAt
-        ? `<div class="text-[0.68rem] text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:shots.card.overriddenAt', { when: new Date(shots.overriddenAt).toLocaleString() })}</div>`
+        ? `<div class="text-[0.68rem] text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:shots.card.overriddenAt', { when: new Date(shots.overriddenAt).toLocaleString(undefined, PlatformI18n.timeZone && PlatformI18n.timeZone() ? { timeZone: PlatformI18n.timeZone() } : {}) })}</div>`
         : '';
       return `<section data-shots="1" data-shots-state="${attr(state)}" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
         <div class="flex items-center justify-between gap-3"><strong class="text-sm">${esc(copy[0])}</strong>${badge}</div>
@@ -28513,8 +28899,12 @@ const AppView = {
     try {
       const d = new Date(ms);
       const locale = PlatformI18n.dateLocale ? PlatformI18n.dateLocale() : undefined;
-      const other = d.getFullYear() !== new Date().getFullYear();
+      // #6479: the zone picked in Settings › Language, else the device's.
+      const timeZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
+      const yearOf = (x) => (PlatformI18n.zonedDay ? PlatformI18n.zonedDay(x).year : x.getFullYear());
+      const other = yearOf(d) !== yearOf(new Date());
       return d.toLocaleDateString(locale, {
+        ...(timeZone ? { timeZone } : {}),
         month: 'short', day: 'numeric', ...(other ? { year: 'numeric' } : {}),
       });
     } catch { return ''; }
@@ -31889,6 +32279,36 @@ const AppView = {
     return { slug, current, post, platformPreview };
   },
 
+  // ── The frame door (docs/plans/browser-site-isolation.md, step 4) ────
+  //
+  // A private app on another site than this shell keeps its door open with
+  // a partitioned cookie, set from the frame's token. When a frame navigates
+  // without one (an offline app's tokenless address, a door that ran out, a
+  // reload), the app gate answers with its frame door page instead of the
+  // sign-in hop, which cannot run in a cross-site frame
+  // (src/services/edge-gate.js). That page asks here: `{ __usernode_frame_door:
+  // 'open', nonce }`. The answer is a fresh token for the app THIS frame
+  // shows, never one the message names, posted only to the origin the frame
+  // was pointed at (`_bridgeRequest`), so a frame navigated elsewhere, a
+  // page nested inside an app, or another app's frame gets nothing it did
+  // not already hold. The app frame and the staging preview only: the
+  // landing viewer is signed out. A null token tells the page to stop.
+  FRAME_DOOR_FRAMES: ['app-iframe', 'staging-iframe'],
+
+  handleFrameDoorMessage(e) {
+    const data = e && e.data;
+    if (!data || typeof data !== 'object' || data.__usernode_frame_door !== 'open') return;
+    const nonce = typeof data.nonce === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(data.nonce) ? data.nonce : '';
+    if (!nonce) return;
+    const frameId = AppView.ownedFrameFor(e.source);
+    if (!AppView.FRAME_DOOR_FRAMES.includes(frameId)) return;
+    const request = AppView._bridgeRequest(e, frameId);
+    if (!request || !request.slug) return;
+    AppView._mintToken(request.slug).then((token) => {
+      request.post({ __usernode_frame_door: 'token', nonce, token: token || null });
+    });
+  },
+
   // Last value posted per frame id, so an unchanged recompute posts
   // nothing (a rotation is one message per frame, not a stream).
   _safeAreaSent: {},
@@ -33023,6 +33443,9 @@ if (typeof window !== 'undefined') {
     try { AppView.handleBackgroundBridgeMessage(e); } catch {}
     // An app's first screen, drawn (`usernode.ready()`): lifts its cover.
     try { AppView.handleReadyBridgeMessage(e); } catch {}
+    // A private app on another site asking for its door (the app gate's
+    // frame door page).
+    try { AppView.handleFrameDoorMessage(e); } catch {}
   });
 
   // #3257: Theme.onChange fires after the new theme is on <html>, for the
@@ -33083,15 +33506,19 @@ function relStamp(iso, now) {
   // Interface language, device region (#6103), as GroupChat._stamp and
   // lib/timestamp.ts read it; the device default where the runtime predates it.
   const locale = PlatformI18n.dateLocale ? PlatformI18n.dateLocale() : undefined;
+  // The zone the account picked (#6479); the device's where none is.
+  const timeZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
+  const zone = timeZone ? { timeZone } : {};
+  const yearOf = (x) => (PlatformI18n.zonedDay ? PlatformI18n.zonedDay(x).year : x.getFullYear());
   const title = date.toLocaleString(locale, {
-    year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    ...zone, year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   });
   const elapsed = ref.getTime() - date.getTime();
   if (elapsed >= REL_FLOOR_MS) {
     return {
-      text: date.toLocaleDateString(locale, date.getFullYear() === ref.getFullYear()
-        ? { month: 'short', day: 'numeric' }
-        : { year: 'numeric', month: 'short', day: 'numeric' }),
+      text: date.toLocaleDateString(locale, yearOf(date) === yearOf(ref)
+        ? { ...zone, month: 'short', day: 'numeric' }
+        : { ...zone, year: 'numeric', month: 'short', day: 'numeric' }),
       title,
     };
   }
@@ -33141,6 +33568,9 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
 
 if (typeof window !== 'undefined') {
   window.AppView = AppView;
+  // #6512: listen from the start, so a revoke made in another tab drops this
+  // tab's cached grant set even if this tab never revokes anything itself.
+  AppView._grantsChannel();
   // #5385: the bot started or finished a piece of work for this viewer (the
   // socket's homeroom_bot_work_changed, relayed as a window event by
   // app.js): the Workshop's rows of it re-read, as the Activity drawer

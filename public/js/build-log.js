@@ -52,7 +52,9 @@ const BuildLog = {
         </p>`;
     } else {
       const when = failure.at ? new Date(failure.at) : null;
-      const whenAbs = when && !Number.isNaN(when.getTime()) ? when.toLocaleString() : null;
+      // #6479: in the zone picked in Settings › Language, else the device's.
+      const zone = typeof PlatformI18n !== 'undefined' && PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
+      const whenAbs = when && !Number.isNaN(when.getTime()) ? when.toLocaleString(undefined, zone ? { timeZone: zone } : {}) : null;
       const whenRel = whenAbs ? blRelTime(failure.at) : null;
       const metaBits = [];
       // Each line is one message: its label in <0>, its value a parameter.

@@ -178,7 +178,7 @@ test('Accessibility is a one-part page in Preferences, right after Appearance', 
   assert.equal(message('settings:nav.part.accessibility'), 'Accessibility');
   assert.match(settings, /accessibility: 'settings:nav\.keywords\.accessibility',/);
   assert.equal(message('settings:nav.keywords.accessibility'),
-    'text size font bigger larger zoom read contrast high normal accessible vision');
+    'text size font bigger larger zoom read contrast high normal accessible vision motion animation reduce');
 });
 
 // ── The catalog ──────────────────────────────────────────────────────────
@@ -199,4 +199,39 @@ test('the pane\'s catalog ids resolve', () => {
   assert.equal(message('settings:accessibility.textSize.larger'), 'Larger');
   assert.equal(message('settings:accessibility.contrast.description'),
     'Darker text and clearer lines, in light and dark.');
+});
+
+// ── What a screen reader is told (#6510) ─────────────────────────────────
+
+test('each switch is read with the sentence under it', () => {
+  const html = renderComponent(
+    'frontend/src/features/settings/sections/accessibility.tsx',
+    'AccessibilitySection',
+  );
+  const seen = new Set();
+  for (const [id, key] of [
+    ['settings-high-contrast', 'contrast'],
+    ['settings-reduce-motion', 'motion'],
+    ['settings-card-previews', 'previews'],
+  ]) {
+    const sw = html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`));
+    assert.ok(sw, `${id} renders`);
+    const noteId = (sw[0].match(/aria-describedby="([^"]+)"/) || [])[1];
+    assert.ok(noteId, `${id} names its description`);
+    assert.ok(!seen.has(noteId), 'each switch has its own');
+    seen.add(noteId);
+    const start = html.indexOf(`<p id="${noteId}"`);
+    assert.ok(start >= 0, `${id}: the description carries that id`);
+    const note = html.slice(html.indexOf('>', start) + 1, html.indexOf('</p>', start))
+      .replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+    assert.equal(note, message(`settings:accessibility.${key}.description`), `${id} is described by its own sentence`);
+  }
+});
+
+test('the project page is the main landmark, like every other screen', () => {
+  const html = renderComponent('frontend/src/features/app-frame/app-view-island.tsx', 'AppViewIsland');
+  const root = html.match(/<div id="app-view"[^>]*>/);
+  assert.ok(root, '#app-view is still a div');
+  assert.match(root[0], /role="main"/);
+  assert.equal((html.match(/role="main"|<main\b/g) || []).length, 1, 'and holds no second one');
 });

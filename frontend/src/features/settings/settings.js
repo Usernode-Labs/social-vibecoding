@@ -187,6 +187,15 @@
   const OFFLINE_LOGOUT_TIMEOUT_MS = 2000;
   const WEB_LOGOUT_TIMEOUT_MS = 15000;
 
+  // #6479: formatter options in the zone picked in Settings › Language, or
+  // unchanged (the device's zone) under Auto or where the runtime predates it.
+  // A function rather than an import: this file also runs as a classic script.
+  const inZone = (options = {}) => {
+    const timeZone = typeof window !== 'undefined' && window.PlatformI18n?.timeZone
+      ? window.PlatformI18n.timeZone() : undefined;
+    return timeZone ? { ...options, timeZone } : options;
+  };
+
   const Settings = {
     // Planted by ./mount.ts, never imported: this file is a classic IIFE that
     // tests/settings-mobile-push.test.js evaluates with vm.runInContext, where
@@ -197,7 +206,7 @@
     // use below goes through `?.` for exactly that reason.
     _store: null,
     _footerHome: null,
-    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, locale: null },
+    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, locale: null, timeZone: null },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -786,35 +795,25 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
-      // New look (an experiment) and the Look menu (the frame's nine looks,
-      // an admin's preview), both kept on the device by the head's
-      // window.Skin: the change is the save, and the look applies at once.
-      // They are exclusive (one data-skin on <html>), so each change
-      // repaints both controls. The menu's options are the frame's looks;
-      // anything else stored (New look, nothing) reads as Standard there.
-      const lookToggle = document.getElementById('new-look-enabled');
+      // The Look menu (an admin's preview of the looks), kept on the device
+      // by the head's window.Skin: the change is the save, and the look
+      // applies at once. Its options are every look there is ('brand',
+      // which keeps the standard pages, and the frame's five); nothing
+      // stored reads as Standard. New look's switch, which set 'brand' on
+      // its own, is gone: that look is the menu's first option now.
       const lookSelect = document.getElementById('settings-look');
       const paintLooks = () => {
         const skin = window.Skin?.get?.();
-        if (lookToggle) lookToggle.checked = skin === 'brand';
         if (lookSelect) {
           lookSelect.value = Array.from(lookSelect.options).some((o) => o.value === skin) ? skin : '';
         }
       };
-      if (lookToggle) {
-        lookToggle.addEventListener('change', (e) => {
-          window.Skin?.set?.(e.target.checked ? 'brand' : 'standard');
-          paintLooks();
-        });
-      }
       if (lookSelect) {
         lookSelect.addEventListener('change', (e) => {
           window.Skin?.set?.(e.target.value || 'standard');
           paintLooks();
         });
-      }
-      if (lookToggle || lookSelect) {
-        // Another tab changing it repaints the controls here too.
+        // Another tab changing it repaints the menu here too.
         window.Skin?.onChange?.(paintLooks);
       }
 
@@ -826,6 +825,12 @@
       const localeSelect = document.getElementById('settings-locale');
       if (localeSelect) {
         localeSelect.addEventListener('change', (e) => this._saveLocale(e.target.value));
+      }
+      // #6479: the time zone times are shown in, beside the language and
+      // saved the same way, on change.
+      const zoneSelect = document.getElementById('settings-timezone');
+      if (zoneSelect) {
+        zoneSelect.addEventListener('change', (e) => this._saveTimeZone(e.target.value));
       }
 
       // #138 "Dev-chat sound & alerts" toggle. Client-only preference
@@ -964,10 +969,11 @@
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
         this.state.sessionBridgeEnabled = !!j.user?.sessionBridgeEnabled;
         this.state.locale = j.user?.locale || null;
-        // Same payload the CLI-credentials gate needs, so prime its memo
-        // rather than let it issue a second /api/auth/me. (It still
-        // fetches on its own when it runs first — the two orders both
-        // resolve to the same deployment-constant answer.)
+        this.state.timeZone = j.user?.timeZone || null;
+        // Same payload the CLI-credentials gate needs, so prime its memo.
+        // When the gate runs first it takes its answer from _readMe too
+        // (_cliAuthAvailable), so neither order sends a second
+        // /api/auth/me; both resolve to the same deployment-constant answer.
         this._cliAuthPromise = Promise.resolve(j.user?.cliAuthEnabled !== false);
         this._renderIndicator();
         // `walletLinkEnabled` decides whether the Homeroom Wallet row is in
@@ -1008,9 +1014,28 @@
         // snapshot, which carries none of these fields. Read for ourselves;
         // offline the worker answers it from cache, as it always has.
       }
-      const r = await fetch(`/api/auth/me${meDemoQ}`, { credentials: 'same-origin' });
-      if (!r.ok) return null;
-      return await r.json();
+      return this._fetchMe(meDemoQ);
+    },
+
+    // The read itself, shared while it is on its way (#6591): refresh() and
+    // the CLI-credentials gate ask in the same tick when Settings opens, and
+    // each sent its own. Nothing is kept: once the answer lands the next
+    // caller asks the server again. The parsed body is shared, so read it
+    // and do not write to it.
+    _meReads: {},
+
+    _fetchMe(meDemoQ) {
+      const running = this._meReads[meDemoQ];
+      if (running) return running;
+      const read = (async () => {
+        const r = await fetch(`/api/auth/me${meDemoQ}`, { credentials: 'same-origin' });
+        if (!r.ok) return null;
+        return await r.json();
+      })();
+      this._meReads[meDemoQ] = read;
+      const done = () => { if (this._meReads[meDemoQ] === read) delete this._meReads[meDemoQ]; };
+      read.then(done, done);
+      return read;
     },
 
     _renderIndicator() {
@@ -1931,8 +1956,6 @@
       if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
       const bridgeStatus = document.getElementById('session-bridge-status');
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
-      const look = document.getElementById('new-look-enabled');
-      if (look) look.checked = window.Skin?.get?.() === 'brand';
       const lookMenu = document.getElementById('settings-look');
       if (lookMenu) {
         const stored = window.Skin?.get?.();
@@ -2070,6 +2093,67 @@
       select.value = value;
       const status = document.getElementById('settings-locale-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      this._renderTimeZoneSection();
+    },
+
+    // #6479: the Time zone list under the language. The pane renders only
+    // the Auto option; the world's zones are added here once, from the
+    // browser's own list, labelled "Region / City". A saved zone the list
+    // lacks (an older engine) is added too, so the select never reads "Auto"
+    // for a zone that is set.
+    _renderTimeZoneSection() {
+      const select = document.getElementById('settings-timezone');
+      if (!select) return;
+      const i18n = window.PlatformI18n;
+      const label = (zone) => (i18n.timeZoneLabel ? i18n.timeZoneLabel(zone) : zone);
+      this._labelTimeZoneAuto();
+      if (select.options.length <= 1) {
+        let zones = [];
+        try { zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : []; } catch { zones = []; }
+        // The browsers' list leaves UTC out (it is no region's zone), and
+        // somebody who keeps their clock in it must be able to pick it.
+        const all = [...new Set(['UTC', ...zones])].sort();
+        const frag = document.createDocumentFragment();
+        for (const zone of all) {
+          const opt = document.createElement('option');
+          opt.value = zone;
+          opt.textContent = label(zone);
+          frag.appendChild(opt);
+        }
+        select.appendChild(frag);
+      }
+      // A save in flight decides what the list shows when it lands.
+      if (this._timeZoneSaving) return;
+      const value = this.state.timeZone || '';
+      this._ensureTimeZoneOption(select, value);
+      select.value = value;
+      const status = document.getElementById('settings-timezone-status');
+      if (status) { status.classList.add('hidden'); status.textContent = ''; }
+    },
+
+    // A zone the list does not offer still shows as itself, never as a blank
+    // or as "Auto": one saved from an engine that knew it, or the server's
+    // canonical spelling of a pick (its Intl may say Europe/Kiev where this
+    // browser listed Europe/Kyiv).
+    _ensureTimeZoneOption(select, value) {
+      if (!value || [...select.options].some((o) => o.value === value)) return;
+      const i18n = window.PlatformI18n;
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = i18n.timeZoneLabel ? i18n.timeZoneLabel(value) : value;
+      select.appendChild(opt);
+    },
+
+    // The Auto option's words, with the device's zone in them. The option is
+    // the pane's own (rendered empty, so the first render is the same on every
+    // device); this writes its text, again whenever the language changes,
+    // and touches nothing else, so a status line under the list stays.
+    _labelTimeZoneAuto() {
+      const auto = document.getElementById('settings-timezone')?.options[0];
+      if (!auto) return;
+      const i18n = window.PlatformI18n;
+      const device = i18n.deviceTimeZone ? i18n.deviceTimeZone() : '';
+      auto.textContent = i18n.t('settings:timezone.auto', { zone: i18n.timeZoneLabel ? i18n.timeZoneLabel(device) : device });
     },
 
     // A language the server's translation cache offers that this build's
@@ -2118,13 +2202,18 @@
     // explicit `false` from the server suppresses the request.
     _cliAuthPromise: null,
 
+    // The answer is a field of the session user, which the shell's boot read
+    // already carries, so the gate joins that read (_readMe) and never sends
+    // its own (#6591). Opening Settings from a page load ran this before
+    // refresh() had primed the memo, and asked /api/auth/me a second time
+    // beside the boot's. No answer (signed out, or a failed read) is TRUE,
+    // as a status that was not ok always was.
     _cliAuthAvailable() {
       if (!this._cliAuthPromise) {
         this._cliAuthPromise = (async () => {
           try {
-            const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
-            if (!r.ok) return true;
-            const j = await r.json();
+            const j = await this._readMe('');
+            if (!j) return true;
             return j.user?.cliAuthEnabled !== false;
           } catch { return true; }
         })();
@@ -2229,7 +2318,7 @@
         // format it uses.
         params.product = connection.client_name || tr('settings:connectors.test.unknownProduct');
         if (connection.last_used_at) {
-          params.lastUsed = new Date(connection.last_used_at).toLocaleString();
+          params.lastUsed = new Date(connection.last_used_at).toLocaleString(undefined, inZone());
           id = 'settings:connectors.test.result.okUsed';
         } else {
           id = 'settings:connectors.test.result.ok';
@@ -2575,13 +2664,19 @@
     // known, in the date format this page uses everywhere.
     _connectorRowView(connector) {
       const stamp = (value) => (value && Number.isFinite(Date.parse(value))
-        ? new Date(value).toLocaleString() : null);
+        ? new Date(value).toLocaleString(undefined, inZone()) : null);
       const expired = !this._connectorIsLive(connector);
       const connected = stamp(connector.connected_at);
       const lastUsed = stamp(connector.last_used_at);
       const ranOut = stamp(connector.expired_at);
+      // Reconnect only where a guide step really signs in again (#6137).
+      const reconnect = expired && !!this.CONNECTOR_RECONNECT_STEP[this._connectorTool(connector.client_name)];
       let detail;
-      if (expired) {
+      if (reconnect) {
+        detail = ranOut
+          ? tr('settings:connectors.row.expiredReconnect', { when: ranOut })
+          : tr('settings:connectors.row.expiredReconnectUnknownDate');
+      } else if (expired) {
         detail = ranOut
           ? tr('settings:connectors.row.expired', { when: ranOut })
           : tr('settings:connectors.row.expiredUnknownDate');
@@ -2593,6 +2688,7 @@
         title: connector.client_name || tr('settings:connectors.row.unnamedClient'),
         detail,
         capabilities: this._connectorCapabilities(connector, expired),
+        reconnect,
       };
     },
 
@@ -2674,7 +2770,7 @@
         // Two whole sentences: how often the tip was sent, then why it is not
         // showing now. Each is one message; hint.summaryAndAdvice orders them.
         const summary = Number.isFinite(Date.parse(hint.lastShownAt))
-          ? tr('settings:connectors.hint.sent', { count: shown, days, when: new Date(hint.lastShownAt).toLocaleString() })
+          ? tr('settings:connectors.hint.sent', { count: shown, days, when: new Date(hint.lastShownAt).toLocaleString(undefined, inZone()) })
           : tr('settings:connectors.hint.sentWhenUnknown', { count: shown, days });
         let advice;
         // Three different answers to "why am I not seeing it", and they are
@@ -2697,9 +2793,13 @@
           // concludes the window has already passed. A day word settles it,
           // and anything further out gets the whole stamp.
           const end = new Date(quietUntil);
-          advice = end.toDateString() === new Date().toDateString()
-            ? tr('settings:connectors.hint.quietUntilToday', { minutes: cooldown, time: end.toLocaleTimeString() })
-            : tr('settings:connectors.hint.quietUntilDate', { minutes: cooldown, when: end.toLocaleString() });
+          const dayOf = (d) => {
+            const z = window.PlatformI18n?.zonedDay ? window.PlatformI18n.zonedDay(d) : null;
+            return z ? `${z.year}-${z.month}-${z.day}` : d.toDateString();
+          };
+          advice = dayOf(end) === dayOf(new Date())
+            ? tr('settings:connectors.hint.quietUntilToday', { minutes: cooldown, time: end.toLocaleTimeString(undefined, inZone()) })
+            : tr('settings:connectors.hint.quietUntilDate', { minutes: cooldown, when: end.toLocaleString(undefined, inZone()) });
         } else {
           advice = tr('settings:connectors.hint.openNewConversation');
         }
@@ -2839,6 +2939,37 @@
         line.hidden = done === 0;
         line.textContent = done ? tr('settings:connectors.progress.done', { done, total }) : '';
       }
+    },
+
+    // Reconnect on an expired row (#6137): the sign-in ran out, but the
+    // connector is still set up in the tool, so the first-time walkthrough's
+    // early steps are already done. This opens the tool's card and lands on
+    // the one step that signs in again: Claude's "Connect" next to the
+    // connector, and Codex's `codex mcp login`. Nothing is sent: a new consent
+    // can only start from the tool itself.
+    //
+    // ChatGPT and other agents are left out on purpose. None of ChatGPT's four
+    // steps is a sign-in (directory, create, URL, use), and the other-agent
+    // guide's OAuth step describes discovery and scopes, not how to start a
+    // sign-in again in whatever client someone configured. There is no step to
+    // land on, and re-authorisation instructions nobody has checked would be
+    // invented. Their expired rows keep the "follow the steps" line and no
+    // Reconnect.
+    CONNECTOR_RECONNECT_STEP: Object.freeze({ claude: 5, codex: 2 }),
+
+    _reconnectConnector(tool) {
+      const step = this.CONNECTOR_RECONNECT_STEP[tool];
+      if (!step) return false;
+      const card = document.querySelector(`#connector-tool-${tool} details`);
+      if (card) card.open = true;
+      const tick = document.querySelector(`[data-connector-step-tick="${tool}:${step}"]`);
+      const target = (tick && typeof tick.closest === 'function' && tick.closest('li')) || tick || card;
+      if (!target) return false;
+      if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'center' });
+      // Focus follows, so a keyboard or screen-reader user lands on the step
+      // too. The tick is the step's one control; focusing it presses nothing.
+      if (tick && typeof tick.focus === 'function') tick.focus({ preventScroll: true });
+      return true;
     },
 
     async _disconnectConnector(id, button) {
@@ -3134,7 +3265,7 @@
           : (link.linked ? { text: tr('settings:socialIdentity.badge.connected'), tone: 'emerald' } : null),
         state,
         linkedAt: link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))
-          ? tr('settings:socialIdentity.row.linkedAt', { when: new Date(link.linkedAt).toLocaleString() })
+          ? tr('settings:socialIdentity.row.linkedAt', { when: new Date(link.linkedAt).toLocaleString(undefined, inZone()) })
           : null,
         noToken: link.linked && link.access === 'identity'
           ? (provider === 'github'
@@ -3383,9 +3514,9 @@
           // One whole line per combination of what is known. `status` is the
           // server's own word for the credential's state.
           const created = Number.isFinite(Date.parse(token.created_at))
-            ? new Date(token.created_at).toLocaleString() : null;
+            ? new Date(token.created_at).toLocaleString(undefined, inZone()) : null;
           const lastUsed = token.last_used_at && Number.isFinite(Date.parse(token.last_used_at))
-            ? new Date(token.last_used_at).toLocaleString() : null;
+            ? new Date(token.last_used_at).toLocaleString(undefined, inZone()) : null;
           const state = token.status || tr('settings:cliTokens.row.statusUnknown');
           let detail;
           if (created && lastUsed) detail = tr('settings:cliTokens.row.createdUsed', { status: state, created, lastUsed });
@@ -3469,6 +3600,41 @@
         status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
         status.classList.add('text-emerald-700', 'dark:text-emerald-400');
       }
+    },
+
+    // One save at a time: the list is disabled until the server answers, so
+    // what it shows is always what was stored (a late answer to an earlier
+    // pick can no longer land after a later one).
+    async _saveTimeZone(value) {
+      const select = document.getElementById('settings-timezone');
+      const status = document.getElementById('settings-timezone-status');
+      const i18n = window.PlatformI18n;
+      const paint = (text, ok) => {
+        if (!status) return;
+        status.textContent = text;
+        status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+        status.classList.add(...(ok ? ['text-emerald-700', 'dark:text-emerald-400'] : ['text-red-700', 'dark:text-red-400']));
+      };
+      if (this._timeZoneSaving) return;
+      this._timeZoneSaving = true;
+      if (select) select.disabled = true;
+      let saved;
+      try {
+        saved = await i18n.saveAccountTimeZone(value || null);
+      } catch {
+        if (select) select.value = this.state.timeZone || '';
+        return paint(i18n.t('settings:timezone.saveFailed'), false);
+      } finally {
+        this._timeZoneSaving = false;
+        if (select) select.disabled = false;
+      }
+      this.state.timeZone = saved;
+      if (select) {
+        this._ensureTimeZoneOption(select, saved);
+        select.value = saved || '';
+      }
+      const zone = saved || (i18n.deviceTimeZone ? i18n.deviceTimeZone() : '');
+      paint(i18n.t('settings:timezone.saved', { zone: i18n.timeZoneLabel ? i18n.timeZoneLabel(zone) : zone }), true);
     },
 
     async _saveAiProgressEstimate(enabled) {
@@ -3571,8 +3737,9 @@
         ?? (typeof App !== 'undefined' && !!App.user?.isAdmin);
       // A device left in one of the menu's looks keeps the menu whoever is
       // signed in (an admin's device in other hands, an admin who lost the
-      // role): the look is stored on the device and the menu is what
-      // clears it. New look has its own switch and does not count.
+      // role, a device that had the old New look switch on, which stored
+      // 'brand'): the look is stored on the device and the menu is what
+      // clears it.
       const lookSection = document.getElementById('settings-look-section');
       if (lookSection) {
         const lookMenu = document.getElementById('settings-look');
@@ -5267,18 +5434,39 @@
 
     // Revoke one capability from one app.
     //
-    // The confirm copy says NEXT TIME IT OPENS rather than "immediately",
-    // and that difference is not hedging: a frame's Permissions Policy is
-    // computed from its `allow` attribute at navigation and cannot be
-    // narrowed afterwards, so a running app keeps what it already holds
-    // until it is reopened. The AI section can honestly promise immediate
-    // because its gate is a server-side check on every call.
-    async _onPermissionRevoke(appId, capability) {
+    // The copy says NEXT TIME IT OPENS rather than "immediately", and that
+    // difference is not hedging: a frame's Permissions Policy is computed
+    // from its `allow` attribute at navigation and cannot be narrowed
+    // afterwards, so a running app keeps what it already holds until its
+    // frame goes. The AI section can honestly promise immediate because its
+    // gate is a server-side check on every call.
+    //
+    // `target` (#6512) is `{ slug, name, permission, isOpen, close }`: the
+    // app's name and the permission's label, which the dialog's title says
+    // so the question names what is being revoked; whether the app
+    // is open in THIS tab (on screen or kept running behind it), and how to
+    // close it. The frame store is per tab, so another tab or device is out
+    // of reach here. The dialog asks with what is open when it is shown;
+    // the close is decided again once the server has taken the permission
+    // away, because the app may have been opened while the request was out
+    // (its launch could then have used the old grant set). Either way the
+    // cached grant set is dropped first (AppView.forgetToken, which tells
+    // this browser's other Homeroom tabs too), or reopening the app within
+    // a minute would hand the revoked capability back.
+    async _onPermissionRevoke(appId, capability, target) {
       const status = (t, k) => this._setAppPermissionsStatus(t, k);
+      const isOpen = () => !!(target && typeof target.isOpen === 'function' && target.isOpen());
+      const openAtAsk = isOpen();
       const ok = await ConfirmModal.show({
-        title: tr('settings:appPermissions.revoke.confirmTitle'),
-        message: tr('settings:appPermissions.revoke.confirmMessage'),
-        confirmLabel: tr('settings:appPermissions.revoke.confirmButton'),
+        title: target && target.name && target.permission
+          ? tr('settings:appPermissions.revoke.confirmTitleNamed', { permission: target.permission, app: target.name })
+          : tr('settings:appPermissions.revoke.confirmTitle'),
+        message: openAtAsk
+          ? tr('settings:appPermissions.revoke.confirmMessageOpen', { app: target.name })
+          : tr('settings:appPermissions.revoke.confirmMessage'),
+        confirmLabel: openAtAsk
+          ? tr('settings:appPermissions.revoke.confirmButtonClose')
+          : tr('settings:appPermissions.revoke.confirmButton'),
         danger: true,
       });
       if (!ok) return;
@@ -5290,11 +5478,80 @@
         );
         const j = await r.json().catch(() => ({}));
         if (!r.ok) { status(j.error || tr('settings:appPermissions.status.revokeFailed'), 'error'); return; }
-        status(tr('settings:appPermissions.status.revoked'), 'ok');
+        const appView = typeof window !== 'undefined' ? window.AppView : null;
+        if (target && target.slug && appView && typeof appView.forgetToken === 'function') {
+          appView.forgetToken(target.slug);
+        }
+        // Asked again now, not at the dialog: see the comment above.
+        const closed = isOpen() && typeof target.close === 'function';
+        if (closed) target.close();
+        status(closed
+          ? tr('settings:appPermissions.status.revokedClosed', { app: target.name })
+          : tr('settings:appPermissions.status.revoked'), 'ok');
         this._renderAppPermissions();
       } catch (err) {
         status(tr('settings:appPermissions.status.networkError', { reason: err.message }), 'error');
       }
+    },
+
+    // Revoke every active capability of one app (#6512 item 4), from the
+    // Revoke all button beside its name. There is no bulk endpoint and none
+    // is needed: each capability goes through the same DELETE a single
+    // revoke uses, one after another, and a failed one does not stop the
+    // rest, because taking back three of four is better than stopping at
+    // the first refusal. What follows a success is _onPermissionRevoke's:
+    // the cached grant set is dropped, then the app is closed if it is open
+    // in this tab NOW, since its frame holds whatever was just revoked. A
+    // partial result says so as an error, and the list is drawn again so
+    // the rows that still show Revoke are the ones still allowed.
+    async _onPermissionRevokeAll(appId, capabilities, target) {
+      const status = (t, k) => this._setAppPermissionsStatus(t, k);
+      const list = Array.isArray(capabilities) ? capabilities.filter(Boolean) : [];
+      if (!list.length) return;
+      const isOpen = () => !!(target && typeof target.isOpen === 'function' && target.isOpen());
+      const name = (target && target.name) || '';
+      const openAtAsk = isOpen();
+      const ok = await ConfirmModal.show({
+        title: tr('settings:appPermissions.revokeAll.confirmTitle', { app: name }),
+        message: openAtAsk
+          ? tr('settings:appPermissions.revokeAll.confirmMessageOpen', { app: name })
+          : tr('settings:appPermissions.revokeAll.confirmMessage'),
+        confirmLabel: openAtAsk
+          ? tr('settings:appPermissions.revokeAll.confirmButtonClose')
+          : tr('settings:appPermissions.revokeAll.confirmButton'),
+        danger: true,
+      });
+      if (!ok) return;
+      if (this._isDemoGrant(appId)) { status(tr('settings:appPermissions.status.demoData'), 'info'); return; }
+      let revoked = 0;
+      let failure = '';
+      for (const capability of list) {
+        try {
+          const r = await fetch(
+            `/api/me/permission-grants/${appId}/${encodeURIComponent(capability)}`,
+            { method: 'DELETE', credentials: 'same-origin' }
+          );
+          if (r.ok) { revoked += 1; continue; }
+          const j = await r.json().catch(() => ({}));
+          failure = j.error || tr('settings:appPermissions.status.revokeFailed');
+        } catch (err) {
+          failure = tr('settings:appPermissions.status.networkError', { reason: err.message });
+        }
+      }
+      if (!revoked) { status(failure, 'error'); return; }
+      const appView = typeof window !== 'undefined' ? window.AppView : null;
+      if (target && target.slug && appView && typeof appView.forgetToken === 'function') {
+        appView.forgetToken(target.slug);
+      }
+      const closed = isOpen() && typeof target.close === 'function';
+      if (closed) target.close();
+      if (revoked < list.length) status(tr('settings:appPermissions.status.revokedSome'), 'error');
+      else {
+        status(closed
+          ? tr('settings:appPermissions.status.revokedAllClosed', { app: name })
+          : tr('settings:appPermissions.status.revokedAll'), 'ok');
+      }
+      this._renderAppPermissions();
     },
 
     // The way back from Revoke, for the same reason the AI rows grew one
@@ -6009,7 +6266,7 @@
     // than the shared helper because a diagnostics line elides nothing and
     // this module cannot import (see _localAgentView).
     _widgetIconTime(ms) {
-      try { return new Date(ms).toLocaleString(); } catch (_) { return String(ms); }
+      try { return new Date(ms).toLocaleString(undefined, inZone()); } catch (_) { return String(ms); }
     },
 
     // One line per pinned entry: what the widget says it holds, and
@@ -6659,7 +6916,7 @@
       if (payload.published_at) {
         try {
           meta.push(tr('settings:terms.published', {
-            date: new Date(payload.published_at).toLocaleDateString(),
+            date: new Date(payload.published_at).toLocaleDateString(undefined, inZone()),
           }));
         } catch (_) {}
       }
@@ -6686,7 +6943,7 @@
         : 'text-zinc-600 dark:text-zinc-400'),
       accepted
         ? (payload.consent.responded_at
-          ? tr('settings:terms.acceptedOn', { date: new Date(payload.consent.responded_at).toLocaleDateString() })
+          ? tr('settings:terms.acceptedOn', { date: new Date(payload.consent.responded_at).toLocaleDateString(undefined, inZone()) })
           : tr('settings:terms.accepted'))
         : tr('settings:terms.notAccepted'));
       panel.appendChild(statusEl);
@@ -7434,6 +7691,8 @@
       repaint(() => Settings._syncChrome());
       repaint(() => Settings._normalizeOpenRouterCopy());
       repaint(() => Settings._renderBody());
+      // #6479: the Time zone list's Auto option is written here, not by React.
+      repaint(() => Settings._labelTimeZoneAuto());
       repaint(() => { if (Settings._connectors.length) Settings._renderConnectors(); });
       repaint(() => Settings._renderConnectorProgress());
       repaint(() => { if (Settings._githubLink) Settings._renderGithubLink(); });

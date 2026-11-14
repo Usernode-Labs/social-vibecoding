@@ -469,6 +469,8 @@ const BOT_DM_OFFER_KEY = 'staging-hrbot-offer';
 // row stands behind it: the action endpoint answers the demo without one.
 const BOT_DM_DEMO_ACTION_ID = 990001;
 const BOT_DM_ASK_KEY = 'staging-hrbot-ask';
+// The demo chat's one saved draft (conversation_drafts): a fixed id, so it is written once.
+const BOT_DM_DRAFT_ID = 'dstagingdemo1';
 // #6305: one request offered on several projects, from one card.
 const BOT_DM_FILE_MANY_KEY = 'staging-hrbot-file-many';
 const BOT_DM_FILE_MANY_FILED_KEY = 'staging-hrbot-file-many-filed';
@@ -501,6 +503,23 @@ const BOT_DM_READY_SESSION_ID = 990901;
 // community find nothing, and the invite sheet opens but makes no link.
 const BOT_DM_FIRST_LIVE_KEY = 'staging-hrbot-first-live';
 const BOT_DM_FIRST_LIVE_SLUG = 'staging-demo-plants';
+// 14 Nov 2026: Main Chat is gone, and every conversation with Homeroom bot
+// is a thread. The demo's chat shows each kind there is:
+//   - a few private threads from the "+" (PARITY_THREADS, below);
+//   - one hello thread: the bot's hello, its prompts under it, unread;
+//   - one first-version thread, "Staging demo plants, first version": the
+//     line that opens it, the project's card, its plan waiting for Build it
+//     and its "live", the newest, unread;
+//   - "Earlier chat": what the fixture used to say in Main (the viewer's ask
+//     for a dark mode, the bot's draft, the two cards for one request on
+//     several projects, the run club's built plan and its card), moved under
+//     one thread exactly as a real person's Main Chat is (earlier-chat.js).
+// A request's news (its question, plan, cards) stays where it was: it was
+// never Main's to draw (conversations.js REQUEST_NEWS), and it is not a
+// thread's either. Every message keeps its idempotency key.
+const BOT_DM_HELLO_KEY = 'staging-hrbot-hello';
+const BOT_DM_FIRST_VERSION_KEY = 'staging-hrbot-first-version';
+const BOT_DM_FIRST_VERSION_NAME = 'Staging demo plants';
 
 async function ensureBotDmFixture(pool, user) {
   if (process.env.USERNODE_ENV !== 'staging' || !user?.id) return null;
@@ -515,6 +534,9 @@ async function ensureBotDmFixture(pool, user) {
   if (!bot || bot.id === user.id) return null;
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, user.id);
   if (!opened) return null;
+  // The bot's hello, first, as a person's chat with it starts: the first
+  // message of a thread of its own (threadBotDmFixture writes its row).
+  await helloRoot(pool, { botId: bot.id, conversationId: opened.conversationId });
   await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
     content: '**Staging demo app** · request #12: Staging demo, sort the list by date\n\n'
       + 'I have a question before I build this:\n\nShould the newest items show first, or the oldest?',
@@ -700,10 +722,14 @@ async function ensureBotDmFixture(pool, user) {
       idempotency_key: activity.DEMO_CARD_KEYS.building,
       // #4392: drawn as the bot's thanks for answering, as cardUnderPlan sends it.
     }, { metadata: { homeroomBot: { kind: 'activity', ...runClub, thanks: true, appEmoji: '🏃' } } });
-    const plants = { appName: 'Staging demo plants', issueNumber: 1, firstVersion: true };
+    const plants = { appName: BOT_DM_FIRST_VERSION_NAME, issueNumber: 1, firstVersion: true };
+    // The first version's thread, opened by the line that says its project
+    // is being set up; its card and its plan are replies in it.
+    const firstRoot = await firstVersionRoot(pool, { botId: bot.id, conversationId: opened.conversationId });
+    const inFirst = firstRoot ? { thread_root_id: firstRoot } : {};
     await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
       content: activity.cardText(plants, dm, { queued: true }),
-      idempotency_key: activity.DEMO_CARD_KEYS.plan,
+      idempotency_key: activity.DEMO_CARD_KEYS.plan, ...inFirst,
     }, { metadata: { homeroomBot: { kind: 'activity', ...plants } } });
     const plan = {
       bullets: [
@@ -715,7 +741,7 @@ async function ensureBotDmFixture(pool, user) {
     };
     await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
       content: require('./homeroom-bot-dm').planCardText({ appName: 'Staging demo plants', plan }),
-      idempotency_key: BOT_DM_PLAN_KEY,
+      idempotency_key: BOT_DM_PLAN_KEY, ...inFirst,
     }, {
       metadata: {
         homeroomBot: {
@@ -804,10 +830,11 @@ async function ensureBotDmFixture(pool, user) {
         homeroomBot: { kind: 'build_failed', ...stuck, actions: dm.STUCK_ACTIONS.build_failed, status: 'open' },
       },
     });
-    const firstLive = { appName: 'Staging demo plants', issueNumber: 1, firstVersion: true };
+    const firstLive = { appName: BOT_DM_FIRST_VERSION_NAME, issueNumber: 1, firstVersion: true };
+    const liveRoot = await firstVersionRoot(pool, { botId: bot.id, conversationId: opened.conversationId });
     await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
       content: dm.mergedText({ line: dm.requestLine(firstLive), appName: firstLive.appName, live: true }),
-      idempotency_key: BOT_DM_FIRST_LIVE_KEY,
+      idempotency_key: BOT_DM_FIRST_LIVE_KEY, ...(liveRoot ? { thread_root_id: liveRoot } : {}),
     }, {
       metadata: {
         homeroomBot: {
@@ -856,13 +883,122 @@ async function ensureBotDmFixture(pool, user) {
     });
   }
   await ensureBotDmStory(pool, { botId: bot.id, conversationId: opened.conversationId, cardKey: cardKeys.thread });
+  // 14 Nov 2026: and everything it says is in a thread the page lists.
+  await threadBotDmFixture(pool, { user, botId: bot.id, conversationId: opened.conversationId });
   await pool.query(
     `INSERT INTO staging_conversation_fixtures (user_id, legacy_id, conversation_id)
      VALUES ($1, $2, $3)
      ON CONFLICT (user_id, legacy_id) DO UPDATE SET conversation_id = EXCLUDED.conversation_id`,
     [user.id, BOT_DM_LEGACY_ID, opened.conversationId]
   );
+  // 14 Nov 2026: one saved draft in the demo's chat (conversation_drafts,
+  // routes/conversations.js bot-drafts), so the list above the box has a row
+  // to show without the bot being mid-answer, which a staging copy cannot
+  // reach. Obviously fake, the viewer's own, written once. It sits in
+  // Earlier chat, the thread threadBotDmFixture just made of what the demo
+  // said in Main: a copy seeded before threads holds it at place 0, which no
+  // screen draws any more, so it is moved rather than written twice. A read
+  // that fails (a copy without the table yet) leaves the fixture as it was.
+  const draftRoot = await require('./private-threads').earlierRootFor(pool, user.id).catch(() => null);
+  if (draftRoot) {
+    await pool.query(
+      `UPDATE conversation_drafts SET thread_root_id = $3
+        WHERE user_id = $1 AND conversation_id = $2 AND thread_root_id = 0 AND draft_id = $4`,
+      [user.id, opened.conversationId, draftRoot, BOT_DM_DRAFT_ID],
+    ).catch(() => {});
+    await pool.query(
+      `INSERT INTO conversation_drafts (user_id, conversation_id, thread_root_id, draft_id, content)
+       SELECT $1, $2, $3, $4::varchar, $5
+        WHERE NOT EXISTS (SELECT 1 FROM conversation_drafts
+                           WHERE user_id = $1 AND conversation_id = $2 AND draft_id = $4::varchar)`,
+      [user.id, opened.conversationId, draftRoot, BOT_DM_DRAFT_ID, 'Staging demo: and could it remember my choice next time?'],
+    ).catch(() => {});
+  }
   return opened.conversationId;
+}
+
+/**
+ * The first message of the demo's first-version thread ("I'm setting up
+ * Staging demo plants now"), sent once: its id, or null.
+ */
+async function firstVersionRoot(pool, { botId, conversationId }) {
+  const dm = require('./homeroom-bot-dm');
+  const sent = await conversations.sendMessage(pool, { id: botId }, conversationId, {
+    content: dm.firstVersionStartedText({ name: BOT_DM_FIRST_VERSION_NAME }),
+    idempotency_key: BOT_DM_FIRST_VERSION_KEY,
+  }, {
+    notify: false,
+    metadata: {
+      homeroomBot: { kind: 'first_version_started', appSlug: BOT_DM_FIRST_LIVE_SLUG, appName: BOT_DM_FIRST_VERSION_NAME },
+    },
+  });
+  return sent?.messageId ?? sent?.message?.id ?? null;
+}
+
+/** The demo's hello from the bot, sent once: its id, or null. */
+async function helloRoot(pool, { botId, conversationId }) {
+  const dm = require('./homeroom-bot-dm');
+  const hello = await conversations.sendMessage(pool, { id: botId }, conversationId, {
+    content: dm.TOUR_HELLO, idempotency_key: BOT_DM_HELLO_KEY,
+  }, {
+    notify: false,
+    metadata: {
+      homeroomBot: { kind: 'hello_tour', hello: dm.TOUR_HELLO, actions: dm.promptActions(dm.TOUR_PROMPTS), status: 'open' },
+    },
+  });
+  return hello?.messageId ?? hello?.message?.id ?? null;
+}
+
+/**
+ * 14 Nov 2026: the demo's chat as threads (the list above BOT_DM_HELLO_KEY).
+ * Run at the end of ensureBotDmFixture, every time, and a no-op once done:
+ * a fixture made before threads is brought to the same shape, its messages'
+ * ids and keys untouched.
+ */
+async function threadBotDmFixture(pool, { user, botId, conversationId }) {
+  const threads = require('./private-threads');
+  // The hello: the first message of a thread of its own, unread.
+  const helloId = await helloRoot(pool, { botId, conversationId });
+  if (helloId) {
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, kind, state)
+       VALUES ($1, $2, $3, 'hello', 'open') ON CONFLICT (root_message_id) DO NOTHING`,
+      [user.id, conversationId, helloId]
+    );
+  }
+  // The first version: its messages under the line that opens it (a fixture
+  // made before threads has them outside one), and its row. Its "live", the
+  // newest, is the one message of it still unread.
+  const firstRoot = await firstVersionRoot(pool, { botId, conversationId });
+  if (firstRoot) {
+    const cardKeys = require('./homeroom-bot-activity').DEMO_CARD_KEYS;
+    await pool.query(
+      `UPDATE conversation_messages SET thread_root_id = $3
+        WHERE conversation_id = $1 AND sender_id = $2 AND thread_root_id IS NULL AND id <> $3
+          AND idempotency_key = ANY($4::text[])`,
+      [conversationId, botId, firstRoot, [cardKeys.plan, BOT_DM_PLAN_KEY, BOT_DM_FIRST_LIVE_KEY]]
+    );
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, kind, state, last_read_message_id)
+       SELECT $1, $2, $3, 'first_version', 'open',
+              COALESCE((SELECT MAX(m.id) - 1 FROM conversation_messages m WHERE m.thread_root_id = $3), $3)
+       ON CONFLICT (root_message_id) DO NOTHING`,
+      [user.id, conversationId, firstRoot]
+    );
+  }
+  // Earlier chat: what is left outside a thread and that Main drew, moved as
+  // a real person's is. Read, the first time: the demo opens calm.
+  const had = await threads.earlierRootFor(pool, user.id);
+  const moved = await require('./earlier-chat').moveFor(pool, { conversationId, userId: user.id, botId });
+  if (!had && moved.rootId) {
+    await pool.query(
+      `UPDATE private_threads p
+          SET last_read_message_id = (SELECT MAX(m.id) FROM conversation_messages m
+                                       WHERE m.thread_root_id = p.root_message_id OR m.id = p.root_message_id)
+        WHERE p.root_message_id = $1 AND p.user_id = $2`,
+      [moved.rootId, user.id]
+    );
+  }
 }
 
 // One request, one story: a demo request whose card is the root of its
@@ -987,7 +1123,7 @@ async function ensureBotDmStory(pool, { botId, conversationId, cardKey }) {
 // Homeroom bot parity (P1-P9): three private threads with Homeroom bot, as a
 // conversation there looks once it has its new cards, which a staging copy
 // cannot reach any other way (the bot's model never runs there). Each is a
-// thread from the bot's "+" (its line in Main, kind 'opened_thread', and its
+// thread from the bot's "+" (its opening line, kind 'opened_thread', and its
 // private_threads row), named by the viewer's first words in it, with the
 // bot's replies carrying the cards as stored messages:
 //   1. talking it through: the "Looked at" line and options to pick from,
@@ -996,7 +1132,7 @@ async function ensureBotDmStory(pool, { botId, conversationId, cardKey }) {
 //      note added to a build that is running (batch.tsx, build-note.tsx);
 //   3. an investigation that checks in for days (investigation.tsx).
 //   4. #6250: a thread filed as a request, which stays in the list with where
-//      it went ("Filed as #404"), and whose opener line Main Chat leaves out.
+//      it went ("Filed as #404").
 // Obviously fake ("Staging demo"), with no project, batch, note or
 // investigation behind the cards: a tap on one decides nothing (the demo's
 // card route answers { demo }), and nothing rings (notify: false). Each
@@ -1147,6 +1283,25 @@ function parityCardAt(card, now = Date.now()) {
 
 async function ensureBotParityThreads(pool, { user, botId, conversationId }) {
   const now = Date.now();
+  // The threads made by this call: read up to their newest message once
+  // their lines are in (a thread carries its own unread, 14 Nov 2026).
+  const madeNow = [];
+  try {
+    await sendParityThreads(pool, { user, botId, conversationId, now, madeNow });
+  } finally {
+    if (madeNow.length) {
+      await pool.query(
+        `UPDATE private_threads p
+            SET last_read_message_id = (SELECT MAX(m.id) FROM conversation_messages m
+                                         WHERE m.thread_root_id = p.root_message_id OR m.id = p.root_message_id)
+          WHERE p.root_message_id = ANY($1::int[]) AND p.user_id = $2`,
+        [madeNow, user.id]
+      );
+    }
+  }
+}
+
+async function sendParityThreads(pool, { user, botId, conversationId, now, madeNow }) {
   for (const thread of PARITY_THREADS) {
     const sent = await pool.query(
       `SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3`,
@@ -1168,6 +1323,7 @@ async function ensureBotParityThreads(pool, { user, botId, conversationId }) {
        VALUES ($1, $2, $3, $4, 'ask', $5, $6) ON CONFLICT (root_message_id) DO NOTHING`,
       [user.id, conversationId, rootId, app ? app.id : null, thread.state || 'open', thread.resultRef || null]
     );
+    madeNow.push(rootId);
     let index = 0;
     for (const line of thread.lines) {
       index += 1;

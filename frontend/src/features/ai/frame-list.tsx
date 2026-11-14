@@ -1,269 +1,506 @@
 /**
- * Homeroom bot's list in the one frame, as the 2026-11-06 screen tour draws
- * it (its steps s08, s09 and s14): the page's head (title, one sentence
- * with the counts, New thread), its tabs (All, then your busiest
- * projects), a search, then Main Chat's row and one group per project of
- * the threads that need you, each row ending in the one blue word that says
- * what to do. With a project picked, its work in progress follows, each
- * row with the small five-stop line.
+ * Homeroom bot's lists under a look (version 2, 11 Nov 2026): the content
+ * of the standard page (./lists.tsx AiLists) in the first tour's layout.
  *
- * It is the same list as ./lists.tsx with another face: the page
- * (./index.tsx) hands it the rows, words and presses it hands that one,
- * built by ./model.ts, and draws this in its place while the device's look
- * is one of the frame's. Nothing is read or decided here.
+ *   [tile] Homeroom bot                  (search) ( + New chat )
+ *          Needs you: 18 · In progress: 12
+ *   ( All ) ( Homeroom ) ( Game Corner ) ( 15 more ⌄ )     ← tabs, a toggle each
+ *   NEEDS YOU · 18                   ← a labelled group, one card
+ *     [tile] Homeroom
+ *      ☑ #6370  Email templates: keep…            (Vote)
+ *      🔒 PR 6198  Keep a vote that decides…   Only you  ⋯
+ *         Show 8 more ⌄
+ *   WAITING & IN PROGRESS · 40       … with "Not moving · 24" as its last row
+ *   LIVE THIS WEEK · 81
+ *   HISTORY                          its kinds, then months, then Earlier months
+ *
+ * Every row, count, chip and note is the one ./lines.ts builds for both
+ * faces; folding is ./model.ts groupRows, as the standard list folds. This
+ * file only maps them to kit rows. Nothing is read or decided here.
  */
-import { useState, type RefObject } from 'react';
+import { Fragment, useRef, useState, type FocusEvent, type ReactNode, type Ref } from 'react';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { getDateLocale } from '../../lib/i18n/runtime';
-import { Btn, Card, Frame, GroupLink, Head, Lead, Meta, Pill, Row, Search, Sec, Tabs, Tile, Track, k } from '@/components/ui/kit';
-import { HISTORY_KINDS, type HistoryKind } from './filter-address';
-import { byMonth, historyGlyph, historyTooltip, historyWords, monthName, type HistoryRow, type HistoryState } from './history';
+import { reload as reloadTab } from '../../lib/tab-build';
+import { Btn, Card, Count, Frame, Icon, Pill, Sec, Tile, k } from '@/components/ui/kit';
 import { BOT_AVATAR } from '../messages/format';
-import { rowKey } from './column';
-import {
-  GROUP_FIRST, byProject, notMoving, rankProjects, railProjects, shortWords,
-  type AiApp, type AiThread, type Phrase, type WorkRow,
-} from './model';
-import type { Stage } from '../../lib/work-state';
+import { ThreadDoneMenu } from '../messages/private-thread-done';
+import { HISTORY_KINDS, type HistoryKind } from './filter-address';
+import { monthName, type HistoryRow, type HistoryState } from './history';
+import { Marked, followFound } from './found';
+import { dayHeading, useAiLines, type FoundLine, type Glyph, type Line } from './lines';
+import { GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, recentGroupsFirst, type AiApp, type AiThread, type Phrase, type WorkRow } from './model';
+import { usePhone } from './phone-drawer';
+import { ProjectPicker } from './project-picker';
+import type { Found } from './search';
 
-/** Where a stage sits on the five-stop line, and whether it waits on someone. */
-const STOP: Record<Stage, [number, 'now' | 'wait']> = {
-  reading: [0, 'now'], planning: [0, 'now'], waiting_for_you: [0, 'wait'], building: [1, 'now'], checking: [2, 'now'],
-  up_for_vote: [3, 'wait'], going_live: [4, 'now'], live: [5, 'now'], stopped: [1, 'wait'], closed: [5, 'now'],
+/** Each glyph's icon in the kit's set (./lines.ts names them). */
+const ICON: Record<Glyph, string> = {
+  chat: 'chat', play: 'play', hand: 'hand', check: 'check', again: 'refresh', warning: 'alert', lock: 'lock', ballot: 'vote',
+  upload: 'up', eye: 'eye', cog: 'tool', reply: 'reply', code: 'code', clock: 'clock', x: 'x', bubble: 'chat',
 };
 
-/** The glyph a Needs you row leads with, by what it asks (./lists.tsx needGlyph's kinds). */
-function needIcon(row: WorkRow): string {
-  const kind = row.key.startsWith('need:') ? row.key.split(':')[1] : row.key.split(':')[0];
-  if (kind === 'question' || kind === 'bot_question') return 'reply';
-  if (kind === 'decide' || kind === 'plan') return 'hand';
-  if (kind === 'private') return 'lock';
-  return 'vote';
+/**
+ * One line of the lists: its glyph, its number, its title, the one word on its right.
+ * `where`: on a phone, where the number has no room and nothing hovers, the
+ * row's own line (its project and number, the tooltip's words) is its second line.
+ */
+function LineRow({ line, plain = false, where = false }: { line: Line; plain?: boolean; where?: boolean }): ReactNode {
+  const t = useMessages('messages');
+  // #6421: a thread that holds several requests says how many after its title.
+  const many = Number(line.requests) > 1;
+  const requestsWord = many ? t('messages:ai.row.requests', { count: line.requests }) : '';
+  const tooltip = many ? `${line.tooltip} · ${requestsWord}` : line.tooltip;
+  const row = (
+    <button
+      type="button"
+      className={k('row sm item', line.lit && 'on', line.fresh && 'fresh', plain && 'plain')}
+      onClick={line.open}
+      title={tooltip}
+      data-ai-line={line.kind}
+      data-ai-lit={line.lit ? '' : undefined}
+      data-ai-fresh={line.fresh ? '' : undefined}
+      aria-current={line.lit ? 'true' : undefined}
+    >
+      {line.fresh ? <span className={k('new')} aria-hidden="true" data-ai-dot="" /> : null}
+      <span className={k('ei', line.owe && 'acc')} aria-hidden="true"><Icon name={ICON[line.glyph]} size={18} /></span>
+      {/* From 768px only: a phone's title needs the room, and the tooltip still says the number. */}
+      <span className={k('num mono d')}>
+        {line.number ? t(line.pr ? 'messages:ai.live.numberPr' : 'messages:ai.live.number', { number: line.number }) : ''}
+      </span>
+      <span className={k('tx')}>
+        <span className={k('t')}>
+          {line.title}
+          {many ? <span className={k('mut')} data-ai-line-requests={line.requests}> {requestsWord}</span> : null}
+        </span>
+        {line.why ? <span className={k('s p')} aria-hidden="true" data-ai-line-why="">{line.why}</span>
+          : where && line.tooltip ? <span className={k('s p')} aria-hidden="true" data-ai-line-where="">{line.tooltip}</span> : null}
+      </span>
+      {line.owe ? <Pill kind="act">{line.right}</Pill> : line.right ? <span className={k('meta')}>{line.right}</span> : null}
+      <span className="sr-only">{tooltip}</span>
+    </button>
+  );
+  // #6159: a private thread's row has its ⋯ beside it, with Mark done.
+  if (!line.done) return row;
+  const { rootId, mark } = line.done;
+  return (
+    <div className={k('rowx')} data-ai-line-done="">
+      {row}
+      <ThreadDoneMenu rootId={rootId} done={false} onChanged={(state) => { if (state === 'done') mark(); }} />
+    </div>
+  );
 }
 
-/** The glyph of a finished item: what became of it. */
-const HISTORY_ICON: Record<ReturnType<typeof historyGlyph>, string> = { live: 'check', closed: 'x', request: 'chat', vote: 'vote', private: 'lock' };
+/** The words the search found, in a snippet: the look's accent tint behind its own ink (kit tokens). */
+const FOUND_MARK = 'rounded-[3px] bg-[color:var(--fr-acc-t)] font-semibold text-[color:var(--fr-ink)]';
+
+/**
+ * 13 Nov 2026 (./search.ts): a message the search found, as a kit row that
+ * is a link to it: its snippet with the found words marked, where it is on
+ * the row's own line under it, and its day. The link's name says all of
+ * it, and who wrote it.
+ */
+function FoundRow({ line }: { line: FoundLine }): ReactNode {
+  return (
+    <a
+      className={k('row sm item')}
+      href={line.href}
+      title={line.name}
+      aria-label={line.name}
+      onClick={(e) => followFound(e, line.href)}
+      data-ai-found={line.thread ? 'thread' : 'chat'}
+    >
+      <span className={k('ei')} aria-hidden="true"><Icon name="chat" size={18} /></span>
+      <span className={k('tx')}>
+        <span className={k('t')} data-ai-found-words=""><Marked parts={line.parts} className={FOUND_MARK} /></span>
+        <span className={k('s')} data-ai-found-place="">{line.place}</span>
+      </span>
+      <span className={k('meta')}>{line.date}</span>
+    </a>
+  );
+}
+
+/** A small caps line with a rule after it: a day inside a project's rows, or "Earlier". */
+function Rule({ children, day }: { children: ReactNode; day?: string }): ReactNode {
+  return <div className={k('rule')} data-ai-day={day} data-ai-earlier={day === undefined ? '' : undefined}>{children}</div>;
+}
+
+/** A compact list's last row of a part: "Show 8 more ⌄", "Not moving · 24 ⌄", "Earlier months ⌄". */
+function MoreRow({ open, onClick, disabled, children, ...data }: {
+  open?: boolean; onClick: () => void; disabled?: boolean; children: ReactNode;
+} & Record<`data-${string}`, string | undefined>): ReactNode {
+  return (
+    <button type="button" className={k('row sm more')} onClick={onClick} aria-expanded={open} disabled={disabled || undefined} {...data}>
+      <span className={k('tx')}><span className={k('t')}>{children}</span></span>
+      <Icon name={open ? 'cu' : 'cd'} size={18} />
+    </button>
+  );
+}
+
+/**
+ * One list's rows under their project's name, each project's first few
+ * before its own Show more: the standard list's GroupList, in kit rows.
+ * You's Changes, Requests and Votes draw History with it too
+ * (../profile/frame/you-history.tsx).
+ */
+export function Groups({ lines, heads, first, freshStyle = false, freshProjects, dayHeads = false, foldFresh = false, where = false }: {
+  lines: Line[];
+  heads: boolean;
+  first: number;
+  freshStyle?: boolean;
+  freshProjects?: Record<string, number>;
+  dayHeads?: boolean;
+  foldFresh?: boolean;
+  /** Each row says its project and number on a phone's second line (<LineRow where/>). */
+  where?: boolean;
+}): ReactNode {
+  const t = useMessages('messages');
+  const [opened, setOpened] = useState<Record<string, boolean>>({});
+  const locale = getDateLocale();
+  return (
+    <>
+      {byProject(lines).map((g) => {
+        const key = g.app?.slug || 'none';
+        const open = !!opened[key];
+        // The row you are on and a row with something new are never folded away (./model.ts groupRows).
+        const { items, shown, hidden } = groupRows(dayHeads ? byDay(g.items) : g.items, first, open, !foldFresh);
+        const freshHidden = foldFresh ? items.slice(shown).filter((line) => line.fresh).length : 0;
+        const anyFresh = freshStyle && g.items.some((line) => line.fresh);
+        const firstOld = anyFresh ? items.findIndex((line) => !line.fresh) : -1;
+        const earlierAt = firstOld >= 0 && firstOld < shown ? firstOld : -1;
+        const freshHere = freshStyle && g.app ? freshProjects?.[g.app.slug] || 0 : 0;
+        let lastDay = '';
+        const drawn = (open ? items : items.slice(0, shown)).map((line) => {
+          const day = dayHeads ? dayKey(line.at) : '';
+          const divider = !!day && day !== lastDay;
+          if (day) lastDay = day;
+          return { line, divider };
+        });
+        return (
+          <div key={key} data-ai-group={key}>
+            {heads ? (
+              <div className={k('row sm proj')} data-ai-project-head="">
+                {/* A private idea in no project yet goes under Only you, with a lock. */}
+                {g.app
+                  ? <Tile size={22} name={g.app.name || g.app.slug} src={g.app.icon_url} emoji={g.app.icon_emoji} />
+                  : <span className={k('ei')} aria-hidden="true"><Icon name="lock" size={16} /></span>}
+                <span className={k('tx')}>
+                  <span className={k('t')}>
+                    {g.app ? g.app.name || g.app.slug : t('messages:ai.short.private')}
+                    {g.items.some((line) => line.left) ? <span className={k('mut')} data-ai-left=""> · {t('messages:ai.history.left')}</span> : null}
+                  </span>
+                </span>
+                {freshHere > 0 ? <Pill kind="act">{t('messages:ai.work.fresh', { count: freshHere })}</Pill> : null}
+              </div>
+            ) : null}
+            {drawn.map(({ line, divider }, i) => (
+              <Fragment key={line.key}>
+                {i === earlierAt ? <Rule>{t('messages:ai.work.earlier')}</Rule> : null}
+                {divider ? <Rule day={dayKey(line.at)}>{dayHeading(line.at, t, locale)}</Rule> : null}
+                <LineRow line={line} plain={anyFresh && !line.fresh} where={where} />
+              </Fragment>
+            ))}
+            {hidden ? (
+              <MoreRow open={open} onClick={() => setOpened((o) => ({ ...o, [key]: !open }))} data-ai-group-more="">
+                {open
+                  ? t('messages:ai.work.showLess')
+                  : freshHidden > 0
+                    ? t('messages:ai.work.showMoreFresh', { count: hidden, fresh: freshHidden })
+                    : t('messages:ai.work.showMore', { count: hidden })}
+              </MoreRow>
+            ) : null}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/**
+ * #6245: while the pointer is over Needs you, or a row in it has the
+ * keyboard's focus, the rows keep the order they were drawn in, so a live
+ * refresh cannot slide one out from under a press (./lists.tsx Section).
+ */
+function useHeld(lines: Line[]) {
+  const ref = useRef<HTMLElement | null>(null);
+  const drawn = useRef<string[] | null>(null);
+  const [holding, setHolding] = useState(false);
+  const held = holding && drawn.current ? holdOrder(lines, drawn.current) : lines;
+  const start = () => { if (!drawn.current) drawn.current = lines.map((line) => line.key); setHolding(true); };
+  const end = () => { drawn.current = null; setHolding(false); };
+  const within = (node: EventTarget | null) => !!ref.current && node instanceof Node && ref.current.contains(node);
+  return {
+    held,
+    props: {
+      ref,
+      onPointerEnter: start,
+      onPointerLeave: end,
+      onFocus: (e: FocusEvent) => { if (!within(e.relatedTarget)) start(); },
+      onBlur: (e: FocusEvent) => { if (!within(e.relatedTarget)) end(); },
+    },
+  };
+}
 
 export function AiFrameList({
-  heroLine, main, lit = null, ready, rows, progress, waiting, live, openRow, openThread, picked = [], onPick, appFor, onNew, query, onQuery,
+  heroLine, query = '', found, onFoundRetry, onQuery, searchOpen, onSearch, searchRef, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live,
+  openRow, openThread, onDone, picked: pickedIn = [], onPick, appFor, onNew,
   history = null, historyKind = null, onHistoryKind, openHistory, historyRef,
 }: {
   /** The one sentence under the title: the counts, as the page's own heading says them (./model.ts heroWords). */
   heroLine: Phrase | null;
-  main: { lit: boolean; unread: number; open: () => void };
+  /** What the search box says, '' while it is closed (#6398). */
+  query?: string;
+  /** 13 Nov 2026: the messages that match it (./search.ts useBotSearch); null while the first answer is on its way. */
+  found?: Found | null;
+  /** Search the messages again, after a read that failed. */
+  onFoundRetry?: () => void;
+  onQuery: (next: string) => void;
+  /** The search box is open under the head; its round button opens and closes it. */
+  searchOpen: boolean;
+  onSearch: (open: boolean) => void;
+  searchRef?: Ref<HTMLInputElement>;
   lit?: string | null;
   ready: boolean;
+  failed?: 'unreachable' | 'failed' | null;
+  onRetry?: () => void;
   rows: WorkRow[];
+  owed: number;
   progress: AiThread[];
   waiting: AiThread[];
   live: AiThread[];
   openRow: (row: WorkRow) => void;
   openThread: (t: AiThread) => void;
+  onDone?: (rootId: number) => void;
   picked?: readonly string[];
   onPick?: (slugs: string[]) => void;
   appFor?: (slug: string) => AiApp | null;
+  /** The "+": a new blank thread with the bot. */
   onNew: () => void;
-  query: string;
-  onQuery: (next: string) => void;
-  /** HISTORY (./history.ts): what finished, by month; the You tab's three lists (your changes, requests, votes) are its kinds. */
   history?: HistoryState | null;
   historyKind?: HistoryKind | null;
   onHistoryKind?: (kind: HistoryKind | null) => void;
   openHistory?: (row: HistoryRow) => void;
   /** The group itself, which #homeroom-bot/history scrolls to. */
-  historyRef?: RefObject<HTMLDivElement | null>;
+  historyRef?: Ref<HTMLDivElement>;
 }) {
   const t = useMessages('messages');
-  const tc = useMessages('changes');
   const tco = useMessages('core');
-  const say = (p: Phrase | null): string => {
-    if (!p) return '';
-    const nested = p.nested ? Object.fromEntries(Object.entries(p.nested).map(([key, q]) => [key, say(q)])) : null;
-    return t(p.id, nested ? { ...p.values, ...nested } : p.values);
-  };
-  const stops = [tc('changes:track.plan'), tc('changes:track.build'), tc('changes:track.checks'), tc('changes:track.vote'), tc('changes:track.live')] as const;
-
-  // The tabs: All, then the busiest projects, then any other one a link picked.
-  const ranked = rankProjects(rows, progress, waiting, live);
-  const projects = railProjects(ranked, [...picked]);
-  for (const slug of picked) {
-    if (!projects.some((p) => p.slug === slug)) { const app = appFor?.(slug); if (app) projects.push(app); }
-  }
-  const current = picked.length === 1 ? picked[0] : picked.length === 0 ? '' : picked.join();
-
-  const q = query.trim().toLowerCase();
-  const matches = (title: string | null, app: AiApp | null, number?: number | null) => {
-    if (picked.length && !(app && picked.includes(app.slug))) return false;
-    if (!q) return true;
-    return (title || '').toLowerCase().includes(q) || (app?.name || '').toLowerCase().includes(q) || (number != null && `#${number}`.includes(q));
-  };
-  const needs = rows.filter((row) => matches(row.title, row.app));
-  const busy = picked.length ? progress.filter((th) => matches(th.title, th.app, th.number)) : [];
-  // Under All, the product's three groups (./lists.tsx): what is under way
-  // and what moves while it waits as one, folded after its first rows; the
-  // rows nobody is moving put away under their head; what went live this
-  // week, folded the same way. A search shows every match.
-  const [moreBusy, setMoreBusy] = useState(false);
-  const [showStill, setShowStill] = useState(false);
-  const [moreLive, setMoreLive] = useState(false);
-  const allBusy = picked.length ? [] : [...progress, ...waiting.filter((th) => !notMoving(th))].filter((th) => matches(th.title, th.app, th.number));
-  const still = picked.length ? [] : waiting.filter((th) => notMoving(th) && matches(th.title, th.app, th.number));
-  const went = live.filter((th) => matches(th.title, th.app, th.number));
-  const fold = <T,>(list: T[], open: boolean, first: number): T[] => (q || open || list.length <= first ? list : list.slice(0, first));
-  const threadRow = (th: AiThread, kind: 'busy' | 'live') => {
-    const [at, state] = STOP[th.work.stage] || [0, 'now'];
-    return (
-      <Row
-        key={`${kind}:${th.threadId}`}
-        lead={kind === 'live' ? <Lead icon="check" tone="ok" /> : <Lead icon={notMoving(th) ? 'clock' : 'tool'} />}
-        title={th.title || (th.number != null ? `#${th.number}` : '')}
-        line={kind === 'live' ? th.app?.name || undefined : say(shortWords(th)) || undefined}
-        right={kind === 'live' ? undefined : <Track mini at={at} state={state} words={stops} />}
-        on={!!lit && rowKey(th) === lit}
-        onClick={() => openThread(th)}
-      />
-    );
-  };
-  const moreLink = (list: unknown[], open: boolean, first: number, toggle: (next: boolean) => void) => (q || list.length <= first ? null : (
-    <GroupLink onClick={() => toggle(!open)}>{open ? t('messages:frame.bot.showLess') : t('messages:frame.bot.showMore', { count: list.length - first })}</GroupLink>
-  ));
-  const locale = getDateLocale();
-  const done = (history?.rows || []).filter((row) => matches(row.title, row.app, row.number));
-  const months = byMonth(done);
+  const {
+    searching, ranked, picked, rail, past, setOnly, toggle, freshAll, freshByApp, freshShown, freshProjects,
+    needLines, busyLines, stillLines, liveLines, liveBehind, onlyApp, nothingHere, locale, historyLines, historyMonths,
+    owedShown, heads, noMatches, noneWords, foundLines, foundMore, foundFailed,
+  } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found });
+  const [more, setMore] = useState<DOMRect | null>(null);
+  const [stillOpen, setStillOpen] = useState(false);
+  const phone = usePhone();
+  // Needs you draws what is new first, then lifts each project by its newest
+  // activity (#6672), then holds the order under the pointer.
+  const needs = useHeld(recentGroupsFirst(freshFirst(needLines)));
+  // A row in the folded part that is where you are opens it.
+  const stillShown = stillOpen || stillLines.some((line) => line.lit);
+  const first = (n: number) => (searching ? Infinity : n);
   const kindWord = (kind: HistoryKind | null) => (kind === 'change' ? t('messages:ai.history.kind.change')
     : kind === 'request' ? t('messages:ai.history.kind.request')
       : kind === 'vote' ? t('messages:ai.history.kind.vote')
         : kind === 'solo' ? t('messages:ai.history.kind.solo') : t('messages:ai.history.kind.all'));
+  const fresh = (count: number) => (count > 0 ? <Count label={t('messages:ai.filter.fresh', { count })}>{count}</Count> : null);
 
   return (
     <Frame className="fr-pane" data-ai-frame-list="">
-      <div className={k('scroll')}>
-        <Head
-          title={t('messages:ai.hero.name')}
-          purpose={heroLine ? <RichMessage id={heroLine.id} values={heroLine.values} components={[<span />]} /> : undefined}
-          acts={<Btn icon="plus" onClick={onNew}>{t('messages:frame.bot.new')}</Btn>}
-        />
-        <Tabs
-          tabs={[
-            { key: '', label: t('messages:frame.bot.all'), count: picked.length === 0 ? rows.length : undefined },
-            ...projects.map((p) => ({ key: p.slug, label: p.name })),
-          ]}
-          current={current}
-          onPick={(key) => onPick?.(key ? [key] : [])}
-        />
-        <Search value={query} onChange={onQuery} placeholder={t('messages:frame.bot.search')} />
-        <div className={k('stack')}>
-          {q || picked.length ? null : (
-            <Sec>
-              <Card>
-                <Row
-                  lead={<Tile name={t('messages:store.header.main')} src={BOT_AVATAR} />}
-                  title={t('messages:store.header.main')}
-                  line={t('messages:frame.bot.mainLine')}
-                  right={main.unread > 0 ? <Pill kind="act">{t('messages:frame.bot.newCount', { count: main.unread })}</Pill> : null}
-                  on={main.lit}
-                  onClick={main.open}
-                />
-              </Card>
-            </Sec>
-          )}
-
-          {byProject(needs).map(({ app, items }) => (
-            <Sec key={app?.slug || '-'} label={app ? t('messages:frame.bot.groupNeeds', { project: app.name }) : t('messages:frame.bot.needs')}>
-              <Card>
-                {items.map((row) => (
-                  <Row
-                    key={row.key}
-                    lead={<Lead icon={needIcon(row)} tone={row.pill ? 'acc' : undefined} />}
-                    title={row.title}
-                    line={say(row.sub) || undefined}
-                    right={row.pill ? <Pill kind="act">{say(row.pill)}</Pill> : <Meta>{t('messages:frame.bot.onlyYou')}</Meta>}
-                    on={!!lit && rowKey(row) === lit}
-                    onClick={() => openRow(row)}
-                  />
-                ))}
-              </Card>
-            </Sec>
-          ))}
-
-          {byProject(busy).map(({ app, items }) => (
-            <Sec key={`busy:${app?.slug || '-'}`} label={app ? t('messages:frame.bot.groupProgress', { project: app.name }) : t('messages:frame.bot.progress')}>
-              <Card>
-                {items.map((th) => {
-                  const [at, state] = STOP[th.work.stage] || [0, 'now'];
-                  return (
-                    <Row
-                      key={th.threadId}
-                      lead={<Lead icon="tool" />}
-                      title={th.title || (th.number != null ? `#${th.number}` : '')}
-                      line={say(shortWords(th)) || undefined}
-                      right={<Track mini at={at} state={state} words={stops} />}
-                      on={!!lit && rowKey(th) === lit}
-                      onClick={() => openThread(th)}
-                    />
-                  );
-                })}
-              </Card>
-            </Sec>
-          ))}
-
-          {allBusy.length ? (
-            <Sec label={t('messages:ai.busy.title', { count: allBusy.length })} action={moreLink(allBusy, moreBusy, GROUP_FIRST.busy, setMoreBusy)}>
-              <Card>{fold(allBusy, moreBusy, GROUP_FIRST.busy).map((th) => threadRow(th, 'busy'))}</Card>
-            </Sec>
-          ) : null}
-          {still.length ? (
-            <Sec label={t('messages:ai.up.stillCount', { count: still.length })} action={q ? null : <GroupLink onClick={() => setShowStill(!showStill)}>{showStill ? t('messages:frame.bot.showLess') : t('messages:frame.bot.show')}</GroupLink>}>
-              {q || showStill ? <Card>{still.map((th) => threadRow(th, 'busy'))}</Card> : null}
-            </Sec>
-          ) : null}
-          {went.length ? (
-            <Sec label={t('messages:ai.live.title', { count: went.length })} action={moreLink(went, moreLive, GROUP_FIRST.live, setMoreLive)}>
-              <Card>{fold(went, moreLive, GROUP_FIRST.live).map((th) => threadRow(th, 'live'))}</Card>
-            </Sec>
-          ) : null}
-
-          {ready && needs.length === 0 && busy.length === 0 && allBusy.length === 0 && went.length === 0 ? <Card pad>{t('messages:frame.bot.quiet')}</Card> : null}
-
-          {history && (!q || done.length) ? (
-            <div ref={historyRef} data-ai-frame-history="">
-              <Sec
-                label={t('messages:ai.history.title')}
-                action={(
-                  <span className={k('btnrow')} role="group" aria-label={t('messages:ai.history.kind.label')}>
-                    {[null, ...HISTORY_KINDS].map((kind) => (
-                      <Btn key={kind || 'all'} kind={historyKind === kind ? '' : 'quiet'} small aria-pressed={historyKind === kind} onClick={() => onHistoryKind?.(kind)}>{kindWord(kind)}</Btn>
-                    ))}
-                  </span>
-                )}
+      <div className={k('scroll botpage')}>
+        <div className={k('head')} data-ai-hero="">
+          <Tile size={48} name={t('messages:ai.hero.name')} src={BOT_AVATAR} />
+          <div className={k('tx')}>
+            <h1 className={k('title')}>{t('messages:ai.hero.name')}</h1>
+            {heroLine ? <p className={k('purpose')} data-ai-hero-sub=""><RichMessage id={heroLine.id} values={heroLine.values} components={[<span />]} /></p> : null}
+          </div>
+          <div className={k('acts')}>
+            <button
+              type="button"
+              className={k('ib more')}
+              aria-label={t('messages:ai.search.open')}
+              title={t('messages:ai.search.open')}
+              aria-expanded={searchOpen}
+              data-ai-search-toggle=""
+              onClick={() => { if (searchOpen) onQuery(''); onSearch(!searchOpen); }}
+            >
+              <Icon name="search" size={18} />
+            </button>
+            {/* New chat: the page's one primary, labelled (14 Nov 2026). */}
+            <Btn small icon="plus" data-bot-new-thread="" data-ai-new-chat="" onClick={onNew}>{t('messages:newThread.start')}</Btn>
+          </div>
+        </div>
+        {searchOpen ? (
+          <div className={k('search')}>
+            <label className={k('inp', query && 'val')}>
+              <Icon name="search" size={18} />
+              <input
+                ref={searchRef}
+                type="search"
+                className={k('v')}
+                value={query}
+                onChange={(e) => onQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onQuery(''); onSearch(false); } }}
+                placeholder={t('messages:ai.search.label')}
+                aria-label={t('messages:ai.search.label')}
+                data-ai-search=""
+              />
+            </label>
+          </div>
+        ) : null}
+        {ranked.length > 1 || picked.length ? (
+          // The standard chips: a toggle each, All when none is picked, and
+          // the rest of the projects behind "N more".
+          <nav className={k('tabs')} aria-label={t('messages:ai.filter.label')} data-ai-project-filter="">
+            <button type="button" className={k('tab', !picked.length && 'on')} aria-pressed={!picked.length} onClick={() => setOnly([])}>
+              {t('messages:ai.filter.all')}{fresh(freshAll)}
+            </button>
+            {rail.map((app) => (
+              <button key={app.slug} type="button" className={k('tab', picked.includes(app.slug) && 'on')} aria-pressed={picked.includes(app.slug)} onClick={() => toggle(app.slug)} data-ai-chip={app.slug}>
+                {/* The project's own tile before its name, as on the standard chip. */}
+                <Tile size={18} name={app.name || app.slug} src={app.icon_url} emoji={app.icon_emoji} />
+                {app.name || app.slug}{fresh(freshByApp[app.slug] || 0)}
+              </button>
+            ))}
+            {past > 0 ? (
+              <button
+                type="button"
+                className={k('tab')}
+                aria-haspopup="dialog"
+                aria-expanded={!!more}
+                onClick={(e) => setMore(more ? null : e.currentTarget.getBoundingClientRect())}
+                data-ai-project-more=""
               >
-                {!history.ready ? <Card pad>{t('messages:ai.history.loading')}</Card>
-                  : history.failed && !done.length ? (
-                    <Card pad>{t('messages:ai.history.failed')} <Btn kind="quiet" small onClick={history.retry}>{tco('core:common.tryAgain')}</Btn></Card>
-                  ) : !done.length && !history.next ? <Card pad>{t('messages:ai.history.empty')}</Card> : null}
-              </Sec>
-              {months.map((month) => (
-                <Sec key={month.key} label={monthName(month.at, locale)}>
-                  <Card>
-                    {month.rows.map((row) => (
-                      <Row
-                        key={row.key}
-                        lead={<Lead icon={HISTORY_ICON[historyGlyph(row)]} tone={historyGlyph(row) === 'live' ? 'ok' : undefined} />}
-                        title={row.title || (row.number != null ? `#${row.number}` : '')}
-                        line={say(historyTooltip(row)) || undefined}
-                        right={<Meta>{say(historyWords(row, locale))}</Meta>}
-                        on={!!lit && rowKey({ rootId: row.rootId ?? null, href: row.href }) === lit}
-                        onClick={() => openHistory?.(row)}
-                      />
+                {t('messages:ai.filter.more', { count: past })}
+                <Icon name="cd" size={16} />
+              </button>
+            ) : null}
+          </nav>
+        ) : null}
+        {more ? (
+          <ProjectPicker sheet={phone} anchor={more} ranked={ranked} picked={picked} onToggle={toggle} onClear={() => setOnly([])} onClose={() => setMore(null)} />
+        ) : null}
+
+        <div className={k('stack')}>
+          {/* 13 Nov 2026: no thread and, once the messages have answered, no message either (./lines.ts noneWords). */}
+          {noMatches ? <Card pad><span data-ai-search-empty="">{noneWords}</span></Card> : null}
+
+          {!searching || !ready || needLines.length || failed ? (
+            <Sec
+              label={<>{owedShown ? t('messages:ai.work.titleCount', { count: owedShown }) : t('messages:ai.work.title')}{freshShown > 0 ? <Pill kind="act" mini>{t('messages:ai.work.fresh', { count: freshShown })}</Pill> : null}</>}
+              data-ai-list="work"
+              {...needs.props}
+            >
+              <Card>
+                <div className={k('list')}>
+                  {failed ? (
+                    <div className={k('txt')} role="status" data-ai-failed={failed}>
+                      {`${failed === 'unreachable' ? t('messages:ai.work.unreachable') : t('messages:ai.work.failed')} `}
+                      <button type="button" className={k('link')} onClick={() => onRetry?.()} data-ai-retry="">{tco('core:common.tryAgain')}</button>
+                    </div>
+                  ) : null}
+                  {needLines.length ? null : ready ? (
+                    <p className={k('txt')} data-ai-empty={nothingHere ? 'project' : ''}>
+                      {nothingHere && onlyApp ? t('messages:ai.filter.emptyProject', { project: onlyApp.name || onlyApp.slug }) : t('messages:ai.work.empty')}
+                    </p>
+                  ) : failed ? null : <p className={k('txt')} role="status" data-ai-loading="">{t('messages:ai.work.loading')}</p>}
+                  <Groups lines={needs.held} heads={heads} first={first(GROUP_FIRST.needs)} freshStyle freshProjects={freshProjects} dayHeads />
+                </div>
+              </Card>
+            </Sec>
+          ) : null}
+
+          {busyLines.length || stillLines.length ? (
+            <Sec label={t('messages:ai.busy.title', { count: busyLines.length + stillLines.length })} data-ai-list="busy">
+              <Card>
+                <div className={k('list')}>
+                  <Groups lines={busyLines} heads={heads} first={first(GROUP_FIRST.busy)} dayHeads />
+                  {/* #6158: the rows nobody is moving, folded at the list's end. */}
+                  {stillLines.length ? (
+                    <div data-ai-still-part="">
+                      <MoreRow open={stillShown} onClick={() => setStillOpen((o) => !o)} data-ai-still="">
+                        {t('messages:ai.up.stillCount', { count: stillLines.length })}
+                      </MoreRow>
+                      {stillShown ? <Groups lines={stillLines} heads={heads} first={stillLines.length} dayHeads /> : null}
+                    </div>
+                  ) : null}
+                </div>
+              </Card>
+            </Sec>
+          ) : null}
+
+          {liveLines.length ? (
+            <Sec label={t('messages:ai.live.title', { count: liveLines.length })} data-ai-list="live">
+              <Card>
+                <div className={k('list')}>
+                  <Groups lines={freshFirst(liveLines)} heads={heads} first={first(GROUP_FIRST.live)} foldFresh />
+                  {liveBehind ? (
+                    // #6233: one Reload under the list, for every row this tab is older than.
+                    <div className={k('txt')} data-ai-older-tab="">
+                      {`${t('messages:ai.live.olderTab')} `}
+                      <button type="button" className={k('link')} onClick={() => reloadTab()} data-ai-older-tab-reload="">{t('messages:ai.short.reload')}</button>
+                    </div>
+                  ) : null}
+                </div>
+              </Card>
+            </Sec>
+          ) : null}
+
+          {/* #6398: History is searched as far as it has loaded; with no match it folds away. */}
+          {history && (!searching || historyLines.length) ? (
+            <div ref={historyRef} data-ai-frame-history="">
+              <Sec label={t('messages:ai.history.title')} data-ai-list="history">
+                <Card>
+                  <div className={k('list')}>
+                    <div className={k('btnrow')} role="group" aria-label={t('messages:ai.history.kind.label')} data-ai-history-kinds="">
+                      {[null, ...HISTORY_KINDS].map((kind) => (
+                        <Btn key={kind || 'all'} kind={historyKind === kind ? '' : 'quiet'} small aria-pressed={historyKind === kind} onClick={() => onHistoryKind?.(kind)} data-ai-history-kind={kind || 'all'}>{kindWord(kind)}</Btn>
+                      ))}
+                    </div>
+                    {!history.ready ? <p className={k('txt')} role="status" data-ai-history-loading="">{t('messages:ai.history.loading')}</p> : null}
+                    {history.ready && history.failed && !historyLines.length ? (
+                      <div className={k('txt')} role="status" data-ai-history-failed="">
+                        {`${t('messages:ai.history.failed')} `}
+                        <button type="button" className={k('link')} onClick={history.retry}>{tco('core:common.tryAgain')}</button>
+                      </div>
+                    ) : null}
+                    {history.ready && !history.failed && !historyLines.length && !history.next ? (
+                      <p className={k('txt')} data-ai-history-empty="">{t('messages:ai.history.empty')}</p>
+                    ) : null}
+                    {historyMonths.map((month) => (
+                      <div key={month.key} data-ai-history-month={month.key}>
+                        <div className={k('row sm proj month')}><span className={k('tx')}><h3 className={k('t')}>{monthName(month.at, locale)}</h3></span></div>
+                        <Groups lines={month.rows} heads={heads} first={first(GROUP_FIRST.live)} />
+                      </div>
                     ))}
-                  </Card>
-                </Sec>
-              ))}
-              {history.ready && history.next ? (
-                <GroupLink onClick={history.more}>{history.loading ? t('messages:ai.history.loading') : t('messages:ai.history.earlier')}</GroupLink>
-              ) : null}
+                    {history.ready && history.next ? (
+                      <MoreRow onClick={history.more} disabled={history.loading} data-ai-history-more="">{t('messages:ai.history.earlier')}</MoreRow>
+                    ) : null}
+                  </div>
+                </Card>
+              </Sec>
             </div>
+          ) : null}
+
+          {/* 13 Nov 2026: the messages that match, under the threads that do, each a link to it. */}
+          {foundLines.length ? (
+            <Sec label={t('messages:ai.search.messages', { count: foundLines.length })} data-ai-list="found">
+              <Card>
+                <div className={k('list')}>
+                  {foundLines.map((line) => <FoundRow key={line.key} line={line} />)}
+                  {foundMore ? <p className={k('txt')} data-ai-found-more="">{t('messages:ai.search.more')}</p> : null}
+                </div>
+              </Card>
+            </Sec>
+          ) : null}
+          {foundFailed ? (
+            <Card pad>
+              <div className={k('txt')} role="status" data-ai-search-failed="">
+                {`${t('messages:ai.search.failed')} `}
+                <button type="button" className={k('link')} onClick={() => onFoundRetry?.()} data-ai-search-retry="">{tco('core:common.tryAgain')}</button>
+              </div>
+            </Card>
           ) : null}
         </div>
       </div>

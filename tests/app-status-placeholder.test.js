@@ -693,17 +693,21 @@ test('#15: while the project is still being set up, the same thumbnail: Homeroom
   assert.equal(failed.message, 'App failed to start', 'a failed project is the failure, whatever the bot was doing');
 });
 
-test('#15: the chat button opens the DM by its id; nothing frames the starter while it is built', () => {
+test('#15: the chat button opens the project\'s first-version thread; nothing frames the starter while it is built', () => {
   const { AppView, sandbox } = makeAppView();
   const opened = [];
-  sandbox.UsernodeReact = { messages: { open: (id) => opened.push(id) } };
+  // 14 Nov 2026: every conversation with Homeroom bot is a thread, so the
+  // button asks for the project's first-version thread (the server says
+  // which, features/ai/where.ts); with no project, a new chat.
+  sandbox.UsernodeReact = { messages: { openBotFirstVersion: (slug) => opened.push(slug), open: (id) => opened.push(`open:${id}`) } };
   AppView.openBotChat('plant-pal', 42);
   AppView.openBotChat('plant-pal', null);
-  assert.deepEqual(opened, [42, null], 'no id opens Messages, where the bot DM is');
+  AppView.openBotChat(null, 42);
+  assert.deepEqual(opened, ['plant-pal', 'plant-pal', 'open:42'], 'by its project, whatever the chat\'s id');
   sandbox.UsernodeReact = null;
   sandbox.location = { hash: '' };
   AppView.openBotChat('plant-pal', 7);
-  assert.equal(sandbox.location.hash, '#messages/7', 'without the bundle, the address does it');
+  assert.equal(sandbox.location.hash, '#homeroom-bot', 'without the bundle, the bot\'s own page');
 
   // #4053: "Show the starter for now" is gone, so a first version on its way
   // is pending for the whole visit, until the server says it is not.
@@ -1020,15 +1024,17 @@ test('a stopped first version: the card and its first look, Stopped, and Try aga
   assert.match(member, />It opens here when it’s ready\.</);
 });
 
-test('a stopped first version\'s Try again opens the build\'s thread, else the message, else the chat', () => {
+test('a stopped first version\'s Try again opens the build\'s thread, else the message, else the project\'s first-version thread', () => {
   const { AppView, sandbox } = makeAppView();
   const opened = [];
-  sandbox.UsernodeReact = { messages: { openAddress: (href) => opened.push(href), open: (id) => opened.push(`open:${id}`) } };
+  sandbox.UsernodeReact = { messages: { openAddress: (href) => opened.push(href), openBotFirstVersion: (slug) => opened.push(`first:${slug}`) } };
   AppView.openFirstVersionThread('plant-pal', 42, 880, 901);
   AppView.openFirstVersionThread('plant-pal', 42, null, 901);
   AppView.openFirstVersionThread('plant-pal', 42, null, null);
   AppView.openFirstVersionThread('plant-pal', null, 880, 901);
-  assert.deepEqual(opened, ['#messages/42/thread/880', '#messages/42/m/901', '#messages/42', 'open:null']);
+  // 14 Nov 2026: with neither a thread nor a message, the chat itself was
+  // Main Chat, which is gone: the project's first-version thread instead.
+  assert.deepEqual(opened, ['#messages/42/thread/880', '#messages/42/m/901', 'first:plant-pal', 'first:plant-pal']);
   // Without the bundle, the address does it.
   sandbox.UsernodeReact = null;
   sandbox.location = { hash: '' };

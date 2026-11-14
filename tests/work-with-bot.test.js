@@ -148,7 +148,7 @@ test('a request the bot holds until later says so, offers no Ask and does not sp
   assert.equal(AppView._issueInProgress(baseIssue({ standing: onHold })), false, 'and no Underway card');
   // Its turn in the line: it spins, and says so.
   const queued = baseIssue({ standing: standing('reading', { line: { code: 'queued' }, whoseMove: 'bot' }) });
-  assert.equal(AppView._requestStatusView(queued).lead, 'Not started yet · Waiting its turn');
+  assert.equal(AppView._requestStatusView(queued).lead, 'Not started yet. Waiting its turn in Homeroom bot’s line; it starts by itself.');
   assert.equal(AppView._issueWorkState(queued).spinner, true);
   // Nobody on it: Nobody, with Ask; a standing nobody has started says so
   // in its own words, with Ask; and a stage this client does not know is no
@@ -193,6 +193,38 @@ test('while the bot waits for her plan, the request says so, with Let the bot bu
   assert.equal(AppView._planHeld({ ...held, standing: standing('reading', { whoseMove: 'bot' }) }), false);
   assert.equal(AppView._planHeld({ ...held, state: 'closed' }), false);
   assert.equal(AppView._planHeld(baseIssue()), false);
+});
+
+// 13 Nov 2026: a tester's own private thread held a request whose build had
+// already reached the line. Its page read "Ready to build · Number 1 in
+// line" beside Let the bot build it now, so nobody could tell who it waited
+// for. The server now says it is held for their plan whatever it had reached
+// (services/work-state.js: `ready` marks the build behind the hold), and the
+// page draws exactly what it draws for one still waiting to be read.
+test('held at the build line, the request reads as waiting for her plan, not as a place in line', () => {
+  const { AppView } = makeAppView();
+  const hold = { rootId: 77, href: '#homeroom-bot/thread/77' };
+  const reading = baseIssue({ botHold: hold, standing: standing('planning', { line: { code: 'planning_with_you' }, whoseMove: 'requester' }) });
+  const atLine = baseIssue({
+    botHold: hold,
+    // Its page's `bot`, read off the same row (work-state.js botWorkOf): the build still waits in the bot's queue.
+    bot: { what: 'queued', since: null, mine: true },
+    standing: standing('planning', { line: { code: 'planning_with_you', ready: true }, whoseMove: 'requester' }),
+  });
+  const status = plain(AppView._requestStatusView(atLine));
+  assert.equal(status.lead, 'Planning · Planning it with you in a private thread');
+  assert.doesNotMatch(status.lead, /in line|Ready to build/);
+  assert.deepEqual(status.action, plain(AppView._requestStatusView(reading)).action);
+  assert.equal(status.action.act.fn, 'letBotBuildNow');
+  assert.deepEqual(status.words, plain(AppView._requestStatusView(reading)).words, 'the same words as a held request still waiting to be read');
+  assert.equal(AppView._planHeld(atLine), true);
+  assert.equal(AppView._botOn(atLine), null, 'nothing of the bot\'s is under way: no spinner, no "Homeroom bot is building"');
+  assert.equal(AppView._issuePrimaryActionSpec(atLine).act.fn, 'letBotBuildNow', 'the Workshop card says the same');
+  // With no hold, the same build says whose line it waits in, and offers nothing to press.
+  const queued = baseIssue({ standing: standing('building', { line: { code: 'queued', place: 1 }, whoseMove: 'bot' }) });
+  const line = plain(AppView._requestStatusView(queued));
+  assert.equal(line.lead, 'Ready to build. Number 1 in Homeroom bot’s line; it starts by itself.');
+  assert.notEqual(line.action && line.action.act && line.action.act.fn, 'letBotBuildNow');
 });
 
 test('the request page\'s button opens the thread on the bot tab; Let the bot build it now lifts the hold', async () => {

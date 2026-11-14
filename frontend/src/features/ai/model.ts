@@ -28,6 +28,7 @@
 
 import { lineWords, normalizeWorkState, stageWords, standingOfPush, waitsForPlan, withoutClosedVote } from '../../lib/work-state';
 import type { WorkState, WorkStatePush } from '../../lib/work-state';
+import { dayKeyOf } from '../../lib/time-zone';
 
 export interface AiApp {
   slug: string;
@@ -61,8 +62,17 @@ export interface AiPrivate {
   resultRef?: number | null;
   /** #6271: the day it was marked done, for Live this week (absent from an older server). */
   doneAt?: string | null;
-  /** Filed (or posted) as a request that has since finished: History's, not Needs you's. */
+  /**
+   * Filed (or posted) as a request that has since finished, or about a change
+   * that is live or closed (13 Nov 2026): History's, not Needs you's.
+   */
   resultDone?: boolean;
+  /**
+   * 14 Nov 2026: how many of its messages are new to the viewer. A thread
+   * carries its own count now that no Main Chat counts them for it. Absent
+   * from an older server, which reads as none.
+   */
+  unread?: number;
 }
 
 export interface AiThread {
@@ -209,7 +219,7 @@ function needNumber(item: NeedItem): number | null {
 
 /**
  * Pure: the number a Needs you row shows. A change for a request goes by the
- * request's, as Homeroom bot names it in Main and as the request's own rows
+ * request's, as Homeroom bot names it in its threads and as the request's own rows
  * here do (30 Oct 2026: the tab said #6032 where the bot said #6038).
  */
 function shownNumber(item: NeedItem): number | null {
@@ -237,14 +247,13 @@ export interface WorkRow {
   pill: Phrase | null;
   /** The row's second line, where it is news (whyOf): a hand-back's reason, said by its stage. */
   why?: Phrase | null;
-  /** Where the row goes: a page, or a private thread of Main. */
+  /** Where the row goes: a page, or a private thread. */
   href: string | null;
   rootId: number | null;
   /**
    * #6262: the thread whose page the row opens, where it has one (a private
-   * thread has none: Main Chat's own "N new" covers it), and how many
-   * messages in it are new. Above zero, the row draws a blue dot and a bold
-   * title.
+   * thread has none: it is known by `rootId`), and how many messages in it
+   * are new. Above zero, the row draws a blue dot and a bold title.
    */
   threadId: number | null;
   unread: number;
@@ -285,7 +294,8 @@ export function byProject<T extends { app: AiApp | null }>(rows: T[]): { app: Ai
 export function dayKey(at: string | null | undefined): string {
   const d = new Date(String(at || ''));
   if (!Number.isFinite(d.getTime())) return '';
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  // #6479: the zone picked in Settings › Language, else the device's.
+  return dayKeyOf(d);
 }
 
 /**
@@ -375,6 +385,37 @@ export function freshByProject(rows: { app: AiApp | null; unread?: number }[]): 
  */
 export function freshFirst<T extends { fresh?: boolean }>(lines: T[]): T[] {
   return [...(lines || [])].sort((a, b) => Number(!!b.fresh) - Number(!!a.fresh));
+}
+
+/**
+ * Pure (14 Nov 2026, request #6672: "Private chats are always at the bottom of
+ * Needs you, even if they're the most recent active thread"). `byProject`
+ * places a project where its first row first comes, and Needs you's rows
+ * arrive votes and plans first, private chats last, so a project whose only
+ * row is a fresh private chat sat at the bottom however recently you were
+ * talking in it. This lifts those groups: the ones with something new first,
+ * then each by its newest row's readable time, newest first. A group with no
+ * readable time keeps today's place after the dated ones, and rows inside a
+ * group keep the order they came in.
+ */
+export function recentGroupsFirst<T extends { app: AiApp | null; fresh?: boolean; at?: string | null }>(lines: T[]): T[] {
+  const groups = byProject(lines).map((group, i) => {
+    let newest: number | null = null;
+    let fresh = false;
+    for (const row of group.items) {
+      if (row.fresh) fresh = true;
+      const at = new Date(String(row.at || '')).getTime();
+      if (Number.isFinite(at) && (newest === null || at > newest)) newest = at;
+    }
+    return { items: group.items, fresh, newest, i };
+  });
+  groups.sort((a, b) => {
+    if (a.fresh !== b.fresh) return a.fresh ? -1 : 1;
+    if ((a.newest === null) !== (b.newest === null)) return a.newest === null ? 1 : -1;
+    if (a.newest !== null && b.newest !== null && a.newest !== b.newest) return b.newest - a.newest;
+    return a.i - b.i;
+  });
+  return groups.flatMap((group) => group.items);
 }
 
 /** How many projects the filter shows as chips before its More (./lists.tsx). */
@@ -686,6 +727,8 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
     // #6159: a done thread is the only one left out (the server leaves it out too).
     if (p.state === 'done') continue;
     // 5 Nov 2026: and one filed as a request that has finished: History's.
+    // 13 Nov 2026: as is one about a change that is live or closed, which
+    // was listed here and, as the change, under Live this week.
     if (p.resultDone) continue;
     const key = filedKey(p);
     if (key && filed.get(key) === p.rootId && listed.has(key)) continue;
@@ -722,9 +765,10 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       pill: null,
       href: null,
       rootId: p.rootId,
-      // A private thread is not a `threads` row: Main Chat's "N new" counts it.
+      // A private thread is not a `threads` row; its new mark is its own
+      // (14 Nov 2026: no Main Chat counts it).
       threadId: null,
-      unread: 0,
+      unread: Math.max(0, Number(p.unread) || 0),
       at: p.at || null,
     });
   }

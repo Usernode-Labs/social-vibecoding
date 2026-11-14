@@ -118,3 +118,55 @@ test('Discover and public project links open the guest pages; the rest keep the 
   assert.match(landing, /setDeepLink\(target \? \{ target, place: deepLinkPlace\(target\) \} : null\);/,
     'the on-show hook keeps the link as it came; what is left for the sheet is derived');
 });
+
+test('under a look the bar names the place a gated link was for, in the product\'s own words', () => {
+  // Version 2 of the looks (o12 to o25): gated addresses behave as in the
+  // standard look. What a look adds is the place's name in the frame's bar.
+  const { gatePlaceWords } = lib();
+  const said = (target) => {
+    const { head, trail } = gatePlaceWords(target);
+    return [head ? message(head.id, head.values) : null, ...trail.map((w) => message(w.id, w.values))];
+  };
+  assert.deepEqual(said('#messages'), ['Messages']);
+  assert.deepEqual(said('#chat/12'), ['Messages']);
+  assert.deepEqual(said('#homeroom-bot/main'), ['Homeroom bot']);
+  assert.deepEqual(said('#profile'), ['You']);
+  assert.deepEqual(gatePlaceWords('#profile/evan').head, { id: '', text: '@evan' }, 'somebody\'s profile keeps its name, not You');
+  assert.equal(renderToHtml(createElement(lib().GatePlace, { target: '#profile/evan' })), '<span hidden="" data-guest-place="head">@evan</span>');
+  assert.deepEqual(said('#settings/account'), ['Settings']);
+  assert.deepEqual(said('#leaderboard'), ['Challenges']);
+  assert.deepEqual(said('#challenges'), ['Challenges'], 'the older address of the same page');
+  assert.deepEqual(said('#leaderboard/challenges/3/9'), ['Challenges']);
+  assert.deepEqual(said('#leaderboard/kudos'), [null], 'a place with no name of its own leaves the bar its brand');
+  assert.deepEqual(said('#notifications'), [null]);
+  assert.deepEqual(said('#toString'), [null], 'only the map\'s own keys');
+  // A project: the brand, then the place; a bare link to its page opens its Workshop.
+  assert.deepEqual(said('/app/usernode-2d5619/workshop'), [null, 'Workshop']);
+  assert.deepEqual(said('#app/usernode-2d5619/workshop?ws=workshop'), [null, 'Workshop']);
+  assert.deepEqual(said('/app/usernode-2d5619/workshop?ws=status'), [null], 'the Hub is the project itself');
+  assert.deepEqual(said('/app/usernode-2d5619/workshop?ws=needs'), [null, 'Needs you']);
+  assert.deepEqual(said('/app/usernode-2d5619/dev/issues/5998'), [null, 'Workshop', 'Request #5998']);
+  assert.deepEqual(said('#app/usernode-2d5619/dev/changes/6369'), [null, 'Workshop', 'Change #6369']);
+  assert.deepEqual(said('/app/usernode-2d5619/dev/issues/abc'), [null]);
+  assert.deepEqual(said('#app/usernode-2d5619'), [null]);
+  const html = renderToHtml(createElement(lib().GatePlace, { target: '/app/usernode-2d5619/dev/issues/5998' }));
+  assert.equal(html, '<span hidden="" data-guest-place="trail">Workshop</span><span hidden="" data-guest-place="trail">Request #5998</span>');
+  assert.equal(renderToHtml(createElement(lib().GatePlace, { target: '#messages' })), '<span hidden="" data-guest-place="head">Messages</span>');
+});
+
+test('under a look a gated address is the same sheet over the same outline: no page of its own', () => {
+  const landing = read('frontend/src/features/auth/landing.tsx');
+  assert.doesNotMatch(landing, /GatedFrame|gateSheet|gated-frame/, 'the first tour\'s members\' page is gone');
+  assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/guest/frame/gated-frame.tsx')));
+  assert.match(landing, /\{gate \? <DeepLinkBackdrop \/> : null\}\s*\{gate \? \(\s*<SignInSheet\s+open\s+title=\{deepLinkTitle\(gate\.place, gateProject/, 'the sheet opens by itself, whatever the look');
+  const catalog = JSON.parse(read('frontend/locales/en/auth.json'));
+  assert.deepEqual(Object.keys(catalog).filter((key) => key.startsWith('frame.gated.')), [], 'its words went with it');
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf("A MEMBERS' ADDRESS OPENED BY A VISITOR"), css.indexOf('/* looks:begin'));
+  assert.ok(css.includes("A MEMBERS' ADDRESS OPENED BY A VISITOR"));
+  assert.doesNotMatch(css, /data-gated-frame/);
+  assert.match(hand, /html\[data-frame-chrome="guest"\] \[data-deep-link-backdrop\] \{ top: var\(--fr-shell-top, 0px\); z-index: 0; background: none !important; \}/, 'under the bar, on the look\'s own ground');
+  assert.match(hand, /\[data-deep-link-backdrop\] > div \{[^}]*opacity: 0\.6; filter: none; \}/, 'an outline, not a blur');
+  assert.match(hand, /:is\(\.rounded-full, \.rounded-\\\[20px\\\]\) \{ background: var\(--fr-surface\); box-shadow: inset 0 0 0 1px var\(--fr-line2\); \}/, 'drawn with the kit\'s surface');
+  assert.match(hand, /#auth-landing-screen:has\(\[data-deep-link-backdrop\]\) \[data-guest-discover\] \{ display: none; \}/, 'the landing\'s own page is not under it');
+});

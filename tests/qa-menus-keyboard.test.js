@@ -14,6 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
@@ -272,12 +273,12 @@ test('Q13: Enter, Tab and the arrows belong to an open suggestion list before th
   const src = read('frontend/src/features/messages/composer.tsx');
   // The :emoji menu (#2985) takes its keys ahead of this list; the two never
   // show together, since that menu opens only with no @ or # list up.
-  assert.match(src, /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(suggestionKeys\(event\)\) return; if \(event\.key === 'Enter' && \(event\.metaKey \|\| event\.ctrlKey\)/,
-    'the list gets the key first; the send chord fires only when no list took it');
-  // #5361: plain Enter is a newline (as in the workshop agent chat), so the
-  // old plain-Enter-sends rule must be gone from the composer's send branch.
-  assert.doesNotMatch(src, /event\.key === 'Enter' && !event\.shiftKey && !event\.nativeEvent\.isComposing\) \{ event\.preventDefault\(\); submit\(\)/,
-    'plain Enter no longer sends');
+  assert.match(src, /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(suggestionKeys\(event\)\) return; if \(enterSends\(event\.nativeEvent\)\) \{ event\.preventDefault\(\); submit\(\); \}/,
+    'the list gets the key first; Enter sends only when no list took it');
+  // The send rule is lib/enter-sends.ts (the next test): Enter sends where
+  // there is a keyboard. #5361's rule, where only the chord sent, is gone.
+  assert.doesNotMatch(src, /event\.key === 'Enter' && \(event\.metaKey \|\| event\.ctrlKey\) && !event\.nativeEvent\.isComposing\) \{ event\.preventDefault\(\); submit\(\)/,
+    'the chord is no longer the only way to send');
   const keys = src.slice(src.indexOf('function suggestionKeys('), src.indexOf('function insertChannel('));
   assert.match(keys, /event\.key === 'ArrowDown' \|\| event\.key === 'ArrowUp'/);
   assert.match(keys, /\(event\.key === 'Enter' && !event\.shiftKey\) \|\| \(event\.key === 'Tab' && !event\.shiftKey\)/);
@@ -292,6 +293,86 @@ test('Q13: Enter, Tab and the arrows belong to an open suggestion list before th
   assert.equal((picks.match(/placeCaretAfterPick\(input, before\.length\);/g) || []).length, 2, 'the @ and the # pick');
   assert.doesNotMatch(picks, /requestAnimationFrame/);
   assert.match(src, /function placeCaretAfterPick\(input: HTMLTextAreaElement \| null, at: number\) \{\s*emojiCaret\.current = at;/);
+});
+
+// ── One Enter rule for every message box ──────────────────────────────────
+
+test('Enter sends where there is a keyboard, Shift + Enter is a new line, and touch keeps Enter as a new line', () => {
+  const keys = loadTsx('frontend/src/lib/enter-sends.ts');
+  const enter = (extra) => ({ key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: false, isComposing: false, keyCode: 13, ...extra });
+  // A device with a keyboard.
+  assert.equal(keys.enterSends(enter(), false), true, 'Enter sends');
+  assert.equal(keys.enterSends(enter({ shiftKey: true }), false), false, 'Shift + Enter is a new line');
+  assert.equal(keys.enterSends(enter({ metaKey: true }), false), true, 'Cmd + Enter still sends');
+  assert.equal(keys.enterSends(enter({ ctrlKey: true }), false), true, 'Ctrl + Enter still sends');
+  // A touch device: nothing changed.
+  assert.equal(keys.enterSends(enter(), true), false, 'Enter stays a new line; the button sends');
+  assert.equal(keys.enterSends(enter({ shiftKey: true }), true), false);
+  assert.equal(keys.enterSends(enter({ ctrlKey: true }), true), true, 'the chord sends from a hardware keyboard (#2145)');
+  assert.equal(keys.enterSends(enter({ metaKey: true }), true), true);
+  // An Enter that commits an IME composition is never a send.
+  assert.equal(keys.enterSends(enter({ isComposing: true }), false), false);
+  assert.equal(keys.enterSends(enter({ keyCode: 229 }), false), false, 'WebKit\'s Enter that ends a composition');
+  assert.equal(keys.enterSends(enter({ isComposing: true, ctrlKey: true }), false), false);
+  assert.equal(keys.enterSends({ key: 'a' }, false), false, 'no other key');
+
+  // Touch is the channels' own reading (GroupChat._isTouch), so a channel's
+  // box and a conversation's agree on every device.
+  assert.equal(keys.NO_HOVER_QUERY, '(hover: none)');
+  assert.match(read('public/js/group-chat.js'), /_isTouch\(\) \{\s*return !!\(window\.matchMedia && window\.matchMedia\('\(hover: none\)'\)\.matches\);/);
+  const asked = [];
+  const device = (noHover) => ({ matchMedia: (query) => { asked.push(query); return { matches: noHover }; } });
+  assert.equal(keys.isTouchInput(device(true)), true);
+  assert.equal(keys.isTouchInput(device(false)), false);
+  assert.deepEqual(asked, ['(hover: none)', '(hover: none)']);
+  assert.equal(keys.isTouchInput({}), false, 'no media queries: a keyboard, as the channels read it');
+  assert.equal(keys.isTouchInput({ matchMedia() { throw new Error('unreadable'); } }), false);
+  assert.equal(keys.isTouchInput(undefined), false, 'no window (a prerender)');
+  // With no touch argument the device is asked at the keypress.
+  const savedWindow = global.window;
+  try {
+    global.window = device(true);
+    assert.equal(keys.enterSends(enter()), false);
+    global.window = device(false);
+    assert.equal(keys.enterSends(enter()), true);
+  } finally {
+    if (savedWindow === undefined) delete global.window; else global.window = savedWindow;
+  }
+});
+
+test('the conversation composer and the New thread box share the rule, and say it only where it holds', () => {
+  const composer = read('frontend/src/features/messages/composer.tsx');
+  const newThread = read('frontend/src/features/messages/new-thread.tsx');
+  assert.match(newThread, /onKeyDown=\{\(e\) => \{\n[^\n]*\n\s+if \(enterSends\(e\.nativeEvent\)\) \{ e\.preventDefault\(\); void send\(\); \}\n\s+\}\}/);
+  assert.doesNotMatch(newThread, /e\.key === 'Enter' && \(e\.metaKey \|\| e\.ctrlKey\)/, 'the chord-only rule is gone here too');
+  // Nothing to send is the box's own check, the one its button is disabled by.
+  assert.match(composer, /function submit\(\) \{\n\s+if \(dictating \|\| uploading \|\| \(!value\.trim\(\) && !attachments\.length && !object\)\) return;/);
+  assert.match(newThread, /if \(busy \|\| dictating \|\| uploading \|\| \(!content && !attachments\.length && !object\)\) return;/);
+
+  assert.equal(message('messages:composer.newLineHint'), 'Shift + Enter for a new line');
+  assert.equal(message('messages:composer.sendShortcut'), 'Send (Enter)');
+  for (const [name, src, text] of [['composer.tsx', composer, 'value'], ['new-thread.tsx', newThread, 'words']]) {
+    assert.match(src, /import \{ enterSends, useEnterSends \} from '\.\.\/\.\.\/lib\/enter-sends';/, name);
+    assert.match(src, /const enterKey = useEnterSends\(\);/, name);
+    // The hint: a keyboard device, text already on a second line (so the first
+    // keystroke never moves the box, #4202), and not beside the count.
+    assert.ok(src.includes(`const keysHint = enterKey && ${text}.includes('\\n') && !nearLimit;`), name);
+    assert.ok(src.includes('{keysHint ? <p className="mt-1 px-3 text-end text-[11px] leading-[15px] text-zinc-500 dark:text-zinc-400" data-enter-hint="">{t(\'messages:composer.newLineHint\')}</p> : null}'), name);
+    // The tooltip names the key only where the key sends.
+    assert.ok(src.includes("aria-label={t('messages:composer.send')} title={enterKey ? t('messages:composer.sendShortcut') : undefined}"), name);
+  }
+  // Read in an effect, so the first render (the prerender's and the
+  // hydration's) says nothing about keys on any device.
+  const hook = read('frontend/src/lib/enter-sends.ts');
+  const body = hook.slice(hook.indexOf('export function useEnterSends('));
+  assert.match(body, /const \[sends, setSends\] = useState\(false\);\n\s+useEffect\(\(\) => \{\n\s+const read = \(\) => setSends\(!isTouchInput\(\)\);\n\s+read\(\);/);
+  assert.match(body, /addEventListener\('change', read\);\n\s+return \(\) => watched\.removeEventListener\('change', read\);/, 'a keyboard attached later is noticed');
+
+  // The Workshop's coding-agent chats keep their own rule: Enter is a new
+  // line, and Ctrl/Cmd + Enter sends or saves a draft while the agent works.
+  assert.match(read('frontend/src/features/agent-session/index.tsx'), /if \(event\.key === 'Enter' && \(event\.metaKey \|\| event\.ctrlKey\) && !event\.nativeEvent\.isComposing\) \{/);
+  assert.doesNotMatch(read('frontend/src/features/agent-session/index.tsx'), /enter-sends/);
+  assert.doesNotMatch(read('frontend/src/features/dev-chat/dev-chat.js'), /enter-sends/);
 });
 
 // ── Q18: Skip to navigation ───────────────────────────────────────────────

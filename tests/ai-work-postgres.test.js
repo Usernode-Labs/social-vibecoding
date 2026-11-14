@@ -540,7 +540,11 @@ test('#6246: a waiting plan stays in Needs you past the 25-request window and a 
 
 test('the demo rows are obviously fake, and staging-only', () => {
   const src = fs.readFileSync(require.resolve('../src/routes/ai-work.js'), 'utf8');
-  assert.match(src, /if \(IS_STAGING && req\.query\.demo === '1'\) return res\.json\(demoWork\(\)\);/);
+  // 14 Nov 2026: the demo's own threads with Homeroom bot (a hello, a first
+  // version, Earlier chat, the private ones) lead the fake rows, so the
+  // demo's chat is reached from the list now that Main Chat is gone.
+  assert.match(src, /const demo = demoWork\(\);\n\s+const mine = await demoPrivate\(pool, req\.user\);\n\s+return res\.json\(\{ \.\.\.demo, private: \[\.\.\.mine, \.\.\.demo\.private\] \}\);/);
+  assert.match(src, /async function demoPrivate\(pool, user\) \{\n\s+try \{\n\s+await require\('\.\.\/services\/staging-messages'\)\.ensureBotDmFixture\(pool, user\);\n\s+return await aiWork\.privateFor\(pool, \{ user \}\);/);
   const { demoWork } = require('../src/routes/ai-work');
   const demo = demoWork();
   for (const row of [...demo.private, ...demo.needs, ...demo.next, ...demo.waiting, ...demo.live]) {
@@ -774,3 +778,98 @@ test('#6600: a takeover holds the person\'s own change while it runs, and says w
   assert.deepEqual(after.map((r) => [r.group, r.fixYours, !!r.botFixFailed, r.work.line]),
     [['needs', true, false, { code: 'checks_failing' }]]);
 });
+
+test('#6667: a request whose bot-made change was handed back waits on its asker, in Needs you', { timeout: 120000 }, async (t) => {
+  let Pool;
+  try { ({ Pool } = require('pg')); } catch { return t.skip('pg is not installed'); }
+  const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 3000 });
+  try { await admin.query('SELECT 1'); } catch (err) {
+    await admin.end();
+    if (process.env.TEST_DATABASE_URL) throw err;
+    return t.skip(`PostgreSQL unavailable: ${err.message}`);
+  }
+  const crypto = require('node:crypto');
+  const name = `ai_work_handback_${crypto.randomBytes(6).toString('hex')}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  const url = new URL(DSN);
+  url.pathname = `/${name}`;
+  const pool = new Pool({ connectionString: String(url), max: 6 });
+  t.after(async () => {
+    await pool.end();
+    await admin.query(`DROP DATABASE ${name}`);
+    await admin.end();
+  });
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  await require('../src/db/reference-data').seedReferenceData(pool);
+  await require('../src/db/schema-migrations').applySchemaWithLockRetry(pool);
+  require('../src/db/pool').getPool = () => pool;
+  const aiWork = require('../src/services/ai-work');
+  const workState = require('../src/services/work-state');
+
+  const one = async (sql, params) => (await pool.query(sql, params)).rows[0];
+  const user = (username, synthetic = false) => one(
+    `INSERT INTO users (username, password, is_synthetic) VALUES ($1, 'x', $2) RETURNING id, username`, [username, synthetic]);
+  const ada = await user('hb_ada');
+  const bob = await user('hb_bob');
+  // changeBotFix reads the bot by its username.
+  const bot = await user('homeroom_bot', true);
+  const app = await one(
+    `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+     VALUES ('Handback', 'hb-handback', 'running', $1, 'public', 'public') RETURNING id, slug`, [ada.id]);
+  for (const member of [ada, bob]) {
+    await pool.query(`INSERT INTO app_collaborators (app_id, user_id, status) VALUES ($1, $2, 'member')`, [app.id, member.id]);
+  }
+  // Ada asked Homeroom bot for it, so she is the request's requester.
+  await one(
+    `INSERT INTO requests (app_id, number, title, created_by) VALUES ($1, 100, 'The sticky Votes card', $2) RETURNING id`,
+    [app.id, ada.id]);
+  await pool.query('INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id) VALUES ($1, 100, $2)', [app.id, ada.id]);
+  // Bob is in the thread too, but did not ask for the request.
+  await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref) VALUES ($1, $2, 'looks good', 'issue', 100)`,
+    [app.id, bob.id]);
+  const head = 'a1b2c3d4e5f6';
+  const change = await one(
+    `INSERT INTO chat_sessions (app_id, user_id, status, pr_number, linked_issues, check_state, reviewed_head_sha, promoted_at, last_activity_at)
+     VALUES ($1, $2, 'promoted', 6615, '{100}', 'failing', $3, NOW(), NOW()) RETURNING id`,
+    [app.id, bot.id, head]);
+  const deps = { bot, liveSvc: { isStaging: () => false }, settings: { mode: 'live' } };
+  const read = async (who) => {
+    await workState.refresh(pool, [{ appId: app.id, issueNumber: 100 }]);
+    const work = await aiWork.workFor(pool, { user: { id: who.id }, deps });
+    const row = (list) => list.find((r) => Number(r.change?.id) === Number(change.id));
+    return { needs: row(work.needs), next: row(work.next), waiting: row(work.waiting) };
+  };
+
+  // Its checks fail, but the bot has not looked at it yet: Waiting, as today.
+  const fresh = await read(ada);
+  assert.equal(fresh.needs, undefined, 'a fresh failure does not move to Needs you');
+
+  // The bot tried and gave up, handing the fix to a person: the asker's.
+  await pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id, checks_head_sha, created_at)
+     VALUES ($1, 100, 'live', 'person', $2, $3, NOW())`,
+    [app.id, change.id, head]);
+  const handed = await read(ada);
+  assert.ok(handed.needs, 'the asker sees it in Needs you');
+  assert.deepEqual([handed.needs.group, handed.needs.botFixFailed, handed.needs.fixYours], ['needs', true, undefined]);
+  assert.equal(handed.next, undefined, 'not In progress');
+  assert.equal(handed.waiting, undefined, 'not Waiting under "Checking"');
+  assert.equal(handed.needs.work.stage, 'checking', 'the change\'s own stage stays as it is');
+  // Homeroom bot's own answer names the row the same way the tab does.
+  const answer = await aiWork.pageLists(pool, { user: { id: ada.id }, deps });
+  assert.match((answer.needsYou.find((r) => r.number === 100) || {}).says || '',
+    /Homeroom bot could not fix the change it made for their request/);
+
+  // Bob did not ask for it: he sees the row as he did before.
+  const bobRead = await read(bob);
+  assert.equal(bobRead.needs, undefined, 'another member is not asked to fix it');
+
+  // A fix waiting its turn holds it where it was.
+  await pool.query(
+    `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, enqueued_at)
+     VALUES ($1, 100, 2, 'checks_failing', NOW())`, [app.id]);
+  const queued = await read(ada);
+  assert.equal(queued.needs, undefined, 'a queued fix keeps it out of Needs you');
+});
+

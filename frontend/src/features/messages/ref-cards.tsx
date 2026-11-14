@@ -15,6 +15,7 @@
  */
 
 import { useMessages } from '../../lib/i18n/react';
+import { reducedMotion } from '../../lib/reduced-motion';
 import { issueRefHref } from './channels';
 import { ObjectCard } from './format';
 import { pageOf, type HomeroomLink } from './homeroom-links';
@@ -52,7 +53,7 @@ export function findRequestCard(from: Element, appSlug: string, n: number): HTML
 
 /** Bring a found card into view and light the message it hangs on. */
 export function revealCard(card: HTMLElement): void {
-  const still = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const still = reducedMotion();
   // #5050: the conversation's own scroller, never the screen around it.
   const scroller = card.closest<HTMLElement>('.messages-thread-scroll');
   if (scroller) centreInScroller(scroller, card, still ? 'auto' : 'smooth');

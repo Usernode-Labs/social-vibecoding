@@ -128,7 +128,7 @@
       "key": "CONTENT_REVIEW_MODE",
       "group": "Platform",
       "default": "advisory",
-      "description": "The Content rules check on every proposal (#2722): a model reads the proposal's diff against the conventions' Content rules section. off: no row. advisory (default): a flag shows on the checks but does not stop the merge. blocking: a flag fails the checks, so the proposal cannot merge until the content is fixed. Fails open on any error."
+      "description": "The Content rules check on every proposal (#2722): a model reads the diff against the conventions' Content rules section. off: no row. advisory (default): a flag shows on the checks but does not stop the merge. blocking: a flag fails the checks, so it cannot merge until the content is fixed. admin (#6642): the checks pass, but it merges only once an admin votes yes. Fails open on any error."
     },
     {
       "key": "TOKEN_ORDER_CHECK_MODE",
@@ -1549,7 +1549,7 @@
     {
       "name": "#apps, Discover's old address, opens Home on its Communities to join (One Home, #6361: the directory is Home's)",
       "path": "/#apps",
-      "expectSelector": "#home-screen:not(.hidden) #home-body #home-join-section:not([hidden]) > h2.home-area-label",
+      "expectSelector": "#home-screen:not(.hidden) #home-body #home-join-section:not([hidden]):not(:has([data-home-join],[data-guest-card-footer])) > h2.home-area-label",
       "expectText": "Communities to join"
     },
     {
@@ -2213,10 +2213,10 @@
       "expectText": "by this time last week"
     },
     {
-      "name": "Workshop: Your work is one row under Overview, opening Homeroom bot narrowed to this project",
+      "name": "Workshop: Your work is a row under Overview, opening Homeroom bot narrowed to this project, and under it New chat about the project, which opens a new chat with the bot set to it",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-dashboard] + [data-ws-desk] > a[data-ws-desk-open][href=\"#homeroom-bot?project=usernode-2d5619\"]",
-      "expectText": "Your work"
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-dashboard] + [data-ws-desk] > a[data-ws-desk-open][href=\"#homeroom-bot?project=usernode-2d5619\"] ~ a[data-ws-desk-new][href=\"#homeroom-bot/new?project=usernode-2d5619\"]",
+      "expectText": "New chat about"
     },
     {
       "name": "Hub: For you's Workshop row opens the project's Workshop",
@@ -3126,9 +3126,9 @@
       "expectText": "#general"
     },
     {
-      "name": "#6035: a community channel's message box wears the formatting row, Bold through Bulleted list, above the field",
+      "name": "#6035/#6653: a community channel's message box wears the formatting row, Bold through Insert link, above the field",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-composer-card > .messages-format-bar[role=\"toolbar\"] > .messages-format-btn[data-format=\"bold\"] ~ .messages-format-btn[data-format=\"bullet\"]"
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] .messages-composer-card > .messages-format-bar[role=\"toolbar\"] > .messages-format-btn[data-format=\"bold\"] ~ .messages-format-btn[data-format=\"strike\"] ~ .messages-format-btn[data-format=\"bullet\"] ~ .messages-format-btn[data-format=\"link\"]"
     },
     {
       "name": "#2783: ...while #123 in a message still reads as an issue reference, not a channel",
@@ -3570,9 +3570,9 @@
       "expectSelector": "[data-settings-section=\"cli\"]:not(.hidden) #cli-setup-guide ol"
     },
     {
-      "name": "Language settings offers Auto and English",
+      "name": "Language settings offers Auto and English, and a Time zone list with Auto (#6479)",
       "path": "/#settings/language",
-      "expectSelector": "#settings-section-content [data-settings-section=\"language\"]:not(.hidden) #settings-language-section:not(.hidden) #settings-locale:has(option[value=\"\"]):has(option[value=\"en\"])"
+      "expectSelector": "#settings-section-content:has(#settings-timezone-section #settings-timezone option[value=\"\"]) [data-settings-section=\"language\"]:not(.hidden) #settings-language-section:not(.hidden) #settings-locale:has(option[value=\"\"]):has(option[value=\"en\"])"
     },
     {
       "name": "Settings shows Admin preview to a real admin",
@@ -3934,7 +3934,7 @@
     {
       "name": "Admin Waitlist is a first-class menu section (#1179), with its Landing panel loaded",
       "path": "/#admin/waitlist",
-      "expectSelector": "#admin-topo-content:has(#admin-topo-wl-story .text-xs):has(#admin-topo-wl-search)",
+      "expectSelector": "#admin-topo-content:has(#admin-topo-wl-switch .text-xs):has(#admin-topo-wl-story .text-xs):has(#admin-topo-wl-search)",
       "expectText": "Signed-out visitors"
     },
     {
@@ -4020,9 +4020,9 @@
       "expectText": "Verdict"
     },
     {
-      "name": "Homeroom bot dashboard says it works for everyone on every app but the paused ones (#2684, #3710), beside its side builds, who asked not to be tagged (#3347), and how much it works on at once (#3624)",
+      "name": "Homeroom bot dashboard says it works for everyone on every app but the paused ones (#2684, #3710), beside its side builds, who asked not to be tagged (#3347), how much it works on at once (#3624), and who it works for: everyone let in, or verified accounts only (#6632)",
       "path": "/#admin/homeroom-bot",
-      "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-side-builds):has(#admin-homeroom-bot-optouts):has(#admin-homeroom-bot-live-at-once):has(#admin-homeroom-bot-per-person) #admin-homeroom-bot-intro",
+      "expectSelector": "#admin-homeroom-bot:has(#admin-homeroom-bot-side-builds):has(#admin-homeroom-bot-optouts):has(#admin-homeroom-bot-live-at-once):has(#admin-homeroom-bot-per-person):has(#admin-homeroom-bot-works-for #admin-homeroom-bot-works-for-everyone) #admin-homeroom-bot-intro",
       "expectText": "acts on every app but the"
     },
     {
@@ -4093,6 +4093,12 @@
       "path": "/?demo=1#admin/journey",
       "expectSelector": "#admin-journey-north-star",
       "expectText": "Active groups"
+    },
+    {
+      "name": "Admin Onboarding flows draws every person as a thread, in five views",
+      "path": "/?demo=1#admin/onboarding-flows",
+      "expectSelector": "#admin-onboarding-flows [data-tab=\"drop\"]",
+      "expectText": "Drop-offs"
     },
     {
       "name": "Analytics states the week's platform-key LLM spend (#1788)",
@@ -4604,6 +4610,12 @@
       "expectText": "Waiting on an admin"
     },
     {
+      "name": "#6643: a change held for an admin says so on its card, with the reason",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban [data-proposal-row=\"9000097\"] [data-release-hold]",
+      "expectText": "It lets the app send tokens."
+    },
+    {
       "name": "#2061: an automatic step says nobody has to act",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban [data-proposal-row=\"9000091\"] [data-req-headline]",
@@ -4636,7 +4648,7 @@
       "name": "#2219: Settings does not promise a revoke takes effect while the app is still open",
       "path": "/?demo=1#settings/app-permissions",
       "expectSelector": "[data-settings-section=\"app-permissions\"]:not(.hidden) #app-permissions-section",
-      "expectText": "the next time it opens"
+      "expectText": "If an app is open in this tab, revoking closes it"
     },
     {
       "name": "#2236: a note a coding agent posted through the connector wears a via agent chip beside the author on the topic's discussion",
@@ -4924,24 +4936,11 @@
       "expectText": "Invitation pending"
     },
     {
-      "name": "Main Chat with Homeroom bot is the conversation (#6207, 3 Nov 2026): a request the bot offers to file stays a message with File it and Not now, and no Write my own (#3624), quoting the message it answers (#3707), and no request's news is drawn there: that is on the request's page",
+      "name": "The old Main Chat address still lands (14 Nov 2026: every conversation with Homeroom bot is a thread): #homeroom-bot/main opens Earlier chat, the thread the old Main Chat messages were moved under (a new chat when there were none), alone in the column with the chat mounted threads only. A request the bot offered to file there is still a message with File it and Not now, and no Write my own (#3624), quoting the message it answers (#3707), and no request's news is drawn there: that is on the request's page (#6207)",
       "path": "/?demo=1#homeroom-bot/main",
-      "expectSelector": "#ai-main-pane .messages-thread-scroll:not(:has([data-request-tag])) .messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)",
-      "expectText": "Main Chat",
-      "id": "homeroom-bot-dm-question",
-      "visual": true,
-      "impact": [
-        "frontend/src/features/messages/**",
-        "src/services/homeroom-bot-dm.js",
-        "src/services/staging-messages.js"
-      ]
-    },
-    {
-      "name": "The Homeroom bot tab's list starts with Main Chat, the chat with the bot itself, drawn lit while it is the chat in the column beside the list, under its own name and that only you can see it (1 Nov 2026: the chat is the tab's alone; its Messages address lands here)",
-      "path": "/?demo=1#messages/910005",
-      "expectSelector": "#ai-screen:not(.hidden):has(#ai-main-pane[data-ai-column=main] > [data-ai-main-head] + .messages-layout[data-main-chat]) [data-ai-sheet=main] > [data-ai-main-row][data-ai-lit][aria-current=true]",
-      "expectText": "Main Chat",
-      "id": "homeroom-bot-main-chat-row",
+      "expectSelector": "#ai-screen:not(.hidden) #ai-main-pane[data-ai-column] > .messages-layout[data-bot-threads] > .messages-reply-pane:has([data-reply-head=alone]) .messages-reply-scroll:not(:has([data-request-tag])) .messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)",
+      "expectText": "Earlier chat",
+      "id": "homeroom-bot-old-main-address",
       "visual": true,
       "impact": [
         "frontend/src/features/ai/**",
@@ -4951,10 +4950,24 @@
       ]
     },
     {
-      "name": "#6207 (3 Nov 2026): Main Chat holds no request's news: no row about a request (a first version's news stays, having no request page yet), since a request's news is on its page, where its row on the Homeroom bot page goes",
-      "path": "/?demo=1#homeroom-bot/main",
-      "expectSelector": "#ai-main-pane[data-ai-column=main] .messages-thread-scroll:not(:has([data-request-tag]))",
-      "expectText": "Main Chat"
+      "name": "The Homeroom bot tab has no Main Chat row: its head has New chat, a labelled button beside search, and its lists are the threads you are in (14 Nov 2026; the chat is the tab's alone, and the demo chat's old Messages address lands here)",
+      "path": "/?demo=1#messages/910005",
+      "expectSelector": "#ai-screen:not(.hidden):not(:has([data-ai-main-row], [data-ai-main-head])) [data-ai-sheet=head] [data-ai-hero] > button[data-ai-search-toggle] + button[data-ai-new-chat]",
+      "expectText": "New chat",
+      "id": "homeroom-bot-new-chat",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/ai/**",
+        "frontend/src/features/messages/**",
+        "src/services/staging-messages.js",
+        "src/routes/conversations.js"
+      ]
+    },
+    {
+      "name": "#homeroom-bot/new?project=<slug> is New chat about a project (the second row of its Workshop's Your work card): What do you want to do?, with that project already on its chip, in the column beside the lists",
+      "path": "/?demo=1#homeroom-bot/new?project=usernode-2d5619",
+      "expectSelector": "#ai-main-pane[data-ai-column=new] [data-bot-new-thread-pane]:has([data-bot-new-thread-project=\"usernode-2d5619\"]) [data-bot-new-thread-start]",
+      "expectText": "New chat"
     },
     {
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",
@@ -5058,9 +5071,9 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "#6019: a request's changes follow it under a rule, each with its own line; a change built for a request has no page of its own now, so its title names it and is no door (one page per thread, 1 Nov 2026; staging fixture: the changes built for #900001)",
+      "name": "#6503 (#6019): a request links its similar open request and its changes follow it under a rule, each with its own line; a change built for a request has no page of its own now, so its title names it and is no door (one page per thread, 1 Nov 2026; staging fixture: the changes built for #900001)",
       "path": "/#app/usernode-2d5619/dev/issues/900001",
-      "expectSelector": "#gc-thread-head .dev-request-root > .min-w-0 > [data-thread-changes] [data-thread-change-line] > h3[data-thread-change-title]",
+      "expectSelector": "#gc-thread-head .dev-request-root:has([data-request-twin=\"9006503\"] a) > .min-w-0 > [data-thread-changes] [data-thread-change-line] > h3[data-thread-change-title]",
       "expectText": "Also closes"
     },
     {

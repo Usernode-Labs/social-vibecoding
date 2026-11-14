@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
+import { reducedMotion } from '../../lib/reduced-motion';
 
 import { t } from '../../lib/i18n/runtime';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -223,12 +224,8 @@ export function jumpLabel(arrived: number): string {
 }
 
 /** A glide the reader asked for, or a jump for a reader who asked for less motion. */
-export function scrollBehavior(win: { matchMedia?: (query: string) => { matches: boolean } } = globalThis as never): ScrollBehavior {
-  try {
-    return win.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
-  } catch {
-    return 'auto';
-  }
+export function scrollBehavior(win: Parameters<typeof reducedMotion>[0] = globalThis as never): ScrollBehavior {
+  return reducedMotion(win, true) ? 'auto' : 'smooth';
 }
 
 type Box = { getBoundingClientRect(): { top: number } };
@@ -403,14 +400,12 @@ export function useUnreadAffordances(
  * A message as this module reads it. Countable the way the server's unread
  * count is (services/conversations.js countUnread): the main stream only,
  * not deleted, not a platform line, and stored (a row still sending, or one
- * that failed, has no place among what was read). One request, one story: a
- * thread reply the chat with Homeroom bot also lists in its main stream
- * (`alsoInChat`, ./bot-shared.ts inMainStream) is part of that stream.
+ * that failed, has no place among what was read). A reply in a thread is no
+ * part of that stream (./bot-shared.ts inMainStream).
  */
 export function messageRow(
   message: {
     id: number; sender: { id: number }; threadRootId?: number | null; deleted?: boolean; system?: boolean; pending?: boolean; failed?: boolean;
-    metadata?: { homeroomBot?: { alsoInChat?: boolean } | null } | null;
   },
   viewerId: number,
 ): UnreadRow {

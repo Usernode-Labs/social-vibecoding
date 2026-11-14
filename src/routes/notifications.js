@@ -172,6 +172,19 @@ function stagingMockNotifications() {
       prTitle: null, branchName: 'dev/mockuser-1700000000000',
       prNumber: null, headlessIssueNumber: null,
     },
+    // #6643: a change held for an admin's approval, as a full admin's bell
+    // shows it: the warning sign, and the change's own name. Older than the
+    // story card above, which a declared check expects on top of its stack.
+    {
+      ...base,
+      id: 990231, kind: 'release_hold',
+      createdAt: new Date(now - 4.5 * 60 * 1000).toISOString(),
+      sourceUsername: 'staging-demo-user',
+      detail: 'wallet,people',
+      sessionId: 9000097,
+      sessionTitle: '[Mock] #6643: held for an admin, because it lets the app send tokens',
+      prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
     // #5929: the digest that waits on the reader, with no app as a real one
     // of several changes has, so a preview shows the amber chip and the
     // counted subject. Unread, and newest of the "Across Homeroom" group, so
@@ -408,6 +421,21 @@ function stagingMockNotifications() {
       sourceUsername: 'staging-demo-reviewer',
       sessionId: 990111,
       prTitle: '[Mock] Bigger buttons on phones', prNumber: 9903, headlessIssueNumber: null,
+    },
+    // A change the hold rules could not read in full, as a full admin's bell
+    // shows it (services/release-holds.js): told, not held, so no warning
+    // sign and no ask. Already read and the oldest row, so it sits at the end
+    // of the older ones and moves nothing a declared check expects on top.
+    {
+      ...base,
+      id: 990232, kind: 'release_hold',
+      createdAt: new Date(now - 13 * 24 * 60 * 60 * 1000).toISOString(),
+      readAt: new Date(now - 12 * 24 * 60 * 60 * 1000).toISOString(),
+      sourceUsername: 'staging-demo-user',
+      detail: 'notice:unread',
+      sessionId: 9000098,
+      sessionTitle: '[Mock] A large change that was not read in full',
+      prTitle: null, prNumber: null, headlessIssueNumber: null,
     },
   ];
 }

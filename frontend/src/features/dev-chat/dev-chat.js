@@ -12394,11 +12394,16 @@ const DevChat = {
       // so it follows the shared rule's other half directly: the year is
       // dropped inside the current one and printed outside it. Spelled here
       // rather than imported for the reason above.
+      const yearOf = (d) => (window.PlatformI18n?.zonedDay ? window.PlatformI18n.zonedDay(d).year : d.getFullYear());
       const builtAt = v.built_at ? new Date(v.built_at) : null;
       const built = builtAt && !Number.isNaN(builtAt.getTime())
-        ? builtAt.toLocaleString([], builtAt.getFullYear() === new Date().getFullYear()
-          ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
-          : { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+        ? builtAt.toLocaleString([], {
+          // #6479: in the zone picked in Settings › Language, else the
+          // device's, and the year is "this year" in that zone too.
+          ...(window.PlatformI18n?.timeZone?.() ? { timeZone: window.PlatformI18n.timeZone() } : {}),
+          ...(yearOf(builtAt) === yearOf(new Date()) ? {} : { year: 'numeric' }),
+          month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+        })
         : '';
       const isThisLatest = latest && v.version === latest.version;
       // The latest option carries the 'latest' value so re-selecting it

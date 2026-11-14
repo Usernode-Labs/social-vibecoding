@@ -110,7 +110,9 @@ test('#6387 the thread read says when it is loading, and settles on success or f
   const src = read(ITEMS);
   assert.match(src, /const loading = !!path && !data && settledPath !== path;/);
   assert.match(src, /\.then\(\(json\) => \{\s+if \(!live\) return;\s+setSettledPath\(path\);/);
-  assert.match(src, /\.catch\(\(\) => \{\s+if \(!live\) return;\s+setSettledPath\(path\);/);
+  // #6604: the read itself never rejects (a prefetched answer and a fetch
+  // both resolve null on failure), so one branch settles both outcomes.
+  assert.match(src, /const read: Promise<ThreadPayload \| null> = pre[\s\S]*?\.catch\(\(\) => null\);/);
   assert.match(src, /return \{ data, setData, reread: \(\) => setRevision\(\(n\) => n \+ 1\), loading \};/);
   assert.match(src, /const again = !!path && readPath\.current === path;/, 'a re-read of the same path keeps data, so it is never loading');
 });

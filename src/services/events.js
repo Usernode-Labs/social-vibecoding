@@ -251,6 +251,10 @@ const EVENT_TYPES = Object.freeze({
   INVITE_OPENED: 'invite_opened',
   INVITE_SIGNED_IN: 'invite_signed_in',
   FIRST_SESSION_LOOKED_AROUND: 'first_session_looked_around',
+  // An account let in at once because the waitlist was off when it signed
+  // up (#6633, services/waitlist.js admitIfOpen). Written once, with the
+  // grant; Admin › Journey reads it to say how the account came in.
+  OPEN_SIGNUP_LET_IN: 'open_signup_let_in',
   // Something on the platform that should not happen, kept for admins
   // (services/platform-incidents.js, #4210). metadata: { kind, ... } where
   // kind names the incident ('build_interrupted': a bot build a restart or

@@ -1,7 +1,8 @@
 /**
  * #4417: THE TRAY, the places list on a phone.
  *
- * Opened from the place bar's button (./place-bar.tsx), or by a swipe right
+ * Opened from the merged header's places button (./place-bar.tsx), or by a
+ * swipe right
  * that starts at the screen's left edge; a swipe left on it, Escape, the
  * scrim, the button again and the device's Back each close it. It slides in
  * from the left over a scrim, under the header (#5384: the header stays as
@@ -22,6 +23,7 @@
  */
 
 import { useEffect, useRef, type ReactNode } from 'react';
+import { reducedMotion } from '../../../lib/reduced-motion';
 import { createPortal } from 'react-dom';
 
 import { pushDismissible, type Release } from '../../../lib/back-stack';
@@ -207,7 +209,7 @@ export function PlacesTray({ id, label, onClose, closing, onClosed, returnTo, na
   useEffect(() => {
     if (!closing) return undefined;
     if (typeof window === 'undefined') return undefined;
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+    if (reducedMotion()) {
       closedRef.current?.();
       return undefined;
     }

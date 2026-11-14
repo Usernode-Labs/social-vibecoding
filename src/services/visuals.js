@@ -38,6 +38,7 @@ const checkSignals = require('./check-signals');
 const unitSuite = require('./unit-suite');
 const unitSuiteRow = require('./unit-suite-row');
 const contentReview = require('./content-review');
+const releaseHolds = require('./release-holds');
 const tokenOrderCheck = require('./token-order-check');
 const smallChange = require('./small-change');
 const assetRouteCheck = require('./asset-route-check');
@@ -61,7 +62,7 @@ function kubernetesCaptureOrigin(config, app, sessionId = null) {
   const cfg = config.kubernetes;
   if (!cfg?.appDomain) throw new Error('Kubernetes capture requires a configured ingress hostname');
   const hostname = sessionId != null
-    ? `${app.slug}--s${sessionId}.${cfg.appDomain}`
+    ? `${app.slug}--s${sessionId}.${cfg.previewDomain || cfg.appDomain}`
     : app.slug === config.selfAppSlug
       ? cfg.platformDomain
       : `${app.slug}.${cfg.appDomain}`;
@@ -2111,7 +2112,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
           [beforeSessionToken, captureUser.id, new Date(Date.now() + CAPTURE_AUTH_TTL_MS)]
         );
-        beforeCookie = `session=${beforeSessionToken}`;
+        beforeCookie = `${require('./browser-session-cookies').sessionCookieName()}=${beforeSessionToken}`;
       } catch (err) {
         beforeSessionToken = '';
         log.warn('visuals', 'Capture session-cookie mint failed — "before" unauthenticated', {
@@ -2894,6 +2895,15 @@ async function settleCaptureRun(config, pool, run) {
     pool, sessionId: session.id, appId: app.id, repoOwner, repoName, commitHash,
   }).catch(() => null);
   if (contentOutcome) extraRows.push(contentOutcome.row);
+  // #6643: read the same head against the rules that hold a change for an
+  // admin, with the review's verdict as one of them, and bring the change's
+  // hold in line. Adds no check row: the hold is a step of its own on the
+  // card. Cached per head. Never throws.
+  if (!shotsOnly) {
+    await releaseHolds.evaluate({
+      config, pool, session, app, repoOwner, repoName, commitHash, contentRow: contentOutcome?.row || null,
+    });
+  }
   // The sign-in token read after the bridge: a script this change adds
   // above the bridge tag that reads the token from the address opens the
   // app signed out inside Homeroom. Deterministic, cached per head, at

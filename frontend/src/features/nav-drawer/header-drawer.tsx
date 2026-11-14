@@ -1,6 +1,8 @@
 /**
- * THE HEADER, ON A PHONE'S COMMUNITY, MESSAGES AND HOMEROOM BOT (Evan's
- * design, 18 Oct 2026; 3 Nov 2026: "simplify on mobile").
+ * THE HEADER, ON A PHONE'S COMMUNITY AND MESSAGES (Evan's design, 18 Oct
+ * 2026; 3 Nov 2026: "simplify on mobile"; 14 Nov 2026: the Homeroom bot
+ * tab's two-level header went with Main Chat, and the tab keeps the plain
+ * header that names it, a thread drawing its own head under it).
  *
  * While one of them applies, the platform header draws three things of its
  * own in place of the places button and the community switcher:
@@ -9,22 +11,20 @@
  *                  GRID (the All communities glyph), which opens every
  *                  community you are in; on any other place of it the ARROW
  *                  up to the Hub (a page under a place, to that place). In
- *                  Messages and on the bot tab it is the arrow back to the
- *                  list, arriving from the right as the conversation slides
- *                  in. A button, not an href'd #back-btn: an arrow with an
+ *                  Messages it is the arrow back to the list, arriving from
+ *                  the right as the conversation slides in. A button, not an href'd #back-btn: an arrow with an
  *                  address is what turns on WebKit's own history swipe
  *                  (../header/native-back-navigation.ts).
  *   DrawerTitles   in the h1: the community over its place ("Workshop",
  *                  "#general"), the community alone on its Hub; in Messages
- *                  "Messages" or the conversation over who it is with; on
- *                  the bot tab "Homeroom bot" or "Main Chat" over its line.
+ *                  "Messages" or the conversation over who it is with.
  *   DrawerUntint   the bar as it is off a community, laid over the
  *                  community's colour. A community's page rests at the full
  *                  colour; its ink is the bar's white (`--nav-k`, app.css).
  *
  * Every one of them is drawn from its drawer's live depth (./drawer-math.ts
- * headerFrame): Messages' and the bot tab's move with their strips, a tap
- * animating them and a pan setting them from the finger; a community's
+ * headerFrame): Messages' moves with its strip, a tap animating it and a
+ * pan setting it from the finger; a community's
  * rests on its page (./drawer-store.ts). React renders the words; the
  * frames never re-render.
  */
@@ -40,29 +40,27 @@ import { useStoreState } from '../../lib/use-store-state';
 import { openPlace } from '../dev-board/workshop/place-store';
 import { litPlace, placeHandle, placeName, type PlaceKey } from '../dev-board/workshop/places';
 import { improveStore } from '../improve/improve-store.js';
-import { botBack, botDepth, botDrawerStore } from './bot-drawer';
 import { headerFrame, titleSlot, type HeaderFrame } from './drawer-math';
 import { communitiesDepth, drawerStore, reducedMotion, type DepthChannel } from './drawer-store';
 import { messagesBack, messagesDepth, messagesDrawerStore } from './messages-drawer';
 import { dirSign } from '../../lib/i18n/direction';
 
-type Mode = 'communities' | 'messages' | 'bot' | null;
+type Mode = 'communities' | 'messages' | null;
 
-/** Which drawer the header is drawn for: a community's, Messages', the bot tab's, or none. */
+/** Which drawer the header is drawn for: a community's, Messages', or none. */
 export function useDrawerMode(): Mode {
   const { on } = useStoreState(drawerStore);
   const { on: messages } = useStoreState(messagesDrawerStore);
-  const { on: bot } = useStoreState(botDrawerStore);
-  return on ? 'communities' : messages ? 'messages' : bot ? 'bot' : null;
+  return on ? 'communities' : messages ? 'messages' : null;
 }
 
-/** A drawer with no colour and two levels, list and conversation: Messages and the bot tab. */
+/** A drawer with no colour and two levels, list and conversation: Messages. */
 function twoLevel(mode: Mode): boolean {
-  return mode === 'messages' || mode === 'bot';
+  return mode === 'messages';
 }
 
 function channelOf(mode: Mode): DepthChannel {
-  return mode === 'messages' ? messagesDepth : mode === 'bot' ? botDepth : communitiesDepth;
+  return mode === 'messages' ? messagesDepth : communitiesDepth;
 }
 
 /** Draw `apply` from the drawer's live depth now, and on every change, while mounted. */
@@ -137,7 +135,6 @@ export function DrawerBack(): ReactNode {
   const { shown } = useStoreState(drawerStore);
   const { subTab } = useStoreState(improveStore) as { subTab: string | null };
   if (mode === 'messages') return <BackDisc mode={mode} label={t('core:header.drawer.toMessages')} onBack={messagesBack} />;
-  if (mode === 'bot') return <BackDisc mode={mode} label={t('core:header.drawer.toBot')} onBack={botBack} />;
   if (mode !== 'communities') return null;
   // A request's or a change's page has ONE back: the chip above its sheet,
   // which names the place it returns to (../dev-board/topic/topic-back.tsx,
@@ -185,10 +182,8 @@ export function DrawerTitles(): ReactNode {
   const mode = useDrawerMode();
   const { shown } = useStoreState(drawerStore);
   const conversation = useStoreState(messagesDrawerStore);
-  const bot = useStoreState(botDrawerStore);
   const messages = mode === 'messages';
-  const onBot = mode === 'bot';
-  const two = messages ? conversation : onBot ? bot : null;
+  const two = messages ? conversation : null;
   // A community's Hub names the community alone, beside the arrow home:
   // its title sits as a name alone does (headerFrame at 1), with no line.
   const hub = mode === 'communities' && shown.place === 'status';
@@ -240,7 +235,7 @@ export function DrawerTitles(): ReactNode {
   }, () => slot.current, redraw);
   // From the Hub to a place and back the page's line comes and goes.
   useEffect(() => { redraw.current(); }, [hub]);
-  const outerName = messages ? t('core:header.drawer.messages') : onBot ? t('core:tabs.ai') : t('core:header.communities');
+  const outerName = messages ? t('core:header.drawer.messages') : t('core:header.communities');
   return (
     <span ref={box} className="nav-drawer-titles" data-nav-drawer-titles="">
       <span ref={outer} className="nav-drawer-title" aria-hidden={!outerShown || undefined}>

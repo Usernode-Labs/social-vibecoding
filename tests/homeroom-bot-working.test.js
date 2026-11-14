@@ -895,13 +895,16 @@ test('in a thread, "status?" is about that thread; a screen asked for is drawn i
   const bare = mayor.systemPrompt({ username: 'evan', thread: { draft: null } });
   const rule = '- Here, "status?", "how is it going?" or "where are we?" means what they asked for in this thread: say what you\n'
     + '  are doing for it right now, or that nothing is under way yet and what happens next. Do not list the rest of\n'
-    + '  their page (my_work) unless they ask about everything.';
+    // 14 Nov 2026: every conversation is a thread now, so "where do things
+    // stand?" as the first words of a new one is about everything, as it was
+    // in Main Chat.
+    + '  their page (my_work) unless they ask about everything, or nothing has been asked for in this thread yet.';
   for (const prompt of [plus, bare]) {
     assert.ok(prompt.includes(`THIS CONVERSATION\n- They are writing in a thread of this chat, and the conversation below is that thread. Answer their newest\n  message here, in this thread.\n${rule}`));
   }
   assert.ok(plus.includes('When they want to see how a\n  screen could look, call draw_screen: it is drawn here, in this thread'), 'the "+" line is kept');
   const main = mayor.systemPrompt({ username: 'evan' });
-  assert.ok(!main.includes(rule), 'Main Chat keeps "status?" as the whole page');
+  assert.ok(!main.includes(rule), 'a prompt told of no thread keeps "status?" as the whole page');
   assert.match(main, /For "where do things stand\?", "what needs me\?" or "status\?", call my_work/);
   const request = mayor.systemPrompt({ username: 'evan', request: { appSlug: 'ear', appName: 'Ear Trainer', issueNumber: 12, title: 'Bigger keys' } });
   assert.ok(request.includes('- Here, "status?", "how is it going?" or "where are we?" means this request: say where it stands right now,\n'

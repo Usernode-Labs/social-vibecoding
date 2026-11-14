@@ -97,8 +97,9 @@ test('eight chart cards, every mark counted, no percentage printed, no links fro
   assert.match(src, /const UNIT_MAX = 24;/, 'small totals are drawn as countable units');
   assert.match(src, /<Ring label="The change loop, turns at each step"/, 'the change loop is drawn as a ring');
   assert.match(src, /<Ring label="The invite loop, people at each step"/, 'and so is the invite loop, on a card of its own');
-  assert.match(src, /className=\{scope\.cohort === 'invited' \? JUI\.mileGridInvited : JUI\.mileGrid\}/,
-    'the first-mile staircase and tracks share one grid, the invited cohort\'s with its own columns');
+  assert.match(src, /const grid = scope\.cohort === 'invited' \? JUI\.mileGridInvited : scope\.cohort === 'waiting' \? JUI\.mileGridWaiting : JUI\.mileGrid;/,
+    'the first-mile staircase and tracks share one grid, the invited and the waiting cohort\'s each with its own columns');
+  assert.match(src, /<div className=\{grid\}>/, 'and the card draws on that grid');
   assert.ok(!/<canvas|from '[^']*chart/i.test(src), 'no chart library: plain elements and one SVG');
   assert.ok(!/<a[\s>]|href=/.test(src), 'nothing is rendered as an anchor');
   assert.match(src, /location\.hash = `#admin\/support\/\$\{p\.userId\}`/,
@@ -123,6 +124,7 @@ test('every first-mile column says what it counts on a tap, and onboard follows 
   assert.match(src, /<OnboardCell onboard=\{p\.onboard\} \/>/, 'every track ends in its onboard cell');
   assert.match(src, /repeat\(11,minmax\(0,1fr\)\)/, 'the grid has the eleventh column: the mail\'s page and onboard');
   assert.match(src, /repeat\(7,minmax\(0,1fr\)\)/, 'and the invited cohort\'s six steps and onboard');
+  assert.match(src, /repeat\(6,minmax\(0,1fr\)\)/, 'and the waiting cohort\'s five steps and onboard');
 });
 
 test('the mail column tells opened from sent but not opened, and each cohort says its count (#6138)', () => {
@@ -133,8 +135,8 @@ test('the mail column tells opened from sent but not opened, and each cohort say
   assert.match(src, /if \(st && key === 'mail_sent'\) fill = mailFill\(p, st\.state\);/, 'each track\'s mail cell takes its shade');
   assert.match(src, /else if \(st && st\.unrecorded\) fill = MAIL_FILL\.untracked;/, 'and a step not recorded then is striped too');
   assert.match(src, /\{mailParts\.opened\}\/\{mailTracked\}/, 'the mail bar counts opened of tracked');
-  assert.match(src, /\{label\(m\.cohort\)\} · \{m\.people\.length\}\{cohortMail\(m\.people, nowMs\)\}/,
-    'the cohort line carries its mail');
+  assert.match(src, /\{label\(m\.cohort\)\} · \{m\.people\.length\}\{m\.total && m\.total > m\.people\.length \? ` of \$\{m\.total\}` : ''\}\{cohortMail\(m\.people, nowMs\)\}/,
+    'the cohort line carries its mail, and how many there are in all when the rows are fewer');
   assert.match(src, /of \$\{tracked\.length\} opened`/, 'as a count, not a rate');
   assert.match(src, /sent, not opened\$\{oldest != null \? `, \$\{Math\.floor\(\(nowMs - oldest\) \/ 86_400_000\)\} d`/,
     'and how long the oldest unopened mail has sat');

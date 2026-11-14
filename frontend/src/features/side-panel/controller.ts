@@ -80,8 +80,8 @@ import { INITIAL, sidePanelRefs, sidePanelStore } from './store.js';
 export const DESKTOP_QUERY = '(min-width: 1024px)';
 
 /**
- * 1 Nov 2026: beside the Homeroom bot tab's page the panel is the column
- * Main Chat docks in, which the page draws from 768px (features/ai/), so it
+ * 1 Nov 2026: beside the Homeroom bot tab's page the panel is the column a
+ * thread docks in, which the page draws from 768px (features/ai/), so it
  * takes a page there from 768px too: there is no app beside it to keep
  * 480px for. Keep in step with the `(max-width: 1023.98px)` rule for
  * #platform-side-panel in public/css/app.css.
@@ -144,7 +144,7 @@ export interface PanelHint {
 /**
  * The class on the panel DOCUMENT's <html> while the panel stands beside
  * the AI tab's page rather than an app. That page draws the panel as its
- * own column, with ‹ Main Chat and the project over it (./side-panel.tsx), so
+ * own column, with a × and the project over it (./side-panel.tsx), so
  * the page in it leaves out its own way back (app.css: the topic's
  * "‹ Workshop" chip), which would be a second one to somewhere else.
  */
@@ -373,10 +373,10 @@ function go(route: string, hint: PanelHint | null): void {
  *
  * BESIDE THE HOMEROOM BOT TAB, THE NATIVE APP TOO (1 Nov 2026). Unfolded and
  * held sideways, iPhone Duo draws the tab's page with Main docked, and a
- * request opened from its list took the whole screen instead of Main's
- * place. That page is a root with no back arrow, so the WebView's back swipe
+ * request opened from its list took the whole screen instead of the
+ * column's place. That page is a root with no back arrow, so the WebView's back swipe
  * is off there already (header/native-back-navigation.ts), and the column's
- * own ‹ Main Chat is the way back. Beside an app the native app keeps the
+ * own × is the way back. Beside an app the native app keeps the
  * whole screen.
  */
 export function canTake(): boolean {

@@ -421,6 +421,10 @@ async function finishProvenEmail(pool, email, result) {
   }
   if (result.created) {
     await waitlist.linkUserByEmail(pool, { userId: result.userId, email, newAccount: true });
+    // #6633: with the waitlist switched off, the account just made is let
+    // in at once. Before the waitlist spot below, which only an account
+    // still waiting gets.
+    await waitlist.admitIfOpen(pool, result.userId);
   }
   // #4083: an account the code proved and nothing let in has a waitlist
   // spot of its own, so an admin can find it there and let it in.

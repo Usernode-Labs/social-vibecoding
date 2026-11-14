@@ -106,7 +106,10 @@ test('one-time phone sign-ins, in production mode, against the full schema', { t
     app: group, user: { ...maya, isAdmin: false, hasPlatformAccess: true }, maxUses: 0,
   });
   assert.ok(made.ok);
-  const inviteCookie = `${invites.INVITE_COOKIE}=${made.link.token}`;
+  // Production names it `__Host-hr_invite` whatever the request says, and
+  // never reads the bare name (tests/protected-cookie-names.test.js).
+  const inviteCookie = `${invites.inviteCookieName({ headers: {} })}=${made.link.token}`;
+  assert.equal(inviteCookie.split('=')[0], '__Host-hr_invite');
 
   let currentUser = null;
   const app = express();

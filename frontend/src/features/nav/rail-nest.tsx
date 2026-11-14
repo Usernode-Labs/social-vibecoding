@@ -46,6 +46,7 @@
  */
 
 import { createContext, useContext, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
+import { reducedMotion } from '../../lib/reduced-motion';
 
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
@@ -53,10 +54,6 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 export const NEST_MS = 260;
 /** The curve both run on: quick to start, easing into place. */
 export const NEST_EASE = 'cubic-bezier(.3,.7,.2,1)';
-
-function reducedMotion(): boolean {
-  try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
-}
 
 /** Whether the part around this one is appearing in this same move. */
 const Appearing = createContext(false);

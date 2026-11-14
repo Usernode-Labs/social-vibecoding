@@ -437,7 +437,7 @@ test('the status card says what Homeroom bot is really doing, or waiting for', (
   // #6156: held for its turn among the project's builds, not for a vote.
   assert.equal(lead({ standing: standing('building', { whoseMove: 'bot', line: { code: 'held_builds' } }) }),
     'Ready to build · Waiting for one of the project\'s builds to finish');
-  assert.equal(lead({ standing: standing('reading', { whoseMove: 'bot', line: { code: 'queued', place: 2 } }) }), 'Not started yet · Number 2 in line');
+  assert.equal(lead({ standing: standing('reading', { whoseMove: 'bot', line: { code: 'queued', place: 2 } }) }), 'Not started yet. Number 2 in Homeroom bot’s line; it starts by itself.');
   // Its sentence is where the work stands: no "Plan v1 is ready for comments." after it.
   assert.match(fs.readFileSync(path.join(__dirname, '..', HEAD), 'utf8'), /const specLine = stage === 'spec' && !s\.botSays/);
   assert.equal(av._requestStatusView(issue({ standing: plan(false) })).botSays, true);
@@ -535,7 +535,10 @@ test('#6387 the row says a change is expected, so the page can hold its place', 
 
 test('#6387 the page holds the change section\'s place while its thread loads', () => {
   const head = fs.readFileSync(path.join(__dirname, '..', HEAD), 'utf8');
-  assert.match(head, /const holding = !r\.status\.closed && !!r\.status\.changeExpected && threadRead\.loading;/);
+  // #6604: the hold covers every open request now, not only one whose row
+  // says a change is expected: the plan card waits for the thread, so it is
+  // not drawn and then replaced by a change's line.
+  assert.match(head, /const holding = !r\.status\.closed && threadRead\.loading;/);
   // The held place counts as a working section, so the status card, the plan
   // and the bot's track give way to it as they do once it has loaded.
   assert.match(head, /const working = layout\.changes\.length > 0 \|\| \(!!layout\.close && layout\.close\.status === 'open'\) \|\| holding;/);

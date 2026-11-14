@@ -370,12 +370,18 @@ declare global {
       onChange(fn: (mode: string) => void): void;
     };
     /** The inline head-blocking display module in src/head.html (#3969):
-     *  text size and high contrast, as data-* attributes on <html>. */
+     *  text size, high contrast and reduce motion (#6510), as data-*
+     *  attributes on <html>. */
     Display?: {
       getTextSize(): 'normal' | 'large' | 'larger';
       setTextSize(size: string): void;
       getContrast(): boolean;
       setContrast(on: boolean): void;
+      /** The Reduce motion setting alone (off: the device decides). */
+      getMotion(): boolean;
+      setMotion(reduce: boolean): void;
+      /** The setting or the device's prefers-reduced-motion. */
+      reducedMotion(): boolean;
       apply(): void;
       onChange(fn: () => void): void;
     };

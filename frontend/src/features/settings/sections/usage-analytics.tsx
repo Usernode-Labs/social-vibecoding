@@ -38,6 +38,10 @@ export function UsageAnalyticsSection() {
         {t('settings:privacy.usageAnalytics.intro')}
       </SectionHeading>
       <div className={`${HELP} mt-3 space-y-3`} data-usage-analytics-kept>
+        {/* A neutral wrapper (looks v2): the two lists are one card under a
+            look, the two lines after it its notes. Same spacing as before
+            in the standard look. */}
+        <div className="ui-card ui-pad space-y-3">
         <div>
           <p className="font-medium text-zinc-700 dark:text-zinc-300">{t('settings:privacy.usageAnalytics.alwaysKept.title')}</p>
           <ul className="mt-1 list-disc ps-5 space-y-0.5">
@@ -52,6 +56,7 @@ export function UsageAnalyticsSection() {
             <li>{t('settings:privacy.usageAnalytics.alsoRecorded.screens')}</li>
             <li>{t('settings:privacy.usageAnalytics.alsoRecorded.speed')}</li>
           </ul>
+        </div>
         </div>
         <p>{t('settings:privacy.usageAnalytics.neverRecorded')}</p>
         <p data-usage-analytics-ask>

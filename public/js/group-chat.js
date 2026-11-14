@@ -3558,9 +3558,9 @@ const GroupChat = {
   },
 
   // The stages at which a card's request is still going (homeroom-bot-chat.js
-  // CARD_STAGES), or waiting on approval that may come in at any time, or on
-  // the project's first version going live.
-  _BOT_CARD_GOING: new Set(['waiting_first_version', 'reading', 'waiting', 'building', 'checking', 'proposed', 'approved', 'fixing']),
+  // CARD_STAGES), or waiting on approval that may come in at any time, on
+  // the project's first version going live, or on its requester's own plan.
+  _BOT_CARD_GOING: new Set(['waiting_first_version', 'reading', 'waiting', 'waiting_plan', 'building', 'checking', 'proposed', 'approved', 'fixing']),
 
   // Whether one card still has somewhere to go.
   _botCardGoing(card) {
@@ -3641,14 +3641,16 @@ const GroupChat = {
     } catch { /* it comes back on the next load, and can be dismissed again */ }
   },
 
-  // B9: the chat with Homeroom bot (See progress, Open chat). 16 Oct 2026
-  // (C4): See progress opens it at the request's own thread, its story.
+  // B9: Homeroom bot, from a request's card here (See progress, Open chat).
+  // 16 Oct 2026 (C4): See progress opens the request's own story: its plan's
+  // thread, else its page. 14 Nov 2026: Open chat, with no request, is a new
+  // chat with the bot set to this project (there is no Main Chat to open).
   openBotChat(issueNumber) {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
     const n = Number(issueNumber);
     if (messages && n && GroupChat.appSlug && typeof messages.openBotRequest === 'function') messages.openBotRequest(GroupChat.appSlug, n);
-    else if (messages && typeof messages.openBot === 'function') messages.openBot();
-    else location.hash = '#messages';
+    else if (messages && typeof messages.openBot === 'function') messages.openBot(GroupChat.appSlug ? { type: 'app', appSlug: GroupChat.appSlug } : undefined);
+    else location.hash = '#homeroom-bot';
   },
 
   // Fix in place: the change a fix went to, on its page (See change).
@@ -3751,20 +3753,27 @@ const GroupChat = {
     // (#6103) — the same rule lib/timestamp.ts reads. The device default
     // stands where the runtime predates it, or where this file is evaluated
     // without one (a bare test sandbox).
-    const locale = typeof PlatformI18n !== 'undefined' && PlatformI18n.dateLocale
-      ? PlatformI18n.dateLocale() : undefined;
+    const i18n = typeof PlatformI18n !== 'undefined' ? PlatformI18n : null;
+    const locale = i18n && i18n.dateLocale ? i18n.dateLocale() : undefined;
+    // The zone the account picked (#6479), and the day an instant falls on
+    // in it; the device's own where none is picked or the runtime predates it.
+    const timeZone = i18n && i18n.timeZone ? i18n.timeZone() : undefined;
+    const zone = timeZone ? { timeZone } : {};
+    const dayOf = (x) => (i18n && i18n.zonedDay
+      ? i18n.zonedDay(x)
+      : { year: x.getFullYear(), month: x.getMonth() + 1, day: x.getDate() });
     // No zero-padded hour (polish N5): "4:14 AM", as lib/timestamp.ts.
-    const time = d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
+    const time = d.toLocaleTimeString(locale, { ...zone, hour: 'numeric', minute: '2-digit' });
     const title = d.toLocaleString(locale, {
-      year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+      ...zone, year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     });
-    const sameDay = d.getFullYear() === today.getFullYear()
-      && d.getMonth() === today.getMonth()
-      && d.getDate() === today.getDate();
+    const a = dayOf(d);
+    const b = dayOf(today);
+    const sameDay = a.year === b.year && a.month === b.month && a.day === b.day;
     if (sameDay) return { text: time, title };
-    const date = d.toLocaleDateString(locale, d.getFullYear() === today.getFullYear()
-      ? { month: 'short', day: 'numeric' }
-      : { year: 'numeric', month: 'short', day: 'numeric' });
+    const date = d.toLocaleDateString(locale, a.year === b.year
+      ? { ...zone, month: 'short', day: 'numeric' }
+      : { ...zone, year: 'numeric', month: 'short', day: 'numeric' });
     return { text: `${date}, ${time}`, title };
   },
 

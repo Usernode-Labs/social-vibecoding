@@ -94,7 +94,7 @@ const AUTHORIZE_SQL = `
               )))
             ))
           ))
-          AND (n.kind NOT IN ('openrouter_key_review', 'platform_limit', 'platform_incident')
+          AND (n.kind NOT IN ('openrouter_key_review', 'platform_limit', 'platform_incident', 'release_hold')
             OR (u.is_admin AND NOT u.admin_readonly))
       ) live_notification
     ) shown ON TRUE
