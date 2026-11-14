@@ -1,17 +1,24 @@
 'use strict';
 
-// #6250 (4 Nov 2026): a private thread's ORIGIN decides what Main Chat shows
-// of it (Evan, 4 Nov). A thread started from the bot's "+" stays out of Main
-// altogether: its opener line and its replies are left out of Main's stream,
-// its unread count and its preview, old and new, and the Homeroom bot page's
-// list is the only way in. A thread the bot opened from Main, answering what
-// the person said there, quotes that message (`reply_to_id`) and stays in
-// Main as the way to its row; one opened from a request's page or a captured
-// screen has its own kind (`opened_about`, `opened_design`) and stays too.
-// The server's tests are conversations.js PLUS_THREAD_OPENER (the line) and
-// PLUS_THREAD_REPLY (a reply in such a thread); the client's copies, for a
-// message that arrives live, are bot-request.ts isPlusThreadOpener and
-// bot-shared.ts alsoInChat (the root's `plusThread`).
+// A THREAD STARTED FROM NEW CHAT, AS THE SERVER TELLS IT APART (#6250, 4 Nov
+// 2026; renamed from main-chat-private-thread on 14 Nov 2026).
+//
+// The rule was written for Main Chat: a thread started from the bot's "+"
+// stayed out of Main altogether (its opener line and its replies), while one
+// the bot opened from Main, from a request's page or from a captured screen
+// kept its line there. Main Chat is gone and every conversation with the bot
+// is a thread, so no screen draws that stream any more. What is still true,
+// and still pinned here:
+//
+//   - the server's two predicates (conversations.js PLUS_THREAD_OPENER, the
+//     line that opens such a thread; PLUS_THREAD_REPLY, a reply in one) still
+//     shape the conversation's own stream, its preview and its count, which
+//     an older client and the connector still read;
+//   - the client's copy of the first (bot-request.ts isPlusThreadOpener)
+//     reads a live message the same way;
+//   - the client no longer reads the `alsoInChat` stamp that listed a
+//     thread's reply in Main as well: a reply is never a position in a
+//     conversation's own stream (bot-shared.ts inMainStream).
 //
 // The predicates run against PostgreSQL when one is reachable (as the
 // repository's other *-postgres suites do), else that part skips.
@@ -45,7 +52,7 @@ const ROWS = [
   { id: 12, meta: { kind: 'question', alsoInChat: true }, reply: null, root: 3, opener: false, plusReply: false, why: 'a ringing reply in a thread the bot opened from Main' },
 ];
 
-test('the client and the server agree on which private thread stays out of Main Chat', () => {
+test('the client and the server agree on which thread was started from New chat', () => {
   const { isPlusThreadOpener } = loadTsx('frontend/src/features/messages/bot-request.ts');
   const BOT = { id: 2, username: 'homeroom_bot', bot: true };
   const quote = { id: 9, sender: { id: 7, username: 'ada' }, content: '', deleted: false };
@@ -64,16 +71,18 @@ test('the client and the server agree on which private thread stays out of Main 
   assert.equal(isPlusThreadOpener({ ...said({ kind: 'opened_thread' }), sender: { id: 7, username: 'ada' } }), false,
     'never a person\'s line');
 
-  // A reply in a plus thread is not a position in Main, though it rings.
-  const { alsoInChat, inMainStream } = loadTsx('frontend/src/features/messages/bot-shared.ts');
+  // A reply is never a position in the conversation's own stream, whatever
+  // its thread started from and whatever stamp an old message carries.
+  const shared = loadTsx('frontend/src/features/messages/bot-shared.ts');
   const plus = { id: 2, senderUsername: 'homeroom_bot', content: 'New thread.', deleted: false, plusThread: true };
   const main = { ...plus, plusThread: undefined };
-  const moment = { threadRootId: 2, threadRoot: main, metadata: { homeroomBot: { kind: 'question', alsoInChat: true } } };
-  assert.equal(alsoInChat(moment), true, 'a moment in a Main-started thread is Main\'s');
-  assert.equal(alsoInChat({ ...moment, threadRoot: plus }), false, 'a moment in a "+" thread stays out');
-  assert.equal(inMainStream({ ...moment, threadRoot: plus }), false);
+  const stamped = { threadRootId: 2, threadRoot: main, metadata: { homeroomBot: { kind: 'question', alsoInChat: true } } };
+  assert.equal(shared.inMainStream(stamped), false);
+  assert.equal(shared.inMainStream({ ...stamped, threadRoot: plus }), false);
+  assert.equal(shared.inMainStream({ threadRootId: null }), true);
+  assert.equal(shared.alsoInChat, undefined, 'the stamp has no reader');
 
-  // Main draws only the "+" thread's opener line out, live or read.
+  // A conversation's own stream leaves the "+" thread's opener line out, live or read.
   const index = read('frontend/src/features/messages/index.tsx');
   assert.match(index, /if \(botDm && isPlusThreadOpener\(message\)\) continue;/);
   // The stream, the preview and the unread count all leave the plus thread out.

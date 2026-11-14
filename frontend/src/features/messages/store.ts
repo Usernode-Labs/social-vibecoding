@@ -693,9 +693,7 @@ let focusLoaded: number | null = null;
  * The newest message of the conversation itself on screen — the read cursor's
  * position. Since the #2387 follow-up the main stream also carries its
  * threads' replies as lines, and a reply is no position in it: the server
- * reads a thread when handed one, and leaves the cursor where it was. One
- * request, one story: a moment the chat with Homeroom bot also lists in its
- * main stream (`alsoInChat`) is a position in it, as the server counts it.
+ * reads a thread when handed one, and leaves the cursor where it was.
  */
 function newestMainId(messages: ConversationMessage[]): number | null {
   for (let i = messages.length - 1; i >= 0; i -= 1) {

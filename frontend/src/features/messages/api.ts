@@ -332,7 +332,6 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       requestTitle: optional('requestTitle'),
       waiting: optional('waiting'),
       ...(countOf(pick(bot, 'count')) !== null ? { count: countOf(pick(bot, 'count'))! } : {}),
-      ...(pick(bot, 'alsoInChat') === true ? { alsoInChat: true } : {}),
       ...(makeProject ? { makeProject } : {}),
       madeSlug: optional('madeSlug'),
       madeName: optional('madeName'),

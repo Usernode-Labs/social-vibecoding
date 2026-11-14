@@ -35,7 +35,7 @@ import { NO_PLAN_LAYOUT, asksWithQuestionsCard, isPlanMessage, planLayout } from
 import { botMeta } from './bot-question';
 import { isReadyMessage } from './bot-ready';
 import {
-  alsoInChat, botRequestNames, botThreadTitle, changeBlocks, dotText, threadsAllowed, type ChangeBlock,
+  botRequestNames, botThreadTitle, changeBlocks, dotText, threadsAllowed, type ChangeBlock,
 } from './bot-shared';
 import { BotWorkSync, loadBotWork, newestBotMessageId, useBotWork, useWorkChanged } from './bot-work';
 import {
@@ -2475,17 +2475,11 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     // the run of replies to that thread with nothing else said between them
     // on the same day. A deleted reply is gone from the run; the next message
     // after the card carries its own name.
-    //
-    // One request, one story: in the chat with Homeroom bot the replies the
-    // main stream lists are the moments that ring (`alsoInChat`), each drawn
-    // whole, buttons and all, under its "↳ in …" label (./message-row.tsx),
-    // not as a line about the thread.
-    const moment = botDm && alsoInChat(message);
-    if (message.threadRootId && !moment) {
+    if (message.threadRootId) {
       const run = [message];
       while (index + 1 < snap.messages.length) {
         const next = snap.messages[index + 1];
-        if (next.threadRootId !== message.threadRootId || dayKey(next) !== day || (botDm && alsoInChat(next))) break;
+        if (next.threadRootId !== message.threadRootId || dayKey(next) !== day) break;
         run.push(next);
         index += 1;
       }
@@ -2499,8 +2493,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     // A failed or unsent row is its own line: it carries a status of its own.
     // So is a platform line (a Homeroom line kept as the root of a thread),
     // which has no author to share a name with the row above.
-    // A moment carries its own label and name: never a continuation line.
-    const grouped = !moment && !!previous && !previous.failed && !message.failed
+    const grouped = !!previous && !previous.failed && !message.failed
       && !previous.system && !message.system
       && groupsWithPrevious(
         { author: previous.sender.id, at: previous.createdAt },
@@ -2524,7 +2517,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
       quoteAgain={quoteAgain}
     />);
     if (botDm && message.sender.bot && message.reply) quoted = message.reply.id;
-    previous = moment ? null : message;
+    previous = message;
     const length = runs.get(index);
     const runKey = String(message.clientKey || message.id);
     if (length && !expandedRuns.has(runKey)) {

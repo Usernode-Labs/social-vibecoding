@@ -400,14 +400,12 @@ export function useUnreadAffordances(
  * A message as this module reads it. Countable the way the server's unread
  * count is (services/conversations.js countUnread): the main stream only,
  * not deleted, not a platform line, and stored (a row still sending, or one
- * that failed, has no place among what was read). One request, one story: a
- * thread reply the chat with Homeroom bot also lists in its main stream
- * (`alsoInChat`, ./bot-shared.ts inMainStream) is part of that stream.
+ * that failed, has no place among what was read). A reply in a thread is no
+ * part of that stream (./bot-shared.ts inMainStream).
  */
 export function messageRow(
   message: {
     id: number; sender: { id: number }; threadRootId?: number | null; deleted?: boolean; system?: boolean; pending?: boolean; failed?: boolean;
-    metadata?: { homeroomBot?: { alsoInChat?: boolean } | null } | null;
   },
   viewerId: number,
 ): UnreadRow {

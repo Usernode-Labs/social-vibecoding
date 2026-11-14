@@ -21,8 +21,8 @@ import { BotQuestion, botMeta } from './bot-question';
 import { BotPlanCard, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './bot-plan';
 import { BotThanksCard, isThanksMessage } from './bot-thanks-card';
 import { BotReadyCard, isReadyMessage } from './bot-ready';
-import { alsoInChat, botRequestNames, botThreadLabel, threadsAllowed, type ChangeBlock } from './bot-shared';
-import { openRequestPage, requestPageOf } from './request-page';
+import { threadsAllowed, type ChangeBlock } from './bot-shared';
+import { requestPageOf } from './request-page';
 import { BotHeadWords, botHead, draftPreviewOf, isHeadCard } from './bot-head-card';
 import { DesignVersionCard, designVersionOf } from './design-card';
 import { BotRichCard, botCardOf } from './bot-cards';
@@ -229,8 +229,7 @@ export const MessageRow = memo(function MessageRow({
   const slowSend = useSlowSend(!!message.pending, message.createdAt);
   // Threads where the chat keeps them (./bot-shared.ts threadsAllowed). In
   // the chat with Homeroom bot a thread is a request's: it hangs off the
-  // request's card (or a message that already has one), and a moment the
-  // main chat also shows (`alsoInChat`) opens the thread it was posted in.
+  // request's card (or a message that already has one).
   const threads = threadsAllowed({ kind, homeroomBot: botChat });
   // 31 Oct 2026: in the chat with Homeroom bot a request's story is the
   // request's own page (./request-page.ts), so its news opens that and has
@@ -240,9 +239,6 @@ export const MessageRow = memo(function MessageRow({
     : message.threadRootId ? message.threadRootId
       : kind !== 'direct' || isActivityMessage(message) || message.thread ? message.id : null;
   const canThread = threadRoot !== null;
-  // The label over such a moment: "↳ in Dark mode · Plant Pal".
-  const inChatLabel = !inThread && threads && alsoInChat(message) && message.sender.bot
-    ? botThreadLabel(botRequestNames(botMeta(message))) : null;
   // A quiet step line in a request's thread ("Reading it.", "Built. Testing it…").
   const step = !!message.sender.bot && message.metadata?.homeroomBot?.kind === 'step';
   const scope = scopeKey(conversationId, inThread ? message.threadRootId : null);
@@ -644,14 +640,6 @@ export const MessageRow = memo(function MessageRow({
             hears which request these words are about, as the block's top
             shows. */}
         {dropHead ? <span className="sr-only">{spokenLabel}</span> : null}
-        {inChatLabel && message.threadRootId ? (
-          <button
-            type="button"
-            className="block max-w-full truncate text-start text-[0.8125rem] font-medium text-zinc-500 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-100"
-            data-bot-thread-label={message.threadRootId}
-            onClick={() => (story ? openRequestPage(story) : openThread(message.threadRootId as number))}
-          >{inChatLabel}</button>
-        ) : null}
         {/* #5680: in a conversation the words sit in a bubble on their
             sender's side; the head above them, and everything under them
             (pictures, shared items, reactions, a thread) stays outside it. */}

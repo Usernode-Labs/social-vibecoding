@@ -180,8 +180,6 @@ export interface HomeroomBotMeta {
   waiting?: string;
   /** An on-hold summary: how many of the person's requests are held. */
   count?: number;
-  /** A moment in a request's thread the main chat also lists, under its "↳ in …" label. */
-  alsoInChat?: boolean;
   /**
    * 1 Nov 2026 (C2.4): the new project a design's card offers to make (kind
    * `make_offer`): its name, the design's thread and version. Once made, the
@@ -774,9 +772,9 @@ export interface ThreadRootRef {
   content: string;
   deleted: boolean;
   /**
-   * #6250: the thread was started from the bot's "+", so neither its opener
-   * line nor its replies are in Main Chat (bot-shared.ts alsoInChat). A
-   * thread the bot opened from Main stays, as the way to its row.
+   * #6250: the thread was started from the bot's "+" (New chat). It kept the
+   * thread's opener line and its replies out of Main Chat while there was
+   * one; the server still says it, and a thread's name reads it.
    */
   plusThread?: boolean;
 }

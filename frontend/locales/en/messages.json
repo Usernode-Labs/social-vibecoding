@@ -2903,22 +2903,6 @@
     "text": "{{count}} updates in its thread ›",
     "description": "Button under a request's card in the chat with Homeroom bot: opens the request's thread, where the bot posts each step and its news. {{count}} is how many messages the thread holds."
   },
-  "row.botThread.in": {
-    "text": "↳ in {{request}} · {{project}}",
-    "description": "Small label over a message from Homeroom bot shown in the main chat that was posted in a request's thread; tapping it opens that thread. {{request}} is the request's title and {{project}} the project's name."
-  },
-  "row.botThread.inFirstVersion": {
-    "text": "↳ in {{project}} first version · {{project}}",
-    "description": "Small label over a message from Homeroom bot shown in the main chat that was posted in the thread about a project's first version; tapping it opens that thread. {{project}} is the project's name, said twice: the thread's name, then the project."
-  },
-  "row.botThread.inNumbered": {
-    "text": "↳ in request #{{number}} · {{project}}",
-    "description": "Small label over a message from Homeroom bot shown in the main chat that was posted in a request's thread, when the request has no title; tapping it opens that thread. {{number}} is the request's number, keep the #; {{project}} is the project's name."
-  },
-  "row.botThread.inProject": {
-    "text": "↳ in its thread · {{project}}",
-    "description": "Small label over a message from Homeroom bot shown in the main chat that was posted in a request's thread, when the request has neither title nor number; tapping it opens that thread. {{project}} is the project's name."
-  },
   "row.menu.replyInThread": {
     "text": "Reply in thread",
     "description": "Item in a message's actions menu: opens a thread under the message to reply there."
