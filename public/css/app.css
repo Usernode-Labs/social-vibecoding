@@ -723,18 +723,6 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 /* THE HISTORY ABOVE A COMPOSER reserves no band at its foot, only the
    transcript's own 12px end: `.chat-transcript`, under "A chat's foot"
    above, which every chat's scroller wears (1 November 2026). */
-/* THE BOT'S CHAT, OPENING (features/messages/open-hold.ts). Its rows are
-   laid out, so the transcript can tell whether they fill the screen, and
-   not seen until they are what it will stay as; the spinner stays at the
-   top of the scroller over them, however far down it is scrolled. */
-.messages-thread-pane[data-opening] > .messages-thread-scroll > :not(.messages-state),
-.messages-thread-pane[data-opening] > [data-transcript-overlay] {
-  visibility: hidden;
-}
-.messages-thread-pane[data-opening] > .messages-thread-scroll > .messages-state {
-  position: sticky;
-  top: 0;
-}
 
 /* A conversation row, drawn straight on the strip: the square swatch
    avatar, then two lines — the name with the time on its trailing edge, the
@@ -1187,45 +1175,6 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 @media (hover: none) {
   .messages-message-gutter { visibility: visible; }
 }
-
-/* ── The bot's change blocks (#4564) ────────────────────────────────────
-   In the chat with Homeroom bot, everything it says about one change is
-   one outlined block led by that change's card: the same hairline and
-   rounding the cards already wear (20px, one hairline, no fill, so the
-   cards inside keep their own surface), drawn around them. The rows keep
-   every part of a row they had — their id, their data, their action bar —
-   and only the outline and the vertical padding between them change, so
-   the line runs unbroken where one row continues into the next. The part
-   classes sit on the row (message-row.tsx); the box they draw is its
-   content column, which is where the cards already stop (`.messages-
-   object-list`'s 480px, plus this padding). The phone's row padding
-   (the @media rule above for .messages-message) stays: a narrow column
-   keeps the same 12px inside the line. */
-.messages-bot-block-body {
-  max-width: 506px;
-  padding: 0 12px;
-  border-inline-start: 1px solid var(--app-sheet-line);
-  border-inline-end: 1px solid var(--app-sheet-line);
-}
-.messages-bot-block-first .messages-bot-block-body,
-.messages-bot-block-only .messages-bot-block-body {
-  border-top: 1px solid var(--app-sheet-line);
-  border-start-start-radius: 20px; border-start-end-radius: 20px; border-end-end-radius: 0; border-end-start-radius: 0;
-  padding-top: 10px;
-}
-.messages-bot-block-last .messages-bot-block-body,
-.messages-bot-block-only .messages-bot-block-body {
-  border-bottom: 1px solid var(--app-sheet-line);
-  border-start-start-radius: 0; border-start-end-radius: 0; border-end-end-radius: 20px; border-end-start-radius: 20px;
-  padding-bottom: 10px;
-}
-.messages-bot-block-only .messages-bot-block-body { border-radius: 20px; }
-.messages-bot-block-first, .messages-bot-block-only { margin-top: 6px; }
-/* The row's own vertical padding gives way where the block continues, so
-   the outline is unbroken from the top of its first row to the foot of its
-   last. */
-.messages-bot-block-first, .messages-bot-block-middle { padding-bottom: 0; }
-.messages-bot-block-middle, .messages-bot-block-last { padding-top: 0; }
 
 /* ── A conversation has sides (#5680) ───────────────────────────────────
    A direct message and a group chat draw each message on its sender's side,
@@ -27650,11 +27599,10 @@ html[data-skin] [data-home-frame] :is(#home-waitlist-card, #home-verify-card, #h
 html[data-skin] [data-home-frame] #app-list { color: var(--fr-ink); }
 html[data-skin] [data-home-frame] #widget-strip { border-color: var(--fr-line); background: var(--fr-surface); }
 
-/* THE BOT'S CARDS AND LINES IN A CONVERSATION, UNDER A LOOK (the tour's
-   s10). The cards under a message wear the kit's rows in one card and the
-   bot's news lines the kit's event line (looks.json wear); the product's
-   own fills, corners and gaps step aside here so the look's are the ones
-   drawn. A card on its own (a file) keeps its padding. */
+/* THE BOT'S CARDS IN A CONVERSATION, UNDER A LOOK (the tour's s10). The
+   cards under a message wear the kit's rows in one card (looks.json wear);
+   the product's own fills, corners and gaps step aside here so the look's
+   are the ones drawn. A card on its own (a file) keeps its padding. */
 html[data-skin] .messages-message .messages-object-list { gap: 0; }
 html[data-skin] .messages-message .messages-object-list > :is(.messages-object-card, .messages-pending-object) { border-radius: 0; background: none; box-shadow: none; }
 html[data-skin] .messages-message .messages-object-list > .messages-object-card:hover { background: var(--fr-line2); }
@@ -27662,10 +27610,6 @@ html[data-skin] .messages-message :is(.messages-object-icon, .messages-file-icon
 html[data-skin] .messages-message .messages-object-card :is(.text-base, .text-sm, .text-xs) { color: var(--fr-ink); }
 html[data-skin] .messages-message .messages-object-card :is(.text-sm, .text-xs, span:last-child) { color: var(--fr-mut); }
 html[data-skin] .messages-message .messages-attachment { background: var(--fr-surface); }
-html[data-skin] :is(.messages-bot-news > button, .messages-bot-settled-run > div) :is(.text-\[14px\], .text-\[13px\]) { font-size: 13px; color: var(--fr-mut); }
-html[data-skin] .messages-bot-news > button .text-\[14px\] { color: var(--fr-ink); }
-html[data-skin] .messages-bot-news > button:hover { background: var(--fr-line2); }
-html[data-skin] .messages-bot-news :is([data-bot-badge], [data-bot-settled-tile]) { background: var(--fr-sunk); }
 
 /* A LIST BESIDE ITS OPEN ITEM (the kit's split: Homeroom bot's page). The
    screen stays the scroller and keeps its own column for the open item;
@@ -30117,9 +30061,9 @@ html[data-skin] .fr-post .fr-txt b{color:var(--fr-acc);font-weight:600}
 html[data-skin] .fr-post .fr-re,html[data-skin]:where(:not([data-skin="brand"])) .messages-message .fr-re{display:inline-flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;font-weight:600;color:var(--fr-acc)}
 html[data-skin] .fr-day,html[data-skin]:where(:not([data-skin="brand"])) .messages-day,html[data-skin]:where(:not([data-skin="brand"])) .messages-reply-pane > .messages-thread-scroll > .messages-reply-count{display:flex;align-items:center;gap:12px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fr-faint)}
 html[data-skin] .fr-day::before,html[data-skin]:where(:not([data-skin="brand"])) .messages-day::before,html[data-skin]:where(:not([data-skin="brand"])) .messages-reply-pane > .messages-thread-scroll > .messages-reply-count::before,html[data-skin] .fr-day::after,html[data-skin]:where(:not([data-skin="brand"])) .messages-day::after,html[data-skin]:where(:not([data-skin="brand"])) .messages-reply-pane > .messages-thread-scroll > .messages-reply-count::after{content:"";flex:1;height:1px;background:var(--fr-line2)}
-html[data-skin] .fr-evt,html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event,html[data-skin]:where(:not([data-skin="brand"])) :is(button:is(.messages-bot-news > *),div:is(.messages-bot-settled-run > *)){display:flex;align-items:center;gap:12px;font-size:13px;color:var(--fr-mut);min-width:0}
-html[data-skin] .fr-evt .fr-ei,html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event .dev-request-event-glyph,html[data-skin]:where(:not([data-skin="brand"])) :is(button:is(.messages-bot-news > *),div:is(.messages-bot-settled-run > *)) :is([data-bot-badge],[data-bot-settled-tile]){width:32px;height:24px;display:grid;place-items:center;flex:none;color:var(--fr-faint)}
-html[data-skin] .fr-evt b,html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event b,html[data-skin]:where(:not([data-skin="brand"])) :is(button:is(.messages-bot-news > *),div:is(.messages-bot-settled-run > *)) b{color:var(--fr-ink);font-weight:650}
+html[data-skin] .fr-evt,html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--fr-mut);min-width:0}
+html[data-skin] .fr-evt .fr-ei,html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event .dev-request-event-glyph{width:32px;height:24px;display:grid;place-items:center;flex:none;color:var(--fr-faint)}
+html[data-skin] .fr-evt b,html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event b{color:var(--fr-ink);font-weight:650}
 html[data-skin] .fr-fields,html[data-skin]:where(:not([data-skin="brand"])) .ui-fields:is(#settings-root *){padding:16px;display:flex;flex-direction:column;gap:16px}
 html[data-skin] .fr-field{display:flex;flex-direction:column;gap:8px;min-width:0}
 html[data-skin] .fr-field label{font-size:13px;font-weight:650}
@@ -30675,7 +30619,7 @@ html[data-skin="paper"] .fr-note.fr-bad{background:var(--fr-bad-t);color:var(--f
 html[data-skin="paper"] .fr-note.fr-wait .fr-ic,html[data-skin="paper"] .fr-note.fr-ok .fr-ic,html[data-skin="paper"] .fr-note.fr-bad .fr-ic{color:inherit}
 html[data-skin="paper"] .fr-day,html[data-skin="paper"] .messages-day,html[data-skin="paper"] .messages-reply-pane > .messages-thread-scroll > .messages-reply-count{letter-spacing:.04em;font-weight:600;color:var(--fr-faint)}
 html[data-skin="paper"] .fr-post .fr-when,html[data-skin="paper"] .messages-message .messages-message-head time,html[data-skin="paper"] .fr-mono{color:var(--fr-faint)}
-html[data-skin="paper"] .fr-evt .fr-ei,html[data-skin="paper"] #dev-topic-thread #gc-thread-messages .dev-request-event .dev-request-event-glyph,html[data-skin="paper"] :is(button:is(.messages-bot-news > *),div:is(.messages-bot-settled-run > *)) :is([data-bot-badge],[data-bot-settled-tile]){color:var(--fr-mut)}
+html[data-skin="paper"] .fr-evt .fr-ei,html[data-skin="paper"] #dev-topic-thread #gc-thread-messages .dev-request-event .dev-request-event-glyph{color:var(--fr-mut)}
 html[data-skin="paper"] .fr-composer,html[data-skin="paper"] .messages-composer-card{background:var(--fr-well);box-shadow:none;padding-inline-start:12px}
 html[data-skin="paper"] .fr-colm>.fr-composer,html[data-skin="paper"] .fr-colm>.messages-composer-card{width:min(1056px,calc(100% - 80px));margin:0 auto 16px}
 html[data-skin="paper"] .fr-composer .fr-send,html[data-skin="paper"] .messages-composer-card .messages-send{background:transparent;color:var(--fr-mut)}
