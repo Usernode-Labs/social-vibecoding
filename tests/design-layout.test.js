@@ -25,8 +25,10 @@ test('the bot page\'s numbers are the ones the stylesheet sets', () => {
   const room = layout.DESKTOP - layout.RAIL_FULL;
   assert.equal(layout.RAIL_FULL, 212, 'the desktop rail is --platform-rail-full');
   assert.equal(bot.desktop.list, 352, 'the list is --list-pane-w, 22rem');
-  assert.equal(bot.desktop.mainChat, room - bot.desktop.list, 'Main takes the room the list does not');
-  assert.equal(bot.desktop.mainChat, 716, '--ai-main-auto at 1280: 1068 less the 352px list');
+  // 14 Nov 2026: what opens beside the list is a thread (Main Chat is gone).
+  assert.equal(bot.desktop.thread, room - bot.desktop.list, 'the thread takes the room the list does not');
+  assert.equal(bot.desktop.thread, 716, '--ai-main-auto at 1280: 1068 less the 352px list');
+  assert.equal(layout.WIDTHS['main-chat'], undefined, 'Main Chat is no page any more');
   assert.equal(bot.desktop.singleColumn, 672, 'with nothing open the list is a centred max-w-2xl');
   assert.equal(layout.WIDTHS.messages.desktop.list, 352, 'Messages shares --list-pane-w with the bot tab (#6495)');
   assert.equal(bot.phone.list, 390, 'a phone has no columns: the list is the screen');
@@ -40,7 +42,7 @@ test('every page designPrompt lists has a phone and a desktop width', () => {
       assert.ok(widths.length > 0, `${key} ${size} has at least one width`);
     }
   }
-  for (const page of ['homeroom-bot', 'main-chat', 'workshop', 'request']) {
+  for (const page of ['homeroom-bot', 'workshop', 'request']) {
     assert.ok(layout.WIDTHS[page], `${page} is in the reference`);
   }
 });
@@ -48,7 +50,8 @@ test('every page designPrompt lists has a phone and a desktop width', () => {
 test('layoutLines names each page, its widths and the rule', () => {
   const lines = layout.layoutLines();
   assert.match(lines[0], /^REAL SIZES/);
-  assert.match(lines.join('\n'), /the Homeroom bot page:[\s\S]*mainChat 716px/);
+  assert.match(lines.join('\n'), /the Homeroom bot page:[^\n]*thread 716px/);
+  assert.doesNotMatch(lines.join('\n'), /Main Chat|mainChat/);
   assert.match(lines.join('\n'), /never make a column wider than the real one/);
   assert.doesNotMatch(lines.join('\n'), /—/);
 });

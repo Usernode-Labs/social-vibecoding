@@ -530,7 +530,7 @@ const TOOLS = Object.freeze([
       name: 'capture_page',
       description: 'Copy one of Homeroom\'s own pages as it is now, at the asked size, and make it version 1 of this '
         + 'design. Use it before edit_design when they ask to show or change an existing Homeroom page: the copy holds '
-        + 'demo data, never their own. Pages: Homeroom bot page, Main Chat, Messages, Communities, Workshop, project '
+        + 'demo data, never their own. Pages: Homeroom bot page, Messages, Communities, Workshop, project '
         + 'page, request page. Only while this thread has no version yet.',
       parameters: {
         type: 'object',
@@ -901,12 +901,12 @@ function designPrompt({
   // #6257: with nothing to go on yet, ask what the screen is for before
   // drawing it, rather than starting from a placeholder.
   if (askFirst && !design) {
-    lines.push('', 'FIRST SCREEN: Before you draw, check that their words, Main Chat\'s brief or the project\'s own screen say what the'
+    lines.push('', 'FIRST SCREEN: Before you draw, check that their words, the brief you were handed or the project\'s own screen say what the'
       + ' app is for and what this screen should do. If they do not, draw nothing: ask one short question about both, in a'
       + ' sentence, and reply. Never start from a placeholder or a made-up app (such as a generic to-do list). If they do,'
       + ' draw it now.');
   }
-  if (brief) lines.push('', `WHAT MAIN CHAT ASKED YOU TO DRAW\n${clip(brief, 600)}`);
+  if (brief) lines.push('', `WHAT YOU WERE ASKED TO DRAW\n${clip(brief, 600)}`);
   // #6354: a design of one of Homeroom's own pages starts from the real
   // page. The copy is Homeroom's own, from a demo route, never their rows.
   if (homeroom) {
@@ -1733,11 +1733,12 @@ async function answer(pool, config, {
 }
 
 /**
- * Main Chat's turn hands this one a screen to draw (homeroom-bot-mayor.js
- * draw_screen): `ask` { app, title, brief }. In a private thread it draws
- * there; in Main Chat, which holds no design, it opens a private thread for
- * it first (design-threads.js openDrawThread), whose line in Main says so,
- * and draws there. Resolves what was sent.
+ * The chat's turn hands this one a screen to draw (homeroom-bot-mayor.js
+ * draw_screen): `ask` { app, title, brief }. It draws in the private thread
+ * the turn is in (14 Nov 2026: every message is in one). In a request
+ * card's thread from before, which holds no design, it opens a private
+ * thread for it first (design-threads.js openDrawThread) and draws there.
+ * Resolves what was sent.
  */
 async function draw(pool, config, { bot, user, settings, conversationId, message, ask = {}, deps = {} }) {
   const dm = deps.dm || require('./homeroom-bot-dm');

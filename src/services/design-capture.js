@@ -63,7 +63,6 @@ const COPY_LOCK = 0x6c61796f; // 'layo'
  */
 const PAGES = Object.freeze([
   Object.freeze({ key: 'homeroom-bot', name: 'Homeroom bot page', route: () => '/?demo=1#homeroom-bot' }),
-  Object.freeze({ key: 'main-chat', name: 'Main Chat', route: () => '/?demo=1#homeroom-bot/main' }),
   Object.freeze({ key: 'messages', name: 'Messages', route: () => '/?demo=1#messages' }),
   Object.freeze({ key: 'communities', name: 'Communities', route: () => '/?demo=1#communities' }),
   Object.freeze({ key: 'project', name: 'project page', route: (self) => `/?demo=1#app/${self}/dev` }),
@@ -89,7 +88,7 @@ function findPage(text) {
     if (want === page.key.toLowerCase() || want === page.name.toLowerCase()) return page;
     const route = page.route('*');
     if (want === genericRoute(route) || genericRoute(want) === genericRoute(route)) return page;
-    // "#homeroom-bot", "homeroom-bot/main" and the like: the route's hash.
+    // "#homeroom-bot", "messages" and the like: the route's hash.
     const hash = String(route).split('#')[1];
     if (hash && (bare === hash.toLowerCase() || want === hash.toLowerCase())) return page;
   }

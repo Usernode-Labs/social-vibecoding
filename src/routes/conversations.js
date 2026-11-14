@@ -852,6 +852,24 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
         metadata = { designPin: pin };
       }
       delete input.design_pin;
+      // 14 Nov 2026: Main Chat is gone, so a message to Homeroom bot is
+      // always in a thread. One posted with none named (an older client, the
+      // connector) gets one before it is sent: the thread of what it quotes,
+      // else a new one, exactly as New thread opens it (private-threads.js
+      // threadForPost). Any other conversation is left as it is.
+      // Only for a message with something in it: one the send would refuse
+      // opens no thread.
+      const hasBody = (typeof input.content === 'string' && input.content.trim().length > 0)
+        || (Array.isArray(input.attachment_ids ?? input.attachmentIds) && (input.attachment_ids ?? input.attachmentIds).length > 0)
+        || (Array.isArray(input.objects) && input.objects.length > 0) || !!input.object;
+      if (hasBody && input.thread_root_id == null && input.threadRootId == null) {
+        const rootId = await privateThreads().threadForPost(pool, {
+          user: req.user, conversationId: id, replyToId: input.reply_to_id, idempotencyKey: input.idempotency_key,
+        });
+        // Its quote stays: what it answers (a tap on Try again, an answer to
+        // a question) is read from it (homeroom-bot-dm.js answerUserMessage).
+        if (rootId) input.thread_root_id = rootId;
+      }
       const result = await conversations.sendMessage(pool, req.user, id, input, {
         metadata,
         afterInsert: (db, sent) => require('../services/homeroom-bot-dm').heardInDm(db, {

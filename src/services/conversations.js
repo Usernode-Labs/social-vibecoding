@@ -1082,11 +1082,15 @@ async function conversationRow(db, user, conversationId) {
          -- #2387: the list's latest message is the main stream's latest
          -- message anyone still has: thread replies and deletions skip,
          -- apart from a bot moment shown in the main chat too (never one in
-         -- a thread from the bot's "+", #6250).
+         -- a thread from the bot's "+", #6250). 14 Nov 2026: the chat with
+         -- Homeroom bot has no main stream; its latest is the newest message
+         -- of any of its threads.
          SELECT id FROM conversation_messages m
           WHERE m.conversation_id = c.id
-            AND (m.thread_root_id IS NULL OR (${ALSO_IN_CHAT} AND NOT ${PLUS_THREAD_REPLY})) AND m.deleted_at IS NULL AND NOT ${REQUEST_NEWS}
-            AND NOT ${PLUS_THREAD_OPENER}
+            AND ((peer_user.is_synthetic IS TRUE AND peer_user.username = 'homeroom_bot')
+                 OR ((m.thread_root_id IS NULL OR (${ALSO_IN_CHAT} AND NOT ${PLUS_THREAD_REPLY}))
+                     AND NOT ${PLUS_THREAD_OPENER}))
+            AND m.deleted_at IS NULL AND NOT ${REQUEST_NEWS}
             AND NOT EXISTS (SELECT 1 FROM user_blocks b
                              WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
           ORDER BY id DESC LIMIT 1
@@ -1160,7 +1164,13 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
   // cursor until acceptance.
   let lastVisitAt = null;
   if (row.membership_status === 'member' && !row.deleted_peer) {
-    unread = await countUnread(db, row.id, user.id, row.last_read_message_id);
+    // 14 Nov 2026: the chat with Homeroom bot has no main stream. Its unread
+    // count, the tab's badge, is the sum over the person's threads there by
+    // each thread's own cursor (private-threads.js unreadInChat), the same
+    // counts the Homeroom bot page marks its rows with.
+    unread = row.kind === 'direct' && row.peer_is_homeroom_bot
+      ? await require('./private-threads').unreadInChat(db, { userId: user.id, conversationId: row.id })
+      : await countUnread(db, row.id, user.id, row.last_read_message_id);
     lastReadMessageId = Number(row.last_read_message_id) || 0;
     lastVisitAt = row.last_visit_at ? new Date(row.last_visit_at).toISOString() : null;
   }
@@ -2288,6 +2298,27 @@ async function markRead(pool, user, conversationId, messageId) {
     );
     if (!message.rows.length) return null;
     const current = membership.last_read_message_id || 0;
+    // 14 Nov 2026: in the chat with Homeroom bot a thread carries its own
+    // unread. Reading a message of one of the person's threads there (its
+    // first message or a reply) moves that thread's cursor to it, and
+    // clears the thread's alerts up to it; the chat's count is the sum of
+    // its threads' (serializeConversation).
+    const privateRoot = message.rows[0].thread_root_id || message.rows[0].id;
+    if (await require('./private-threads').markThreadRead(db, { userId: user.id, rootId: privateRoot, messageId })) {
+      await db.query(
+        `UPDATE notifications n SET read_at = NOW()
+           FROM conversation_messages m
+          WHERE n.user_id = $1 AND n.conversation_id = $2 AND n.read_at IS NULL
+            AND m.id = n.conversation_message_id
+            AND (m.thread_root_id = $3 OR m.id = $3) AND m.id <= $4`,
+        [user.id, conversationId, privateRoot, messageId]
+      );
+      return {
+        messageId: membership.last_read_message_id || null,
+        threadRootId: privateRoot,
+        memberIds: await activeMemberIds(db, conversationId),
+      };
+    }
     // A bot moment shown in the main chat is read where it is shown: it is
     // a main-stream position, as its unread count says (countUnread).
     const threadRootId = message.rows[0].also_in_chat ? null : message.rows[0].thread_root_id;
@@ -2348,7 +2379,19 @@ async function markUnread(pool, user, conversationId, messageId) {
     const membership = await lockInteractionMembership(db, conversationId, user.id);
     if (!membership) return null;
     const target = await visibleMessageRef(db, user, conversationId, messageId);
-    if (!target || target.thread_root_id) return null;
+    if (!target) return null;
+    // 14 Nov 2026: in the chat with Homeroom bot, a thread of theirs is
+    // marked unread from one of its messages: its own cursor moves back.
+    const threads = require('./private-threads');
+    const privateRoot = target.thread_root_id || target.id;
+    if (await threads.markThreadUnread(db, { userId: user.id, rootId: privateRoot, messageId })) {
+      return {
+        messageId: membership.last_read_message_id || null,
+        threadRootId: privateRoot,
+        unreadCount: await threads.unreadInChat(db, { userId: user.id, conversationId }),
+      };
+    }
+    if (target.thread_root_id) return null;
     const previous = await db.query(
       `SELECT MAX(id) AS id FROM conversation_messages
         WHERE conversation_id = $1 AND id < $2`,

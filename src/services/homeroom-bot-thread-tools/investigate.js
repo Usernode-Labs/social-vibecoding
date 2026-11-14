@@ -220,7 +220,9 @@ async function checkIn(ctx, { pool, config, deps = {} }) {
     const sent = await dm.sendDm(pool, {
       bot, userId: Number(inv.user_id), content: updateText({ n, line: done.line, ok: done.ok }),
       idempotencyKey: `hrbot-investigation:${id}:${seq}`,
-      threadRootId: inv.thread_root_id ? Number(inv.thread_root_id) : false,
+      // In the thread it was asked for in; one asked for in Main Chat, before
+      // every message was in a thread, in the thread its ask is in now.
+      ...(inv.thread_root_id ? { threadRootId: Number(inv.thread_root_id) } : { replyToId: Number(inv.source_message_id) || null }),
       // Quiet, unless it found something worth acting on.
       moment: done.worth ? 'reply' : null,
       metadata: {
@@ -274,7 +276,7 @@ async function sayEnded(ctx, { pool, config, deps = {} }) {
   const bot = deps.bot || await (deps.botSvc || require('../homeroom-bot')).ensureBotUser(pool, config);
   const sent = await dm.sendDm(pool, {
     bot, userId: Number(inv.user_id), content: text, idempotencyKey: `hrbot-investigation:${id}:ended`,
-    threadRootId: inv.thread_root_id ? Number(inv.thread_root_id) : false,
+    ...(inv.thread_root_id ? { threadRootId: Number(inv.thread_root_id) } : { replyToId: Number(inv.source_message_id) || null }),
     moment: reason === 'answered' ? 'reply' : null,
     metadata: { kind: reason === 'answered' ? 'chat' : 'investigation_update', investigationId: id },
   });

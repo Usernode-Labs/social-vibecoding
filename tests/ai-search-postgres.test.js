@@ -128,15 +128,17 @@ test('the Homeroom bot tab\'s search in messages against the full schema', { tim
   assert.deepEqual(ids(mine), [underNews.id, underGrew.id, botInPlus.id, answered.id, asked.id]);
   assert.equal(mine.more, false);
   const by = Object.fromEntries(mine.rows.map((r) => [r.messageId, r]));
-  // The report itself: her own message, in the chat, with the word marked.
+  // The report itself: her own message, with the word marked. 14 Nov 2026:
+  // Main Chat is gone, so a message that is not a reply is its own thread's
+  // first message: the match names that thread, never "the chat".
   assert.deepEqual(by[asked.id], {
-    messageId: asked.id, rootId: null, threadTitle: null, mine: true,
+    messageId: asked.id, rootId: asked.id, threadTitle: 'I want to improve my app.', mine: true,
     snippet: 'I want to improve my app.', ranges: [[10, 17]], at: by[asked.id].at,
   });
   assert.match(by[asked.id].at, /^\d{4}-\d\d-\d\dT/);
   // The bot's answer in the chat: its words without their markdown.
   assert.equal(by[answered.id].mine, false);
-  assert.equal(by[answered.id].rootId, null);
+  assert.equal(by[answered.id].rootId, answered.id);
   assert.equal(by[answered.id].snippet, 'Happy to help you improve it. Which part first?');
   assert.deepEqual(by[answered.id].ranges, [[18, 25]]);
   // In a "+" thread: named as the tab's list names it, by her first words in it.
@@ -161,8 +163,17 @@ test('the Homeroom bot tab\'s search in messages against the full schema', { tim
   assert.deepEqual(ids(await search(ada, 'deleted')), []);
   assert.deepEqual(ids(await search(ada, 'hidden line')), []);
   assert.deepEqual(ids(await search(ada, 'joined')), []);
-  // Her first message of a thread is something she said in the chat.
-  assert.deepEqual((await search(ada, 'newest first')).rows.map((r) => [r.messageId, r.rootId]), [[grew.id, null]]);
+  // Her first message of a thread is found as that thread's first.
+  assert.deepEqual((await search(ada, 'newest first')).rows.map((r) => [r.messageId, r.rootId, r.threadTitle]),
+    [[grew.id, grew.id, 'Sort the list by date']]);
+  // Earlier chat is named by what it is, whichever of its messages matches.
+  const old = await say(adaChat, ada, 'Something I said in the main chat long ago');
+  const oldReply = await say(adaChat, bot, 'Long ago indeed.', { root: old.id });
+  await pool.query(
+    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, kind, state) VALUES ($1, $2, $3, 'earlier', 'open')`,
+    [ada.id, adaChat, old.id]);
+  assert.deepEqual((await search(ada, 'long ago')).rows.map((r) => [r.messageId, r.rootId, r.threadTitle]),
+    [[oldReply.id, old.id, 'Earlier chat'], [old.id, old.id, 'Earlier chat']]);
 
   // 1: nobody else's words, and nothing of hers outside this chat.
   for (const r of mine.rows) assert.doesNotMatch(r.snippet, /Bob|our plan|together|group/i);
@@ -236,7 +247,11 @@ test('the Homeroom bot tab\'s search in messages against the full schema', { tim
   assert.ok(ask, 'the viewer\'s own message among them');
   assert.equal(ask.snippet, '…could you add a dark mode to the list?');
   assert.deepEqual(ask.ranges.map(([a, b]) => ask.snippet.slice(a, b)), ['dark mode']);
-  assert.equal(ask.rootId, null, 'said in the chat itself');
+  // 14 Nov 2026: what the demo used to say in Main Chat is in its Earlier
+  // chat thread, which the viewer's ask leads.
+  assert.equal(ask.rootId, ask.messageId, 'the first message of its thread');
+  assert.equal(ask.threadTitle, 'Earlier chat');
+  assert.equal(await require('../src/services/private-threads').earlierRootFor(pool, carol.id), ask.messageId);
   // A word from its start finds it whole, and it says what it is.
   const whole = (await search(carol, 'staging demo: could')).rows.find((r) => r.mine);
   assert.equal(whole.snippet, 'Staging demo: could you add a dark mode to the list?');
