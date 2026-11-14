@@ -382,3 +382,13 @@ test('saved drafts in the chat with Homeroom bot, against the full PostgreSQL sc
     assert.equal((await stored(dansChat)).length, 0);
   });
 });
+
+test('the staging demo chat carries one saved draft, written once', { skip: !process.env.TEST_DATABASE_URL }, async () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src/services/staging-messages.js'), 'utf8');
+  // The seed is the viewer's own row in the demo chat itself (thread 0), under
+  // a fixed id, so a second visit writes nothing; a copy without the table
+  // keeps its fixture.
+  assert.match(src, /const BOT_DM_DRAFT_ID = 'dstagingdemo1';/);
+  assert.match(src, /INSERT INTO conversation_drafts \(user_id, conversation_id, thread_root_id, draft_id, content\)\s+VALUES \(\$1, \$2, 0, \$3, \$4\)\s+ON CONFLICT DO NOTHING/);
+  assert.match(src, /\[user\.id, opened\.conversationId, BOT_DM_DRAFT_ID, 'Staging demo: and could it remember my choice next time\?'\],\s+\)\.catch\(\(\) => \{\}\);/);
+});
