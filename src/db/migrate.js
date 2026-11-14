@@ -435,6 +435,9 @@ async function migrate(config) {
   await followPlatformDefaultModel(pool);
   // After backfillVotesRequired, which reads the merge announcements.
   await clearAutomatedChannelLines(pool);
+  // 14 Nov 2026: Main Chat is removed. What each person and Homeroom bot
+  // said there moves, once, under their Earlier chat thread.
+  await moveMainChatToThreads(pool);
   await backfillPlanRows(pool);
   await backfillFiledDraftCards(pool);
   await revokeLegacyGithubGrants(pool, config);
@@ -1092,6 +1095,35 @@ async function clearAutomatedChannelLines(pool) {
     log.warn('db', 'Clearing activity lines from channels skipped', { err: err.message });
   } finally {
     if (client) client.release();
+  }
+}
+
+// 14 Nov 2026: Main Chat, the one mixed stream of a person's chat with
+// Homeroom bot, is removed; every conversation with the bot is a thread.
+// What was said in Main before moves, once, under one private thread per
+// person named "Earlier chat" (services/earlier-chat.js says what moves, why
+// its first message is the earliest one, and why nothing new is unread).
+//
+// It is here, with the other boot repairs, and not a file under
+// db/migrations/: a migration file is one transaction that cannot commit as
+// it goes (docs/database/schema-migrations.md), and this is a data move over
+// every chat with the bot, taken one person at a time under the lock a send
+// in that chat takes, so nobody's message waits behind somebody else's
+// move. The schema it needs (the thread kind, the read cursor) is the
+// tracked migration bot-chat-threads-only.
+//
+// Every boot, and a no-op once clean: it also sweeps up a message an older
+// instance wrote outside a thread while a release was rolling. Best-effort:
+// a failure never aborts boot, and a person it could not move is left for
+// the next one.
+async function moveMainChatToThreads(pool) {
+  try {
+    const done = await require('../services/earlier-chat').moveAll(pool);
+    if (done.moved || done.listed) {
+      log.info('db', 'Moved Main Chat under Earlier chat threads', done);
+    }
+  } catch (err) {
+    log.warn('db', 'Moving Main Chat under Earlier chat threads skipped', { err: err.message });
   }
 }
 
@@ -10686,17 +10718,15 @@ async function seedStagingDesignThread(pool) {
       userId: member.id,
       content: `Staging demo: I opened a design thread for ${named}, in a thread only you can see. `
         + 'Tell me what to change there, or pin a comment on the preview, and I\'ll make the next version.',
-      threadRootId: false,
+      // The thread's first message, its row written with it (sendDm `thread`).
+      thread: { kind: 'design', appId: app.id },
       moment: null,
       metadata: { kind: 'opened_design', appSlug: app.slug, appName: app.name || app.slug, designTitle: named },
     });
     if (!opened?.messageId) return;
     const thread = (await pool.query(
-      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
-       VALUES ($1, $2, $3, $4, 'design', 'open')
-       ON CONFLICT (root_message_id) DO NOTHING
-       RETURNING id`,
-      [member.id, opened.conversationId, opened.messageId, app.id]
+      'SELECT id FROM private_threads WHERE root_message_id = $1 AND user_id = $2',
+      [opened.messageId, member.id]
     )).rows[0];
     if (!thread) return;
     await pool.query(
@@ -10837,17 +10867,15 @@ async function seedStagingCapturedPageThread(pool) {
       userId: member.id,
       content: `Staging demo: I opened a design thread for ${named.replace('Staging demo: ', '')}, in a thread only you can see. `
         + 'Tell me what to change there, and I\'ll make the next version.',
-      threadRootId: false,
+      // The thread's first message, its row written with it (sendDm `thread`).
+      thread: { kind: 'design', appId: app.id },
       moment: null,
       metadata: { kind: 'opened_design', appSlug: app.slug, appName: app.name || app.slug, designTitle: named },
     });
     if (!opened?.messageId) return;
     const thread = (await pool.query(
-      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
-       VALUES ($1, $2, $3, $4, 'design', 'open')
-       ON CONFLICT (root_message_id) DO NOTHING
-       RETURNING id`,
-      [member.id, opened.conversationId, opened.messageId, app.id]
+      'SELECT id FROM private_threads WHERE root_message_id = $1 AND user_id = $2',
+      [opened.messageId, member.id]
     )).rows[0];
     if (!thread) return;
     await pool.query(
@@ -19938,6 +19966,7 @@ module.exports = {
   followPlatformDefaultModel,
   seedStagingHelperCalls,
   clearAutomatedChannelLines,
+  moveMainChatToThreads,
   backfillFiledDraftCards,
   backfillLinkedIssuesFromPrBodies,
   backfillPlanRows,
