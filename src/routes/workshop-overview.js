@@ -277,6 +277,16 @@ const VISIBLE_APP_WHERE = `a.moderation_suspended_at IS NULL
      AND (NOT a.self_hosted OR $2::boolean)
      AND ($3::boolean OR a.view_visibility = 'public' OR me.user_id IS NOT NULL)`;
 
+// #6664: the project's rule for taking part, the one `checkAppAccess(…,
+// 'collab')` applies (services/app-access.js) and sessionCollabGuard /
+// issueCollabGuard enforce on a vote: everyone when the project lets them
+// (collab_visibility = 'public'), its accepted collaborators, and admins.
+// `me` is the viewer's `app_collaborators` row with status 'member', which
+// every owed-vote query already joins; `$3` is "is an admin". A vote this
+// refuses would answer 403 `collab_required`, so the queues below never
+// count or list one: pressing Yes is never refused.
+const CAN_TAKE_PART_SQL = `($3::boolean OR a.collab_visibility = 'public' OR me.user_id IS NOT NULL)`;
+
 // Counts for every app the viewer can see that has a non-zero one.
 //
 // Four aggregates rather than one scan with four FILTERs: `issues` and
@@ -335,8 +345,14 @@ const COUNTS_SQL = `
   )
   SELECT a.slug,
          (COALESCE(ms.n, 0) + COALESCE(mp.n, 0) + COALESCE(mg.n, 0)) AS working,
-         (COALESCE(op.n, 0) + COALESCE(og.n, 0) + COALESCE(oq.n, 0)) AS needs,
-         (COALESCE(op.keys, '{}'::text[]) || COALESCE(og.keys, '{}'::text[]) || COALESCE(oq.keys, '{}'::text[])) AS owed
+         -- #6664: a change or settings vote the viewer could not cast is not
+         -- owed. Questions are theirs wherever they are, so oq is not gated.
+         ((CASE WHEN ${CAN_TAKE_PART_SQL} THEN COALESCE(op.n, 0) ELSE 0 END)
+          + (CASE WHEN ${CAN_TAKE_PART_SQL} THEN COALESCE(og.n, 0) ELSE 0 END)
+          + COALESCE(oq.n, 0)) AS needs,
+         ((CASE WHEN ${CAN_TAKE_PART_SQL} THEN COALESCE(op.keys, '{}'::text[]) ELSE '{}'::text[] END)
+          || (CASE WHEN ${CAN_TAKE_PART_SQL} THEN COALESCE(og.keys, '{}'::text[]) ELSE '{}'::text[] END)
+          || COALESCE(oq.keys, '{}'::text[])) AS owed
     FROM apps a
     LEFT JOIN app_collaborators me
       ON me.app_id = a.id AND me.user_id = $1 AND me.status = 'member'
@@ -348,7 +364,9 @@ const COUNTS_SQL = `
     LEFT JOIN owed_questions  oq ON oq.app_id = a.id
    WHERE ${VISIBLE_APP_WHERE}
      AND (COALESCE(ms.n, 0) + COALESCE(mp.n, 0) + COALESCE(mg.n, 0)
-          + COALESCE(op.n, 0) + COALESCE(og.n, 0) + COALESCE(oq.n, 0)) > 0
+          + (CASE WHEN ${CAN_TAKE_PART_SQL} THEN COALESCE(op.n, 0) ELSE 0 END)
+          + (CASE WHEN ${CAN_TAKE_PART_SQL} THEN COALESCE(og.n, 0) ELSE 0 END)
+          + COALESCE(oq.n, 0)) > 0
 `;
 
 // ── The rows behind the counts (#3051) ─────────────────────────────────
@@ -411,6 +429,15 @@ const ITEMS_SQL = `
              ORDER BY it.at DESC NULLS LAST, it.id DESC
            ) AS rn
       FROM items it
+      JOIN apps a ON a.id = it.app_id
+      LEFT JOIN app_collaborators me
+        ON me.app_id = a.id AND me.user_id = $1 AND me.status = 'member'
+     -- #6664: a vote the viewer could not cast is dropped before ranking, so
+     -- it never takes one of the five per-app slots. Working rows and the
+     -- bot's questions are not votes and are kept.
+     WHERE it.section = 'working'
+        OR it.kind = 'question'
+        OR ${CAN_TAKE_PART_SQL}
   )
   SELECT a.slug, r.section, r.kind, r.id, r.title, r.status, r.at
     FROM ranked r
@@ -695,6 +722,9 @@ const needsFeedSql = ({ inThreads = false } = {}) => `
    WHERE ${VISIBLE_APP_WHERE}
      AND EXISTS (SELECT 1 FROM community_members cm
                   WHERE cm.community_id = a.community_id AND cm.user_id = $1)
+     -- #6664: a vote the viewer could not cast is not listed. The bot's
+     -- questions to them still are.
+     AND (o.kind = 'question' OR ${CAN_TAKE_PART_SQL})
      ${inThreads ? IN_THREADS_WHERE : ''}
    ORDER BY o.at DESC NULLS LAST, o.id DESC
    LIMIT $4
@@ -720,7 +750,7 @@ const NEEDS_FEED_IN_THREADS_SQL = needsFeedSql({ inThreads: true });
 // first version is owed by nobody: OWED_PROPOSALS_WHERE.)
 const OWED_BY_COMMUNITY_SQL = `
   WITH owed AS (
-    SELECT cs.app_id,
+    SELECT cs.app_id, 'proposal'::text AS kind,
            NOT EXISTS (SELECT 1 FROM homeroom_bot_requesters r
                         WHERE r.app_id = cs.app_id
                           AND r.issue_number = cs.created_from_issue_number
@@ -728,12 +758,12 @@ const OWED_BY_COMMUNITY_SQL = `
       FROM chat_sessions cs
      WHERE ${OWED_PROPOSALS_WHERE}
     UNION ALL
-    SELECT i.app_id, TRUE AS pays
+    SELECT i.app_id, 'governance'::text AS kind, TRUE AS pays
       FROM issues i
      WHERE ${OWED_GOVERNANCE_WHERE}
     UNION ALL
     -- A question answered is not a vote cast: it pays nothing.
-    SELECT q.app_id, FALSE AS pays
+    SELECT q.app_id, 'question'::text AS kind, FALSE AS pays
       FROM ${OWED_QUESTIONS_FROM}
      WHERE ${OWED_QUESTIONS_WHERE}
   )
@@ -750,6 +780,9 @@ const OWED_BY_COMMUNITY_SQL = `
     LEFT JOIN app_collaborators me
       ON me.app_id = a.id AND me.user_id = $1 AND me.status = 'member'
    WHERE ${VISIBLE_APP_WHERE}
+     -- #6664: as the feed above, a vote the viewer could not cast is not
+     -- waiting on them; the bot's questions still are.
+     AND (o.kind = 'question' OR ${CAN_TAKE_PART_SQL})
    GROUP BY a.id, a.slug, a.name
    ORDER BY MIN(cm.joined_at) ASC, a.id ASC
 `;

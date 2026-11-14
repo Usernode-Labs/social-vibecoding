@@ -16199,6 +16199,13 @@ const AppView = {
       }
     }
     if (f.needsVote) {
+      // #6664: on a project where only its collaborators take part, a vote
+      // is not one the viewer can cast — the server refuses it as
+      // `collab_required` — so their Hub's owed list and Needs you count
+      // leave it out, as the feed above does. `can_collaborate === false`
+      // is the same rule (isAdmin || collab_visibility !== 'private' ||
+      // isCollaborator).
+      if (AppView.readOnly) return false;
       if (kind === 'proposal') {
         // The card's pulsing "Vote" badge's condition (isUnvoted), narrowed.
         // A project's first version needs nobody's vote (D1).

@@ -224,7 +224,11 @@ test('the visibility filter is GET /api/apps\'s, so the two lists cannot disagre
     'the clause this mirrors is still the one /api/apps applies');
   // And only apps with something on them are returned: the client reads a
   // missing slug as two zeroes, so a row per app would be payload for nothing.
-  assert.match(sql, /\+ COALESCE\(op\.n, 0\) \+ COALESCE\(og\.n, 0\) \+ COALESCE\(oq\.n, 0\)\) > 0/);
+  // #6664: the outer filter reads the same gated votes the counts do, so a
+  // project with only votes this viewer cannot cast drops out.
+  assert.match(sql, /\+ COALESCE\(oq\.n, 0\)\) > 0/);
+  assert.equal((sql.match(/CASE WHEN \(\$3::boolean OR a\.collab_visibility = 'public' OR me\.user_id IS NOT NULL\) THEN COALESCE\(o[pg]\.n, 0\) ELSE 0 END\)/g) || []).length, 4,
+    'two in the counts and two in the outer filter');
 });
 
 test('#5023: the Workshop asks GET /api/apps for joined rows only, not the whole catalog', () => {
