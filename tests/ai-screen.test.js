@@ -189,7 +189,7 @@ test('each section groups its rows by project, and a project shows its first few
   // #6262: Needs you orders its rows with the new ones first, before the
   // drawn order is held, then folds through the same pure rule (which never
   // hides a fresh row either).
-  assert.match(lists, /const ordered = freshStyle \|\| foldFresh \? freshFirst\(lines\) : lines;/);
+  assert.match(lists, /const ordered = freshStyle \? recentGroupsFirst\(freshFirst\(lines\)\) : foldFresh \? freshFirst\(lines\) : lines;/);
   assert.match(lists, /const held = hold && holding && drawn\.current \? holdOrder\(ordered, drawn\.current\) : ordered;/,
     'the new first, then the drawn order held');
   assert.match(lists, /const \{ items, shown, hidden \} = groupRows\(dayHeads \? byDay\(g\.items\) : g\.items, first, open, !foldFresh\);/,
@@ -336,6 +336,52 @@ test('#6262: threads with something new get a dot, a bold title and a count', ()
   assert.ok(!quiet.includes('data-ai-dot'), 'nothing new has no dot');
   assert.ok(!quiet.includes('data-ai-earlier'), 'and no Earlier line');
   assert.ok(!quiet.includes('data-ai-fresh'), 'and no count at all');
+});
+
+// #6672 (14 Nov 2026, Evan): "Private chats are always at the bottom of Needs
+// you, even if they're the most recent active thread." Rows arrive votes and
+// plans first and private chats last, so a project whose only row was a fresh
+// private thread always sat at the bottom. Needs you now lifts each project by
+// its newest activity: the ones with something new first, then newest first.
+test('#6672: Needs you orders its projects by their newest activity', () => {
+  const { recentGroupsFirst } = loadTsx(MODEL);
+  const recipe = { slug: 'recipebot', name: 'RecipeBot', icon_url: null, icon_emoji: null };
+  const now = '2026-11-14T12:00:00Z';
+  const yesterday = '2026-11-13T12:00:00Z';
+  const threeDays = '2026-11-11T12:00:00Z';
+  // A private row in no project is one group ('') among the others, not last.
+  const rows = [
+    { key: 'need:garden', app, at: threeDays },
+    { key: 'private:recipe', app: recipe, at: now },
+    { key: 'private:solo', app: null, at: yesterday },
+  ];
+  assert.deepEqual(recentGroupsFirst(rows).map((r) => r.key), ['private:recipe', 'private:solo', 'need:garden'],
+    'RecipeBot, Only you, then Garden: newest activity first');
+  // A group with something new still comes before one without, even older.
+  assert.deepEqual(recentGroupsFirst([
+    { key: 'old-fresh', app, at: threeDays, fresh: true },
+    { key: 'new-quiet', app: recipe, at: now },
+  ]).map((r) => r.key), ['old-fresh', 'new-quiet'], 'what is new still leads');
+  // A group with no readable time goes after the dated ones, in today's order.
+  assert.deepEqual(recentGroupsFirst([
+    { key: 'undated-b', app: recipe, at: null },
+    { key: 'dated', app, at: yesterday },
+    { key: 'undated-a', app: null, at: null },
+  ]).map((r) => r.key), ['dated', 'undated-b', 'undated-a'], 'no time keeps its place, after the dated groups');
+  // Inside a group nothing moves, and equal times keep the order they came in.
+  assert.deepEqual(recentGroupsFirst([
+    { key: 'garden-newer', app, at: now },
+    { key: 'garden-older', app, at: threeDays },
+    { key: 'recipe', app: recipe, at: now },
+  ]).map((r) => r.key), ['garden-newer', 'garden-older', 'recipe'], 'a group\'s rows keep their order; a tie keeps its place');
+
+  // Both faces of the list apply it, Needs you only, after the new-first pass.
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  assert.match(lists, /const ordered = freshStyle \? recentGroupsFirst\(freshFirst\(lines\)\) : foldFresh \? freshFirst\(lines\) : lines;/,
+    'Needs you lifts the projects after its new-first pass');
+  assert.match(read('frontend/src/features/ai/frame-list.tsx'),
+    /const needs = useHeld\(recentGroupsFirst\(freshFirst\(needLines\)\)\);/,
+    'the kit face draws the same order');
 });
 
 // #6408 (6 Nov 2026, Evan): Live this week showed 50 of a project's 76 rows
