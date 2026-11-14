@@ -715,18 +715,6 @@
     "text": "Done another way",
     "description": "How a request the bot was working on ended, said on hover and to a screen reader beside its small status square: somebody else's change shipped what it asked for."
   },
-  "bot.strip.firstVersion": {
-    "text": "{{project}}, first version",
-    "description": "Name of a project's first version on a row of the activity drawer of the chat with Homeroom bot and on a news line in the chat with Homeroom bot. {{project}} is the project's name."
-  },
-  "bot.strip.requestNumber": {
-    "text": "Request #{{number}}",
-    "description": "Name of a request with no title on a row of the activity drawer of the chat with Homeroom bot and on a news line in the chat with Homeroom bot. {{number}} is its number on the project's board, keep the #."
-  },
-  "bot.news.started": {
-    "text": "I’ve started on it",
-    "description": "Where a request stands, on the line under its title in a news row in the chat with Homeroom bot: the bot (speaking as I) started working on the request. Sentence case: it is a line of its own."
-  },
   "bot.final.live": {
     "text": "Live",
     "description": "How a finished request ended, on its one-line row in the chat with Homeroom bot (after a green check): its change is live."
@@ -754,102 +742,6 @@
   "bot.final.failed": {
     "text": "Couldn’t build",
     "description": "The same, after a red cross: the bot could not finish building it."
-  },
-  "bot.news.answer": {
-    "text": "Needs your answer",
-    "description": "Where a request stands, on the line under its title in a news row in the chat with Homeroom bot: the bot asked the person a question about it. Sentence case: it is a line of its own."
-  },
-  "bot.news.plan": {
-    "text": "Plan is ready",
-    "description": "Where a request stands, on the line under its title in a news row in the chat with Homeroom bot: the bot's plan for it is ready. Sentence case: it is a line of its own."
-  },
-  "bot.news.decision": {
-    "text": "Needs your decision",
-    "description": "Where a request stands, on the line under its title in a news row in the chat with Homeroom bot: the person has to decide something. Sentence case: it is a line of its own."
-  },
-  "bot.news.detail": {
-    "text": "Needs more detail",
-    "description": "Where a request stands, on the line under its title in a news row in the chat with Homeroom bot: the bot cannot build it as written. Sentence case: it is a line of its own."
-  },
-  "bot.news.ready": {
-    "text": "Ready to try",
-    "description": "Where a request stands, on the line under its title in a news row in the chat with Homeroom bot: the change the bot built is ready to try. Sentence case: it is a line of its own."
-  },
-  "bot.news.stopped": {
-    "text": "Stopped",
-    "description": "Where a request stands, on the line under its title in a news row in the chat with Homeroom bot: the bot's work on it stopped. Sentence case: it is a line of its own."
-  },
-  "bot.news.onHold": {
-    "text": "On hold until Monday",
-    "description": "Where a request stands, on the line under its title in a news row in the chat with Homeroom bot: building time for this week is used up. Sentence case: it is a line of its own."
-  },
-  "bot.news.slots": {
-    "text": "Waiting for votes on other changes",
-    "description": "A row in the chat with Homeroom bot standing for one request, beside its title: the request is ready to build, but as many of the bot's changes as may wait for a vote at once are waiting, so it waits for one of them to be voted in or closed."
-  },
-  "bot.news.builds": {
-    "text": "Waiting its turn to be built",
-    "description": "A row in the chat with Homeroom bot standing for one request, beside its title: the request is ready to build, but the bot is already building as many changes on the project at once as it may, so it waits for one of those builds to be done."
-  },
-  "bot.news.doneElsewhere": {
-    "text": "Done another way",
-    "description": "A row in the chat with Homeroom bot standing for one request, beside its title: somebody else's change shipped what the request asked for, so the bot has nothing more to build."
-  },
-  "bot.news.taken": {
-    "text": "Somebody else took it on",
-    "description": "A row in the chat with Homeroom bot standing for one request, beside its title: the bot had said it would build the request, but a person has taken it on since (their own change, or a claim), so the bot leaves it to them."
-  },
-  "bot.news.live": {
-    "text": "Live",
-    "description": "Where a request stands, on the line under its title in a news row in the chat with Homeroom bot: its change is live. Sentence case: it is a line of its own."
-  },
-  "bot.news.update": {
-    "text": "New update",
-    "description": "Where a request stands, on the line under its title in a news row in the chat with Homeroom bot: other news about it. Sentence case: it is a line of its own."
-  },
-  "bot.news.past.answer": {
-    "text": "Asked you a question",
-    "description": "Where a request stands, on the line under its title in a news row of the chat with Homeroom bot, when the question the bot asked no longer waits on the person (answered, or the request moved on). Past tense; sentence case."
-  },
-  "bot.news.past.plan": {
-    "text": "Sent you a plan",
-    "description": "The same line when the plan the bot sent no longer waits on the person. Past tense; sentence case."
-  },
-  "bot.news.past.decision": {
-    "text": "Asked you to decide",
-    "description": "The same line when the decision the bot asked for no longer waits on the person. Past tense; sentence case."
-  },
-  "bot.news.past.detail": {
-    "text": "Asked for more detail",
-    "description": "The same line when the bot's ask for more detail no longer waits on the person. Past tense; sentence case."
-  },
-  "bot.news.past.ready": {
-    "text": "Was ready to try",
-    "description": "The same line when the change the bot built is no longer up for the person to try (it went live, was closed or was replaced). Past tense; sentence case."
-  },
-  "bot.news.run.finished_one": {
-    "text": "{{count}} finished",
-    "description": "Part of the chat with Homeroom bot's folded line of finished requests, in place of a strip of small status squares: how many of them ended fine (went live, was closed, was handed to a person). {{count}} is that number. Zero parts of the line are left out."
-  },
-  "bot.news.run.finished_other": {
-    "text": "{{count}} finished",
-    "description": "Part of the chat with Homeroom bot's folded line of finished requests, in place of a strip of small status squares: how many of them ended fine (went live, was closed, was handed to a person). {{count}} is that number. Zero parts of the line are left out."
-  },
-  "bot.news.run.failed_one": {
-    "text": "{{count}} couldn’t build",
-    "description": "Part of the chat with Homeroom bot's folded line of finished requests, in place of a strip of small status squares: how many of them went wrong. {{count}} is that number."
-  },
-  "bot.news.run.failed_other": {
-    "text": "{{count}} couldn’t build",
-    "description": "Part of the chat with Homeroom bot's folded line of finished requests, in place of a strip of small status squares: how many of them went wrong. {{count}} is that number."
-  },
-  "bot.news.updates_one": {
-    "text": "· {{count}} update",
-    "description": "End of the news line for a request's card in the chat with Homeroom bot: how many messages its thread holds; a tap opens it. {{count}} is that number."
-  },
-  "bot.news.updates_other": {
-    "text": "· {{count}} updates",
-    "description": "End of the news line for a request's card in the chat with Homeroom bot: how many messages its thread holds; a tap opens it. {{count}} is that number."
   },
   "bot.span.underMinute": {
     "text": "under a minute",
@@ -2999,14 +2891,6 @@
     "text": "View thread",
     "description": "Item in a message's actions menu when the message already has replies in a thread: opens the thread."
   },
-  "row.botThread.updates_one": {
-    "text": "{{count}} update in its thread ›",
-    "description": "Button under a request's card in the chat with Homeroom bot: opens the request's thread, where the bot posts each step and its news. {{count}} is how many messages the thread holds; English spells the singular with the number."
-  },
-  "row.botThread.updates_other": {
-    "text": "{{count}} updates in its thread ›",
-    "description": "Button under a request's card in the chat with Homeroom bot: opens the request's thread, where the bot posts each step and its news. {{count}} is how many messages the thread holds."
-  },
   "row.menu.replyInThread": {
     "text": "Reply in thread",
     "description": "Item in a message's actions menu: opens a thread under the message to reply there."
@@ -4546,14 +4430,6 @@
   "replies.app.membersOnly": {
     "text": "Only members of this app can reply here.",
     "description": "Notice in place of the message box in a thread of a project's channel, shown to someone who is not a member of that project."
-  },
-  "row.botBlock.requestLabel": {
-    "text": "Request #{{number}}: {{title}}",
-    "description": "Read by screen readers only, at the start of a message from Homeroom bot whose request card is not drawn because an earlier message in the same outlined group already shows it: says which request the message is about. \"Request\" is a noun; {{number}} is the request number, keep the #; {{title}} is the request's title."
-  },
-  "row.botBlock.requestLabelUntitled": {
-    "text": "Request #{{number}}",
-    "description": "Read by screen readers only, at the start of a message from Homeroom bot whose request card is not drawn because an earlier message in the same outlined group already shows it, when the request's title is not known: says which request the message is about. \"Request\" is a noun; {{number}} is the request number, keep the #."
   },
   "bot.ready.line.release": {
     "text": "{{release}}.",

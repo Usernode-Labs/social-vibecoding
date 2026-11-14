@@ -9,8 +9,7 @@
 //
 //   1. Which rows have a side (`sided`): a DM and a group do; a channel does
 //      not (#2783), and neither does a row that is not something a person
-//      said — the bot's cards and plans, its step lines, a platform notice,
-//      a change block.
+//      said: the bot's cards and plans, its step lines, a platform notice.
 //   2. The markup: a sided row wears `messages-message-bubble` beside the id,
 //      the `data-message-id` and the classes it already had, its own rows
 //      carry no avatar, and the words sit in `.messages-bubble` inside
@@ -82,12 +81,9 @@ test('a DM and a group give their rows a side; a channel does not', () => {
 });
 
 test('the row that is not something a person said keeps its full-width named row', () => {
-  // A change block, a quiet step line, and a platform notice: none of them
-  // is a message from a person in the conversation.
-  const block = row({ message: message(BOT, 3), kind: 'direct', block: { key: 'todo-list#7', part: 'only', repeat: false } });
-  assert.doesNotMatch(block, /messages-message-bubble/, 'a change block has no side');
-  assert.match(block, /class="min-w-0 flex-1 messages-bot-block-body"/);
-
+  // A quiet step line and a platform notice: neither is a message from a
+  // person in the conversation. (A change block was a third, until the bot
+  // chat's own stream, which drew them, stopped being drawn: 14 Nov 2026.)
   const step = row({ message: message(BOT, 4, { metadata: { homeroomBot: { kind: 'step' } } }), kind: 'direct' });
   assert.doesNotMatch(step, /messages-message-bubble/, 'a step line has no side');
 

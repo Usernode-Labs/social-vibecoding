@@ -150,7 +150,6 @@ let state: InternalState = {
   listCollapsed: false,
   showMoreChannels: false,
   unreadMark: null,
-  threadFocusId: null,
 };
 
 /*
@@ -539,7 +538,12 @@ function botToTab(): boolean {
   if (typeof window === 'undefined' || !state.route.open || state.route.embedded) return false;
   const conversationId = state.route.conversationId;
   if (!conversationId || conversationId !== botConversationId()) return false;
-  if (!new RegExp(`^#messages/${conversationId}(?:/|$)`).test(window.location.hash)) return false;
+  // Only from this conversation's own address, read as the router reads it
+  // (public/js/app.js: the query off, the id as a number), so every address
+  // the router opened the chat from here goes on to the tab. The chat's own
+  // stream is drawn on no screen: nothing here may be left showing it.
+  const parts = window.location.hash.replace(/^#/, '').split('?')[0].split('/');
+  if (parts[0] !== 'messages' || Number(parts[1]) !== conversationId) return false;
   // The chat itself was Main Chat: its old address, which the tab resolves
   // to the thread those messages are in now (../ai/where.ts).
   const href = botOldAddress({ threadRootId: state.route.threadRootId, focusMessageId: state.route.focusMessageId });
@@ -737,17 +741,6 @@ function browserOffline(): boolean {
   return typeof navigator !== 'undefined' && navigator.onLine === false;
 }
 
-/**
- * How many messages a page of a conversation reads. The Homeroom bot's chat
- * folds most of its news into a few "N finished" lines (./bot-news-line.tsx),
- * so a page of 50 fills little of the screen and opening it read page after
- * page to fill it, behind its spinner (./open-hold.ts). There it reads the
- * server's most (services/conversations.js caps a page at 100).
- */
-function pageSize(conversation: Pick<ConversationDetail, 'homeroomBot'> | null): number {
-  return conversation?.homeroomBot === true ? 100 : 50;
-}
-
 export async function loadThread(conversationId: number, force = false): Promise<void> {
   if (!validId(conversationId)) return;
   if (leftConversations.has(conversationId)) {
@@ -843,8 +836,8 @@ export async function loadThread(conversationId: number, force = false): Promise
         ? await api.listMessagesAround(conversationId, anchor, read).then((around) => ({
           messages: around.messages, nextBefore: around.nextBefore, nextAfter: around.nextAfter,
           threadRootId: around.focus.threadRootId, focusMessageId: around.focus.messageId,
-        })).catch(() => api.listMessages(conversationId, null, read, pageSize(active)).then((latest) => ({ ...latest, nextAfter: null })))
-        : { ...(await api.listMessages(conversationId, null, read, pageSize(active))), nextAfter: null };
+        })).catch(() => api.listMessages(conversationId, null, read).then((latest) => ({ ...latest, nextAfter: null })))
+        : { ...(await api.listMessages(conversationId, null, read)), nextAfter: null };
     if (request !== threadRequest || state.route.conversationId !== conversationId) return;
     if (focus && page.focusMessageId && page.focusMessageId !== focus) {
       // In its community's page the room has no address of its own (#3653):
@@ -1123,7 +1116,7 @@ export async function loadOlder(): Promise<boolean> {
   if (!conversationId || !state.nextBefore || state.loadingOlder) return true;
   publish({ loadingOlder: true });
   try {
-    const page = await api.listMessages(conversationId, state.nextBefore, undefined, pageSize(state.active));
+    const page = await api.listMessages(conversationId, state.nextBefore);
     if (state.route.conversationId !== conversationId) return true;
     const known = new Set(state.messages.map((message) => message.id));
     const older = page.messages.filter((message) => !known.has(message.id));
@@ -2724,31 +2717,9 @@ export function threadAddress(conversationId: number, rootId: number): string {
   return `#messages/${conversationId}/thread/${rootId}`;
 }
 
-/**
- * Open a request's thread at one of its messages (the strip's buttons, a
- * news line in the chat with Homeroom bot): the thread pane scrolls to it
- * and flashes it (`threadFocusId`). Without a root it opens the message
- * itself, wherever it is, by its link.
- */
-export function openThreadAt(rootId: number | null | undefined, focusId: number | null | undefined = null): void {
-  const conversationId = state.route.conversationId;
-  if (typeof window === 'undefined' || !conversationId) return;
-  if (!validId(rootId)) {
-    if (validId(focusId)) openAddress(messageAddress(conversationId, focusId));
-    return;
-  }
-  publish({ threadFocusId: validId(focusId) && focusId !== rootId ? focusId : null });
-  openThread(rootId);
-}
-
-/** The open conversation's main stream as loaded, for a request's story (./bot-request.ts storyRootIn). */
+/** The open conversation's own stream as loaded: none for the chat with Homeroom bot, which reads its threads only. */
 export function loadedMessages(): readonly ConversationMessage[] {
   return state.messages;
-}
-
-/** The thread pane has shown the message it was opened at. */
-export function clearThreadFocus(): void {
-  if (state.threadFocusId) publish({ threadFocusId: null });
 }
 
 /**
