@@ -919,6 +919,17 @@ test('#6251: offer_request carries pictures, related requests, where it happened
   assert.equal(mayor.draftDoneWhen('one'), null);
 });
 
+test('#6670: every request draft reads as a request in its own right', () => {
+  const tool = mayor.TOOLS.find((t) => t.function.name === 'offer_request').function;
+  assert.match(tool.parameters.properties.details.description, /never saw this chat/);
+  assert.match(tool.parameters.properties.details.description, /replaces or revises an earlier draft/);
+  assert.match(tool.parameters.properties.doneWhen.description, /never against an earlier draft/);
+  assert.match(tool.description, /never seen by anyone else/);
+  const prompt = mayor.systemPrompt({ username: 'ada' });
+  assert.match(prompt, /Write every draft as a request in its own right/);
+  assert.match(prompt, /nobody else ever saw it/);
+});
+
 test('#6251: the draft shows Where, Related and Done when, in the words it says them', () => {
   const extras = {
     attachmentIds: ['a'.repeat(32)],

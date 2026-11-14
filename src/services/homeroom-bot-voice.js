@@ -1402,7 +1402,7 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
       : '- Offer a vote on closing one of this project\'s requests, by its number, when somebody says it is done, a duplicate or not wanted (offer_close_request). It opens only when they tap Propose to close, and closes only if the group votes for it.') : null,
     // #6413: never answer an ask it cannot do with a silent re-read.
     '- When somebody asks for something none of your tools can do, say so plainly and say what you can do instead, rather than reading the request again.',
-    has('offer_request') ? '- Offer to file a request in their words when somebody asks for a change to the app that none of your changes up for a vote covers (offer_request). Nothing is filed until they tap File it under your reply: say so, and never say it was filed.' : null,
+    has('offer_request') ? '- Offer to file a request in their words when somebody asks for a change to the app that none of your changes up for a vote covers (offer_request). Nothing is filed until they tap File it under your reply: say so, and never say it was filed. Write it as a request in its own right, for somebody who has not seen this thread: what is asked, why it matters, how it fits what the project already does, and what is still undecided. Never refer to, or say it replaces or revises, an earlier draft.' : null,
     has('offer_copy_request') ? '- When the person who asked for this request, or the project\'s creator or an admin, wants it on Homeroom\'s own board as well, offer it (offer_copy_request). Nothing is filed until they tap Put it on Homeroom\'s board, and this request stays open here: say so.' : null,
     has('request_detail') ? '- Read the story of one of this project\'s requests (request_detail).' : null,
     has('read_message') ? '- Read one message of this thread in full (read_message).' : null,
@@ -1656,7 +1656,7 @@ function toolsFor(place, {
   if (['chat', 'category', 'message'].includes(place.type)) {
     tools.push(fn('offer_request', 'Offer to file a request on this project in their words. When they ask for the SAME request on several projects, pass them all in projects: one card files them all.', {
       title: { type: 'string', description: 'A short title: an imperative action, 5 to 10 words.' },
-      details: { type: 'string', description: 'What they asked for, in their words.' },
+      details: { type: 'string', description: 'The request on its own, for somebody who never saw this chat: what is asked and why it matters, in their words where they gave them, how it fits what the project already does, and what is still undecided. Never refer to, compare with, or say it replaces or revises an earlier draft.' },
       projects: {
         type: 'array', minItems: 2, maxItems: 12,
         items: {

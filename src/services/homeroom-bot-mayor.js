@@ -632,6 +632,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  request, from the "id ..." in a picture\'s history line. Give context.request whenever they name a request',
     '  number, and ask which project when a bare number is ambiguous; put what they saw in context.saw. Propose one',
     '  to three doneWhen checks in their words, of what is true when it is done. They see all of it on the draft.',
+    '- Write every draft as a request in its own right, for somebody who has not seen this chat: what is',
+    '  asked, why it matters, how it fits what the project already does, and what is still undecided. When they',
+    '  rework an idea, offer the whole request again as it now stands. Never refer back to, contrast with, or say',
+    '  it replaces or revises an earlier draft: nobody else ever saw it.',
     '- A request on one of their projects that is about Homeroom itself (its header, its request form, a project\'s',
     '  description or invite message, how votes or notifications work), not the project\'s code, belongs on Homeroom\'s',
     '  own board: request_detail says aboutHomeroom when you left it for that reason. When they filed it or asked for',
@@ -875,7 +879,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'offer_request',
-      description: 'Offer to file a NEW request on one of their projects. They see the request under your reply with File it and Not now; nothing is filed unless they tap File it. Up to three offers under one reply; to file the same request on several projects, pass them all in projects: one card files them all.',
+      description: 'Offer to file a NEW request on one of their projects. They see the request under your reply with File it and Not now; nothing is filed unless they tap File it. Up to three offers under one reply; to file the same request on several projects, pass them all in projects: one card files them all. Each offer is a whole request on its own: an earlier offer they did not file was never seen by anyone else.',
       parameters: {
         type: 'object',
         properties: {
@@ -895,7 +899,7 @@ const TOOLS = [
           },
           named: { type: 'string', description: 'The project\'s name exactly as they wrote it, when they named one. A name that is not exactly the project\'s is asked about on the card ("Did you mean ...?").' },
           title: { type: 'string', description: 'A short title for the request, in their words.' },
-          details: { type: 'string', description: 'What they asked for, in their words, with anything they said that matters.' },
+          details: { type: 'string', description: 'The request on its own, for somebody who never saw this chat: what is asked and why it matters, in their words where they gave them, how it fits what the project already does, and what is still undecided. Never refer to, compare with, or say it replaces or revises an earlier draft.' },
           attachmentIds: {
             type: 'array', maxItems: 3,
             items: { type: 'string' },
@@ -935,7 +939,7 @@ const TOOLS = [
           doneWhen: {
             type: 'array', minItems: 1, maxItems: 3,
             items: { type: 'string' },
-            description: 'One to three short checks, in their words, of what is true when it is done.',
+            description: 'One to three short checks, in their words, of what is true when it is done. Each one reads on its own, never against an earlier draft.',
           },
         },
         required: ['title', 'details', 'doneWhen'],
