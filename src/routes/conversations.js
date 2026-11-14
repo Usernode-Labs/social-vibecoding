@@ -1091,6 +1091,36 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // 14 Nov 2026 (#6674): what Homeroom bot is doing in this conversation or
+  // one of its threads now, so a page coming back from the background draws
+  // its working card at once instead of waiting for the next renewal of the
+  // typing event. Live state only: it reads the bot's process memory and the
+  // short-lived copy other instances publish (bot-typing-mirror.js).
+  router.get('/api/conversations/:id/bot-working', conversationReactionLimiter, async (req, res) => {
+    let id = conversations.strictId(req.params.id);
+    const rawRoot = req.query.thread_root_id;
+    const threadRootId = rawRoot == null ? null : conversations.strictId(rawRoot);
+    if (!id || (rawRoot != null && !threadRootId)) return sendNotFound(res);
+    try {
+      if (isDemo(req)) id = await stagingMessages.resolveLegacyLink(pool, req.user, id);
+      const conversation = await conversations.getConversation(pool, req.user, id);
+      if (!conversation) return sendNotFound(res);
+      res.set('Cache-Control', 'no-store');
+      const botId = conversation.peer?.bot ? conversation.peer.id : null;
+      if (!botId) return res.json({ typing: false, botId: null });
+      const working = require('../services/homeroom-bot-dm').botWorkingNow(id, threadRootId);
+      return res.json({
+        typing: working.typing,
+        ...(working.typing && working.doing ? { doing: working.doing } : {}),
+        ...(working.typing && working.answering ? { answering: working.answering } : {}),
+        botId,
+      });
+    } catch (err) {
+      log.error('conversations', 'bot working failed', { id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/conversations/:id/typing', conversationReactionLimiter, async (req, res) => {
     const id = conversations.strictId(req.params.id);
     if (!id || typeof req.body?.typing !== 'boolean') return sendNotFound(res);
