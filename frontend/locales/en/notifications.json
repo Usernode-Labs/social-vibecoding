@@ -993,11 +993,19 @@
   },
   "row.vote.no": {
     "text": "Voted no",
-    "description": "First line of a notification: somebody (named on the last line) voted against the viewer's proposed change. The change's title is on the line below."
+    "description": "First line of a notification when the voter is not known: somebody voted against the viewer's proposed change. The change's title is on the line below. When the voter is known, \"row.vote.noBy\" names them instead."
   },
   "row.vote.yes": {
     "text": "Voted yes",
-    "description": "First line of a notification: somebody (named on the last line) voted for the viewer's proposed change. The change's title is on the line below."
+    "description": "First line of a notification when the voter is not known: somebody voted for the viewer's proposed change. The change's title is on the line below. When the voter is known, \"row.vote.yesBy\" names them instead."
+  },
+  "row.vote.yesBy": {
+    "text": "@{{username}} voted yes",
+    "description": "First line of a notification: the person named voted for the viewer's proposed change. {{username}} is their @handle without the @, which the text keeps. The change's title is on the line below."
+  },
+  "row.vote.noBy": {
+    "text": "@{{username}} voted no",
+    "description": "First line of a notification: the person named voted against the viewer's proposed change. {{username}} is their @handle without the @, which the text keeps. The change's title is on the line below."
   },
   "row.vote.yourChange": {
     "text": "your change",

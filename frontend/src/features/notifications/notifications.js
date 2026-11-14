@@ -3622,9 +3622,19 @@ function rowWords(n) {
   // Somebody voted. The DIRECTION is in the label rather than the subject,
   // because it is the part you want at a glance and the proposal title is
   // usually long enough to push it off the row.
+  // #6665: the voter's name is in that label too, so a card that groups
+  // several votes says who cast each one (the member lines under it read the
+  // label and never draw a `by` line). The name is then not repeated on the
+  // small line below, the same rule the key rows follow. Without a known
+  // voter the plain "Voted yes" / "Voted no" stays.
   if (n.kind === 'proposal_vote') {
+    const who = typeof n.sourceUsername === 'string' ? n.sourceUsername.trim() : '';
+    const no = n.detail === 'no';
+    const label = who
+      ? (no ? t('notifications:row.vote.noBy', { username: who }) : t('notifications:row.vote.yesBy', { username: who }))
+      : (no ? t('notifications:row.vote.no') : t('notifications:row.vote.yes'));
     const head = headline(
-      n.detail === 'no' ? t('notifications:row.vote.no') : t('notifications:row.vote.yes'),
+      label,
       prLabel || n.sessionTitle || t('notifications:row.vote.yourChange'),
     );
     // #1688: the voter's own line rides after the subject, quoted — the
@@ -3632,8 +3642,8 @@ function rowWords(n) {
     const reason = typeof n.voteReason === 'string' ? n.voteReason.trim() : '';
     return {
       ...base,
-      by: n.sourceUsername || null,
-      icon: n.detail === 'no' ? '\u{1F44E}' : '\u{1F44D}',
+      by: null,
+      icon: no ? '\u{1F44E}' : '\u{1F44D}',
       label: head.label,
       segments: reason
         ? [...head.segments, { t: 'text', v: t('notifications:row.vote.reason', { reason }) }]
