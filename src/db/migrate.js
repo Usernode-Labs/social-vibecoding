@@ -305,6 +305,7 @@ async function migrate(config) {
   await seedStagingAppSortSignals(pool);
   // Must run AFTER seedStagingYourApps — it features that fixture's apps.
   await seedStagingFeaturedApps(pool);
+  await seedStagingFeaturedKinds(pool);
   await seedStagingAppQuotaUsers(pool);
   // Must run AFTER seedStagingYourApps (it references those demo apps) and
   // AFTER seedStagingAppQuotaUsers (it seeds the zero-quota fixture's grid).
@@ -11396,6 +11397,32 @@ async function seedStagingFeaturedApps(pool) {
     log.info('db', 'Staging featured-apps fixtures seeded', { rows: candidates.length });
   } catch (err) {
     log.warn('db', 'Staging featured-apps seeding failed', { message: err.message });
+  }
+}
+
+// #6660: Home's Featured heading names the chosen kind ("Featured in Games")
+// once one is picked, and the sort beside More communities needs two cards to
+// order, so the after copy needs featured games and more than one game. The
+// featured fixtures above carry no category, and a fresh staging copy has no
+// app_inferred_categories rows either. Two of them are games here, and so is
+// the unfeatured chess fixture, which leaves something under More
+// communities: display data on fake apps only, and only where no category is
+// set, so a real one is never overwritten. Idempotent on every boot; strictly
+// a no-op outside staging.
+async function seedStagingFeaturedKinds(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `UPDATE apps AS a
+          SET manifest_snapshot = COALESCE(a.manifest_snapshot, '{"secrets": []}'::jsonb)
+                || '{"category": "games"}'::jsonb
+        WHERE a.slug IN ('staging-demo-puzzle-chain', 'staging-demo-word-garden',
+                         'staging-demo-chess-arena')
+          AND NOT (COALESCE(a.manifest_snapshot, '{}'::jsonb) ? 'category')`
+    );
+    log.info('db', 'Staging featured-app kinds seeded');
+  } catch (err) {
+    log.warn('db', 'Staging featured-app kinds seeding failed', { message: err.message });
   }
 }
 
