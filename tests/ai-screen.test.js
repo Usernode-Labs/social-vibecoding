@@ -1515,7 +1515,9 @@ test('the tab\'s bare address closes what is open beside the lists (#6425)', () 
   const app = read('public/js/app.js');
   assert.match(app, /if \(parts\.length === 1\) \{\s+window\.UsernodeReact\?\.ai\?\.closeColumn\?\.\(\);\s+\}/);
   const door = read('frontend/src/features/ai/door.ts');
-  assert.match(door, /export function askBotClose\(\): void \{\s+seq \+= 1;\s+asked = \{ at: null, item: null, close: true, seq \};/);
+  // Except the second pass of a link to a new chat, whose own address the
+  // page has since replaced with the bare tab's (tests/ai-where.test.js).
+  assert.match(door, /export function askBotClose\(\): void \{\s+if \(asked\?\.fresh && typeof window !== 'undefined'\s+&& isNewChatEcho\([^\n]+\)\) return;\s+seq \+= 1;\s+asked = \{ at: null, item: null, close: true, seq \};/);
   assert.match(door, /closeColumn: askBotClose/);
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /if \(ask\.close\) closeColumn\(\);/);

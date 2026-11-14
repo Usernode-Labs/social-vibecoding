@@ -11,10 +11,10 @@
 //
 //   1. Which page a bot message stands for (request-page.ts), and that the
 //      bot's own private threads (a draft, a design) are not one of them.
-//   2. Every way in goes there: a news line, a moment's "↳ in …" label, a
-//      thread opened by id, a link to an old thread, and "See progress"
-//      opens Main Chat, never a thread. (The activity drawer, another way
-//      in, is gone: 5 Nov 2026.)
+//   2. Every way in goes there: a news line, a thread opened by id and a
+//      link to an old thread. (14 Nov 2026: a moment's "↳ in …" label, one
+//      more way in, went with Main Chat; the activity drawer, another,
+//      on 5 Nov 2026.)
 //   3. A request's message offers no thread of its own.
 //   4. What still asks something in the chat is drawn whole in Main Chat,
 //      for as long as its request waits, so nothing is left in a thread.
@@ -76,7 +76,9 @@ test('every way into a request\'s story goes to its page', () => {
   assert.match(news, /function tap\(\) \{\n {4}if \(page\) openRequestPage\(page\);/);
   assert.match(news, /else openThreadAt\(rootId, /, 'only news that names no page (sent before it named its project) opens where it is told');
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /onClick=\{\(\) => \(story \? openRequestPage\(story\) : openThread\(/, 'the "↳ in …" label');
+  // The "↳ in …" label over a moment Main Chat also listed was one more way
+  // in; it went with Main Chat and the stamp that drew it (14 Nov 2026).
+  assert.doesNotMatch(row, /openRequestPage|data-bot-thread-label/, 'a row has no door of its own to a request\'s story');
   // The activity drawer, which opened its rows the same way, is gone (5 Nov 2026).
   assert.doesNotMatch(read('frontend/src/features/messages/bot-strip.tsx'), /openRequestPage|openThreadAt/, 'no door of its own');
   const store = read(STORE);

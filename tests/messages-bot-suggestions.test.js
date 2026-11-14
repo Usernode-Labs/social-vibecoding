@@ -183,8 +183,10 @@ test('#6207: the demo DM’s stopped build is a request’s news, so the declare
   // Try again.
   const check = JSON.parse(read('dapp.json')).tests.find((t) => t.id === 'homeroom-bot-old-main-address');
   assert.ok(check, 'declared');
-  assert.match(check.expectSelector, /:not\(:has\(\[data-request-tag\]\)\)$/);
-  assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
+  assert.match(check.expectSelector, /\.messages-reply-scroll:not\(:has\(\[data-request-tag\]\)\) \.messages-quote /,
+    'no request\'s news anywhere in the thread the offer is found in');
+  const limit = Number(/const MAX_SELECTOR_LEN = (\d+);/.exec(read('capture/capture.js'))[1]);
+  assert.ok(check.expectSelector.length <= limit, 'within what the runner reads');
   const fixture = read('src/services/staging-messages.js');
   assert.match(fixture, /homeroomBot: \{ kind: 'build_failed', \.\.\.stuck, actions: dm\.STUCK_ACTIONS\.build_failed, status: 'open' \}/);
 });
