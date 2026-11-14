@@ -6583,6 +6583,14 @@
     "text": "No longer needed. Voting has ended.",
     "description": "Line under the Votes card on a governance vote's page once something else settled what it was about, so the vote no longer applies."
   },
+  "workRow.twin": {
+    "text": "Similar to <0>#{{number}}</0>",
+    "description": "Hint below a request in the Workshop: links to another open request with a similar title. It does not merge them."
+  },
+  "topic.request.twin": {
+    "text": "Similar to <0>#{{number}} {{title}}</0>",
+    "description": "Hint below a request title: links to the closest similar open request, with its number and title."
+  },
   "frame.hub.people": {
     "text": "People",
     "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who is active and who the community is for."

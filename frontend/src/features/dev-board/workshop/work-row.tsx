@@ -60,7 +60,7 @@ import {
   SparklesIcon,
 } from '@/components/ui/icons';
 
-import { useMessages } from '../../../lib/i18n/react';
+import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
 import { CategoryChip, ChatCount, ChecksBar, MenuTrigger, VoteButton } from '../card/dev-card';
 import { callAppView, itemHooks, LiveTally, openHref, RowBand, StatePill, voteSpecs } from '../card/fold';
@@ -269,6 +269,13 @@ export function WorkRow({
           </a>
         ) : <span className="dev-ws-wrow-link" title={card.title.text}>{card.title.text}</span>}
         <span className="dev-ws-wrow-sub">{rowWords(b)}</span>
+        {b.twin && slug ? (
+          <span className="relative z-[1] text-[13px] leading-snug text-zinc-500 dark:text-zinc-400" data-ws-twin={b.twin.number}>
+            <RichMessage id="project:workRow.twin" values={{ number: b.twin.number }} components={[
+              <a key="twin" className="font-semibold text-violet-700 hover:underline dark:text-violet-300" href={`#app/${encodeURIComponent(slug)}/dev/issues/${b.twin.number}`} title={b.twin.title} onClick={onOpen ? (e) => onOpen(e, { kind: 'issue', id: b.twin!.number }) : undefined} />,
+            ]} />
+          </span>
+        ) : null}
         {status ? (
           <span className="dev-ws-wrow-status">
             {live && pill ? <StatePill s={pill} className="dev-ws-wrow-live" /> : null}

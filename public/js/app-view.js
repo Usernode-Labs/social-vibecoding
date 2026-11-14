@@ -6709,6 +6709,12 @@ const AppView = {
   // the assignee chip, the work note, its "Also:", the admins' Claims line
   // and the thread's claim line); the status card says it once, and the
   // thread's claim line reads as what happened.
+  _twinOf(issue) {
+    const number = Number(issue?.similar?.number);
+    return Number.isSafeInteger(number) && number > 0 && number !== Number(issue.number)
+      ? { number, title: String(issue.similar.title || '') } : null;
+  },
+
   _requestView(issue) {
     const n = issue.number;
     const top = issue.category && issue.category.top;
@@ -6730,6 +6736,7 @@ const AppView = {
       askedTime: stamp.text,
       askedTitle: stamp.title,
       title: issue.title || '',
+      similar: AppView._twinOf(issue),
       titleEditing: canEditTitle && AppView._editingIssueTitle === n ? { issue: n, initial: issue.title || '' } : null,
       bodyHtml: words.text.trim() ? AppView._issueBodyHtml({ body: words.text }) : '',
       bodyMarkdown: words.text,
@@ -13154,7 +13161,7 @@ const AppView = {
       }
       const cat = it.category && it.category.top ? AppView._categoryMeta(it.category.top) : null;
       return {
-        ...base, kind: 'request', noun: 'request', n: Number(it.number) || null,
+        ...base, kind: 'request', noun: 'request', n: Number(it.number) || null, twin: AppView._twinOf(it),
         category: cat ? cat.label : '', replies: Number(it.chatCount) || 0,
         stage: ws && ws.key !== 'claimed' && ws.key !== 'in_review' ? 'worked' : (ws && ws.key === 'in_review' ? 'vote' : 'request'),
         // Nobody has taken it (the Workshop's "Nobody is on these"), so a
