@@ -4909,11 +4909,11 @@
   },
   "ai.row.botCouldntFix": {
     "text": "{{project}} · #{{number}} · Homeroom bot couldn't fix it",
-    "description": "The AI tab's main view, Needs you: tooltip of the row of the person's own change after Homeroom bot took over its fix and its last attempt failed."
+    "description": "The AI tab's main view, Needs you: tooltip of the row of the person's own change after Homeroom bot took over its fix and its last attempt failed, or of the change Homeroom bot made for a request they asked for, after it handed the fix back."
   },
   "ai.row.botCouldntFixPr": {
     "text": "{{project}} · PR {{number}} · Homeroom bot couldn't fix it",
-    "description": "The AI tab's main view, Needs you: the same tooltip on a project whose code is on GitHub, where a change's number is its pull request's (\"PR 12\")."
+    "description": "The AI tab's main view, Needs you: the same tooltip on a project whose code is on GitHub, where a change's number is its pull request's (\"PR 12\"). Also covers the change Homeroom bot made for a request they asked for, after it handed the fix back."
   },
   "ai.row.voteFreesSlot": {
     "text": "{{project}} · #{{number}} · Your vote helps free a build slot",
@@ -5013,7 +5013,7 @@
   },
   "ai.pill.askAgain": {
     "text": "Ask again",
-    "description": "The AI tab's main view, Needs you: the pill on the person's own change after Homeroom bot took over its fix and its last attempt failed. Opens the change, where the bot can be asked again in its thread. A verb."
+    "description": "The AI tab's main view, Needs you: the pill on the person's own change after Homeroom bot took over its fix and its last attempt failed, or on the change Homeroom bot made for a request they asked for, after it handed the fix back. Opens the change, where the bot can be asked again in its thread. A verb."
   },
   "ai.pill.needsYou": {
     "text": "Take a look",
@@ -5217,7 +5217,7 @@
   },
   "ai.why.botCouldntFix": {
     "text": "Homeroom bot couldn't fix it. Ask it again, or fix it yourself",
-    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for the person's own change after Homeroom bot took over its fix and its last attempt failed."
+    "description": "Homeroom bot tab, on a phone: the second line of a Needs you row for the person's own change after Homeroom bot took over its fix and its last attempt failed, or for the change Homeroom bot made for a request they asked for, after it handed the fix back."
   },
   "ai.why.fixTests": {
     "text": "Tests failing",
