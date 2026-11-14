@@ -145,8 +145,9 @@ test('the content rules are a section of their own, naming every category (#2722
   const section = prompts.getConventionSection('content-rules-what-no-app-may-show');
   assert.ok(section, 'the content rules resolve by their obvious slug');
   for (const term of [
-    /Mature or suggestive themes/, /nudity/i, /Graphic sexual content/,
-    /Violence/, /weapons/, /simulated gambling/, /loot boxes/,
+    /Sexual content or nudity/, /Realistic or graphic violence/, /Real-money gambling/, /loot boxes/,
+    // 14 Nov 2026: what agents used to refuse is named as allowed.
+    /Cartoon and fantasy violence in games/, /weapons/, /Pretend-currency games/,
   ]) {
     assert.match(section.content, term);
   }

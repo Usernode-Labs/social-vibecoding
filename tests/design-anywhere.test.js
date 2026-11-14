@@ -214,7 +214,7 @@ test('the prompt: a thread with no screen yet is drawn; one with a version is ed
   assert.match(none, /WHAT YOU WERE ASKED TO DRAW\nA seed calendar/);
   assert.doesNotMatch(none, /Main Chat|MAIN CHAT/, '14 Nov 2026: there is no Main Chat to name');
   assert.match(none, /THERE IS NO SCREEN YET: draw it with write_screen\.$/);
-  assert.match(none, /Content rules: nothing sexual, violent,\n  or about weapons or gambling/, 'its content rules kept');
+  assert.match(none, /Content rules: nothing sexual, no\n  realistic or graphic violence and no real-money gambling/, 'its content rules kept');
   assert.doesNotMatch(none, /—/);
   const design = { surface: 'app', app: { slug: 'garden', name: 'Garden club' }, title: 'Plots', width: 390, height: 844 };
   const some = designBot.designPrompt({ username: 'ada', design, version: 3, html: '<p>x</p>' });
