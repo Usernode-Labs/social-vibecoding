@@ -66,9 +66,17 @@
  * all of them against one table of instants and asserts they answer
  * identically. Same arrangement, and the same reason, as `swatchFor` in
  * features/messages/format.tsx.
+ *
+ * ── Which zone ────────────────────────────────────────────────────────
+ *
+ * The zone the account picked in Settings › Language (#6479, ./time-zone.ts),
+ * or the device's when it picked none. "Today" and "this year" are decided in
+ * that zone too, so a message sent late last night in the picked zone reads
+ * as yesterday there, whatever the device's clock says.
  */
 
 import { getDateLocale, t } from './i18n/runtime';
+import { getTimeZone, zonedDay } from './time-zone';
 
 export interface Stamp {
   /** What the row shows: the time, preceded by the date when it is not today. */
@@ -99,19 +107,21 @@ const FULL: Intl.DateTimeFormatOptions = {
 const formatters = new Map<string, Intl.DateTimeFormat>();
 function formatDate(date: Date, key: string, options: Intl.DateTimeFormatOptions): string {
   const locale = getDateLocale();
-  const id = `${locale}|${key}`;
+  // The zone is in the key as the locale is: it can change under a page (#6479).
+  const timeZone = getTimeZone();
+  const id = `${locale}|${timeZone || ''}|${key}`;
   let formatter = formatters.get(id);
   if (!formatter) {
-    formatter = new Intl.DateTimeFormat(locale, options);
+    formatter = new Intl.DateTimeFormat(locale, timeZone ? { ...options, timeZone } : options);
     formatters.set(id, formatter);
   }
   return formatter.format(date);
 }
 
 function sameDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear()
-    && a.getMonth() === b.getMonth()
-    && a.getDate() === b.getDate();
+  const x = zonedDay(a);
+  const y = zonedDay(b);
+  return x.year === y.year && x.month === y.month && x.day === y.day;
 }
 
 /**
@@ -123,7 +133,7 @@ function sameDay(a: Date, b: Date): boolean {
  * screen.
  */
 function datePart(date: Date, now: Date): string {
-  return date.getFullYear() === now.getFullYear()
+  return zonedDay(date).year === zonedDay(now).year
     ? formatDate(date, 'day', { month: 'short', day: 'numeric' })
     : formatDate(date, 'day-year', { year: 'numeric', month: 'short', day: 'numeric' });
 }
