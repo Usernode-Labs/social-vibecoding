@@ -5261,11 +5261,11 @@
   },
   "ai.history.live": {
     "text": "Live {{date}}",
-    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a change that went live (people using the app have it). {{date}} is the day, short, as \"Oct 24\"."
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a change that went live (people using the app have it), or for a private thread with Homeroom bot about such a change. {{date}} is the day, short, as \"Oct 24\"."
   },
   "ai.history.closed": {
     "text": "Closed",
-    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a change closed without being merged, or a request closed with nothing built."
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a change closed without being merged, a request closed with nothing built, or a private thread with Homeroom bot about a change that was closed."
   },
   "ai.history.shipped": {
     "text": "Shipped",

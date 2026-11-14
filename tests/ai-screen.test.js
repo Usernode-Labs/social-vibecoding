@@ -815,6 +815,18 @@ test('#6237: a change on a GitHub-hosted project is "PR N" on the bot tab\'s row
   });
   assert.equal(rows[0].sub.id, 'messages:ai.row.privateAboutChangePr');
   assert.equal(words(rows[0].sub), 'Only you · Garden club · About change PR 6230');
+  // 13 Nov 2026: once that change is live or closed the thread is History's
+  // (the server says so as resultDone, services/ai-work.js ABOUT_CHANGE_END_SQL),
+  // so the change is not listed here and again under Live this week.
+  const liveChange = thread(6, 6230, 'live', { kind: 'change', app: github });
+  const finished = {
+    private: [{ rootId: 5, title: 'Plans', kind: 'ask', app: github, state: 'open', about: { kind: 'change', number: 6230 }, resultDone: true }],
+    needs: [], next: [], waiting: [], live: [liveChange],
+  };
+  assert.deepEqual(needsYou(null, finished), [], 'not under Needs you');
+  const { liveThisWeek } = loadTsx(MODEL);
+  assert.deepEqual(liveThisWeek(finished).map((t) => t.threadId), [6], 'the change is Live this week\'s one row');
+  assert.deepEqual(require('../src/services/ai-work').unfiledPrivate(finished.private, new Set()), [], 'nor counted by the server\'s own lists');
   // Older servers send no flag: the row keeps what it said before.
   assert.equal(changeOnGithub(thread(4, 6230, 'vote', { kind: 'change', app })), false);
   // The rendered row's number cell says PR; "#6230" is nowhere on the page.

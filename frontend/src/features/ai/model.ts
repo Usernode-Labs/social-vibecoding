@@ -61,7 +61,10 @@ export interface AiPrivate {
   resultRef?: number | null;
   /** #6271: the day it was marked done, for Live this week (absent from an older server). */
   doneAt?: string | null;
-  /** Filed (or posted) as a request that has since finished: History's, not Needs you's. */
+  /**
+   * Filed (or posted) as a request that has since finished, or about a change
+   * that is live or closed (13 Nov 2026): History's, not Needs you's.
+   */
   resultDone?: boolean;
 }
 
@@ -686,6 +689,8 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
     // #6159: a done thread is the only one left out (the server leaves it out too).
     if (p.state === 'done') continue;
     // 5 Nov 2026: and one filed as a request that has finished: History's.
+    // 13 Nov 2026: as is one about a change that is live or closed, which
+    // was listed here and, as the change, under Live this week.
     if (p.resultDone) continue;
     const key = filedKey(p);
     if (key && filed.get(key) === p.rootId && listed.has(key)) continue;
