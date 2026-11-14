@@ -1200,6 +1200,9 @@ test('every door into the bot\'s chat lands on its tab, never the Messages scree
   // A cold link: once the store learns the chat is the bot's, as for a channel.
   assert.match(store, /if \(active\.homeroomBot && active\.kind !== 'channel'\) \{\s+noteBotConversation\(active\.id\);\s+if \(state\.route\.open && !state\.route\.embedded\) \{\s+publish\(\{ active \}\);\s+if \(botToTab\(\)\) return;/);
   assert.match(store, /channelToHub\(\);\s+botToTab\(\);/, 'and when the list lands');
+  // From any address the router opened the chat at: the query off, the id as a number.
+  const botToTab = store.slice(store.indexOf('function botToTab('), store.indexOf('function resolvePendingChannel('));
+  assert.match(botToTab, /const parts = window\.location\.hash\.replace\(\/\^#\/, ''\)\.split\('\?'\)\[0\]\.split\('\/'\);\s+if \(parts\[0\] !== 'messages' \|\| Number\(parts\[1\]\) !== conversationId\) return false;/);
   // Design threads, bell rows and the first session name the tab.
   assert.match(read('src/services/design-threads.js'), /href: `#homeroom-bot\/thread\/\$\{Number\(opened\.messageId\)\}`,/);
   assert.match(read('frontend/src/features/first-session/index.tsx'), /else if \(screen === 'bot' && conversationId\) void openFirstVersion\(slug\);/);

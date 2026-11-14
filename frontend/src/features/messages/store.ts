@@ -539,7 +539,12 @@ function botToTab(): boolean {
   if (typeof window === 'undefined' || !state.route.open || state.route.embedded) return false;
   const conversationId = state.route.conversationId;
   if (!conversationId || conversationId !== botConversationId()) return false;
-  if (!new RegExp(`^#messages/${conversationId}(?:/|$)`).test(window.location.hash)) return false;
+  // Only from this conversation's own address, read as the router reads it
+  // (public/js/app.js: the query off, the id as a number), so every address
+  // the router opened the chat from here goes on to the tab. The chat's own
+  // stream is drawn on no screen: nothing here may be left showing it.
+  const parts = window.location.hash.replace(/^#/, '').split('?')[0].split('/');
+  if (parts[0] !== 'messages' || Number(parts[1]) !== conversationId) return false;
   // The chat itself was Main Chat: its old address, which the tab resolves
   // to the thread those messages are in now (../ai/where.ts).
   const href = botOldAddress({ threadRootId: state.route.threadRootId, focusMessageId: state.route.focusMessageId });
