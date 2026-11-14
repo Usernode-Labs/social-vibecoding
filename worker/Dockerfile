@@ -32,9 +32,12 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
 # The base image's own packages are upgraded first: the release's image scan
 # refuses a fixed advisory left unpatched (OpenSSL CVE-2026-84782, 26 Oct
 # 2026), and a cached layer would otherwise keep the old package.
+# linux-libc-dev is named in the install so this layer rebuilds and takes
+# Debian's patched release instead of the cached one (audit of 14 Nov 2026:
+# 6.12.117-1 or later).
 RUN apt-get update && apt-get upgrade -y --no-install-recommends \
   && apt-get install -y --no-install-recommends \
-    git curl wget ca-certificates unzip python3 make g++ \
+    git curl wget ca-certificates unzip python3 make g++ linux-libc-dev \
   && rm -rf /var/lib/apt/lists/*
 
 # ── The shots browser's system font (#4087) ────────────────────────────
