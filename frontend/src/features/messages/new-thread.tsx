@@ -69,7 +69,7 @@ import { useStagedCard } from './composer';
 import { BOT_AVATAR, fileSize, pendingObjectLabel } from './format';
 import { takeCarried } from './new-chat-carry';
 import type { MessageAttachment, SharedObjectReference, StagedObject } from './types';
-import { loadCommunities } from '../workshop/community-scope';
+import { communityScopeStore, describe, loadCommunities } from '../workshop/community-scope';
 import { ProjectChip, ProjectPicker } from './project-picker';
 import {
   BUILDER_NAME, BUILDER_PRODUCT, BuilderChip, BuilderPicker, BuilderSetup, HANDOFF_MAX, builderLink, useBuilderConnections, type Builder,
@@ -266,8 +266,29 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
 
   // A door named the project: the chip says its name once the communities
   // you are in are known, which the picker would otherwise read on opening.
+  // 14 Nov 2026: a door can name a project the person is not in (a public
+  // project's Workshop row, followed as a link, or a chip the bot page drew
+  // from its address): the chip said "Any project" over a chat that was set
+  // to that project all the same. Its name and icon are read once then.
   useEffect(() => {
-    if (project) void loadCommunities();
+    if (!project) return undefined;
+    let live = true;
+    void loadCommunities().then(() => {
+      if (!live || communityScopeStore.get().info[project]) return null;
+      return fetch(`/api/apps/${encodeURIComponent(project)}`, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => {
+          const app = body && typeof body === 'object' ? (body.app || body) : null;
+          if (!live || !app || app.slug !== project || typeof app.name !== 'string' || !app.name) return;
+          describe(project, {
+            name: app.name,
+            iconUrl: app.icon_url || (app.icon_image_id ? `/app-icons/${app.icon_image_id}` : null),
+            iconEmoji: app.icon_emoji || null,
+            iconColor: app.icon_color || null,
+          });
+        });
+    }).catch(() => { /* the chip keeps Any project; the picker still chooses */ });
+    return () => { live = false; };
   }, [project]);
 
   // Their own Claude Code or ChatGPT is picked, by the picker or by a door:

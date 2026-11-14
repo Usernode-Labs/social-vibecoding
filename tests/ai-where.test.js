@@ -266,3 +266,74 @@ test('a quote goes to the thread its message is in, into that thread\'s own box'
   assert.match(fn, /setReply\(scopeKey\(wanted\.conversationId, thread\.rootId\), message\);/, 'the thread\'s box, never one with no thread');
   assert.match(src, /firstUnreadId: same && current && current\.firstUnreadId !== undefined \? current\.firstUnreadId : page\.firstUnreadId,\s+\},\s+\}\);\s+applyPendingQuote\(\);/, 'once the thread has drawn it');
 });
+
+// A NEW CHAT ASKED FOR BY A LINK IS NOT CLOSED BY ITS OWN NAVIGATION. A link
+// to `#homeroom-bot/new…` (a project's Workshop row) fires popstate and then
+// hashchange, and the router runs on each. Where the page already knew the
+// bot's chat it opened the new chat on the first pass and wrote its own
+// address in place (`#homeroom-bot`, with its filter); the second pass read
+// that bare address as the tab pressed and closed it again, so the row
+// landed on the lists alone. Only a browser shows the two passes, so this
+// drives the door the way the router does, with the event it is handling.
+test('a link to a new chat: the second pass of its own navigation does not close it', () => {
+  const had = { window: globalThis.window };
+  const location = { hash: '', search: '', pathname: '/' };
+  globalThis.window = { location, UsernodeReact: {}, event: undefined };
+  try {
+    const door = loadTsx('frontend/src/features/ai/door.ts', {
+      stubs: { react: { useSyncExternalStore: (_subscribe, get) => get() } },
+    });
+    const ai = globalThis.window.UsernodeReact.ai;
+    const asked = () => plain(door.useBotTabAsk());
+    const asking = 'http://homeroom.test/?demo=1#homeroom-bot/new?project=run-club-1a2b3c';
+
+    // Pass one (popstate): the router hands the address over, and the page
+    // opens the new chat and puts its own address in the bar.
+    location.hash = '#homeroom-bot/new?project=run-club-1a2b3c';
+    globalThis.window.event = { type: 'popstate' };
+    ai.openNew(location.hash);
+    const first = asked();
+    assert.deepEqual(first.fresh, { project: 'run-club-1a2b3c', builder: 'homeroom' });
+    location.hash = '#homeroom-bot?project=run-club-1a2b3c';
+
+    // Pass two (hashchange, for the same navigation): the router sees a bare
+    // tab address and asks to close. That ask is dropped.
+    globalThis.window.event = { type: 'hashchange', newURL: asking };
+    ai.closeColumn();
+    assert.deepEqual(asked(), first, 'the new chat stays asked for: nothing closed it');
+
+    // The tab pressed afterwards is a navigation of its own, and closes it.
+    location.hash = '#homeroom-bot';
+    globalThis.window.event = { type: 'hashchange', newURL: 'http://homeroom.test/?demo=1#homeroom-bot' };
+    ai.closeColumn();
+    assert.equal(asked().close, true, 'the tab pressed still closes the column');
+    assert.equal(asked().seq, first.seq + 1);
+
+    // With the address in the bar already the page's own, the tab pressed
+    // runs the router with no event at all.
+    ai.openNew('#homeroom-bot/new');
+    globalThis.window.event = undefined;
+    ai.closeColumn();
+    assert.equal(asked().close, true);
+
+    // The rule itself: only a hashchange, only one that went to a new chat,
+    // and only once the address has been replaced.
+    assert.equal(door.isNewChatEcho({ type: 'hashchange', newURL: asking }, '#homeroom-bot?project=run-club-1a2b3c'), true);
+    assert.equal(door.isNewChatEcho({ type: 'hashchange', newURL: asking }, '#homeroom-bot/new?project=run-club-1a2b3c'), false,
+      'the address still asks for the new chat: the page has not taken it, and the router asks again');
+    assert.equal(door.isNewChatEcho({ type: 'popstate', newURL: asking }, '#homeroom-bot'), false);
+    assert.equal(door.isNewChatEcho({ type: 'hashchange', newURL: 'http://homeroom.test/#homeroom-bot/thread/5' }, '#homeroom-bot'), false);
+    assert.equal(door.isNewChatEcho({ type: 'hashchange' }, '#homeroom-bot'), false);
+    assert.equal(door.isNewChatEcho(null, '#homeroom-bot'), false);
+
+    // A thread asked for after the new chat is the last ask: a bare address
+    // then is the tab pressed, whatever event carries it.
+    ai.openNew('#homeroom-bot/new');
+    ai.openAt({ threadRootId: 5, focusMessageId: null });
+    globalThis.window.event = { type: 'hashchange', newURL: asking };
+    ai.closeColumn();
+    assert.equal(asked().close, true, 'only the pass that follows a new chat\'s own ask is dropped');
+  } finally { globalThis.window = had.window; }
+  const src = read('frontend/src/features/ai/door.ts');
+  assert.match(src, /export function askBotClose\(\): void \{\n\s+if \(asked\?\.fresh && typeof window !== 'undefined'\n\s+&& isNewChatEcho\(window\.event as \{ type\?: string; newURL\?: unknown \} \| undefined, window\.location\.hash\)\) return;\n\s+seq \+= 1;/);
+});

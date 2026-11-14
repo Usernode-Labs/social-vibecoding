@@ -379,3 +379,18 @@ test('until its connector is there, the steps to add it take the thread\'s place
   assert.match(walkthrough, /import \{ ChatgptSetupSteps, ClaudeSetupSteps \} from '\.\.\/settings\/connector-setup-steps';/);
   assert.match(walkthrough, /import \{ ConnectorUrl \} from '\.\.\/dev-chat\/connector-setup-inline';/);
 });
+
+// 14 Nov 2026: a door can name a project the person is not in (a public
+// project's Workshop row followed as a link; a chip the bot page drew from
+// its address). The chat was set to that project, and its chip said "Any
+// project": the chip names a project only from the communities you are in.
+// Its name and icon are read once, and told to the store the chip reads.
+test('a new chat set to a project the person is not in still names it on its chip', () => {
+  const thread = read('frontend/src/features/messages/new-thread.tsx');
+  assert.match(thread, /void loadCommunities\(\)\.then\(\(\) => \{\s+if \(!live \|\| communityScopeStore\.get\(\)\.info\[project\]\) return null;\s+return fetch\(`\/api\/apps\/\$\{encodeURIComponent\(project\)\}`/,
+    'only when the communities read does not know it');
+  assert.match(thread, /if \(!live \|\| !app \|\| app\.slug !== project \|\| typeof app\.name !== 'string' \|\| !app\.name\) return;\s+describe\(project, \{\s+name: app\.name,/);
+  assert.match(thread, /return \(\) => \{ live = false; \};\s+\}, \[project\]\);/);
+  const chip = read('frontend/src/features/messages/project-picker.tsx');
+  assert.match(chip, /const info = slug \? st\.info\[slug\] \|\| null : null;/, 'the chip reads that store');
+});

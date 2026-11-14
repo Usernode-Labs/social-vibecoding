@@ -311,8 +311,36 @@ export function askBotTab(at: Partial<BotAt> | null | undefined): void {
   listeners.forEach((fn) => fn());
 }
 
-/** The router's half: close what is open beside the lists (a bare `#homeroom-bot`). */
+/**
+ * Pure: whether a `hashchange` is the second pass of a navigation to a new
+ * chat, arriving after the page has put its own address in the new chat's
+ * place. `went` is where that navigation went (the event's `newURL`), `hash`
+ * the address in the bar now.
+ */
+export function isNewChatEcho(event: { type?: string; newURL?: unknown } | null | undefined, hash: string | null | undefined): boolean {
+  if (!event || event.type !== 'hashchange' || typeof event.newURL !== 'string') return false;
+  const at = event.newURL.indexOf('#');
+  const went = at === -1 ? '' : event.newURL.slice(at);
+  return went !== String(hash || '') && !!botNewAt(went);
+}
+
+/**
+ * The router's half: close what is open beside the lists (a bare `#homeroom-bot`).
+ *
+ * NOT THE ECHO OF A NEW CHAT'S OWN ADDRESS (14 Nov 2026). A link to
+ * `#homeroom-bot/new…` (a project's Workshop row) fires popstate and then
+ * hashchange, and the router runs on each. The first pass asks for the new
+ * chat; where the page already knows the bot's chat it opens at once and
+ * writes its own address in place (`#homeroom-bot`, with its filter: a new
+ * chat has no address of its own, ./column.ts). The second pass then read
+ * that bare address as the tab pressed and closed the new chat it had just
+ * opened: the row landed on the lists alone. The event being handled says
+ * where the navigation really went, so that one pass is told apart from the
+ * tab pressed and dropped.
+ */
 export function askBotClose(): void {
+  if (asked?.fresh && typeof window !== 'undefined'
+    && isNewChatEcho(window.event as { type?: string; newURL?: unknown } | undefined, window.location.hash)) return;
   seq += 1;
   asked = { at: null, item: null, close: true, seq };
   listeners.forEach((fn) => fn());
