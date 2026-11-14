@@ -19,6 +19,18 @@
  * Workshop's card asks who should build instead (./first-change.tsx), until
  * they close it or make something.
  *
+ * 14 Nov 2026: the Workshop's card has a second row under the first, a new
+ * chat with Homeroom bot about this project:
+ *
+ *   [+]   New chat about Garden club
+ *         Ask Homeroom bot for a change, a fix or an answer
+ *
+ * Every conversation with the bot is a thread now (Main Chat is gone), so a
+ * project's own door to the bot starts one, already set to the project
+ * (../../ai/door.ts botNewAddress: `#homeroom-bot/new?project=<slug>`). The
+ * first-change card keeps its own rows: its Homeroom bot row is the same
+ * door, so this one is not drawn beside it.
+ *
  * An anchor, so the browser's own ways to open a link work on it. The first
  * render is the prerender's: the title and nothing else until the lists are
  * read (an effect).
@@ -27,9 +39,11 @@
 import type { ReactNode } from 'react';
 
 import { ListRow } from '@/components/ui/grouped-list';
+import { PlusIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { deskLine, deskWords, useDesk } from '../../ai/desk';
+import { botNewAddress } from '../../ai/door';
 import { projectTabAddress } from '../../ai/filter-address';
 import { BOT_AVATAR } from '../../messages/format';
 import { FirstChangeCard, useFirstChange } from './first-change';
@@ -71,7 +85,32 @@ export function YourWorkRow({ slug, name, className = '', ...hooks }: {
   );
 }
 
-/** The Workshop's Your work: the row, in a card of its own, under Overview. */
+/**
+ * A new chat with Homeroom bot about this project: the Your work card's
+ * second row. An anchor to the tab's New chat, set to the project, with a
+ * plus tile where the first row has the bot's picture.
+ */
+export function NewChatRow({ slug, name, className = '' }: { slug: string; name: string; className?: string }): ReactNode {
+  const t = useMessages('project');
+  return (
+    <ListRow
+      as="a"
+      href={botNewAddress({ project: slug })}
+      inset="none"
+      className={className}
+      data-ws-desk-new=""
+      leading={(
+        <span className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[10px] bg-zinc-200/70 text-zinc-700 dark:bg-zinc-700/60 dark:text-zinc-200">
+          <PlusIcon className="h-[18px] w-[18px]" aria-hidden="true" />
+        </span>
+      )}
+      title={t('project:workshop.desk.newChat', { project: name })}
+      subtitle={t('project:workshop.desk.newChatSub')}
+    />
+  );
+}
+
+/** The Workshop's Your work: the row and, under it, New chat about the project, in a card of their own under Overview. */
 export function YourWorkCard({ slug, name }: { slug: string; name: string }): ReactNode {
   // The desk is read once for every row on screen (../../ai/desk.ts), so
   // asking here as well as in the row costs no second read.
@@ -80,6 +119,8 @@ export function YourWorkCard({ slug, name }: { slug: string; name: string }): Re
   return (
     <section className="dev-ws-strip dev-ws-desk" data-ws-desk="">
       <YourWorkRow slug={slug} name={name} className="rounded-[14px] px-1 py-2" />
+      <div className="mx-1 border-t border-[color:var(--app-sheet-line)]" aria-hidden="true" />
+      <NewChatRow slug={slug} name={name} className="rounded-[14px] px-1 py-2" />
     </section>
   );
 }
