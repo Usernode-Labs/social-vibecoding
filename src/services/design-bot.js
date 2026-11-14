@@ -10,10 +10,10 @@
 // the chat can hold a design, and the bot draws a screen in one from words
 // (write_screen: self-contained HTML for one screen; Homeroom puts the
 // project's own stylesheets in, so the model never retypes CSS), from the
-// project's code (list_source, read_source: the Main Chat turn's readers,
+// project's code (list_source, read_source: the chat turn's readers,
 // behind the same check) and from the pictures the person sent (as pictures
 // for a model that reads them; else described first, in a few sentences, by
-// a cheap model that does). Main Chat's turn hands it a thread to draw in
+// a cheap model that does). The chat turn hands it a thread to draw in
 // (homeroom-bot-mayor.js draw_screen, `draw` below); once a thread holds a
 // design, every message there is this bot's (homeroom-bot-dm.js).
 //
@@ -112,7 +112,7 @@ const NOT_DRAWN_TEXT = 'I couldn\'t draw that just now. Ask me again and I\'ll h
 // goes back to the model: words that say it drew or is drawing what it did
 // not (the shared reply check's drawing and design_done claims,
 // reply-claims.js), words that only announce the next step (the mayor's
-// announcesOnly), a question asking leave to start, and, when Main Chat
+// announcesOnly), a question asking leave to start, and, when the chat turn
 // handed it a screen to draw, anything but a real question.
 // "Want me to start?", "Shall I draw it?", "Should I go ahead?"
 const ASKS_LEAVE = /\b(?:want me to|do you want me to|would you like me to|shall I|should I|ok(?:ay)? if I|can I go ahead|ready for me to|shall we start|should we start|want to start|go ahead)\b[^?]*\?/i;
@@ -171,7 +171,7 @@ function askFirst({ current = null, pictures = [], added = [], about = null, his
  * Pure: why words that end a design turn are not its end yet by their shape,
  * or null. What they claim is the reply check's (reply-claims.js).
  * `changed` the turn made a version, `offered` it offered a card,
- * `handoff` Main Chat handed it a screen to draw, `drawnBefore` the thread
+ * `handoff` the chat turn handed it a screen to draw, `drawnBefore` the thread
  * holds a version already. Filler (isFiller) is 'filler' whatever was asked.
  * `mayAsk` (#6257): this first drawing may ask what the screen is for, so a
  * real question back is its answer, not a turn that ended before drawing.
@@ -483,7 +483,7 @@ const TOOLS = Object.freeze([
       },
     },
   },
-  // #6260: the project's board, the same read Main Chat's turn gets. View is
+  // #6260: the project's board, the same read the chat turn gets. View is
   // enough to read requests; building on the project is not needed.
   {
     type: 'function',
@@ -661,7 +661,7 @@ async function builtSheet(pool, config, app, { entry, filePath }, deps = {}) {
  * The stylesheets a screen of this design is drawn with: { links, styles }.
  * Homeroom's own pages: the shell's three (the preview draws today's, frame
  * ts freshSheets). A new project: the native kit. A project's app: what its
- * entry page links on main, read with the Main Chat turn's own readers and
+ * entry page links on main, read with the chat turn's own readers and
  * its check (view and build access; never a secret path), and a sheet main
  * does not hold (a compiled Tailwind) read off its running copy (builtSheet);
  * the kit kept as a link; the kit alone when none of it can be read. `entry`
@@ -1015,7 +1015,7 @@ function imagePart(picture) {
 
 /**
  * For a model that reads text only: the pictures said in words, by one short
- * call to the platform's cheap model that reads pictures (the Main Chat
+ * call to the platform's cheap model that reads pictures (the chat
  * turn's default), on the turn's own key and count. Map(picture id → words);
  * empty when that model cannot look at them either, or the call fails.
  */
@@ -1123,7 +1123,7 @@ function screenArgs(args) {
 
 /**
  * A project's open requests, or one of them, read on the agent-session
- * Mayor's read grant (mayor/mcp-shim.js): the same platform read Main Chat's
+ * Mayor's read grant (mayor/mcp-shim.js): the same platform read the chat turn's
  * turn gets. The project is this design's unless they name another, and only
  * a project they can see is read. `state` keeps the grant for the turn (its
  * `grant` is undefined until one is opened, null when none could be) so one
@@ -1216,8 +1216,8 @@ async function readPlan(pool, { design, project, html, threads, mayor, deps = {}
  * in a thread that holds none yet. `design` is the thread's (design-threads
  * js designFor), or null; `thread` the thread to draw in (draftingThread),
  * given when there is no design yet or the message was written elsewhere
- * (Main Chat's hand-off); `app` the project Main Chat named for it; `brief`
- * what Main Chat asked for; `handoff` when Main Chat's turn already counted
+ * (the chat turn's hand-off); `app` the project the chat turn named for it; `brief`
+ * what the chat turn asked for; `handoff` when the chat turn already counted
  * this one. Resolves what was sent, or null.
  */
 async function answer(pool, config, {
@@ -1231,7 +1231,7 @@ async function answer(pool, config, {
   const rootId = room?.rootId || design?.rootId || null;
   // Under the key the DM's answers use, so a retry after a restart finds it
   // said (homeroom-bot-dm.js answeredAlready). In the thread it draws in,
-  // which is not the message's own when Main Chat handed it over.
+  // which is not the message's own when the chat turn handed it over.
   const key = mayor.answerKey(message.id);
   const say = (content, extra = {}) => dm.sendDm(pool, {
     bot, userId: user.id, content: withoutEmDashes(content), idempotencyKey: key, replyToId: message.id, moment: 'reply',
@@ -1247,7 +1247,7 @@ async function answer(pool, config, {
   if (design?.latest && !current) return say(BROKEN_TEXT);
   if (current && current.html.length > MAX_DESIGN_CHARS) return say(TOO_BIG_TEXT);
 
-  // The project it is for: the thread's, else the one Main Chat named.
+  // The project it is for: the thread's, else the one the chat turn named.
   const project = room.app || design?.app || app || null;
   const surface = design?.surface || threads.surfaceFor(config, project);
   const t = {
@@ -1330,7 +1330,7 @@ async function answer(pool, config, {
       ? { role: 'assistant', content: clip(m.content, 1500) || '(nothing)' }
       : { role: 'user', content: personLine(m) }));
     const ids = kept.map((m) => Number(m.id));
-    // Main Chat's hand-off: the message is Main's, not the thread's.
+    // The chat turn's hand-off: the message is the one it answered, not the thread's.
     if (!history.length || history[history.length - 1].role !== 'user') {
       history.push({ role: 'user', content: personLine(message) });
       ids.push(Number(message.id));
@@ -1574,7 +1574,7 @@ async function answer(pool, config, {
           }
         } else if (name === 'make_pictures') {
           // P8: pictures for the design, a gallery under the reply, made and
-          // paid for as in Main Chat (homeroom-bot-thread-tools/pictures.js).
+          // paid for as in any other thread (homeroom-bot-thread-tools/pictures.js).
           const pictureCtx = {
             user, settings, config, conversationId, deps: { ...deps, threadRootId: room.rootId },
           };

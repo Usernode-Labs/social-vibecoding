@@ -661,7 +661,7 @@ const STORY_MOMENTS = Object.freeze({
   request_taken: 'on_hold',
   chat: 'reply', confirm: 'reply',
 });
-// The moments that ring, shown in the main chat as well as the request's thread.
+// The moments that ring. (They were shown in Main Chat as well as the request's thread, until 14 Nov 2026.)
 const RINGING_MOMENTS = new Set(['needs_you', 'ready', 'stopped', 'on_hold', 'live', 'done_elsewhere']);
 // A build that did not finish, by its cause (buildFailedCause).
 const BUILD_SAID = Object.freeze({

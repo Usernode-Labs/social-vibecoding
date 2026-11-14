@@ -1159,8 +1159,9 @@ async function serializeConversation(db, user, row, { includeMembers = true } = 
   // a member who has read nothing, which countUnread reads the same way; null
   // is "not yours to know", hidden until acceptance like the count itself.
   let lastReadMessageId = null;
-  // #6426: when the viewer last looked at this conversation, for Main Chat's
-  // "Welcome back" card. A member's own reading state, hidden like the
+  // #6426: when the viewer last looked at this conversation. (It fed Main
+  // Chat's "Welcome back" card, retired with Main Chat on 14 Nov 2026; the
+  // field is still served.) A member's own reading state, hidden like the
   // cursor until acceptance.
   let lastVisitAt = null;
   if (row.membership_status === 'member' && !row.deleted_peer) {
@@ -2344,7 +2345,7 @@ async function markRead(pool, user, conversationId, messageId) {
     const cursor = Math.max(current, messageId);
     // #6426: this is a VISIT to the main stream. `last_visit_at` moves on
     // every read, even when the cursor is already at the same message, so
-    // Main Chat can tell a return after hours away from a glance.
+    // a return after hours away can be told from a glance.
     await db.query(
       `UPDATE conversation_members SET last_read_message_id = $1, last_visit_at = NOW()
         WHERE conversation_id = $2 AND user_id = $3`,

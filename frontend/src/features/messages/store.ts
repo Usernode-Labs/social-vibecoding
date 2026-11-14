@@ -2102,8 +2102,7 @@ export function quoteInComposer(message: ConversationMessage, conversationId: nu
 export async function answerBotQuestion(question: ConversationMessage, answer: string): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId || conversationId !== question.conversationId) return;
-  // One request, one story: the answer goes in the request's thread,
-  // whether it was tapped there or on the moment the main chat also shows.
+  // One request, one story: the answer goes in the thread the question is in.
   const rootId = botThreadOf(question);
   const scope = scopeKey(conversationId, rootId);
   const draft = draftFor(scope);

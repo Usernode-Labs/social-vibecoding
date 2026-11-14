@@ -288,6 +288,16 @@ is no replay plan to write and nothing to verify locally.
   which can be done (Mark done, or asking the bot) and reopened: one from
   New chat, one the bot opened (a hello, a project's first version, an
   answer), one about a request or a change, or a captured screen's.
+  Earlier chat and a project's first version are named by what they are
+  (`private-threads.js` `kindTitle`: "Earlier chat", "Plant Pal, first
+  version"), on the row, in History and in the open thread's head
+  (`private-thread-bar.tsx` `serverThreadName`), never by their first
+  words. A first version's plan and activity cards are replies of its
+  thread, which reads them as the stream they were (`planLayout`).
+  A new chat has no address of its own (it is the bare tab's), and a link
+  runs the router twice, on popstate and then hashchange: `door.ts`
+  `askBotClose` drops the second pass of a link to `#homeroom-bot/new…`
+  (`isNewChatEcho`), which would otherwise close what the first opened.
   New chat opens "What do you want to do?" (`messages/new-thread.tsx`) with
   its project already set: the one chip picked on the page, else the
   project page the person last left (`workshop/community-scope.ts`), else
