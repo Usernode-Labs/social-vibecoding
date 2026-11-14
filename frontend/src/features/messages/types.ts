@@ -997,13 +997,6 @@ export interface MessagesSnapshot {
    * nothing was unread. Optional so a fixture without it reads as null.
    */
   unreadMark?: UnreadMark | null;
-  /**
-   * The message a reply thread opens at (store.openThreadAt): the strip's
-   * Needs you button opens a request's thread at the question it asks.
-   * Scrolled to and flashed once by the thread pane, never by the
-   * conversation beside it. Optional so a fixture without it reads as null.
-   */
-  threadFocusId?: number | null;
 }
 
 export interface ReplyThreadState {

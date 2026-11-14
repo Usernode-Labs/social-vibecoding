@@ -37,9 +37,8 @@ export function findRequestCard(from: Element, appSlug: string, n: number): HTML
   const activity = `${appSlug}#${n}`;
   let above: HTMLElement | null = null;
   let below: HTMLElement | null = null;
-  // #4564: a ready card leading a change block names its request
-  // (`data-bot-ready-request`), so a chip in a row whose request card was
-  // dropped still finds the card at the top of its block.
+  // #4564: a ready card names its request (`data-bot-ready-request`), so a
+  // chip finds it as it finds an activity card.
   for (const el of Array.from(scope.querySelectorAll<HTMLElement>('a.messages-object-card[href], [data-bot-activity-request], [data-bot-ready-request]'))) {
     const match = el.matches('a.messages-object-card')
       ? el.getAttribute('href') === href
