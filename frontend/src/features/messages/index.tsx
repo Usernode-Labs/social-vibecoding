@@ -3173,8 +3173,12 @@ function ReplyThreadPanel({ inMain = false, onBack = null }: {
       ) : null}
       <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll chat-transcript" aria-live="polite">
         {/* The root's Reply quotes it into THIS thread's composer (#2387): its
-            own threadRootId is null, being the main stream's message. */}
-        {root ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} /> : null}
+            own threadRootId is null, being the main stream's message.
+            #6668: a thread opened from the bot's "+" opens on what the person
+            wrote, not on the bot's "New thread." line, as Main Chat leaves that
+            line out (#6250). The root still names the thread; it is only not
+            drawn. */}
+        {root && !(botChat && isPlusThreadOpener(root)) ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} /> : null}
         {pieces.map((item) => <MessageRow key={item.clientKey || item.id} message={{ ...item, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === item.id} />)}
         {/* An error stands in place of the thread (#5219 review): with one,
             the count line would say "No replies yet", which is a different
