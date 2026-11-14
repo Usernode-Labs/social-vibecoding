@@ -17134,24 +17134,34 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 
 /* Votes, then Testing: two cards in the Messages surface. */
 .dev-change-pair { margin-top: 12px; display: grid; gap: 8px; }
-/* 6 Nov 2026 (#6419): on the change's own page the pair sticks under the
-   sheet's header instead of a second Votes card appearing above the replies
-   (#5725, removed). A sticky box travels only within its parent, so it is
-   the pair, not the Votes card alone, that sticks: the pair's parent is the
-   article's content column, which ends with the change's own content, above
-   the replies, so the pair lets go there by itself. The mark is the 1px
-   sentinel above it that says when the pair has left the top of the
-   scroller: it has an area to observe and its -1px margin moves nothing.
-   `-4px` is `.messages-thread-scroll`'s own top padding, as the old pin had.
-   `--dc-sheet-solid` is the plane colour for a surface content passes
-   behind, so nothing shows through the card's padding or the pair's gap. */
+/* 6 Nov 2026 (#6419): on the change's own page the Votes and Testing pair
+   keeps the change's own state in sight while the reader scrolls. #6615
+   (11 Nov 2026): it does so without changing the page's flow. The cards stay
+   at full size where they are (`.dev-change-pair[data-stick]`, in flow and
+   never sticky); the one-line rows float in `.dev-change-pair-float`, a
+   zero-height sticky holder between the mark and the pair that travels within
+   the article's content column and lets go, with no extra code, where the
+   change's own content ends above the replies. The strip is absolutely
+   positioned, so appearing or going changes no height above or below the
+   reader: the first version shrank the pair in place and gave the lost height
+   back as a margin, and while the cards updated that made the page jump back
+   and forth. Because nothing in the flow resizes, the switch cannot feed
+   scroll anchoring, and the pair opts out of being an anchor as well. The
+   mark is the 1px sentinel above the pair that says when it has left the top
+   of the scroller: it has an area to observe and its -1px margin moves
+   nothing, and `-4px` is `.messages-thread-scroll`'s own top padding, as the
+   old pin had. `--dc-sheet-solid` is the plane colour for a surface content
+   passes behind, so nothing shows through the card's padding or the strip's
+   gap. */
 .dev-change-pair-mark { display: block; height: 1px; margin-bottom: -1px; }
-.dev-change-pair[data-stick] { position: sticky; top: -4px; z-index: 10; }
+.dev-change-pair[data-stick] { overflow-anchor: none; }
+.dev-change-pair-float { position: sticky; top: -4px; z-index: 10; height: 0; overflow-anchor: none; }
+.dev-change-pair-float > .dev-change-pair { position: absolute; inset-inline: 0; top: 0; margin-top: 0; }
 .dev-change-pair[data-stuck] { gap: 4px; padding-block: 8px; background-color: var(--dc-sheet-solid); }
 .dev-change-pair[data-stuck] .dev-change-gate { padding: 8px 12px; }
 .dev-change-pair[data-stuck] :is(.dev-change-bar, .dev-change-gate-facts, .dev-change-gate-note,
   .dev-change-gate-why, .dev-change-gate-fix, .dev-change-gate-refused) { display: none; }
-.dev-change-pair[data-stuck] [data-change-gate="testing"] .dev-change-gate-act { display: none; }
+.dev-change-pair[data-stuck] [data-change-gate-line="testing"] .dev-change-gate-act { display: none; }
 .dev-change-gate {
   min-width: 0;
   display: grid;
