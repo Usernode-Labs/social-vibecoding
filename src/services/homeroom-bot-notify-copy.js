@@ -69,7 +69,10 @@ const SAID_BY_MOMENT = Object.freeze({
   // 16 Oct 2026: `slots`, a build held because the project's changes waiting
   // for votes are as many as it may have (homeroom-bot.js WAITING_PER_APP),
   // rings once; #6156: `builds`, because its builds are (BUILDS_PER_APP).
-  on_hold: Object.freeze(['allowance', 'paused', 'slots', 'builds', 'taken']),
+  // 14 Nov 2026: `low`, the week's building time nearly spent: an account
+  // notice with no message behind it (homeroom-bot-notices.js), like the two
+  // "until Monday" ones (`allowance`, `paused`).
+  on_hold: Object.freeze(['allowance', 'paused', 'slots', 'builds', 'taken', 'low']),
   live: Object.freeze(['live', 'live_soon', 'live_first', 'live_first_soon']),
   done_elsewhere: Object.freeze(['done_elsewhere']),
 });
@@ -401,6 +404,7 @@ function bodyFor(d) {
     case 'needs_look': return 'Stopped: it\'s built, but a person needs to look at it before you can try it.';
     case 'checks': return 'Stopped: its checks still fail. A person needs to look.';
     case 'first_failed': return 'Stopped: I couldn\'t start building your first version. You can still post a request on its page.';
+    case 'low': return 'You\'re close to this week\'s building time.';
     case 'allowance': return 'On hold until Monday: your building time for this week is used up.';
     case 'paused': return 'On hold until Monday: I\'ve used my budget for this week.';
     case 'slots': return 'Waiting for a slot: all of this project\'s are in use. I\'ll start when one frees.';
@@ -443,6 +447,8 @@ function titleFor(d) {
  * row from before "one story" keeps the moment, as the bell reads it there.
  */
 function bellLabelFor(d) {
+  // Nothing is on hold yet: the week's building time is only nearly spent.
+  if (d.moment === 'on_hold' && d.said === 'low') return 'Building time';
   if (d.moment === 'needs_you' && !d.legacy) {
     if (d.said === 'decide_others') return d.deciders ? `Waiting on ${d.deciders}` : 'Waiting on a decision';
     if (NEEDS_YOU_ASKS[d.said]) return NEEDS_YOU_ASKS[d.said];
@@ -508,7 +514,8 @@ function botMomentCopy(detail, message = '') {
   const body = bodyFor(d);
   if (!body) return null;
   const title = titleFor(d);
-  const bellSubject = d.moment === 'on_hold' && d.count > 1
+  const bellSubject = d.moment === 'on_hold' && d.said === 'low' ? body
+    : d.moment === 'on_hold' && d.count > 1
     ? title
     : (d.firstVersion ? (d.appName ? `${d.appName} first version` : 'Your first version') : (requestName(d) || d.appName || 'Homeroom bot'));
   return {
