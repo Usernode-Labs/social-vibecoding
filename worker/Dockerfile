@@ -74,11 +74,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # This layer sits BEFORE the CLAUDE_CODE_CACHE_BUST ARG below on purpose,
 # so the apt install and initdb stay layer-cached across the daily
 # Claude-Code rebuild.
-RUN mkdir -p /etc/postgresql-common/createcluster.conf.d \
+#
+# Bumping the date below re-runs this cached layer, which is how an
+# audit-driven package upgrade (17.11 → 17.12 today) picks up Debian's
+# current 17.x server, client and libpq. The version check fails the build
+# loudly if the mirror would still ship anything older than 17.12, so a
+# stale cached layer cannot quietly keep the old packages.
+ARG POSTGRES_PACKAGES_REFRESHED=2026-11-14
+RUN echo "postgres packages refreshed: ${POSTGRES_PACKAGES_REFRESHED}" \
+  && mkdir -p /etc/postgresql-common/createcluster.conf.d \
   && echo 'create_main_cluster = false' \
        > /etc/postgresql-common/createcluster.conf.d/no-main-cluster.conf \
   && apt-get update && apt-get install -y --no-install-recommends \
     postgresql-17 postgresql-contrib-17 \
+  && for p in libpq5 postgresql-17 postgresql-client-17; do \
+       v="$(dpkg-query -W -f='${Version}' "$p")"; \
+       dpkg --compare-versions "$v" ge 17.12-0+deb13u1 \
+         || { echo "$p $v is older than 17.12-0+deb13u1" >&2; exit 1; }; \
+     done \
   && rm -rf /var/lib/apt/lists/*
 
 # Debian keeps the server binaries (pg_ctl/initdb/postgres) off PATH —
