@@ -2149,6 +2149,46 @@ form.agent-session-composer:focus-within {
 .messages-format-btn svg { width: 18px; height: 18px; stroke-width: 1.8; }
 .messages-format-btn:hover { background: var(--messages-surface-2); }
 .messages-format-btn:disabled { opacity: .35; }
+/* #6653: the field that asks for a web address sits in the formatting row's
+   place, with the row's own sizes: a 32px field and two 32px buttons, above
+   the same hairline the row draws. */
+.messages-format-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 4px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--app-sheet-line);
+}
+.messages-format-link input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--app-sheet-line);
+  background: var(--messages-surface);
+  color: var(--text-primary);
+  font-size: 15px;
+}
+.messages-format-link input::placeholder { color: var(--text-secondary); }
+.messages-format-link button {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  transition: background 150ms;
+}
+.messages-format-link button:hover:not(:disabled) { background: var(--messages-surface-2); }
+.messages-format-link button.messages-format-link-add {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.messages-format-link button.messages-format-link-add:hover:not(:disabled) { background: var(--accent-light); }
+.messages-format-link button.messages-format-link-add:disabled { opacity: .35; }
 /* #6035: the draft drawn as it will be sent, above the field. It appears
    only once the message carries formatting, so a plain message's box keeps
    its one row; the field below still holds the source that gets sent. It is
@@ -2208,6 +2248,33 @@ form.agent-session-composer:focus-within {
 .messages-composer-menu button svg { width: 18px; height: 18px; stroke-width: 1.8; flex: 0 0 auto; }
 .messages-composer-menu button:hover:not(:disabled) { background: var(--messages-surface-2); }
 .messages-composer-menu button:disabled { opacity: .35; }
+/* #6653: the right-click menu over selected words. The same card as the "+"
+   menu beside the field, placed where the pointer is by the composer. */
+.messages-select-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 200px;
+  padding: 6px;
+  border-radius: 16px;
+  background: var(--messages-surface);
+  box-shadow: 0 7px 20px rgba(0, 0, 0, .16);
+}
+.messages-select-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 12px;
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 15px;
+  text-align: start;
+  white-space: nowrap;
+}
+.messages-select-menu button svg { width: 18px; height: 18px; stroke-width: 1.8; flex: 0 0 auto; }
+.messages-select-menu button:hover:not(:disabled) { background: var(--messages-surface-2); }
+.messages-select-menu button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.messages-select-menu hr { margin: 4px 6px; border: 0; border-top: 1px solid var(--app-sheet-line); }
 .messages-send {
   display: inline-flex;
   align-items: center;
@@ -13607,6 +13674,240 @@ html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: 
    the now-empty headings. */
 #admin-status-root:not(.is-admin) .admin-only { display: none !important; }
 
+/* ── Onboarding flows (features/admin/admin-onboarding-flows.tsx) ────────
+   The flow chart is one drawn surface: an SVG the section's engine fills,
+   with the view tabs, the legend, a selection sheet and a notes drawer
+   floating over it. Its inks are its own, because they are data colours
+   (teal is a private project, purple a public one, clay is dropped off) and
+   must not be read as the console's accent. Every rule is scoped to the
+   section root. */
+#admin-onboarding-flows {
+  --bg:#f5f5f7; --surface:#ffffff; --fg:#1c1c1e; --muted:#68686c; --faint:#8e8e93; --rule:#e3e3e6; --node:#2c2c2e;
+  --share:#12876B; --pub:#5B50C8; --drop:#C2410C; --ok:#2E7D32;
+  --share-fill:#E1F5EE; --pub-fill:#EEEDFE; --drop-fill:#FBEBE2;
+  --sel:#1c1c1e; --thread-op:.8;
+  --font-display:inherit; --font-body:inherit; --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  position:relative; height:calc(100dvh - 13rem); min-height:560px; overflow:hidden; overflow:clip; border-radius:1rem;
+  background:var(--surface); color:var(--fg); font-size:15px; line-height:1.55;
+}
+html.dark #admin-onboarding-flows {
+  --bg:#0b0b0c; --surface:#1c1c1e; --fg:#f5f5f7; --muted:#a1a1a6; --faint:#68686c; --rule:#2c2c2e; --node:#e3e3e6;
+  --share:#27A17E; --pub:#8A80E8; --drop:#DC6B30; --ok:#6CC070;
+  --share-fill:#0C3A2C; --pub-fill:#2A2562; --drop-fill:#43200F;
+  --sel:#f5f5f7; --thread-op:.85;
+}
+#admin-onboarding-flows *{box-sizing:border-box}
+#admin-onboarding-flows [hidden]{display:none!important}
+#admin-onboarding-flows .wrap{display:grid;gap:18px}
+#admin-onboarding-flows .ui{position:absolute;inset:0;display:flex;flex-direction:column;gap:8px;padding:12px;pointer-events:none}
+#admin-onboarding-flows .ui .fill{flex:1 1 0;min-height:0}
+#admin-onboarding-flows .topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+#admin-onboarding-flows .ctl{pointer-events:auto;display:grid;gap:7px;min-width:0;max-width:100%;padding:6px;background:var(--surface);border:1px solid var(--rule);border-radius:16px;box-shadow:0 6px 22px rgba(0,0,0,.10)}
+#admin-onboarding-flows .ctl .tabs{flex-wrap:nowrap;overflow-x:auto;max-width:100%;scrollbar-width:none}
+#admin-onboarding-flows .ctl .tabs::-webkit-scrollbar{display:none}
+#admin-onboarding-flows .ctl .tab{white-space:nowrap;flex:none}
+#admin-onboarding-flows .ctl .legend{padding:0 8px 3px;flex:1 1 auto;min-width:0}
+#admin-onboarding-flows .ctlrow{display:flex;align-items:center;justify-content:space-between;gap:8px 14px;min-width:0}
+#admin-onboarding-flows .tgl{flex:none;display:inline-flex;align-items:center;gap:7px;font-family:var(--font-body);font-weight:500;font-size:12.5px;line-height:1;height:28px;padding:0 10px 0 6px;margin:0 2px 2px 0;border:1px solid var(--rule);border-radius:999px;background:var(--bg);color:var(--muted);cursor:pointer;white-space:nowrap}
+#admin-onboarding-flows .tgl .knob{width:22px;height:14px;border-radius:999px;background:var(--rule);position:relative;transition:background .15s}
+#admin-onboarding-flows .tgl .knob::after{content:'';position:absolute;top:2px;inset-inline-start:2px;width:10px;height:10px;border-radius:50%;background:var(--surface);transition:transform .15s}
+#admin-onboarding-flows .tgl[aria-pressed="true"]{color:var(--fg);border-color:var(--fg);background:var(--surface)}
+#admin-onboarding-flows .tgl[aria-pressed="true"] .knob{background:var(--fg)}
+#admin-onboarding-flows .tgl[aria-pressed="true"] .knob::after{transform:translateX(8px)}
+#admin-onboarding-flows .tgl:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+@media (max-width:640px){
+  #admin-onboarding-flows .ctlrow{flex-wrap:wrap}
+  #admin-onboarding-flows .ctlrow .legend{flex-basis:100%}
+}
+@media (prefers-reduced-motion: reduce){
+  #admin-onboarding-flows .tgl .knob,#admin-onboarding-flows .tgl .knob::after{transition:none}
+}
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) #admin-onboarding-flows .tgl .knob,:where(html[data-motion="reduce"]) #admin-onboarding-flows .tgl .knob::after{transition:none}
+@media (max-width:640px){
+  #admin-onboarding-flows .ctl .legend{flex-wrap:nowrap;overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+  #admin-onboarding-flows .ctl .legend::-webkit-scrollbar{display:none}
+  #admin-onboarding-flows .ctl .legend li{flex:none}
+  #admin-onboarding-flows .relnote .more{display:none}
+  #admin-onboarding-flows .fab{height:38px;padding:0 13px}
+}
+#admin-onboarding-flows .fab{pointer-events:auto;flex:none;font-family:var(--font-body);font-weight:500;font-size:14px;line-height:1;height:42px;padding:0 16px;border:1px solid var(--rule);border-radius:999px;background:var(--surface);color:var(--fg);cursor:pointer;box-shadow:0 6px 22px rgba(0,0,0,.10)}
+#admin-onboarding-flows .fab:hover{border-color:var(--muted)}
+#admin-onboarding-flows .fab:focus-visible,#admin-onboarding-flows .x:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+#admin-onboarding-flows .x{position:absolute;top:6px;inset-inline-end:6px;width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:8px;background:transparent;color:var(--muted);font-family:var(--font-body);font-weight:400;font-size:24px;line-height:1;cursor:pointer}
+#admin-onboarding-flows .x:hover{color:var(--fg)}
+#admin-onboarding-flows .sheet{position:absolute;inset-inline:4px;bottom:8px;z-index:5;margin-inline:auto;max-width:640px;max-height:min(46%,460px);overflow:auto;overscroll-behavior:contain;padding:14px 16px;background:var(--surface);border:1px solid var(--rule);border-radius:16px;box-shadow:0 8px 28px rgba(0,0,0,.16);pointer-events:auto;display:grid;gap:12px;animation:of-rise .18s ease-out}
+#admin-onboarding-flows .sheet .who{margin-inline-end:36px}
+@keyframes of-rise{from{transform:translateY(10px);opacity:.4}to{transform:none;opacity:1}}
+#admin-onboarding-flows .notes{position:absolute;top:0;inset-inline-end:0;bottom:0;z-index:8;width:min(680px,100%);overflow:auto;overscroll-behavior:contain;background:var(--bg);border-inline-start:1px solid var(--rule);box-shadow:-10px 0 34px rgba(0,0,0,.14);padding:20px 20px 28px}
+#admin-onboarding-flows .notes header{margin-inline-end:36px}
+@media (prefers-reduced-motion: reduce){
+  #admin-onboarding-flows .sheet{animation:none}
+}
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) #admin-onboarding-flows .sheet{animation:none}
+#admin-onboarding-flows .eyebrow{font-family:var(--font-mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0}
+#admin-onboarding-flows h1{font-family:var(--font-display);font-weight:600;font-size:30px;line-height:1.15;margin:6px 0 8px;text-wrap:balance}
+#admin-onboarding-flows h2{font-family:var(--font-display);font-weight:600;font-size:18px;line-height:1.3;margin:0;text-wrap:balance}
+#admin-onboarding-flows h3{font-family:var(--font-display);font-weight:600;font-size:15px;margin:0}
+#admin-onboarding-flows p{margin:0}
+#admin-onboarding-flows .lede{color:var(--muted);max-width:74ch}
+#admin-onboarding-flows .facts{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:12px;font-family:var(--font-mono);font-size:12px;color:var(--muted)}
+#admin-onboarding-flows .facts b{color:var(--fg);font-weight:500}
+#admin-onboarding-flows .card{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:18px 20px;display:grid;gap:14px;min-width:0}
+#admin-onboarding-flows .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+#admin-onboarding-flows .bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 20px}
+#admin-onboarding-flows .tabs{display:inline-flex;flex-wrap:wrap;gap:4px;padding:4px;border:1px solid var(--rule);border-radius:22px;background:var(--bg)}
+#admin-onboarding-flows .tab{font-family:var(--font-body);font-weight:500;font-size:14px;line-height:1;height:34px;padding:0 15px;border:0;border-radius:999px;background:transparent;color:var(--muted);cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+#admin-onboarding-flows .tab:hover{color:var(--fg)}
+#admin-onboarding-flows .tab[aria-selected="true"]{background:var(--surface);color:var(--fg);box-shadow:0 0 0 1px var(--rule)}
+#admin-onboarding-flows .tab:focus-visible,#admin-onboarding-flows .nodeg:focus-visible,#admin-onboarding-flows .linkbtn:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+#admin-onboarding-flows .tab .dot{width:9px;height:9px;border-radius:50%}
+#admin-onboarding-flows .tab .cnt{font-family:var(--font-mono);font-size:11.5px;color:var(--faint);font-variant-numeric:tabular-nums}
+#admin-onboarding-flows .dot.share{background:var(--share)}
+#admin-onboarding-flows .dot.pub{background:var(--pub)}
+#admin-onboarding-flows .dot.none{background:var(--drop)}
+#admin-onboarding-flows .dot.both{background:linear-gradient(90deg,var(--share) 50%,var(--pub) 50%)}
+#admin-onboarding-flows .dot.loop{background:transparent;box-shadow:inset 0 0 0 2px var(--muted)}
+#admin-onboarding-flows .dot.all{background:linear-gradient(90deg,var(--pub) 0 34%,var(--share) 34% 67%,var(--drop) 67%)}
+#admin-onboarding-flows .legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin:0;padding:0;list-style:none;font-size:12.5px;color:var(--muted)}
+#admin-onboarding-flows .legend li{display:flex;align-items:center;gap:7px}
+#admin-onboarding-flows .legend .sw{width:18px;height:6px;border-radius:2px}
+#admin-onboarding-flows .legend .box{width:10px;height:14px;border-radius:2px;background:var(--node)}
+#admin-onboarding-flows .legend .box.hatch{background:repeating-linear-gradient(135deg,var(--node) 0 2px,transparent 2px 4.5px);outline:1px solid var(--node);outline-offset:-1px}
+#admin-onboarding-flows .viewline{color:var(--muted);max-width:92ch}
+#admin-onboarding-flows .viewline b{color:var(--fg);font-weight:600}
+#admin-onboarding-flows .scroller{position:absolute;inset:0;overflow:hidden;overflow:clip;background:var(--surface);touch-action:none;direction:ltr;-webkit-user-select:none;user-select:none}
+#admin-onboarding-flows .stage{position:absolute;inset-inline-start:0;top:0;transform-origin:0 0;will-change:transform}
+#admin-onboarding-flows .of-flow{display:block;width:100%;user-select:none;-webkit-user-select:none;touch-action:none}
+#admin-onboarding-flows .thread{fill:none;stroke-linecap:butt;stroke-linejoin:round;opacity:var(--thread-op)}
+#admin-onboarding-flows .thread.share{stroke:var(--share)}
+#admin-onboarding-flows .thread.pub{stroke:var(--pub)}
+#admin-onboarding-flows .thread.none{stroke:var(--drop)}
+#admin-onboarding-flows .thread.both{stroke:url(#of-bothStripe)}
+#admin-onboarding-flows .of-flow.dim .thread{opacity:.1}
+#admin-onboarding-flows .of-flow.dim .thread.hl{opacity:1}
+#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nlabel,#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nsub{opacity:.45}
+#admin-onboarding-flows .nodeg{cursor:pointer;outline:none}
+#admin-onboarding-flows .nodeg rect.nbox{fill:var(--node)}
+#admin-onboarding-flows .nodeg.ghost rect.nbox{fill:url(#of-hatch);stroke:var(--node);stroke-width:1}
+#admin-onboarding-flows .nodeg.inferred rect.nbox{fill:var(--surface);stroke:var(--node);stroke-width:1.5;stroke-dasharray:3 2.5}
+#admin-onboarding-flows .nodeg.team rect.nbox{fill:var(--faint)}
+#admin-onboarding-flows .nodeg.sel rect.nbox{stroke:var(--sel);stroke-width:2;stroke-dasharray:none}
+#admin-onboarding-flows .nodeg .hit{fill:transparent}
+#admin-onboarding-flows .nodeg.card rect.nbox{fill:var(--surface);stroke:var(--node);stroke-width:1.2}
+#admin-onboarding-flows .nodeg.card.ghost rect.nbox{fill:url(#of-hatchSoft);stroke:var(--node);stroke-width:1.2;stroke-dasharray:2 3}
+#admin-onboarding-flows .nodeg.card.inferred rect.nbox{fill:var(--surface);stroke-width:1.4;stroke-dasharray:5 4}
+#admin-onboarding-flows .nodeg.card.team rect.nbox{fill:var(--bg);stroke:var(--faint)}
+#admin-onboarding-flows .nodeg.card.sel rect.nbox{stroke-width:2.4;stroke-dasharray:none}
+#admin-onboarding-flows .nodeg.card .nlabel{font-size:12.5px;font-weight:600;stroke:none}
+#admin-onboarding-flows .nodeg.card.small .nlabel{font-size:12px;font-weight:500}
+#admin-onboarding-flows .nodeg.card .nsub{font-size:10.5px;stroke:none}
+#admin-onboarding-flows .caption.gbtn{fill:var(--fg);cursor:pointer;outline:none;stroke:none}
+#admin-onboarding-flows .gpill{fill:var(--surface);stroke:var(--muted);stroke-width:1;cursor:pointer}
+#admin-onboarding-flows .nodeg:hover .gpill:hover,#admin-onboarding-flows .gpill.on{stroke:var(--fg);stroke-width:1.6}
+#admin-onboarding-flows .gpill.on{fill:var(--bg)}
+#admin-onboarding-flows .caption.gbtn.sel{font-weight:600}
+#admin-onboarding-flows .of-flow.rel .nsub{fill:var(--fg);font-weight:500}
+#admin-onboarding-flows .of-flow.rel .nodeg.small .nlabel{fill:var(--fg)}
+#admin-onboarding-flows .relnote{align-self:flex-start;pointer-events:auto;font-size:12.5px;line-height:1.4;color:var(--fg);background:var(--surface);border:1px solid var(--rule);border-radius:10px;padding:6px 10px;max-width:min(64ch,100%);box-shadow:0 4px 14px rgba(0,0,0,.08)}
+#admin-onboarding-flows .relnote b{font-weight:600}
+#admin-onboarding-flows .seg{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
+#admin-onboarding-flows .seg .opts{display:inline-flex;padding:3px;border:1px solid var(--rule);border-radius:999px;background:var(--bg);gap:2px}
+#admin-onboarding-flows .seg button{font-family:var(--font-body);font-weight:500;font-size:12.5px;line-height:1;height:26px;padding:0 11px;border:0;border-radius:999px;background:transparent;color:var(--muted);cursor:pointer}
+#admin-onboarding-flows .seg button[aria-pressed="true"]{background:var(--surface);color:var(--fg);box-shadow:0 0 0 1px var(--rule)}
+#admin-onboarding-flows .seg button:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+#admin-onboarding-flows .nlabel{font-family:var(--font-body);font-size:13px;font-weight:600;fill:var(--fg);paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round}
+#admin-onboarding-flows .nsub{font-family:var(--font-mono);font-size:11px;fill:var(--muted);paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round;font-variant-numeric:tabular-nums}
+#admin-onboarding-flows .nodeg.small .nlabel{font-size:12px;font-weight:500}
+#admin-onboarding-flows .ctitle{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;fill:var(--muted)}
+#admin-onboarding-flows .ztitle{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;fill:var(--faint)}
+#admin-onboarding-flows .zline{stroke:var(--faint);stroke-width:1;stroke-dasharray:5 6;opacity:.7}
+#admin-onboarding-flows .caption{font-family:var(--font-mono);font-size:10px;letter-spacing:.07em;text-transform:uppercase;fill:var(--muted);paint-order:stroke;stroke:var(--surface);stroke-width:4px}
+#admin-onboarding-flows .stopbar{fill:var(--drop)}
+#admin-onboarding-flows .leak{cursor:pointer;outline:none}
+#admin-onboarding-flows .leak rect{fill:var(--surface);stroke:var(--drop);stroke-width:1.4}
+#admin-onboarding-flows .leak text{font-family:var(--font-mono);font-size:10.5px;font-weight:500;fill:var(--drop);font-variant-numeric:tabular-nums}
+#admin-onboarding-flows .leak.ok rect{stroke:var(--ok)}
+#admin-onboarding-flows .leak.ok text{fill:var(--ok)}
+#admin-onboarding-flows .leak.ok path{fill:none;stroke:var(--ok);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+#admin-onboarding-flows .leak.end circle{fill:var(--surface);stroke:var(--faint);stroke-width:1.4}
+#admin-onboarding-flows .leak.end path{fill:none;stroke:var(--faint);stroke-width:1.8;stroke-linecap:round}
+#admin-onboarding-flows .leak.on circle,#admin-onboarding-flows .leak:focus-visible circle{stroke:var(--fg);stroke-width:2}
+#admin-onboarding-flows .leak.strong rect{fill:var(--drop)}
+#admin-onboarding-flows .leak.strong text{fill:var(--surface)}
+#admin-onboarding-flows .leak.on rect{stroke:var(--fg);stroke-width:2}
+#admin-onboarding-flows .leak:focus-visible rect{stroke:var(--fg);stroke-width:2}
+#admin-onboarding-flows .of-flow.dim .leak:not(.on){opacity:.5}
+#admin-onboarding-flows .legend .stop{width:4px;height:14px;border-radius:2px;background:var(--drop)}
+#admin-onboarding-flows .loop path{fill:none;stroke:var(--share);stroke-width:1.6;stroke-dasharray:5 4}
+#admin-onboarding-flows .loop text{font-family:var(--font-body);font-size:12.5px;font-weight:500;fill:var(--fg);paint-order:stroke;stroke:var(--surface);stroke-width:5px}
+#admin-onboarding-flows .tip{position:fixed;z-index:6;pointer-events:none;max-width:300px;background:var(--fg);color:var(--bg);border-radius:8px;padding:8px 11px;font-size:12.5px;line-height:1.4;box-shadow:0 6px 20px rgba(0,0,0,.18)}
+#admin-onboarding-flows .tip b{font-weight:600}
+#admin-onboarding-flows .tip .t2{display:block;opacity:.8}
+#admin-onboarding-flows .hint{font-size:13px;color:var(--muted)}
+#admin-onboarding-flows .two{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:22px;align-items:start}
+@media (max-width:860px){
+  #admin-onboarding-flows .two{grid-template-columns:1fr}
+}
+#admin-onboarding-flows .says{margin:0;padding:0;list-style:none;display:grid;gap:12px}
+#admin-onboarding-flows .says li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:start}
+#admin-onboarding-flows .says .fig{font-family:var(--font-mono);font-size:13px;font-weight:500;min-width:74px;padding:2px 8px;border-radius:6px;text-align:center;font-variant-numeric:tabular-nums;border:1px solid var(--rule);white-space:nowrap}
+#admin-onboarding-flows .says .fig.both{background:linear-gradient(90deg,var(--share-fill) 50%,var(--pub-fill) 50%);border-color:var(--share) var(--pub) var(--pub) var(--share)}
+#admin-onboarding-flows .says .fig.share{background:var(--share-fill);border-color:var(--share)}
+#admin-onboarding-flows .says .fig.pub{background:var(--pub-fill);border-color:var(--pub)}
+#admin-onboarding-flows .says .fig.none{background:var(--drop-fill);border-color:var(--drop)}
+#admin-onboarding-flows .says p{max-width:62ch}
+#admin-onboarding-flows .says .q{color:var(--muted);font-size:13px;display:block}
+#admin-onboarding-flows .eyebrow2{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+#admin-onboarding-flows .detail{align-content:start}
+#admin-onboarding-flows .detail .empty{color:var(--muted)}
+#admin-onboarding-flows .who{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#admin-onboarding-flows .pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;letter-spacing:.03em;padding:2px 8px;border-radius:999px;border:1px solid var(--rule);white-space:nowrap}
+#admin-onboarding-flows .pill.both{background:linear-gradient(90deg,var(--share-fill) 50%,var(--pub-fill) 50%);border-color:var(--share) var(--pub) var(--pub) var(--share)}
+#admin-onboarding-flows .pill.share{background:var(--share-fill);border-color:var(--share)}
+#admin-onboarding-flows .pill.pub{background:var(--pub-fill);border-color:var(--pub)}
+#admin-onboarding-flows .pill.none{background:var(--drop-fill);border-color:var(--drop)}
+#admin-onboarding-flows .steps{margin:0;padding:0;list-style:none;display:grid;gap:7px}
+#admin-onboarding-flows .steps li{display:grid;grid-template-columns:118px minmax(0,1fr);gap:12px;font-size:14px}
+#admin-onboarding-flows .steps .k{font-family:var(--font-mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);padding-top:3px}
+@media (max-width:480px){
+  #admin-onboarding-flows .steps li{grid-template-columns:1fr;gap:0}
+}
+#admin-onboarding-flows .split{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+@media (max-width:480px){
+  #admin-onboarding-flows .split{grid-template-columns:1fr}
+}
+#admin-onboarding-flows .rows{margin:6px 0 0;padding:0;list-style:none;display:grid;gap:5px;font-size:13.5px}
+#admin-onboarding-flows .rows li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:baseline}
+#admin-onboarding-flows .rows .n{font-family:var(--font-mono);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+#admin-onboarding-flows .names{display:flex;flex-wrap:wrap;gap:6px}
+#admin-onboarding-flows .linkbtn{font-family:var(--font-body);font-weight:500;font-size:12.5px;line-height:1;padding:5px 9px;border:1px solid var(--rule);border-radius:999px;background:var(--surface);color:var(--fg);cursor:pointer}
+#admin-onboarding-flows .linkbtn:hover{border-color:var(--muted)}
+#admin-onboarding-flows .tablewrap{overflow-x:auto}
+#admin-onboarding-flows table{width:100%;border-collapse:collapse;font-size:14px;min-width:640px}
+#admin-onboarding-flows thead th{font-family:var(--font-mono);font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:start;padding:0 14px 8px 0;border-bottom:1px solid var(--rule);white-space:nowrap}
+#admin-onboarding-flows tbody th{text-align:start;font-weight:600;padding:9px 14px 9px 0;vertical-align:top}
+#admin-onboarding-flows tbody td{padding:9px 14px 9px 0;vertical-align:top}
+#admin-onboarding-flows tbody tr + tr th,#admin-onboarding-flows tbody tr + tr td{border-top:1px solid var(--rule)}
+#admin-onboarding-flows td.num,#admin-onboarding-flows th.num{text-align:end;font-variant-numeric:tabular-nums;font-family:var(--font-mono);font-size:13px}
+#admin-onboarding-flows td .sub,#admin-onboarding-flows th .sub{display:block;color:var(--muted);font-size:12.5px;font-weight:400}
+#admin-onboarding-flows td.cell{text-align:center;font-family:var(--font-mono);font-size:14px;font-variant-numeric:tabular-nums;border-inline-start:1px solid var(--rule)}
+#admin-onboarding-flows td.cell button{font:inherit;color:inherit;background:none;border:0;padding:4px 10px;border-radius:6px;cursor:pointer}
+#admin-onboarding-flows td.cell button:hover{outline:1px solid var(--muted)}
+#admin-onboarding-flows td.cell button:focus-visible{outline:2px solid var(--fg)}
+#admin-onboarding-flows .meter{display:flex;height:8px;border-radius:2px;overflow:hidden;background:var(--bg);min-width:140px;gap:2px}
+#admin-onboarding-flows .meter i{display:block;height:100%}
+#admin-onboarding-flows .meter .share{background:var(--share)}
+#admin-onboarding-flows .meter .pub{background:var(--pub)}
+#admin-onboarding-flows .meter .none{background:var(--drop)}
+#admin-onboarding-flows .meter .both{background:repeating-linear-gradient(90deg,var(--share) 0 4px,var(--pub) 4px 8px)}
+#admin-onboarding-flows .legend .sw.both{background:repeating-linear-gradient(90deg,var(--share) 0 5px,var(--pub) 5px 10px)}
+#admin-onboarding-flows .note{color:var(--muted);font-size:13px;max-width:92ch}
+#admin-onboarding-flows code{font-family:var(--font-mono);font-size:.88em;background:var(--bg);border:1px solid var(--rule);border-radius:4px;padding:0 4px;word-break:break-word}
+#admin-onboarding-flows .method{margin:0;padding-inline-start:18px;display:grid;gap:6px;color:var(--muted);font-size:13.5px;max-width:96ch}
+#admin-onboarding-flows .block{display:grid;gap:12px;min-width:0}
+
 /* ── Analytics (was public/dashboard.html) + Estimator accuracy ──────── */
 /* Both console sections share the .dc-* chart idiom: the estimator card was
    split out of Analytics into #admin/estimator (#898) and carries the same
@@ -19736,8 +20037,11 @@ a.dev-ws-hero-pending {
    draws the fill), a circle. Its menu hangs below it over the cards under
    the hero, so the hero lifts while the menu is open, as it does for the
    Join popup. */
-.dev-ws-hero .dev-ws-plus-btn { width: 32px; height: 32px; }
-.dev-ws-hero .dev-ws-plus-glyph { width: 18px; height: 18px; }
+/* A BIGGER ⋯ (request 6654): 32px with an 18px glyph read as a detail and
+   was easy to miss. 48px, bolder dots and a hairline ring, so it stands as a
+   control of its own beside Open app. */
+.dev-ws-hero .dev-ws-plus-btn { width: 48px; height: 48px; box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
+.dev-ws-hero .dev-ws-plus-glyph { width: 24px; height: 24px; stroke-width: 2.6; }
 .dev-ws-hero:has(#dev-plus-menu:not(.hidden)) { position: relative; z-index: 5; }
 /* It hangs from the ⋯'s LEFT edge and opens rightward, into the column: the
    ⋯ is near the row's start (after Open app and Invite), and a menu opening
@@ -19775,6 +20079,60 @@ a.dev-ws-hero-pending {
 .dev-ws-hero-lineage { display: block; font-size: 13px; line-height: 18px; color: var(--text-muted); }
 .dev-ws-hero-lineage-link { color: var(--text-secondary); font-weight: 600; text-decoration: none; }
 .dev-ws-hero-lineage-link:hover { text-decoration: underline; }
+/* INVITE, AS A CARD (community-card.tsx InviteHeroCard, request 6654):
+   Home's New project card on the hub. A lilac card: faces of people already
+   here fanned out with an open seat after them, a question, what an invite
+   does, one full-width dark button and how many are in. Under the hero on a
+   phone; beside it on a wide window ("THE HUB IN TWO COLUMNS" below). */
+.dev-ws-invite-hero {
+  display: flex; flex-direction: column; gap: 10px; min-width: 0;
+  padding: 20px 20px 16px; border-radius: 20px;
+  background: #f6f2fc; box-shadow: inset 0 0 0 1px #d9d0ec;
+}
+.dark .dev-ws-invite-hero { background: #201b2f; box-shadow: inset 0 0 0 1px #3a3152; }
+.dev-ws-invite-hero-fan { display: flex; align-items: center; margin-bottom: 2px; }
+.dev-ws-invite-hero-face {
+  flex: none; width: 40px; height: 40px; margin-inline-end: -10px;
+  display: grid; place-items: center; border-radius: 999px;
+  font-size: 15px; font-weight: 700; color: #fff;
+  box-shadow: 0 0 0 2.5px #f6f2fc;
+}
+.dark .dev-ws-invite-hero-face { box-shadow: 0 0 0 2.5px #201b2f; }
+.dev-ws-invite-hero-face:nth-child(odd) { transform: rotate(-5deg); }
+.dev-ws-invite-hero-face:nth-child(even) { transform: rotate(5deg); }
+.dev-ws-invite-hero-seat {
+  margin-inline-end: 0; transform: none !important;
+  background: #fff; color: #6b4fb3; font-size: 20px; font-weight: 500;
+  border: 1.5px dashed #b9a7e3; box-shadow: none;
+}
+.dark .dev-ws-invite-hero-seat { background: #2a2340; color: #cdbdf5; border-color: #5a4b85; box-shadow: none; }
+.dev-ws-invite-hero-title { margin: 0; font-size: 18px; font-weight: 750; line-height: 23px; letter-spacing: -0.01em; color: var(--text-primary); }
+.dev-ws-invite-hero-text { margin: 0; font-size: 14px; line-height: 20px; color: var(--text-secondary); }
+.dev-ws-invite-hero-btn { margin-top: 4px; background: #18181b; }
+.dev-ws-invite-hero-btn:hover { background: #27272a; }
+.dark .dev-ws-invite-hero-btn { background: #fafafa; color: #18181b; }
+.dark .dev-ws-invite-hero-btn:hover { background: #e4e4e7; }
+.dev-ws-invite-hero-count { margin: 0; font-size: 13px; line-height: 18px; text-align: center; color: var(--text-muted); }
+/* THE HUB IN TWO COLUMNS (request 6654). On a wide window the hub was one
+   760px column with a wide empty margin either side. Its page is 1080px
+   there, and two pairs sit side by side in equal halves: the hero with the
+   Invite card, and For you with Topics. Everything else keeps the full
+   width, in the order it is written. Each pair is side by side only when
+   both are there and adjacent, so a hub without topics, or without the
+   Invite card, is one column as before. Not under a look (`data-skin`),
+   whose kit has a column of its own. */
+@media (min-width: 1100px) {
+  html:not([data-skin]) #dev-workshop:has(> .dev-ws[data-ws-tab="status"]) { max-width: 1080px; }
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 16px; align-content: start; align-items: start;
+  }
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > * { grid-column: 1 / -1; }
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero:has(+ .dev-ws-invite-hero),
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you]:has(+ [data-ws-hub-topics]) { grid-column: 1; }
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero + .dev-ws-invite-hero,
+  html:not([data-skin]) .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] + [data-ws-hub-topics] { grid-column: 2; }
+}
 @media (min-width: 768px) {
   .dev-ws-hero-summary {
     display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-auto-flow: row dense;
@@ -29638,7 +29996,7 @@ html[data-skin]:where(:not([data-skin="brand"])) #notifications-sheet .notificat
    wherever it reads a token. A solid sheet (--dc-sheet, the dialog's own
    card; --dc-sheet-solid: a menu, a pinned head) takes the look's opaque
    surface where the look's own is see-through (--fr-solid, from
-   looks.json "opaque"): both float over other text with no blur behind. The exception for the New look ("brand", the
+   looks.json "opaque"): both float over other text with no blur behind. The exception for the brand look ("brand", the
    last block of this sheet, which is not a look of the frame) sits inside
    :where(), so the rule weighs one attribute and More contrast
    (html…[data-contrast="more"], two) still sets its inks over any look.
@@ -30716,33 +31074,57 @@ html[data-skin="sunrise"][data-skin] .fr-barline{border-bottom:0}
 }
 /* looks:end */
 
-/* ── THE NEW LOOK, AN EXPERIMENT (Settings › Experimental, off by default) ──
+/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING (Settings ›
+   Experimental › Look, an admin's preview) ──
    Every rule here is scoped to html[data-skin="brand"], which the head's
    window.Skin sets from the device's stored choice before this sheet
-   applies; without it not one rule below matches. Light shell only, and not
-   over a dark app either (:not(.dark), :not([data-app-tone="dark"])): dark
-   is the standard dark either way.
+   applies; without it not one rule below matches. It is drawn in light
+   and in dark, where the shell and a framed app agree about the tone:
+   light is :not(.dark):not([data-app-tone="dark"]), dark is
+   .dark:not([data-app-tone="light"]), as the frame's looks scope their
+   pages. Where the two disagree (a dark app under the light shell, a
+   light app under the dark one) the look steps aside and the standard
+   rules draw the page.
 
-   The look is "Baseplate" (request #6278): bricks on a baseplate.
-   - A light warm grey ground, the plate, with white cards and white bars
-     on it. A community's own header colour stays on its pages.
-   - One palette: warm greys, and an ink (#1d231c) for text.
-   - One job per colour. Sun (#ffd95a, on a darker #d6a92a edge) means
-     "do this": the main action, Join, and the votes waiting for you. Ink
-     means "you are here" or "selected": the lit tab, the lit row, the
-     chosen chip. The old blue's other jobs (links, text, quieter fills) go
-     to ink.
-   - Geist for words, Young Serif for page titles, Geist Mono for counts.
+   WRITTEN ONCE FOR BOTH MODES. Each mode sets the look's own colours as
+   --bl-* variables on <html>, beside the product's tokens, and the rules
+   below read them from a scope that matches either mode. Only the two
+   ramps that repaint Tailwind's zinc and violet utilities are per mode:
+   light and dark wear different utility classes (bg-zinc-100 and
+   dark:bg-zinc-800), so each mode names its own.
+
+   The id is the old New look's ("Baseplate", request #6278), whose switch
+   is gone. This is that look redrawn (13 Nov 2026): the Paper look's manner
+   on the STANDARD pages, in the website's colours and typefaces.
+   - Same pages. It is not a look of the frame: no page changes its markup
+     or its layout, so every rule here is paint.
+   - Figure and ground. The page is one deeper cream and a card is plain
+     white with a soft lift and no outline, so a card differs from the page
+     by its fill. (The website's own cream, #fffeea, is too close to white
+     for that without the ink outline its cards wear.) In dark the page is
+     the dark of the website's ink, a deep green, a card is one step
+     lighter, and words are the cream the light page is made of.
+   - A frame around the page: a deep sky sidebar with white words, and a
+     navy top bar, darker than the sidebar so the two read as two pieces. A
+     community's own header colour stays on its pages. In dark both are
+     deeper, so the frame does not glare beside a dark page.
+   - One job per colour. Sun (#ffee6f) means "you are here" on the sidebar
+     and the tab bar, and "do this" on the main button, which in light also
+     wears the website's ink outline and hard foot. Deep sky (#1a63c4) is a
+     link, and a count that asks for you; in dark a link is a light sky,
+     which reads on a dark card. Ink (#121a0e) is text, cream in dark.
+   - Geist for words, Young Serif for titles, Geist Mono for counts. A
+     label over a group is sentence case, not small caps.
    - The website's own figures in two empty states.
 
    Appended last on purpose. The declarations other rules count (the home
-   washes, the wallpaper, the sheet fill) are not redeclared: the ground
-   and the bars are painted over them instead. */
+   washes, the wallpaper, the sheet fill) are not redeclared: the ground,
+   the bars and the planes are painted over them instead. */
 @font-face {
   font-family: 'Geist';
   /* Absolute: the build-scoped copy of this sheet (/b/<sha>/css/app.css)
      serves only .js and .css, so a relative url would 404 there. A browser
-     without the new look never matches a rule that names Geist, so it never
+     without this look never matches a rule that names Geist, so it never
      downloads the file. The same holds for the two faces below. */
   src: url('/fonts/geist/Geist-Variable.woff2') format('woff2');
   font-weight: 100 900;
@@ -30763,240 +31145,565 @@ html[data-skin="sunrise"][data-skin] .fr-barline{border-bottom:0}
   font-style: normal;
   font-display: swap;
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) {
   font-family: 'Geist', ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  background-color: #f4f4f0;
-  /* Surfaces: white cards on the plate. */
+  background-color: var(--bl-page);
+}
+/* LIGHT. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
+  /* The look's own colours, read by the rules below. */
+  --bl-page: #f6f2d8;
+  --bl-card: #ffffff;
+  --bl-raise: #ffffff;
+  --bl-label: #41483c;
+  --bl-tile-ink: #595f52;
+  --bl-bar: #37477b;
+  --bl-side: #1a63c4;
+  --bl-sun: #ffee6f;
+  --bl-sun-lit: #fff6ac;
+  --bl-on-sun: #121a0e;
+  --bl-wash: #fff6ac;
+  --bl-sky: #1a63c4;
+  --bl-count: #1a63c4;
+  --bl-on-count: #ffffff;
+  --bl-solid: #121a0e;
+  --bl-on-solid: #ffffff;
+  --bl-tint-sun: #fff6ac;
+  --bl-tint-sky: #e3eefb;
+  --bl-tint-leaf: #e2f2dc;
+  --bl-on-tint: #121a0e;
+  --bl-edge: rgba(18, 26, 14, 0.07);
+  --bl-pic-line: rgba(18, 26, 14, 0.1);
+  --bl-lift: 0 1px 2px rgba(18, 26, 14, 0.06), 0 14px 30px -22px rgba(18, 26, 14, 0.3);
+  --bl-raise-edge: inset 0 0 0 1px rgba(18, 26, 14, 0.1), 0 1px 2px rgba(18, 26, 14, 0.06);
+  --bl-pill-edge: inset 0 0 0 1px #121a0e, 0 2px 0 #121a0e;
+  --bl-pill-edge-down: inset 0 0 0 1px #121a0e, 0 0 0 #121a0e;
+  /* Surfaces: white cards on the cream page. */
   --bg-primary: #ffffff;
-  --bg-secondary: #f4f4f0;
-  --bg-tertiary: #e9e9e3;
-  --bg-input: #f4f4f0;
-  --dc-strip: #f4f4f0;
+  --bg-secondary: #f6f2d8;
+  --bg-tertiary: #ece8cc;
+  --bg-input: #ffffff;
+  --dc-strip: #f6f2d8;
   --dc-sheet: #ffffff;
   --dc-sheet-raise: #ffffff;
-  --dc-raised: #f4f4f0;
+  --dc-raised: #f6f2d8;
   --dc-sheet-solid: #ffffff;
-  --dc-strip-solid: #f4f4f0;
-  --border: #dcdcd5;
-  --border-light: #e9e9e3;
+  --dc-strip-solid: #f6f2d8;
+  --border: rgba(18, 26, 14, 0.14);
+  --border-light: rgba(18, 26, 14, 0.08);
   /* Ink and its warm greys. */
-  --text-primary: #1d231c;
-  --text-secondary: #3d4039;
-  --text-muted: #62655d;
-  --text-faint: #8d9088;
-  /* The old blue's jobs that are not "do this" go to ink: links, text,
-     outlines and the quieter fills. Sun is given out by name below. */
-  --accent: #1d231c;
-  --accent-light: #3d4039;
+  --text-primary: #121a0e;
+  --text-secondary: #41483c;
+  --text-muted: #595f52;
+  --text-faint: #858a7c;
+  /* The old blue's jobs that are not a link or a count go to ink: text,
+     outlines, a switch that is on and the quieter fills. Sun and the deep
+     sky are given out by name below. */
+  --accent: #121a0e;
+  --accent-light: #41483c;
   --accent-ink: #ffffff;
-  --accent-tint: rgba(29, 35, 28, 0.06);
-  --accent-tint-ink: #1d231c;
-  --accent-wash: #fff5d1;
-  --accent-wash-ink: #5c4400;
-  /* Lit things elsewhere (steps, tags, the theme switch) on a pale warm
-     grey; the tab and the row you are on are ink, below. */
-  --lit-ink: #1d231c;
-  --lit-tint: #e9e9e3;
-  --lit-line: rgba(29, 35, 28, 0.14);
-  /* The header's own ink on the top-level screens. A project's bar sets
-     its own on #platform-header (white on the project's colour). */
-  --brand-ink: #1d231c;
-  --brand-tint: #f4f4f0;
-  --brand-line: #dcdcd5;
+  --accent-tint: rgba(18, 26, 14, 0.06);
+  --accent-tint-ink: #121a0e;
+  --accent-wash: #fff6ac;
+  --accent-wash-ink: #121a0e;
+  /* Lit things on the page (steps, tags, the theme switch) on a pale sun.
+     The sidebar and the bars set their own below. */
+  --lit-ink: #121a0e;
+  --lit-tint: #fff6ac;
+  --lit-line: transparent;
+  /* The header's ink where it is read off the bar (a place bar, a sheet's
+     head). Both bars set white on themselves below. */
+  --brand-ink: #121a0e;
+  --brand-tint: #ffffff;
+  --brand-line: rgba(18, 26, 14, 0.1);
 }
-/* Hairlines in ink at 8%, unless high contrast asked for darker ones. */
+/* Hairlines in ink at 7%, unless high contrast asked for darker ones. A
+   card's own outline is this faint too: its fill and lift say where it
+   ends. */
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-contrast="more"]) {
-  --app-sheet-line: rgba(29, 35, 28, 0.08);
+  --app-sheet-line: rgba(18, 26, 14, 0.07);
+}
+/* DARK. The same roles on a deep green page. As in the standard dark the
+   surfaces climb from the page: --bg-primary is the page, a card is
+   --bg-secondary, and what stands on a card is --bg-tertiary. */
+html[data-skin="brand"].dark:not([data-app-tone="light"]) {
+  --bl-page: #141a11;
+  --bl-card: #20281c;
+  --bl-raise: #2b3426;
+  --bl-label: #cfceb7;
+  --bl-tile-ink: #cfceb7;
+  --bl-bar: #232c4f;
+  --bl-side: #143a75;
+  --bl-sun: #ffee6f;
+  --bl-sun-lit: #fff6ac;
+  --bl-on-sun: #121a0e;
+  --bl-wash: #3a3714;
+  --bl-sky: #7fbcf7;
+  --bl-count: #1a63c4;
+  --bl-on-count: #ffffff;
+  --bl-solid: #f6f2d8;
+  --bl-on-solid: #121a0e;
+  --bl-tint-sun: rgba(255, 238, 111, 0.18);
+  --bl-tint-sky: rgba(127, 188, 247, 0.18);
+  --bl-tint-leaf: rgba(150, 184, 133, 0.22);
+  --bl-on-tint: #f6f2d8;
+  --bl-edge: rgba(246, 242, 216, 0.08);
+  --bl-pic-line: rgba(246, 242, 216, 0.12);
+  /* A shadow has to out-darken the page to lift anything from it. */
+  --bl-lift: 0 1px 2px rgba(0, 0, 0, 0.35), 0 14px 30px -22px rgba(0, 0, 0, 0.9);
+  --bl-raise-edge: inset 0 0 0 1px rgba(246, 242, 216, 0.1), 0 1px 2px rgba(0, 0, 0, 0.3);
+  /* An ink outline would vanish on the dark page: the pill keeps its hard
+     foot, in a deeper sun. */
+  --bl-pill-edge: 0 2px 0 #a3962b;
+  --bl-pill-edge-down: 0 0 0 #a3962b;
+  --bg-primary: #141a11;
+  --bg-secondary: #20281c;
+  --bg-tertiary: #2b3426;
+  --dev-press: #374131;
+  --bg-input: #20281c;
+  --bg-code: #10150d;
+  --bg-code-header: #20281c;
+  --bg-card: rgba(246, 242, 216, 0.06);
+  --dc-strip: #141a11;
+  --dc-sheet: #20281c;
+  --dc-sheet-raise: #2b3426;
+  --dc-raised: #2b3426;
+  --dc-sheet-solid: #20281c;
+  --dc-strip-solid: #141a11;
+  /* In dark the lighter line is the stronger one, as in the standard dark. */
+  --border: rgba(246, 242, 216, 0.12);
+  --border-light: rgba(246, 242, 216, 0.18);
+  /* Cream and its greys. */
+  --text-primary: #f6f2d8;
+  --text-secondary: #dedbc4;
+  --text-muted: #a9ad98;
+  --text-faint: #8f937f;
+  --text-code: #dedbc4;
+  /* The accent is the light sky here, not the cream that would mirror
+     light's ink: rules that put white words on the accent stay as readable
+     as they are in the standard dark. */
+  --accent: #7fbcf7;
+  --accent-light: #a9d2fa;
+  --accent-ink: #121a0e;
+  --accent-tint: rgba(127, 188, 247, 0.14);
+  --accent-tint-ink: #7fbcf7;
+  --accent-wash: #3a3714;
+  --accent-wash-ink: #ffee6f;
+  /* Lit things on the page: sun words on a wash of sun. */
+  --lit-ink: #ffee6f;
+  --lit-tint: rgba(255, 238, 111, 0.16);
+  --lit-line: transparent;
+  --brand-ink: #f6f2d8;
+  --brand-tint: #20281c;
+  --brand-line: rgba(246, 242, 216, 0.14);
+}
+/* Hairlines in cream at 7%, unless high contrast asked for stronger ones. */
+html[data-skin="brand"].dark:not([data-app-tone="light"]):not([data-contrast="more"]) {
+  --app-sheet-line: rgba(246, 242, 216, 0.07);
 }
 
-/* THE PLATE. The wallpaper is drawn on <body> by the route rule (one id
+/* THE PAGE. The wallpaper is drawn on <body> by the route rule (one id
    deep); `:has(#platform-tabs)` is always true in the shell and makes this
    rule one id deep as well, so it wins by its classes. The tile zoom paints
    the moving view from --un-zoom-bg, so it follows. --home-ground moves with
    it: the browser scroller paints the body from it (!important), and the
    launch cover and the washes end on it. The scroller's fixed layer repaints
    the wallpaper; it is flat here too. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) body:has(#platform-tabs) {
-  --home-ground: #f4f4f0;
-  --un-zoom-bg: #f4f4f0;
-  background: #f4f4f0;
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(#platform-tabs) {
+  --home-ground: var(--bl-page);
+  --un-zoom-bg: var(--bl-page);
+  background: var(--bl-page);
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) body::before {
-  background: #f4f4f0;
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body::before {
+  background: var(--bl-page);
+}
+/* A screen that paints itself with the wallpaper (Make it, the made
+   screen, sign-in) does so in its own style attribute, which only
+   !important outranks: it is the flat page here too. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [style*="--home-wallpaper"] {
+  background: var(--bl-page) !important;
+}
+/* The planes over the page. A strip (the pane a screen stands on) is the
+   page itself, flat, so the page reads as one ground with cards on it; a
+   sheet (a conversation, a session) is a card. Neither is frosted: there
+   is nothing behind them to blur. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dc-lift-strip {
+  background-color: var(--bl-page);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dc-lift-session {
+  background-color: var(--bl-card);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
-/* THE BARS are white. On the top-level screens the header is a flat bar
-   with a hairline foot and square corners, not the faked glass with the
-   rounded notch. A project's bar (html[data-community-tint]) keeps its
-   community's colour. The doubled id outranks the route rules (two ids
-   deep) by its classes. The tab bar keeps its own layer, filled flat. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-community-tint]) #platform-header#platform-header {
-  background-color: #ffffff;
+/* THE TOP BAR is navy with white words on the top-level screens: a flat
+   bar with square corners, not the faked glass with the rounded notch. A
+   project's bar (html[data-community-tint]) keeps its community's colour.
+   `body:has(#platform-tabs)`, always true in the shell, and the doubled id
+   outrank the route rules: the deepest of them, a phone browser's (two ids
+   and a `body`), gives the bar the sheet's white. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])):not([data-community-tint]) body:has(#platform-tabs) #platform-header#platform-header {
+  --brand-ink: #ffffff;
+  --brand-tint: rgba(255, 255, 255, 0.16);
+  --brand-line: rgba(255, 255, 255, 0.3);
+  background-color: var(--bl-bar);
+  color: #ffffff;
   clip-path: none;
   border-end-start-radius: 0;
   border-end-end-radius: 0;
-  box-shadow: inset 0 -1px 0 rgba(29, 35, 28, 0.08);
-}
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-community-tint]) #platform-header#platform-header::before {
-  display: none;
-}
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tabs::before {
-  background: #ffffff;
-}
-
-/* YOU ARE HERE: ink. On a phone the lit tab sits on the sliding marker;
-   from 768px the lit row of the sidebar is the tab itself. The places of a
-   project (its Hub, Workshop, channels) light the same way, in the drawer,
-   the tray and the sidebar's nest. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tabs-marker {
-  background: #1d231c;
   box-shadow: none;
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab[aria-current="page"] {
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])):not([data-community-tint]) body:has(#platform-tabs) #platform-header#platform-header::before {
+  display: none;
+}
+/* On either bar, the navy one or a community's own, everything read off
+   the bar is white: its muted words, and what is lit on it (the sidebar's
+   switch while the sidebar is open) is a wash of white, not the page's
+   pale sun. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-header {
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.86);
+  --text-muted: rgba(255, 255, 255, 0.82);
+  --text-faint: rgba(255, 255, 255, 0.62);
+  --lit-ink: #ffffff;
+  --lit-tint: rgba(255, 255, 255, 0.2);
+  --lit-line: transparent;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-header :is(.text-zinc-950, .text-zinc-900, .text-zinc-800, .text-zinc-700) {
   color: #ffffff;
 }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) #platform-header :is(.text-zinc-600, .text-zinc-500, .text-zinc-400) {
+  color: rgba(255, 255, 255, 0.82);
+}
+html[data-skin="brand"].dark:not([data-app-tone="light"]) #platform-header :is(.dark\:text-zinc-100, .dark\:text-zinc-200, .dark\:text-zinc-300) {
+  color: #ffffff;
+}
+html[data-skin="brand"].dark:not([data-app-tone="light"]) #platform-header :is(.dark\:text-zinc-400, .dark\:text-zinc-500) {
+  color: rgba(255, 255, 255, 0.82);
+}
+/* A project's tile on the bar is a tile of its own: its letter keeps the
+   tile's grey, not the bar's white. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-header .app-icon-tile {
+  color: var(--bl-tile-ink);
+}
+
+/* THE SIDEBAR (from 768px) is the deep sky, a deeper blue in dark, with
+   white words. Its rows
+   draw from the tokens, so they are moved on the bar itself: what is lit
+   or hovered there is a wash of white. The row you are on is named below. */
 @media (min-width: 768px) {
-  html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab[aria-current="page"] {
-    background: #1d231c;
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs {
+    --text-primary: rgba(255, 255, 255, 0.94);
+    --text-secondary: rgba(255, 255, 255, 0.88);
+    --text-muted: rgba(255, 255, 255, 0.72);
+    --text-faint: rgba(255, 255, 255, 0.32);
+    --lit-ink: #ffffff;
+    --lit-tint: rgba(255, 255, 255, 0.24);
+    --lit-line: transparent;
+    --accent: #ffffff;
+    background: var(--bl-side);
+    box-shadow: none;
+  }
+  /* A row being dragged keeps the bar's own fill behind it. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs .platform-rail-community.un-reorder-ghost {
+    background: var(--bl-side);
+  }
+  /* Its glyphs are as bright as its words. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs :is(.platform-tab-glyph, .dev-ws-place-glyph, .platform-rail-sub-glyph, .platform-rail-settings) {
+    color: rgba(255, 255, 255, 0.9);
+  }
+  /* YOU ARE HERE: sun, with ink words. A community's own row is not lit
+     while its places are open under it; the place is. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community:not([data-rail-open]), .dev-ws-place, .platform-rail-sub)[aria-current="page"] {
+    background: var(--bl-sun);
+    color: var(--bl-on-sun);
+    box-shadow: none;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community:not([data-rail-open]), .dev-ws-place, .platform-rail-sub)[aria-current="page"] :is(.platform-tab-glyph, .dev-ws-place-glyph, .platform-rail-sub-glyph, .platform-rail-settings-glyph) {
+    color: var(--bl-on-sun);
+  }
+  /* A count that asks for you: white, with ink figures. A channel's unread
+     count stays the quiet one. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs :is(.platform-rail-votes, .platform-tab-all-votes, .platform-tab-votes, .dev-ws-place-count, .platform-rail-sub-count) {
+    background: #ffffff;
+    color: #121a0e;
+    font-variant-numeric: tabular-nums;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs :is(.platform-rail-sub-count, :is([data-place="discussion"], [data-place^="c:"]) > .dev-ws-place-count) {
+    background: rgba(255, 255, 255, 0.3);
+    color: #ffffff;
+  }
+  /* A label over a group of rows: sentence case. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs :is(.platform-rail-head, .platform-rail-head-label, .platform-side-apps-head, .dev-ws-places-head) {
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  /* The faint bar beside a community's nested rows. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs .platform-rail-nest-in::before {
+    background: rgba(255, 255, 255, 0.45);
+  }
+  /* A community's tile keeps its edge on the blue, and its letter its own
+     ink (the row's white would vanish on the tile). */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs .platform-rail-tile {
+    color: var(--bl-tile-ink);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+  }
+  /* The gear sits on the You row: while that row is lit it is read on sun. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs:has(#platform-tab-me[aria-current="page"]) .platform-rail-settings {
+    color: var(--bl-on-sun);
   }
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-place[aria-current="page"] {
-  background: #1d231c;
-  color: #ffffff;
+/* ON A PHONE the tab bar is the sidebar's blue and its marker is sun; the tab
+   you are on is ink, on the marker. */
+@media (max-width: 767.98px) {
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-tabs {
+    --text-primary: #ffffff;
+    --text-muted: rgba(255, 255, 255, 0.9);
+    --lit-ink: var(--bl-on-sun);
+    --lit-tint: var(--bl-sun);
+    --lit-line: transparent;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-tabs::before {
+    background: var(--bl-side);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-tabs .platform-tab:not([aria-current="page"]) {
+    color: rgba(255, 255, 255, 0.92);
+  }
+  /* A community's page lights no drawn tab (its own, Communities, is not
+     on the bar) and the marker rests under Home, as in the standard look:
+     Home is read on the marker there. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-tabs:has(#platform-tab-workshop[aria-current="page"]) #platform-tab-home {
+    color: var(--bl-on-sun);
+  }
 }
 
-/* DO THIS: sun with ink words, on a darker edge. The shell's primary
-   button, Join, starting a conversation, and the counts of votes waiting
-   for you. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-violet-600,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty button,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .card-add-btn[data-join]:not([data-join="joined"]) {
-  background-color: #ffd95a;
+/* DO THIS: the one sun pill, on the website's ink outline and hard foot
+   (in dark the foot alone, in a deeper sun). The shell's primary button,
+   Join, and starting a conversation. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .bg-violet-600,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-empty button,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .card-add-btn[data-join]:not([data-join="joined"]) {
+  background-color: var(--bl-sun);
   border-color: transparent;
-  color: #1d231c;
-  box-shadow: 0 2px 0 #d6a92a;
+  color: var(--bl-on-sun);
+  box-shadow: var(--bl-pill-edge);
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .hover\:bg-violet-500:hover,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty button:hover {
-  background-color: #ffe07a;
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .hover\:bg-violet-500:hover,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-empty button:hover {
+  background-color: var(--bl-sun-lit);
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-violet-600:active,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty button:active,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .card-add-btn[data-join]:active {
-  box-shadow: 0 0 0 #d6a92a;
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .bg-violet-600:active,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-empty button:active,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .card-add-btn[data-join]:active {
+  box-shadow: var(--bl-pill-edge-down);
   transform: translateY(1px);
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab-votes,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab-all-votes,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-rail-votes,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-foryou-pill:not([data-ws-channel-unread]) {
-  background: #ffd95a;
-  color: #1d231c;
+/* A count that asks for you, off the sidebar: deep sky, white figures. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-tab-votes,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-tab-all-votes,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-rail-votes,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-foryou-pill:not([data-ws-channel-unread]) {
+  background: var(--bl-count);
+  color: var(--bl-on-count);
   font-variant-numeric: tabular-nums;
 }
-/* The old blue as words and pale fills: ink, and a pale sun. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-violet-500,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-violet-600,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-violet-700 {
-  color: #1d231c;
+/* The old blue as words is the sky (deep in light, light in dark), and as
+   a pale fill a wash of sun. Each mode names the utilities it wears. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .text-violet-500,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .text-violet-600,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .text-violet-700,
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-violet-200,
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-violet-300,
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-violet-400 {
+  color: var(--bl-sky);
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) a.text-violet-600,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) a.text-violet-700 {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-thickness: 1px;
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .bg-violet-50,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .bg-violet-100,
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-violet-950,
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-violet-950\/40,
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-violet-900\/40 {
+  background-color: var(--bl-wash);
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-violet-50,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-violet-100 {
-  background-color: #fff5d1;
+/* A chosen chip is sun with ink words; an unchosen one is a card on the
+   page. The chip idiom is a round button whose chosen state is the
+   solid inversion (zinc-900 with white words): the chip primitive, the
+   bell's Unread and All, the board's filters. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) button.bg-zinc-900.text-white.rounded-full,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) button[aria-pressed="true"].bg-zinc-900,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-chip[aria-pressed="true"] {
+  background-color: var(--bl-sun);
+  color: var(--bl-on-sun);
 }
 
-/* WARM GREYS. The zinc ramp is a cool grey; on the warm plate its common
-   fills, words and lines take the warm one. The chosen chip (zinc-900) is
-   the ink. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-50 { background-color: #f7f7f3; }
+/* WARM GREYS. The zinc ramp is a cool grey; on the cream page its common
+   fills, words and lines take a warm one. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-50 { background-color: #f4f1dc; }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-100,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .hover\:bg-zinc-100:hover { background-color: #ebebe5; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .hover\:bg-zinc-100:hover { background-color: #ece8cc; }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-200,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .hover\:bg-zinc-200:hover { background-color: #e2e2dc; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-900 { background-color: #1d231c; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-900 { color: #1d231c; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-800 { color: #2c3029; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-700 { color: #3d4039; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-600 { color: #4d5049; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-500 { color: #62655d; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-400 { color: #8d9088; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .border-zinc-200 { border-color: #e2e2dc; }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .border-zinc-300 { border-color: #cfd0c9; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .hover\:bg-zinc-200:hover { background-color: #e3dfc1; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .bg-zinc-900 { background-color: #121a0e; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-950,
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-900 { color: #121a0e; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-800 { color: #2a3125; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-700 { color: #41483c; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-600 { color: #4d5347; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-500 { color: #595f52; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-400 { color: #858a7c; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .border-zinc-200 { border-color: rgba(18, 26, 14, 0.1); }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .border-zinc-300 { border-color: rgba(18, 26, 14, 0.18); }
+/* WARM DARKS. In dark the same elements wear dark: utilities, a cool
+   near-black ramp; on the green page they take the look's own steps. The
+   inverted solid (a light fill with dark words) is cream with ink. */
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-950 { background-color: #141a11; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-900 { background-color: #20281c; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-800,
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:hover\:bg-zinc-800:hover { background-color: #2b3426; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-700,
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:hover\:bg-zinc-700:hover { background-color: #374131; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-600 { background-color: #4a5443; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-100 { background-color: #f6f2d8; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-100 { color: #f6f2d8; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-200 { color: #e4e1c9; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-300 { color: #cfceb7; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-400 { color: #a9ad98; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-500 { color: #8f937f; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-900 { color: #121a0e; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:border-zinc-800 { border-color: rgba(246, 242, 216, 0.1); }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:border-zinc-700 { border-color: rgba(246, 242, 216, 0.16); }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:border-zinc-600 { border-color: rgba(246, 242, 216, 0.24); }
+/* MORE CONTRAST keeps its word under the look. The standard rules deepen
+   the muted inks and the lines from <html>; the look's own tokens and
+   ramps would outrank them, so each mode restates them here, in its own
+   hues. (The sheet line is left to the standard rule, above.) */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"])[data-contrast="more"] {
+  --text-muted: #2a3125;
+  --text-faint: #41483c;
+  --border: rgba(18, 26, 14, 0.5);
+  --border-light: rgba(18, 26, 14, 0.28);
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"])[data-contrast="more"] :is(.text-zinc-400, .text-zinc-500) { color: #2a3125; }
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"])[data-contrast="more"] .border-zinc-200 { border-color: rgba(18, 26, 14, 0.28); }
+html[data-skin="brand"].dark:not([data-app-tone="light"])[data-contrast="more"] {
+  --text-muted: #e4e1c9;
+  --text-faint: #cfceb7;
+  --border: rgba(246, 242, 216, 0.5);
+  --border-light: rgba(246, 242, 216, 0.3);
+}
+html[data-skin="brand"].dark:not([data-app-tone="light"])[data-contrast="more"] :is(.dark\:text-zinc-400, .dark\:text-zinc-500) { color: #e4e1c9; }
+html[data-skin="brand"].dark:not([data-app-tone="light"])[data-contrast="more"] .dark\:border-zinc-800 { border-color: rgba(246, 242, 216, 0.3); }
 
-/* BRICKS: white cards on the plate, with a hairline and a soft shadow. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\],
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-section-card,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty {
-  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(29, 35, 28, 0.05), 0 8px 20px -14px rgba(29, 35, 28, 0.22);
+/* CARDS: plain on the page (white in light, one step off the page in
+   dark), with a soft lift. The outline every card is drawn with is the
+   faint hairline above. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\],
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-section-card,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-empty,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-strip,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-challenge-card,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-discover-card {
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .app-icon-tile,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .home-discover-card {
-  border-color: rgba(29, 35, 28, 0.08);
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-strip {
+  background-color: var(--bl-card);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .home-discover-card {
-  box-shadow: 0 1px 2px rgba(29, 35, 28, 0.05), 0 8px 20px -14px rgba(29, 35, 28, 0.22);
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .app-icon-tile,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-discover-card {
+  border-color: var(--bl-edge);
 }
 /* Unread conversations: coral, the colour of people talking. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .platform-tab-badge {
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-tab-badge {
   background: #ff8a78;
-  color: #1d231c;
+  color: #121a0e;
   font-variant-numeric: tabular-nums;
 }
 
-/* A PROJECT'S HUB. Open app is ink: it goes somewhere, it does not ask for
-   you. Invite and the ⋯ beside it are white bricks. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-open-app[data-ws-community-open-app] {
-  background: #1d231c;
-  color: #ffffff;
+/* LABELS over a group are sentence case, as the Paper look sets its
+   captions: the section label of a grouped list, Home's and Messages'. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .uppercase,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-section-head,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-thread-kicker,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .msgx-picker-head,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dc-drafts-head,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-topic-h,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-topic-sub,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-details-sub,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-eyebrow,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-places-head,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-lane-title,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .community-switcher-title,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .community-switcher-section,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .shots-noticed-head,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .st-spec-head {
+  text-transform: none;
+  letter-spacing: 0;
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-community-invite],
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-plus-btn-hero {
-  background: #ffffff;
-  color: #1d231c;
-  box-shadow: inset 0 0 0 1px rgba(29, 35, 28, 0.10), 0 1px 2px rgba(29, 35, 28, 0.06);
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .uppercase.tracking-\[0\.06em\],
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-area-label > span:first-child,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-section-head,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-head-label {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--bl-label);
+}
+
+/* A PROJECT'S HUB. Open app is the solid (ink in light, cream in dark): it
+   goes somewhere, it does not ask for you. Invite and the ⋯ beside it are
+   raised plain buttons. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-open-app[data-ws-community-open-app] {
+  background: var(--bl-solid);
+  color: var(--bl-on-solid);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-ws-community-invite],
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-plus-btn-hero {
+  background: var(--bl-raise);
+  color: var(--text-primary);
+  box-shadow: var(--bl-raise-edge);
 }
 /* For you: each row's glyph on the pale tint of its job (sun for what
    waits on you, sky for your own work, grass for the conversation), and the
-   channel's unread count in ink. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-hub-needs] .dev-ws-foryou-row > :first-child {
-  background: #fff5d1;
-  color: #1d231c;
+   channel's unread count in the solid. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-ws-hub-needs] .dev-ws-foryou-row > :first-child {
+  background: var(--bl-tint-sun);
+  color: var(--bl-on-tint);
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-mine-card] > :first-child {
-  background: #e6f0fb;
-  color: #1d231c;
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-ws-mine-card] > :first-child {
+  background: var(--bl-tint-sky);
+  color: var(--bl-on-tint);
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ws-channel="preview"] > :first-child {
-  background: #e3f5e8;
-  color: #1d231c;
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-ws-channel="preview"] > :first-child {
+  background: var(--bl-tint-leaf);
+  color: var(--bl-on-tint);
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-foryou-pill[data-ws-channel-unread] {
-  background: #1d231c;
-  color: #ffffff;
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-foryou-pill[data-ws-channel-unread] {
+  background: var(--bl-solid);
+  color: var(--bl-on-solid);
 }
 /* Pictures of a change: a hairline, drawn over the picture so an image
    filling the box does not hide it. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-recent-pic,
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-media-view {
-  outline: 1px solid rgba(29, 35, 28, 0.10);
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-recent-pic,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-media-view {
+  outline: 1px solid var(--bl-pic-line);
   outline-offset: -1px;
 }
 
-/* TYPE BY ROLE. A page's title in the serif (not the header's own name,
-   and not the small line the made screen keeps in an h1); the Workshop's
-   counts in mono, so the figures line up. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) h1:not(#platform-header h1):not(#first-session-made-title) {
+/* TYPE BY ROLE. A page's title in the serif, the top bar's too (not the
+   small line the made screen keeps in an h1); the Workshop's counts in
+   mono, so the figures line up. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) h1:not(#first-session-made-title),
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-hero-name {
   font-family: 'Young Serif', Georgia, 'Times New Roman', serif;
   font-weight: 400;
   letter-spacing: -0.005em;
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-dash-cell b {
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-dash-cell b {
   font-family: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
@@ -31004,8 +31711,8 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-ws-dash-cell
 
 /* MOMENTS. The website's own figures above two empty states: Messages
    before the first conversation, and Homeroom bot when nothing needs you.
-   Background images, so the experiment off never loads them. */
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty::before {
+   Background images, so a browser without this look never loads them. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-empty::before {
   content: "";
   display: block;
   align-self: stretch;
@@ -31013,7 +31720,7 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .messages-empty::
   margin-bottom: 12px;
   background: url('/illustrations/people/phone.png') center / contain no-repeat;
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-ai-empty=""]::before {
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-ai-empty=""]::before {
   content: "";
   display: block;
   height: 130px;

@@ -64,7 +64,8 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
   // Fake work: each call recorded; `answer` per kind.
   const work = { calls: [], answer: new Map() };
   const fake = (kind) => ({
-    maxAttempts: 2, backoffMs: () => 0, leaseMs: 600,
+    // A loaded check machine must not lose a claim and run a hello again.
+    maxAttempts: 2, backoffMs: () => 0, leaseMs: 10000,
     async run({ input, key }) {
       work.calls.push({ kind, key, input });
       const a = work.answer.get(kind);
@@ -448,8 +449,24 @@ test('the Homeroom bot\'s reply machines against the full PostgreSQL schema', { 
     await platform.greet(pool, { userId: dee.id, kind: 'joiner', appId: other.id });
     await platform.greet(pool, { userId: dee.id, kind: 'tour' });
     await settle();
-    assert.deepEqual(calls(dm.WORK.hello).map((c) => [c.input.kind, c.key]),
-      [['joiner', `hello:joiner:${app.id}`], ['joiner', `hello:joiner:${other.id}`], ['tour', 'hello:tour']],
+    // One settle pass is not proof: a lost lease, a busy claim or a full
+    // kind returns 0 while hellos are still owed. Wait for all three to be
+    // said and applied (each wf_work row `settled`), and for the DM idle.
+    await until(async () => {
+      await settle();
+      const { rows } = await pool.query(
+        `SELECT status FROM wf_work WHERE kind = $1 AND machine = $2 AND key = $3`, [dm.WORK.hello, dm.MACHINE, dmKey(dee)]);
+      return rows.length === 3 && rows.every((r) => r.status === 'settled')
+        && (await inst(dm.MACHINE, dmKey(dee)))?.state === 'idle'
+        && calls(dm.WORK.hello).length >= 3;
+    }, 'the three hellos said and the person\'s DM idle');
+    const hellos = calls(dm.WORK.hello);
+    assert.equal(hellos.length, 3, 'one hello per trigger, and none said twice');
+    // The run order of independent work items is not the claim: compare the
+    // (kind, key) pairs as a set, still requiring each trigger's own key once.
+    const byKey = (a, b) => a[1].localeCompare(b[1]);
+    assert.deepEqual(hellos.map((c) => [c.input.kind, c.key]).sort(byKey),
+      [['joiner', `hello:joiner:${app.id}`], ['joiner', `hello:joiner:${other.id}`], ['tour', 'hello:tour']].sort(byKey),
       'each trigger owes its own; the send keeps one hello per person (sendDm\'s claim)');
   });
 

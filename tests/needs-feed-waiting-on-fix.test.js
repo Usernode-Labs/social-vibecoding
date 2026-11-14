@@ -14,7 +14,8 @@ const overview = require('../src/routes/workshop-overview');
 
 const row = (over = {}) => ({
   kind: 'proposal', id: 6358, app_id: 1, author_id: 42, external_agent: 'claude-code',
-  yes: 1, votes_required: 1, other_yes: 1, requires_explicit_approval: false,
+  // #6651: the gate is read once, by governedGate, as work-state reads it.
+  votes_in: true, yes: 1, requires_explicit_approval: false,
   check_state: 'passing', mergeability: 'clean', integration_merges_clean: true,
   merge_conflict_state: null, ...over,
 });
@@ -29,16 +30,22 @@ test('#6389: waitingOnFix names tests failing, then a conflict, once the vote is
 });
 
 test('#6389: while the gate is not met the row is still a Vote', () => {
-  assert.equal(overview.waitingOnFix(row({ yes: 0, check_state: 'failing' }), 42), null);
+  assert.equal(overview.waitingOnFix(row({ votes_in: false, check_state: 'failing' }), 42), null);
   assert.equal(overview.waitingOnFix(row({ check_state: 'failing' }), 7), null, 'somebody else\'s change');
   assert.deepEqual(overview.waitingOnFix(row({ external_agent: null, check_state: 'failing' }), 42), ['checks'],
     'one made on Homeroom waits on its fix the same way');
 });
 
-test('#6389: an explicit approval needs a Yes from another member', () => {
-  const flagged = row({ requires_explicit_approval: true, other_yes: 0, check_state: 'failing' });
+test('#6651: the gate is governedGate\'s answer, not a count of every Yes', () => {
+  // A non-approver's Yes on an approver project leaves votes_in false, so the
+  // author's row stays a Vote even though its `yes` count looks like enough.
+  const waiting = row({ votes_in: false, yes: 1, check_state: 'failing' });
+  assert.equal(overview.authorGateMet(waiting, 42), false);
+  assert.equal(overview.waitingOnFix(waiting, 42), null);
+  // An explicit approval's member floor is decided by the same gate.
+  const flagged = row({ requires_explicit_approval: true, votes_in: false, yes: 1, check_state: 'failing' });
   assert.equal(overview.waitingOnFix(flagged, 42), null, 'its author\'s own Yes is not the member Yes');
-  assert.deepEqual(overview.waitingOnFix({ ...flagged, other_yes: 1 }, 42), ['checks']);
+  assert.deepEqual(overview.waitingOnFix({ ...flagged, votes_in: true }, 42), ['checks']);
 });
 
 test('#6389: with its votes in and nothing left to fix, the row leaves Needs you', () => {

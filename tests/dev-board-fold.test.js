@@ -1779,7 +1779,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 733 → 734: +1 (#6643): a change held for an admin says so on its card,
   // with the reason. No existing check opens that demo card's warning, and
   // a hold is a state no other route reaches. 734 leaves 146 slots.
-  checkCap.assertPinned(DAPP.tests.length, 734);
+  // 734 → 735: +1 (Admin › Onboarding flows): the new section's own route,
+  // which no existing check opens, drawn on its demo payload with its five
+  // views. 735 leaves 145 slots.
+  checkCap.assertPinned(DAPP.tests.length, 735);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -795,35 +795,25 @@
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
       }
 
-      // New look (an experiment) and the Look menu (the frame's five looks,
-      // an admin's preview), both kept on the device by the head's
-      // window.Skin: the change is the save, and the look applies at once.
-      // They are exclusive (one data-skin on <html>), so each change
-      // repaints both controls. The menu's options are the frame's looks;
-      // anything else stored (New look, nothing) reads as Standard there.
-      const lookToggle = document.getElementById('new-look-enabled');
+      // The Look menu (an admin's preview of the looks), kept on the device
+      // by the head's window.Skin: the change is the save, and the look
+      // applies at once. Its options are every look there is ('brand',
+      // which keeps the standard pages, and the frame's five); nothing
+      // stored reads as Standard. New look's switch, which set 'brand' on
+      // its own, is gone: that look is the menu's first option now.
       const lookSelect = document.getElementById('settings-look');
       const paintLooks = () => {
         const skin = window.Skin?.get?.();
-        if (lookToggle) lookToggle.checked = skin === 'brand';
         if (lookSelect) {
           lookSelect.value = Array.from(lookSelect.options).some((o) => o.value === skin) ? skin : '';
         }
       };
-      if (lookToggle) {
-        lookToggle.addEventListener('change', (e) => {
-          window.Skin?.set?.(e.target.checked ? 'brand' : 'standard');
-          paintLooks();
-        });
-      }
       if (lookSelect) {
         lookSelect.addEventListener('change', (e) => {
           window.Skin?.set?.(e.target.value || 'standard');
           paintLooks();
         });
-      }
-      if (lookToggle || lookSelect) {
-        // Another tab changing it repaints the controls here too.
+        // Another tab changing it repaints the menu here too.
         window.Skin?.onChange?.(paintLooks);
       }
 
@@ -980,10 +970,10 @@
         this.state.sessionBridgeEnabled = !!j.user?.sessionBridgeEnabled;
         this.state.locale = j.user?.locale || null;
         this.state.timeZone = j.user?.timeZone || null;
-        // Same payload the CLI-credentials gate needs, so prime its memo
-        // rather than let it issue a second /api/auth/me. (It still
-        // fetches on its own when it runs first — the two orders both
-        // resolve to the same deployment-constant answer.)
+        // Same payload the CLI-credentials gate needs, so prime its memo.
+        // When the gate runs first it takes its answer from _readMe too
+        // (_cliAuthAvailable), so neither order sends a second
+        // /api/auth/me; both resolve to the same deployment-constant answer.
         this._cliAuthPromise = Promise.resolve(j.user?.cliAuthEnabled !== false);
         this._renderIndicator();
         // `walletLinkEnabled` decides whether the Homeroom Wallet row is in
@@ -1024,9 +1014,28 @@
         // snapshot, which carries none of these fields. Read for ourselves;
         // offline the worker answers it from cache, as it always has.
       }
-      const r = await fetch(`/api/auth/me${meDemoQ}`, { credentials: 'same-origin' });
-      if (!r.ok) return null;
-      return await r.json();
+      return this._fetchMe(meDemoQ);
+    },
+
+    // The read itself, shared while it is on its way (#6591): refresh() and
+    // the CLI-credentials gate ask in the same tick when Settings opens, and
+    // each sent its own. Nothing is kept: once the answer lands the next
+    // caller asks the server again. The parsed body is shared, so read it
+    // and do not write to it.
+    _meReads: {},
+
+    _fetchMe(meDemoQ) {
+      const running = this._meReads[meDemoQ];
+      if (running) return running;
+      const read = (async () => {
+        const r = await fetch(`/api/auth/me${meDemoQ}`, { credentials: 'same-origin' });
+        if (!r.ok) return null;
+        return await r.json();
+      })();
+      this._meReads[meDemoQ] = read;
+      const done = () => { if (this._meReads[meDemoQ] === read) delete this._meReads[meDemoQ]; };
+      read.then(done, done);
+      return read;
     },
 
     _renderIndicator() {
@@ -1947,8 +1956,6 @@
       if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
       const bridgeStatus = document.getElementById('session-bridge-status');
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
-      const look = document.getElementById('new-look-enabled');
-      if (look) look.checked = window.Skin?.get?.() === 'brand';
       const lookMenu = document.getElementById('settings-look');
       if (lookMenu) {
         const stored = window.Skin?.get?.();
@@ -2195,13 +2202,18 @@
     // explicit `false` from the server suppresses the request.
     _cliAuthPromise: null,
 
+    // The answer is a field of the session user, which the shell's boot read
+    // already carries, so the gate joins that read (_readMe) and never sends
+    // its own (#6591). Opening Settings from a page load ran this before
+    // refresh() had primed the memo, and asked /api/auth/me a second time
+    // beside the boot's. No answer (signed out, or a failed read) is TRUE,
+    // as a status that was not ok always was.
     _cliAuthAvailable() {
       if (!this._cliAuthPromise) {
         this._cliAuthPromise = (async () => {
           try {
-            const r = await fetch('/api/auth/me', { credentials: 'same-origin' });
-            if (!r.ok) return true;
-            const j = await r.json();
+            const j = await this._readMe('');
+            if (!j) return true;
             return j.user?.cliAuthEnabled !== false;
           } catch { return true; }
         })();
@@ -3725,8 +3737,9 @@
         ?? (typeof App !== 'undefined' && !!App.user?.isAdmin);
       // A device left in one of the menu's looks keeps the menu whoever is
       // signed in (an admin's device in other hands, an admin who lost the
-      // role): the look is stored on the device and the menu is what
-      // clears it. New look has its own switch and does not count.
+      // role, a device that had the old New look switch on, which stored
+      // 'brand'): the look is stored on the device and the menu is what
+      // clears it.
       const lookSection = document.getElementById('settings-look-section');
       if (lookSection) {
         const lookMenu = document.getElementById('settings-look');
@@ -5428,7 +5441,9 @@
     // frame goes. The AI section can honestly promise immediate because its
     // gate is a server-side check on every call.
     //
-    // `target` (#6512) is `{ slug, name, isOpen, close }`: whether the app
+    // `target` (#6512) is `{ slug, name, permission, isOpen, close }`: the
+    // app's name and the permission's label, which the dialog's title says
+    // so the question names what is being revoked; whether the app
     // is open in THIS tab (on screen or kept running behind it), and how to
     // close it. The frame store is per tab, so another tab or device is out
     // of reach here. The dialog asks with what is open when it is shown;
@@ -5443,7 +5458,9 @@
       const isOpen = () => !!(target && typeof target.isOpen === 'function' && target.isOpen());
       const openAtAsk = isOpen();
       const ok = await ConfirmModal.show({
-        title: tr('settings:appPermissions.revoke.confirmTitle'),
+        title: target && target.name && target.permission
+          ? tr('settings:appPermissions.revoke.confirmTitleNamed', { permission: target.permission, app: target.name })
+          : tr('settings:appPermissions.revoke.confirmTitle'),
         message: openAtAsk
           ? tr('settings:appPermissions.revoke.confirmMessageOpen', { app: target.name })
           : tr('settings:appPermissions.revoke.confirmMessage'),
@@ -5475,6 +5492,66 @@
       } catch (err) {
         status(tr('settings:appPermissions.status.networkError', { reason: err.message }), 'error');
       }
+    },
+
+    // Revoke every active capability of one app (#6512 item 4), from the
+    // Revoke all button beside its name. There is no bulk endpoint and none
+    // is needed: each capability goes through the same DELETE a single
+    // revoke uses, one after another, and a failed one does not stop the
+    // rest, because taking back three of four is better than stopping at
+    // the first refusal. What follows a success is _onPermissionRevoke's:
+    // the cached grant set is dropped, then the app is closed if it is open
+    // in this tab NOW, since its frame holds whatever was just revoked. A
+    // partial result says so as an error, and the list is drawn again so
+    // the rows that still show Revoke are the ones still allowed.
+    async _onPermissionRevokeAll(appId, capabilities, target) {
+      const status = (t, k) => this._setAppPermissionsStatus(t, k);
+      const list = Array.isArray(capabilities) ? capabilities.filter(Boolean) : [];
+      if (!list.length) return;
+      const isOpen = () => !!(target && typeof target.isOpen === 'function' && target.isOpen());
+      const name = (target && target.name) || '';
+      const openAtAsk = isOpen();
+      const ok = await ConfirmModal.show({
+        title: tr('settings:appPermissions.revokeAll.confirmTitle', { app: name }),
+        message: openAtAsk
+          ? tr('settings:appPermissions.revokeAll.confirmMessageOpen', { app: name })
+          : tr('settings:appPermissions.revokeAll.confirmMessage'),
+        confirmLabel: openAtAsk
+          ? tr('settings:appPermissions.revokeAll.confirmButtonClose')
+          : tr('settings:appPermissions.revokeAll.confirmButton'),
+        danger: true,
+      });
+      if (!ok) return;
+      if (this._isDemoGrant(appId)) { status(tr('settings:appPermissions.status.demoData'), 'info'); return; }
+      let revoked = 0;
+      let failure = '';
+      for (const capability of list) {
+        try {
+          const r = await fetch(
+            `/api/me/permission-grants/${appId}/${encodeURIComponent(capability)}`,
+            { method: 'DELETE', credentials: 'same-origin' }
+          );
+          if (r.ok) { revoked += 1; continue; }
+          const j = await r.json().catch(() => ({}));
+          failure = j.error || tr('settings:appPermissions.status.revokeFailed');
+        } catch (err) {
+          failure = tr('settings:appPermissions.status.networkError', { reason: err.message });
+        }
+      }
+      if (!revoked) { status(failure, 'error'); return; }
+      const appView = typeof window !== 'undefined' ? window.AppView : null;
+      if (target && target.slug && appView && typeof appView.forgetToken === 'function') {
+        appView.forgetToken(target.slug);
+      }
+      const closed = isOpen() && typeof target.close === 'function';
+      if (closed) target.close();
+      if (revoked < list.length) status(tr('settings:appPermissions.status.revokedSome'), 'error');
+      else {
+        status(closed
+          ? tr('settings:appPermissions.status.revokedAllClosed', { app: name })
+          : tr('settings:appPermissions.status.revokedAll'), 'ok');
+      }
+      this._renderAppPermissions();
     },
 
     // The way back from Revoke, for the same reason the AI rows grew one

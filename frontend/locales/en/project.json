@@ -1857,11 +1857,27 @@
   },
   "hub.topics.title": {
     "text": "Topics",
-    "description": "On a phone, small heading over the card on a project's Hub that lists the project's topics, each a channel of its own, one row a topic, under the For you card. Pressing a row opens that topic's channel."
+    "description": "Small heading over the card on a project's Hub that lists the project's topics, each a channel of its own, one row a topic, under or beside the For you card. Pressing a row opens that topic's channel."
   },
   "hub.forYou.title": {
     "text": "For you",
     "description": "Small heading over the card of what on a project is this person's: the votes they owe, their own work and the project's discussion, on the project's Hub."
+  },
+  "hub.invite.title": {
+    "text": "Know someone who'd like it here?",
+    "description": "Heading of the Invite card at the top of a project's Hub, shown to a member of a community that other people are in. A friendly question asking whether they know somebody who would enjoy this community."
+  },
+  "hub.invite.text": {
+    "text": "Invite them to {{community}}. They can join the discussion, suggest ideas and vote on changes.",
+    "description": "Text of the Invite card at the top of a project's Hub, under its heading \"Know someone who'd like it here?\". {{community}} is the community's name. Says what an invited person can do once they join."
+  },
+  "hub.invite.button": {
+    "text": "Invite people",
+    "description": "Button of the Invite card at the top of a project's Hub. A verb: opens the pane that makes an invite link to the community."
+  },
+  "hub.invite.membersActive": {
+    "text": "{{members}} · {{active}}",
+    "description": "Small line at the foot of the Invite card at the top of a project's Hub. {{members}} is how many members the community has, already in the reader's language, like \"236 members\"; {{active}} is how many were active this week, already in the reader's language, like \"25 active this week\". Only the order and the separator are yours to change."
   },
   "hub.forYou.needs.firstAndMore_one": {
     "text": "{{title}}, and {{count}} more",
@@ -6566,6 +6582,14 @@
   "topic.decision.outcome.superseded": {
     "text": "No longer needed. Voting has ended.",
     "description": "Line under the Votes card on a governance vote's page once something else settled what it was about, so the vote no longer applies."
+  },
+  "workRow.twin": {
+    "text": "Similar to <0>#{{number}}</0>",
+    "description": "Hint below a request in the Workshop: links to another open request with a similar title. It does not merge them."
+  },
+  "topic.request.twin": {
+    "text": "Similar to <0>#{{number}} {{title}}</0>",
+    "description": "Hint below a request title: links to the closest similar open request, with its number and title."
   },
   "frame.hub.people": {
     "text": "People",

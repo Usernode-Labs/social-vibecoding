@@ -32,6 +32,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type Reac
 import { CheckIcon, ChevronLeftIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
+import { radioGroupKeys } from '../../lib/radio-group';
 import { changeHref } from '../../lib/change-href';
 import { callAppView } from '../dev-board/card/fold';
 import { FeedThread } from '../dev-board/card/feed-thread';
@@ -142,6 +143,8 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
     { key: 'other', text: t('communities:review.why.other') },
   ];
   const choiceText = whyChoices.find((c) => c.key === choice)?.text || '';
+  // One tab stop, and the arrow keys move the pick (#6510).
+  const whyKeys = radioGroupKeys(whyChoices.map((c) => c.key), choice, setChoice);
   // The whole reason stays within the server's limit: the line gets what the
   // answer and its ": " leave.
   const lineMax = choice ? Math.max(0, NO_LINE_MAX - choiceText.length - 2) : NO_LINE_MAX;
@@ -312,7 +315,7 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
     body = (
       <>
         <h2 className="rf-why-head">{t('communities:review.why.title')}</h2>
-        <div className="rf-chips" role="radiogroup" aria-label={t('communities:review.why.title')}>
+        <div className="rf-chips" role="radiogroup" aria-label={t('communities:review.why.title')} onKeyDown={whyKeys.onKeyDown}>
           {whyChoices.map((c) => (
             <button
               key={c.key}
@@ -321,6 +324,7 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
               aria-checked={choice === c.key}
               className="rf-chip"
               data-rf-why-choice={c.key}
+              tabIndex={whyKeys.tabIndex(c.key)}
               onClick={() => setChoice(c.key)}
             >{c.text}</button>
           ))}

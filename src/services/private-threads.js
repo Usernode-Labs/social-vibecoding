@@ -596,7 +596,11 @@ async function aboutContext(pool, { user, draft, deps = {} }) {
 //
 // A private thread can be done: on its own when its request goes live or is
 // closed (finishForRequest), by Mark done in its ⋯ (markDone), or by asking
-// the bot (its close_thread tool, which calls markDone). A done thread leaves
+// the bot (its close_thread tool, which calls markDone). A thread about a
+// change is finished with its change too, but nothing is written here for
+// it: the lists read how the change stands (ai-work.js ABOUT_CHANGE_END_SQL), so
+// it leaves Needs you for History when the change is live or closed, and
+// comes back when they write in it. A done thread leaves
 // the Homeroom bot page's lists (ai-work.js PRIVATE_SQL); its messages stay,
 // and a link still opens it. #6250 (4 Nov 2026): a filed, posted or put-away
 // thread stays listed until it is done; only a done one leaves. Reopen, or

@@ -207,6 +207,68 @@ test('each moment has its words, in the app and on the web', () => {
   for (const text of Object.values(catalog).map((e) => e.text)) {
     assert.doesNotMatch(text, /—/, 'no em dash in the copy');
   }
+  assert.ok(catalog['ask.unsure'] && catalog['ask.unsure'].description,
+    'the line for an answer that could not be read is cataloged, with a description');
+});
+
+// A tap's answer is read, not guessed: only a real refusal may say off.
+async function askOsOf(chrome) {
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'window');
+  const prior = globalThis.window;
+  globalThis.window = { NativeChrome: chrome };
+  try {
+    const { askOs } = loadTsx('frontend/src/features/notify-ask/ask-state.ts');
+    return await askOs();
+  } finally {
+    if (had) globalThis.window = prior; else delete globalThis.window;
+  }
+}
+
+test('askOs keeps the app\'s outcome: granted, denied, no-app, unknown', async () => {
+  const says = (answer) => ({ notifyWhenReady: async () => answer });
+  assert.deepEqual(await askOsOf(says({ outcome: 'granted' })), { outcome: 'granted', settings: false });
+  assert.deepEqual(await askOsOf(says({ outcome: 'unknown' })), { outcome: 'unknown', settings: false });
+  assert.deepEqual(await askOsOf(says({ outcome: 'no-app' })), { outcome: 'no-app', settings: false });
+  assert.deepEqual(await askOsOf(says({ outcome: 'something-else' })), { outcome: 'unknown', settings: false },
+    'an unrecognised outcome is not a refusal');
+  assert.equal((await askOsOf({ notifyWhenReady: async () => { throw new Error('down'); } })).outcome, 'unknown',
+    'a throw is never off');
+  assert.equal((await askOsOf(undefined)).outcome, 'no-app', 'no bridge is not the app, not a refusal');
+});
+
+test('a reported refusal is read once more before it is trusted', async () => {
+  const refused = (permission, settings = true) => ({
+    notifyWhenReady: async () => ({ outcome: 'denied', settings }),
+    notifyAskPermission: async () => ({ permission }),
+  });
+  assert.deepEqual(await askOsOf(refused('denied')), { outcome: 'denied', settings: true },
+    'a second refusal keeps the way to the settings page');
+  assert.deepEqual(await askOsOf(refused('granted')), { outcome: 'granted', settings: false },
+    'a grant that landed after the watch is allowed');
+  assert.deepEqual(await askOsOf(refused(null)), { outcome: 'unknown', settings: false },
+    'an unreadable re-read is unknown, never off');
+  assert.deepEqual(await askOsOf({
+    notifyWhenReady: async () => ({ outcome: 'denied', settings: true }),
+    notifyAskPermission: async () => { throw new Error('down'); },
+  }), { outcome: 'unknown', settings: false }, 'a throwing re-read is unknown, never off');
+});
+
+test('only a real refusal draws the off line', () => {
+  const src = read('frontend', 'src', 'features', 'notify-ask', 'notify-ask.tsx');
+  const ask = src.slice(src.indexOf('const notifyMe ='), src.indexOf('const gotApp'));
+
+  assert.equal((src.match(/setPhase\('off'\)/g) || []).length, 1, 'one off line, in one place');
+  assert.match(ask, /answer\.outcome === 'denied'[\s\S]*?setPhase\('off'\)/, 'denied: the off line');
+  assert.match(ask, /else \{\s*telemetry\.done\('failure', \{ errorCode: 'unknown' \}\);\s*setPhase\('unsure'\);/,
+    'unknown (and no-app) keep the ask instead of claiming off');
+  assert.doesNotMatch(ask, /setPhase\('off'\)[\s\S]*answer\.outcome === 'denied'/,
+    'nothing before a real denial says off');
+
+  assert.match(src, /'notifications:ask\.unsure'/, 'a literal id');
+  assert.match(src, /data-notify-ask-unsure=""/, 'the line has its own node');
+
+  assert.ok(ask.indexOf('await askOs()') < ask.indexOf("recordAsk('app', moment, 'yes')"),
+    'the answer is read before it is recorded, so an unreadable one is not saved');
 });
 
 test('a small group is 2 to 8 people in a private project', () => {

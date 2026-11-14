@@ -2268,6 +2268,137 @@ test('camera, microphone and screen sharing carry a plain note; the other permis
   assert.doesNotMatch(screen, /everything|whole screen|all of your screen/i, 'the person picks what is shared');
 });
 
+// #6512 item 4: one step to take everything back from one app.
+test('an app with two or more active permissions offers Revoke all; one with fewer does not (#6512)', () => {
+  const html = renderComponent('frontend/src/features/settings/app-permissions-list.tsx', 'AppPermissionsListView', {
+    phase: 'ready',
+    apps: [{
+      appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam',
+      items: [
+        { capability: 'geolocation', label: 'Location', revoked: false },
+        { capability: 'camera', label: 'Camera', revoked: false },
+        { capability: 'microphone', label: 'Microphone', revoked: true },
+      ],
+    }, {
+      appId: 8, appName: 'One Thing', appSlug: 'one-thing',
+      items: [
+        { capability: 'camera', label: 'Camera', revoked: false },
+        { capability: 'microphone', label: 'Microphone', revoked: true },
+      ],
+    }, {
+      appId: 9, appName: 'All Gone', appSlug: 'all-gone',
+      items: [
+        { capability: 'camera', label: 'Camera', revoked: true },
+        { capability: 'microphone', label: 'Microphone', revoked: true },
+      ],
+    }],
+  });
+  const all = [...html.matchAll(/<button type="button" aria-label="([^"]*)" data-role="revoke-all"[^>]*>([^<]*)</g)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(all, [['Revoke all permissions for Snap Cam', 'Revoke all']],
+    'only the app with two active permissions; with one, the row\'s own Revoke is the same act');
+  assert.ok(html.indexOf('data-role="revoke-all"') < html.indexOf('>Location<'), 'it sits on the app\'s name line, above its rows');
+  for (const name of ['Snap Cam', 'One Thing', 'All Gone']) assert.ok(html.includes(`>${name}</div>`), `${name} keeps its name line`);
+  const list = read('frontend/src/features/settings/app-permissions-list.tsx');
+  assert.match(list, /const active = app\.items\.filter\(\(item\) => !item\.revoked\)\.map\(\(item\) => item\.capability\);/);
+  assert.match(list, /_onPermissionRevokeAll\?\.\(app\.appId, active, target\)/, 'only the active ones are sent');
+});
+
+/**
+ * Run Settings._onPermissionRevokeAll with everything around it stubbed.
+ * `fail` names the capabilities whose DELETE the server refuses; `throws`
+ * the ones whose request never lands.
+ */
+async function runPermissionRevokeAll({ open = false, confirm = true, fail = [], throws = [], demo = false, capabilities = ['geolocation', 'camera', 'display-capture'] } = {}) {
+  const calls = { dialog: null, fetches: [], status: [], rendered: 0, closed: 0, forgot: [], order: [] };
+  let live = open;
+  const target = {
+    slug: 'snap-cam',
+    name: 'Snap Cam',
+    isOpen: () => live,
+    close: () => { calls.closed += 1; calls.order.push('close'); live = false; },
+  };
+  const ConfirmModal = { show: async (opts) => { calls.dialog = opts; return confirm; } };
+  const fetch = async (url, init) => {
+    calls.fetches.push([url, init && init.method]);
+    await new Promise((r) => setImmediate(r));
+    const capability = decodeURIComponent(url.split('/').pop());
+    if (throws.includes(capability)) throw new Error('offline');
+    const ok = !fail.includes(capability);
+    return { ok, json: async () => (ok ? {} : { error: 'nope' }) };
+  };
+  const window = { AppView: { forgetToken: (slug) => { calls.forgot.push(slug); calls.order.push('forget'); } } };
+  const tr = englishPlatformI18n().t;
+  const host = new Function('tr', 'ConfirmModal', 'fetch', 'window',
+    `return {${sliceMethod(settingsJs, '_onPermissionRevokeAll')}};`)(tr, ConfirmModal, fetch, window);
+  host._setAppPermissionsStatus = (text, kind) => calls.status.push([text, kind]);
+  host._isDemoGrant = () => demo;
+  host._renderAppPermissions = () => { calls.rendered += 1; };
+  await host._onPermissionRevokeAll(7, capabilities, target);
+  return calls;
+}
+
+test('Revoke all asks once, revokes each permission, and says what stays true elsewhere (#6512)', async () => {
+  const calls = await runPermissionRevokeAll();
+  assert.equal(calls.dialog.title, 'Revoke every permission for Snap Cam?');
+  assert.equal(calls.dialog.message, message('settings:appPermissions.revokeAll.confirmMessage'));
+  assert.equal(calls.dialog.confirmLabel, 'Revoke all');
+  assert.equal(calls.dialog.danger, true);
+  assert.deepEqual(calls.fetches, [
+    ['/api/me/permission-grants/7/geolocation', 'DELETE'],
+    ['/api/me/permission-grants/7/camera', 'DELETE'],
+    ['/api/me/permission-grants/7/display-capture', 'DELETE'],
+  ], 'the same endpoint a single revoke uses, once per permission');
+  assert.deepEqual(calls.forgot, ['snap-cam'], 'the cached grant set goes, once');
+  assert.equal(calls.closed, 0);
+  assert.deepEqual(calls.status, [[message('settings:appPermissions.status.revokedAll'), 'ok']]);
+  assert.equal(calls.rendered, 1);
+  // The same limits a single revoke states, in the plural.
+  for (const id of ['revokeAll.confirmMessage', 'revokeAll.confirmMessageOpen', 'status.revokedAll']) {
+    const text = message(`settings:appPermissions.${id}`);
+    assert.doesNotMatch(text, /next time|this device|immediately/, `${id} promises only what is true`);
+    assert.match(text, /On another device, opening the app again within a minute may bring them back until it is closed again\.$/, `${id} says what another device can still do`);
+  }
+
+  const cancelled = await runPermissionRevokeAll({ confirm: false });
+  assert.deepEqual(cancelled.fetches, [], 'Cancel revokes nothing');
+  const demo = await runPermissionRevokeAll({ demo: true });
+  assert.deepEqual(demo.fetches, [], 'the staging demo rows are not real grants');
+  assert.deepEqual(demo.status, [[message('settings:appPermissions.status.demoData'), 'info']]);
+  const none = await runPermissionRevokeAll({ capabilities: [] });
+  assert.equal(none.dialog, null, 'nothing to revoke asks nothing');
+});
+
+test('Revoke all closes an app open in this tab, and the dialog says so first (#6512)', async () => {
+  const calls = await runPermissionRevokeAll({ open: true });
+  assert.equal(calls.dialog.confirmLabel, 'Revoke all and close app');
+  assert.match(calls.dialog.message, /^Snap Cam is open in this tab, so revoking closes it now and anything not saved in it may be lost\./);
+  assert.equal(calls.closed, 1);
+  assert.deepEqual(calls.order, ['forget', 'close'], 'the cached grant set goes before the frame');
+  assert.deepEqual(calls.status, [['All revoked, and Snap Cam was closed in this tab.', 'ok']]);
+});
+
+test('Revoke all keeps going past a refusal and never claims more than it did (#6512)', async () => {
+  const partial = await runPermissionRevokeAll({ open: true, fail: ['camera'] });
+  assert.equal(partial.fetches.length, 3, 'a refusal does not stop the rest');
+  assert.deepEqual(partial.forgot, ['snap-cam']);
+  assert.equal(partial.closed, 1, 'the frame still holds what was revoked, so it goes');
+  assert.deepEqual(partial.status, [[message('settings:appPermissions.status.revokedSome'), 'error']]);
+  assert.equal(partial.rendered, 1, 'the list is drawn again, so the rows left with Revoke are the ones still allowed');
+
+  const dropped = await runPermissionRevokeAll({ throws: ['geolocation'] });
+  assert.equal(dropped.fetches.length, 3, 'nor does a request that never lands');
+  assert.deepEqual(dropped.status, [[message('settings:appPermissions.status.revokedSome'), 'error']]);
+
+  const refused = await runPermissionRevokeAll({ open: true, fail: ['geolocation', 'camera', 'display-capture'] });
+  assert.deepEqual(refused.forgot, [], 'nothing changed, so nothing is dropped');
+  assert.equal(refused.closed, 0, 'and the app stays open');
+  assert.deepEqual(refused.status, [['nope', 'error']]);
+  assert.equal(refused.rendered, 0);
+
+  const offline = await runPermissionRevokeAll({ throws: ['geolocation', 'camera', 'display-capture'] });
+  assert.deepEqual(offline.status, [['Network error: offline', 'error']]);
+});
+
 // #6512 item 9: a blocked app says when it was blocked.
 test('a blocked app shows when it was blocked, and a row without a stamp shows nothing (#6512)', () => {
   const BLOCKED = 'frontend/src/features/settings/sections/blocked-apps.tsx';
@@ -2292,12 +2423,13 @@ test('a blocked app shows when it was blocked, and a row without a stamp shows n
  * whether the app is open in this tab; `openWhileDeleting` changes it while
  * the DELETE is out.
  */
-async function runPermissionRevoke({ open = false, openWhileDeleting, confirm = true, ok = true } = {}) {
+async function runPermissionRevoke({ open = false, openWhileDeleting, confirm = true, ok = true, permission } = {}) {
   const calls = { dialog: null, fetches: [], status: [], rendered: 0, closed: 0, forgot: [], order: [] };
   let live = open;
   const target = {
     slug: 'snap-cam',
     name: 'Snap Cam',
+    ...(permission ? { permission } : {}),
     isOpen: () => live,
     close: () => { calls.closed += 1; calls.order.push('close'); live = false; },
   };
@@ -2391,6 +2523,73 @@ test('the Revoke button hands Settings a live question, not a snapshot, of wheth
   const live = read('frontend/src/features/app-frame/live-apps.tsx');
   assert.match(live, /export function isLiveApp\(slug: string\): boolean \{\s*return !!slug && liveAppSlugs\(appFrameStore\.get\(\)\)\.includes\(slug\);/,
     'open means the same frames the green dot reads: the mounted one and the kept ones');
+});
+
+// #6512 item 14: the page's row buttons all read "Revoke", "Re-enable" or
+// "Unblock". Each one's accessible name says what it acts on, and starts with
+// the word on the button so speech control still finds it by what is shown.
+test('every App permissions button and field is named for its app and permission (#6512)', async () => {
+  const device = renderComponent('frontend/src/features/settings/app-permissions-list.tsx', 'AppPermissionsListView', {
+    phase: 'ready',
+    apps: [{
+      appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam',
+      items: [
+        { capability: 'camera', label: 'Camera', revoked: false },
+        { capability: 'geolocation', label: 'Location', revoked: false },
+        { capability: 'microphone', label: 'Microphone', revoked: true },
+      ],
+    }],
+  });
+  const named = (html) => [...html.matchAll(/<(?:button|input)[^>]*aria-label="([^"]*)"/g)].map((m) => m[1]);
+  assert.deepEqual(named(device), [
+    'Revoke all permissions for Snap Cam',
+    'Revoke Camera for Snap Cam',
+    'Revoke Location for Snap Cam',
+    'Re-enable Microphone for Snap Cam',
+  ], 'four buttons in one app, four different names');
+  assert.equal((device.match(/<button/g) || []).length, 4, 'no button is left with the bare word');
+
+  const ai = grantRows({
+    phase: 'ready',
+    grants: [grantView(), grantView({ appId: 12, appName: 'Old App', appSlug: 'old-app', revoked: true })],
+  });
+  assert.deepEqual(named(ai), [
+    'Cap for Demo App, in dollars a day',
+    'Revoke AI access for Demo App',
+    'Re-enable AI access for Old App',
+  ]);
+
+  const BLOCKED = 'frontend/src/features/settings/sections/blocked-apps.tsx';
+  const blocked = renderComponent(BLOCKED, 'BlockedAppRow', {
+    app: { slug: 'noisy', name: 'Noisy App' }, busy: null, onUnblock: () => {},
+  });
+  assert.deepEqual(named(blocked), ['Unblock Noisy App']);
+  const busy = renderComponent(BLOCKED, 'BlockedAppRow', {
+    app: { slug: 'noisy', name: 'Noisy App' }, busy: 'noisy', onUnblock: () => {},
+  });
+  assert.deepEqual(named(busy), [], 'while it works the button says Unblocking, and the name must not hide that');
+
+  // The visible word leads each name (WCAG 2.5.3, Label in Name).
+  for (const [label, word] of [
+    ['appPermissions.revokeLabel', 'appPermissions.revoke'],
+    ['appPermissions.revokeAllLabel', 'appPermissions.revokeAll'],
+    ['appPermissions.reEnableLabel', 'appPermissions.reEnable'],
+    ['grants.revokeLabel', 'grants.revoke'],
+    ['grants.reenableLabel', 'grants.reenable'],
+    ['blockedApps.unblockLabel', 'blockedApps.unblock'],
+  ]) {
+    assert.ok(message(`settings:${label}`).startsWith(message(`settings:${word}`) + ' '), `${label} starts with the button's word`);
+  }
+  assert.ok(message('settings:grants.capFieldLabel').startsWith('Cap '), 'the cap field keeps its visible word');
+
+  // The confirmation names what is being revoked; a caller that cannot say
+  // (no label) still gets the plain question.
+  const asked = await runPermissionRevoke({ permission: 'Camera' });
+  assert.equal(asked.dialog.title, 'Revoke Camera for Snap Cam?');
+  const plain = await runPermissionRevoke();
+  assert.equal(plain.dialog.title, message('settings:appPermissions.revoke.confirmTitle'));
+  assert.match(read('frontend/src/features/settings/app-permissions-list.tsx'), /name: app\.appName,\s*permission: item\.label,/,
+    'the row hands Settings the label the title says');
 });
 
 test('a revoked app permission offers Re-enable; an active one offers Revoke (#1957)', () => {

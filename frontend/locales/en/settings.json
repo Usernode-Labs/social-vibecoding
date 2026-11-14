@@ -699,6 +699,10 @@
     "text": "Re-enable",
     "description": "Button on a revoked app's row in Settings > App AI permissions: gives the app back its permission to use AI."
   },
+  "grants.reenableLabel": {
+    "text": "Re-enable AI access for {{app}}",
+    "description": "Screen-reader name of the Re-enable button on a revoked app in Settings > App AI permissions. {{app}} is the app."
+  },
   "grants.spentToday": {
     "text": "${{spent}} / ${{cap}} today",
     "description": "Figure on an app's row in Settings > App AI permissions: what the app has spent today out of its daily cap. {{spent}} and {{cap}} are amounts in US dollars such as 0.12; the dollar signs are part of the text."
@@ -707,6 +711,10 @@
     "text": "Cap $",
     "description": "Label directly before a number field on an app's row in Settings > App AI permissions: the most the app may spend per day, in US dollars. The dollar sign reads as the unit of the field that follows."
   },
+  "grants.capFieldLabel": {
+    "text": "Cap for {{app}}, in dollars a day",
+    "description": "Screen-reader name of the daily spending cap field on an app in Settings > App AI permissions. {{app}} is the app."
+  },
   "grants.useOwnKey": {
     "text": "Use my own key past the weekly budget",
     "description": "Checkbox label on an app's row in Settings > App AI permissions: lets the app keep using AI on the person's own Anthropic API key once the daily budget is used up."
@@ -714,6 +722,10 @@
   "grants.revoke": {
     "text": "Revoke",
     "description": "Button on an app's row in Settings > App AI permissions: withdraws that app's permission to use AI on the person's budget."
+  },
+  "grants.revokeLabel": {
+    "text": "Revoke AI access for {{app}}",
+    "description": "Screen-reader name of the Revoke button on an app in Settings > App AI permissions. {{app}} is the app."
   },
   "usage.title": {
     "text": "Usage",
@@ -1363,14 +1375,6 @@
     "text": "Adds <0>Your computer · Homeroom session</0> to the list of places a session can be built. You keep the platform chat exactly as it is, with the same transcript, branch and proposal, but its turns run through the Homeroom CLI on your own machine, on your own Claude plan. It needs the CLI installed and attached, so it stays off until you ask for it.",
     "description": "Explanation under the Session bridge switch in Settings > Experimental. The tagged part is the name of an option in another list, shown in a monospace font; translate it as that option is translated. CLI is the command-line tool; Claude is a product name; a \"turn\" is one request and answer of the coding agent."
   },
-  "experimental.newLook.label": {
-    "text": "New look",
-    "description": "Label of a switch in Settings, Experimental. When on, Homeroom is drawn in its new visual style: white cards on a light grey background, a new typeface, yellow for what needs the person and black for where they are."
-  },
-  "experimental.newLook.description": {
-    "text": "Try Homeroom's new look: white cards on a light grey background, the Geist typeface with a serif for titles, and colours that each have a job: yellow for what needs you, black for where you are. Light mode only. On for this browser.",
-    "description": "Explanation under the New look switch in Settings, Experimental. Geist is the name of a typeface; keep it as is. Homeroom is the product name. Yellow and black name the colours of the highlights on screen."
-  },
   "experimental.look.fold": {
     "text": "Look and theme",
     "description": "Accessible name and tooltip of a round button in the top bar on a phone, which only admins see. It opens a small menu with two rows: Look (the visual style) and Theme (light or dark)."
@@ -1382,6 +1386,10 @@
   "experimental.look.standard": {
     "text": "Standard",
     "description": "First option of the Look menu in Settings, Experimental: Homeroom's usual visual style, with no experimental look applied."
+  },
+  "experimental.look.brand": {
+    "text": "Paper, simplified, with brand styling",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style. It draws Homeroom's usual pages the clean way the Paper look does (cards with no outlines, white on a cream page in light and one step off a deep green page in dark), in the website's own colours and typefaces. \"Paper\" is the name of another look in the same menu; translate it the same way there and here."
   },
   "experimental.look.glass": {
     "text": "Glass",
@@ -1404,7 +1412,7 @@
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (white cards and a peach-to-lavender main button). A proper name; translate it as a short name, not a sentence."
   },
   "experimental.look.description": {
-    "text": "Try one of five looks for Homeroom, in light and dark. Each has its own typeface, colours and shapes. Not every screen is drawn in them yet; admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",
+    "text": "Try another look for Homeroom, in light and dark. One keeps every page as it is and draws it in the website's colours. The other five each have their own typeface, colours and shapes, and not every screen is drawn in them yet. Admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",
     "description": "Explanation under the Look menu in Settings, Experimental, which only admins see while the looks are being drawn. Homeroom is the product name; Home is its first screen."
   },
   "experimental.localAgents.title": {
@@ -1975,9 +1983,17 @@
     "text": "Re-enable",
     "description": "Button beside a struck-through permission of an app in Settings > App device permissions: gives the app back a permission the person revoked."
   },
+  "appPermissions.reEnableLabel": {
+    "text": "Re-enable {{permission}} for {{app}}",
+    "description": "Screen-reader name of the Re-enable button beside a revoked permission in Settings > App device permissions. {{permission}} is the permission (Camera, Location) and {{app}} is the app."
+  },
   "appPermissions.revoke": {
     "text": "Revoke",
     "description": "Red button beside a permission of an app in Settings > App device permissions: takes that permission away from the app."
+  },
+  "appPermissions.revokeLabel": {
+    "text": "Revoke {{permission}} for {{app}}",
+    "description": "Screen-reader name of the Revoke button beside a permission in Settings > App device permissions. {{permission}} is the permission (Camera, Location) and {{app}} is the app."
   },
   "appPermissions.note.camera": {
     "text": "Lets this app use your camera while it is open, once your browser allows it too.",
@@ -1990,6 +2006,14 @@
   "appPermissions.note.screen": {
     "text": "Each time it asks, your browser lets you choose a screen, window or tab. The app sees only what you choose, until you stop sharing.",
     "description": "Small grey line under the Screen sharing permission of an app in Settings > App device permissions. The browser shows its own picker every time the app asks to share, and the app sees only the screen, window or tab the person picks there."
+  },
+  "appPermissions.revokeAll": {
+    "text": "Revoke all",
+    "description": "Red button beside an app's name in Settings > App device permissions, shown when the app has two or more permissions: takes all of them away from that app in one step."
+  },
+  "appPermissions.revokeAllLabel": {
+    "text": "Revoke all permissions for {{app}}",
+    "description": "Screen-reader name of the Revoke all button beside an app's name in Settings > App device permissions. {{app}} is the app."
   },
   "blockedApps.title": {
     "text": "Blocked apps",
@@ -2014,6 +2038,10 @@
   "blockedApps.unblock": {
     "text": "Unblock",
     "description": "Button on an app's row in Settings > Blocked apps: removes the block so the app is shown and can be opened again."
+  },
+  "blockedApps.unblockLabel": {
+    "text": "Unblock {{app}}",
+    "description": "Screen-reader name of the Unblock button on a row in Settings > Blocked apps. {{app}} is the blocked app."
   },
   "blockedApps.unblocking": {
     "text": "Unblocking…",
@@ -2852,7 +2880,7 @@
     "description": "Not shown on screen. Extra search words for \"Agent instructions & skills\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.experimental": {
-    "text": "beta labs progress estimate session bridge local agent new look design",
+    "text": "beta labs progress estimate session bridge local agent look design",
     "description": "Not shown on screen. Extra search words for \"Experimental\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.theme": {
@@ -4075,6 +4103,10 @@
     "text": "Revoke this permission?",
     "description": "Title of the confirmation dialog before taking away one device permission (camera, microphone, location…) from an app, in Settings."
   },
+  "appPermissions.revoke.confirmTitleNamed": {
+    "text": "Revoke {{permission}} for {{app}}?",
+    "description": "Title of the confirmation shown before revoking one device permission from an app in Settings. {{permission}} is the permission (Camera, Location) and {{app}} is the app."
+  },
   "appPermissions.revoke.confirmMessage": {
     "text": "Anywhere the app is already open, it keeps this permission until it is closed. On another device, opening the app again within a minute may bring the permission back until it is closed again.",
     "description": "Body of the confirmation dialog before taking away a device permission from an app that is not open in this browser tab, in Settings. A running app keeps a permission until it is closed, and another device that reopens the app within about a minute of the revoke may still give it the permission, which it then keeps until it is closed."
@@ -4118,6 +4150,38 @@
   "appPermissions.status.reenabled": {
     "text": "Re-enabled. It applies the next time the app opens.",
     "description": "Status under the list of device permissions granted to apps, in Settings > App device permissions, after a revoked permission was given back to an app."
+  },
+  "appPermissions.revokeAll.confirmTitle": {
+    "text": "Revoke every permission for {{app}}?",
+    "description": "Title of the confirmation shown before revoking all of an app's device permissions at once in Settings. {{app}} is the app."
+  },
+  "appPermissions.revokeAll.confirmMessage": {
+    "text": "Anywhere the app is already open, it keeps these permissions until it is closed. On another device, opening the app again within a minute may bring them back until it is closed again.",
+    "description": "Body of the confirmation shown before revoking all of an app's device permissions, when the app is not open in this browser tab."
+  },
+  "appPermissions.revokeAll.confirmMessageOpen": {
+    "text": "{{app}} is open in this tab, so revoking closes it now and anything not saved in it may be lost. Anywhere else it is open, it keeps these permissions until it is closed. On another device, opening the app again within a minute may bring them back until it is closed again.",
+    "description": "Body of the confirmation shown before revoking all of an app's device permissions, when the app is open in this browser tab. {{app}} is the app."
+  },
+  "appPermissions.revokeAll.confirmButton": {
+    "text": "Revoke all",
+    "description": "Confirm button of the dialog that revokes all of an app's device permissions at once."
+  },
+  "appPermissions.revokeAll.confirmButtonClose": {
+    "text": "Revoke all and close app",
+    "description": "Confirm button of the dialog that revokes all of an app's device permissions, when the app is open in this tab and will be closed."
+  },
+  "appPermissions.status.revokedAll": {
+    "text": "All revoked. Anywhere the app is already open, it keeps the permissions until it is closed. On another device, opening the app again within a minute may bring them back until it is closed again.",
+    "description": "Status line in Settings > App device permissions after every permission of one app was revoked and the app was not open in this tab."
+  },
+  "appPermissions.status.revokedAllClosed": {
+    "text": "All revoked, and {{app}} was closed in this tab.",
+    "description": "Status line in Settings > App device permissions after every permission of one app was revoked and the app, open in this tab, was closed. {{app}} is the app."
+  },
+  "appPermissions.status.revokedSome": {
+    "text": "Not every permission could be revoked. Any that still show Revoke are still allowed.",
+    "description": "Error line in Settings > App device permissions when Revoke all took away some of an app's permissions but at least one request failed."
   },
   "agentFiles.status.tooLarge": {
     "text": "\"{{file}}\" is too large. The limit is 48 KB per file.",

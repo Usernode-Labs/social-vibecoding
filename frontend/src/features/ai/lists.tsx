@@ -40,6 +40,10 @@
  *                    (./project-picker.tsx, 30 Oct 2026: a chip a project
  *                    was unusable with dozens).
  *   no row lines     space and the project's name group the rows.
+ *   search           the box by the plus narrows every list to the threads
+ *                    that match (#6398) and, under them, lists the messages
+ *                    in the chat with the bot and its threads that do, each
+ *                    a link to that message (13 Nov 2026, ./search.ts).
  *
  * Rows here are 14px over one line, not the shell's 15 over 13 (AGENTS.md,
  * "Type and colour"): this page's exception, recorded there.
@@ -73,12 +77,14 @@ import {
 } from './model';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
 import { reload as reloadTab } from '../../lib/tab-build';
-import { dayHeading, useAiLines, type Glyph, type Line } from './lines';
+import { Marked, followFound } from './found';
+import { dayHeading, useAiLines, type FoundLine, type Glyph, type Line } from './lines';
 import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
 import { SmallTile } from './small-tile';
 import { HISTORY_KINDS, type HistoryKind } from './filter-address';
 import { monthName, type HistoryRow, type HistoryState } from './history';
+import type { Found } from './search';
 
 // The plane a list stands on, as GroupedList draws one: the sheet's solid
 // fill, 20px, one inset hairline. Complete literals for Tailwind.
@@ -203,6 +209,44 @@ function LineButton({ line, quiet = false, freshTitles = false }: { line: Line; 
       </span>
       <span className="sr-only">{tooltip}</span>
     </button>
+  );
+}
+
+/**
+ * 13 Nov 2026: the words the search found, in a message's snippet. The
+ * accent's own tint behind them (a token, so it follows the theme) and the
+ * title's ink and weight, so they stand out of the quiet line round them.
+ */
+const FOUND_MARK = 'rounded-[3px] bg-[color:var(--accent-tint)] font-semibold text-zinc-900 dark:text-zinc-100';
+
+/**
+ * 13 Nov 2026 (./search.ts): a message the search found, as one of the
+ * list's quiet rows, and a link to it: its snippet with the found words
+ * marked, where it is (its thread's name, or the chat itself) and its day.
+ * Under 1024px, where the line has no room for it (the width a row gives up
+ * its number at), where it is goes on a second line, as a row's reason
+ * does on a phone. The link's name says all of it, and who wrote it.
+ */
+function FoundRow({ line }: { line: FoundLine }): ReactNode {
+  return (
+    <a
+      href={line.href}
+      className={LIVE_ROW}
+      title={line.name}
+      aria-label={line.name}
+      onClick={(e) => followFound(e, line.href)}
+      data-ai-found={line.thread ? 'thread' : 'chat'}
+    >
+      <span className={GLYPH} aria-hidden="true"><GlyphIcon name="chat" /></span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] leading-5 text-zinc-600 dark:text-zinc-400" data-ai-found-words="">
+          <Marked parts={line.parts} className={FOUND_MARK} />
+        </span>
+        <span className="block truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400 lg:hidden">{line.place}</span>
+      </span>
+      <span className="hidden max-w-[40%] shrink truncate text-[13px] text-zinc-500 dark:text-zinc-400 lg:block" data-ai-found-place="">{line.place}</span>
+      <span className="shrink-0 whitespace-nowrap text-[13px] text-zinc-500 dark:text-zinc-400">{line.date}</span>
+    </a>
   );
 }
 
@@ -619,7 +663,7 @@ function ListsFailed({ failed, onRetry }: { failed: 'unreachable' | 'failed'; on
 }
 
 export function AiLists({
-  hero, main, query = '', lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone,
+  hero, main, query = '', found, onFoundRetry, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone,
   picked: pickedIn = [], onPick, appFor, history = null, historyKind = null, onHistoryKind, openHistory, historyRef,
 }: {
   /** The page's title, drawn in the sheet the chips are in. */
@@ -631,6 +675,14 @@ export function AiLists({
    * while you search. '' (the box closed or empty) filters nothing.
    */
   query?: string;
+  /**
+   * 13 Nov 2026: the messages in the chat with the bot and its threads that
+   * match what the box says (./search.ts useBotSearch), listed under the
+   * threads that do; null while the first answer is on its way.
+   */
+  found?: Found | null;
+  /** Search the messages again: the Try again of the note that says they could not be. */
+  onFoundRetry?: () => void;
   /** Main Chat's row: whether it is the one in the column, what is new in it, and its press. */
   main: { lit: boolean; unread: number; open: () => void };
   /**
@@ -678,8 +730,8 @@ export function AiLists({
   const {
     searching, ranked, picked, rail, past, setOnly, toggle, freshAll, freshByApp, freshShown, freshProjects,
     needLines, busyLines, stillLines, liveLines, liveBehind, onlyApp, nothingHere, locale, historyLines, historyMonths,
-    owedShown, heads, noMatches,
-  } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory });
+    owedShown, heads, noMatches, noneWords, foundLines, foundMore, foundFailed,
+  } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found });
   // More, open under its chip.
   const [more, setMore] = useState<DOMRect | null>(null);
   const phone = usePhone();
@@ -725,11 +777,12 @@ export function AiLists({
       </div>
       {/* #6398: Main Chat is not a thread you are searching for, so it steps
           aside while a search is on, and one short note says when nothing on
-          the page matched. */}
+          the page matched: no thread, and (13 Nov 2026) no message either,
+          once the messages' answer is in (./lines.ts noneWords). */}
       {searching ? null : <MainChatRow lit={main.lit} unread={main.unread} open={main.open} />}
       {noMatches ? (
         <div className={`${PLANE} px-4 py-3`} data-ai-search-empty="">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('messages:ai.search.none', { query: query.trim() })}</p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">{noneWords}</p>
         </div>
       ) : null}
       {more ? (
@@ -880,6 +933,39 @@ export function AiLists({
               ) : null}
             </div>
           </section>
+        </div>
+      ) : null}
+      {/* 13 Nov 2026: the messages that match, under the threads that do: a
+          card of its own, its rows links to each message. Drawn only while a
+          search is on and has found some (nothing in the prerender). */}
+      {foundLines.length ? (
+        <div className={`${PLANE} pb-2`} data-ai-sheet="found">
+          <section className="pb-1" data-ai-list="found">
+            <div className="mb-1 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band="">
+              <SectionHeader className="px-0 pt-0 pb-0">{t('messages:ai.search.messages', { count: foundLines.length })}</SectionHeader>
+            </div>
+            <div className="px-4">
+              {foundLines.map((line) => <FoundRow key={line.key} line={line} />)}
+              {foundMore ? (
+                <p className="py-2 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-found-more="">{t('messages:ai.search.more')}</p>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {/* The messages could not be searched: said plainly, with a way to ask
+          again, as a list that could not be read says it (ListsFailed). */}
+      {foundFailed ? (
+        <div className={`${PLANE} px-4 py-3`} data-ai-search-failed="" role="status">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('messages:ai.search.failed')}</p>
+          <button
+            type="button"
+            className="mt-1 inline-flex min-h-[44px] md:min-h-0 items-center py-1 text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
+            onClick={() => onFoundRetry?.()}
+            data-ai-search-retry=""
+          >
+            {t('core:common.tryAgain')}
+          </button>
         </div>
       ) : null}
     </div>

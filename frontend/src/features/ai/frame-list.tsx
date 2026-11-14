@@ -29,10 +29,12 @@ import { BOT_AVATAR } from '../messages/format';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
 import { HISTORY_KINDS, type HistoryKind } from './filter-address';
 import { monthName, type HistoryRow, type HistoryState } from './history';
-import { dayHeading, useAiLines, type Glyph, type Line } from './lines';
+import { Marked, followFound } from './found';
+import { dayHeading, useAiLines, type FoundLine, type Glyph, type Line } from './lines';
 import { GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, type AiApp, type AiThread, type Phrase, type WorkRow } from './model';
 import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
+import type { Found } from './search';
 
 /** Each glyph's icon in the kit's set (./lines.ts names them). */
 const ICON: Record<Glyph, string> = {
@@ -88,6 +90,35 @@ function LineRow({ line, plain = false, where = false }: { line: Line; plain?: b
       {row}
       <ThreadDoneMenu rootId={rootId} done={false} onChanged={(state) => { if (state === 'done') mark(); }} />
     </div>
+  );
+}
+
+/** The words the search found, in a snippet: the look's accent tint behind its own ink (kit tokens). */
+const FOUND_MARK = 'rounded-[3px] bg-[color:var(--fr-acc-t)] font-semibold text-[color:var(--fr-ink)]';
+
+/**
+ * 13 Nov 2026 (./search.ts): a message the search found, as a kit row that
+ * is a link to it: its snippet with the found words marked, where it is on
+ * the row's own line under it, and its day. The link's name says all of
+ * it, and who wrote it.
+ */
+function FoundRow({ line }: { line: FoundLine }): ReactNode {
+  return (
+    <a
+      className={k('row sm item')}
+      href={line.href}
+      title={line.name}
+      aria-label={line.name}
+      onClick={(e) => followFound(e, line.href)}
+      data-ai-found={line.thread ? 'thread' : 'chat'}
+    >
+      <span className={k('ei')} aria-hidden="true"><Icon name="chat" size={18} /></span>
+      <span className={k('tx')}>
+        <span className={k('t')} data-ai-found-words=""><Marked parts={line.parts} className={FOUND_MARK} /></span>
+        <span className={k('s')} data-ai-found-place="">{line.place}</span>
+      </span>
+      <span className={k('meta')}>{line.date}</span>
+    </a>
   );
 }
 
@@ -213,7 +244,7 @@ function useHeld(lines: Line[]) {
 }
 
 export function AiFrameList({
-  heroLine, main, query = '', onQuery, searchOpen, onSearch, searchRef, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live,
+  heroLine, main, query = '', found, onFoundRetry, onQuery, searchOpen, onSearch, searchRef, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live,
   openRow, openThread, onDone, picked: pickedIn = [], onPick, appFor, onNew,
   history = null, historyKind = null, onHistoryKind, openHistory, historyRef,
 }: {
@@ -222,6 +253,10 @@ export function AiFrameList({
   main: { lit: boolean; unread: number; open: () => void };
   /** What the search box says, '' while it is closed (#6398). */
   query?: string;
+  /** 13 Nov 2026: the messages that match it (./search.ts useBotSearch); null while the first answer is on its way. */
+  found?: Found | null;
+  /** Search the messages again, after a read that failed. */
+  onFoundRetry?: () => void;
   onQuery: (next: string) => void;
   /** The search box is open under the head; its round button opens and closes it. */
   searchOpen: boolean;
@@ -256,8 +291,8 @@ export function AiFrameList({
   const {
     searching, ranked, picked, rail, past, setOnly, toggle, freshAll, freshByApp, freshShown, freshProjects,
     needLines, busyLines, stillLines, liveLines, liveBehind, onlyApp, nothingHere, locale, historyLines, historyMonths,
-    owedShown, heads, noMatches,
-  } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory });
+    owedShown, heads, noMatches, noneWords, foundLines, foundMore, foundFailed,
+  } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found });
   const [more, setMore] = useState<DOMRect | null>(null);
   const [stillOpen, setStillOpen] = useState(false);
   const phone = usePhone();
@@ -367,7 +402,8 @@ export function AiFrameList({
               </button>
             </Card>
           )}
-          {noMatches ? <Card pad><span data-ai-search-empty="">{t('messages:ai.search.none', { query: query.trim() })}</span></Card> : null}
+          {/* 13 Nov 2026: no thread and, once the messages have answered, no message either (./lines.ts noneWords). */}
+          {noMatches ? <Card pad><span data-ai-search-empty="">{noneWords}</span></Card> : null}
 
           {!searching || !ready || needLines.length || failed ? (
             <Sec
@@ -464,6 +500,26 @@ export function AiFrameList({
                 </Card>
               </Sec>
             </div>
+          ) : null}
+
+          {/* 13 Nov 2026: the messages that match, under the threads that do, each a link to it. */}
+          {foundLines.length ? (
+            <Sec label={t('messages:ai.search.messages', { count: foundLines.length })} data-ai-list="found">
+              <Card>
+                <div className={k('list')}>
+                  {foundLines.map((line) => <FoundRow key={line.key} line={line} />)}
+                  {foundMore ? <p className={k('txt')} data-ai-found-more="">{t('messages:ai.search.more')}</p> : null}
+                </div>
+              </Card>
+            </Sec>
+          ) : null}
+          {foundFailed ? (
+            <Card pad>
+              <div className={k('txt')} role="status" data-ai-search-failed="">
+                {`${t('messages:ai.search.failed')} `}
+                <button type="button" className={k('link')} onClick={() => onFoundRetry?.()} data-ai-search-retry="">{tco('core:common.tryAgain')}</button>
+              </div>
+            </Card>
           ) : null}
         </div>
       </div>

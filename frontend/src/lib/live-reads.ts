@@ -208,7 +208,9 @@ export function installLiveReads(
   docArg: (EventTargetLike & { visibilityState?: string }) | null
     = typeof document !== 'undefined' ? document as never : null,
 ): void {
-  if (!win || installed) return;
+  // A window that cannot listen (a suite's bare stand-in, set before a module
+  // that imports this one is loaded) has no triggers to install.
+  if (!win || installed || typeof win.addEventListener !== 'function') return;
   installed = true;
   doc = docArg;
   if (win.location?.origin) origin = win.location.origin;

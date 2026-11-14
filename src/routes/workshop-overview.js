@@ -778,27 +778,53 @@ async function owedByCommunity(pool, userId, { showSelfHosted = false, isAdmin =
  * electorate, then the merge gate over the counted votes. One read per
  * project, and only for those rows; a project whose read fails is left
  * without one. Resolves the rows. Exported for tests.
+ *
+ * #6651: a row that is the viewer's own change also gets `votes_in`, from
+ * the same gate services/work-state.js reads, so a change still waiting on a
+ * vote stays a Vote in Needs you instead of looking approved to a weaker
+ * count. A failed read leaves it unset, and the row stays a Vote.
  */
 async function withVotesRequired(pool, rows, viewerId = null) {
+  const isAuthors = (row) => viewerId != null && row.kind === 'proposal'
+    && Number(row.author_id) === Number(viewerId);
   const byApp = new Map();
   for (const row of rows) {
-    // #6389: a row that is the viewer's own change needs the same count, so
-    // a met vote can be told from one still owed.
-    const authors = viewerId != null && row.kind === 'proposal'
-      && Number(row.author_id) === Number(viewerId);
-    if (row.solo !== true && !authors) continue;
+    if (row.solo !== true && !isAuthors(row)) continue;
     if (!byApp.has(row.app_id)) byApp.set(row.app_id, []);
     byApp.get(row.app_id).push(row);
   }
   await Promise.all([...byApp].map(async ([appId, list]) => {
-    try {
-      const gov = await governance.getGovernance(pool, appId);
-      const electorate = await governance.getElectorate(pool, appId, gov);
-      for (const row of list) {
-        row.votes_required = governance.computeGate(gov, electorate.active, row.yes, row.no, row.at, null).required;
+    const soloRows = list.filter((row) => row.solo === true);
+    if (soloRows.length) {
+      try {
+        const gov = await governance.getGovernance(pool, appId);
+        const electorate = await governance.getElectorate(pool, appId, gov);
+        for (const row of soloRows) {
+          row.votes_required = governance.computeGate(gov, electorate.active, row.yes, row.no, row.at, null).required;
+        }
+      } catch (err) {
+        log.warn('workshop-overview', 'Could not work out the votes a solo project needs', { appId, message: err.message });
       }
-    } catch (err) {
-      log.warn('workshop-overview', 'Could not work out the votes a solo project needs', { appId, message: err.message });
+    }
+    for (const row of list) {
+      if (!isAuthors(row)) continue;
+      try {
+        // #6651: the gate a merge decision takes (services/work-state.js
+        // votes_in): approvers only, the project's own rules, and the member
+        // floor, so a non-approver's Yes cannot make it look approved.
+        const gate = await governance.governedGate(pool, appId, {
+          kind: 'pr', id: row.id, openedAt: row.at, now: new Date(),
+          explicitApproval: row.requires_explicit_approval === true,
+          explicitReason: row.explicit_approval_reason || null,
+          authorId: row.author_id == null ? null : Number(row.author_id),
+          firstVersion: false,
+        });
+        row.votes_in = gate?.mergeable === true;
+      } catch (err) {
+        log.warn('workshop-overview', 'Could not read whether a change the viewer made has its votes', {
+          appId, id: row.id, message: err.message,
+        });
+      }
     }
   }));
   return rows;
@@ -806,19 +832,15 @@ async function withVotesRequired(pool, rows, viewerId = null) {
 
 /**
  * #6389: whether a change the viewer made has the votes it needs, so the row
- * is waiting on their fix rather than on a Vote. The same facts the change's
- * Votes card reads: the gate's Yes count, and, where an explicit approval is
- * flagged, a Yes from another member. First for a change a coding agent
- * submitted; every change since proposing stopped being a yes.
+ * is waiting on their fix rather than on a Vote. #6651: `votes_in` is the
+ * answer, read from the same gate the merge decision takes (approvers only,
+ * the project's rules, the member floor), so a change still waiting on a vote
+ * stays a Vote here exactly as it does in the badge's count.
  */
 function authorGateMet(row, viewerId) {
   if (row.kind !== 'proposal') return false;
   if (viewerId == null || Number(row.author_id) !== Number(viewerId)) return false;
-  const needed = parseInt(row.votes_required, 10);
-  if (!Number.isFinite(needed)) return false;
-  if ((Number(row.yes) || 0) < needed) return false;
-  if (row.requires_explicit_approval && (Number(row.other_yes) || 0) < 1) return false;
-  return true;
+  return row.votes_in === true;
 }
 
 /**

@@ -42,7 +42,7 @@ test('the place\'s head is the kit\'s title, sentence and places, with no button
 test('the stage is the product\'s on both pages: nothing is drawn in its place under a look', () => {
   const page = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(page, /\{tab === 'needs' && slug \? \(/);
-  assert.match(page, /<ProjectReviewFlow slug=\{slug\} onDone=\{\(\) => openTab\('status'\)\} \/>/);
+  assert.match(page, /<ProjectReviewFlow slug=\{slug\} onDone=\{\(\) => openTab\('status'\)\} project=\{projectName\} \/>/);
   for (const file of ['review-flow/review-flow.tsx', 'review-flow/vote-sheet.tsx', 'review-flow/compare.tsx', 'workshop/index.tsx', 'workshop/vote-filter.tsx']) {
     assert.doesNotMatch(read('frontend/src/features', file), /useSkin|useLiveSkin|isFrameSkin|components\/ui\/kit/, `${file} does not know the look`);
   }

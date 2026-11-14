@@ -352,6 +352,7 @@ const OWNED = [
   { sel: '#admin-section-content', when: '#admin/estimator' }, // features/admin/admin-estimator.tsx
   { sel: '#admin-section-content', when: '#admin/analytics' }, // features/admin/admin-analytics.tsx
   { sel: '#admin-section-content', when: '#admin/journey' }, // features/admin/admin-journey.tsx
+  { sel: '#admin-section-content', when: '#admin/onboarding-flows' }, // features/admin/admin-onboarding-flows.tsx
   { sel: '#admin-section-content', when: '#admin/overview' }, // features/admin/admin-overview.tsx
   { sel: '#admin-section-content', when: '#admin/codes' },   // features/admin/admin-codes.tsx
   { sel: '#admin-section-content', when: '#admin/featured-apps' }, // features/admin/admin-featured-apps.tsx
@@ -425,7 +426,7 @@ const ROUTES = [
   // #4455: a change's page in the same layout (`.dev-request.dev-change`),
   // on the demo proposal whose testing is part way through.
   '?demo=1#app/usernode-2d5619/dev/proposals/9000026',
-  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/email-templates', '#admin/sms', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/incidents', '#admin/apps', '#admin/rollover', '#admin/staging-reap', '#admin/templates', '#admin/workflows',
+  '#admin/e2e', '#admin/gallery', '#admin/node', '#admin/merges', '#admin/push', '#admin/campaigns', '#admin/mail', '#admin/email-templates', '#admin/sms', '#admin/estimator', '#admin/analytics', '#admin/journey', '#admin/onboarding-flows', '#admin/overview', '#admin/codes', '#admin/featured-apps', '#admin/db-export', '#admin/features', '#admin/limits', '#admin/users', '#admin/users/900301', '#admin/support', '#admin/support/900302', '#admin/status', '#admin/incidents', '#admin/apps', '#admin/rollover', '#admin/staging-reap', '#admin/templates', '#admin/workflows',
   '#admin/model-costs', '#admin/reports', '#admin/welcome-dm', '#admin/sign-in', '#admin/test-accounts', '#admin/access-review', '#admin/compliance', '#admin/approvals', '#admin/homeroom-bot', '#admin/homeroom-bot/settings', '#admin/homeroom-bot/benchmark', '#admin/small-changes',
   // Its Configurations (once Bot configurations, #admin/bot-configs) and Calls tabs.
   '#admin/homeroom-bot/configs', '#admin/homeroom-bot/calls',

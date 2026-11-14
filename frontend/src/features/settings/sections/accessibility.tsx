@@ -148,6 +148,7 @@ function HighContrastRow() {
       <label className="flex items-center gap-2 cursor-pointer select-none">
         <Switch
           id="settings-high-contrast"
+          aria-describedby="settings-high-contrast-note"
           checked={on}
           onChange={(e) => {
             const next = e.currentTarget.checked;
@@ -159,7 +160,8 @@ function HighContrastRow() {
           {t('settings:accessibility.contrast.label')}
         </span>
       </label>
-      <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+      {/* Read with the switch (#6510). */}
+      <p id="settings-high-contrast-note" className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
         {t('settings:accessibility.contrast.description')}
       </p>
       </div>
@@ -196,6 +198,7 @@ function ReduceMotionRow() {
       <label className="flex items-center gap-2 cursor-pointer select-none">
         <Switch
           id="settings-reduce-motion"
+          aria-describedby="settings-reduce-motion-note"
           checked={on}
           onChange={(e) => {
             const next = e.currentTarget.checked;
@@ -207,7 +210,8 @@ function ReduceMotionRow() {
           {t('settings:accessibility.motion.label')}
         </span>
       </label>
-      <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+      {/* Read with the switch (#6510). */}
+      <p id="settings-reduce-motion-note" className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
         {t('settings:accessibility.motion.description')}
       </p>
       </div>
@@ -243,6 +247,7 @@ function CardPreviewsRow() {
       <label className="flex items-center gap-2 cursor-pointer select-none">
         <Switch
           id="settings-card-previews"
+          aria-describedby="settings-card-previews-note"
           checked={on}
           onChange={(e) => {
             const next = e.currentTarget.checked;
@@ -254,7 +259,8 @@ function CardPreviewsRow() {
           {t('settings:accessibility.previews.label')}
         </span>
       </label>
-      <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+      {/* Read with the switch (#6510). */}
+      <p id="settings-card-previews-note" className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
         {t('settings:accessibility.previews.description')}
       </p>
       </div>

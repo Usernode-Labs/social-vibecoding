@@ -574,6 +574,71 @@ const FIRST_MILE_INVITED_SQL = `WITH ${ADMITTED_CTE}
      AND ${REAL_PERSON_SQL}
    ORDER BY iv.invite_redeemed_at, u.id`;
 
+// Everyone's first mile in one read, for the onboarding flows: each person
+// let off the waitlist (as their admit cohort has them), and every other real
+// person who has access or followed an invite link, whenever that was. The
+// cohort queries above cover one admit day, or the last weeks; a chart of the
+// whole funnel needs the people from before them too. $1 the most rows to
+// return, $2 now.
+const EVERYONE_MAX = 5000;
+const FIRST_MILE_EVERYONE_SQL = `WITH ${ADMITTED_CTE}
+  SELECT x.* FROM (
+    SELECT a.signup_id, a.email, a.released_at, 'admitted'::text AS door,
+           ${INVITE_COLUMNS}, ${PERSON_FACTS}
+      FROM admitted a
+      LEFT JOIN users u ON u.id = a.linked_user_id
+      ${INVITE_JOIN}
+      ${PERSON_JOINS}
+     WHERE a.released_at <= $2::timestamptz
+       AND ${NEWCOMER_OR_NO_ACCOUNT}
+    UNION ALL
+    SELECT NULL::bigint AS signup_id, NULL::text AS email, NULL::timestamptz AS released_at,
+           CASE WHEN iv.invite_id IS NOT NULL THEN 'invite_link' ELSE 'code_wallet_or_grant' END AS door,
+           ${INVITE_COLUMNS}, ${PERSON_FACTS}
+      FROM users u
+      LEFT JOIN admitted a ON FALSE
+      ${INVITE_JOIN}
+      ${PERSON_JOINS}
+     WHERE (u.has_platform_access OR iv.invite_id IS NOT NULL)
+       AND u.created_at <= $2::timestamptz
+       AND NOT EXISTS (
+         SELECT 1 FROM admitted a2
+          WHERE a2.linked_user_id = u.id AND a2.released_at <= $2::timestamptz
+            AND (u.platform_access_granted_at IS NULL OR u.platform_access_granted_at >= a2.released_at))
+       AND ${REAL_PERSON_SQL}
+  ) x
+  ORDER BY COALESCE(x.released_at, x.access_at, x.account_at), x.user_id, x.signup_id
+  LIMIT $1::int`;
+
+// Still on the waitlist: joined and not let off yet. One row per person (a
+// sign-up, or the account it is linked to), the longest wait first. An
+// account that already has access some other way is not waiting; a test
+// sign-up (source 'test') and a team address stay out, and an account is
+// held to the real-person rule like everyone else on this page. $1 the most
+// rows to return, $2 now; `total` is everyone, whatever $1 cuts off.
+const WAITING_MAX = 2000;
+const FIRST_MILE_WAITING_SQL = `WITH waiting AS (
+    SELECT DISTINCT ON (COALESCE('u' || w.linked_user_id::text, 'w' || w.id::text))
+           w.id AS signup_id, w.email, w.submitted_at, w.confirmed_at, w.source,
+           w.answers->'discovery'->>'source' AS discovery,
+           (w.answers ?| ARRAY[${FOLLOW_UP_KEYS_SQL}]) AS answered_follow_up,
+           w.invited_by IS NOT NULL AS referred, w.project_invite_id IS NOT NULL AS project_invite,
+           u.id AS user_id, u.username, u.created_at AS account_at
+      FROM waitlist_signups w
+      LEFT JOIN users u ON u.id = w.linked_user_id
+     WHERE w.released_at IS NULL
+       AND w.submitted_at <= $2::timestamptz
+       AND COALESCE(w.source, '') <> 'test'
+       AND NOT (w.email IS NOT NULL AND (LOWER(split_part(w.email, '@', 2)) IN (${TEAM_DOMAINS_SQL})
+         OR LOWER(regexp_replace(w.email, '\\+[^@]*@', '@')) IN (${TEAM_ADDRESSES_SQL})))
+       AND (u.id IS NULL OR (u.has_platform_access IS NOT TRUE AND ${REAL_PERSON_SQL}))
+     ORDER BY COALESCE('u' || w.linked_user_id::text, 'w' || w.id::text), w.submitted_at, w.id
+  )
+  SELECT wt.*, (COUNT(*) OVER ())::int AS total
+    FROM waiting wt
+   ORDER BY wt.submitted_at, wt.signup_id
+   LIMIT $1::int`;
+
 const MAIL_PROOF_DAYS = 30;
 
 const FIRST_MILE_STEPS = Object.freeze([
@@ -762,6 +827,80 @@ function invitedMilePerson(row, now) {
     mail: null,
     ...cameInFacts(row),
     ...invitedMileSteps(row, now),
+  };
+}
+
+// The first mile of somebody still on the waitlist. There is no admit yet,
+// so it is what they did while waiting: joined, proved the address takes
+// mail, answered the follow-up questions, made an account. Only the first is
+// on everyone's way. The middle three are theirs to do or not, so one not
+// done is "not yet", never where they stopped: they are all stuck at the
+// release, which is ours to do.
+const WAITING_MILE_STEPS = Object.freeze(['wl_joined', 'wl_confirmed', 'wl_answered', 'wl_account', 'wl_released']);
+const WAITING_STUCK = 'Not let off the waitlist yet';
+
+/** Pure: one waiting person's first mile, from a FIRST_MILE_WAITING_SQL row, in firstMileSteps' shape. */
+function waitingMileSteps(row, now = new Date()) {
+  const t = (v) => (v ? new Date(v) : null);
+  const nowMs = new Date(now).getTime();
+  const joined = t(row.submitted_at);
+  const facts = {
+    wl_joined: { done: true, at: joined, note: row.source || null },
+    wl_confirmed: { done: !!row.confirmed_at, at: t(row.confirmed_at) },
+    wl_answered: { done: row.answered_follow_up === true, at: null },
+    wl_account: { done: row.user_id != null, at: t(row.account_at) },
+    wl_released: { done: false },
+  };
+  let furthest = 0;
+  WAITING_MILE_STEPS.forEach((key, i) => { if (facts[key].done) furthest = i; });
+  const steps = WAITING_MILE_STEPS.map((key) => {
+    const f = facts[key];
+    if (f.done) return { key, state: 'done', at: f.at || null, note: f.note || null };
+    if (key === 'wl_released') return { key, state: 'stuck', at: null, note: WAITING_STUCK };
+    return { key, state: 'not_yet', at: null, note: null };
+  });
+  return {
+    steps,
+    furthest: WAITING_MILE_STEPS[furthest],
+    stuckAt: 'wl_released',
+    stuckReason: WAITING_STUCK,
+    daysSince: joined ? Math.max(0, Math.floor((nowMs - joined.getTime()) / DAY_MS)) : null,
+    failedAttempts: 0,
+    repeatedTaps: 0,
+    tour: null,
+    welcome: null,
+  };
+}
+
+/**
+ * One waiting person's row, in firstMilePerson's shape. `waitedDays` is the
+ * wait so far, since nobody has ended it.
+ */
+function waitingMilePerson(row, now = new Date()) {
+  const mile = waitingMileSteps(row, now);
+  const joined = row.submitted_at ? new Date(row.submitted_at) : null;
+  return {
+    signupId: row.signup_id != null ? Number(row.signup_id) : null,
+    userId: row.user_id != null ? Number(row.user_id) : null,
+    // As in the admit cohorts: no account means only the address is known.
+    name: row.username || row.email || null,
+    hasAccount: row.user_id != null,
+    door: 'waitlist',
+    mail: null,
+    signupMethod: null,
+    waitlist: joined ? {
+      joinedAt: joined,
+      waitedDays: mile.daysSince,
+      source: row.source || null,
+      discovery: row.discovery || null,
+      answeredFollowUp: row.answered_follow_up === true,
+      referred: row.referred === true,
+      projectInvite: row.project_invite === true,
+    } : null,
+    mailPage: null,
+    fromEmail: null,
+    invite: null,
+    ...mile,
   };
 }
 
@@ -1033,10 +1172,13 @@ async function cohorts(pool, { now = new Date(), leftOutIds = [] } = {}) {
   const { rows } = await pool.query(COHORTS_SQL, [null, now, ...realPersonParams(leftOutIds)]);
   const other = await pool.query(FIRST_MILE_OTHER_WAY_SQL, [NEWCOMER_DAYS, now, ...realPersonParams(leftOutIds)]);
   const invited = await pool.query(FIRST_MILE_INVITED_SQL, [INVITED_DAYS, now, ...realPersonParams(leftOutIds)]);
+  // One row is enough here: it carries the count of everyone waiting.
+  const waiting = await pool.query(FIRST_MILE_WAITING_SQL, [1, now, ...realPersonParams(leftOutIds)]);
   return {
     cohorts: rows.map((r) => ({ day: r.day, admitted: r.admitted, withAccount: r.with_account })),
     otherWay: { people: other.rows.length },
     invited: { people: invited.rows.length },
+    waiting: { people: waiting.rows.length ? Number(waiting.rows[0].total) || 0 : 0 },
   };
 }
 
@@ -1072,15 +1214,22 @@ async function onboardFor(pool, row, seasonId) {
   return { shown: true, done, total, complete: done === total };
 }
 
-/** One cohort's first mile: `day` is an admit day, or 'other_way'. */
+/**
+ * One cohort's first mile: `day` is an admit day, 'other_way', 'invited', or
+ * 'waiting' (still on the waitlist, at most WAITING_MAX people, the longest
+ * wait first; `total` then says how many are waiting in all).
+ */
 async function firstMile(pool, { day, now = new Date(), leftOutIds = [] } = {}) {
   const params = realPersonParams(leftOutIds);
   let result;
   if (day === 'other_way') result = await pool.query(FIRST_MILE_OTHER_WAY_SQL, [NEWCOMER_DAYS, now, ...params]);
   else if (day === 'invited') result = await pool.query(FIRST_MILE_INVITED_SQL, [INVITED_DAYS, now, ...params]);
+  else if (day === 'waiting') result = await pool.query(FIRST_MILE_WAITING_SQL, [WAITING_MAX, now, ...params]);
   else result = await pool.query(FIRST_MILE_ADMITTED_SQL, [day, now, ...params]);
   const season = result.rows.some(cardWasShown) ? await fetchCurrentSeason(pool) : null;
-  const person = day === 'invited' ? invitedMilePerson : firstMilePerson;
+  let person = firstMilePerson;
+  if (day === 'invited') person = invitedMilePerson;
+  else if (day === 'waiting') person = waitingMilePerson;
   const cameFromRecords = await cameFromFor(pool, {
     userIds: result.rows.map((r) => r.user_id).filter((v) => v != null),
     signupIds: result.rows.map((r) => r.signup_id).filter((v) => v != null),
@@ -1100,8 +1249,98 @@ async function firstMile(pool, { day, now = new Date(), leftOutIds = [] } = {}) 
       tracked: tracked.length,
       opened: tracked.filter((p) => p.mail.opened).length,
       clicked: tracked.filter((p) => p.mail.clicked).length,
-    } : notRecorded('No admit mail in this cohort was tracked: tracking began on 7 Oct 2026.'),
+    } : notRecorded(day === 'waiting'
+      ? 'People still on the waitlist have been sent no admit mail.'
+      : 'No admit mail in this cohort was tracked: tracking began on 7 Oct 2026.'),
     notRecorded: {},
+    ...(day === 'waiting' ? { total: result.rows.length ? Number(result.rows[0].total) || result.rows.length : 0 } : {}),
+  };
+}
+
+/**
+ * Everyone's first mile (FIRST_MILE_EVERYONE_SQL): each person as their
+ * cohort's first mile has them, with the dates the onboarding flows place
+ * them by (`releasedAt`, `accountAt`, `accessAt`, `inviteAt`). Somebody
+ * invited and not let in yet has the invite's first mile. Each carries
+ * `cameFrom`, the two recorded sources; there is no `onboard` here, which a
+ * caller that needs it reads from the cohort.
+ */
+async function everyoneMile(pool, { now = new Date(), leftOutIds = [] } = {}) {
+  const { rows } = await pool.query(FIRST_MILE_EVERYONE_SQL, [EVERYONE_MAX, now, ...realPersonParams(leftOutIds)]);
+  const cameFromRecords = await cameFromFor(pool, {
+    userIds: rows.map((r) => r.user_id).filter((v) => v != null),
+    signupIds: rows.map((r) => r.signup_id).filter((v) => v != null),
+  });
+  const t = (v) => (v ? new Date(v) : null);
+  const people = rows.map((row) => {
+    const invitedOnly = row.invite_id != null && !row.released_at && !row.has_platform_access;
+    return {
+      ...(invitedOnly ? invitedMilePerson(row, now) : firstMilePerson(row, now)),
+      invitedOnly,
+      releasedAt: t(row.released_at),
+      accountAt: t(row.account_at),
+      accessAt: t(row.access_at),
+      inviteAt: t(row.invite_redeemed_at),
+      cameFrom: cameFromOf(cameFromRecords, { userId: row.user_id, signupId: row.signup_id }),
+    };
+  });
+  return { people, cut: rows.length >= EVERYONE_MAX };
+}
+
+/** When each person last contributed and last used an app (LAST_ACTS_SQL), by user id. */
+async function lastActs(pool, { now = new Date(), leftOutIds = [] } = {}) {
+  const { rows } = await pool.query(LAST_ACTS_SQL, [EVERYONE_MAX, now, ...realPersonParams(leftOutIds)]);
+  const byUser = new Map();
+  for (const r of rows) {
+    byUser.set(Number(r.user_id), {
+      lastContribAt: r.last_contrib_at ? new Date(r.last_contrib_at) : null,
+      lastAppDay: r.last_app_day || null,
+    });
+  }
+  return byUser;
+}
+
+/**
+ * The people still on the waitlist, counted: how long they have waited so
+ * far, how far each got, what they said brought them, which form they joined
+ * through and the month they joined. No names: the cohort's first mile has
+ * the people.
+ */
+async function waitingSummary(pool, { now = new Date(), leftOutIds = [] } = {}) {
+  const { rows } = await pool.query(FIRST_MILE_WAITING_SQL, [WAITING_MAX, now, ...realPersonParams(leftOutIds)]);
+  const people = rows.map((row) => waitingMilePerson(row, now));
+  const total = rows.length ? Number(rows[0].total) || rows.length : 0;
+  const tally = (keyOf) => {
+    const m = new Map();
+    for (const p of people) { const k = keyOf(p); if (k != null) m.set(k, (m.get(k) || 0) + 1); }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  };
+  const waits = people.map((p) => p.waitlist.waitedDays).filter((d) => d != null).sort((a, b) => a - b);
+  const done = (p, key) => p.steps.some((st) => st.key === key && st.state === 'done');
+  const bucket = (d) => (d < 14 ? 'under_2_weeks' : d < 42 ? '2_to_5_weeks' : d < 91 ? '6_to_12_weeks' : '3_months_or_more');
+  const order = ['under_2_weeks', '2_to_5_weeks', '6_to_12_weeks', '3_months_or_more'];
+  const waited = new Map(order.map((k) => [k, 0]));
+  for (const d of waits) waited.set(bucket(d), waited.get(bucket(d)) + 1);
+  const months = new Map();
+  for (const p of people) {
+    const m = p.waitlist.joinedAt ? new Date(p.waitlist.joinedAt).toISOString().slice(0, 7) : null;
+    if (m) months.set(m, (months.get(m) || 0) + 1);
+  }
+  return {
+    people: total,
+    counted: people.length,
+    medianDays: waits.length ? waits[Math.floor((waits.length - 1) / 2)] : null,
+    longestDays: waits.length ? waits[waits.length - 1] : null,
+    waited: order.filter((k) => waited.get(k)).map((k) => [k, waited.get(k)]),
+    far: [
+      ['confirmed', people.filter((p) => done(p, 'wl_confirmed')).length],
+      ['answered', people.filter((p) => done(p, 'wl_answered')).length],
+      ['account', people.filter((p) => done(p, 'wl_account')).length],
+      ['none', people.filter((p) => !done(p, 'wl_confirmed') && !done(p, 'wl_answered') && !done(p, 'wl_account')).length],
+    ],
+    said: tally((p) => p.waitlist.discovery || 'not_said'),
+    form: tally((p) => p.waitlist.source || 'not_recorded'),
+    months: [...months.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)),
   };
 }
 
@@ -1151,6 +1390,32 @@ const OWN_CHANGE = `cs.pr_number IS NOT NULL
       AND cs.source IS DISTINCT FROM 'maintenance'
       AND cs.cloned_from_session_id IS NULL
       AND COALESCE(cs.branch_name, '') NOT LIKE 'rename/%'`;
+
+// When each real person last contributed (a vote on a change or a request,
+// feedback, a request filed, a change of their own, or one of theirs going
+// live) and the last day they used an app for 30 seconds or more. $1 the
+// most rows to return, $2 now.
+const LAST_ACTS_SQL = `WITH real AS (
+    SELECT u.id FROM users u WHERE ${REAL_PERSON_SQL}
+  ), c AS (
+    SELECT pv.user_id, pv.created_at AS at FROM pr_votes pv
+    UNION ALL SELECT ivx.user_id, ivx.created_at FROM issue_votes ivx
+    UNION ALL SELECT frx.user_id, frx.created_at FROM feedback_reports frx
+    UNION ALL SELECT i.created_by, i.created_at FROM issues i
+    UNION ALL SELECT ${CHANGE_PERSON_SQL}, cs.created_at FROM chat_sessions cs WHERE ${OWN_CHANGE}
+    UNION ALL SELECT ${CHANGE_PERSON_SQL}, cs.merged_at FROM chat_sessions cs
+               WHERE ${OWN_CHANGE} AND cs.status = 'merged' AND cs.merged_at IS NOT NULL
+  )
+  SELECT r.id AS user_id, lc.at AS last_contrib_at, to_char(la.day, 'YYYY-MM-DD') AS last_app_day
+    FROM real r
+    LEFT JOIN (SELECT c.user_id, MAX(c.at) AS at FROM c
+                WHERE c.at <= $2::timestamptz GROUP BY c.user_id) lc ON lc.user_id = r.id
+    LEFT JOIN (SELECT aa.user_id, MAX(aa.date) AS day FROM app_activity aa
+                WHERE aa.seconds_spent >= 30 AND aa.date <= ($2::timestamptz AT TIME ZONE 'UTC')::date
+                GROUP BY aa.user_id) la ON la.user_id = r.id
+   WHERE lc.at IS NOT NULL OR la.day IS NOT NULL
+   ORDER BY r.id
+   LIMIT $1::int`;
 
 const STAGES_SQL = `WITH real AS (
     SELECT u.id, u.username FROM users u WHERE ${REAL_PERSON_SQL}
@@ -2994,6 +3259,299 @@ async function pairs(pool, { week, now = new Date(), leftOutIds = [], memberIds 
   };
 }
 
+// ── Flows: who is in which project, and whom they brought ──────────────
+//
+// What the other readings leave out when a person's whole path is drawn: the
+// audience of each project they touched (so "a private project they shared"
+// can be told from "a public one they found"), what they did in each project
+// rather than in all of them together, and the invites they sent, followed or
+// not. One row per real person and project, over all time up to `now`.
+//
+// A project's audience, as the screen names it: 'solo' (Just you), 'invited'
+// (Private community) or 'open' (Public community). It is derived, never
+// stored (services/communities.js audienceSql), and written out here because
+// a constant is what scripts/check-sql.js can validate; a test holds the two
+// to the same text. It is the audience NOW: a project made private and
+// opened later reads 'open' for everything that happened in it.
+const FLOWS_AUDIENCE_SQL = `CASE
+    WHEN ap.view_visibility = 'public' THEN 'open'
+    WHEN COALESCE((SELECT COUNT(*) FROM community_members m WHERE m.community_id = ap.community_id), 0) > 1
+      OR EXISTS (SELECT 1 FROM app_collaborators ic
+                  WHERE ic.app_id = ap.id AND ic.status = 'invited') THEN 'invited'
+    ELSE 'solo'
+  END`;
+
+// Every project made by $1 (now), with who made it. The reading keeps the
+// ones somebody's row names.
+const FLOWS_APPS_SQL = `SELECT ap.id, ap.slug, ap.name, ap.created_at, ap.self_hosted IS TRUE AS platform,
+         (${FLOWS_AUDIENCE_SQL}) AS audience,
+         (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = ap.community_id) AS members,
+         mk.id AS maker_id, mk.username AS maker
+    FROM apps ap
+    LEFT JOIN users mk ON mk.id = ap.created_by
+   WHERE ap.created_at <= $1::timestamptz
+   ORDER BY ap.created_at, ap.id`;
+
+// One row per real person and project they have anything to do with: days
+// they used its app (30 seconds or more, the rule the stages use), changes of
+// their own (OWN_CHANGE, credited by CHANGE_PERSON_SQL) and how many went
+// live, votes on its changes and requests, requests filed, feedback sent,
+// and messages in its chat; first_day and last_day are the first and last
+// day of any use, however short. A project they made, joined, were invited to or
+// followed an invite link into has a row even with nothing done in it.
+// Membership the platform gives by itself (source 'auto', 'active', 'voter',
+// 'favorite') is no row of its own: `member` says it on the rows there are.
+// $1 the most rows to return, $2 now; `total` is every row, whatever $1 cuts.
+const FLOWS_MAX = 20000;
+const FLOWS_PEOPLE_SQL = `WITH real AS (
+    SELECT u.id, u.username FROM users u WHERE ${REAL_PERSON_SQL}
+  ), f AS (
+    SELECT aa.user_id, aa.app_id,
+           (COUNT(*) FILTER (WHERE aa.seconds_spent >= 30))::int AS days,
+           MIN(aa.date) AS first_day, MAX(aa.date) AS last_day,
+           0 AS changes, 0 AS live, 0 AS votes, 0 AS requests, 0 AS feedback, 0 AS messages
+      FROM app_activity aa
+     WHERE aa.date <= ($2::timestamptz AT TIME ZONE 'UTC')::date
+     GROUP BY aa.user_id, aa.app_id
+    UNION ALL
+    SELECT c.user_id, c.app_id, 0, NULL, NULL, COUNT(*)::int,
+           (COUNT(*) FILTER (WHERE c.status = 'merged'))::int, 0, 0, 0, 0
+      FROM (SELECT ${CHANGE_PERSON_SQL} AS user_id, cs.app_id, cs.status
+              FROM chat_sessions cs
+             WHERE ${OWN_CHANGE} AND cs.created_at <= $2::timestamptz) c
+     GROUP BY c.user_id, c.app_id
+    UNION ALL
+    SELECT pv.user_id, cs.app_id, 0, NULL, NULL, 0, 0, COUNT(*)::int, 0, 0, 0
+      FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id
+     WHERE pv.created_at <= $2::timestamptz
+     GROUP BY pv.user_id, cs.app_id
+    UNION ALL
+    SELECT iv.user_id, i.app_id, 0, NULL, NULL, 0, 0, COUNT(*)::int, 0, 0, 0
+      FROM issue_votes iv JOIN issues i ON i.id = iv.issue_id
+     WHERE iv.created_at <= $2::timestamptz
+     GROUP BY iv.user_id, i.app_id
+    UNION ALL
+    SELECT i.created_by, i.app_id, 0, NULL, NULL, 0, 0, 0, COUNT(*)::int, 0, 0
+      FROM issues i
+     WHERE i.created_at <= $2::timestamptz
+     GROUP BY i.created_by, i.app_id
+    UNION ALL
+    SELECT fr.user_id, fr.app_id, 0, NULL, NULL, 0, 0, 0, 0, COUNT(*)::int, 0
+      FROM feedback_reports fr
+     WHERE fr.created_at <= $2::timestamptz
+     GROUP BY fr.user_id, fr.app_id
+    UNION ALL
+    SELECT cmx.user_id, cmx.app_id, 0, NULL, NULL, 0, 0, 0, 0, 0, COUNT(*)::int
+      FROM chat_messages cmx
+     WHERE cmx.msg_type = 'message' AND cmx.deleted_at IS NULL AND cmx.created_at <= $2::timestamptz
+     GROUP BY cmx.user_id, cmx.app_id
+    UNION ALL
+    SELECT ap.created_by, ap.id, 0, NULL, NULL, 0, 0, 0, 0, 0, 0
+      FROM apps ap WHERE ap.created_at <= $2::timestamptz
+    UNION ALL
+    SELECT m.user_id, ap.id, 0, NULL, NULL, 0, 0, 0, 0, 0, 0
+      FROM community_members m JOIN apps ap ON ap.community_id = m.community_id
+     WHERE m.source IN ('joined', 'collaborator') AND m.joined_at <= $2::timestamptz
+    UNION ALL
+    SELECT rd.user_id, ci.app_id, 0, NULL, NULL, 0, 0, 0, 0, 0, 0
+      FROM community_invite_redemptions rd JOIN community_invites ci ON ci.id = rd.invite_id
+     WHERE rd.status <> 'cancelled' AND rd.created_at <= $2::timestamptz
+    UNION ALL
+    SELECT c.user_id, c.app_id, 0, NULL, NULL, 0, 0, 0, 0, 0, 0
+      FROM app_collaborators c
+     WHERE c.invited_by IS NOT NULL AND c.invited_by <> c.user_id AND c.created_at <= $2::timestamptz
+  ), g AS (
+    SELECT f.user_id, f.app_id, SUM(f.days)::int AS days, MIN(f.first_day) AS first_day, MAX(f.last_day) AS last_day,
+           SUM(f.changes)::int AS changes, SUM(f.live)::int AS live, SUM(f.votes)::int AS votes,
+           SUM(f.requests)::int AS requests, SUM(f.feedback)::int AS feedback, SUM(f.messages)::int AS messages
+      FROM f
+     WHERE f.user_id IS NOT NULL AND f.app_id IS NOT NULL
+     GROUP BY f.user_id, f.app_id
+  )
+  SELECT r.id AS user_id, r.username, ap.id AS app_id,
+         g.days, to_char(g.first_day, 'YYYY-MM-DD') AS first_day, to_char(g.last_day, 'YYYY-MM-DD') AS last_day,
+         g.changes, g.live, g.votes, g.requests, g.feedback, g.messages,
+         (ap.created_by = r.id) AS made,
+         EXISTS (SELECT 1 FROM community_members m
+                  WHERE m.community_id = ap.community_id AND m.user_id = r.id) AS member,
+         COALESCE(
+           (SELECT mk.username FROM community_invite_redemptions rd
+              JOIN community_invites ci ON ci.id = rd.invite_id
+              JOIN users mk ON mk.id = ci.created_by
+             WHERE rd.user_id = r.id AND ci.app_id = ap.id AND rd.status <> 'cancelled'
+             ORDER BY rd.created_at, rd.id LIMIT 1),
+           (SELECT hb.username FROM app_collaborators c JOIN users hb ON hb.id = c.invited_by
+             WHERE c.app_id = ap.id AND c.user_id = r.id AND c.invited_by <> r.id)) AS invited_by,
+         (COUNT(*) OVER ())::int AS total
+    FROM g
+    JOIN real r ON r.id = g.user_id
+    JOIN apps ap ON ap.id = g.app_id
+   ORDER BY r.username, r.id, g.days DESC, ap.id
+   LIMIT $1::int`;
+
+// The invites each real person sent, by project: invite links they made
+// (`links`, and how many of those they shared from the share sheet), people
+// they invited by name (`direct`; one who came by a link is the link's), and
+// how many times their links to the project were opened by somebody else,
+// signed in or not (community_invite_opens: once per account or browser).
+// `opens_since` is when opens were first recorded at all. $1 the most rows,
+// $2 now.
+const FLOWS_SENT_SQL = `WITH real AS (
+    SELECT u.id, u.username FROM users u WHERE ${REAL_PERSON_SQL}
+  ), sent AS (
+    SELECT ci.created_by AS user_id, ci.app_id, COUNT(*)::int AS links, COUNT(ci.shared_at)::int AS shared,
+           0 AS direct, MIN(ci.created_at) AS first_at
+      FROM community_invites ci
+     WHERE ci.created_by IS NOT NULL AND ci.created_at <= $2::timestamptz
+     GROUP BY ci.created_by, ci.app_id
+    UNION ALL
+    SELECT c.invited_by, c.app_id, 0, 0, COUNT(*)::int, MIN(c.created_at)
+      FROM app_collaborators c
+     WHERE c.invited_by IS NOT NULL AND c.invited_by <> c.user_id
+       AND c.accepted_via IS DISTINCT FROM 'link' AND c.created_at <= $2::timestamptz
+     GROUP BY c.invited_by, c.app_id
+  )
+  SELECT r.id AS user_id, r.username, s.app_id,
+         SUM(s.links)::int AS links, SUM(s.shared)::int AS shared, SUM(s.direct)::int AS direct,
+         MIN(s.first_at) AS first_at,
+         (SELECT COUNT(*)::int FROM community_invite_opens o
+           WHERE o.maker_id = r.id AND o.app_id = s.app_id AND o.opened_at <= $2::timestamptz
+             AND o.user_id IS DISTINCT FROM r.id) AS opened,
+         (SELECT MIN(o2.opened_at) FROM community_invite_opens o2) AS opens_since
+    FROM sent s
+    JOIN real r ON r.id = s.user_id
+   GROUP BY r.id, r.username, s.app_id
+   ORDER BY r.username, r.id, s.app_id
+   LIMIT $1::int`;
+
+// The real people an invite reached, whoever sent it: by a link (its
+// redemption: 'joined', or 'queued' until they are let in) or by name
+// ('joined' once accepted, 'invited' until then). $1 the most rows, $2 now.
+const FLOWS_REACHED_SQL = `SELECT ci.created_by AS maker_id, ci.app_id, u.id AS user_id, u.username,
+         rd.status::text AS status, 'link' AS how, rd.created_at AS at
+    FROM community_invite_redemptions rd
+    JOIN community_invites ci ON ci.id = rd.invite_id
+    JOIN users u ON u.id = rd.user_id
+   WHERE rd.status <> 'cancelled' AND rd.created_at <= $2::timestamptz
+     AND ci.created_by IS NOT NULL AND ${REAL_PERSON_SQL}
+  UNION ALL
+  SELECT c.invited_by, c.app_id, u.id, u.username,
+         CASE WHEN c.accepted_at IS NOT NULL THEN 'joined' ELSE 'invited' END, 'direct', c.created_at
+    FROM app_collaborators c
+    JOIN users u ON u.id = c.user_id
+   WHERE c.invited_by IS NOT NULL AND c.invited_by <> c.user_id
+     AND c.accepted_via IS DISTINCT FROM 'link' AND c.created_at <= $2::timestamptz
+     AND ${REAL_PERSON_SQL}
+   ORDER BY at, user_id
+   LIMIT $1::int`;
+
+const FLOWS_AUDIENCES = Object.freeze(['solo', 'invited', 'open']);
+
+/**
+ * Pure: the flows reading from its four queries' rows.
+ *
+ * `apps` are the projects somebody's row names, oldest first: `slug`, `name`,
+ * `audience` ('solo' | 'invited' | 'open', as it is now), `platform`
+ * (Homeroom itself), `madeAt`, `madeBy` and `members`. `people` are real
+ * people by name, each with `apps` (one entry per project: `made`, `member`,
+ * `invitedBy`, `days`, `firstDay`, `lastDay`, `changes`, `live`, `votes`,
+ * `requests`, `feedback`, `messages`) and `invites` (one entry per project
+ * they invited people to: `links`, `shared`, `direct`, `opened`, `firstAt`,
+ * and `reached`, the real people who followed, each with how and where they
+ * stand). An invite nobody followed is an entry whose `reached` is empty.
+ */
+function flowsReading({ apps = [], rows = [], sent = [], reached = [] } = {}) {
+  const appById = new Map(apps.map((a) => [Number(a.id), a]));
+  const used = new Set();
+  const people = new Map();
+  const personOf = (id, username) => {
+    const key = Number(id);
+    if (!people.has(key)) people.set(key, { userId: key, name: username, apps: [], invites: [] });
+    return people.get(key);
+  };
+  for (const r of rows) {
+    const app = appById.get(Number(r.app_id));
+    if (!app) continue;
+    used.add(Number(r.app_id));
+    personOf(r.user_id, r.username).apps.push({
+      slug: app.slug,
+      made: r.made === true,
+      member: r.member === true,
+      invitedBy: r.invited_by || null,
+      days: Number(r.days) || 0,
+      firstDay: r.first_day || null,
+      lastDay: r.last_day || null,
+      changes: Number(r.changes) || 0,
+      live: Number(r.live) || 0,
+      votes: Number(r.votes) || 0,
+      requests: Number(r.requests) || 0,
+      feedback: Number(r.feedback) || 0,
+      messages: Number(r.messages) || 0,
+    });
+  }
+  const reachedBy = new Map();
+  for (const r of reached) {
+    const key = `${Number(r.maker_id)}:${Number(r.app_id)}`;
+    if (!reachedBy.has(key)) reachedBy.set(key, []);
+    reachedBy.get(key).push({ userId: Number(r.user_id), name: r.username, status: r.status, how: r.how, at: r.at });
+  }
+  let opensSince = null;
+  for (const s of sent) {
+    const app = appById.get(Number(s.app_id));
+    if (!app) continue;
+    used.add(Number(s.app_id));
+    if (s.opens_since && !opensSince) opensSince = s.opens_since;
+    personOf(s.user_id, s.username).invites.push({
+      slug: app.slug,
+      links: Number(s.links) || 0,
+      shared: Number(s.shared) || 0,
+      direct: Number(s.direct) || 0,
+      opened: Number(s.opened) || 0,
+      firstAt: s.first_at || null,
+      reached: reachedBy.get(`${Number(s.user_id)}:${Number(s.app_id)}`) || [],
+    });
+  }
+  const listed = apps.filter((a) => used.has(Number(a.id))).map((a) => ({
+    slug: a.slug,
+    name: a.name,
+    audience: FLOWS_AUDIENCES.includes(a.audience) ? a.audience : null,
+    platform: a.platform === true,
+    madeAt: a.created_at || null,
+    madeBy: a.maker_id != null ? { userId: Number(a.maker_id), name: a.maker } : null,
+    members: Number(a.members) || 0,
+  }));
+  const everyone = [...people.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)) || a.userId - b.userId);
+  const total = rows.length ? Number(rows[0].total) || rows.length : 0;
+  return {
+    apps: listed,
+    people: everyone,
+    counts: {
+      people: everyone.length,
+      apps: listed.length,
+      audiences: Object.fromEntries(FLOWS_AUDIENCES.map((k) => [k, listed.filter((a) => a.audience === k && !a.platform).length])),
+      inviters: everyone.filter((p) => p.invites.length).length,
+    },
+    // Rows the cap left out, so a partial reading says so.
+    cut: total > rows.length ? { kept: rows.length, of: total } : null,
+    notRecorded: opensSince ? {} : {
+      opened: notRecorded('No invite link has a recorded open yet: `opened` reads 0 until one does.'),
+    },
+    opensSince,
+  };
+}
+
+/** The flows reading over all time up to `now` (flowsReading says its shape). */
+async function flows(pool, { now = new Date(), leftOutIds = [] } = {}) {
+  const params = [FLOWS_MAX, now, ...realPersonParams(leftOutIds)];
+  const [apps, rows, sent, reached] = await Promise.all([
+    pool.query(FLOWS_APPS_SQL, [now]),
+    pool.query(FLOWS_PEOPLE_SQL, params),
+    pool.query(FLOWS_SENT_SQL, params),
+    pool.query(FLOWS_REACHED_SQL, params),
+  ]);
+  return flowsReading({ apps: apps.rows, rows: rows.rows, sent: sent.rows, reached: reached.rows });
+}
+
 // ── Summary ────────────────────────────────────────────────────────────
 //
 // What the page leads with, in one request: active groups for the last
@@ -3080,6 +3638,11 @@ module.exports = {
   FIRST_MILE_ADMITTED_SQL,
   FIRST_MILE_OTHER_WAY_SQL,
   FIRST_MILE_INVITED_SQL,
+  FIRST_MILE_WAITING_SQL,
+  WAITING_MILE_STEPS,
+  WAITING_MAX,
+  waitingMileSteps,
+  waitingMilePerson,
   FIRST_MILE_STEPS,
   INVITED_MILE_STEPS,
   INVITED_DAYS,
@@ -3153,4 +3716,19 @@ module.exports = {
   invitedMileSteps,
   invitedMilePerson,
   mailPageFact,
+  FIRST_MILE_EVERYONE_SQL,
+  LAST_ACTS_SQL,
+  EVERYONE_MAX,
+  everyoneMile,
+  lastActs,
+  waitingSummary,
+  FLOWS_AUDIENCE_SQL,
+  FLOWS_APPS_SQL,
+  FLOWS_PEOPLE_SQL,
+  FLOWS_SENT_SQL,
+  FLOWS_REACHED_SQL,
+  FLOWS_MAX,
+  FLOWS_AUDIENCES,
+  flowsReading,
+  flows,
 };

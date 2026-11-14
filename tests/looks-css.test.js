@@ -173,7 +173,7 @@ test('a kit rule for a worn component also names the product\'s own markup for i
   // has no word for. looks.json "wear" says which of the product's classes
   // is each kit class of those components, and the rule names both.
   assert.equal(looks.wornSelector('html[data-skin] .fr-post .fr-who'), 'html[data-skin]:where(:not([data-skin="brand"])) .messages-message .messages-message-author',
-    'the kit is any look\'s, and the New look ("brand") is not one: its conversations keep the standard markup\'s rules');
+    'the kit is any look\'s, and the brand look is not one: its conversations keep the standard markup\'s rules');
   assert.equal(looks.wornSelector('html[data-skin="mosaic"] .fr-post .fr-when'), 'html[data-skin="mosaic"] .messages-message .messages-message-head time');
   assert.equal(looks.wornSelector('html[data-skin="mosaic"] .fr-post'), 'html[data-skin="mosaic"] .messages-message');
   // (The day's label has a second wearer, the count of a reply thread's replies: lane M, tests/messages-frame-stream.test.js.)
@@ -407,10 +407,10 @@ test('app.css carries exactly what the script builds from frontend/looks/', () =
   assert.equal(section(), looks.build(), 'run `node scripts/build-looks-css.js` after changing a file in frontend/looks/');
 });
 
-test('the section sits just before the New look\'s block, which stays last', () => {
+test('the section sits just before the brand look\'s block, which stays last', () => {
   const css = read('public', 'css', 'app.css');
   const end = css.indexOf(END) + END.length;
-  assert.match(css.slice(end, end + 80), /^\n\n\/\* ── THE NEW LOOK, AN EXPERIMENT/);
+  assert.match(css.slice(end, end + 80), /^\n\n\/\* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING/);
 });
 
 // The product's classes looks.json "wear" names: the only ones the section may carry.
@@ -474,7 +474,7 @@ test('each look is headed by its flag, in the registry\'s order, with its fonts,
 test('what every look shares: the product\'s tokens follow the look\'s, at a look\'s own weight', () => {
   const text = section();
   const m = text.match(/html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\)\{([^}]*)\}/);
-  assert.ok(m, 'one rule for any look but New look, its exception inside :where() so More contrast still outweighs it');
+  assert.ok(m, 'one rule for any look but the brand look, its exception inside :where() so More contrast still outweighs it');
   for (const [token, from] of [['--text-primary', '--fr-ink'], ['--text-secondary', '--fr-mut'], ['--text-muted', '--fr-faint'], ['--border', '--fr-line'],
     ['--border-light', '--fr-line'], ['--accent', '--fr-acc'], ['--accent-ink', '--fr-acc-ink'], ['--accent-tint-ink', '--fr-acc'], ['--lit-ink', '--fr-lit'],
     ['--lit-tint', '--fr-lit-t'], ['--lit-line', '--fr-line'], ['--dc-sheet-raise', '--fr-surface'],

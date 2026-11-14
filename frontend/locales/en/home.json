@@ -28,8 +28,16 @@
     "description": "Read by screen readers while the grid of app tiles on Home is still loading."
   },
   "grid.noMatches": {
-    "text": "No apps match “{{query}}”. Clear the search and try <0>Discover communities</0> below.",
-    "description": "Shown in place of Home's app tiles when the search finds none of the viewer's apps. {{query}} is what the person typed. The numbered tag highlights the name of the section further down the Home screen; use the same words as that section's heading."
+    "text": "None of your apps match “{{query}}”.",
+    "description": "Shown in place of Home's app tiles when the search finds none of the viewer's apps. {{query}} is what the person typed. The same search also filters the communities listed further down the Home screen."
+  },
+  "search.none": {
+    "text": "No community matches “{{query}}” either.",
+    "description": "Shown on Home under the line saying none of the viewer's apps match the search, when no community matches it either: none they are in and none they could join. {{query}} is what the person typed. A button offering to make it follows."
+  },
+  "search.make": {
+    "text": "Make “{{idea}}”",
+    "description": "Button on Home shown when the search matches no app and no community. {{idea}} is what the person typed. Pressing it opens the screen for making a new project, with those words filled in as the idea."
   },
   "grid.showAll_one": {
     "text": "Show all {{count}} app",
@@ -903,9 +911,29 @@
     "text": "Featured",
     "description": "Small heading over the communities the platform features, the first group of cards in Communities to join on Home (signed in or out)."
   },
+  "join.featuredKind": {
+    "text": "Featured in {{kind}}",
+    "description": "Small heading over the communities the platform features, in Communities to join on Home (signed in or out), when a kind is chosen from the chips above. {{kind}} is the chosen chip's name, such as Games or Tools."
+  },
   "join.more": {
     "text": "More communities",
-    "description": "Small heading over the community cards after Featured in Communities to join on Home (signed in or out): every community of the chosen kind that Featured does not show, most used first. Not shown while searching, with nothing featured, or when every community of the kind is featured."
+    "description": "Small heading over the community cards after Featured in Communities to join on Home (signed in or out): every community of the chosen kind that Featured does not show, in the chosen order. Not shown while searching, with nothing featured, or when every community of the kind is featured."
+  },
+  "join.sort.label": {
+    "text": "Sort communities",
+    "description": "Accessible name of the small menu beside the More communities heading in Communities to join on Home: orders the community cards there. It offers New, Popular and Most active."
+  },
+  "join.sort.new": {
+    "text": "New",
+    "description": "One choice of the sort menu in Communities to join on Home: the most recently made communities first."
+  },
+  "join.sort.popular": {
+    "text": "Popular",
+    "description": "One choice of the sort menu in Communities to join on Home: the communities with the most members first."
+  },
+  "join.sort.active": {
+    "text": "Most active",
+    "description": "One choice of the sort menu in Communities to join on Home: the communities with the most people active lately first. It is the starting order."
   },
   "join.members_one": {
     "text": "{{count}} member",

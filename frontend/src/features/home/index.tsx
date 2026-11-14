@@ -98,6 +98,7 @@ import { CreateCompact } from './create-tile';
 import { ChallengesSection } from './panels/sections';
 import { HomeJoin } from './home-join';
 import { PinnedCommunities } from './pinned-communities';
+import { HomeSearchMake } from './search-make';
 import { SectionHeading } from './panels/ui';
 import { VerifyCard } from './verify-card';
 import { WaitlistCard } from './waitlist-card';
@@ -389,6 +390,13 @@ export function HomeScreen() {
           */}
           <AppsMore />
         </section>
+        {/*
+            A SEARCH NOTHING ANSWERS IS AN IDEA (./search-make.tsx, #5928):
+            under the grid's own no-match line, once Pinned communities and
+            Communities to join have none either, Make opens "What do you
+            want to make?" with the words typed in. Null in the prerender.
+        */}
+        {frame ? null : <HomeSearchMake />}
         {/*
             ── AREAS 2-4: DISCOVER, WAITLIST, VERIFY, CHALLENGES ──────
 

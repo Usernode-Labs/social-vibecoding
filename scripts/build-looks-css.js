@@ -100,7 +100,7 @@ function mapSelector(raw, id) {
  */
 function wornSelector(mapped, raw = null) {
   const at = mapped.indexOf(' ');
-  // The kit's rules are any look's, and "brand" (the New look) carries the
+  // The kit's rules are any look's, and "brand" (the brand look) carries the
   // attribute without being one: it draws no kit markup, so only a worn
   // rule could reach it. :where() leaves it out at no weight.
   const head = mapped.slice(0, at) + (mapped.startsWith('html[data-skin=') ? '' : ':where(:not([data-skin="brand"]))');
@@ -269,7 +269,7 @@ function lookBlock(id) {
     dark: [['--accent-tint', look.tint[1]], ...(look.opaque ? [['--fr-solid', look.opaque[1]]] : [])],
   }));
   if (look.ground) {
-    // The look's own page, moved the way the New look moves its plate: on
+    // The look's own page, moved the way the brand look moves its page: on
     // <body>, one id deep like the route rule that draws the wallpaper, with
     // --home-ground following. Dark carries :not([data-app-tone="light"]) to
     // outweigh the dark wallpaper's rule and to leave a light app its page.
@@ -322,7 +322,7 @@ function build() {
    wherever it reads a token. A solid sheet (--dc-sheet, the dialog's own
    card; --dc-sheet-solid: a menu, a pinned head) takes the look's opaque
    surface where the look's own is see-through (--fr-solid, from
-   looks.json "opaque"): both float over other text with no blur behind. The exception for the New look ("brand", the
+   looks.json "opaque"): both float over other text with no blur behind. The exception for the brand look ("brand", the
    last block of this sheet, which is not a look of the frame) sits inside
    :where(), so the rule weighs one attribute and More contrast
    (html…[data-contrast="more"], two) still sets its inks over any look.

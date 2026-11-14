@@ -146,9 +146,9 @@ test('a switch row in a static pane is a neutral wrapper, laid out by the styles
     assert.match(section(file), new RegExp(`<div className="ui-card ui-swrow">\\s*<SwitchRow id="${id}">`), file);
   }
   const exp = section('experimental.tsx');
-  assert.match(exp, /<div className="ui-card">\s*<InterfaceModeControl \/>\s*<div className="ui-swrow">\s*<SwitchRow id="ai-progress-estimate">/, 'the four switches are one card');
+  assert.match(exp, /<div className="ui-card">\s*<InterfaceModeControl \/>\s*<div className="ui-swrow">\s*<SwitchRow id="ai-progress-estimate">/, 'the three switches are one card');
   assert.match(exp, /<div className="ui-swrow mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">\s*<SwitchRow id="session-bridge-enabled">/);
-  assert.match(exp, /<div className="ui-swrow mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">\s*<SwitchRow id="new-look-enabled">/);
+  assert.doesNotMatch(exp, /new-look-enabled/, 'New look\'s switch is gone: its look is one of the Look menu\'s');
   assert.match(exp, /<div id="settings-look-section" className="hidden ui-card ui-fields /);
   assert.match(settings, new RegExp(`${ANY} #settings-screen #settings-section-content \\[data-settings-section\\] \\.ui-swrow \\{ display: grid; grid-template-columns: minmax\\(0, 1fr\\) auto;`));
   assert.match(settings, new RegExp(`${ANY} #settings-root \\.ui-swrow > label \\{ display: contents; \\}`), 'the label still toggles its switch; only its box steps aside');

@@ -6716,6 +6716,12 @@ const AppView = {
   // the assignee chip, the work note, its "Also:", the admins' Claims line
   // and the thread's claim line); the status card says it once, and the
   // thread's claim line reads as what happened.
+  _twinOf(issue) {
+    const number = Number(issue?.similar?.number);
+    return Number.isSafeInteger(number) && number > 0 && number !== Number(issue.number)
+      ? { number, title: String(issue.similar.title || '') } : null;
+  },
+
   _requestView(issue) {
     const n = issue.number;
     const top = issue.category && issue.category.top;
@@ -6737,6 +6743,7 @@ const AppView = {
       askedTime: stamp.text,
       askedTitle: stamp.title,
       title: issue.title || '',
+      similar: AppView._twinOf(issue),
       titleEditing: canEditTitle && AppView._editingIssueTitle === n ? { issue: n, initial: issue.title || '' } : null,
       bodyHtml: words.text.trim() ? AppView._issueBodyHtml({ body: words.text }) : '',
       bodyMarkdown: words.text,
@@ -6883,11 +6890,19 @@ const AppView = {
 
   // The standing's words as the status card's sentence: its stage, and its
   // second line after it. Homeroom bot's own sentence (its reason) follows as
-  // a sentence of its own.
+  // a sentence of its own. 13 Nov 2026: a request waiting its turn says
+  // whose line it is and that it starts by itself, where a row's label says
+  // "Number 1 in line": a tester could not tell whether that line was the
+  // bot's, another person's or theirs.
   _standingSays(words) {
     const t = PlatformI18n.t;
     const stage = t(words.stage.id, words.stage.values || {});
     if (!words.line) return t('changes:request.status.lead.stands', { stage });
+    if (words.line.id === 'core:work.line.queuedAt') {
+      const place = Number(words.line.values && words.line.values.place) || 1;
+      return t('changes:request.status.lead.botLineAt', { stage, place });
+    }
+    if (words.line.id === 'core:work.line.queued') return t('changes:request.status.lead.botLine', { stage });
     const line = t(words.line.id, words.line.values || {});
     return words.line.id === 'core:work.line.said'
       ? t('changes:request.status.lead.standsSaid', { stage, said: line })
@@ -13156,7 +13171,7 @@ const AppView = {
       }
       const cat = it.category && it.category.top ? AppView._categoryMeta(it.category.top) : null;
       return {
-        ...base, kind: 'request', noun: 'request', n: Number(it.number) || null,
+        ...base, kind: 'request', noun: 'request', n: Number(it.number) || null, twin: AppView._twinOf(it),
         category: cat ? cat.label : '', replies: Number(it.chatCount) || 0,
         stage: ws && ws.key !== 'claimed' && ws.key !== 'in_review' ? 'worked' : (ws && ws.key === 'in_review' ? 'vote' : 'request'),
         // Nobody has taken it (the Workshop's "Nobody is on these"), so a
@@ -16202,10 +16217,21 @@ const AppView = {
     }
     if (f.needsVote) {
       if (kind === 'proposal') {
-        // Same condition as the card's pulsing "Vote" badge (isUnvoted). A
-        // project's first version needs nobody's vote (D1).
+        // The card's pulsing "Vote" badge's condition (isUnvoted), narrowed.
+        // A project's first version needs nobody's vote (D1).
         // #6594: its votes are in, so it asks nobody for one.
-        if (!(it.status === 'promoted' && !it.my_vote && it.first_version !== true && it.votes_in !== true)) return false;
+        // And only once its vote is open (`vote_open`, the stored work
+        // state's answer on the /promoted row, routes/votes.js): the rule
+        // the Needs you page lists by (GET /api/workshop/needs-feed,
+        // VOTE_OPEN_SQL). A change still being checked, or whose shots are
+        // still being taken, was counted here as waiting on your vote while
+        // the page said nothing was. It stays on the board with its own
+        // status and its card's own Vote pill (statusPillState is not asked
+        // this), and its own page still takes an early vote. A row without
+        // the field (an older saved copy, a demo row) reads as open, so a
+        // vote is never hidden for want of it.
+        if (!(it.status === 'promoted' && !it.my_vote && it.first_version !== true && it.votes_in !== true
+          && it.vote_open !== false)) return false;
       } else if (kind === 'gov') {
         if (it.my_vote) return false;
       } else {

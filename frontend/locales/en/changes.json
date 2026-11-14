@@ -8463,6 +8463,14 @@
     "text": "{{stage}} · {{line}}",
     "description": "The one sentence on the status card of a request's page that says where the request stands: its stage, then what that means now. {{stage}} and {{line}} are already translated, the same words every screen uses (for example Ready to build and Number 2 in line). Keep the dot between them as a separator."
   },
+  "request.status.lead.botLineAt": {
+    "text": "{{stage}}. Number {{place}} in Homeroom bot’s line; it starts by itself.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands, while it waits its turn in Homeroom bot's own line on its project: its stage, then its place in that line. Nobody else builds it and nobody has to do anything: the bot starts on it by itself when it has a free slot. {{stage}} is the stage's own words, already translated (Ready to build, or Not started yet). {{place}} is a number, 1 for next. Homeroom bot is the platform's assistant that builds changes; keep its name."
+  },
+  "request.status.lead.botLine": {
+    "text": "{{stage}}. Waiting its turn in Homeroom bot’s line; it starts by itself.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands, while it waits its turn in Homeroom bot's own line on its project and its place is not known: its stage, then whose line it is. Nobody else builds it and nobody has to do anything: the bot starts on it by itself when it has a free slot. {{stage}} is the stage's own words, already translated (Ready to build, or Not started yet). Homeroom bot is the platform's assistant that builds changes; keep its name."
+  },
   "request.status.lead.standsSaid": {
     "text": "{{stage}}. {{said}}",
     "description": "The status card of a request's page, when Homeroom bot handed the request back with a reason of its own: the stage, as a sentence, then the bot's reason. {{stage}} is already translated (for example Waiting for you to decide). {{said}} is \"Homeroom bot:\" followed by the bot's own sentence, already ending in its own full stop."

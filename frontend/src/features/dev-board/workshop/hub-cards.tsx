@@ -784,8 +784,8 @@ export const HUB_TOPICS_SHOWN = 6;
  * Workshop and #general, and this card to each live topic's channel, a row
  * a topic, drawn as the Discussion's row is: its icon, its name and #handle,
  * what it is about, and how much is new in it. The first few are listed and
- * the rest wait behind "Show N more", as the sidebar folds them. A wide
- * window lists the topics in its sidebar and draws no card.
+ * the rest wait behind "Show N more", as the sidebar folds them. Drawn at
+ * every width since request 6654: a wide window puts it beside For you.
  */
 export function TopicsCard({ data, onOpen }: {
   data: CommunityPayload | null;
