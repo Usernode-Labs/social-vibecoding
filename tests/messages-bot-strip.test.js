@@ -29,6 +29,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+const { withWords } = require('./lib/work-words');
 const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
@@ -48,8 +49,9 @@ globalThis.window = {
 const NOW = new Date('2026-10-09T12:00:00Z');
 const ago = (minutes) => new Date(NOW.getTime() - minutes * 60000).toISOString();
 const nowhere = { request: null, proposal: null, project: null };
-// A work state as the server stores it (services/work-state.js).
-const at = (stage, extra = {}) => ({ stage, why: null, reason: null, line: null, whoseMove: null, since: null, ...extra });
+// A work state as the server stores it (services/work-state.js), with the
+// words it sends with it (11 Nov 2026: tests/lib/work-words.js).
+const at = (stage, extra = {}) => withWords({ stage, why: null, reason: null, line: null, whoseMove: null, since: null, ...extra });
 // One of the viewer's requests, as GET /api/ai/tracks sends it (api.ts normalizeBotTrack).
 let seq = 0;
 const track = (work, extra = {}) => {
@@ -390,7 +392,7 @@ test('every line opens its request\'s page the same way; news naming no page, it
   assert.doesNotMatch(line(old), /data-bot-news-open="inline"/);
   const source = read(NEWS);
   // 31 Oct 2026: the request's own page (./bot-request-page.test.js).
-  assert.match(source, /if \(page\) openRequestPage\(page, message\.conversationId\);/);
+  assert.match(source, /if \(page\) openRequestPage\(page\);/);
   assert.match(source, /const rootId = newsThread\(message\) \?\? \(earlier\[0\]\?\.id \|\| message\.id\);/);
   assert.match(source, /else openThreadAt\(rootId, rootId === message\.id \? null : message\.id\);/);
   assert.doesNotMatch(source, /else setOpen\(true\)|full\(\)/, 'nothing opens in place');

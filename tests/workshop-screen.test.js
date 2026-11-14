@@ -236,9 +236,9 @@ test('#5023: the Workshop asks GET /api/apps for joined rows only, not the whole
   // One Home (#6361): the switcher's list reads it; the Needs you page left
   // of the Communities screen reads no list of communities at all.
   assert.doesNotMatch(read('frontend/src/features/workshop/index.tsx'), /\/api\/apps/);
-  assert.match(read('frontend/src/features/home/home-pins-store.ts'), /readJson\('\/api\/apps\?scope=joined'\)/, 'and Home\'s All communities');
+  assert.match(read('frontend/src/features/home/home-pins-store.ts'), /sharedJson<any>\('\/api\/apps\?scope=joined'\)/, 'and Home\'s All communities');
   for (const file of ['frontend/src/features/workshop/community-scope.ts']) {
-    assert.match(read(file), /fetch\(`\/api\/apps\?scope=joined\$\{/, `${file} reads the joined scope`);
+    assert.match(read(file), /sharedJson<any>\(`\/api\/apps\?scope=joined\$\{/, `${file} reads the joined scope`);
   }
 });
 
@@ -316,6 +316,85 @@ test('"Show N more" reveals five at a time, then folds back (#3269)', () => {
   // Three or fewer: no fold at all.
   assert.deepEqual(sectionFold(3, 3), { shown: 3, label: null, next: 3 });
   assert.equal(sectionFold(0, 3).label, null);
+});
+
+test('opening Needs you while the community list reads the counts asks for them once (#6591)', async () => {
+  const priorWindow = global.window;
+  const priorFetch = global.fetch;
+  // A window before the load, so the scope publishes its loader beside the
+  // page's controller: the two then share one lib/shared-read.ts, as in the
+  // shell's bundle.
+  global.window = {};
+  try {
+    const { workshopController, workshopStore } = loadTsx('frontend/src/features/workshop/index.tsx');
+    const scope = global.window.UsernodeReact.communityScope;
+    const pending = [];
+    global.fetch = (url, opts) => new Promise((resolve) => { pending.push({ url: String(url), cache: opts && opts.cache, resolve }); });
+    const counts = (needs) => ({ ok: true, json: async () => ({ counts: { a: { working: 0, needs } } }) });
+    const feed = { ok: true, json: async () => ({ items: [], max: 0 }) };
+    const apps = { ok: true, json: async () => ({ apps: [{ slug: 'a', name: 'A', is_member: true }] }) };
+    const settle = (answer) => {
+      for (const read of pending.splice(0)) {
+        read.resolve(read.url === '/api/workshop/counts' ? answer
+          : read.url === '/api/workshop/needs-feed' ? feed : apps);
+      }
+    };
+    const asked = (url) => pending.filter((read) => read.url === url).length;
+
+    // A page load that lands on Needs you: the sidebar's list and the page
+    // ask in the same moment.
+    const listed = scope.loadCommunities();
+    const opened = workshopController.open();
+    assert.equal(asked('/api/workshop/counts'), 1, 'one request serves the list and the page');
+    assert.equal(asked('/api/workshop/needs-feed'), 1, 'the feed is the page\'s own read');
+    settle(counts(2));
+    await Promise.all([listed, opened]);
+    assert.deepEqual(workshopStore.get().feed, []);
+    assert.equal(workshopStore.get().feedError, false);
+
+    // NOTHING IS KEPT: a re-entry asks the server for itself, past any saved
+    // copy, even while another read of the same address is on its way.
+    workshopController.close();
+    const again = scope.loadCommunities(true);
+    const reopened = workshopController.open();
+    const reads = pending.filter((read) => read.url === '/api/workshop/counts');
+    assert.equal(reads.length, 2, 'a re-entry may follow a vote, so it does not take another reader\'s request');
+    assert.deepEqual(reads.map((read) => read.cache), ['no-cache', 'no-cache']);
+    settle(counts(1));
+    await Promise.all([again, reopened]);
+
+    // And the quiet refresh after a change never shares either.
+    const forced = scope.loadCommunities(true);
+    const quiet = workshopController.refreshNeeds();
+    assert.equal(asked('/api/workshop/counts'), 2);
+    settle(counts(0));
+    await Promise.all([forced, quiet]);
+  } finally {
+    if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
+    global.fetch = priorFetch;
+  }
+});
+
+test('a first entry whose shared counts read fails still draws the feed (#6591)', async () => {
+  const priorWindow = global.window;
+  const priorFetch = global.fetch;
+  global.window = {};
+  try {
+    const { workshopController, workshopStore } = loadTsx('frontend/src/features/workshop/index.tsx');
+    const asked = [];
+    global.fetch = async (url) => {
+      asked.push(String(url));
+      if (url === '/api/workshop/counts') return { ok: false, json: async () => ({}) };
+      return { ok: true, json: async () => ({ items: [], max: 0 }) };
+    };
+    await workshopController.open();
+    assert.deepEqual(asked, ['/api/workshop/counts', '/api/workshop/needs-feed']);
+    assert.equal(workshopStore.get().feedError, false, 'the counts are the optional half');
+    workshopController.close();
+  } finally {
+    if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
+    global.fetch = priorFetch;
+  }
 });
 
 test('the controller reads the feed and the counts, survives losing the counts, and says when the feed is lost (One Home, #6361)', async () => {
@@ -720,7 +799,7 @@ test('the app\'s own Workshop switches communities through Your communities, the
   assert.match(scope, /switcher: SwitcherFrom \| null;/);
   // The list loads on open, and never during render.
   assert.match(scope, /communityScopeStore\.set\(\{ switcher: from, anchor \}\);\s*void loadCommunities\(\);/);
-  assert.match(scope, /fetch\(`\/api\/apps\?scope=joined\$\{q\.replace\('\?', '&'\)\}`/);
+  assert.match(scope, /sharedJson<any>\(`\/api\/apps\?scope=joined\$\{q\.replace\('\?', '&'\)\}`/);
 });
 
 // ── 4. The rows behind the counts (#3051) ──────────────────────────────

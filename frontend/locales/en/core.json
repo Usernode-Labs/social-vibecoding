@@ -25,7 +25,7 @@
   },
   "tabs.ai": {
     "text": "Homeroom bot",
-    "description": "Tab in the main navigation: opens the person's page with Homeroom bot, the AI that builds what people ask for (their private chat with it and their work across projects). The bot's own name. On a phone it sits under an icon in a bar of five, in one of its two wider seats; keep it within about twelve characters."
+    "description": "Tab in the main navigation: opens the person's page with Homeroom bot, the AI that builds what people ask for (their private threads with it and their work across projects). The bot's own name. On a phone it sits under an icon in a bar of five, in one of its two wider seats; keep it within about twelve characters."
   },
   "tabs.unreadAi": {
     "text": "Unread messages from the Homeroom bot",
@@ -623,10 +623,6 @@
     "text": "Back to {{place}}",
     "description": "On a phone, the header's back arrow on a page under one of a community's places (All items, under the Workshop): goes up to that place. {{place}} is the place's name, such as Workshop. Its accessible name and tooltip."
   },
-  "header.drawer.toBot": {
-    "text": "Back to the list",
-    "description": "On a phone, the header's back arrow in Main Chat, the person's private chat with Homeroom bot: slides back to the Homeroom bot tab's list of what needs them and what is in progress. Its accessible name and tooltip."
-  },
   "header.drawer.messages": {
     "text": "Messages",
     "description": "On a phone, the header's title over the list of the person's conversations, when the conversations are drawn as the navigation drawer's outer level."
@@ -871,6 +867,10 @@
     "text": "Waiting on GitHub",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Going live: the change has the yes it needs, and GitHub held its merge back for a moment (busy, or a refusal nobody has to act on). Homeroom tries again in a few minutes."
   },
+  "work.line.shots": {
+    "text": "Taking the before and after screenshots",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Checking: the change's tests passed, and Homeroom is still taking the before and after screenshots people look at before they vote, so nobody is asked to vote on it yet."
+  },
   "work.line.firstVersion": {
     "text": "First version: it goes live without a vote",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: a project's first version is put live once its tests pass, with no vote."
@@ -914,41 +914,5 @@
   "frame.navigation": {
     "text": "Homeroom",
     "description": "Accessible name of the sidebar and of the phone's tab bar as navigation landmarks, when the interface is drawn in one of the frame's looks (an admin's preview). The product's name."
-  },
-  "frame.menu.handle": {
-    "text": "@{{username}}",
-    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one line under the person's name: their username with an at sign."
-  },
-  "frame.menu.profile": {
-    "text": "Your profile",
-    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row that opens the person's own profile."
-  },
-  "frame.menu.darkTheme": {
-    "text": "Dark theme",
-    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row with a switch: turns the dark theme on or off."
-  },
-  "frame.menu.invite": {
-    "text": "Invite people",
-    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row under the Homeroom label: opens inviting people to Homeroom."
-  },
-  "frame.menu.about": {
-    "text": "About Homeroom",
-    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Row under the Homeroom label: opens what this build of Homeroom is. Homeroom is the product's name."
-  },
-  "frame.menu.signOut": {
-    "text": "Sign out",
-    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The last row: signs the person out."
-  },
-  "frame.menu.open": {
-    "text": "Account menu",
-    "description": "Account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Accessible name of the control that opens this menu."
-  },
-  "frame.menu.suggest": {
-    "text": "Suggest an improvement",
-    "description": "The account menu when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the row under Homeroom that opens the Improve panel, as the logo menu's row does."
-  },
-  "frame.menu.homeScreen": {
-    "text": "Add Homeroom to your home screen",
-    "description": "The account menu under one of the frame's looks, on a phone's browser: the row that shows the steps to put Homeroom on the home screen, as the logo menu's row does."
   }
 }

@@ -22,6 +22,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { settleWorkStates } = require('./lib/work-states');
 const crypto = require('node:crypto');
 
 const DSN = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -80,9 +81,10 @@ test('ballots, rivals and close votes against the full PostgreSQL schema', { tim
   });
 
   const feedFor = async (viewer) => overview.shapeNeedsFeed(
-    (await pool.query(overview.NEEDS_FEED_SQL, [viewer.id, false, false, overview.NEEDS_FEED_MAX])).rows)
+    (await settleWorkStates(pool), await pool.query(overview.NEEDS_FEED_SQL, [viewer.id, false, false, overview.NEEDS_FEED_MAX])).rows)
     .filter((i) => i.app.slug === app.slug);
   const needsFor = async (viewer) => {
+    await settleWorkStates(pool);
     const row = (await pool.query(overview.COUNTS_SQL, [viewer.id, false, false])).rows.find((r) => r.slug === app.slug);
     return row ? Number(row.needs) : 0;
   };
@@ -137,6 +139,7 @@ test('ballots, rivals and close votes against the full PostgreSQL schema', { tim
     const question = (await feedFor(ada)).find((i) => i.kind === 'question');
     assert.deepEqual([question.id, question.title, question.number, question.author], [msg.id, 'Newest first?', 7, 'tb_bot']);
     assert.equal(await needsFor(ada), 3);
+    await settleWorkStates(pool);
     const owed = (await pool.query(overview.COUNTS_SQL, [ada.id, false, false])).rows.find((r) => r.slug === app.slug).owed;
     assert.ok(owed.includes(`question:${msg.id}`), 'under a key the seen record takes');
     await pool.query(`UPDATE homeroom_bot_dm_messages SET question_status = 'answered' WHERE message_id = $1`, [msg.id]);

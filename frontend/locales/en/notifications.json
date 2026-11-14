@@ -539,6 +539,10 @@
     "text": "On hold",
     "description": "First line of a notification from Homeroom bot: work on the viewer's requests waits until Monday, because this week's building time is used up. The request's title (or how many requests) is on the line below."
   },
+  "row.bot.label.buildingTime": {
+    "text": "Building time",
+    "description": "First line of a notification from Homeroom bot, the built-in assistant that builds what people ask for: a notice about the viewer's own weekly building time, the amount of the bot's work on their requests a week allows. The notice itself is on the line below. Tapping the row opens the Settings page that shows how much is used."
+  },
   "row.bot.onHoldNote.allowance": {
     "text": "Until Monday: this week's building time is used up.",
     "description": "Small line under the title of an \"On hold\" notification from Homeroom bot: why the viewer's request or requests wait. It may stand for one request or several, so it has no verb of its own."
@@ -622,6 +626,10 @@
   "row.bot.subject.onHold_other": {
     "text": "{{count}} requests on hold",
     "description": "Second line of a notification from Homeroom bot, in bold: how many of the viewer's requests wait until Monday. {{count}} is that number."
+  },
+  "row.bot.subject.buildingTimeLow": {
+    "text": "You're close to this week's building time.",
+    "description": "Second line of a notification from Homeroom bot, in bold, under the label \"Building time\": most of the viewer's weekly building time is used, so their requests will soon wait until Monday. Nothing is on hold yet."
   },
   "row.bot.meta": {
     "text": "{{project}} · Homeroom bot",
@@ -722,6 +730,22 @@
   "row.limit.unknown.label": {
     "text": "Platform limit",
     "description": "First line of a notification to an administrator about a server-wide limit, when its details cannot be read."
+  },
+  "row.releaseHold.label": {
+    "text": "Needs your approval",
+    "description": "First line of a notification sent to platform administrators: a proposed change is held until one of them approves it. The change's name is on the line below."
+  },
+  "row.releaseHold.body": {
+    "text": "Held until an admin votes yes",
+    "description": "Second line of the \"Needs your approval\" notification when the held change has no name to show."
+  },
+  "row.releaseHold.noticeLabel": {
+    "text": "Not read in full",
+    "description": "First line of a notification sent to platform administrators: Homeroom's risk rules could read only part of a proposed change, usually because it is very large. The change is not held and nothing is asked of the reader. The change's name is on the line below."
+  },
+  "row.releaseHold.noticeBody": {
+    "text": "A change was too large to check in full",
+    "description": "Second line of the \"Not read in full\" notification when the change has no name to show."
   },
   "row.limit.unknown.body": {
     "text": "the server is nearing one of its limits",
@@ -866,6 +890,14 @@
   "row.incident.signal.body": {
     "text": "Homeroom filed request #{{number}} on its own board from its own records.",
     "description": "Second line of the \"A platform problem needs a person\" notification to an administrator. {{number}} is the request's number on Homeroom's own board."
+  },
+  "row.incident.private.label": {
+    "text": "A private platform request needs a person",
+    "description": "First line of a notification to an administrator: Homeroom found a problem in itself that only administrators should see (for example a security finding in its dependencies) and filed a private request for a person."
+  },
+  "row.incident.private.body": {
+    "text": "Homeroom filed it privately: only administrators can see it, under Private requests in its Workshop.",
+    "description": "Second line of the \"A private platform request needs a person\" notification to an administrator. \"Private requests\" is the name of the section at the end of Homeroom's own Workshop page."
   },
   "row.kudos.label": {
     "text": "Kudos",
@@ -1715,6 +1747,58 @@
     "text": "It’s open: ready to use",
     "description": "A notification row in the notifications sheet: a project the reader joined while it was still being made has just gone live. The project's name is shown on the line beside it. \"It\" is the project."
   },
+  "row.inviteNudge.voted": {
+    "text": "You voted in {{project}}",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they voted on something. The line below asks them to invite a friend or two. {{project}} is the project's name. Tapping the row opens the project's page, where Invite is."
+  },
+  "row.inviteNudge.votedUnnamed": {
+    "text": "You voted in a project",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they voted on something. Used when the project's name is not known. The line below asks them to invite a friend or two."
+  },
+  "row.inviteNudge.posted": {
+    "text": "You posted in {{project}}",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they wrote a message. The line below asks them to invite a friend or two. {{project}} is the project's name. Tapping the row opens the project's page, where Invite is."
+  },
+  "row.inviteNudge.postedUnnamed": {
+    "text": "You posted in a project",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they wrote a message. Used when the project's name is not known. The line below asks them to invite a friend or two."
+  },
+  "row.inviteNudge.asked": {
+    "text": "You asked for a change in {{project}}",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they asked for a change. The line below asks them to invite a friend or two. {{project}} is the project's name. Tapping the row opens the project's page, where Invite is."
+  },
+  "row.inviteNudge.askedUnnamed": {
+    "text": "You asked for a change in a project",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they asked for a change. Used when the project's name is not known. The line below asks them to invite a friend or two."
+  },
+  "row.inviteNudge.changed": {
+    "text": "You made a change in {{project}}",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they made a change. The line below asks them to invite a friend or two. {{project}} is the project's name. Tapping the row opens the project's page, where Invite is."
+  },
+  "row.inviteNudge.changedUnnamed": {
+    "text": "You made a change in a project",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they made a change. Used when the project's name is not known. The line below asks them to invite a friend or two."
+  },
+  "row.inviteNudge.used": {
+    "text": "You used {{project}}",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they used its app. The line below asks them to invite a friend or two. {{project}} is the project's name. Tapping the row opens the project's page, where Invite is."
+  },
+  "row.inviteNudge.usedUnnamed": {
+    "text": "You used a project's app",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they used its app. Used when the project's name is not known. The line below asks them to invite a friend or two."
+  },
+  "row.inviteNudge.plain": {
+    "text": "You're new in {{project}}",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there, when what that was is not known. The line below asks them to invite a friend or two. {{project}} is the project's name. Tapping the row opens the project's page, where Invite is."
+  },
+  "row.inviteNudge.plainUnnamed": {
+    "text": "You're new in a project",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there, when neither what that was nor the project's name is known. The line below asks them to invite a friend or two."
+  },
+  "row.inviteNudge.ask": {
+    "text": "It's better with your people: invite one or two friends? They can use it straight away and help shape it.",
+    "description": "Second line of a notification from Homeroom bot to somebody new to a project, under a line saying what they first did there. \"It\" is the project. Tapping the row opens the project's page, where the Invite button is."
+  },
   "ask.invite_sent.title": {
     "text": "Hear when they join?",
     "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. Shown inside the Homeroom phone app; its button then shows the phone's own permission prompt. This one appears right after the person sent an invite link to their project."
@@ -1773,7 +1857,11 @@
   },
   "ask.off": {
     "text": "Notifications are off for Homeroom",
-    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. What the card says when the phone's settings refused notifications."
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. What the card says only when the phone reported that notifications were refused."
+  },
+  "ask.unsure": {
+    "text": "We couldn’t check notifications on this phone. Tap Notify me to try again.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. What the card says under its title when the phone's answer could not be read after Notify me; the button stays to try again."
   },
   "ask.turnOn": {
     "text": "Turn on notifications",
@@ -1834,45 +1922,5 @@
   "row.chat.changeReplyPr": {
     "text": "Replied on change PR {{number}}",
     "description": "First line of a notification: somebody posted in the discussion of a change on a project whose code is on GitHub, where a change's number is written PR, not #. The viewer built it, voted on it or posted in it. {{number}} is the change's number. \"Change\" is a noun. The message is on the line below."
-  },
-  "frame.title": {
-    "text": "Notifications",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The sheet's title."
-  },
-  "frame.purposeNeeds_one": {
-    "text": "{{count}} needs an answer. The rest is news.",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title: how many notifications wait for the person's answer. Singular."
-  },
-  "frame.purposeNeeds_other": {
-    "text": "{{count}} need an answer. The rest is news.",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title: how many notifications wait for the person's answer. Plural."
-  },
-  "frame.purposeNews": {
-    "text": "Nothing needs an answer. This is news.",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title when no notification waits for an answer."
-  },
-  "frame.purposeEmpty": {
-    "text": "Nothing yet. What happens in your communities shows up here.",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the title when the person has never had a notification."
-  },
-  "frame.needsAnswer": {
-    "text": "Needs an answer",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the first group: notifications that wait for the person to vote, reply or decide."
-  },
-  "frame.news": {
-    "text": "News",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group of unread notifications that only tell the person something happened."
-  },
-  "frame.earlier": {
-    "text": "Earlier",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group of notifications the person has already seen."
-  },
-  "frame.answer": {
-    "text": "Answer",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Status word on a row that waits for the person: pressing the row opens what to answer."
-  },
-  "frame.markAllRead": {
-    "text": "Mark all read",
-    "description": "Notifications sheet when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The sheet's one button: marks every notification as read."
   }
 }

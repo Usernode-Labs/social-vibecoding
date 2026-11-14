@@ -68,3 +68,11 @@ test('#3572: the conventions tell an app\'s builders the limit', () => {
   assert.match(section, /\*\*90 characters or fewer\*\*/);
   assert.match(section, /two lines\s+on a phone/);
 });
+
+test('#6659: the line Homeroom writes for a new project says what it is and what you do there', () => {
+  const src = read('src/services/llm.js');
+  const prompt = src.slice(src.indexOf('async function generateShortDescription'), src.indexOf('const REVISED_DESCRIPTION_SCHEMA'));
+  assert.match(prompt, /what the app is, then what you do there/);
+  assert.match(prompt, /short enough to read on one line of a card/);
+  assert.match(prompt, /at most \$\{max\} characters/, 'the limit is still the caller\'s');
+});

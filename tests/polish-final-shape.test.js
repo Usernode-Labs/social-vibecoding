@@ -86,12 +86,17 @@ test('#12: the track card\'s pictures hold their frames while they are read', ()
 test('#12: a request page drawn from the board\'s older row holds its track card unseen', () => {
   const view = read('public/js/app-view.js');
   assert.match(view, /trackPending: !!issue\.track && AppView\._devTopic\?\.kind === 'issue'/);
-  const open = view.slice(view.indexOf('    const topic = AppView._devTopic;\n    if (topic) topic.rowFresh = false;'));
+  // #6604: the page no longer reloads the board behind a thread. A paint
+  // from the older list row marks itself (`paint(false)`), and the page's
+  // own single-item read frees it when that read lands.
+  const open = view.slice(view.indexOf('    const paint = (fresh) => {'));
   assert.ok(open.length > 0, 'openTopic marks a paint from the lists');
-  assert.match(open.slice(0, 1600), /if \(topic\) topic\.rowFresh = true;\s*AppView\._fetchTopicItem\(ref\)/,
+  assert.match(open, /if \(AppView\._boardListsCurrent\(\) && AppView\._findTopicItem\(\)\) paint\(false\);/,
+    'a row the board read before paints without its own read');
+  assert.match(open.slice(0, 1600), /if \(shown\) shown\.rowFresh = !!fresh;/,
+    'the paint says whether its row was read for this page');
+  assert.match(open, /Promise\.resolve\(AppView\._fetchTopicItem\(ref\)\)\.then\(\(row\) => \{[\s\S]*?if \(shown\) shown\.rowFresh = true;\s*AppView\._renderTopicHead\(\);/,
     'a page drawn from its own read is fresh');
-  assert.match(open.slice(0, 2400), /const held = !!topic && topic\.rowFresh === false;\s*if \(topic\) topic\.rowFresh = true;/,
-    'the board\'s reload frees it, failed or not');
 });
 
 // ── #13: the Workshop overview ──────────────────────────────────────────

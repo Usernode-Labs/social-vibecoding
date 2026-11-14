@@ -80,19 +80,28 @@ export interface GuestOverview {
 }
 
 /**
- * New accounts start on the waitlist: one made from these pages has no
- * platform access until it is let in (src/services/email-signup.js
- * isWaitlisted), and nothing on the server switches that off for everyone.
- * The guest pages say so where somebody is about to make one: the hero's
- * button ("Join the waitlist") and the sheets for taking part on a
- * project's page. One switch for both, so the day
- * Homeroom lets everyone in (Evan: about four weeks from 21 Oct 2026) is
- * this line.
+ * New accounts start on the waitlist unless an admin switched it off (Admin ›
+ * Waitlist, #6633): one made from these pages has no platform access until
+ * it is let in (src/services/email-signup.js isWaitlisted). The guest pages
+ * say so where somebody is about to make one: the hero's button ("Join the
+ * waitlist") and the sheets for taking part on a project's page.
+ *
+ * This is what they say until the server has answered: the prerendered
+ * document and the first paint carry the waitlist's words, so nothing
+ * flickers for the usual case and hydration matches. `newAccountsWait` is
+ * the one reader: the public options' `waitlist_enabled`, and this until
+ * they arrive.
  */
 export const NEW_ACCOUNTS_WAIT = true;
 
+/** Whether a new account waits: only the options' `waitlist_enabled: false` says no. */
+export function newAccountsWait(options: { waitlist_enabled?: boolean } | null | undefined): boolean {
+  if (options && options.waitlist_enabled === false) return false;
+  return NEW_ACCOUNTS_WAIT;
+}
+
 /** The sorts Discover offers, in the order its control shows them. */
-export const SORTS = ['trending', 'new', 'built'] as const;
+export const SORTS = ['trending', 'new', 'built', 'popular'] as const;
 export type GuestSort = (typeof SORTS)[number];
 
 /**
@@ -117,18 +126,20 @@ function createdAt(app: GuestApp): number {
 }
 
 /**
- * The directory in a sort's order, and only that: Popular is the most people
- * active first, whether or not a visitor can try it. Putting the tryable
- * first (21 Oct 2026) led the list with test and diagnostic apps nobody
- * uses, above a game 42 people play (Evan's review of the live page, 21 Oct
- * 2026); what a visitor can try is Featured's job, and its cards carry Try
- * it wherever they sort. Ties keep the directory's own order.
+ * The directory in a sort's order, and only that: `'trending'` is the most
+ * people active lately first, whether or not a visitor can try it, and
+ * `'popular'` is the most members. Putting the tryable first (21 Oct 2026)
+ * led the list with test and diagnostic apps nobody uses, above a game 42
+ * people play (Evan's review of the live page, 21 Oct 2026); what a visitor
+ * can try is Featured's job, and its cards carry Try it wherever they sort.
+ * Ties keep the directory's own order.
  */
 export function sortApps(apps: readonly GuestApp[], sort: GuestSort): GuestApp[] {
   const indexed = apps.map((app, i) => ({ app, i }));
   const key = (app: GuestApp): number => {
     if (sort === 'new') return createdAt(app);
     if (sort === 'built') return buildersOf(app);
+    if (sort === 'popular') return app.member_count || 0;
     return app.active_users || 0;
   };
   indexed.sort((a, b) => key(b.app) - key(a.app) || a.i - b.i);
@@ -193,6 +204,13 @@ export const MIN_BUILDERS = 5;
  * picture it is a figure beside others, not a claim on its own.
  */
 export const MIN_PEOPLE = 5;
+
+/** A project made in the last 30 days wears "New" on its card. */
+const NEW_FOR_MS = 30 * 24 * 60 * 60 * 1000;
+export function isNew(app: GuestApp, now = Date.now()): boolean {
+  const t = app.created_at ? Date.parse(app.created_at) : NaN;
+  return Number.isFinite(t) && now - t < NEW_FOR_MS;
+}
 /** "Updated …" reaches this far back; older says nothing. */
 export const UPDATED_WITHIN_MS = 30 * 24 * 60 * 60 * 1000;
 

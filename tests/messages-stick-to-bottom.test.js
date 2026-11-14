@@ -420,7 +420,9 @@ test('B19 follow-up: a reply thread opens at its first unread reply, with the Ne
   assert.match(panel, /if \(!firstUnread \|\| !line \|\| snap\.threadFocusId \|\| snap\.route\.focusMessageId\) return;/,
     'nothing unread: it stays at its newest reply');
   // The New line, once, above that reply.
-  assert.match(panel, /const line = firstUnread && message\.id === firstUnread\s*\? <NewMessagesDivider key="unread-line" ref=\{unreadLine\} \/> : null;/);
+  // (Above the first reply drawn from there on: the one it names can be a
+  // card its plan carries, in a first version's thread, which is not drawn.)
+  assert.match(panel, /const line = firstUnread && !newLineDrawn && message\.id >= firstUnread\s*\? <NewMessagesDivider key="unread-line" ref=\{unreadLine\} \/> : null;\s+if \(line\) newLineDrawn = true;/);
   // The opening effect runs after the one that follows new replies to the bottom.
   assert.ok(panel.indexOf('el.scrollTop = el.scrollHeight;') < panel.indexOf('el.scrollTop = opening.top;'));
   // Taken from the first page, and kept through a re-read while it is open.

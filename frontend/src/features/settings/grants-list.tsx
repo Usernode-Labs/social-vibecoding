@@ -53,7 +53,7 @@ function controller(): any {
  * figure/ground, so the row is the surface and needs no border, which is also
  * what every other card on this screen does.
  */
-const ROW_CLASS = 'rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
+const ROW_CLASS = 'ui-mini rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';
 
 /*
  * #1957: the way back. A revoked row used to be the badge and nothing else —
@@ -83,6 +83,7 @@ function RevokedRow({ grant }: { grant: GrantView }) {
         </span>
         <Button
           type="button"
+          aria-label={t('settings:grants.reenableLabel', { app: grant.appName })}
           data-role="re-enable"
           layout="shrink"
           variant="compact"
@@ -117,6 +118,7 @@ function GrantRow({ grant }: { grant: GrantView }) {
               `text`, with `ring={false}` because the string carried no focus
               rule and the browser's own outline is the cue. */}
           <Input
+            aria-label={t('settings:grants.capFieldLabel', { app: grant.appName })}
             data-role="cap"
             type="number"
             min="0.01"
@@ -150,6 +152,7 @@ function GrantRow({ grant }: { grant: GrantView }) {
         */}
         <button
           type="button"
+          aria-label={t('settings:grants.revokeLabel', { app: grant.appName })}
           data-role="revoke"
           className="rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-0.5 font-medium text-red-700 dark:text-red-400 transition-colors touch-target-32"
           onClick={() => { void controller()?._onGrantRevoke?.(grant.appId, grant.appName); }}

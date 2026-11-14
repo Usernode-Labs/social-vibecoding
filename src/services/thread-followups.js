@@ -174,7 +174,9 @@ async function usernameOf(pool, userId) {
  * message in that thread; in a project's chat or a reply thread it is a
  * message in the reply thread under the ask; in a DM it is a message there.
  * Everyone but a DM rings the person's bell as any mention does.
- * Resolves the message's id, or null.
+ * Resolves the message's id, or null. A line that could not be sent throws
+ * (bot-post.js post, its row left pending), so the work that fired it is
+ * retried and tells it then.
  */
 async function deliver(pool, row, text, { deps = {} } = {}) {
   const body = saying(text);
@@ -183,10 +185,16 @@ async function deliver(pool, row, text, { deps = {} } = {}) {
   const bot = deps.bot || await dm.botAccount(pool);
   if (!bot) return null;
   if (row.place_type === 'dm') {
+    // 14 Nov 2026: in the thread it was promised in. One promised in Main
+    // Chat, before every message was in a thread, is told in Earlier chat,
+    // where what was said in Main is now.
+    const promisedIn = row.thread_root_id == null
+      ? await require('./private-threads').earlierRootFor(pool, Number(row.user_id)).catch(() => null)
+      : Number(row.thread_root_id);
     const sent = await dm.sendDm(pool, {
       bot, userId: Number(row.user_id), content: body,
       idempotencyKey: `followup:${Number(row.id)}`,
-      threadRootId: row.thread_root_id == null ? undefined : Number(row.thread_root_id),
+      threadRootId: promisedIn == null ? undefined : promisedIn,
     });
     // homeroom-bot-dm.js sendDm answers { messageId }: reading `id` alone
     // left every DM follow-up owed, so it was sent again on each pass.
@@ -200,7 +208,15 @@ async function deliver(pool, row, text, { deps = {} } = {}) {
     : row.place_type === 'session' ? { type: 'session', ref: Number(row.place_ref) }
       : { type: 'message', ref: Number(row.place_ref) };
   if (!thread.ref) return null;
-  const sent = await ws.sendBotMessage(pool, app.id, { user: bot, content: body, thread });
+  // Step 4: one post (bot-post.js), once per follow-up: an answer to the
+  // person who asked to be told.
+  const out = await require('./bot-post').post(pool, {
+    place: thread, appId: app.id, kind: 'followup_told', words: body, author: bot,
+    ...(thread.type === 'issue' ? { issueNumber: thread.ref } : {}),
+    version: `followup-${Number(row.id)}`, record: false,
+  }, { ws });
+  if (out.outcome === 'again') return out.messageId ? Number(out.messageId) : null;
+  const sent = out.outcome === 'said' ? { id: out.messageId } : null;
   if (!sent?.id) return null;
   const username = await usernameOf(pool, row.user_id);
   try {

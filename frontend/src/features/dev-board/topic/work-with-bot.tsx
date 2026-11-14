@@ -21,6 +21,8 @@ import type { ReactNode } from 'react';
 import { useMessages } from '../../../lib/i18n/react';
 import { openThreadAbout } from '../../../lib/thread-about';
 import { Button } from '@/components/ui/button';
+import { Btn, Frame } from '@/components/ui/kit';
+import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
 
 /** Whether this viewer may open a thread with the bot here: signed in, on a board they can act on. */
 function canWork(): boolean {
@@ -41,7 +43,30 @@ export function WorkWithBotButton({ slug, number, kind = 'change', voting = fals
 }): ReactNode {
   const t = useMessages('project');
   const [busy, setBusy] = useState(false);
+  // Under one of the frame's looks it is the kit's quiet small button, with
+  // the same words and the same press.
+  const frame = isFrameSkin(useLiveSkin());
   if (!slug || !number || number <= 0 || !canWork() || botAtWork) return null;
+  if (frame) {
+    const press = async () => {
+      if (busy) return;
+      setBusy(true);
+      try {
+        await openThreadAbout(slug, number, kind, { failed: t('project:topic.workWithBot.failed') });
+      } finally {
+        setBusy(false);
+      }
+    };
+    return (
+      <Frame className="fr-topicask" data-work-with-bot={number}>
+        <Btn kind="quiet" small disabled={busy} title={voting ? t('project:topic.workWithBot.suggestTitle') : t('project:topic.workWithBot.askTitle')} onClick={press}>
+          {busy
+            ? t('project:topic.workWithBot.opening')
+            : voting ? t('project:topic.workWithBot.suggest') : t('project:topic.workWithBot.ask')}
+        </Btn>
+      </Frame>
+    );
+  }
   return (
     <div className="mt-2" data-work-with-bot={number}>
       <Button

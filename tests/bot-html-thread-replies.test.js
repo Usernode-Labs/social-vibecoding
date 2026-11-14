@@ -73,8 +73,8 @@ test('the copy goes only beside the words exactly as the reply wrote them, and n
   assert.match(src, /ctx\.pendingReply = \{\n\s+text,\n\s+\.\.\.\(html \? \{ html \} : \{\}\),/);
   assert.match(src, /ctx\.reply = \{ text, suggestions, suggestionsForOthers: forOthers, \.\.\.\(html \? \{ html \} : \{\}\) \};/);
   // Its words are checked with the reply's, on both passes.
-  assert.match(src, /await claimsFor\(pool, ctx, replyHtml\.withHtmlWords\(said, shown\)\)/);
-  assert.match(src, /ctx\.checkedProblems = await claimsFor\(pool, ctx, replyHtml\.withHtmlWords\(again\?\.text \?\? finalText, again\?\.html\)\);/);
+  assert.match(src, /await claims\.checkReply\(pool, ctx, replyHtml\.withHtmlWords\(said, shown\)\)/);
+  assert.match(src, /ctx\.checkedProblems = await claims\.checkReply\(pool, ctx, replyHtml\.withHtmlWords\(again\?\.text \?\? finalText, again\?\.html\)\);/);
   // The words before anything changes them, and the copy is decided from them.
   assert.match(src, /const asWritten = finalReply\?\.text \? text : null;/);
   assert.match(src, /const html = threadReplyHtml\(\{ finalReply, text, asWritten, checkedProblems: ctx\.checkedProblems, offer: ctx\.offer \}\);/);
@@ -121,7 +121,10 @@ test('say() stores the copy on the bot\'s reply, and none under an offer', async
 test('a design thread\'s answer with no new version may come laid out; the not-drawn line never does', () => {
   const src = read('src/services/design-bot.js');
   assert.match(src, /replyCopy = replyHtml\.cleanReplyHtml\(args\.html\);\n\s+copyBeside = replyText;/);
-  assert.match(src, /const copy = !unkept && !error && replyCopy && replyText && replyText === copyBeside\n\s+&& !\(builds && saysNotBuilt\(replyHtml\.htmlWords\(replyCopy\)\)\) \? replyCopy : null;/);
+  // Its words and its copy are checked together (reply-claims.js), and a
+  // copy goes only when nothing in either was cut.
+  assert.match(src, /endProblems = await claimsIn\(replyText, replyCopy\);/);
+  assert.match(src, /const copy = !notDrawn && !error && replyCopy && replyText && replyText === copyBeside\n\s+&& !endProblems\.length \? replyCopy : null;/);
   assert.match(src, /Object\.keys\(meta\)\.length \? \{ metadata: \{ kind: 'chat', \.\.\.meta \} \} : \{\}\);/,
     'a chat answer, which the chat draws laid out (messages/bot-html.tsx botReplyHtml)');
   // A version's line keeps its words: the version card is its picture.

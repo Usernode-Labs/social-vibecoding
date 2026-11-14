@@ -412,3 +412,21 @@ export function SessionRow({
     </a>
   );
 }
+
+/**
+ * The same state for a surface that draws its own pill (the looks' Messages
+ * list, features/messages/index.tsx): the word, and which of the kit's tones
+ * says it. Waiting on you is the accent there, on others or in flight amber,
+ * settled well green, failing red; handed off has none.
+ */
+export function sessionRowState(session: SessionRowView): { label: string; kind: 'act' | 'wait' | 'ok' | 'bad' | '' } {
+  const { label } = stateOf(session);
+  if (session.busy) return { label, kind: 'wait' };
+  if (session.kind === 'task') return { label, kind: '' };
+  if (session.awaitingInput) return { label, kind: 'act' };
+  if (session.sessionStatus === 'promoted' || session.sessionStatus === 'merging') return { label, kind: 'wait' };
+  if (session.sessionStatus === 'merged') return { label, kind: 'ok' };
+  if (session.checkState === 'failing' || session.checkState === 'error') return { label, kind: 'bad' };
+  if (session.checkState === 'pending' && session.checkPhase !== 'deferred') return { label, kind: 'wait' };
+  return { label, kind: 'ok' };
+}

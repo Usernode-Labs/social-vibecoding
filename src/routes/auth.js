@@ -1,3 +1,4 @@
+const { readSessionCookie, setSessionCookie, clearSessionCookies, protectedCookieName } = require('../services/browser-session-cookies');
 const appAllowance = require('../services/app-allowance');
 const appLimit = require('../services/app-limit');
 const crypto = require('crypto');
@@ -50,6 +51,7 @@ const {
   withTransaction,
 } = require('../services/cli-auth');
 const { revokeNativeSessionCredentials } = require('../services/native-session-revocation');
+const { sessionTokenIsLive } = require('../services/web-session-auth');
 // The SAME predicate the CLI 404 gates use (routes/cli-auth.js), so the
 // capability this route advertises can never disagree with what that
 // surface actually serves.
@@ -108,7 +110,12 @@ function roleFields(isAdmin, adminReadonly) {
 // Previously this was `NODE_ENV !== 'development'`, which silently dropped the
 // cookie on any dev box reached over LAN HTTP (mobile testing) because
 // NODE_ENV was usually unset => secure=true => browser refuses cookie on HTTP.
-const SECURE_COOKIE = process.env.NODE_ENV === 'production';
+// Read per call, so the signup cookie's writer and reader always agree.
+const secureCookie = () => process.env.NODE_ENV === 'production';
+// The email code's signup continuation, spent by set-password. Secure, it is
+// `__Host-usernode_signup` (browser-session-cookies.js protectedCookieName),
+// so it is Path=/ and an app on a sibling host cannot plant one; the bare
+// name is plain-HTTP development's only, and never read in production.
 const SIGNUP_COOKIE = 'usernode_signup';
 
 // Ordinary credential exchanges may only mint a session from a signed-out
@@ -151,12 +158,7 @@ const SESSION_MINT_PATHS = [
 ];
 
 function createSessionCookie(res, token, expiresAt) {
-  res.cookie('session', token, {
-    httpOnly: true,
-    secure: SECURE_COOKIE,
-    sameSite: 'lax',
-    expires: expiresAt,
-  });
+  setSessionCookie(res, token, expiresAt);
   require('../services/browser-api-cache').setSessionCacheCookie(res, token, expiresAt);
 }
 
@@ -174,23 +176,26 @@ async function createSession(queryable, userId, req = null) {
   return { token, expiresAt };
 }
 
+function signupCookieName() {
+  return protectedCookieName(SIGNUP_COOKIE, secureCookie());
+}
+
+// The clear repeats the attributes: a browser drops a `__Host-` cookie only
+// for a Set-Cookie that is itself Secure, Path=/ and without a Domain.
+function signupCookieOptions() {
+  return { httpOnly: true, secure: secureCookie(), sameSite: 'lax', path: '/' };
+}
+
 function createSignupCookie(res, token, expiresAt) {
-  res.cookie(SIGNUP_COOKIE, token, {
-    httpOnly: true,
-    secure: SECURE_COOKIE,
-    sameSite: 'lax',
-    path: '/api/auth/otp',
-    expires: expiresAt,
-  });
+  res.cookie(signupCookieName(), token, { ...signupCookieOptions(), expires: expiresAt });
 }
 
 function clearSignupCookie(res) {
-  res.clearCookie(SIGNUP_COOKIE, {
-    httpOnly: true,
-    secure: SECURE_COOKIE,
-    sameSite: 'lax',
-    path: '/api/auth/otp',
-  });
+  res.clearCookie(signupCookieName(), signupCookieOptions());
+}
+
+function readSignupCookie(req) {
+  return req.cookies?.[signupCookieName()];
 }
 
 function authRoutes(config) {
@@ -206,16 +211,10 @@ function authRoutes(config) {
   // protocol; every current native mint call remains routed through
   // fetchSessionMint until then.
   router.post(SESSION_MINT_PATHS, async (req, res, next) => {
-    const token = req.cookies?.session;
+    const token = readSessionCookie(req);
     if (!token) return next();
     try {
-      const { rows } = await pool.query(
-        `SELECT 1 FROM sessions
-          WHERE token = $1 AND expires_at > NOW()
-          LIMIT 1`,
-        [token]
-      );
-      if (rows.length === 0) return next();
+      if (!(await sessionTokenIsLive(pool, token))) return next();
       return res.status(409).json({
         error: 'Sign out before signing in again.',
         code: 'logout_required',
@@ -542,7 +541,7 @@ function authRoutes(config) {
   router.get('/api/auth/username-available', usernameCheckLimiter, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
-      const userId = await emailSignup.pendingUsernameChoice(pool, req.cookies?.[SIGNUP_COOKIE]);
+      const userId = await emailSignup.pendingUsernameChoice(pool, readSignupCookie(req));
       if (!userId) return res.status(401).json({ error: 'Your signup session expired. Request a new code.', code: 'invalid_signup_session' });
       const check = usernames.validateUsername(typeof req.query.username === 'string' ? req.query.username : '');
       if (!check.ok) return res.json({ ok: true, available: false, error: check.error });
@@ -569,7 +568,7 @@ function authRoutes(config) {
     }
     try {
       const completed = await emailSignup.completePassword(pool, {
-        signupToken: req.cookies?.[SIGNUP_COOKIE],
+        signupToken: readSignupCookie(req),
         password,
         // The handle the set-password step asks a new account for (QA
         // 2026-09-24 Q12). Required since #3575 for an account that has
@@ -746,7 +745,7 @@ function authRoutes(config) {
   });
 
   router.post('/api/auth/logout', sameOriginBrowserOnly, async (req, res) => {
-    const token = req.cookies?.session;
+    const token = readSessionCookie(req);
     if (token) {
       try {
         await withTransaction(pool, async (client) => {
@@ -773,8 +772,7 @@ function authRoutes(config) {
         return res.status(500).json({ error: 'Internal server error' });
       }
     }
-    res.clearCookie('session');
-    res.clearCookie(require('../services/browser-api-cache').SCOPE_COOKIE, { path: '/' });
+    clearSessionCookies(res);
     res.json({ ok: true });
   });
 
@@ -1002,10 +1000,21 @@ function authRoutes(config) {
     // #3624: whether this person builds through the Homeroom bot's DM
     // (everyone with platform access). The create dialog asks for a longer
     // description when it is true. Unreadable means false.
+    // #6632: with the bot for verified accounts only, somebody let in but
+    // not verified has `homeroomBotDm` false and `homeroomBotVerify` naming
+    // the signals that count, so the screens can ask them to verify without
+    // a round trip. Null for everybody else.
     let homeroomBotDm = false;
+    let homeroomBotVerify = null;
     try {
       const settings = await require('../services/homeroom-bot').readSettings(pool);
-      homeroomBotDm = !req.user.isSynthetic && require('../services/homeroom-bot-dm').hasBot(settings, req.user);
+      const botDm = require('../services/homeroom-bot-dm');
+      if (!req.user.isSynthetic) {
+        homeroomBotDm = await botDm.botWorksFor(pool, settings, req.user);
+        if (!homeroomBotDm && botDm.hasBot({ ...settings, worksFor: 'everyone' }, req.user)) {
+          homeroomBotVerify = { signals: require('../services/homeroom-bot-verified').signalsOf(settings) };
+        }
+      }
     } catch {}
     res.json({
       user: {
@@ -1025,6 +1034,7 @@ function authRoutes(config) {
         canAdminWrite: !!req.user.canAdminWrite,
         role: !req.user.isAdmin ? 'user' : (req.user.adminReadonly ? 'view_admin' : 'admin'),
         homeroomBotDm,
+        homeroomBotVerify,
         // Derived per-user app-creation affordance. Kept for the home-screen
         // treatment; the numbers below explain that state in the create
         // dialog. A null used/remaining value means the count query was not
@@ -1054,6 +1064,9 @@ function authRoutes(config) {
         // it via the iframe JWT `locale` claim and the bridge's
         // usernode.getUserLocale().
         locale: req.user.locale ?? null,
+        // #6479: the IANA zone Settings › Language saved, or null for Auto
+        // (the device's own). Only the shell's time formatters read it.
+        timeZone: req.user.timeZone ?? null,
         // Platform-access gate (onboarding flow alignment). FALSE means
         // the account is waiting to be released off the platform
         // waitlist — the waiting room polls this to know when to let
@@ -1446,7 +1459,7 @@ function authRoutes(config) {
   // which signs that phone out and stops its notifications. Only the
   // signed-in account's own phones: any other id is a 404.
   async function currentNativeCredential(req) {
-    const token = req.cookies?.session;
+    const token = readSessionCookie(req);
     if (!token) return null;
     const { rows } = await pool.query(
       'SELECT native_session_credential_reference FROM sessions WHERE token = $1 AND user_id = $2',
@@ -1494,7 +1507,7 @@ function authRoutes(config) {
     res.set('Cache-Control', 'private, no-store');
     try {
       const browsers = await linkedBrowsers.listLinkedBrowsers(pool, req.user.id, {
-        currentToken: req.cookies?.session || null,
+        currentToken: readSessionCookie(req) || null,
       });
       res.json({ browsers });
     } catch (err) {
@@ -1508,15 +1521,14 @@ function authRoutes(config) {
     const sessionId = req.params.id;
     if (!linkedBrowsers.isBrowserSessionId(sessionId)) return res.status(404).json({ error: 'Not found' });
     try {
-      const currentToken = req.cookies?.session || null;
+      const currentToken = readSessionCookie(req) || null;
       const { signedOut, current } = await linkedBrowsers.signOutBrowser(pool, req.user.id, sessionId, { currentToken });
       if (!signedOut) return res.status(404).json({ error: 'Not found' });
       log.info('settings', 'Browser session signed out', { userId: req.user.id, current });
       // The browser in your hands was signed out with it: drop its cookies
       // as /api/auth/logout does, so the page it reloads to is signed out.
       if (current) {
-        res.clearCookie('session');
-        res.clearCookie(require('../services/browser-api-cache').SCOPE_COOKIE, { path: '/' });
+        clearSessionCookies(res);
       }
       res.json({ ok: true, current });
     } catch (err) {
@@ -1567,6 +1579,48 @@ function authRoutes(config) {
       res.json({ ok: true, locale: normalized });
     } catch (err) {
       log.error('settings', 'Failed to save locale preference', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The time zone a person's times are shown in (request #6479), beside the
+  // language in Settings › Language and saved the same way, on change. Body
+  // { timeZone: string | null }: null (or "") clears it back to "Auto: use
+  // device time zone". Anything else must be a zone this server's Intl knows,
+  // and is stored under the name Intl resolves it to ("asia/tokyo" →
+  // "Asia/Tokyo"). Read back through /api/auth/me.
+  router.post('/api/me/timezone', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { timeZone } = req.body || {};
+
+    let normalized = null;
+    if (timeZone !== null && timeZone !== undefined && timeZone !== '') {
+      if (typeof timeZone !== 'string') {
+        return res.status(400).json({ error: 'timeZone must be a string or null' });
+      }
+      const clean = timeZone.trim();
+      if (clean) {
+        let resolved = null;
+        if (clean.length <= 64) {
+          try {
+            resolved = new Intl.DateTimeFormat('en-US', { timeZone: clean }).resolvedOptions().timeZone || null;
+          } catch {
+            resolved = null;
+          }
+        }
+        if (!resolved) {
+          return res.status(400).json({ error: 'timeZone must be an IANA time zone (e.g. "Europe/Paris")' });
+        }
+        normalized = resolved;
+      }
+    }
+
+    try {
+      await pool.query('UPDATE users SET timezone = $1 WHERE id = $2', [normalized, req.user.id]);
+      log.info('settings', 'Time zone preference saved', { userId: req.user.id, timeZone: normalized });
+      res.json({ ok: true, timeZone: normalized });
+    } catch (err) {
+      log.error('settings', 'Failed to save time zone preference', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -2305,4 +2359,5 @@ function authRoutes(config) {
 
 // Apple and Google sign-in (routes/sign-in-providers.js) mints the same
 // session, with the same cookie, and answers with the same role fields.
-module.exports = { authRoutes, createSession, createSessionCookie, roleFields };
+module.exports = { authRoutes, createSession, createSessionCookie, roleFields,
+  createSignupCookie, clearSignupCookie, readSignupCookie };

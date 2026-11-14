@@ -1,4 +1,5 @@
 import { useEffect, useRef, type RefObject } from 'react';
+import { reducedMotion } from './reduced-motion';
 
 import { KB_OPEN_CLASS } from './keyboard-open';
 
@@ -214,7 +215,7 @@ export function attachKeyboardSurface(
     return root.classList.contains(KB_OPEN_CLASS) || root.classList.contains('un-kb');
   };
   const reduced = () => {
-    try { return !!win.matchMedia?.('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
+    return reducedMotion(win);
   };
 
   // The ride: the sheet's layout top (offsetTop: no transform counts, so a

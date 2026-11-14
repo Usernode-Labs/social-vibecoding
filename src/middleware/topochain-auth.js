@@ -1,3 +1,4 @@
+const { readSessionCookie } = require('../services/browser-session-cookies');
 // Auth middlewares for the /api/v4 (topochain) surface. Unlike
 // src/middleware/auth.js (the platform's own session gate, which redirects
 // or 401s), every middleware here is scoped to ONE of the three non-admin
@@ -57,7 +58,7 @@ function optionalSessionAuth(config) {
 
   return async (req, _res, next) => {
     try {
-      const cookieToken = req.cookies?.session;
+      const cookieToken = readSessionCookie(req);
       if (!cookieToken) return next();
 
       const { rows } = await pool.query(

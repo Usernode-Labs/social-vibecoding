@@ -456,6 +456,12 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/voted-digest').sweep(pool),
   },
   {
+    // #6643: full admins are told about a change held for their approval
+    // once it is up for a vote (services/release-holds.js).
+    name: 'release-holds', everyMs: 2 * MIN,
+    run: (_ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/release-holds').sweep(pool, { config }),
+  },
+  {
     // A person let in gets the welcome group an admin set up.
     name: 'welcome-dm', everyMs: 30 * 1000,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/welcome-dm').sweep(pool),
@@ -501,6 +507,14 @@ export const JOBS: readonly Job[] = Object.freeze([
         signupId: Number(ctx.input.input?.signupId), reminder: Number(ctx.input.input?.reminder),
       }, ctx.steps()),
     },
+  },
+  {
+    // "Let them all in" (#6633): the people who were waiting when an admin
+    // turned the waitlist off, admitted a few a beat under the release
+    // email's switch and the mail budget (services/waitlist-open.js). A
+    // stored run, so a restart carries on; nothing to do without one.
+    name: 'waitlist-admit-all', everyMs: MIN,
+    run: (_ctx: WorkContext, { config, pool }: JobDeps) => legacy('services/waitlist-open').admitAllTick(config, pool),
   },
   {
     // "Your agent is waiting on you", once its delay has passed.
@@ -663,6 +677,15 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { config }: JobDeps) => (legacy('services/application-runtime').mode(config) === 'kubernetes'
       ? legacy('services/kubernetes').reconcileAppGateIngresses(config)
       : { off: true }),
+  },
+  {
+    // Apps moving to another domain (USERNODE_LEGACY_APPS_DOMAIN,
+    // services/apps-domain-move.js): every production app Ingress still on
+    // the old domain moves to the apps domain. Previews move on their next
+    // build. Nothing to do while the setting is empty. The newest build's
+    // setting, as for the gate.
+    name: 'apps-domain-move', everyMs: 10 * MIN, newestOnly: true, leaseMs: 5 * MIN,
+    run: (_ctx: WorkContext, { config }: JobDeps) => legacy('services/apps-domain-move').run({ config }),
   },
   {
     // The translation of this build's new interface text

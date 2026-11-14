@@ -345,7 +345,14 @@ test('each place gets the tools that fit it, and nothing that acts without a tap
   assert.deepEqual(names(voice.toolsFor({ type: 'session', ref: 1 }, { ownChange: false })),
     ['reply', 'stay_quiet', 'attach_files', 'request_detail', 'read_message', 'list_source', 'read_source', 'show_change', 'list_change_files'], 'somebody else\'s change: answer only');
   assert.deepEqual(names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: false })),
-    ['reply', 'stay_quiet', 'attach_files', 'tell_me_when', 'start_request', 'offer_close_request', 'offer_copy_request', 'request_detail', 'read_message', 'list_source', 'read_source', 'show_change', 'list_change_files']);
+    ['reply', 'stay_quiet', 'attach_files', 'tell_me_when', 'start_request', 'ask_changed', 'offer_close_request', 'offer_copy_request', 'request_detail', 'read_message', 'list_source', 'read_source', 'show_change', 'list_change_files']);
+  // Step 5: a comment reads the request again only through ask_changed, so
+  // it is offered where nothing else takes a change to the ask: not with
+  // the bot's change up (update_change), nor under a plan waiting (change_plan).
+  assert.ok(!names(voice.toolsFor({ type: 'issue', ref: 1 }, { requestChange: true })).includes('ask_changed'));
+  for (const type of ['session', 'chat', 'message']) {
+    assert.ok(!names(voice.toolsFor({ type, ref: 1 }, {})).includes('ask_changed'), type);
+  }
   // #6534: pictures it makes itself are offered where the asker may pay for them.
   assert.ok(names(voice.toolsFor({ type: 'issue', ref: 1 }, { picturesAllowed: true })).includes('make_pictures'));
   assert.ok(!names(voice.toolsFor({ type: 'chat', ref: null }, { picturesAllowed: true })).includes('make_pictures'),
@@ -503,30 +510,36 @@ test('#6384: a request\'s thread reads a posted plan by the version it is asked 
 });
 
 test('#6263: a reply never says what a description contains unless it read it this turn', () => {
+  // The shared reply check's unread_description claim (reply-claims.js),
+  // held to the changes the voice's turn read (ctx.readChanges).
+  const claims = require('../src/services/reply-claims');
+  const kinds = (text, readChanges) => claims.check(claims.mentions(text), { turn: { readChanges } }).map((p) => p.kind);
   const said = 'That\'s the earlier wording, from before the update.';
-  assert.deepEqual(voice.unreadDescriptionClaims(said, { readChanges: new Set() }),
-    [{ kind: 'unread_description', said: 'describes what a change\'s description says without reading it in this turn' }]);
-  assert.deepEqual(voice.unreadDescriptionClaims('The description says it adds a toggle.', { readChanges: new Set() }).map((p) => p.kind),
-    ['unread_description']);
-  assert.deepEqual(voice.unreadDescriptionClaims(said, { readChanges: new Set([7]) }), [],
-    'it read the change this turn, so quoting it is allowed');
-  assert.deepEqual(voice.unreadDescriptionClaims('Done: the header is blue now.', { readChanges: new Set() }), []);
-  assert.equal(voice.stripUnreadClaims(`It says a lot. ${said}`, [{ kind: 'unread_description' }]), 'It says a lot.');
+  assert.deepEqual(kinds(said, new Set()), ['unread_description']);
+  assert.deepEqual(claims.check(claims.mentions(said), { turn: { readChanges: new Set() } })[0].said,
+    'describes what a change\'s description says without reading it in this turn');
+  assert.deepEqual(kinds('The description says it adds a toggle.', new Set()), ['unread_description']);
+  assert.deepEqual(kinds(said, new Set([7])), [], 'it read the change this turn, so quoting it is allowed');
+  assert.deepEqual(kinds('Done: the header is blue now.', new Set()), []);
+  assert.deepEqual(kinds(said, undefined), [], 'a surface that does not track its reads is not held to them');
+  assert.equal(claims.cut(`It says a lot. ${said}`, [{ kind: 'unread_description' }]), 'It says a lot.');
+  const note = claims.repairNote([{ kind: 'unread_description', said: 'x' }], { tools: new Set(['reply', 'get_change']) });
+  assert.match(note, /You described a change's description without reading it in this reply\. Read it with get_change, or say you cannot see it\./);
 });
 
 test('#6376: the thread voice keeps a sentence about Monday', async () => {
-  const mayor = require('../src/services/homeroom-bot-mayor');
+  const claims = require('../src/services/reply-claims');
   const text = 'I tried to start it, and it did not start: the building time for this week is used up. It will start this request on Monday when it resets.';
-  const problems = await mayor.claimProblems({ query: async () => ({ rows: [] }) }, { user: { id: 1 }, appIds: new Set(), offer: null }, text);
+  const problems = await claims.checkReply({ query: async () => ({ rows: [] }) }, { user: { id: 1 }, appIds: new Set(), offer: null }, text);
   assert.deepEqual(problems, [], 'Monday is a day, not a project');
-  assert.equal(voice.stripUnreadClaims(mayor.stripClaims(text, problems), problems), text);
-  // A made-up project is still cut; the sentence about when it starts stays.
+  assert.equal(claims.cut(text, problems), text);
+  // A made-up project is still cut; the sentence about when it starts stays,
+  // and nothing is said in the cut one's place.
   const madeUp = 'The draft for Community Components is ready. It will start this request on Monday when it resets.';
-  const found = await mayor.claimProblems({ query: async () => ({ rows: [] }) },
+  const found = await claims.checkReply({ query: async () => ({ rows: [] }) },
     { user: { id: 1 }, appIds: new Set(), offer: null, knownProjects: new Set(['community tier lists']) }, madeUp);
   assert.deepEqual(found.map((p) => p.kind), ['unknown_project']);
-  assert.equal(voice.stripUnreadClaims(mayor.stripClaims(madeUp, found), found),
-    'It will start this request on Monday when it resets.\n\n(I can\'t find a project called "Community Components".)');
+  assert.equal(claims.cut(madeUp, found), 'It will start this request on Monday when it resets.');
 });
 
 test('the prompt says where it is, lists only what it can do, and holds it to what it did', () => {
@@ -549,6 +562,10 @@ test('the prompt says where it is, lists only what it can do, and holds it to wh
   assert.match(prompt, /the limit is\s+yours/);
   assert.match(prompt, /Read one message of this thread in full \(read_message\)\./);
   assert.match(prompt, /Today is 2026-10-10/);
+  // #6670: a reworked draft is the whole request, never a note against an earlier one.
+  assert.match(prompt, /Write it as a request in its own right/);
+  const offer = tools.find((t) => t.function.name === 'offer_request').function;
+  assert.match(offer.parameters.properties.details.description, /replaces or revises an earlier draft/);
   assert.doesNotMatch(prompt, /—/, 'no em dashes in what it is told either');
 });
 
@@ -561,6 +578,54 @@ test('a transcript line says who wrote it, what it replied to, and the bot as "y
   assert.match(voice.transcriptLine({ id: 6, user_id: 1, content: 'Done', msg_type: 'message', created_at: at, metadata: {} }, 1), /you \(Homeroom bot\): Done/);
   assert.match(voice.transcriptLine({ id: 7, user_id: 2, username: 'evan', content: 'thanks', msg_type: 'message', created_at: at, metadata: { quote: { refMsgId: 6, author: 'homeroom_bot', snippet: 'Done' } } }, 1),
     /replying to #6 by @homeroom_bot: "Done"/);
+});
+
+test('a transcript line ends with Homeroom\'s notes on what its writer attached', () => {
+  const at = new Date('2026-11-13T12:30:00Z');
+  const row = { id: 5, user_id: 2, username: 'evan', msg_type: 'message', created_at: at, metadata: {} };
+  const note = '[Homeroom: they attached the picture desktop.png, shown below.]';
+  assert.equal(voice.transcriptLine({ ...row, content: 'It looks like this on desktop.' }, 1, { attached: [note] }),
+    `#5 [2026-11-13] @evan: It looks like this on desktop. ${note}`);
+  // A picture sent with no words is still a line of its own.
+  assert.equal(voice.transcriptLine({ ...row, content: '' }, 1, { attached: [note] }), `#5 [2026-11-13] @evan: ${note}`);
+  assert.equal(voice.transcriptLine({ ...row, content: 'no files' }, 1, { attached: undefined }), '#5 [2026-11-13] @evan: no files');
+});
+
+test('which attached pictures a turn sends, and what a file\'s line says, are the bot\'s own chat\'s rule', () => {
+  const mayor = require('../src/services/homeroom-bot-mayor');
+  const { turnImageBudget, MAX_TURN_IMAGES } = require('../src/services/mayor/mcp-shim');
+  const file = (id, message, kind = 'image') => ({ id, message_id: message, kind, filename: `${id}.png` });
+  const files = [file('a', 10), file('b', 11), file('c', 12, 'markdown'), file('d', 13), file('e', 14)];
+  const theirs = [10, 11, 12, 13, 14];
+  // A text-only model is sent none.
+  assert.deepEqual(mayor.picturesToSend(files, { theirs, always: [11], imageInput: false }), []);
+  // The bot's own chat: the people's newest two messages, newest first.
+  assert.deepEqual(mayor.picturesToSend(files, { theirs, imageInput: true }).map((f) => f.id), ['e', 'd']);
+  // A project's thread: the message it answers first, wherever it sits, then those.
+  assert.deepEqual(mayor.picturesToSend(files, { theirs, always: [11], imageInput: true }).map((f) => f.id), ['b', 'e', 'd']);
+  // Never a file that is not a picture, and never more than the turn's allowance.
+  assert.deepEqual(mayor.picturesToSend(files, { theirs, always: [12], imageInput: true }).map((f) => f.id), ['e', 'd']);
+  const many = Array.from({ length: 9 }, (_, i) => file(`p${i}`, 14));
+  assert.equal(mayor.picturesToSend(many, { theirs, imageInput: true, takeImages: turnImageBudget() }).length, MAX_TURN_IMAGES);
+  assert.equal(mayor.picturesToSend([file('a', 10), ...many], { theirs, always: [10], imageInput: true, takeImages: turnImageBudget() })[0].id, 'a',
+    'the allowance goes to the answered message first');
+
+  const shot = { id: 'f1', kind: 'image', filename: 'desktop.png' };
+  assert.equal(mayor.attachedLine(shot, { picture: { mimeType: 'image/png', data: 'AAAA' }, imageInput: true, withId: false }),
+    '[Homeroom: they attached the picture desktop.png, shown below.]');
+  assert.equal(mayor.attachedLine(shot, { imageInput: false, withId: false }),
+    '[Homeroom: they attached the picture desktop.png, which you cannot see: your model reads text only.]');
+  assert.equal(mayor.attachedLine(shot, { imageInput: true, withId: false }),
+    '[Homeroom: they attached the picture desktop.png. Only the newest pictures are shown.]');
+  assert.equal(mayor.attachedLine({ id: 'f2', kind: 'markdown', filename: 'notes.md' }, { imageInput: true, withId: false }),
+    '[Homeroom: they attached the file notes.md, which you cannot open.]');
+  // #6251: in its own chat the id stays on the line.
+  assert.equal(mayor.attachedLine(shot, { imageInput: false }),
+    '[Homeroom: they attached the picture desktop.png (id f1), which you cannot see: your model reads text only.]');
+  // The thread's prompt says what such a note is, and never to deny the picture.
+  const prompt = voice.systemPrompt({ app: { name: 'Maps' }, place: { type: 'issue', ref: 1 }, tools: [] });
+  assert.match(prompt, /A note in \[Homeroom: \.\.\.\] at the end of a message says what its writer attached to it\./);
+  assert.match(prompt, /Never say that no picture or file came through/);
 });
 
 test('#6406: a change is named the way the screen does, never by its internal id', () => {
@@ -733,26 +798,108 @@ test('the DM, a chat\'s fix and a No vote\'s line become asks, and a merge drops
   assert.match(merged.slice(0, 500), /\.dropAsks\(pool, session\.id, \{ strict: !!deps\.strict \}\)/, 'strict in the bot-change machine\'s durable work');
 });
 
+// ── Step 5 (11 Nov 2026): a comment that does not change the ask ─────────
+
+test('step 5: ask_changed owes the request a read as changed:voice, only where a read would come of it', async () => {
+  const owed = [];
+  const ctxOf = ({ open = null, pending = false, settings = { mode: 'live' }, looking = false } = {}) => ({
+    app: { id: 3, slug: 'todo', name: 'Todo' }, place: { type: 'issue', ref: 12 }, user: { id: 9, username: 'ada' },
+    bot: { id: 77 }, settings, triggerMessage: { id: 501, created_at: '2026-11-11T10:00:00Z' }, reads: 0,
+    deps: {
+      replies: { async botOwedAndWait(p) { owed.push(p); return { queued: !looking, looking, jobKey: null }; } },
+      liveSvc: { isLiveFor: (s) => s?.mode !== 'off', async openBotProposal() { return open; } },
+      mayor: { async pendingBuild() { return pending; } },
+    },
+  });
+  const ctx = ctxOf();
+  const out = await voice.runTool({}, ctx, 'ask_changed', { what: '  The footer\n should be blue too. ' });
+  assert.equal(out.ok, true);
+  assert.match(out.queued, /^You read this request again soon/);
+  assert.match(out.queued, /Never say what that read will decide/);
+  assert.deepEqual(owed, [{
+    appId: 3, issueNumber: 12, reason: 'changed', priority: 2, changedBy: 'voice',
+    threadSeenAt: '2026-11-11T10:00:00.000Z', key: 'voice-ask:3:12:501', source: 'voice',
+  }], 'a change the voice judged, keyed by the message it judged');
+  assert.equal(ctx.askedChange, 'The footer should be blue too.');
+  assert.equal(ctx.started, 'Todo', 'a read queued is a start, which backs saying it will be read');
+  assert.match((await voice.runTool({}, ctx, 'ask_changed', { what: 'and the header' })).error, /^One start per turn/);
+  assert.equal(owed.length, 1);
+  assert.match((await voice.runTool({}, ctxOf({ looking: true }), 'ask_changed', { what: 'blue footer' })).queued,
+    /^You are reading this request now/, 'a read under way reads it');
+  assert.match((await voice.runTool({}, ctxOf(), 'ask_changed', { what: '' })).error, /one line/);
+  owed.length = 0;
+  for (const [over, said] of [
+    [{ settings: { mode: 'off' } }, /not reading Todo's requests right now/],
+    [{ settings: { mode: 'live', pausedApps: ['todo'] } }, /not reading Todo's requests right now/],
+    [{ open: { id: 5, status: 'promoted' } }, /up for a vote, so what changed is a change to that \(update_change\)/],
+    [{ open: { id: 5, status: 'merging' } }, /being merged/],
+    [{ pending: true }, /build is already on its way/],
+  ]) {
+    const refused = await voice.runTool({}, ctxOf(over), 'ask_changed', { what: 'blue footer' });
+    assert.equal(refused.ok, false);
+    assert.match(refused.error, said);
+    assert.match(refused.error, /Nothing was queued\.$/);
+  }
+  assert.deepEqual(owed, [], 'nothing owed where no read would come of it');
+  assert.deepEqual(await voice.runTool({}, { ...ctxOf(), place: { type: 'session', ref: 1 } }, 'ask_changed', { what: 'x' }), { error: 'Not here.' });
+});
+
+test('step 5: the voice is told a question, a status check or thanks gets a reply only', () => {
+  const tools = voice.toolsFor({ type: 'issue', ref: 3 }, {});
+  const ask = tools.find((t) => t.function.name === 'ask_changed');
+  assert.deepEqual(ask.function.parameters.required, ['what']);
+  const prompt = voice.systemPrompt({ app: { slug: 'papote', name: 'Papote' }, place: { type: 'issue', ref: 3 }, tools });
+  assert.match(prompt, /When somebody changes what this request asks for \(something added, dropped or done differently\), call ask_changed with what changed in one line/);
+  assert.match(prompt, /A question, a status check or thanks gets a reply only: never ask_changed for those\./);
+  assert.doesNotMatch(voice.systemPrompt({
+    app: { slug: 'papote' }, place: { type: 'issue', ref: 3 }, tools: voice.toolsFor({ type: 'issue', ref: 3 }, { requestChange: true }),
+  }), /ask_changed/);
+  const profiles = require('../src/services/bot-profiles');
+  assert.ok(profiles.profileOf('request').tools.includes('ask_changed'));
+  assert.ok(!profiles.profileOf('change').tools.includes('ask_changed'));
+});
+
+test('step 5: a turn keeps the messages it judged, unless it could not answer them', () => {
+  const record = { addressedIds: [41, 42], tools: ['reply'] };
+  assert.deepEqual(voice.judgedIds(record, 'replied'), [41, 42]);
+  assert.deepEqual(voice.judgedIds(record, 'quiet'), [41, 42], 'it chose to say nothing');
+  assert.deepEqual(voice.judgedIds(record, 'fallback'), [], 'it could not answer: not judged');
+  assert.deepEqual(voice.judgedIds(record, 'failed'), []);
+  assert.deepEqual(voice.judgedIds({ addressedIds: [43], tools: ['ask_changed'] }, 'fallback'), [43],
+    'a read it asked for was asked, whatever came of its reply');
+  assert.deepEqual(voice.judgedIds({}, 'replied'), []);
+  const src = read('src/services/homeroom-bot-voice.js');
+  assert.match(src, /failures = \$12, speaker_id = COALESCE\(\$13, speaker_id\), addressed_ids = \$14/);
+  assert.match(src, /record\.addressedIds = judgedIds\(record, outcome\);/);
+  // What it judges is set only once a turn will answer: never for the sorry
+  // line, nor for a place that has had its turns this hour.
+  const turn = src.slice(src.indexOf('async function runTurn('), src.indexOf('// What a turn says when it could not answer at all'));
+  assert.ok(turn.indexOf('record.addressedIds = addressed.map') > turn.indexOf("record.error = 'busy_place'"));
+  assert.ok(turn.indexOf('record.addressedIds = addressed.map') < turn.indexOf('const goAheadCannot = await goAheadCannotReply'));
+});
+
 test('a tap under an offer is the person\'s own, from their browser, and members only', () => {
   const routes = read('src/routes/chat.js');
   const at = routes.indexOf("router.post('/api/apps/:slug/messages/:id/bot-offer'");
   assert.ok(at > 0);
-  const route = routes.slice(at, at + 1400);
+  const route = routes.slice(at, at + 2400);
   assert.match(route, /groupChatWriteLimiter, sameOriginBrowserOnly,\s*communities\.requireAppMembership\(pool\)/);
   // #6211: an overlap note's third choice (build this one first) is accepted too.
   assert.match(route, /if \(choice !== 'yes' && choice !== 'no' && choice !== 'first'\)/);
   assert.match(route, /appAccess\.getAppForUser\(pool, req\.params\.slug, req\.user, 'collab'/);
   assert.match(route, /decideOffer\(pool, config, \{/);
+  // Step 3: the card the buttons are for, by its id.
+  assert.match(route, /app, user: req\.user, messageId: id, offerId, choice, rows,/);
 });
 
 test('the chat draws an offer\'s buttons for the person it is for, and takes them away when it is decided', () => {
   const gc = read('public/js/group-chat.js');
   assert.match(gc, /case 'chat_message_updated': \{/);
-  assert.match(gc, /botOffer: GroupChat\._botOfferView\(kind === 'message' && !deleted \? meta : null\)/);
+  assert.match(gc, /botOffer: GroupChat\._botOfferView\(kind === 'message' && !deleted \? meta : null, msg\.id\)/);
   assert.match(gc, /\/messages\/\$\{Number\(messageId\)\}\/bot-offer/);
   const tx = read('frontend/src/features/group-chat/transcript.tsx');
   assert.match(tx, /msg\.botOffer && msg\.botOffer\.forMe && msg\.botOffer\.status === 'open'/);
-  assert.match(tx, /controller\(\)\?\.decideBotOffer\?\.\(id, choice, many \? picks : undefined\)/);
+  assert.match(tx, /controller\(\)\?\.decideBotOffer\?\.\(id, choice, many \? picks : undefined, offer\.id\)/);
 });
 
 test('the voice\'s module and its tables say what they are for', () => {

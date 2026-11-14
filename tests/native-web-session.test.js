@@ -9,7 +9,7 @@ const path = require('node:path');
 const { once } = require('node:events');
 const express = require('express');
 const { restoreNativeWebSession } = require('../src/services/topochain/native-web-session');
-const { nativeWebSessionIsLive } = require('../src/services/web-session-auth');
+const { nativeWebSessionIsLive, sessionTokenIsLive } = require('../src/services/web-session-auth');
 
 const DSN = process.env.TEST_DATABASE_URL;
 const auth = { credentialReference: 'credential-a', credentialGeneration: 1,
@@ -74,6 +74,7 @@ test('native web session recovery against PostgreSQL', { skip: !DSN && 'set TEST
           'middleware/auth.js', 'middleware/topochain-auth.js',
           'routes/cli-auth.js', 'routes/status.js', 'routes/topochain/mobile.js',
           'services/topochain/native-session-protocol.js', 'services/ws.js',
+          'services/web-session-auth.js',
         ]) {
           const source = fs.readFileSync(path.join(__dirname, '../src', file), 'utf8');
           for (const match of source.matchAll(/`[^`]*\$\{nativeWebSessionIsLive\('[a-z_]+'\)\}[^`]*`/g)) {
@@ -87,7 +88,7 @@ test('native web session recovery against PostgreSQL', { skip: !DSN && 'set TEST
             await client.query(`DEALLOCATE ${name}`);
           }
         }
-        assert.equal(count, 8, 'all cookie authentication queries receive planner coverage');
+        assert.equal(count, 9, 'all cookie authentication queries receive planner coverage');
       } finally {
         await client.end();
         await admin.query(`DROP DATABASE ${name}`);
@@ -176,6 +177,29 @@ test('native web session recovery against PostgreSQL', { skip: !DSN && 'set TEST
       await pool.query("UPDATE native_session_credentials SET state='revoked'");
       assert.equal(await live(restored.sessionToken), 0);
       await assert.rejects(restore(restored.sessionToken), { status: 401 });
+    });
+    await t.test('the sign-in boundary calls live only what authentication honours (#6619)', async () => {
+      await reset();
+      const restored = await restore();
+      await pool.query("INSERT INTO sessions (token,user_id,expires_at) VALUES ('plain', 1, NOW()+INTERVAL '1 day')");
+      assert.equal(await sessionTokenIsLive(pool, restored.sessionToken), true);
+      assert.equal(await sessionTokenIsLive(pool, 'plain'), true);
+      assert.equal(await sessionTokenIsLive(pool, null), false);
+      assert.equal(await sessionTokenIsLive(pool, 'unknown'), false);
+      // Revoked native authority: every read is refused (the person is
+      // signed out), so a sign-in must not be refused as "already signed in".
+      await pool.query("UPDATE native_session_credentials SET state='revoked'");
+      assert.equal(await live(restored.sessionToken), 0);
+      assert.equal(await sessionTokenIsLive(pool, restored.sessionToken), false);
+      await pool.query("UPDATE sessions SET expires_at = NOW() - INTERVAL '1 second' WHERE token = 'plain'");
+      assert.equal(await sessionTokenIsLive(pool, 'plain'), false);
+      await pool.query("INSERT INTO sessions (token,user_id,expires_at) VALUES ('synthetic', 2, NOW()+INTERVAL '1 day')");
+      await pool.query('UPDATE users SET is_synthetic = TRUE WHERE id = 2');
+      try {
+        assert.equal(await sessionTokenIsLive(pool, 'synthetic'), false);
+      } finally {
+        await pool.query('UPDATE users SET is_synthetic = NULL WHERE id = 2');
+      }
     });
     await t.test('revocation holding the credential lock wins over an in-flight restore', async () => {
       await reset();

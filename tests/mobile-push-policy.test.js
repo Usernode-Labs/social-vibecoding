@@ -481,6 +481,11 @@ test('unexpected events alerts say how many of what, with no app (#4296)', () =>
   });
   assert.deepEqual(copy('digest:1:build_interrupted=1').title, '1 unexpected event yesterday');
   assert.equal(copy('garbage').title, 'Unexpected events');
+  // A private request (a security finding): the lock screen says only where it is.
+  assert.deepEqual(copy('private:42'), {
+    title: 'A private platform request needs a person',
+    body: 'Homeroom filed it privately: open Private requests in its Workshop',
+  });
 });
 
 test('platform limit alerts name the cap, how full it is, and the lever', () => {

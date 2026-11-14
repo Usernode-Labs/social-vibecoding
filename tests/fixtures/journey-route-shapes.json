@@ -65,6 +65,9 @@
     },
     "otherWay": {
       "people": "number"
+    },
+    "waiting": {
+      "people": "number"
     }
   },
   "firstMile": {
@@ -345,5 +348,27 @@
     },
     "sessionMinutes": "number",
     "week": "string"
+  },
+  "flows": {
+    "apps": [],
+    "counts": {
+      "apps": "number",
+      "audiences": {
+        "invited": "number",
+        "open": "number",
+        "solo": "number"
+      },
+      "inviters": "number",
+      "people": "number"
+    },
+    "cut": "object",
+    "notRecorded": {
+      "opened": {
+        "reason": "string",
+        "recorded": "boolean"
+      }
+    },
+    "opensSince": "object",
+    "people": []
   }
 }

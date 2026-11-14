@@ -207,10 +207,13 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
     // the bot's own account of it says building, not "writing the plan for
     // the build".
     assert.deepEqual([read.firstVersion.step, read.firstVersion.line], [4, 'building'], 'its build waits its turn on the build\'s step');
-    const { rightNow } = await progress.progressFor(pool, { userId: alex.id, facts: false });
+    // 11 Nov 2026: the bot's account is the request's stored work state, in
+    // the words every screen uses (homeroom-bot-mayor.js progressOf).
+    await require('./lib/work-states').settleWorkStates(pool);
+    const { rightNow } = await mayor.progressOf(pool, { userId: alex.id, settings: { mode: 'live' }, deps: { domain: null } });
     const mine = rightNow.find((e) => e.firstVersion);
     assert.ok(mine, 'the first version is in progress');
-    assert.deepEqual([mine.step, mine.stepName], [4, 'Building'], 'Step 4 of 7 · Building, in the chat (one story: the steps are named in a word)');
-    assert.doesNotMatch(String(mine.doing), /plan/);
+    assert.equal(mine.stage, 'building', 'its build, in the chat as on its page');
+    assert.doesNotMatch(String(mine.says), /plan/i);
   });
 });

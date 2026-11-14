@@ -744,8 +744,11 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     // B05 (audit 2 Nov 2026): the draft is right where the plan is, not one
     // thread away, and the plan offers no Build it while it waits.
     const { rows: [where] } = await pool.query('SELECT thread_root_id, reply_to_id FROM conversation_messages WHERE id = $1', [out.messageId]);
-    assert.equal(where.thread_root_id, null, 'the draft is not in a thread of its own');
-    assert.equal(Number(where.reply_to_id), Number(sent.messageId), 'it answers what they wrote');
+    // 14 Nov 2026: every message is in a thread. The draft is under what
+    // they wrote, in that message's thread (its own here: it was sent with
+    // none named), never in a second thread opened for the draft.
+    assert.equal(Number(where.thread_root_id), Number(sent.messageId), 'the draft answers what they wrote, under it');
+    assert.equal(where.reply_to_id, null, 'in a thread, what it answers is the line above it');
     const { rows: opened } = await pool.query(
       `SELECT 1 FROM conversation_messages WHERE conversation_id = $1 AND metadata->'homeroomBot'->>'kind' = 'opened_draft'`,
       [card.conversation_id],
@@ -878,6 +881,9 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     );
     return row.id;
   };
+  // Step 4 (11 Nov 2026): a plan's row keeps the words it was shown with;
+  // what became of it is its status (specShare.botNote), which its card draws.
+  const PLAN_SHOWN = '📋 Plan v1: Leaderboard. Nothing is built yet. Waiting for @maya to say Build it.';
   const rowOf = async (id) => (await pool.query(
     `SELECT content, metadata->'specShare'->>'botNote' AS note FROM chat_messages WHERE id = $1`, [id],
   )).rows[0];
@@ -903,7 +909,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     assert.match(after.build_note, /Approved by the person who asked for it, who said Build it under this plan and its spec:/);
     assert.deepEqual(await queued(), [], 'no new look was queued');
     // Its row on the request says it is being built (live.notePlanRows).
-    assert.deepEqual(await rowOf(row), { content: "📋 Plan v1: Leaderboard. I'm building it now.", note: 'building' });
+    assert.deepEqual(await rowOf(row), { content: PLAN_SHOWN, note: 'building' }, 'its status, never its words (step 4)');
     // Asked again while that build waits its turn: nothing new is queued, as a new look would replace it.
     const again = await mayor.startRequest(pool, ctx(maya), { project: 'chores', number: 12 });
     assert.equal(again.ok, true);
@@ -915,10 +921,15 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
   await t.test('papote #3: request_detail says the plan waits for Build it, not "building now"', async () => {
     await fresh();
     await waitingRun();
+    // 11 Nov 2026: where it stands is its standing, the row its page draws,
+    // in its requester's words to her and in everyone else's to others; a
+    // look's build says nothing of a build not under way.
+    await require('../src/services/work-state').refresh(pool, [{ appId: app.id, issueNumber: 12 }]);
     const mine = await mayor.requestDetail(pool, { user: maya, project: 'chores', number: 12, settings });
-    assert.equal(mine.recentLooks[0].build, 'not building: its plan is written and waits for them to say Build it, and nothing is built until then');
+    assert.deepEqual([mine.standing.stage, mine.standing.says, mine.standing.waitingOn], ['waiting_for_you', 'Waiting for you to OK the plan', 'them']);
+    assert.equal(mine.recentLooks[0].build, undefined, 'never "building now"');
     const theirs = await mayor.requestDetail(pool, { user: sam, project: 'chores', number: 12, settings });
-    assert.equal(theirs.recentLooks[0].build, 'not building: its plan is written and waits for @maya to say Build it, and nothing is built until then');
+    assert.deepEqual([theirs.standing.says, theirs.standing.waitingOn], ["Waiting for the plan to be OK'd", 'the person who asked for it']);
   });
 
   await t.test('papote #3: what was said to the bot under a plan is not an answer to it, and "@Homeroom bot build it" is Build it', async () => {
@@ -934,16 +945,39 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     assert.ok((await runRow(run)).live_build_waiting_at);
   });
 
-  await t.test('papote #3: the refresh reads past what people said to the bot', async () => {
-    await fresh();
-    const bots = await said(homeroomBot, 'Its plan is ready.', { ago: 40 });
-    const plain = await said(sam, 'Looks good to me', { ago: 30 });
-    await said(sam, '@homeroom_bot status?', { ago: 20 });
-    await said(maya, 'And how long?', { metadata: { quote: { refMsgId: bots.id } }, ago: 10 });
-    const seen = await bot.unaddressedActivityByIssue(pool, app.id, [12], homeroomBot.id);
-    assert.equal(new Date(seen.get(12)).getTime(), new Date(plain.created_at).getTime(),
-      'a mention of the bot and a Reply to it are left out; the rest counts');
-    assert.deepEqual(await bot.unaddressedActivityByIssue(pool, app.id, [], homeroomBot.id), new Map());
+  // Step 5 (11 Nov 2026): for every request, by what the voice recorded
+  // judging (its turns' addressed_ids), not by the mention or Reply it was
+  // guessed from.
+  await t.test('papote #3 and step 5: the refresh reads past what the voice answered, and waits for what it has yet to read', async () => {
+    const n = 13;
+    const at = (who, content, { metadata = {}, ago = 0 } = {}) => pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, thread_type, thread_ref, metadata, created_at)
+       VALUES ($1, $2, $3, 'issue', $4, $5, NOW() - make_interval(secs => $6)) RETURNING id, created_at`,
+      [app.id, who.id, content, n, JSON.stringify(metadata), ago],
+    ).then((r) => r.rows[0]);
+    const turn = (through, addressed, tools = ['reply']) => pool.query(
+      `INSERT INTO homeroom_bot_voice_turns (app_id, place_type, place_ref, place_key, through_message_id, addressed_ids, tools, outcome, finished_at)
+       VALUES ($1, 'issue', $2, $3, $4, $5, $6, 'replied', NOW())`,
+      [app.id, n, `${app.id}:issue:${n}`, through, addressed, tools],
+    );
+    const seen = async () => (await bot.unaddressedActivityByIssue(pool, app.id, [n])).get(n) || null;
+    const ms = (v) => (v ? new Date(v).getTime() : null);
+    const old = await at(sam, 'Filed this a while ago', { ago: 2 * 3600 });
+    const bots = await at(homeroomBot, 'Its plan is ready.', { ago: 40 });
+    const plain = await at(sam, 'Looks good to me', { ago: 30 });
+    const status = await at(sam, '@homeroom_bot status?', { ago: 20 });
+    const reply = await at(maya, 'And how long?', { metadata: { quote: { refMsgId: bots.id } }, ago: 10 });
+    let s = await seen();
+    assert.equal(ms(s.lastAt), ms(old.created_at), 'what the voice has yet to read waits for it; older than its window, it counts');
+    await turn(reply.id, [status.id, reply.id]);
+    s = await seen();
+    assert.deepEqual([ms(s.lastAt), s.voiceAt], [ms(plain.created_at), null],
+      'what the voice answered is left out; what nobody said to it counts, and the bot\'s own words never do');
+    const asked = await at(maya, '@homeroom_bot the leaderboard should show weekly scores too', { ago: 5 });
+    await turn(asked.id, [asked.id], ['ask_changed', 'reply']);
+    s = await seen();
+    assert.deepEqual([ms(s.lastAt), ms(s.voiceAt)], [ms(asked.created_at), ms(asked.created_at)], 'a change it judged counts, as the voice\'s');
+    assert.deepEqual(await bot.unaddressedActivityByIssue(pool, app.id, []), new Map());
   });
 
   await t.test('papote #3: change_plan plans it again with their words, and its row says a newer plan replaced it', async () => {
@@ -959,7 +993,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
       [null, false, 'skipped: somebody asked to change the plan']);
     assert.deepEqual(await queued(), [{ priority: 0, reason: 'plan_change' }], 'read again next');
     assert.equal((await planMessage(run)).meta.status, 'closed', 'a card sent before gives way');
-    assert.deepEqual(await rowOf(row), { content: '📋 Plan v1: Leaderboard. A newer plan replaced it.', note: 'replaced' });
+    assert.deepEqual(await rowOf(row), { content: PLAN_SHOWN, note: 'replaced' });
     const none = await mayor.replanRequest(pool, ctx(maya), { project: 'chores', number: 12 });
     assert.match(none.error, /^No plan of yours waits for Build it on it/);
   });
@@ -981,7 +1015,7 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     const merged = await waitingRun();
     const mergedRow = await planRow(merged);
     await bot.retireWaitingPlans(pool, { appId: app.id, issueNumber: 12, why: 'merged', deps: { ws } });
-    assert.deepEqual(await rowOf(mergedRow), { content: '📋 Plan v1: Leaderboard. It stopped waiting for Build it.', note: 'stopped' });
+    assert.deepEqual(await rowOf(mergedRow), { content: PLAN_SHOWN, note: 'stopped' });
     assert.equal(await live.notePlanRows(pool, [read, merged], 'building', { ws }), 0, 'a row no longer waiting stays as it is');
     assert.equal(await live.notePlanRows(pool, [read], 'nonsense', { ws }), 0);
   });
@@ -1000,11 +1034,11 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     const aWeek = await runWith("build_ok = FALSE, build_error = 'skipped: nobody tapped Build it within a week'");
     const stillWaiting = await planRow(await waitingRun());
     assert.equal(await backfillPlanRows(pool), 4);
-    assert.deepEqual(await rowOf(readAgain), { content: '📋 Plan v1: Leaderboard. A newer plan replaced it.', note: 'replaced' });
+    assert.deepEqual(await rowOf(readAgain), { content: PLAN_SHOWN, note: 'replaced' }, 'its words as shown');
     assert.equal((await rowOf(changed)).note, 'replaced');
-    assert.deepEqual(await rowOf(wentAhead), { content: "📋 Plan v1: Leaderboard. I'm building it now.", note: 'building' });
+    assert.deepEqual(await rowOf(wentAhead), { content: PLAN_SHOWN, note: 'building' });
     assert.equal((await rowOf(aWeek)).note, 'stopped');
-    assert.deepEqual(await rowOf(stillWaiting), { content: '📋 Plan v1: Leaderboard. Nothing is built yet. Waiting for @maya to say Build it.', note: 'waiting' });
+    assert.deepEqual(await rowOf(stillWaiting), { content: PLAN_SHOWN, note: 'waiting' });
     assert.equal(await backfillPlanRows(pool), 0, 'once');
   });
 });

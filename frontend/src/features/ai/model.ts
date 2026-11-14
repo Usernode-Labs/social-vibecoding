@@ -26,8 +26,9 @@
  * are drawn, so this module needs no i18n runtime and its tests read it bare.
  */
 
-import { lineWords, stageWords } from '../../lib/work-state';
-import type { WorkState } from '../../lib/work-state';
+import { lineWords, normalizeWorkState, stageWords, standingOfPush, waitsForPlan, withoutClosedVote } from '../../lib/work-state';
+import type { WorkState, WorkStatePush } from '../../lib/work-state';
+import { dayKeyOf } from '../../lib/time-zone';
 
 export interface AiApp {
   slug: string;
@@ -61,8 +62,17 @@ export interface AiPrivate {
   resultRef?: number | null;
   /** #6271: the day it was marked done, for Live this week (absent from an older server). */
   doneAt?: string | null;
-  /** Filed (or posted) as a request that has since finished: History's, not Needs you's. */
+  /**
+   * Filed (or posted) as a request that has since finished, or about a change
+   * that is live or closed (13 Nov 2026): History's, not Needs you's.
+   */
   resultDone?: boolean;
+  /**
+   * 14 Nov 2026: how many of its messages are new to the viewer. A thread
+   * carries its own count now that no Main Chat counts them for it. Absent
+   * from an older server, which reads as none.
+   */
+  unread?: number;
 }
 
 export interface AiThread {
@@ -209,7 +219,7 @@ function needNumber(item: NeedItem): number | null {
 
 /**
  * Pure: the number a Needs you row shows. A change for a request goes by the
- * request's, as Homeroom bot names it in Main and as the request's own rows
+ * request's, as Homeroom bot names it in its threads and as the request's own rows
  * here do (30 Oct 2026: the tab said #6032 where the bot said #6038).
  */
 function shownNumber(item: NeedItem): number | null {
@@ -237,14 +247,13 @@ export interface WorkRow {
   pill: Phrase | null;
   /** The row's second line, where it is news (whyOf): a hand-back's reason, said by its stage. */
   why?: Phrase | null;
-  /** Where the row goes: a page, or a private thread of Main. */
+  /** Where the row goes: a page, or a private thread. */
   href: string | null;
   rootId: number | null;
   /**
    * #6262: the thread whose page the row opens, where it has one (a private
-   * thread has none: Main Chat's own "N new" covers it), and how many
-   * messages in it are new. Above zero, the row draws a blue dot and a bold
-   * title.
+   * thread has none: it is known by `rootId`), and how many messages in it
+   * are new. Above zero, the row draws a blue dot and a bold title.
    */
   threadId: number | null;
   unread: number;
@@ -285,7 +294,8 @@ export function byProject<T extends { app: AiApp | null }>(rows: T[]): { app: Ai
 export function dayKey(at: string | null | undefined): string {
   const d = new Date(String(at || ''));
   if (!Number.isFinite(d.getTime())) return '';
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  // #6479: the zone picked in Settings › Language, else the device's.
+  return dayKeyOf(d);
 }
 
 /**
@@ -469,14 +479,17 @@ function waitingRow(reasons: string[]) {
 }
 
 /**
- * Pure: which hand-back a Needs you row of the bot's is, by its stage: the
+ * Pure: which hand-back a Needs you row of the bot's is, by its standing: the
  * row's key and pill. A plan waits for Build it; a decision, for a person;
  * #6306: one already there only needs closing; a stopped build, for a
- * restart; #6284: failing checks it stopped fixing, for one more try.
+ * restart; #6284: failing checks it stopped fixing, for one more try. Only a
+ * standing waiting for its requester has a why: one that is anything else
+ * (being built, say) is never "Review plan", whatever an older read said.
  */
 function needKind(work: WorkState): string {
   if (work.stage === 'stopped') return work.reason === 'fix_stopped' ? 'fix_stopped' : 'stopped';
-  if (work.why === 'plan') return 'plan';
+  if (work.stage !== 'waiting_for_you') return 'needs';
+  if (waitsForPlan(work)) return 'plan';
   if (work.why === 'already_works') return 'works';
   if (work.why === 'needs_detail') return 'detail';
   return 'decide';
@@ -683,6 +696,8 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
     // #6159: a done thread is the only one left out (the server leaves it out too).
     if (p.state === 'done') continue;
     // 5 Nov 2026: and one filed as a request that has finished: History's.
+    // 13 Nov 2026: as is one about a change that is live or closed, which
+    // was listed here and, as the change, under Live this week.
     if (p.resultDone) continue;
     const key = filedKey(p);
     if (key && filed.get(key) === p.rootId && listed.has(key)) continue;
@@ -719,9 +734,10 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       pill: null,
       href: null,
       rootId: p.rootId,
-      // A private thread is not a `threads` row: Main Chat's "N new" counts it.
+      // A private thread is not a `threads` row; its new mark is its own
+      // (14 Nov 2026: no Main Chat counts it).
       threadId: null,
-      unread: 0,
+      unread: Math.max(0, Number(p.unread) || 0),
       at: p.at || null,
     });
   }
@@ -794,6 +810,56 @@ export function upNext(needs: NeedItem[] | null, work: AiWork | null): AiThread[
     const yourVotes = (needs || []).filter((item) => item.app?.slug === row.app!.slug && holdsSlot(item)).length;
     return yourVotes ? { ...row, yourVotes } : row;
   });
+}
+
+/**
+ * Pure (11 Nov 2026): the lists with a `work_state` push applied where they
+ * hold its item, so a row says where it stands now rather than after the
+ * next read. Its request's row (or its change's own, for a change with no
+ * request) takes the standing the push carries; a row of Needs you that no
+ * longer asks its requester anything (a plan OK'd and now being built) leaves
+ * Needs you; and a Vote card of the feed whose change the push says is not
+ * open for votes (merged, merging, held, closed) leaves at once. Which list a
+ * row belongs in is the server's to say: the read that follows the push puts
+ * it there. Hands back the same lists when nothing matched.
+ */
+export function applyWorkState(
+  work: AiWork | null,
+  needs: NeedItem[] | null,
+  push: WorkStatePush,
+): { work: AiWork | null; needs: NeedItem[] | null } {
+  const standing = standingOfPush(push);
+  const state = normalizeWorkState(push.state);
+  if (!standing || !state) return { work, needs };
+  const { kind, issueNumber, sessionId } = standing;
+  const slug = push.appSlug || null;
+  const holds = (t: AiThread) => !!slug && t.app?.slug === slug && (kind === 'change'
+    ? t.kind === 'change' && !!sessionId && t.change?.id === sessionId
+    : t.kind !== 'change' && t.kind !== 'decision' && !!issueNumber && t.number === issueNumber);
+  let moved = false;
+  const take = (list: AiThread[] | undefined, group: AiThread['group']) => {
+    if (!list) return list;
+    let changed = false;
+    const out: AiThread[] = [];
+    for (const t of list) {
+      if (!holds(t)) { out.push(t); continue; }
+      changed = true;
+      // Needs you is what asks the person something: a row that asks
+      // nothing any more waits for the read to say where it went.
+      if (group === 'needs' && !t.fixYours && state.stage !== 'waiting_for_you' && state.stage !== 'stopped') continue;
+      out.push({ ...t, work: state });
+    }
+    if (changed) moved = true;
+    return changed ? out : list;
+  };
+  const nextWork = work ? {
+    ...work,
+    needs: take(work.needs, 'needs'),
+    next: take(work.next, 'next') || [],
+    waiting: take(work.waiting, 'waiting') || [],
+    live: take(work.live, 'live') || [],
+  } : work;
+  return { work: moved ? nextWork : work, needs: withoutClosedVote(needs, push) };
 }
 
 /** How long a done private thread stays under Live this week. */

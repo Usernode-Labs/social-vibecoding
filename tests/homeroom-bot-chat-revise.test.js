@@ -24,6 +24,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { settleWorkStates } = require('./lib/work-states');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -89,7 +90,11 @@ test('where a request stands, from its work state', () => {
   assert.equal(stage({ stage: 'waiting_for_you', why: 'needs_detail' }), 'person');
   assert.equal(stage({ stage: 'planning' }), 'building', 'writing the plan for its build');
   assert.equal(stage({ stage: 'planning', line: { code: 'retry_plan' } }), 'waiting');
-  assert.equal(stage({ stage: 'planning', line: { code: 'planning_with_you' } }), 'waiting');
+  // 13 Nov 2026: held for its requester's plan is a stage of its own, never
+  // the bot's line: whatever it had reached (`ready`: its build was waiting).
+  assert.equal(stage({ stage: 'planning', line: { code: 'planning_with_you' } }), 'waiting_plan');
+  assert.equal(stage({ stage: 'planning', line: { code: 'planning_with_you', ready: true } }), 'waiting_plan');
+  assert.ok(botChat.CARD_STAGES.includes('waiting_plan'));
   for (const code of ['queued', 'held_builds', 'held_waiting']) assert.equal(stage({ stage: 'building', line: { code } }), 'waiting', code);
   for (const code of [null, 'starting', 'reviewing', 'proposing', 'fixing', 'revising', 'claimed']) {
     assert.equal(stage({ stage: 'building', line: code ? { code } : null }), 'building', String(code));
@@ -97,7 +102,7 @@ test('where a request stands, from its work state', () => {
   assert.equal(stage({ stage: 'checking' }), 'checking');
   assert.equal(stage({ stage: 'checking', line: { code: 'checks_failing', failing: 2 } }), 'checking');
   assert.equal(stage({ stage: 'up_for_vote' }), 'proposed');
-  assert.equal(stage({ stage: 'up_for_vote', line: { code: 'update_queued' } }), 'checking', 'an update on its way: not to try yet');
+  assert.equal(stage({ stage: 'building', line: { code: 'update_queued' } }), 'checking', 'an update on its way: not to try yet');
   assert.equal(stage({ stage: 'going_live' }), 'approved', 'live once the app answers');
   assert.equal(stage({ stage: 'live' }), 'live');
   assert.equal(stage({ stage: 'closed' }), 'closed');
@@ -109,19 +114,26 @@ test('where a request stands, from its work state', () => {
     assert.ok(botChat.CARD_STAGES.includes(botChat.cardStageOfWork({ stage: s, line: null })), s);
   }
   assert.equal(botChat.stageOf({ kind: 'filed' }), null, 'no work state read: the card says what it said before');
-  const fix = (row) => botChat.stageOf({ kind: 'revise', session_status: 'promoted', ...row });
+  // A fix follows its change's stored work state (services/work-state.js),
+  // with what its own follow-up came to.
+  const changeRow = ({ status = 'promoted', stage = 'up_for_vote', voteOpen = stage === 'up_for_vote', update = null } = {}) => ({
+    stage, change: { status, voteOpen, update },
+  });
+  const fix = (row, change = changeRow()) => botChat.stageOf({ kind: 'revise', ...row }, { change });
   assert.equal(fix({}), 'fixing');
   assert.equal(fix({ run_id: 2, verdict: 'revise', queued: true }), 'fixing', 'a follow-up still to come');
-  assert.equal(fix({ run_id: 2, verdict: 'revise', check_state: 'running' }), 'checking');
-  assert.equal(fix({ run_id: 2, verdict: 'revise', check_state: 'passing' }), 'proposed');
+  assert.equal(fix({ run_id: 2, verdict: 'revise' }, changeRow({ update: 'queued', stage: 'building' })), 'fixing', 'an update on its way');
+  assert.equal(fix({ run_id: 2, verdict: 'revise' }, changeRow({ stage: 'checking' })), 'checking');
+  assert.equal(fix({ run_id: 2, verdict: 'revise' }), 'proposed');
   assert.equal(fix({ run_id: 2, verdict: 'question' }), 'asked');
   assert.equal(fix({ run_id: 2, verdict: 'answer' }), 'answered');
   assert.equal(fix({ run_id: 2, verdict: 'failed' }), 'stopped');
-  assert.equal(fix({ session_status: 'closed' }), 'closed');
-  assert.equal(fix({ session_status: 'merging' }), 'approved');
-  assert.equal(fix({ session_status: 'merged' }), 'approved', 'merged, not live yet');
-  assert.equal(fix({ session_status: 'merged', session_live_at: new Date() }), 'live', 'live once production runs it');
-  assert.equal(fix({ session_status: 'active' }), 'stopped', 'not up for approval, and not approved: nothing to change');
+  assert.equal(fix({}, changeRow({ status: 'closed', stage: 'closed' })), 'closed');
+  assert.equal(fix({}, changeRow({ status: 'merging', stage: 'going_live' })), 'approved');
+  assert.equal(fix({}, changeRow({ status: 'merged', stage: 'going_live' })), 'approved', 'merged, not live yet');
+  assert.equal(fix({}, changeRow({ status: 'merged', stage: 'live' })), 'live', 'live once production runs it');
+  assert.equal(botChat.stageOf({ kind: 'revise' }), null, 'no row read: the card says what it said before');
+  assert.equal(fix({}, changeRow({ status: 'active', stage: 'building' })), 'stopped', 'not up for approval, and not approved: nothing to change');
   // The room's status chip is gone (5 Nov 2026): no stage settles a chip any more.
   assert.equal(botChat.chipFor, undefined);
   for (const s of ['reading', 'proposed', 'fixing', 'asked']) assert.ok(botChat.CARD_STAGES.includes(s), s);
@@ -385,11 +397,13 @@ test('Flat 4B Chores, against the full PostgreSQL schema', { timeout: 180000 }, 
     // insert: schema.sql wf_enrol_proposal).
     await asKernel((c) => c.query(`UPDATE chat_sessions SET check_state = 'running', approval_epoch = 1 WHERE id = $1`, [first.id]));
     const sams = { id: sam.id, username: 'sam', hasPlatformAccess: true };
+    await settleWorkStates(pool);
     let mine = await botChat.myRequests(pool, { app, user: sams, deps: deps(null) });
     const fixCard = () => mine.cards.find((c) => c.messageId === fixId);
     assert.equal(fixCard().state.stage, 'checking');
     // Its checks pass: the moment (tellReady, once the bot's change machine decides) pushes her card again.
     await asKernel((c) => c.query(`UPDATE chat_sessions SET check_state = 'passing' WHERE id = $1`, [first.id]));
+    await settleWorkStates(pool);
     pushed.length = 0;
     await botChat.noteRequestStatus(pool, { appId: app.id, issueNumber: 1, status: 'ready', sessionId: first.id, deps: deps(null) });
     assert.equal((await metaOf(fixId)).botRequest, undefined, 'and still nothing on the message');

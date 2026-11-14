@@ -6,10 +6,13 @@
 // it; this reads what it lists, for one person, across every project they
 // can see:
 //
-//   private  their private threads in the chat with Homeroom bot that have
-//            gone nowhere yet: the threads they started (services/
-//            private-threads.js) and the drafts the bot opened for them, each
-//            with the project it is for, if it has one;
+//   private  their private threads in the chat with Homeroom bot: the threads
+//            they started (services/private-threads.js), the drafts the bot
+//            opened for them and (14 Nov 2026: Main Chat is gone, and every
+//            conversation there is a thread) the bot's hello, a project's
+//            first version and Earlier chat, each with the project it is
+//            for, if it has one, and how many of its messages are new to
+//            them (`unread`);
 //   threads  the public threads they are in, by the rule a thread's
 //            followers are worked out by (threads.js FOLLOWERS_SQL, read the
 //            other way round; threadsInSql): they asked for it, built a
@@ -230,6 +233,41 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
  WHERE place <= $4
  ORDER BY sort_at DESC`;
 
+// How the change a private thread is about ended, as one row (at, outcome),
+// or none while the thread is still Needs you's. Written for the two reads
+// that list private threads (PRIVATE_SQL here, HISTORY_PRIVATE_SQL in
+// ai-history.js): `p` is their private_threads row and $1 their viewer. A
+// constant, not a builder, so both reads stay ones `npm run lint:sql` checks.
+//
+// 13 Nov 2026: a thread about a request is finished with it (finishForRequest
+// in private-threads.js), but one about a change had no such rule, so a
+// change that went live was listed twice: its thread under Needs you and the
+// change under Live this week. The thread is finished with its change: merged
+// and live ('live', at the moment it went live), or closed ('closed'). The
+// change is the one the thread opens (aboutTarget: the newest session with
+// that pull request number), so a closed change that is reopened brings its
+// thread back. Read, never stored, so the threads of changes already live
+// leave too, and the change's page still opens the same thread (startAbout
+// reuses an open one).
+//
+// A thread they opened after the change ended, or wrote in since, is theirs
+// again: it stays listed, the way writing in a done thread reopens it
+// (reopenOnReply). Mark done then closes it like any other.
+const ABOUT_CHANGE_END_SQL = `SELECT ended.at, ended.outcome FROM (
+      SELECT CASE cs.status WHEN 'merged' THEN cs.live_at
+                            WHEN 'archived' THEN COALESCE(cs.archived_at, cs.last_activity_at) END AS at,
+             CASE cs.status WHEN 'merged' THEN 'live' ELSE 'closed' END AS outcome
+        FROM chat_sessions cs
+       WHERE p.about_kind = 'change' AND p.state = 'open'
+         AND cs.app_id = p.app_id AND cs.pr_number = p.about_number AND cs.is_headless = FALSE
+       ORDER BY cs.id DESC
+       LIMIT 1
+    ) ended
+    WHERE ended.at IS NOT NULL AND ended.at >= p.created_at
+      AND NOT EXISTS (SELECT 1 FROM conversation_messages w
+                       WHERE w.thread_root_id = p.root_message_id AND w.sender_id = $1
+                         AND w.deleted_at IS NULL AND w.created_at > ended.at)`;
+
 // $1 viewer, $2 the bot, $3 the most rows, $4 days a done thread stays
 // listed. A thread they started is one of their own messages in the chat
 // with the bot that has replies; a draft the bot opened is a row of
@@ -259,20 +297,25 @@ SELECT m.id AS root_id, m.content, m.created_at, p.kind, p.state, p.result_ref, 
        -- what it drafts, never by the bot's line that opened it.
        m.metadata->'homeroomBot'->>'projectIdea' AS project_idea,
        m.metadata->'homeroomBot'->>'draftTitle' AS draft_title,
+       -- 14 Nov 2026: a first version's thread is named by its project, the
+       -- one its first message names when the project itself is gone.
+       m.metadata->'homeroomBot'->>'appName' AS root_app_name,
        (SELECT MAX(r.created_at) FROM conversation_messages r
          WHERE r.thread_root_id = m.id AND r.deleted_at IS NULL) AS last_at,
        -- Filed (or posted) as a request that has finished: live for longer
        -- than Live this week keeps it, or closed with nothing merged. It is
        -- History's then (services/ai-history.js reads it by the same rule),
-       -- not a Needs you row with nothing left to do.
-       (p.state IN ('filed', 'posted') AND p.result_ref > 0 AND (
+       -- not a Needs you row with nothing left to do. Or about a change
+       -- that is live or closed (ABOUT_CHANGE_END_SQL), which is History's too.
+       (EXISTS (${ABOUT_CHANGE_END_SQL})
+        OR (p.state IN ('filed', 'posted') AND p.result_ref > 0 AND (
           EXISTS (SELECT 1 FROM chat_sessions cs
                    WHERE cs.app_id = p.app_id AND p.result_ref = ANY(cs.linked_issues) AND cs.status = 'merged'
                      AND cs.live_at <= NOW() - make_interval(days => $4))
           OR EXISTS (SELECT 1 FROM requests r
                       WHERE r.app_id = p.app_id AND r.number = p.result_ref AND r.state = 'closed'
                         AND NOT EXISTS (SELECT 1 FROM chat_sessions m
-                                         WHERE m.app_id = r.app_id AND r.number = ANY(m.linked_issues) AND m.status = 'merged')))) AS result_done
+                                         WHERE m.app_id = r.app_id AND r.number = ANY(m.linked_issues) AND m.status = 'merged'))))) AS result_done
   FROM conversations c
   JOIN conversation_members mine ON mine.conversation_id = c.id AND mine.user_id = $1
   JOIN conversation_members bot ON bot.conversation_id = c.id AND bot.user_id = $2
@@ -354,6 +397,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 function standing(row, viewerId, now = new Date(), botId = null, work = null, viewer = null) {
   const status = row.change_status || null;
   const theirs = row.change_user != null && Number(row.change_user) === Number(viewerId);
+  // #6667: the change Homeroom bot made, which waits on the person who asked
+  // for its request once the bot hands the fix back (workFor marks it).
+  const byBot = botId != null && row.change_user != null && Number(row.change_user) === Number(botId);
   // In progress is their own work: asked for, built, or followed.
   const own = row.own === true || theirs;
   // A decision up for the group's vote (a rename, a card picture, ...) has
@@ -363,13 +409,19 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
     const myVote = row.decision_vote === 'yes' || row.decision_vote === 'no' ? row.decision_vote : null;
     // Their vote still owed: the Needs you feed's, as a change's is.
     if (!myVote && row.decision_mine !== true) return null;
-    return { group: 'waiting', work: { stage: 'up_for_vote', why: null, reason: null, line: null, since: iso(row.created_at) },
-      at: iso(row.created_at), myVote };
+    const vote = { stage: 'up_for_vote', why: null, reason: null, line: null, since: iso(row.created_at) };
+    return { group: 'waiting', work: { ...vote, words: workState.phrasesOf(vote) }, at: iso(row.created_at), myVote };
   }
-  const state = work || fallbackState(row);
+  // 11 Nov 2026: the stored row is the one source (statesFor makes it first
+  // when it is missing); a thread with none to read is not listed.
+  const state = work;
   if (!state) return null;
   const at = iso(state.since) || iso(row.request_at || row.created_at);
-  const stored = { stage: state.stage, why: state.why || null, reason: state.reason || null, line: state.line || null, since: at };
+  // Its words travel with it (work-state.js phrasesOf): the tab draws them.
+  const stored = {
+    stage: state.stage, why: state.why || null, reason: state.reason || null, line: state.line || null, since: at,
+    words: state.words || workState.phrasesOf(state),
+  };
   if (state.stage === 'live') {
     const liveAt = row.live_at || state.since;
     if (!liveAt || now - new Date(liveAt) > LIVE_DAYS * DAY_MS) return null;
@@ -396,15 +448,28 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   const updating = status === 'promoted' && (code === 'revising' || code === 'update_queued' || code === 'fixing');
   // #6600: its last takeover attempt failed, and nothing has checked it since.
   const botFixFailed = row.update_failed != null || code === 'bot_fix_failed';
-  const voteOwed = state.stage === 'up_for_vote' && !updating && status === 'promoted' && wouldVote;
-  // Their own change (not Homeroom bot's, whose fixes are its own) that
-  // waits on them: checks that failed, a preview that did not build, a
-  // conflict to resolve (THREADS_SQL needs_fix). Needs you, with Fix it,
-  // not Waiting under "Checks failing", which it would wait in forever. The
-  // stage stays the change's own; that it is theirs to fix is the viewer's.
-  // #6600: after Homeroom bot's own attempt failed it says that instead.
+  // Owed only while its change is open for votes (work_states.vote_open).
+  const voteOwed = (state.voteOpen ?? state.stage === 'up_for_vote') && !updating && status === 'promoted' && wouldVote;
+  // Their own change that waits on them: checks that failed, a preview that
+  // did not build, a conflict to resolve (THREADS_SQL needs_fix). Needs you,
+  // with Fix it, not Waiting under "Checks failing", which it would wait in
+  // forever. The stage stays the change's own; that it is theirs to fix is
+  // the viewer's. #6600: after Homeroom bot's own attempt failed it says
+  // that instead. A change Homeroom bot made is not theirs to fix while the
+  // bot is still working; once it hands the fix back, the request's asker
+  // gets it (below).
   if (status === 'promoted' && theirs && row.needs_fix === true && !updating && state.stage !== 'building') {
     return { group: 'needs', work: stored, at: iso(row.last_activity_at || row.promoted_at) || at, fixYours: true, ...(botFixFailed ? { botFixFailed: true } : {}) };
+  }
+  // #6667: Homeroom bot built the change and gave up fixing it, and the
+  // viewer asked for its request. Waiting under "Checking" looked like
+  // nothing was needed of them, but nothing moves until a person steps in.
+  // Only once the bot is not fixing it: a running or queued fix, or one it
+  // has not looked at yet, stays where it is.
+  const asked = state.requesterId != null && Number(state.requesterId) === Number(viewerId);
+  if (status === 'promoted' && byBot && asked && row.needs_fix === true && row.bot_handed_off === true
+      && !updating && row.update_coming == null && state.stage !== 'building') {
+    return { group: 'needs', work: stored, at: iso(row.last_activity_at || row.promoted_at) || at, botFixFailed: true };
   }
   // #6402: a change still being checked asks nobody for a vote yet. Someone
   // who would have been asked, but is not its author or a follower, sees it
@@ -420,7 +485,6 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   if (!place) return null;
   const out = { group: place, work: stored, at };
   if (state.stage === 'building' && !state.line) {
-    const byBot = botId != null && row.change_user != null && Number(row.change_user) === Number(botId);
     out.by = status ? (byBot ? 'bot' : theirs ? 'you' : 'someone') : 'bot';
   }
   // Somebody pressed Claim, or is building a change of their own for it: you, or someone.
@@ -443,39 +507,6 @@ function inFlight(state) {
   return state.stage === 'checking' || state.stage === 'up_for_vote' || state.stage === 'going_live';
 }
 
-/**
- * Pure: a thread's state before its stored row exists (it is made on the
- * read, workFor; this covers a read that failed): its change's, or waiting
- * to be read. Null for a thread with neither a request nor a change.
- *
- * Waiting to be read only for a request that is open. A thread with a
- * number but no request row (an old request from before the move off
- * GitHub, never mirrored into `requests`) is not one: listing it drew a row
- * with no title, "Not started yet", that opened the project's Workshop
- * (6 Nov 2026, twelve of them under Not moving). The tab before #6359 left
- * such a thread out the same way.
- */
-function fallbackState(row) {
-  if (row.change_status) {
-    const change = workState.deriveChange({
-      status: row.change_status, check_state: row.check_state, promoted_at: row.promoted_at,
-      merged_at: row.merged_at, live_at: row.live_at, last_activity_at: row.last_activity_at,
-    });
-    // #6282: an update on its way holds the vote (work-state.js derive says
-    // the same). #6545: a queued one holds only a vote, never a change still
-    // checking (a fix waiting its turn). #6600: a running takeover says the
-    // bot is fixing its failing checks, and one that failed says so. Its
-    // clock stays the change's last activity, as an update's always has.
-    const updated = workState.withUpdate(change, { coming: row.update_coming, failed: row.update_failed });
-    if (updated !== change) return { ...updated, since: iso(row.last_activity_at || row.promoted_at) };
-    return updated;
-  }
-  if (row.request_state === 'open') {
-    return { stage: 'reading', why: null, reason: null, line: { code: 'waiting' }, since: iso(row.request_at || row.created_at) };
-  }
-  return null;
-}
-
 // In progress is soonest first: going live, then a change being fixed or
 // updated, then made, then planned, then a request being read.
 const NEXT_ORDER = { going_live: 0, checking: 1, building: 2, planning: 3, reading: 4 };
@@ -488,7 +519,8 @@ const nextRank = (t) => (t.work.stage === 'building' && t.work.line && ['fixing'
 function waitingRank(t) {
   const { stage, line } = t.work;
   const code = line && line.code;
-  if (stage === 'up_for_vote') return code === 'update_queued' ? 1 : 0;
+  if (stage === 'up_for_vote') return 0;
+  if (stage === 'building' && code === 'update_queued') return 1;
   if (stage === 'checking' || (stage === 'planning' && code !== 'retry_plan')) return 0;
   if (stage === 'planning') return 4;
   if (stage === 'building') return code === 'queued' ? 2 : 3;
@@ -562,7 +594,7 @@ function arrange(rows, viewerId, now = new Date(), botId = null, states = null, 
  * The stored work state of each thread's request (by botKey) and of each
  * change with no request (`change:<id>`), with a row made first for any
  * request that has none yet (work-state.js ensure). Empty on a read error:
- * the rows then fall back to what their change says (fallbackState).
+ * a thread with no row read is then not listed.
  */
 async function statesFor(pool, rows) {
   const states = new Map();
@@ -570,11 +602,7 @@ async function statesFor(pool, rows) {
   const changes = (rows || []).filter((r) => r.change_id && r.request_id == null).map((r) => Number(r.change_id));
   try {
     await workState.ensure(pool, requests.map((r) => ({ appId: Number(r.app_id), issueNumber: Number(r.number) })));
-    const missingChanges = changes.length ? (await pool.query(
-      `SELECT x.id FROM unnest($1::int[]) AS x(id)
-        WHERE NOT EXISTS (SELECT 1 FROM work_states ws WHERE ws.item_kind = 'change' AND ws.item_ref = x.id)`,
-      [changes])).rows.map((r) => Number(r.id)) : [];
-    if (missingChanges.length) await workState.refresh(pool, missingChanges.map((id) => ({ sessionId: id })));
+    await workState.ensureChanges(pool, changes);
     const { rows: found } = await pool.query(
       `SELECT ws.*, a.slug FROM work_states ws JOIN apps a ON a.id = ws.app_id
         WHERE (ws.item_kind = 'request' AND (ws.app_id, ws.item_ref) IN (SELECT * FROM unnest($1::int[], $2::int[])))
@@ -626,9 +654,14 @@ function shapePrivate(row) {
   // 1 Nov 2026 (C1): a thread about a request or a change by its title (its
   // number rides in `about`, and the tab draws it as a request's row is
   // drawn); a "+" thread by their first words; a design by its screen.
+  // 14 Nov 2026: Earlier chat and a project's first version by what they
+  // are ("Earlier chat", "Plant Pal, first version": private-threads.js
+  // kindTitle), never by their first words.
   const about = row.about_kind && Number(row.about_number) > 0
     ? { kind: row.about_kind, number: Number(row.about_number) } : null;
-  const named = about && row.about_title ? row.about_title
+  const byKind = require('./private-threads').kindTitle({ kind: row.kind, appName: row.name || row.root_app_name || null });
+  const named = byKind ? byKind
+    : about && row.about_title ? row.about_title
     : row.project_idea ? row.project_idea
       : row.draft_title ? row.draft_title
         : row.kind === 'ask' && row.first_own ? row.first_own
@@ -646,7 +679,8 @@ function shapePrivate(row) {
     ...(Number(row.result_ref) > 0 ? { resultRef: Number(row.result_ref) } : {}),
     // #6271: the day it was closed, for Live this week.
     ...(row.done_at ? { doneAt: iso(row.done_at) } : {}),
-    // Filed as a request that has finished: History's, not Needs you's.
+    // Filed as a request that has finished, or about a change that is live
+    // or closed: History's, not Needs you's.
     ...(row.result_done === true ? { resultDone: true } : {}),
   };
 }
@@ -672,7 +706,8 @@ function unfiledPrivate(privates, listed) {
   return (privates || []).filter((p) => {
     // #6271: a done thread is closed; it is not Needs you's, but Live's.
     if (p.state === 'done') return false;
-    // Filed as a request that has finished: History's.
+    // Filed as a request that has finished, or about a change that is live
+    // or closed: History's.
     if (p.resultDone === true) return false;
     const key = filedKey(p);
     if (!key || folded.has(key)) return true;
@@ -764,27 +799,71 @@ async function tracksFor(pool, { user, limit = 100, deps = {} }) {
 const appIdOf = (apps, slug) => Number(apps.find((a) => a.slug === slug)?.id) || 0;
 
 /**
+ * The person's private threads with Homeroom bot, as the tab lists them,
+ * each with how many of its messages are new to them (`unread`, by the
+ * thread's own cursor: private-threads.js unreadFor). 14 Nov 2026: the tab's
+ * badge is the sum over their threads that are not done (conversations.js
+ * serializeConversation reads the same predicate), so opening a thread
+ * clears its share of it.
+ */
+async function privateFor(pool, { user, deps = {} }) {
+  const dm = deps.dm || require('./homeroom-bot-dm');
+  const bot = deps.bot !== undefined ? deps.bot : await dm.botAccount(pool);
+  if (!bot) return [];
+  const { rows } = await pool.query(PRIVATE_SQL, [user.id, bot.id, PRIVATE_MAX, LIVE_DAYS]);
+  const privates = rows.map(shapePrivate);
+  const unread = await (deps.privateThreads || require('./private-threads'))
+    .unreadFor(pool, user.id, privates.map((p) => p.rootId));
+  for (const p of privates) p.unread = unread.get(p.rootId) || 0;
+  return privates;
+}
+
+/**
+ * #6667: marks the thread rows where Homeroom bot made the change, its fix
+ * was handed back to a person, and the viewer asked for its request, so
+ * `standing` moves them to Needs you. Only the viewer's own requests with a
+ * failing bot change are read (`changeBotFix`), a handful of queries at most.
+ */
+async function markBotHandedOff(pool, rows, viewerId, bot, states, deps = {}) {
+  if (!bot || bot.id == null) return;
+  const changeBotFix = deps.changeBotFix || require('./homeroom-bot-progress').changeBotFix;
+  const candidates = (rows || []).filter((row) => {
+    if (row.change_user == null || Number(row.change_user) !== Number(bot.id)) return false;
+    if (row.change_status !== 'promoted' || row.needs_fix !== true) return false;
+    const key = row.slug && row.number != null && row.request_id != null ? botKey(row.slug, row.number) : null;
+    const state = (key && states?.get(key)) || (row.change_id && states?.get(`change:${Number(row.change_id)}`)) || null;
+    return state?.requesterId != null && Number(state.requesterId) === Number(viewerId);
+  });
+  if (!candidates.length) return;
+  await Promise.all(candidates.map(async (row) => {
+    const fix = await Promise.resolve()
+      .then(() => changeBotFix(pool, row.change_id))
+      .catch(() => null);
+    if (fix?.state === 'handed_off') row.bot_handed_off = true;
+  }));
+}
+
+/**
  * Everything the AI tab's main view lists for `user` beside the Needs you
  * feed: { private, needs, next, waiting, live }.
  */
 async function workFor(pool, { user, showSelfHosted = false, deps = {} }) {
   const dm = deps.dm || require('./homeroom-bot-dm');
   const bot = deps.bot || await dm.botAccount(pool);
-  const [{ rows: threadRows }, privateRows] = await Promise.all([
+  const [{ rows: threadRows }, privates] = await Promise.all([
     pool.query(THREADS_SQL, [user.id, !!showSelfHosted, !!user.isAdmin, THREADS_MAX, LIVE_DAYS]),
-    bot ? pool.query(PRIVATE_SQL, [user.id, bot.id, PRIVATE_MAX, LIVE_DAYS]).then((r) => r.rows) : Promise.resolve([]),
+    privateFor(pool, { user, deps: { ...deps, bot: bot || null } }),
   ]);
   const [states, viewers] = await Promise.all([statesFor(pool, threadRows), viewerFacts(pool, threadRows, user.id)]);
+  await markBotHandedOff(pool, threadRows, user.id, bot, states, deps);
   const lists = arrange(threadRows, user.id, new Date(), bot ? bot.id : null, states, viewers);
   // #6262: how many messages in each listed thread are new to the viewer.
-  // Private threads are not `threads` rows and keep no cursor here: Main
-  // Chat's own "N new" covers them.
   const listed = [...lists.needs, ...lists.next, ...lists.waiting, ...lists.live];
   const unread = await (deps.threadReads || require('./thread-reads'))
     .unreadFor(pool, user.id, listed.map((t) => t.threadId));
   for (const t of listed) t.unread = unread.get(t.threadId) || 0;
   return {
-    private: privateRows.map(shapePrivate),
+    private: privates,
     ...lists,
   };
 }
@@ -822,6 +901,7 @@ function threadSays(t, slotVotes = 0) {
       ? 'Homeroom bot could not fix their own change'
       : 'their own change waits for their fix: its checks failed, its preview did not build, or it conflicts';
   }
+  if (t.botFixFailed) return 'Homeroom bot could not fix the change it made for their request';
   const work = t.work || { stage: 'reading' };
   const yours = t.group === 'needs';
   let says = workState.says(work, { yours });
@@ -943,13 +1023,14 @@ module.exports = {
   yoursOf,
   yoursOn,
   PRIVATE_SQL,
+  // Spelled out, not shorthand: scripts/check-sql.js follows it into ai-history.js.
+  ABOUT_CHANGE_END_SQL: ABOUT_CHANGE_END_SQL,
   VIEWER_SQL,
   threadsInSql,
   THREADS_MAX,
   PRIVATE_MAX,
   LIVE_DAYS,
   standing,
-  fallbackState,
   arrange,
   shapePrivate,
   filedKey,
@@ -957,6 +1038,7 @@ module.exports = {
   statesFor,
   viewerFacts,
   tracksFor,
+  privateFor,
   workFor,
   threadSays,
   listsOf,

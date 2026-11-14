@@ -300,6 +300,81 @@
       "id": "work-state-votes",
       "sha256": "35fe59fc0cc0a553f996638dfef0e6cfc949196053cf57883ca86e212abe8123",
       "schemaSha256": "5b0a205d5965ba2fd2434cc0e45865f319d27d99b640b1607f42bce395663dc7"
+    },
+    {
+      "id": "work-state-standing",
+      "sha256": "24a1d11510fd809c002d95f7a0abbd6a6ffbbb1cdf470b168cc5dcfd3560ba38",
+      "schemaSha256": "82eed2549cb6a50586885282e97d3fd0ccbee694292ba5a3e623a90b3be5e4fc"
+    },
+    {
+      "id": "bot-quieter-rereads",
+      "sha256": "64673847c891220f4327c0f71bf0210b409c01d05e8c73334a70d70143d7d8f2",
+      "schemaSha256": "f55bc2de36305ca9f00f80eb6ec90bb35dd6d44b425d2907958efa7424cd3b42"
+    },
+    {
+      "id": "bot-cards-retired",
+      "sha256": "7ed4a1b49569c9be795f7a439ed51f532392115dc85d494edaf202a624db5563",
+      "schemaSha256": "618e6025c33fa9aa37fd8b303683d4984544a8b21be5c0d75597f8e103f2a1ad"
+    },
+    {
+      "id": "bot-posts",
+      "sha256": "a2f9eb96bd1cb019c7b420f4963041a7c3a03d45b46a1f797a9623ca170e28d6",
+      "schemaSha256": "d3be46fad177b29d979708a1df21329579deb42e18dc2858797298d5459e3d64"
+    },
+    {
+      "id": "work-state-backfill-and-indexes",
+      "sha256": "33513d01944cb62b790adf11e7851ad7f41d5723b989be9aabd5b7ad4a811b93",
+      "schemaSha256": "5492b9572cb99e244e6831633b77d4fcf2a4e5f3bcaad742fddf86e8c3d62ff0"
+    },
+    {
+      "id": "bot-posts-claims",
+      "sha256": "9306ae1ef3220c20e6b4ba4e2fb204f0f73df60ebd0888e306becf9cd7d1c411",
+      "schemaSha256": "b087bda2528bee618c65b04f787a4fd73c40356fc9e9671323035297f1810104"
+    },
+    {
+      "id": "change-thread-follows-links",
+      "sha256": "0e23cc37ac0c9b8d6fa9445e6bad4b4e0e7eab0a20ed87d4a81e621f545eec98",
+      "schemaSha256": "cc1abe1a94bd3668be36679fdee60e7e1b976184d049ac21dfd3bf9121a52ac3"
+    },
+    {
+      "id": "change-request-claims-confirm",
+      "sha256": "25c5edefb2193a3337feaca7da640ef8b285b166b20b808da4dd32fda9b0c618",
+      "schemaSha256": "b9699b9462a8fa1fbf70615ec5defb83d30b7afc99d2dcf64719e97524a95022"
+    },
+    {
+      "id": "requests-filer-from-twin",
+      "sha256": "c2c7b8469376599c5b83f74a3916b4f6386f6467f555453b629f5be62b6e9542",
+      "schemaSha256": "78d3ae3f376fe9865019e30705c9c0891901250f20b4035875b5109bbadc3b8b"
+    },
+    {
+      "id": "platform-signals-private-requests",
+      "sha256": "4dd6fc1ede8187ec60ac8f649c1e8a02b1959d77df22dd85dcc91e063489e56b",
+      "schemaSha256": "3e464e042703fcc68849b9d2c20f205285398fe8d786701642990ba60b175845"
+    },
+    {
+      "id": "release-holds",
+      "sha256": "8a3cd4c3bd9da7b25c9f3efd85471c5fa9c1797c2c059e479627615ac72b7038",
+      "schemaSha256": "342b4e500204d177606226ca31d64e4a3030231959d896cfa84c82b5b8cd16b8"
+    },
+    {
+      "id": "release-hold-notices",
+      "sha256": "787953b2ba2b54988c0ef53422acf44366e98d0ebd8d4be7daf148f36e84dbc4",
+      "schemaSha256": "025a3702a827c62429e965fa3c9c9b820fa0fa7203d45f672073a7141e7126c1"
+    },
+    {
+      "id": "user-timezone",
+      "sha256": "22f84d61daba3c9e9987b4376fb64be9d83da8d8e1716c245601b868bd33d5a8",
+      "schemaSha256": "1f9e69bb624ad8113d3c51d5d5cf2b0ca9dc8690cd841506f5f1e5cb06ad0bef"
+    },
+    {
+      "id": "conversation-drafts",
+      "sha256": "bfb84fc6fbcb0d1b28422dc23384f236e7d6c79c317403953e038dc4daa00178",
+      "schemaSha256": "4d4d42c5bbff283662b84925b75e248f09099b7881985e25b3acaa79172c1a45"
+    },
+    {
+      "id": "bot-chat-threads-only",
+      "sha256": "229aab21e369f6bcaa24538bb7df2ffc9c901c35cda8e616acdda6b65408e9ec",
+      "schemaSha256": "b5893a86e58a422c5fd31e28e17279737fc7531c5f9a517921c56e3e51b96e6c"
     }
   ]
 }

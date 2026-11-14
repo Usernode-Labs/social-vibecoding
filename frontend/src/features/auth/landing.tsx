@@ -66,7 +66,7 @@ import {
   useAuthScreensPatch,
   zoomFx,
 } from './shared';
-import { DeepLinkBackdrop, type DeepLinkPlace, deepLinkPlace, deepLinkReturnTo, deepLinkTitle } from './deep-link-sign-in';
+import { DeepLinkBackdrop, type DeepLinkPlace, GatePlace, deepLinkPlace, deepLinkReturnTo, deepLinkTitle } from './deep-link-sign-in';
 import { DeadInvite, InviteJoinBar, InvitePending, inviteTokenFrom, MadeForYou, onInviteLink, useInvitePreview } from './invite-card';
 import { type ReleaseAccount, releaseAccountFromToken } from './login';
 import {
@@ -81,10 +81,9 @@ import { Story } from './story';
 import { cardCover, morph, projectHero } from '../guest/card-morph';
 import { devicePinsStore, loadDevicePins, toggleDevicePin } from '../guest/device-pins';
 import { GuestDiscover } from '../guest/guest-discover';
-import { GatedFrame } from '../guest/frame/gated-frame';
 import { LandingFrame } from '../guest/frame/landing-frame';
 import { type GuestIntent, GuestProject } from '../guest/guest-project';
-import { type GuestApp, linksToWorkshop, NEW_ACCOUNTS_WAIT, projectHash } from '../guest/guest-data';
+import { type GuestApp, linksToWorkshop, NEW_ACCOUNTS_WAIT, newAccountsWait, projectHash } from '../guest/guest-data';
 import { noteSignUpFrom } from './sign-up-from';
 import { WaitlistCard } from '../guest/waitlist-card';
 import { useWaitlistOptions, type WaitlistOptions, waitlistOptions } from './waitlist-shared';
@@ -141,15 +140,24 @@ export function useNativeSignInProviders(options: WaitlistOptions | null): SignI
 
 // The way back from a provider (routes/sign-in-providers.js) leaves its
 // outcome in a short-lived cookie the page can read, never in the URL. Read
-// once and cleared, so a reload does not reopen the sheet.
-const PROVIDER_RESULT_COOKIE = 'hr_oauth_result';
+// once and cleared, so a reload does not reopen the sheet. Over HTTPS it is
+// the `__Host-` name, which only this host can set; the bare name is
+// plain-HTTP development's, and is never read over HTTPS, where an app on a
+// sibling host could have planted it (lib/api-cache-identity.ts decides the
+// cache label's name the same way). Clearing a `__Host-` cookie takes Secure.
+const PROVIDER_RESULT_COOKIE = '__Host-hr_oauth_result';
+const DEV_PROVIDER_RESULT_COOKIE = 'hr_oauth_result';
 const PROVIDER_RESULT_RE = /^(username|error-[a-z_]{1,40})$/;
 
-export function takeProviderResult(): SignInResume | null {
-  if (typeof document === 'undefined') return null;
-  const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${PROVIDER_RESULT_COOKIE}=([^;]*)`));
+export function takeProviderResult(
+  doc: Pick<Document, 'cookie'> | undefined = typeof document !== 'undefined' ? document : undefined,
+  secure = typeof location === 'undefined' || location.protocol !== 'http:',
+): SignInResume | null {
+  if (!doc) return null;
+  const name = secure ? PROVIDER_RESULT_COOKIE : DEV_PROVIDER_RESULT_COOKIE;
+  const match = doc.cookie.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
   if (!match) return null;
-  document.cookie = `${PROVIDER_RESULT_COOKIE}=; Max-Age=0; path=/`;
+  doc.cookie = `${name}=; Max-Age=0; path=/${secure ? '; Secure' : ''}`;
   let value = '';
   try { value = decodeURIComponent(match[1]); } catch { return null; }
   return PROVIDER_RESULT_RE.test(value) ? (value as SignInResume) : null;
@@ -798,7 +806,7 @@ type Translate = (id: string, params?: Record<string, unknown>) => string;
 
 /**
  * The sign-in sheet's title for what a visitor tried to do on a project's
- * page. While new accounts wait (guest-data NEW_ACCOUNTS_WAIT), taking part
+ * page. While new accounts wait (guest-data newAccountsWait), taking part
  * asks for an account in the title: an account made now waits on the
  * waitlist, and can join, vote, ask or chat once it is let in. The title, not
  * a line under it (the sheets carry none, #4037). Try it's "Sign in to use"
@@ -879,13 +887,12 @@ export function LandingScreen() {
   const [deepLink, setDeepLink] = useState<{ target: string; place: DeepLinkPlace } | null>(null);
   // Closed without signing in: the story, under an address that says so. The
   // link stays remembered, so a sign-in from the story still lands on it.
-  // UNDER A LOOK the link has a page of its own (../guest/frame/gated-frame
-  // .tsx) and the sheet opens from its Sign in, not by itself: closing the
-  // sheet then closes the sheet, and the page stays.
-  const [gateSheet, setGateSheet] = useState(false);
-  const gateSheetUp = useRef(false);
+  // Under a look it is the same sheet over the same outline (version 2 of
+  // the looks), with the place named in the frame's bar (GatePlace below).
+  // The tab a public project's page is on, which the frame's bar names
+  // under a look (../guest/guest-project.tsx says it).
+  const [projectTab, setProjectTab] = useState<'hub' | 'workshop' | 'discussion'>('hub');
   const closeGate = useCallback(() => {
-    if (gateSheetUp.current) { setGateSheet(false); return; }
     setDeepLink(null);
     closeSheet();
     try {
@@ -994,6 +1001,9 @@ export function LandingScreen() {
   // (a hydration mismatch is a console error, and a console error on any
   // route fails the proposal checks).
   const waitlistPayload = useWaitlistOptions();
+  // Whether a new account waits (#6633): the waitlist's words until the
+  // options arrive, and after that unless an admin switched it off.
+  const accountsWait = newAccountsWait(waitlistPayload);
   const waitlistUrl = marketingWaitlistUrl(waitlistPayload);
   const siteUrl = marketingSiteUrl(waitlistPayload);
 
@@ -1058,6 +1068,8 @@ export function LandingScreen() {
   const linkedSlug = deepPlace?.kind === 'project' ? deepPlace.slug : null;
   const linkedApp = linkedSlug && apps ? apps.find((a) => a.slug === linkedSlug) ?? null : null;
   const guestProject = guestOn ? linkedApp : null;
+  const guestProjectSlug = guestProject?.slug ?? null;
+  useEffect(() => { if (!guestProjectSlug) setProjectTab('hub'); }, [guestProjectSlug]);
   // Until the directory is read, a project link is neither public nor not,
   // so neither its page nor the sheet shows yet.
   const linkPending = guestOn && !!linkedSlug && apps === null && !appsFailed;
@@ -1083,8 +1095,6 @@ export function LandingScreen() {
   // (./sign-up-from.ts): noted as it shows, in an effect, never the render.
   const gateTarget = gate?.target ?? null;
   useEffect(() => { if (gateTarget) noteSignUpFrom('link'); }, [gateTarget]);
-  gateSheetUp.current = frame && !!gate && gateSheet;
-  useEffect(() => { setGateSheet(false); }, [gateTarget]);
   const storyFront = storyOn && inApp && !linkedSlug && !discoverLink && !gate;
   // The guest pages (Discover, a project's page) and their bar.
   const guestPages = guestOn && !storyFront;
@@ -1756,6 +1766,13 @@ export function LandingScreen() {
             carrying h-7, and the lead group must stay that div.
         */}
         <div className="w-7 shrink-0 [[data-guest-top]_&]:hidden" aria-hidden="true" />
+        {/* Under a look, the place a gated link was for, for the frame's bar
+            (./deep-link-sign-in.tsx GatePlace). Never in the first render. */}
+        {frame && gate ? <GatePlace target={gate.target} /> : null}
+        {/* …and a public project's tab, after its name, when it is not the Hub. */}
+        {frame && guestPages && guestProject && projectTab !== 'hub' ? (
+          <span hidden data-guest-place="trail">{projectTab === 'workshop' ? t('auth:guest.project.tab.workshop') : t('auth:guest.project.tab.discussion')}</span>
+        ) : null}
         {/*
             THE ONE WAY IN THE BAR CARRIES (the guest Discover, 21 Oct 2026):
             a quiet "Sign in", for somebody who has an account and is looking
@@ -2270,6 +2287,7 @@ export function LandingScreen() {
               startOnWorkshop={!!deepLink && linksToWorkshop(deepLink.target)}
               signedIn={waitingGuest}
               primaryClass={PRIMARY_PILL}
+              onPlace={setProjectTab}
               onIntent={askFor}
               onOpenInside={(app) => { void live.current.openLandingApp(app); }}
               onShare={shareProject}
@@ -2279,22 +2297,13 @@ export function LandingScreen() {
           {/* The same page in the one frame, ahead of the standard one, which
               app.css puts away while this is up. An account still in line
               looks around on it too. */}
-          {frame && gate ? (
-            <GatedFrame
-              target={gate.target}
-              title={deepLinkTitle(gate.place, gateProject, (id, params) => t(id, params))}
-              waitlist={NEW_ACCOUNTS_WAIT}
-              onSignIn={() => setGateSheet(true)}
-              onStart={() => setSheet('start')}
-              onBrowse={closeGate}
-            />
-          ) : null}
           {frame && guestPages && !guestProject && !linkPending && !gate ? (
             <LandingFrame
               apps={apps}
               failed={appsFailed && !apps}
-              waitlist={NEW_ACCOUNTS_WAIT}
+              waitlist={accountsWait}
               waiting={waitingGuest ? { email: sessionEmail() } : null}
+              welcomeEmail={releaseEmail}
               onStart={() => setSheet('start')}
               onOpenInside={(app) => { void live.current.openLandingApp(app); }}
               onRetry={() => { st.appsReady = live.current.loadLandingApps(); }}
@@ -2305,7 +2314,6 @@ export function LandingScreen() {
               apps={apps}
               failed={appsFailed && !apps}
               signedIn={waitingGuest}
-              onIntent={askFor}
               onOpenInside={(app) => { void live.current.openLandingApp(app); }}
               onRetry={() => { st.appsReady = live.current.loadLandingApps(); }}
               hero={waitingGuest ? (
@@ -2315,7 +2323,7 @@ export function LandingScreen() {
                   compact
                   primaryClass={PRIMARY_PILL}
                   welcomeEmail={releaseEmail}
-                  waitlist={NEW_ACCOUNTS_WAIT}
+                  waitlist={accountsWait}
                   onStart={() => setSheet('start')}
                   onSignIn={() => setSheet('signin')}
                 />
@@ -2365,7 +2373,7 @@ export function LandingScreen() {
       {gate ? <DeepLinkBackdrop /> : null}
       {gate ? (
         <SignInSheet
-          open={!frame || gateSheet}
+          open
           title={deepLinkTitle(gate.place, gateProject, (id, params) => t(id, params))}
           providers={providers}
           native={nativeSignIn}
@@ -2388,7 +2396,7 @@ export function LandingScreen() {
       {intent ? (
         <SignInSheet
           open
-          title={intentTitle(intent, (id, params) => t(id, params))}
+          title={intentTitle(intent, (id, params) => t(id, params), accountsWait)}
           providers={providers}
           native={nativeSignIn}
           phoneLink={phoneSignIn}

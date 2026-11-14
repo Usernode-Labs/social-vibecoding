@@ -34,6 +34,9 @@ const { planRecordSql } = require('./request-specs');
 const progress = require('./homeroom-bot-progress');
 const { syncWaits, syncStand } = require('./vote-ready');
 const checksEstimate = require('./checks-estimate');
+const { firstVersionSql } = require('./first-version-rule');
+const { heldUntil } = require('../workflow/rules/bot-readiness.ts');
+const { currentVotePredicateSql } = require('../workflow/rules/vote-predicate.ts');
 
 const STAGES = Object.freeze([
   'reading', 'planning', 'waiting_for_you', 'building', 'checking',
@@ -146,14 +149,52 @@ function votesIn(row) {
   return row?.votes_in === true;
 }
 
+/**
+ * Pure (#6531, 11 Nov 2026): a change that conflicts with main where only a
+ * yes can move it (syncStand 'vote'). It is up for a vote, and so open for
+ * votes, only while it could take one, as voteReadySql reads it: its checks
+ * passed (or had nothing to test) on the head up for a vote, it is not its
+ * project's first version, and its before & after shots are not still being
+ * taken. Until then it is checking: its failing checks when they fail, else
+ * what a yes will do once it can be given. `onHead` and `held` are the
+ * caller's (a request's facts row and a change's name their columns
+ * differently).
+ */
+function yesOnlyState(row, since, { onHead, held }) {
+  const passed = row.check_state === 'passing' || row.check_state === 'skipped';
+  if (passed && onHead && row.first_version !== true && !held) {
+    return state('up_for_vote', { since, line: { code: 'conflict_on_yes' } });
+  }
+  if (row.check_state === 'failing' || row.check_state === 'error') {
+    const failing = Number(row.failed_checks ?? progress.failedCount(row.test_results)) || 0;
+    return state('checking', { since, line: { code: 'checks_failing', ...(failing ? { failing } : {}) } });
+  }
+  return state('checking', { since, line: { code: 'conflict_on_yes' } });
+}
+
+/** Pure: whether a request's facts row's shots still hold its change's vote (stageOf's own reading). */
+function requestShotsHeld(row, now) {
+  if (!row || !row.shots_detail) return false;
+  const head = (row.proposal_source === 'imported' ? row.imported_pr_head_sha : row.reviewed_head_sha) || row.checks_sha;
+  return heldUntil({
+    shots_state: row.shots_state, shots_run_id: row.shots_run_id, shots_detail: row.shots_detail,
+    shots_updated_at: row.shots_updated_at, checks_checked_at: row.checks_at,
+  }, head, now.getTime()) != null;
+}
+
+/** Pure: a request's facts row whose change waits only for a yes on a conflict (yesOnlyState). */
+function requestOnYes(row, since, now) {
+  return yesOnlyState(row, since, { onHead: progress.checksOnHead(row), held: requestShotsHeld(row, now) });
+}
+
 /** The stage word plus the two lines a checking change can carry (#6402). */
-function checkingState(row, since, now) {
+function checkingState(row, since, now, onYes = requestOnYes) {
   // #6531: what a conflicting change waits on decides where it shows and
-  // what it says. A yes-only conflict is up for a vote; one the lane is
-  // resolving says "Syncing with main"; one only its author can move keeps
-  // the old wording.
+  // what it says. A yes-only conflict is up for a vote once it could take
+  // one (yesOnlyState); one the lane is resolving says "Syncing with main";
+  // one only its author can move keeps the old wording.
   const stand = syncStand(row);
-  if (stand === 'vote') return state('up_for_vote', { since, line: { code: 'conflict_on_yes' } });
+  if (stand === 'vote') return onYes(row, since, now);
   if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
   if (stand === 'author') return state('checking', { since, line: { code: 'sync_wait' } });
   // #6594: its votes are in, so its checks are what it waits on now, not a
@@ -196,17 +237,39 @@ function fromStage(s, row, now = new Date()) {
   const since = s.since || null;
   switch (s.stage) {
     case 'reading':
-      return state('reading', { since, ...(s.reply ? { line: { code: 'reply' } } : {}) });
+      // #6228: reading a reply now, or about to (`soon`: its read is queued),
+      // which a thread's reply line reads (homeroom-bot-reply-status.js).
+      return state('reading', { since, ...(s.reply ? { line: { code: 'reply', ...(s.waiting ? { soon: true } : {}) } } : {}) });
     case 'queued':
       return s.retry === 'plan'
         ? state('planning', { since, line: { code: 'retry_plan' } })
-        : state('reading', { since, line: { code: 'queued', ...(row.queue_place ? { place: Number(row.queue_place) } : {}) } });
+        : state('reading', {
+          since,
+          line: {
+            code: 'queued',
+            ...(row.queue_place ? { place: Number(row.queue_place) } : {}),
+            // B8: somebody asked the bot for it (its page, their chat), so
+            // it is the bot's already, waiting for a free builder.
+            ...(row.queue_priority != null && Number(row.queue_priority) === 0 ? { asked: true } : {}),
+          },
+        });
     case 'on_hold':
       // #6357: a day's pause after its look threw again and again is not
-      // the week's building time (homeroom-bot-progress.js holdOf).
-      return state('reading', { since, line: { code: s.hold === 'cooldown' ? 'cooldown' : 'on_hold' } });
+      // the week's building time (homeroom-bot-progress.js holdOf). Its
+      // line says until when, so a request's track reads it off the row.
+      return state('reading', {
+        since, line: { code: s.hold === 'cooldown' ? 'cooldown' : 'on_hold', ...(iso(s.until) ? { until: iso(s.until) } : {}) },
+      });
     case 'held':
-      return state('building', { since, line: { code: row.cap_suppressed === 'builds_per_app' ? 'held_builds' : 'held_waiting' } });
+      // Its place among the project's requests held at the same limit
+      // (REQUEST_FACTS_SQL held_place), as a request's track draws it.
+      return state('building', {
+        since,
+        line: {
+          code: row.cap_suppressed === 'builds_per_app' ? 'held_builds' : 'held_waiting',
+          ...(Number(row.held_place) > 0 ? { position: Number(row.held_place) } : {}),
+        },
+      });
     case 'build_queued':
       // #5323: its place among the project's builds waiting to start, so it
       // never says a bare "waiting its turn".
@@ -241,14 +304,26 @@ function fromStage(s, row, now = new Date()) {
       return state('checking', { since, line: { code: 'checks_failing', ...(failing ? { failing } : {}) } });
     }
     case 'followup_queued':
-      return state('up_for_vote', { since, line: { code: 'update_queued' } });
-    case 'checks':
+      // 11 Nov 2026: an update on its way asks nobody for a vote (vote_open
+      // is false), so it is not up for one: the bot has it, waiting its turn.
+      return state('building', { since, line: { code: 'update_queued' } });
+    case 'checks': {
+      // An approved change GitHub holds is going live, never checking again
+      // (#6546), whatever its own checks' verdict says meanwhile.
+      const hold = githubHold(row);
+      if (hold) return state(hold.stage, { since, line: { code: hold.code } });
+      // #6528: its tests passed on its head, and its before & after shots
+      // are still being taken (stageOf's hold): it says so.
+      if (row.check_state === 'passing' || row.check_state === 'skipped') {
+        if (progress.checksOnHead(row) && !syncStand(row)) return state('checking', { since, line: { code: 'shots' } });
+      }
       return checkingState(row, since, now);
+    }
     case 'checks_failed': {
       // #6531: a conflicting head the lane is catching up (or that only a yes
       // can move) is not yet its author's failing verdict.
       const stand = syncStand(row);
-      if (stand === 'vote') return state('up_for_vote', { since, line: { code: 'conflict_on_yes' } });
+      if (stand === 'vote') return requestOnYes(row, since, now);
       if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
       const failing = Number(row.failed_checks ?? progress.failedCount(row.test_results)) || 0;
       return state('checking', { since, line: { code: 'checks_failing', ...(failing ? { failing } : {}) } });
@@ -262,7 +337,7 @@ function fromStage(s, row, now = new Date()) {
       // #6531: unless it conflicts and only a yes can move it.
       {
         const stand = syncStand(row);
-        if (stand === 'vote') return state('up_for_vote', { since, line: { code: 'conflict_on_yes' } });
+        if (stand === 'vote') return requestOnYes(row, since, now);
         if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
         if (stand === 'author') return state('checking', { since, line: { code: 'sync_wait' } });
       }
@@ -298,37 +373,6 @@ function derive(row, opts = {}) {
   return out;
 }
 
-/**
- * Pure (#6600): how an update on its way, or a takeover whose last attempt
- * failed, changes a change's state. `coming` is 'running' | 'queued' | null
- * (homeroom-bot-progress.js updateComingSql) and `failed` is why its newest
- * takeover look failed, if it did (updateFailedSql).
- *
- * A running update holds a vote and a checking change as Building, as #6282
- * did; a takeover on a change whose checks failed says "Fixing what its
- * tests found", the words a fix of the bot's own already uses. A queued one
- * holds only a vote (#6545). A takeover whose last attempt failed leaves its
- * change Checking, its line saying Homeroom bot could not fix it.
- */
-function withUpdate(change, { coming = null, failed = null } = {}) {
-  if (!change) return change;
-  const failing = change.stage === 'checking'
-    && (change.line?.code === 'checks_failing' || change.line?.code === 'github_checks_failing');
-  if (coming === 'running') {
-    if (change.stage === 'checking' || change.stage === 'up_for_vote') {
-      return state('building', { since: change.since, line: { code: failing ? 'fixing' : 'revising' } });
-    }
-    return change;
-  }
-  if (coming === 'queued' && change.stage === 'up_for_vote') {
-    return state('up_for_vote', { since: change.since, line: { code: 'update_queued' } });
-  }
-  if (!coming && failed && failing) {
-    return { ...change, line: { code: 'bot_fix_failed' } };
-  }
-  return change;
-}
-
 function deriveFacts(row, { now = new Date() } = {}) {
   const status = row.proposal_status || null;
   // Its change is live (REQUEST_RECORD_COLUMNS reads a merged change that is
@@ -338,15 +382,15 @@ function deriveFacts(row, { now = new Date() } = {}) {
   const step = progress.stageOf(row, { now });
   let out = step ? fromStage(step, row, now) : null;
   // An update on its way holds the vote it would otherwise ask for (#6282),
-  // or says the bot is fixing its failing checks (#6600). #6545: a queued one
-  // holds only a vote; a change still checking (a fix waiting its turn) stays
-  // Checking until the update starts.
+  // or says the bot is fixing its failing checks (#6600).
   if (status === 'promoted' && out) out = withUpdate(out, { coming: row.update_coming, failed: row.update_failed });
   // A private thread of the requester's holds it for their plan: nothing
   // queued overtakes that until a change is up (1 Nov 2026).
-  if (row.awaiting_plan === true && !status && (!out || out.stage === 'reading')) {
-    return state('planning', { since: row.request_at || row.run_at, line: { code: 'planning_with_you' }, whoseMove: 'requester' });
-  }
+  const planHeld = row.awaiting_plan === true && !status;
+  const planning = (line = {}) => state('planning', {
+    since: row.request_at || row.run_at, line: { code: 'planning_with_you', ...line }, whoseMove: 'requester',
+  });
+  if (planHeld && (!out || out.stage === 'reading')) return planning();
   // 16 Oct 2026: ready, but a person has the request now (a claim, or a
   // change of their own under way): the bot leaves it alone, so it is
   // theirs, not a wait for a slot.
@@ -360,12 +404,23 @@ function deriveFacts(row, { now = new Date() } = {}) {
       line: { code: 'claimed', by: personBuilding || claimFirst }, whoseMove: 'builder',
     });
   }
+  // 13 Nov 2026: the same hold on a request that had already reached the
+  // build line (its build waits its turn, or one of the project's limits
+  // holds it). The lane starts no build and takes no held verdict back up
+  // while the thread holds it (rules/bot-loop.ts BUILD_CANDIDATES_SQL,
+  // READ_CANDIDATES_SQL), so it waits for its requester, not for a slot: it
+  // read "Ready to build · Number 1 in line" beside Let the bot build it
+  // now. `ready` says a build is waiting behind the hold (botWorkOf).
+  if (planHeld && out && out.stage === 'building' && READY.has(out.line?.code)) return planning({ ready: true });
   if (out) return out;
 
   // A change somebody made for it, when Homeroom bot has none of its own:
   // that is where it stands, whatever an older look of the bot's said.
   if (!status && row.lc_status) {
-    const change = deriveChange({
+    // The change's own facts when refresh read them (CHANGE_FACTS_SQL: its
+    // checks' head, its shots, an update on its way), so the request and
+    // the change's own row read one stage; else the columns of the facts row.
+    const change = deriveChange(row.lc_facts || {
       status: row.lc_status, check_state: row.lc_check_state, checks_at: row.lc_checks_at,
       check_phase: row.lc_check_phase, merge_conflict_state: row.lc_merge_conflict_state,
       integration_merges_clean: row.lc_integration_merges_clean,
@@ -374,16 +429,17 @@ function deriveFacts(row, { now = new Date() } = {}) {
       votes_in: row.lc_votes_in === true, earlier_yes: row.lc_earlier_yes,
       promoted_at: row.lc_promoted_at, merged_at: row.lc_merged_at, live_at: row.lc_live_at,
       last_activity_at: row.lc_last_activity_at, created_at: row.lc_created_at,
+      // #6282: an update on its way holds its vote too. #6600: and a
+      // takeover whose last attempt failed says so.
+      update_coming: row.lc_update_coming, update_failed: row.lc_update_failed,
     }, { now });
     // Somebody is building it: who, as a claim says it.
-    if (change.stage === 'building' && row.lc_by) {
+    if ((row.lc_status === 'active' || row.lc_status === 'paused') && row.lc_by) {
       return state('building', { since: change.since, line: { code: 'claimed', by: row.lc_by }, whoseMove: 'builder' });
     }
-    // #6282: an update on its way holds its vote too. #6545: a queued one
-    // holds only a vote; a change still checking stays Checking. #6600: a
-    // running takeover says the bot is fixing its failing checks, and one
-    // whose attempt failed says so instead.
-    return withUpdate(change, { coming: row.lc_update_coming, failed: row.lc_update_failed });
+    // deriveChange read an update on its way and a failed takeover already
+    // (withUpdate, #6282, #6600).
+    return change;
   }
 
   // Nothing in progress: what its newest look came to.
@@ -409,7 +465,73 @@ function deriveFacts(row, { now = new Date() } = {}) {
   return state('reading', { since: row.request_at || row.run_at, line: { code: 'waiting' } });
 }
 
-/** Pure: where a change with no request of its own stands. */
+/**
+ * Pure (#6282, #6545, #6600): how an update on its way, or a takeover whose
+ * last attempt failed, changes a change's state. `coming` is 'running' |
+ * 'queued' | null (homeroom-bot-progress.js updateComingSql) and `failed`
+ * is why its newest takeover look failed, if it did (updateFailedSql).
+ *
+ * A running update holds a vote and a checking change as Building: a
+ * takeover on a change whose checks failed says "Fixing what its tests
+ * found", the words a fix of the bot's own already uses, and any other
+ * says it is being updated. A queued one holds only a vote (it waits its
+ * turn, the bot's to start), and a change still checking (a fix waiting its
+ * turn) stays Checking until the update starts. 11 Nov 2026: never up for a
+ * vote while it comes, so a stage of up_for_vote is always a change open
+ * for votes (vote_open). A takeover whose last attempt failed leaves its
+ * change Checking, its line saying Homeroom bot could not fix it.
+ */
+function withUpdate(change, { coming = null, failed = null } = {}) {
+  if (!change) return change;
+  const failing = change.stage === 'checking'
+    && (change.line?.code === 'checks_failing' || change.line?.code === 'github_checks_failing');
+  if (coming === 'running') {
+    if (change.stage === 'checking' || change.stage === 'up_for_vote') {
+      return state('building', { since: change.since, line: { code: failing ? 'fixing' : 'revising' } });
+    }
+    return change;
+  }
+  if (coming === 'queued' && change.stage === 'up_for_vote') {
+    return state('building', { since: change.since, line: { code: 'update_queued' } });
+  }
+  if (!coming && failed && failing) return { ...change, line: { code: 'bot_fix_failed' } };
+  return change;
+}
+
+/** Pure: the head a change's votes and checks are about (progress.checksOnHead's reading). */
+function changeHead(row) {
+  return (row?.source === 'imported' ? row?.imported_pr_head_sha : row?.reviewed_head_sha) || row?.checks_commit_sha || null;
+}
+
+/**
+ * Pure (#6528): whether a change's before & after shots still hold its
+ * vote, by the bot's own readiness rule (bot-readiness.ts heldUntil, with
+ * its 45-minute lapse when no settle ever comes).
+ */
+function shotsHeld(row, now = new Date()) {
+  if (!row || !row.shots_detail) return false;
+  return heldUntil({
+    shots_state: row.shots_state, shots_run_id: row.shots_run_id, shots_detail: row.shots_detail,
+    shots_updated_at: row.shots_updated_at, checks_checked_at: row.checks_at,
+  }, changeHead(row), now.getTime()) != null;
+}
+
+/** Pure: whether a change's check verdict is about the head up for a vote (progress.checksOnHead). */
+function changeChecksOnHead(row) {
+  return progress.checksOnHead({
+    proposal_source: row?.source, imported_pr_head_sha: row?.imported_pr_head_sha,
+    reviewed_head_sha: row?.reviewed_head_sha, checks_sha: row?.checks_commit_sha,
+  });
+}
+
+/**
+ * Pure: where a change stands, from its own facts (CHANGE_FACTS_SQL; a
+ * request's change, or one with no request of its own). Up for a vote only
+ * when it is open for votes (voteOpen): its checks passed on its head, it
+ * merges cleanly (or only a yes can move it), GitHub is not holding an
+ * approved merge, it is not its project's first version, no update is on
+ * its way, and its before & after shots are not still being taken.
+ */
 function deriveChange(row, { now = new Date() } = {}) {
   const status = row.status || null;
   if (status === 'merged') {
@@ -417,36 +539,65 @@ function deriveChange(row, { now = new Date() } = {}) {
   }
   if (status === 'merging') return state('going_live', { since: row.promoted_at });
   if (status === 'closed' || status === 'archived') return state('closed', { since: row.last_activity_at || row.promoted_at });
-  if (status === 'promoted') {
-    // #6531: a conflicting change is where its conflict stand puts it, before
-    // its stale verdict is read as final: only a yes can move it (vote), the
-    // lane is catching it up (syncing), or it is its author's (author).
-    const stand = syncStand(row);
-    if (stand === 'vote') return state('up_for_vote', { since: row.checks_at || row.promoted_at, line: { code: 'conflict_on_yes' } });
-    if (stand === 'syncing') return state('checking', { since: row.checks_at || row.promoted_at, line: { code: 'syncing' } });
-    if (stand === 'author') {
-      const failed = row.check_state === 'failing' || row.check_state === 'error';
-      return state('checking', { since: row.checks_at || row.promoted_at, line: { code: failed ? 'checks_failing' : 'sync_wait' } });
-    }
-    if (row.check_state !== 'passing' && row.check_state !== 'skipped') {
-      const failing = row.check_state === 'failing' || row.check_state === 'error';
-      if (failing) return state('checking', { since: row.checks_at || row.promoted_at, line: { code: 'checks_failing' } });
-      // #6402: deferred or conflicting heads wait to sync with main; a run in
-      // flight says about how long it has left.
-      return checkingState(row, row.checks_at || row.promoted_at, now);
-    }
-    // A passing change that has since stopped merging cleanly moves back to
-    // Waiting to sync with main: its verdict no longer describes what lands.
-    if (syncWaits(row)) return state('checking', { since: row.checks_at || row.promoted_at, line: { code: 'sync_wait' } });
-    // #6546: approved, and GitHub is holding its merge.
-    const hold = githubHold(row);
-    if (hold) return state(hold.stage, { since: row.promoted_at, line: { code: hold.code } });
-    // #6594: its votes are in; it is being merged, not voted on.
-    if (votesIn(row)) return state('going_live', { since: row.promoted_at });
-    return upForVote(row, row.promoted_at);
-  }
+  if (status === 'promoted') return withUpdate(promotedChange(row, now), { coming: row.update_coming, failed: row.update_failed });
   void now;
   return state('building', { since: row.last_activity_at || row.created_at, whoseMove: 'builder' });
+}
+
+/** Pure: a change's own facts row that waits only for a yes on a conflict (yesOnlyState). */
+function changeOnYes(row, since, now) {
+  return yesOnlyState(row, since, { onHead: changeChecksOnHead(row), held: shotsHeld(row, now) });
+}
+
+function promotedChange(row, now) {
+  const since = row.checks_at || row.promoted_at;
+  // #6531: a conflicting change is where its conflict stand puts it, before
+  // its stale verdict is read as final: only a yes can move it (vote, once
+  // it could take one: yesOnlyState), the lane is catching it up (syncing),
+  // or it is its author's (author).
+  const stand = syncStand(row);
+  if (stand === 'vote') return changeOnYes(row, since, now);
+  if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
+  if (stand === 'author') {
+    const failed = row.check_state === 'failing' || row.check_state === 'error';
+    return state('checking', { since, line: { code: failed ? 'checks_failing' : 'sync_wait' } });
+  }
+  // #6546: approved, and GitHub is holding its merge: going live (or its
+  // author's again, when GitHub's own checks fail), never up for a vote.
+  const hold = githubHold(row);
+  if (hold) return state(hold.stage, { since: row.promoted_at, line: { code: hold.code } });
+  if (row.check_state !== 'passing' && row.check_state !== 'skipped') {
+    const failing = row.check_state === 'failing' || row.check_state === 'error';
+    if (failing) {
+      const count = Number(row.failed_checks) || 0;
+      return state('checking', { since, line: { code: 'checks_failing', ...(count ? { failing: count } : {}) } });
+    }
+    // #6402: deferred or conflicting heads wait to sync with main; a run in
+    // flight says about how long it has left.
+    return checkingState(row, since, now, changeOnYes);
+  }
+  // N5: a verdict about another commit than the one up for a vote says
+  // nothing about it: its own checks are still to come. #6594: with its
+  // votes in, it is approved and those checks are what it waits on.
+  if (!changeChecksOnHead(row)) {
+    return state('checking', { since, ...(votesIn(row) ? { line: { code: 'approved_checking' } } : {}) });
+  }
+  // A passing change that has since stopped merging cleanly moves back to
+  // Waiting to sync with main: its verdict no longer describes what lands.
+  if (syncWaits(row)) return state('checking', { since, line: { code: 'sync_wait' } });
+  // D1: a project's first version goes live without a vote.
+  if (row.first_version === true) return state('going_live', { since: row.promoted_at, line: { code: 'first_version' } });
+  // #6528: its before & after shots are still being taken.
+  if (shotsHeld(row, now)) return state('checking', { since, line: { code: 'shots' } });
+  // #6594: its votes are in (the project's rule would let it merge now): it
+  // is being merged, not voted on, so it is not open for votes either.
+  if (votesIn(row)) return state('going_live', { since: row.promoted_at });
+  return upForVote(row, row.promoted_at);
+}
+
+/** Pure: whether a change is open for votes now (work_states.vote_open): its stage is up for a vote. */
+function voteOpenOf(changeState) {
+  return !!changeState && changeState.stage === 'up_for_vote';
 }
 
 /**
@@ -492,13 +643,17 @@ function placeFor(item, viewer = {}) {
  * Into waiting_for_you: needs you; up_for_vote: ready to vote; stopped:
  * stopped; live: live. A row that only moved its line rings nothing.
  */
+const queuedUpdate = (item) => !!item && item.stage === 'building' && item.line?.code === 'update_queued';
+
 function bellOf(prev, next) {
   if (!next) return null;
   const same = prev && prev.stage === next.stage && (prev.why || null) === (next.why || null)
     && (prev.reason || null) === (next.reason || null);
   if (same) return null;
   if (next.stage === 'waiting_for_you') return 'needs_you';
-  if (next.stage === 'up_for_vote') return prev && prev.stage === 'up_for_vote' ? null : 'ready';
+  // An update that was only queued and never started took nothing back:
+  // its "ready to try" still stands (withdrawReady), so it rings no other.
+  if (next.stage === 'up_for_vote') return prev && (prev.stage === 'up_for_vote' || queuedUpdate(prev)) ? null : 'ready';
   if (next.stage === 'stopped') return 'stopped';
   if (next.stage === 'live') return 'live';
   return null;
@@ -506,131 +661,155 @@ function bellOf(prev, next) {
 
 // ── Words ────────────────────────────────────────────────────────────────
 
-// The English words of frontend/locales/en/core.json's work.* entries, for
-// what the server words itself (Homeroom bot's answers, the bell). Keyed by
-// those entries' keys; tests/work-state.test.js holds the two together.
-const WORDS = Object.freeze({
-  'work.stage.reading': 'Reading it',
-  'work.stage.notStarted': 'Not started yet',
-  'work.stage.readyToBuild': 'Ready to build',
-  'work.stage.planning': 'Planning',
-  'work.stage.waitingForYou': 'Waiting for you',
-  'work.stage.building': 'Building',
-  'work.stage.checking': 'Checking',
-  'work.stage.syncing': 'Syncing with main',
-  'work.stage.upForVote': 'Up for a vote',
-  'work.stage.approved': 'Approved',
-  'work.stage.goingLive': 'Going live',
-  'work.stage.waitingToMerge': 'Waiting to merge',
-  'work.stage.live': 'Live',
-  'work.stage.stopped': 'Stopped',
-  'work.stage.closed': 'Closed',
-  'work.why.question': 'Waiting for your answer',
-  'work.why.plan': 'Waiting for you to OK the plan',
-  'work.why.decide': 'Waiting for you to decide',
-  'work.why.alreadyWorks': 'It may already work: close it?',
-  'work.why.needsDetail': 'Waiting for more detail from you',
-  'work.whyOthers.question': 'Waiting for an answer',
-  'work.whyOthers.plan': "Waiting for the plan to be OK'd",
-  'work.whyOthers.decide': 'Waiting for a decision',
-  'work.whyOthers.alreadyWorks': 'It may already work',
-  'work.whyOthers.needsDetail': 'Waiting for more detail',
-  'work.reason.buildFailed': "Stopped: the build didn't finish",
-  'work.reason.fixStopped': 'Stopped: its tests still fail',
-  'work.reason.lookFailed': "Stopped: it couldn't be read",
-  'work.reason.changeClosed': 'Stopped: its change was closed',
-  'work.reason.stalled': "Stopped: the build didn't start",
-  'work.line.queued': 'Waiting its turn',
-  'work.line.firstVersionWait': 'Waiting for the first version to go live',
-  'work.line.queuedAt': 'Number {{place}} in line',
-  'work.line.heldBuilds': "Waiting for one of the project's builds to finish",
-  'work.line.heldWaiting': 'Waiting for changes up for a vote to be decided',
-  'work.line.onHold': "On hold until Monday: this week's building time is used up",
-  'work.line.cooldown': 'Paused after repeated errors: Homeroom bot tries again later',
-  'work.line.reply': 'Reading your reply',
-  'work.line.retryPlan': 'Trying the plan again',
-  'work.line.reviewing': 'Reviewing, round {{round}} of {{of}}',
-  'work.line.starting': 'Starting',
-  'work.line.proposing': 'Putting it up for a vote',
-  'work.line.fixing': 'Fixing what its tests found',
-  'work.line.revising': 'Updating the change',
-  'work.line.updateQueued': 'An update is on its way',
-  'work.line.checksFailing': 'Tests are failing',
-  'work.line.botFixFailed': "Homeroom bot couldn't fix it",
-  'work.line.checksFailingCount_one': '{{count}} test failing',
-  'work.line.checksFailingCount_other': '{{count}} tests failing',
-  'work.line.checksRunning_one': 'About {{count}} min left',
-  'work.line.checksRunning_other': 'About {{count}} min left',
-  'work.line.syncWait': 'Waiting to sync with main',
-  'work.line.conflictOnYes': 'Conflicts with main: Homeroom resolves it once you approve',
-  'work.line.approvedChecking': 'Checking the latest version',
-  'work.line.earlierYes_one': 'Changed since its yes vote, which counts again once confirmed',
-  'work.line.earlierYes_other': 'Changed since its {{count}} yes votes, which count again once each is confirmed',
-  'work.line.githubChecks': "Waiting on GitHub's checks",
-  'work.line.githubChecksFailing': "GitHub's checks are failing",
-  'work.line.githubWait': 'Waiting on GitHub',
-  'work.line.firstVersion': 'First version: it goes live without a vote',
-  'work.line.claimed': '{{username}} is building it',
-  'work.line.planningWithYou': 'Planning it with you in a private thread',
-  'work.line.waiting': 'Waiting to be read',
-  'work.line.said': 'Homeroom bot: {{reason}}',
-});
+// 11 Nov 2026: the stage, why, reason and line of an item map to the phrase
+// ids of frontend/locales/en/core.json's work.* entries here, once. The map
+// ships with every row (`words`: fromRow, the push, a request's standing),
+// so every screen draws the same words and no client keeps a table of its
+// own; the server's own English (Homeroom bot's answers, the bell) reads
+// the same catalog through push-text.js.
 
 // A request in the reading stage nobody has started on yet, and one ready to
 // build that waits its turn, are said so (the same stages, in plainer words).
 const NOT_STARTED = new Set(['queued', 'waiting', 'on_hold', 'cooldown', 'first_version_wait']);
 const READY = new Set(['queued', 'held_builds', 'held_waiting']);
+// The second lines that need no value, by code (work.line.<camel>).
+const PLAIN_LINES = new Set([
+  'queued', 'first_version_wait', 'held_builds', 'held_waiting', 'on_hold', 'cooldown', 'reply', 'retry_plan',
+  'starting', 'proposing', 'fixing', 'revising', 'update_queued', 'checks_failing', 'sync_wait', 'conflict_on_yes',
+  'github_checks', 'github_checks_failing', 'github_wait', 'first_version', 'planning_with_you', 'waiting', 'shots',
+  'approved_checking',
+  // #6600: Homeroom bot took over its failing tests, and its last attempt could not fix them.
+  'bot_fix_failed',
+]);
 
 const camel = (s) => String(s).replace(/_([a-z])/g, (_m, c) => c.toUpperCase());
-const fill = (key, values = {}) => WORDS[key].replace(/\{\{(\w+)\}\}/g, (_m, k) => String(values[k] ?? ''));
 
-/** Pure: the stage's words in English, as the screens say them (lib/work-state.ts stageWords). */
-function stageSays(item, { yours = true } = {}) {
-  if (!item) return '';
-  if (item.stage === 'waiting_for_you' && item.why && WORDS[`work.why.${camel(item.why)}`]) {
-    return fill(`work.${yours ? 'why' : 'whyOthers'}.${camel(item.why)}`);
+/** Pure: the stage's phrase, as its requester reads it (`yours`) or as anyone else does. */
+function stagePhrase(item, yours) {
+  if (item.stage === 'waiting_for_you' && item.why && WHYS.includes(item.why)) {
+    return { id: `core:work.${yours ? 'why' : 'whyOthers'}.${camel(item.why)}` };
   }
-  if (item.stage === 'stopped' && item.reason && WORDS[`work.reason.${camel(item.reason)}`]) return fill(`work.reason.${camel(item.reason)}`);
+  if (item.stage === 'stopped' && item.reason && REASONS.includes(item.reason)) return { id: `core:work.reason.${camel(item.reason)}` };
   const code = item.line && item.line.code;
   // #6531: a conflicting change the lane is catching up says so in the stage
   // word itself ("Syncing with main", not "Checking"), and carries no line.
-  if (item.stage === 'checking' && code === 'syncing') return fill('work.stage.syncing');
+  if (item.stage === 'checking' && code === 'syncing') return { id: 'core:work.stage.syncing' };
   // #6594: its votes are in, so it is approved and its checks are what it
   // waits on, not a vote.
-  if (item.stage === 'checking' && code === 'approved_checking') return fill('work.stage.approved');
+  if (item.stage === 'checking' && code === 'approved_checking') return { id: 'core:work.stage.approved' };
   // #6563: an approved change whose merge GitHub holds is not going live yet;
   // its word says so, and its second line says on what. #6594: waiting on
-  // GitHub's checks is still approved, only GitHub itself holding it back
+  // GitHub's checks is still approved; only GitHub itself holding it back
   // reads "Waiting to merge".
-  if (item.stage === 'going_live' && code === 'github_checks') return fill('work.stage.approved');
-  if (item.stage === 'going_live' && code === 'github_wait') return fill('work.stage.waitingToMerge');
-  if (item.stage === 'reading' && NOT_STARTED.has(code)) return fill('work.stage.notStarted');
-  if (item.stage === 'building' && READY.has(code)) return fill('work.stage.readyToBuild');
-  return fill(`work.stage.${camel(item.stage)}`) || '';
+  if (item.stage === 'going_live' && code === 'github_checks') return { id: 'core:work.stage.approved' };
+  if (item.stage === 'going_live' && code === 'github_wait') return { id: 'core:work.stage.waitingToMerge' };
+  if (item.stage === 'reading' && NOT_STARTED.has(code)) return { id: 'core:work.stage.notStarted' };
+  if (item.stage === 'building' && READY.has(code)) return { id: 'core:work.stage.readyToBuild' };
+  return { id: `core:work.stage.${camel(STAGES.includes(item.stage) ? item.stage : 'reading')}` };
 }
 
-/** Pure: the second line in English (lib/work-state.ts lineWords), or null. */
-function lineSays(item) {
+/** Pure: the second line's phrase, or null when it has none. */
+function linePhrase(item) {
   const line = item && item.line;
   if (!line || !line.code) return null;
   switch (line.code) {
-    case 'queued': return line.place ? fill('work.line.queuedAt', { place: line.place }) : fill('work.line.queued');
-    case 'reviewing': return fill('work.line.reviewing', { round: line.round || 1, of: line.of || 1 });
+    case 'queued':
+      return line.place ? { id: 'core:work.line.queuedAt', values: { place: Number(line.place) } } : { id: 'core:work.line.queued' };
+    case 'reviewing':
+      return { id: 'core:work.line.reviewing', values: { round: Number(line.round) || 1, of: Number(line.of) || 1 } };
     case 'checks_failing':
       return line.failing
-        ? fill(line.failing === 1 ? 'work.line.checksFailingCount_one' : 'work.line.checksFailingCount_other', { count: line.failing })
-        : fill('work.line.checksFailing');
+        ? { id: 'core:work.line.checksFailingCount', values: { count: Number(line.failing) } }
+        : { id: 'core:work.line.checksFailing' };
     case 'checks_running':
-      return line.minutes
-        ? fill(line.minutes === 1 ? 'work.line.checksRunning_one' : 'work.line.checksRunning_other', { count: line.minutes })
-        : null;
+      return line.minutes ? { id: 'core:work.line.checksRunning', values: { count: Number(line.minutes) } } : null;
+    // #6594: a push retired earlier yes votes; it says why a new yes is needed.
     case 'earlier_yes':
-      return line.count
-        ? fill(line.count === 1 ? 'work.line.earlierYes_one' : 'work.line.earlierYes_other', { count: line.count })
-        : null;
-    case 'claimed': return line.by ? fill('work.line.claimed', { username: line.by }) : null;
-    case 'reason': return line.text ? fill('work.line.said', { reason: line.text }) : null;
-    default: return WORDS[`work.line.${camel(line.code)}`] ? fill(`work.line.${camel(line.code)}`) : null;
+      return line.count ? { id: 'core:work.line.earlierYes', values: { count: Number(line.count) } } : null;
+    case 'claimed': return line.by ? { id: 'core:work.line.claimed', values: { username: String(line.by) } } : null;
+    case 'reason': return line.text ? { id: 'core:work.line.said', values: { reason: String(line.text) } } : null;
+    default: return PLAIN_LINES.has(line.code) ? { id: `core:work.line.${camel(line.code)}` } : null;
+  }
+}
+
+/**
+ * Pure: an item's words, as phrase ids of the core catalog: its stage as
+ * its requester reads it (`stage`) and as anyone else does (`stageOthers`),
+ * and its second line (`line`, or null).
+ */
+function phrasesOf(item) {
+  if (!item || !item.stage) return null;
+  return { stage: stagePhrase(item, true), stageOthers: stagePhrase(item, false), line: linePhrase(item) };
+}
+
+let englishCatalog = null;
+/** Pure: a phrase in English, from the core catalog (push-text.js reads it in a checkout and in the image). */
+function english(phrase) {
+  if (!phrase || !phrase.id) return '';
+  if (!englishCatalog) {
+    const pushText = require('./push-text');
+    englishCatalog = pushText.englishFrom(pushText.englishTexts(null, 'core'));
+  }
+  return englishCatalog(phrase.id, phrase.values);
+}
+
+/** Pure: the stage's words in English, as the screens say them (phrasesOf). */
+function stageSays(item, { yours = true } = {}) {
+  const words = phrasesOf(item);
+  return words ? english(yours ? words.stage : words.stageOthers) : '';
+}
+
+/** Pure: the second line in English, or null. */
+function lineSays(item) {
+  const line = linePhrase(item);
+  return line ? english(line) || null : null;
+}
+
+// The second lines of the bot's stages that say it waits rather than works.
+const WAITING_LINES = new Set([...NOT_STARTED, ...READY, 'update_queued', 'retry_plan', 'planning_with_you', 'claimed']);
+
+/**
+ * Pure: whether Homeroom bot is at an item this minute: reading it,
+ * planning it or building it, not waiting its turn, a hold, or a person.
+ */
+function busyNow(item) {
+  if (!item || item.whoseMove !== 'bot') return false;
+  if (!['reading', 'planning', 'building'].includes(item.stage)) return false;
+  const code = item.line && item.line.code;
+  if (code === 'reply' && item.line.soon) return false;
+  return !WAITING_LINES.has(code);
+}
+
+// What the Homeroom bot is reading or building on a request (`bot`: { what,
+// since, plan?, held?, turn? }, or null), as a request's page and Ask
+// Homeroom bot to build this read it before they read the standing: read
+// off the same row, so the two never disagree.
+const BOT_NOT_STARTED = new Set(['waiting', 'on_hold', 'cooldown', 'first_version_wait']);
+function botWorkOf(item) {
+  if (!item) return null;
+  const code = item.line?.code || null;
+  const since = item.since || null;
+  switch (item.stage) {
+    case 'reading':
+      if (code === 'queued') return item.line.asked ? { what: 'queued', since } : null;
+      if (BOT_NOT_STARTED.has(code) || (code === 'reply' && item.line.soon)) return null;
+      return { what: 'reading', since };
+    case 'planning':
+      // Held for its requester's plan: nothing of the bot's is under way.
+      // One whose build already waits behind the hold (`ready`) is still the
+      // bot's, in its queue, so asking it to build it again is refused.
+      if (code === 'planning_with_you') return item.line.ready ? { what: 'queued', since } : null;
+      return { what: 'building', since };
+    case 'building':
+      if (code === 'held_builds' || code === 'held_waiting') {
+        return { what: 'queued', since, held: true, ...(code === 'held_builds' ? { turn: true } : {}) };
+      }
+      if (code === 'claimed' || code === 'update_queued' || item.whoseMove === 'builder') return null;
+      return { what: 'building', since };
+    case 'waiting_for_you':
+      return item.why === 'plan' ? { what: 'queued', since, plan: true } : null;
+    default:
+      return null;
   }
 }
 
@@ -673,7 +852,7 @@ const REQUEST_FACTS_SQL = `
          lc.promoted_at AS lc_promoted_at, lc.merged_at AS lc_merged_at, lc.live_at AS lc_live_at,
          lc.last_activity_at AS lc_last_activity_at, lc.created_at AS lc_created_at, lc.update_coming AS lc_update_coming,
          lc.update_failed AS lc_update_failed,
-         lc.username AS lc_by,
+         lc.username AS lc_by, q.priority AS queue_priority,
          -- #5323: a ready request's place among the project's builds waiting to start.
          CASE WHEN run.live_build_waiting_at IS NOT NULL AND run.build_session_id IS NULL THEN (
            SELECT COUNT(*)::int FROM homeroom_bot_runs b
@@ -686,7 +865,21 @@ const REQUEST_FACTS_SQL = `
          CASE WHEN q.id IS NOT NULL AND q.started_at IS NULL THEN (
            SELECT COUNT(*)::int FROM homeroom_bot_queue q2
             WHERE q2.app_id = it.app_id AND q2.started_at IS NULL AND q2.enqueued_at <= q.enqueued_at
-         ) END AS queue_place
+         ) END AS queue_place,
+         -- A held request's place among the project's requests held at the
+         -- same limit, in the order the bot takes them back up (oldest hold
+         -- first), counting only open ones: its track's "3rd in line".
+         CASE WHEN run.cap_suppressed IS NOT NULL THEN (
+           SELECT COUNT(*)::int FROM (
+             SELECT DISTINCT ON (h.issue_number) h.issue_number, h.cap_suppressed, h.created_at
+               FROM homeroom_bot_runs h
+              WHERE h.app_id = it.app_id AND h.mode = 'live'
+              ORDER BY h.issue_number, h.id DESC
+           ) hq
+            WHERE hq.cap_suppressed = run.cap_suppressed
+              AND (hq.created_at < run.created_at OR (hq.created_at = run.created_at AND hq.issue_number <= it.issue_number))
+              AND NOT ${progress.requestClosedSql({ appId: 'it.app_id', issueNumber: 'hq.issue_number' })}
+         ) END AS held_place
     FROM it
     LEFT JOIN homeroom_bot_requesters rq ON rq.app_id = it.app_id AND rq.issue_number = it.issue_number
     LEFT JOIN LATERAL (
@@ -724,15 +917,152 @@ const REQUEST_FACTS_SQL = `
        LIMIT 1
     ) lc ON TRUE`;
 
-/** One row per change named by $1 (session ids) that has no request of its own. */
+// The checks of a change's newest verdict that did not pass (progress.js
+// failedCount, in SQL).
+const FAILED_CHECKS_SQL = (cs) => `(SELECT COUNT(*)::int
+     FROM jsonb_array_elements(CASE WHEN jsonb_typeof(${cs}.test_results) = 'array' THEN ${cs}.test_results ELSE '[]'::jsonb END) t
+    WHERE COALESCE(t->>'status', '') NOT IN ('', 'pass'))`;
+
+/**
+ * One row per change named by $1 (session ids): what its stage and its
+ * standing read (its checks and their head, what holds its vote or its
+ * merge, an update on its way, its votes this round), and whether it is
+ * about requests of its own (`has_requests`).
+ */
 const CHANGE_FACTS_SQL = `
-  SELECT cs.id, cs.app_id, (SELECT a.slug FROM apps a WHERE a.id = cs.app_id) AS app_slug, cs.user_id, cs.status, cs.check_state, cs.checks_checked_at AS checks_at,
+  SELECT cs.id, cs.app_id, (SELECT a.slug FROM apps a WHERE a.id = cs.app_id) AS app_slug, cs.user_id, cs.status,
+         cs.pr_number, cs.is_headless, cs.check_state, cs.checks_checked_at AS checks_at,
          cs.check_phase, cs.merge_conflict_state, cs.integration_merges_clean, cs.integration_block_reasons,
          cs.promoted_at, cs.merged_at, cs.live_at, cs.created_at, cs.last_activity_at,
+         cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha, cs.checks_commit_sha,
+         cs.shots_state, cs.shots_run_id, cs.shots_detail, cs.shots_updated_at,
+         CASE WHEN cs.check_state IN ('failing', 'error') THEN ${FAILED_CHECKS_SQL('cs')} END AS failed_checks,
+         ${firstVersionSql('cs')} AS first_version,
          CASE WHEN cs.status = 'promoted' THEN ${progress.updateComingSql('cs')} END AS update_coming,
-         CASE WHEN cs.status = 'promoted' THEN ${progress.updateFailedSql('cs')} END AS update_failed
+         -- #6600: why a takeover's last attempt failed, when it did.
+         CASE WHEN cs.status = 'promoted' THEN ${progress.updateFailedSql('cs')} END AS update_failed,
+         (SELECT COUNT(*) FILTER (WHERE pv.vote = 'yes') FROM pr_votes pv
+           WHERE pv.session_id = cs.id AND ${currentVotePredicateSql('pv', 'cs')})::int AS votes_yes,
+         (SELECT COUNT(*) FILTER (WHERE pv.vote = 'no') FROM pr_votes pv
+           WHERE pv.session_id = cs.id AND ${currentVotePredicateSql('pv', 'cs')})::int AS votes_no,
+         -- Each run column on its own index (one OR would read every run).
+         (cardinality(COALESCE(cs.linked_issues, '{}'::int[])) > 0
+          OR EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.proposal_session_id = cs.id)
+          OR EXISTS (SELECT 1 FROM homeroom_bot_runs r WHERE r.build_session_id = cs.id)) AS has_requests,
+         -- Its open cards (one of Homeroom bot's offers on it).
+         COALESCE((SELECT jsonb_agg(jsonb_build_object('id', c.id, 'kind', c.kind, 'expiresAt', c.expires_at) ORDER BY c.id)
+                     FROM bot_cards c
+                    WHERE c.status = 'open' AND c.expires_at > NOW()
+                      AND (c.session_id = cs.id OR (c.args->>'sessionId') = cs.id::text)), '[]'::jsonb) AS offers
     FROM chat_sessions cs
    WHERE cs.id = ANY($1::int[])`;
+
+/**
+ * What is asked of each request's requester and what Homeroom bot last said
+ * about it, one row per request named by ($1 app ids, $2 numbers): the
+ * bot's open question, its newest plan, an open vote to close it, a private
+ * thread holding it for its requester's plan, its open cards (and a
+ * thread's offers from before the card store), the reports filed from it,
+ * and the bot's newest post about it.
+ */
+const STANDING_SQL = `
+  WITH it AS (
+    SELECT DISTINCT x.app_id, x.issue_number
+      FROM unnest($1::int[], $2::int[]) AS x(app_id, issue_number)
+  )
+  SELECT it.app_id, it.issue_number,
+         oq.message_id AS question_id, oq.created_at AS question_at,
+         pl.session_id AS plan_session_id, pl.version AS plan_version, pl.created_at AS plan_at,
+         cv.id AS close_id, cv.yes AS close_yes, cv.no AS close_no,
+         dr.id AS draft_id,
+         COALESCE((SELECT jsonb_agg(o ORDER BY o->>'id') FROM (
+             SELECT jsonb_build_object('id', c.id, 'kind', c.kind, 'expiresAt', c.expires_at) AS o
+               FROM bot_cards c
+              WHERE c.app_id = it.app_id AND c.status = 'open' AND c.expires_at > NOW()
+                AND COALESCE(c.issue_number, c.source_issue_number,
+                             CASE WHEN (c.args->>'issueNumber') ~ '^[0-9]{1,9}$' THEN (c.args->>'issueNumber')::int END) = it.issue_number
+             UNION ALL
+             SELECT jsonb_build_object('id', v.id, 'kind', v.kind, 'expiresAt', v.created_at + INTERVAL '14 days')
+               FROM homeroom_bot_voice_offers v
+              WHERE v.app_id = it.app_id AND v.status = 'open' AND v.created_at > NOW() - INTERVAL '14 days'
+                AND (v.args->>'issueNumber') = it.issue_number::text
+           ) offered), '[]'::jsonb) AS offers,
+         (SELECT COUNT(*)::int FROM feedback_reports fr
+           WHERE fr.app_id = it.app_id AND fr.issue_number = it.issue_number) AS reports,
+         sd.message_id AS said_id, sd.kind AS said_kind, sd.created_at AS said_at, sd.text AS said_text
+    FROM it
+    LEFT JOIN LATERAL (
+      SELECT d.message_id, d.created_at FROM homeroom_bot_dm_messages d
+       WHERE d.app_id = it.app_id AND d.issue_number = it.issue_number AND d.question_status = 'open'
+       ORDER BY d.created_at DESC LIMIT 1
+    ) oq ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT s.session_id, s.version, s.created_at
+        FROM chat_session_specs s
+        JOIN chat_sessions c ON c.id = s.session_id
+       WHERE c.app_id = it.app_id
+         AND (c.created_from_issue_number = it.issue_number OR it.issue_number = ANY(c.linked_issues))
+         AND (s.shared_to_group_at IS NOT NULL
+              OR EXISTS (SELECT 1 FROM homeroom_bot_runs r
+                          WHERE r.app_id = it.app_id AND r.issue_number = it.issue_number AND r.build_session_id = c.id))
+       ORDER BY s.created_at DESC, s.version DESC LIMIT 1
+    ) pl ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT i.id,
+             (SELECT COUNT(*) FROM issue_votes v WHERE v.issue_id = i.id AND v.vote = 'yes')::int AS yes,
+             (SELECT COUNT(*) FROM issue_votes v WHERE v.issue_id = i.id AND v.vote = 'no')::int AS no
+        FROM issues i
+       WHERE i.app_id = it.app_id AND i.kind = 'close_issue' AND i.status = 'open'
+         AND (i.payload->>'issueNumber') = it.issue_number::text
+       ORDER BY i.id DESC LIMIT 1
+    ) cv ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT ph.id FROM private_threads ph
+       WHERE ph.app_id = it.app_id AND ph.about_number = it.issue_number
+         AND ${require('../workflow/rules/bot-loop.ts').planHoldActiveSql('ph')}
+       ORDER BY ph.id DESC LIMIT 1
+    ) dr ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT p.thread_message_id AS message_id, p.kind, p.created_at, LEFT(m.content, 200) AS text
+        FROM homeroom_bot_posts p
+        JOIN chat_messages m ON m.id = p.thread_message_id
+       WHERE p.app_id = it.app_id AND p.issue_number = it.issue_number AND p.pending IS NOT TRUE
+         AND m.deleted_at IS NULL
+       ORDER BY p.created_at DESC, p.id DESC LIMIT 1
+    ) sd ON TRUE`;
+
+// The live runs of each request named by ($1 app ids, $2 numbers), newest
+// first, at most 200 of each: what their tries count, and why a build
+// stopped. The limit is per request, so one request with many runs never
+// takes another's out of a batch (its tries and its cause read from its own
+// newest runs, whatever else is refreshed with it).
+const STANDING_RUNS_SQL = `
+  SELECT r.*
+    FROM (SELECT DISTINCT x.app_id, x.issue_number FROM unnest($1::int[], $2::int[]) AS x(app_id, issue_number)) it
+    CROSS JOIN LATERAL (
+      SELECT r.id, r.app_id, r.issue_number, r.verdict, r.cap_suppressed, r.awaiting_go_at, r.proposal_session_id,
+             r.build_ok, r.build_error, r.build_session_id, r.error, r.created_at,
+             r.build_no_change->'turns'->-1->>'said' AS no_change_said,
+             (r.plan IS NOT NULL AND r.plan->'chosen' IS NULL AND r.build_ok IS FALSE
+               AND r.build_session_id IS NULL AND r.proposal_session_id IS NULL) AS plan_only
+        FROM homeroom_bot_runs r
+       WHERE r.app_id = it.app_id AND r.issue_number = it.issue_number AND r.mode = 'live'
+       ORDER BY r.id DESC
+       LIMIT 200
+    ) r
+   ORDER BY r.id DESC`;
+
+// Who shipped a closed request: the newest merged change linked to it that
+// is not the bot's. `$1`/`$2` the requests as parallel arrays of project
+// and number.
+const DONE_BY_SQL = `
+  SELECT DISTINCT ON (w.app_id, w.n) w.app_id, w.n, cs.id AS session_id, cs.pr_number, u.username
+    FROM UNNEST($1::int[], $2::int[]) AS w(app_id, n)
+    JOIN chat_sessions cs ON cs.app_id = w.app_id AND cs.status = 'merged'
+         AND (w.n = ANY(cs.linked_issues) OR cs.created_from_issue_number = w.n)
+    JOIN users u ON u.id = cs.user_id
+   WHERE u.username <> 'homeroom_bot'
+   ORDER BY w.app_id, w.n, cs.merged_at DESC NULLS LAST, cs.id DESC`;
 
 /**
  * The requests a session is about: the requests whose bot run built or
@@ -740,9 +1070,12 @@ const CHANGE_FACTS_SQL = `
  * request, which is its own item.
  */
 async function requestsOfSession(db, sessionId) {
+  // One branch per run column, so each reads its own index (an OR of the
+  // two would read every run); UNION drops the repeats.
   const { rows } = await db.query(
-    `SELECT DISTINCT r.app_id, r.issue_number FROM homeroom_bot_runs r
-      WHERE r.proposal_session_id = $1 OR r.build_session_id = $1
+    `SELECT r.app_id, r.issue_number FROM homeroom_bot_runs r WHERE r.proposal_session_id = $1
+     UNION
+     SELECT r.app_id, r.issue_number FROM homeroom_bot_runs r WHERE r.build_session_id = $1
      UNION
      SELECT cs.app_id, n AS issue_number FROM chat_sessions cs, unnest(cs.linked_issues) AS n
       WHERE cs.id = $1`,
@@ -753,17 +1086,30 @@ async function requestsOfSession(db, sessionId) {
 
 // ── Storing ──────────────────────────────────────────────────────────────
 
-const sameLine = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
+// jsonb hands keys back in its own order, so two values are compared with
+// their keys sorted, never as written.
+function canon(value) {
+  if (Array.isArray(value)) return value.map(canon);
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    return Object.fromEntries(Object.keys(value).sort().filter((k) => value[k] !== undefined).map((k) => [k, canon(value[k])]));
+  }
+  return value instanceof Date ? value.toISOString() : value;
+}
+const sameJson = (a, b) => JSON.stringify(canon(a ?? null)) === JSON.stringify(canon(b ?? null));
 
 async function upsert(db, key, next, { touch = false } = {}) {
   const { rows: [prev] } = await db.query(
-    `SELECT stage, why, reason, line, whose_move, requester_id, since FROM work_states
+    `SELECT stage, why, reason, line, whose_move, requester_id, since, standing, vote_open, lead_change_id FROM work_states
       WHERE app_id = $1 AND item_kind = $2 AND item_ref = $3`,
     [key.appId, key.kind, key.ref],
   );
+  const standing = next.standing || {};
   if (prev && prev.stage === next.stage && (prev.why || null) === next.why && (prev.reason || null) === next.reason
-    && sameLine(prev.line, next.line) && (prev.whose_move || null) === next.whoseMove
-    && (prev.requester_id == null ? null : Number(prev.requester_id)) === (next.requesterId ?? null)) {
+    && sameJson(prev.line, next.line) && (prev.whose_move || null) === next.whoseMove
+    && (prev.requester_id == null ? null : Number(prev.requester_id)) === (next.requesterId ?? null)
+    && prev.vote_open === !!next.voteOpen
+    && (prev.lead_change_id == null ? null : Number(prev.lead_change_id)) === (next.leadChangeId ?? null)
+    && sameJson(prev.standing || {}, standing)) {
     // Unchanged. The sweep still marks it checked, so it moves on to others.
     if (touch) {
       await db.query('UPDATE work_states SET checked_at = NOW() WHERE app_id = $1 AND item_kind = $2 AND item_ref = $3',
@@ -773,16 +1119,26 @@ async function upsert(db, key, next, { touch = false } = {}) {
   }
   await db.query(
     `INSERT INTO work_states (app_id, item_kind, item_ref, issue_number, session_id, stage, why, reason, line,
-                              whose_move, requester_id, since, updated_at, checked_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, NOW(), NOW())
+                              whose_move, requester_id, since, standing, vote_open, lead_change_id, updated_at, checked_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13::jsonb, $14, $15, NOW(), NOW())
      ON CONFLICT (app_id, item_kind, item_ref) DO UPDATE
        SET issue_number = EXCLUDED.issue_number, session_id = EXCLUDED.session_id, stage = EXCLUDED.stage,
            why = EXCLUDED.why, reason = EXCLUDED.reason, line = EXCLUDED.line, whose_move = EXCLUDED.whose_move,
-           requester_id = EXCLUDED.requester_id, since = EXCLUDED.since, updated_at = NOW(), checked_at = NOW()`,
+           requester_id = EXCLUDED.requester_id, since = EXCLUDED.since, standing = EXCLUDED.standing,
+           vote_open = EXCLUDED.vote_open, lead_change_id = EXCLUDED.lead_change_id,
+           updated_at = NOW(), checked_at = NOW()`,
     [key.appId, key.kind, key.ref, key.issueNumber ?? null, key.sessionId ?? null, next.stage, next.why, next.reason,
-      next.line ? JSON.stringify(next.line) : null, next.whoseMove, next.requesterId ?? null, next.since],
+      next.line ? JSON.stringify(next.line) : null, next.whoseMove, next.requesterId ?? null, next.since,
+      JSON.stringify(standing), !!next.voteOpen, next.leadChangeId ?? null],
   );
-  return { prev: prev ? { stage: prev.stage, why: prev.why || null, reason: prev.reason || null } : null };
+  return {
+    prev: prev ? {
+      stage: prev.stage, why: prev.why || null, reason: prev.reason || null, line: prev.line || null,
+      // Whether a vote on closing it was open: one opening retires its
+      // Propose to close buttons (bot-cards.js retireFor).
+      closeVote: !!prev.standing?.asks?.closeVote,
+    } : null,
+  };
 }
 
 const IN_FLIGHT_CHECKS = (s) => s === 'pending' || s === 'running';
@@ -873,10 +1229,95 @@ async function attachVotes(db, rows, keyOf, now) {
 }
 
 /**
+ * Pure: a change's facts as its standing carries them (the contract every
+ * reader draws: services/work-state.js fromRow `change`), with whether it is
+ * open for votes from its own stage. Null for no change.
+ */
+function changeStandingOf(f, changeState, now = new Date()) {
+  if (!f) return null;
+  const promoted = f.status === 'promoted';
+  return {
+    id: Number(f.id),
+    number: f.pr_number == null ? null : Number(f.pr_number),
+    status: f.status || null,
+    checks: {
+      state: f.check_state || null,
+      phase: f.check_phase || null,
+      failing: f.failed_checks == null ? null : Number(f.failed_checks),
+    },
+    votes: { yes: Number(f.votes_yes) || 0, no: Number(f.votes_no) || 0 },
+    voteOpen: voteOpenOf(changeState),
+    firstVersion: f.first_version === true,
+    githubHold: promoted && !!githubHold(f),
+    shotsHeld: promoted && shotsHeld(f, now),
+    conflict: promoted && (f.merge_conflict_state === 'conflict' || f.merge_conflict_state === 'failed' || f.integration_merges_clean === false),
+    update: promoted && (f.update_coming === 'queued' || f.update_coming === 'running') ? f.update_coming : null,
+  };
+}
+
+const NO_ASKS = Object.freeze({ question: null, plan: null, closeVote: null, draft: null, offers: [], reports: 0 });
+
+/**
+ * Pure: what a request's standing says beside its stage, from its facts row
+ * (REQUEST_FACTS_SQL), its STANDING_SQL row, its live runs (newest first),
+ * its derived state and its lead change: the change, what is asked of its
+ * requester, the bot's newest post about it, its tries (a request's track's
+ * "Try 2"), why a build stopped, and who shipped it.
+ */
+function requestStandingOf({ row, extra = null, runs = [], next, change = null, doneBy = null }) {
+  const iso2 = (v) => iso(v);
+  const waitingGo = next.stage === 'waiting_for_you' && next.why === 'plan';
+  const plan = extra && extra.plan_version != null
+    ? { version: Number(extra.plan_version), sessionId: Number(extra.plan_session_id) || null, at: iso2(extra.plan_at), waitingGo }
+    : waitingGo
+      ? { version: null, sessionId: Number(row.build_session_id) || null, at: iso2(row.plan_waiting_at), waitingGo }
+      : null;
+  const asks = extra ? {
+    question: extra.question_id ? { messageId: Number(extra.question_id), at: iso2(extra.question_at) } : null,
+    plan,
+    closeVote: extra.close_id ? { issueId: Number(extra.close_id), yes: Number(extra.close_yes) || 0, no: Number(extra.close_no) || 0 } : null,
+    draft: extra.draft_id ? { threadId: Number(extra.draft_id) } : null,
+    offers: (Array.isArray(extra.offers) ? extra.offers : []).map((o) => ({ id: Number(o.id), kind: String(o.kind), expiresAt: iso2(o.expiresAt) })),
+    reports: Number(extra.reports) || 0,
+  } : { ...NO_ASKS, plan };
+  const said = extra && extra.said_id
+    ? { messageId: Number(extra.said_id), kind: extra.said_kind || null, at: iso2(extra.said_at), text: String(extra.said_text || '').slice(0, 200) }
+    : null;
+  // Its tries, as its track counts them: a change being fixed or updated is
+  // its next try until a run records it (homeroom-bot-track.js triesOf).
+  const track = require('./homeroom-bot-track');
+  const code = next.line && next.line.code;
+  const since = next.since || iso2(row.run_at);
+  const underWay = (code === 'fixing' || code === 'revising')
+    && !runs.some((run) => run.verdict === 'revise' && Date.parse(run.created_at) >= Date.parse(since || 0));
+  const lead = runs[0] || null;
+  return {
+    change,
+    asks,
+    said,
+    tries: track.triesOf(runs, { underWay }),
+    tryStarts: track.tryStartsOf(runs, { underWay: underWay ? since : null }),
+    cause: next.stage === 'stopped' && next.reason === 'build_failed' && lead
+      ? track.buildStopWhy(lead.build_error, lead.no_change_said ? { said: lead.no_change_said } : null)
+      : null,
+    doneBy: next.stage === 'closed' && doneBy
+      ? { username: doneBy.username || null, prNumber: Number(doneBy.pr_number) || null, sessionId: Number(doneBy.session_id) || null }
+      : null,
+  };
+}
+
+// A change built for a request has a row of its own once it is up for a
+// vote or past it (Needs you reads whether it is open for votes); before
+// that its request's row is where it stands.
+const CHANGE_ROW_STATUSES = new Set(['promoted', 'merging', 'merged', 'closed', 'archived']);
+
+/**
  * Derive the items again and store each that changed. `items` are
- * { appId, issueNumber } (a request) or { sessionId } (a change, which
- * resolves to its requests when it has any). Resolves the changed rows:
- * { appId, kind, ref, issueNumber, sessionId, state, prev, bell }.
+ * { appId, issueNumber } (a request) or { sessionId } (a change: its own
+ * row, and the rows of the requests it is about). Resolves the changed
+ * rows: { appId, kind, ref, issueNumber, sessionId, state, prev, bell },
+ * `state` carrying the whole stored row (stage, why, reason, line, whose
+ * move, since, requesterId, voteOpen, leadChangeId, standing).
  */
 async function refresh(db, items, { now = new Date(), touch = false } = {}) {
   const requests = new Map();
@@ -885,25 +1326,51 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
     if (it && Number(it.appId) > 0 && Number(it.issueNumber) > 0) {
       requests.set(`${Number(it.appId)}:${Number(it.issueNumber)}`, { appId: Number(it.appId), issueNumber: Number(it.issueNumber) });
     } else if (it && Number(it.sessionId) > 0) {
-      const of = await requestsOfSession(db, Number(it.sessionId));
-      if (of.length) for (const r of of) requests.set(`${r.appId}:${r.issueNumber}`, r);
-      else changes.add(Number(it.sessionId));
+      for (const r of await requestsOfSession(db, Number(it.sessionId))) requests.set(`${r.appId}:${r.issueNumber}`, r);
+      changes.add(Number(it.sessionId));
     }
   }
   const changed = [];
-  // Stored in one order everywhere (by project and number, then by change),
-  // so two refreshes of the same rows never wait on each other in a circle.
+  let rows = [];
   if (requests.size) {
     const list = [...requests.values()];
-    const { rows } = await db.query(REQUEST_FACTS_SQL, [list.map((r) => r.appId), list.map((r) => r.issueNumber)]);
+    ({ rows } = await db.query(REQUEST_FACTS_SQL, [list.map((r) => r.appId), list.map((r) => r.issueNumber)]));
+    // Stored in one order everywhere (by project and number, then by
+    // change), so two refreshes of the same rows never wait on each other.
     rows.sort((a, b) => Number(a.app_id) - Number(b.app_id) || Number(a.issue_number) - Number(b.issue_number));
+  }
+  // The change each request draws: the bot's newest proposal of it, else a
+  // person's change for it. Its facts are read with the changes named.
+  const leads = new Set();
+  for (const row of rows) {
+    row.lead_change_id = Number(row.proposal_session_id) || Number(row.lc_id) || null;
+    if (row.lead_change_id) leads.add(row.lead_change_id);
+    if (Number(row.lc_id)) leads.add(Number(row.lc_id));
+  }
+  const ids = [...new Set([...changes, ...leads])];
+  const facts = new Map();
+  if (ids.length) {
+    const { rows: found } = await db.query(CHANGE_FACTS_SQL, [ids]);
+    await attachChecksEstimate(db, found, (r) => r.status === 'promoted' && IN_FLIGHT_CHECKS(r.check_state));
+    // #6594: whether each promoted change's votes are in, which decides
+    // whether it asks for a vote at all. Read once per change, here, and
+    // handed to the requests that draw it below.
+    await attachVotes(db, found, (r) => (r.status === 'promoted' ? { id: Number(r.id), prefix: '' } : null), now);
+    for (const f of found) facts.set(Number(f.id), f);
+  }
+  const changeStates = new Map([...facts.values()].map((f) => [Number(f.id), deriveChange(f, { now })]));
+
+  if (rows.length) {
     await attachChecksEstimate(db, rows, (r) => (r.proposal_status === 'promoted' && IN_FLIGHT_CHECKS(r.check_state))
       || (r.lc_status === 'promoted' && IN_FLIGHT_CHECKS(r.lc_check_state)));
-    // #6594: whether each promoted change's votes are in, which decides
-    // whether it asks for a vote at all.
-    await attachVotes(db, rows, (r) => (r.proposal_status === 'promoted' && Number(r.proposal_session_id) > 0
-      ? { id: Number(r.proposal_session_id), prefix: '' }
-      : (r.lc_status === 'promoted' && Number(r.lc_id) > 0 ? { id: Number(r.lc_id), prefix: 'lc_' } : null)), now);
+    // #6594: a request reads its change's votes from that change's facts
+    // (the bot's own proposal of it, or a person's change for it).
+    for (const row of rows) {
+      const own = row.proposal_status === 'promoted' ? facts.get(Number(row.proposal_session_id)) : null;
+      if (own) Object.assign(row, { votes_in: own.votes_in === true, earlier_yes: Number(own.earlier_yes) || 0 });
+      const theirs = row.lc_status === 'promoted' ? facts.get(Number(row.lc_id)) : null;
+      if (theirs) Object.assign(row, { lc_votes_in: theirs.votes_in === true, lc_earlier_yes: Number(theirs.earlier_yes) || 0 });
+    }
     // Which of them wait for their project's first version, by the bot's
     // own rule (as its read lane and a project chat's card read it).
     const bot = require('./homeroom-bot');
@@ -912,30 +1379,98 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
       row.held_first_version = bot.heldForFirstVersion(holds, {
         appId: row.app_id, issueNumber: row.issue_number, firstVersion: row.first_version === true, reason: row.queue_reason || null,
       });
+      // A person's change for it reads the change's own facts (deriveFacts).
+      if (Number(row.lc_id) && facts.has(Number(row.lc_id))) row.lc_facts = facts.get(Number(row.lc_id));
     }
-    for (const row of rows) {
-      const next = { ...derive(row, { now }), requesterId: row.requester_id == null ? null : Number(row.requester_id) };
+    const pairs = [rows.map((r) => Number(r.app_id)), rows.map((r) => Number(r.issue_number))];
+    const [{ rows: extras }, { rows: runs }] = await Promise.all([
+      db.query(STANDING_SQL, pairs),
+      db.query(STANDING_RUNS_SQL, pairs),
+    ]);
+    const extraOf = new Map(extras.map((e) => [`${e.app_id}:${e.issue_number}`, e]));
+    const runsOf = new Map();
+    for (const run of runs) {
+      const k = `${run.app_id}:${run.issue_number}`;
+      if (!runsOf.has(k)) runsOf.set(k, []);
+      runsOf.get(k).push(run);
+    }
+    const derived = rows.map((row) => {
+      let next = derive(row, { now });
+      const lead = row.lead_change_id ? facts.get(row.lead_change_id) || null : null;
+      const leadState = lead ? changeStates.get(Number(lead.id)) : null;
+      const voteOpen = !!lead && voteOpenOf(leadState);
+      // 11 Nov 2026: a request is up for a vote only while its change is
+      // open for votes; otherwise it is where its change is.
+      if (next.stage === 'up_for_vote' && lead && !voteOpen && leadState) next = { ...leadState };
+      return { row, next, lead, leadState, voteOpen };
+    });
+    const closed = derived.filter((d) => d.next.stage === 'closed');
+    const doneBy = new Map();
+    if (closed.length) {
+      const { rows: shipped } = await db.query(DONE_BY_SQL, [closed.map((d) => Number(d.row.app_id)), closed.map((d) => Number(d.row.issue_number))]);
+      for (const r of shipped) doneBy.set(`${r.app_id}:${r.n}`, r);
+    }
+    for (const { row, next: derivedState, lead, leadState, voteOpen } of derived) {
+      const k = `${row.app_id}:${row.issue_number}`;
+      const next = {
+        ...derivedState,
+        requesterId: row.requester_id == null ? null : Number(row.requester_id),
+        voteOpen,
+        leadChangeId: row.lead_change_id || null,
+      };
+      next.standing = requestStandingOf({
+        row, extra: extraOf.get(k) || null, runs: runsOf.get(k) || [], next,
+        change: changeStandingOf(lead, leadState, now), doneBy: doneBy.get(k) || null,
+      });
       const sessionId = Number(row.proposal_session_id || row.build_session_id || row.lc_id) || null;
       const key = { appId: Number(row.app_id), kind: 'request', ref: Number(row.issue_number), issueNumber: Number(row.issue_number), sessionId };
       const wrote = await upsert(db, key, next, { touch });
       if (wrote) changed.push({ ...key, appSlug: row.app_slug || null, state: next, prev: wrote.prev, bell: bellOf(wrote.prev, next) });
     }
   }
-  if (changes.size) {
-    const { rows } = await db.query(CHANGE_FACTS_SQL, [[...changes]]);
-    rows.sort((a, b) => Number(a.id) - Number(b.id));
-    await attachChecksEstimate(db, rows, (r) => r.status === 'promoted' && IN_FLIGHT_CHECKS(r.check_state));
-    await attachVotes(db, rows, (r) => (r.status === 'promoted' ? { id: Number(r.id), prefix: '' } : null), now);
-    for (const row of rows) {
-      // #6600: an update on its way, or a takeover that failed, as every
-      // other surface reads it.
-      const next = {
-        ...withUpdate(deriveChange(row, { now }), { coming: row.update_coming, failed: row.update_failed }),
-        requesterId: row.user_id == null ? null : Number(row.user_id),
-      };
-      const key = { appId: Number(row.app_id), kind: 'change', ref: Number(row.id), issueNumber: null, sessionId: Number(row.id) };
-      const wrote = await upsert(db, key, next, { touch });
-      if (wrote) changed.push({ ...key, appSlug: row.app_slug || null, state: next, prev: wrote.prev, bell: bellOf(wrote.prev, next) });
+
+  // The changes' own rows: every change named, and each request's change
+  // once it is up for a vote or past it. Never a headless session's. A row
+  // a change already has is always derived again (a change built for a
+  // request that went back to Underway, or was closed, must not keep saying
+  // it is open for votes, and the sweep must find it checked), and one whose
+  // change is gone or headless is removed.
+  const existing = new Set();
+  if (ids.length) {
+    // A change's row carries its own id as its session (work_states_session_idx).
+    const { rows: had } = await db.query(
+      `SELECT item_ref FROM work_states WHERE session_id = ANY($1::int[]) AND item_kind = 'change'`, [ids]);
+    for (const r of had) existing.add(Number(r.item_ref));
+  }
+  const gone = [...existing].filter((id) => !facts.has(id) || facts.get(id).is_headless === true);
+  if (gone.length) {
+    await db.query(`DELETE FROM work_states WHERE session_id = ANY($1::int[]) AND item_kind = 'change'`, [gone]);
+  }
+  const own = [...facts.values()]
+    .filter((f) => f.is_headless !== true && (changes.has(Number(f.id)) || leads.has(Number(f.id))))
+    .filter((f) => existing.has(Number(f.id)) || f.has_requests !== true || CHANGE_ROW_STATUSES.has(f.status))
+    .sort((a, b) => Number(a.id) - Number(b.id));
+  for (const f of own) {
+    const st = changeStates.get(Number(f.id));
+    const next = {
+      ...st,
+      requesterId: f.user_id == null ? null : Number(f.user_id),
+      voteOpen: voteOpenOf(st),
+      leadChangeId: null,
+      standing: {
+        change: changeStandingOf(f, st, now),
+        asks: { ...NO_ASKS, offers: (Array.isArray(f.offers) ? f.offers : []).map((o) => ({ id: Number(o.id), kind: String(o.kind), expiresAt: iso(o.expiresAt) })) },
+        said: null,
+      },
+    };
+    const key = { appId: Number(f.app_id), kind: 'change', ref: Number(f.id), issueNumber: null, sessionId: Number(f.id) };
+    const wrote = await upsert(db, key, next, { touch });
+    // A change with requests never rings: its requests' rows do.
+    if (wrote) {
+      changed.push({
+        ...key, appSlug: f.app_slug || null, state: next, prev: wrote.prev,
+        bell: f.has_requests === true ? null : bellOf(wrote.prev, next),
+      });
     }
   }
   return changed;
@@ -1011,8 +1546,56 @@ async function itemsOf(db, { machine, key, appId }) {
   return [];
 }
 
-/** The push a changed row is carried by, to everyone who may view its app. */
+/**
+ * Pure: a work state as every reader takes it (fromRow, the push, a
+ * request's `standing` on its page): the stored row, its words (phrasesOf)
+ * and its standing (its change, what is asked, what the bot last said). The
+ * per-viewer facts (`mine`, `voteOwed`) are the reader's to add.
+ */
+function shapeOf(item) {
+  const standing = item.standing && typeof item.standing === 'object' ? item.standing : {};
+  const out = {
+    appId: Number(item.appId),
+    app: item.app || null,
+    kind: item.kind,
+    ref: Number(item.ref),
+    issueNumber: item.issueNumber == null ? null : Number(item.issueNumber),
+    sessionId: item.sessionId == null ? null : Number(item.sessionId),
+    stage: item.stage,
+    why: item.why || null,
+    reason: item.reason || null,
+    line: item.line || null,
+    whoseMove: item.whoseMove || null,
+    requesterId: item.requesterId == null ? null : Number(item.requesterId),
+    since: iso(item.since),
+    updatedAt: iso(item.updatedAt),
+    voteOpen: !!item.voteOpen,
+    leadChangeId: item.leadChangeId == null ? null : Number(item.leadChangeId),
+    words: phrasesOf(item),
+    change: standing.change || null,
+    asks: standing.asks || { ...NO_ASKS },
+    said: standing.said || null,
+  };
+  if (item.kind === 'request') {
+    out.tries = Number(standing.tries) || 1;
+    out.tryStarts = Array.isArray(standing.tryStarts) ? standing.tryStarts : [];
+    out.cause = standing.cause || null;
+    out.doneBy = standing.doneBy || null;
+  }
+  return out;
+}
+
+/**
+ * The push a changed row is carried by, to everyone who may view its app:
+ * the whole row (shapeOf) as anybody but its requester reads it (publicOf).
+ */
 function pushOf(row) {
+  const state = publicOf(shapeOf({
+    ...row.state,
+    appId: row.appId, kind: row.kind, ref: row.ref, issueNumber: row.issueNumber, sessionId: row.sessionId,
+    app: row.appSlug ? { slug: row.appSlug, name: row.appName || row.appSlug } : null,
+    updatedAt: row.updatedAt || new Date(),
+  }));
   return {
     kind: 'scoped',
     routing: { appId: row.appId, appSlug: row.appSlug || null },
@@ -1021,10 +1604,7 @@ function pushOf(row) {
       appId: row.appId,
       appSlug: row.appSlug || null,
       item: { kind: row.kind, ref: row.ref, issueNumber: row.issueNumber, sessionId: row.sessionId },
-      state: {
-        stage: row.state.stage, why: row.state.why, reason: row.state.reason, line: row.state.line,
-        whoseMove: row.state.whoseMove, since: row.state.since,
-      },
+      state,
     },
   };
 }
@@ -1156,7 +1736,7 @@ async function bellPushes(db, changed) {
 
 /**
  * #6441: "Ready to try" outlives the change being ready. When a request's
- * stage leaves for building (an update asked for, or a fix), the
+ * stage leaves for building (an update or a fix under way), the
  * "ready to try" it rang is no longer true, so its unread row is withdrawn:
  * marked read and mailed, never deleted (the row stays in All, and no email
  * goes out for it). The move back to up_for_vote rings a fresh one through
@@ -1170,8 +1750,10 @@ async function withdrawReady(db, changed) {
   for (const row of changed || []) {
     if (row.kind !== 'request') continue;
     const sessionId = Number(row.sessionId) || 0;
-    if (!sessionId || row.state?.stage !== 'building') continue;
-    if (!row.prev || row.prev.stage === 'building') continue;
+    // Only an update or a fix under way rebuilds it: one that is only queued
+    // takes nothing back yet (11 Nov 2026: building, update_queued).
+    if (!sessionId || row.state?.stage !== 'building' || queuedUpdate(row.state)) continue;
+    if (!row.prev || (row.prev.stage === 'building' && !queuedUpdate(row.prev))) continue;
     const { rows } = await db.query(
       `UPDATE notifications
           SET read_at = NOW(), mailed_at = COALESCE(mailed_at, NOW())
@@ -1189,9 +1771,48 @@ async function withdrawReady(db, changed) {
   return pushes;
 }
 
-/** The pushes changed rows are carried by: their work_state, the bell of each that rang, and each ready one withdrawn. */
-async function pushesOf(db, changed) {
-  return [...changed.map(pushOf), ...(await bellPushes(db, changed)), ...(await withdrawReady(db, changed))];
+/**
+ * Step 3 (11 Nov 2026): the buttons of Homeroom bot's cards about rows that
+ * moved, which their new standings no longer keep (bot-cards.js
+ * retireOnMove, the one table), retired; and each item whose cards went
+ * derived again at once, so its standing no longer lists them among its
+ * open cards (a retire marks nothing: migration
+ * work-state-backfill-and-indexes). Resolves the pushes of the messages
+ * they were under and of the rows derived again. Inside a transition this
+ * is its transaction's; the drain runs it after its own commits
+ * (drainDirty).
+ */
+async function settleCards(db, changed, depth = 0) {
+  const cards = require('./bot-cards');
+  const pushes = [];
+  const again = [];
+  for (const row of changed || []) {
+    // Buttons are judged on a move only (bot-cards.js moved).
+    if (!cards.moved(row.prev, row.state)) continue;
+    const item = row.kind === 'request' ? { appId: row.appId, issueNumber: row.issueNumber } : { sessionId: row.sessionId };
+    const out = await cards.inTransaction(db, (tx) => cards.retireOnMove(tx, { ...item, standing: row.state, prev: row.prev }));
+    pushes.push(...out.pushes);
+    if (out.retired) again.push(item);
+  }
+  if (again.length) {
+    // Its open cards changed and nothing else did, unless a write landed
+    // meanwhile: a move found here rings and retires like any other, once
+    // more at most.
+    const moved = await refresh(db, again);
+    pushes.push(...await pushesOf(db, moved, { cards: false }));
+    if (depth < 1) pushes.push(...await settleCards(db, moved, depth + 1));
+  }
+  return pushes;
+}
+
+/**
+ * The pushes changed rows are carried by: their work_state, the bell of each
+ * that rang, each ready one withdrawn, and the cards their move retired
+ * (settleCards; `cards: false` leaves those to the caller).
+ */
+async function pushesOf(db, changed, { cards = true } = {}) {
+  const pushes = [...changed.map(pushOf), ...(await bellPushes(db, changed)), ...(await withdrawReady(db, changed))];
+  return cards ? [...pushes, ...(await settleCards(db, changed))] : pushes;
 }
 
 /**
@@ -1231,24 +1852,99 @@ async function forRequests(db, appId, numbers) {
   return new Map(rows.map((r) => [Number(r.item_ref), fromRow(r)]));
 }
 
-/** Pure: a stored row as the readers take it. */
+/**
+ * The stored rows of named requests ({ appId, issueNumber }) on any project,
+ * made first for any that has none yet, in the order named.
+ */
+async function forItems(db, items) {
+  const list = (items || []).filter((it) => Number(it.appId) > 0 && Number(it.issueNumber) > 0);
+  if (!list.length) return [];
+  await ensure(db, list);
+  const { rows } = await db.query(
+    `SELECT ws.*, a.slug, a.name AS app_name FROM work_states ws JOIN apps a ON a.id = ws.app_id
+      WHERE ws.item_kind = 'request'
+        AND (ws.app_id, ws.item_ref) IN (SELECT * FROM unnest($1::int[], $2::int[]))`,
+    [list.map((it) => Number(it.appId)), list.map((it) => Number(it.issueNumber))],
+  );
+  const byKey = new Map(rows.map((r) => [`${r.app_id}:${r.item_ref}`, fromRow(r)]));
+  return list.map((it) => byKey.get(`${Number(it.appId)}:${Number(it.issueNumber)}`)).filter(Boolean);
+}
+
+/** The stored rows of named changes, by session id, made first for any that has none yet. */
+async function forChanges(db, sessionIds, { ensure: make = true } = {}) {
+  const list = [...new Set((sessionIds || []).map(Number).filter((n) => n > 0))];
+  if (!list.length) return new Map();
+  if (make) await ensureChanges(db, list);
+  const { rows } = await db.query(
+    `SELECT ws.*, a.slug, a.name AS app_name FROM work_states ws JOIN apps a ON a.id = ws.app_id
+      WHERE ws.item_kind = 'change' AND ws.item_ref = ANY($1::int[])`,
+    [list],
+  );
+  return new Map(rows.map((r) => [Number(r.item_ref), fromRow(r)]));
+}
+
+/** Pure: a stored row as the readers take it (shapeOf). */
 function fromRow(r) {
-  return {
-    appId: Number(r.app_id),
+  return shapeOf({
+    appId: r.app_id,
     app: r.slug ? { slug: r.slug, name: r.app_name || r.slug } : null,
     kind: r.item_kind,
-    ref: Number(r.item_ref),
-    issueNumber: r.issue_number == null ? null : Number(r.issue_number),
-    sessionId: r.session_id == null ? null : Number(r.session_id),
+    ref: r.item_ref,
+    issueNumber: r.issue_number,
+    sessionId: r.session_id,
     stage: r.stage,
-    why: r.why || null,
-    reason: r.reason || null,
-    line: r.line || null,
-    whoseMove: r.whose_move || null,
-    requesterId: r.requester_id == null ? null : Number(r.requester_id),
-    since: iso(r.since),
-    updatedAt: iso(r.updated_at),
+    why: r.why,
+    reason: r.reason,
+    line: r.line,
+    whoseMove: r.whose_move,
+    requesterId: r.requester_id,
+    since: r.since,
+    updatedAt: r.updated_at,
+    voteOpen: r.vote_open === true,
+    leadChangeId: r.lead_change_id,
+    standing: r.standing,
+  });
+}
+
+/**
+ * Pure (11 Nov 2026): a row as anybody but its requester may read it. What
+ * is asked of its requester is said as whether it is, never with what is
+ * theirs alone: no message of their chat with Homeroom bot (its open
+ * question), no private thread of theirs (a plan they are drafting), none of
+ * its cards (one in their chat is theirs; `openOffers` counts them), and
+ * nobody's id. The scoped push carries this shape to every viewer of the
+ * project (pushOf); a reader hands the whole row to its requester only
+ * (forViewer).
+ */
+function publicOf(row) {
+  if (!row) return null;
+  const asks = row.asks && typeof row.asks === 'object' ? row.asks : NO_ASKS;
+  const offers = Array.isArray(asks.offers) ? asks.offers : [];
+  return {
+    ...row,
+    requesterId: null,
+    asks: {
+      question: asks.question ? { messageId: null, at: asks.question.at || null } : null,
+      plan: asks.plan || null,
+      closeVote: asks.closeVote || null,
+      draft: asks.draft ? { threadId: null } : null,
+      offers: [],
+      openOffers: offers.length,
+      reports: Number(asks.reports) || 0,
+    },
   };
+}
+
+/**
+ * Pure: a row as one viewer reads it, with the per-viewer facts the store
+ * never holds: `mine` (they asked for it, or decide on its project) and
+ * `voteOwed` (its change is open for votes, and they still owe a vote).
+ * Anybody but its requester (`viewerId`) reads it as publicOf says.
+ */
+function forViewer(row, { mine = false, voteOwed = false, viewerId = null } = {}) {
+  if (!row) return null;
+  const theirs = viewerId != null && row.requesterId != null && Number(row.requesterId) === Number(viewerId);
+  return { ...(theirs ? row : publicOf(row)), mine: !!mine, voteOwed: !!voteOwed };
 }
 
 // ── The sweep ────────────────────────────────────────────────────────────
@@ -1261,9 +1957,15 @@ function fromRow(r) {
 // longest unchecked first, and seeds a row for each request the bot knows
 // that has none yet (its first run after the table exists).
 async function sweep(db, { olderThanMs = 2 * 60 * 1000, limit = 100, seed = 100 } = {}) {
+  // A request nobody has started on (reading, waiting to be read) is left
+  // out: it moves only when one of its records is written, which marks it
+  // (work_state_dirty), and a list makes one of those for every request it
+  // shows. The same test as work_states_sweep_moving_idx's, word for word.
   const { rows } = await db.query(
     `SELECT app_id, item_kind, item_ref FROM work_states
-      WHERE stage <> 'closed' AND checked_at < NOW() - make_interval(secs => $1)
+      WHERE stage <> 'closed'
+        AND NOT (item_kind = 'request' AND stage = 'reading' AND COALESCE(line->>'code', '') = 'waiting')
+        AND checked_at < NOW() - make_interval(secs => $1)
         AND NOT (stage = 'live' AND since < NOW() - make_interval(days => $3))
       ORDER BY checked_at ASC LIMIT $2`,
     [Math.round(olderThanMs / 1000), limit, LIVE_DAYS + 1],
@@ -1282,15 +1984,26 @@ async function sweep(db, { olderThanMs = 2 * 60 * 1000, limit = 100, seed = 100 
      ORDER BY k.at DESC LIMIT $1`,
     [seed],
   ) : { rows: [] };
+  // 11 Nov 2026: and a row for each change up for a vote or going live that
+  // has none yet (a change built for a request had none before), so Needs
+  // you finds every change open for votes.
+  const { rows: missingChanges } = seed > 0 ? await db.query(
+    `SELECT cs.id FROM chat_sessions cs
+      WHERE cs.status IN ('promoted', 'merging') AND cs.is_headless = FALSE
+        AND NOT EXISTS (SELECT 1 FROM work_states ws WHERE ws.item_kind = 'change' AND ws.item_ref = cs.id)
+      ORDER BY cs.id DESC LIMIT $1`,
+    [seed],
+  ) : { rows: [] };
   const items = [
     ...rows.map((r) => (r.item_kind === 'request'
       ? { appId: Number(r.app_id), issueNumber: Number(r.item_ref) }
       : { sessionId: Number(r.item_ref) })),
     ...missing.map((r) => ({ appId: Number(r.app_id), issueNumber: Number(r.issue_number) })),
+    ...missingChanges.map((r) => ({ sessionId: Number(r.id) })),
   ];
   if (!items.length) return { checked: 0, seeded: 0, changed: [], pushes: [] };
   const changed = await refresh(db, items, { touch: true });
-  return { checked: rows.length, seeded: missing.length, changed, pushes: await pushesOf(db, changed) };
+  return { checked: rows.length, seeded: missing.length + missingChanges.length, changed, pushes: await pushesOf(db, changed) };
 }
 
 /**
@@ -1298,10 +2011,12 @@ async function sweep(db, { olderThanMs = 2 * 60 * 1000, limit = 100, seed = 100 
  * a work state is derived from, wherever it was made), at most `limit` at a
  * time, and resolve the changed rows. The marks are taken and the items
  * refreshed in one transaction, so a mark made meanwhile waits for it and
- * stays for the next run; a failure leaves them marked. `db` is a pool.
+ * stays for the next run; a failure leaves them marked. The cards their
+ * moves retire go after that commit (settleCards). `db` is a pool.
  */
 async function drainDirty(pool, { limit = 200 } = {}) {
   const client = await pool.connect();
+  let out;
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
@@ -1314,15 +2029,27 @@ async function drainDirty(pool, { limit = 200 } = {}) {
       ? { sessionId: Number(r.session_id) }
       : { appId: Number(r.app_id), issueNumber: Number(r.issue_number) }))) : [];
     // Each moment's bell is rung with the stage, in this transaction.
-    const pushes = await pushesOf(client, changed);
+    const pushes = await pushesOf(client, changed, { cards: false });
     await client.query('COMMIT');
-    return { taken: rows.length, changed, pushes };
+    out = { taken: rows.length, changed, pushes };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {
     client.release();
   }
+  // The cards their moves retired, once the taken marks are let go: a tap
+  // on one of them holds its card and then marks its request, so a drain
+  // still holding the marks and reaching for the card would wait on the
+  // tap while the tap waits on it. A failure here leaves the rows stored.
+  if (out.changed.length) {
+    try {
+      out.pushes.push(...await settleCards(pool, out.changed));
+    } catch (err) {
+      require('./logger').warn('work-state', 'Retiring the cards of moved rows failed', { message: err.message });
+    }
+  }
+  return out;
 }
 
 /**
@@ -1342,6 +2069,18 @@ async function ensure(db, items) {
   if (rows.length) await refresh(db, rows.map((r) => ({ appId: Number(r.app_id), issueNumber: Number(r.issue_number) })));
 }
 
+/** The rows of changes that have none yet, made now (ensure, for changes). Resolves nothing. */
+async function ensureChanges(db, sessionIds) {
+  const list = [...new Set((sessionIds || []).map(Number).filter((n) => n > 0))];
+  if (!list.length) return;
+  const { rows } = await db.query(
+    `SELECT x.id FROM unnest($1::int[]) AS x(id)
+      WHERE NOT EXISTS (SELECT 1 FROM work_states ws WHERE ws.item_kind = 'change' AND ws.item_ref = x.id)`,
+    [list],
+  );
+  if (rows.length) await refresh(db, rows.map((r) => ({ sessionId: Number(r.id) })));
+}
+
 module.exports = {
   STAGES,
   WHYS,
@@ -1349,17 +2088,33 @@ module.exports = {
   LIFTED_LIMITS,
   outdatedReason,
   LIVE_DAYS,
-  WORDS,
+  phrasesOf,
+  english,
   APPROVED_SQL,
   attachVotes,
   votesIn,
   stageSays,
   lineSays,
   says,
+  busyNow,
+  botWorkOf,
+  forItems,
   fromStage,
   derive,
   deriveChange,
   withUpdate,
+  voteOpenOf,
+  shotsHeld,
+  changeStandingOf,
+  requestStandingOf,
+  shapeOf,
+  publicOf,
+  forViewer,
+  forChanges,
+  ensureChanges,
+  STANDING_SQL,
+  STANDING_RUNS_SQL,
+  DONE_BY_SQL,
   placeFor,
   bellOf,
   REQUEST_FACTS_SQL,
@@ -1373,6 +2128,7 @@ module.exports = {
   bellSaid,
   bellPushes,
   pushesOf,
+  settleCards,
   quietBell,
   publish,
   touched,

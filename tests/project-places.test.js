@@ -201,7 +201,7 @@ test('the tray: rendered only while open, into the body; focus in and back; Esca
   // fallback if it is missed, and at once under reduced motion.
   assert.match(src, /onAnimationEnd=\{\(e\) => \{\s*if \(e\.target !== e\.currentTarget \|\| e\.animationName !== 'dev-ws-tray-out'\) return;\s*if \(!closingRef\.current\) return;/, 'the card\'s own out slide ends it');
   assert.match(src, /setTimeout\(\(\) => closedRef\.current\?\.\(\), 320\)/, 'a missed animationend never leaves it on screen');
-  assert.match(src, /if \(window\.matchMedia\?\.\('\(prefers-reduced-motion: reduce\)'\)\?\.matches\) \{\s*closedRef\.current\?\.\(\);/, 'reduced motion closes at once, as the open skips its slide');
+  assert.match(src, /if \(reducedMotion\(\)\) \{\s*closedRef\.current\?\.\(\);/, 'reduced motion closes at once, as the open skips its slide');
   const { isEdgeSwipe, isCloseSwipe, edgeSwipeAllowed } = loadTsx(TRAY);
   assert.equal(isEdgeSwipe(4, 300, 120, 310), true, 'a swipe right from the edge');
   assert.equal(isEdgeSwipe(60, 300, 200, 300), false, 'not from the edge');

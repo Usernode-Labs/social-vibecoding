@@ -253,7 +253,7 @@ export function GuestChange({ vote, app, signedIn = false, onBack, onIntent }: {
   );
 }
 
-export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommunities, startOnWorkshop = false, signedIn = false, preview = false, initialOverview = null }: {
+export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommunities, onPlace, startOnWorkshop = false, signedIn = false, preview = false, initialOverview = null }: {
   /** The project's card from the public directory. */
   app: GuestApp;
   /**
@@ -279,6 +279,8 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
   preview?: boolean;
   /** The overview already read (the visitor view reads it to find the app). */
   initialOverview?: GuestOverview | null;
+  /** The tab that is up, for the frame's bar to name under a look (landing.tsx). */
+  onPlace?: (tab: 'hub' | 'workshop' | 'discussion') => void;
 }) {
   const t = useMessages('auth');
   const device = useStoreState(devicePinsStore);
@@ -296,6 +298,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
   const [opened, setOpened] = useState<number | null>(null);
   const [allVotes, setAllVotes] = useState(false);
   const [allLive, setAllLive] = useState(false);
+  useEffect(() => { onPlace?.(tab); }, [tab, onPlace]);
 
   useEffect(() => {
     let live = true;
@@ -339,6 +342,7 @@ export function GuestProject({ app, onIntent, onOpenInside, onShare, onAllCommun
         pinned={pinnedHere}
         onPin={() => { toggleDevicePin('communities', app.slug); }}
         canTry={canTryHere(app, inHomeroomApp())}
+        color={color}
         onIntent={onIntent}
         onOpenInside={onOpenInside}
         onShare={onShare}

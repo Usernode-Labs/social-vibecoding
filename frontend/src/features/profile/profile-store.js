@@ -51,7 +51,14 @@
 import { createStore } from '../../lib/plain-store.js';
 import { changeHref } from '../../lib/change-href';
 import { getDateLocale, t } from '../../lib/i18n/runtime';
+import { getTimeZone, zonedDay } from '../../lib/time-zone';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
+
+/** The zone the account picked in Settings › Language (#6479), as a formatter option. */
+const inZone = (opts = {}) => {
+  const timeZone = getTimeZone();
+  return timeZone ? { ...opts, timeZone } : opts;
+};
 
 /** Short facts on one small line, each a whole message, joined the way the
  *  language on screen separates them (`profile:line.factPair`). */
@@ -81,6 +88,7 @@ function factLine(parts) {
  * @property {boolean} friendsOpen          — the Friends card is up (UI overhaul)
  * @property {boolean} appSlotsOpen         — the App allowance card is up (#6446)
  * @property {boolean} weekShareOpen        — the "Share your week" card is up (#6464)
+ * @property {string} tab                   — under a look, which of You's tabs is up (./frame/you-tabs.ts)
  */
 
 export const profileStore = createStore(/** @type {ProfileState} */ ({
@@ -100,6 +108,8 @@ export const profileStore = createStore(/** @type {ProfileState} */ ({
   friendsOpen: false,
   appSlotsOpen: false,
   weekShareOpen: false,
+  // Under a look, which of You's tabs is up (./frame/you-tabs.ts).
+  tab: 'overview',
 }));
 
 /** Only ever render an http(s) URL as a real anchor. Escaping alone would not
@@ -153,7 +163,7 @@ export function relativeDate(iso, now = Date.now()) {
   if (days === 1) return t('profile:date.yesterday');
   if (days < 14) return t('profile:date.daysAgo', { count: days });
   try {
-    return new Date(at).toLocaleDateString();
+    return new Date(at).toLocaleDateString(undefined, inZone());
   } catch (_) {
     return null;
   }
@@ -223,7 +233,7 @@ export function memberSinceLabel(iso) {
   if (!Number.isFinite(at)) return null;
   try {
     return t('profile:identity.buildingSince', {
-      date: new Date(at).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
+      date: new Date(at).toLocaleDateString(undefined, inZone({ month: 'long', year: 'numeric' })),
     });
   } catch (_) {
     return null;
@@ -255,6 +265,12 @@ export function identityView(state) {
     initial: initialOf(u),
     name: displayNameOf(u),
     handle,
+    // The kit's You page (./frame/you-frame.tsx) leads with the @handle and
+    // says the facts under it, so it reads the two apart: the handle whether
+    // or not a display name is set, and the facts without it.
+    username: u.username ? `@${u.username}` : null,
+    displayName: handle ? displayNameOf(u) : null,
+    about: factLine(facts.filter((fact) => fact !== handle)),
     sub: factLine(facts),
     bio: u.bio || null,
     chips: verifiedSocialLinksView(u),
@@ -602,11 +618,11 @@ export function mergedAgo(iso, now = Date.now()) {
   const days = Math.floor((now - at) / 86400000);
   if (days >= 0 && days < 14) return relativeDate(iso, now);
   const date = new Date(at);
-  const opts = date.getFullYear() === new Date(now).getFullYear()
+  const opts = zonedDay(date).year === zonedDay(new Date(now)).year
     ? { month: 'short', day: 'numeric' }
     : { month: 'short', day: 'numeric', year: 'numeric' };
   try {
-    return date.toLocaleDateString(undefined, opts);
+    return date.toLocaleDateString(undefined, inZone(opts));
   } catch (_) {
     return null;
   }
@@ -665,7 +681,7 @@ function monthYear(iso) {
   const at = Date.parse(iso || '');
   if (!Number.isFinite(at)) return null;
   try {
-    return new Date(at).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    return new Date(at).toLocaleDateString(undefined, inZone({ month: 'long', year: 'numeric' }));
   } catch (_) {
     return null;
   }

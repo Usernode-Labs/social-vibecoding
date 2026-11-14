@@ -14,7 +14,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(root, 'frontend/src/features/settings', rel), 'utf8');
 
-const ROW_CLASS = "const ROW_CLASS = 'rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';";
+const ROW_CLASS = "const ROW_CLASS = 'ui-mini rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';";
 const LISTS = [
   'grants-list.tsx',
   'notification-prefs-list.tsx',

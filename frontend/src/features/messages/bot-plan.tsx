@@ -8,7 +8,7 @@ import * as api from './api';
 import { ACTIVITY_OUTCOME_LABELS, isActivityMessage, isMovedActivity } from './bot-activity';
 import { ensureBotActivity, useBotActivity } from './bot-activity-store';
 import { changeKey } from './bot-shared';
-import { botMeta, postedNote } from './bot-question';
+import { OfferRefused, botMeta, postedNote, refusalOf, type OfferRefusal } from './bot-question';
 import { AnsweredChoices, PlanCardView, type AnsweredChoice, type PlanCardState, type PlanProgress } from './bot-plan-view';
 import { PlanSpec } from './bot-plan-spec';
 import { BotHeadWords, botHead } from './bot-head-card';
@@ -184,9 +184,11 @@ export const NO_PLAN_LAYOUT: PlanLayout = { hidden: new Set(), cardOf: new Map()
  *   - the newest plan, waiting or built, reads the newest card's state.
  *
  * One request, one story: a plan posted in its request's thread (the card
- * is the thread's root, and the main chat may also show the plan there) hides
- * no card, since the card is the way into the thread, and reads the state of
- * the card it hangs off.
+ * is the thread's root) hides no card, since the card is the way into the
+ * thread, and reads the state of the card it hangs off. A first version's
+ * thread hangs off no card: its pane hands its replies over with no thread
+ * above them, and they are read as the stream they were (14 Nov 2026,
+ * ./index.tsx ReplyThreadPanel).
  */
 export function planLayout(messages: readonly ConversationMessage[]): PlanLayout {
   const plans = new Map<string, ConversationMessage>();
@@ -302,6 +304,8 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
   useMessages('messages');
   const meta = botMeta(message);
   const [pressed, setPressed] = useState(false);
+  // Step 3: a Build it the server refused, said under the plan's buttons.
+  const [refused, setRefused] = useState<OfferRefusal | null>(null);
   const activity = useBotActivity();
   const { messages } = useMessagesSnapshot();
   const userId = typeof window !== 'undefined' ? Number(window.App?.user?.id) || null : null;
@@ -318,9 +322,14 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
   function build(answers: Array<string | null>) {
     if (!actionId) return;
     setPressed(true);
-    // A refusal (decided on another device, or the plan was replaced) brings
-    // nothing back here: the card's own update says what happened.
-    void api.decideBotAction(actionId, 'build', answers.map((a) => a || '')).catch(() => setPressed(false));
+    setRefused(null);
+    // A refusal (decided on another device, the plan replaced or retired)
+    // brings the buttons back with a line under them that says why, until
+    // the card's own update says what happened.
+    void api.decideBotAction(actionId, 'build', answers.map((a) => a || '')).catch((error: unknown) => {
+      setPressed(false);
+      setRefused(refusalOf(error));
+    });
   }
 
   return (
@@ -339,7 +348,7 @@ export function BotPlanCard({ message, conversationId, cardId = null }: {
       card={meta.plan.card || null}
       footer={state === 'built' && card && card.state !== 'done'
         ? notifyFooter(meta, offer, userId, conversationId, Number(message.id))
-        : null}
+        : state === 'open' && refused ? <OfferRefused refusal={refused} /> : null}
     />
   );
 }

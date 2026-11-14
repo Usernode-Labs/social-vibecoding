@@ -33,12 +33,15 @@ export function AlertsSection() {
         <SectionHeading title={t('settings:alerts.title')}>
           {t('settings:alerts.intro')}
         </SectionHeading>
-        <SwitchRow id="devchat-alerts-toggle">
-          {t('settings:alerts.toggle.label')}
-        </SwitchRow>
-        <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-          {t('settings:alerts.toggle.description')}
-        </p>
+        {/* A neutral wrapper (looks v2); see ./dev-console.tsx. */}
+        <div className="ui-card ui-swrow">
+          <SwitchRow id="devchat-alerts-toggle">
+            {t('settings:alerts.toggle.label')}
+          </SwitchRow>
+          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+            {t('settings:alerts.toggle.description')}
+          </p>
+        </div>
         <button
           id="devchat-alerts-test"
           type="button"
@@ -60,79 +63,80 @@ export function AlertsSection() {
           <SectionHeading title={t('settings:alerts.push.title')} blurbClassName="leading-relaxed">
             {t('settings:alerts.push.intro')}
           </SectionHeading>
-          <div className="space-y-3">
-            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="messages">
-              <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.messages.label')}</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.messages.description')}</span>
+          {/* ui-card and ui-row: names only (looks v2), the kit's card of rows under a look. */}
+          <div className="ui-card space-y-3">
+            <label className="ui-row flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="messages">
+              <span className="ui-row-tx">
+                <span className="ui-row-t block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.messages.label')}</span>
+                <span className="ui-row-s block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.messages.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
-            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="builds">
-              <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.builds.label')}</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.builds.description')}</span>
+            <label className="ui-row flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="builds">
+              <span className="ui-row-tx">
+                <span className="ui-row-t block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.builds.label')}</span>
+                <span className="ui-row-s block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.builds.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
-            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="invite_activity">
-              <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.inviteActivity.label')}</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.inviteActivity.description')}</span>
+            <label className="ui-row flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="invite_activity">
+              <span className="ui-row-tx">
+                <span className="ui-row-t block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.inviteActivity.label')}</span>
+                <span className="ui-row-s block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.inviteActivity.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
-            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="direct_interactions">
-              <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.directInteractions.label')}</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.directInteractions.description')}</span>
+            <label className="ui-row flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="direct_interactions">
+              <span className="ui-row-tx">
+                <span className="ui-row-t block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.directInteractions.label')}</span>
+                <span className="ui-row-s block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.directInteractions.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
-            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="invitations">
-              <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.invitations.label')}</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.invitations.description')}</span>
+            <label className="ui-row flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="invitations">
+              <span className="ui-row-tx">
+                <span className="ui-row-t block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.invitations.label')}</span>
+                <span className="ui-row-s block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.invitations.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
-            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="shared_work">
-              <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.sharedWork.label')}</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.sharedWork.description')}</span>
+            <label className="ui-row flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="shared_work">
+              <span className="ui-row-tx">
+                <span className="ui-row-t block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.sharedWork.label')}</span>
+                <span className="ui-row-s block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.sharedWork.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
-            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="developer_sessions">
-              <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.developerSessions.label')}</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.developerSessions.description')}</span>
+            <label className="ui-row flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="developer_sessions">
+              <span className="ui-row-tx">
+                <span className="ui-row-t block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.developerSessions.label')}</span>
+                <span className="ui-row-s block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.developerSessions.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
-            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="proposal_alerts">
-              <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.proposalAlerts.label')}</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.proposalAlerts.description')}</span>
+            <label className="ui-row flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="proposal_alerts">
+              <span className="ui-row-tx">
+                <span className="ui-row-t block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.proposalAlerts.label')}</span>
+                <span className="ui-row-s block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.proposalAlerts.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
-            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="app_alerts">
-              <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.appAlerts.label')}</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.appAlerts.description')}</span>
+            <label className="ui-row flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="app_alerts">
+              <span className="ui-row-tx">
+                <span className="ui-row-t block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.appAlerts.label')}</span>
+                <span className="ui-row-s block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.appAlerts.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
-            <label className="flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="lightweight_activity">
-              <span>
-                <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.lightweightActivity.label')}</span>
-                <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.lightweightActivity.description')}</span>
+            <label className="ui-row flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="lightweight_activity">
+              <span className="ui-row-tx">
+                <span className="ui-row-t block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.lightweightActivity.label')}</span>
+                <span className="ui-row-s block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.lightweightActivity.description')}</span>
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
           </div>
-          <p data-mobile-push-status aria-live="polite" className="text-xs mt-3 text-zinc-500 dark:text-zinc-400">
+          <p data-mobile-push-status aria-live="polite" className="ui-note text-xs mt-3 text-zinc-500 dark:text-zinc-400">
             {t('settings:alerts.push.loading')}
           </p>
         </div>

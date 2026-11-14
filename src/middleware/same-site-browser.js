@@ -1,5 +1,8 @@
 'use strict';
 
+const log = require('../services/logger');
+const { readSessionCookie } = require('../services/browser-session-cookies');
+
 // Refuse a BROWSER request that did not come from the Homeroom page itself.
 //
 // The session cookie is SameSite=Lax, and child apps and staging previews
@@ -38,7 +41,10 @@ function firstHeader(value) {
 // Same source as community-invites.js's requestOrigin(); a browser cannot set
 // X-Forwarded-* on a request that skips the CORS preflight.
 function ownOrigin(req) {
-  const proto = firstHeader(req.headers['x-forwarded-proto']) || req.protocol;
+  // A WebSocket upgrade reaches us as a bare http.IncomingMessage, which has
+  // no Express `req.protocol`; its socket says whether TLS ended here.
+  const proto = firstHeader(req.headers['x-forwarded-proto']) || req.protocol
+    || (req.socket?.encrypted ? 'https' : 'http');
   const host = firstHeader(req.headers['x-forwarded-host']) || firstHeader(req.headers.host);
   if (!/^https?$/.test(proto) || !host) return null;
   try {
@@ -62,10 +68,15 @@ function sameOriginByOriginHeader(req) {
   return claimed !== 'null' && own != null && claimed === own;
 }
 
-function sameOriginBrowserOnly(req, res, next) {
+// The rule itself, for callers that are not Express routes (the WebSocket
+// upgrade in services/ws.js).
+function isSameOriginBrowserRequest(req) {
   const fetchSite = req.headers['sec-fetch-site'];
-  const allowed = fetchSite != null ? fetchSite === 'same-origin' : sameOriginByOriginHeader(req);
-  if (!allowed) return res.status(403).json({ error: 'forbidden' });
+  return fetchSite != null ? fetchSite === 'same-origin' : sameOriginByOriginHeader(req);
+}
+
+function sameOriginBrowserOnly(req, res, next) {
+  if (!isSameOriginBrowserRequest(req)) return res.status(403).json({ error: 'forbidden' });
   return next();
 }
 
@@ -78,4 +89,48 @@ function sameOriginBrowserWrites(req, res, next) {
   return sameOriginBrowserOnly(req, res, next);
 }
 
-module.exports = { sameOriginBrowserOnly, sameOriginBrowserWrites };
+// ── Every cookie-authenticated write, by default ─────────────────────────
+//
+// The per-route guard above is opt-in, and the routes without it were safe
+// only because the JSON body parser makes their requests preflight and the
+// platform answers no credentialed CORS. That held, but silently: a new
+// urlencoded or text parser, a write driven by the query string, or a CORS
+// rule would have opened them without a test failing. server.js mounts this
+// ahead of every router, so a write that carries the session cookie is
+// refused unless the Homeroom page itself sent it, whatever the route.
+//
+// It reads only the session cookie, the one credential a browser attaches by
+// itself; bearer and token requests carry none and are not its concern.
+// The anonymous /api/public tier never reads the session (the marketing site
+// on the same domain posts its waitlist forms there), so it is not guarded.
+//
+// A write with the cookie and neither Origin nor Sec-Fetch-Site comes from a
+// client that is not a browser (every browser since 2020 sends at least one):
+// the native app's own HTTP calls, the CLI, a test. It passes, as it does in
+// sameOriginBrowserOnly, and is logged once per method and path prefix, so
+// the clients that still depend on it can be found before it is refused.
+const PUBLIC_PREFIX = '/api/public/';
+const MAX_LOGGED_SHAPES = 500;
+const loggedShapes = new Set();
+
+function logHeaderlessCookieWrite(req) {
+  if (loggedShapes.size >= MAX_LOGGED_SHAPES) return;
+  const shape = `${req.method} ${req.path.split('/').slice(0, 4).join('/')}`;
+  if (loggedShapes.has(shape)) return;
+  loggedShapes.add(shape);
+  log.info('same-site-browser',
+    'Cookie-authenticated write without Origin or Sec-Fetch-Site', { shape });
+}
+
+function sameOriginCookieWrites(req, res, next) {
+  if (SAFE_METHODS.has(req.method) || req.path.startsWith(PUBLIC_PREFIX)) return next();
+  if (!readSessionCookie(req)) return next();
+  if (req.headers['sec-fetch-site'] == null && req.headers.origin == null) {
+    logHeaderlessCookieWrite(req);
+    return next();
+  }
+  return sameOriginBrowserOnly(req, res, next);
+}
+
+module.exports = { sameOriginBrowserOnly, sameOriginBrowserWrites, sameOriginCookieWrites,
+  isSameOriginBrowserRequest };

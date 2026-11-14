@@ -518,7 +518,11 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.equal((await dm.firstVersionState(pool, app.id, { viewerId: maya.id })).line, 'plan');
     assert.deepEqual(fv.plan.bullets, PLAN.bullets);
     assert.equal(fv.plan.actionId, (await planMessage(first)).meta.actionId);
-    assert.equal((await progress.botWorkByIssue(pool, app.id)).get(1).what, 'queued', 'nobody else starts it');
+    // Its page's `bot`, read off its stored row (work-state.js botWorkOf).
+    const ws = require('../src/services/work-state');
+    await ws.refresh(pool, [{ appId: app.id, issueNumber: 1 }]);
+    const [row1] = await ws.forItems(pool, [{ appId: app.id, issueNumber: 1 }]);
+    assert.equal(ws.botWorkOf(row1).what, 'queued', 'nobody else starts it');
   });
 
   await t.test('Build it, from any device, builds once, with the choices tapped and the rest suggested', async () => {
@@ -591,15 +595,22 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     await bot.awaitGo(pool, { runId: third, app, issueNumber: 1, parsed: { plan: { bullets: ['A shared list'], questions: [] } }, bot: homeroomBot });
     assert.equal((await planMessage(second)).meta.replaced, true, 'Replaced by a newer plan');
     assert.notEqual((await planMessage(first)).meta.replaced, true, 'a plan that was built stays as it was');
+    // Where the request stands, stored as the drain stores it: waiting for its plan.
+    const { settleWorkStates } = require('./lib/work-states');
+    await settleWorkStates(pool);
     assert.deepEqual(await bot.retireWaitingPlans(pool, { appId: app.id, issueNumber: 1, why: 'the request was read again' }), [third]);
     const run = await runRow(third);
     assert.deepEqual([run.awaiting_go_at, run.build_ok, run.build_error], [null, false, 'skipped: the request was read again']);
     const card = await planMessage(third);
     assert.equal(card.meta.status, 'closed');
-    const { rows: [action] } = await pool.query('SELECT status FROM bot_cards WHERE id = $1', [card.meta.actionId]);
-    assert.equal(action.status, 'declined');
+    // Step 3: its Build it card retires with the request's move off its plan
+    // (bot-cards.js retireOnMove, from the standing), as the drain finds it.
+    await settleWorkStates(pool);
+    const { rows: [action] } = await pool.query('SELECT status, retired_reason FROM bot_cards WHERE id = $1', [card.meta.actionId]);
+    assert.equal(action.status, 'retired');
+    assert.equal(action.retired_reason, 'moved_on');
     const late = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: card.meta.actionId, choice: 'build' });
-    assert.equal(late.status, 409, 'a closed plan builds nothing');
+    assert.deepEqual([late.status, late.code, late.reason], [410, 'retired', 'moved_on'], 'a closed plan builds nothing, and says why');
   });
 
   await t.test('a week with no tap stops it; "build it" written under a plan is its button; "yes" typed is never an offer\'s', async () => {
@@ -759,10 +770,11 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
 
   // First session, 4 October: Build it collapsed the plan and nothing
   // appeared under it; the build's progress was in a card above the plans.
-  // #6019: Main is one conversation, so the plan is said there, below the
-  // request's card, and Build it moves the card under the plan (B6), where
-  // the person is: one card per request still, ringing nothing.
-  await t.test('Build it is answered in Main: the card moves under the plan, silently', async () => {
+  // #6019: the plan is said below the request's card, and Build it moves the
+  // card under the plan (B6), where the person is: one card per request
+  // still, ringing nothing. 14 Nov 2026: Main Chat is gone; a first version's
+  // card and its plan are in the project's first-version thread, together.
+  await t.test('Build it is answered in the first version\'s thread: the card moves under the plan, silently', async () => {
     const activity = require('../src/services/homeroom-bot-activity');
     const requester = await dm.requesterOf(pool, app.id, 1);
     // Its card, from when it was queued (or the one an earlier Build it moved).
@@ -772,8 +784,14 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     const plan = await planMessage(run);
     const above = await activity.requestCard(pool, { userId: maya.id, appId: app.id, issueNumber: 1 });
     assert.ok(above && above.messageId < Number(plan.id), 'the request\'s card sits above its plan');
-    const { rows: [planRow] } = await pool.query('SELECT thread_root_id FROM conversation_messages WHERE id = $1', [plan.id]);
-    assert.equal(planRow.thread_root_id, null, 'the plan is said in Main');
+    const { rows: [planRow] } = await pool.query(
+      `SELECT m.thread_root_id, COALESCE(m.thread_root_id, m.id) AS root,
+              (SELECT p.kind FROM private_threads p WHERE p.root_message_id = COALESCE(m.thread_root_id, m.id)) AS kind
+         FROM conversation_messages m WHERE m.id = $1`, [plan.id]);
+    assert.equal(planRow.kind, 'first_version', 'the plan is said in the project\'s first-version thread');
+    const { rows: [cardRow] } = await pool.query(
+      'SELECT COALESCE(thread_root_id, id) AS root FROM conversation_messages WHERE id = $1', [above.messageId]);
+    assert.equal(cardRow.root, planRow.root, 'with its card');
 
     const tapped = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: plan.meta.actionId, choice: 'build' });
     assert.equal(tapped.ok, true);

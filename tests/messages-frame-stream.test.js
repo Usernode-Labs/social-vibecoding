@@ -51,7 +51,7 @@ globalThis.window = {
   setTimeout, clearTimeout,
 };
 
-const FRAME = ['glass', 'brandkit', 'workbench', 'paper', 'pastel', 'mosaic', 'sunrise', 'today', 'playground'];
+const FRAME = ['glass', 'paper', 'pastel', 'mosaic', 'sunrise'];
 const skin = (look) => ({
   '../../lib/skin': { useLiveSkin: () => look, useSkin: () => look, currentSkin: () => look, isFrameSkin: (s) => FRAME.includes(s), FRAME_SKINS: FRAME },
 });
@@ -87,12 +87,12 @@ test('the standard look keeps its sides', () => {
 });
 
 test('a face under a look is the kit\'s avatar in the person\'s own colour; the bot\'s is the Homeroom tile', () => {
-  assert.match(face({ user: ADA, size: 'md', shape: 'square' }), /^<span class="fr-av" style="--fr-as:32px;--fr-ac:#[0-9a-f]{6}" aria-hidden="true">a<\/span>$/);
+  assert.match(face({ user: ADA, size: 'md', shape: 'square' }), /^<span class="fr-av" style="--fr-as:32px;--fr-ac:#[0-9a-f]{6}" aria-hidden="true">A<\/span>$/, 'the initials the standard face says (format.tsx initials)');
   assert.match(face({ user: ADA, size: 'lg' }), /--fr-as:40px/);
   assert.match(face({ user: ADA, size: 'sm' }), /--fr-as:24px/);
   assert.match(face({ user: { ...ADA, avatarUrl: '/u/8.png' } }), /^<span class="fr-av"[^>]*><img src="\/u\/8\.png"/);
   assert.match(face({ user: BOT }), /^<span class="fr-tile" style="--fr-ts:32px;[^"]*" aria-hidden="true"><img src="\/brand\/homeroom-mark\.png"/);
-  assert.match(face({ user: null, title: 'Design review' }), /^<span class="fr-av"[^>]*>D<\/span>$/, 'no person: the title\'s letter');
+  assert.match(face({ user: null, title: 'Design review' }), /^<span class="fr-av"[^>]*>DR<\/span>$/, 'no person: the title\'s initials, as the standard face');
   // The standard look's own, untouched.
   assert.match(face({ user: ADA, size: 'md', shape: 'square' }, 'standard'), /^<span aria-hidden="true" class="w-9 h-9 text-xs rounded-xl text-white font-bold/);
 });
@@ -136,7 +136,8 @@ test('app.css sets the standard row\'s own spacing aside under a look, and only 
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.messages-message-grouped:not\(:has\(\+ \.messages-message-grouped\)\) \{ padding-bottom: 8px; \}/,
     'and the post ends where their run does');
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.messages-thread-header > \.fr-av \{ --fr-as: 40px !important; \}/, 'the head\'s face is the row\'s size');
-  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.messages-message-gutter \{ flex-basis: 44px; width: 44px; margin-inline-start: 0; \}/, 'a continuation\'s time sits under the face, not past the row\'s edge');
+  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.messages-message-gutter \{ flex-basis: 32px; width: 32px; margin-inline-start: 0; \}/,
+    'a continuation\'s time takes the face\'s own width (32px, and the row\'s 12px gap after it), so its words start where the first line\'s do');
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.messages-thread-pane > \.messages-thread-scroll \{[^}]*padding: 24px 32px;/, 'the open-item pane\'s own margins');
 });
 
@@ -159,4 +160,56 @@ test('a group wears one face under a look, a member\'s who is not you', () => {
   const faces = src.slice(src.indexOf('function GroupFaces('), src.indexOf('const ConversationRow = memo('));
   assert.match(faces, /const frame = isFrameSkin\(useLiveSkin\(\)\);\s+if \(frame\) return <UserAvatar user=\{others\[0\] \|\| null\} title=\{conversation\.title\} size="lg" shape="square" \/>;/);
   assert.ok(faces.indexOf('const frame = ') < faces.indexOf('if (others.length === 2)'), 'before the standard look\'s stacked pair');
+});
+
+test('version 2: a quote, reactions and the thread cards wear the look, drawn by the product\'s own renderer', () => {
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
+  const at = hand.indexOf('/* VERSION 2 (the tour\'s s17 to s19)');
+  assert.ok(at > 0);
+  const block = hand.slice(at, hand.indexOf('/* NEW MESSAGE\'S DIALOG'));
+  const P = 'html\\[data-skin\\]:where\\(:not\\(\\[data-skin="brand"\\]\\)\\) ';
+  const has = (re, why) => assert.match(block, new RegExp(P + re), why);
+  has(':is\\(\\.messages-quote, \\.messages-reply-draft\\) \\{ padding-block: 2px; padding-inline: 9px 0; border-inline-start: 3px solid var\\(--fr-acc\\); font-size: 13px; line-height: 1\\.45; color: var\\(--fr-mut\\); \\}',
+    'the kit\'s quote (kit.css .quote), and the reply staged over the composer drawn the same');
+  has(':is\\(\\.messages-quote, \\.messages-reply-draft\\) span \\{ color: var\\(--fr-acc\\); font-weight: 650; \\}', 'who is quoted, in the accent');
+  has('\\.messages-reactions button \\{ height: 28px; padding: 0 10px; background: var\\(--fr-sunk\\); color: var\\(--fr-mut\\); font-size: 13px; font-weight: 600; \\}');
+  has('\\.messages-reactions \\.messages-reaction-mine \\{ background: var\\(--fr-acc-t\\); color: var\\(--fr-acc\\); \\}', 'your own reaction in the accent\'s tint');
+  has(':is\\(\\.msgx-thread-chip\\.msgx-thread-card, \\.msgx-thread-activity-card\\) \\{ gap: 4px; max-width: 440px; padding: 8px 12px; border: 0; border-radius: 12px; background: var\\(--fr-surface\\); box-shadow: inset 0 0 0 1px var\\(--fr-line\\); color: var\\(--fr-mut\\); font-size: 13px; \\}',
+    '"3 replies" under a message and "replies in thread" in the stream are one small surface card');
+  has('\\.msgx-thread-chip\\.msgx-thread-card\\.msgx-thread-chip-active \\{ box-shadow: inset 0 0 0 2px var\\(--fr-acc\\); \\}', 'the open thread\'s card wears the accent\'s ring');
+  has(':is\\(\\.msgx-thread-count, \\.msgx-thread-activity-root:not\\(\\.msgx-thread-activity-root-deleted\\)\\) \\{ color: var\\(--fr-acc\\); font-weight: 650; \\}');
+  has('\\.msgx-thread-activity \\{ padding: 0 0 8px; \\}', 'the stream\'s rows have no side padding under a look');
+  has('\\.msgx-thread-activity-glyph \\{ flex-basis: 32px; padding-top: 10px; \\}', 'the replies\' glyph stands in the faces\' column');
+  assert.doesNotMatch(block, /#[0-9a-fA-F]{3,8}\b|rgba?\(/, 'no colour of its own');
+  assert.doesNotMatch(block, /(margin|padding|border)-(left|right)\b/, 'logical sides only');
+  // Nothing is redrawn: the parts are still the renderer's.
+  const row = read('frontend/src/features/messages/message-row.tsx');
+  assert.match(row, /<button type="button" className="messages-quote"/);
+  assert.match(row, /<div className="messages-reactions">/);
+  assert.match(row, /<ThreadSummaryChip/);
+});
+
+test('version 2: the reply thread stays the product\'s pane, wearing the look', () => {
+  const css = read('public/css/app.css');
+  const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
+  const P = 'html[data-skin]:where(:not([data-skin="brand"])) ';
+  for (const rule of [
+    `${P}.messages-reply-pane { font: 15px/1.45 var(--fr-f); color: var(--fr-ink); }`,
+    `${P}.messages-layout:has(> [data-frame-list]) > .messages-reply-pane > .messages-thread-scroll { padding: 16px 24px; }`,
+    `${P}.messages-layout:has(> [data-frame-list]) > .messages-reply-pane { margin: 0; border-radius: 0; background: none; box-shadow: none; border-top: 0; }`,
+    `${P}.messages-layout:has(> [data-frame-list]) > .messages-reply-pane { border-inline-start: 1px solid var(--fr-line); }`,
+    `${P}.messages-layout.messages-has-reply-thread:has(> [data-frame-list]) > .messages-thread-pane { margin-inline: 0; }`,
+  ]) assert.ok(hand.includes(rule), `${rule}`);
+  // The line that counts the replies is the kit's day label, through the map.
+  const looks = JSON.parse(read('frontend/looks/looks.json'));
+  const day = looks.wear.roots.day;
+  assert.equal(day.to, '.messages-day');
+  assert.ok((day.also || []).some((w) => w.to === '.messages-reply-pane > .messages-thread-scroll > .messages-reply-count'), 'a second wearer, a selector of its own');
+  const worn = css.slice(css.indexOf('/* looks:begin'));
+  assert.ok(worn.includes('html[data-skin]:where(:not([data-skin="brand"])) .messages-reply-pane > .messages-thread-scroll > .messages-reply-count::before'), 'the label\'s two rules reach it');
+  // The pane itself is the product's: its head, its count, its composer.
+  const src = read('frontend/src/features/messages/index.tsx');
+  assert.match(src, /className="messages-reply-pane platform-kb-column dc-lift dc-lift-session"/);
+  assert.match(src, /<div className="messages-reply-count" aria-hidden=\{!merged\.length\}>/);
 });

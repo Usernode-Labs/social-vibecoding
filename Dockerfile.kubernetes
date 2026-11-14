@@ -83,7 +83,11 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
 # The base image's own packages are upgraded first: the release's image scan
 # refuses a fixed advisory left unpatched (libcurl CVE-2026-92392, 26 Oct
 # 2026), and a cached layer would otherwise keep the old package.
-RUN apk upgrade --no-cache && apk add --no-cache git postgresql-client
+# git and git-init-template are held at 2.54.1-r0 or later, a floor rather
+# than an exact pin: the daily dependency audit flags 2.54.0 as outdated, and
+# an exact pin would break the build whenever Alpine rebuilds the package.
+RUN apk upgrade --no-cache \
+  && apk add --no-cache "git>=2.54.1-r0" "git-init-template>=2.54.1-r0" postgresql-client
 
 WORKDIR /app
 COPY --chown=node:node package.json package-lock.json ./

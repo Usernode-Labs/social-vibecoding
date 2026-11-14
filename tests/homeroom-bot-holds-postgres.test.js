@@ -227,20 +227,29 @@ test('a mention on a claimed request is answered, a second one is the go-ahead, 
       github, bot: homeroomBot, ws, notifications, capRoom: { proposals_per_app: 1, proposals_total: 1 },
     });
     await rt.drain();
-    const { rows: [owed] } = await pool.query(
-      `SELECT kind, pending FROM homeroom_bot_posts WHERE app_id = $1 ORDER BY id DESC LIMIT 1`, [app.id]);
-    assert.deepEqual([owed.kind, owed.pending], [holds.LEAVING_KIND, true], 'owed from the decision');
+    // Step 4: the answer's post is claimed by its key with the decision
+    // (bot_posts, pending), and the request's row is written once it is said.
+    const latest = async () => (await pool.query(
+      `SELECT kind, outcome, version, github_comment_id, chat_message_id, request_post_id FROM bot_posts
+        WHERE app_id = $1 AND kind = ANY($2::text[]) ORDER BY id DESC LIMIT 1`,
+      [app.id, [holds.LEAVING_KIND, holds.GOING_KIND]])).rows[0];
+    const owed = await latest();
+    assert.deepEqual([owed.kind, owed.outcome], [holds.LEAVING_KIND, 'pending'], 'owed from the decision');
+    assert.match(owed.version, /^mention-\d+$/, 'keyed by the mention it answers');
     await rt.runServices();
     await rt.drain();
-    const { rows: [still] } = await pool.query(
-      `SELECT pending, thread_message_id FROM homeroom_bot_posts WHERE app_id = $1 ORDER BY id DESC LIMIT 1`, [app.id]);
-    assert.equal(still.pending, true, 'GitHub failed: not said yet, and tried again');
+    const still = await latest();
+    assert.equal(still.outcome, 'pending', 'GitHub failed: not said yet, and tried again');
+    assert.equal(still.request_post_id, null, 'and not on the request\'s record');
     down = false;
     await settle();
-    const { rows: [said] } = await pool.query(
-      `SELECT pending, github_comment_id FROM homeroom_bot_posts WHERE app_id = $1 ORDER BY id DESC LIMIT 1`, [app.id]);
-    assert.equal(said.pending, null);
+    const said = await latest();
+    assert.equal(said.outcome, 'said');
     assert.ok(said.github_comment_id);
+    const { rows: [projected] } = await pool.query(
+      'SELECT pending, github_comment_id FROM homeroom_bot_posts WHERE id = $1', [said.request_post_id]);
+    assert.equal(projected.pending, null);
+    assert.equal(String(projected.github_comment_id), String(said.github_comment_id));
     const bubbles = messages.filter((m) => /is still on|leaving it to them/.test(m.content));
     assert.ok(bubbles.length >= 1);
     assert.equal(new Set(bubbles.map((m) => m.content)).size, bubbles.length, 'its bubble once');

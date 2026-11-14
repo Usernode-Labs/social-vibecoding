@@ -5,19 +5,22 @@
 // Every request the bot works on for someone has one story: its activity
 // card in their chat with the bot is the root of that request's reply
 // thread, where its steps, questions, plan, answers and ending are posted.
-// The four moments that ring (needs you, ready to try, stopped, live) are
-// also listed in the main chat (`alsoInChat`). Pinned here:
+// 14 Nov 2026: the four moments that ring (needs you, ready to try, stopped,
+// live) were also listed in Main Chat, under a "↳ in …" label, by an
+// `alsoInChat` stamp. Main Chat is gone: nothing writes the stamp and the
+// client reads it nowhere. Pinned here:
 //
 //   1. Where threads are: rooms, and the chat with Homeroom bot alone among
 //      direct chats (`threadsAllowed`, the one place the client says so).
-//   2. What a moment in the main stream is: a position in it for the read
-//      cursor and the unread count (`inMainStream`, unread-anchor messageRow).
-//   3. The names: the thread pane's title, the "↳ in …" label over a moment
-//      and the composer's "Reply about …" placeholder.
-//   4. The drawing: a moment in the main chat is the whole message under
-//      its label (never the rooms' thread line); a request's card says
-//      "N updates in its thread ›"; a step line reads quietly; a plan in a
-//      thread hides no card and reads the card it hangs off.
+//   2. What the main stream is: a conversation's own messages, never a
+//      reply in a thread, for the read cursor and the unread count
+//      (`inMainStream`, unread-anchor messageRow).
+//   3. The names: the thread pane's title and the composer's "Reply about …"
+//      placeholder.
+//   4. The drawing: a thread's reply in a transcript is the rooms' thread
+//      line; a request's card says "N updates in its thread ›"; a step line
+//      reads quietly; a plan in a thread hides no card and reads the card it
+//      hangs off.
 //   5. The words of spec 2.3: Send answers, Write my own.
 //
 // Run with: node --test tests/messages-bot-threads.test.js
@@ -72,22 +75,30 @@ test('the row, the transcript, the thread pane, the composer and the store all a
 
 // ── 2. The main stream ────────────────────────────────────────────────────
 
-test('a moment the bot also lists in the main chat is a position in it; another thread reply is not', () => {
-  const { alsoInChat, inMainStream } = loadTsx(SHARED);
-  const moment = { threadRootId: 9, metadata: { homeroomBot: { kind: 'question', alsoInChat: true } } };
+test('a reply in a thread is no position in the main stream, whatever stamp it carries', () => {
+  const shared = loadTsx(SHARED);
+  const { inMainStream } = shared;
+  // A message from before 14 Nov 2026 can still carry the stamp that listed
+  // it in Main Chat too. There is no Main Chat, and the stamp is not read.
+  const stamped = { threadRootId: 9, metadata: { homeroomBot: { kind: 'question', alsoInChat: true } } };
   const quiet = { threadRootId: 9, metadata: { homeroomBot: { kind: 'step' } } };
-  assert.equal(alsoInChat(moment), true);
-  assert.equal(alsoInChat(quiet), false);
-  assert.equal(alsoInChat({ threadRootId: null, metadata: { homeroomBot: { alsoInChat: true } } }), false, 'only a reply is also shown');
   assert.equal(inMainStream({ threadRootId: null }), true);
-  assert.equal(inMainStream(moment), true);
+  assert.equal(inMainStream(stamped), false);
   assert.equal(inMainStream(quiet), false);
+  assert.equal(shared.alsoInChat, undefined, 'the reader of the stamp is gone');
+  assert.equal(shared.botThreadLabel, undefined, 'and the label it drew');
 
   const { messageRow } = loadTsx('frontend/src/features/messages/unread-anchor.ts');
-  assert.equal(messageRow({ id: 5, sender: BOT, ...moment }, 7).countable, true, 'counted as the server counts it');
+  assert.equal(messageRow({ id: 5, sender: BOT, threadRootId: null }, 7).countable, true);
+  assert.equal(messageRow({ id: 5, sender: BOT, ...stamped }, 7).countable, false, 'a thread\'s reply is read in its thread');
   assert.equal(messageRow({ id: 6, sender: BOT, ...quiet }, 7).countable, false);
-  // The read cursor moves to the newest main-stream position, a moment included.
+  // The read cursor moves to the newest main-stream position.
   assert.match(read('frontend/src/features/messages/store.ts'), /if \(item\.id > 0 && inMainStream\(item\)\) return item\.id;/);
+  // Nothing in the client reads the stamp any more.
+  for (const rel of ['api.ts', 'types.ts', 'store.ts', 'unread-anchor.ts', 'message-row.tsx', 'index.tsx']) {
+    assert.doesNotMatch(read(`frontend/src/features/messages/${rel}`), /alsoInChat/, rel);
+  }
+  assert.doesNotMatch(read('frontend/locales/en/messages.json'), /"row\.botThread\.in/, 'the label\'s words went with it');
 });
 
 test('the client keeps the thread and moment fields of a bot message', () => {
@@ -97,29 +108,26 @@ test('the client keeps the thread and moment fields of a bot message', () => {
     waiting: 'you and @ada', count: 2, alsoInChat: true, appName: 'Plant Pal', appSlug: 'plant-pal', issueNumber: 4,
   } }).homeroomBot;
   assert.deepEqual(
-    [meta.threadRootId, meta.moment, meta.said, meta.requestTitle, meta.waiting, meta.count, meta.alsoInChat],
-    [31, 'needs_you', 'question', 'Dark mode', 'you and @ada', 2, true],
+    [meta.threadRootId, meta.moment, meta.said, meta.requestTitle, meta.waiting, meta.count],
+    [31, 'needs_you', 'question', 'Dark mode', 'you and @ada', 2],
   );
-  const bare = normalizeBotMeta({ homeroomBot: { kind: 'step', alsoInChat: 'yes', threadRootId: -1 } }).homeroomBot;
-  assert.equal('alsoInChat' in bare, false, 'only a real true');
+  assert.equal('alsoInChat' in meta, false, 'an old message\'s stamp is dropped: nothing reads it');
+  const bare = normalizeBotMeta({ homeroomBot: { kind: 'step', threadRootId: -1 } }).homeroomBot;
   assert.equal('threadRootId' in bare, false);
 });
 
 // ── 3. The names ──────────────────────────────────────────────────────────
 
-test('a request\'s thread is named by the request, and a moment\'s label says which', () => {
-  const { botRequestNames, botThreadTitle, botThreadLabel } = loadTsx(SHARED);
+test('a request\'s thread is named by the request', () => {
+  const { botRequestNames, botThreadTitle } = loadTsx(SHARED);
   const titled = botRequestNames({ appName: 'Plant Pal', appSlug: 'plant-pal', issueNumber: 4, requestTitle: 'Dark mode' });
   assert.equal(botThreadTitle(titled), 'Dark mode');
-  assert.equal(botThreadLabel(titled), '↳ in Dark mode · Plant Pal');
   // An activity card names its request by `issueTitle`.
   assert.equal(botThreadTitle(botRequestNames({ appName: 'Plant Pal', issueNumber: 4, issueTitle: 'Water reminders' })), 'Water reminders');
   const first = botRequestNames({ appName: 'Plant Pal', issueNumber: 1, firstVersion: true, requestTitle: null });
   assert.equal(botThreadTitle(first), 'Plant Pal first version');
-  assert.equal(botThreadLabel(first), '↳ in Plant Pal first version · Plant Pal');
   const untitled = botRequestNames({ appName: 'Plant Pal', issueNumber: 9 });
   assert.equal(botThreadTitle(untitled), 'Request #9');
-  assert.equal(botThreadLabel(untitled), '↳ in request #9 · Plant Pal');
 });
 
 test('the composer inside a request\'s thread says what a reply is about', () => {
@@ -128,7 +136,7 @@ test('the composer inside a request\'s thread says what a reply is about', () =>
   assert.equal(catalog('messages:composer.placeholderBotThread'), 'Reply about this request…');
   assert.equal(catalog('messages:composer.placeholderBotThreadFirstVersion'), 'Reply about this first version…');
   const composer = read('frontend/src/features/messages/composer.tsx');
-  assert.match(composer, /placeholder=\{inThread \? threadPlaceholder : \(prompt \|\| t\('messages:composer\.placeholder'\)\)\}/);
+  assert.match(composer, /placeholder=\{inThread \? threadPlaceholder : t\('messages:composer\.placeholder'\)\}/);
   assert.match(composer, /botRequest\.firstVersion \? t\('messages:composer\.placeholderBotThreadFirstVersion'/);
   // Rooms keep their own.
   assert.match(composer, /!botRequest \? t\('messages:composer\.placeholderThread'\)/);
@@ -148,19 +156,18 @@ globalThis.window = {
 const META = { kind: 'activity', appSlug: 'plant-pal', appName: 'Plant Pal', issueNumber: 4, issueTitle: 'Dark mode' };
 const THREAD = { replyCount: 3, lastReplyAt: '2026-10-09T12:10:00.000Z', participants: [BOT], lastReply: null };
 
-test('a moment in the main chat is the whole message under its label, which opens the thread', () => {
+test('a message the old stamp listed in Main Chat is a reply like any other, with no label over it', () => {
   const { MessageRow } = loadTsx('frontend/src/features/messages/message-row.tsx');
   const moment = message(BOT, 40, {
     threadRootId: 31,
     content: 'I have a question before I build it.',
     metadata: { homeroomBot: { kind: 'question', appName: 'Plant Pal', appSlug: 'plant-pal', issueNumber: 4, requestTitle: 'Dark mode', alsoInChat: true, threadRootId: 31 } },
   });
-  const html = renderToHtml(createElement(MessageRow, { message: moment, conversationId: 42, kind: 'direct', botChat: true }));
-  assert.match(html, /<button type="button" class="[^"]*" data-bot-thread-label="31">↳ in Dark mode · Plant Pal<\/button>/);
-  assert.match(html, /I have a question before I build it\./, 'the message itself, not a line about the thread');
-  // In its thread it is a reply like any other, with no label.
-  const inThread = renderToHtml(createElement(MessageRow, { message: moment, conversationId: 42, kind: 'direct', botChat: true, inThread: true }));
-  assert.doesNotMatch(inThread, /data-bot-thread-label/);
+  for (const inThread of [true, false]) {
+    const html = renderToHtml(createElement(MessageRow, { message: moment, conversationId: 42, kind: 'direct', botChat: true, inThread }));
+    assert.match(html, /I have a question before I build it\./);
+    assert.doesNotMatch(html, /data-bot-thread-label|↳ in/);
+  }
 });
 
 test('a request\'s card says how many updates its thread holds, in words; rooms keep their chip', () => {
@@ -192,11 +199,11 @@ test('a step line in a request\'s thread reads quietly', () => {
   assert.match(html, /Reading it\./);
 });
 
-test('the transcript draws a moment whole in the bot\'s chat, and keeps the rooms\' thread line elsewhere', () => {
+test('a transcript draws a thread\'s reply as the rooms\' thread line, in every chat', () => {
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /const moment = botDm && alsoInChat\(message\);\s*if \(message\.threadRootId && !moment\) \{/);
+  assert.match(screen, /if \(message\.threadRootId\) \{\s+const run = \[message\];/, 'no moment is drawn whole in a main stream');
   assert.match(screen, /rows\.push\(<ThreadActivityRow key=/, 'rooms keep ThreadActivityRow');
-  assert.match(screen, /const grouped = !moment && !!previous/, 'a moment carries its own name');
+  assert.match(screen, /const grouped = !!previous && !previous\.failed && !message\.failed/);
   // The thread pane names a request's thread by the request, over its project;
   // a thread from the bot's "+" (#6071 follow-up) by what it is for.
   assert.match(screen, /\{started \? startedThreadTitle\(t, started\.changeKind\) : request \? botThreadTitle\(request\) : t\('messages:replies\.title'\)\}/);
@@ -208,12 +215,43 @@ test('a plan in its request\'s thread hides no card and reads the card it hangs 
   const card = message(BOT, 31, { content: 'Dark mode', metadata: { homeroomBot: META }, thread: THREAD });
   const plan = message(BOT, 33, {
     threadRootId: 31, content: 'My plan',
-    metadata: { homeroomBot: { kind: 'plan', appSlug: 'plant-pal', appName: 'Plant Pal', issueNumber: 4, status: 'open', actionId: 5, plan: { bullets: ['Add a dark theme'], questions: [] }, alsoInChat: true } },
+    metadata: { homeroomBot: { kind: 'plan', appSlug: 'plant-pal', appName: 'Plant Pal', issueNumber: 4, status: 'open', actionId: 5, plan: { bullets: ['Add a dark theme'], questions: [] } } },
   });
   const layout = planLayout([card, plan]);
   assert.equal(layout.hidden.has(31), false, 'the card is the way into the thread');
   assert.equal(layout.cardOf.get(33), 31);
   assert.equal(layout.answersOpen, true);
+});
+
+// 14 Nov 2026: with no Main Chat, a project's first version is one thread:
+// its opening line, then the activity card, the plan and the card Build it
+// moves under the plan, each a reply. They were messages of the main stream,
+// read together; a thread that hangs off no card reads its replies the same
+// way, so the plan still carries its request's step and the card above it
+// is not drawn a second time.
+test('a first version\'s thread reads its replies as the stream they were: the plan carries the card\'s step', () => {
+  const { planLayout } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
+  const fv = { appSlug: 'plant-pal', appName: 'Plant Pal', issueNumber: 1, firstVersion: true };
+  const reply = (id, meta) => message(BOT, id, { threadRootId: 60, content: 'x', metadata: { homeroomBot: meta } });
+  const card = reply(61, { kind: 'activity', ...fv });
+  const plan = reply(62, { kind: 'plan', ...fv, status: 'open', actionId: 5, plan: { bullets: ['A list of plants'], questions: [] } });
+  const live = reply(63, { kind: 'merged', ...fv, live: true });
+  // As the pane hands them over: its own replies, with no thread above them.
+  const flat = (rows) => planLayout(rows.map((row) => ({ ...row, threadRootId: null })));
+  const waiting = flat([card, plan, live]);
+  assert.deepEqual([...waiting.hidden], [61], 'the card above its plan is not drawn');
+  assert.equal(waiting.cardOf.get(62), 61, 'the plan reads its step');
+  // Read as replies of a request's thread, nothing is hidden and the plan hangs off the root.
+  const threaded = planLayout([card, plan, live]);
+  assert.deepEqual([...threaded.hidden], []);
+  assert.equal(threaded.cardOf.get(62), 60);
+  const screen = read('frontend/src/features/messages/index.tsx');
+  assert.match(screen, /const flatPlans = botChat && !cardId\s+\? planLayout\(replies\.map\(\(message\) => \(message\.threadRootId \? \{ \.\.\.message, threadRootId: null \} : message\)\)\)\s+: NO_PLAN_LAYOUT;/);
+  assert.match(screen, /const carried = \(message: ConversationMessage\) => botChat && !cardId\s+&& \(flatPlans\.hidden\.has\(message\.id\) \|\| isMovedActivity\(message\)\);/);
+  assert.match(screen, /\.\.\.replies\.filter\(\(message\) => !carried\(message\)\)\.map\(\(message\) => \(\{ kind: 'reply' as const, message \}\)\),/);
+  assert.match(screen, /planCardId=\{isPlanMessage\(message\) \? cardId \|\| flatPlans\.cardOf\.get\(message\.id\) \|\| null : null\}/);
+  // The New line stands above the first reply drawn from the first unread on.
+  assert.match(screen, /const line = firstUnread && !newLineDrawn && message\.id >= firstUnread/);
 });
 
 test('an answer to a message in a request\'s thread goes in that thread, from either place', () => {
@@ -336,6 +374,53 @@ test('a request\'s own step closed by newer news says why in its place', () => {
   assert.doesNotMatch(replaced, /Try again/);
   assert.match(replaced, /<p class="messages-bot-answered" data-bot-closed-why="">A newer plan replaced this<\/p>/);
   assert.equal(draw({ status: 'closed' }), '', 'closed with no reason: suggestions still go quietly');
+});
+
+// Step 3 (11 Nov 2026): an offer whose buttons went because what it was
+// about moved on (services/bot-cards.js retireFor) says why in their place,
+// and a press the server refused says why in a line after the buttons,
+// never inside `.messages-bot-answers` (a declared check selects its last
+// button).
+test('step 3: a retired or expired offer says why in its place, and a refused press says why after the buttons', () => {
+  const { BotQuestion, OfferRefused, refusalOf, refusalLine, retiredLine } = loadTsx('frontend/src/features/messages/bot-question.tsx');
+  const { MessagesApiError, normalizeBotMeta } = loadTsx('frontend/src/features/messages/api.ts');
+  const close = [
+    { id: 'yes', label: 'Propose to close', style: 'primary', type: 'server' },
+    { id: 'no', label: 'Keep it open', style: 'secondary', type: 'server' },
+  ];
+  const draw = (meta) => renderToHtml(createElement(BotQuestion, {
+    message: message(BOT, 62, { content: 'Want me to open a vote on closing request #4?', metadata: { homeroomBot: {
+      kind: 'confirm', appSlug: 'plant-pal', issueNumber: 4, actionId: 13, actions: close, ...meta,
+    } } }),
+    conversationId: 42,
+  }));
+  const retired = draw({ status: 'closed', retired: 'close_vote' });
+  assert.doesNotMatch(retired, /Propose to close/);
+  assert.match(retired, /data-bot-retired="close_vote"/);
+  assert.ok(retired.includes(catalog('messages:bot.offer.retired.closeVote')));
+  assert.ok(draw({ status: 'closed', retired: 'nonsense' }).includes(catalog('messages:bot.offer.retired.other')));
+  assert.ok(draw({ status: 'closed', expired: true }).includes(catalog('messages:bot.offer.expired')));
+  assert.ok(draw({ status: 'closed' }).includes(catalog('messages:bot.actions.closed')), 'a plain close keeps its line');
+  // The client keeps them.
+  const kept = normalizeBotMeta({ homeroomBot: { kind: 'confirm', status: 'closed', retired: 'building', expired: true } }).homeroomBot;
+  assert.deepEqual([kept.retired, kept.expired], ['building', true]);
+  // A refused press: its code, as the server answered it, and its line.
+  assert.deepEqual(refusalOf(new MessagesApiError(410, 'retired', 'retired', 'close_vote')), { code: 'retired', reason: 'close_vote' });
+  assert.deepEqual(refusalOf(new Error('offline')), { code: 'failed', reason: null });
+  assert.equal(refusalLine({ code: 'retired', reason: 'close_vote' }), retiredLine('close_vote'));
+  assert.equal(refusalLine({ code: 'expired', reason: null }), 'messages:bot.offer.expired');
+  assert.equal(refusalLine({ code: 'already_decided', reason: null }), 'messages:bot.offer.refused.alreadyDecided');
+  assert.equal(refusalLine({ code: 'no_such_offer', reason: null }), 'messages:bot.offer.refused.gone');
+  assert.equal(refusalLine({ code: 'something_else', reason: null }), 'messages:bot.offer.refused.failed');
+  const line = renderToHtml(createElement(OfferRefused, { refusal: { code: 'already_decided', reason: null } }));
+  assert.equal(line, `<p class="messages-bot-answered" role="status" data-bot-refused="already_decided">${catalog('messages:bot.offer.refused.alreadyDecided')}</p>`);
+  assert.equal(renderToHtml(createElement(OfferRefused, { refusal: null })), '');
+  // After the buttons' group, in both the question and the plan.
+  const src = read('frontend/src/features/messages/bot-question.tsx');
+  const body = src.slice(src.indexOf('function BotActions('));
+  assert.ok(body.indexOf('<OfferRefused refusal={refused} />') > body.indexOf('className="messages-bot-answers"'));
+  assert.ok(body.indexOf('<OfferRefused refusal={refused} />') > body.indexOf('</div>\n      ) : null}'), 'outside the group');
+  assert.match(read('frontend/src/features/messages/bot-plan.tsx'), /state === 'open' && refused \? <OfferRefused refusal=\{refused\} \/> : null/);
 });
 
 test('"done already" is one message: Propose to close is decided, Tell me what\'s missing is written', () => {

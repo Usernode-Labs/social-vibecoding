@@ -2,6 +2,9 @@ import catalogs from './catalogs.generated.json';
 import { saveAccountLocale } from './account';
 import { createLanguageRuntime } from './core';
 import { errorText } from './server-error';
+import {
+  deviceTimeZone, getTimeZone, saveAccountTimeZone, setTimeZone, subscribeTimeZone, timeZoneLabel, zonedDay,
+} from '../time-zone';
 
 export { errorText };
 
@@ -14,7 +17,8 @@ const runtime = createLanguageRuntime(catalogs);
 
 export const {
   i18n, t, htmlText, htmlRich, listText, languageName, registerNamespace, ensureNamespace,
-  changeLanguage, applySessionLanguage, getLanguage, getDateLocale, getPreference,
+  changeLanguage, applySessionLanguage, getLanguage, getDateLocale, getPreference, getAutoLanguage,
+  subscribeAutoLanguage,
   getNotice, subscribeNotice, dismissNotice, getLanguages, subscribeLanguages,
 } = runtime;
 
@@ -71,12 +75,30 @@ export function switchToEnglish(): Promise<boolean> {
   t, htmlText, htmlRich, listText, languageName, getLanguage, getPreference, changeLanguage, errorText,
   // #6103: the classic scripts' date formatters read the same rule.
   dateLocale: getDateLocale,
+  // #6479: the zone the account picked (undefined for the device's), and the
+  // calendar day an instant falls on in it, for GroupChat._stamp and relStamp.
+  timeZone: getTimeZone,
+  zonedDay,
+  // Settings › Language's Time zone list: its labels, Auto's zone, the save.
+  timeZoneLabel, deviceTimeZone, saveAccountTimeZone,
   applySessionLanguage, saveAccountLocale, getLanguages,
 };
+
+// A new zone repaints what the legacy modules drew, as a new language does:
+// every one of them redraws its times on this event.
+subscribeTimeZone(() => {
+  if (typeof document === 'undefined' || typeof document.dispatchEvent !== 'function') return;
+  document.dispatchEvent(new CustomEvent('homeroom:language-changed', {
+    detail: { language: getLanguage(), preference: getPreference(), timeZone: getTimeZone() || null },
+  }));
+});
 
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
   // Signed in. app.js reports the signed-out case itself (enterAnonymous).
   document.addEventListener('sv:session', (event) => {
-    void applySessionLanguage((event as CustomEvent).detail?.user || null);
+    const user = (event as CustomEvent).detail?.user || null;
+    // #6479: the account's zone, or the device's when it picked none.
+    setTimeZone(user?.timeZone || null);
+    void applySessionLanguage(user);
   });
 }

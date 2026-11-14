@@ -48,10 +48,16 @@ type JsonRecord = Record<string, unknown>;
 
 export class MessagesApiError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /** The server's code for a refusal, when it gave one (a bot card's tap: expired, retired, already_decided, ...). */
+  readonly code: string | null;
+  /** Why, for a code that has one (a retired card's reason). */
+  readonly reason: string | null;
+  constructor(status: number, message: string, code: string | null = null, reason: string | null = null) {
     super(message);
     this.name = 'MessagesApiError';
     this.status = status;
+    this.code = code;
+    this.reason = reason;
   }
 }
 
@@ -315,6 +321,9 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       ...(goesLive ? { goesLive } : {}),
       // Why its buttons were closed, said in their place.
       ...(text(pick(bot, 'closedWhy')) ? { closedWhy: text(pick(bot, 'closedWhy')).slice(0, 120) } : {}),
+      // Step 3: an offer expired, or retired because what it was about moved on, and why.
+      ...(pick(bot, 'expired') === true ? { expired: true } : {}),
+      ...(text(pick(bot, 'retired')) ? { retired: text(pick(bot, 'retired')).slice(0, 40) } : {}),
       // One request, one story: the thread it is in, the moment it rings
       // as, and the names its label and its push use.
       ...(strictId(pick(bot, 'threadRootId')) ? { threadRootId: strictId(pick(bot, 'threadRootId'))! } : {}),
@@ -323,7 +332,6 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       requestTitle: optional('requestTitle'),
       waiting: optional('waiting'),
       ...(countOf(pick(bot, 'count')) !== null ? { count: countOf(pick(bot, 'count'))! } : {}),
-      ...(pick(bot, 'alsoInChat') === true ? { alsoInChat: true } : {}),
       ...(makeProject ? { makeProject } : {}),
       madeSlug: optional('madeSlug'),
       madeName: optional('madeName'),
@@ -396,6 +404,60 @@ export async function cardAction(messageId: number, action: string, value?: unkn
   return record(await request<unknown>(`/api/conversations/homeroom-bot/cards/${messageId}`, {
     method: 'POST', body: JSON.stringify(value === undefined ? { action } : { action, value }),
   }));
+}
+
+/**
+ * Task 2148: Stop, while Homeroom bot is working on the viewer's message
+ * `messageId` in their chat with it (the message its typing event named).
+ * Resolves whether an answer is being stopped: false when it had already
+ * ended. Throws when the server could not be asked.
+ */
+export async function stopBotAnswer(conversationId: number, messageId: number): Promise<boolean> {
+  const data = record(await request<unknown>(`/api/conversations/${conversationId}/bot-stop`, {
+    method: 'POST', body: JSON.stringify({ messageId }),
+  }));
+  return pick(data, 'stopping') === true;
+}
+
+/**
+ * A saved draft in the chat with Homeroom bot (./bot-drafts.ts): words typed
+ * while the bot was working, kept on the server until their writer sends,
+ * edits or deletes them.
+ */
+export interface SavedDraft {
+  id: string;
+  text: string;
+  savedAt: string | null;
+}
+
+function normalizeDrafts(data: unknown): SavedDraft[] {
+  return array(pick(record(data), 'drafts')).map((item) => {
+    const row = record(item);
+    return { id: text(pick(row, 'id')), text: text(pick(row, 'text')), savedAt: text(pick(row, 'savedAt', 'saved_at')) || null };
+  }).filter((draft) => draft.id && draft.text);
+}
+
+function botDraftsPath(conversationId: number, threadRootId: number | null, draftId?: string): string {
+  const base = `/api/conversations/${conversationId}/bot-drafts${draftId ? `/${encodeURIComponent(draftId)}` : ''}`;
+  return threadRootId ? `${base}?threadRootId=${threadRootId}` : base;
+}
+
+/** The viewer's saved drafts for their chat with Homeroom bot, or one of its threads, oldest first. */
+export async function listBotDrafts(conversationId: number, threadRootId: number | null = null): Promise<SavedDraft[]> {
+  // The server's list is the truth, never the worker's copy of it.
+  return normalizeDrafts(await request<unknown>(botDraftsPath(conversationId, threadRootId), { cache: 'no-store' }));
+}
+
+/** Save one draft there. Resolves the list as the server now has it. */
+export async function saveBotDraft(conversationId: number, threadRootId: number | null, draft: SavedDraft): Promise<SavedDraft[]> {
+  return normalizeDrafts(await request<unknown>(`/api/conversations/${conversationId}/bot-drafts`, {
+    method: 'POST', body: JSON.stringify({ ...draft, ...(threadRootId ? { threadRootId } : {}) }),
+  }));
+}
+
+/** Delete one draft there. Resolves the list as the server now has it. */
+export async function deleteBotDraft(conversationId: number, threadRootId: number | null, draftId: string): Promise<SavedDraft[]> {
+  return normalizeDrafts(await request<unknown>(botDraftsPath(conversationId, threadRootId, draftId), { method: 'DELETE' }));
 }
 
 export function normalizeMember(input: unknown): ConversationMember {
@@ -607,7 +669,6 @@ export function normalizeConversation(input: unknown): ConversationDetail {
     lastActivityAt: dateText(pick(row, 'lastActivityAt', 'last_activity_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at')),
     unreadCount: Number(pick(row, 'unreadCount', 'unread_count')) || 0,
     lastReadMessageId: readCursor(pick(row, 'lastReadMessageId', 'last_read_message_id')),
-    lastVisitAt: text(pick(row, 'lastVisitAt', 'last_visit_at')) || null,
     awaitingAcceptance: kind === 'direct' && pick(row, 'awaitingAcceptance', 'awaiting_acceptance') === true,
     canSend: typeof canSendValue === 'boolean' ? canSendValue : membershipStatus !== 'invited',
     canInvite: bool(pick(row, 'canInvite', 'can_invite'), kind === 'group' && membershipStatus !== 'invited'),
@@ -673,7 +734,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (pick(body, 'code') === 'contact_restricted') {
       throw new MessagesApiError(response.status, t('messages:api.contactRestricted'));
     }
-    throw new MessagesApiError(response.status, errorText(body) || text(pick(body, 'message'), t('messages:api.requestFailed', { status: response.status })));
+    throw new MessagesApiError(
+      response.status,
+      errorText(body) || text(pick(body, 'message'), t('messages:api.requestFailed', { status: response.status })),
+      text(pick(body, 'code')) || null,
+      text(pick(body, 'reason')) || null,
+    );
   }
   return data as T;
 }

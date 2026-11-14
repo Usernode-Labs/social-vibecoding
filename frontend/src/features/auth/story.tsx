@@ -129,7 +129,7 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
    * screen; nothing to fit, so no steps.
    */
   compact?: boolean;
-  /** The short story's button says "Join the waitlist" (guest-data NEW_ACCOUNTS_WAIT). */
+  /** The short story's button says "Join the waitlist" (guest-data newAccountsWait). */
   waitlist?: boolean;
   /**
    * Inside the Homeroom app the full story is still the front door

@@ -35,7 +35,7 @@
 //     kept to the team's private copy. It had no way to, and
 //     promised "I'll look into it" and "I'll let the team know" with nothing
 //     behind either; now a promise to come back to something later is a
-//     claim the reply is checked for (CLAIMS).
+//     claim the reply is checked for (reply-claims.js CLAIMS).
 // It ends every turn with `reply`: a short answer and up to three cards for
 // the requests or proposals it talks about.
 //
@@ -93,8 +93,13 @@ const progressSvc = require('./homeroom-bot-progress');
 const repoRef = require('./repo-ref');
 const { isStandIn, lastRoundNote, standInNote, readingDoneNote } = require('./homeroom-bot-reply-guards');
 const turnEngine = require('./homeroom-bot-turn-engine');
+// A person's Stop of the turn (task 2148).
+const botStop = require('./homeroom-bot-stop');
 const { GITHUB_ISSUE_BODY_MAX } = require('./issue-body-limit');
-const { labelledAsPullRequest } = require('./request-mentions');
+// The one reply checker every surface runs (Homeroom bot one model, step 2).
+const claims = require('./reply-claims');
+
+const { cleanReply, squashWords, requestNumbers } = claims;
 
 const MAX_HISTORY = CHAT_LIMITS.history;
 // Homeroom bot parity, P1 (room to answer): a conversation with the bot gets
@@ -333,9 +338,6 @@ function answersFor(action) {
   if (action?.kind === 'post_design') return designPlanAnswers(action.source_issue_number);
   return OFFER_ANSWERS[action?.kind] || OFFER_ANSWERS.file_request;
 }
-// #11: what a reply that promised to come back to something later says
-// instead, when nothing it did this turn will.
-const CANT_LOOK_TEXT = 'I can\'t look into that myself from here.';
 // #11: reports to the Homeroom team, filed for a person (report_problem):
 // where they are recorded as from, how many a day one person may send this
 // way, and how many of the chat's newest messages go with one.
@@ -404,11 +406,6 @@ const PLAIN_NOTE_NO_LATER = PLAIN_NOTE.replace(
   'If answering needs a lookup or an action, say plainly that you could not do it just now and that they can send\n'
     + 'it again. Never say you will come back to it: nothing asks you again.',
 );
-// B01: a new project's thread whose turn failed asks for what its first
-// screen needs, in the thread, so the conversation goes on there.
-const PROJECT_THREAD_TEXT = 'Let\'s shape it here. What should the first screen show, and who will use it? '
-  + 'Tell me in a line or two and I\'ll draw it.';
-
 // How many of one project's requests the bot reads at once (the setting,
 // else its default: homeroom-bot.js readsPerApp).
 function readsAtOnce(settings) {
@@ -420,24 +417,8 @@ function clip(value, max) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-// #3769: "[about Ear Trainer request #14] " opened replies. It was the label
-// the bot's own past messages carried in the model's history, copied. The
-// history no longer carries it (historyMessages); a reply that still starts
-// with one, or with any bracketed note of the same shape, loses it.
-const LEADING_NOTE_RE = /^\s*\[(?:about|re|homeroom)\b[^\]\n]{0,200}\]\s*/i;
-
-// The platform's copy has no em dashes (tests/no-em-dash-in-copy.test.js),
-// and the prompt says so, but the model still writes "Sorry about that \u2014
-// that sounds like a bug". Its replies go through the same normaliser as
-// everything else the bot writes for people (em-dashes.js, 5 Oct 2026):
-// "Sorry about that. That sounds like a bug."
-
-/** Pure: a reply's words as they are sent: no leading bracketed note, and no em dash. */
-function cleanReply(text) {
-  let out = String(text ?? '');
-  for (let i = 0; i < 3 && LEADING_NOTE_RE.test(out); i += 1) out = out.replace(LEADING_NOTE_RE, '');
-  return withoutEmDashes(out).trim();
-}
+// #3769, 5 Oct 2026: a reply's words as they are sent (no leading bracketed
+// note, no em dash) are the shared reply checker's cleanReply.
 
 function dmModule(deps) { return deps.dmSvc || require('./homeroom-bot-dm'); }
 function activityModule(deps) { return deps.activitySvc || require('./homeroom-bot-activity'); }
@@ -468,13 +449,16 @@ function platformRules() {
     .join('\n\n');
 }
 
-// 1 Nov 2026: in a thread, a status question is about that thread. The
-// general rule (systemPrompt: "status?" is answered from my_work's
-// onYourPage) is for the main chat.
+// 1 Nov 2026: in a thread, a status question is about that thread. 14 Nov
+// 2026: every conversation is a thread now, so the general rule
+// (systemPrompt: "status?" is answered from my_work's onYourPage) is for a
+// thread in which nothing has been asked for yet, as it was for Main Chat:
+// "where do things stand?" as the first words of a new thread is about
+// everything.
 const THREAD_STATUS_LINES = Object.freeze([
   '- Here, "status?", "how is it going?" or "where are we?" means what they asked for in this thread: say what you',
   '  are doing for it right now, or that nothing is under way yet and what happens next. Do not list the rest of',
-  '  their page (my_work) unless they ask about everything.',
+  '  their page (my_work) unless they ask about everything, or nothing has been asked for in this thread yet.',
 ]);
 
 /**
@@ -507,13 +491,38 @@ function otherThreadLines(thread) {
       '  you. What it is about is below. Answer about it, here, and never ask which request or change they mean.',
     );
   } else if (d?.kind === 'ask' && d.changeKind === 'project') {
-    // 1 Nov 2026 (C2.4): opened for a new project (start_project_thread).
+    // 1 Nov 2026 (C2.4): a thread the bot opened for a new project, from Main
+    // Chat, before 14 Nov 2026 (the tool that opened one is retired with Main).
     lines.push(
       '- It is the private thread you opened for a NEW project, which does not exist yet. Help them shape what it is',
       '  for, then draw its first screen with draw_screen and design it with them here; from a design they like, you',
       '  offer to make the project. Nothing is made, filed or posted until they tap.',
       // #6523: its foot already has the door, so the flag is not needed here.
       '- New project is already at the foot of this thread, so do not call offer_new_project here.',
+    );
+  } else if (d?.kind === 'first_version') {
+    // 14 Nov 2026: a project's first version has one thread, opened by
+    // "I'm setting up X now", where its plan, its progress and its news go.
+    const name = d.appName || d.appSlug;
+    const records = d.issueNumber
+      ? `  progress, and from request_detail with project "${d.appSlug}" and number ${Number(d.issueNumber)}.`
+      : '  progress.';
+    lines.push(
+      `- It is the thread of the first version of ${name} (project "${d.appSlug}"): your plan for it, how its build is`,
+      '  going and its news are said here, so what they ask here is most likely about it. Answer about it from',
+      records,
+      '  Anything else they want is answered here too: a change is offered as a request (offer_request), as anywhere.',
+      '  Only a screen is not drawn here: when they ask to see how one could look, tell them to start a new thread',
+      '  (New thread on the Homeroom bot page) and ask there. Do not call draw_screen in this thread.',
+    );
+  } else if (d?.kind === 'earlier') {
+    // 14 Nov 2026: what was said in Main Chat before every conversation
+    // became a thread, kept as one thread they can still write in.
+    lines.push(
+      '- It is their Earlier chat thread: what you and they said before every conversation here became a thread of',
+      '  its own. They can still write here. Nothing in it is filed until you offer it: once what they want is clear',
+      '  enough to build, offer it as a request with offer_request. When, and only when, they bring an idea for a',
+      '  project of its own with no project yet, call offer_new_project so New project shows under your reply.',
     );
   } else if (d?.kind === 'ask') {
     // #6071 follow-up: started from your "+", with what its welcome block picked.
@@ -602,8 +611,8 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '',
     'In this chat you can:',
     '- Say what you are working on for them and how far along it is. For "how far along are you?", "is it ready?"',
-    '  or "what are you doing?", call progress first: for each thing you are doing for them it gives the step you',
-    '  are on (say it, for example "step 4 of 7: building it, 6 minutes so far"), what is happening, since when,',
+    '  or "what are you doing?", call progress first: for each thing you are doing for them it gives where it',
+    '  stands in the words their screens use (says, for example "Building · Reviewing, round 1 of 2"), since when,',
     '  and who it waits on. For the whole list of their requests, call my_work. For ANY question about their',
     '  work, answer only from what these return. Use request_detail for the whole story of one request.',
     // 30 Oct 2026: the same lists the Homeroom bot tab draws, so the answer and the page agree.
@@ -648,6 +657,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  request, from the "id ..." in a picture\'s history line. Give context.request whenever they name a request',
     '  number, and ask which project when a bare number is ambiguous; put what they saw in context.saw. Propose one',
     '  to three doneWhen checks in their words, of what is true when it is done. They see all of it on the draft.',
+    '- Write every draft as a request in its own right, for somebody who has not seen this chat: what is',
+    '  asked, why it matters, how it fits what the project already does, and what is still undecided. When they',
+    '  rework an idea, offer the whole request again as it now stands. Never refer back to, contrast with, or say',
+    '  it replaces or revises an earlier draft: nobody else ever saw it.',
     '- A request on one of their projects that is about Homeroom itself (its header, its request form, a project\'s',
     '  description or invite message, how votes or notifications work), not the project\'s code, belongs on Homeroom\'s',
     '  own board: request_detail says aboutHomeroom when you left it for that reason. When they filed it or asked for',
@@ -670,7 +683,7 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     // 1 Nov 2026 (threads, one loop): a screen is drawn, not picked.
     '- Draw a screen with them when they want to see how something could look, or to change how a screen looks or is',
     '  laid out (draw_screen): your designer draws it from their words, the project\'s code and any picture they sent, in',
-    '  a private thread (from Main Chat, a new one, which it says), and changes it at their word there. Call it alone,',
+    '  this thread, and changes it at their word here. Call it alone,',
     '  and do not reply: the designer answers them. When they have asked you to draw, render, show or mock up a',
     '  screen, call draw_screen in that turn: never answer with what you are about to do, and never ask whether to',
     '  start it. Put in only what they said of the app and the screen, never a screen they did not describe. When they',
@@ -713,10 +726,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Their weekly building time pays for your work on their requests, not for these answers (buildingTime in',
     '  my_work). Mention it only when they ask about it, or when my_work marks it low. Never name an amount of money.',
     '  When it is used up, their requests wait until Monday, and someone else in the project can ask you to start one.',
-    '- Homeroom tells them itself how each request is going: on its card in this chat and in the tray above it, and',
-    '  in its thread here. Each request\'s card is the first message of its own thread, where everything about it',
-    '  is said; the main chat shows the moments that need them (a question, a plan, a change to try, a stop, live).',
-    '  Those messages start with "[Homeroom posted this automatically]" in this conversation.',
+    '- Homeroom tells them itself how each request is going: on the request\'s own page, where everything about it',
+    '  is said, and in their bell at the moments that need them (a question, a plan, a change to try, a stop, live).',
+    '  A new project\'s first version has a thread of its own in this chat instead. Such messages start with',
+    '  "[Homeroom posted this automatically]" in this conversation.',
     '  Never write a message like them, and never start a reply with a note in brackets. A change that is',
     '  going live is "going live", not live yet: they get a message here when it is live.',
     ...(platform ? [
@@ -783,7 +796,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'progress',
-      description: 'How far along you are with this person\'s work right now, from your own records. rightNow: each thing in progress (setting up a project for its first version, reading a request, a question waiting for their answer, writing the plan, building, the proposal\'s checks, the group\'s vote) with the step it is on (step and of, and the step\'s name), what is happening, since when and minutesSoFar, typicalMinutes when the step takes a while (how long it usually takes, from and to, in minutes: what to say when they ask how long), the step\'s time limit when it has one (stepTimeLimitMinutes: the most it can take before it is stopped, never the wait), waitingOn (them, or the group; none when it is on you), busyNow when you are doing it this minute, the proposal\'s checks and votes, and links. finishedLately: what came to something in the last two weeks. Empty rightNow means you are doing nothing for them now.',
+      description: 'How far along you are with this person\'s work right now, from the same records their screens draw. rightNow: each thing in progress or waiting on somebody (setting up a project for its first version, reading a request, a question waiting for their answer, writing the plan, building, the change\'s checks, the group\'s vote), each with where it stands in their screens\' own words (says: say it as written), its stage, whose move it is (whoseMove, and waitingOn: them, or the group; none when it is on you), since when and minutesSoFar, typicalMinutes when the step takes a while (how long it usually takes, from and to, in minutes: what to say when they ask how long), busyNow when you are doing it this minute, its change (its checks, its votes, and openForVotes), what it asks of them (asks), what you last said about it (lastSaid), and links. finishedLately: what went live or was closed in the last two weeks. Empty rightNow means you are doing nothing for them now.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
@@ -799,7 +812,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'request_detail',
-      description: 'Your own records of one request: your recent verdicts on it, the open question and its suggested answers, the build, the proposal with its checks and votes, and whether you build on its project. For what the request itself says, use get_request.',
+      description: 'Your own records of one request: where it stands now (standing: in the words its page uses, whose move it is, what it asks of them, what you last said there), your recent looks at it (each look\'s verdict and what became of its build), the open question and its suggested answers, its change with its checks and votes, and whether you build on its project. For what the request itself says, use get_request.',
       parameters: {
         type: 'object',
         properties: {
@@ -891,7 +904,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'offer_request',
-      description: 'Offer to file a NEW request on one of their projects. They see the request under your reply with File it and Not now; nothing is filed unless they tap File it. Up to three offers under one reply; to file the same request on several projects, pass them all in projects: one card files them all.',
+      description: 'Offer to file a NEW request on one of their projects. They see the request under your reply with File it and Not now; nothing is filed unless they tap File it. Up to three offers under one reply; to file the same request on several projects, pass them all in projects: one card files them all. Each offer is a whole request on its own: an earlier offer they did not file was never seen by anyone else.',
       parameters: {
         type: 'object',
         properties: {
@@ -911,7 +924,7 @@ const TOOLS = [
           },
           named: { type: 'string', description: 'The project\'s name exactly as they wrote it, when they named one. A name that is not exactly the project\'s is asked about on the card ("Did you mean ...?").' },
           title: { type: 'string', description: 'A short title for the request, in their words.' },
-          details: { type: 'string', description: 'What they asked for, in their words, with anything they said that matters.' },
+          details: { type: 'string', description: 'The request on its own, for somebody who never saw this chat: what is asked and why it matters, in their words where they gave them, how it fits what the project already does, and what is still undecided. Never refer to, compare with, or say it replaces or revises an earlier draft.' },
           attachmentIds: {
             type: 'array', maxItems: 3,
             items: { type: 'string' },
@@ -951,7 +964,7 @@ const TOOLS = [
           doneWhen: {
             type: 'array', minItems: 1, maxItems: 3,
             items: { type: 'string' },
-            description: 'One to three short checks, in their words, of what is true when it is done.',
+            description: 'One to three short checks, in their words, of what is true when it is done. Each one reads on its own, never against an earlier draft.',
           },
         },
         required: ['title', 'details', 'doneWhen'],
@@ -1030,7 +1043,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'draw_screen',
-      description: 'Draw a screen with them, as a design: hands this turn to your designer, which draws it from their words, the project\'s code and any picture they sent, shows it small in a private thread with Open preview, and changes it at their word there. In a private thread it draws there; in Main Chat it first opens a new private thread for it and says so. Use it when they want to see how something could look, or to change how a screen looks or is laid out. Call it alone, and do not reply: the designer answers them.',
+      description: 'Draw a screen with them, as a design: hands this turn to your designer, which draws it from their words, the project\'s code and any picture they sent, shows it small in this thread with Open preview, and changes it at their word here. Use it when they want to see how something could look, or to change how a screen looks or is laid out. Call it alone, and do not reply: the designer answers them.',
       parameters: {
         type: 'object',
         properties: {
@@ -1047,7 +1060,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'close_thread',
-      description: 'Mark this private thread done, when they ask you to close or finish it (#6159). It leaves their Homeroom bot page\'s lists; nothing in it is deleted, and anything they write in it brings it back. It closes only the private thread you are in: never Main Chat, and never a request (a request closes by its group\'s vote, which offer_close_request offers). Takes no arguments. After it, reply "Done. Reply here to pick it up again."',
+      description: 'Mark this private thread done, when they ask you to close or finish it (#6159). It leaves their Homeroom bot page\'s lists; nothing in it is deleted, and anything they write in it brings it back. It closes only the private thread you are in: never a request (a request closes by its group\'s vote, which offer_close_request offers). Takes no arguments. After it, reply "Done. Reply here to pick it up again."',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
@@ -1065,22 +1078,6 @@ const TOOLS = [
           number: { type: 'integer', description: 'With project: the request it is about, if one.' },
         },
         required: ['summary', 'details'],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'start_project_thread',
-      description: 'They want to make a NEW project (an app that does not exist yet) and you are in the main chat: open a '
-        + 'private thread for it, with only them, and carry on there. Main gets one line that links to it, and your reply '
-        + 'goes in the thread. There you shape the idea with them and draw its first screen; from a design they like, '
-        + 'the project is made. Not for a change to a project that exists. One per turn.',
-      parameters: {
-        type: 'object',
-        properties: { idea: { type: 'string', description: 'What the project is for, in a few of their own words.' } },
-        required: ['idea'],
         additionalProperties: false,
       },
     },
@@ -1161,168 +1158,221 @@ const PLAIN_REPLY_TOOL = {
 
 // ── What the bot is doing for one person ──────────────────────────────────
 
-/** Pure: one request's state in a few plain words, from its records. */
-function statusOf(row) {
-  const proposal = row.proposal_status || null;
-  // Merged is live once production runs it (chat_sessions.live_at).
-  if (proposal === 'merged' && row.proposal_live_at === null) return 'approved, going live now';
-  if (proposal === 'merged') return 'approved and live';
-  if (proposal === 'merging') return 'approved, being merged now';
-  if (row.started_at) return 'looking at it now';
-  if (row.open_question) return 'waiting for their answer to your question';
-  if (proposal === 'promoted') return 'proposal up for the group\'s vote';
-  // A place in the queue across every project was not when it would start:
-  // per-project and per-person limits decide that (progress.js queuedWait).
-  if (row.enqueued_at) return 'waiting for a free builder';
-  switch (row.verdict) {
-    case 'person': return 'left for the group to decide';
-    case 'empty': return 'nothing to build in it yet';
-    case 'failed': return 'your last look at it failed';
-    case 'ready':
-      // B6: a first version's plan waits for them.
-      if (row.plan_waiting_at && row.build_ok == null) return 'its plan is waiting for them to tap Build it, or to reply with changes';
-      if (row.build_ok !== false) return 'ready; the build is next';
-      if (/^skipped: nobody tapped Build it/.test(String(row.build_error || ''))) return 'its plan waited a week with no Build it; a reply to the plan picks it up again';
-      // WP1: a build that was not needed (skipped) stopped; it did not fail.
-      return /^skipped:/.test(String(row.build_error || '')) ? 'you stopped before building it: it was not needed' : 'you could not build it';
-    case 'question': return 'asked a question, answered; waiting to look again';
-    default: return proposal === 'closed' ? 'its proposal was closed' : 'looked at; nothing new since';
-  }
-}
+// 11 Nov 2026 (docs/plans/bot-one-model.md, step 3): where each of their
+// requests stands is its stored work state (services/work-state.js), the
+// row every screen draws. progress, my_work and request_detail say its
+// stage in the screens' own words (`says`), whose move it is, its change
+// (checks, votes, whether it is open for votes), what is asked of the
+// requester and what the bot last said there, and nothing else: they used
+// to read the bot's records again with rules of their own, and said
+// "looking at it now" of a request its page called up for a vote.
 
 // Where links point: the platform's own domain, as the bot's posts use it.
 function domainOf(deps) {
   return deps.domain !== undefined ? deps.domain : require('./caddy').USERNODE_DOMAIN;
 }
 
-/** `progress` (homeroom-bot-progress.js) for this person, with the DM's own dependencies. */
-async function progressOf(pool, { userId, settings, config = null, deps = {} }) {
-  return progressSvc.progressFor(pool, {
-    userId, settings, config, deps: { botSvc: deps.botSvc, creationPhase: deps.creationPhase, domain: domainOf(deps) },
-  });
-}
-
-/** A progress entry as one line of my_work: "step 4 of 7: building it". */
-function stepLine(entry) {
-  return entry.step ? `step ${entry.step} of ${entry.of}: ${entry.doing}` : entry.doing;
+// How long a step usually takes, by the stage (and line) the bot is at
+// (progress.typicalMinutes keys).
+function typicalStepOf(row) {
+  if (!require('./work-state').busyNow(row)) return null;
+  const code = row.line && row.line.code;
+  if (row.stage === 'reading') return 'reading';
+  if (row.stage === 'planning') return 'planning';
+  if (['reviewing', 'proposing', 'fixing', 'revising', 'starting'].includes(code)) return code;
+  return 'building';
 }
 
 /**
- * Everything the bot knows it is doing for `userId`: the requests recorded
- * as theirs (homeroom_bot_requesters), plus anything of theirs waiting in
- * its queue that it has not looked at yet, and the first versions it is
- * waiting to file. Newest first. What is in progress, and how far along,
- * is `progress`'s (homeroom-bot-progress.js): a build has no queue row, so
- * the queue alone would call a request being built idle. Given the `user`
- * (as a turn has them), `onYourPage` is their Homeroom bot tab's lists.
+ * Pure: one stored work state as the bot's tools tell it: its stage in the
+ * screens' words, whose move it is, since when, its change, what it asks of
+ * its requester, what the bot last said there, and the links.
  */
-async function myWork(pool, { userId, user = null, settings, config = null, deps = {} }) {
-  const bot = botModule(deps);
-  // #3772: what the bot does FOR them. A request of theirs it only read in
-  // the background (shadow triage of a project it does not build on) is not
-  // in their queue and was not its decision, so a status answer listed the
-  // platform's own requests as "reading them, not mine to build". As
-  // `progress` already does (#3734), only a project it acts on has a queue
-  // for them, and only its acted-on ('live') looks are its verdicts.
-  const scope = liveModule(deps).appsScope(settings);
+function standingItem(row, { title = null, firstVersion = false, domain = null, yours = true, now = new Date() } = {}) {
+  const workState = require('./work-state');
+  const slug = row.app?.slug || null;
+  const busy = workState.busyNow(row);
+  const step = typicalStepOf(row);
+  const typical = step ? progressSvc.typicalMinutes(step) : null;
+  const minutes = row.since ? Math.max(0, Math.floor((now.getTime() - Date.parse(row.since)) / 60000)) : null;
+  const change = row.change ? {
+    id: row.change.id,
+    ...(row.change.number ? { number: row.change.number } : {}),
+    status: row.change.status,
+    checks: row.change.checks,
+    votes: row.change.votes,
+    openForVotes: !!row.change.voteOpen,
+    ...(row.change.firstVersion ? { firstVersion: true } : {}),
+    ...(row.change.update ? { update: row.change.update } : {}),
+  } : null;
+  const asks = row.asks || {};
+  const asked = {
+    ...(asks.question ? { question: true } : {}),
+    ...(asks.plan?.waitingGo ? { planWaitsForBuildIt: true } : {}),
+    ...(asks.closeVote ? { closeVote: { yes: asks.closeVote.yes, no: asks.closeVote.no } } : {}),
+    ...(asks.draft ? { planningInPrivateThread: true } : {}),
+  };
+  return {
+    project: slug,
+    projectName: row.app?.name || slug,
+    ...(row.issueNumber ? { number: row.issueNumber } : {}),
+    title: firstVersion ? 'First version' : title,
+    ...(firstVersion ? { firstVersion: true } : {}),
+    stage: row.stage,
+    says: workState.says(row, { yours }),
+    whoseMove: row.whoseMove || null,
+    ...(row.whoseMove === 'requester' ? { waitingOn: yours ? 'them' : 'the person who asked for it' } : {}),
+    ...(row.whoseMove === 'group' ? { waitingOn: 'the group' } : {}),
+    busyNow: busy,
+    ...(row.since ? { since: row.since } : {}),
+    ...(busy && minutes != null ? { minutesSoFar: minutes } : {}),
+    ...(typical ? { typicalMinutes: typical } : {}),
+    ...(change ? { change } : {}),
+    ...(Object.keys(asked).length ? { asks: asked } : {}),
+    ...(row.said ? { lastSaid: { kind: row.said.kind, at: row.said.at, text: row.said.text } } : {}),
+    links: progressSvc.links(domain, { slug, number: row.issueNumber, proposal: change?.id || null, pr: change?.number || null }),
+  };
+}
+
+// What came to something lately is listed for two weeks, the three newest.
+const FINISHED_DAYS = 14;
+const MAX_FINISHED = 3;
+
+/**
+ * Their requests' stored work states, newest first, with their titles:
+ * every request recorded as theirs, and any of theirs waiting in the bot's
+ * queue it has not recorded yet. A row is made first for any that has none.
+ */
+async function theirStandings(pool, userId, { inScope = null } = {}) {
   const { rows: found } = await pool.query(
-    `WITH mine AS (
-       SELECT r.app_id, r.issue_number, r.issue_title, r.first_version, TRUE AS recorded
+    `SELECT mine.app_id, mine.issue_number, mine.issue_title, mine.first_version, mine.recorded, a.slug FROM (
+       SELECT r.app_id, r.issue_number, r.issue_title, r.first_version, TRUE AS recorded, r.created_at AS at
          FROM homeroom_bot_requesters r WHERE r.user_id = $1
-       UNION
-       SELECT q.app_id, q.issue_number, i.title, FALSE, FALSE
+       UNION ALL
+       SELECT q.app_id, q.issue_number, i.title, FALSE, FALSE, q.enqueued_at
          FROM homeroom_bot_queue q
          JOIN issues i ON i.app_id = q.app_id AND i.github_issue_number = q.issue_number
         WHERE i.created_by = $1
           AND NOT EXISTS (SELECT 1 FROM homeroom_bot_requesters r2
                            WHERE r2.app_id = q.app_id AND r2.issue_number = q.issue_number)
-     )
-     SELECT m.app_id, a.slug, a.name, m.issue_number, m.issue_title, m.first_version, m.recorded,
-            q.id AS queue_id, q.started_at, q.enqueued_at,
-            run.verdict, run.created_at AS run_at, run.build_ok, run.build_error, run.awaiting_go_at AS plan_waiting_at,
-            prop.proposal_session_id, cs.status AS proposal_status, cs.live_at AS proposal_live_at,
-            oq.message_id AS open_question
-       FROM mine m
-       JOIN apps a ON a.id = m.app_id
-       LEFT JOIN homeroom_bot_queue q ON q.app_id = m.app_id AND q.issue_number = m.issue_number
-       LEFT JOIN LATERAL (
-         SELECT verdict, created_at, build_ok, build_error, awaiting_go_at FROM homeroom_bot_runs
-          WHERE app_id = m.app_id AND issue_number = m.issue_number AND mode = 'live'
-          ORDER BY id DESC LIMIT 1
-       ) run ON TRUE
-       LEFT JOIN LATERAL (
-         SELECT proposal_session_id FROM homeroom_bot_runs
-          WHERE app_id = m.app_id AND issue_number = m.issue_number AND proposal_session_id IS NOT NULL
-          ORDER BY id DESC LIMIT 1
-       ) prop ON TRUE
-       LEFT JOIN chat_sessions cs ON cs.id = prop.proposal_session_id
-       LEFT JOIN LATERAL (
-         SELECT message_id FROM homeroom_bot_dm_messages
-          WHERE user_id = $1 AND app_id = m.app_id AND issue_number = m.issue_number AND question_status = 'open'
-          ORDER BY created_at DESC LIMIT 1
-       ) oq ON TRUE
-      ORDER BY GREATEST(COALESCE(run.created_at, 'epoch'::timestamptz), COALESCE(q.enqueued_at, 'epoch'::timestamptz)) DESC
-      LIMIT 25`,
+     ) mine
+     JOIN apps a ON a.id = mine.app_id
+     LEFT JOIN work_states ws ON ws.app_id = mine.app_id AND ws.item_kind = 'request' AND ws.item_ref = mine.issue_number
+     -- #6280: a cap on what came to something, never on work under way: a
+     -- request still going (or with no row yet) comes before any that ended.
+     ORDER BY COALESCE(ws.stage IN ('live', 'closed'), FALSE), mine.at DESC
+     LIMIT 60`,
     [userId],
   );
-  const rows = found
-    // Waiting in a queue only on a project it acts on, and a request that
-    // was only ever in the background queue is not theirs to hear about.
-    .map((row) => (liveModule(deps).inScope(scope, row.slug) ? row : { ...row, queue_id: null, started_at: null, enqueued_at: null }))
-    .filter((row) => row.recorded || row.queue_id);
-  // Where each waiting request is in the live queue.
-  const position = new Map();
-  if (!liveModule(deps).scopeIsEmpty(scope) && rows.some((r) => r.queue_id && !r.started_at)) {
-    const { rows: queue } = await pool.query(
-      `SELECT q.id FROM homeroom_bot_queue q JOIN apps a ON a.id = q.app_id
-        WHERE q.started_at IS NULL
-          AND (CASE WHEN $2::boolean THEN NOT (a.slug = ANY($3::text[])) ELSE a.slug = ANY($1::text[]) END)
-        ORDER BY q.priority, q.enqueued_at LIMIT 500`,
-      [scope.slugs, scope.all, scope.except],
-    );
-    queue.forEach((q, i) => position.set(Number(q.id), i + 1));
+  // #3772: what the bot does FOR them. A request of theirs it only read in
+  // the background (its queue on a project it does not act on) is not theirs
+  // to hear about: only one recorded as theirs, or queued where it acts.
+  const keys = found.filter((k) => k.recorded === true || (inScope && inScope(k.slug)));
+  const about = new Map(keys.map((k) => [`${k.app_id}:${k.issue_number}`, k]));
+  const rows = await require('./work-state').forItems(pool, keys.map((k) => ({ appId: k.app_id, issueNumber: k.issue_number })));
+  return rows
+    .map((row) => ({ row, about: about.get(`${row.appId}:${row.issueNumber}`) || {} }))
+    .sort((a, b) => String(b.row.updatedAt || '').localeCompare(String(a.row.updatedAt || '')));
+}
+
+/**
+ * `progress` for this person, from the stored work states: rightNow (what
+ * is under way or waits on somebody), finishedLately (what came to
+ * something in the last two weeks), and the first versions it is still
+ * setting up, which have no request yet.
+ */
+async function progressOf(pool, { userId, settings, deps = {} }) {
+  const domain = domainOf(deps);
+  const now = new Date();
+  const rightNow = [];
+  const finished = [];
+  const phases = deps.creationPhase || require('./app-creation-phase');
+  for (const row of await progressSvc.firstVersionRows(pool, userId)) {
+    const setup = progressSvc.setupOf(row, { phase: row.app_status === 'creating' ? await phases.read(pool, row.app_id).catch(() => null) : null });
+    if (setup.outcome) continue;
+    rightNow.push({
+      project: row.slug, projectName: row.name || row.slug, title: 'First version', firstVersion: true,
+      stage: 'setting_up', says: setup.doing, busyNow: !setup.waitingOn,
+      ...(setup.waitingOn ? { waitingOn: 'them' } : {}),
+      ...(setup.since ? {
+        since: new Date(setup.since).toISOString(),
+        minutesSoFar: Math.max(0, Math.floor((now.getTime() - new Date(setup.since).getTime()) / 60000)),
+      } : {}),
+      typicalMinutes: progressSvc.typicalMinutes('setting_up'),
+      links: progressSvc.links(domain, { slug: row.slug }),
+    });
   }
-  // What is in progress. Without it the list still answers, from the queue.
-  let progress = null;
-  try {
-    progress = await progressOf(pool, { userId, settings, config, deps });
-  } catch (err) {
-    log.warn('homeroom-bot-mayor', 'Could not read the progress of a person\'s work', { userId, err: err.message });
-  }
-  const inProgress = new Map((progress?.rightNow || []).map((e) => [`${e.project}#${e.number || ''}`, e]));
-  const builds = (slug) => liveModule(deps).isLiveFor(settings, { slug });
-  // 5 Nov 2026 (docs/plans/bot-one-model.md, decision 4): where each of
-  // their requests stands is its stored work state, in the words every
-  // screen uses (work-state.js says); the old reading of its records is for
-  // a request with none stored yet.
-  const workState = require('./work-state');
-  const stored = new Map((await workState.forRequester(pool, userId).catch(() => []))
-    .filter((w) => w.kind === 'request').map((w) => [`${w.appId}#${w.ref}`, w]));
-  const requests = [];
-  for (const row of rows) {
-    const now = inProgress.get(`${row.slug}#${Number(row.issue_number)}`);
-    const state = stored.get(`${Number(row.app_id)}#${Number(row.issue_number)}`) || null;
-    const item = {
-      project: row.slug,
-      projectName: row.name || row.slug,
-      number: Number(row.issue_number),
-      title: row.first_version ? 'First version' : (row.issue_title || null),
-      status: now
-        ? stepLine(now)
-        : state ? workState.says(state)
-          : statusOf({ ...row, queue_position: row.queue_id ? position.get(Number(row.queue_id)) : null }),
-      ...(state ? { stage: state.stage } : {}),
-      botBuildsHere: builds(row.slug),
-    };
-    if (now?.since) item.since = now.since;
-    else if (row.started_at) item.since = new Date(row.started_at).toISOString();
-    if (row.run_at) item.lastLooked = new Date(row.run_at).toISOString();
-    if (now?.proposal) {
-      item.proposal = now.proposal;
-    } else if (row.proposal_session_id && row.proposal_status && row.proposal_status !== 'closed') {
-      item.proposal = await progressSvc.proposalFacts(pool, Number(row.proposal_session_id), { domain: domainOf(deps) });
+  const cutoff = now.getTime() - FINISHED_DAYS * 24 * 60 * 60 * 1000;
+  const acts = (slug) => liveModule(deps).isLiveFor(settings, { slug });
+  for (const { row, about } of await theirStandings(pool, userId, { inScope: acts })) {
+    const item = standingItem(row, { title: about.issue_title || null, firstVersion: about.first_version === true, domain, now });
+    if (row.stage === 'live' || row.stage === 'closed') {
+      if (Date.parse(row.since || 0) >= cutoff && finished.length < MAX_FINISHED) finished.push(item);
+    } else {
+      rightNow.push(item);
     }
-    requests.push(item);
+  }
+  return { botIsOn: settings?.mode !== 'off', rightNow, finishedLately: finished };
+}
+
+/** Pure: `progress` as a short message in plain words, from the records alone (#4097: at most `max`, with how many more). */
+function progressText(progress, { max = 5 } = {}) {
+  const lines = [];
+  const rightNow = progress?.rightNow || [];
+  for (const item of rightNow.slice(0, max)) {
+    const what = item.number
+      ? `${item.projectName} request #${item.number}${item.title ? ` (${item.title})` : ''}`
+      : `${item.projectName}, its ${String(item.title || 'first version').toLowerCase()}`;
+    const time = Number.isInteger(item.minutesSoFar)
+      ? `, for ${item.minutesSoFar < 1 ? 'under a minute' : `${item.minutesSoFar} minute${item.minutesSoFar === 1 ? '' : 's'}`} so far`
+      : '';
+    lines.push(`- ${what}: ${item.says}${time}.`);
+  }
+  if (lines.length && rightNow.length > max) lines.push(`- and ${rightNow.length - max} more.`);
+  if (!lines.length) {
+    const done = (progress?.finishedLately || [])[0];
+    return done
+      ? `I'm not working on anything for you right now. Most recently, ${done.projectName}${done.number ? ` request #${done.number}` : ''}: ${done.says}.`
+      : 'I\'m not working on anything for you right now.';
+  }
+  const off = progress.botIsOn === false ? '\n\nI\'m switched off right now, so this waits until I\'m back on.' : '';
+  return `Here is where things stand, from my records:\n\n${lines.join('\n')}${off}`;
+}
+
+/**
+ * Everything the bot knows it is doing for `userId`: each of their
+ * requests' stored work state (theirStandings), newest first, and the first
+ * versions it is waiting to file. Given the `user` (as a turn has them),
+ * `onYourPage` is their Homeroom bot tab's lists.
+ */
+async function myWork(pool, { userId, user = null, settings, config = null, deps = {} }) {
+  const domain = domainOf(deps);
+  const now = new Date();
+  const builds = (slug) => liveModule(deps).isLiveFor(settings, { slug });
+  const requests = [];
+  const workingOnNow = [];
+  for (const { row, about } of (await theirStandings(pool, userId, { inScope: builds })).slice(0, 25)) {
+    const item = standingItem(row, { title: about.issue_title || null, firstVersion: about.first_version === true, domain, now });
+    requests.push({
+      project: item.project,
+      projectName: item.projectName,
+      number: item.number,
+      title: item.title,
+      status: item.says,
+      stage: item.stage,
+      whoseMove: item.whoseMove,
+      ...(item.since ? { since: item.since } : {}),
+      ...(item.change ? { change: item.change } : {}),
+      ...(item.asks ? { asks: item.asks } : {}),
+      botBuildsHere: builds(row.app?.slug),
+      links: item.links,
+    });
+    if (item.busyNow) {
+      workingOnNow.push({
+        project: item.project, projectName: item.projectName, number: item.number, title: item.title,
+        status: item.says, ...(item.since ? { since: item.since } : {}),
+      });
+    }
   }
   const { rows: firsts } = await pool.query(
     `SELECT a.slug, a.name, f.status FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
@@ -1330,13 +1380,6 @@ async function myWork(pool, { userId, user = null, settings, config = null, deps
       ORDER BY f.created_at DESC LIMIT 10`,
     [userId],
   );
-  const workingOnNow = progress
-    ? progress.rightNow.filter((e) => e.busyNow).map((e) => ({
-      project: e.project, projectName: e.projectName, ...(e.number ? { number: e.number } : {}),
-      title: e.title, status: stepLine(e), ...(e.since ? { since: e.since } : {}),
-    }))
-    : (await bot.workingNow(pool, settings, { userId }))
-      .map((w) => ({ project: w.appSlug, projectName: w.appName, number: w.issueNumber, since: w.since }));
   const cap = Number(await dmModule(deps).weeklyCapCents(pool, settings, userId)) || 0;
   const spent = cap > 0 ? await dmModule(deps).weeklySpentCents(pool, userId) : 0;
   // 30 Oct 2026: the Homeroom bot tab's own lists, which a status answer is
@@ -1356,15 +1399,11 @@ async function myWork(pool, { userId, user = null, settings, config = null, deps
     ...(onYourPage ? { onYourPage } : {}),
     workingOnNow,
     requests,
-    firstVersionsNotFiledYet: firsts.map((f) => {
-      const setup = inProgress.get(`${f.slug}#`);
-      return {
-        project: f.slug,
-        projectName: f.name || f.slug,
-        status: setup ? stepLine(setup)
-          : f.status === 'failed' ? 'could not start it' : 'waiting for the project to finish setting up',
-      };
-    }),
+    firstVersionsNotFiledYet: firsts.map((f) => ({
+      project: f.slug,
+      projectName: f.name || f.slug,
+      status: f.status === 'failed' ? 'could not start it' : 'waiting for the project to finish setting up',
+    })),
     atOnce: `You work on up to ${settings?.perPerson || 2} of their requests at a time: up to ${readsAtOnce(settings)} reads per project, and up to ${require('./homeroom-bot').BUILDS_PER_APP} builds per project.`,
     // #3772: said only when they ask, or when little is left; every status
     // answer used to end with it. A share of the week, never an amount: the
@@ -1558,18 +1597,14 @@ async function listChangeFiles(pool, { user, project, change, deps = {} }) {
 }
 
 /**
- * Pure: what became of one look's build, for request_detail, or undefined
- * when the look built nothing. WP1 (#10): a build that waits or runs says
- * so ("building now"), so a second build of a request is never invisible;
- * and a build that was not needed (skipped) stopped, it did not fail.
- *
- * Papote #3 (18 Oct 2026): a plan waiting for its requester's Build it read
- * as "building now", so "status?" on a request whose plan had waited three
- * days for its requester was told the build was still running. `waitingFor`
- * names who the plan waits on: 'them' (whoever is asking), a username, or
- * null when it cannot be named.
+ * Pure: what became of one look's build, for request_detail's history of
+ * its looks, or undefined when the look built nothing or its build has not
+ * come to anything yet: where it stands now is the request's standing,
+ * never a guess from one look (Papote #3, 18 Oct 2026: a plan waiting for
+ * its requester's Build it read as "building now"). A build that was not
+ * needed (skipped) stopped; it did not fail.
  */
-function buildWords(r, { waitingFor = null } = {}) {
+function buildWords(r) {
   const error = clip(r.build_error || 'no reason recorded', 300);
   if (r.verdict !== 'ready') return r.build_ok == null ? undefined : (r.build_ok ? 'built' : `could not build: ${error}`);
   if (r.build_ok === true || r.proposal_session_id) return 'built';
@@ -1578,19 +1613,10 @@ function buildWords(r, { waitingFor = null } = {}) {
       ? `stopped before it was built: ${error.replace(/^skipped:\s*/, '')}`
       : `could not build: ${error}`;
   }
-  if (r.cap_suppressed) return 'held back by a limit, so not built yet';
+  if (r.cap_suppressed) return 'held back by a limit, so not built from this look';
   // A wait a later look replaced (homeroom-bot.js runTriage) was never built.
   if (r.build_error) return `not built: ${error.replace(/^superseded:\s*/, '')}`;
-  if (r.awaiting_go_at && !r.build_session_id) {
-    const who = waitingFor === 'them' ? 'them' : waitingFor ? `@${waitingFor}` : 'the person who asked for it';
-    return `not building: its plan is written and waits for ${who} to say Build it, and nothing is built until then`;
-  }
-  if (r.live_build_waiting_at && !r.build_session_id) {
-    return r.complicated === true && !r.planned
-      ? 'writing the plan its requester checks before anything is built'
-      : 'waiting its turn to be built';
-  }
-  return 'building now';
+  return undefined;
 }
 
 async function requestDetail(pool, { user, project, number, settings = null, deps = {} }) {
@@ -1603,21 +1629,9 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
   // nothing to anybody, and its verdict read as the bot's decision.
   const { rows: runs } = await pool.query(
     `SELECT verdict, question, question_answers, reason, build_note, build_ok, build_error, created_at,
-            proposal_session_id, cap_suppressed, live_build_waiting_at, build_session_id, about_platform,
-            awaiting_go_at, complicated, plan IS NOT NULL AS planned
+            proposal_session_id, cap_suppressed, build_session_id, about_platform
        FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = $2 AND mode = 'live'
       ORDER BY id DESC LIMIT 4`,
-    [app.id, n],
-  );
-  // Who a plan waiting for Build it waits on (buildWords).
-  const requester = runs.some((r) => r.awaiting_go_at)
-    ? await Promise.resolve().then(() => dmModule(deps).requesterOf(pool, app.id, n)).catch(() => null)
-    : null;
-  const waitingFor = requester
-    ? (Number(requester.userId) === Number(user.id) ? 'them' : requester.username || null)
-    : null;
-  const { rows: queue } = await pool.query(
-    'SELECT started_at, enqueued_at FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2',
     [app.id, n],
   );
   const { rows: openQ } = await pool.query(
@@ -1628,7 +1642,11 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
     [user.id, app.id, n],
   );
   const asked = openQ[0]?.metadata?.homeroomBot || null;
-  const sessionId = runs.find((r) => r.proposal_session_id)?.proposal_session_id || null;
+  // Where it stands: its stored work state, as its page draws it, in the
+  // words its requester reads when they are the one asking.
+  const [row] = await require('./work-state').forItems(pool, [{ appId: app.id, issueNumber: n }]);
+  const yours = !row || row.requesterId == null || Number(row.requesterId) === Number(user.id);
+  const standing = row ? standingItem(row, { domain: domainOf(deps), yours }) : null;
   return {
     // For the turn's own checks (runTool takes it off before the model reads).
     appId: Number(app.id),
@@ -1636,7 +1654,18 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
     projectName: app.name || app.slug,
     number: n,
     botBuildsHere: liveModule(deps).isLiveFor(settings, app),
-    queue: queue[0] ? (queue[0].started_at ? 'working on it now' : 'waiting in your queue') : 'not in your queue',
+    ...(standing ? {
+      standing: {
+        stage: standing.stage,
+        says: standing.says,
+        whoseMove: standing.whoseMove,
+        ...(standing.waitingOn ? { waitingOn: standing.waitingOn } : {}),
+        busyNow: standing.busyNow,
+        ...(standing.since ? { since: standing.since } : {}),
+        ...(standing.asks ? { asks: standing.asks } : {}),
+        ...(standing.lastSaid ? { lastSaid: standing.lastSaid } : {}),
+      },
+    } : {}),
     openQuestion: asked ? { question: asked.question || null, suggestedAnswers: asked.answers || [] } : null,
     recentLooks: runs.map((r) => ({
       when: new Date(r.created_at).toISOString(),
@@ -1649,9 +1678,9 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
       // #4239: left because it is about Homeroom itself (offer_move_request).
       aboutHomeroom: r.about_platform ? true : undefined,
       plan: r.build_note ? clip(r.build_note, 800) : undefined,
-      build: buildWords(r, { waitingFor }),
+      build: buildWords(r),
     })),
-    proposal: sessionId ? await progressSvc.proposalFacts(pool, Number(sessionId), { domain: domainOf(deps) }) : null,
+    proposal: standing?.change ? { ...standing.change, links: standing.links } : null,
   };
 }
 
@@ -1691,1015 +1720,27 @@ async function canFile(pool, app, user) {
   } catch { return false; }
 }
 
-// ── What a reply may say was done (#3769, #3772) ──────────────────────────
+// ── The reply check ───────────────────────────────────────────────────────
 //
-// On 3 October the bot answered a typed "file it" with "Filed: Ear Trainer
-// request #14 …" and nothing was filed: no draft was waiting, no tool ran,
-// and #14 never existed. The prompt already said never to claim what no
-// tool did. Now the code checks: each claim below counts only when this
-// turn's tools did that thing, and every request number a reply names must
-// exist on the person's projects. A reply that fails is asked for once more
-// with a note saying why (checkNote); what still fails is cut (stripClaims).
-//
-// #11 (WP3): on 3 October it also said it would "look into" a duplicate
-// proposal and "let the team know", and had no way to do either. A promise
-// to come back to something later counts only when this turn did something
-// that comes back (a change sent to its proposal, a comment, a start, a
-// withdrawal, a report), and "the team has been told" or "I withdrew it" only
-// when report_problem or withdraw_proposal did it.
-
-// 1 Nov 2026: says a screen is being drawn: the `drawing` claim below, and
-// what design-bot.js reads as a design it says it made and did not.
-const DRAWING_CLAIM = new RegExp(
-  '\\bI(?:\'m| am)\\s+(?:now\\s+|just\\s+)?(?:drawing|sketching|designing|rendering|mocking (?:it |this |that )?up|laying (?:it |this |that )?out)\\b'
-  + '|\\b(?:I(?:\'ll| will)|let me)\\s+(?:now\\s+|just\\s+|go ahead and\\s+)?(?:draw|sketch|design|render|mock(?: it| this| that)? up|lay (?:it |this |that )?out)\\b'
-  + '(?![^.!?\\n]*\\b(?:if|when|once|after|as soon as) you\\b)'
-  // "Drawing it now…", "Drawing the main screen next"; not "Rendering the list as cards would fit".
-  + '|(?:^|[.!\\n]\\s*)(?:drawing|rendering|sketching|designing|mocking up)\\s+'
-  + '(?:it|this|that|them|(?:the|your|a|an)\\s+(?:[\\w\'-]+\\s+){0,2}(?:screens?|designs?|pages?|versions?|mock-?ups?|layouts?))\\b'
-  + '|\\b(?:drawing|rendering|sketching) (?:it|this|that|them) (?:now|up)\\b',
-  'i',
-);
-
-/**
- * #6159 (3 Nov 2026): "close it from your side", "I can't close threads":
- * there is no such control on their side, and the bot can close this thread
- * itself (close_thread).
- */
-const NO_CONTROL_CLAIM = /\b(?:from|on) your (?:side|end)\b|\bI\s+(?:can['’]?t|cannot|am not able to)\s+close\b[^.?!]{0,30}\bthreads?\b|\bclose (?:it|this thread|the thread) yourself\b/i;
+// What a reply may say was done is checked by the shared reply checker
+// (reply-claims.js: the claims, the request numbers and project names a
+// reply gives, the repair note and the cut), which Main, the voice and the
+// design bot all run. The names below are what other modules and tests
+// already read from here.
 
 /**
  * #6159: close_thread. Marks the private thread this turn is in done
- * (private-threads.js markDone), for the person who asked. Refuses Main
- * Chat, a request's thread, and anything not theirs.
+ * (private-threads.js markDone), for the person who asked. Refuses a
+ * request's thread, and anything not theirs.
  */
 async function closeThread(pool, ctx) {
   if (ctx.deps?.threadRequest) return { ok: false, error: 'This is a request\'s thread. A request closes only by its group\'s vote (offer_close_request).' };
   const rootId = Number(ctx.deps?.threadRootId) || null;
-  if (!rootId) return { ok: false, error: 'Main Chat cannot be closed. Only a private thread can.' };
+  if (!rootId) return { ok: false, error: 'There is no private thread here to close.' };
   const went = await require('./private-threads').markDone(pool, { user: ctx.user, rootId, bot: ctx.bot, deps: ctx.deps || {} });
   if (!went.ok) return { ok: false, error: 'No such thread.' };
   ctx.closedThread = rootId;
   return { ok: true, state: 'done', reply: 'Done. Reply here to pick it up again.' };
-}
-
-const CLAIMS = Object.freeze([
-  {
-    kind: 'no_control',
-    proof: 'never',
-    re: NO_CONTROL_CLAIM,
-    backed: () => false,
-    said: 'tells them to do something there is no control for, or says you cannot close this thread',
-    instead: 'To finish this thread, ask me to close it, or tap Mark done in its ⋯ menu.',
-  },
-  {
-    kind: 'filed',
-    proof: 'records',
-    // "Filed: …" opening a line, "I filed …", or "I opened / created a
-    // request". A draft or an offer is not a filing, and a proposal the bot
-    // opened is a different thing. Nor is a report to the team (`reported`
-    // below): "I've filed a report".
-    re: /(?:^|\n)\s*\**filed\b|\bI(?:'ve| have)?(?: just| now)? (?:filed|logged|submitted)\b(?!(?: (?:it|this|that) to the (?:Homeroom )?team| (?:a|an|the|your|that|this|my) (?:\w+ ){0,2}(?:report|problem)))|\bI(?:'ve| have)?(?: just| now)? (?:opened|created|added) (?:a |an |the |that |this |your )?(?:new )?(?:request|issue)\b/i,
-    // #6583: a card this conversation filed earlier, or their own requester
-    // row for a number the reply names, is a record of a real filing.
-    backed: (ctx) => !!(ctx.stored?.filed || ctx.stored?.earlier?.filed),
-    said: 'says a request was filed',
-    instead: 'I haven\'t filed anything for that yet. Tell me what you want filed and I\'ll draft it for you to confirm.',
-  },
-  {
-    kind: 'drafted',
-    proof: 'records',
-    // #4605: "A File it button will appear under this message", "tap File
-    // it", "you'll see File it below", "I've drafted the request". A draft
-    // exists only when offer_request made one this turn, or when one is still
-    // open in this conversation, so a reply that says one is there with
-    // nothing behind it leaves the person nothing to tap (Drea, twice, on
-    // Rilo). Not a filing: `filed` above needs "I filed".
-    re: /\bFile it\b[^.!?\n]{0,80}\b(?:appear|show(?:s|n)? up|below|under (?:this|my|the|that) (?:message|reply))|\b(?:tap|press|click|hit|use)\s+(?:the\s+)?\**["“]?File it\b|\b(?:you(?:'ll| will| should)? see|there(?:'s| is| will be))\b[^.!?\n]{0,60}\bFile it\b|\bI(?:'ve| have)?(?: just| now)? (?:drafted|prepared|written up|put together)\b[^.!?\n]{0,60}\b(?:request|draft)\b|\b(?:draft|drafted request)\b[^.!?\n]{0,40}\b(?:below|under (?:this|my|the) (?:message|reply))\b/i,
-    // Any offer this turn made backs the reply; a draft still open in the
-    // conversation backs it too, whatever its age.
-    backed: (ctx) => !!(ctx.offer || ctx.stored?.openDraft),
-    said: 'says a drafted request with File it is under it',
-    // #6307: they have already said what they want; asking them again reads
-    // as though nothing they wrote was heard.
-    instead: 'I haven\'t drafted it yet, so there\'s nothing to tap.',
-  },
-  {
-    kind: 'posted',
-    proof: 'records',
-    re: /\bI(?:'ve| have)?(?: just| now)? (?:posted|added|put|passed|left|sent|shared)\b[^.!?\n]{0,80}\b(?:discussion|comment|request|proposal|board|issue|thread)\b/i,
-    // P8: pictures make_pictures put under this reply ("I've put them in this thread").
-    // Homeroom bot parity (P5): a note sent to a running build (add_to_build).
-    // #6583: an earlier message of the bot's in this conversation that says
-    // it posted is a record too. A filing of a request is not a posting of a
-    // comment on that request, so `stored.filed` does not back this.
-    backed: (ctx) => !!(ctx.posted || ctx.revised || ctx.commented || ctx.pictures || ctx.steered
-      || ctx.stored?.earlier?.posted),
-    said: 'says something was posted',
-    instead: 'I haven\'t posted that anywhere yet.',
-  },
-  {
-    // #6534: a reply that says pictures, shots or a design are posted, when
-    // nothing was stored under it. In a project's thread only what was stored
-    // as an attachment counts; in the bot's own chat the gallery card does.
-    kind: 'posted_pictures',
-    proof: 'turn',
-    re: /\bhere (?:are|is) the (?:pictures|shots|stills|designs?)\b|\bI(?:'ve| have)(?: just| now)? (?:attached|posted|added|put up) (?:the |your |two |three |four )?(?:pictures?|shots?|stills|designs?|before and after)\b|\battached below\b/i,
-    backed: (ctx) => !!(ctx.attached?.length || (!ctx.place && ctx.pictures?.made)),
-    said: 'says pictures or a design were posted',
-    instead: 'I haven\'t attached any pictures.',
-  },
-  {
-    kind: 'started',
-    proof: 'records',
-    re: /\bI(?:'m| am)\s+(?:now\s+)?(?:starting|working on (?:it|that|this|#\d+)|building (?:it|that|this|#\d+)|on it)\b|\bI(?:'ve| have)\s+started\b|\bI(?:'ll| will) (?:start(?: on)?|look at|pick up) (?:it|that|this|#\d+) (?:now|right away|right now)\b/i,
-    // Homeroom bot parity (P4): reads a batch queued this turn (work_through).
-    // #6583: a request's stored track that is being read, planned, built or
-    // going live is started, whether this turn touched it or not.
-    backed: (ctx) => !!(ctx.started || ctx.posted || ctx.revised || ctx.commented || ctx.workBusy || ctx.batchQueued
-      || ctx.stored?.busy),
-    said: 'says you started work on something',
-    instead: 'I haven\'t started on it yet.',
-  },
-  {
-    kind: 'revised',
-    proof: 'records',
-    re: /\bI(?:'ve| have)?(?: just| now)? (?:revised|changed|updated|reworked) (?:the |your |its |that |this )?(?:proposal|it)\b/i,
-    backed: (ctx) => !!(ctx.recentRevision || ctx.described || ctx.stored?.earlier?.revised),
-    said: 'says a proposal was changed',
-    instead: 'I haven\'t changed the proposal yet.',
-  },
-  {
-    kind: 'withdrew',
-    proof: 'records',
-    // "I withdrew / closed the duplicate proposal", "the proposal has been
-    // withdrawn". #6566: a bare passive is about anything ("the window has
-    // been withdrawn"); only one that names a proposal, PR or #N counts.
-    re: /\bI(?:'ve| have)?(?: just| now| already)? (?:withdrawn|withdrew|closed|cancell?ed|taken down|took down) (?:the |your |its |that |this |my |both |one of the |a )?(?:duplicate |extra |second |other |old |older )?(?:proposals?|duplicates?|PRs?|pull requests?)\b|\b(?:(?:the|your|this|that|my|its) )?(?:duplicate )?(?:proposals?|PRs?|pull requests?)\s+(?:(?:has|have) been|was) withdrawn\b|\b#\d+\s+(?:(?:has|have) been|was) withdrawn\b/i,
-    backed: (ctx) => !!(ctx.withdrew || ctx.stored?.earlier?.withdrew),
-    said: 'says a proposal was withdrawn',
-    instead: 'I haven\'t withdrawn anything.',
-  },
-  {
-    kind: 'moved',
-    proof: 'never',
-    // #4239: a request is moved only by its Move it to Homeroom tap. #6583:
-    // "it was moved" is a fact about the request (moved_status); only "I
-    // moved it" is a claim of an action the bot never takes.
-    re: /\bI(?:'ve| have)?(?: just| now| already)? moved (?:it|this|that|the request|your request|#\d+)\b/i,
-    backed: () => false,
-    said: 'says a request was moved',
-    instead: 'I haven\'t moved it yet.',
-  },
-  {
-    kind: 'moved_status',
-    proof: 'records',
-    // #6583: a passive sentence about a request being moved is checked
-    // against the request, not cut as an action the bot took.
-    re: /\b(?:(?:the|your|this|that) request(?: #\d+)?|#\d+)\s+(?:(?:has|have) been|was) moved\b/i,
-    backed: (ctx) => !!ctx.stored?.movedStatus,
-    said: 'says a request was moved',
-  },
-  {
-    kind: 'closed_request',
-    proof: 'never',
-    // #4525: a request closes only when its group votes for it, so the bot
-    // never closes one: an offer only opens the vote. #6566: "after the app
-    // has been closed for a while" is not a claim. #6583: only "I closed it"
-    // stays here; the passive fact is `closed_status` below.
-    re: /\bI(?:'ve| have)?(?: just| now| already)? closed (?:it|this|that|the request|your request|#\d+)\b/i,
-    backed: () => false,
-    said: 'says a request was closed',
-    instead: 'I haven\'t closed it. Its group decides that by a vote.',
-  },
-  {
-    kind: 'closed_status',
-    proof: 'records',
-    // #6583: "Request #14 is closed", "the request was closed" is a fact to
-    // check against the request's state, not an action.
-    re: /\b(?:(?:the|your|this|that) request(?: #\d+)?|#\d+)\s+(?:(?:has|have) been|was|is (?:now )?)\s*closed\b/i,
-    backed: (ctx) => !!ctx.stored?.closedStatus,
-    said: 'says a request was closed',
-  },
-  {
-    kind: 'reported',
-    proof: 'records',
-    // "I've told the team", "I've reported it to the admins", "the team has
-    // been told".
-    re: /\bI(?:'ve| have)?(?: just| now| already)? (?:told|let|notified|alerted|informed|reported (?:it |this |that )?to|passed (?:it |this |that )?(?:on |along )?to|sent (?:it |this |that |a report |your report )?to|raised (?:it |this |that )?with|flagged (?:it |this |that )?(?:to|with|for)) (?:the )?(?:Homeroom )?(?:team|admins?|developers?|devs|staff)\b|\bI(?:'ve| have)?(?: just| now)? (?:filed|sent|made|submitted) (?:a|your|the) (?:bug |problem )?report\b|\bthe (?:Homeroom )?(?:team|admins?|developers?)(?: has| have|'s)? (?:been |now )?(?:told|notified|alerted|informed|made aware)\b/i,
-    // #6583: a report already on file for them, or one this conversation
-    // says went to the team, is a record too.
-    backed: (ctx) => !!(ctx.reported || ctx.stored?.reported || ctx.stored?.earlier?.reported),
-    said: 'says the team was told',
-    instead: 'I haven\'t told the team yet.',
-  },
-  {
-    kind: 'drawing',
-    proof: 'turn',
-    // 1 Nov 2026: "Drawing it now from the app's own markup and styles." was
-    // the whole answer, and nothing was drawn: only draw_screen hands a
-    // screen to the designer. "I'm drawing", "I'll draw it", "rendering it
-    // now"; not "I can draw it" or "I'll draw it once you say which".
-    re: DRAWING_CLAIM,
-    backed: (ctx) => !!ctx.drawScreen,
-    said: 'says you are drawing a screen',
-    instead: 'I haven\'t drawn it yet. Ask me to draw it and I\'ll start on it.',
-  },
-  {
-    kind: 'promised',
-    proof: 'turn',
-    // "I'll look into it", "I'll follow up", "let me sort that out", "I'll
-    // get back to you": nothing brings the bot back to it later.
-    re: /\b(?:I(?:'ll| will|'m going to| am going to)|let me|we(?:'ll| will))\s+(?:(?:now|also|then|definitely|personally|quickly|go and|try to|make sure to|be sure to)\s+)*(?:follow(?:ing)?[ -]up|look(?:ing)? into|sort(?:ing)? (?:\w+ ){0,2}out|investigate|dig into|get back to|check into|chase (?:\w+ ){0,2}up|escalate)\b/i,
-    // Homeroom bot parity (P3): a look this turn started that is still
-    // running does come back (look_into posts what it finds here). P4, P5: a
-    // batch's reads, a note sent to a build.
-    backed: (ctx) => !!(ctx.revised || ctx.commented || ctx.started || ctx.withdrew || ctx.reported || ctx.lookRunning
-      || ctx.batchQueued || ctx.steered || ctx.followedUp),
-    said: 'promises to come back to something later',
-    instead: CANT_LOOK_TEXT,
-  },
-  {
-    kind: 'report_back',
-    proof: 'turn',
-    // Homeroom bot parity (P3): "I'll post what I find here", "I'll let you
-    // know what it turns up", "I'll report back": only a look this turn
-    // started, still running, posts anything here later. #6583: a request
-    // started this turn posts its news to the DM, so its start counts too.
-    re: /\b(?:I(?:'ll| will|'m going to| am going to)|we(?:'ll| will))\s+(?:(?:then|also|soon|just)\s+)?(?:post|share|send|report|tell you|let you know|come back|update you|write)\b[^.!?\n]{0,60}?(?:\bwhat (?:I|it|they|we|the helper) (?:finds?|turns? up|comes? up)\b|\b(?:the |my |its )?findings\b|\b(?:the |its )?results?\b|\bback\b|\bwhen (?:it|I|the look|the helper)(?:'s| is|'m| am)? (?:done|finished|back)\b)/i,
-    // #6264: a promise stored by tell_me_when is kept by the change's own
-    // moment, which posts it here.
-    backed: (ctx) => !!(ctx.lookRunning || ctx.followedUp || ctx.started || ctx.batchQueued),
-    said: 'says it will post findings here later',
-    instead: 'Nothing I started is still looking into it, so nothing will be posted here later.',
-  },
-]);
-
-/**
- * The request numbers `text` names ("#14", "request #14"), less those of a
- * proposal, pull request or change ("proposal #6011", "PR #12",
- * "Change #6002"; request-mentions.js). #6583: only a #N used as a request
- * counts, so a colour ("#222") or a ranking ("#1 priority") is not one.
- */
-function requestNumbers(text) {
-  const out = new Set();
-  const String_ = String(text || '');
-  const re = /#(\d{1,7})\b/g;
-  let m;
-  while ((m = re.exec(String_)) !== null) {
-    const at = m.index;
-    // A number written as part of a word or an entity ("x#9", "&#39;").
-    if (at > 0 && /[\w&/#]/.test(String_[at - 1])) continue;
-    if (labelledAsPullRequest(String_, at)) continue;
-    const before = String_.slice(Math.max(0, at - 100), at);
-    const after = String_.slice(at + m[0].length, at + m[0].length + 48);
-    if (!usedAsRequest(before, after)) continue;
-    out.add(Number(m[1]));
-  }
-  return [...out];
-}
-
-/**
- * Pure: does the `#N` between `before` and `after` read as a request in a
- * reply, rather than a colour or a ranking (#6583)? A request number is the
- * usual case; these are the contexts that make it something else.
- */
-function usedAsRequest(before, after) {
-  // "Use #222 for the header", "the colour #222".
-  if (/\b(?:use|using|colour|color|hex|shade|background)\s*$/i.test(before)) return false;
-  // "#1 priority", "#3 on the list".
-  if (/^\s*(?:priority|(?:on|in|of)\s+(?:the|your|that)\s+list)\b/i.test(after)) return false;
-  return true;
-}
-
-/**
- * #6581: the request numbers this conversation already knows: the bot's own
- * request cards in it, and the reports it filed for this person, on any
- * project, Homeroom's own board included (feedback_reports.app_id is null
- * there, so the query above never matched one). Read once a turn and kept
- * on ctx.threadKnown. Best-effort: a read that fails caches an empty set and
- * the reply is checked as it was.
- */
-async function threadRequestNumbers(pool, ctx) {
-  if (!ctx) return new Set();
-  if (ctx.threadKnown) return ctx.threadKnown;
-  const known = new Set();
-  ctx.threadKnown = known;
-  const add = (value) => {
-    const n = Number(value);
-    if (Number.isInteger(n) && n > 0) known.add(n);
-  };
-  const conversationId = Number(ctx.conversationId);
-  const botId = Number(ctx.bot?.id);
-  const userId = Number(ctx.user?.id);
-  try {
-    if (Number.isInteger(conversationId) && conversationId > 0 && Number.isInteger(botId) && botId > 0) {
-      const { rows } = await pool.query(
-        `SELECT DISTINCT o.object_ref AS n
-           FROM conversation_message_objects o
-           JOIN conversation_messages m ON m.id = o.message_id
-          WHERE m.conversation_id = $1 AND m.sender_id = $2 AND o.object_type = 'github_issue'`,
-        [conversationId, botId],
-      );
-      for (const row of rows) add(row?.n);
-    }
-    if (Number.isInteger(userId) && userId > 0) {
-      const { rows } = await pool.query(
-        `SELECT DISTINCT issue_number AS n FROM feedback_reports
-          WHERE user_id = $1 AND issue_number IS NOT NULL AND issue_number > 0`,
-        [userId],
-      );
-      for (const row of rows) add(row?.n);
-    }
-  } catch (err) {
-    log.warn('homeroom-bot-mayor', 'Could not read the requests this conversation knows', { err: err.message });
-  }
-  return known;
-}
-
-/** The numbers among `numbers` that are no request on any project this person or this turn touches. */
-async function unknownRequests(pool, ctx, numbers) {
-  if (!numbers.length) return [];
-  // #6581: what this conversation filed or read is real, whether or not a
-  // queue or issues row exists yet.
-  const known = new Set([...(ctx?.knownRequests || []), ...(ctx?.seenRequests?.keys?.() || [])]);
-  for (const n of await threadRequestNumbers(pool, ctx)) known.add(Number(n));
-  const asked = numbers.filter((n) => !known.has(Number(n)));
-  if (!asked.length) return [];
-  const { rows } = await pool.query(
-    `SELECT DISTINCT x.n FROM (
-       SELECT github_issue_number AS n, app_id FROM issues WHERE github_issue_number = ANY($2::int[])
-       UNION ALL
-       SELECT issue_number, app_id FROM homeroom_bot_requesters WHERE issue_number = ANY($2::int[])
-       UNION ALL
-       SELECT issue_number, app_id FROM homeroom_bot_queue WHERE issue_number = ANY($2::int[])
-       UNION ALL
-       SELECT issue_number, app_id FROM homeroom_bot_runs WHERE issue_number = ANY($2::int[])
-       UNION ALL
-       -- A request filed from an app's "Suggest an improvement" dialog has no twin.
-       SELECT issue_number, app_id FROM feedback_reports WHERE issue_number = ANY($2::int[])
-     ) x
-      WHERE x.app_id IN (
-        SELECT a.id FROM apps a JOIN community_members m ON m.community_id = a.community_id WHERE m.user_id = $1
-        UNION SELECT r.app_id FROM homeroom_bot_requesters r WHERE r.user_id = $1
-        UNION SELECT unnest($3::int[])
-      )`,
-    [ctx.user.id, asked, [...(ctx.appIds || [])]],
-  );
-  const found = new Set(rows.map((r) => Number(r.n)));
-  const missing = asked.filter((n) => !found.has(n));
-  if (!missing.length) return [];
-  // #6581: a report filed on Homeroom's own board has no queue row yet. Look
-  // the rest up there (at most three) before calling any of them unknown: a
-  // row on the board is proof the number is real, whatever project it is on.
-  // requestDetail is no use here: it answers for any number on an app they
-  // can see, so it would call an invented number real.
-  let platform = null;
-  try {
-    platform = await require('./homeroom-bot-move').platformApp(pool, ctx.deps || {});
-  } catch {
-    platform = null;
-  }
-  if (!platform) return missing;
-  const batch = missing.slice(0, 3);
-  let onBoard;
-  try {
-    const { rows: board } = await pool.query(
-      `SELECT DISTINCT x.n FROM (
-         SELECT github_issue_number AS n FROM issues WHERE app_id = $1 AND github_issue_number = ANY($2::int[])
-         UNION ALL SELECT issue_number FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = ANY($2::int[])
-         UNION ALL SELECT issue_number FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = ANY($2::int[])
-         UNION ALL SELECT issue_number FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = ANY($2::int[])
-         UNION ALL SELECT issue_number FROM feedback_reports WHERE issue_number = ANY($2::int[])
-       ) x`,
-      [platform.id, batch],
-    );
-    onBoard = new Set(board.map((r) => Number(r.n)));
-  } catch (err) {
-    log.warn('homeroom-bot-mayor', 'Could not look a request number up on Homeroom\'s board', { err: err.message });
-    return missing;
-  }
-  return [...batch.filter((n) => !onBoard.has(Number(n))), ...missing.slice(3)];
-}
-
-// ── The projects a reply names (#6307) ─────────────────────────────────────
-//
-// On 4 November a reply garbled a project's name ("Community Components" for
-// Community Tier Lists) and named a project nothing had returned ("Block
-// World"), while the card under it was right. A project a reply names must be
-// one this turn's tools returned, spelled as the tool returned it; a sentence
-// naming any other is cut, as a request number that does not exist is.
-
-/** Places and features on screen, which a sentence may name without it being a project. */
-const PROJECT_NAME_STOPWORDS = new Set([
-  'main chat', 'workshop', 'discover', 'messages', 'home', 'needs you', 'hub', 'all communities', 'settings',
-  'homeroom bot', 'the app',
-  // #6566: "on Homeroom's requests board" names the platform, not a project.
-  'homeroom', 'homerooms', 'homeroom s',
-]);
-// A sentence that speaks of a draft, a request or the next one is where a
-// project's name is expected.
-const PROJECT_MENTION_ANCHOR = /\b(?:drafts?|drafted|drafting|file it|filed|filing|requests?|next one|projects?)\b/i;
-// "the draft for Community Components", "on Ear Trainer", a quoted name too.
-const PROJECT_NAME_AFTER = /\b(?:for|on)\s+(?:"([^"]{2,60})"|([A-Z][\w'’&.-]*(?:\s+[A-Z0-9][\w'’&.-]*){0,5}))/g;
-const QUOTED_NAME = /"([^"]{2,60})"/g;
-
-// #6376: a day, a month or a time word after "for" or "on" is when a thing
-// happens, never a project. A reply saying "I will start this request on
-// Monday" lost that sentence to a note that no project called "Monday" exists.
-const PROJECT_TIME_WORDS = new Set([
-  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
-  'mon', 'tue', 'tues', 'wed', 'thu', 'thur', 'thurs', 'fri', 'sat', 'sun',
-  'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
-  'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'sept', 'oct', 'nov', 'dec',
-  'today', 'tonight', 'tomorrow', 'yesterday', 'morning', 'afternoon', 'evening', 'night',
-  'midnight', 'noon', 'week', 'weekend', 'weekday', 'month', 'year', 'now',
-]);
-// "next Monday", "this week", "the weekend": the word in front names a time too.
-const PROJECT_TIME_LEAD = new Set(['next', 'this', 'the', 'last']);
-
-/** Pure: does `name` open with a time, so it is a date rather than a project? */
-function isTimePhrase(name) {
-  const words = squashWords(name).split(' ').filter(Boolean);
-  while (words.length && PROJECT_TIME_LEAD.has(words[0])) words.shift();
-  return !words.length || PROJECT_TIME_WORDS.has(words[0]);
-}
-
-/**
- * Pure: the project names `text` gives as a draft's or a request's, once
- * each, as { name, labelled } (#6583: `labelled` is a name plainly given as
- * a project, which may be checked even when it is not a garble).
- */
-function projectMentions(text) {
-  const out = [];
-  const seen = new Set();
-  const add = (name, labelled) => {
-    // "on Rilo I drafted" gives "Rilo I": a trailing pronoun is not part of a name.
-    const clean = String(name).trim().replace(/[.,;:]+$/, '').replace(/\s+(?:I|A)$/, '');
-    if (!clean || PROJECT_NAME_STOPWORDS.has(squashWords(clean)) || isTimePhrase(clean)) return;
-    const key = squashWords(clean);
-    if (seen.has(key)) return;
-    seen.add(key);
-    out.push({ name: clean, labelled });
-  };
-  for (const sentence of String(text || '').split(/(?<=[.!?\n])\s+|\n+/)) {
-    if (!PROJECT_MENTION_ANCHOR.test(sentence)) continue;
-    // #6583: "the X project", "project called X", "projects" plainly names
-    // what it says is a project.
-    const plainly = /\bprojects?\b/i.test(sentence);
-    for (const m of sentence.matchAll(PROJECT_NAME_AFTER)) add(m[1] || m[2], plainly);
-    // "Next after this is \"Block World\"" says a project without the word draft.
-    if (plainly) for (const m of sentence.matchAll(QUOTED_NAME)) add(m[1], true);
-  }
-  return out;
-}
-
-/** Note a project a tool returned this turn, so a reply naming another one is caught. */
-function noteKnownProjects(ctx, result) {
-  if (!ctx || !result || typeof result !== 'object' || result.error) return;
-  if (!ctx.knownProjects) ctx.knownProjects = new Set();
-  const add = (name, slug) => {
-    for (const value of [name, slug]) {
-      const key = squashWords(value);
-      if (key) ctx.knownProjects.add(key);
-    }
-  };
-  add(result.projectName, result.project);
-  if (result.app && typeof result.app === 'object') add(result.app.name, result.app.slug);
-  for (const p of Array.isArray(result.projects) ? result.projects : []) {
-    if (p && typeof p === 'object') add(p.projectName || p.name, p.project || p.slug);
-  }
-}
-
-/** The projects this person can see: theirs, their requests' and their pins'. */
-async function personProjectNames(pool, ctx) {
-  const known = new Set();
-  if (!ctx?.user?.id) return known;
-  const add = (name, slug) => {
-    for (const value of [name, slug]) {
-      const key = squashWords(value);
-      if (key) known.add(key);
-    }
-  };
-  try {
-    const { rows } = await pool.query(
-      `SELECT a.name, a.slug FROM apps a JOIN community_members m ON m.community_id = a.community_id WHERE m.user_id = $1
-       UNION
-       SELECT a.name, a.slug FROM apps a JOIN homeroom_bot_requesters r ON r.app_id = a.id WHERE r.user_id = $1
-       UNION
-       SELECT a.name, a.slug FROM apps a JOIN app_favorites f ON f.app_id = a.id WHERE f.user_id = $1`,
-      [ctx.user.id],
-    );
-    for (const row of rows) add(row.name, row.slug);
-  } catch (err) {
-    log.warn('homeroom-bot-mayor', 'Could not read the projects a reply may name', { err: err.message });
-  }
-  return known;
-}
-
-
-/**
- * #6581: note every request number a tool returned this turn (request_detail,
- * list_requests, get_request, my_work, my_projects, progress), so a reply
- * naming one is not called unknown. Platform tools included: their results
- * are plain JSON with the number in it.
- */
-function noteKnownRequests(ctx, result) {
-  if (!ctx || !result || typeof result !== 'object' || result.error) return;
-  if (!ctx.knownRequests) ctx.knownRequests = new Set();
-  const walk = (value, depth) => {
-    if (!value || typeof value !== 'object' || depth > 6) return;
-    if (Array.isArray(value)) {
-      for (const item of value) walk(item, depth + 1);
-      return;
-    }
-    for (const key of ['number', 'issueNumber']) {
-      const n = Number(value[key]);
-      if (Number.isInteger(n) && n > 0) ctx.knownRequests.add(n);
-    }
-    for (const item of Object.values(value)) {
-      // A platform tool's answer is JSON text ({ result }).
-      if (typeof item === 'string' && /^\s*[[{]/.test(item)) {
-        try {
-          walk(JSON.parse(item), depth + 1);
-          continue;
-        } catch { /* not JSON: nothing to read */ }
-      }
-      walk(item, depth + 1);
-    }
-  };
-  walk(result, 0);
-}
-
-/** The projects this turn's tools returned and this person can see, squashed. */
-async function knownProjectNames(pool, ctx) {
-  const known = new Set(ctx?.knownProjects || []);
-  const add = (name, slug) => {
-    for (const value of [name, slug]) {
-      const key = squashWords(value);
-      if (key) known.add(key);
-    }
-  };
-  add(ctx?.offer?.app?.name, ctx?.offer?.app?.slug);
-  add(ctx?.app?.name, ctx?.app?.slug);
-  const ids = [...(ctx?.appIds || [])].map(Number).filter((id) => Number.isInteger(id) && id > 0);
-  if (ids.length) {
-    try {
-      const { rows } = await pool.query('SELECT name, slug FROM apps WHERE id = ANY($1::int[])', [ids]);
-      for (const row of rows) add(row.name, row.slug);
-    } catch (err) {
-      log.warn('homeroom-bot-mayor', 'Could not check the projects a reply names', { err: err.message });
-    }
-  }
-  // #6583: a person's own projects back a true mention ("Ear Trainer", "Rilo")
-  // even when no tool returned one this turn.
-  try {
-    for (const key of await personProjectNames(pool, ctx)) known.add(key);
-  } catch { /* the names read above are enough */ }
-  return known;
-}
-
-/**
- * Pure: does `name`, as a reply wrote it, name a project a tool returned?
- * The mention stops at the first lowercase word ("on Note board request #6"
- * gives "Note"), so a known name that begins with it at a word boundary is
- * the same project said short, never a garbled one ("Community Components"
- * does not begin Community Tier Lists).
- */
-function namesReturnedProject(known, name) {
-  const key = squashWords(name);
-  if (!key) return true;
-  if (known.has(key)) return true;
-  for (const candidate of known) {
-    if (candidate.startsWith(`${key} `)) return true;
-  }
-  return false;
-}
-
-/**
- * Pure: is `name` a garbled version of a project they have (#6583)? It shares
- * its first word with one, but is not a prefix of it, so "Community
- * Components" beside "Community Tier Lists" is a garble.
- */
-function looksLikeKnownProject(known, name) {
-  const key = squashWords(name);
-  const first = key.split(' ')[0];
-  if (!first) return false;
-  for (const candidate of known) {
-    if (candidate.split(' ')[0] !== first) continue;
-    if (candidate === key || candidate.startsWith(`${key} `)) continue;
-    return true;
-  }
-  return false;
-}
-
-/**
- * The project names among `names` that no tool returned and this person does
- * not have, and that are shown to be a project: a garble of one of theirs, or
- * a name plainly given as a project (#6583). Plain capitalised words after
- * "for"/"on" are left alone.
- */
-async function unknownProjects(pool, ctx, text) {
-  const mentions = projectMentions(text);
-  if (!mentions.length) return [];
-  const known = await knownProjectNames(pool, ctx);
-  return mentions
-    .filter((m) => !namesReturnedProject(known, m.name))
-    .filter((m) => m.labelled || looksLikeKnownProject(known, m.name))
-    .map((m) => m.name);
-}
-
-/**
- * #6566: the receipt a report's own reply may carry ("Filed as #6564 on
- * Homeroom's requests board"), accepted only for the number this turn filed.
- * The true sentence is blanked before the claims are tested, so `filed`
- * does not fire on it; a different number is not accepted.
- */
-function receiptPhrases(ctx) {
-  const number = Number(ctx?.reported?.number);
-  if (!Number.isInteger(number) || number <= 0) return null;
-  return new RegExp(`(?:Already )?[Ff]iled as #${number} on Homeroom['’]s requests board`, 'i');
-}
-
-/**
- * #6583: where a reply's own bot_cards live, so a draft, a filing or a move
- * recorded there counts whatever its age. Null when the turn names no place
- * and no conversation (no card can belong to it).
- */
-function cardScope(ctx) {
-  if (ctx?.conversationId) {
-    return {
-      where: "a.place = 'dm' AND a.user_id = $1 AND a.conversation_id = $2",
-      params: [ctx.user.id, ctx.conversationId],
-    };
-  }
-  const appId = Number(ctx?.app?.id || ctx?.place?.appId);
-  const place = ctx?.place;
-  if (!appId || !place) return null;
-  const user = ctx?.user?.id ? Number(ctx.user.id) : null;
-  const who = user ? ' AND (a.user_id IS NULL OR a.user_id = $2)' : '';
-  const whoParam = user ? [user] : [];
-  if (['issue', 'message', 'category'].includes(place.type)) {
-    return {
-      where: `a.place = 'thread' AND a.app_id = $1 AND EXISTS (SELECT 1 FROM chat_messages cm WHERE cm.id = a.chat_message_id AND cm.thread_type = $${user ? 3 : 2} AND cm.thread_ref = $${user ? 4 : 3})${who}`,
-      params: [appId, ...whoParam, place.type, Number(place.ref)],
-    };
-  }
-  return {
-    where: `a.place = 'thread' AND a.app_id = $1 AND EXISTS (SELECT 1 FROM chat_messages cm WHERE cm.id = a.chat_message_id AND cm.thread_type IS NULL)${who}`,
-    params: [appId, ...whoParam],
-  };
-}
-
-/** The cards in `ctx`'s place matching `where` and `params`. */
-async function cardsInScope(pool, ctx, where, params = []) {
-  const scope = cardScope(ctx);
-  if (!scope) return [];
-  const { rows } = await pool.query(
-    `SELECT a.id, a.kind, a.status, a.issue_number FROM bot_cards a WHERE ${scope.where} AND ${where}`,
-    [...scope.params, ...params],
-  );
-  return rows.map((row) => ({ kind: row.kind, status: row.status, issueNumber: row.issue_number == null ? null : Number(row.issue_number) }));
-}
-
-/**
- * #6583: what the bot's records show about a reply's claims, read once per
- * reply text (`ctx.stored`). `read` is true only when every read it needed
- * succeeded; a failed read leaves the sentence in place. `earlier` is the
- * bot's own earlier words in this conversation, checked with no new query.
- */
-async function storedClaimFacts(pool, ctx, body, numbers) {
-  const text = String(body || '');
-  if (ctx.stored && ctx.stored.text === text) return ctx.stored;
-  const facts = {
-    text, read: true, filed: false, openDraft: false, busy: false, reported: false,
-    closed: new Set(), moved: new Set(), closedStatus: false, movedStatus: false, earlier: {},
-  };
-  const earlierText = String(ctx.earlierBotText || '');
-  const earlierNumbers = new Set(requestNumbers(earlierText));
-  // #6583: an earlier message only backs the same kind of claim, and when
-  // this reply names a request, the earlier words must name it too: an old
-  // "Filed." does not back a new claim about #99.
-  const sameRequest = !numbers.length || numbers.some((n) => earlierNumbers.has(n));
-  for (const claim of CLAIMS) {
-    if (claim.proof === 'records') facts.earlier[claim.kind] = sameRequest && claim.re.test(earlierText);
-  }
-  const fail = (what, err) => {
-    facts.read = false;
-    log.warn('homeroom-bot-mayor', `Could not read the records for a reply's ${what} claim`, { err: err?.message || String(err) });
-  };
-  const appIds = [...new Set([
-    ...[...(ctx.appIds || [])].map(Number), Number(ctx.app?.id), Number(ctx.place?.appId),
-  ].filter((id) => Number.isInteger(id) && id > 0))];
-  const place = ctx.place || null;
-  const requestNumber = Number(place?.type === 'issue' ? place.ref
-    : (ctx.change?.linked_issues?.[0] || ctx.requestChange?.linked_issues?.[0])) || null;
-  const asked = [...new Set([...numbers, requestNumber].filter((n) => Number.isInteger(n) && n > 0))];
-
-  // Cards this place or conversation holds: a draft still open, a filing, a move.
-  try {
-    const open = await cardsInScope(pool, ctx, "a.kind = 'file_request' AND a.status = 'open'");
-    facts.openDraft = open.length > 0;
-    const doneFilings = await cardsInScope(pool, ctx, "a.kind = 'file_request' AND a.status = 'done' AND a.issue_number IS NOT NULL");
-    const doneMoves = await cardsInScope(pool, ctx, "a.kind = 'move_request' AND a.status = 'done' AND a.issue_number IS NOT NULL");
-    if (numbers.length) {
-      facts.filed = doneFilings.some((c) => c.issueNumber != null && numbers.includes(c.issueNumber));
-    } else {
-      facts.filed = doneFilings.length > 0;
-    }
-    for (const card of doneMoves) if (card.issueNumber != null) facts.moved.add(card.issueNumber);
-  } catch (err) {
-    fail('draft, filing or move', err);
-  }
-  // Their own requester rows back a filing they name.
-  if (numbers.length && !facts.filed) {
-    try {
-      const { rows } = await pool.query(
-        'SELECT issue_number FROM homeroom_bot_requesters WHERE user_id = $1 AND issue_number = ANY($2::int[])',
-        [ctx.user.id, numbers],
-      );
-      facts.filed = rows.some((row) => row.issue_number != null && numbers.includes(Number(row.issue_number)));
-    } catch (err) {
-      fail('filed request', err);
-    }
-  }
-  // A request's stored state, by the numbers it names.
-  if (asked.length) {
-    try {
-      const filter = appIds.length ? ' AND app_id = ANY($1::int[])' : '';
-      const params = appIds.length ? [appIds, asked] : [asked];
-      const nParam = appIds.length ? '$2' : '$1';
-      const { rows } = await pool.query(
-        `SELECT github_issue_number AS n FROM issues
-          WHERE kind = 'general' AND status = 'closed'${filter} AND github_issue_number = ANY(${nParam}::int[])
-         UNION
-         SELECT issue_number AS n FROM homeroom_bot_closed_requests
-          WHERE closed_at IS NOT NULL${filter} AND issue_number = ANY(${nParam}::int[])`,
-        params,
-      );
-      for (const row of rows) if (row.n != null) facts.closed.add(Number(row.n));
-    } catch (err) {
-      fail('closed request', err);
-    }
-  }
-  // Reports already on file for them, named by the reply or from the last week.
-  try {
-    const { rows } = await pool.query(
-      `SELECT issue_number, created_at FROM feedback_reports
-        WHERE user_id = $1 AND (issue_number = ANY($2::int[]) OR created_at > NOW() - INTERVAL '7 days')`,
-      [ctx.user.id, numbers],
-    );
-    const named = rows.some((row) => row.issue_number != null && numbers.includes(Number(row.issue_number)));
-    const recent = rows.some((row) => !!row.created_at);
-    facts.reported = named || recent;
-  } catch (err) {
-    fail('report to the team', err);
-  }
-  // A request already being read, planned, built or going live is started.
-  const trackApp = Number(ctx.app?.id) || appIds[0];
-  if (trackApp && asked.length) {
-    try {
-      const track = ctx.deps?.track || require('./homeroom-bot-track');
-      const tracks = await track.tracksForRequests(pool, { appId: trackApp, numbers: asked, deps: ctx.deps || {} });
-      const live = new Set(['reading', 'planning', 'building', 'going_live']);
-      facts.busy = [...tracks.values()].some((t) => live.has(t?.work?.stage));
-    } catch (err) {
-      fail('started work', err);
-    }
-  }
-  // A status sentence with no number can only be checked in a request's own
-  // thread; elsewhere it is kept.
-  const statusNumbersIn = (kind) => {
-    const found = new Set();
-    const claim = CLAIMS.find((c) => c.kind === kind);
-    if (!claim) return found;
-    for (const sentence of text.split(/(?<=[.!?\n])\s+|\n+/)) {
-      if (!claim.re.test(sentence)) continue;
-      for (const n of requestNumbers(sentence)) found.add(n);
-    }
-    return found;
-  };
-  const closedNamed = statusNumbersIn('closed_status');
-  const movedNamed = statusNumbersIn('moved_status');
-  facts.closedStatus = closedNamed.size
-    ? [...closedNamed].every((n) => facts.closed.has(n))
-    : (requestNumber ? facts.closed.has(requestNumber) : true);
-  facts.movedStatus = movedNamed.size
-    ? [...movedNamed].every((n) => facts.moved.has(n))
-    : (requestNumber ? facts.moved.has(requestNumber) : true);
-  ctx.stored = facts;
-  return facts;
-}
-
-/**
- * Pure apart from the request lookup: what `text` claims that this turn did
- * not do, as [{ kind, said, proof }], plus { kind: 'unknown', numbers } for
- * request numbers that do not exist and { kind: 'unknown_project', names }
- * for projects no tool returned. Empty when it is all true.
- */
-async function claimProblems(pool, ctx, text) {
-  // Read as it would be sent: a leading note is taken off first.
-  const body = cleanReply(text);
-  if (!body) return [];
-  // #6566: the report's own receipt is true, so it is not read as a claim.
-  const receipt = receiptPhrases(ctx);
-  const claimBody = receipt ? body.replace(receipt, ' ') : body;
-  // #6583: a claim backed by this turn's flags needs no read. One that is not
-  // asks the records before it is called false.
-  const numbers = requestNumbers(body);
-  const unmatched = CLAIMS.filter((c) => c.re.test(claimBody) && !c.backed(ctx));
-  let stored = null;
-  if (unmatched.some((c) => c.proof === 'records')) {
-    stored = await storedClaimFacts(pool, ctx, body, numbers);
-    if (!stored.read) {
-      // A read that failed proves nothing: keep every record-backed sentence.
-      stored = { ...stored, read: false };
-    }
-  }
-  const out = CLAIMS
-    .filter((c) => c.re.test(claimBody) && !c.backed(ctx) && !stored?.earlier?.[c.kind])
-    .filter((c) => c.proof !== 'records' || !!stored?.read)
-    .map((c) => ({ kind: c.kind, said: c.said, proof: c.proof }));
-  try {
-    // #6566: the report just filed is a real request on Homeroom's board.
-    const filed = Number(ctx?.reported?.number);
-    const missing = await unknownRequests(pool, ctx, numbers.filter((n) => !(Number.isInteger(filed) && n === filed)));
-    if (missing.length) out.push({ kind: 'unknown', numbers: missing, said: `names ${missing.map((n) => `request #${n}`).join(' and ')}, which no project of theirs has` });
-  } catch (err) {
-    log.warn('homeroom-bot-mayor', 'Could not check the requests a reply names', { err: err.message });
-  }
-  try {
-    const projects = await unknownProjects(pool, ctx, body);
-    if (projects.length) out.push({ kind: 'unknown_project', names: projects, said: `names ${projects.map((n) => `"${n}"`).join(' and ')}, which no tool returned this turn` });
-  } catch (err) {
-    log.warn('homeroom-bot-mayor', 'Could not check the projects a reply names', { err: err.message });
-  }
-  return out;
-}
-
-/**
- * The note a reply that claimed too much is asked again with. `tools` is the
- * set of tool names offered where the reply is written; a tool is named only
- * when that place has it (#6583).
- */
-function checkNote(problems, { tools = null } = {}) {
-  const offered = (name) => tools == null || tools.has(name);
-  const names = (...list) => list.filter(offered);
-  const list = problems.map((p) => p.said).join('; and it ');
-  const canDo = [
-    offered('offer_request') ? 'offer_request drafts a request for them to file' : null,
-    offered('comment_on_request') ? 'comment_on_request posts on a request' : null,
-    offered('start_request') ? 'start_request starts one' : null,
-    offered('revise_proposal') ? 'revise_proposal changes your proposal' : null,
-    offered('withdraw_proposal') ? 'withdraw_proposal withdraws one of your proposals' : null,
-    offered('report_problem') ? 'report_problem tells the Homeroom team' : null,
-  ].filter(Boolean);
-  // #6581: a number Homeroom cannot find yet is not a thing that did not
-  // happen. When that is all that is wrong, the note never says the turn did
-  // nothing and never lists the doing-tools: it asks the model to check the
-  // number and keep it if a tool returns it.
-  const onlyUnknown = problems.length > 0 && problems.every((p) => p.kind === 'unknown' || p.kind === 'unknown_project');
-  const unknownNumbers = problems.find((p) => p.kind === 'unknown')?.numbers || [];
-  const lookupTools = names('request_detail', 'get_request');
-  const lookup = lookupTools.length
-    ? `${lookupTools[0]}${lookupTools[1] ? ` (or ${lookupTools[1]})` : ''}`
-    : '';
-  const keepIt = 'and if a tool returns it, keep the number. If not, drop the sentence that names it.'
-    + ' Never retract an earlier action in this conversation: something you filed earlier stays filed, so do not apologise for it or offer to file it again.';
-  const found = unknownNumbers.map((n) => `request #${n}`).join(' or ');
-  // #6583: a note whose only reason is an unfound number asks for a lookup and
-  // never says anything did not happen.
-  const unknownTail = !unknownNumbers.length
-    ? ''
-    : onlyUnknown
-      ? ` Look the number up${lookup ? ` with ${lookup}` : ''}, ${keepIt}`
-      : ` Homeroom could not find ${found} in its records yet: check it${lookup ? ` with ${lookup}` : ''}, ${keepIt}`;
-  const numberTools = names('my_work', 'request_detail', 'list_requests');
-  const unknown = unknownNumbers.length
-    ? (onlyUnknown || !numberTools.length ? unknownTail : ` Check request numbers with ${numberTools.slice(0, -1).join(', ')}${numberTools.length > 1 ? ' or ' : ''}${numberTools[numberTools.length - 1]}.${unknownTail}`)
-    : '';
-  // #6307: a project named that no tool returned (a garbled name, a guessed one).
-  const projectTools = names('my_work', 'list_requests');
-  const unknownProject = problems.some((p) => p.kind === 'unknown_project')
-    ? ` Look the project up${projectTools.length ? ` (${projectTools.join(', ')})` : ''} and write its name as the tool returns it; never guess or abbreviate a name. Drop the sentence naming any other project.`
-    : '';
-  const promised = problems.some((p) => p.kind === 'promised')
-    ? ' Never promise to look into something or come back to it later: say what you cannot do from here, and what they can do (leave it, vote No on the proposal, comment on the request, or use Send feedback)'
-      + (offered('report_problem') ? ', or offer report_problem.' : '.')
-    : '';
-  // #4605: a draft promised with no offer behind it. The second pass drafts
-  // it; refused, the promise is cut (stripClaims) rather than sent again.
-  // #6307: it drafts it now, and says one line about it, never its words.
-  const drafted = problems.some((p) => p.kind === 'drafted')
-    ? ` Your reply says a draft with File it and Not now is under it, but no draft is open in this conversation, so nothing is under it.${offered('offer_request') ? ' Call offer_request now with the project, title and details; if it is refused, say why plainly and do not mention File it.' : ' Do not mention File it.'} Then reply with one short line about the draft at most: the card under it shows its title and words, so never write them in your reply.`
-    : '';
-  // 1 Nov 2026: a screen said to be drawing with no draw_screen behind it.
-  const drawing = problems.some((p) => p.kind === 'drawing')
-    ? ' Your reply says you are drawing a screen, but you did not call draw_screen in this turn, so nothing is being drawn. If they asked for a screen, call draw_screen now with what to draw and its title, and do not reply. If you cannot, say so plainly.'
-    : '';
-  // #6159: there is no control on their side; close_thread finishes a thread.
-  const noControl = problems.some((p) => p.kind === 'no_control')
-    ? ' There is no such control on their side: to finish this private thread, call close_thread.'
-    : '';
-  const canDoLine = canDo.length
-    ? `If they want it done now, call the tool that does it: ${canDo.join(', ')}.`
-    : '';
-  const lead = onlyUnknown
-    ? `[Homeroom check, not from them: your reply ${list}.`
-    : [
-      `[Homeroom check, not from them: your reply ${list}.`,
-      // #6581: what this turn did is not the whole record; #6583: the note
-      // never tells the model to say the thing was not done.
-      'No tool you called in this turn did that.',
-      'If it happened earlier and the records show it, say when.',
-      canDoLine,
-      'If you cannot confirm it with a lookup, leave that sentence out.',
-    ].filter(Boolean).join(' ');
-  return [
-    lead,
-    `${promised}${drafted}${drawing}${noControl}${unknown}${unknownProject} Then call reply again.]`,
-  ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-}
-
-// #6307: what a reply says about a draft, when the draft it promised was not
-// made. Cut with it, so the plain line never sits over words that still
-// promise one ("Here's the next one, for The Best Color").
-const DRAFT_PROMISE_RE = /\b(?:drafts?|drafted|drafting|File it)\b|\bnext one\b|\bthe one below\b/i;
-
-/**
- * Pure: `text` less every sentence that still claims what was not done, led
- * by a plain line saying it was not, and the rest when anything worth
- * sending is left. A request that does not exist is said not to, and so is a
- * project no tool returned.
- */
-function stripClaims(text, problems, ctx = null) {
-  if (!problems?.length) return text;
-  const kinds = new Set(problems.map((p) => p.kind));
-  const res = CLAIMS.filter((c) => kinds.has(c.kind));
-  const unknownProjectNames = (problems.find((p) => p.kind === 'unknown_project')?.names || []).map((n) => squashWords(n)).filter(Boolean);
-  // #6566: a report's own receipt is always true, whatever else is cut.
-  const receipt = receiptPhrases(ctx);
-  const keeps = (sentence) => {
-    if (receipt && receipt.test(sentence)) return true;
-    if (res.some((c) => c.re.test(sentence))) return false;
-    if (kinds.has('drafted') && DRAFT_PROMISE_RE.test(sentence)) return false;
-    if (unknownProjectNames.length && projectMentions(sentence).some((mention) => {
-      const key = squashWords(mention.name);
-      return key && unknownProjectNames.some((u) => u === key || u.startsWith(`${key} `) || key.startsWith(`${u} `));
-    })) return false;
-    return true;
-  };
-  // #6566: sentences are split within a paragraph, not per line, so a
-  // sentence wrapped over two lines is dropped whole, never left as a
-  // fragment. A list line is kept as it is.
-  const sentencesOf = (paragraph) => {
-    const out = [];
-    let buf = '';
-    for (const line of paragraph.split('\n')) {
-      if (/^\s*(?:[-*]|\d+\.)\s/.test(line)) {
-        if (buf) { out.push(buf); buf = ''; }
-        out.push(line);
-        continue;
-      }
-      buf = buf ? `${buf} ${line}` : line;
-      if (/[.!?:]\s*$/.test(line)) { out.push(buf); buf = ''; }
-    }
-    if (buf) out.push(buf);
-    return out.flatMap((piece) => (/^\s*(?:[-*]|\d+\.)\s/.test(piece)
-      ? [piece] : piece.split(/(?<=[.!?])\s+/)));
-  };
-  const kept = String(text || '').split(/\n{2,}/).map((paragraph) => {
-    let out = '';
-    let wasList = false;
-    for (const piece of sentencesOf(paragraph).filter(keeps)) {
-      const isList = /^\s*(?:[-*]|\d+\.)\s/.test(piece);
-      if (!out) out = piece;
-      else out += (isList || wasList ? '\n' : ' ') + piece;
-      wasList = isList;
-    }
-    return out;
-  }).filter(Boolean).join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
-  // #6583: only a claim the bot can never do, or one only this turn could
-  // have done, keeps a fixed line. A record-backed claim proven false is cut
-  // with no "I haven't…" line; `drafted` keeps its line because no card is
-  // open anywhere, so there really is nothing to tap.
-  const proofOf = (kind) => problems.find((p) => p.kind === kind)?.proof
-    || CLAIMS.find((c) => c.kind === kind)?.proof || 'never';
-  const lines = res.filter((c) => proofOf(c.kind) !== 'records' || c.kind === 'drafted').map((c) => c.instead);
-  if (kept.replace(/[^\w]/g, '').length >= 20) lines.push(kept);
-  const unknown = problems.find((p) => p.kind === 'unknown');
-  if (unknown) {
-    // #6581: a number this conversation filed or read is never said not to
-    // exist, even when the lookup that flagged it could not see it.
-    const known = new Set([...(ctx?.knownRequests || []), ...(ctx?.seenRequests?.keys?.() || []), ...(ctx?.threadKnown || [])]);
-    const filed = Number(ctx?.reported?.number);
-    if (Number.isInteger(filed) && filed > 0) known.add(filed);
-    const missing = unknown.numbers.map(Number).filter((n) => !known.has(n));
-    if (missing.length) lines.push(`(I can't find ${missing.map((n) => `request #${n}`).join(' or ')} on your projects.)`);
-  }
-  const unknownProject = problems.find((p) => p.kind === 'unknown_project');
-  if (unknownProject) lines.push(`(I can't find ${unknownProject.names.map((n) => `a project called "${n}"`).join(' or ')}.)`);
-  return lines.join('\n\n');
 }
 
 // #3772: a typed "file it" or "yes" with no draft waiting. #6583: it no
@@ -2778,7 +1819,7 @@ function announcesOnly(text) {
   return step(sentences[sentences.length - 1]) && sentences.slice(0, -1).every((s) => step(s) || ack(s));
 }
 
-/** What a turn that stopped on its next step is told (role user, as checkNote is). */
+/** What a turn that stopped on its next step is told (role user, as the repair note is). */
 const PREAMBLE_NOTE = '[Homeroom check, not from them: you said what you would do next but did not do it. '
   + 'Do it now with your tools, or give your answer with reply.]';
 // The most times one turn is told so, inside its rounds.
@@ -3014,13 +2055,12 @@ function besideWords(content) {
   return text.length > MAX_PREAMBLE_CHARS ? text : null;
 }
 
-/** What a turn is told the first time its words beside a call are kept (role user, as checkNote is). */
+/** What a turn is told the first time its words beside a call are kept (role user, as the repair note is). */
 const BESIDE_NOTE = '[Homeroom check, not from them: the words you wrote beside those calls are shown to them as the start '
   + 'of your answer. Your reply\'s text follows them: do not write them again, add only what is new.]';
 
 // How much of a kept passage's opening, found in the reply, means the reply wrote it again.
 const BESIDE_MATCH_CHARS = 160;
-const squashWords = (text) => String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
 /**
  * Pure: the answer as it is sent: the words kept beside calls, in order,
@@ -3043,7 +2083,7 @@ function answerText(besides = [], text = '') {
 }
 
 /**
- * Pure (task 2020): the words a turn's answer is checked by (claimProblems):
+ * Pure (task 2020): the words a turn's answer is checked by (reply-claims.js checkReply):
  * the answer's text, and the words its laid-out copy shows, which the chat
  * draws in the text's place.
  */
@@ -3342,6 +2382,43 @@ function imagePart(picture) {
 }
 
 /**
+ * Pure: which of the attached `files` ({ id, message_id, kind }) a turn sends
+ * as pictures. Only for a model that can look (`imageInput`): the images on
+ * the newest IMAGE_REPLAY_MESSAGES of `theirs` (people's message ids, oldest
+ * first) and on `always` (the messages a turn answers, when they are not the
+ * newest: a project's thread), those first, then newest message first, as
+ * many as `takeImages` (the turn's allowance, mcp-shim.js) still allows. The
+ * one rule for the bot's own chat (historyMessages) and for the threads it
+ * answers in on a project (homeroom-bot-voice.js).
+ */
+function picturesToSend(files, { theirs = [], always = [], imageInput = false, takeImages = null } = {}) {
+  if (!imageInput) return [];
+  const first = new Set(always.map(Number));
+  const recent = new Set(theirs.slice(-IMAGE_REPLAY_MESSAGES).map(Number));
+  const rank = (f) => (first.has(Number(f.message_id)) ? 1 : 0);
+  const wanted = files
+    .filter((f) => f.kind === 'image' && (first.has(Number(f.message_id)) || recent.has(Number(f.message_id))))
+    .sort((a, b) => rank(b) - rank(a) || Number(b.message_id) - Number(a.message_id));
+  return takeImages ? takeImages({ images: wanted }).images : wanted;
+}
+
+/**
+ * Pure: one attached file as the model reads it under its message. `picture`
+ * is its bytes when they are sent with it. #6251: in the bot's own chat the
+ * id is on the line, so offer_request can name the pictures that belong with
+ * the request it drafts; a project's thread has no tool that takes one
+ * (`withId: false`).
+ */
+function attachedLine(f, { picture = null, imageInput = false, withId = true } = {}) {
+  const named = `${clip(f.filename, 120)}${withId ? ` (id ${f.id})` : ''}`;
+  if (picture) return `[Homeroom: they attached the picture ${named}, shown below.]`;
+  if (f.kind !== 'image') return `[Homeroom: they attached the file ${named}, which you cannot open.]`;
+  return imageInput
+    ? `[Homeroom: they attached the picture ${named}. Only the newest pictures are shown.]`
+    : `[Homeroom: they attached the picture ${named}, which you cannot see: your model reads text only.]`;
+}
+
+/**
  * The last messages of the DM, oldest first, as the model reads them.
  *
  * What the person attached is named on their message. For a model that can
@@ -3397,12 +2474,7 @@ async function historyMessages(pool, {
     : { rows: [] };
   // Which pictures are sent, newest messages first so the allowance goes to
   // what they just said, then read in one query.
-  const recent = new Set(theirs.slice(-IMAGE_REPLAY_MESSAGES));
-  const wanted = imageInput
-    ? files.filter((f) => f.kind === 'image' && recent.has(Number(f.message_id)))
-      .sort((a, b) => Number(b.message_id) - Number(a.message_id))
-    : [];
-  const kept = takeImages ? takeImages({ images: wanted }).images : wanted;
+  const kept = picturesToSend(files, { theirs, imageInput, takeImages });
   // WP1 (#10): what each of the bot's activity cards shows now, by message.
   // Its words say only that work began; the card itself follows it, and the
   // model never saw it ("Nothing broke" beside a card that read "Didn't
@@ -3450,16 +2522,8 @@ async function historyMessages(pool, {
     const parts = [];
     const lines = attached.map((f) => {
       const picture = shown.get(f.id);
-      // #6251: the id is on the line, so offer_request can name the ones
-      // that belong with the request it drafts.
-      if (picture) {
-        parts.push(imagePart(picture));
-        return `[Homeroom: they attached the picture ${clip(f.filename, 120)} (id ${f.id}), shown below.]`;
-      }
-      if (f.kind !== 'image') return `[Homeroom: they attached the file ${clip(f.filename, 120)} (id ${f.id}), which you cannot open.]`;
-      return imageInput
-        ? `[Homeroom: they attached the picture ${clip(f.filename, 120)} (id ${f.id}). Only the newest pictures are shown.]`
-        : `[Homeroom: they attached the picture ${clip(f.filename, 120)} (id ${f.id}), which you cannot see: your model reads text only.]`;
+      if (picture) parts.push(imagePart(picture));
+      return attachedLine(f, { picture, imageInput });
     });
     const card = fromBot && kind === 'activity' ? cardNow.get(Number(m.id)) : null;
     if (card) lines.push(`[Homeroom: this activity card now reads "${card}".]`);
@@ -3776,9 +2840,20 @@ async function resolveCards(pool, user, cards) {
  * 1 Nov 2026 (threads, one loop): draw_screen, in offer_design's place. The
  * turn ends here and the designer takes it over (answer(): design-bot.js
  * draw), for `project` when it names one they may see: it draws in this
- * private thread, or opens one from Main Chat.
+ * thread the turn is in.
  */
 async function drawScreen(pool, ctx, args = {}) {
+  // 14 Nov 2026: a thread that holds a design is the designer's from then
+  // on (design-threads.js threadOf). A project's first-version thread is
+  // where its plan, its progress and its news are said, so no screen is
+  // drawn there: one is drawn in a thread of its own.
+  if (ctx.deps?.threadKind === 'first_version') {
+    return {
+      ok: false,
+      error: 'No screen is drawn in a first version\'s thread. Tell them to start a new thread on the Homeroom bot page '
+        + '(New thread) and ask for the screen there: you will draw it in that thread.',
+    };
+  }
   const what = clip(String(args.what || '').trim(), 600);
   const title = clip(String(args.title || '').replace(/\s+/g, ' ').trim(), 120);
   if (!what || !title) return { ok: false, error: 'Say what to draw (what) and name the screen (title).' };
@@ -3791,53 +2866,6 @@ async function drawScreen(pool, ctx, args = {}) {
   }
   ctx.drawScreen = { app, title, brief: what };
   return { ok: true, note: 'Your designer draws it now and answers them itself. Call nothing else, and do not reply.' };
-}
-
-// 1 Nov 2026 (threads, one loop: C2.4): a new project's private thread.
-const MAX_PROJECT_IDEA = 160;
-
-/** Pure: Main's one line that a new project's thread hangs off. */
-function projectThreadLine(idea) {
-  const said = clip(String(idea || '').replace(/\s+/g, ' '), MAX_PROJECT_IDEA).replace(/[.!?…]+$/, '');
-  return said ? `New thread, for a new project: ${said}. Only you can see it.` : 'New thread, for a new project. Only you can see it.';
-}
-
-/**
- * start_project_thread (C2.4): from Main, a "+"-style private thread with no
- * project, for a new one: the bot's line in Main (metadata kind
- * 'opened_thread', changeKind 'project', quoting what they said), its row
- * (kind 'ask', no project), and this turn's reply goes in it (answer()).
- * The conversation goes on there, where the first screen is drawn and the
- * project made from it (design-bot.js offer_project). Never throws.
- */
-async function startProjectThread(pool, ctx, args = {}) {
-  if (ctx.projectThread) return { ok: true, note: 'The thread is open: your reply goes there.' };
-  if (ctx.deps.threadRequest || ctx.deps.threadRootId) {
-    return { ok: false, error: 'You are in a thread already: carry on here.' };
-  }
-  const idea = clip(String(args.idea || '').replace(/\s+/g, ' '), MAX_PROJECT_IDEA);
-  if (!idea) return { ok: false, error: 'Say in a few of their words what the project is for.' };
-  const dm = dmModule(ctx.deps);
-  const said = await dm.sendDm(pool, {
-    bot: ctx.bot, userId: ctx.user.id, content: projectThreadLine(idea),
-    idempotencyKey: `hrbot-mayor-project-${ctx.messageId}`, replyToId: ctx.messageId, threadRootId: false, moment: null,
-    metadata: { kind: 'opened_thread', changeKind: 'project', projectIdea: idea },
-  }).catch((err) => {
-    log.warn('homeroom-bot-mayor', 'Could not open a new project\'s thread', { err: err.message });
-    return null;
-  });
-  if (!said?.messageId) return { ok: false, error: 'The thread could not be opened just now. Carry on here.' };
-  await pool.query(
-    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
-     VALUES ($1, $2, $3, NULL, 'ask', 'open') ON CONFLICT (root_message_id) DO NOTHING`,
-    [ctx.user.id, said.conversationId || ctx.conversationId, said.messageId],
-  ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not record a new project\'s thread', { err: err.message }));
-  ctx.projectThread = { rootId: Number(said.messageId) };
-  return {
-    ok: true,
-    note: 'A private thread for the new project is open, linked from the main chat, and your reply goes in it: answer there, '
-      + 'and ask what its first screen should show, or draw it.',
-  };
 }
 
 // ── What a draft request carries besides its words (#6251) ────────────────
@@ -3970,14 +2998,17 @@ async function draftContext(pool, { app, value }) {
 
 /** The server's own part: the thread the message is in, and the bot message it quotes. */
 async function draftPlace(pool, { ctx }) {
-  const href = '#homeroom-bot/main';
+  // 14 Nov 2026: there is no Main Chat to link to; a place that cannot be
+  // read is the Homeroom bot page.
+  const href = '#homeroom-bot';
   try {
     const { rows: [own] } = await pool.query(
-      'SELECT thread_root_id, reply_to_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2',
+      'SELECT id, thread_root_id, reply_to_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2',
       [ctx.messageId, ctx.conversationId],
     );
     if (!own) return { href, quoted: null };
-    const root = Number(own.thread_root_id) || null;
+    // A message in no other thread is its own thread's first.
+    const root = Number(own.thread_root_id) || Number(own.id) || null;
     let quoted = null;
     if (own.reply_to_id) {
       const { rows: [by] } = await pool.query(
@@ -4032,7 +3063,7 @@ async function runTool(pool, ctx, name, args) {
     }
     switch (name) {
       case 'progress': {
-        ctx.progress = await progressOf(pool, { userId: user.id, settings, config: ctx.config, deps });
+        ctx.progress = await progressOf(pool, { userId: user.id, settings, deps });
         if ((ctx.progress?.rightNow || []).some((e) => e.busyNow)) ctx.workBusy = true;
         return ctx.progress;
       }
@@ -4057,11 +3088,10 @@ async function runTool(pool, ctx, name, args) {
       case 'draw_screen': return await drawScreen(pool, ctx, args);
       case 'close_thread': return await closeThread(pool, ctx);
       case 'start_request': return await startRequest(pool, ctx, args);
-      case 'start_project_thread': return await startProjectThread(pool, ctx, args);
       case 'offer_new_project': {
         // #6523: the New project button is the bot's to offer, in a private
-        // thread that is an idea for a project of its own. Never in Main.
-        if (!ctx.deps.threadRootId && !ctx.projectThread) return { ok: false, error: 'Only in a private thread with no project.' };
+        // thread that is an idea for a project of its own.
+        if (!ctx.deps.threadRootId) return { ok: false, error: 'Only in a private thread with no project.' };
         ctx.newProjectOffer = true;
         return { ok: true, note: 'New project shows under your reply.' };
       }
@@ -4313,6 +3343,9 @@ function avoidProviders(before, err) {
 async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_ATTEMPTS, retryOutputTokens, ...rest }) {
   let overrides = {};
   for (let attempt = 1; ; attempt += 1) {
+    // A person's Stop (homeroom-bot-stop.js): nothing more is asked, a retry
+    // after its wait included.
+    botStop.check(t.signal);
     try {
       const res = await t.chat({
         apiKey: t.apiKey,
@@ -4339,6 +3372,8 @@ async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_
         ...(Array.isArray(t.avoid) && t.avoid.length ? { ignoreProviders: t.avoid } : {}),
         // P1: streamed, so the answer shows as it is written (draftWriter).
         ...(typeof t.onDelta === 'function' ? { onDelta: t.onDelta } : {}),
+        // Their Stop cuts the request off (openrouter.js: code 'cancelled').
+        ...(t.signal ? { signal: t.signal } : {}),
         ...rest,
         ...overrides,
       });
@@ -4353,6 +3388,9 @@ async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_
       }
       return res;
     } catch (err) {
+      // Cut off by their Stop, or failed as they stopped: not the model's
+      // failure. It is not recorded as one and never asked again.
+      if (t.signal?.aborted) throw botStop.stopError();
       const code = codeOf(err);
       t.failures.push(`${where}:${code}${err?.status ? `:${err.status}` : ''}`);
       log.warn('homeroom-bot-mayor', 'A DM model request failed', {
@@ -4438,8 +3476,8 @@ async function plainAnswer(t, history, { later = true } = {}) {
 }
 
 /**
- * What the person is told when the model gave no answer, in order: that
- * their answer was passed on, when it was; what the records say, for a
+ * What the person is told when the model gave no answer, in order: what was
+ * done before it failed (a withdrawal, a report); what the records say, for a
  * question about their work; that the key does not work, when no request
  * can get past it; one plain answer; and only then that it will answer later
  * (#3772) or, when a later try cannot help, BROKEN_TEXT. `defer` is whether
@@ -4449,16 +3487,9 @@ async function plainAnswer(t, history, { later = true } = {}) {
 async function fallbackAnswer(pool, t, { error, errorStatus = null, history }) {
   const { ctx } = t;
   const deferrable = DEFERRABLE_ERRORS.has(error);
-  if (ctx.posted) {
-    return {
-      fallback: 'posted',
-      text: `I posted your answer on the public discussion of ${ctx.posted}, and I'll look at the request again next.`,
-      cards: ctx.cards.slice(0, MAX_CARDS),
-      defer: false,
-    };
-  }
   // #11 (WP3): a withdrawal or a report done before the model failed is
-  // said, so it is never asked for, and done, twice.
+  // said, so it is never asked for, and done, twice. The template states
+  // what was done, so it goes through the reply check as a reply would.
   if (ctx.withdrew || ctx.reported) {
     const done = [
       ctx.withdrew ? `I withdrew the ${ctx.withdrew.projectName} proposal${ctx.withdrew.title ? ` "${ctx.withdrew.title}"` : ''}.` : '',
@@ -4467,18 +3498,23 @@ async function fallbackAnswer(pool, t, { error, errorStatus = null, history }) {
         ? `${ctx.reported.repeat ? 'Already filed' : 'Filed'} as #${ctx.reported.number} on Homeroom's requests board.`
         : 'I sent your report to the Homeroom team.') : '',
     ].filter(Boolean).join(' ');
-    return { fallback: 'done', text: done, cards: ctx.cards.slice(0, MAX_CARDS), defer: false };
+    return { fallback: 'done', text: await claims.checkedNote(pool, ctx, done), cards: ctx.cards.slice(0, MAX_CARDS), defer: false };
   }
-  // B01 (audit 2 Nov 2026): a new project's thread opened before the model
-  // failed is answered there with the question its first screen needs, now.
-  // A plain answer knows nothing of the thread, and promised to "come back
-  // in a minute" from Main, a promise no later try kept.
-  if (ctx.projectThread) return { fallback: 'project', text: PROJECT_THREAD_TEXT, cards: [], defer: false };
   const fromRecords = await recordsAnswer(pool, ctx);
   if (fromRecords) return { fallback: 'records', ...fromRecords, defer: false };
   if (KEY_ERRORS.has(error) && errorStatus !== 403) return { fallback: 'key', text: KEY_TEXT, cards: [], defer: false };
   const plain = await plainAnswer(t, history, { later: deferrable });
-  if (plain) return { fallback: 'plain', text: plain.text, cards: [], defer: plain.later && deferrable };
+  // #6583: the plain answer is checked as the rounds' answer is, with no
+  // second pass: what it says that is shown false is cut.
+  let plainText = plain?.text || '';
+  if (plainText) {
+    const problems = await claims.checkReply(pool, ctx, plainText).catch(() => []);
+    if (problems.length) {
+      t.failures.push(`claims:${problems.map((p) => p.kind).join('+')}`.slice(0, 80));
+      plainText = claims.cut(plainText, problems, ctx);
+    }
+  }
+  if (plainText) return { fallback: 'plain', text: plainText, cards: [], defer: plain.later && deferrable };
   if (deferrable) return { fallback: 'deferred', text: DEFERRED_TEXT, cards: [], defer: true };
   return { fallback: 'broken', text: BROKEN_TEXT, cards: [], defer: false };
 }
@@ -4493,7 +3529,7 @@ async function recordsAnswer(pool, ctx) {
   let progress = ctx.progress;
   if (!progress) {
     try {
-      progress = await progressOf(pool, { userId: ctx.user.id, settings: ctx.settings, config: ctx.config, deps: ctx.deps });
+      progress = await progressOf(pool, { userId: ctx.user.id, settings: ctx.settings, deps: ctx.deps });
     } catch (err) {
       log.warn('homeroom-bot-mayor', 'Could not read the progress of a person\'s work', { userId: ctx.user.id, err: err.message });
       return null;
@@ -4504,7 +3540,7 @@ async function recordsAnswer(pool, ctx) {
     return { kind: 'project', project: e.project };
   }));
   // #4097: it lists what it has cards for, and says how many more.
-  const said = progressSvc.progressText(progress, { max: MAX_CARDS });
+  const said = progressText(progress, { max: MAX_CARDS });
   return { text: `I couldn't put a full answer together just now. ${said}`, cards };
 }
 
@@ -4531,10 +3567,10 @@ function runDmTurn(pool, config, { bot, user, settings, conversationId, message,
 async function answerLater(pool, config, { bot, user, conversationId, message, deps = {} }, attempt) {
   const dm = dmModule(deps);
   const settings = await botModule(deps).readSettings(pool);
-  if (!dm.hasBot(settings, user)) return null;
+  if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, settings, user))) return null;
   log.info('homeroom-bot-mayor', 'Asking a DM answer again', { userId: user.id, messageId: message.id, attempt });
   // 31 Oct 2026: a later try reads the thread the message was written in, as
-  // its first try did (answerUserMessage); it used to read the main chat.
+  // its first try did (answerUserMessage).
   const where = typeof dm.threadDeps === 'function'
     ? await dm.threadDeps(pool, { userId: user.id, conversationId, message }).catch(() => ({}))
     : {};
@@ -4551,6 +3587,8 @@ async function answerLater(pool, config, { bot, user, conversationId, message, d
     ? dm.whileTyping(pool, {
       botId: bot.id, conversationId, ws: deps.ws,
       threadRootId: Number(message.threadRootId ?? message.thread_root_id) || null,
+      // Task 2148: a later try can be stopped as the first one can.
+      answering: deps.stop ? message.id : null,
     }, run)
     : run();
 }
@@ -4573,6 +3611,25 @@ async function turn(pool, config, { bot, user, settings, conversationId, message
     // cards, the offer) ended the turn with no answer at all, and nothing
     // recorded it. It is recorded and said, with its code.
     const code = codeOf(err);
+    // Task 2148: the person stopped this turn, and a step outside its rounds
+    // failed (or its one line could not be sent just now). Said as a stop,
+    // with what the turn had done, never as "I couldn't answer".
+    if (deps.stop?.signal?.aborted) {
+      if (!state.recorded) {
+        const t = state.turn;
+        await recordTurn(pool, {
+          userId: user.id, conversationId, messageId: message.id, model: t?.model, rounds: state.rounds, tools: state.tools,
+          inputTokens: t?.usage.inputTokens, outputTokens: t?.usage.outputTokens, costUsd: t?.usage.costUsd,
+          error: null, failures: t?.failures, fallback: 'stopped',
+        });
+      }
+      return say(botStop.stoppedText(deps.stop.did)).catch((sendErr) => {
+        // `strict`: nothing reached them, so the work is tried again, and
+        // says it then (answerOwed, stopped before the try began).
+        if (deps.strict) throw sendErr;
+        return null;
+      });
+    }
     log.warn('homeroom-bot-mayor', 'DM turn failed outside the model', {
       userId: user.id, messageId: message.id, code, err: clip(err?.message, 300),
     });
@@ -4601,12 +3658,12 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   // Used-up building time holds their requests (runTriage), never the chat.
   const ctx = {
     bot, user, settings, config, deps, messageId: message.id, userText: String(message.content || '').trim(),
-    cards: [], offer: null, reply: null, progress: null, readWork: false, revised: false, posted: null,
+    cards: [], offer: null, reply: null, progress: null, readWork: false, revised: false,
     // #3772: what this turn did, for the check on what its reply says
-    // (claimProblems): a comment posted, a request started, work under way
-    // by the records, a revision of a proposal they asked about. #11 (WP3):
-    // a proposal withdrawn, a report sent to the team.
-    commented: null, started: null, workBusy: false, recentRevision: false, withdrew: null, reported: null,
+    // (reply-claims.js checkReply): a request started, work under way by the
+    // records, a revision of a proposal they asked about. #11 (WP3): a
+    // proposal withdrawn, a report sent to the team.
+    started: null, workBusy: false, recentRevision: false, withdrew: null, reported: null,
     conversationId,
     // The projects this turn looked at, for the request numbers its reply names.
     appIds: new Set(),
@@ -4619,16 +3676,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     // 9 Nov 2026 (#6523): the bot offered to make this idea a project, so the
     // reply carries `newProject` and the thread's foot shows New project.
     newProjectOffer: false,
+    // Their Stop (homeroom-bot-stop.js), for a tool that waits (look_into).
+    stopSignal: deps.stop?.signal || null,
   };
-  // B01, B07 (audit 2 Nov 2026): once start_project_thread opened a new
-  // project's thread, everything this turn says goes in it, whichever way
-  // it is said. A fallback answer used to land in Main beside the thread's
-  // line, as a second reply quoting the question again.
-  const sayOutside = say;
-  say = (content, extra = {}) => sayOutside(content, {
-    ...(ctx.projectThread ? { replyToId: null, threadRootId: ctx.projectThread.rootId } : {}),
-    ...extra,
-  });
   // What one turn's model requests share (askModel). The route is OpenRouter's
   // session, which pins a provider: it is this turn's, not the person's, so
   // one that failed them is not the one every later turn of theirs is sent
@@ -4646,6 +3696,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     // The providers that failed this turn, left out of its later requests
     // (avoidProviders); null once a request was refused as it was built.
     avoid: [],
+    // Their Stop: a request in flight is cut off, none is asked after it.
+    signal: deps.stop?.signal || null,
   };
   // #6346: a stand-in refused by its reply tool is recorded with the turn.
   ctx.failures = t.failures;
@@ -4668,6 +3720,28 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   let error = null;
   let errorStatus = null;
   let history = [{ role: 'user', content: ctx.userText || '(attachment)' }];
+  // Task 2148: the person stopped this turn (homeroom-bot-stop.js). The
+  // reply it was writing is not sent, no fallback answers in its place, and
+  // one line says so where they wrote, with what the turn had already done
+  // that stays done. It is recorded as a turn that cost what it cost, with
+  // no error: the model did not fail. The line is sent as written, never
+  // through the reply checks, under the answer's own key, so a retry finds
+  // the message answered and no apology follows.
+  const stoppedNow = () => deps.stop?.signal?.aborted === true;
+  const sayStopped = async () => {
+    draft?.close({ clear: true });
+    await recordTurn(pool, {
+      userId: user.id, conversationId, messageId: message.id, model: t.model, rounds: turnRounds.rounds, tools: toolsUsed,
+      inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, costUsd: t.usage.costUsd, error: null,
+      failures: t.failures, fallback: 'stopped',
+    });
+    state.recorded = true;
+    await turnEngine.chargeTurn(pool, bot.id, t.usage.costUsd, { what: 'a DM turn', category: 'homeroom-bot-mayor' });
+    log.info('homeroom-bot-mayor', 'A DM turn was stopped by the person', {
+      userId: user.id, messageId: message.id, rounds: turnRounds.rounds, did: deps.stop.did?.length ?? null,
+    });
+    return sayOutside(botStop.stoppedText(deps.stop.did));
+  };
   if (t.apiKey === undefined) {
     try {
       t.apiKey = await botKey(pool, config, bot.id);
@@ -4756,14 +3830,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         ...(about ? [{ role: 'system', content: about }] : []),
         ...history,
       ];
-      // #6583: the bot's own earlier words in this conversation are a record
-      // the claim check may read, with no further query.
-      ctx.conversationId = conversationId;
-      ctx.earlierBotText = history
-        .filter((m) => m.role === 'assistant')
-        .map((m) => (typeof m.content === 'string' ? m.content
-          : Array.isArray(m.content) ? m.content.map((part) => part?.text || '').join(' ') : ''))
-        .join('\n');
+      // The tools this place offers, the only ones a repair note may name
+      // (#6583). The check reads the bot's server notes in this conversation
+      // itself, never its earlier chat words.
       ctx.toolNames = new Set(tools.map((tool) => tool?.function?.name).filter(Boolean));
       // #3772: a message that reads as a decision on a draft that is not
       // waiting (typed "file it" with nothing to file) is said to the model,
@@ -4792,6 +3861,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         // #3685: one failed request used to end the turn with "I couldn't
         // answer just now", whatever the round had already read.
         ask: (options) => askModel(t, options),
+        // Their Stop, looked at before each request and each call (the engine).
+        signal: t.signal,
         where: (n) => `r${n}`,
         // The turn ends with its reply, or with a screen handed to the designer.
         done: () => !!ctx.reply || !!ctx.drawScreen,
@@ -4859,12 +3930,13 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
             })
             : await runTool(pool, ctx, name, args);
           if (!onPlatform) noteRequests(ctx, result);
-          // #6581: any number a tool returned is a real request, platform tools included.
-          noteKnownRequests(ctx, result);
+          // #6581, #6307: the requests and projects any tool returned are
+          // real, platform tools included (reply-claims.js noteTool).
+          claims.noteTool(ctx, result);
           // P1: what it read, for the reply's "Looked at" line.
           noteLookup(ctx, name, args, result);
-          // #6307: the projects the tools returned, which a reply may name.
-          noteKnownProjects(ctx, result);
+          // What it did that stays done, for the line a Stop says.
+          await deps.stop?.note?.(name, args, result);
           return result;
         },
         afterCalls: ({ rounds }) => {
@@ -4886,22 +3958,23 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       };
       const runRounds = () => turnEngine.runRounds(turnRounds, chat);
       await runRounds();
-      // #3769, #3772: what the reply says was done is checked against what
-      // this turn's tools did, and every request number it names against the
-      // requests that exist. One more pass to put it right; whatever is still
-      // claimed with nothing behind it is cut before it is sent (answer()).
+      // #3769, #3772, #6583: what the reply says was done is checked against
+      // what this turn's tools did and what Homeroom has stored, and every
+      // request number it names against the requests that exist
+      // (reply-claims.js). One more pass to put right what is shown false;
+      // whatever still is, is cut before it is sent (answer()).
       const said = checkedWords(ctx, finalText);
       // A screen handed to the designer is answered by it, not checked here.
-      const problems = said && !ctx.drawScreen && !ctx.gaveUp ? await claimProblems(pool, ctx, said) : [];
+      const problems = said && !ctx.drawScreen && !ctx.gaveUp ? await claims.checkReply(pool, ctx, said) : [];
       if (problems.length) {
         t.failures.push(`claims:${problems.map((p) => p.kind).join('+')}`.slice(0, 80));
         log.info('homeroom-bot-mayor', 'A DM reply claimed what this turn did not do; asking again', {
           userId: user.id, messageId: message.id, kinds: problems.map((p) => p.kind),
         });
         const first = ctx.reply ? { ...ctx.reply } : { text: finalText, cards: [] };
-        messages.push({ role: 'user', content: checkNote(problems, { tools: ctx.toolNames }) });
-        // P1, #6581: the next pass writes the answer again; no words are on
-        // the card to replace, only the step it named.
+        messages.push({ role: 'user', content: claims.repairNote(problems, { tools: ctx.toolNames }) });
+        // #6581: no words were shown, so the second pass's answer is simply
+        // the one that is sent.
         ctx.reply = null;
         finalText = '';
         // #6307: the first pass's words beside its calls go too, so the second
@@ -4918,34 +3991,45 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         try {
           await runRounds();
         } catch (err) {
+          if (botStop.isStop(err)) throw err;
           // The first answer, less what it should not have said, still goes.
           log.info('homeroom-bot-mayor', 'The second pass failed; sending the first answer, checked', { userId: user.id, code: codeOf(err) });
         }
         if (!ctx.reply && !finalText) ctx.reply = first;
-        ctx.checkedProblems = await claimProblems(pool, ctx, checkedWords(ctx, finalText));
+        ctx.checkedProblems = await claims.checkReply(pool, ctx, checkedWords(ctx, finalText));
       }
     } catch (err) {
       error = codeOf(err);
       errorStatus = err?.status ?? null;
-      log.warn('homeroom-bot-mayor', 'DM turn failed', {
-        userId: user.id, messageId: message.id, code: error, status: err?.status ?? null, err: clip(err?.message, 300),
-      });
+      if (!botStop.isStop(err)) {
+        log.warn('homeroom-bot-mayor', 'DM turn failed', {
+          userId: user.id, messageId: message.id, code: error, status: err?.status ?? null, err: clip(err?.message, 300),
+        });
+      }
     } finally {
       try { await platform?.close?.(); } catch {}
     }
   }
+  // Stopped during its rounds, or as they ended: the last safe point before
+  // anything is sent.
+  if (stoppedNow()) return sayStopped();
   // #6307: a paragraph said once, and the draft's own words left to the card
   // under the reply, before what it still claims is cut.
   let text = dropDraftEcho(dropRepeatedParagraphs(cleanReply(answerText(ctx.besides, ctx.reply?.text || finalText))), ctx.offer);
   text = clip(text, MAX_REPLY_CHARS);
   // P1: nothing more is shown as it is written; the message takes the card's place.
   draft?.close({ clear: !text });
-  // Whatever the second pass still claimed with nothing behind it is cut.
+  // What the second pass still says that is shown false is cut, and nothing
+  // is said in its place. Cut to nothing, an offer's card or a screen handed
+  // to the designer still answers; else the fallback below does, as for no
+  // answer at all, never as a model that failed.
+  let cutAll = false;
   if (text && ctx.checkedProblems?.length) {
     log.info('homeroom-bot-mayor', 'Cut what a DM reply still claimed', {
       userId: user.id, messageId: message.id, kinds: ctx.checkedProblems.map((p) => p.kind),
     });
-    text = stripClaims(text, ctx.checkedProblems, ctx);
+    text = claims.cut(text, ctx.checkedProblems, ctx);
+    cutAll = !text;
   }
   const html = replyHtmlFor(ctx, text);
   let cards = [];
@@ -4954,8 +4038,15 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   if (!text && !ctx.offer && !ctx.drawScreen) {
     // The model gave no answer. Why is recorded; what can still be said is.
     // A turn that gave up on its stand-in says so, never the stand-in word.
-    if (!error) error = ctx.gaveUp ? 'stand_in' : turnRounds.rounds >= MAX_ROUNDS && !ctx.reply ? 'no_reply' : 'empty_answer';
+    // An answer whose every sentence was shown false is not a model that
+    // failed to answer: never asked again later, never said as one.
+    if (!error) {
+      error = ctx.gaveUp ? 'stand_in' : cutAll ? 'claims_cut'
+        : turnRounds.rounds >= MAX_ROUNDS && !ctx.reply ? 'no_reply' : 'empty_answer';
+    }
     ({ text, cards, fallback, defer } = await fallbackAnswer(pool, t, { error, errorStatus, history }));
+    // Stopped while the fallback's one plain request ran: nothing it wrote is sent.
+    if (stoppedNow()) return sayStopped();
   }
   await recordTurn(pool, {
     userId: user.id, conversationId, messageId: message.id, model: t.model, rounds: turnRounds.rounds, tools: toolsUsed,
@@ -4975,13 +4066,11 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     if (deps.deferAttempt) return null;
   }
   if (fallback === 'key' || fallback === 'broken' || fallback === 'deferred') return say(text);
-  // 1 Nov 2026: draw_screen. The designer draws it and answers, in this
-  // private thread or one it opens from Main Chat (design-bot.js draw).
+  // 1 Nov 2026: draw_screen. The designer draws it and answers, in the
+  // thread this turn is in (design-bot.js draw).
   if (ctx.drawScreen) {
-    // B01: drawn in the new project's thread when this turn opened one.
-    const where = ctx.projectThread ? { ...deps, threadRootId: ctx.projectThread.rootId, threadRequest: null } : deps;
     return (deps.designBot || require('./design-bot')).draw(pool, config, {
-      bot, user, settings, conversationId, message, ask: ctx.drawScreen, deps: where,
+      bot, user, settings, conversationId, message, ask: ctx.drawScreen, deps,
     });
   }
   if (fallback) return say(text, { objects: cards, metadata: { kind: 'chat' } });
@@ -5033,8 +4122,6 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // Task 2020: the answer laid out, drawn in place of the words.
       ...(html ? { html } : {}),
     },
-    // C2.4: a new project's thread opened this turn: the answer is its first reply.
-    ...(ctx.projectThread ? { replyToId: null, threadRootId: ctx.projectThread.rootId } : {}),
   });
 }
 
@@ -5262,12 +4349,14 @@ function closeOfferMeta({ app, name, actionId, issueNumber }) {
   });
 }
 
-// #6019 follow-up: Main's line for a draft the bot opened a private thread
-// for, quoting what the person asked, and the thread's row
-// (private_threads, services/private-threads.js), which the AI tab lists
-// with a lock until the draft is filed, posted or put away. Resolves the
-// line ({ messageId, conversationId }), or null when it could not be sent,
-// and the draft is then said in Main as before.
+// #6019 follow-up: the line a private thread the bot opens for a draft starts
+// with, and the thread's row (private_threads, services/private-threads.js),
+// written with it, which the AI tab lists with a lock until the draft is
+// filed, posted or put away. 14 Nov 2026: every message is in a thread, so
+// a draft is said in the thread it was asked for in (offer); this is for a
+// message in none. Resolves the line ({ messageId, conversationId }), or
+// null when it could not be sent, and the draft is then said under the
+// message it answers.
 async function openDraftThread(pool, { bot, user, conversationId, message, kind, app, name, title = null, deps }) {
   const dm = dmModule(deps);
   // B19 (audit 2 Nov 2026): what the thread is named by, in the tab's list
@@ -5281,20 +4370,17 @@ async function openDraftThread(pool, { bot, user, conversationId, message, kind,
       ? `I drafted that to post on ${name}, in a thread only you can see. Nothing is posted until you post it.`
       : `I drafted it as a request on ${name}, in a thread only you can see. Nothing is filed until you file it.`,
     idempotencyKey: `hrbot-mayor-opened-${message.id}`,
+    // The thread's first message, its row written with it (sendDm `thread`),
+    // quoting what asked for the draft, which leads the thread's history.
     replyToId: message.id,
-    threadRootId: false,
+    thread: { kind: kind === 'post_reply' ? 'draft_reply' : 'draft_request', appId: app.id },
     moment: null,
     metadata: { kind: 'opened_draft', appSlug: app.slug, appName: name, draft: kind, ...(draftTitle ? { draftTitle } : {}) },
   }).catch((err) => {
-    log.warn('homeroom-bot-mayor', 'Could not open a draft\'s private thread (saying it in Main)', { err: err.message });
+    log.warn('homeroom-bot-mayor', 'Could not open a draft\'s private thread (saying it under their message)', { err: err.message });
     return null;
   });
   if (!said?.messageId) return null;
-  await pool.query(
-    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
-     VALUES ($1, $2, $3, $4, $5, 'open') ON CONFLICT (root_message_id) DO NOTHING`,
-    [user.id, said.conversationId || conversationId, said.messageId, app.id, kind === 'post_reply' ? 'draft_reply' : 'draft_request'],
-  ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not record a draft\'s private thread', { err: err.message }));
   return said;
 }
 
@@ -5306,7 +4392,11 @@ async function notePrivateDraft(pool, { userId, messageId, state, ref = null }) 
   await pool.query(
     `UPDATE private_threads p SET state = $3, result_ref = COALESCE($4, p.result_ref), updated_at = NOW()
        FROM conversation_messages m
-      WHERE m.id = $1 AND p.root_message_id = m.thread_root_id AND p.user_id = $2 AND p.state = 'open'`,
+      WHERE m.id = $1 AND p.root_message_id = m.thread_root_id AND p.user_id = $2 AND p.state = 'open'
+        -- 14 Nov 2026: a draft said in a thread that is not its own (the
+        -- bot's hello, a first version, Earlier chat, a note) leaves that
+        -- thread as it is: only the draft's card says where it went.
+        AND p.kind NOT IN ('hello', 'first_version', 'earlier', 'note')`,
     [Number(messageId), Number(userId), state, ref == null ? null : Number(ref)],
   ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not note where a draft\'s private thread went', { err: err.message }));
 }
@@ -5378,14 +4468,14 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
   // request (`issueNumber`), or on the change it asks to revise (`sessionId`).
   const post = o.kind === 'post_reply';
   const kind = withdraw || move || copy || close || post ? o.kind : 'file_request';
-  const { rows: [action] } = await pool.query(
-    `INSERT INTO bot_cards (user_id, conversation_id, app_id, kind, title, details, session_id, source_issue_number,
-                                          target_message_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-    [user.id, conversationId, o.app.id, kind, o.title, o.details || null,
-      withdraw || (post && o.sessionId) ? o.sessionId : null,
-      move || copy || close || post ? o.issueNumber : null, post && o.targetMessageId ? Number(o.targetMessageId) : null],
-  );
+  // Step 3 (11 Nov 2026): the offer's card, written with its message
+  // (dm.sendDm `card`), whose metadata then names it (`actionId`).
+  const card = {
+    kind, appId: o.app.id, title: o.title, details: o.details || null,
+    sessionId: withdraw || (post && o.sessionId) ? o.sessionId : null,
+    sourceIssueNumber: move || copy || close || post ? o.issueNumber : null,
+    targetMessageId: post && o.targetMessageId ? Number(o.targetMessageId) : null,
+  };
   const moveSvc = require('./homeroom-bot-move');
   const body = post
     ? postOfferText({ name, issueNumber: o.issueNumber, revise: !!o.sessionId, text, draft: o.details })
@@ -5409,15 +4499,14 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       ...(o.details ? ['', clip(o.details, 1200)] : []),
       ...(o.extras && draftExtrasText(o.extras) ? ['', draftExtrasText(o.extras)] : []),
     ].join('\n');
-  // #6019 follow-up (plan v3: "Drafts: the bot opens a locked thread and
-  // links it from Main"): a draft (a request to file, or words to post) is
-  // put in a private thread of its own, only the person's. Main says so,
-  // quoting what they asked, and the draft is the thread's first reply.
-  // Said in a thread already, it stays there.
+  // #6019 follow-up: a draft (a request to file, or words to post) is said
+  // in a private thread, only the person's. 14 Nov 2026: every message is in
+  // one, so it is said in the thread it was asked for in; a thread is opened
+  // for it only for a message in none.
   // B05 (audit 2 Nov 2026): a change to a plan is drafted where the plan
   // is, so its Post it is right under it, never one thread away.
   const draft = kind === 'file_request' || (post && o.title !== 'plan_change');
-  const opened = draft && !(message.threadRootId || message.thread_root_id)
+  const opened = draft && !(message.threadRootId || message.thread_root_id || deps?.threadRootId || deps?.threadRequest)
     ? await openDraftThread(pool, {
       bot, user, conversationId, message, kind, app: o.app, name, title: post ? o.details : o.title, deps,
     })
@@ -5429,24 +4518,25 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     idempotencyKey: `hrbot-mayor-${message.id}${keySuffix}`,
     // It quotes the message it answers, and that quote is where the
     // request's later news finds what it started from (#3707,
-    // homeroom-bot-dm.js requestStart); in a draft's thread, Main's line
-    // quotes it instead.
+    // homeroom-bot-dm.js requestStart); in a thread opened for the draft,
+    // the draft is its first reply.
     replyToId: opened ? null : message.id,
     ...(opened ? { threadRootId: opened.messageId } : {}),
     // The proposal it would withdraw, to open before deciding.
     objects: withdraw || (post && o.sessionId) ? [{ type: 'proposal', appId: Number(o.app.id), sessionId: Number(o.sessionId) }]
       : move || copy || close || post ? [{ type: 'issue', appId: Number(o.app.id), issueNumber: Number(o.issueNumber) }] : null,
+    card,
     metadata: {
       ...(post ? confirmMeta('post_reply', {
-        app: o.app, name, actionId: action.id,
+        app: o.app, name, actionId: null,
         question: o.sessionId ? `Post this on the change for request #${o.issueNumber} on ${name}?` : `Post this on request #${o.issueNumber} on ${name}?`,
       })
-        : move ? moveSvc.moveOfferMeta({ app: o.app, actionId: action.id })
-        : copy ? moveSvc.copyOfferMeta({ app: o.app, actionId: action.id })
-        : close ? closeOfferMeta({ app: o.app, name, actionId: action.id, issueNumber: o.issueNumber })
-        : o.guess ? guessMeta({ app: o.app, name, actionId: action.id })
+        : move ? moveSvc.moveOfferMeta({ app: o.app, actionId: null })
+        : copy ? moveSvc.copyOfferMeta({ app: o.app, actionId: null })
+        : close ? closeOfferMeta({ app: o.app, name, actionId: null, issueNumber: o.issueNumber })
+        : o.guess ? guessMeta({ app: o.app, name, actionId: null })
         : confirmMeta(kind, {
-          app: o.app, name, actionId: action.id,
+          app: o.app, name, actionId: null,
           question: withdraw ? `Withdraw this proposal on ${name}?` : `File this as a request on ${name}?`,
         })),
       // 2 Nov 2026: the turn's "Looked at" line and a thread tool's card (answer()).
@@ -5458,17 +4548,9 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       ...dbRead,
     },
   });
-  if (sent?.messageId && sent.duplicate) {
-    // Offered already, by an attempt a restart cut short: that offer is
-    // the one under the message; this one was never shown.
-    await pool.query('DELETE FROM bot_cards WHERE id = $1 AND message_id IS NULL', [action.id]);
-    await pool.query(
-      `UPDATE bot_cards a SET message_id = $1
-        WHERE a.id = (SELECT id FROM bot_cards WHERE user_id = $2 AND conversation_id = $3 AND message_id IS NULL ORDER BY id DESC LIMIT 1)
-          AND NOT EXISTS (SELECT 1 FROM bot_cards WHERE message_id = $1)`,
-      [sent.messageId, user.id, conversationId]);
-  } else if (sent?.messageId) {
-    await pool.query('UPDATE bot_cards SET message_id = $2 WHERE id = $1', [action.id, sent.messageId]);
+  // Offered already, by an attempt a restart cut short (a duplicate): its
+  // card was written with it, and nothing more is.
+  if (sent?.messageId && !sent.duplicate) {
     // #6251: the pictures that go with the request show on the draft, the
     // same thumbnails as any picture in a chat message. Only on the new
     // message: an offer said already keeps the ones it had.
@@ -5670,12 +4752,6 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
     ? `Tap the card to post version ${v} on request #${n} as its plan, publicly, under your name.`
     : `Tap New request to file a request on ${name} with version ${v} as its plan, publicly, under your name, `
       + 'or add it to a request you name.';
-  const { rows: [action] } = await pool.query(
-    `INSERT INTO bot_cards (user_id, conversation_id, app_id, kind, title, source_issue_number,
-                                          private_thread_id, design_version)
-     VALUES ($1, $2, $3, 'post_design', $4, $5, $6, $7) RETURNING id`,
-    [user.id, conversationId, app.id, clip(design.title, MAX_TITLE_CHARS) || 'Design', n, design.threadId, v],
-  );
   // #6353: a plan that would show lists empty because a script builds them
   // says so before it is posted, and offers to write the rows in first. The
   // post stays, as a secondary action: the warning informs, it does not block.
@@ -5691,8 +4767,15 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
     user, conversationId,
     roots: [message?.threadRootId || message?.thread_root_id || null, deps?.threadRootId || null],
   });
-  const sent = await dm.sendDm(pool, {
+  // Step 3: its card, written with the message (dm.sendDm `card`). A
+  // duplicate (offered already, by an attempt a restart cut short) keeps the
+  // card it was written with.
+  return dm.sendDm(pool, {
     bot, userId: user.id, idempotencyKey: key, replyToId: message.id, moment: 'reply',
+    card: {
+      kind: 'post_design', appId: app.id, title: clip(design.title, MAX_TITLE_CHARS) || 'Design',
+      sourceIssueNumber: n, privateThreadId: design.threadId, designVersion: v,
+    },
     content: [
       cardSentence(text, { issueNumber: n, fallback }),
       '',
@@ -5700,18 +4783,11 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
       ...(o.gap ? ['', `${o.gap.reason} I can write the rows into the screen first.`] : []),
     ].join('\n'),
     metadata: {
-      kind: 'confirm', appSlug: app.slug, appName: name, actionId: action.id,
+      kind: 'confirm', appSlug: app.slug, appName: name, actionId: null,
       question: n ? `Post version ${v} as a plan on #${n}?` : `Post version ${v} as a plan on ${name}?`,
       answers: designPlanAnswers(n), actions, status: 'open', mirrors: false, ...dbRead,
     },
   });
-  if (sent?.messageId && sent.duplicate) {
-    // Offered already, by an attempt a restart cut short: that card stands.
-    await pool.query('DELETE FROM bot_cards WHERE id = $1 AND message_id IS NULL', [action.id]);
-  } else if (sent?.messageId) {
-    await pool.query('UPDATE bot_cards SET message_id = $2 WHERE id = $1', [action.id, sent.messageId]);
-  }
-  return sent;
 }
 
 /**
@@ -5865,11 +4941,15 @@ async function decideTyped(pool, config, { bot, user, settings, conversationId, 
   }
   const action = open[0];
   if (decision.plain) {
+    // The bot's newest line in the thread they wrote in (14 Nov 2026: every
+    // message is in one; a message in no other is its own thread's first).
+    const inThread = Number(message.threadRootId ?? message.thread_root_id) || Number(message.id);
     const { rows: newest } = await pool.query(
       `SELECT id FROM conversation_messages
-        WHERE conversation_id = $1 AND sender_id = $2 AND id < $3 AND deleted_at IS NULL AND thread_root_id IS NULL
+        WHERE conversation_id = $1 AND sender_id = $2 AND id < $3 AND deleted_at IS NULL
+          AND (thread_root_id = $4 OR id = $4)
         ORDER BY id DESC LIMIT 1`,
-      [conversationId, bot.id, message.id],
+      [conversationId, bot.id, message.id, inThread],
     );
     if (Number(newest[0]?.id) !== Number(action.message_id)) return null;
   }
@@ -5914,26 +4994,34 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
  * is a 409 and does nothing, and every device shows the choice
  * (setQuestionState). Decided in the person's DM machine
  * (src/workflow/bot-dm/), whose work then does it (actOnTap). Resolves
- * { ok: true, choice, label } or { ok: false, status, error }.
+ * { ok: true, choice, label } or { ok: false, status, error, code? }: a
+ * card retired because what it was about moved on (bot-cards.js retireFor)
+ * is a 410 with its `reason`.
  */
 async function decideOfferTap(pool, config, { user, actionId, choice, answers = [], deps = {} }) {
   if (choice !== 'yes' && choice !== 'no' && choice !== 'build') {
-    return { ok: false, status: 400, error: 'choice must be yes, no or build' };
+    return { ok: false, status: 400, error: 'choice must be yes, no or build', code: 'no_such_choice' };
   }
   const id = Number(actionId);
-  if (!user?.id || !Number.isInteger(id) || id <= 0) return { ok: false, status: 404, error: 'No such choice' };
+  if (!user?.id || !Number.isInteger(id) || id <= 0) return { ok: false, status: 404, error: 'No such choice', code: 'no_such_offer' };
   const { rows } = await pool.query('SELECT * FROM bot_cards WHERE id = $1 AND user_id = $2 AND place = \'dm\'', [id, user.id]);
   const action = rows[0];
   const plan = action?.kind === 'build_plan';
   // The bring-a-friend nudge (invite-nudge.js): Not now is its one server
   // choice, decided here at once; its Invite people is answered on the device.
   const nudge = action?.kind === INVITE_NUDGE_KIND;
-  if (!action || (!plan && !nudge && !OFFER_ANSWERS[action.kind])) return { ok: false, status: 404, error: 'No such choice' };
-  if (nudge && choice !== 'no') return { ok: false, status: 400, error: 'choice must be no' };
-  if (!nudge && (plan ? choice !== 'build' : choice === 'build')) {
-    return { ok: false, status: 400, error: plan ? 'choice must be build' : 'choice must be yes or no' };
+  if (!action || (!plan && !nudge && !OFFER_ANSWERS[action.kind])) {
+    return { ok: false, status: 404, error: 'No such choice', code: 'no_such_offer' };
   }
-  if (action.status !== 'open') return { ok: false, status: 409, error: 'already_decided', decided: action.status };
+  if (nudge && choice !== 'no') return { ok: false, status: 400, error: 'choice must be no', code: 'no_such_choice' };
+  if (!nudge && (plan ? choice !== 'build' : choice === 'build')) {
+    return { ok: false, status: 400, error: plan ? 'choice must be build' : 'choice must be yes or no', code: 'no_such_choice' };
+  }
+  if (action.status === 'retired') {
+    return { ok: false, status: 410, error: 'retired', code: 'retired', reason: action.retired_reason || null };
+  }
+  if (action.status === 'expired') return { ok: false, status: 410, error: 'expired', code: 'expired' };
+  if (action.status !== 'open') return { ok: false, status: 409, error: 'already_decided', code: 'already_decided', decided: action.status };
   // 5 Nov 2026 (docs/plans/bot-one-model.md, decision 3): a card is open 14
   // days (bot_cards.expires_at), then it is no longer an offer.
   if (!require('./bot-cards').stillOpen(action)) {
@@ -5941,13 +5029,21 @@ async function decideOfferTap(pool, config, { user, actionId, choice, answers = 
     await dmModule(deps).setQuestionState(pool, Number(action.message_id), { status: 'closed', expired: true }, {
       ws: deps.ws || null, conversationId: action.conversation_id, userId: user.id,
     }).catch(() => {});
-    return { ok: false, status: 410, error: 'expired' };
+    return { ok: false, status: 410, error: 'expired', code: 'expired' };
   }
   if (nudge) return (deps.inviteNudge || require('./invite-nudge')).dismiss(pool, { user, action, deps });
+  // #6632: a yes, or Build it, is the bot acting for them. With the bot for
+  // verified accounts only, an unverified tap is answered with its own code
+  // before anything is decided (the card stays open for after they verify);
+  // a no is always theirs to give.
+  if (choice !== 'no') {
+    const locked = await require('./homeroom-bot-verified').refusalFor(pool, user, { botSvc: deps.botSvc });
+    if (locked) return locked;
+  }
   const out = await (deps.replies || require('../workflow/platform.ts')).tapDmAction({
     userId: Number(user.id), actionId: id, choice, answers: Array.isArray(answers) ? answers.slice(0, 2) : [],
   });
-  if (!out.ok) return { ok: false, status: out.status || 409, error: out.error || 'already_decided' };
+  if (!out.ok) return { ok: false, status: out.status || 409, error: out.error || 'already_decided', code: out.code || 'already_decided' };
   if (plan) return { ok: true, choice: 'build', label: 'Build it' };
   const [yesWord, noWord] = answersFor(action);
   return { ok: true, choice, label: choice === 'yes' ? yesWord : noWord };
@@ -6249,7 +5345,7 @@ function requestBody({ details, username, extras = null, screenshotIds = [], dom
   if (extras.context?.quoted?.excerpt) where.push(`- Homeroom bot's message: "${extras.context.quoted.excerpt}"`);
   if (extras.context?.saw) where.push(`- ${extras.context.saw}`);
   if (where.length) sections.push(['**Where it happened**', ...where].join('\n'));
-  const href = extras.chatHref || '#homeroom-bot/main';
+  const href = extras.chatHref || '#homeroom-bot';
   const chatFooter = `Filed from ${username}'s [chat with Homeroom bot](${base}/${href}).`;
   const embed = Array.isArray(screenshotIds) && screenshotIds.length
     ? require('../routes/feedback').buildScreenshotsEmbed(screenshotIds, domain)
@@ -6533,7 +5629,6 @@ async function pendingBuild(pool, appId, n) {
  */
 async function commentOnRequest(pool, ctx, args) {
   const { user, deps } = ctx;
-  if (ctx.commented) return { ok: false, error: 'One comment per turn.' };
   const comment = String(args.comment || '').trim();
   if (comment.split(/\s+/).filter(Boolean).length < 2) {
     return { ok: false, error: 'Say what they want added. If they have not said, ask them; nothing was posted.' };
@@ -6665,20 +5760,21 @@ async function startRequest(pool, ctx, args) {
   if (open?.status === 'promoted') {
     return { ok: false, code: 'already_built', error: 'You already built it: its proposal is up for the group\'s vote. To change it, use revise_proposal. Nothing was started.' };
   }
+  // Where it stands now, its stored work state, in the screens' words.
   const entryFor = async () => {
-    const p = await progressOf(pool, { userId: user.id, settings, config: ctx.config, deps });
-    return (p.rightNow || []).find((e) => e.project === app.slug && Number(e.number) === n) || null;
+    const [row] = await require('./work-state').forItems(pool, [{ appId: app.id, issueNumber: n }]);
+    return row ? standingItem(row, { domain: domainOf(deps) }) : null;
   };
   const before = await entryFor().catch(() => null);
   if (before?.busyNow) {
     ctx.started = name;
-    return { ok: true, already: `You are on it now: ${before.doing}.` };
+    return { ok: true, already: `You are on it now: ${before.says}.` };
   }
   if (await pendingBuild(pool, app.id, n)) {
     ctx.started = name;
     return {
       ok: true,
-      already: `It is ready and its build is already on its way${before?.doing ? ` (${before.doing})` : ''}, so nothing new was queued: a new look would only start it over.`,
+      already: `It is ready and its build is already on its way${before?.says ? ` (${before.says})` : ''}, so nothing new was queued: a new look would only start it over.`,
     };
   }
   // #6252: the last look, read before the queued one replaces it: a verdict
@@ -6721,7 +5817,7 @@ async function startRequest(pool, ctx, args) {
   return {
     ok: true,
     queued: queued ? 'At the front of your queue.' : 'You are already on it: it is not waiting in the queue.',
-    ...(after ? { status: after.doing, ...(after.step ? { step: `step ${after.step} of ${after.of}` } : {}) } : {}),
+    ...(after ? { status: after.says } : {}),
     ...left,
   };
 }
@@ -7586,15 +6682,19 @@ async function reportSubject(pool, ctx, args) {
   };
 }
 
-/** The DM's newest messages, oldest first, as a report quotes them. */
+/** The newest messages of the thread the report was asked for in, oldest first, as a report quotes them. */
 async function recentChat(pool, ctx) {
   if (!ctx.conversationId) return [];
+  // 14 Nov 2026: every message is in a thread, so the report quotes that
+  // thread, never a chat-wide stream.
+  const rootId = Number(ctx.deps?.threadRequest?.rootId || ctx.deps?.threadRootId) || null;
   const { rows } = await pool.query(
     `SELECT sender_id, content FROM conversation_messages
-      WHERE conversation_id = $1 AND deleted_at IS NULL AND moderation_hidden_at IS NULL AND thread_root_id IS NULL
+      WHERE conversation_id = $1 AND deleted_at IS NULL AND moderation_hidden_at IS NULL
+        AND (CASE WHEN $4::int IS NULL THEN thread_root_id IS NULL ELSE (thread_root_id = $4 OR id = $4) END)
         AND msg_type = 'message' AND ($2::int IS NULL OR id <= $2)
       ORDER BY id DESC LIMIT $3`,
-    [ctx.conversationId, ctx.messageId || null, REPORT_CHAT_MESSAGES],
+    [ctx.conversationId, ctx.messageId || null, REPORT_CHAT_MESSAGES, rootId],
   );
   return rows.reverse().map((m) => ({
     who: Number(m.sender_id) === Number(ctx.bot?.id) ? 'Homeroom bot' : ctx.user.username,
@@ -7688,7 +6788,7 @@ async function reportProblem(pool, ctx, args) {
     const link = linkFor(number);
     ctx.reported = { title: summary, number, link, repeat: true };
     // #6581: the number is real from here on, in this thread.
-    noteKnownRequests(ctx, { number });
+    claims.noteKnownRequests(ctx, { number });
     if (platform) {
       ctx.appIds.add(Number(platform.id));
       ctx.cards.push({ type: 'issue', appId: Number(platform.id), issueNumber: number });
@@ -7727,7 +6827,7 @@ async function reportProblem(pool, ctx, args) {
   const link = linkFor(number) || filed.url || null;
   ctx.reported = { title: summary, number, link };
   // #6581: the report the turn just filed is a real request, kept for this reply.
-  noteKnownRequests(ctx, { number });
+  claims.noteKnownRequests(ctx, { number });
   // #6566: the card under the reply opens the report on Homeroom's board.
   if (platform && number) {
     ctx.appIds.add(Number(platform.id));
@@ -7760,8 +6860,6 @@ module.exports = {
   designPlanActions,
   answersFor,
   checkPlanOffer,
-  startProjectThread,
-  projectThreadLine,
   checkProjectOffer,
   cardSentence,
   sendDesignOffer,
@@ -7773,7 +6871,6 @@ module.exports = {
   MAKE_PROJECT,
   MOVE_IT,
   KEEP_HERE,
-  CANT_LOOK_TEXT,
   REPORT_SOURCE,
   MAX_REPORTS_PER_DAY,
   OFF_TEXT,
@@ -7805,7 +6902,8 @@ module.exports = {
   MAX_CALLS_PER_ROUND,
   RATE_LIMIT_WAITS_MS,
   PROGRESS_QUESTION,
-  statusOf,
+  standingItem,
+  progressText,
   buildWords,
   retryPlan,
   retryAct,
@@ -7827,6 +6925,10 @@ module.exports = {
   changeRefs,
   listChangeFiles,
   historyMessages,
+  // A project's threads send people's pictures by the same rule (homeroom-bot-voice.js).
+  imagePart,
+  picturesToSend,
+  attachedLine,
   picturesMessage,
   withoutPictures,
   modelSeesImages,
@@ -7878,20 +6980,21 @@ module.exports = {
   liftTextSuggestions,
   MAX_SUGGESTIONS,
   MAX_SUGGESTION_CHARS,
-  claimProblems,
-  checkNote,
-  stripClaims,
-  unknownRequests,
-  projectMentions,
-  noteKnownProjects,
-  // #6581: the requests a turn's tools returned, and the ones this thread knows.
-  noteKnownRequests,
-  threadRequestNumbers,
-  unknownProjects,
+  // The reply check lives in reply-claims.js; these are its names as the
+  // tests (#6583's table among them) have always read them from here.
+  claimProblems: claims.checkReply,
+  checkNote: claims.repairNote,
+  stripClaims: claims.cut,
+  unknownRequests: claims.unknownRequests,
+  projectMentions: claims.projectMentions,
+  noteKnownProjects: claims.noteKnownProjects,
+  noteKnownRequests: claims.noteKnownRequests,
+  threadRequestNumbers: claims.threadRequestNumbers,
+  unknownProjects: claims.unknownProjects,
+  DRAWING_CLAIM: claims.DRAWING_CLAIM,
+  NO_CONTROL_CLAIM: claims.NO_CONTROL_CLAIM,
   dropRepeatedParagraphs,
   dropDraftEcho,
-  DRAWING_CLAIM,
-  NO_CONTROL_CLAIM,
   closeThread,
   announcesOnly,
   goesOnAfter,

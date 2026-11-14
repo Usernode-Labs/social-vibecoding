@@ -110,6 +110,7 @@
  */
 
 import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { reducedMotion } from '../../lib/reduced-motion';
 import { createPortal } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
@@ -560,10 +561,6 @@ const SHARE_ESCAPE_MS = 400;
  * at once.
  */
 export const INVITE_SLIDE_MS = 200;
-
-function reducedMotion(): boolean {
-  try { return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
-}
 
 /**
  * How the link went out. A share says only that it was handed to the share

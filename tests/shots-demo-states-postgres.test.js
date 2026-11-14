@@ -502,7 +502,19 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   // cards' reader. Its build waits its turn, so its line is Building it,
   // and the plan carries its state. Under it: the close offer's pair and,
   // newest of all, the drafted request's pair (#4605).
-  const { messages } = await dmStream(pool, viewer, demoStates.IDS.botConversation);
+  // 14 Nov 2026: Main Chat is gone, and what these states say is in threads
+  // (the first version's own, and each ask's with its offer under it). Read
+  // flat here, every message in the order it was written, so the states'
+  // order is still what is pinned; the threads are checked after.
+  const whole = async () => {
+    const { rows } = await pool.query(
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND deleted_at IS NULL ORDER BY id',
+      [demoStates.IDS.botConversation]);
+    const out = [];
+    for (const row of rows) out.push(await conversations.getMessage(pool, viewer, demoStates.IDS.botConversation, row.id));
+    return out;
+  };
+  const messages = await whole();
   const { planLayout, isPlanMessage, planState } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
   const { isThanksMessage, thanksLine } = loadTsx('frontend/src/features/messages/bot-thanks-card.tsx');
   const plan = messages.find(isPlanMessage);
@@ -512,7 +524,11 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   assert.equal(thanks.content, botActivity.thanksText('[shots fixture] Book club'));
   assert.equal(thanks.id, messages.at(-5).id, 'under it the close offer\'s pair and the drafted request\'s pair');
   assert.ok(newer.messageId < plan.id && plan.id < thanks.id, 'after the bot run card\'s cards');
-  const layout = planLayout(messages);
+  // The plan and its thanks card are replies in the first version's thread
+  // now, in that order. Read as the thread shows them (its replies, with no
+  // thread above them), the card Build it moved sits under the plan.
+  const inThread = messages.filter((m) => m.threadRootId === plan.threadRootId).map((m) => ({ ...m, threadRootId: null }));
+  const layout = planLayout(inThread);
   assert.equal(layout.cardOf.get(plan.id), thanks.id);
   assert.ok(!layout.hidden.has(thanks.id));
   const thanksCard = allCards.find((card) => card.messageId === thanks.id);
@@ -562,7 +578,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   // (homeroom-bot-mayor.js offer). The drafted request's pair follows it.
   const [ask, offered] = messages.slice(-4, -2);
   assert.equal(ask.sender.id, member);
-  assert.equal(offered.reply.id, ask.id);
+  assert.equal(offered.threadRootId, ask.id, 'the offer is under the ask, in the ask\'s thread');
   const { rows: [action] } = await pool.query(
     'SELECT * FROM bot_cards WHERE message_id = $1', [offered.id]);
   assert.deepEqual([action.kind, action.status, action.source_issue_number, action.user_id],
@@ -580,8 +596,9 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     user: viewer, actionId: action.id, choice: 'yes', deps: { replies: tapsNow(pool, {}, { github: { isEnabled: () => false } }) },
   });
   assert.equal(tapped.ok, true);
-  const { messages: after } = await dmStream(pool, viewer, demoStates.IDS.botConversation);
+  const after = await whole();
   assert.equal(after.at(-1).content, 'I couldn\'t propose closing it just now. Try again in a minute.');
+  assert.equal(after.at(-1).threadRootId, ask.id, 'said in the thread of the offer it answers');
   assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM issues WHERE kind = \'close_issue\'')).rows[0].n, 0);
 
   // Last in the same chat, the bot's drafted request (#4605): quoting the
@@ -590,8 +607,27 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
   // newest message, and read.
   const [fileAsk, fileOffer] = messages.slice(-2);
   assert.equal(fileAsk.sender.id, member);
-  assert.equal(fileOffer.reply.id, fileAsk.id);
+  assert.equal(fileOffer.threadRootId, fileAsk.id, 'the draft is under the ask, in the ask\'s thread');
   assert.equal(chat.latestMessage.id, fileOffer.id);
+  // The threads the Homeroom bot page lists for them: the first version's
+  // (opened by the line that says it is being set up, holding its plan and
+  // the thanks), and each ask's with its offer. Each is read, so the chat's
+  // count, the sum of its threads', is zero (above).
+  const { rows: listedThreads } = await pool.query(
+    `SELECT p.kind, p.root_message_id, p.app_id, p.last_read_message_id FROM private_threads p
+      WHERE p.user_id = $1 AND p.conversation_id = $2 ORDER BY p.root_message_id`,
+    [member, demoStates.IDS.botConversation]);
+  assert.deepEqual(listedThreads.map((t) => [t.kind, t.root_message_id, t.app_id, t.last_read_message_id]), [
+    ['first_version', plan.threadRootId, demoStates.IDS.firstVersionApp, thanks.id],
+    ['idea', ask.id, null, offered.id],
+    ['idea', fileAsk.id, null, fileOffer.id],
+  ]);
+  assert.equal(thanks.threadRootId, plan.threadRootId, 'the plan and the thanks are in one thread');
+  const firstOpener = messages.find((m) => m.id === plan.threadRootId);
+  assert.equal(firstOpener.metadata.homeroomBot.kind, 'first_version_started');
+  assert.match(firstOpener.content, /I'm setting up \[shots fixture\] Book club now\./);
+  const page = await require('../src/services/ai-work').privateFor(pool, { user: viewer });
+  assert.equal(page.find((t) => t.rootId === plan.threadRootId).title, '[shots fixture] Book club, first version');
   const { rows: [fileAction] } = await pool.query(
     'SELECT * FROM bot_cards WHERE message_id = $1', [fileOffer.id]);
   assert.deepEqual([fileAction.kind, fileAction.status, fileAction.user_id],
@@ -632,7 +668,7 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
     context: { saw: 'the insights page' },
     doneWhen: ['Insights show week by week, not only as a total', 'The same weeks are counted however the list is sorted'],
-    chatHref: '#homeroom-bot/main',
+    chatHref: '#homeroom-bot',
   });
   assert.deepEqual(fileOffer.metadata.homeroomBot.actions.map((a) => a.label), ['File it', 'Not now']);
 

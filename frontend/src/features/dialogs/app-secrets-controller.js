@@ -41,6 +41,7 @@
 
 import { htmlRich, htmlText, t } from '../../lib/i18n/runtime';
 import { attachReturnKey, pressButton } from '../../lib/return-to-next';
+import { inZone } from '../../lib/time-zone';
 
 // The island's open/close controller, or null before hydration. Registered by
 // `useDialog('appSecrets')` — see use-dialog.ts. Looked up on every call
@@ -483,7 +484,7 @@ const Secrets = {
     try {
       const d = new Date(iso);
       if (Number.isNaN(d.getTime())) return String(iso);
-      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+      return d.toLocaleDateString(undefined, inZone({ year: 'numeric', month: 'short', day: 'numeric' }));
     } catch {
       return String(iso);
     }

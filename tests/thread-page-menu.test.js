@@ -108,20 +108,21 @@ test('a plan goes with the change built from it; the request lists only plans no
   assert.equal(message('project:topic.thread.page.fromPlan', { title: 'Plan A' }), 'Built from the plan "Plan A"');
 });
 
-test('Main Chat\'s thread takes its whole column, alone: Main Chat is a row of the list', () => {
+test('a thread of the bot\'s chat takes its whole column, alone: the chat is drawn threads only', () => {
   const css = read('public/css/app.css');
-  assert.match(css, /\.messages-layout\[data-main-chat\]\.messages-has-reply-thread > \.messages-thread-pane \{ display: none; \}/);
-  assert.match(css, /\.messages-layout\[data-main-chat\] > \.messages-reply-pane \{\n {2}flex: 1 1 auto;\n {2}width: 100%;/);
-  assert.match(css, /\.messages-layout\[data-main-chat\] > \.messages-reply-pane > \.messages-reply-resizer \{ display: none; \}/);
-  // 6 Nov 2026 (#6425): a thread in Main Chat's place closes with its own ✕,
-  // which leaves the lists alone or Main Chat when it was open; a phone's
-  // arrow goes to the list.
+  // 14 Nov 2026: no stream of the conversation's own is drawn beside the
+  // thread (there is no Main Chat), so nothing is hidden under it.
+  assert.doesNotMatch(css, /data-main-chat/);
+  assert.match(css, /\.messages-layout\[data-bot-threads\] > \.messages-reply-pane \{\n {2}flex: 1 1 auto;\n {2}width: 100%;/);
+  assert.match(css, /\.messages-layout\[data-bot-threads\] > \.messages-reply-pane > \.messages-reply-resizer \{ display: none; \}/);
+  // 6 Nov 2026 (#6425): a thread in the column closes with its own ✕, which
+  // leaves the lists alone; a phone's arrow goes to the list.
   const screen = read('frontend/src/features/messages/index.tsx');
   assert.match(screen, /data-reply-close="" aria-label=\{t\('messages:replies\.close'\)\}/);
   assert.doesNotMatch(screen, /messages:replies\.backToMain/);
   assert.match(screen, /data-reply-back=""\s+aria-label=\{t\('messages:ai\.drawer\.back'\)\}/);
-  assert.match(read('frontend/src/features/ai/index.tsx'), /<EmbeddedConversation [^>]*mainChat/);
-  assert.match(read('frontend/src/features/ai/phone-drawer.tsx'), /<EmbeddedConversation [^>]*mainChat onBack=\{onBack\}/);
+  assert.match(read('frontend/src/features/ai/index.tsx'), /<EmbeddedConversation [^>]*threadsOnly/);
+  assert.match(read('frontend/src/features/ai/phone-drawer.tsx'), /<EmbeddedConversation [^>]*threadsOnly onBack=\{onBack\}/);
 });
 
 test('where a private thread stands says what it is and what a reply answers', () => {

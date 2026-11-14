@@ -80,12 +80,9 @@ const proposalTouches = require('../services/proposal-touches');
 const visualsService = require('../services/visuals');
 const shotsView = require('../services/shots-view');
 const { botRequestedBySql } = require('../services/bot-requested-by');
-const { firstVersionSql } = require('../services/first-version-rule');
 const { governanceKindsSql } = require('../services/governance-kinds');
 const { threadsInSql } = require('../services/ai-work');
-const { updateComingSql } = require('../services/homeroom-bot-progress');
-const { voteReadySql, awaitingYesSql } = require('../services/vote-ready');
-const { APPROVED_SQL, attachVotes, votesIn } = require('../services/work-state');
+const { awaitingYesSql } = require('../services/vote-ready');
 const communities = require('../services/communities');
 const governance = require('../services/governance');
 const codeMissing = require('../services/code-missing');
@@ -183,45 +180,37 @@ const BALLOT_THREAD_SQL = (cs) => `${cs}.thread_id IS NOT NULL AND cardinality($
 // their yes, and their tap is (governance-rules.ts, 11 Nov 2026; a change a
 // coding agent submitted was the first, #6006). Nor is it their pick on a
 // ballot.
+// 11 Nov 2026 (docs/plans/bot-one-model.md, step 3): whether a change is
+// open for votes is its stored work state's (work_states.vote_open,
+// services/work-state.js deriveChange): up for a vote, its checks passed on
+// its head (#6402), it merges cleanly or waits only for a yes (#6531), it is
+// not its project's first version (13 Oct 2026, D1), no update is on its way
+// (#6282), GitHub is not holding an approved merge (#6546), and its before &
+// after shots are not still being taken (#6528), and its votes are not in
+// yet (#6594: one that has them is Approved or going live, so it asks
+// nothing of anyone). The same row every screen
+// draws, so a merged, merging or held change is never a Vote row while its
+// own page says it is going live. Voting early stays possible on the
+// change's own page. What is left here is the viewer's own: not theirs, not
+// voted on yet, and the ballot's exclusions.
+const VOTE_OPEN_SQL = (alias) => `EXISTS (SELECT 1 FROM work_states wso
+                WHERE wso.item_kind = 'change' AND wso.item_ref = ${alias}.id AND wso.vote_open)`;
+
 const OWED_PROPOSALS_WHERE = `cs.status = 'promoted'
+       AND ${VOTE_OPEN_SQL('cs')}
        AND NOT EXISTS (
          SELECT 1 FROM pr_votes pv
           WHERE pv.session_id = cs.id
             AND pv.user_id = $1
             AND ${currentVotePredicateSql('pv', 'cs')}
        )
-       AND NOT ${firstVersionSql('cs')}
-       -- #6282 (4 Nov 2026): a change with an update on its way asks for no
-       -- vote. A yes cast now is cleared when the update lands and Homeroom
-       -- asks again, so it waits under Updating / Update queued instead
-       -- (services/homeroom-bot-progress.js updateComingSql, which the AI tab
-       -- and the change's own Votes card read too). A ballot goes with it
-       -- while any of its changes has an update coming, so nobody picks a
-       -- change that is about to change.
-       AND ${updateComingSql('cs')} IS NULL
-       -- #6402 (6 Nov 2026): a vote is asked only once the change is ready:
-       -- its checks passed (or it had nothing to test) and it merges cleanly
-       -- with main. Until then it waits under Waiting & in progress, worded
-       -- by services/work-state.js. Voting early stays possible on the
-       -- change's own page.
-       AND ${voteReadySql('cs')}
-       -- #6594 (11 Nov 2026): a change whose votes are in asks nothing of
-       -- anyone, not only of the person who voted. Its stored work state is
-       -- Approved (waiting on its checks) or Going live, so it leaves the
-       -- feed, the counts and the ballot rows alike.
-       AND NOT EXISTS (
-             SELECT 1 FROM work_states w
-              WHERE w.session_id = cs.id AND ${APPROVED_SQL('w')})
-       AND NOT (${BALLOT_THREAD_SQL('cs')} AND EXISTS (
-             SELECT 1 FROM chat_sessions ru
-              WHERE ${RIVAL_SQL('cs', 'ru')}
-                AND ${updateComingSql('ru')} IS NOT NULL))
-       -- A ballot waits too while any of its changes is not ready, so nobody
-       -- picks between changes that are still being checked.
+       -- A ballot waits while any of its changes is not open for votes (an
+       -- update on its way, its checks still running), so nobody picks
+       -- between changes that are about to change or still being checked.
        AND NOT (${BALLOT_THREAD_SQL('cs')} AND EXISTS (
              SELECT 1 FROM chat_sessions rr
               WHERE ${RIVAL_SQL('cs', 'rr')}
-                AND NOT ${voteReadySql('rr')}))
+                AND NOT ${VOTE_OPEN_SQL('rr')}))
        AND NOT (${BALLOT_THREAD_SQL('cs')} AND (
              EXISTS (SELECT 1 FROM chat_sessions rv
                       WHERE ${RIVAL_SQL('cs', 'rv')}
@@ -788,48 +777,70 @@ async function owedByCommunity(pool, userId, { showSelfHosted = false, isAdmin =
  * works it out for the change's card: the project's governance and
  * electorate, then the merge gate over the counted votes. One read per
  * project, and only for those rows; a project whose read fails is left
- * without one. Read by the B7 `approve` flag on a `solo` row; an author's own
- * change asks the governed gate through `votes_in` instead (#6616). Resolves
- * the rows. Exported for tests.
+ * without one. Resolves the rows. Exported for tests.
+ *
+ * #6651: a row that is the viewer's own change also gets `votes_in`, from
+ * the same gate services/work-state.js reads, so a change still waiting on a
+ * vote stays a Vote in Needs you instead of looking approved to a weaker
+ * count. A failed read leaves it unset, and the row stays a Vote.
  */
 async function withVotesRequired(pool, rows, viewerId = null) {
+  const isAuthors = (row) => viewerId != null && row.kind === 'proposal'
+    && Number(row.author_id) === Number(viewerId);
   const byApp = new Map();
   for (const row of rows) {
-    // #6389, #6616: a row that is the viewer's own change also carries the
-    // count; its gate now reads `votes_in`, and the B7 `approve` flag on a
-    // solo row reads this. Kept so that flag's answer is unchanged.
-    const authors = viewerId != null && row.kind === 'proposal'
-      && Number(row.author_id) === Number(viewerId);
-    if (row.solo !== true && !authors) continue;
+    if (row.solo !== true && !isAuthors(row)) continue;
     if (!byApp.has(row.app_id)) byApp.set(row.app_id, []);
     byApp.get(row.app_id).push(row);
   }
   await Promise.all([...byApp].map(async ([appId, list]) => {
-    try {
-      const gov = await governance.getGovernance(pool, appId);
-      const electorate = await governance.getElectorate(pool, appId, gov);
-      for (const row of list) {
-        row.votes_required = governance.computeGate(gov, electorate.active, row.yes, row.no, row.at, null).required;
+    const soloRows = list.filter((row) => row.solo === true);
+    if (soloRows.length) {
+      try {
+        const gov = await governance.getGovernance(pool, appId);
+        const electorate = await governance.getElectorate(pool, appId, gov);
+        for (const row of soloRows) {
+          row.votes_required = governance.computeGate(gov, electorate.active, row.yes, row.no, row.at, null).required;
+        }
+      } catch (err) {
+        log.warn('workshop-overview', 'Could not work out the votes a solo project needs', { appId, message: err.message });
       }
-    } catch (err) {
-      log.warn('workshop-overview', 'Could not work out the votes a solo project needs', { appId, message: err.message });
+    }
+    for (const row of list) {
+      if (!isAuthors(row)) continue;
+      try {
+        // #6651: the gate a merge decision takes (services/work-state.js
+        // votes_in): approvers only, the project's own rules, and the member
+        // floor, so a non-approver's Yes cannot make it look approved.
+        const gate = await governance.governedGate(pool, appId, {
+          kind: 'pr', id: row.id, openedAt: row.at, now: new Date(),
+          explicitApproval: row.requires_explicit_approval === true,
+          explicitReason: row.explicit_approval_reason || null,
+          authorId: row.author_id == null ? null : Number(row.author_id),
+          firstVersion: false,
+        });
+        row.votes_in = gate?.mergeable === true;
+      } catch (err) {
+        log.warn('workshop-overview', 'Could not read whether a change the viewer made has its votes', {
+          appId, id: row.id, message: err.message,
+        });
+      }
     }
   }));
   return rows;
 }
 
 /**
- * #6389, #6616: whether a change the viewer made has the votes it needs, so
- * the row is waiting on their fix rather than on a Vote. It asks the same
- * gate the merge takes (`votes_in`, #6594: approvers, rules, the member floor
- * and explicit approval), never a raw count of yes votes — under an
- * approvers-only rule (#6616) a non-approver's Yes is not the vote being in.
- * A row whose gate could not be read has no `votes_in`, and stays a Vote.
+ * #6389: whether a change the viewer made has the votes it needs, so the row
+ * is waiting on their fix rather than on a Vote. #6651: `votes_in` is the
+ * answer, read from the same gate the merge decision takes (approvers only,
+ * the project's rules, the member floor), so a change still waiting on a vote
+ * stays a Vote here exactly as it does in the badge's count.
  */
 function authorGateMet(row, viewerId) {
   if (row.kind !== 'proposal') return false;
   if (viewerId == null || Number(row.author_id) !== Number(viewerId)) return false;
-  return votesIn(row);
+  return row.votes_in === true;
 }
 
 /**
@@ -1462,5 +1473,5 @@ module.exports = {
   withPictures, withCodeMissing, pictureFields, decisionFacts, DEMO_NEEDS_FEED, withDemoNeedsFeed,
   isDemoNeedsProposal,
   OWED_BY_COMMUNITY_SQL, owedByCommunity,
-  MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE,
+  MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE, OWED_PROPOSALS_WHERE, VOTE_OPEN_SQL,
 };

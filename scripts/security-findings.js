@@ -72,15 +72,27 @@ function npmFindings(audit, lock, now) {
   return npmGate(audit, lock, { now }).blocking;
 }
 
+// What a finding is compared with in the baseline. null means no comparable
+// identity: never fall back to a raw key from another ecosystem.
+function baselineKey(result, v) {
+  if (v.PkgName === 'stdlib' && ['gobinary', 'gomod'].includes(result.Type)) {
+    return goStdlibKey(v.PkgName, v.InstalledVersion, v.PkgIdentifier?.PURL);
+  }
+  // A Playwright browser (playwright-browser-findings.js) is in no SBOM: it
+  // is the baseline's when the baseline installs the same Playwright.
+  if (result.Type === 'playwright-browser') {
+    return /^playwright-core@[^\s]+$/.test(v.BaselineKey || '') ? v.BaselineKey : null;
+  }
+  return undefined;
+}
+
 function imageGate(report, { now, component, baseline = null } = {}) {
   if (report.SchemaVersion !== 2 || !Array.isArray(report.Results) || report.Results.length === 0) throw new Error('Empty or invalid image scan');
   const findings = report.Results.flatMap((r) => (r.Vulnerabilities || [])
     .filter((v) => /^(HIGH|CRITICAL)$/.test(v.Severity) && v.FixedVersion
       && !excepted(v.PkgName, v.InstalledVersion, [v.VulnerabilityID, ...(v.References || []).map((u) => u.split('/').pop())], now, exceptions, component))
     .map((v) => ({ name: v.PkgName, version: v.InstalledVersion,
-      // null means unconfirmed Go identity: never fall back to a raw npm key.
-      baselineKey: v.PkgName === 'stdlib' && ['gobinary', 'gomod'].includes(r.Type)
-        ? goStdlibKey(v.PkgName, v.InstalledVersion, v.PkgIdentifier?.PURL) : undefined,
+      baselineKey: baselineKey(r, v),
       text: `${r.Target}: ${v.PkgName}@${v.InstalledVersion}: ${v.VulnerabilityID} (fix ${v.FixedVersion})` })));
   return split(findings, baseline);
 }
@@ -124,7 +136,8 @@ function imageAssessment(reports, { component, baseline = null, baselineName = n
 
 function readImageReports(dir) {
   const path = require('node:path');
-  return ['vulnerabilities.json', 'image-vulnerabilities.json']
+  // browser-vulnerabilities.json: the Playwright browsers the scans cannot see.
+  return ['vulnerabilities.json', 'image-vulnerabilities.json', 'browser-vulnerabilities.json']
     .filter((name) => fs.existsSync(path.join(dir, name)))
     .map((name) => JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')));
 }

@@ -49,6 +49,7 @@
  */
 
 import { appFrameStore } from '../app-frame/app-frame-store.js';
+import { reducedMotion } from '../../lib/reduced-motion';
 
 /** How long either motion takes. */
 export const RESUME_MOTION_MS = 250;
@@ -160,14 +161,6 @@ export function takeResumeOrigin(slug: string, doc: Document = document): HTMLEl
 }
 
 // ── Close: the stand-in that shrinks into the handle ──────────────────
-
-function reducedMotion(win: Window | null | undefined): boolean {
-  try {
-    return !!win?.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  } catch {
-    return false;
-  }
-}
 
 /** The app's own page colour, as its frame last reported it, or ''. */
 function appBackground(slug: string): string {

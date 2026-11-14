@@ -104,6 +104,15 @@ test('every variant of the contract is worded, with the request and its project 
     assert.equal(got.bellSubject, 'Plant Pal first version', said);
     covered.add(said);
   }
+  // 14 Nov 2026: an account notice, not a request's moment: the week's
+  // building time nearly spent (src/services/homeroom-bot-notices.js). It is
+  // a bell row with no chat message behind it, headed by what it is about,
+  // over the notice itself; nothing is on hold yet.
+  const low = copy.botMomentCopy(require('../src/services/homeroom-bot-notices').detailFor('allowance_low'));
+  assert.deepEqual([low.moment, low.said, low.title, low.body, low.bellLabel, low.bellSubject, low.bellMeta, low.threadRootId],
+    ['on_hold', 'low', 'Homeroom bot', 'You\'re close to this week\'s building time.', 'Building time',
+      'You\'re close to this week\'s building time.', 'Homeroom bot', null]);
+  covered.add('low');
   for (const [moment, saids] of Object.entries(copy.SAID_BY_MOMENT)) {
     for (const said of saids) assert.ok(covered.has(said), `${moment}/${said} is pinned here`);
   }

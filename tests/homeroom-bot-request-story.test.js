@@ -65,62 +65,112 @@ test('live, the request\'s ending: "It\'s live. {title} is in {project} now."', 
   assert.equal(live.tagsPoster('live'), false, 'not tagged');
 });
 
+// Step 4 (11 Nov 2026): a post's said-once key in bot_posts
+// (services/bot-post.js), as the database answers it: claimed before
+// anything is sent (a second ask finds the first), what went out recorded on
+// it, then settled; and the request's row in homeroom_bot_posts once said.
+function botPostsFake({ failClaim = () => false } = {}) {
+  const keys = new Map();   // said_key -> row
+  const byId = new Map();
+  const projected = [];
+  let nextId = 99;
+  const handle = (sql, params) => {
+    if (/INSERT INTO bot_posts/.test(sql)) {
+      if (failClaim()) throw new Error('connection reset');
+      const had = keys.get(params[0]);
+      if (had) return { rows: [{ ...had, fresh: false }] };
+      const row = {
+        id: nextId++, said_key: params[0], outcome: 'pending', github_comment_id: null, chat_message_id: null, request_post_id: null,
+        created_at: new Date(), claimed_at: new Date(), claimed_by: params[11],
+      };
+      keys.set(params[0], row);
+      byId.set(row.id, row);
+      return { rows: [{ ...row, fresh: true }] };
+    }
+    // A pending post's claim: taken over once it lapsed (or never had one),
+    // let go when its send failed.
+    if (/SET claimed_at = NOW\(\), claimed_by = \$2/.test(sql)) {
+      const row = byId.get(params[0]) || [...keys.values()].find((r) => r.id === params[0]);
+      const lapsed = row && row.outcome === 'pending' && (!row.claimed_at || Date.now() - row.claimed_at.getTime() > params[2] * 1000);
+      if (!lapsed) return { rows: [] };
+      Object.assign(row, { claimed_at: new Date(), claimed_by: params[1] });
+      byId.set(row.id, row);
+      return { rows: [row] };
+    }
+    if (/UPDATE bot_posts SET claimed_at = NULL/.test(sql)) {
+      const row = byId.get(params[0]);
+      if (row && row.outcome === 'pending' && row.claimed_by === params[1]) row.claimed_at = null;
+      return { rows: [] };
+    }
+    if (/FROM bot_posts WHERE said_key = \$1/.test(sql)) return { rows: keys.has(params[0]) ? [keys.get(params[0])] : [] };
+    // The message named on its record, in its transaction, by the claim's holder.
+    if (/UPDATE bot_posts SET chat_message_id = \$2\s+WHERE id = \$1 AND chat_message_id IS NULL/.test(sql)) {
+      const row = byId.get(params[0]);
+      if (row.chat_message_id != null || (params[2] != null && row.claimed_by !== params[2])) return { rows: [], rowCount: 0 };
+      row.chat_message_id = params[1];
+      return { rows: [], rowCount: 1 };
+    }
+    if (/UPDATE bot_posts\s+SET chat_message_id = COALESCE/.test(sql)) {
+      const row = byId.get(params[0]);
+      if (params[1] != null) row.chat_message_id = params[1];
+      if (params[3] != null) row.github_comment_id = params[3];
+      return { rows: [] };
+    }
+    if (/UPDATE bot_posts\s+SET outcome = \$2/.test(sql)) {
+      const row = byId.get(params[0]);
+      row.outcome = params[1];
+      if (params[3] != null) row.request_post_id = params[3];
+      return { rows: [] };
+    }
+    if (/INSERT INTO homeroom_bot_posts/.test(sql)) {
+      projected.push(params);
+      return { rows: [{ id: 500 + projected.length }] };
+    }
+    return null;
+  };
+  return { keys, byId, projected, handle, only: () => [...keys.values()][0] };
+}
+
 function fakeLive({ posted = false, run = true } = {}) {
   const queries = [];
   const comments = [];
   const messages = [];
+  const store = botPostsFake();
+  if (posted) {
+    store.keys.set('live:request:3-12:run-40', { id: 1, outcome: 'said', chat_message_id: 7 });
+  }
   const pool = {
     async query(sql, params) {
       queries.push({ sql, params });
       if (/FROM homeroom_bot_runs r\s+JOIN apps a/.test(sql)) {
         return { rows: run ? [{ run_id: 40, app_id: 3, issue_number: 12, slug: 'plant-pal', name: 'Plant Pal', repo_url: 'https://github.com/o/plant-pal', title: 'Dark mode' }] : [] };
       }
-      if (/kind = 'live' AND pending IS NOT TRUE LIMIT 1/.test(sql)) return { rows: posted ? [{ '?column?': 1 }] : [] };
       if (/FROM users WHERE username/.test(sql)) return { rows: [BOT] };
-      if (/INSERT INTO homeroom_bot_posts/.test(sql)) return { rows: [{ id: 99 }] };
-      return { rows: [] };
+      return store.handle(sql, params) || { rows: [] };
     },
   };
   const deps = {
     github: { async createIssueComment(owner, repo, n, text) { comments.push({ owner, repo, n, text }); return { id: 5, created_at: 'now' }; } },
     ws: {
-      async sendBotMessage(_pool, appId, msg) { messages.push({ appId, ...msg }); return { id: 77 }; },
+      async sendBotMessage(_pool, appId, { onInsert, ...msg }) { messages.push({ appId, ...msg }); return { id: 77 }; },
       async sendSystemMessage() { throw new Error('the bot speaks as itself'); },
     },
   };
-  return { pool, deps, queries, comments, messages };
+  return { pool, deps, queries, comments, messages, store };
 }
+
+const RUN_ROW = { run_id: 40, app_id: 3, issue_number: 12, slug: 'plant-pal', name: 'Plant Pal', repo_url: 'https://github.com/o/plant-pal', title: 'Dark mode' };
 
 // What the bot's change machine's retry needs (its bot.commentLive work,
 // strict): a part that failed is thrown with the post left pending, and the
 // retry says only what is missing; a post never reads as said half sent.
 test('strict: a failed GitHub comment or thread message is thrown and retried, never marked said', async () => {
-  const posts = new Map();   // id -> the homeroom_bot_posts row
-  let nextId = 99;
+  const store = botPostsFake();
   const pool = {
     async query(sql, params) {
-      if (/FROM homeroom_bot_runs r\s+JOIN apps a/.test(sql)) {
-        return { rows: [{ run_id: 40, app_id: 3, issue_number: 12, slug: 'plant-pal', name: 'Plant Pal', repo_url: 'https://github.com/o/plant-pal', title: 'Dark mode' }] };
-      }
-      if (/kind = 'live' AND pending IS NOT TRUE LIMIT 1/.test(sql)) {
-        return { rows: [...posts.values()].filter((r) => r.pending !== true) };
-      }
-      if (/WHERE run_id = \$1 AND kind = \$2 AND pending IS TRUE/.test(sql)) {
-        return { rows: [...posts.values()].filter((r) => r.pending === true).map((r) => ({ ...r, created_at: new Date() })) };
-      }
+      if (/FROM homeroom_bot_runs r\s+JOIN apps a/.test(sql)) return { rows: [RUN_ROW] };
       if (/FROM users WHERE username/.test(sql)) return { rows: [BOT] };
-      if (/INSERT INTO homeroom_bot_posts/.test(sql)) {
-        const id = nextId++;
-        posts.set(id, { id, pending: true, github_comment_id: null, thread_message_id: null });
-        return { rows: [{ id }] };
-      }
-      if (/SET github_comment_id = \$2, thread_message_id = \$3, pending = NULL/.test(sql)) {
-        Object.assign(posts.get(params[0]), { github_comment_id: params[1], thread_message_id: params[2], pending: null });
-        return { rows: [] };
-      }
-      if (/SET github_comment_id = \$2 WHERE id = \$1/.test(sql)) { posts.get(params[0]).github_comment_id = params[1]; return { rows: [] }; }
-      if (/SET thread_message_id = \$2 WHERE id = \$1/.test(sql)) { posts.get(params[0]).thread_message_id = params[1]; return { rows: [] }; }
-      return { rows: [] };
+      return store.handle(sql, params) || { rows: [] };
     },
   };
   const down = { github: true, thread: true };
@@ -141,39 +191,34 @@ test('strict: a failed GitHub comment or thread message is thrown and retried, n
   };
   await assert.rejects(live.announceLive(pool, { session: { id: 51 }, deps, strict: true }),
     /GitHub comment \(GitHub is down\), the thread message \(db hiccup\)/);
-  assert.equal([...posts.values()][0].pending, true, 'not said yet');
+  assert.equal(store.only().said_key, 'live:request:3-12:run-40', 'its key: live, for its run');
+  assert.equal(store.only().outcome, 'pending', 'not said yet');
   // The retry: GitHub answers now, the thread still fails.
   down.github = false;
   await assert.rejects(live.announceLive(pool, { session: { id: 51 }, deps, strict: true }), /the thread message/);
-  assert.equal(posts.size, 1, 'the same post taken up');
+  assert.equal(store.keys.size, 1, 'the same post taken up');
   assert.equal(comments.length, 1);
   // Then the thread too: said once, in both places, and marked said.
   down.thread = false;
   const out = await live.announceLive(pool, { session: { id: 51 }, deps, strict: true });
   assert.ok(out && out.github && out.thread);
   assert.deepEqual([comments.length, messages.length], [1, 1], 'the comment is not posted twice');
-  assert.equal([...posts.values()][0].pending, null);
+  assert.equal(store.only().outcome, 'said');
+  assert.equal(store.projected.length, 1, 'the request\'s row is written once, when said');
   assert.equal(await live.announceLive(pool, { session: { id: 51 }, deps, strict: true }), null, 'said: nothing more');
 });
 
-test('strict: a failed lookup of the pending post is thrown, never taken for none (no second post, nothing said twice)', async () => {
+test('strict: a failed claim of the post is thrown, never taken for none (no second post, nothing said twice)', async () => {
   // The thread message went out; GitHub failed, so the post is pending.
-  const posts = new Map([[99, { id: 99, pending: true, github_comment_id: null, thread_message_id: 77 }]]);
-  let lookupDown = true;
-  const inserted = [];
+  let claimDown = true;
+  const store = botPostsFake({ failClaim: () => claimDown });
+  store.keys.set('live:request:3-12:run-40', { id: 99, outcome: 'pending', github_comment_id: null, chat_message_id: 77, created_at: new Date() });
+  store.byId.set(99, store.keys.get('live:request:3-12:run-40'));
   const pool = {
-    async query(sql) {
-      if (/FROM homeroom_bot_runs r\s+JOIN apps a/.test(sql)) {
-        return { rows: [{ run_id: 40, app_id: 3, issue_number: 12, slug: 'plant-pal', name: 'Plant Pal', repo_url: 'https://github.com/o/plant-pal', title: 'Dark mode' }] };
-      }
-      if (/kind = 'live' AND pending IS NOT TRUE LIMIT 1/.test(sql)) return { rows: [] };
-      if (/WHERE run_id = \$1 AND kind = \$2 AND pending IS TRUE/.test(sql)) {
-        if (lookupDown) throw new Error('connection reset');
-        return { rows: [...posts.values()].map((r) => ({ ...r, created_at: new Date() })) };
-      }
+    async query(sql, params) {
+      if (/FROM homeroom_bot_runs r\s+JOIN apps a/.test(sql)) return { rows: [RUN_ROW] };
       if (/FROM users WHERE username/.test(sql)) return { rows: [BOT] };
-      if (/INSERT INTO homeroom_bot_posts/.test(sql)) { inserted.push(sql); return { rows: [{ id: 100 }] }; }
-      return { rows: [] };
+      return store.handle(sql, params) || { rows: [] };
     },
   };
   const messages = [];
@@ -182,41 +227,32 @@ test('strict: a failed lookup of the pending post is thrown, never taken for non
     ws: { async sendBotMessage(_p, _a, msg) { messages.push(msg.content); return { id: 78 }; }, async sendSystemMessage() {} },
   };
   await assert.rejects(live.announceLive(pool, { session: { id: 51 }, deps, strict: true }), /connection reset/);
-  assert.deepEqual([inserted.length, messages.length], [0, 0], 'no second post, nothing sent');
-  // The retry finds the pending post and sends only the missing comment.
-  lookupDown = false;
+  assert.deepEqual([store.projected.length, messages.length], [0, 0], 'no second post, nothing sent');
+  // The retry takes up the pending post and sends only the missing comment.
+  claimDown = false;
   const out = await live.announceLive(pool, { session: { id: 51 }, deps, strict: true });
   assert.ok(out && out.github && out.thread);
-  assert.deepEqual([inserted.length, messages.length], [0, 0], 'the thread message is not said again');
+  assert.deepEqual(messages.length, 0, 'the thread message is not said again');
+  assert.equal(store.byId.get(99).outcome, 'said');
 });
 
 // trace-bot-notes bugs 9 and 10: the bubble's row went in and its id was
 // never kept (its broadcast threw after the INSERT, or the process ended),
-// or GitHub could not be read for the comment a cut-short post made: the
-// retry finds the bubble by the post's mark, and a failed read is retried,
-// never taken for "not posted".
-test('strict: a retry finds the thread message it made before by its mark, and a failed comment lookup is thrown', async () => {
-  const posts = new Map([[99, { id: 99, pending: true, github_comment_id: null, thread_message_id: null }]]);
+// or GitHub could not be read for the comment a cut-short post made. Step 4:
+// the message's record names it in the message's own transaction
+// (ws.sendBotMessage `onInsert`), so the retry finds it there; a failed
+// read is retried, never taken for "not posted".
+test('strict: a retry finds the thread message it made before by its record, and a failed comment lookup is thrown', async () => {
+  const store = botPostsFake();
+  store.keys.set('live:request:3-12:run-40', { id: 99, outcome: 'pending', github_comment_id: null, chat_message_id: null, created_at: new Date() });
+  store.byId.set(99, store.keys.get('live:request:3-12:run-40'));
   const chat = [];   // chat_messages rows the bot inserted, with their metadata
   let lookupDown = true;
   const pool = {
     async query(sql, params) {
-      if (/FROM homeroom_bot_runs r\s+JOIN apps a/.test(sql)) {
-        return { rows: [{ run_id: 40, app_id: 3, issue_number: 12, slug: 'plant-pal', name: 'Plant Pal', repo_url: 'https://github.com/o/plant-pal', title: 'Dark mode' }] };
-      }
-      if (/kind = 'live' AND pending IS NOT TRUE LIMIT 1/.test(sql)) return { rows: [] };
-      if (/WHERE run_id = \$1 AND kind = \$2 AND pending IS TRUE/.test(sql)) {
-        return { rows: [...posts.values()].filter((r) => r.pending).map((r) => ({ ...r, created_at: new Date() })) };
-      }
-      if (/metadata->>'hrbotPost' = \$3/.test(sql)) {
-        return { rows: chat.filter((m) => m.metadata.hrbotPost === params[2]).map((m) => ({ id: m.id })) };
-      }
+      if (/FROM homeroom_bot_runs r\s+JOIN apps a/.test(sql)) return { rows: [RUN_ROW] };
       if (/FROM users WHERE username/.test(sql)) return { rows: [BOT] };
-      if (/SET github_comment_id = \$2, thread_message_id = \$3, pending = NULL/.test(sql)) {
-        Object.assign(posts.get(params[0]), { github_comment_id: params[1], thread_message_id: params[2], pending: null });
-      }
-      if (/SET github_comment_id = \$2 WHERE id = \$1/.test(sql)) posts.get(params[0]).github_comment_id = params[1];
-      return { rows: [] };
+      return store.handle(sql, params) || { rows: [] };
     },
   };
   let broadcastFails = true;
@@ -228,12 +264,14 @@ test('strict: a retry finds the thread message it made before by its mark, and a
       async createIssueComment(o, r, n, text) { comments.push(text); return { id: 5, created_at: 'now' }; },
     },
     ws: {
-      // The row goes in, then its broadcast throws: what sendBotMessage does
-      // when its user_blocks read fails after the INSERT.
-      async sendBotMessage(_p, _a, msg) {
-        chat.push({ id: 700 + chat.length, metadata: msg.metadata });
+      // The row goes in with its record, then its broadcast throws: what
+      // sendBotMessage does when its user_blocks read fails after the commit.
+      async sendBotMessage(p, _a, msg) {
+        const id = 700 + chat.length;
+        chat.push({ id, metadata: msg.metadata });
+        if (msg.onInsert) await msg.onInsert(p, { messageId: id });
         if (broadcastFails) throw new Error('user_blocks read failed');
-        return { id: 700 + chat.length - 1 };
+        return { id };
       },
       async sendSystemMessage() {},
     },
@@ -244,12 +282,13 @@ test('strict: a retry finds the thread message it made before by its mark, and a
   lookupDown = false;
   await assert.rejects(live.announceLive(pool, { session: { id: 51 }, deps, strict: true }), /the thread message \(user_blocks read failed\)/);
   assert.equal(chat.length, 1);
-  assert.equal(chat[0].metadata.hrbotPost, '99', 'its message carries the post\'s mark');
+  assert.equal(chat[0].metadata.hrbotPost, 'post-99', 'its message carries the post\'s mark');
+  assert.equal(store.byId.get(99).chat_message_id, 700, 'and its record names it');
   broadcastFails = false;
   const out = await live.announceLive(pool, { session: { id: 51 }, deps, strict: true });
   assert.ok(out && out.thread);
   assert.equal(chat.length, 1, 'the bubble is not posted a second time');
-  assert.equal(posts.get(99).thread_message_id, 700, 'and the one it made is the one kept');
+  assert.equal(out.messageId, 700, 'and the one it made is the one kept');
   assert.equal(comments.length, 1);
 });
 
@@ -261,8 +300,7 @@ test('announceLive says it on the request once, in both places, untagged', async
   assert.equal(f.messages.length, 1);
   assert.equal(f.messages[0].content, 'It\'s live. Dark mode is in Plant Pal now.');
   assert.deepEqual(f.messages[0].thread, { type: 'issue', ref: 12 });
-  const insert = f.queries.find((q) => /INSERT INTO homeroom_bot_posts/.test(q.sql));
-  assert.deepEqual(insert.params, [3, 12, 40, 'live']);
+  assert.deepEqual(f.store.projected[0].slice(0, 4), [3, 12, 40, 'live']);
   // Said already, or not the bot's change: nothing more.
   const again = fakeLive({ posted: true });
   assert.equal(await live.announceLive(again.pool, { session: { id: 51 }, deps: again.deps }), null);

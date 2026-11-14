@@ -10,6 +10,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { settleWorkStates } = require('./lib/work-states');
 const crypto = require('node:crypto');
 const { Pool } = require('pg');
 
@@ -320,19 +321,23 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   });
 
   await t.test('my_work is one person\'s: each request\'s state, the proposal\'s votes, what runs now', async () => {
+    // 11 Nov 2026: each request's state is its stored work state, in the
+    // words its screens use (services/work-state.js says), with whose move it
+    // is and its change: the same row its page draws.
     const work = await mayor.myWork(pool, { userId: ada.id, settings, deps: { domain: 'app.test' } });
     const by = new Map(work.requests.map((r) => [`${r.project}#${r.number}`, r]));
-    assert.equal(by.get('seed-swap#3').status, 'step 1 of 6: reading the request to decide whether to ask a question or build it');
+    assert.deepEqual([by.get('seed-swap#3').status, by.get('seed-swap#3').whoseMove], ['Reading it', 'bot']);
     assert.ok(by.get('seed-swap#3').since, 'and since when');
     assert.equal(by.get('seed-swap#3').botBuildsHere, true);
-    assert.equal(by.get('seed-swap#4').status, 'step 1 of 6: waiting for an answer to the question asked');
-    assert.equal(by.get('note-board#5').status, 'step 5 of 6: it\'s waiting for approval');
-    assert.equal(by.get('note-board#5').proposal.proposal, proposal.id);
-    assert.equal(by.get('note-board#5').proposal.yesVotes, 0);
-    assert.equal(by.get('note-board#5').proposal.checks, 'passed');
-    assert.equal(by.get('note-board#5').proposal.link, `https://app.test/#app/note-board/dev/proposals/${proposal.id}`);
-    // #3771: what it waits for, in words: here nothing is ahead of it.
-    assert.equal(by.get('note-board#6').status, 'step 1 of 6: next in line for a free builder');
+    assert.deepEqual([by.get('seed-swap#4').status, by.get('seed-swap#4').whoseMove], ['Waiting for your answer', 'requester']);
+    assert.deepEqual([by.get('note-board#5').status, by.get('note-board#5').whoseMove], ['Up for a vote', 'group']);
+    assert.deepEqual(by.get('note-board#5').change, {
+      id: proposal.id, status: 'promoted', checks: { state: 'passing', phase: null, failing: null },
+      votes: { yes: 0, no: 0 }, openForVotes: true,
+    });
+    assert.equal(by.get('note-board#5').links.proposal, `https://app.test/#app/note-board/dev/proposals/${proposal.id}`);
+    // Waiting its turn: its place in the bot's line on its project.
+    assert.equal(by.get('note-board#6').status, 'Not started yet · Number 1 in line');
     assert.ok(!by.has('sam-shop#9'), 'never somebody else\'s request');
     assert.deepEqual(work.workingOnNow.map((w) => `${w.project}#${w.number}`), ['seed-swap#3'],
       'only what the bot is doing this minute, not what waits on her, the group or the queue');
@@ -355,17 +360,18 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
        VALUES ($1, 3, 'live', 'ready', $2) RETURNING id`,
       [seeds.id, buildSession.id],
     );
+    await settleWorkStates(pool);
     const planning = await mayor.myWork(pool, { userId: ada.id, settings });
-    assert.equal(planning.requests.find((r) => r.project === 'seed-swap' && r.number === 3).status,
-      'step 2 of 6: writing the plan for the build');
+    assert.equal(planning.requests.find((r) => r.project === 'seed-swap' && r.number === 3).status, 'Planning');
     assert.deepEqual(planning.workingOnNow.map((w) => `${w.project}#${w.number}`), ['seed-swap#3']);
     // Its plan is posted: it is building.
     await pool.query(
       `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind) VALUES ($1, 3, $2, 'spec')`,
       [seeds.id, run.id],
     );
+    await settleWorkStates(pool);
     const later = await mayor.myWork(pool, { userId: ada.id, settings });
-    assert.equal(later.requests.find((r) => r.number === 3 && r.project === 'seed-swap').status, 'step 3 of 6: building it');
+    assert.equal(later.requests.find((r) => r.number === 3 && r.project === 'seed-swap').status, 'Building');
 
     // A project the bot is not on: it says so, rather than seeming idle.
     const off = await mayor.myWork(pool, { userId: ada.id, settings: { ...settings, pausedApps: ['note-board'] } });
@@ -636,7 +642,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const ack = await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: tap, deps: {} });
     assert.equal(created.length, 1);
     assert.deepEqual({ title: created[0].title, repo: created[0].repo }, { title: 'Add a search box', repo: 'note-board' });
-    assert.match(created[0].body, /^Search notes by their text\.\n\n\*\*Done when\*\*\n- It does what was asked\.\n\n---\nFiled from ada_\d+'s \[chat with Homeroom bot\]\(https:\/\/apps\.example\.invalid\/#homeroom-bot\/main\)\.$/);
+    assert.match(created[0].body, /^Search notes by their text\.\n\n\*\*Done when\*\*\n- It does what was asked\.\n\n---\nFiled from ada_\d+'s \[chat with Homeroom bot\]\(https:\/\/apps\.example\.invalid\/#homeroom-bot\/thread\/\d+\)\.$/);
     const n = 41;
     const { rows: [issue] } = await pool.query('SELECT created_by, title FROM issues WHERE app_id = $1 AND github_issue_number = $2', [notes.id, n]);
     assert.deepEqual(issue, { created_by: ada.id, title: 'Add a search box' });
@@ -722,7 +728,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
 
     const before = created.length;
     const foreign = await mayor.decideOfferTap(pool, CONFIG, { user: sam, actionId: action.id, choice: 'yes', deps: { bot, replies } });
-    assert.deepEqual(foreign, { ok: false, status: 404, error: 'No such choice' }, 'only the person it was offered to');
+    assert.deepEqual(foreign, { ok: false, status: 404, error: 'No such choice', code: 'no_such_offer' }, 'only the person it was offered to');
     assert.equal((await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'maybe', deps: { bot, replies } })).status, 400);
 
     const tapped = await mayor.decideOfferTap(pool, CONFIG, { user: ada, actionId: action.id, choice: 'yes', deps: { bot, replies } });
@@ -842,8 +848,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       deps: { chat: scripted(steps), apiKey: 'sk-test', openMcp, sleep: async () => {} },
     });
     const first = await run();
-    // Its process went after the send, before it noted the message.
-    await pool.query('UPDATE bot_cards SET message_id = NULL WHERE message_id = $1', [first.messageId]);
+    // Step 3: the card was written with the message, in one transaction, so
+    // no process can go between them. The retried answer is the same message
+    // (its key), and writes no second card.
     const second = await run();
     assert.equal(second.messageId, first.messageId, 'the same message');
     const { rows } = await pool.query(
@@ -878,7 +885,10 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     await pool.query('DELETE FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2', [notes.id, tapFiled]);
   }
 
-  await t.test('#3707: each answer quotes the message it answers; a request she started here sends no news here', async () => {
+  // 14 Nov 2026: Main Chat is gone, and every message is in a thread. An
+  // answer goes under the message it answers, in that message's thread (its
+  // own here: these are sent with none named), so it needs no quote.
+  await t.test('#3707: each answer is under the message it answers; a request she started here sends no news here', async () => {
     const run = (message, steps) => mayor.runDmTurn(pool, CONFIG, {
       bot, user: ada, settings, conversationId: opened.conversationId, message,
       deps: { chat: scripted(steps), apiKey: 'sk-test', openMcp },
@@ -893,16 +903,15 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     ];
     const [one, two] = await Promise.all(answers.map(read));
     assert.ok(one.id > second.id && two.id > one.id, 'both answers land after both questions');
-    assert.equal(one.reply.id, first.id);
-    assert.equal(one.reply.content, 'is Pin notes up for a vote yet?');
-    assert.equal(two.reply.id, second.id);
-    // Its set answers quote too.
-    const off = await turn('hello?', async () => { throw new Error('not called'); }, { settings: { ...settings, mode: 'off' } });
-    assert.equal((await read(off)).reply.content, 'hello?');
+    assert.deepEqual([one.threadRootId, one.reply], [first.id, null]);
+    assert.deepEqual([two.threadRootId, two.reply], [second.id, null]);
+    // Its set answers too.
+    const off = await read(await turn('hello?', async () => { throw new Error('not called'); }, { settings: { ...settings, mode: 'off' } }));
+    assert.equal((await read({ messageId: off.threadRootId })).content, 'hello?');
 
-    // The offer quotes what asked for it; File it is answered quoting the tap.
-    // #6019 follow-up: the draft is in a private thread of its own, and
-    // Main's line that opened it quotes what asked for it.
+    // File it is answered under the tap. #6019 follow-up: a draft asked for
+    // by a turn told of no thread is in a private thread opened for it, whose
+    // row is written with its line.
     const ask = await say('could you add tags to note board?');
     const offered = await run(ask, [
       [['offer_request', { project: 'note-board', title: 'Tags', details: 'Tag notes to find them.', doneWhen: ['It does what was asked.'] }]],
@@ -911,7 +920,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const draftCard = await read(offered);
     assert.ok(draftCard.threadRootId, 'the draft is in a thread of its own');
     const openedLine = await read({ messageId: draftCard.threadRootId });
-    assert.equal(openedLine.reply.id, ask.id);
+    assert.equal(openedLine.threadRootId, null, 'the thread\'s own first message');
+    assert.equal(openedLine.reply.id, ask.id, 'quoting what asked for it, which leads the thread\'s history');
     assert.match(openedLine.content, /^I drafted it as a request on Note board, in a thread only you can see\./);
     // B19 (audit 2 Nov 2026): the thread is named by the request it drafts, not by this line.
     assert.equal(openedLine.metadata.homeroomBot.draftTitle, 'Tags');
@@ -923,7 +933,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): what answers the
     // tap is the reply saying it is filed (no activity card any more).
     assert.equal(ack.metadata.homeroomBot.kind, 'filed');
-    assert.equal(ack.reply.id, tap.id, 'quoting the tap');
+    assert.equal(ack.threadRootId, tap.id, 'under the tap');
     const n = ack.metadata.homeroomBot.issueNumber;
     assert.ok(n > 0);
     const { rows: [filedRow] } = await pool.query(
@@ -945,9 +955,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.deepEqual([backfilled.kind, backfilled.issueNumber, backfilled.issueTitle], ['confirm', n, 'Tags']);
 
     // 31 Oct 2026: a message written in the draft's private thread is
-    // answered from that thread, led by what she asked in Main, and told the
-    // draft became request #n. It used to read Main, which leaves thread
-    // replies out: the model never saw what she wrote there.
+    // answered from that thread, led by what she asked (the message its
+    // first line quotes), and told the draft became request #n.
     const inThread = await say('the card still says not filed, is it out of date?', { thread_root_id: draftCard.threadRootId });
     const where = await dm.threadDeps(pool, { userId: ada.id, conversationId: opened.conversationId, message: inThread });
     assert.equal(where.threadRootId, draftCard.threadRootId);
@@ -966,9 +975,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const words = sent.filter((m) => m.role !== 'system').map((m) => (typeof m.content === 'string' ? m.content : m.content?.[0]?.text) || '');
     assert.equal(sent[sent.length - 1].role, 'user', 'the history ends on her message');
     assert.match(words[words.length - 1], /the card still says not filed/);
-    assert.match(words[0], /could you add tags to note board\?/, 'led by what she asked in Main');
+    assert.match(words[0], /could you add tags to note board\?/, 'led by what she asked');
     assert.ok(words.some((w) => /I drafted it as a request on Note board/.test(w)), 'the thread\'s first line');
-    assert.ok(!words.some((w) => /what about dark mode/.test(w)), 'nothing else from Main');
+    assert.ok(!words.some((w) => /what about dark mode/.test(w)), 'nothing from any other thread');
     assert.match(sent[0].content, new RegExp(`They filed it: it is request\\s+#${n}\\.`));
 
     // 31 Oct 2026: an answer that took over earlier ones the bot promised to
@@ -999,11 +1008,19 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.deepEqual([building.messageId, building.quiet, building.userId], [null, true, ada.id]);
     assert.equal(await botLines(), linesBefore, 'nothing said in her chat');
     assert.equal(await dm.untaggedRequester(pool, { appId: notes.id, issueNumber: n, bot, told: building }), ada.username);
-    // A notice about her account is still the conversation, quoting where the request started.
+    // A notice about her account is a bell row (14 Nov 2026), not a message
+    // in her chat: it names the one request it holds.
+    const lines = await botLines();
     const held = await dm.noteOverAllowance(pool, {
       settings: { ...settings, userWeeklyCents: 100 }, requester: { userId: ada.id, username: ada.username, hasPlatformAccess: true }, app: notes, issueNumber: n, bot,
     });
-    assert.equal((await read(held)).reply.id, ask.id);
+    assert.ok(held.notificationId, 'it rang');
+    assert.equal(await botLines(), lines, 'and said nothing in her chat');
+    const { rows: [heldBell] } = await pool.query(
+      'SELECT kind, detail, app_id, conversation_message_id FROM notifications WHERE id = $1', [held.notificationId]);
+    const heldWords = require('../src/services/homeroom-bot-notify-copy').parseBotDetail(heldBell.detail);
+    assert.deepEqual([heldBell.kind, heldBell.app_id, heldBell.conversation_message_id, heldWords.moment, heldWords.said, heldWords.issueNumber],
+      ['build_stopped', notes.id, null, 'on_hold', 'allowance', n]);
     const { rows: [built] } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, promoted_at)
        VALUES ($1, $2, 'tags', 'promoted', 'Tags', NOW()) RETURNING id`,
@@ -1049,7 +1066,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   });
 
   await t.test('#3685: progress reads each stage from the records, with its step, time so far, time limit and links', async () => {
-    const read = () => progressSvc.progressFor(pool, { userId: ada.id, settings, deps: { domain: 'app.test' } });
+    // 11 Nov 2026: progress is the stored work states, in their screens' words.
+    const read = async () => (await settleWorkStates(pool), await mayor.progressOf(pool, { userId: ada.id, settings, deps: { domain: 'app.test' } }));
     // Her answer to its question (passed on above) put #4 first in the
     // queue, and the lane granted it the project's read at once (#3771):
     // Seed swap is building #3, but a build runs on a session of its own and
@@ -1060,24 +1078,21 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const first = await read();
     const by = new Map(first.rightNow.map((e) => [`${e.project}#${e.number}`, e]));
     const building = by.get('seed-swap#3');
-    assert.equal(building.stage, 'building');
-    assert.deepEqual([building.step, building.of, building.stepName], [3, 6, 'Building']);
-    assert.equal(building.stepTimeLimitMinutes, 20, 'a build is stopped at its clock: the most it can take');
-    // #19 (WP3): and how long a build usually takes, never past that clock.
-    assert.deepEqual(building.typicalMinutes, { from: 10, to: 20 });
+    assert.deepEqual([building.stage, building.says, building.whoseMove], ['building', 'Building', 'bot']);
+    // #19 (WP3): and how long a build usually takes.
+    assert.deepEqual(building.typicalMinutes, { from: 10, to: 25 });
     assert.deepEqual(by.get('seed-swap#4').typicalMinutes, { from: 1, to: 3 }, 'a read usually takes a few minutes');
     assert.equal(building.busyNow, true);
     assert.ok(Number.isInteger(building.minutesSoFar));
     assert.deepEqual(building.links, {
       project: 'https://app.test/#app/seed-swap', request: 'https://app.test/#app/seed-swap/dev/issues/3',
     });
-    // #4, granted beside the build, is being read.
-    assert.deepEqual([by.get('seed-swap#4').stage, by.get('seed-swap#4').stepName], ['reading', 'Reading']);
-    assert.equal(by.get('seed-swap#4').doing, 'reading the request to decide whether to ask a question or build it');
-    assert.equal(by.get('seed-swap#4').waitingFor, undefined);
+    // #4, granted beside the build, is being read (her answer, read again).
+    assert.equal(by.get('seed-swap#4').stage, 'reading');
+    assert.match(by.get('seed-swap#4').says, /^Reading it/);
     assert.equal(by.get('seed-swap#4').busyNow, true);
     assert.equal(by.get('note-board#5').waitingOn, 'the group');
-    assert.equal(by.get('note-board#5').proposal.votesNeeded > 0, true, 'and how many votes it needs');
+    assert.equal(by.get('note-board#5').change.openForVotes, true, 'its change is open for votes');
     assert.ok(!first.rightNow.some((e) => e.project === 'sam-shop'), 'never somebody else\'s');
 
     // The proposal's checks, as they run and as they end.
@@ -1087,28 +1102,28 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       [proposal.id],
     );
     const running = (await read()).rightNow.find((e) => e.project === 'note-board' && e.number === 5);
-    assert.equal(running.doing, 'it\'s waiting for approval, and its tests are running: 120 of 338 done, 0 failed so far');
-    assert.equal(running.step, 4);
+    assert.deepEqual([running.stage, running.change.openForVotes, running.change.checks.state], ['checking', false, 'pending']);
+    assert.match(running.says, /^Checking/);
     await pool.query(
       `UPDATE chat_sessions SET check_state = 'failing', check_phase = NULL, checks_progress = NULL,
               test_results = '[{"name": "home", "status": "fail"}, {"name": "list", "status": "pass"}]' WHERE id = $1`,
       [proposal.id],
     );
     const failing = (await read()).rightNow.find((e) => e.project === 'note-board' && e.number === 5);
-    assert.equal(failing.stage, 'checks_failed');
-    assert.equal(failing.doing, 'it\'s waiting for approval, and its tests failed (1 test did not pass)');
+    assert.deepEqual([failing.stage, failing.says, failing.change.checks.failing], ['checking', 'Checking · 1 test failing', 1]);
     // Merged: no longer in progress, and among what finished lately.
     await asKernel((c) => c.query(`UPDATE chat_sessions SET status = 'merged', merged_at = NOW(), live_at = NOW() WHERE id = $1`, [proposal.id]));
     const merged = await read();
     assert.ok(!merged.rightNow.some((e) => e.project === 'note-board' && e.number === 5));
     const done = merged.finishedLately.find((e) => e.project === 'note-board' && e.number === 5);
-    assert.equal(done.outcome, 'approved and live');
+    assert.equal(done.says, 'Live');
     assert.equal(done.links.proposal, `https://app.test/#app/note-board/dev/proposals/${proposal.id}`);
     await asKernel((c) => c.query(
-      `UPDATE chat_sessions SET status = 'promoted', merged_at = NULL, check_state = 'passing', test_results = '[]'
+      `UPDATE chat_sessions SET status = 'promoted', merged_at = NULL, live_at = NULL, check_state = 'passing', test_results = '[]'
         WHERE id = $1`,
       [proposal.id],
     ));
+    await settleWorkStates(pool);
   });
 
   // Ada's new project, Ear trainer: created with a description two minutes
@@ -1139,8 +1154,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       (req) => {
         const ear = lastToolResult(req, 'progress').rightNow.find((e) => e.project === 'ear-trainer');
         assert.deepEqual(
-          { step: ear.step, of: ear.of, stepName: ear.stepName, doing: ear.doing, minutesSoFar: ear.minutesSoFar, busyNow: ear.busyNow },
-          { step: 1, of: 7, stepName: 'Setting up', doing: 'setting up the project: part 2 of 4, making its code repository', minutesSoFar: 2, busyNow: true },
+          { stage: ear.stage, says: ear.says, minutesSoFar: ear.minutesSoFar, busyNow: ear.busyNow },
+          { stage: 'setting_up', says: 'setting up the project: part 2 of 4, making its code repository', minutesSoFar: 2, busyNow: true },
         );
         assert.equal(ear.links.project, 'https://app.test/#app/ear-trainer');
         return [['reply', {
@@ -1219,7 +1234,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const msg = await read(sent);
     assert.notEqual(msg.content, mayor.BROKEN_TEXT);
     assert.match(msg.content, /^I couldn't put a full answer together just now\. Here is where things stand, from my records:\n\n/);
-    assert.match(msg.content, /\n- Ear trainer, its first version: step 1 of 7, setting up the project: part 2 of 4, making its code repository, for 2 minutes so far\./);
+    assert.match(msg.content, /\n- Ear trainer, its first version: setting up the project: part 2 of 4, making its code repository, for 2 minutes so far\./);
     // #4097: it lists as much as it has cards for, and says how many more.
     const listed = msg.content.split('\n').filter((line) => line.startsWith('- ') && !/^- and \d+ more\.$/.test(line));
     assert.equal(listed.length, mayor.MAX_CARDS);
@@ -1270,7 +1285,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const sent = await turn(EVAN, busy, { deps: { sleep: async (ms) => { waits.push(ms); } } });
     const msg = await read(sent);
     assert.equal(msg.content, 'Yes: one number per lesson. Want me to file that as a request?');
-    assert.equal(msg.reply.content, EVAN, 'quoting what it answers');
+    assert.equal((await read({ messageId: msg.threadRootId })).content, EVAN, 'under what it answers');
     assert.deepEqual(waits, mayor.RATE_LIMIT_WAITS_MS, 'a few seconds, then a few more');
     assert.deepEqual(sessions.map((id) => id.replace(/^hrbot-dm-\d+-\d+/, '')), ['', '-r2', '-r3'], 'each on a fresh route');
     assert.deepEqual(await lastTurn(), {
@@ -1498,7 +1513,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     down = false;
     const later = await read(await scheduled[0].work());
     assert.equal(later.content, 'Pin notes is up for a vote.');
-    assert.equal(later.reply.id, firstMsg.reply.id, 'it quotes the message it answers');
+    assert.equal(later.threadRootId, firstMsg.threadRootId, 'it is under the message it answers');
     const { rows: [keyed] } = await pool.query('SELECT idempotency_key FROM conversation_messages WHERE id = $1', [later.id]);
     assert.match(keyed.idempotency_key, /^hrbot-mayor-\d+-d1$/);
 
@@ -1523,13 +1538,13 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const promised = await turn('and the calendar?', flaky);
     const dmSvc = require('../src/services/homeroom-bot-dm');
     const again2 = await dmSvc.answerOwed(pool, CONFIG, {
-      userId: ada.id, conversationId: opened.conversationId, messageId: (await read(promised)).reply.id, attempt: 0, workKey: 'msg:x',
+      userId: ada.id, conversationId: opened.conversationId, messageId: (await read(promised)).threadRootId, attempt: 0, workKey: 'msg:x',
       deps: { bot, chat: flaky, apiKey: 'sk-test', openMcp, sleep: async () => {} },
     });
     assert.deepEqual(again2, { sent: true, skipped: 'answered', later: 1 });
     // A later try that fails for good says it could not, under its own key.
     const gaveUp = await dmSvc.sayCouldNotAnswer(pool, { userId: ada.id, conversationId: opened.conversationId,
-      messageId: (await read(promised)).reply.id, attempt: 1, deps: { bot } });
+      messageId: (await read(promised)).threadRootId, attempt: 1, deps: { bot } });
     assert.equal((await read(gaveUp)).content, mayor.DEFERRED_GAVE_UP_TEXT);
     // (Written to since, the try is not asked at all: the DM machine drops it,
     // workflow-bot-replies-postgres.test.js.)
@@ -1619,11 +1634,12 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   });
 
   await t.test('#3734: once it is queued, its work state and the progress answer both say it is in flight', async () => {
-    const progress = await progressSvc.progressFor(pool, { userId: ada.id, settings, deps: { domain: 'app.test' } });
+    await settleWorkStates(pool);
+    const progress = await mayor.progressOf(pool, { userId: ada.id, settings, deps: { domain: 'app.test' } });
     const said = progress.rightNow.find((e) => e.project === 'note-board' && e.number === 5);
-    assert.equal(said.stage, 'followup_queued');
-    assert.equal(progressSvc.inFlight(said), true);
-    assert.match(said.doing, /^waiting for a free builder to follow up on the newest replies on the change$/);
+    // 11 Nov 2026: an update on its way is not open for votes: the bot's,
+    // waiting its turn.
+    assert.deepEqual([said.stage, said.says, said.whoseMove], ['building', 'Building · An update is on its way', 'bot']);
     // Every screen reads the stored state (services/work-state.js), refreshed
     // here as the platform's triggers and drain refresh it.
     const stored = async () => {
@@ -1631,12 +1647,11 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       return (await workState.forRequests(pool, notes.id, [5])).get(5);
     };
     const shown = await stored();
-    assert.deepEqual([shown.stage, shown.line], ['up_for_vote', { code: 'update_queued' }], 'an update on its way holds the vote');
+    assert.deepEqual([shown.stage, shown.line, shown.voteOpen], ['building', { code: 'update_queued' }, false], 'an update on its way holds the vote');
     assert.equal(shown.sessionId, proposal.id);
     const words = await mayor.myWork(pool, { userId: ada.id, settings });
-    assert.match(words.requests.find((r) => r.project === 'note-board' && r.number === 5).status,
-      /^step 5 of 6: waiting for a free builder to follow up on the newest replies on the change$/,
-      'and the bot\'s list of her work says the same');
+    assert.equal(words.requests.find((r) => r.project === 'note-board' && r.number === 5).status,
+      'Building · An update is on its way', 'and the bot\'s list of her work says the same');
     // Her burst settled: the lane, looking again, grants it (its row
     // started). Running it: both say so.
     await pool.query(`UPDATE chat_messages SET created_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, [settledMessage]);
@@ -1647,8 +1662,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const { rows: [granted] } = await pool.query(
       `SELECT state, data->'look' AS look FROM wf_instances WHERE machine = 'bot-request' AND key = $1`, [`request:${notes.id}:5`]);
     assert.deepEqual([granted.state, granted.look.kind, granted.look.sessionId], ['following_up', 'followUp', proposal.id]);
-    const running = (await progressSvc.progressFor(pool, { userId: ada.id, settings })).rightNow.find((e) => e.project === 'note-board' && e.number === 5);
-    assert.equal(running.stage, 'revising');
+    await settleWorkStates(pool);
+    const running = (await mayor.progressOf(pool, { userId: ada.id, settings })).rightNow.find((e) => e.project === 'note-board' && e.number === 5);
+    assert.deepEqual([running.stage, running.says], ['building', 'Building · Updating the change']);
     const runningState = await stored();
     assert.deepEqual([runningState.stage, runningState.line], ['building', { code: 'revising' }], 'and now it is being updated');
     // A second ask while that runs is still drafted, and sent on Post it.
@@ -1858,13 +1874,17 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(seen.length, 2);
     assert.equal(created.length, before, 'and nothing was filed');
     const { rows: [row] } = await pool.query('SELECT failures FROM homeroom_bot_dm_turns ORDER BY id DESC LIMIT 1');
-    assert.deepEqual(row.failures, ['claims:filed+started+unknown']);
-    // Said again: cut, and said plainly.
+    // Step 2 (one reply checker): "I'll look at it now" names no request and
+    // none of its own is in the records yet, so it cannot be shown false and
+    // stays; the filing and the unknown number are what is caught.
+    assert.deepEqual(row.failures, ['claims:filed+unknown']);
+    // Said again, and by the plain answer after it: cut, with no "(I can't
+    // find…)" line in its place. Nothing true is left, so the chat's last
+    // resort answers; a cut is never said as a model that failed.
     const stubborn = await turn('file it', scripted([
       [['reply', { text: 'Filed: **Note board** request #99: Note colours.' }]],
     ]));
-    assert.equal((await read(stubborn)).content,
-      '(I can\'t find request #99 on your projects.)');
+    assert.equal((await read(stubborn)).content, mayor.BROKEN_TEXT);
     // A true answer passes untouched, in one pass.
     const fine = [];
     await turn('what is #5?', scripted([[['reply', { text: 'Request #5 is Pin notes, up for a vote.' }]]], fine));
@@ -1910,8 +1930,6 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       /^They are not a member of Sam shop/);
     assert.match((await mayor.commentOnRequest(pool, ctx(), { project: 'note-board', number: 999, comment: 'a b' })).error,
       /^Note board has no request #999\./);
-    assert.match((await mayor.commentOnRequest(pool, ctx({ commented: 'x' }), { project: 'note-board', number: 6, comment: 'a b' })).error,
-      /^One comment per turn\.$/);
     assert.equal(threadPosts.length, 1);
   });
 
@@ -2376,10 +2394,12 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     ], seen));
     assert.equal(seen.length, 2);
     assert.equal((await read(fixed)).content, 'I can\'t look into that myself from here. You can vote No on the extra one, or I can tell the team.');
+    // Still promised after the second pass: the promise is cut, and nothing
+    // is said in its place (step 2: no fixed line).
     const stubborn = await turn('why are there two proposals?', scripted([
       [['reply', { text: 'Good question. I\'ll look into it.' }]],
     ]));
-    assert.equal((await read(stubborn)).content, 'I can\'t look into that myself from here.');
+    assert.equal((await read(stubborn)).content, 'Good question.');
   });
 
   await t.test('#4097: Filed on a project the bot does not build on leads with the request\'s line, its card said once', async () => {
@@ -2753,6 +2773,44 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.deepEqual((await mayor.claimProblems(pool, otherCtx, 'Your report is #987654.')).map((p) => p.kind), ['unknown'],
       'a number nobody filed is still cut');
     await pool.query('DELETE FROM feedback_reports WHERE user_id = $1', [ada.id]);
+  });
+
+  await t.test('Step 2: the reply check reads server notes, cards and work states, never the bot\'s own chat words', async () => {
+    const claims = require('../src/services/reply-claims');
+    const ctx = () => ({ user: ada, bot, appIds: new Set([notes.id]), conversationId: opened.conversationId, deps: {} });
+    const kinds = async (text) => (await claims.checkReply(pool, ctx(), text)).map((p) => p.kind);
+    // A model reply saying it filed something is no record of a filing.
+    await conversations.sendMessage(pool, bot, opened.conversationId, { content: 'Filed it as request #8801.' },
+      { metadata: { homeroomBot: { kind: 'chat' } }, notify: false });
+    assert.ok((await kinds('Filed it as request #8801.')).includes('filed'), 'its own words back nothing');
+    // The ack of a tap that filed it is.
+    await conversations.sendMessage(pool, bot, opened.conversationId, { content: '**Note board** · request #8801: Pins\n\nFiled.' },
+      { metadata: { homeroomBot: { kind: 'filed', appSlug: 'note-board', issueNumber: 8801 } }, notify: false });
+    assert.ok(!(await kinds('Filed it as request #8801.')).includes('filed'), 'the server note backs it');
+
+    // A request moved to Homeroom's board: by its original number, or its new one.
+    await pool.query(
+      `INSERT INTO bot_cards (user_id, conversation_id, app_id, kind, title, status, source_issue_number, issue_number)
+       VALUES ($1, $2, $3, 'move_request', 'x', 'done', 8802, 9902)`,
+      [ada.id, opened.conversationId, notes.id],
+    );
+    assert.ok(!(await kinds('Request #8802 was moved.')).includes('moved_status'));
+    assert.ok(!(await kinds('#9902 was moved.')).includes('moved_status'));
+    assert.ok((await kinds('Request #8803 was moved.')).includes('moved_status'), 'no card moved it');
+
+    // Work under way, from the stored work state.
+    for (const [n, stage] of [[8804, 'building'], [8805, 'stopped']]) {
+      await pool.query(
+        `INSERT INTO work_states (app_id, item_kind, item_ref, issue_number, stage, reason)
+         VALUES ($1, 'request', $2, $2, $3, $4) ON CONFLICT DO NOTHING`,
+        [notes.id, n, stage, stage === 'stopped' ? 'build_failed' : null],
+      );
+    }
+    assert.ok(!(await kinds('I\'m building #8804 now.')).includes('started'));
+    assert.ok((await kinds('I\'m building #8805 now.')).includes('started'), 'a stopped build is not being built');
+    assert.ok(!(await kinds('I\'m building #8806 now.')).includes('started'), 'no stored state: it cannot be shown false');
+    await pool.query('DELETE FROM work_states WHERE app_id = $1 AND item_ref = ANY($2::int[])', [notes.id, [8804, 8805]]);
+    await pool.query('DELETE FROM bot_cards WHERE source_issue_number = 8802');
   });
 
 });

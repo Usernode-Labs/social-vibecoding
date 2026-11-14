@@ -20,6 +20,7 @@ const {
   conversationInviteLimiter,
   conversationReactionLimiter,
   conversationReportLimiter,
+  draftWriteLimiter,
   linkCardLimiter,
   userDirectoryLimiter,
 } = require('../middleware/rate-limits');
@@ -234,7 +235,19 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       // The staging demo's offers are fixtures: there is nothing to decide.
       if (isDemo(req)) return res.json({ ok: true, choice, demo: true });
       const out = await require('../services/homeroom-bot-mayor').decideOfferTap(pool, config, { user: req.user, actionId, choice, answers });
-      if (!out.ok) return res.status(out.status || 400).json({ error: out.error });
+      // Every tap as answered (events BOT_OFFER_TAP): rollout health counts the 404s and 410s.
+      void require('../services/events').recordBotOfferTap(pool, {
+        surface: 'chat', status: out.ok ? 200 : out.status || 400, userId: req.user?.id ?? null,
+      });
+      // Step 3: a refusal names its code (the line under the buttons, in the
+      // reader's language: messages.json bot.offer.refused.*), and a retired
+      // card why.
+      if (!out.ok) {
+        return res.status(out.status || 400).json({
+          error: out.error, code: out.code || null, ...(out.reason ? { reason: out.reason } : {}),
+          ...(out.signals ? { signals: out.signals } : {}),
+        });
+      }
       return res.json(out);
     } catch (err) {
       log.error('conversations', 'homeroom bot action failed', { err: err.message, userId: req.user?.id });
@@ -256,8 +269,16 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
       // The staging demo's cards are fixtures: there is nothing to decide.
       if (isDemo(req)) return res.json({ ok: true, demo: true });
+      // #6632: a card's tap is the bot acting for them. With the bot for
+      // verified accounts only, an unverified tap is asked to verify first.
+      const locked = await require('../services/homeroom-bot-verified').refusalFor(pool, req.user);
+      if (locked) return res.status(locked.status).json({ error: locked.error, code: locked.code, signals: locked.signals });
       const out = await require('../services/homeroom-bot-cards').decide(pool, config, {
         user: req.user, messageId: req.params.messageId, action: req.body?.action, value: req.body?.value,
+      });
+      // Every tap as answered (events BOT_OFFER_TAP): rollout health counts the 404s and 410s.
+      void require('../services/events').recordBotOfferTap(pool, {
+        surface: 'card', status: out.ok ? 200 : out.status || 400, userId: req.user.id,
       });
       if (!out.ok) return res.status(out.status || 400).json({ error: out.error || 'That did not work' });
       return res.json(out);
@@ -832,6 +853,24 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
         metadata = { designPin: pin };
       }
       delete input.design_pin;
+      // 14 Nov 2026: Main Chat is gone, so a message to Homeroom bot is
+      // always in a thread. One posted with none named (an older client, the
+      // connector) gets one before it is sent: the thread of what it quotes,
+      // else a new one, exactly as New thread opens it (private-threads.js
+      // threadForPost). Any other conversation is left as it is.
+      // Only for a message with something in it: one the send would refuse
+      // opens no thread.
+      const hasBody = (typeof input.content === 'string' && input.content.trim().length > 0)
+        || (Array.isArray(input.attachment_ids ?? input.attachmentIds) && (input.attachment_ids ?? input.attachmentIds).length > 0)
+        || (Array.isArray(input.objects) && input.objects.length > 0) || !!input.object;
+      if (hasBody && input.thread_root_id == null && input.threadRootId == null) {
+        const rootId = await privateThreads().threadForPost(pool, {
+          user: req.user, conversationId: id, replyToId: input.reply_to_id, idempotencyKey: input.idempotency_key,
+        });
+        // Its quote stays: what it answers (a tap on Try again, an answer to
+        // a question) is read from it (homeroom-bot-dm.js answerUserMessage).
+        if (rootId) input.thread_root_id = rootId;
+      }
       const result = await conversations.sendMessage(pool, req.user, id, input, {
         metadata,
         afterInsert: (db, sent) => require('../services/homeroom-bot-dm').heardInDm(db, {
@@ -1071,6 +1110,137 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       return res.status(204).end();
     } catch (err) {
       log.error('conversations', 'typing failed', { id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Task 2148: Stop, while Homeroom bot is working on the person's message
+  // in their chat with it. `messageId` is the message the bot's typing named
+  // on their screen (its typing event's `answering`), so a Stop only ever
+  // ends the answer they were looking at. Their own chat with the bot only:
+  // any other conversation, somebody else's included, is not found. The
+  // bot's turn ends at its next safe point and says "Stopped." there
+  // (services/homeroom-bot-stop.js); nothing it had already done is undone,
+  // and a build it started carries on (that has its own Stop).
+  //
+  //   POST /api/conversations/:id/bot-stop  { messageId }
+  //   → 200 { ok: true, stopping }   (stopping: false when no answer to that
+  //                                   message is under way: it ended first)
+  //
+  // A browser's own press only: same-origin, and on no connector's list
+  // (services/cli-api-policy.js is fail-closed).
+  router.post('/api/conversations/:id/bot-stop', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    const id = conversations.strictId(req.params.id);
+    const messageId = conversations.strictId(req.body?.messageId ?? req.body?.message_id);
+    if (!id || !messageId) return sendNotFound(res);
+    try {
+      if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      // The staging demo's chat is a fixture: nothing is being answered there.
+      if (isDemo(req)) return res.json({ ok: true, stopping: false, demo: true });
+      const botDm = require('../services/homeroom-bot-dm');
+      const bot = await botDm.botAccount(pool);
+      if (!bot || !(await botDm.isBotDirect(pool, id, bot.id, req.user.id))) return sendNotFound(res);
+      const out = await require('../workflow/platform.ts').stopDmAnswer({ userId: Number(req.user.id), conversationId: id, messageId });
+      return res.json({ ok: true, stopping: !!out.stopping });
+    } catch (err) {
+      log.error('conversations', 'stopping the Homeroom bot failed', { id, err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Saved drafts in the person's chat with Homeroom bot: the agent chats'
+  // list (routes/agent-session-drafts.js), which this reuses the limits of.
+  // While the bot works on their message the message box saves what they
+  // type instead of sending it, and a draft is sent later by a tap, never on
+  // its own (frontend/src/features/messages/bot-stop.ts). One list for the
+  // chat itself and one for each of its threads (`threadRootId`).
+  //
+  //   GET    /api/conversations/:id/bot-drafts[?threadRootId=]  → { drafts, max }
+  //   POST   /api/conversations/:id/bot-drafts   { id?, text, savedAt?, threadRootId? }
+  //   DELETE /api/conversations/:id/bot-drafts/:draftId[?threadRootId=]
+  //
+  // - THEIR OWN CHAT WITH THE BOT ONLY, as Stop is: any other conversation,
+  //   somebody else's chat with the bot included, is not found. The bot's
+  //   account is resolved here, never taken from the request.
+  // - Text only, at most a message's 8000 characters: a draft is sent as one.
+  // - Every write answers with the list as it now stands, oldest first. A
+  //   save is idempotent on its id; a full list (20) answers 409 `draft_cap`
+  //   and evicts nothing; deleting twice is fine.
+  // - Their other tabs and devices hear `conversation_drafts_changed` on
+  //   their own sockets and re-read.
+  // - A browser's own request only: same-origin, and on no connector's list
+  //   (services/cli-api-policy.js is fail-closed).
+  const drafts = () => require('../services/conversation-drafts');
+  const draftLimits = () => require('./chat-drafts');
+  // The caller's own chat with Homeroom bot, and the place in it the request
+  // names: { id, threadRootId } (null for the chat itself), or null for
+  // anything else, which every route answers as not found.
+  async function botDraftPlace(req, rawRoot) {
+    const id = conversations.strictId(req.params.id);
+    const threadRootId = rawRoot == null || rawRoot === '' ? null : conversations.strictId(rawRoot);
+    if (!id || !req.user?.id || ((rawRoot != null && rawRoot !== '') && !threadRootId)) return null;
+    const botDm = require('../services/homeroom-bot-dm');
+    const bot = await botDm.botAccount(pool);
+    if (!bot || !(await botDm.isBotDirect(pool, id, bot.id, req.user.id))) return null;
+    return { id, threadRootId };
+  }
+
+  router.get('/api/conversations/:id/bot-drafts', sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const place = await botDraftPlace(req, req.query.threadRootId);
+      if (!place) return sendNotFound(res);
+      const list = await drafts().listDrafts(pool, { userId: req.user.id, conversationId: place.id, threadRootId: place.threadRootId });
+      return res.json({ drafts: list, max: draftLimits().MAX_DRAFTS });
+    } catch (err) {
+      log.error('conversations', 'listing saved drafts failed', { id: req.params.id, err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/conversations/:id/bot-drafts', draftWriteLimiter, sameOriginBrowserOnly, async (req, res) => {
+    const { MAX_DRAFTS, DRAFT_ID_RE, CAP_MESSAGE, clampSavedAt } = draftLimits();
+    const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+    if (!text) return res.status(400).json({ error: 'Draft text required' });
+    if (text.length > drafts().MAX_DRAFT_CHARS) {
+      return res.status(400).json({ error: `A draft can be at most ${drafts().MAX_DRAFT_CHARS} characters` });
+    }
+    let draftId = `d${Date.now().toString(36)}${crypto.randomBytes(4).toString('hex')}`;
+    if (req.body?.id != null) {
+      draftId = String(req.body.id);
+      if (!DRAFT_ID_RE.test(draftId)) return res.status(400).json({ error: 'Bad draft id' });
+    }
+    try {
+      const place = await botDraftPlace(req, req.body?.threadRootId ?? req.body?.thread_root_id);
+      if (!place) return sendNotFound(res);
+      // A thread's list hangs off a message of this chat's main stream.
+      if (place.threadRootId && !(await drafts().isThreadRoot(pool, place.id, place.threadRootId))) return sendNotFound(res);
+      const where = { userId: req.user.id, conversationId: place.id, threadRootId: place.threadRootId };
+      const out = await drafts().saveDraft(pool, { ...where, draftId, text, savedAt: clampSavedAt(req.body?.savedAt), max: MAX_DRAFTS });
+      if (out.full) return res.status(409).json({ error: CAP_MESSAGE, code: 'draft_cap' });
+      const list = await drafts().listDrafts(pool, where);
+      drafts().pushDraftsChanged(req.user.id, place.id, place.threadRootId);
+      return res.json({ ok: true, id: draftId, drafts: list, max: MAX_DRAFTS });
+    } catch (err) {
+      log.error('conversations', 'saving a draft failed', { id: req.params.id, err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.delete('/api/conversations/:id/bot-drafts/:draftId', draftWriteLimiter, sameOriginBrowserOnly, async (req, res) => {
+    const { MAX_DRAFTS, DRAFT_ID_RE } = draftLimits();
+    const draftId = String(req.params.draftId || '');
+    if (!DRAFT_ID_RE.test(draftId)) return res.status(400).json({ error: 'Bad draft id' });
+    try {
+      const place = await botDraftPlace(req, req.query.threadRootId);
+      if (!place) return sendNotFound(res);
+      const where = { userId: req.user.id, conversationId: place.id, threadRootId: place.threadRootId };
+      const gone = await drafts().deleteDraft(pool, { ...where, draftId });
+      const list = await drafts().listDrafts(pool, where);
+      // Deleting what was already gone changed nothing: nobody is told.
+      if (gone) drafts().pushDraftsChanged(req.user.id, place.id, place.threadRootId);
+      return res.json({ ok: true, drafts: list, max: MAX_DRAFTS });
+    } catch (err) {
+      log.error('conversations', 'deleting a draft failed', { id: req.params.id, err: err.message, userId: req.user?.id });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

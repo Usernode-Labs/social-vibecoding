@@ -23,7 +23,7 @@ const tools = require('../src/services/mcp-tools');
 const journey = require('../src/services/journey');
 const { READ_SCOPE, WRITE_SCOPE } = require('../src/services/mcp-connect-constants');
 
-const TOOLS = ['get_journey_cohorts', 'get_journey_first_mile', 'get_journey_person', 'get_journey_readings'];
+const TOOLS = ['get_journey_cohorts', 'get_journey_first_mile', 'get_journey_flows', 'get_journey_person', 'get_journey_readings'];
 const ADMIN = { id: 1, username: 'evan', isAdmin: true, canAdminWrite: true };
 // The answer budget the tools hold themselves to (JOURNEY_MAX_CHARS).
 const MAX_CHARS = 48_000;

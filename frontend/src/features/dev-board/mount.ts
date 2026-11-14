@@ -65,7 +65,9 @@ import {
 import { DevKanban } from './card/dev-kanban';
 import type { DevKanbanView, DevWorkshopView } from './card/model';
 import { DevWorkshop, withoutSavedVotes } from './workshop/workshop';
+import { openPrivateRequest } from './workshop/private-request-door';
 import { TopicHead } from './topic/topic-head';
+import { prefetchThread } from './topic/thread-items';
 import { topicHeadStore, type TopicHeadState } from './topic/topic-store';
 import { publishRequestThread } from './topic/request-model';
 import { askVotesInView } from './topic/votes-in-view';
@@ -121,6 +123,11 @@ export interface DevBoardBridge {
   publishKanban(view: DevKanbanView): void;
   mountTopicHead(host: Element | null): void;
   publishTopicHead(state: TopicHeadState): void;
+  /**
+   * #6604: start a thread's own read when its page opens, in the same tick
+   * as app-view.js's item read, rather than after the root post has painted.
+   */
+  prefetchThread(slug: string | null, number: number | null): Promise<unknown> | null;
   /** #4453: a request's stream, as `GroupChat.renderThread` publishes it — for its spec cards. */
   publishRequestThread(number: number, rows: TranscriptMessage[]): void;
   mountAutoSessionModal(host: Element | null, view: AutoSessionModalView): void;
@@ -138,6 +145,8 @@ export interface DevBoardBridge {
   showVotes(sessionId: number): void;
   /** #6439: the next request's page opens at its vote to close it (topic/votes-in-view.ts). */
   showClose(closeId: number): void;
+  /** The Workshop's Private requests open private request `id` of `slug` (workshop/private-request-door.ts). */
+  showPrivateRequest(slug: string, id: number): void;
   publishViewMode(mode: string): void;
   publishWorkshopGroup(mode: string): void;
   /** #3700: the invite link a project's page was opened from (App._followInvite). */
@@ -205,6 +214,7 @@ llmConsentModalStore.setFlush(flushSync);
 permissionConsentModalStore.setFlush(flushSync);
 
 export const devBoardBridge: DevBoardBridge = {
+  prefetchThread,
   mountBoard(host, options) {
     // Seed before the first render so a cold `?view=kanban` deep link paints
     // kanban immediately rather than list-then-kanban.
@@ -414,6 +424,9 @@ export const devBoardBridge: DevBoardBridge = {
   showVotes: (sessionId: number) => askVotesInView(sessionId),
   // #6439: a door to a vote to close a request: the request's page opens at it.
   showClose: (closeId: number) => askVotesInView(`close:${Number(closeId)}`),
+  // A door to one private request (the bell's private platform request
+  // row): the Workshop's Private requests open it.
+  showPrivateRequest: (slug: string, id: number) => openPrivateRequest(slug, Number(id)),
 
   publishViewMode,
   publishWorkshopGroup,

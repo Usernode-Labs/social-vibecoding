@@ -15,10 +15,13 @@ import { openThreadAt } from './store';
 import type { ConversationMessage, HomeroomBotMeta, HomeroomBotWork } from './types';
 
 /*
- * One request, one story: the bot's news in the main chat, ONE short line
- * each. In the chat with Homeroom bot every message about a request (its
- * card, the moments that ring and are also shown in the main chat, and the
- * big cards from before threads) is drawn as
+ * One request, one story: the bot's news in a transcript, ONE short line
+ * each. (14 Nov 2026: this was Main Chat's drawing. Every conversation with
+ * the bot is a thread now, and the chat's own stream, where these lines
+ * stood, is drawn nowhere: the Messages store hands the bot's chat to its
+ * tab before reading its messages.) In the chat with Homeroom bot every
+ * message about a request in that stream (its card and the big cards from
+ * before threads) is drawn as
  *
  *     [tile] #18 Dark mode                                  >
  *            Needs your answer · 3 updates
@@ -207,7 +210,7 @@ export function newsTitle(meta: HomeroomBotMeta): string {
 /**
  * Pure: whether a piece of news still asks something the chat answers: a
  * question with its answers, two at once, a plan to build, buttons to
- * press. Such a message is drawn whole in the main chat rather than folded
+ * press. Such a message is drawn whole in the stream rather than folded
  * into its request's line, for as long as it is open. What it asks once its
  * request has no track any more is the caller's to read (newsStatusOf):
  * that has moved on, and is a line again.
@@ -260,7 +263,7 @@ export function BotNewsLine({ message, focused = false, earlier = [], updates: u
   const page = requestPageOf(message);
   const rootId = newsThread(message) ?? (earlier[0]?.id || message.id);
   function tap() {
-    if (page) openRequestPage(page, message.conversationId);
+    if (page) openRequestPage(page);
     else openThreadAt(rootId, rootId === message.id ? null : message.id);
   }
 

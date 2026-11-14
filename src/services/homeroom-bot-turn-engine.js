@@ -18,7 +18,8 @@
 //   2. decide whether it is the last (isLast, by default rounds >= limit);
 //   3. ask the profile what this round offers (offer: tools, tool choice, a
 //      note said before it, the request's own options), and ask the model;
-//   4. an answer with no calls goes to onWords, which keeps going or stops;
+//   4. an answer with no calls goes to onWords, which keeps going or stops
+//      (it may be async: the design bot checks words against the records);
 //   5. calls are kept as the assistant's message, each run through `call`,
 //      and each result kept as a tool message, cut as the profile cuts it;
 //   6. afterCalls may stop the turn.
@@ -27,8 +28,15 @@
 // more round for a refused stand-in, two for a claims correction) and reads
 // its rounds when it records the turn. Behaviour is each loop's own, as it
 // was: this module decides nothing a profile did not decide before.
+//
+// A turn a person can stop (their chat with the bot: homeroom-bot-stop.js)
+// hands its `signal` on the profile. The round looks at it at its two safe
+// points, before the model is asked and before each tool call, and throws
+// the stop there: a call that has started always finishes. A profile with
+// no signal (a project's thread) is never stopped here.
 
 const log = require('./logger');
+const botStop = require('./homeroom-bot-stop');
 
 /** Pure: a tool result as the model reads it, cut at `max` characters. */
 function resultText(result, max, cut) {
@@ -50,6 +58,8 @@ async function runRound(state, profile, override = null) {
   round.last = typeof profile.isLast === 'function' ? !!profile.isLast(round) : state.rounds >= state.limit;
   const offered = override || profile.offer(round);
   if (offered.note) profile.messages.push({ role: 'user', content: offered.note });
+  // A safe point: nothing of this round has been asked or done yet.
+  botStop.check(profile.signal);
   const res = await profile.ask({
     messages: profile.messages,
     tools: offered.tools,
@@ -60,11 +70,13 @@ async function runRound(state, profile, override = null) {
   const calls = profile.normalize(res?.toolCalls, state.rounds, profile.ids);
   if (!calls.length) {
     const onWords = offered.onWords || profile.onWords;
-    return onWords(res, round) === 'stop';
+    return (await onWords(res, round)) === 'stop';
   }
   if (typeof profile.onCalls === 'function' && profile.onCalls(res, calls, round) === 'stop') return true;
   profile.messages.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
   for (const call of calls) {
+    // A safe point: the calls before this one are done, this one not begun.
+    botStop.check(profile.signal);
     const name = call.function.name;
     const args = profile.parseArgs(call.function.arguments);
     const result = await profile.call(call, name, args, round);
@@ -73,7 +85,7 @@ async function runRound(state, profile, override = null) {
     });
   }
   const afterCalls = override && 'afterCalls' in override ? override.afterCalls : profile.afterCalls;
-  return typeof afterCalls === 'function' ? afterCalls(round) === 'stop' : false;
+  return typeof afterCalls === 'function' ? (await afterCalls(round)) === 'stop' : false;
 }
 
 /** The turn's rounds, until the profile has its answer, a hook stops it, or the limit is reached. */

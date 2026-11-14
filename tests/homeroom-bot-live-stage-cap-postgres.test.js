@@ -103,11 +103,8 @@ test('#6280: a request being built is read past the 25-request cap, with the sta
   });
 
   await t.test('the request page\'s track reads the same records and says the same stage', async () => {
-    const { rows: [row] } = await pool.query(track.REQUEST_ROWS_SQL, [app.id, [6251]]);
-    assert.ok(row, 'the track has a row for the request');
-    const state = progress.stageOf(row, { now: new Date() });
-    assert.equal(state.stage, 'building');
-    // Its track is its stored work state, derived from the same records.
+    // Its track is its stored work state, derived from the same records
+    // (work-state.js REQUEST_FACTS_SQL, the shared per-request record).
     const tracks = await track.tracksForRequests(pool, { appId: app.id, numbers: [6251] });
     assert.equal(tracks.get(6251).work.stage, 'building');
   });

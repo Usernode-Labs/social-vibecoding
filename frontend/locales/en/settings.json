@@ -9,7 +9,11 @@
   },
   "language.auto": {
     "text": "Auto: use device language",
-    "description": "First option in the Language list in Settings: follow the language of the phone or browser instead of a fixed choice."
+    "description": "First option in the Language list in Settings: follow the language of the phone or browser instead of a fixed choice. Shown only for a moment, until the page knows which language that is."
+  },
+  "language.autoCurrently": {
+    "text": "Auto (currently: {{language}})",
+    "description": "First option in the Language list in Settings: follow the language of the phone or browser instead of a fixed choice. {{language}} is the language that gives on this device, in its own name (for example \"English\" or \"Español\"), or English when Homeroom is not available in the device's language."
   },
   "language.saved": {
     "text": "✓ Saved",
@@ -22,6 +26,26 @@
   "language.loadFailed": {
     "text": "Could not load that language. Try again.",
     "description": "Status line under the Language list in Settings when the chosen language's text could not be downloaded."
+  },
+  "timezone.title": {
+    "text": "Time zone",
+    "description": "Heading of the Time zone section in Settings, under the Language section, where the person picks the time zone Homeroom shows times in."
+  },
+  "timezone.intro": {
+    "text": "The time zone Homeroom uses for the times it shows you, on every device you sign in on. Auto follows this device's clock.",
+    "description": "Explanation under the Time zone heading in Settings: the choice is saved to the account, and Auto uses the phone's or computer's own time zone."
+  },
+  "timezone.auto": {
+    "text": "Auto: use device time zone ({{zone}})",
+    "description": "First option in the Time zone list in Settings: follow the phone's or computer's own time zone. {{zone}} is that zone's name, for example \"Europe / Paris\"."
+  },
+  "timezone.saved": {
+    "text": "✓ Saved: {{zone}}",
+    "description": "Status line under the Time zone list in Settings after the choice was saved. {{zone}} is the chosen zone's name, for example \"America / New York\", or the device's zone when Auto was chosen. Keep the check mark."
+  },
+  "timezone.saveFailed": {
+    "text": "Could not save the time zone. Try again.",
+    "description": "Status line under the Time zone list in Settings when the choice could not be saved (no connection, or the server refused it)."
   },
   "connectors.title": {
     "text": "Connectors",
@@ -290,6 +314,10 @@
   "connectors.list.disconnect": {
     "text": "Disconnect",
     "description": "Button on a connection's row, on its AI tool's card in Settings > Connectors: removes that connection's access to Homeroom."
+  },
+  "connectors.list.reconnect": {
+    "text": "Reconnect",
+    "description": "Button under a connection whose sign-in ran out, on its AI tool's card in Settings > Connectors: opens that tool's setup steps at the one step that signs in again, so the person can connect it again without repeating the whole setup. Shown for Claude and Codex."
   },
   "connectors.claudeSteps.open.title": {
     "text": "Open connector settings.",
@@ -671,6 +699,10 @@
     "text": "Re-enable",
     "description": "Button on a revoked app's row in Settings > App AI permissions: gives the app back its permission to use AI."
   },
+  "grants.reenableLabel": {
+    "text": "Re-enable AI access for {{app}}",
+    "description": "Screen-reader name of the Re-enable button on a revoked app in Settings > App AI permissions. {{app}} is the app."
+  },
   "grants.spentToday": {
     "text": "${{spent}} / ${{cap}} today",
     "description": "Figure on an app's row in Settings > App AI permissions: what the app has spent today out of its daily cap. {{spent}} and {{cap}} are amounts in US dollars such as 0.12; the dollar signs are part of the text."
@@ -679,6 +711,10 @@
     "text": "Cap $",
     "description": "Label directly before a number field on an app's row in Settings > App AI permissions: the most the app may spend per day, in US dollars. The dollar sign reads as the unit of the field that follows."
   },
+  "grants.capFieldLabel": {
+    "text": "Cap for {{app}}, in dollars a day",
+    "description": "Screen-reader name of the daily spending cap field on an app in Settings > App AI permissions. {{app}} is the app."
+  },
   "grants.useOwnKey": {
     "text": "Use my own key past the weekly budget",
     "description": "Checkbox label on an app's row in Settings > App AI permissions: lets the app keep using AI on the person's own Anthropic API key once the daily budget is used up."
@@ -686,6 +722,10 @@
   "grants.revoke": {
     "text": "Revoke",
     "description": "Button on an app's row in Settings > App AI permissions: withdraws that app's permission to use AI on the person's budget."
+  },
+  "grants.revokeLabel": {
+    "text": "Revoke AI access for {{app}}",
+    "description": "Screen-reader name of the Revoke button on an app in Settings > App AI permissions. {{app}} is the app."
   },
   "usage.title": {
     "text": "Usage",
@@ -1335,13 +1375,9 @@
     "text": "Adds <0>Your computer · Homeroom session</0> to the list of places a session can be built. You keep the platform chat exactly as it is, with the same transcript, branch and proposal, but its turns run through the Homeroom CLI on your own machine, on your own Claude plan. It needs the CLI installed and attached, so it stays off until you ask for it.",
     "description": "Explanation under the Session bridge switch in Settings > Experimental. The tagged part is the name of an option in another list, shown in a monospace font; translate it as that option is translated. CLI is the command-line tool; Claude is a product name; a \"turn\" is one request and answer of the coding agent."
   },
-  "experimental.newLook.label": {
-    "text": "New look",
-    "description": "Label of a switch in Settings, Experimental. When on, Homeroom is drawn in its new visual style: white cards on a light grey background, a new typeface, yellow for what needs the person and black for where they are."
-  },
-  "experimental.newLook.description": {
-    "text": "Try Homeroom's new look: white cards on a light grey background, the Geist typeface with a serif for titles, and colours that each have a job: yellow for what needs you, black for where you are. Light mode only. On for this browser.",
-    "description": "Explanation under the New look switch in Settings, Experimental. Geist is the name of a typeface; keep it as is. Homeroom is the product name. Yellow and black name the colours of the highlights on screen."
+  "experimental.look.fold": {
+    "text": "Look and theme",
+    "description": "Accessible name and tooltip of a round button in the top bar on a phone, which only admins see. It opens a small menu with two rows: Look (the visual style) and Theme (light or dark)."
   },
   "experimental.look.label": {
     "text": "Look",
@@ -1351,17 +1387,13 @@
     "text": "Standard",
     "description": "First option of the Look menu in Settings, Experimental: Homeroom's usual visual style, with no experimental look applied."
   },
+  "experimental.look.brand": {
+    "text": "Paper, simplified, with brand styling",
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style. It draws Homeroom's usual pages the clean way the Paper look does (cards with no outlines, white on a cream page in light and one step off a deep green page in dark), in the website's own colours and typefaces. \"Paper\" is the name of another look in the same menu; translate it the same way there and here."
+  },
   "experimental.look.glass": {
     "text": "Glass",
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (frosted glass panels floating on the wallpaper). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.look.brandkit": {
-    "text": "Brand kit",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (the brand's cream page, a serif for titles and one yellow button). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.look.workbench": {
-    "text": "Workbench",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (dense one-line rows for people who work in it all day). A proper name; translate it as a short name, not a sentence."
   },
   "experimental.look.paper": {
     "text": "Paper",
@@ -1379,16 +1411,8 @@
     "text": "Sunrise",
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (white cards and a peach-to-lavender main button). A proper name; translate it as a short name, not a sentence."
   },
-  "experimental.look.today": {
-    "text": "Today",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (large headings and big cards, like an app store's front page). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.look.playground": {
-    "text": "Playground",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (chunky rounded blocks and heavy friendly type). A proper name; translate it as a short name, not a sentence."
-  },
   "experimental.look.description": {
-    "text": "Try one of nine looks for Homeroom, in light and dark. Each has its own typeface, colours and shapes. Not every screen is drawn in them yet; admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",
+    "text": "Try another look for Homeroom, in light and dark. One keeps every page as it is and draws it in the website's colours. The other five each have their own typeface, colours and shapes, and not every screen is drawn in them yet. Admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",
     "description": "Explanation under the Look menu in Settings, Experimental, which only admins see while the looks are being drawn. Homeroom is the product name; Home is its first screen."
   },
   "experimental.localAgents.title": {
@@ -1462,6 +1486,14 @@
   "accessibility.contrast.description": {
     "text": "Darker text and clearer lines, in light and dark.",
     "description": "Explanation under the High contrast switch in Settings > Accessibility."
+  },
+  "accessibility.motion.label": {
+    "text": "Reduce motion",
+    "description": "Label of a switch in Settings > Accessibility: turns off most animations, slides and moving effects across Homeroom."
+  },
+  "accessibility.motion.description": {
+    "text": "Turns off most animations, slides and moving effects, so screens change in place. When this is off, Homeroom follows your device's own reduce motion setting.",
+    "description": "Explanation under the Reduce motion switch in Settings > Accessibility."
   },
   "accessibility.previews.label": {
     "text": "Play previews on project cards",
@@ -1936,8 +1968,8 @@
     "description": "Heading of the section in Settings that lists which apps may use the device's location, microphone, camera and so on."
   },
   "appPermissions.intro": {
-    "text": "Apps you've allowed to use your location, microphone, camera, screen or connected devices. Each app is asked for separately, and only the app you granted gets it. Revoking stops the app the next time it opens, because a running app keeps what it was given until then.",
-    "description": "Explanation under the App device permissions heading in Settings."
+    "text": "Apps you've allowed to use your location, microphone, camera, screen or connected devices. Each app is asked for separately, and only the app you granted gets it. If an app is open in this tab, revoking closes it so it stops at once. Anywhere else it is open, it keeps access until it is closed. On another device, opening the app again within a minute may bring the permission back until it is closed again.",
+    "description": "Explanation under the App device permissions heading in Settings. Revoking closes the app when it is open in this browser tab. A running app keeps a permission until it is closed, and another device that reopens the app within about a minute of the revoke may still give it the permission, which it then keeps until it is closed."
   },
   "appPermissions.loadFailed": {
     "text": "Could not load app permissions.",
@@ -1951,9 +1983,37 @@
     "text": "Re-enable",
     "description": "Button beside a struck-through permission of an app in Settings > App device permissions: gives the app back a permission the person revoked."
   },
+  "appPermissions.reEnableLabel": {
+    "text": "Re-enable {{permission}} for {{app}}",
+    "description": "Screen-reader name of the Re-enable button beside a revoked permission in Settings > App device permissions. {{permission}} is the permission (Camera, Location) and {{app}} is the app."
+  },
   "appPermissions.revoke": {
     "text": "Revoke",
     "description": "Red button beside a permission of an app in Settings > App device permissions: takes that permission away from the app."
+  },
+  "appPermissions.revokeLabel": {
+    "text": "Revoke {{permission}} for {{app}}",
+    "description": "Screen-reader name of the Revoke button beside a permission in Settings > App device permissions. {{permission}} is the permission (Camera, Location) and {{app}} is the app."
+  },
+  "appPermissions.note.camera": {
+    "text": "Lets this app use your camera while it is open, once your browser allows it too.",
+    "description": "Small grey line under the Camera permission of an app in Settings > App device permissions: says plainly what this permission lets the app do. Shown on revoked rows too, so it describes the permission rather than what the app can do right now; the browser must also allow the camera."
+  },
+  "appPermissions.note.microphone": {
+    "text": "Lets this app hear you and the sounds around you while it is open, once your browser allows it too.",
+    "description": "Small grey line under the Microphone permission of an app in Settings > App device permissions: says plainly what this permission lets the app do. Shown on revoked rows too, so it describes the permission rather than what the app can do right now; the browser must also allow the microphone."
+  },
+  "appPermissions.note.screen": {
+    "text": "Each time it asks, your browser lets you choose a screen, window or tab. The app sees only what you choose, until you stop sharing.",
+    "description": "Small grey line under the Screen sharing permission of an app in Settings > App device permissions. The browser shows its own picker every time the app asks to share, and the app sees only the screen, window or tab the person picks there."
+  },
+  "appPermissions.revokeAll": {
+    "text": "Revoke all",
+    "description": "Red button beside an app's name in Settings > App device permissions, shown when the app has two or more permissions: takes all of them away from that app in one step."
+  },
+  "appPermissions.revokeAllLabel": {
+    "text": "Revoke all permissions for {{app}}",
+    "description": "Screen-reader name of the Revoke all button beside an app's name in Settings > App device permissions. {{app}} is the app."
   },
   "blockedApps.title": {
     "text": "Blocked apps",
@@ -1979,6 +2039,10 @@
     "text": "Unblock",
     "description": "Button on an app's row in Settings > Blocked apps: removes the block so the app is shown and can be opened again."
   },
+  "blockedApps.unblockLabel": {
+    "text": "Unblock {{app}}",
+    "description": "Screen-reader name of the Unblock button on a row in Settings > Blocked apps. {{app}} is the blocked app."
+  },
   "blockedApps.unblocking": {
     "text": "Unblocking…",
     "description": "Label of the Unblock button on an app's row in Settings > Blocked apps while the block is being removed."
@@ -1986,6 +2050,10 @@
   "blockedApps.unblockFailed": {
     "text": "Could not unblock this app.",
     "description": "Error in Settings > Blocked apps when removing a block failed and the server gave no reason."
+  },
+  "blockedApps.blockedAt": {
+    "text": "Blocked {{when}}",
+    "description": "Small grey line under an app's name in Settings > Blocked apps saying when the person blocked it. {{when}} is either how long ago (\"3d ago\", \"just now\") or, after a week, a date such as \"Jun 16\"."
   },
   "tour.title": {
     "text": "Welcome tour",
@@ -2080,8 +2148,8 @@
     "description": "Row title in Settings > User guide, about the AI assistant. The bot's own name."
   },
   "guide.place.bot.body": {
-    "text": "Homeroom bot is your AI assistant: ask it a question, have it build a change, file an idea or fix a bug. It has its own tab. Main Chat is the first row there, and under it is the work you are part of across your projects. Messages is a separate tab, for your conversations with people.",
-    "description": "Paragraph in Settings > User guide. \"Main Chat\" is the name of the person's main chat with the bot. \"Messages\" is the name of a tab."
+    "text": "Homeroom bot is your AI assistant: ask it a question, have it build a change, file an idea or fix a bug. It has its own tab. New chat starts a conversation there, and the tab lists your chats with the bot beside the work you are part of across your projects. Messages is a separate tab, for your conversations with people.",
+    "description": "Paragraph in Settings > User guide. \"New chat\" is the name of the button on the Homeroom bot tab that starts a conversation with the bot. \"Messages\" is the name of a tab."
   },
   "guide.place.you.title": {
     "text": "You and Settings",
@@ -2191,13 +2259,13 @@
     "text": "Everything waiting on you, such as a vote or a question from Homeroom bot. Home shows a shortcut to it while a vote waits, and each project's page has its own.",
     "description": "Paragraph in Settings > User guide, explaining \"Needs you\"."
   },
-  "guide.term.mainChat.title": {
-    "text": "Main Chat",
-    "description": "Row title in Settings > User guide: the name of the person's main chat with Homeroom bot. Same words as on screen."
+  "guide.term.newChat.title": {
+    "text": "New chat",
+    "description": "Row title in Settings > User guide: the name of the button that starts a conversation with Homeroom bot. Same words as on screen."
   },
-  "guide.term.mainChat.body": {
-    "text": "Your own chat with Homeroom bot, the first row of its tab. News about a request is on the request's page instead.",
-    "description": "Paragraph in Settings > User guide, explaining \"Main Chat\"."
+  "guide.term.newChat.body": {
+    "text": "How you start talking to Homeroom bot: on its tab, or from a project's Workshop, where it is already about that project. Each chat is its own thread that only you can see, listed on the bot's tab. News about a request is on the request's page instead.",
+    "description": "Paragraph in Settings > User guide, explaining \"New chat\". \"Workshop\" is the name of a place on a project's page."
   },
   "guide.term.justYou.title": {
     "text": "Just you",
@@ -2812,7 +2880,7 @@
     "description": "Not shown on screen. Extra search words for \"Agent instructions & skills\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.experimental": {
-    "text": "beta labs progress estimate session bridge local agent new look design",
+    "text": "beta labs progress estimate session bridge local agent look design",
     "description": "Not shown on screen. Extra search words for \"Experimental\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.theme": {
@@ -2824,12 +2892,12 @@
     "description": "Not shown on screen. Extra search words for \"Developer console\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.accessibility": {
-    "text": "text size font bigger larger zoom read contrast high normal accessible vision",
+    "text": "text size font bigger larger zoom read contrast high normal accessible vision motion animation reduce",
     "description": "Not shown on screen. Extra search words for \"Accessibility\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.language": {
-    "text": "locale translate english auto device",
-    "description": "Not shown on screen. Extra search words for \"Language\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
+    "text": "language languages locale translate translation english auto device time zone timezone clock region bahasa idioma langue sprache lingua taal dil 语言 言語 언어 язык لغة",
+    "description": "Not shown on screen. Extra search words for \"Language\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words. The non-English words are the word for \"language\" in other languages, so someone whose screen is in the wrong language can still find this page: keep them."
   },
   "nav.keywords.alerts": {
     "text": "notifications sound push phone mute bell chime",
@@ -3082,6 +3150,14 @@
   "connectors.row.expiredUnknownDate": {
     "text": "Sign-in ran out. Follow the steps to connect again.",
     "description": "Line on a connection's row in Settings > Connectors when its sign-in has ended and the date is not known. The steps are that tool's setup steps on the same card."
+  },
+  "connectors.row.expiredReconnect": {
+    "text": "Sign-in ran out {{when}}. Reconnect to use it again.",
+    "description": "Line on a connection's row in Settings > Connectors when its sign-in has ended and the tool can sign in again from one step of its setup (Claude, Codex). {{when}} is a date with time. Reconnect is the button under this line."
+  },
+  "connectors.row.expiredReconnectUnknownDate": {
+    "text": "Sign-in ran out. Reconnect to use it again.",
+    "description": "Line on a connection's row in Settings > Connectors when its sign-in has ended, the date is not known, and the tool can sign in again from one step of its setup (Claude, Codex). Reconnect is the button under this line."
   },
   "connectors.capabilities.readWrite": {
     "text": "Can read your apps and send proposals",
@@ -4027,21 +4103,37 @@
     "text": "Revoke this permission?",
     "description": "Title of the confirmation dialog before taking away one device permission (camera, microphone, location…) from an app, in Settings."
   },
+  "appPermissions.revoke.confirmTitleNamed": {
+    "text": "Revoke {{permission}} for {{app}}?",
+    "description": "Title of the confirmation shown before revoking one device permission from an app in Settings. {{permission}} is the permission (Camera, Location) and {{app}} is the app."
+  },
   "appPermissions.revoke.confirmMessage": {
-    "text": "The app loses it the next time it opens. It can ask you again later.",
-    "description": "Body of the confirmation dialog before taking away a device permission from an app, in Settings. \"It\" is the permission, then the app."
+    "text": "Anywhere the app is already open, it keeps this permission until it is closed. On another device, opening the app again within a minute may bring the permission back until it is closed again.",
+    "description": "Body of the confirmation dialog before taking away a device permission from an app that is not open in this browser tab, in Settings. A running app keeps a permission until it is closed, and another device that reopens the app within about a minute of the revoke may still give it the permission, which it then keeps until it is closed."
   },
   "appPermissions.revoke.confirmButton": {
     "text": "Revoke",
     "description": "Red confirm button in the dialog that takes away a device permission from an app, in Settings."
+  },
+  "appPermissions.revoke.confirmMessageOpen": {
+    "text": "{{app}} is open in this tab, so revoking closes it now and anything not saved in it may be lost. Anywhere else it is open, it keeps this permission until it is closed. On another device, opening the app again within a minute may bring the permission back until it is closed again.",
+    "description": "Body of the confirmation dialog before taking away a device permission (camera, microphone, location…) from an app that is open in this browser tab right now, in Settings. {{app}} is the app's name. Confirming also closes the app in this tab. A running app keeps a permission until it is closed, and another device that reopens the app within about a minute of the revoke may still give it the permission, which it then keeps until it is closed."
+  },
+  "appPermissions.revoke.confirmButtonClose": {
+    "text": "Revoke and close app",
+    "description": "Red confirm button in the dialog that takes away a device permission from an app that is open in this browser tab right now, in Settings: it takes the permission away and closes the app."
+  },
+  "appPermissions.status.revokedClosed": {
+    "text": "Revoked, and {{app}} was closed in this tab.",
+    "description": "Status under the list of device permissions granted to apps, in Settings > App device permissions, after a permission was taken away from an app that was open in this browser tab, which was closed so the change took effect at once. {{app}} is the app's name."
   },
   "appPermissions.status.revokeFailed": {
     "text": "Failed to revoke.",
     "description": "Status under the list of device permissions granted to apps, in Settings > App device permissions, when a permission could not be taken away and the server gave no reason."
   },
   "appPermissions.status.revoked": {
-    "text": "Revoked. It stops the next time the app opens.",
-    "description": "Status under the list of device permissions granted to apps, in Settings > App device permissions, after a permission was taken away from an app. \"It\" is the app's use of the permission."
+    "text": "Revoked. Anywhere the app is already open, it keeps the permission until it is closed. On another device, opening the app again within a minute may bring the permission back until it is closed again.",
+    "description": "Status under the list of device permissions granted to apps, in Settings > App device permissions, after a permission was taken away from an app that was not open in this browser tab. A running app keeps a permission until it is closed, and another device that reopens the app within about a minute of the revoke may still give it the permission, which it then keeps until it is closed."
   },
   "appPermissions.status.unknownApp": {
     "text": "This app could not be identified.",
@@ -4058,6 +4150,38 @@
   "appPermissions.status.reenabled": {
     "text": "Re-enabled. It applies the next time the app opens.",
     "description": "Status under the list of device permissions granted to apps, in Settings > App device permissions, after a revoked permission was given back to an app."
+  },
+  "appPermissions.revokeAll.confirmTitle": {
+    "text": "Revoke every permission for {{app}}?",
+    "description": "Title of the confirmation shown before revoking all of an app's device permissions at once in Settings. {{app}} is the app."
+  },
+  "appPermissions.revokeAll.confirmMessage": {
+    "text": "Anywhere the app is already open, it keeps these permissions until it is closed. On another device, opening the app again within a minute may bring them back until it is closed again.",
+    "description": "Body of the confirmation shown before revoking all of an app's device permissions, when the app is not open in this browser tab."
+  },
+  "appPermissions.revokeAll.confirmMessageOpen": {
+    "text": "{{app}} is open in this tab, so revoking closes it now and anything not saved in it may be lost. Anywhere else it is open, it keeps these permissions until it is closed. On another device, opening the app again within a minute may bring them back until it is closed again.",
+    "description": "Body of the confirmation shown before revoking all of an app's device permissions, when the app is open in this browser tab. {{app}} is the app."
+  },
+  "appPermissions.revokeAll.confirmButton": {
+    "text": "Revoke all",
+    "description": "Confirm button of the dialog that revokes all of an app's device permissions at once."
+  },
+  "appPermissions.revokeAll.confirmButtonClose": {
+    "text": "Revoke all and close app",
+    "description": "Confirm button of the dialog that revokes all of an app's device permissions, when the app is open in this tab and will be closed."
+  },
+  "appPermissions.status.revokedAll": {
+    "text": "All revoked. Anywhere the app is already open, it keeps the permissions until it is closed. On another device, opening the app again within a minute may bring them back until it is closed again.",
+    "description": "Status line in Settings > App device permissions after every permission of one app was revoked and the app was not open in this tab."
+  },
+  "appPermissions.status.revokedAllClosed": {
+    "text": "All revoked, and {{app}} was closed in this tab.",
+    "description": "Status line in Settings > App device permissions after every permission of one app was revoked and the app, open in this tab, was closed. {{app}} is the app."
+  },
+  "appPermissions.status.revokedSome": {
+    "text": "Not every permission could be revoked. Any that still show Revoke are still allowed.",
+    "description": "Error line in Settings > App device permissions when Revoke all took away some of an app's permissions but at least one request failed."
   },
   "agentFiles.status.tooLarge": {
     "text": "\"{{file}}\" is too large. The limit is 48 KB per file.",
@@ -4863,80 +4987,8 @@
     "text": "Your choice could not be saved on this device. Try again.",
     "description": "Error below the mode switch when browser storage refuses a save."
   },
-  "frame.purpose.account": {
-    "text": "Your profile and how you sign in.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Account."
-  },
-  "frame.purpose.linkedAccounts": {
-    "text": "A connected account helps check that one person is not making many, because Homeroom pays for your AI credit.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Linked accounts."
-  },
-  "frame.purpose.contactPrivacy": {
-    "text": "Who can reach you, who can find you, and what Homeroom may send you.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Privacy."
-  },
-  "frame.purpose.phones": {
-    "text": "The phones and browsers signed in to your account. Unlink any you no longer use or do not recognize.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Linked devices."
-  },
-  "frame.purpose.wallet": {
-    "text": "The wallet linked to your account for this season's challenges.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Homeroom Wallet."
-  },
-  "frame.purpose.ai": {
-    "text": "What is left of this week's allowance, where it went, and which model does the work.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: AI usage & models."
-  },
-  "frame.purpose.connectors": {
-    "text": "Work on your apps from a Claude or ChatGPT chat, or from your own terminal, without using your weekly credit.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Connectors & CLI."
-  },
-  "frame.purpose.agentFiles": {
-    "text": "Personal files the coding agent follows on every build or plan you start, in any app.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Agent instructions & skills."
-  },
-  "frame.purpose.theme": {
-    "text": "How Homeroom looks on this browser.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Appearance."
-  },
-  "frame.purpose.accessibility": {
-    "text": "Make Homeroom easier to read on this browser.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Accessibility."
-  },
-  "frame.purpose.language": {
-    "text": "The language of Homeroom's own screens. Apps use it as their default and may offer their own choice.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Language."
-  },
-  "frame.purpose.alerts": {
-    "text": "Choose what reaches your phone and this browser.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Notifications."
-  },
-  "frame.purpose.appPermissions": {
-    "text": "What apps on Homeroom may use on your behalf, and which apps you have blocked.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: App permissions."
-  },
-  "frame.purpose.developer": {
-    "text": "Tools for people building and testing apps.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Developer."
-  },
-  "frame.purpose.tour": {
-    "text": "Take the welcome tour again.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Welcome tour."
-  },
-  "frame.purpose.guide": {
-    "text": "The places of Homeroom, and how a change gets voted in.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: User guide."
-  },
-  "frame.purpose.usernode": {
-    "text": "The Homeroom app on this phone, and its diagnostics.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Homeroom app."
-  },
-  "frame.purpose.about": {
-    "text": "Which build of Homeroom this is, and what is being improved.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: About."
-  },
-  "frame.purpose.experimental": {
-    "text": "Features still being tried. Switch one on to see it; switch it off to go back.",
-    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the page's name, saying what the page is for. The page: Experimental."
+  "frame.head.purpose": {
+    "text": "Your account, your preferences and your tools.",
+    "description": "Settings when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental): the one sentence under the title Settings at the head of the page, above the list of sections and the open section."
   }
 }

@@ -551,6 +551,46 @@ test('a language only the server\'s cache has is offered once its list arrives, 
   assert.match(page.requests[0], /^\/locales\/live\/es\.core\.[a-f0-9]{64}\.json$/);
 });
 
+test('Auto names the language it gives on this device: the first one offered, else English (#6511)', async (t) => {
+  {
+    const { runtime } = setup(t, { deviceLanguages: ['ja', 'es-AR'] });
+    assert.equal(runtime.getAutoLanguage(), 'es', 'a device language that is not offered is passed over');
+    await runtime.applySessionLanguage({ id: 1, locale: null });
+    assert.equal(runtime.getAutoLanguage(), runtime.getLanguage(), 'what Auto names is what an unsaved choice shows');
+    await runtime.changeLanguage('en');
+    assert.equal(runtime.getAutoLanguage(), 'es', 'a saved choice does not change what Auto would give');
+    assert.equal(runtime.languageName(runtime.getAutoLanguage()), 'Español', 'named in its own language');
+  }
+  {
+    const { runtime } = setup(t, { deviceLanguages: ['ja'] });
+    assert.equal(runtime.getAutoLanguage(), 'en', 'a device language Homeroom does not offer reads English, the one shown');
+  }
+  {
+    const { live, runtime } = liveSetup(t, { deviceLanguages: ['es-MX'] });
+    assert.equal(runtime.getAutoLanguage(), 'en', 'English until the list offers Spanish');
+    runtime.setLiveCatalogs(live);
+    assert.equal(runtime.getAutoLanguage(), 'es', 'read again once the list adds it');
+  }
+});
+
+test('Auto names the language actually shown when the device language cannot load (#6511)', async (t) => {
+  const { runtime, page } = setup(t, { deviceLanguages: ['es-ES'] });
+  let heard = 0;
+  runtime.subscribeAutoLanguage(() => { heard += 1; });
+  page.unavailable = (url) => /\/es\./.test(url);
+  await runtime.applySessionLanguage({ id: 1, locale: null });
+  assert.equal(runtime.getLanguage(), 'en', 'the pack failed: English is shown');
+  assert.equal(runtime.getAutoLanguage(), 'en', 'and Auto says English, not Español');
+  assert.ok(heard >= 1, 'the label is told');
+  page.unavailable = null;
+  await runtime.applySessionLanguage({ id: 1, locale: null });
+  assert.equal(runtime.getAutoLanguage(), 'es', 'once it loads, Auto says Spanish');
+  // A fixed choice on screen: Auto names what it would give, not what shows.
+  page.unavailable = (url) => /\/es\./.test(url);
+  await runtime.applySessionLanguage({ id: 1, locale: 'en' });
+  assert.equal(runtime.getAutoLanguage(), 'es');
+});
+
 test('a list the runtime cannot trust is refused, and the build\'s languages stand', (t) => {
   const { live, runtime } = liveSetup(t);
   const entry = live.manifest.es.core;

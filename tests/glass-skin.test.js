@@ -1,9 +1,9 @@
 // The glass look: the second value of the head's skin switch (the first is
-// the brand look, tests/new-look.test.js). `window.Skin` keeps the choice on
+// the brand look, tests/brand-look.test.js). `window.Skin` keeps the choice on
 // the device under 'homeroom:skin' and sets data-skin="glass" on <html>
 // before first paint; `?skin=` pins a look for one load, for the capture
 // runner; app.css draws the look from the attribute in light AND dark.
-// Glass was the first of the nine looks of the one frame; this suite holds
+// Glass was the first of the looks of the one frame; this suite holds
 // the Skin module, the hook and the Settings picker for all of them, and
 // tests/frame-looks.test.js the stylesheet.
 //
@@ -24,7 +24,7 @@ const settingsJs = () => read('frontend', 'src', 'features', 'settings', 'settin
 const experimentalSrc = () => read('frontend', 'src', 'features', 'settings', 'sections', 'experimental.tsx');
 
 // The Skin module's own source: from its assignment to the end of its IIFE
-// (the same slice tests/new-look.test.js takes).
+// (the same slice tests/brand-look.test.js takes).
 function skinModuleSrc() {
   const src = headSrc();
   const start = src.indexOf('window.Skin = (function () {');
@@ -117,9 +117,9 @@ test('a pick replaces a look named in the address, keeping the rest of it', () =
     href: 'https://app.example/wall?skin=glass&tab=2#section',
   });
   assert.equal(r.replaced.length, 0, 'a load alone never rewrites the address');
-  r.Skin.set('workbench');
-  assert.equal(r.Skin.get(), 'workbench');
-  assert.equal(r.store.get('homeroom:skin'), 'workbench');
+  r.Skin.set('sunrise');
+  assert.equal(r.Skin.get(), 'sunrise');
+  assert.equal(r.store.get('homeroom:skin'), 'sunrise');
   assert.deepEqual(r.replaced, ['/wall?tab=2#section'],
     'the skin parameter is gone, the other parameters and the hash stay');
 });
@@ -134,13 +134,17 @@ test('a pick made in another tab takes over, after a local pick', () => {
   assert.equal(r.Skin.get(), 'mosaic');
 });
 
-// ── The nine looks of the frame ──────────────────────────────────────────
+// ── The five looks of the frame ──────────────────────────────────────────
 //
-// Glass was the first of the tour's nine looks over the one frame; the
-// other eight are stored, applied and pinned the same way. `brand` (New
-// look) is a look too, but not one of the frame's.
+// Glass was the first of the tour's looks over the one frame; the other
+// four are stored, applied and pinned the same way. `brand` ("Paper,
+// simplified, with brand styling", the old New look redrawn) is a look of
+// the menu too, but not one of the frame's: it keeps the standard pages.
+// Four more were drawn and retired on 12 Nov 2026 (Brand kit, Workbench,
+// Today, Playground).
 
-const FRAME_LOOKS = ['glass', 'brandkit', 'workbench', 'paper', 'pastel', 'mosaic', 'sunrise', 'today', 'playground'];
+const FRAME_LOOKS = ['glass', 'paper', 'pastel', 'mosaic', 'sunrise'];
+const RETIRED_LOOKS = ['brandkit', 'workbench', 'today', 'playground'];
 
 test('every frame look is stored, applied and pinned like glass', () => {
   for (const look of FRAME_LOOKS) {
@@ -153,16 +157,51 @@ test('every frame look is stored, applied and pinned like glass', () => {
   }
 });
 
-test('the head and the hook list the same looks, the frame\'s nine after brand', () => {
+// A device that chose a retired look keeps its id in storage. Nothing
+// draws it any more, so it must read as the standard design everywhere: no
+// attribute for app.css, no frame for the islands, Standard in the menus.
+test('a retired look, stored or named in the address, is the standard design', () => {
+  for (const look of RETIRED_LOOKS) {
+    const stored = runSkin({ stored: look });
+    assert.equal(stored.Skin.get(), 'standard', `${look} in storage reads as standard`);
+    assert.equal(stored.attrs.has('data-skin'), false, `${look} in storage puts no data-skin on <html>`);
+    const pinned = runSkin({ search: `?skin=${look}` });
+    assert.equal(pinned.Skin.get(), 'standard', `?skin=${look} pins nothing`);
+    assert.equal(pinned.attrs.has('data-skin'), false);
+    // The address cannot bring one back over a look that is stored.
+    assert.equal(runSkin({ stored: 'glass', search: `?skin=${look}` }).Skin.get(), 'glass');
+    // A pick after it works as on a fresh device.
+    stored.Skin.set('paper');
+    assert.equal(stored.attrs.get('data-skin'), 'paper');
+    assert.equal(stored.store.get('homeroom:skin'), 'paper');
+  }
+  const mod = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
+  for (const look of RETIRED_LOOKS) {
+    assert.equal(mod.isFrameSkin(look), false, `${look} draws no frame`);
+    // Even a head module that still answered it (a cached shell) is not believed.
+    globalThis.window = { Skin: { get: () => look, onChange() {} } };
+    try { assert.equal(mod.currentSkin(), 'standard'); } finally { delete globalThis.window; }
+  }
+  // Nothing of them is left to draw: no rule, no source, no name.
+  const css = read('public', 'css', 'app.css');
+  for (const look of RETIRED_LOOKS) {
+    assert.ok(!css.includes(`data-skin="${look}"`), `app.css has no rule for ${look}`);
+    assert.equal(fs.existsSync(path.join(__dirname, '..', 'frontend', 'looks', `${look}.css`)), false, `${look}.css is gone`);
+    assert.doesNotMatch(experimentalSrc(), new RegExp(`value="${look}"`), `${look} is not offered in Settings`);
+  }
+});
+
+test('the head and the hook list the same looks, the frame\'s five after brand', () => {
   const head = skinModuleSrc().match(/const SKINS = \[([^\]]*)\]/);
   assert.ok(head, 'the head module lists its looks');
   const listed = head[1].split(',').map((s) => s.trim().replace(/'/g, '')).filter(Boolean);
   assert.deepEqual(listed, ['brand', ...FRAME_LOOKS]);
   const mod = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
   assert.deepEqual([...mod.FRAME_SKINS], FRAME_LOOKS);
+  assert.deepEqual([...mod.MENU_SKINS], listed, 'the menu offers exactly the looks the head stores');
   for (const look of FRAME_LOOKS) assert.equal(mod.isFrameSkin(look), true, look);
   assert.equal(mod.isFrameSkin('standard'), false);
-  assert.equal(mod.isFrameSkin('brand'), false, 'New look draws the standard Home');
+  assert.equal(mod.isFrameSkin('brand'), false, 'brand keeps the standard pages');
   globalThis.window = { Skin: { get: () => 'mosaic', onChange() {} } };
   try { assert.equal(mod.currentSkin(), 'mosaic'); } finally { delete globalThis.window; }
 });
@@ -170,16 +209,15 @@ test('the head and the hook list the same looks, the frame\'s nine after brand',
 // ── The settings switch ──────────────────────────────────────────────────
 
 // The picker is an admin's preview while the looks are drawn screen by
-// screen: one select under New look, shipped hidden, which settings.js
-// shows only to a REAL admin (the same reading of App._realIsAdmin that
-// shows "view as non-admin").
+// screen: one select, shipped hidden, which settings.js shows only to a
+// REAL admin (the same reading of App._realIsAdmin that shows "view as
+// non-admin"). New look's own switch stood above it until 13 Nov 2026;
+// its look, redrawn, is the menu's first option now.
 
-const LOOK_NAMES = {
-  glass: 'Glass', brandkit: 'Brand kit', workbench: 'Workbench', paper: 'Paper', pastel: 'Pastel',
-  mosaic: 'Mosaic', sunrise: 'Sunrise', today: 'Today', playground: 'Playground',
-};
+const LOOK_NAMES = { brand: 'Paper, simplified, with brand styling', glass: 'Glass', paper: 'Paper', pastel: 'Pastel', mosaic: 'Mosaic', sunrise: 'Sunrise' };
+const MENU_LOOKS = ['brand', ...FRAME_LOOKS];
 
-test('Settings › Experimental offers the nine looks in one menu, shipped hidden under New look', () => {
+test('Settings › Experimental offers every look in one menu, shipped hidden, and no New look switch', () => {
   const { renderComponent } = require('./lib/render-tsx');
   const html = renderComponent('frontend/src/features/settings/sections/experimental.tsx', 'ExperimentalSection', {});
   const section = html.match(/<div id="settings-look-section" class="([^"]*)">([\s\S]*?)<\/select>/);
@@ -187,9 +225,10 @@ test('Settings › Experimental offers the nine looks in one menu, shipped hidde
   assert.match(section[1], /^hidden /, 'hidden until the admin gate lifts it');
   assert.match(section[2], /<label[^>]*for="settings-look"[^>]*>Look<\/label>/);
   const options = [...section[2].matchAll(/<option value="([^"]*)"[^>]*>([^<]*)<\/option>/g)].map((m) => [m[1], m[2]]);
-  assert.deepEqual(options, [['', 'Standard'], ...FRAME_LOOKS.map((id) => [id, LOOK_NAMES[id]])],
-    'Standard, then the nine in the tour\'s order, each by its name');
-  assert.ok(html.indexOf('id="new-look-enabled"') < html.indexOf('id="settings-look-section"'));
+  assert.deepEqual(options, [['', 'Standard'], ...MENU_LOOKS.map((id) => [id, LOOK_NAMES[id]])],
+    'Standard, then brand, then the five in the tour\'s order, each by its name');
+  assert.doesNotMatch(html, /new-look-enabled/, 'the New look switch is gone: its look is the menu\'s');
+  assert.doesNotMatch(experimentalSrc(), /settings:experimental\.newLook\./, 'and so are its words');
   assert.ok(html.indexOf('id="settings-look"') < html.indexOf('id="settings-local-agents-section"'));
   assert.doesNotMatch(html, /glass-look-enabled/, 'the one-look switch is gone');
 });
@@ -207,7 +246,7 @@ function runAdminGate({ realAdmin, skin = 'standard' }) {
   };
   const nodes = {
     'settings-admin-section': node(), 'view-as-non-admin': node({ checked: false }), 'settings-look-section': node(),
-    'settings-look': node({ options: [{ value: '' }, ...FRAME_LOOKS.map((value) => ({ value }))] }),
+    'settings-look': node({ options: [{ value: '' }, ...MENU_LOOKS.map((value) => ({ value }))] }),
   };
   vm.runInNewContext(`({ ${method} })._renderAdminSection()`, {
     document: { getElementById: (id) => nodes[id] || null },
@@ -221,7 +260,6 @@ function runAdminGate({ realAdmin, skin = 'standard' }) {
 test('settings.js shows the Look menu only to a real admin', () => {
   assert.deepEqual(runAdminGate({ realAdmin: true }), { menuShown: true, adminShown: true });
   assert.deepEqual(runAdminGate({ realAdmin: false }), { menuShown: false, adminShown: false });
-  assert.equal(runAdminGate({ realAdmin: false, skin: 'brand' }).menuShown, false, 'New look has its own switch');
 });
 
 test('a device left in one of the looks keeps the menu, so the way back to Standard is never hidden', () => {
@@ -230,23 +268,26 @@ test('a device left in one of the looks keeps the menu, so the way back to Stand
   // clears it.
   assert.equal(runAdminGate({ realAdmin: false, skin: 'mosaic' }).menuShown, true);
   assert.equal(runAdminGate({ realAdmin: false, skin: 'mosaic' }).adminShown, false, 'only the menu, never the admin preview');
+  // A device that had the old New look switch on stored 'brand'. The switch
+  // is gone, so the menu is its way back too.
+  assert.equal(runAdminGate({ realAdmin: false, skin: 'brand' }).menuShown, true);
 });
 
-// The wiring, run: settings.js's own block for the two controls, against
-// stub elements and a stub window.Skin.
+// The wiring, run: settings.js's own block for the menu, against stub
+// elements and a stub window.Skin.
 function runLooksWiring({ skin = 'standard' } = {}) {
   const src = settingsJs();
-  const start = src.indexOf("const lookToggle = document.getElementById('new-look-enabled');");
+  assert.doesNotMatch(src, /new-look-enabled/, 'settings.js wires no New look switch');
+  const start = src.indexOf("const lookSelect = document.getElementById('settings-look');");
   const end = src.indexOf('// Platform-level language preference', start);
   assert.ok(start > 0 && end > start, 'the looks wiring is one block before the language preference');
   const el = (extra) => ({ listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; }, ...extra });
-  const toggle = el({ checked: false });
-  const select = el({ value: '', options: [{ value: '' }, ...FRAME_LOOKS.map((value) => ({ value }))] });
+  const select = el({ value: '', options: [{ value: '' }, ...MENU_LOOKS.map((value) => ({ value }))] });
   const state = { skin, onChange: null };
   const window = { Skin: { get: () => state.skin, set: (v) => { state.skin = v; }, onChange: (fn) => { state.onChange = fn; } } };
-  const document = { getElementById: (id) => ({ 'new-look-enabled': toggle, 'settings-look': select })[id] || null };
+  const document = { getElementById: (id) => ({ 'settings-look': select })[id] || null };
   vm.runInNewContext(`${src.slice(start, end)}\npaintLooks();`, { window, document });
-  return { toggle, select, state };
+  return { select, state };
 }
 
 test('the Look menu sets the look through window.Skin, and Standard clears it', () => {
@@ -258,16 +299,16 @@ test('the Look menu sets the look through window.Skin, and Standard clears it', 
   assert.equal(state.skin, 'standard');
 });
 
-test('New look and the Look menu are exclusive, and both paint what is stored', () => {
+test('the menu paints what is stored, brand among its looks, and follows another tab', () => {
   const on = runLooksWiring({ skin: 'pastel' });
   assert.equal(on.select.value, 'pastel', 'the stored look is selected');
-  assert.equal(on.toggle.checked, false);
-  on.toggle.listeners.change({ target: { checked: true } });
+  // A device the old New look switch left in brand reads as that option.
+  assert.equal(runLooksWiring({ skin: 'brand' }).select.value, 'brand');
+  on.select.listeners.change({ target: { value: 'brand' } });
   assert.equal(on.state.skin, 'brand');
-  assert.equal(on.select.value, '', 'New look is not one of the menu\'s looks: the menu reads Standard');
-  assert.equal(on.toggle.checked, true);
-  on.select.listeners.change({ target: { value: 'today' } });
-  assert.equal(on.toggle.checked, false, 'choosing a look turns New look off');
+  assert.equal(on.select.value, 'brand');
+  on.select.listeners.change({ target: { value: 'sunrise' } });
+  assert.equal(on.state.skin, 'sunrise');
   // Another tab changes the look: this pane repaints.
   on.state.skin = 'glass';
   on.state.onChange();
@@ -277,19 +318,21 @@ test('New look and the Look menu are exclusive, and both paint what is stored', 
 test('the Look menu\'s words are English source with descriptions', () => {
   const en = JSON.parse(read('frontend', 'locales', 'en', 'settings.json'));
   for (const key of ['experimental.look.label', 'experimental.look.description', 'experimental.look.standard',
-    ...FRAME_LOOKS.map((id) => `experimental.look.${id}`)]) {
+    ...MENU_LOOKS.map((id) => `experimental.look.${id}`)]) {
     assert.ok(en[key], `${key} exists`);
     assert.equal(typeof en[key].text, 'string');
     assert.ok(en[key].description.length > 20, `${key} says where it appears`);
   }
-  for (const id of FRAME_LOOKS) assert.equal(en[`experimental.look.${id}`].text, LOOK_NAMES[id]);
+  for (const id of MENU_LOOKS) assert.equal(en[`experimental.look.${id}`].text, LOOK_NAMES[id]);
   assert.equal(en['experimental.glassLook.label'], undefined, 'the one-look switch\'s words are gone');
+  assert.equal(en['experimental.newLook.label'], undefined, 'New look\'s words are gone with its switch');
+  assert.equal(en['experimental.newLook.description'], undefined);
   const src = experimentalSrc();
-  for (const id of FRAME_LOOKS) assert.ok(src.includes(`t('settings:experimental.look.${id}')`), `${id}'s name is read by a whole literal id`);
+  for (const id of MENU_LOOKS) assert.ok(src.includes(`t('settings:experimental.look.${id}')`), `${id}'s name is read by a whole literal id`);
 });
 
 // The stylesheet's side (each look's block, tokens, typeface and rules) is
-// held as a table over the nine in tests/frame-looks.test.js.
+// held as a table over the five in tests/frame-looks.test.js.
 
 // ── useSkin(): the look, read by an island after it mounts ─────────────
 //

@@ -108,10 +108,10 @@ export function chatLine(row: LineRow): Push {
 // One session's live event (ws.broadcastGlobal's `session_event`, routed by
 // session as services/ws.js broadcastSessionEvent routes it): the owner's
 // tabs and the tabs watching the session, and for the few events lists and
-// boards draw (a checks run's progress and verdict, a preview built or
-// failed) everyone who may view the app. `seq` is the client's dedup key
+// boards draw (a checks run's progress and verdict, a preview built, woken
+// or failed) everyone who may view the app. `seq` is the client's dedup key
 // (`_seq`), unique per event: the transition's instance and version.
-const SESSION_FANOUT_EVENTS: ReadonlySet<string> = new Set(['checks_ready', 'staging_ready', 'staging_failed']);
+const SESSION_FANOUT_EVENTS: ReadonlySet<string> = new Set(['checks_ready', 'staging_ready', 'staging_awake', 'staging_failed']);
 export interface SessionRoute { sessionId: number; userId: number | null; appId: number | null; appSlug: string | null }
 export function sessionEvent(to: SessionRoute, event: string, seq: string, data: JsonObject): Push {
   return {

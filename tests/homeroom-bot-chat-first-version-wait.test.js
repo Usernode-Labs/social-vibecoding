@@ -24,6 +24,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { settleWorkStates } = require('./lib/work-states');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -43,24 +44,27 @@ const WAIT = 'Waiting for the first version to go live. I’ll start on this as 
 const STAYS = 'It stays in the project’s requests with your name on it.';
 
 test('a held request has its own stage, and only while its work state waits to be read', () => {
-  const queued = { stage: 'reading', line: { code: 'queued' } };
-  const stage = (row, work = queued) => botChat.stageOf({ kind: 'filed', ...row }, { work });
+  // 11 Nov 2026: the hold is its stored work state's own line
+  // (services/work-state.js: reading, first_version_wait), read as every
+  // screen reads it.
+  const held = { stage: 'reading', line: { code: 'first_version_wait' } };
+  const stage = (work) => botChat.stageOf({ kind: 'filed' }, { work });
   assert.ok(botChat.CARD_STAGES.includes('waiting_first_version'));
-  assert.equal(stage({ held_first_version: true }), 'waiting_first_version', 'queued behind the first version');
-  // Answered and queued again, its work state reads as waiting to be read:
-  // it waits for the first version, whatever it came to before.
-  assert.equal(stage({ held_first_version: true }, { stage: 'reading', line: { code: 'waiting' } }), 'waiting_first_version');
-  assert.equal(stage({ held_first_version: false }), 'reading', 'the hold over: read as before');
-  assert.equal(stage({}), 'reading');
+  assert.equal(stage(held), 'waiting_first_version', 'queued behind the first version');
+  assert.equal(stage({ stage: 'reading', line: { code: 'queued' } }), 'reading', 'the hold over: read as before');
+  assert.equal(stage({ stage: 'reading', line: { code: 'waiting' } }), 'reading');
   // What its work state settles past reading comes first: the bot's change
   // for it (a follow-up on it is never held), or a request closed.
-  assert.equal(stage({ held_first_version: true }, { stage: 'checking', line: null }), 'checking');
-  assert.equal(stage({ held_first_version: true }, { stage: 'up_for_vote', line: { code: 'update_queued' } }), 'checking');
-  assert.equal(stage({ held_first_version: true }, { stage: 'closed', line: null }), 'closed');
+  assert.equal(stage({ stage: 'checking', line: null }), 'checking');
+  assert.equal(stage({ stage: 'building', line: { code: 'update_queued' } }), 'checking');
+  assert.equal(stage({ stage: 'closed', line: null }), 'closed');
   // With no work state read, the card says what it said before.
-  assert.equal(stage({ held_first_version: true }, null), null);
-  // A fix is never held: it runs on its change's own branch.
-  assert.equal(botChat.stageOf({ kind: 'revise', session_status: 'promoted', held_first_version: true }), 'fixing');
+  assert.equal(stage(null), null);
+  // A fix is never held: it runs on its change's own branch, and follows
+  // that change's stored row.
+  const change = { stage: 'up_for_vote', change: { status: 'promoted', voteOpen: true, update: null } };
+  assert.equal(botChat.stageOf({ kind: 'revise' }, { change }), 'fixing', 'its follow-up not run yet');
+  assert.equal(botChat.stageOf({ kind: 'revise', run_id: 3, verdict: 'revise' }, { change }), 'proposed');
 });
 
 // The room's status chip is gone (5 Nov 2026): the chip a held request wore, and the catch-up of one a moment missed, went with it.
@@ -83,6 +87,45 @@ test('what the card says while it waits', () => {
   // The room's status chip is gone (5 Nov 2026): what everybody saw on her message while it waited is not drawn.
   // The chat reads the cards again each minute while one waits.
   assert.match(read('public/js/group-chat.js'), /_BOT_CARD_GOING: new Set\(\['waiting_first_version', /);
+});
+
+// 13 Nov 2026: a tester read "Waiting for a free builder" and could not tell
+// whether it waited for the bot, for another person, or for them, and
+// wondered whether the project had to be public for somebody to build it.
+// The card names whose line it is; and a request its requester's own private
+// thread holds waits for them, never for a slot.
+test('a ready request waits in Homeroom bot\'s own line; one held for her plan waits for her', () => {
+  const { BotRequestCardView, cardWords, sharedNow } = loadTsx('frontend/src/features/group-chat/bot-request.tsx');
+  const card = { kind: 'filed', title: BOOKS, messageId: 1, issueNumber: 2, first: false };
+  const SLOT = 'Homeroom bot will build it when it has a free slot. It starts by itself.';
+  const PLAN = 'It’s waiting for you: you’re planning it with Homeroom bot in a private thread.';
+  const ready = { ...card, state: { stage: 'waiting' } };
+  assert.equal(cardWords(ready), `Got it: ${BOOKS}. ${SLOT}`);
+  assert.equal(cardWords({ ...ready, title: null }), `Got it: your request. ${SLOT}`);
+  assert.equal(cardWords({ ...ready, first: true }), `Got it: ${BOOKS}. ${SLOT} ${STAYS}`);
+  const planning = { ...card, state: { stage: 'waiting_plan' } };
+  assert.equal(cardWords(planning), `Got it: ${BOOKS}. ${PLAN}`);
+  assert.equal(cardWords({ ...planning, title: null }), `Got it: your request. ${PLAN}`);
+  assert.equal(cardWords({ ...planning, first: true }), `Got it: ${BOOKS}. ${PLAN} ${STAYS}`);
+  for (const c of [ready, planning]) {
+    assert.ok(!/builder|Usually about|—/.test(cardWords({ ...c, typicalMinutes: 10 })), c.state.stage);
+    assert.equal(sharedNow(c), true, 'the request is still the project\'s');
+    assert.match(renderToHtml(createElement(BotRequestCardView, { card: c })), /data-bot-request-action="progress"><span>See progress/);
+  }
+  assert.ok(!/free slot/.test(cardWords(planning)), 'never the line\'s sentence for a request that waits on her');
+  // Which of the two it is comes from its stored work state: held for her
+  // plan whatever it had reached, the bot's line otherwise.
+  const stage = (work) => botChat.stageOf({ kind: 'filed' }, { work });
+  assert.equal(stage({ stage: 'planning', line: { code: 'planning_with_you', ready: true } }), 'waiting_plan');
+  assert.equal(stage({ stage: 'building', line: { code: 'queued', place: 1 } }), 'waiting');
+  // The chat reads the card again while it waits for her, so lifting the hold moves it on.
+  assert.match(read('public/js/group-chat.js'), /_BOT_CARD_GOING: new Set\(\[[^\]]*'waiting_plan'/);
+  // The retired words are gone from the card's catalog, and from what the
+  // bot says in its own chat (homeroom-bot-activity.js, -progress.js).
+  assert.ok(!/free builder/i.test(read('frontend/locales/en/chat.json')));
+  const said = [require('../src/services/homeroom-bot-activity').QUEUED_WORDS,
+    require('../src/services/homeroom-bot-progress').QUEUE_WAIT, require('../src/services/homeroom-bot-progress').QUEUE_NEXT];
+  for (const words of said) assert.match(words, /^(?!.*builder).*by myself.*free slot/, words);
 });
 
 test('the merge wakes the loop for what waited, and its pick-up moves the chat request on', () => {
@@ -233,7 +276,9 @@ test('Page Turners, against the full PostgreSQL schema', { timeout: 180000 }, as
   // clock derives it again; here that is done by hand before a read.
   const rederive = (...numbers) => require('../src/services/work-state').refresh(pool, numbers.map((n) => ({ appId: app.id, issueNumber: n })));
   const cardsTo = (who) => pushed.filter((p) => p.userId === who.id && p.frame.type === 'bot_request_card').map((p) => p.frame.card);
-  const mine = async () => (await botChat.myRequests(pool, { app, user: priya, deps: deps(null) })).cards;
+  // 11 Nov 2026: a card reads its request's stored work state, derived
+  // again from what the triggers mark; read once the drain has run.
+  const mine = async () => (await settleWorkStates(pool), await botChat.myRequests(pool, { app, user: priya, deps: deps(null) })).cards;
   // What the lane (bot-lane) may grant a read to now, in its order.
   const { READ_CANDIDATES_SQL } = require('../src/workflow/rules/bot-loop.ts');
   const readable = async () => (await pool.query(READ_CANDIDATES_SQL, [botUser.id, []])).rows

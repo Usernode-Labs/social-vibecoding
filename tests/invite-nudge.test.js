@@ -130,23 +130,43 @@ test('the item claims, then sends, each a step', async () => {
   assert.deepEqual(done, ['claim'], 'nothing is sent for a claim that found nothing');
   const src = read('src/services/invite-nudge.js');
   assert.match(src, /const claimed = await steps\.once\('claim', \(\) => claim\(pool, \{ userId, appId, deps \}\)\);\s+if \(!claimed\?\.nudgeId\) return claimed;\s+return steps\.once\('sent', \(\) => send\(pool, claimed, deps\)\);/);
-  // The claim: a lock on the person, the question asked again, the card and the row in one transaction.
+  // The claim: a lock on the person, the question asked again, the row in one transaction.
   assert.match(src, /pg_advisory_xact_lock\(\$1, \$2\)', \[INVITE_NUDGE_LOCK, Number\(userId\)\]/);
   assert.match(src, /ON CONFLICT \(user_id, app_id\) DO NOTHING RETURNING id/);
-  // The send: Main, under the row's idempotency key.
-  assert.match(src, /idempotencyKey: `hrbot-invite-nudge-\$\{claimed\.nudgeId\}`/);
-  assert.match(src, /threadRootId: false,/);
+  // 14 Nov 2026: the send is a BELL row (kind `invite_nudge`), not a message
+  // in Main Chat, which is gone: written only while the nudge is not sent,
+  // never to somebody who blocked the bot, and named on the nudge's row in
+  // the same transaction, so a retry rings nothing twice.
+  assert.match(src, /INSERT INTO notifications \(user_id, source_user_id, kind, detail, app_id, mailed_at\)\s+SELECT n\.user_id, \$2::int, 'invite_nudge', n\.act, n\.app_id, NOW\(\)\s+FROM invite_nudges n\s+WHERE n\.id = \$1::int AND n\.sent_at IS NULL\s+AND NOT EXISTS \(SELECT 1 FROM user_blocks b WHERE b\.blocker_id = n\.user_id AND b\.blocked_user_id = \$2::int\)/);
+  assert.match(src, /'UPDATE invite_nudges SET sent_at = NOW\(\), notification_id = \$2 WHERE id = \$1'/);
+  assert.doesNotMatch(src, /sendDm|INSERT INTO bot_cards|threadRootId/, 'no chat message and no card');
+  // It wakes no phone, as the message rang nothing: the kind has no push category.
+  assert.ok(!require('../src/services/mobile-push-preferences').ALLOWED_KINDS.has('invite_nudge'));
+  assert.match(read('src/db/migrations/bot-chat-threads-only.sql'),
+    /ALTER TABLE invite_nudges ADD COLUMN IF NOT EXISTS notification_id\s+INTEGER REFERENCES notifications\(id\) ON DELETE SET NULL;/);
   assert.equal(require('../src/services/advisory-locks').INVITE_NUDGE_LOCK, 991031);
 });
 
-test('a send the chat refuses settles its card as failed', async () => {
+test('a nudge with nobody to tell rings nothing, and nothing is marked sent', async () => {
   const queries = [];
-  const pool = { async query(sql, params) { queries.push({ sql, params }); return { rows: [] }; } };
-  const fakeDm = { ...dm, async botAccount() { return { id: 1 }; }, async sendDm() { return null; } };
-  const out = await nudges.send(pool, { nudgeId: 5, cardId: 6, userId: 7, appId: 8, act: 'vote', slug: 'run-club', name: 'Run Club' }, { dm: fakeDm });
+  const client = {
+    async query(sql, params) { queries.push({ sql: String(sql), params }); return { rows: [] }; },
+    release() {},
+  };
+  const pool = { async connect() { return client; }, async query(sql, params) { queries.push({ sql: String(sql), params }); return { rows: [] }; } };
+  const fakeDm = { ...dm, async botAccount() { return { id: 1 }; } };
+  const pushed = [];
+  const deps = { dm: fakeDm, notifications: { async hydrateAndPush(_p, row) { pushed.push(row); } } };
+  // The bell row's insert finds nobody (they blocked the bot): not sent.
+  const out = await nudges.send(pool, { nudgeId: 5, userId: 7, appId: 8, act: 'vote', slug: 'run-club', name: 'Run Club' }, deps);
   assert.deepEqual(out, { said: 'not_sent' });
-  assert.match(queries[0].sql, /UPDATE bot_cards SET status = 'failed', error = 'not_sent' WHERE id = \$1 AND status = 'open'/);
-  assert.deepEqual(queries[0].params, [6]);
+  assert.ok(!queries.some((q) => /UPDATE invite_nudges SET sent_at/.test(q.sql)), 'nothing is marked sent');
+  assert.deepEqual(pushed, []);
+  // An act it has no words for says nothing at all, and asks the database nothing but whether it was sent.
+  queries.length = 0;
+  assert.deepEqual(await nudges.send(pool, { nudgeId: 5, userId: 7, appId: 8, act: 'danced', slug: 'run-club', name: 'Run Club' }, deps),
+    { said: 'not_sent' });
+  assert.ok(!queries.some((q) => /INSERT INTO notifications/.test(q.sql)));
   await assert.rejects(nudges.send(pool, { nudgeId: 5 }, { dm: { ...fakeDm, async botAccount() { return null; } } }), /not available/);
 });
 
@@ -156,9 +176,9 @@ test('Not now is decided once on the server, and only Not now', async () => {
   const dismissed = [];
   const deps = { inviteNudge: { async dismiss(_pool, args) { dismissed.push(args); return { ok: true, choice: 'no', label: 'Not now' }; } } };
   assert.deepEqual(await mayor.decideOfferTap(pool, {}, { user: { id: 7 }, actionId: 41, choice: 'yes', deps }),
-    { ok: false, status: 400, error: 'choice must be no' });
+    { ok: false, status: 400, error: 'choice must be no', code: 'no_such_choice' });
   assert.deepEqual(await mayor.decideOfferTap(pool, {}, { user: { id: 7 }, actionId: 41, choice: 'build', deps }),
-    { ok: false, status: 400, error: 'choice must be no' });
+    { ok: false, status: 400, error: 'choice must be no', code: 'no_such_choice' });
   assert.deepEqual(await mayor.decideOfferTap(pool, {}, { user: { id: 7 }, actionId: 41, choice: 'no', deps }),
     { ok: true, choice: 'no', label: 'Not now' });
   assert.equal(dismissed.length, 1);
@@ -174,7 +194,7 @@ test('Not now is decided once on the server, and only Not now', async () => {
   assert.match(queries[1].sql, /UPDATE invite_nudges SET dismissed_at = COALESCE\(dismissed_at, NOW\(\)\) WHERE card_id = \$1/);
   assert.deepEqual(states, [{ id: 90, patch: { status: 'answered', answer: 'Not now', chosen: 'no' } }]);
   assert.deepEqual(await nudges.dismiss(answer([]), { user: { id: 7 }, action: card, deps: { dm: fakeDm } }),
-    { ok: false, status: 409, error: 'already_decided' });
+    { ok: false, status: 409, error: 'already_decided', code: 'already_decided' });
   // Words typed or quoted never decide it: the model reads them.
   const src = read('src/services/homeroom-bot-mayor.js');
   assert.match(src, /AND a\.kind NOT IN \('build_plan', 'invite_friends'\)/);

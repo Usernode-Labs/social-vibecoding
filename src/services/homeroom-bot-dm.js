@@ -51,6 +51,7 @@ const repoRef = require('./repo-ref');
 // Newcomer run five: a first version's stages, as they happen.
 const timeline = require('./first-version-timeline');
 const notifyCopy = require('./homeroom-bot-notify-copy');
+const botVerified = require('./homeroom-bot-verified');
 
 const BOT_USERNAME = 'homeroom_bot';
 const META = conversations.BOT_METADATA_KEY;
@@ -115,14 +116,44 @@ function settingsModule() {
  */
 function hasBot(settings, person) {
   if (!settings || !person?.username) return false;
-  return !person.isSynthetic && !!(person.hasPlatformAccess || person.isAdmin || person.privateMember);
+  if (person.isSynthetic || !(person.hasPlatformAccess || person.isAdmin || person.privateMember)) return false;
+  // #6632: with the bot for verified accounts only, an admin, or somebody
+  // the rule was read for and passes (`botVerified`, withVerified below).
+  // Somebody it was never read for does not have the bot: the closed side.
+  if (!botVerified.ruleOn(settings)) return true;
+  return !!person.isAdmin || person.botVerified === true;
+}
+
+/**
+ * #6632: `person` with the verified-accounts rule read for them
+ * (`botVerified`), which hasBot then decides from. With the rule off (or
+ * for an admin, or one already read) it is the same person and nothing is
+ * read. `db` is a pool or a transaction's connection.
+ */
+async function withVerified(db, settings, person) {
+  if (!person || !botVerified.ruleOn(settings) || person.isAdmin || typeof person.botVerified === 'boolean') return person;
+  return { ...person, botVerified: !(await botVerified.verifyRequired(db, settings, person)) };
+}
+
+/** hasBot, with the verified-accounts rule read first: what every caller with a database asks. */
+async function botWorksFor(db, settings, person) {
+  return hasBot(settings, await withVerified(db, settings, person));
+}
+
+/**
+ * #6632: whether the verified-accounts rule alone keeps the bot from this
+ * person, for the places that ask them to verify instead of staying quiet.
+ * False with the rule off, whoever they are.
+ */
+async function verifyRequired(db, settings, person) {
+  return botVerified.verifyRequired(db, settings, person);
 }
 
 /** Whether this signed-in person builds through the bot's DM (the create dialog asks). */
 async function isEnabledFor(pool, user) {
   if (!user || user.isSynthetic) return false;
   const settings = await settingsModule().readSettings(pool);
-  return hasBot(settings, user);
+  return botWorksFor(pool, settings, user);
 }
 
 /**
@@ -168,7 +199,7 @@ const PROJECT_ORIGINS = Object.freeze(['import', 'fork', 'blank']);
 async function noteProjectMade(pool, { app, user, origin }) {
   if (!app?.id || !user?.id || !PROJECT_ORIGINS.includes(origin)) return false;
   const settings = await settingsModule().readSettings(pool);
-  if (!hasBot(settings, user)) return false;
+  if (!(await botWorksFor(pool, settings, user))) return false;
   const { rowCount } = await pool.query(
     `INSERT INTO homeroom_bot_dm_projects (app_id, user_id, origin) VALUES ($1, $2, $3)
      ON CONFLICT (app_id) DO NOTHING`,
@@ -260,10 +291,13 @@ const INVITE_PEOPLE = Object.freeze({ id: 'invite_people', label: 'Invite people
 // ── The bring-a-friend nudge (invite-nudge.js) ──────────────────────────
 //
 // Somebody new to a project hears from the bot once, after the first thing
-// they did there, asking them to invite one or two friends to it. The
-// message's kind is its bot card's (bot_cards.kind), whose Not now is the
-// one server choice (invite-nudge.js dismiss); Invite people is the go-live
-// button, answered on the device.
+// they did there, asking them to invite one or two friends to it. 14 Nov
+// 2026: as a bell row (notification kind `invite_nudge`), not a chat
+// message; the words below are what the row says
+// (frontend/locales/en/notifications.json row.inviteNudge.*) and what the
+// chat card said before. A card sent then keeps its buttons: its kind is
+// its bot card's (bot_cards.kind), whose Not now is the one server choice
+// (invite-nudge.js dismiss); Invite people is answered on the device.
 
 const INVITE_NUDGE_KIND = 'invite_friends';
 // What they did first, as the message says it ("You voted in Run Club.").
@@ -324,10 +358,12 @@ async function pushLive(pool, result, conversationId, { opened = false, threadRo
 }
 
 /**
- * #3707: the person's message a bot message may quote, or null. Only their
- * own, in this DM's main stream, and still there to read: a send refuses a
- * quote from another conversation outright, and a message deleted or
- * hidden by moderation is not one to put back in front of them.
+ * #3707: the person's message a line of the bot's may quote, or null. Only
+ * their own, in this chat, not a reply, and still there to read. 14 Nov
+ * 2026: only the line that OPENS a thread for what somebody asked quotes it
+ * (a draft's thread, a screen's), so the thread's history is led by what
+ * they asked (homeroom-bot-mayor.js historyMessages `withRootQuote`); an
+ * answer in a thread quotes nothing, the line above it being what it answers.
  */
 async function quotable(pool, conversationId, userId, messageId) {
   const id = conversations.strictId(messageId);
@@ -342,36 +378,168 @@ async function quotable(pool, conversationId, userId, messageId) {
 }
 
 /**
- * The thread a bot message goes in, in the person's chat with the bot, or
- * null for Main, the chat itself. Main is one conversation (#6019): what the
- * bot says about a request is said there, beside the request's card, and the
- * request's own page is its thread. Only an answer to something the person
- * wrote in a thread of theirs (a private thread, stage 5) goes in that
- * thread. The threads the bot opened per request before this stay where they
- * are, readable, and nothing new is added to them. Never throws.
+ * The thread a message is in, in the person's chat with the bot: its first
+ * message's id (the message's own when it is a first message), or null when
+ * it is no message of that chat, or a first message that was deleted with
+ * nothing under it. Never throws.
  */
 async function threadRootFor(pool, { conversationId, replyToId = null }) {
   try {
     const replyId = conversations.strictId(replyToId);
     if (!replyId) return null;
-    const { rows: [quoted] = [] } = await pool.query(
-      'SELECT thread_root_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2',
+    // A first message its author deleted before anybody replied under it is
+    // no thread to reply in (conversations.js sendMessage refuses one).
+    const { rows: [root] = [] } = await pool.query(
+      `SELECT r.id FROM conversation_messages q
+         JOIN conversation_messages r ON r.id = COALESCE(q.thread_root_id, q.id)
+        WHERE q.id = $1 AND q.conversation_id = $2
+          AND (r.deleted_at IS NULL
+               OR EXISTS (SELECT 1 FROM conversation_messages x WHERE x.thread_root_id = r.id))`,
       [replyId, conversationId],
     );
-    return quoted?.thread_root_id ? Number(quoted.thread_root_id) : null;
+    return root ? Number(root.id) : null;
   } catch (err) {
-    log.warn('homeroom-bot-dm', 'Could not find the thread a reply was in (saying it in Main)', { conversationId, err: err.message });
+    log.warn('homeroom-bot-dm', 'Could not find the thread a reply was in (giving it a thread of its own)', { conversationId, err: err.message });
     return null;
   }
 }
 
+// ── Every message is in a thread (14 Nov 2026) ───────────────────────────
+//
+// Main Chat is gone: in a person's chat with the bot, every message that is
+// not a reply is the first message of a thread the Homeroom bot page lists
+// (a `private_threads` row). sendDm upholds it for everything the bot says,
+// in this order (placeFor):
+//
+//   1. `thread`          the message OPENS a thread (the "+", a thread about
+//                        a request, a draft, a design, a hello): it is the
+//                        thread's first message, and its row is written in
+//                        the message's own transaction;
+//   2. `threadRootId`    the thread it is named into, unless that is a
+//                        request's card from before (a request's news is on
+//                        its page);
+//   3. `replyToId`       the thread the message it answers is in;
+//   4. a first version   that project's first-version thread, opened by its
+//                        first message ("I'm setting up X now") and holding
+//                        its plan, its progress, live and whatever stopped it;
+//   5. anything else     a thread of its own (kind 'note'), so nothing the
+//                        bot says is ever outside one. A sender that lands
+//                        here should name its thread; it is logged.
+//
+// A thread the bot opens starts unread (its first message is news); one the
+// person opened themselves starts read (`thread.read`).
+
+// The kinds that are a first version's own, whatever else they carry.
+const FIRST_VERSION_KINDS = new Set(['first_version_started', 'first_version_failed']);
+
+/** Pure: the project a message is a first version's news about (its slug), or null. */
+function firstVersionSlugOf(metadata) {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const slug = typeof metadata.appSlug === 'string' ? metadata.appSlug : '';
+  if (!slug) return null;
+  return metadata.firstVersion === true || FIRST_VERSION_KINDS.has(metadata.kind) ? slug : null;
+}
+
 /**
- * Where news that quotes `replyToId` (requestStart's message) is said: in
- * Main, `{ threadRootId: false }`, when that message sits under a request's
- * card, else `{}` (sendDm's own choice, the thread it was written in). A
- * card's thread opens the request's page, or a first version's hub, so news
- * said there was never seen (the plan in B02, audit of 2 Nov 2026). A thread
- * of the person's own (a draft, an idea) keeps it. Never throws.
+ * The first-version thread of `appSlug` in `userId`'s chat with the bot:
+ * { appId, rootId }, `rootId` null when it has none yet (the message that
+ * asks opens it). Null when there is no such project. The oldest wins, so
+ * two messages that raced to open it meet in one from then on.
+ */
+async function firstVersionThread(pool, { userId, appSlug }) {
+  const { rows: [app] = [] } = await pool.query('SELECT id FROM apps WHERE slug = $1', [String(appSlug)]);
+  if (!app) return null;
+  const { rows: [open] = [] } = await pool.query(
+    `SELECT p.root_message_id FROM private_threads p
+       JOIN conversation_messages m ON m.id = p.root_message_id AND m.deleted_at IS NULL
+      WHERE p.user_id = $1 AND p.app_id = $2 AND p.kind = 'first_version'
+      ORDER BY p.id LIMIT 1`,
+    [Number(userId), Number(app.id)],
+  );
+  return { appId: Number(app.id), rootId: open ? Number(open.root_message_id) : null };
+}
+
+/**
+ * Where one message of the bot's goes (the rules above): { root } for a
+ * thread that exists, or { open } for the thread this message opens, with
+ * the columns of its row. Never throws: a place it cannot work out is a
+ * thread of its own.
+ */
+async function placeFor(pool, { conversationId, userId, threadRootId, replyToId, metadata, thread }) {
+  if (thread && typeof thread === 'object') return { root: null, open: thread };
+  const named = threadRootId === false ? null : conversations.strictId(threadRootId);
+  // `outside`: named under a request's card from before, and said in a
+  // thread that is not what it answers (its line there is a quiet one).
+  let outside = false;
+  try {
+    if (named) {
+      if (await isRequestCard(pool, named)) outside = true;
+      else {
+        const root = await threadRootFor(pool, { conversationId, replyToId: named });
+        if (root) return { root };
+      }
+    }
+    if (threadRootId !== false) {
+      const root = await threadRootFor(pool, { conversationId, replyToId });
+      if (root) return { root };
+    }
+    const slug = firstVersionSlugOf(metadata);
+    if (slug) {
+      const first = await firstVersionThread(pool, { userId, appSlug: slug });
+      if (first?.rootId) return { root: first.rootId, outside };
+      if (first) return { root: null, open: { kind: 'first_version', appId: first.appId }, outside };
+    }
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not place a message in a thread (giving it one of its own)', { userId, err: err.message });
+  }
+  log.info('homeroom-bot-dm', 'A message with no thread named got a thread of its own', {
+    userId, kind: metadata?.kind || null,
+  });
+  return { root: null, open: { kind: 'note' }, outside };
+}
+
+// The row of a thread a message opens, written in the message's own
+// transaction ($3 the message). `read`: the person opened it themselves.
+const OPEN_THREAD_SQL = `
+  INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state,
+                               about_thread_id, about_kind, about_number, holds_bot, last_read_message_id)
+  VALUES ($1, $2, $3, $4, $5, 'open', $6, $7, $8, $9, CASE WHEN $10::boolean THEN $3::int END)
+  ON CONFLICT (root_message_id) DO NOTHING`;
+
+async function writeOpenedThread(db, { userId, conversationId, messageId, open }) {
+  await db.query(OPEN_THREAD_SQL, [
+    Number(userId), Number(conversationId), Number(messageId), open.appId == null ? null : Number(open.appId),
+    String(open.kind || 'note'), open.aboutThreadId == null ? null : Number(open.aboutThreadId),
+    open.aboutKind || null, open.aboutNumber == null ? null : Number(open.aboutNumber), open.holds === true,
+    open.read === true,
+  ]);
+}
+
+// A thread the bot answers in is one the page lists: a first message with no
+// row yet (the person's own, written outside a thread by an older client; a
+// line of the bot's from before) gets one as the reply lands, in the reply's
+// transaction. Everything before the reply counts as read. A request's card
+// from before is left as it is: its request's page is its place.
+// $1 the person, $2 the chat, $3 the thread's first message, $4 the reply.
+const LIST_THREAD_SQL = `
+  INSERT INTO private_threads (user_id, conversation_id, root_message_id, kind, state, last_read_message_id)
+  SELECT $1, $2, m.id, CASE WHEN m.sender_id = $1 THEN 'idea' ELSE 'note' END, 'open',
+         (SELECT MAX(r.id) FROM conversation_messages r
+           WHERE (r.id = m.id OR r.thread_root_id = m.id) AND r.id < $4)
+    FROM conversation_messages m
+   WHERE m.id = $3 AND m.conversation_id = $2 AND m.thread_root_id IS NULL
+     AND NOT ${conversations.REQUEST_NEWS}
+     AND NOT EXISTS (SELECT 1 FROM private_threads p WHERE p.root_message_id = m.id)
+  ON CONFLICT (root_message_id) DO NOTHING`;
+
+/**
+ * Where news that quotes `replyToId` (requestStart's message) is said:
+ * `{ threadRootId: false }`, not in that message's thread, when it sits under
+ * a request's card from before, else `{}` (sendDm's own choice, the thread
+ * it was written in). A card's thread opens the request's page, so news said
+ * there was never seen (the plan in B02, audit of 2 Nov 2026); a first
+ * version's goes in its own thread instead (placeFor). A thread of the
+ * person's own (a draft, an idea) keeps it. Never throws.
  */
 async function outsideCardThread(pool, replyToId) {
   const id = conversations.strictId(replyToId);
@@ -381,7 +549,7 @@ async function outsideCardThread(pool, replyToId) {
     const root = Number(quoted?.thread_root_id) || null;
     return root && await isRequestCard(pool, root) ? { threadRootId: false } : {};
   } catch (err) {
-    log.warn('homeroom-bot-dm', 'Could not tell where a request\'s start is (saying it in Main)', { replyToId: id, err: err.message });
+    log.warn('homeroom-bot-dm', 'Could not tell where a request\'s start is (not saying it in its thread)', { replyToId: id, err: err.message });
     return { threadRootId: false };
   }
 }
@@ -394,7 +562,7 @@ async function isRequestCard(pool, messageId) {
     );
     return rows.length > 0;
   } catch (err) {
-    log.warn('homeroom-bot-dm', 'Could not tell whether a message is a request\'s card (saying it in Main)', { messageId, err: err.message });
+    log.warn('homeroom-bot-dm', 'Could not tell whether a message is a request\'s card (not saying it under it)', { messageId, err: err.message });
     return true;
   }
 }
@@ -407,9 +575,9 @@ async function isRequestCard(pool, messageId) {
  * objects ({ type: 'issue', appId, issueNumber } / { type: 'proposal',
  * appId, sessionId }). A card the bot cannot attach (a private project it
  * is not in) never costs the message: it is sent without its cards.
- * `replyToId` (#3707) is the person's message this one answers, quoted
- * above it as a person's reply quotes; one that cannot be quoted (see
- * quotable) is left off, never the message. #20 (WP3): `withoutCards` is
+ * `replyToId` (#3707) is the person's message this one answers: it goes in
+ * that message's thread, under it (no quote: in a thread, what it answers is
+ * the line above it). #20 (WP3): `withoutCards` is
  * what the message says when its cards cannot go with it, for a message
  * whose words point at a card ("open the proposal below"): with the link
  * written out instead.
@@ -493,7 +661,7 @@ const STORY_MOMENTS = Object.freeze({
   request_taken: 'on_hold',
   chat: 'reply', confirm: 'reply',
 });
-// The moments that ring, shown in the main chat as well as the request's thread.
+// The moments that ring. (They were shown in Main Chat as well as the request's thread, until 14 Nov 2026.)
 const RINGING_MOMENTS = new Set(['needs_you', 'ready', 'stopped', 'on_hold', 'live', 'done_elsewhere']);
 // A build that did not finish, by its cause (buildFailedCause).
 const BUILD_SAID = Object.freeze({
@@ -553,8 +721,8 @@ function saidOf(kind, info = {}) {
 /**
  * Pure: a message's metadata with the story's fields (contract 2.1) filled
  * in: `moment` (a ringing one only), `said`, the request's title (null for a
- * first version, which says `firstVersion`), and, in a request's thread,
- * `threadRootId` and `alsoInChat` for a moment that rings. What the caller
+ * first version, which says `firstVersion`), and `threadRootId`, the thread
+ * it is said in (left out on a thread's own first message). What the caller
  * set itself wins.
  */
 function storyMetadata(metadata, { moment = null, threadRootId = null, quiet = false } = {}) {
@@ -569,10 +737,9 @@ function storyMetadata(metadata, { moment = null, threadRootId = null, quiet = f
     ...(about && !('requestTitle' in metadata)
       ? { requestTitle: metadata.firstVersion ? null : (metadata.issueTitle || null) } : {}),
     ...(threadRootId ? { threadRootId } : {}),
-    ...(threadRootId && ringing ? { alsoInChat: true } : {}),
-    // #6019: a quiet line about a request, said in Main now that requests
-    // have no thread there: it counts as nothing unread (conversations.js
-    // countUnread), as it did in the thread it used to go in.
+    // #6019: a quiet line about a request, said outside the card's thread it
+    // was named into: it counts as nothing unread (private-threads.js
+    // unreadFor), as it did in the thread it used to go in.
     ...(quiet && !ringing ? { quiet: true } : {}),
   };
 }
@@ -614,10 +781,11 @@ async function hasOthers(pool, appId, appSlug = null) {
  * just wrote); left out, its kind decides (STORY_MOMENTS), and anything
  * else is silent.
  *
- * One story per request: a message about a request goes in that request's
- * thread, under its card (threadRootFor), and one of the four moments that
- * ring is shown in the main chat too (`alsoInChat`). `threadRootId` names
- * the thread outright; false keeps the message in the main chat.
+ * Every message is in a thread (placeFor, above): `thread` opens one with
+ * this message as its first; `threadRootId` names the thread outright;
+ * false says "not the thread `replyToId` is in". With neither, the message
+ * goes in the thread of what it answers, a first version's news in that
+ * project's first-version thread, and anything else in a thread of its own.
  */
 // B5: a person's one hello, claimed in the transaction that sends it (a
 // row per person, homeroom_bot_hellos): `known` when the bot wrote to them
@@ -660,12 +828,23 @@ async function storyAppId(pool, metadata, root) {
 
 async function sendDm(pool, {
   bot, userId, content, metadata = null, idempotencyKey = null, objects = null, replyToId = null, withoutCards = null,
-  moment = undefined, threadRootId = undefined, hello = null,
+  moment = undefined, threadRootId = undefined, hello = null, card = null, postKind = null, thread = null,
 }) {
   if (!bot?.id || !userId) return null;
+  // Step 4 (11 Nov 2026): this is the bot's posting function's transport for
+  // a person's chat with it (services/bot-post.js): every message, and every
+  // one its rules refuse, is recorded there, keyed by its idempotency key in
+  // this chat (which also says it once). A message sent is recorded in its
+  // own transaction (afterInsert, below: the two commit together); a
+  // duplicate's ask, and a refusal, after.
+  const record = (outcome, messageId = null, conversationId = null, db = pool, strict = false) => require('./bot-post').recordDm(db, {
+    userId, conversationId, kind: postKind || metadata?.kind || 'dm', key: conversations.normalizeIdempotencyKey(idempotencyKey),
+    messageId, words: content, outcome,
+    appId: null, issueNumber: Number(metadata?.issueNumber) || null,
+  }, { strict });
   // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's news is
   // not a message. It is said on the request's own page (its question or
-  // plan, built and up for a vote, one failure updated in place, live), and
+  // plan, built and up for a vote, a failure note, live), and
   // its requester's bell rings from its stage (services/work-state.js).
   // Nothing about it goes into Main Chat, a request card's thread or a
   // private thread. A first version's news is the exception: it has no
@@ -674,6 +853,7 @@ async function sendDm(pool, {
     log.info('homeroom-bot-dm', 'A request\'s news is said on its page, not sent', {
       userId, kind: metadata?.kind || null, issueNumber: metadata?.issueNumber || null,
     });
+    await record('refused');
     return null;
   }
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, userId);
@@ -681,19 +861,17 @@ async function sendDm(pool, {
   const input = { content: clip(content, conversations.MAX_MESSAGE_LENGTH || 8000) };
   const key = conversations.normalizeIdempotencyKey(idempotencyKey);
   if (key) input.idempotency_key = key;
-  // A message a caller would have put in a request's thread, under its
-  // card, is said beside the card (#6019), and a thread of the person's own
-  // (a private thread) keeps its messages. #6207 (3 Nov 2026): Main Chat no
-  // longer draws a request's news at all (conversations.js REQUEST_NEWS):
-  // it is on the request's page, where its row goes, and it still rings.
-  const asked = threadRootId === false ? null : conversations.strictId(threadRootId);
-  const root = threadRootId === false ? null
-    : (asked && !(await isRequestCard(pool, asked)) ? asked
-      : await threadRootFor(pool, { conversationId: opened.conversationId, replyToId }));
-  if (root) {
-    // In a thread, what it answers is the line above it: no quote.
-    input.thread_root_id = root;
-  } else {
+  // 14 Nov 2026: every message is in a thread (placeFor). It is a reply in
+  // one that exists (`root`), or the first message of the one it opens
+  // (`place.open`, whose row is written with it, below). In a thread, what
+  // it answers is the line above it: no quote.
+  const place = await placeFor(pool, {
+    conversationId: opened.conversationId, userId, threadRootId, replyToId, metadata, thread,
+  });
+  const root = place.root || null;
+  if (root) input.thread_root_id = root;
+  else {
+    // The line that opens a thread for what they asked quotes it (quotable).
     const quote = await quotable(pool, opened.conversationId, userId, replyToId);
     if (quote) input.reply_to_id = quote;
   }
@@ -712,8 +890,8 @@ async function sendDm(pool, {
     && Number(hello.metadata.issueNumber) === Number(metadata.issueNumber)) {
     hello = { ...hello, metadata: { ...hello.metadata, issueTitle: title } };
   }
-  // Said in Main instead of under the request's card (above).
-  const quiet = !!asked && !root;
+  // Said outside the request's card it was named under (placeFor).
+  const quiet = place.outside === true;
   const stored = metadata
     ? storyMetadata(group ? { ...metadata, group: true } : metadata, { moment: story, threadRootId: root, quiet })
     : null;
@@ -749,6 +927,7 @@ async function sendDm(pool, {
   const mailFor = metadata?.firstVersion ? 'live' : 'ready';
   const mail = !muted && story === mailFor ? {
     kind: 'build_ready', appName: metadata?.appName || null, appSlug: metadata?.appSlug || null,
+    // The thread it is said in: its own first message's, when it opens one.
     conversationId: opened.conversationId, threadRootId: root || null,
     ...(story === 'live' ? { detail } : {}),
     // Built, but part of it failed when Homeroom tried it: not "ready to try".
@@ -759,24 +938,55 @@ async function sendDm(pool, {
   // chose for their own: owed in the message's own transaction.
   const opens = story === 'live' && !!metadata?.firstVersion && !!metadata?.appSlug;
   let toldOpen = [];
+  const greet = hello?.kind ? async (db) => {
+    const { rows: claimed } = await db.query(CLAIM_HELLO_SQL, [Number(userId), Number(bot.id), String(hello.kind)]);
+    greeted = claimed[0]?.kind === hello.kind;
+    if (!greeted) return hello.content ? null : { refuse: true };
+    return hello.content
+      ? { content: clip(hello.content, conversations.MAX_MESSAGE_LENGTH || 8000), metadata: helloStored ? { [META]: helloStored } : null }
+      : null;
+  } : null;
+  // Step 3 (11 Nov 2026, services/bot-cards.js): an offer's card, written in
+  // the message's own transaction: before the message, its id put in the
+  // message's metadata (`actionId`, what a tap names); after it, the
+  // message's id put on the card. A duplicate (the same key, sent before)
+  // writes none: its card was written with it. `card.onInsert(db, { cardId,
+  // messageId })` is the caller's own write in that transaction.
+  let cardId = null;
+  const withCard = card ? async (db) => {
+    const instead = greet ? await greet(db) : null;
+    if (instead?.refuse) return instead;
+    const made = await require('./bot-cards').insertCard(db, {
+      ...card, place: 'dm', userId, conversationId: opened.conversationId,
+    });
+    cardId = Number(made.id);
+    const base = instead && 'metadata' in instead ? instead.metadata : (stored ? { [META]: stored } : null);
+    const bot0 = base && base[META] && typeof base[META] === 'object' ? base[META] : {};
+    return { ...(instead || {}), metadata: { ...(base || {}), [META]: { ...bot0, actionId: cardId } } };
+  } : null;
+  let recorded = false;
   const hooks = {
-    ...(hello?.kind ? {
-      prepare: async (db) => {
-        const { rows: claimed } = await db.query(CLAIM_HELLO_SQL, [Number(userId), Number(bot.id), String(hello.kind)]);
-        greeted = claimed[0]?.kind === hello.kind;
-        if (!greeted) return hello.content ? null : { refuse: true };
-        return hello.content
-          ? { content: clip(hello.content, conversations.MAX_MESSAGE_LENGTH || 8000), metadata: helloStored ? { [META]: helloStored } : null }
-          : null;
-      },
-    } : {}),
-    ...(hello?.kind || mail || opens ? {
-      afterInsert: async (db, { messageId: id }) => {
-        if (greeted) await db.query('UPDATE homeroom_bot_hellos SET message_id = $2 WHERE user_id = $1', [Number(userId), id]);
-        if (mail) await require('../workflow/platform.ts').dmMailOwed(db, { userId: Number(userId), messageId: id, mail });
-        if (opens) toldOpen = await require('./project-opened').oweTold(db, { appSlug: metadata.appSlug, makerId: userId });
-      },
-    } : {}),
+    ...(greet || withCard ? { prepare: withCard || greet } : {}),
+    afterInsert: async (db, { messageId: id }) => {
+      if (greeted) await db.query('UPDATE homeroom_bot_hellos SET message_id = $2 WHERE user_id = $1', [Number(userId), id]);
+      if (cardId) {
+        await db.query('UPDATE bot_cards SET message_id = $2 WHERE id = $1', [cardId, id]);
+        if (typeof card.onInsert === 'function') await card.onInsert(db, { cardId, messageId: id, conversationId: opened.conversationId });
+      }
+      // The thread it opens, or the row of the one it answers in, so the
+      // Homeroom bot page lists it: written with the message.
+      if (place.open) await writeOpenedThread(db, { userId, conversationId: opened.conversationId, messageId: id, open: place.open });
+      else if (root) await db.query(LIST_THREAD_SQL, [Number(userId), Number(opened.conversationId), Number(root), Number(id)]);
+      if (mail) {
+        await require('../workflow/platform.ts').dmMailOwed(db, {
+          userId: Number(userId), messageId: id, mail: { ...mail, threadRootId: root || Number(id) },
+        });
+      }
+      if (opens) toldOpen = await require('./project-opened').oweTold(db, { appSlug: metadata.appSlug, makerId: userId });
+      // Its record (services/bot-post.js), committed with it.
+      await record('said', id, opened.conversationId, db, true);
+      recorded = true;
+    },
   };
   const send = (withCards) => conversations.sendMessage(pool, { id: bot.id }, opened.conversationId,
     withCards.length
@@ -799,6 +1009,8 @@ async function sendDm(pool, {
     return null;
   }
   const messageId = result.messageId ?? result.message?.id ?? null;
+  // A duplicate (its key sent before) wrote nothing: it is asked again.
+  if (!recorded) await record('said', messageId, opened.conversationId);
   // #4396: after the commit, the bells of the members its "live" told
   // (their notices, phone pushes and emails are owed in the message's own
   // transaction: afterInsert).
@@ -820,8 +1032,12 @@ async function sendDm(pool, {
     conversationId: opened.conversationId,
     messageId,
     duplicate: !!result.duplicate,
+    // The thread it replied in (null for a thread's own first message), and
+    // the thread it is in either way.
     threadRootId: root || null,
+    rootId: root || (messageId ? Number(messageId) : null),
     ...(hello?.kind ? { hello: greeted } : {}),
+    ...(cardId ? { cardId } : {}),
   };
 }
 
@@ -865,41 +1081,13 @@ const typingSends = new Map();
 // (frontend/locales/en/messages.json `thread.botWorking.*`), as the agent
 // session's activity line does from a tool's name. No `doing` is "Thinking".
 // A person's typing event (routes/conversations.js) never carries one.
-// Homeroom bot parity, P1: 'writing' carries the answer as it is written
-// (homeroom-bot-mayor.js draftWriter), its own words and the only `text`
-// a typing event has: the newest MAX_DRAFT_CHARS of it, so the event fits
-// the bus between servers (ws-bus.js: 8000 bytes, or it becomes a nudge to
-// reload) and the card stays a card. The message sent takes its place.
+// 'writing': the model is writing its answer (homeroom-bot-mayor.js
+// draftWriter). #6581, step 4 (11 Nov 2026): no words travel with it, ever:
+// the card says "Writing", and the answer appears once, whole, as the
+// bot's message, so nothing shown is ever replaced or wiped.
 // 'looking': a helper sent to look into a project's code (P3, look_into).
 const DOING_KINDS = Object.freeze(['progress', 'request', 'code', 'drawing', 'capturing', 'designing', 'drafting', 'writing', 'looking']);
 const MAX_DOING_PROJECT = 60;
-const MAX_DRAFT_CHARS = 1800;
-const MAX_DRAFT_BYTES = 5600;
-
-/**
- * Pure: the end of an answer being written, as a typing event carries it:
- * '…' and the newest words when it is long, and where that tail starts in
- * the whole answer (`from`; 0 when nothing was cut), so the screen can stitch
- * the tail under the words it already holds instead of sliding them (#6405).
- */
-function draftTail(text) {
-  let out = String(text || '').replace(/\r/g, '').trim();
-  if (!out) return { text: '', from: 0 };
-  // `from` travels beside the text, so the byte budget leaves room for it.
-  const fits = (value) => Buffer.byteLength(JSON.stringify(value), 'utf8') <= MAX_DRAFT_BYTES - 16;
-  if (out.length <= MAX_DRAFT_CHARS && fits(out)) return { text: out, from: 0 };
-  let keep = MAX_DRAFT_CHARS;
-  let tail = out.slice(-keep);
-  while (keep > 100 && !fits(`… ${tail}`)) {
-    keep = Math.floor(keep * 0.8);
-    tail = out.slice(-keep);
-  }
-  // From a word, not the middle of one.
-  const space = tail.search(/\s/);
-  if (space > 0 && space < 40) tail = tail.slice(space + 1);
-  const words = tail.trimStart();
-  return { text: `… ${words}`, from: out.length - words.length };
-}
 
 /** Pure: `what` as a typing event carries it ({ kind, number?, project? }), or null for "thinking". */
 function typingDoing(what) {
@@ -917,25 +1105,24 @@ function typingDoing(what) {
     const page = typeof what.page === 'string' ? clip(what.page.replace(/\s+/g, ' ').trim(), MAX_DOING_PROJECT) : '';
     return page ? { kind: 'capturing', page } : { kind: 'capturing' };
   }
-  if (what.kind === 'writing') {
-    // #6581: no words are carried any more, so a bare `writing` says "Writing".
-    if (typeof what.text !== 'string') return { kind: 'writing' };
-    const tail = draftTail(what.text);
-    // `from` only when the text was cut, so a whole answer keeps its own start.
-    return tail.text ? { kind: 'writing', text: tail.text, ...(tail.from > 0 ? { from: tail.from } : {}) } : null;
-  }
+  // 'writing' and the rest: the kind alone, never words.
   return { kind: what.kind };
 }
 
 const sameDoing = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
 
-async function pushTyping(pool, botId, conversationId, typing, ws, threadRootId = null, doing = null) {
+// Task 2148: `answering` is the message of theirs this typing is the answer
+// to, when that answer can be stopped (their DM machine's work,
+// homeroom-bot-stop.js): the composer's Stop names it, so a Stop only ever
+// ends the answer the person was looking at.
+async function pushTyping(pool, botId, conversationId, typing, ws, threadRootId = null, doing = null, answering = null) {
   try {
     await conversations.withLockedAudience(pool, { id: botId }, conversationId, (audience) => {
       ws.pushConversationEvent(audience, {
         type: 'conversation_typing', conversationId, userId: botId, typing,
         ...(threadRootId ? { threadRootId } : {}),
         ...(typing && doing ? { doing } : {}),
+        ...(typing && answering ? { answering } : {}),
       }, { excludeUserId: botId, actorUserId: botId });
     });
   } catch (err) {
@@ -944,10 +1131,10 @@ async function pushTyping(pool, botId, conversationId, typing, ws, threadRootId 
   }
 }
 
-function sendTyping(pool, botId, conversationId, typing, ws, threadRootId = null, doing = null) {
+function sendTyping(pool, botId, conversationId, typing, ws, threadRootId = null, doing = null, answering = null) {
   const place = typingPlace(conversationId, threadRootId);
   const prior = typingSends.get(place) || Promise.resolve();
-  const next = prior.then(() => pushTyping(pool, botId, conversationId, typing, ws, threadRootId, doing));
+  const next = prior.then(() => pushTyping(pool, botId, conversationId, typing, ws, threadRootId, doing, answering));
   typingSends.set(place, next);
   next.then(() => { if (typingSends.get(place) === next) typingSends.delete(place); });
   return next;
@@ -957,9 +1144,10 @@ function sendTyping(pool, botId, conversationId, typing, ws, threadRootId = null
  * Show the bot typing in one conversation until the returned stop() is
  * called, or TYPING_MAX_MS passes. Never throws. `stop.doing(what)` says
  * what it is doing now (typingDoing; null: thinking): at once, if it
- * changed, and on every renewal after.
+ * changed, and on every renewal after. `answering`: the message of theirs
+ * a stoppable answer is for (pushTyping), said on every event.
  */
-function startTyping(pool, { botId, conversationId, threadRootId = null, ws = null }) {
+function startTyping(pool, { botId, conversationId, threadRootId = null, ws = null, answering = null }) {
   const id = Number(conversationId);
   if (!botId || !Number.isSafeInteger(id) || id <= 0) {
     const none = async () => {};
@@ -969,9 +1157,10 @@ function startTyping(pool, { botId, conversationId, threadRootId = null, ws = nu
   const root = Number.isSafeInteger(Number(threadRootId)) && Number(threadRootId) > 0 ? Number(threadRootId) : null;
   const place = typingPlace(id, root);
   const io = ws || require('./ws');
+  const answered = Number.isSafeInteger(Number(answering)) && Number(answering) > 0 ? Number(answering) : null;
   let entry = typingNow.get(place);
   if (!entry) {
-    const created = { holders: new Map(), timer: null, doing: null, doingBy: null };
+    const created = { holders: new Map(), timer: null, doing: null, doingBy: null, answering: answered, answeringBy: null };
     created.end = () => {
       clearInterval(created.timer);
       if (typingNow.get(place) === created) typingNow.delete(place);
@@ -986,21 +1175,24 @@ function startTyping(pool, { botId, conversationId, threadRootId = null, ws = nu
         return;
       }
       // One renewal at a time: a slow database never queues them up.
-      if (!typingSends.has(place)) sendTyping(pool, botId, id, true, io, root, created.doing);
+      if (!typingSends.has(place)) sendTyping(pool, botId, id, true, io, root, created.doing, created.answering);
     }, TYPING_RENEW_MS);
     created.timer.unref?.();
     typingNow.set(place, created);
-    created.first = sendTyping(pool, botId, id, true, io, root);
+    created.first = sendTyping(pool, botId, id, true, io, root, null, answered);
     entry = created;
   }
   const holder = Symbol('typing');
   entry.holders.set(holder, Date.now() + TYPING_MAX_MS);
+  // The answer this typing is for is the newest holder's that names one.
+  if (answered) { entry.answering = answered; entry.answeringBy = holder; }
   const stop = async () => {
     // Already timed out, or another answer is still being written.
     if (!entry.holders.delete(holder)) return;
     if (entry.holders.size) {
       // What this answer was doing is not what the one still going is.
       if (entry.doingBy === holder) { entry.doing = null; entry.doingBy = null; }
+      if (entry.answeringBy === holder) { entry.answering = null; entry.answeringBy = null; }
       return;
     }
     await entry.end();
@@ -1013,7 +1205,7 @@ function startTyping(pool, { botId, conversationId, threadRootId = null, ws = nu
     if (!entry.holders.has(holder) || typingNow.get(place) !== entry || sameDoing(next, entry.doing)) return Promise.resolve();
     entry.doing = next;
     entry.doingBy = next ? holder : null;
-    return sendTyping(pool, botId, id, true, io, root, next);
+    return sendTyping(pool, botId, id, true, io, root, next, entry.answering);
   };
   return stop;
 }
@@ -1027,9 +1219,10 @@ const TYPING_FIRST_WAIT_MS = 2000;
  * doing now (startTyping's stop.doing); `moveTo(threadRootId)` carries the
  * typing, and what it last said it was doing, to another thread of the
  * same conversation where the answer goes on (null: the main chat).
+ * `answering`: the message a stoppable answer is for (startTyping).
  */
-async function whileTyping(pool, { botId, conversationId, threadRootId = null, ws = null }, work) {
-  let stop = startTyping(pool, { botId, conversationId, threadRootId, ws });
+async function whileTyping(pool, { botId, conversationId, threadRootId = null, ws = null, answering = null }, work) {
+  let stop = startTyping(pool, { botId, conversationId, threadRootId, ws, answering });
   let here = Number(threadRootId) || null;
   // What it last said it is doing, for the place it moves to.
   let said = null;
@@ -1053,7 +1246,7 @@ async function whileTyping(pool, { botId, conversationId, threadRootId = null, w
       const there = Number(rootId) || null;
       if (there === here) return;
       const was = stop;
-      stop = startTyping(pool, { botId, conversationId, threadRootId: there, ws });
+      stop = startTyping(pool, { botId, conversationId, threadRootId: there, ws, answering });
       here = there;
       if (said) await stop.doing(said);
       await was();
@@ -1332,13 +1525,16 @@ function overAllowanceText({ line = null, appName, group = false }) {
 /**
  * Said once a week, to the person whose building time holds a request back
  * (its payer; the requester unless somebody else asked for it), when the bot
- * talks to them. One story: ONE message a week that rings (on_hold, with
+ * talks to them. One story: ONE notice a week that rings (on_hold, with
  * `count`, how many of their requests are held), and each held request's
- * thread says it quietly; its card says On hold until Monday.
+ * thread says it quietly; its card says On hold until Monday. 14 Nov 2026:
+ * the notice is a bell row, not a chat message (homeroom-bot-notices.js):
+ * it is about their account, and belongs to no thread. Resolves what it
+ * rang ({ notificationId } or { duplicate }), or null.
  */
 async function noteOverAllowance(pool, { settings, requester, payer = null, app, issueNumber, bot }) {
   const who = payer || requester;
-  if (!who || !hasBot(settings, who)) return null;
+  if (!who || !(await botWorksFor(pool, settings, who))) return null;
   const { rows } = await pool.query(
     `SELECT (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS members
        FROM apps a WHERE a.id = $1`,
@@ -1366,34 +1562,32 @@ async function noteOverAllowance(pool, { settings, requester, payer = null, app,
       content: overAllowanceText({ appName, group }),
     });
   }
-  return sendDm(pool, {
-    bot,
-    userId: who.userId,
-    idempotencyKey: `hrbot-allowance-${who.userId}-${weekKey()}`,
-    // One message for every held request: the main chat, not a thread.
-    threadRootId: false,
-    replyToId: count > 1 ? null : await requestStart(pool, { userId: who.userId, appId: app.id, issueNumber }),
-    content: overAllowanceText({ line: count > 1 ? null : requestLine(context), appName, group }),
-    metadata: {
-      kind: 'allowance', appSlug: app.slug, appName, issueNumber, count,
-      ...(context.issueTitle ? { issueTitle: context.issueTitle } : {}),
-      ...(context.firstVersion ? { firstVersion: true } : {}),
+  // One notice for every held request, in the bell.
+  return require('./homeroom-bot-notices').ring(pool, {
+    bot, userId: who.userId, kind: 'allowance', appId: app.id,
+    legacyKey: `hrbot-allowance-${who.userId}-${weekKey()}`,
+    fields: {
+      kind: 'allowance', appSlug: app.slug, appName, count,
+      // One held request is named; several are counted.
+      ...(count > 1 ? {} : {
+        issueNumber,
+        ...(context.firstVersion ? { firstVersion: true } : { requestTitle: context.issueTitle || null }),
+      }),
     },
   });
 }
 
 /**
  * #6133, 5 Nov 2026: the person's building time for the week is nearly
- * spent, said once a week in their chat with the bot as the account notice
- * it is (kind 'allowance', `low`), not on a request's card, which no longer
- * goes there. Resolves what sendDm did, or null.
+ * spent, said once a week as the account notice it is, not on a request's
+ * card. 14 Nov 2026: in the bell, not the chat (homeroom-bot-notices.js,
+ * `allowance_low`); it opens where their building time is shown. Resolves
+ * what it rang, or null.
  */
-async function noteAllowanceLow(pool, { bot, userId, app }) {
+async function noteAllowanceLow(pool, { bot, userId }) {
   if (!bot?.id || !userId) return null;
-  return sendDm(pool, {
-    bot, userId, threadRootId: false, idempotencyKey: `hrbot-allowance-low-${Number(userId)}-${weekKey()}`,
-    content: 'You\'re close to this week\'s building time.',
-    metadata: { kind: 'allowance', low: true, ...(app?.slug ? { appSlug: app.slug, appName: app.name || app.slug } : {}) },
+  return require('./homeroom-bot-notices').ring(pool, {
+    bot, userId, kind: 'allowance_low', legacyKey: `hrbot-allowance-low-${Number(userId)}-${weekKey()}`,
   });
 }
 
@@ -1406,7 +1600,8 @@ const PAUSED_FOR_WEEK_TEXT = 'On hold until Monday: I\'ve used my budget for thi
  * The bot's own weekly budget is spent (homeroom-bot.js pauseOnBudget), and
  * work of this person's was next: they hear it once a week, whichever
  * request it was, rather than finding the bot quiet. `apps` names the
- * projects held, when the caller knows them. Resolves what sendDm did, or
+ * projects held, when the caller knows them. 14 Nov 2026: in the bell, not
+ * the chat (homeroom-bot-notices.js, `paused`). Resolves what it rang, or
  * null for somebody the bot does not talk to.
  */
 async function notePausedForWeek(pool, { settings, bot, userId, apps = [] }) {
@@ -1415,15 +1610,11 @@ async function notePausedForWeek(pool, { settings, bot, userId, apps = [] }) {
     'SELECT u.id AS user_id, u.username, u.is_synthetic, (u.has_platform_access OR u.private_member_since IS NOT NULL) AS has_platform_access, u.is_admin FROM users u WHERE u.id = $1',
     [userId],
   );
-  if (!rows[0] || !hasBot(settings, requesterFrom(rows[0]))) return null;
+  if (!rows[0] || !(await botWorksFor(pool, settings, requesterFrom(rows[0])))) return null;
   const names = (Array.isArray(apps) ? apps : []).map((a) => a?.name || a?.slug).filter(Boolean).slice(0, 3);
-  return sendDm(pool, {
-    bot,
-    userId,
-    idempotencyKey: `hrbot-paused-${userId}-${weekKey()}`,
-    content: PAUSED_FOR_WEEK_TEXT,
-    threadRootId: false,
-    metadata: { kind: 'paused', ...(names.length ? { appName: names.join(', ') } : {}) },
+  return require('./homeroom-bot-notices').ring(pool, {
+    bot, userId, kind: 'paused', legacyKey: `hrbot-paused-${userId}-${weekKey()}`,
+    fields: { kind: 'paused', ...(names.length ? { appName: names.join(', ') } : {}) },
   });
 }
 
@@ -1862,7 +2053,7 @@ async function closeOpenQuestions(pool, { userId, appId, issueNumber, ws = null 
 async function dmRecipient(pool, appId, issueNumber) {
   const settings = await settingsModule().readSettings(pool);
   const requester = await requesterOf(pool, appId, issueNumber);
-  return requester && hasBot(settings, requester)
+  return requester && (await botWorksFor(pool, settings, requester))
     ? { userId: requester.userId, username: requester.username }
     : null;
 }
@@ -1999,7 +2190,7 @@ async function cardShown(pool, userId, appId, issueNumber) {
 const MOVES_CHAT_CARD = new Set(['spec', 'build_failed', 'blocked', 'person', 'empty']);
 
 async function relayIssuePost({
-  pool, ws = null, app, issueNumber, kind, runId = null, postId = null, bot, dm, ready = false, key = null, strict = false,
+  pool, ws = null, app, issueNumber, kind, runId = null, postKey = null, bot, dm, ready = false, key = null, strict = false,
 }) {
   if (MOVES_CHAT_CARD.has(kind) && app?.id) {
     await require('./homeroom-bot-chat').noteRequestStatus(pool, { appId: app.id, issueNumber });
@@ -2026,7 +2217,7 @@ async function relayIssuePost({
     ? require('./homeroom-bot-move').noteMoveOffer(pool, runId, outcome) : null);
   const settings = await settingsModule().readSettings(pool);
   const requester = await requesterOf(pool, app.id, issueNumber);
-  if (!requester || !hasBot(settings, requester)) {
+  if (!requester || !(await botWorksFor(pool, settings, requester))) {
     await noteMove(requester ? 'no_bot' : 'no_requester');
     return null;
   }
@@ -2079,7 +2270,7 @@ async function relayIssuePost({
     // One story: in the request's thread, a quiet line.
     const line = shown ? await stepLine(pool, {
       bot, userId: requester.userId, app, issueNumber, context, content, card: shown, step: kind,
-      key: postId ? `hrbot-post-${postId}` : key,
+      key: postKey || key,
       actions: kind === 'spec' && !dm.retry ? [readPlanAction(app.slug, issueNumber)] : null,
     }) : null;
     log.info('homeroom-bot-dm', line ? 'A quiet line in the request\'s thread' : 'On the card, not a message', { app: app.slug, issueNumber, kind });
@@ -2193,6 +2384,7 @@ async function relayIssuePost({
     kind: offerKind, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason, runId,
   }) : null;
   if (offer) Object.assign(metadata, offer.metadata);
+  // Step 3: its card is written with the message (sendDm `card`).
   const started = shown ? null : await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber });
   const sent = await sendDm(pool, {
     bot,
@@ -2200,7 +2392,7 @@ async function relayIssuePost({
     content,
     withoutCards: dmText(kind, { ...dm, sessionId: null }, context),
     metadata,
-    idempotencyKey: sendKey || (postId ? `hrbot-post-${postId}` : null),
+    idempotencyKey: sendKey || postKey || null,
     // B7: a ready card's Try it is its way to the change; it carries no card.
     objects: dm.card ? [] : cardsFor(kind, dm, app, issueNumber).filter((c) => !(shown && c.type === 'issue')),
     // #3707: news about a request they started here points back at it.
@@ -2211,6 +2403,7 @@ async function relayIssuePost({
     // try, and a request that names who builds it. Its card and the bot's
     // Needs you list still show what it waits on.
     ...(dm.quiet ? { moment: null } : {}),
+    ...(offer ? { card: offer.card } : {}),
   });
   await move.foldedOfferSent(pool, offer, sent);
   if (!sent?.messageId) {
@@ -2441,7 +2634,7 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
   // #4175: nobody to send it to is said apart from a send that failed: the
   // first stops its run at once, the second is tried again.
   if (!requester) return { messageId: null, stop: 'no_requester' };
-  if (!hasBot(settings, requester)) return { messageId: null, stop: 'no_bot' };
+  if (!(await botWorksFor(pool, settings, requester))) return { messageId: null, stop: 'no_bot' };
   // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a complicated change's
   // plan is asked on its request's page, where it is posted; no card goes to
   // the requester's chat with the bot, so nothing is tried and retried here
@@ -2449,20 +2642,19 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
   if (plan.complicated === true) return { messageId: null, stop: 'on_request' };
   const name = app.name || app.slug;
   const questions = (plan.questions || []).slice(0, 2);
-  const { rows: [action] } = await pool.query(
-    `INSERT INTO bot_cards (user_id, app_id, kind, title)
-     VALUES ($1, $2, 'build_plan', $3) RETURNING id`,
-    [requester.userId, app.id, clip(`The plan for ${name}`, 200)],
-  );
   // #4488: a complicated change on an existing project: not a first version,
   // with its spec (read on the request, whose card goes under the plan).
   const complicated = plan.complicated === true;
   const planStarted = await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber });
+  // Step 3 (11 Nov 2026): Build it's card, written with the plan's message
+  // (sendDm `card`); it names its request, whose standing retires it once
+  // the plan stops waiting (bot-cards.js retireFor).
   const sent = await sendDm(pool, {
     bot,
     userId: requester.userId,
     content: planCardText({ appName: name, plan: { bullets: plan.bullets, questions, complicated }, issueNumber }),
     idempotencyKey: `hrbot-plan-${runId}`,
+    card: { kind: 'build_plan', appId: app.id, title: clip(`The plan for ${name}`, 200), sourceIssueNumber: Number(issueNumber) },
     metadata: {
       kind: PLAN_KIND, appSlug: app.slug, appName: name, issueNumber: Number(issueNumber),
       // #5582: a complicated plan on an existing project names its request
@@ -2474,7 +2666,7 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
         bullets: plan.bullets, questions,
         ...(complicated ? { complicated: true, ...(plan.spec ? { spec: plan.spec } : {}), ...(plan.card ? { card: plan.card } : {}) } : {}),
       },
-      actionId: Number(action.id), status: 'open',
+      actionId: null, status: 'open',
     },
     ...(complicated ? { objects: cardsFor(PLAN_KIND, {}, app, issueNumber) } : {}),
     // 13 Oct 2026: a plan its maker already decided on the made screen
@@ -2488,23 +2680,19 @@ async function sendPlanCard(pool, { app, issueNumber, runId, plan, bot, ws = nul
     // askThreadId).
     ...await outsideCardThread(pool, planStarted),
   });
-  if (!sent?.messageId) {
-    await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'not_sent']);
-    return null;
-  }
-  await pool.query(
-    'UPDATE bot_cards SET message_id = $2, conversation_id = $3 WHERE id = $1',
-    [action.id, sent.messageId, sent.conversationId],
-  ).catch(() => {});
+  if (!sent?.messageId) return null;
   if (sent.duplicate) return sent;
   try {
-    // Older plans for it give way to this one, and a question it had is done.
+    // Older plans for it give way to this one: their Build it is retired
+    // (bot-cards.js retireFor: a newer card of the same kind supersedes it),
+    // and one that had already stopped asking reads "Replaced" too. A
+    // question it had is done.
+    const work = require('./work-state');
+    await work.publish(pool, await require('./bot-cards').retireFor(pool, {
+      appId: app.id, issueNumber, keep: [sent.cardId],
+    }));
     for (const card of await planCards(pool, { userId: requester.userId, appId: app.id, issueNumber })) {
       if (Number(card.message_id) === Number(sent.messageId) || card.meta?.status === 'answered' || card.meta?.replaced) continue;
-      await pool.query(
-        'UPDATE bot_cards SET status = \'declined\', decided_at = NOW(), error = \'replaced\' WHERE message_id = $1 AND status = \'open\'',
-        [card.message_id],
-      );
       await setQuestionState(pool, Number(card.message_id), { status: 'closed', replaced: true }, {
         ws, conversationId: card.conversation_id, userId: requester.userId,
       });
@@ -2546,10 +2734,9 @@ async function closePlanCards(pool, runIds, { stopped = false, ws = null, bot = 
     );
     let sender = bot;
     for (const row of rows) {
-      await pool.query(
-        'UPDATE bot_cards SET status = \'declined\', decided_at = NOW(), error = $2 WHERE message_id = $1 AND status = \'open\'',
-        [row.message_id, stopped ? 'stopped' : 'closed'],
-      );
+      // Its Build it card goes with the request's move out of waiting for
+      // its plan (bot-cards.js retireOnMove, from the standing); the card's
+      // message says how it stopped.
       await setQuestionState(pool, Number(row.message_id), stopped ? { status: 'closed', stopped: true } : { status: 'closed' }, {
         ws, conversationId: row.conversation_id, userId: row.user_id,
       });
@@ -2594,6 +2781,10 @@ async function closePlanCards(pool, runIds, { stopped = false, ws = null, bot = 
 // never put to its maker, so goAhead writes them as the plan's own lines.
 async function decidePlanTap(pool, { user, action, choice, answers = [], deps = {}, planShown = true, claimKey = null }) {
   if (choice !== 'build') return { ok: false, status: 400, error: 'choice must be build' };
+  // #6632: Build it is the bot building for them. Checked before the card
+  // is claimed, so the press can be sent again once they verify.
+  const ruleSettings = await settingsModule().readSettings(pool);
+  if (await verifyRequired(pool, ruleSettings, user)) return botVerified.refusal(ruleSettings);
   const { rows: [card] } = await pool.query(
     'SELECT run_id, conversation_id FROM homeroom_bot_dm_messages WHERE message_id = $1 AND user_id = $2 AND kind = $3',
     [action.message_id, user.id, PLAN_KIND],
@@ -3746,7 +3937,7 @@ async function noteChangeStopped(pool, sessionId, { why = 'preview', deps = {}, 
     // read as "no bot" and the line taken for said.
     const settings = await settingsModule().readSettings(pool, { strict });
     const requester = await requesterOf(pool, run.id, Number(run.issue_number));
-    if (!requester || !hasBot(settings, requester)) return null;
+    if (!requester || !(await botWorksFor(pool, settings, requester))) return null;
     const bot = deps.bot || await botAccount(pool);
     if (!bot) return null;
     const context = {
@@ -3836,7 +4027,7 @@ async function noteNeedsLook(pool, { sessionId = null, runId = null, why = 'chec
     const settings = await settingsModule().readSettings(pool);
     const issueNumber = Number(run.issue_number);
     const requester = await requesterOf(pool, run.id, issueNumber);
-    if (!requester || !hasBot(settings, requester)) return null;
+    if (!requester || !(await botWorksFor(pool, settings, requester))) return null;
     const bot = deps.bot || await botAccount(pool);
     if (!bot) return null;
     const context = {
@@ -4032,7 +4223,7 @@ async function noteProposalMerged(pool, session, { deps = {} } = {}) {
   const finish = (saidIn) => finishRequestThreads(pool, {
     app: { id: run.app_id, slug: run.slug, name: run.name }, issueNumber: run.issue_number, how: 'live', saidIn, deps,
   });
-  if (!requester || !hasBot(settings, requester)) { await finish(null); return null; }
+  if (!requester || !(await botWorksFor(pool, settings, requester))) { await finish(null); return null; }
   const bot = await botAccount(pool);
   if (!bot) return null;
   await closeOpenQuestions(pool, { userId: requester.userId, appId: run.app_id, issueNumber: run.issue_number });
@@ -4131,6 +4322,15 @@ const HELP_TEXT = [
 const NOT_ENABLED_TEXT = 'I\'m not taking requests from your account yet. I will as soon as Homeroom lets '
   + 'your account in.';
 
+// #6632: what somebody the verified-accounts rule keeps the bot from is
+// told, with a Verify button under it (messages' store opens the verify
+// sheet for `verify_account`; its target is where an older client goes).
+// One fixed reply, no model.
+const VERIFY_TEXT = 'I work for verified accounts. Verify yours and I\'ll pick up from here.';
+const VERIFY_ACTION = Object.freeze({
+  id: 'verify_account', label: 'Verify', style: 'primary', type: 'open', target: '#settings/linked-accounts',
+});
+
 /** Whether this conversation is the person's direct conversation with the bot. */
 async function isBotDirect(pool, conversationId, botId, userId) {
   const [low, high] = conversations.normalizePair(botId, userId);
@@ -4197,23 +4397,25 @@ async function threadRequest(pool, { userId, conversationId, message }) {
  * request's (threadRequest): its root, and for a private thread the bot
  * opened for a draft (private_threads, a request to file or words to post)
  * what became of the draft: { rootId, draft: { kind, state, appSlug,
- * appName, title, issueNumber } | null }. Null in the main chat. A turn
- * written there reads that thread: it used to read the main chat, which
- * leaves thread replies out, so the model never saw what they wrote in a
- * draft's thread and answered an older message, or nothing at all.
+ * appName, title, issueNumber } | null }. 14 Nov 2026: every message is in
+ * a thread, so this is null only for a message that is not of this chat; a
+ * message in no other thread is its own thread's first. A turn reads that
+ * thread, never a chat-wide stream.
  */
 async function messageThread(pool, { userId, conversationId, message }) {
   let rootId = Number(message?.threadRootId ?? message?.thread_root_id) || null;
   if (!rootId && message?.id) {
     const { rows: [row] = [] } = await pool.query(
-      'SELECT thread_root_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2',
+      'SELECT id, thread_root_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2',
       [Number(message.id), conversationId],
     ).catch(() => ({ rows: [] }));
-    rootId = Number(row?.thread_root_id) || null;
+    // 14 Nov 2026: a message in no other thread is its own thread's first.
+    rootId = Number(row?.thread_root_id) || Number(row?.id) || null;
   }
   if (!rootId) return null;
   const { rows: [p] = [] } = await pool.query(
     `SELECT p.kind, p.state, p.result_ref, a.slug, a.name, p.about_kind, p.about_number,
+            (SELECT f.issue_number FROM homeroom_bot_first_versions f WHERE f.app_id = p.app_id) AS first_issue,
             (p.holds_bot AND p.hold_lifted_at IS NULL) AS holding,
             (SELECT r.metadata->'homeroomBot'->>'changeKind' FROM conversation_messages r
               WHERE r.id = p.root_message_id) AS change_kind,
@@ -4244,7 +4446,7 @@ async function messageThread(pool, { userId, conversationId, message }) {
       state: p.state,
       appSlug: p.slug || null,
       appName: p.slug ? p.name || p.slug : null,
-      // 1 Nov 2026 (C2.4): 'project', a thread for a new project (homeroom-bot-mayor.js start_project_thread).
+      // 1 Nov 2026 (C2.4): 'project', a thread the bot opened for a new project, before Main Chat went.
       changeKind: ['fix', 'add', 'design', 'project'].includes(p.change_kind) ? p.change_kind : 'any',
       // 1 Nov 2026: a thread about a request or a change (private-threads.js
       // startAbout), which the turn reads (aboutContext); `holds` while the
@@ -4255,19 +4457,31 @@ async function messageThread(pool, { userId, conversationId, message }) {
       } : {}),
     }
     : null;
-  return { rootId, draft: draft || started };
+  // 14 Nov 2026: a project's first-version thread (opened by "I'm setting up
+  // X now"): the turn is told which project it is, and its first request
+  // once it is filed.
+  const first = p && p.kind === 'first_version' && p.slug
+    ? {
+      kind: 'first_version', state: p.state, appSlug: p.slug, appName: p.name || p.slug,
+      issueNumber: Number(p.first_issue) || null,
+    }
+    : null;
+  // And Earlier chat: what they and the bot said in Main Chat before threads.
+  const earlier = p && p.kind === 'earlier' ? { kind: 'earlier', state: p.state } : null;
+  // `kind`: the thread's own (private_threads.kind), null with no row.
+  return { rootId, kind: p?.kind || null, draft: draft || started || first || earlier };
 }
 
 /**
  * What a turn is told about where a message was written: a request's thread
- * ({ threadRequest }), any other thread ({ threadRootId, threadDraft }), or
- * the main chat ({}).
+ * from before ({ threadRequest }), else its thread ({ threadRootId,
+ * threadDraft }).
  */
 async function threadDeps(pool, { userId, conversationId, message }) {
   const request = await threadRequest(pool, { userId, conversationId, message });
   if (request) return { threadRequest: request };
   const other = await messageThread(pool, { userId, conversationId, message });
-  return other ? { threadRootId: other.rootId, threadDraft: other.draft } : {};
+  return other ? { threadRootId: other.rootId, threadDraft: other.draft, threadKind: other.kind } : {};
 }
 
 /**
@@ -4749,19 +4963,32 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
   const settings = await settingsModule().readSettings(pool);
   // B5: words that are one of its open prompts settle those buttons.
   await settlePrompt(pool, { botId: bot.id, userId: user.id, conversationId, content: message.content });
-  if (!hasBot(settings, user)) {
+  const person = await withVerified(pool, settings, user);
+  if (!hasBot(settings, person)) {
     const hour = Math.floor(Date.now() / (NOT_ENABLED_KEY_HOURS * 3600 * 1000));
+    // #6632: let in, and held only by the verified-accounts rule: the fixed
+    // reply that says so, once a day, with Verify. No model is asked.
+    if (hasBot({ ...settings, worksFor: 'everyone' }, user)) {
+      return sendDm(pool, {
+        bot, userId: user.id, replyToId: message.id, content: VERIFY_TEXT, idempotencyKey: `hrbot-verify-${user.id}-${hour}`,
+        metadata: { kind: 'verify', actions: [{ ...VERIFY_ACTION }], status: 'open', signals: botVerified.signalsOf(settings) },
+        moment: 'reply',
+      });
+    }
     return sendDm(pool, {
       bot, userId: user.id, replyToId: message.id, content: NOT_ENABLED_TEXT, idempotencyKey: `hrbot-notyet-${user.id}-${hour}`,
       moment: 'reply',
     });
   }
   // #3684: typing from here until the answer is sent (whileTyping above).
-  // In the thread they wrote in, where the answer lands (sendDm's threadRootFor).
-  const threadRootId = Number(message.threadRootId ?? message.thread_root_id) || null;
+  // In the thread they wrote in, where the answer lands (sendDm's placeFor):
+  // a message in no other thread is its own thread's first.
+  const threadRootId = Number(message.threadRootId ?? message.thread_root_id) || Number(message.id) || null;
   // 1 Nov 2026: and what it is doing as it works (deps.doing: typing's
   // stop.doing), for the working card the screen draws in its place.
-  return whileTyping(pool, { botId: bot.id, conversationId, threadRootId, ws: deps.ws },
+  // Task 2148: an answer the person can stop names their message on its
+  // typing events, which is what the composer's Stop sends back.
+  return whileTyping(pool, { botId: bot.id, conversationId, threadRootId, ws: deps.ws, answering: deps.stop ? message.id : null },
     (typing) => answerUserMessage(pool, config, {
       bot, user, settings, conversationId, message, deps: { ...deps, doing: typing.doing, moveTyping: typing.moveTo },
     }));
@@ -4778,6 +5005,9 @@ async function heardInDm(db, { user, conversationId, messageId, membership, memb
   const { rows } = await db.query(
     'SELECT 1 FROM users WHERE id = $1 AND username = $2 AND is_synthetic = TRUE', [Number(memberIds[0]), BOT_USERNAME]);
   if (!rows.length) return false;
+  // 14 Nov 2026: a message they posted in no thread (none could be opened for
+  // it: private-threads.js threadForPost) is its own thread's first message.
+  await require('./private-threads').ownThreadFor(db, { userId: user.id, conversationId, messageId });
   await require('../workflow/platform.ts').dmWritten(db, {
     userId: Number(user.id), conversationId: Number(conversationId), messageId: Number(messageId),
   });
@@ -4794,9 +5024,15 @@ async function heardInDm(db, { user, conversationId, messageId, membership, memb
  * claimed offer by its item, a report by the checkpoint `once`). Throws on a
  * failure a retry can cure. Resolves { sent, later }: `later` is the try the
  * machine asks next, when the model could not answer.
+ *
+ * Task 2148: `stop` is the watch for the person's Stop of this answer
+ * (homeroom-bot-stop.js watch: { signal, did, note, add }). The turn ends
+ * at its next safe point and says one line in the answer's place; a Stop
+ * that came before this try began (while it waited to run, or to be tried
+ * again: `retried`) is said here, with nothing done again.
  */
 async function answerOwed(pool, config, {
-  userId, conversationId, messageId, attempt = 0, workKey, once = null, also = [], deps = {},
+  userId, conversationId, messageId, attempt = 0, workKey, once = null, also = [], stop = null, retried = false, deps = {},
 }) {
   const bot = deps.bot || await botAccount(pool);
   if (!bot) return { sent: false, skipped: 'no_bot' };
@@ -4804,6 +5040,13 @@ async function answerOwed(pool, config, {
     // Said already, by an attempt a restart cut short: if what it said was
     // "I'll get back to you", the later try it promised is still owed.
     return { sent: true, skipped: 'answered', later: await laterPromised(pool, { messageId, attempt }) };
+  }
+  if (stop?.signal?.aborted) {
+    // What an earlier try did is known only as far as it was kept: with
+    // nothing kept after one, the line names nothing and rules nothing out.
+    const did = retried && !(stop.did || []).length ? null : stop.did;
+    const said = await sayStopped(pool, { userId, conversationId, messageId, attempt, did, deps: { ...deps, bot } });
+    return { sent: !!said, later: null, stopped: true };
   }
   const { rows: [u] } = await pool.query(
     `SELECT id, username, is_synthetic, has_platform_access, is_admin, private_member_since FROM users
@@ -4821,6 +5064,7 @@ async function answerOwed(pool, config, {
   // retried and then says it could not (dm.sorry), never counted as said.
   const turnDeps = {
     ...deps, bot, workKey, once, strict: true, onLater: (n) => { later = n; },
+    ...(stop ? { stop } : {}),
     // 31 Oct 2026: their earlier messages whose answer this one took over
     // (the bot-dm machine's `also`): the turn answers them too.
     ...(Array.isArray(also) && also.length ? { alsoUnanswered: also } : {}),
@@ -4881,6 +5125,25 @@ async function sayCouldNotAnswer(pool, { userId, conversationId, messageId, atte
   });
 }
 
+/**
+ * Task 2148: the one line a stopped answer says when no turn is there to say
+ * it (a Stop before the try began, after it deferred, or of one that failed
+ * for good): under the answer's own key, so it is nothing when an answer or
+ * the turn's own line did go out. `did`: what it had done that stays done
+ * (homeroom-bot-stop.js stoppedText; null when there is no record). Throws
+ * on a failure.
+ */
+async function sayStopped(pool, { userId, conversationId, messageId, attempt = 0, did = null, deps = {} }) {
+  const bot = deps.bot || await botAccount(pool);
+  if (!bot) return null;
+  if (await answeredAlready(pool, { botId: bot.id, conversationId, messageId, attempt })) return null;
+  const mayor = deps.mayor || require('./homeroom-bot-mayor');
+  return sendDm(pool, {
+    bot, userId: Number(userId), content: require('./homeroom-bot-stop').stoppedText(did),
+    idempotencyKey: mayor.answerKey(messageId, attempt), replyToId: Number(messageId), moment: 'reply',
+  });
+}
+
 /** What noteUserMessage does with a message from somebody it works for, while the bot types. */
 async function answerUserMessage(pool, config, { bot, user, settings, conversationId, message, deps }) {
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
@@ -4912,9 +5175,9 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
   if (thread) deps = { ...deps, threadRequest: thread };
   else {
     // 31 Oct 2026: any other thread (a draft's private one among them) is
-    // read as that thread too, never as the main chat.
+    // read as that thread too. 14 Nov 2026: there is no main chat to read.
     const other = await messageThread(pool, { userId: user.id, conversationId, message });
-    if (other) deps = { ...deps, threadRootId: other.rootId, threadDraft: other.draft };
+    if (other) deps = { ...deps, threadRootId: other.rootId, threadDraft: other.draft, threadKind: other.kind };
   }
   if (quoted) {
     const decided = await mayor.decideOffer(pool, config, { bot, user, settings, conversationId, message, deps });
@@ -5024,7 +5287,7 @@ async function noteRequestFiled(pool, { app, user, issueNumber, title = null, as
     const n = Number(issueNumber);
     if (!app?.id || !user?.id || user.isSynthetic || !Number.isInteger(n) || n <= 0) return null;
     const settings = await settingsModule().readSettings(pool);
-    if (!hasBot(settings, user)) return null;
+    if (!(await botWorksFor(pool, settings, user))) return null;
     await pool.query(
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, asked_text)
        VALUES ($1, $2, $3, $4, $5)
@@ -5066,7 +5329,10 @@ async function botDoorFor(pool, app, user) {
   try {
     if (!app?.slug || !user?.id || user.isSynthetic) return null;
     const settings = await settingsModule().readSettings(pool);
-    if (!hasBot(settings, user) || !require('./homeroom-bot-live').isLiveFor(settings, app)) return null;
+    // #6632: somebody let in whom only the verified-accounts rule holds is
+    // still offered the door: their press is answered `bot_verify_required`
+    // (askBotToBuild), which opens the verify sheet and is then sent again.
+    if (!hasBot({ ...settings, worksFor: 'everyone' }, user) || !require('./homeroom-bot-live').isLiveFor(settings, app)) return null;
     return { typicalMinutes: await typicalMinutes(pool) };
   } catch (err) {
     log.warn('homeroom-bot-dm', 'Could not read whether the bot builds here', { app: app?.slug, err: err.message });
@@ -5125,11 +5391,19 @@ async function askBotToBuild(pool, { app, user, issueNumber, deps = {}, readAgai
   if (!Number.isInteger(n) || n <= 0) return { ok: false, status: 400, error: 'Invalid request number' };
   if (!app?.id || !user?.id || user.isSynthetic) return { ok: false, status: 403, error: 'forbidden' };
   const settings = await settingsModule().readSettings(pool);
-  if (!hasBot(settings, user)) return { ok: false, status: 403, error: 'Homeroom bot is not on for you yet.' };
+  if (!(await botWorksFor(pool, settings, user))) {
+    // #6632: let in but not verified is its own refusal, which the client
+    // opens the verify sheet for and then sends the press again.
+    if (hasBot({ ...settings, worksFor: 'everyone' }, user)) return botVerified.refusal(settings);
+    return { ok: false, status: 403, error: 'Homeroom bot is not on for you yet.' };
+  }
   if (!require('./homeroom-bot-live').isLiveFor(settings, app)) {
     return { ok: false, status: 409, error: 'Homeroom bot does not build on this project.', code: 'not_building' };
   }
-  const busy = (await require('./homeroom-bot-progress').botWorkByIssue(pool, app.id)).get(n);
+  // Where it stands, as its page reads it (services/work-state.js botWorkOf).
+  const workState = require('./work-state');
+  const [standing] = await workState.forItems(pool, [{ appId: app.id, issueNumber: n }]);
+  const busy = workState.botWorkOf(standing);
   if (busy) return { ok: false, status: 409, error: 'Homeroom bot is already on it.', code: 'already_building' };
   // #6399: "Ask Homeroom bot to read this again", offered when the reason its
   // last read handed the request back is one a later release removed
@@ -5248,13 +5522,15 @@ function memberHelloAlone(appName) {
  * B5, 5 Nov 2026: a member's hello with their first request on a project
  * they did not make, said on its own (memberHelloAlone), once ever: sendDm
  * claims the hello in the message's own transaction and sends nothing when
- * they have had theirs. A message of the conversation, so it is sent.
+ * they have had theirs. A message of the conversation, so it is sent: the
+ * first message of a thread of its own (14 Nov 2026), where a tap on one of
+ * its prompts is answered.
  */
 async function sayMemberHello(pool, { bot, userId, app, issueNumber }) {
   const appName = app.name || app.slug;
   const text = memberHelloAlone(appName);
   return sendDm(pool, {
-    bot, userId, content: text, threadRootId: false, idempotencyKey: `hrbot-hello-member-${Number(userId)}`,
+    bot, userId, content: text, thread: { kind: 'hello', appId: app.id }, idempotencyKey: `hrbot-hello-member-${Number(userId)}`,
     hello: { kind: 'member' },
     metadata: {
       kind: 'member', appSlug: app.slug, appName, issueNumber: Number(issueNumber),
@@ -5292,10 +5568,10 @@ async function greetJoiner(pool, { user, app, strict = false }) {
       'SELECT id, username, is_synthetic, (has_platform_access OR private_member_since IS NOT NULL) AS has_platform_access, is_admin FROM users WHERE id = $1', [user.id],
     );
     const person = rows[0];
-    if (!person || !hasBot(settings, {
-      username: person.username, isSynthetic: !!person.is_synthetic,
+    if (!person || !(await botWorksFor(pool, settings, {
+      id: person.id, username: person.username, isSynthetic: !!person.is_synthetic,
       hasPlatformAccess: !!person.has_platform_access, isAdmin: !!person.is_admin,
-    })) return null;
+    }))) return null;
     const bot = await botAccount(pool);
     if (!bot) return null;
     const name = app.name || app.slug;
@@ -5306,6 +5582,8 @@ async function greetJoiner(pool, { user, app, strict = false }) {
       bot,
       userId: user.id,
       idempotencyKey: `hrbot-joiner-${user.id}`,
+      // 14 Nov 2026: a hello is the first message of a thread of its own.
+      thread: { kind: 'hello', appId: app.id },
       content: hello,
       metadata: {
         kind: 'hello_joiner', appSlug: app.slug, appName: name,
@@ -5353,10 +5631,10 @@ async function greetTourFinisher(pool, { userId, strict = false }) {
          FROM users WHERE id = $1 AND anonymised_at IS NULL`, [userId],
     );
     const person = rows[0];
-    if (!person || !hasBot(settings, {
-      username: person.username, isSynthetic: !!person.is_synthetic,
+    if (!person || !(await botWorksFor(pool, settings, {
+      id: person.id, username: person.username, isSynthetic: !!person.is_synthetic,
       hasPlatformAccess: !!person.has_platform_access, isAdmin: !!person.is_admin,
-    })) return null;
+    }))) return null;
     const bot = await botAccount(pool);
     if (!bot) return null;
     // The message is the hello alone: sent only when it is theirs to have
@@ -5365,6 +5643,8 @@ async function greetTourFinisher(pool, { userId, strict = false }) {
       bot,
       userId,
       idempotencyKey: `hrbot-tour-${userId}`,
+      // 14 Nov 2026: a hello is the first message of a thread of its own.
+      thread: { kind: 'hello' },
       content: TOUR_HELLO,
       metadata: { kind: 'hello_tour', hello: TOUR_HELLO, actions: promptActions(TOUR_PROMPTS), status: 'open' },
       hello: { kind: 'tour' },
@@ -5427,10 +5707,10 @@ async function greetReadyMadeMaker(pool, { userId, app, strict = false }) {
          FROM users WHERE id = $1 AND anonymised_at IS NULL`, [userId],
     );
     const person = rows[0];
-    if (!person || !hasBot(settings, {
-      username: person.username, isSynthetic: !!person.is_synthetic,
+    if (!person || !(await botWorksFor(pool, settings, {
+      id: person.id, username: person.username, isSynthetic: !!person.is_synthetic,
       hasPlatformAccess: !!person.has_platform_access, isAdmin: !!person.is_admin,
-    })) return null;
+    }))) return null;
     const bot = await botAccount(pool);
     if (!bot) return null;
     const name = app.name || app.slug;
@@ -5441,6 +5721,8 @@ async function greetReadyMadeMaker(pool, { userId, app, strict = false }) {
       bot,
       userId,
       idempotencyKey: `hrbot-readymade-${app.id}`,
+      // 14 Nov 2026: a hello is the first message of a thread of its own.
+      thread: { kind: 'hello', appId: app.id },
       content,
       metadata: {
         kind: 'hello_maker', appSlug: app.slug, appName: name,
@@ -5740,7 +6022,7 @@ async function recordFirstVersion(db, pool, config, { app, user, brief, design =
   // Read on the caller's transaction connection, never another from the pool
   // while it holds one (a full pool would wait on itself).
   const settings = await settingsModule().readSettings(db);
-  const botBuilds = hasBot(settings, user);
+  const botBuilds = await botWorksFor(db, settings, user);
   const { rows } = await db.query(
     `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds)
      VALUES ($1, $2, $3, $4)
@@ -5861,7 +6143,7 @@ async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = f
   const text = normalizeBrief(brief);
   if (!text || !app?.id || !user?.id) return null;
   const settings = await settingsModule().readSettings(pool);
-  const bot = hasBot(settings, user) ? await settingsModule().ensureBotUser(pool, config) : null;
+  const bot = (await botWorksFor(pool, settings, user)) ? await settingsModule().ensureBotUser(pool, config) : null;
   await pool.query(
     `INSERT INTO homeroom_bot_first_versions (app_id, user_id, brief, bot_builds)
      VALUES ($1, $2, $3, $4)
@@ -5877,6 +6159,12 @@ async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = f
   // B5: a maker's first project is where the bot says hello, once: decided
   // in the message's own transaction (sendDm's `hello`).
   const plain = { kind: 'first_version_started', appSlug: app.slug, appName: name };
+  // 14 Nov 2026: this line opens the project's first-version thread, where
+  // everything about the first version is said from here on (its plan, its
+  // progress, live, anything that stopped it). sendDm's placeFor finds the
+  // thread by the project, from the message's kind, and opens it with the
+  // first message that needs it: this one, unless an early plan got there
+  // first. The maker's hello, when it is theirs, is folded into it.
   const sent = await sendDm(pool, {
     bot,
     userId: user.id,
@@ -6634,7 +6922,11 @@ module.exports = {
   MIN_BRIEF_CHARS,
   HELP_TEXT,
   NOT_ENABLED_TEXT,
+  VERIFY_TEXT,
   hasBot,
+  withVerified,
+  botWorksFor,
+  verifyRequired,
   isEnabledFor,
   botAccount,
   PROJECT_ORIGINS,
@@ -6646,9 +6938,6 @@ module.exports = {
   startTyping,
   whileTyping,
   typingDoing,
-  draftTail,
-  MAX_DRAFT_CHARS,
-  MAX_DRAFT_BYTES,
   DOING_KINDS,
   recordRequester,
   requesterOf,
@@ -6728,6 +7017,9 @@ module.exports = {
   cardsFor,
   quotedTarget,
   quotable,
+  placeFor,
+  firstVersionThread,
+  firstVersionSlugOf,
   requestStart,
   outsideCardThread,
   newestOpenQuestion,
@@ -6753,6 +7045,7 @@ module.exports = {
   answerOwed,
   answeredAlready,
   sayCouldNotAnswer,
+  sayStopped,
   normalizeBrief,
   firstVersionIssue,
   firstVersionStartedText,

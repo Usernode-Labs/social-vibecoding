@@ -1,19 +1,22 @@
 /**
  * The frame's own chrome: the sidebar, the bar and the phone's tab bar the
  * 2026-11-06 screen tour draws around every page (`page()` in the tour's
- * kit), shown while the device's look is one of the frame's nine.
+ * kit), shown while the device's look is one of the frame's five.
  *
  * Drawn with the kit (frontend/@/components/ui/kit.tsx), so each look's
  * sidebar, bar and tab bar are that look's own: glass's floating pane,
- * Sunrise's ink sidebar, Mosaic's rail of pictures, Pastel's capsule.
+ * Sunrise's ink sidebar, Mosaic's glass panel, Pastel's white panel.
  *
  * IT DRAWS; THE SHELL'S OWN NAVIGATION STILL DECIDES. Today's header and
  * tab bar stay mounted, hidden (app.css "THE FRAME IN THE SHELL"), and
  * keep every behaviour they have: the router's writes, the counts, the
- * sheets they open. The bell and the account menu open the kit's own
- * sheets (./frame-sheets.tsx), fed by the same controllers. This island reads the same stores they read (where you
- * are, what is unread, your recent communities) and a press here is handed
- * to the control it stands for there, so nothing is decided twice.
+ * sheets they open. The bell opens the product's own notifications sheet
+ * and the mark its own "Feedback & info" menu, each wearing the look
+ * (app.css, THE BELL'S SHEET and THE HOMEROOM MENU): the chrome has no
+ * sheet of its own. This island reads the same stores the shell's
+ * navigation reads (where you are, what is unread, your recent
+ * communities) and a press here is handed to the control it stands for
+ * there, so nothing is decided twice.
  *
  * WHERE IT SITS. A fixed layer over the screens, at the tab bar's own
  * level, that takes presses only on its sidebar, bar and tab bar; the page
@@ -31,7 +34,7 @@
  */
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
-import { Av, Count, Frame, Icon, Tile, k } from '@/components/ui/kit';
+import { Av, Btn, Count, Frame, Icon, Tile, k } from '@/components/ui/kit';
 import { useMessages } from '../../lib/i18n/react';
 import { whenPlatformViewer } from '../../lib/platform-viewer';
 import { isFrameSkin, useSkin } from '../../lib/skin';
@@ -44,8 +47,10 @@ import { placeName } from '../dev-board/workshop/places';
 import { communityScopeStore, goToCommunity } from '../workshop/community-scope';
 import { swatchFor } from '../messages/format';
 import { appContextStore } from '../app-context/app-context-store.js';
+import { useInAppShown } from '../header/in-app-actions';
+import { Improve } from '../improve/improve-controller.js';
+import { improveStore } from '../improve/improve-store.js';
 import { framePageStore } from './frame-page-store';
-import { FrameSheets, openFrameSheet } from './frame-sheets';
 import { GuestFrame } from './guest-chrome';
 import { LookPicker } from './look-picker';
 
@@ -54,6 +59,11 @@ const MARK = '/brand/homeroom-mark.png';
 /** The shell's own control a press here is handed to. */
 function press(id: string) {
   document.getElementById(id)?.click();
+}
+
+/** Settings, by its address, as the standard rail's cog opens it. */
+function openSettings() {
+  window.location.hash = '#settings';
 }
 
 /** Says which tab was pressed, for a kit page that has places of its own to come back from. */
@@ -132,7 +142,17 @@ export function FrameChrome() {
   // (../dev-board/workshop/place-store.ts); the arrow goes up to the Hub from
   // a place and back to Home from the Hub, as the standard header's does.
   const where = useStoreState(placeStore);
-  const here = inCommunity && where.slug === inCommunity ? where.place : null;
+  // A RUNNING APP (the tour's s38) is the project's App place: the bar says
+  // the project and "App", the word its places list has for that row. The
+  // app tab publishes no place, so what the page last said is not read
+  // there. The bar also carries Suggest, the one control the standard
+  // header has on a project's pages besides the bell and the mark, shown by
+  // the same rule and pressed the same way (../header/in-app-actions.tsx).
+  const tProject = useMessages('project');
+  const improve = useStoreState(improveStore) as { target?: string; tab?: string };
+  const onApp = !!inCommunity && improve.target === 'app' && improve.tab === 'app';
+  const suggest = useInAppShown();
+  const here = inCommunity && !onApp && where.slug === inCommunity ? where.place : null;
   const project = inCommunity ? scope.info[inCommunity] : null;
   const projectCrumb = { word: project?.name || title, lead: <Tile size={24} name={project?.name || title} src={project?.iconUrl} emoji={project?.iconEmoji} color={project?.iconColor} /> };
   // A page that says its own trail inside a project (a request, a change)
@@ -140,9 +160,11 @@ export function FrameChrome() {
   const crumbs: Array<{ word: string; lead?: ReactNode }> = page.crumb
     ? [...(inCommunity ? [projectCrumb] : []), ...page.crumb.map((word) => ({ word }))]
     : inCommunity
-      ? [projectCrumb, ...(here && here !== 'status' ? [{ word: placeName(here) }] : [])]
+      ? [projectCrumb, ...(onApp ? [{ word: tProject('project:places.list.app') }] : here && here !== 'status' ? [{ word: placeName(here) }] : [])]
       : (title ? [{ word: title }] : []);
-  const back = page.crumb ? !!page.onBack : inCommunity ? true : shellBack;
+  // Beside a running app the way back is the shell's own, as on any page
+  // that is not one of the project's places.
+  const back = page.crumb ? !!page.onBack : inCommunity && !onApp ? true : shellBack;
   const goBack = () => {
     if (page.crumb && page.onBack) page.onBack(); else press('back-btn');
   };
@@ -150,6 +172,14 @@ export function FrameChrome() {
     if (!inCommunity) return;
     if (here && here !== 'status') openPlace(inCommunity, 'status'); else pressTab('home');
   };
+  // The crumb a phone keeps: the last, or the one before it where the page's own title says the last (framePageStore's phoneUp).
+  const kept = page.crumb && page.phoneUp && crumbs.length > 1 ? crumbs.length - 2 : crumbs.length - 1;
+  // THE SIDEBAR FOLDS AS THE STANDARD ONE DOES: the same fact (navStore's
+  // railOpen), turned over by the standard header's own toggle
+  // (../nav/sidebar-toggle.tsx), which this bar's button presses. Folded,
+  // the frame is the kit's own frame with no sidebar (.noside), and the
+  // page area it publishes starts at the window's edge.
+  const { railOpen } = useStoreState(navStore);
   const unread = useNodeShown('notifications-badge');
   const menuOpen = !!(useStoreState(appContextStore) as { open?: boolean }).open;
   const user = (typeof window === 'undefined' ? undefined : (window as any).App?.user) as { username?: string; avatar_url?: string | null } | undefined;
@@ -207,12 +237,12 @@ export function FrameChrome() {
   return (
     <>
       {/* Behind the screens: what a look gives the page column itself. */}
-      <div className="fr fr-app fr-shell fr-shell-under" aria-hidden="true">
+      <div className={`fr fr-app fr-shell fr-shell-under${railOpen ? '' : ' fr-noside'}`} aria-hidden="true">
         <aside className={k('side')} />
         <div className={k('colm')} />
       </div>
 
-      <Frame className="fr-app fr-shell" data-frame-app="">
+      <Frame className={`fr-app fr-shell${railOpen ? '' : ' fr-noside'}`} data-frame-app="">
         <aside className={k('side')} aria-label={t('core:frame.navigation')}>
           <div className={k('brand')}>
             <Tile size={28} src={MARK} color="#0f1116" name={t('core:frame.brand')} />
@@ -245,17 +275,18 @@ export function FrameChrome() {
             <span className={k('nm')}>{t('core:rail.allPlain')}</span>
           </a>
           <div className={k('sidefoot')}>
-            {/* You opens your page; the sliders at the row's end open the
-                account menu. One row, as the tour draws it, so the glyph is
-                a control inside the link and its press is taken here. */}
+            {/* You opens your page; the glyph at the row's end opens
+                Settings, as the standard rail's cog does. One row, as the
+                tour draws it, so the glyph is a control inside the link and
+                its press is taken here. */}
             <a
               className={k('nv me', tab === 'me' && !inCommunity && 'on')}
               href="#profile"
               aria-current={tab === 'me' && !inCommunity ? 'page' : undefined}
               onClick={(event) => {
-                if ((event.target as HTMLElement).closest('[data-frame-menu]')) {
+                if ((event.target as HTMLElement).closest('[data-frame-settings]')) {
                   event.preventDefault();
-                  openFrameSheet('menu');
+                  openSettings();
                   return;
                 }
                 handing(event, () => press('platform-tab-me'));
@@ -264,16 +295,17 @@ export function FrameChrome() {
               <Av size={24} name={me || '?'} src={user?.avatar_url} color={swatchFor(me || '?')} />
               <span className={k('nm')}>{t('core:tabs.me')}</span>
               <span
-                data-frame-menu=""
-                role="button"
+                data-frame-settings=""
+                role="link"
                 tabIndex={0}
-                aria-label={t('core:frame.menu.open')}
+                aria-label={t('core:tabs.settings')}
+                title={t('core:tabs.settings')}
                 style={{ display: 'contents' }}
                 onKeyDown={(event) => {
                   if (event.key !== 'Enter' && event.key !== ' ') return;
                   event.preventDefault();
                   event.stopPropagation();
-                  openFrameSheet('menu');
+                  openSettings();
                 }}
               >
                 <Icon name="sliders" size={18} />
@@ -284,8 +316,22 @@ export function FrameChrome() {
 
         <div className={k('colm')}>
           <header className={k('bar')}>
+            {/* Hide or show the sidebar, on a desktop: the standard header's
+                own control (#sidebar-toggle), pressed from here. A toggle,
+                so the name is the act and aria-pressed the state. */}
+            <button
+              type="button"
+              className={k('ib d')}
+              data-frame-sidebar=""
+              aria-pressed={railOpen ? 'true' : 'false'}
+              aria-label={railOpen ? t('core:rail.hideSidebar') : t('core:rail.showSidebar')}
+              title={railOpen ? t('core:rail.hideSidebar') : t('core:rail.showSidebar')}
+              onClick={() => press('sidebar-toggle')}
+            >
+              <Icon name="sidebar" />
+            </button>
             {back ? (
-              <button type="button" className={k('ib')} aria-label={t('core:header.back')} onClick={!page.crumb && inCommunity ? goUp : goBack}>
+              <button type="button" className={k('ib')} aria-label={t('core:header.back')} onClick={!page.crumb && inCommunity && !onApp ? goUp : goBack}>
                 <Icon name="cl" />
               </button>
             ) : null}
@@ -295,18 +341,34 @@ export function FrameChrome() {
               {crumbs.map(({ word, lead }, i) => (
                 <Fragment key={`${i}:${word}`}>
                   {i > 0 ? <Icon name="cr" size={14} /> : null}
-                  <span className={k('ci', i === crumbs.length - 1 && 'here keep')}>{lead}{word}</span>
+                  <span className={k('ci', i === crumbs.length - 1 && 'here', i === kept && 'keep')}>
+                    {lead}
+                    {/* The words are a box of their own, so a long name is
+                        cut with an ellipsis before the bar's buttons. */}
+                    <span className={k('cw')}>
+                      <span className={k('cn')}>{word}</span>
+                    </span>
+                  </span>
                 </Fragment>
               ))}
             </div>
             <span className={k('sp')} />
-            {/* Search is your communities': the page that lists them, with its field. */}
-            <button type="button" className={k('ib d')} aria-label={t('core:rail.search')} onClick={() => goToCommunity(null)}>
+            {/* Suggest, on a desktop only: a phone reaches it through the
+                mark's menu, as under the standard header. */}
+            {suggest ? (
+              <Btn kind="line" small icon="edit" className="d" data-frame-suggest="" aria-label={t('core:header.inApp.suggestLabel')} onClick={() => Improve.giveFeedback({ target: 'app' })}>
+                {t('core:header.inApp.suggest')}
+              </Btn>
+            ) : null}
+            {/* Search is Home's: its field, which finds your apps and communities (Home.focusSearch). */}
+            <button type="button" className={k('ib d')} aria-label={t('core:rail.search')} onClick={() => { (window as any).Home?.focusSearch?.(); }}>
               <Icon name="search" />
             </button>
-            {/* An admin's look picker (./look-picker.tsx), beside the bell. */}
+            {/* An admin's look picker (./look-picker.tsx), beside the bell. The
+                bell opens the product's own sheet, as the standard header's
+                bell does. */}
             <LookPicker variant="frame" />
-            <button type="button" className={k('ib')} aria-label={t('core:header.notifications')} onClick={() => openFrameSheet('notifications')}>
+            <button type="button" className={k('ib')} aria-label={t('core:header.notifications')} aria-haspopup="dialog" data-frame-bell="" onClick={() => { (window as any).NotificationsSheet?.toggle?.(); }}>
               <Icon name="bell" />
               {unread ? <span className={k('dot')} /> : null}
             </button>
@@ -319,9 +381,10 @@ export function FrameChrome() {
               <Tile size={26} src={MARK} color="#0f1116" name={t('core:frame.brand')} />
               <Icon name="cd" size={16} />
             </button>
-            <button type="button" className={k('p')} aria-label={t('core:frame.menu.open')} onClick={() => openFrameSheet('menu')} style={{ background: 'none', border: 0 }}>
+            {/* A phone's avatar is the way to You, as the tab is. */}
+            <a className={k('p')} href="#profile" aria-label={t('core:tabs.me')} onClick={(event) => handing(event, () => pressTab('me'))}>
               <Av size={28} name={me || '?'} src={user?.avatar_url} color={swatchFor(me || '?')} />
-            </button>
+            </a>
           </header>
           <main className={k('pagearea')} ref={areaRef} />
           <nav className={k('tabbar')} aria-label={t('core:frame.navigation')}>
@@ -332,7 +395,6 @@ export function FrameChrome() {
           </nav>
         </div>
       </Frame>
-      <FrameSheets username={me} />
     </>
   );
 }

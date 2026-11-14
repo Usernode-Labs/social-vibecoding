@@ -57,7 +57,7 @@ test('the options carry the switch, and the admin switches it beside the invite 
   assert.match(admin, /router\.get\('\/api\/v4\/admin\/story-landing',/);
   assert.match(admin, /router\.put\('\/api\/v4\/admin\/story-landing', adminWriteGate,/);
   const screen = read('frontend/src/features/admin/topochain/waitlist.tsx');
-  assert.match(screen, /\{showAnalytics \? <WaitlistAnalyticsPanel onClose=\{\(\) => setShowAnalytics\(false\)\} \/> : null\}\s+<StoryLandingPanel \/>/);
+  assert.match(screen, /\{showAnalytics \? <WaitlistAnalyticsPanel onClose=\{\(\) => setShowAnalytics\(false\)\} \/> : null\}\s+<WaitlistSwitchPanel onChanged=\{onBatchAdmitted\} \/>\s+<StoryLandingPanel \/>/);
   assert.match(screen, /id="admin-topo-wl-story-enabled"/);
 });
 
@@ -147,8 +147,8 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
   // Polish N10: the email line's "Sign in" opens the same sheet titled Sign in.
   // The story heads the guest Discover now, in its short version
   // (features/guest, tests/guest-discover.test.js), with the same two ways in.
-  // Its button says join the waitlist while new accounts wait (guest-data NEW_ACCOUNTS_WAIT).
-  assert.match(landing, /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+waitlist=\{NEW_ACCOUNTS_WAIT\}\s+onStart=\{\(\) => setSheet\('start'\)\}\s+onSignIn=\{\(\) => setSheet\('signin'\)\}\s+\/>/);
+  // Its button says join the waitlist while new accounts wait (guest-data newAccountsWait).
+  assert.match(landing, /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+waitlist=\{accountsWait\}\s+onStart=\{\(\) => setSheet\('start'\)\}\s+onSignIn=\{\(\) => setSheet\('signin'\)\}\s+\/>/);
   // A new account from its sheet is asked what to make, not which communities to join.
   assert.match(landing, /sessionStorage\.setItem\('usernode:first-session:make', '1'\)/);
   assert.match(landing, /fetch\('\/api\/me\/first-session\/started', \{ method: 'POST', credentials: 'same-origin' \}\)/);
@@ -786,9 +786,9 @@ test('the maker\'s way on after Make it: the app itself once it runs, Home and t
   // Review the plan while one waits, else a quiet Open Homeroom bot.
   assert.match(read('public/js/app-view.js'),
     /label: thumb\.buildLine === 'plan' \? PlatformI18n\.t\('changes:firstVersion\.reviewPlan'\) : PlatformI18n\.t\('changes:firstVersion\.openBot'\),/);
-  // Create's Go to chat still opens the chat by address: on the Homeroom bot
-  // tab, as Main Chat (1 Nov 2026: the chat's only place).
-  assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = '#homeroom-bot\/main';/);
+  // Create's Go to chat opens the Homeroom bot tab (1 Nov 2026: the chat's only place).
+  // 14 Nov 2026: the project's first-version thread (features/ai/where.ts), not Main Chat, which is gone.
+  assert.match(index, /else if \(screen === 'bot' && conversationId\) void openFirstVersion\(slug\);/);
 });
 
 test('the admin Journey page says which first session answered the join screen', () => {

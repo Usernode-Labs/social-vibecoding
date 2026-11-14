@@ -130,12 +130,18 @@ export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share' | 'github
  * 'open' and the buttons go, for everybody.
  */
 export interface BotOfferView {
-  status: 'open' | 'deciding' | 'done' | 'declined' | 'failed' | 'gone' | 'expired';
+  status: 'open' | 'deciding' | 'done' | 'declined' | 'failed' | 'gone' | 'expired' | 'retired';
   forMe: boolean;
   actions: { id: 'yes' | 'no' | 'first'; label: string; primary: boolean }[];
   /** #6305: 'file_many' when one request is offered on several projects. */
   kind?: string;
   rows?: BotOfferRow[] | null;
+  /** Step 3 (11 Nov 2026): its card's id, which a tap sends. */
+  id?: number;
+  /** Why its buttons went when what it was about moved on (bot-cards.js retireFor). */
+  retired?: string;
+  /** A tap of this device's the server refused, and why: kept until the chat is left. */
+  refused?: { code: string; reason?: string } | null;
 }
 
 /** #6305: one project's row on a many-project offer in a thread. */
@@ -168,7 +174,7 @@ export interface BotSuggestView {
  * named says so.
  */
 export interface BotRequestState {
-  stage: 'waiting_first_version' | 'reading' | 'waiting' | 'building' | 'question' | 'checking' | 'proposed' | 'approved'
+  stage: 'waiting_first_version' | 'reading' | 'waiting' | 'waiting_plan' | 'building' | 'question' | 'checking' | 'proposed' | 'approved'
     | 'live' | 'closed' | 'person' | 'stopped' | 'fixing' | 'asked' | 'answered';
   sessionId?: number;
   youApprove?: boolean;

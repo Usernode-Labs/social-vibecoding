@@ -83,20 +83,43 @@ test('a card\'s outcome is the first live run after it began: its verdict, and f
   }
 });
 
-test('a card still going takes its step from progressFor; with nothing in progress it stopped', () => {
+// 11 Nov 2026: a card still going says where its request stands from the
+// request's stored work state (services/work-state.js), in the words every
+// screen says it.
+test('a card still going takes its step from its request\'s work state; with nothing in progress it stopped', () => {
   const row = { message_id: 31, created_at: '2026-10-02T11:51:00Z', slug: 'ear trainer', issue_number: 12 };
-  const entry = {
-    project: 'ear trainer', number: 12, stage: 'building', step: 3, of: 6, stepName: 'Building', doing: 'building it',
-    since: '2026-10-02T11:56:00.000Z', stepTimeLimitMinutes: 30,
-  };
+  const work = { stage: 'building', why: null, reason: null, line: { code: 'reviewing', round: 1, of: 2 },
+    whoseMove: 'bot', since: '2026-10-02T11:56:00.000Z' };
+  const entry = activity.entryOfWork(work);
   const going = activity.cardOf(row, entry);
   assert.deepEqual(going, {
     messageId: 31, startedAt: '2026-10-02T11:51:00.000Z', workedFrom: '2026-10-02T11:51:00.000Z',
     links: { request: '#app/ear%20trainer/dev/issues/12', proposal: null },
-    state: 'working', stage: 'building', step: 3, of: 6, stepName: 'Building', doing: 'building it',
-    stepSince: '2026-10-02T11:56:00.000Z', stepLimitMinutes: 30,
+    state: 'working', stage: 'building', step: 2, of: 5, stepName: null, doing: 'Building · Reviewing, round 1 of 2',
+    stepSince: '2026-10-02T11:56:00.000Z', typicalMinutes: { from: 5, to: 25 },
   });
-  assert.equal(activity.cardOf(row, { ...entry, waitingOn: 'them' }).waitingOn, 'them');
+  assert.equal(activity.cardOf(row, activity.entryOfWork({ ...work, stage: 'waiting_for_you', why: 'question', whoseMove: 'requester' })).waitingOn, 'them');
+  // Waiting its turn to be read, or on hold, it says so.
+  assert.equal(activity.entryOfWork({ stage: 'reading', line: { code: 'queued', place: 2 }, whoseMove: 'bot' }).stage, 'queued');
+  assert.equal(activity.entryOfWork({ stage: 'reading', line: { code: 'cooldown' }, whoseMove: 'bot' }).stage, 'cooldown');
+  // 13 Nov 2026: and whose line it waits in, in the bot's own words: its own,
+  // which starts by itself. "Ready to build · Number 1 in line" did not say
+  // whether it waited for the bot, for another person or for its requester.
+  const doing = (w) => activity.entryOfWork({ whoseMove: 'bot', ...w }).doing;
+  assert.equal(doing({ stage: 'building', line: { code: 'queued', place: 1 } }), 'Ready to build · Number 1 in my own line; I\'ll start by myself');
+  assert.equal(doing({ stage: 'building', line: { code: 'queued' } }), 'Ready to build · Waiting its turn in my own line; I\'ll start by myself');
+  assert.equal(doing({ stage: 'reading', line: { code: 'queued', place: 2 } }), 'Not started yet · Number 2 in my own line; I\'ll start by myself');
+  // A limit that holds it keeps the words every screen says.
+  assert.equal(doing({ stage: 'building', line: { code: 'held_builds' } }), 'Ready to build · Waiting for one of the project\'s builds to finish');
+  // Held for its requester's plan, whatever it had reached: it waits on them, and is no build under way.
+  const planning = activity.entryOfWork({ stage: 'planning', line: { code: 'planning_with_you', ready: true }, whoseMove: 'requester' });
+  assert.deepEqual([planning.doing, planning.waitingOn, planning.typicalMinutes],
+    ['Planning · Planning it with you in a private thread', 'them', undefined]);
+  // A request that ended, or was handed back, has no work going on.
+  for (const ended of [{ stage: 'live' }, { stage: 'closed' }, { stage: 'stopped', reason: 'build_failed' },
+    { stage: 'waiting_for_you', why: 'decide' }]) {
+    assert.equal(activity.entryOfWork(ended), null, JSON.stringify(ended));
+  }
 
   const gone = activity.cardOf(row, null);
   assert.equal(gone.state, 'done');
@@ -137,8 +160,9 @@ test('WP1: a card whose build still waits or runs is working, whatever began aft
   const entry = { stage: 'reading', step: 1, of: 6, stepName: 'Reading', doing: 'reading the request' };
   assert.equal(activity.cardOf({ ...row, build_status: 'active' }, entry).stage, 'building');
   // Its own progress, while it is the newest card, is read as before.
-  const own = activity.cardOf({ ...row, next_at: null, build_status: 'active' }, { stage: 'building', step: 3, of: 6, stepName: 'Building', doing: 'building it' });
-  assert.deepEqual([own.stage, own.step], ['building', 3]);
+  const own = activity.cardOf({ ...row, next_at: null, build_status: 'active' },
+    activity.entryOfWork({ stage: 'building', line: null, whoseMove: 'bot', since: '2026-10-03T16:50:00Z' }));
+  assert.deepEqual([own.stage, own.step, own.doing], ['building', 2, 'Building']);
   // A build with nothing under way any more (its session put away, never
   // recorded) is not working for ever, and an outcome always wins.
   assert.equal(activity.cardOf({ ...row, build_status: 'archived' }, null).outcome, 'stopped');
@@ -835,21 +859,22 @@ test('only the bot\'s DM keeps the cards current, beside its tray', () => {
   assert.match(screen, /\{botDm \? <BotWorkSync [^\n]*\n[^\n]*\n\s*\{botDm \? <BotActivitySync conversationId=\{conversationId\} newsKey=\{newestBotMessageId\(snap\.messages\)\} \/> : null\}/);
 });
 
-test('the staging preview\'s declared check follows the demo DM to the Homeroom bot tab, Main Chat its list\'s first row', () => {
+test('the staging preview\'s declared check follows the demo DM to the Homeroom bot tab, which has New chat and no Main Chat row', () => {
   // 1 Nov 2026: the chat with the bot is the Homeroom bot tab's alone. Its
   // Activity bar was drawn over it on the Messages screen only, where it is
   // no longer drawn: the tab's own lists say what needs you and what is in
-  // progress. Its check now follows the demo DM's Messages address to the
-  // tab: Main Chat, lit, first, with the demo chat in the column beside it.
+  // progress. Its check follows the demo DM's Messages address to the tab.
+  // 14 Nov 2026: there it finds no Main Chat row and no Main Chat head, and
+  // New chat, the labelled button beside search, in the page's head.
   const tests = JSON.parse(read('dapp.json')).tests;
   assert.ok(!tests.some((t) => t.id === 'homeroom-bot-dm-activity-tray'), 'the bar\'s check is retired');
-  const check = tests.find((t) => t.id === 'homeroom-bot-main-chat-row');
+  assert.ok(!tests.some((t) => t.id === 'homeroom-bot-main-chat-row'), 'and so is Main Chat\'s row\'s');
+  const check = tests.find((t) => t.id === 'homeroom-bot-new-chat');
   assert.equal(check.path, '/?demo=1#messages/910005', 'its old address, which lands on the tab');
-  // #6207: Main Chat holds no request's news, so the check no longer waits for a news row in it.
-  assert.match(check.expectSelector, /^#ai-screen:not\(\.hidden\):has\(#ai-main-pane\[data-ai-column=main\] > \[data-ai-main-head\] \+ \.messages-layout\[data-main-chat\]\)/);
-  assert.match(check.expectSelector, /\[data-ai-sheet=main\] > \[data-ai-main-row\]\[data-ai-lit\]\[aria-current=true\]$/);
+  assert.match(check.expectSelector, /^#ai-screen:not\(\.hidden\):not\(:has\(\[data-ai-main-row\], \[data-ai-main-head\]\)\)/);
+  assert.match(check.expectSelector, /\[data-ai-hero\] > button\[data-ai-search-toggle\] \+ button\[data-ai-new-chat\]$/);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
-  assert.equal(check.expectText, 'Main Chat');
+  assert.equal(check.expectText, 'New chat');
   for (const file of ['frontend/src/features/ai/**', 'src/services/staging-messages.js', 'src/routes/conversations.js']) {
     assert.ok(check.impact.includes(file), file);
   }

@@ -1,9 +1,11 @@
 'use strict';
 
 // Homeroom bot's thread kinds, each with its profile (docs/plans/bot-one-model.md,
-// step 5). A thread is the unit the bot answers in: a person's chat with it
-// (Main, a private thread in it, a design thread), or a project's thread (a
-// request's, a change's, its chat or a topic, a reply thread). Each kind's
+// step 5). A thread is the unit the bot answers in: a thread of a person's
+// chat with it (a private thread, a design thread; 14 Nov 2026: Main Chat is
+// gone, and so is its kind `main`: every message there is in a thread), or a
+// project's thread (a request's, a change's, its chat or a topic, a reply
+// thread). Each kind's
 // profile is data: the surface that runs its turn on the turn engine, the
 // scope of the tools it offers (src/services/bot-tools/), the tools it may
 // offer, its limits, the prompt section it speaks from, and, on a project's
@@ -13,12 +15,12 @@
 //
 // When the bot speaks is unchanged (decision 9): today's rules, written down.
 
-const KINDS = Object.freeze(['main', 'private', 'design', 'request', 'change', 'channel', 'reply']);
+const KINDS = Object.freeze(['private', 'design', 'request', 'change', 'channel', 'reply']);
 
 // A project's thread kind, by the place type the chat stores it under.
 const PLACE_KIND = Object.freeze({ issue: 'request', session: 'change', chat: 'channel', category: 'channel', message: 'reply' });
 
-// A person's chat with the bot: Main, and a private thread in it.
+// A person's chat with the bot: a private thread in it.
 const CHAT_LIMITS = Object.freeze({
   rounds: 16,
   readsPerTurn: 8,
@@ -74,7 +76,7 @@ const CHAT_TOOLS = Object.freeze([
   'progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'get_spec', 'answer_question',
   'revise_proposal', 'comment_on_request', 'start_request', 'offer_request', 'offer_move_request',
   'offer_copy_request', 'offer_close_request', 'withdraw_proposal', 'draw_screen', 'close_thread',
-  'report_problem', 'start_project_thread', 'offer_new_project', 'reply',
+  'report_problem', 'offer_new_project', 'reply',
 ]);
 const DESIGN_TOOLS = Object.freeze([
   'write_screen', 'edit_design', 'list_source', 'read_source', 'reply', 'read_plan', 'compare_versions',
@@ -95,12 +97,11 @@ const THREAD_CHECKS = Object.freeze([
 const profile = (kind, fields) => Object.freeze({ kind, ...fields });
 
 const PROFILES = Object.freeze({
-  main: profile('main', {
-    surface: 'chat', scope: 'main', prompt: 'main', limits: CHAT_LIMITS, tools: CHAT_TOOLS, threadTools: true, platformReads: true,
-  }),
-  // A private thread in their chat (an ask, a draft, an idea), and a
-  // request card's thread from before (decision 10): the chat's turn, told
-  // which thread it is in.
+  // A private thread in their chat (an ask, a draft, an idea, the bot's
+  // hello, a first version, Earlier chat), and a request card's thread from
+  // before (decision 10): the chat's turn, told which thread it is in.
+  // `scope: 'main'` is the tools' scope (src/services/bot-tools/), which
+  // kept its name: the tools of the person's own chat with the bot.
   private: profile('private', {
     surface: 'chat', scope: 'main', prompt: 'private', limits: CHAT_LIMITS, tools: CHAT_TOOLS, threadTools: true, platformReads: true,
   }),
@@ -109,7 +110,9 @@ const PROFILES = Object.freeze({
   }),
   request: profile('request', {
     surface: 'thread', scope: 'thread', prompt: 'request', places: ['issue'], limits: THREAD_LIMITS,
-    tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'start_request', 'offer_close_request', 'offer_copy_request', 'offer_withdraw', 'change_plan', 'make_pictures', 'attach_files', 'show_change', 'list_change_files']),
+    // Step 5 (11 Nov 2026): ask_changed reads it again for a comment that
+    // changes what it asks for; nothing else said there does.
+    tools: Object.freeze([...THREAD_TOOLS, 'get_spec', 'start_request', 'offer_close_request', 'offer_copy_request', 'offer_withdraw', 'change_plan', 'ask_changed', 'make_pictures', 'attach_files', 'show_change', 'list_change_files']),
     // Words passed on as a change are the follow-up's; the bot's own change
     // up for a vote answers anyone; the requester or an admin straight after
     // a post of the bot's is answering it; else only a mention or a reply,
@@ -156,13 +159,13 @@ function profileOfPlace(place) {
 
 /**
  * The kind of a thread in a person's chat with the bot, by what the chat
- * found it to be: a design thread, a private thread (or a request card's
- * thread from before), else Main.
+ * found it to be: a design thread, else a private thread (a request card's
+ * thread from before among them). 14 Nov 2026: there is no Main Chat, so a
+ * message is always in one or the other; one in no other thread is its own
+ * thread's first (homeroom-bot-dm.js messageThread).
  */
-function kindInChat({ design = null, threadRootId = null, threadRequest = null } = {}) {
-  if (design) return 'design';
-  if (threadRootId || threadRequest) return 'private';
-  return 'main';
+function kindInChat({ design = null } = {}) {
+  return design ? 'design' : 'private';
 }
 
 module.exports = {

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
+import { getTimeZone, zonedDay } from '../../lib/time-zone';
 
 /**
  * One points activity, with when it happened (#3648), for the activity list in
@@ -10,7 +11,8 @@ import { t as translate } from '../../lib/i18n/runtime';
  * The list showed only what was done and the points, so nobody could tell
  * which day a credit belonged to or check it against what they remember
  * doing. Every activity the API returns carries `activity_at`; this turns it
- * into one compact line in the viewer's own locale and timezone:
+ * into one compact line in the viewer's own locale and timezone (the one
+ * picked in Settings › Language, #6479, else the device's):
  *
  *   this year        Fri, Oct 2 · 04:32 PM
  *   an earlier year  Fri, Oct 2, 2025 · 04:32 PM
@@ -61,16 +63,18 @@ export function activityWhen(
   const now = opts.now || new Date(Date.now());
   const dateOnly = opts.precision ? opts.precision === 'day' : isDateOnly(date);
   // The date-only case reads the calendar day in UTC, so the year test does too.
-  const year = dateOnly ? date.getUTCFullYear() : date.getFullYear();
-  const zone: Intl.DateTimeFormatOptions = dateOnly ? { timeZone: 'UTC' } : {};
-  const z = dateOnly ? 'utc' : 'local';
-  const day = year === now.getFullYear()
+  // An instant is read in the picked zone (#6479), or the device's.
+  const picked = getTimeZone();
+  const year = dateOnly ? date.getUTCFullYear() : zonedDay(date).year;
+  const zone: Intl.DateTimeFormatOptions = dateOnly ? { timeZone: 'UTC' } : (picked ? { timeZone: picked } : {});
+  const z = dateOnly ? 'utc' : `local-${picked || ''}`;
+  const day = year === zonedDay(now).year
     ? format(date, `day-${z}`, { ...zone, weekday: 'short', month: 'short', day: 'numeric' })
     : format(date, `day-year-${z}`, { ...zone, weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   const fullDay = format(date, `full-${z}`, { ...zone, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   if (dateOnly) return { text: day, title: fullDay, iso: date.toISOString() };
   // The hour unpadded, "4:14 AM", as every stamp is (lib/timestamp.ts).
-  const time = format(date, 'time', { hour: 'numeric', minute: '2-digit' });
+  const time = format(date, `time-${z}`, { ...zone, hour: 'numeric', minute: '2-digit' });
   return {
     text: translate('leaderboard:activity.dayTime', { day, time }),
     title: translate('leaderboard:activity.dayTimeFull', { day: fullDay, time }),

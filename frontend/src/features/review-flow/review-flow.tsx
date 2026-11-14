@@ -50,12 +50,17 @@
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { reducedMotion } from '../../lib/reduced-motion';
 
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { ChatIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlayIcon, SparklesIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { changeHref } from '../../lib/change-href';
+import { watch } from '../../lib/live-reads';
+import { pushIsFor } from '../../lib/work-state';
+import { pacedReads } from '../ai/live';
+import { WORK_CHANGED_EVENT } from '../messages/bot-shared';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { callAppView } from '../dev-board/card/fold';
 import type { NeedsFeedItem } from '../workshop/needs-reel';
@@ -64,7 +69,7 @@ import { CompareSlider } from './compare';
 import { Illustration } from './illustrations';
 import { readInks, useInks } from './ink';
 import {
-  composeSheet, glyphBars, nextIndex, openPlace, orderForReview, pageItems, pictoMarks, screenLine, toReviewItems,
+  composeSheet, glyphBars, nextIndex, openPlace, orderForReview, pageItems, pictoMarks, screenLine, takeRead, toReviewItems,
   type AreaKind, type BenefitKind, type DecisionKind, type GlyphBar, type Ink, type PageKind, type Placement, type ReviewItem, type SheetPlate,
 } from './model';
 import { VoteSheet, sheetOpen, type SheetState, type Vote } from './vote-sheet';
@@ -122,10 +127,6 @@ export function pageRoom(cssMax: number, top: number, viewH: number, wide: boole
 }
 /** The change page is never wider than this (app.css `.rf-page`). */
 const COLUMN = 520;
-
-function reducedMotion(): boolean {
-  try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
-}
 
 function shape(visuals: unknown, shots: unknown) {
   const out = callAppView('_workshopVisuals', visuals, shots);
@@ -521,13 +522,25 @@ function ChangeBody({ item, width, pageH, arrive, still = null, onView, onMore }
 
 /* ── The run ──────────────────────────────────────────────────────────── */
 
-export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered, onRetracted, onSettled, header = 'communities' }: {
+export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered, onRetracted, onSettled, header = 'communities', project, grows = false }: {
   items: NeedsFeedItem[] | null;
   error: boolean;
   capped: boolean;
   onDone: () => void;
   /** The end's way on; "Back to Home" when not given. */
   doneLabel?: string;
+  /**
+   * A project's own Needs you: its name, which the empty line says nothing
+   * waits in. Without it the line speaks for every project, as Needs you's
+   * own page does.
+   */
+  project?: string;
+  /**
+   * The run takes in what a later read of `items` adds (a project's own
+   * Needs you, which reads again when a change's state moves): see the
+   * effect under `list`. Off, the run is what the first read held.
+   */
+  grows?: boolean;
   /**
    * Whose header the run sits under: Needs you's (#needs, the page left of
    * the Communities screen, One Home #6361), whose way back is Home, or a
@@ -584,10 +597,27 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   // nothing else waits they are listed with a way there.
   const onPage = useMemo(() => (items ? pageItems(items, t) : []), [items, t]);
   useEffect(() => {
-    if (!shaped || list) return;
-    setList(shaped);
-    setIndex(Math.max(0, shaped.findIndex((it) => it.kind !== 'governance')));
-  }, [shaped, list]);
+    if (!shaped) return;
+    if (!list) {
+      setList(shaped);
+      setIndex(Math.max(0, shaped.findIndex((it) => it.kind !== 'governance')));
+      return;
+    }
+    // A LATER READ ADDS, AND NOTHING ELSE (model.ts takeRead). A vote that
+    // opened while the page was up joins the end of the run; what the run
+    // holds stays where it is, so a change you voted on or skipped is not
+    // dealt again and the one on show does not move. With nothing on show
+    // (the empty line, the list of pages, the end) the page opens on the
+    // first change that arrived.
+    if (!grows) return;
+    const took = takeRead({ list, index, done, votes, skipped }, shaped, (all) => filterByVoteType(all, filter, reviewVoteType));
+    if (took.list === list) return;
+    setList(took.list);
+    if (took.open == null) return;
+    setSheet('ask');
+    setIndex(took.open);
+    setDone(false);
+  }, [shaped, list]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const run = list ? filterByVoteType(list, filter, reviewVoteType) : [];
   // The chips count the whole run, whatever kind is picked: they say how
@@ -904,7 +934,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
         </div>
       );
     }
-    return <p ref={anchorRef as never} className="rf-feed-note px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="" data-review-flow="">{t('communities:reel.empty')}</p>;
+    return <p ref={anchorRef as never} className="rf-feed-note px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="" data-review-flow="">{project ? t('communities:reel.emptyProject', { project }) : t('communities:reel.empty')}</p>;
   }
 
   const page = open ? (
@@ -1001,38 +1031,104 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   );
 }
 
+/** Pure: whether a read lib/live-reads.ts corrects is the Needs you feed's own. */
+export function isNeedsFeedRead(url: URL): boolean {
+  return url.pathname === '/api/workshop/needs-feed' && !url.searchParams.get('in');
+}
+
+/** Where a project's Needs you hands what it read. */
+export interface ProjectFeedSink {
+  /** A read landed: the feed's items for this project. */
+  items(list: NeedsFeedItem[]): void;
+  /** The first read failed. A later read that fails says nothing: the page keeps what it has. */
+  failed(): void;
+}
+
 /**
- * A project's own Needs you, drawn by the same flow: the cross-project feed
- * (GET /api/workshop/needs-feed) narrowed to this project, so the two never
- * draw a change differently. Read in an effect, as every island does.
+ * A project's Needs you feed, read now and READ AGAIN WHEN A CHANGE'S STATE
+ * MOVES, until the returned function is called.
+ *
+ * The page used to read once, as it opened. A change is listed only once its
+ * vote is open (its checks passed on its head, it merges cleanly, its before
+ * & after shots are taken, no update on its way), so a vote that opened a
+ * minute later was on the project's count and not on the page until the
+ * person left and came back. A change's state moving is a `work_state` push
+ * (services/work-state.js), which app.js relays as WORK_CHANGED_EVENT with
+ * the push as its detail: one about this project asks for the feed again, at
+ * the Homeroom bot tab's pace (../ai/live.ts pacedReads: a burst is one read,
+ * reads are seconds apart, none while the browser tab is hidden). So do the
+ * gaps a push can fall into (lib/live-reads.ts: the socket reconnected, the
+ * tab came back after a while).
+ *
+ * A later read is quiet: nothing is cleared before it lands, a failed one
+ * leaves the page as it was, and an answer that a newer read overtook is
+ * dropped.
  */
-export function ProjectReviewFlow({ slug, onDone }: { slug: string; onDone: () => void }) {
-  const t = useMessages('communities');
-  const [items, setItems] = useState<NeedsFeedItem[] | null>(null);
-  const [error, setError] = useState(false);
-  useEffect(() => {
-    let live = true;
-    let demo = '';
-    try { demo = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : ''; } catch { /* no query */ }
+export function watchProjectFeed(slug: string, sink: ProjectFeedSink): () => void {
+  let live = true;
+  let asked = 0;
+  let landed = false;
+  let demo = '';
+  try { demo = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : ''; } catch { /* no query */ }
+  const read = () => {
+    const mine = ++asked;
     fetch(`/api/workshop/needs-feed${demo}`, { cache: 'no-cache', credentials: 'same-origin' })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((data) => {
-        if (!live) return;
+        if (!live || mine !== asked) return;
+        landed = true;
         const all: NeedsFeedItem[] = Array.isArray(data?.items) ? data.items : [];
-        setItems(all.filter((it) => it.app && it.app.slug === slug));
+        sink.items(all.filter((it) => it.app && it.app.slug === slug));
       })
-      .catch(() => { if (live) setError(true); });
-    return () => { live = false; };
-  }, [slug]);
+      .catch(() => { if (live && mine === asked && !landed) sink.failed(); });
+  };
+  read();
+  const reads = pacedReads(read);
+  const onPush = (event: Event) => {
+    if (pushIsFor((event as CustomEvent).detail, slug)) reads.ask();
+  };
+  window.addEventListener(WORK_CHANGED_EVENT, onPush);
+  document.addEventListener('visibilitychange', reads.seen);
+  const unwatch = watch(reads.ask, { reads: isNeedsFeedRead });
+  return () => {
+    live = false;
+    reads.stop();
+    window.removeEventListener(WORK_CHANGED_EVENT, onPush);
+    document.removeEventListener('visibilitychange', reads.seen);
+    unwatch();
+  };
+}
+
+/**
+ * A project's own Needs you, drawn by the same flow: the cross-project feed
+ * (GET /api/workshop/needs-feed) narrowed to this project, so the two never
+ * draw a change differently. Read in an effect, as every island does, and
+ * read again while it is up (watchProjectFeed), so a vote that opens is
+ * listed without leaving the page: the run takes it in at its end (`grows`).
+ * `project` is the project's name, for the line that says nothing waits here.
+ */
+export function ProjectReviewFlow({ slug, onDone, project }: { slug: string; onDone: () => void; project?: string }) {
+  const t = useMessages('communities');
+  // What was read, with whose it is: another project's answer is never drawn
+  // as this one's while its own first read is on its way.
+  const [feed, setFeed] = useState<{ slug: string; items: NeedsFeedItem[] } | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  useEffect(() => watchProjectFeed(slug, {
+    items: (list) => { setFeed({ slug, items: list }); setFailed(null); },
+    failed: () => setFailed(slug),
+  }), [slug]);
   return (
     <div className="rf-project" data-rf-project={slug}>
       <ReviewFlow
-        items={items}
-        error={error}
+        key={slug}
+        items={feed && feed.slug === slug ? feed.items : null}
+        error={failed === slug}
         capped={false}
         onDone={onDone}
         doneLabel={t('communities:review.end.backToProject')}
         header="project"
+        project={project}
+        grows
       />
     </div>
   );

@@ -114,12 +114,17 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
 
   await t.test('one stored row per item, in the ten words', async () => {
     const changed = await ws.refresh(pool, [req(1), req(2), req(3), req(4), req(5), req(6), { sessionId: own.id }]);
-    assert.equal(changed.length, 7);
+    // Seven items, and (11 Nov 2026) a row of their own for the two changes
+    // built for requests 5 and 6, which Needs you reads.
+    assert.equal(changed.length, 9);
+    assert.deepEqual(changed.filter((c) => c.kind === 'change').map((c) => [c.ref, c.state.stage, c.bell]).sort(),
+      [[failing.id, 'checking', null], [live.id, 'live', null], [own.id, 'building', null]].sort(),
+      'a change built for a request rings nothing: its request does');
     const s1 = await stored('request', 1);
     assert.deepEqual([s1.stage, s1.line, s1.whose_move, Number(s1.requester_id)], ['reading', { code: 'queued', place: 2 }, 'bot', ada.id]);
     assert.deepEqual((await stored('request', 2)).line, { code: 'queued', place: 1 });
     const s3 = await stored('request', 3);
-    assert.deepEqual([s3.stage, s3.line], ['building', { code: 'held_builds' }]);
+    assert.deepEqual([s3.stage, s3.line], ['building', { code: 'held_builds', position: 1 }]);
     const s4 = await stored('request', 4);
     assert.deepEqual([s4.stage, s4.why, s4.whose_move], ['waiting_for_you', 'question', 'requester']);
     const s5 = await stored('request', 5);
@@ -142,9 +147,12 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
   await t.test('a session names its requests; a change of stage rings', async () => {
     await pool.query("UPDATE chat_sessions SET check_state = 'passing' WHERE id = $1", [failing.id]);
     const changed = await ws.refresh(pool, [{ sessionId: failing.id }]);
-    assert.equal(changed.length, 1);
+    assert.equal(changed.length, 2, 'its request, and its own row');
     assert.deepEqual([changed[0].kind, changed[0].ref, changed[0].state.stage, changed[0].bell], ['request', 5, 'up_for_vote', 'ready']);
     assert.equal(Number(changed[0].sessionId), failing.id);
+    assert.deepEqual([changed[1].kind, changed[1].ref, changed[1].state.stage, changed[1].state.voteOpen, changed[1].bell],
+      ['change', failing.id, 'up_for_vote', true, null]);
+    assert.equal(changed[0].state.voteOpen, true, 'the request is open for votes as its change is');
     // The queue moves on: a line that moved rings nothing.
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 2', [app.id]);
     const moved = await ws.refresh(pool, [req(1)]);
@@ -186,16 +194,37 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
 
   await t.test('the sweep seeds a row for a request the bot knows, then checks the oldest in turn', async () => {
     await ask(7, bob, 'Share a list');
+    await ask(70, bob, 'Print a list');
     assert.equal(await stored('request', 7), undefined);
     const first = await ws.sweep(pool, { olderThanMs: 0 });
-    assert.equal(first.seeded, 1);
-    assert.equal((await stored('request', 7)).stage, 'reading');
-    const before = await one(`SELECT checked_at FROM work_states WHERE app_id = $1 AND item_kind = 'request' AND item_ref = 7`, [app.id]);
+    assert.equal(first.seeded, 2);
+    assert.deepEqual((await stored('request', 7)).line, { code: 'waiting' });
+    // 7 waits its turn in the bot's line (a row that moves by time); 70 waits
+    // to be read, which moves only when a record of it is written (marked).
+    await pool.query('INSERT INTO homeroom_bot_queue (app_id, issue_number, priority) VALUES ($1, 7, 1)', [app.id]);
+    await ws.refresh(pool, [req(7)]);
+    const checkedAt = async (n) => (await one(
+      `SELECT checked_at FROM work_states WHERE app_id = $1 AND item_kind = 'request' AND item_ref = $2`, [app.id, n])).checked_at;
+    const before = await checkedAt(7);
+    const idleBefore = await checkedAt(70);
     const again = await ws.sweep(pool, { olderThanMs: 0, limit: 100 });
     assert.equal(again.seeded, 0);
     assert.ok(again.checked >= 1);
-    const after = await one(`SELECT checked_at FROM work_states WHERE app_id = $1 AND item_kind = 'request' AND item_ref = 7`, [app.id]);
-    assert.ok(new Date(after.checked_at) > new Date(before.checked_at), 'an unchanged row is still marked checked');
+    assert.ok(new Date(await checkedAt(7)) > new Date(before), 'an unchanged row is still marked checked');
+    assert.equal(String(await checkedAt(70)), String(idleBefore), 'a request nobody has started on is left to its marks');
+    // The sweep's test is its index's, word for word, so it reads only the rows still moving.
+    const client = await pool.connect();
+    let forced;
+    try {
+      await client.query('SET enable_seqscan = off');
+      forced = (await client.query(
+        `EXPLAIN SELECT app_id FROM work_states
+          WHERE stage <> 'closed'
+            AND NOT (item_kind = 'request' AND stage = 'reading' AND COALESCE(line->>'code', '') = 'waiting')
+          ORDER BY checked_at ASC LIMIT 5`)).rows.map((r) => r['QUERY PLAN']).join('\n');
+      await client.query('RESET enable_seqscan');
+    } finally { client.release(); }
+    assert.match(forced, /work_states_sweep_moving_idx/);
     assert.equal((await stored('request', 3)).stage, 'closed');
     const closedChecked = await one(`SELECT checked_at, updated_at FROM work_states WHERE app_id = $1 AND item_kind = 'request' AND item_ref = 3`, [app.id]);
     assert.equal(String(closedChecked.checked_at), String(closedChecked.updated_at), 'a closed row is not swept');
@@ -218,7 +247,8 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     assert.deepEqual(await marks(), ['8', `s${failing.id}`], 'what a stage reads, not every write (a view bumps activity)');
     const out = await ws.drainDirty(pool);
     assert.equal(out.taken, 2);
-    assert.deepEqual(out.changed.map((c) => [c.ref, c.state.stage]).sort(), [[5, 'checking'], [8, 'building']].sort());
+    assert.deepEqual(out.changed.map((c) => [c.ref, c.state.stage]).sort(),
+      [[5, 'checking'], [8, 'building'], [failing.id, 'checking']].sort());
     assert.deepEqual(await marks(), [], 'taken');
     assert.deepEqual((await ws.drainDirty(pool)).taken, 0);
     // A claim, a reply's question answered, a closed record: each marks its request.
@@ -270,8 +300,9 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     const changed = await ws.refresh(pool, [req(20)]);
     assert.deepEqual([changed[0].state.stage, changed[0].bell], ['up_for_vote', 'ready']);
     const pushes = await ws.pushesOf(pool, changed);
-    assert.deepEqual(pushes.map((p) => p.data.type), ['work_state', 'notifications_changed']);
-    assert.deepEqual(pushes[1].routing, { userId: ada.id });
+    assert.deepEqual(pushes.map((p) => p.data.type), ['work_state', 'work_state', 'notifications_changed'],
+      'its request\'s row and its change\'s, and one bell: its request\'s');
+    assert.deepEqual(pushes[2].routing, { userId: ada.id });
     const [ready] = await rows(ada);
     assert.equal(ready.kind, 'build_ready');
     assert.equal(Number(ready.source_user_id), bot.id, 'from Homeroom bot');
@@ -315,7 +346,7 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     await run(21, 'ready', { buildOk: true, proposalSessionId: fv.id });
     const fvChanged = await ws.refresh(pool, [req(21)]);
     assert.deepEqual([fvChanged[0].state.stage, fvChanged[0].bell], ['live', 'live']);
-    assert.deepEqual((await ws.pushesOf(pool, fvChanged)).map((p) => p.data.type), ['work_state']);
+    assert.deepEqual((await ws.pushesOf(pool, fvChanged)).map((p) => p.data.type), ['work_state', 'work_state']);
     assert.deepEqual(await rows(bob), []);
 
     // Somebody who blocked the bot is not rung.
@@ -342,16 +373,18 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
         WHERE session_id = $1 AND kind = 'build_ready' ORDER BY id`, [up.id])).rows;
     assert.equal((await readyRows())[0].read_at, null, 'ready to try waits unread');
 
-    // An update queued moves only its line: the stage is still up_for_vote,
-    // so the row somebody has not acted on (#6438's) stays unread.
+    // An update queued asks nobody for a vote (11 Nov 2026: its change is not
+    // open for votes, so it is the bot's, waiting its turn), but takes
+    // nothing back yet: the row somebody has not acted on (#6438's) stays
+    // unread.
     const ask30 = await one(
       `INSERT INTO homeroom_bot_change_asks (app_id, session_id, issue_number, asker_id, instruction, status)
        VALUES ($1, $2, 30, $3, 'Make it bigger', 'queued') RETURNING id`,
       [app.id, up.id, ada.id]);
     const queued = await ws.refresh(pool, [req(30)]);
-    assert.deepEqual([queued[0].state.stage, queued[0].state.line.code], ['up_for_vote', 'update_queued']);
-    assert.deepEqual((await ws.pushesOf(pool, queued)).map((p) => p.data.type), ['work_state'], 'no bell, no withdraw');
-    assert.equal((await readyRows())[0].read_at, null, 'only its line moved');
+    assert.deepEqual([queued[0].state.stage, queued[0].state.line.code, queued[0].state.voteOpen], ['building', 'update_queued', false]);
+    assert.deepEqual((await ws.pushesOf(pool, queued)).map((p) => p.data.type), ['work_state', 'work_state'], 'no bell, no withdraw');
+    assert.equal((await readyRows())[0].read_at, null, 'nothing rebuilt yet');
 
     // Taken, it goes back to building: the unread row is withdrawn, its
     // email with it, and the open tab hears its bell moved.
@@ -359,7 +392,7 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     const back = await ws.refresh(pool, [req(30)]);
     assert.deepEqual([back[0].state.stage, back[0].bell], ['building', null]);
     const backPushes = await ws.pushesOf(pool, back);
-    assert.deepEqual(backPushes.map((p) => p.data.type).sort(), ['notifications_changed', 'work_state']);
+    assert.deepEqual(backPushes.map((p) => p.data.type).sort(), ['notifications_changed', 'work_state', 'work_state']);
     assert.deepEqual(backPushes.find((p) => p.data.type === 'notifications_changed').routing, { userId: ada.id });
     const [withdrawn] = await readyRows();
     assert.ok(withdrawn.read_at, 'withdrawn, not deleted');
@@ -374,6 +407,244 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     const after = await readyRows();
     assert.equal(after.length, 2);
     assert.equal(after[1].read_at, null, 'the new one rings');
+  });
+
+  // 11 Nov 2026 (one model, step 1): the standing. A request's row carries
+  // its change, what is asked of its requester and what the bot last said,
+  // and its words; a change is open for votes only while it really is.
+  await t.test('the standing: its change, its asks, its words, in the row and its push', async () => {
+    await ask(40, ada, 'Swap history');
+    const up = await change(bot, 540, [40], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    await run(40, 'ready', { buildOk: true, proposalSessionId: up.id });
+    // #6594: one yes is all the project's rule needs, and a change whose
+    // votes are in is going live, not open for votes; a rule asking for two
+    // keeps this one up for a vote with its yes counted.
+    const { rows: [rule] } = await pool.query('SELECT approvals_required FROM apps WHERE id = $1', [app.id]);
+    await pool.query('UPDATE apps SET approvals_required = 2 WHERE id = $1', [app.id]);
+    require('../src/services/governance').invalidateGovernance(app.id);
+    await pool.query("INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'yes')", [up.id, bob.id]);
+    const changed = await ws.refresh(pool, [req(40)]);
+    const row = (await ws.forRequests(pool, app.id, [40])).get(40);
+    assert.equal(row.stage, 'up_for_vote');
+    assert.equal(row.voteOpen, true);
+    assert.equal(row.leadChangeId, up.id);
+    assert.deepEqual(row.words.stage, { id: 'core:work.stage.upForVote' });
+    assert.deepEqual([row.change.id, row.change.number, row.change.status, row.change.votes, row.change.voteOpen],
+      [up.id, 540, 'promoted', { yes: 1, no: 0 }, true]);
+    assert.deepEqual(row.change.checks, { state: 'passing', phase: null, failing: null });
+    assert.deepEqual(row.asks, { question: null, plan: null, closeVote: null, draft: null, offers: [], reports: 0 });
+    assert.equal(row.said, null);
+    const push = ws.pushOf(changed.find((c) => c.kind === 'request'));
+    assert.equal(push.data.state.stage, 'up_for_vote');
+    assert.deepEqual(push.data.state.words, row.words, 'the push carries the same row, words and all');
+    assert.equal(push.data.state.change.id, up.id);
+    // A vote marks the change, and its count moves in the row.
+    await pool.query('DELETE FROM work_state_dirty');
+    await pool.query("INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, 'no')", [up.id, ada.id]);
+    assert.deepEqual((await pool.query('SELECT session_id FROM work_state_dirty')).rows.map((r) => Number(r.session_id)), [up.id]);
+    await ws.drainDirty(pool);
+    assert.deepEqual((await ws.forRequests(pool, app.id, [40])).get(40).change.votes, { yes: 1, no: 1 });
+    // An open vote to close it is asked of the group, and its votes are in the row.
+    const close = await one(
+      `INSERT INTO issues (app_id, github_issue_number, title, created_by, kind, payload, status)
+       VALUES ($1, 940, 'Close #40', $2, 'close_issue', '{"issueNumber": 40}'::jsonb, 'open') RETURNING id`, [app.id, bob.id]);
+    await ws.drainDirty(pool);
+    assert.deepEqual((await ws.forRequests(pool, app.id, [40])).get(40).asks.closeVote, { issueId: close.id, yes: 0, no: 0 });
+    await pool.query('UPDATE apps SET approvals_required = $2 WHERE id = $1', [app.id, rule.approvals_required]);
+    require('../src/services/governance').invalidateGovernance(app.id);
+  });
+
+  await t.test('a merged, merging, GitHub-held or shots-held change is never open for votes, nor a Vote row', async () => {
+    const overview = require('../src/routes/workshop-overview');
+    const owedTo = async (who, ids) => (await pool.query(
+      `SELECT cs.id FROM chat_sessions cs WHERE cs.id = ANY($2::int[]) AND ${overview.OWED_PROPOSALS_WHERE}`,
+      [who.id, ids])).rows.map((r) => Number(r.id));
+    const head = 'abc';
+    const made = {};
+    made.open = await change(bob, 600, [], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    made.merged = await change(bob, 601, [], 'merged', { promotedAt: new Date(), liveAt: new Date(), checkState: 'passing' });
+    made.merging = await change(bob, 602, [], 'merging', { promotedAt: new Date(), checkState: 'passing' });
+    made.github = await change(bob, 603, [], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    await pool.query(`UPDATE chat_sessions SET integration_block_reasons = '["github_checks"]'::jsonb WHERE id = $1`, [made.github.id]);
+    made.shots = await change(bob, 604, [], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    await pool.query(
+      `UPDATE chat_sessions SET shots_state = 'exploring', shots_run_id = $2, shots_updated_at = NOW(),
+              checks_checked_at = NOW(), shots_detail = $3::jsonb WHERE id = $1`,
+      [made.shots.id, 'r'.repeat(32), JSON.stringify({ headSha: head, required: true })]);
+    const ids = Object.values(made).map((c) => c.id);
+    await ws.refresh(pool, ids.map((id) => ({ sessionId: id })));
+    const rows = await ws.forChanges(pool, ids);
+    const said = Object.fromEntries(Object.entries(made).map(([k, c]) => [k, [rows.get(c.id).stage, rows.get(c.id).voteOpen]]));
+    assert.deepEqual(said, {
+      open: ['up_for_vote', true],
+      merged: ['live', false],
+      merging: ['going_live', false],
+      github: ['going_live', false],
+      shots: ['checking', false],
+    });
+    assert.deepEqual(rows.get(made.shots.id).line, { code: 'shots' });
+    assert.equal(rows.get(made.github.id).change.githubHold, true);
+    assert.equal(rows.get(made.shots.id).change.shotsHeld, true);
+    assert.deepEqual(await owedTo(ada, ids), [made.open.id], 'Needs you asks for a vote only on the change open for one');
+    // Merged meanwhile: the row moves with it, and the Vote row goes.
+    await pool.query("UPDATE chat_sessions SET status = 'merged' WHERE id = $1", [made.open.id]);
+    await ws.drainDirty(pool);
+    assert.equal((await ws.forChanges(pool, [made.open.id])).get(made.open.id).voteOpen, false);
+    assert.deepEqual(await owedTo(ada, ids), []);
+  });
+
+  await t.test('a request being built never waits for its plan, anywhere', async () => {
+    await ask(50, ada, 'A printable list');
+    const build = await change(bot, null, [50], 'active');
+    await one(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, awaiting_go_at, build_session_id)
+       VALUES ($1, 50, 'live', 'ready', NOW() - interval '1 hour', $2) RETURNING id`, [app.id, build.id]);
+    await ws.refresh(pool, [req(50)]);
+    const row = (await ws.forRequests(pool, app.id, [50])).get(50);
+    assert.notEqual(row.stage, 'waiting_for_you');
+    assert.ok(['planning', 'building'].includes(row.stage), row.stage);
+    assert.equal(row.asks.plan, null, 'no plan waits for Build it');
+    // Needs you (the Homeroom bot tab) does not list it as hers to act on.
+    const aiWork = require('../src/services/ai-work');
+    const stand = aiWork.standing({ change_status: null, own: true, state: 'open', kind: 'work', request_at: new Date() },
+      ada.id, new Date(), bot.id, row, { decides: true });
+    assert.notEqual(stand?.group, 'needs');
+    // Nor does the bot tell her it waits for her.
+    const mayor = require('../src/services/homeroom-bot-mayor');
+    const item = mayor.standingItem(row, {});
+    assert.equal(item.asks?.planWaitsForBuildIt, undefined);
+    assert.notEqual(item.whoseMove, 'requester');
+  });
+
+  await t.test('Main\'s request_detail and the request\'s status payload say the same stage and whose move', async () => {
+    const mayor = require('../src/services/homeroom-bot-mayor');
+    const { standingsFor } = require('../src/routes/issues');
+    const settings = { mode: 'live', apps: [] };
+    for (const n of [1, 3, 4, 5, 40]) {
+      const detail = await mayor.requestDetail(pool, {
+        user: { id: ada.id, username: 'ws_ada', isAdmin: true }, project: app.slug, number: n, settings, deps: { domain: null },
+      });
+      const payload = (await standingsFor(pool, { app: { id: app.id, created_by: bob.id }, numbers: [n], viewer: { id: ada.id } })).get(n);
+      assert.ok(detail.standing, `request ${n} has a standing in request_detail`);
+      assert.deepEqual([detail.standing.stage, detail.standing.whoseMove], [payload.stage, payload.whoseMove], `request ${n}`);
+      assert.equal(detail.standing.says, ws.says(payload, { yours: payload.mine }), `request ${n} says the same words`);
+    }
+  });
+
+  // Review of the one-model finish (11 Nov 2026).
+  await t.test('a change built for a request that goes back to Underway, or goes, is never left open for votes', async () => {
+    await ask(61, ada, 'Swap reminders');
+    const up = await change(bot, 561, [61], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    await run(61, 'ready', { buildOk: true, proposalSessionId: up.id });
+    await ws.refresh(pool, [req(61)]);
+    const row = async () => (await ws.forChanges(pool, [up.id], { ensure: false })).get(up.id);
+    assert.deepEqual([(await row()).stage, (await row()).voteOpen], ['up_for_vote', true]);
+    // Unpromoted: its row is derived again, not frozen open for votes.
+    await pool.query("UPDATE chat_sessions SET status = 'active' WHERE id = $1", [up.id]);
+    await ws.drainDirty(pool);
+    assert.deepEqual([(await row()).stage, (await row()).voteOpen], ['building', false]);
+    // The sweep checks it like any row (it never stays the oldest unchecked).
+    await pool.query(`UPDATE work_states SET checked_at = NOW() - interval '1 hour' WHERE item_kind = 'change' AND item_ref = $1`, [up.id]);
+    await ws.sweep(pool, { olderThanMs: 0, limit: 500, seed: 0 });
+    const checked = await one(`SELECT checked_at > NOW() - interval '1 minute' AS fresh FROM work_states WHERE item_kind = 'change' AND item_ref = $1`, [up.id]);
+    assert.equal(checked.fresh, true);
+    // Gone altogether: its row goes with it.
+    await pool.query('UPDATE homeroom_bot_runs SET proposal_session_id = NULL WHERE proposal_session_id = $1', [up.id]);
+    await pool.query('DELETE FROM chat_sessions WHERE id = $1', [up.id]);
+    await ws.refresh(pool, [{ sessionId: up.id }]);
+    assert.equal(await row(), undefined);
+  });
+
+  await t.test('changes up for a vote with no row are marked, by the migration and on every boot (a staging copy)', async () => {
+    const seed = await change(bob, 562, [], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    const merging = await change(bob, 563, [], 'merging', { promotedAt: new Date(), checkState: 'passing' });
+    const idle = await change(bob, 564, [], 'active');
+    await ws.drainDirty(pool);
+    // As a staging copy starts: work states and their marks empty.
+    await pool.query('DELETE FROM work_state_dirty');
+    await pool.query(`DELETE FROM work_states WHERE item_kind = 'change' AND item_ref = ANY($1::int[])`, [[seed.id, merging.id, idle.id]]);
+    const marked = async () => (await pool.query('SELECT session_id FROM work_state_dirty WHERE session_id = ANY($1::int[]) ORDER BY session_id',
+      [[seed.id, merging.id, idle.id]])).rows.map((r) => Number(r.session_id));
+    await require('../src/db/migrate').markChangesWithoutWorkState(pool);
+    assert.deepEqual(await marked(), [seed.id, merging.id], 'up for a vote or merging, with no row');
+    await require('../src/db/migrate').markChangesWithoutWorkState(pool);
+    assert.deepEqual(await marked(), [seed.id, merging.id], 'marking again does nothing');
+    await ws.drainDirty(pool);
+    assert.equal((await ws.forChanges(pool, [seed.id], { ensure: false })).get(seed.id).voteOpen, true, 'Needs you finds it');
+    // The migration's own statement, run again on a database that has rows: idempotent.
+    await pool.query(`DELETE FROM work_states WHERE item_kind = 'change' AND item_ref = $1`, [merging.id]);
+    const fs = require('node:fs');
+    const path = require('node:path');
+    await pool.query(fs.readFileSync(path.join(__dirname, '../src/db/migrations/work-state-backfill-and-indexes.sql'), 'utf8'));
+    assert.deepEqual(await marked(), [merging.id]);
+    await ws.drainDirty(pool);
+  });
+
+  await t.test('a request\'s tries read its own newest runs, however many another request in the batch has', async () => {
+    await ask(62, ada, 'Few runs');
+    await ask(63, ada, 'Many runs');
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 62, 'live', 'ready'), ($1, 62, 'live', 'question')`,
+      [app.id]);
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict)
+       SELECT $1, 63, 'live', 'empty' FROM generate_series(1, 2100)`, [app.id]);
+    const { rows } = await pool.query(ws.STANDING_RUNS_SQL, [[app.id, app.id], [62, 63]]);
+    const count = (n) => rows.filter((r) => Number(r.issue_number) === n).length;
+    assert.deepEqual([count(62), count(63)], [2, 200], 'at most 200 of each, and none of the other\'s taken');
+    assert.ok(rows.every((r, i) => i === 0 || Number(rows[i - 1].id) > Number(r.id)), 'newest first');
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = 63', [app.id]);
+  });
+
+  await t.test('a change\'s requests are found by each run column\'s own index', async () => {
+    await ask(64, ada, 'Built for');
+    const build = await change(bot, null, [], 'active');
+    await one(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_session_id) VALUES ($1, 64, 'live', 'ready', $2) RETURNING id`,
+      [app.id, build.id]);
+    assert.deepEqual(await ws.requestsOfSession(pool, build.id), [{ appId: app.id, issueNumber: 64 }]);
+    const proposed = await change(bot, 565, [], 'promoted', { promotedAt: new Date(), checkState: 'pending' });
+    await run(64, 'ready', { proposalSessionId: proposed.id });
+    assert.deepEqual(await ws.requestsOfSession(pool, proposed.id), [{ appId: app.id, issueNumber: 64 }]);
+    const client = await pool.connect();
+    let plan;
+    try {
+      await client.query('SET enable_seqscan = off');
+      plan = (await client.query('EXPLAIN SELECT 1 FROM homeroom_bot_runs r WHERE r.build_session_id = 1')).rows
+        .map((r) => r['QUERY PLAN']).join('\n');
+      await client.query('RESET enable_seqscan');
+    } finally { client.release(); }
+    assert.match(plan, /idx_homeroom_bot_runs_build_session/);
+  });
+
+  await t.test('what is its requester\'s alone is theirs: nobody else\'s read or the push names it', async () => {
+    await ask(65, ada, 'Swap by post, privately asked');
+    const asked = await run(65, 'question');
+    const sent = await dm.sendDm(pool, { bot, userId: ada.id, content: 'Which post office?' });
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, run_id, question_status)
+       VALUES ($1, $2, $3, $4, 65, 'question', $5, 'open')`,
+      [sent.messageId, ada.id, sent.conversationId, app.id, asked.id]);
+    const card = await one(
+      `INSERT INTO bot_cards (user_id, conversation_id, app_id, kind, title, issue_number)
+       VALUES ($1, $2, $3, 'build_plan', 'Swap by post', 65) RETURNING id`,
+      [ada.id, sent.conversationId, app.id]);
+    const changed = await ws.refresh(pool, [req(65)]);
+    const { standingsFor } = require('../src/routes/issues');
+    const read = async (viewer) => (await standingsFor(pool, { app: { id: app.id, created_by: bob.id }, numbers: [65], viewer })).get(65);
+    const hers = await read({ id: ada.id });
+    assert.equal(hers.asks.question.messageId, sent.messageId, 'she reads her own question');
+    assert.deepEqual(hers.asks.offers.map((o) => o.id), [card.id]);
+    assert.equal(hers.requesterId, ada.id);
+    const his = await read({ id: bob.id });
+    assert.equal(his.stage, hers.stage);
+    assert.deepEqual(his.asks.question, { messageId: null, at: hers.asks.question.at }, 'that a question waits, not which message');
+    assert.deepEqual([his.asks.offers, his.asks.openOffers], [[], 1]);
+    assert.equal(his.requesterId, null);
+    const push = ws.pushOf(changed.find((c) => c.kind === 'request' && c.ref === 65));
+    assert.equal(push.kind, 'scoped');
+    assert.deepEqual([push.data.state.asks.question.messageId, push.data.state.asks.offers, push.data.state.requesterId], [null, [], null]);
+    assert.equal(JSON.stringify(push).includes(`"messageId":${sent.messageId}`), false);
   });
 
   // #6600: a takeover of a change nobody asked for (its own item) is read

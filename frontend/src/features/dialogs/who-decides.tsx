@@ -45,6 +45,7 @@ import { Switch } from '@/components/ui/switch';
 
 import { changeHref } from '../../lib/change-href';
 import { useMessages } from '../../lib/i18n/react';
+import { radioGroupKeys } from '../../lib/radio-group';
 import { audienceLine, reloadCommunity, useCommunity } from '../dev-board/workshop/community-card';
 import {
   creatorGroupLine, currentValue, groupKey, groupLabel, groupNameProblem, groupSize, matchPreset, MAX_AT_LEAST,
@@ -58,6 +59,8 @@ import { useDialog } from './use-dialog';
 
 type Screen = 'main' | 'own' | 'group' | 'rule';
 type Visibility = 'private' | 'public';
+// The two rows of "Who can see it", in the order they are drawn.
+const VISIBILITIES: readonly Visibility[] = ['private', 'public'];
 
 /** What the approval section has picked: a preset, or rules of the project's own. */
 type Choice = { kind: 'preset'; key: PresetKey } | { kind: 'own'; value: RulesValue };
@@ -159,6 +162,10 @@ export function WhoDecidesDialog() {
   const currentVis: Visibility = visibility?.view === 'public' ? 'public' : 'private';
   const buildLimited = visibility?.view === 'public' && visibility?.build === 'private';
   const pickedVis: Visibility = vis || currentVis;
+  // Public but building by invitation is neither row until one is picked.
+  const seeChecked: Visibility | null = pickedVis === 'public' && buildLimited && !vis ? null : pickedVis;
+  // One tab stop, and the arrow keys move the pick (#6510).
+  const seeKeys = radioGroupKeys(VISIBILITIES, seeChecked, setVis);
   const name = community?.name || slug;
   const memberCount = Number(community?.member_count) || 0;
 
@@ -340,13 +347,14 @@ export function WhoDecidesDialog() {
         {community?.can_manage !== false ? (
           <>
             <SectionHeader className="px-1 pb-2 pt-4" id="who-see-label">{t('dialogs:whoDecides.see.title')}</SectionHeader>
-            <GroupedList className="mx-0" role="radiogroup" aria-labelledby="who-see-label" data-who-see="">
-              {(['private', 'public'] as const).map((v) => (
+            <GroupedList className="mx-0" role="radiogroup" aria-labelledby="who-see-label" data-who-see="" onKeyDown={seeKeys.onKeyDown}>
+              {VISIBILITIES.map((v) => (
                 <ListRow
                   key={v}
                   as="button"
                   role="radio"
-                  aria-checked={pickedVis === v && !(v === 'public' && buildLimited && !vis)}
+                  aria-checked={seeChecked === v}
+                  tabIndex={seeKeys.tabIndex(v)}
                   data-who-see-option={v}
                   onClick={() => setVis(v)}
                   leading={<IconTile size="xs">{v === 'private' ? <LockIcon aria-hidden="true" /> : <GlobeIcon aria-hidden="true" />}</IconTile>}
@@ -354,7 +362,7 @@ export function WhoDecidesDialog() {
                   subtitle={t(v === 'private' ? 'dialogs:whoDecides.see.privateSub' : 'dialogs:whoDecides.see.publicSub')}
                   subtitleClassName="whitespace-normal"
                   chevron={false}
-                  trailing={<Picked on={pickedVis === v && !(v === 'public' && buildLimited && !vis)} />}
+                  trailing={<Picked on={seeChecked === v} />}
                 />
               ))}
             </GroupedList>
@@ -688,6 +696,9 @@ export function WhoDecidesDialog() {
     const others = draft.rules.filter((_, i) => i !== ruleDraft.index);
     const duplicate = others.some((r) => ruleSignature(r) === ruleSignature(rule));
     const set = (patch: Partial<RuleDraft>) => setRuleDraft({ ...ruleDraft, ...patch });
+    const pickKind = (k: Kind) => set({ kind: k, n: k === 'atLeast' ? Math.min(ruleDraft.n, MAX_AT_LEAST) : (k === 'majority' ? ruleDraft.n : 50) });
+    // One tab stop, and the arrow keys move the pick (#6510).
+    const kindKeys = radioGroupKeys(KINDS, ruleDraft.kind, pickKind);
     const size = groupSize(rule.group, ruleCtx);
     return (
       <>
@@ -715,10 +726,10 @@ export function WhoDecidesDialog() {
         {rule.group !== 'creator' ? (
           <>
             <SectionHeader className="px-1 pb-2 pt-5" id="who-rule-kind-label">{t('dialogs:whoDecides.rule.howMany')}</SectionHeader>
-            <GroupedList className="mx-0" role="radiogroup" aria-labelledby="who-rule-kind-label">
+            <GroupedList className="mx-0" role="radiogroup" aria-labelledby="who-rule-kind-label" onKeyDown={kindKeys.onKeyDown}>
               {KINDS.map((k) => (
-                <ListRow key={k} as="button" role="radio" aria-checked={ruleDraft.kind === k} data-who-rule-kind={k}
-                  onClick={() => set({ kind: k, n: k === 'atLeast' ? Math.min(ruleDraft.n, MAX_AT_LEAST) : (k === 'majority' ? ruleDraft.n : 50) })}
+                <ListRow key={k} as="button" role="radio" aria-checked={ruleDraft.kind === k} tabIndex={kindKeys.tabIndex(k)} data-who-rule-kind={k}
+                  onClick={() => pickKind(k)}
                   title={t(KIND_IDS[k].label)} subtitle={t(KIND_IDS[k].sub)} subtitleClassName="whitespace-normal" chevron={false}
                   trailing={<Picked on={ruleDraft.kind === k} />} />
               ))}

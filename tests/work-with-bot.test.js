@@ -72,6 +72,13 @@ const baseIssue = (over) => ({
   ...over,
 });
 const plain = (x) => JSON.parse(JSON.stringify(x));
+// 11 Nov 2026 (one model): a request's standing as its row carries it, in
+// the contract's shape (tests/lib/work-words.js gives it the server's words).
+const { withWords } = require('./lib/work-words');
+const standing = (stage, extra = {}) => withWords({
+  kind: 'request', stage, why: null, reason: null, line: null, whoseMove: null, since: null,
+  change: null, asks: null, said: null, mine: true, voteOwed: false, ...extra,
+});
 
 test('a request nobody is building: Work on this with Homeroom bot, and the agent session in its ⋯', () => {
   const { AppView } = makeAppView();
@@ -93,77 +100,81 @@ test('a request nobody is building: Work on this with Homeroom bot, and the agen
   // The other primary states stay: Continue work, the bot on it, a change waiting.
   assert.equal(AppView._requestStatusView(baseIssue({ myPrSessionId: 9 })).action.label, 'Continue your work');
   assert.equal(AppView._requestStatusView(baseIssue({ myPrSessionId: 9 })).agentSession, false);
-  const botOn = AppView._requestStatusView(baseIssue({ bot: { what: 'building', since: null, askedBy: 'me', mine: true } }));
+  const botOn = AppView._requestStatusView(baseIssue({ standing: standing('building', { whoseMove: 'bot' }) }));
   // #6401: the progress card under this one already says where the bot is,
   // so the page offers no button that scrolls to it.
   assert.equal(botOn.action, null);
   assert.equal(botOn.agentSession, false);
   // The Workshop list keeps it (its page is not the one the press lands on).
   assert.equal(plain(AppView._issuePrimaryActionSpec(
-    baseIssue({ bot: { what: 'building', since: null, askedBy: 'me', mine: true } }),
+    baseIssue({ standing: standing('building', { whoseMove: 'bot' }) }),
   )).label, 'See progress');
   // The progress card drawn (the track): still no action on the page.
   const tracked = plain(AppView._requestStatusView(baseIssue({
-    bot: { what: 'reading', since: null, askedBy: 'me', mine: true },
+    standing: standing('reading', { whoseMove: 'bot' }),
     track: { work: { stage: 'reading' } },
   })));
   assert.equal(tracked.action, null, 'no See progress while the progress card is drawn');
   assert.equal(tracked.agentSession, false);
   // #6210 (3 Nov 2026): her own plan waits for her: "you", and the plan
   // with its Build it is right under this card, so the card has no button.
-  const planMine = plain(AppView._requestStatusView(baseIssue({ bot: { what: 'reading', plan: true, since: null, askedBy: 'me', mine: true } })));
-  assert.equal(planMine.lead, 'Your plan is ready. Build it is on the plan below.');
-  assert.doesNotMatch(planMine.lead, /@me/);
+  const plan = (mine) => standing('waiting_for_you', { why: 'plan', whoseMove: 'requester', mine });
+  const planMine = plain(AppView._requestStatusView(baseIssue({ standing: plan(true) })));
+  assert.equal(planMine.lead, 'Waiting for you to OK the plan.');
   assert.equal(planMine.action, null, 'the plan card under it is the one Build it');
-  const planTheirs = plain(AppView._requestStatusView(baseIssue({ bot: { what: 'reading', plan: true, since: null, askedBy: 'ada', mine: false } })));
-  assert.equal(planTheirs.lead, '@ada\'s plan is ready. Any member can build it below.', 'anyone else is told any member may build it');
+  const planTheirs = plain(AppView._requestStatusView(baseIssue({ standing: plan(false) })));
+  assert.equal(planTheirs.lead, 'Waiting for the plan to be OK\'d.', 'anyone else reads it as somebody else\'s wait');
+  assert.equal(planTheirs.action, null);
   AppView._ghIssuesMeta = { myRemaining: 5, homeroomBot: { typicalMinutes: 8 } };
   assert.equal(AppView._requestStatusView(baseIssue()).action.label, 'Ask Homeroom bot to build this', 'where the bot builds, its door stays');
 });
 
 // #6375: queued but held until later, its queue row is no `bot` (its read
 // keeps unheld rows only), so the status card read "Nobody is working on
-// this yet." with Ask over the track card's "On hold until …". The stored
-// work state (the track) says it now, with nothing offered and no spinner.
+// this yet." with Ask over the track card's "On hold until …". 11 Nov 2026:
+// its standing says it, with nothing offered and no spinner.
 test('a request the bot holds until later says so, offers no Ask and does not spin', () => {
   const { AppView } = makeAppView();
   AppView._ghIssuesMeta = { myRemaining: 5, homeroomBot: { typicalMinutes: 8 } };
-  const track = { work: { stage: 'reading', why: null, reason: null, line: { code: 'on_hold' } }, held: { limit: 'allowance', position: null, until: '2026-11-09T01:00:00.000Z' } };
-  const held = plain(AppView._requestStatusView(baseIssue({ track })));
-  assert.equal(held.lead, message('core:work.line.onHold'), 'the stored line\'s own words');
+  const onHold = standing('reading', { line: { code: 'on_hold' }, whoseMove: 'bot' });
+  const held = plain(AppView._requestStatusView(baseIssue({ standing: onHold })));
+  assert.equal(held.lead, `${message('core:work.stage.notStarted')} · ${message('core:work.line.onHold')}`, 'the standing\'s own words');
   assert.doesNotMatch(held.lead, /Nobody/);
   assert.equal(held.action, null, 'no Ask Homeroom bot to build this');
   assert.equal(held.botSays, true);
   assert.equal(held.ownAgent, false);
   assert.equal(held.agentSession, false);
-  assert.equal(AppView._issueWorkState(baseIssue({ track })), null, 'no bot state, so no working spinner');
-  // A hold whose line has no words here says until when, and nothing more.
-  const other = plain(AppView._requestStatusView(baseIssue({ track: { ...track, work: { ...track.work, line: { code: 'later' } } } })));
-  assert.match(other.lead, /^Homeroom bot has this on hold until Nov 9\.$/);
-  assert.equal(other.action, null);
-  // Queued and not held: as before, and it spins.
-  const queued = baseIssue({ bot: { what: 'queued', since: null } });
-  assert.equal(AppView._requestStatusView(queued).lead, message('changes:request.status.lead.botQueued'));
+  assert.equal(AppView._issueWorkState(baseIssue({ standing: onHold })), null, 'no bot state, so no working spinner');
+  assert.equal(AppView._issueInProgress(baseIssue({ standing: onHold })), false, 'and no Underway card');
+  // Its turn in the line: it spins, and says so.
+  const queued = baseIssue({ standing: standing('reading', { line: { code: 'queued' }, whoseMove: 'bot' }) });
+  assert.equal(AppView._requestStatusView(queued).lead, 'Not started yet. Waiting its turn in Homeroom bot’s line; it starts by itself.');
   assert.equal(AppView._issueWorkState(queued).spinner, true);
-  // Nobody on it, and a track that holds nothing: Nobody, with Ask. #6390:
-  // a track that says it is READING with no bot row is the bot on it, not
-  // nobody, so that case is the queued one here.
-  for (const issue of [baseIssue(), baseIssue({ track: { work: { stage: 'queued', line: { code: 'queued' } } } })]) {
-    const nobody = AppView._requestStatusView(issue);
-    assert.equal(nobody.lead, 'Nobody is working on this yet.');
-    assert.equal(nobody.action.label, 'Ask Homeroom bot to build this');
-  }
-  // A person in review still wins over the hold.
-  const review = AppView._requestStatusView(baseIssue({ track, in_progress: { sessions: [{ sessionId: 5, username: 'ada', status: 'promoted' }] } }));
-  assert.equal(review.lead, 'ada’s change for this is waiting for approval.');
+  // Nobody on it: Nobody, with Ask; a standing nobody has started says so
+  // in its own words, with Ask; and a stage this client does not know is no
+  // standing at all.
+  const nobody = AppView._requestStatusView(baseIssue());
+  assert.equal(nobody.lead, 'Nobody is working on this yet.');
+  assert.equal(nobody.action.label, 'Ask Homeroom bot to build this');
+  const waiting = AppView._requestStatusView(baseIssue({ standing: standing('reading', { line: { code: 'waiting' }, whoseMove: 'bot' }) }));
+  assert.equal(waiting.lead, 'Not started yet · Waiting to be read');
+  assert.equal(waiting.action.label, 'Ask Homeroom bot to build this');
+  assert.equal(AppView._requestStatusView(baseIssue({ track: { work: { stage: 'queued', line: { code: 'queued' } } } })).lead,
+    'Nobody is working on this yet.');
+  // A person's change waiting for approval is the standing's to say, with
+  // how its vote stands; without one, the person's own sentence.
+  const promoted = { sessions: [{ sessionId: 5, username: 'ada', status: 'promoted' }] };
+  assert.equal(AppView._requestStatusView(baseIssue({ in_progress: promoted, standing: standing('up_for_vote', { whoseMove: 'group' }) })).lead,
+    'Up for a vote.');
+  assert.equal(AppView._requestStatusView(baseIssue({ in_progress: promoted })).lead, 'ada’s change for this is waiting for approval.');
 });
 
 test('while the bot waits for her plan, the request says so, with Let the bot build it now', () => {
   const { AppView } = makeAppView();
-  const held = baseIssue({ botHold: { rootId: 77, href: '#homeroom-bot/thread/77' } });
+  const hold = { rootId: 77, href: '#homeroom-bot/thread/77' };
+  const held = baseIssue({ botHold: hold, standing: standing('planning', { line: { code: 'planning_with_you' }, whoseMove: 'requester' }) });
   const status = plain(AppView._requestStatusView(held));
-  assert.equal(status.lead, 'Homeroom bot is waiting for your plan.');
-  assert.equal(message('changes:request.status.lead.botWaitsPlan'), 'Homeroom bot is waiting for your plan.');
+  assert.equal(status.lead, 'Planning · Planning it with you in a private thread');
   assert.deepEqual(status.action, {
     label: 'Let the bot build it now',
     title: 'Homeroom bot starts on it without waiting for your plan',
@@ -173,11 +184,47 @@ test('while the bot waits for her plan, the request says so, with Let the bot bu
   assert.equal(status.botSays, true, 'no "Plan v1 is ready" after it');
   assert.equal(status.agentSession, false);
   assert.equal(AppView._issuePrimaryActionSpec(held).act.fn, 'letBotBuildNow', 'the board card says the same');
+  // A row from an older server, with only the hold, reads the same.
+  const legacy = baseIssue({ botHold: hold });
+  assert.equal(plain(AppView._requestStatusView(legacy)).action.act.fn, 'letBotBuildNow');
   // Queued for a builder is still waiting for her; reading or building is not.
-  assert.equal(AppView._planHeld({ ...held, bot: { what: 'queued', since: null } }), true);
-  assert.equal(AppView._planHeld({ ...held, bot: { what: 'reading', since: null } }), false);
+  assert.equal(AppView._planHeld({ ...legacy, bot: { what: 'queued', since: null } }), true);
+  assert.equal(AppView._planHeld({ ...legacy, bot: { what: 'reading', since: null } }), false);
+  assert.equal(AppView._planHeld({ ...held, standing: standing('reading', { whoseMove: 'bot' }) }), false);
   assert.equal(AppView._planHeld({ ...held, state: 'closed' }), false);
   assert.equal(AppView._planHeld(baseIssue()), false);
+});
+
+// 13 Nov 2026: a tester's own private thread held a request whose build had
+// already reached the line. Its page read "Ready to build · Number 1 in
+// line" beside Let the bot build it now, so nobody could tell who it waited
+// for. The server now says it is held for their plan whatever it had reached
+// (services/work-state.js: `ready` marks the build behind the hold), and the
+// page draws exactly what it draws for one still waiting to be read.
+test('held at the build line, the request reads as waiting for her plan, not as a place in line', () => {
+  const { AppView } = makeAppView();
+  const hold = { rootId: 77, href: '#homeroom-bot/thread/77' };
+  const reading = baseIssue({ botHold: hold, standing: standing('planning', { line: { code: 'planning_with_you' }, whoseMove: 'requester' }) });
+  const atLine = baseIssue({
+    botHold: hold,
+    // Its page's `bot`, read off the same row (work-state.js botWorkOf): the build still waits in the bot's queue.
+    bot: { what: 'queued', since: null, mine: true },
+    standing: standing('planning', { line: { code: 'planning_with_you', ready: true }, whoseMove: 'requester' }),
+  });
+  const status = plain(AppView._requestStatusView(atLine));
+  assert.equal(status.lead, 'Planning · Planning it with you in a private thread');
+  assert.doesNotMatch(status.lead, /in line|Ready to build/);
+  assert.deepEqual(status.action, plain(AppView._requestStatusView(reading)).action);
+  assert.equal(status.action.act.fn, 'letBotBuildNow');
+  assert.deepEqual(status.words, plain(AppView._requestStatusView(reading)).words, 'the same words as a held request still waiting to be read');
+  assert.equal(AppView._planHeld(atLine), true);
+  assert.equal(AppView._botOn(atLine), null, 'nothing of the bot\'s is under way: no spinner, no "Homeroom bot is building"');
+  assert.equal(AppView._issuePrimaryActionSpec(atLine).act.fn, 'letBotBuildNow', 'the Workshop card says the same');
+  // With no hold, the same build says whose line it waits in, and offers nothing to press.
+  const queued = baseIssue({ standing: standing('building', { line: { code: 'queued', place: 1 }, whoseMove: 'bot' }) });
+  const line = plain(AppView._requestStatusView(queued));
+  assert.equal(line.lead, 'Ready to build. Number 1 in Homeroom bot’s line; it starts by itself.');
+  assert.notEqual(line.action && line.action.act && line.action.act.fn, 'letBotBuildNow');
 });
 
 test('the request page\'s button opens the thread on the bot tab; Let the bot build it now lifts the hold', async () => {
@@ -276,7 +323,7 @@ test('a change gets the quiet version: under its cards, on its request\'s page a
   // platform's is not the bot at work.
   assert.match(changes, /function changeBotAtWork\(item: ThreadItem, view: ChangeView \| null\): boolean \{\s*if \(item\.byBot && item\.state === 'underway' && !item\.ready\) return true;\s*const fix = view\?\.v\.testing\.botFix;\s*return fix === 'fixing' \|\| fix === 'queued';\s*\}/);
   const page = read('frontend/src/features/dev-board/topic/change-head.tsx');
-  assert.match(page, /\{v\.shots \? <ShotsCard s=\{v\.shots\} \/> : null\}\s*\{\/\*[^*]*\*\/\}\s*<WorkWithBotButton\s+slug=\{pageSlug\(\)\}\s+number=\{v\.number\}\s+voting=\{!!v\.votes\.facts\?\.length\}\s+botAtWork=\{v\.testing\.botFix === 'fixing' \|\| v\.testing\.botFix === 'queued'\}\s*\/>/,
+  assert.match(page, /\{v\.shots \? <ShotsCard s=\{v\.shots\} \/> : null\}\s*\{\/\*[^*]*\*\/\}\s*<WorkWithBotButton\s+slug=\{slug\}\s+number=\{v\.number\}\s+voting=\{!!v\.votes\.facts\?\.length\}\s+botAtWork=\{v\.testing\.botFix === 'fixing' \|\| v\.testing\.botFix === 'queued'\}\s*\/>/,
     'the last of the change page\'s root post, under its cards, with the same two signals');
 });
 
@@ -286,7 +333,7 @@ test('the bot tab says Waiting for you to OK the plan', () => {
   const model = loadTsx('frontend/src/features/ai/model.ts');
   const t = {
     group: 'needs', app: { slug: 'x', name: 'Plant Pal' }, number: 18, title: 'Dark mode',
-    work: { stage: 'waiting_for_you', why: 'plan', reason: null, line: null, since: null },
+    work: withWords({ stage: 'waiting_for_you', why: 'plan', reason: null, line: null, since: null }),
   };
   const words = model.nextWords(t);
   assert.equal(words.id, 'messages:ai.row.stage');

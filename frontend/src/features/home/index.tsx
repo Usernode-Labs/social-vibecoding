@@ -98,6 +98,7 @@ import { CreateCompact } from './create-tile';
 import { ChallengesSection } from './panels/sections';
 import { HomeJoin } from './home-join';
 import { PinnedCommunities } from './pinned-communities';
+import { HomeSearchMake } from './search-make';
 import { SectionHeading } from './panels/ui';
 import { VerifyCard } from './verify-card';
 import { WaitlistCard } from './waitlist-card';
@@ -156,7 +157,17 @@ export function HomeScreen() {
           (./frame/home-frame.tsx), as the scroller's first child. The
           standard Home below stays mounted, so what home.js writes still
           lands; app.css hides it while data-frame-page is set. */}
-      {frame ? <HomeFrame /> : null}
+      {frame ? (
+        <HomeFrame
+          // The four standard pieces the kit page does not redraw. Each is
+          // drawn in one place at a time, here or in the standard body
+          // below, so its ids are in the document once.
+          grid={grid.editing ? <AppGrid /> : null}
+          widgets={<WidgetStrip />}
+          waitlist={<WaitlistCard />}
+          verify={<VerifyCard />}
+        />
+      ) : null}
       {/*
           Hidden-until-pulled search bar (iOS idiom). Deliberately the FIRST
           child of the scroller and NOT sticky: it occupies real scroll space
@@ -260,7 +271,7 @@ export function HomeScreen() {
             component took over from Home._wireWidgetStrip and what it left
             there.
         */}
-        <WidgetStrip />
+        {frame ? null : <WidgetStrip />}
         {/* One Home (#6361): no continue card. The change you last worked on
             is a row of the bell and of Homeroom bot's list. */}
         {/*
@@ -370,7 +381,7 @@ export function HomeScreen() {
           >
             {t('home:grid.heading')}
           </SectionHeading>
-          <AppGrid />
+          {frame && grid.editing ? null : <AppGrid />}
           {/*
               "Show all N apps" — revealed by Home.render() only when the
               viewer has more than the visible rows hold. Ships hidden
@@ -379,6 +390,13 @@ export function HomeScreen() {
           */}
           <AppsMore />
         </section>
+        {/*
+            A SEARCH NOTHING ANSWERS IS AN IDEA (./search-make.tsx, #5928):
+            under the grid's own no-match line, once Pinned communities and
+            Communities to join have none either, Make opens "What do you
+            want to make?" with the words typed in. Null in the prerender.
+        */}
+        {frame ? null : <HomeSearchMake />}
         {/*
             ── AREAS 2-4: DISCOVER, WAITLIST, VERIFY, CHALLENGES ──────
 
@@ -431,13 +449,13 @@ export function HomeScreen() {
             once the shell knows who is signed in. Their Home has no
             Challenges (src/routes/home-panels.js leaves it out).
         */}
-        <WaitlistCard />
+        {frame ? null : <WaitlistCard />}
         {/*
             "VERIFY YOUR ACCOUNT" (./verify-card.tsx): a member the
             verified-identity rule holds to it adds a phone here, or links
             GitHub and X. Nothing in the prerender, like the card above.
         */}
-        <VerifyCard />
+        {frame ? null : <VerifyCard />}
         <ChallengesSection />
         <HomeJoin />
         {/*

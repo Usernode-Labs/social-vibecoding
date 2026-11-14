@@ -1,3 +1,4 @@
+const { readSessionCookie, setSessionCookie } = require('../services/browser-session-cookies');
 const { nativeWebSessionIsLive } = require('../services/web-session-auth');
 const { bindStreamSession } = require('../services/http-stream-access');
 const { setSessionCacheCookie, stampApiIdentity } = require('../services/browser-api-cache');
@@ -102,8 +103,8 @@ const PUBLIC_PATHS = [
   // every quoted string here as a public prefix (see history.test.js).
   '/vendor/',
   // Self-hosted typefaces (public/fonts, provenance beside each), the same
-  // static-only tier as /vendor/: the new look (an experiment) draws every
-  // screen in Geist, the signed-out ones included.
+  // static-only tier as /vendor/: the brand look (one of the experimental
+  // looks) draws every screen in Geist, the signed-out ones included.
   '/fonts/',
   '/usernode-bridge.js',
   '/usernode-bridge/',
@@ -304,7 +305,6 @@ const STAGING_SESSION_DAYS = 7;
 // the right default: a staging container with no app identity cannot
 // safely accept an identity minted for some other app.
 const SELF_APP_ID = process.env.USERNODE_APP_ID;
-const SECURE_COOKIE = process.env.NODE_ENV === 'production';
 
 // Browser sessions now follow the mobile session's active-lease model: a
 // device that keeps using Homeroom stays signed in, while an abandoned device
@@ -363,12 +363,7 @@ async function renewCookieSession(pool, res, token, row) {
     if (rows.length !== 1) return null;
 
     const persistedExpiry = new Date(rows[0].expires_at);
-    res.cookie('session', token, {
-      httpOnly: true,
-      secure: SECURE_COOKIE,
-      sameSite: 'lax',
-      expires: persistedExpiry,
-    });
+    setSessionCookie(res, token, persistedExpiry);
     setSessionCacheCookie(res, token, persistedExpiry);
     return persistedExpiry;
   } catch (err) {
@@ -408,13 +403,13 @@ function authMiddleware(config) {
       return next();
     }
 
-    const cookieToken = req.cookies?.session;
+    const cookieToken = readSessionCookie(req);
 
     // Cookie path — identical in prod and staging once a session exists.
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, s.created_at, s.last_seen_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.review_flow_enabled, u.private_member_since, u.locale, u.has_platform_access, u.is_synthetic,
+          `SELECT s.user_id, s.expires_at, s.created_at, s.last_seen_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.review_flow_enabled, u.private_member_since, u.locale, u.timezone, u.has_platform_access, u.is_synthetic,
              ${nativeWebSessionIsLive('s')} AS native_session_valid
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
@@ -493,6 +488,9 @@ function authMiddleware(config) {
             // Platform-level language preference (issue #757): a BCP-47
             // tag or null when unset. Surfaced via /api/auth/me.
             locale: rows[0].locale || null,
+            // #6479: the IANA zone this person's times are shown in, or
+            // null for Auto (the device's own). Surfaced via /api/auth/me.
+            timeZone: rows[0].timezone || null,
             // Platform-access gate (onboarding flow alignment): FALSE for
             // new signups until an admin releases them off the waitlist.
             hasPlatformAccess: !!rows[0].has_platform_access,
@@ -608,7 +606,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
   // personas by their fixed ids, seeded with their fixture roles. Username
   // match is defense-in-depth against a token naming another row's id.
   const findUser = async () => (await pool.query(
-    'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
+    'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, session_bridge_enabled, locale, timezone, has_platform_access FROM users WHERE id = $1',
     [payload.id]
   )).rows[0];
   let userRow;
@@ -645,12 +643,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
     return null;
   }
 
-  res.cookie('session', sessionToken, {
-    httpOnly: true,
-    secure: SECURE_COOKIE,
-    sameSite: 'lax',
-    expires: expiresAt,
-  });
+  setSessionCookie(res, sessionToken, expiresAt);
   setSessionCacheCookie(res, sessionToken, expiresAt);
   if (req) bindStreamSession(req, sessionToken);
   res.setHeader?.('Cache-Control', 'private, no-store');
@@ -669,6 +662,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
     aiProgressEstimate: !!userRow.ai_progress_estimate,
     sessionBridgeEnabled: !!userRow.session_bridge_enabled,
     locale: userRow.locale || null,
+    timeZone: userRow.timezone || null,
     hasPlatformAccess: !!userRow.has_platform_access,
     privateMember: isPrivateMember(userRow),
   };

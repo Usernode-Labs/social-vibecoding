@@ -24,19 +24,48 @@ test('it is one small control: a glyph, and under it the system\'s own menu of l
   const html = view({ variant: 'frame', skin: 'glass' });
   assert.match(html, /^<label class="fr-ib fr-look" title="Look" data-look-picker="frame"><svg[^>]*>.*?<\/svg><select aria-label="Look">/s);
   assert.deepEqual([...html.matchAll(/<option value="([a-z]+)"( selected="")?>([^<]+)<\/option>/g)].map((m) => [m[1], m[3], !!m[2]]), [
-    ['standard', 'Standard', false], ['glass', 'Glass', true], ['brandkit', 'Brand kit', false], ['workbench', 'Workbench', false],
+    ['standard', 'Standard', false], ['brand', 'Paper, simplified, with brand styling', false], ['glass', 'Glass', true],
     ['paper', 'Paper', false], ['pastel', 'Pastel', false], ['mosaic', 'Mosaic', false], ['sunrise', 'Sunrise', false],
-    ['today', 'Today', false], ['playground', 'Playground', false],
-  ], 'Standard, then the nine looks in the tour\'s order, the device\'s own chosen');
+  ], 'Standard, then brand and the five looks in the tour\'s order, the device\'s own chosen');
+});
+
+test('brand keeps the platform\'s header, and the menu there reads it', () => {
+  // "Paper, simplified, with brand styling" is not a look of the frame, so
+  // the picker under it is the shell's. It used to read as Standard there,
+  // when New look had a switch of its own.
+  const html = view({ variant: 'shell', skin: 'brand' });
+  assert.match(html, /<option value="brand" selected="">Paper, simplified, with brand styling<\/option>/);
+  assert.doesNotMatch(html, /<option value="standard" selected="">/);
+  assert.match(view({ variant: 'shell', skin: 'neon' }), /<option value="standard" selected="">/, 'an unknown look reads as Standard');
 });
 
 test('under the standard look it is drawn with the header\'s own classes, beside its bell', () => {
   const html = view({ variant: 'shell', skin: 'standard' });
-  assert.match(html, /^<label class="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target [^"]*" title="Look" data-look-picker="shell">/);
-  assert.match(html, /<select aria-label="Look" class="absolute inset-0 h-full w-full cursor-pointer opacity-0">/);
+  assert.match(html, /^<label class="relative w-7 h-7 flex items-center justify-center rounded-full [^"]*" title="Look" data-look-picker="shell">/);
+  assert.doesNotMatch(html, /<label[^>]*un-touch-target/, 'the label brings no hit box of its own');
+  assert.match(html, /<select aria-label="Look" class="absolute left-1\/2 top-1\/2 h-11 w-11 -translate-x-1\/2 -translate-y-1\/2 cursor-pointer opacity-0">/);
   assert.match(html, /<option value="standard" selected="">Standard<\/option>/);
   assert.doesNotMatch(html, /fr-ib|fr-look/, 'not the kit\'s disc: the kit\'s rules exist only under a look');
   assert.match(html, /<svg class="fr-ic" width="20" height="20"/, 'the glyph sizes itself, with or without the kit');
+});
+
+test('under the standard look the menu itself takes the press', () => {
+  // .un-touch-target::after is a 44px box painted above the invisible select,
+  // so on the label every press stopped there and the menu never opened
+  // (#6648). The select now carries the same 44px square, centred on the
+  // 28px disc.
+  const html = view({ variant: 'shell', skin: 'standard' });
+  const label = html.match(/<label class="([^"]*)" title="Look" data-look-picker="shell">/);
+  assert.ok(label, 'the shell variant draws its label');
+  assert.doesNotMatch(label[1], /un-touch-target/, 'no hit box sits over the select');
+  const select = html.match(/<select aria-label="Look" class="([^"]*)">/);
+  assert.ok(select, 'the system\'s own menu is still the control');
+  assert.match(select[1], /\bh-11\b/);
+  assert.match(select[1], /\bw-11\b/);
+  assert.match(select[1], /left-1\/2/, 'centred on the disc');
+  assert.match(select[1], /top-1\/2/, 'centred on the disc');
+  assert.match(select[1], /-translate-x-1\/2/, 'centred on the disc');
+  assert.match(select[1], /-translate-y-1\/2/, 'centred on the disc');
 });
 
 test('real admins only, and never on the first render', () => {
@@ -81,7 +110,16 @@ test('beside the look, one press flips light and dark', () => {
   // A look is judged in both: the toggle sits with the picker, between it
   // and the bell, and says which one is on.
   const light = view({ variant: 'frame', skin: 'glass', dark: false, onDark() {} });
-  assert.match(light, /<\/label><button type="button" class="fr-ib" aria-pressed="false" aria-label="Dark" title="Dark" data-look-theme="frame"><svg[^>]*>.*?<\/svg><\/button>$/s);
+  assert.match(light, /<\/label><button type="button" class="fr-ib fr-d" aria-pressed="false" aria-label="Dark" title="Dark" data-look-theme="frame"><svg[^>]*>.*?<\/svg><\/button><span class="fr-lookfold fr-p" data-look-fold="">/s);
+  // On a phone the two are one disc (the pair is the kit's "desktop only",
+  // the disc its "phone only"), so the bar's title has room; its small menu,
+  // closed until pressed, holds Look and Theme.
+  assert.match(light, /^<label class="fr-ib fr-look fr-d" title="Look" data-look-picker="frame">/);
+  assert.match(light, /<span class="fr-lookfold fr-p" data-look-fold=""><button type="button" class="fr-ib" aria-haspopup="true" aria-expanded="false" aria-label="Look and theme" title="Look and theme"><svg[^>]*>.*?<\/svg><\/button><\/span>$/s);
+  const picker = read('frontend/src/features/frame/look-picker.tsx');
+  assert.match(picker, /data-look-fold-look=""[\s\S]*?<select aria-label=\{t\('settings:experimental\.look\.label'\)\} value=\{value\}/, 'the menu\'s Look row is the system\'s own menu of looks');
+  assert.match(picker, /data-look-fold-theme="" onClick=\{onDark\}/, 'and its Theme row flips light and dark');
+  assert.doesNotMatch(view({ variant: 'shell', skin: 'standard', dark: false, onDark() {} }), /fr-lookfold/, 'the standard header keeps its two');
   const dark = view({ variant: 'shell', skin: 'standard', dark: true, onDark() {} });
   assert.match(dark, /<\/label><button type="button" class="relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target [^"]*" aria-pressed="true" aria-label="Dark" title="Dark" data-look-theme="shell">/);
   // The glyph is where a press goes: the moon while it is light, the sun while it is dark.

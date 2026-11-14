@@ -1105,10 +1105,13 @@ const DM_TAP = new Map<string, { status: number; error: string }>([
   ['already_decided', { status: 409, error: 'already_decided' }],
   ['wrong_choice', { status: 400, error: 'choice must be yes, no or build' }],
 ]);
-function tapAnswer(out: EventOutcome, refusals: Map<string, { status: number; error: string }>): { ok: boolean; status?: number; error?: string; pending?: boolean } {
+// A refusal names its `code` (the machine's reason) too, for the line the
+// buttons leave behind in the reader's language (step 3, 11 Nov 2026).
+function tapAnswer(out: EventOutcome, refusals: Map<string, { status: number; error: string }>): { ok: boolean; status?: number; error?: string; code?: string; pending?: boolean } {
   if (out.status === 'accepted' || out.status === 'replayed') return { ok: true };
   if (out.status === 'pending') return { ok: true, pending: true };
-  return { ok: false, ...(refusals.get(String(out.reason)) || { status: 409, error: 'That didn\'t work just now.' }) };
+  const known = refusals.get(String(out.reason));
+  return { ok: false, ...(known || { status: 409, error: 'That didn\'t work just now.' }), code: known ? String(out.reason) : 'failed' };
 }
 
 // A tap under one of the voice's offers (routes/chat.js): decided once in
@@ -1133,6 +1136,23 @@ export async function tapDmAction(p: { userId: number; actionId: number; choice:
     { type: 'Tapped', payload: { userId: p.userId, actionId: p.actionId, choice: p.choice, answers: (p.answers || []) as any } },
     { requestKey: `tap-action:${p.actionId}:${randomUUID()}`, source: { kind: 'route', name: 'bot-action' }, actor: `user:${p.userId}` });
   return tapAnswer(out, DM_TAP);
+}
+
+// A person's Stop of the answer Homeroom bot is writing to `messageId` in
+// their DM with it (routes/conversations.js, task 2148). Their DM's instance
+// marks the answer stopped; its work ends the turn at its next safe point
+// and says so (services/homeroom-bot-stop.js). Resolves whether an answer
+// is being stopped: false when none to that message is under way (it ended
+// first, or it is not theirs). The answer's work reads the mark within a
+// second, in whichever process it runs.
+export async function stopDmAnswer(p: { userId: number; conversationId: number; messageId: number }): Promise<{ stopping: boolean }> {
+  if (!runtime) throw new Error('The workflow runtime is not running in this process');
+  const out = await runtime.appendAndWait(BOT_DM, dmKey(p.userId),
+    { type: 'StopRequested', payload: { userId: p.userId, conversationId: p.conversationId, messageId: p.messageId, at: new Date().toISOString() } },
+    { requestKey: `stop-answer:${p.messageId}:${randomUUID()}`, source: { kind: 'route', name: 'bot-stop' }, actor: `user:${p.userId}`, waitMs: 5000 });
+  // Heard and not decided yet (a busy pipeline): its work will read the mark.
+  if (out.status === 'pending') return { stopping: true };
+  return { stopping: (out.status === 'accepted' || out.status === 'replayed') && (out.reply as any)?.stopping === true };
 }
 
 // An admin's moves on a campaign (routes/campaigns.js): retry one app, force

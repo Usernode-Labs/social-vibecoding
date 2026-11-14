@@ -18,7 +18,8 @@ const overview = require('../src/routes/workshop-overview');
 
 const row = (over = {}) => ({
   kind: 'proposal', id: 6358, app_id: 1, author_id: 42, external_agent: 'claude-code',
-  yes: 1, votes_required: 1, other_yes: 1, requires_explicit_approval: false, votes_in: true,
+  // #6651: the gate is read once, by governedGate, as work-state reads it.
+  votes_in: true, yes: 1, requires_explicit_approval: false,
   check_state: 'passing', mergeability: 'clean', integration_merges_clean: true,
   merge_conflict_state: null, ...over,
 });
@@ -39,21 +40,14 @@ test('#6389: while the gate is not met the row is still a Vote', () => {
     'one made on Homeroom waits on its fix the same way');
 });
 
-test('#6616: a raw yes count never stands in for the gate', () => {
-  // One counted yes, enough votes on paper, but the approvers-only gate says
-  // the vote is not in: the row stays a Vote.
-  const approversOnly = row({ yes: 1, votes_required: 1, other_yes: 1, votes_in: false });
-  assert.equal(overview.authorGateMet(approversOnly, 42), false);
-  assert.equal(overview.waitingOnFix(approversOnly, 42), null);
-  // And the gate alone is enough, whatever the arithmetic says.
-  assert.equal(overview.authorGateMet(row({ yes: 0, votes_required: 1 }), 42), true);
-  assert.equal(overview.authorGateMet(row({ votes_in: false }), 42), false, 'a failed read leaves it a Vote');
-  assert.equal(overview.authorGateMet(row(), 7), false, 'somebody else\'s change');
-  assert.equal(overview.authorGateMet(row({ kind: 'question' }), 42), false);
-});
-
-test('#6389: an explicit approval needs a Yes from another member', () => {
-  const flagged = row({ requires_explicit_approval: true, other_yes: 0, votes_in: false, check_state: 'failing' });
+test('#6651: the gate is governedGate\'s answer, not a count of every Yes', () => {
+  // A non-approver's Yes on an approver project leaves votes_in false, so the
+  // author's row stays a Vote even though its `yes` count looks like enough.
+  const waiting = row({ votes_in: false, yes: 1, check_state: 'failing' });
+  assert.equal(overview.authorGateMet(waiting, 42), false);
+  assert.equal(overview.waitingOnFix(waiting, 42), null);
+  // An explicit approval's member floor is decided by the same gate.
+  const flagged = row({ requires_explicit_approval: true, votes_in: false, yes: 1, check_state: 'failing' });
   assert.equal(overview.waitingOnFix(flagged, 42), null, 'its author\'s own Yes is not the member Yes');
   assert.deepEqual(overview.waitingOnFix({ ...flagged, votes_in: true }, 42), ['checks']);
 });

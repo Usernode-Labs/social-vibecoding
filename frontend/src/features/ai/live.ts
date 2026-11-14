@@ -18,8 +18,9 @@
  *     project (`notification_new`, `notifications_changed`: yours alone);
  *   - Homeroom bot started or finished work for you (WORK_CHANGED_EVENT,
  *     which app.js also sends when its socket reconnects);
- *   - Main Chat had a message: a private thread is listed once it has a
- *     reply, and leaves once it is filed or posted;
+ *   - the chat with the bot had a message: a private thread is listed
+ *     once it has a reply, shows what is new in it, and leaves once it is
+ *     filed or posted;
  *   - the reads may have missed something (lib/live-reads.ts): the socket
  *     reconnected, the browser tab came back after a while, or the service
  *     worker corrected a read it first answered from its saved copy.
@@ -34,11 +35,18 @@
  * public/js/app.js hands every events-socket message to `handleEvent`
  * (window.UsernodeReact.aiScreen), as it hands conversation events to
  * Messages; which of them matter is decided here.
+ *
+ * IN PLACE FIRST (11 Nov 2026). A `work_state` push carries the whole
+ * standing of the item that moved (lib/work-state.ts). The page applies it
+ * at once to the row it holds (`apply`, ./model.ts applyWorkState), so the
+ * row's words and a Vote that closed change with the push, not a read later;
+ * the read still follows, since which list a row is in is the server's.
  */
 
 import { useEffect, useRef } from 'react';
 
 import { watch } from '../../lib/live-reads';
+import { isWorkStatePush, type WorkStatePush } from '../../lib/work-state';
 import { WORK_CHANGED_EVENT } from '../messages/bot-shared';
 
 /** How long the events of one burst are gathered before the read. */
@@ -57,7 +65,7 @@ export interface SocketEvent {
   [key: string]: unknown;
 }
 
-/** What the page shows: the projects in its lists, and Main Chat's conversation. */
+/** What the page shows: the projects in its lists, and the chat with the bot. */
 export interface Showing {
   projects: ReadonlySet<string>;
   botId: number | null;
@@ -67,7 +75,7 @@ export interface Showing {
 const PROJECT_EVENTS: ReadonlySet<string> = new Set(['session_update', 'vote_update', 'issue_update', 'app_version_changed', 'work_state']);
 const BANNER_ACTIONS: ReadonlySet<string> = new Set(['behind_main', 'freshness', 'sync_status', 'staging_ready']);
 const YOUR_EVENTS: ReadonlySet<string> = new Set(['notification_new', 'notifications_changed']);
-const MAIN_EVENTS: ReadonlySet<string> = new Set(['conversation_message_created', 'conversation_message_updated']);
+const CHAT_EVENTS: ReadonlySet<string> = new Set(['conversation_message_created', 'conversation_message_updated']);
 
 /** Pure: whether an events-socket message can move a row of the lists. */
 export function movesLists(event: SocketEvent | null | undefined, showing: Showing): boolean {
@@ -79,7 +87,7 @@ export function movesLists(event: SocketEvent | null | undefined, showing: Showi
     return !event.appSlug || showing.projects.has(String(event.appSlug));
   }
   if (YOUR_EVENTS.has(type)) return true;
-  if (MAIN_EVENTS.has(type)) {
+  if (CHAT_EVENTS.has(type)) {
     const id = Number(event.conversationId ?? event.conversation_id);
     return !!showing.botId && id === showing.botId;
   }
@@ -153,15 +161,24 @@ export function pacedReads(reread: () => void, hidden: () => boolean = tabHidden
 
 /**
  * While `visible`, run `reread` again whenever something the lists show
- * may have moved (see the header), at the pace above.
+ * may have moved (see the header), at the pace above. A `work_state` push
+ * is handed to `apply` first (IN PLACE FIRST above).
  */
-export function useLiveLists(reread: () => void, visible: boolean, showing: Showing): void {
-  const latest = useRef({ reread, showing });
-  latest.current = { reread, showing };
+export function useLiveLists(
+  reread: () => void,
+  visible: boolean,
+  showing: Showing,
+  apply: ((push: WorkStatePush) => void) | null = null,
+): void {
+  const latest = useRef({ reread, showing, apply });
+  latest.current = { reread, showing, apply };
   useEffect(() => {
     if (!visible || typeof window === 'undefined') return undefined;
     const reads = pacedReads(() => latest.current.reread());
-    const onEvent: Listener = (event) => { if (movesLists(event, latest.current.showing)) reads.ask(); };
+    const onEvent: Listener = (event) => {
+      if (isWorkStatePush(event)) latest.current.apply?.(event);
+      if (movesLists(event, latest.current.showing)) reads.ask();
+    };
     listeners.add(onEvent);
     window.addEventListener(WORK_CHANGED_EVENT, reads.ask);
     document.addEventListener('visibilitychange', reads.seen);

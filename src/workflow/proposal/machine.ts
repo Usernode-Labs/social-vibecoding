@@ -623,10 +623,12 @@ function closedLine(r: Row, reason: string, byOwner: boolean, base: string | nul
   switch (reason) {
     case 'auto-rejected': return `${l} was set aside for now (more No than Yes, and not enough support to carry it).`;
     case 'admin-no': return `${l} was set aside: an admin voted No and nobody voted Yes within a week. It can always come back as a new change.`;
+    case 'admin-declined': return `${l} was closed: it was held for an admin's approval, and an admin voted No.`;
     case 'approver-no': return `${l} was set aside: an approver voted No and nobody voted Yes within ${APPROVER_NO_WINDOW_WORDS}. It can always come back as a new change.`;
     case 'proposal-replaced':
       return byOwner && r.ownerName ? `${r.ownerName} replaced ${r.prTitle ? l : 'this change'} with a new one.` : `${l} was replaced by a new one.`;
     case 'superseded': return `${l} was withdrawn: another change for the same request covers it.`;
+    case 'already-on-main': return `${l} was closed: everything in it is already on main, so there was nothing left to merge.`;
     case 'request-closed': return `${l} was withdrawn: the request it was built for is closed.`;
     case 'red-checks': return `${l} was withdrawn: its checks failed and nobody changed it for a few days.`;
     case 'stale-pr': return `${l} went quiet and was set aside. It can always come back as a new change.`;
@@ -1113,6 +1115,13 @@ function attempted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, dep
       return { ...out, messages: [...(out.messages || []), ended(s.data, a, 'closed')] };
     }
     case 'gone': return backToReview(s, e, f, ctx, deps, { outcome: 'gone' });
+    // Request 6549: everything in it is on main already (the git host merged
+    // nothing). No retry can merge it, so it is closed, saying why, instead
+    // of held as waiting on GitHub forever.
+    case 'already_on_main': {
+      const out = close({ ...s, data: { ...s.data, attempt: null } }, e, f, 'already-on-main');
+      return { ...out, messages: [...(out.messages || []), ended(s.data, a, 'closed')] };
+    }
     // GitHub's limit: not merged, nothing said against this head, and an
     // earlier refusal this ask was retrying is forgotten too: the queue's
     // next look (its sweep) asks again.
