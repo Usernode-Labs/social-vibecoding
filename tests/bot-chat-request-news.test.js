@@ -11,8 +11,9 @@
 // removal leaves alone: old news in the chat that belongs to no thread is
 // not moved under Earlier chat (earlier-chat.js), is not found by the bot
 // page's search as a message of the chat (ai-search.js), and is still left
-// out of the conversation's own stream, count and preview. The client's
-// copy, for a message that arrives live, is bot-request.ts isRequestNews.
+// out of the conversation's own stream, count and preview. The client kept
+// a copy of the test for a message arriving live in that stream; it draws
+// the stream on no screen now, and the copy is gone.
 //
 // The predicate runs against PostgreSQL when one is reachable (as the
 // repository's other *-postgres suites do), else that part skips.
@@ -41,16 +42,13 @@ const ROWS = [
   { id: 9, meta: { kind: 'hello_tour' }, news: false, why: 'a hello' },
 ];
 
-test('the client and the server agree on what a request\'s news is', () => {
+test('the server leaves a request\'s news out of the stream, the preview and the count; the client keeps no copy of the test', () => {
+  // The client drew the bot chat's own stream once, and mirrored the test
+  // for a message arriving live. It draws that stream nowhere now.
   const src = read('frontend/src/features/messages/bot-request.ts');
-  assert.match(src, /export function isRequestNews\(message: ConversationMessage\): boolean \{\s+return isBotNews\(message\) && !message\.metadata\?\.homeroomBot\?\.firstVersion;\s+\}/);
-  // The kinds that are conversation are one list, mirrored on both sides.
-  const kinds = [...conversations.BOT_CONVERSATION_KINDS];
-  const client = /const CONVERSATION_KINDS = new Set\(\[([\s\S]*?)\]\);/.exec(src)[1].match(/'([a-z_]+)'/g).map((k) => k.slice(1, -1));
-  assert.deepEqual(client.sort(), kinds.sort());
-  // A conversation's own stream draws none of it, live or read.
-  const index = read('frontend/src/features/messages/index.tsx');
-  assert.match(index, /if \(botDm && isRequestNews\(message\)\) continue;/);
+  assert.doesNotMatch(src, /isRequestNews|isBotNews|CONVERSATION_KINDS/);
+  assert.doesNotMatch(read('frontend/src/features/messages/index.tsx'), /isRequestNews|isBotNews/);
+  assert.ok(conversations.BOT_CONVERSATION_KINDS.has('filed') && !conversations.BOT_CONVERSATION_KINDS.has('activity'));
   // The stream, the preview and the unread count all leave it out.
   const server = read('src/services/conversations.js');
   assert.match(server, /dc\.kind = 'direct'\)\)\)\)\s+AND NOT \$\{REQUEST_NEWS\}\s+AND NOT \$\{PLUS_THREAD_OPENER\}`;/, 'the main stream');

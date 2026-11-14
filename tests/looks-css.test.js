@@ -350,11 +350,12 @@ test('version 2 dresses nothing of the product\'s own that it did not dress befo
   // its nodes ARE named here; what holds for them is the line above: each
   // such rule needs a kit element, and the room has none, so none of them
   // draws there. A conversation's and a request's nodes stay unnamed.
-  // Since the left-overs pass a conversation's cards and the bot's news
-  // lines wear the row, the card and the event line (the owner asked for
-  // the tour's s10), so those four nodes are named too, under the same
-  // condition; no other conversation or request node is.
-  const BOT_WEAR = /\.messages-object-card:is\(\.messages-message \*\)|:is\(\.messages-object-list,\.messages-attachment\):is\(\.messages-message \*\)|section:is\(\.messages-bot-card > \*\)|:is\(button:is\(\.messages-bot-news > \*\),div:is\(\.messages-bot-settled-run > \*\)\)/g;
+  // Since the left-overs pass a conversation's cards wear the row and the
+  // card (the owner asked for the tour's s10), so those three nodes are
+  // named too, under the same condition; no other conversation or request
+  // node is. (The bot's news lines wore the event line until 14 Nov 2026:
+  // they were rows of the bot chat's own stream, which no screen draws.)
+  const BOT_WEAR = /\.messages-object-card:is\(\.messages-message \*\)|:is\(\.messages-object-list,\.messages-attachment\):is\(\.messages-message \*\)|section:is\(\.messages-bot-card > \*\)/g;
   assert.doesNotMatch(css.replace(BOT_WEAR, ''), /messages-|dev-request|dev-change/, 'no other conversation or request node is named');
   assert.match(css, /data-waiting-|waiting-about-save/, 'the waiting room\'s controls are named, by their own hooks');
 });
@@ -364,7 +365,6 @@ test('an item\'s page keeps the product\'s discussion and dresses it: the stream
   // event line out of the map on purpose; the lane that redraws the page
   // adds it, with the stream's card and its label.
   const roots = looks.config.wear.roots;
-  // (The bot's news lines in a conversation are a further wearer, after it.)
   assert.deepEqual({ to: roots.evt.to, parts: roots.evt.parts }, { to: '#dev-topic-thread #gc-thread-messages .dev-request-event', parts: { ei: '.dev-request-event-glyph' } },
     'two ids: the standard look\'s rule for the line names both, and a worn rule must outweigh it');
   assert.equal(looks.wornSelector('html[data-skin] .fr-evt .fr-ei').split(',html')[0], 'html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event .dev-request-event-glyph');
@@ -386,9 +386,9 @@ test('an item\'s page keeps the product\'s discussion and dresses it: the stream
   assert.equal(looks.wornSelector('html[data-skin="sunrise"] .fr-sechead .fr-cap', '.sechead .cap'), 'html[data-skin="sunrise"] #dev-topic-thread .dev-request #gc-thread-messages .messages-reply-count');
   assert.equal(looks.wornSelector('html[data-skin] .fr-sechead', '.sechead'), null);
   assert.equal(looks.wornSelector('html[data-skin] .fr-cap.fr-over'), null);
-  const css = section();
-  assert.ok(css.includes(',html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event,'), 'and the bot\'s news lines after it');
-  assert.ok(css.includes(':is(button:is(.messages-bot-news > *),div:is(.messages-bot-settled-run > *)){display:flex;align-items:center;gap:12px;font-size:13px;color:var(--fr-mut);min-width:0}'));
+  // The event line has the one wearer: the bot's news lines, a second, went with the stream that drew them.
+  assert.equal(roots.evt.also, undefined);
+  assert.doesNotMatch(section(), /messages-bot-news|messages-bot-settled-run/);
 });
 
 // ── The committed section ────────────────────────────────────────────────

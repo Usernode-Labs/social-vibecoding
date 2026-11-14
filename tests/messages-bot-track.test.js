@@ -315,7 +315,7 @@ test('there is no On hold group, and no drawer; the slots page still opens from 
   const track = read(TRACK);
   assert.match(track, /openSlots\(/, 'the slots page opens as a place under the Workshop');
   assert.doesNotMatch(src, /openSlots\(|bot\.strip\.slots/, 'the strip module carries no slots links of its own');
-  assert.match(src, /done_elsewhere: \{ key: 'messages:bot\.final\.doneElsewhere', tone: 'good', icon: CheckIcon \}/);
+  assert.match(src, /done_elsewhere: \{ key: 'messages:bot\.final\.doneElsewhere', tone: 'good' \}/);
   assert.equal(message('messages:bot.strip.summary.done', { count: 2 }), '2 finished today');
 });
 

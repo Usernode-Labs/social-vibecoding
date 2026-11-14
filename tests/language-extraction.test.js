@@ -627,31 +627,6 @@ test('the flag survives every copy between the normalizer and the sentence', asy
   assert.match(read('frontend/src/features/messages/bot-shared.ts'), /if \(job\.appUnnamed\) \{\n\s*if \(job\.firstVersion\) return t\('messages:bot\.job\.firstVersionUnnamed'\);/);
 });
 
-test('the bot\'s news line never takes the unnamed project\'s stand-in as a project\'s name', async (t) => {
-  // One request, one story: the header's status line, which this test held
-  // to the rule, is gone, and so is the "Your requests" drawer that replaced
-  // it (5 Nov 2026). Each request's line in the chat names it
-  // (bot-news-line.tsx newsTitle), and holds to the same rule.
-  const es = {
-    'messages:bot.job.unnamedProject': 'Un proyecto',
-    'messages:bot.job.firstVersionUnnamed': 'La primera versión de un proyecto',
-    'messages:bot.strip.firstVersion': '{{project}}, primera versión',
-    'messages:bot.strip.requestNumber': 'Solicitud n.º {{number}}',
-  };
-  const { module: news } = await loadInSpanish(t, 'frontend/src/features/messages/bot-news-line.tsx', es);
-  const title = (meta) => news.newsTitle({ kind: 'merged', appName: null, appSlug: null, ...meta });
-  assert.equal(title({ firstVersion: true }), 'La primera versión de un proyecto', 'the stand-in is not placed as a name');
-  assert.equal(message('messages:bot.job.firstVersionUnnamed') === message('messages:bot.strip.firstVersion', { project: 'Un proyecto' }), false);
-  // A project really called "A project", and one known by its slug, stay on the named path.
-  assert.equal(title({ firstVersion: true, appName: 'A project' }), 'A project, primera versión');
-  assert.equal(title({ firstVersion: true, appSlug: 'recetas' }), 'recetas, primera versión');
-  // A request is named by itself, never by its project.
-  assert.equal(title({ issueNumber: 12 }), 'Solicitud n.º 12');
-  assert.equal(title({ issueNumber: 12, requestTitle: 'Recetas' }), 'Recetas');
-  // Nothing else to name it by: the stand-in alone, as a label.
-  assert.equal(title({}), 'Un proyecto');
-});
-
 test('the reply strip words a nameless row in its own sentence', async (t) => {
   const { module: composer } = await loadInSpanish(t, 'frontend/src/features/group-chat/composer.tsx', {
     'chat:group.composer.replyingTo': '↩ Respondiendo a {{name}}',

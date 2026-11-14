@@ -143,7 +143,7 @@ test('the agent session, the improvement form and Messages each wire the shared 
   // forwards to no longer has a zone of its own.
   const messages = read('frontend/src/features/messages/index.tsx');
   assert.match(messages, /useFileDrag\(\{ disabled: !ready, onFiles:/);
-  assert.match(messages, /data-opening=\{[^}]*\} \{\.\.\.drop\.handlers\}/, 'the conversation pane takes the drop');
+  assert.match(messages, /aria-label=\{snap\.active\?\.title \|\| t\('messages:thread\.paneName'\)\} \{\.\.\.drop\.handlers\}>/, 'the conversation pane takes the drop');
   assert.match(messages, /<DropOverlay className="messages-drop-overlay" \/>/);
   const composer = read('frontend/src/features/messages/composer.tsx');
   assert.doesNotMatch(composer, /useFileDrag/, 'the box no longer owns the drop');

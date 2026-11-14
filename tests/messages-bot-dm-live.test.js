@@ -754,7 +754,7 @@ test('when GitHub cannot answer, a request card takes the title Homeroom holds f
   assert.deepEqual(asked.sort(), [4752, 4753]);
 });
 
-test('the chat with the bot sends its news rows without their cards; the server and the client agree on which rows those are', () => {
+test('the chat with the bot sends its news rows without their cards', () => {
   const conversations = require('../src/services/conversations');
   const row = (meta, over = {}) => ({ sender_is_synthetic: true, msg_type: 'message', deleted_at: null, metadata: { homeroomBot: meta }, ...over });
   assert.equal(conversations.isBotNewsRow(row({ kind: 'activity', issueNumber: 18 })), true);
@@ -765,12 +765,10 @@ test('the chat with the bot sends its news rows without their cards; the server 
   assert.equal(conversations.isBotNewsRow(row({ kind: 'note' })), false, 'about no request');
   assert.equal(conversations.isBotNewsRow(row({ kind: 'question', issueNumber: 18 }, { sender_is_synthetic: false })), false, 'a person\'s message is theirs');
   assert.equal(conversations.isBotNewsRow(row({ kind: 'question', issueNumber: 18 }, { deleted_at: new Date() })), false);
-  // The client's isBotNews draws exactly these rows as one line with no card.
-  const client = read('frontend/src/features/messages/bot-request.ts');
-  const listed = client.slice(client.indexOf('const CONVERSATION_KINDS = new Set(['), client.indexOf(']);', client.indexOf('const CONVERSATION_KINDS')));
-  const kinds = [...listed.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
-  assert.deepEqual([...conversations.BOT_CONVERSATION_KINDS].sort(), kinds.sort(), 'the same conversation kinds on both sides');
-  assert.match(client, /return \(Number\(meta\.issueNumber\) > 0\) \|\| !!meta\.firstVersion \|\| meta\.kind === 'activity';/);
+  // The client drew exactly these rows as one line with no card, in the
+  // chat's own stream. No screen draws that stream since 14 Nov 2026, and
+  // its copy of the test went with the line.
+  assert.doesNotMatch(read('frontend/src/features/messages/bot-request.ts'), /isBotNews|CONVERSATION_KINDS/);
   // Every main-stream read in the chat with the bot leaves them out; a story keeps them.
   const source = read('src/services/conversations.js');
   assert.equal((source.match(/hydrateMessages\((?:pool|db), user, page, \{ cards \}\)/g) || []).length, 3, 'newest, newer and a permalink window');

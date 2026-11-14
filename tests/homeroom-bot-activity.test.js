@@ -854,9 +854,17 @@ test('an older card the server keeps no state for draws its message\'s words; on
   assert.match(draw(landedWith([30], { failed: true })), /Couldn’t load how far along this is\./);
 });
 
-test('only the bot\'s DM keeps the cards current, beside its tray', () => {
+test('only the bot\'s chat keeps the cards current, beside its tray, while one of its threads is drawn', () => {
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /\{botDm \? <BotWorkSync [^\n]*\n[^\n]*\n\s*\{botDm \? <BotActivitySync conversationId=\{conversationId\} newsKey=\{newestBotMessageId\(snap\.messages\)\} \/> : null\}/);
+  // 14 Nov 2026: the chat is its threads only, and the open thread's newest
+  // message from the bot is the news that moves them on (BotThreadsSync).
+  const sync = screen.slice(screen.indexOf('function BotThreadsSync('), screen.indexOf('export function MessagesScreen('));
+  assert.match(sync, /const newsKey = thread \? newestBotMessageId\(thread\.messages\) : null;/);
+  assert.match(sync, /<BotWorkSync conversationId=\{conversationId\} newsKey=\{newsKey\} \/>\s+<BotActivitySync conversationId=\{conversationId\} newsKey=\{newsKey\} \/>/);
+  assert.match(screen, /\{here \? <BotThreadsSync conversationId=\{conversationId\} \/> : null\}/, 'mounted by the threads-only chat alone');
+  // A conversation's own transcript mounts neither: no chat with the bot is drawn as one.
+  const stream = screen.slice(screen.indexOf('function ConversationThread('), screen.indexOf('function ThreadActivityRow('));
+  assert.doesNotMatch(stream, /BotWorkSync|BotActivitySync/);
 });
 
 test('the staging preview\'s declared check follows the demo DM to the Homeroom bot tab, which has New chat and no Main Chat row', () => {
@@ -1270,7 +1278,7 @@ test('B6: a card going says how long its step usually takes, beside how long so 
   assert.doesNotMatch(draw({ card: working() }), /usually/, 'nothing said without a range');
 });
 
-test('B6: the transcript leaves out a card Build it moved under its plan, and the client keeps where it went', () => {
+test('B6: a thread leaves out a card Build it moved under its plan, and the client keeps where it went', () => {
   const { isMovedActivity } = loadTsx(CARD);
   const message = (meta, extra = {}) => ({
     id: 800, sender: { id: 1, username: 'homeroom_bot', bot: true }, content: 'words', metadata: { homeroomBot: { ...META, ...meta } }, ...extra,
@@ -1283,8 +1291,11 @@ test('B6: the transcript leaves out a card Build it moved under its plan, and th
   assert.equal(normalizeBotMeta({ homeroomBot: { kind: 'activity', movedTo: 950 } }).homeroomBot.movedTo, 950);
   assert.equal('movedTo' in normalizeBotMeta({ homeroomBot: { kind: 'activity', movedTo: 'x' } }).homeroomBot, false);
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /const message = snap\.messages\[index\];\s*\/\/[^\n]*\n\s*if \(isMovedActivity\(message\)\) continue;\s*\/\/[^\n]*\n\s*if \(plans\.hidden\.has\(message\.id\)\) continue;\s*\/\/[^\n]*\n\s*if \(newsFold\?\.hidden\.has\(message\.id\)\) continue;\s*const day = dayKey\(message\);/,
-    'skipped before its day and its name are counted, so the row after it is drawn as it would be (and so is news folded into a newer row about its request)');
-  // #4564 joined isActivityMessage to the import, for the change blocks' read of what a row shows.
+  // 14 Nov 2026: a first version's cards are replies of its own thread,
+  // read there as the stream they were: the moved card is not among the
+  // replies drawn (nor one whose step its plan carries).
+  assert.match(screen, /const carried = \(message: ConversationMessage\) => botChat && !cardId\s+&& \(flatPlans\.hidden\.has\(message\.id\) \|\| isMovedActivity\(message\)\);/);
+  assert.match(screen, /\.\.\.replies\.filter\(\(message\) => !carried\(message\)\)\.map\(\(message\) => \(\{ kind: 'reply' as const, message \}\)\),/,
+    'left out before the rows are ordered and grouped, so the row after it is drawn as it would be');
   assert.match(screen, /import \{ BotActivitySync, isActivityMessage, isMovedActivity \} from '\.\/bot-activity';/);
 });

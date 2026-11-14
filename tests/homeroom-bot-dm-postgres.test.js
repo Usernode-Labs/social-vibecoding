@@ -1326,9 +1326,9 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(after.line, null);
   });
 
-  // #6019: Main is one conversation. What the bot says about a request is
-  // said there, beside the request's card, and folds into one row per
-  // request (bot-news-line.tsx foldBotNews); the moments that ring count
+  // #6019: Main was one conversation. What the bot said about a request was
+  // said there, beside the request's card, and folded into one row per
+  // request; the moments that ring count
   // once and quiet lines count as nothing unread. A thread opened under a
   // card before this (or by the person replying under it) keeps its replies.
   // 5 Nov 2026 (step 4): a request's card and news are no longer sent; the

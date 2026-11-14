@@ -124,7 +124,7 @@ test('#6404: a message asking with a Questions card hides its suggested replies,
     /<span>Try again<\/span>/, 'a quoted step still draws');
 
   const index = read('frontend/src/features/messages/index.tsx');
-  assert.match(index, /hidePrompts=\{\(plans\.answersOpen \|\| asksWithQuestionsCard\(message\)\) && !!message\.sender\.bot\}/,
+  assert.match(index, /hidePrompts=\{asksWithQuestionsCard\(message\) && !!message\.sender\.bot\}/,
     'the row hides on the message carrying the card, and on no other');
 });
 
