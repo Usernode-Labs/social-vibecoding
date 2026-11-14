@@ -106,6 +106,7 @@ import { useFramePage } from '../frame/frame-page-store';
 import { Icon as KitIcon, Tile as KitTile, k as kit } from '@/components/ui/kit';
 import { historyAsked, isBotTabHash, kindOf, projectsOf, withFilter, type HistoryKind } from './filter-address';
 import { useHistory, type HistoryRow } from './history';
+import { useBotSearch } from './search';
 import { communityScopeStore } from '../workshop/community-scope';
 import { publishBotDrawer, registerBotBack } from '../nav-drawer/bot-drawer';
 import { AiDrawer, MainPane, usePhone } from './phone-drawer';
@@ -868,6 +869,13 @@ export function AiScreen(): ReactNode {
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => { if (searchOpen) searchRef.current?.focus(); }, [searchOpen]);
+  // 13 Nov 2026: the box also searches what was said, in the person's own
+  // chat with the bot and its threads, on the server (./search.ts). Asked
+  // only once something is typed, so the first render has none of it.
+  const search = useBotSearch(searchOpen ? query : '', {
+    signedIn: mounted && typeof window !== 'undefined' && !!(window as any).App?.user,
+    demo: !!demoQuery(),
+  });
 
   const heroLine = work ? heroWords(owed, progress.length, fresh) : null;
   // A look of the one frame draws the list with the kit (./frame-list.tsx),
@@ -946,6 +954,8 @@ export function AiScreen(): ReactNode {
           searchOpen={searchOpen}
           onSearch={setSearchOpen}
           searchRef={searchRef}
+          found={search.found}
+          onFoundRetry={search.retry}
           lit={lit}
           ready={!!work && !!needs}
           failed={failed}
@@ -974,6 +984,8 @@ export function AiScreen(): ReactNode {
           hero={hero}
           main={{ lit: lit === 'main', unread, open: openMain }}
           query={searchOpen ? query : ''}
+          found={search.found}
+          onFoundRetry={search.retry}
           lit={lit}
           ready={!!work && !!needs}
           failed={failed}

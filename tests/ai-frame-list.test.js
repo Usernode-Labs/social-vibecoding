@@ -43,11 +43,11 @@ const titles = (html) => [...html.matchAll(/<span class="fr-t">([^<]+)/g)].map((
 test('the head: the bot\'s tile, the title with the counts, and two round buttons (search, new thread)', () => {
   const html = render();
   assert.match(html, /^<div class="fr fr-pane" data-ai-frame-list=""><div class="fr-scroll fr-botpage"><div class="fr-head" data-ai-hero=""><span class="fr-tile"[^>]*><img[^>]*><\/span><div class="fr-tx"><h1 class="fr-title">Homeroom bot<\/h1><p class="fr-purpose" data-ai-hero-sub="">/);
-  assert.match(html, /<div class="fr-acts"><button type="button" class="fr-ib fr-more" aria-label="Search your threads" title="Search your threads" aria-expanded="false" data-ai-search-toggle="">.*?<\/button><button type="button" class="fr-ib fr-more" aria-label="New thread" title="New thread" data-bot-new-thread="">/s);
+  assert.match(html, /<div class="fr-acts"><button type="button" class="fr-ib fr-more" aria-label="Search threads and messages" title="Search threads and messages" aria-expanded="false" data-ai-search-toggle="">.*?<\/button><button type="button" class="fr-ib fr-more" aria-label="New thread" title="New thread" data-bot-new-thread="">/s);
   assert.doesNotMatch(html, /fr-btn"[^>]*>.*?New thread<\/button>/s, 'no labelled New thread button: it is the + in the head');
   assert.doesNotMatch(html, /data-ai-search=""/, 'the search field is drawn only while it is open');
   const open = render({ searchOpen: true });
-  assert.match(open, /<div class="fr-search"><label class="fr-inp">.*?<input type="search" class="fr-v" placeholder="Search your threads" aria-label="Search your threads" data-ai-search="" value=""\/>/s);
+  assert.match(open, /<div class="fr-search"><label class="fr-inp">.*?<input type="search" class="fr-v" placeholder="Search threads and messages" aria-label="Search threads and messages" data-ai-search="" value=""\/>/s);
   assert.ok(open.indexOf('data-ai-search=""') < open.indexOf('data-ai-project-filter'), 'between the head and the projects, as on the standard page');
 });
 
@@ -168,6 +168,38 @@ test('what the standard list says when it has nothing, cannot read, or finds no 
   assert.deepEqual(titles(render({ query: 'zoom', searchOpen: true })), ['Game Corner', 'Which part should zoom in?']);
 });
 
+// 13 Nov 2026: the search also reads what was said in the chat with the bot
+// and its threads (./search.ts); both faces draw the rows ./lines.ts builds.
+test('a search lists the messages that match under the threads, as kit rows that are links', () => {
+  const year = new Date().getFullYear();
+  const found = {
+    q: 'zoom', more: true, state: 'answered',
+    rows: [
+      { messageId: 71, rootId: null, threadTitle: null, mine: true, snippet: 'Could it zoom in on the map?', ranges: [[9, 13]], at: `${year}-11-03T12:00:00.000Z` },
+      { messageId: 88, rootId: 60, threadTitle: 'Map ideas', mine: false, snippet: '…a pinch to zoom, then', ranges: [[14, 18]], at: `${year}-11-02T12:00:00.000Z` },
+    ],
+  };
+  assert.doesNotMatch(render({ found }), /data-ai-list="found"|<mark/, 'nothing of it with no search on');
+  const html = render({ query: 'zoom', searchOpen: true, found });
+  assert.ok(html.indexOf('data-ai-list="work"') < html.indexOf('data-ai-list="found"'), 'under the matching threads');
+  const group = html.slice(html.indexOf('data-ai-list="found"'));
+  assert.match(group, /<h2 class="fr-cap">In your messages · 2<\/h2>/, 'the group\'s label, as every group\'s');
+  const rows = [...group.matchAll(/<a class="fr-row fr-sm fr-item" href="([^"]+)" title="[^"]*" aria-label="([^"]*)" data-ai-found="(chat|thread)">(.*?)<\/a>/g)];
+  assert.deepEqual(rows.map((m) => [m[1], m[3]]), [['#homeroom-bot/main/m/71', 'chat'], ['#homeroom-bot/thread/60/m/88', 'thread']]);
+  assert.match(rows[0][4], /<span class="fr-t" data-ai-found-words="">Could it <mark class="[^"]*var\(--fr-acc-t\)[^"]*">zoom<\/mark> in on the map\?<\/span><span class="fr-s" data-ai-found-place="">Your chat with Homeroom bot<\/span>/);
+  assert.match(rows[1][4], /<span class="fr-s" data-ai-found-place="">Map ideas<\/span>/);
+  assert.match(rows[0][2], /^You: Could it zoom in on the map\? · Your chat with Homeroom bot · /);
+  assert.match(rows[1][2], /^Homeroom bot: …a pinch to zoom, then · Map ideas · /);
+  assert.match(group, /<p class="fr-txt" data-ai-found-more="">These are the newest matches\. Type more to narrow them down\.<\/p>/);
+  // Nothing anywhere, once the messages have answered: the one note says both.
+  const none = render({ query: 'no such thing', searchOpen: true, found: { q: 'no such thing', rows: [], more: false, state: 'answered' } });
+  assert.match(none, /<span data-ai-search-empty="">Nothing in your threads or messages matches “no such thing”<\/span>/);
+  assert.doesNotMatch(render({ query: 'no such thing', searchOpen: true, found: null }), /data-ai-search-empty/, 'not before they answer');
+  // The messages could not be read.
+  const failed = render({ query: 'zoom', searchOpen: true, found: { q: 'zoom', rows: [], more: false, state: 'failed' } });
+  assert.match(failed, /<div class="fr-txt" role="status" data-ai-search-failed="">Your messages could not be searched\. <button type="button" class="fr-link" data-ai-search-retry="">Try again<\/button><\/div>/);
+});
+
 test('the page draws this list in place of its own under a look, from the same rows, presses and search', () => {
   const src = read('frontend', 'src', 'features', 'ai', 'index.tsx');
   assert.match(src, /const frame = isFrameSkin\(useSkin\(\)\);/, 'after mount only: useSkin answers standard on the first render');
@@ -180,8 +212,8 @@ test('the page draws this list in place of its own under a look, from the same r
     'on a phone the frame\'s bar names the open chat and goes back to the list');
   const list = read(LIST);
   assert.doesNotMatch(list, /\bfetch\(|useEffect\(/, 'nothing is read or kept in the list itself');
-  assert.match(list, /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory \}\);/, 'the rows are the ones the standard list draws');
-  assert.match(read('frontend/src/features/ai/lists.tsx'), /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory \}\);/);
+  assert.match(list, /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found \}\);/, 'the rows are the ones the standard list draws');
+  assert.match(read('frontend/src/features/ai/lists.tsx'), /\} = useAiLines\(\{ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found \}\);/);
 });
 
 test('the list\'s + starts the blank thread, as the standard "+" does', () => {
@@ -207,9 +239,15 @@ test('what the first tour invented is gone: its words left the catalog, and the 
   assert.deepEqual(Object.keys(en).filter((key) => key.startsWith('frame.bot.')), []);
   const list = read(LIST);
   assert.doesNotMatch(list, /frame\.bot\.|Track\b/);
-  for (const id of ['ai.search.open', 'newThread.start', 'ai.filter.all', 'ai.filter.more', 'ai.main.new', 'ai.work.titleCount', 'ai.busy.title', 'ai.up.stillCount', 'ai.live.title', 'ai.history.title', 'ai.work.showMore', 'ai.history.earlier', 'ai.search.none', 'ai.filter.emptyProject']) {
+  for (const id of ['ai.search.open', 'newThread.start', 'ai.filter.all', 'ai.filter.more', 'ai.main.new', 'ai.work.titleCount', 'ai.busy.title', 'ai.up.stillCount', 'ai.live.title', 'ai.history.title', 'ai.work.showMore', 'ai.history.earlier', 'ai.search.messages', 'ai.search.more', 'ai.search.failed', 'ai.filter.emptyProject']) {
     assert.match(list, new RegExp(`'messages:${id.replace(/\./g, '\\.')}'`), id);
   }
+  // What the search says when nothing matched is decided once for both faces (lines.ts).
+  const lines = read('frontend', 'src', 'features', 'ai', 'lines.ts');
+  for (const id of ['ai.search.none', 'ai.search.noneThreads', 'ai.search.inChat', 'ai.search.rowYou', 'ai.search.rowBot']) {
+    assert.match(lines, new RegExp(`'messages:${id.replace(/\./g, '\\.')}'`), id);
+  }
+  assert.match(list, /data-ai-search-empty="">\{noneWords\}</);
 });
 
 test('s10: Main Chat\'s head in the column is the kit\'s, with the standard head\'s lock before its line', () => {
