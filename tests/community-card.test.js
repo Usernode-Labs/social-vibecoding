@@ -166,7 +166,7 @@ test('the channel is a hub card at its old address; Join asks under its button a
   assert.match(src, /const member = data\.is_member && !offer\?\.preview;/);
   // #4896: on a project that is just yours too, beside "Just you so far":
   // it was left to the Share it card, and a newcomer met "Just you" alone.
-  assert.match(src, /\{member \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/,
+  assert.match(src, /\{member && !\(inviteCard && showsInviteHero\(data\)\) \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/,
     'Invite is offered to members, a project of one included');
   assert.doesNotMatch(src, /_plusMenuShowsMembers/, 'not by the members dialog\'s gate');
 });
