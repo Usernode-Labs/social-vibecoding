@@ -391,6 +391,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 function standing(row, viewerId, now = new Date(), botId = null, work = null, viewer = null) {
   const status = row.change_status || null;
   const theirs = row.change_user != null && Number(row.change_user) === Number(viewerId);
+  // #6667: the change Homeroom bot made, which waits on the person who asked
+  // for its request once the bot hands the fix back (workFor marks it).
+  const byBot = botId != null && row.change_user != null && Number(row.change_user) === Number(botId);
   // In progress is their own work: asked for, built, or followed.
   const own = row.own === true || theirs;
   // A decision up for the group's vote (a rename, a card picture, ...) has
@@ -441,14 +444,26 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   const botFixFailed = row.update_failed != null || code === 'bot_fix_failed';
   // Owed only while its change is open for votes (work_states.vote_open).
   const voteOwed = (state.voteOpen ?? state.stage === 'up_for_vote') && !updating && status === 'promoted' && wouldVote;
-  // Their own change (not Homeroom bot's, whose fixes are its own) that
-  // waits on them: checks that failed, a preview that did not build, a
-  // conflict to resolve (THREADS_SQL needs_fix). Needs you, with Fix it,
-  // not Waiting under "Checks failing", which it would wait in forever. The
-  // stage stays the change's own; that it is theirs to fix is the viewer's.
-  // #6600: after Homeroom bot's own attempt failed it says that instead.
+  // Their own change that waits on them: checks that failed, a preview that
+  // did not build, a conflict to resolve (THREADS_SQL needs_fix). Needs you,
+  // with Fix it, not Waiting under "Checks failing", which it would wait in
+  // forever. The stage stays the change's own; that it is theirs to fix is
+  // the viewer's. #6600: after Homeroom bot's own attempt failed it says
+  // that instead. A change Homeroom bot made is not theirs to fix while the
+  // bot is still working; once it hands the fix back, the request's asker
+  // gets it (below).
   if (status === 'promoted' && theirs && row.needs_fix === true && !updating && state.stage !== 'building') {
     return { group: 'needs', work: stored, at: iso(row.last_activity_at || row.promoted_at) || at, fixYours: true, ...(botFixFailed ? { botFixFailed: true } : {}) };
+  }
+  // #6667: Homeroom bot built the change and gave up fixing it, and the
+  // viewer asked for its request. Waiting under "Checking" looked like
+  // nothing was needed of them, but nothing moves until a person steps in.
+  // Only once the bot is not fixing it: a running or queued fix, or one it
+  // has not looked at yet, stays where it is.
+  const asked = state.requesterId != null && Number(state.requesterId) === Number(viewerId);
+  if (status === 'promoted' && byBot && asked && row.needs_fix === true && row.bot_handed_off === true
+      && !updating && row.update_coming == null && state.stage !== 'building') {
+    return { group: 'needs', work: stored, at: iso(row.last_activity_at || row.promoted_at) || at, botFixFailed: true };
   }
   // #6402: a change still being checked asks nobody for a vote yet. Someone
   // who would have been asked, but is not its author or a follower, sees it
@@ -464,7 +479,6 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   if (!place) return null;
   const out = { group: place, work: stored, at };
   if (state.stage === 'building' && !state.line) {
-    const byBot = botId != null && row.change_user != null && Number(row.change_user) === Number(botId);
     out.by = status ? (byBot ? 'bot' : theirs ? 'you' : 'someone') : 'bot';
   }
   // Somebody pressed Claim, or is building a change of their own for it: you, or someone.
@@ -774,6 +788,31 @@ async function tracksFor(pool, { user, limit = 100, deps = {} }) {
 const appIdOf = (apps, slug) => Number(apps.find((a) => a.slug === slug)?.id) || 0;
 
 /**
+ * #6667: marks the thread rows where Homeroom bot made the change, its fix
+ * was handed back to a person, and the viewer asked for its request, so
+ * `standing` moves them to Needs you. Only the viewer's own requests with a
+ * failing bot change are read (`changeBotFix`), a handful of queries at most.
+ */
+async function markBotHandedOff(pool, rows, viewerId, bot, states, deps = {}) {
+  if (!bot || bot.id == null) return;
+  const changeBotFix = deps.changeBotFix || require('./homeroom-bot-progress').changeBotFix;
+  const candidates = (rows || []).filter((row) => {
+    if (row.change_user == null || Number(row.change_user) !== Number(bot.id)) return false;
+    if (row.change_status !== 'promoted' || row.needs_fix !== true) return false;
+    const key = row.slug && row.number != null && row.request_id != null ? botKey(row.slug, row.number) : null;
+    const state = (key && states?.get(key)) || (row.change_id && states?.get(`change:${Number(row.change_id)}`)) || null;
+    return state?.requesterId != null && Number(state.requesterId) === Number(viewerId);
+  });
+  if (!candidates.length) return;
+  await Promise.all(candidates.map(async (row) => {
+    const fix = await Promise.resolve()
+      .then(() => changeBotFix(pool, row.change_id))
+      .catch(() => null);
+    if (fix?.state === 'handed_off') row.bot_handed_off = true;
+  }));
+}
+
+/**
  * Everything the AI tab's main view lists for `user` beside the Needs you
  * feed: { private, needs, next, waiting, live }.
  */
@@ -785,6 +824,7 @@ async function workFor(pool, { user, showSelfHosted = false, deps = {} }) {
     bot ? pool.query(PRIVATE_SQL, [user.id, bot.id, PRIVATE_MAX, LIVE_DAYS]).then((r) => r.rows) : Promise.resolve([]),
   ]);
   const [states, viewers] = await Promise.all([statesFor(pool, threadRows), viewerFacts(pool, threadRows, user.id)]);
+  await markBotHandedOff(pool, threadRows, user.id, bot, states, deps);
   const lists = arrange(threadRows, user.id, new Date(), bot ? bot.id : null, states, viewers);
   // #6262: how many messages in each listed thread are new to the viewer.
   // Private threads are not `threads` rows and keep no cursor here: Main
@@ -832,6 +872,7 @@ function threadSays(t, slotVotes = 0) {
       ? 'Homeroom bot could not fix their own change'
       : 'their own change waits for their fix: its checks failed, its preview did not build, or it conflicts';
   }
+  if (t.botFixFailed) return 'Homeroom bot could not fix the change it made for their request';
   const work = t.work || { stage: 'reading' };
   const yours = t.group === 'needs';
   let says = workState.says(work, { yours });
