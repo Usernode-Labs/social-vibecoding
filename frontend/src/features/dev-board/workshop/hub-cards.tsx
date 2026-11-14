@@ -79,8 +79,8 @@ import { countsDown, estimateOf, leftNote } from '../../app-frame/first-version-
 import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import { madeAppUrl } from '../../first-session/made';
 import { ThumbRow } from '../../first-session/sketch-card';
-import { open as openConversation, openBot } from '../../messages/store';
 import { openBotTab } from '../../ai/door';
+import { openFirstVersion } from '../../ai/where';
 import type { DevWorkshopView, ListRow as BoardRow } from '../card/model';
 import { isNeedsSeen, needsRowKey, useNeedsSeen } from '../../workshop/needs-seen';
 import { reloadCommunity, type CommunityPayload, type HubFirstVersion } from './community-card';
@@ -226,8 +226,9 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
       // Its plan waits in a private thread of theirs: open it there, at the plan.
       openBotTab({ threadRootId: fv.plan_at.threadRootId, focusMessageId: fv.plan_at.messageId ?? null });
     } else if (action === 'review' || action === 'answer') {
-      if (fv.conversation_id) openConversation(fv.conversation_id);
-      else void openBot();
+      // The project's first-version thread, where its plan and its
+      // questions are (14 Nov 2026: there is no Main Chat for them).
+      void openFirstVersion(slug);
     } else if (action === 'try' && fv.session_id) {
       (window as any).AppView?.tryFirstVersion?.(slug, fv.session_id);
     } else if (action === 'open') {
@@ -267,12 +268,10 @@ export function FirstVersionCard({ slug, data, emoji = null, onSeePlan }: {
           </Button>
         ) : null}
         onBroken={look.onBroken}
-        // #5618: the picture and the words open the maker's chat with
-        // Homeroom bot, as Review the plan does; Watch keeps its own job.
-        onOpen={() => {
-          if (fv.conversation_id) openConversation(fv.conversation_id);
-          else void openBot();
-        }}
+        // #5618: the picture and the words open the project's first-version
+        // thread with Homeroom bot, as Review the plan does; Watch keeps its
+        // own job.
+        onOpen={() => { void openFirstVersion(slug); }}
       />
     );
   }

@@ -3641,14 +3641,16 @@ const GroupChat = {
     } catch { /* it comes back on the next load, and can be dismissed again */ }
   },
 
-  // B9: the chat with Homeroom bot (See progress, Open chat). 16 Oct 2026
-  // (C4): See progress opens it at the request's own thread, its story.
+  // B9: Homeroom bot, from a request's card here (See progress, Open chat).
+  // 16 Oct 2026 (C4): See progress opens the request's own story: its plan's
+  // thread, else its page. 14 Nov 2026: Open chat, with no request, is a new
+  // chat with the bot set to this project (there is no Main Chat to open).
   openBotChat(issueNumber) {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
     const n = Number(issueNumber);
     if (messages && n && GroupChat.appSlug && typeof messages.openBotRequest === 'function') messages.openBotRequest(GroupChat.appSlug, n);
-    else if (messages && typeof messages.openBot === 'function') messages.openBot();
-    else location.hash = '#messages';
+    else if (messages && typeof messages.openBot === 'function') messages.openBot(GroupChat.appSlug ? { type: 'app', appSlug: GroupChat.appSlug } : undefined);
+    else location.hash = '#homeroom-bot';
   },
 
   // Fix in place: the change a fix went to, on its page (See change).

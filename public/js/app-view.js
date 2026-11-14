@@ -4279,28 +4279,33 @@ const AppView = {
    * 14 Oct 2026: a stopped first version's Try again (_firstVersionStoppedView):
    * the build's thread in its maker's chat with Homeroom bot, where the bot's
    * Try again is; else the message itself, whose link lands inside its
-   * thread; else the chat (openBotChat). The address goes through Messages'
-   * openAddress, as a bell row's does, so it opens even when it is the one
-   * already in the bar.
+   * thread; else the project's first-version thread (openBotChat). The
+   * address goes through Messages' openAddress, as a bell row's does, so it
+   * opens even when it is the one already in the bar.
    */
   openFirstVersionThread(slug, conversationId, threadRootId, messageId) {
     const valid = (value) => Number.isInteger(value) && value > 0;
-    if (!valid(conversationId)) return AppView.openBotChat(slug, null);
+    if (!valid(conversationId) || (!valid(threadRootId) && !valid(messageId))) return AppView.openBotChat(slug, conversationId);
     const href = valid(threadRootId) ? `#messages/${conversationId}/thread/${threadRootId}`
-      : valid(messageId) ? `#messages/${conversationId}/m/${messageId}`
-        : `#messages/${conversationId}`;
+      : `#messages/${conversationId}/m/${messageId}`;
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
     if (messages && typeof messages.openAddress === 'function') messages.openAddress(href);
     else location.hash = href;
     return undefined;
   },
 
-  /** The first-version screen's button: the viewer's DM with the Homeroom bot. */
-  openBotChat(_slug, conversationId) {
+  /**
+   * The first-version screen's button. 14 Nov 2026: every conversation with
+   * Homeroom bot is a thread, so this opens the project's first-version
+   * thread (the server says which), or the Homeroom bot page when it has
+   * none; with no project, a new chat.
+   */
+  openBotChat(slug, conversationId) {
     const id = Number.isInteger(conversationId) && conversationId > 0 ? conversationId : null;
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
-    if (messages && typeof messages.open === 'function') messages.open(id);
-    else location.hash = id ? `#messages/${id}` : '#messages';
+    if (slug && messages && typeof messages.openBotFirstVersion === 'function') messages.openBotFirstVersion(slug);
+    else if (messages && typeof messages.open === 'function') messages.open(id);
+    else location.hash = '#homeroom-bot';
   },
 
   _stopFirstVersionWatch() {
@@ -7324,7 +7329,7 @@ const AppView = {
         rows.push({
           label: PlatformI18n.t('changes:page.menu.askForChanges'), icon: 'generate',
           title: PlatformI18n.t('changes:page.menu.askForChangesTitle'),
-          act: () => AppView.askBotForChanges(item.id, item.session_title || item.pr_title || null),
+          act: () => AppView.askBotForChanges(item.id, item.session_title || item.pr_title || null, item.pr_number),
         });
       }
       if (body.build) {
@@ -24563,21 +24568,25 @@ const AppView = {
   },
 
   /**
-   * B8: "Ask for changes" on a change Homeroom bot built: the viewer's chat
-   * with it, with this change attached on the composer and the caret in the
-   * box (messages/store.ts openBot). The page names the change's project, so
-   * nothing is asked of them first; the server reads its live title.
+   * B8: "Ask for changes" on a change Homeroom bot built. 14 Nov 2026: the
+   * viewer's private thread about this change (messages/store.ts openBot,
+   * by its pull request's `number`), started or found; a change with no
+   * number yet opens a new chat set to its project, with the change
+   * attached in its box and the caret there. The page names the change's
+   * project, so nothing is asked of them first; the server reads its live
+   * title.
    */
-  askBotForChanges(sessionId, title) {
+  askBotForChanges(sessionId, title, number) {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
     const app = AppView.appData || {};
     const reference = {
       type: 'proposal', sessionId: Number(sessionId), title: title || null,
       appId: Number(app.id) > 0 ? Number(app.id) : undefined,
       appSlug: app.slug || App.currentApp || undefined,
+      number: Number(number) > 0 ? Number(number) : undefined,
     };
     if (messages && typeof messages.openBot === 'function') messages.openBot(reference);
-    else location.hash = '#messages';
+    else location.hash = '#homeroom-bot';
   },
 
   /** B8: whether Homeroom bot builds requests here, for this viewer ({ typicalMinutes }), or null. */
