@@ -786,9 +786,9 @@ test('the maker\'s way on after Make it: the app itself once it runs, Home and t
   // Review the plan while one waits, else a quiet Open Homeroom bot.
   assert.match(read('public/js/app-view.js'),
     /label: thumb\.buildLine === 'plan' \? PlatformI18n\.t\('changes:firstVersion\.reviewPlan'\) : PlatformI18n\.t\('changes:firstVersion\.openBot'\),/);
-  // Create's Go to chat still opens the chat by address: on the Homeroom bot
-  // tab, as Main Chat (1 Nov 2026: the chat's only place).
-  assert.match(index, /else if \(screen === 'bot' && conversationId\) window\.location\.hash = '#homeroom-bot\/main';/);
+  // Create's Go to chat opens the Homeroom bot tab (1 Nov 2026: the chat's only place).
+  // 14 Nov 2026: the project's first-version thread (features/ai/where.ts), not Main Chat, which is gone.
+  assert.match(index, /else if \(screen === 'bot' && conversationId\) void openFirstVersion\(slug\);/);
 });
 
 test('the admin Journey page says which first session answered the join screen', () => {

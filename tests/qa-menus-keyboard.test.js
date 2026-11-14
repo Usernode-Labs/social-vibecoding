@@ -347,7 +347,7 @@ test('the conversation composer and the New thread box share the rule, and say i
   assert.doesNotMatch(newThread, /e\.key === 'Enter' && \(e\.metaKey \|\| e\.ctrlKey\)/, 'the chord-only rule is gone here too');
   // Nothing to send is the box's own check, the one its button is disabled by.
   assert.match(composer, /function submit\(\) \{\n\s+if \(dictating \|\| uploading \|\| \(!value\.trim\(\) && !attachments\.length && !object\)\) return;/);
-  assert.match(newThread, /if \(busy \|\| dictating \|\| uploading \|\| \(!content && !attachments\.length\)\) return;/);
+  assert.match(newThread, /if \(busy \|\| dictating \|\| uploading \|\| \(!content && !attachments\.length && !object\)\) return;/);
 
   assert.equal(message('messages:composer.newLineHint'), 'Shift + Enter for a new line');
   assert.equal(message('messages:composer.sendShortcut'), 'Send (Enter)');

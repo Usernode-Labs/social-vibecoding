@@ -369,7 +369,7 @@ test('a version said in a thread is drawn small, with Open preview; nothing is r
   assert.match(row, /<DesignVersionCard conversationId=\{conversationId\} rootId=\{message\.threadRootId\} version=\{designVersion\}/);
   // And the thread's head opens it at the newest, while it is not open.
   const index = read('frontend/src/features/messages/index.tsx');
-  assert.match(index, /\{inMain && preview\?\.rootId !== rootId && isDesignThread\(root, replies\) \? \(/);
+  assert.match(index, /\{alone && preview\?\.rootId !== rootId && isDesignThread\(root, replies\) \? \(/);
 });
 
 test('a thread about a request is named by it, in its head and in the list', () => {

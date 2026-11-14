@@ -588,16 +588,19 @@ test('a question in the DM draws its answers, the default marked, and says an an
   assert.match(offered, /<span>Not now<\/span>/);
   assert.doesNotMatch(offered, /suggested|Write my own|public discussion/);
   // #3770: File it is the act, filled in the accent, and Not now the neutral
-  // fill beside it. Not `.messages-bot-other`, which the declared check
-  // (homeroom-bot-dm-question) reads as a Something else.
+  // fill beside it. Not `.messages-bot-other`, which reads as a Something else.
   assert.match(offered, /<button type="button" class="messages-bot-primary" data-bot-answer="default"><span>File it<\/span><\/button><button type="button" class="messages-bot-secondary" data-bot-answer="other"><span>Not now<\/span><\/button><\/div>/);
   assert.match(html, /<button type="button" data-bot-answer="default"><span>Newest first<\/span>/);
   assert.doesNotMatch(html, /messages-bot-primary|messages-bot-secondary/, 'a question\'s answers keep one look: none of them is the act');
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-bot-answers \.messages-bot-primary \{ color: var\(--accent-ink\); background: var\(--accent\); \}/);
   assert.match(css, /\.messages-bot-answers \.messages-bot-other,\s*\.messages-bot-answers \.messages-bot-secondary \{\s*color: var\(--text-secondary\);\s*background: var\(--dc-raised\);/);
-  const check = JSON.parse(read('dapp.json')).tests.find((t) => t.id === 'homeroom-bot-dm-question');
-  assert.match(check.expectSelector, /\[aria-label\^="File this"\] > button:last-child:not\(\.messages-bot-other\)/);
+  // 14 Nov 2026: the declared check that found this pair in Main Chat
+  // (homeroom-bot-dm-question) went with Main Chat; its place in dapp.json
+  // is the old address's landing (homeroom-bot-old-main-address).
+  const declared = JSON.parse(read('dapp.json')).tests;
+  assert.ok(!declared.some((t) => t.id === 'homeroom-bot-dm-question'));
+  assert.equal(declared.find((t) => t.id === 'homeroom-bot-old-main-address').path, '/?demo=1#homeroom-bot/main');
   const chose = { ...offer, metadata: { homeroomBot: { ...offer.metadata.homeroomBot, status: 'answered', answer: 'File it' } } };
   assert.match(renderToHtml(createElement(BotQuestion, { message: chose, conversationId: 3 })), /You chose: File it/);
 });

@@ -128,7 +128,7 @@ test('the composer inside a request\'s thread says what a reply is about', () =>
   assert.equal(catalog('messages:composer.placeholderBotThread'), 'Reply about this request…');
   assert.equal(catalog('messages:composer.placeholderBotThreadFirstVersion'), 'Reply about this first version…');
   const composer = read('frontend/src/features/messages/composer.tsx');
-  assert.match(composer, /placeholder=\{inThread \? threadPlaceholder : \(prompt \|\| t\('messages:composer\.placeholder'\)\)\}/);
+  assert.match(composer, /placeholder=\{inThread \? threadPlaceholder : t\('messages:composer\.placeholder'\)\}/);
   assert.match(composer, /botRequest\.firstVersion \? t\('messages:composer\.placeholderBotThreadFirstVersion'/);
   // Rooms keep their own.
   assert.match(composer, /!botRequest \? t\('messages:composer\.placeholderThread'\)/);

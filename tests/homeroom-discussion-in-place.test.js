@@ -199,11 +199,15 @@ test('#3494: exactly one copy of the thread is drawn, and the page\'s has no hea
   // The page's copy holds the store only while it is on screen, and gives it back.
   const embedded = SCREEN.slice(SCREEN.indexOf('export function EmbeddedConversation('), SCREEN.indexOf('export function MessagesScreen('));
   // #3653: with the place a door named in the room, taken once (`take`).
-  assert.match(embedded, /if \(!active \|\| messagesOpen\) return undefined;\s*embed\(conversationId, take\(\)\);\s*return \(\) => release\(conversationId\);/);
+  assert.match(embedded, /if \(!active \|\| messagesOpen\) return undefined;\s*embed\(conversationId, take\(\), \{ threadsOnly \}\);\s*return \(\) => release\(conversationId\);/);
   // Polish board #19: until the room is in place, the room's own loading row.
   assert.match(embedded, /\{here \? <ConversationThread embedded \/> : <ChannelLoading \/>\}/);
-  // 1 Nov 2026: in Main Chat (`mainChat`) the thread is alone under its own head.
-  assert.match(embedded, /\{here && snap\.route\.threadRootId \? <ReplyThreadPanel inMain=\{mainChat\} onBack=\{onBack\} \/> : null\}/);
+  // The room's own reply thread opens beside it.
+  assert.match(embedded, /\{here && snap\.route\.threadRootId \? <ReplyThreadPanel onBack=\{onBack\} \/> : null\}/);
+  // 14 Nov 2026: the chat with Homeroom bot is mounted threads only
+  // (`threadsOnly`): no copy of the conversation's own stream, the thread
+  // alone under its own head, and the bot's work kept current beside it.
+  assert.match(embedded, /if \(threadsOnly\) \{\s*return \(\s*<div className=\{`messages-layout messages-layout-embedded messages-has-reply-thread\$\{blank \? ' messages-has-blank-thread' : ''\}`\} data-bot-threads="">\s*\{here \? <BotThreadsSync conversationId=\{conversationId\} \/> : null\}\s*\{here && snap\.route\.threadRootId \? <ReplyThreadPanel alone onBack=\{onBack\} \/> : null\}\s*\{blank \? <NewThreadPanel conversationId=\{conversationId\} \/> : null\}\s*<\/div>/);
 });
 
 test('#3494: the Discussion tab turns for Homeroom too, and mounts #general while the page is on screen', () => {

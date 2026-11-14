@@ -124,8 +124,8 @@ test('#6404: a message asking with a Questions card hides its suggested replies,
     /<span>Try again<\/span>/, 'a quoted step still draws');
 
   const index = read('frontend/src/features/messages/index.tsx');
-  assert.match(index, /hidePrompts=\{\(plans\.answersOpen \|\| asksWithQuestionsCard\(message\) \|\| \(welcomeShown && message\.id === newestMainBotId\)\) && !!message\.sender\.bot\}/,
-    'the row hides on the message carrying the card (or under #6426\'s welcome card), and on no other');
+  assert.match(index, /hidePrompts=\{\(plans\.answersOpen \|\| asksWithQuestionsCard\(message\)\) && !!message\.sender\.bot\}/,
+    'the row hides on the message carrying the card, and on no other');
 });
 
 test('a step to take on the message is a filled button; a suggestion keeps the pill', () => {
@@ -175,12 +175,13 @@ test('Try again replies to its message; Add detail quotes it in the composer and
   ], 'only a prompt quotes');
 });
 
-test('#6207: the demo DM’s stopped build is a request’s news, so the declared check finds it out of Main Chat', () => {
-  // 3 Nov 2026: Main Chat is the conversation. The demo's stopped build is
-  // news about a request, on that request's page, so Main draws no row for
-  // it: the declared check finds Main with no row about a request. The
-  // fixture still writes it, with its Try again.
-  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^#6207 \(3 Nov 2026\): Main Chat holds no request's news/.test(t.name));
+test('#6207: the demo DM’s stopped build is a request’s news, so the declared check finds it out of the bot\'s chat', () => {
+  // 3 Nov 2026: the demo's stopped build is news about a request, on that
+  // request's page, so the chat draws no row for it. 14 Nov 2026: Main Chat
+  // is gone; the declared check follows its old address and finds no row
+  // about a request where it lands. The fixture still writes it, with its
+  // Try again.
+  const check = JSON.parse(read('dapp.json')).tests.find((t) => t.id === 'homeroom-bot-old-main-address');
   assert.ok(check, 'declared');
   assert.match(check.expectSelector, /:not\(:has\(\[data-request-tag\]\)\)$/);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');

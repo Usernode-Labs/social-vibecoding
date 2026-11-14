@@ -171,20 +171,20 @@ test('whose thread it is, its name and the words to take public, for a root of t
   assert.equal(privateThreadTitle(named, [], ME), 'Also show who has each thing');
 });
 
-test('in Main Chat\'s column a thread is alone under its own head, and says it is theirs', () => {
+test('in the bot tab\'s column a thread is alone under its own head, and says it is theirs', () => {
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /function ReplyThreadPanel\(\{ inMain = false, onBack = null \}/);
-  assert.match(screen, /<div className="messages-thread-name min-w-0 truncate" data-reply-title="">\{mainTitle\}<\/div>/);
+  assert.match(screen, /function ReplyThreadPanel\(\{ alone = false, onBack = null \}/);
+  assert.match(screen, /<div className="messages-thread-name min-w-0 truncate" data-reply-title="">\{aloneTitle\}<\/div>/);
   assert.match(screen, /<span className="truncate">\{t\('messages:ai\.thread\.sub'\)\}<\/span>/);
   assert.equal(message('messages:ai.thread.sub'), 'Only you can see this thread');
   // 6 Nov 2026 (#6425): on a desktop the thread closes with its own ✕, which
-  // leaves the lists alone or Main Chat when it was open; a phone's arrow
-  // still goes to the list, with no ✕ beside it.
-  assert.match(screen, /\{inMain && onBack \? null : \(\s*<button type="button" className="messages-thread-action" data-reply-close=""/);
-  assert.match(screen, /\{inMain && onBack \? \(\s*<button type="button" className="messages-thread-action messages-thread-back" data-reply-back=""\s+aria-label=\{t\('messages:ai\.drawer\.back'\)\}/);
+  // leaves the lists alone; a phone's arrow still goes to the list, with no
+  // ✕ beside it.
+  assert.match(screen, /\{alone && onBack \? null : \(\s*<button type="button" className="messages-thread-action" data-reply-close=""/);
+  assert.match(screen, /\{alone && onBack \? \(\s*<button type="button" className="messages-thread-action messages-thread-back" data-reply-back=""\s+aria-label=\{t\('messages:ai\.drawer\.back'\)\}/);
   assert.doesNotMatch(screen, /messages:replies\.backToMain/);
   assert.equal(message('messages:replies.close'), 'Close thread');
-  assert.match(screen, /\{here && snap\.route\.threadRootId \? <ReplyThreadPanel inMain=\{mainChat\} onBack=\{onBack\} \/> : null\}/);
+  assert.match(screen, /\{here && snap\.route\.threadRootId \? <ReplyThreadPanel alone onBack=\{onBack\} \/> : null\}/, 'the chat with the bot, mounted threads only');
 });
 
 test('the foot has New project alone: no File it or Post it form, and nothing it writes', () => {
