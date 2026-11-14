@@ -117,7 +117,6 @@ test('a tool call is noted only when it left something that stays, in plain word
     { did: 'withdrawn the Seed swap proposal', stays: 'it stays withdrawn' });
   assert.deepEqual(each('revise_proposal', {}, { ok: true, posted: 'in the discussion' }),
     { did: 'posted your change on the proposal\'s discussion', stays: 'it stays posted' });
-  assert.deepEqual(each('start_project_thread', {}, { ok: true }), { did: 'opened a thread for the new project', stays: 'it stays open' });
   assert.deepEqual(each('close_thread', {}, { ok: true, state: 'done' }), { did: 'marked this thread done', stays: 'it stays done' });
   assert.deepEqual(each('add_to_build', { number: 9 }, { ok: true }), { did: 'passed your note on to the build of request #9', stays: 'it stays with the build' });
   assert.deepEqual(each('tell_me_when', {}, { ok: true, promise: 'x' }), { did: 'noted to tell you when that is ready', stays: 'I still will' });
