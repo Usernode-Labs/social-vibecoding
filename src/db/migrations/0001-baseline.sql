@@ -5245,10 +5245,26 @@ CREATE TABLE IF NOT EXISTS leaderboard_snapshots (
   max_bp_success_rate_up_to_current        NUMERIC(5,2) NOT NULL DEFAULT 0,
   season_id                                BIGINT,
   challenge_details                        JSONB,
+  -- #6039: the standing score and its two inputs. `standings_score` is the
+  -- sort key the board ranks on: total_points lifted by a capped quality and
+  -- breadth factor, so it is never below total_points. `graded_points` and
+  -- `distinct_challenges` are stored so the season aggregate can re-derive
+  -- the same two factors from its SUMS rather than re-reading the ledger.
+  -- See src/services/topochain/standing-score.js.
+  standings_score                          NUMERIC(15,2) NOT NULL DEFAULT 0,
+  graded_points                            NUMERIC(15,2) NOT NULL DEFAULT 0,
+  distinct_challenges                      INTEGER NOT NULL DEFAULT 0,
   UNIQUE (season_event_id, user_id, snapshot_at)
 );
 CREATE INDEX IF NOT EXISTS idx_leaderboard_snapshots_season_event_rank ON leaderboard_snapshots (season_event_id, rank);
 CREATE INDEX IF NOT EXISTS idx_leaderboard_snapshots_season_event_snapshot ON leaderboard_snapshots (season_event_id, snapshot_at);
+
+-- The three #6039 columns also reach databases created before they existed
+-- (migrate.js replays this file each boot). Declared above for fresh ones;
+-- this ALTER is the idempotent path for the rest.
+ALTER TABLE leaderboard_snapshots ADD COLUMN IF NOT EXISTS standings_score NUMERIC(15,2) NOT NULL DEFAULT 0;
+ALTER TABLE leaderboard_snapshots ADD COLUMN IF NOT EXISTS graded_points NUMERIC(15,2) NOT NULL DEFAULT 0;
+ALTER TABLE leaderboard_snapshots ADD COLUMN IF NOT EXISTS distinct_challenges INTEGER NOT NULL DEFAULT 0;
 
 -- `token_allocation` — the financial record of tokens allocated to a
 -- user for a season. `updated_by` referenced a source admin user;

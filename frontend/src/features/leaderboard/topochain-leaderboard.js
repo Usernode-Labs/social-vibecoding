@@ -492,6 +492,10 @@ const TopochainLeaderboard = {
       rows,
       you,
       nonPodiumToggle,
+      // #6039: the board no longer ranks on points alone, so the table says
+      // how a place is worked out. The sentence is a message id the pane
+      // renders, not copy built here, so it translates with the rest.
+      orderNote: true,
     };
   },
 

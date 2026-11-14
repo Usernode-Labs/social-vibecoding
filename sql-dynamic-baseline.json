@@ -2152,6 +2152,13 @@
       "preview": "SNAPSHOT_UPSERT_SQL"
     },
     {
+      "source": "src/services/topochain/snapshot-builder.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "f1400603791e21455944",
+      "count": 1,
+      "preview": "ACTIVITY_STANDING_INPUTS_SQL"
+    },
+    {
       "source": "src/services/topochain/sql-console.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "adbf45b08ad6468aa147",
@@ -2164,6 +2171,20 @@
       "fingerprint": "7a85376a5a47e5ee63f8",
       "count": 1,
       "preview": "`SET LOCAL ROLE ${consoleRole.ROLE}`"
+    },
+    {
+      "source": "src/services/topochain/standings.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "b12806d51857be055a34",
+      "count": 1,
+      "preview": "STANDINGS_SQL"
+    },
+    {
+      "source": "src/services/topochain/standings.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "fd05d2d012f50a8a8e46",
+      "count": 1,
+      "preview": "OWN_STANDING_SQL"
     },
     {
       "source": "src/services/turn-leftovers.js",

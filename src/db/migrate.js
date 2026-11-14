@@ -17,6 +17,10 @@ const { withStagingMedia } = require('../services/staging-media');
 // Read by seedStagingPlatformMail's at-the-ceiling fixture, so the number
 // of seeded sends tracks the rule instead of restating it.
 const mailRateLimit = require('../services/mail/rate-limit');
+// #6039: the standing-score arithmetic the staging reorder fixture writes
+// into its snapshot rows, so the fixture's numbers can never drift from the
+// rule the board actually ranks by.
+const { standingScore } = require('../services/topochain/standing-score');
 
 // What a staging fixture's password is hashed at. Each is a literal written
 // in this file, or random bytes nobody keeps, for an account that exists
@@ -412,6 +416,10 @@ async function migrate(config) {
   await seedStagingInviteChallengeStatuses(pool);
   // After it: the First challenges hang off its season-type event.
   await seedStagingFirstChallenges(pool);
+  // #6039: after it — it lifts two of that fixture's season-board players
+  // into the new ranking order, so the reorder is the first thing the
+  // DEFAULT standings board paints.
+  await seedStagingStandingOrder(pool);
   await seedStagingCountedCredit(pool, config);
   // Must run AFTER seedStagingTopochain (it decorates the same three viewer
   // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
@@ -19244,6 +19252,139 @@ async function seedStagingFirstChallenges(pool) {
   }
 }
 
+// The staging reorder fixture for the smarter Standings rank (#6039).
+//
+// Request #6039 changes the ordering the Standings board ranks by: points
+// first, then a small, capped lift for work the grader judged and for
+// scoring on more of the season's challenges. The board's whole point is
+// that the ORDER moves, and the fixture in seedStagingTopochain above
+// cannot show that: every seeded snapshot row takes the new columns'
+// default of 0, so every player's score is exactly their points and the
+// board paints in the old order.
+//
+// This function makes the reorder the first thing a preview paints, on the
+// DEFAULT board (the fixture season's season-type event, whose standings
+// are the WHOLE season's aggregate — computeStandings):
+//
+//   - player `eventA2` (participant-4) keeps a plain, block-produced
+//     record: nothing graded, one challenge scored on the event.
+//   - player `eventA1` (participant-3), 600 points BEHIND it on the season
+//     total, scored on more of the season event's challenges and had its
+//     work judged — so its score lifts past eventA2's and the two swap
+//     places. The two are the closest pair on the seeded board (3200 and
+//     3800 season points), and the caps are small on purpose, so this is
+//     the honest demonstration: a shorter, sharper record passing a longer,
+//     blunter one.
+//
+// (The spec named the pair as "eventA2, mixed", but mixed sits 900 season
+// points above eventA2 and no capped lift can close that; the two fixture
+// players 600 apart are what "two players with near-equal points" reaches
+// here. The graded rows go on the LOWER of the pair, as the spec says.)
+//
+// Two things are seeded, and nothing else:
+//   1. LEDGER rows on the season event's own challenges, so a drill-down
+//      on either row lists the graded work and shows the "Why:" line the
+//      grader writes (metadata.grade — score, reason, model: the shape
+//      src/services/topochain/challenge-grader.js writes, where the score
+//      IS the points paid). eventA1 gets three graded rows, one per
+//      challenge (900505-900507), so its distinct-challenge count is
+//      genuinely 3; eventA2 gets one plain completion, so its count is 1.
+//      Ids 900930-900933.
+//   2. The two players' season-event SNAPSHOT rows gain the #6039 columns
+//      (graded_points, distinct_challenges, standings_score), the stored
+//      inputs the season aggregate re-derives the factors from, so the
+//      board paints in the new order immediately. Those rows already exist
+//      (900607 eventA2, 900608 eventA1, written by seedStagingTopochain),
+//      so this is an UPDATE by id — the UNIQUE (season_event_id, user_id,
+//      snapshot_at) that makes the aggregate read "one latest row per
+//      player" leaves no room for a second INSERT at the same instant, and
+//      an UPDATE is idempotent on reboot anyway.
+//
+// DATA ONLY, NO SIGNAL (platform conventions): the ledger rows are the
+// visible state a drill-down reads, and the three columns are fixture
+// values on fixture rows, computed by the SAME service the board ranks
+// with — the fixtures decide what the preview LOOKS like, and the app's own
+// rule is what turns them into an order. The fixture people are never-login
+// accounts, like every staging demo person.
+//
+// Its own function and failure domain, so a clone missing the fixture event
+// or snapshot rows skips only this, and so its ids (900930-900933) stay
+// clear of the per-viewer window (900520-900579), the season snapshots
+// (900600-900611), the archive activities (900700-900704) and the
+// First-challenge / invite fixtures (900720-900730, 900900-900910).
+async function seedStagingStandingOrder(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    // The graded rows the lift is built on, one per season-event challenge,
+    // plus the plain completion that gives the other player a scored
+    // challenge of its own. `activity_type` comes from the challenge's own
+    // template category, as the scorer writes it; a graded row's points are
+    // the grader's score, which is why the two agree.
+    const grade = (score) => JSON.stringify({
+      fixture: 'standing-order',
+      grade: { score, reason: 'Says what broke, where, and what was expected. Easy to act on.', model: 'fixture' },
+    });
+    await pool.query(
+      `INSERT INTO user_activities
+         (id, user_id, season_event_id, activity_type, points, description,
+          metadata, activity_at, source, challenge_id, created_at, updated_at)
+       SELECT v.id, u.id, c.season_event_id, COALESCE(ct.category, 'activity'),
+              v.points, v.description, v.metadata::jsonb,
+              NOW() - make_interval(mins => v.mins_ago), 'api', c.id, NOW(), NOW()
+         FROM (VALUES
+           (900930, 'staging-demo-topochain-participant-3', 900505, 800,
+            '[staging fixture] Graded work on the bug challenge.', $1, 90),
+           (900931, 'staging-demo-topochain-participant-3', 900506, 800,
+            '[staging fixture] Graded work on the transaction challenge.', $1, 70),
+           (900932, 'staging-demo-topochain-participant-3', 900507, 800,
+            '[staging fixture] Graded work on the share challenge.', $1, 50),
+           (900933, 'staging-demo-topochain-participant-4', 900505, 0,
+            '[staging fixture] Completed a challenge.', $2, 40)
+         ) AS v(id, username, challenge_id, points, description, metadata, mins_ago)
+         JOIN users u ON u.username = v.username
+         JOIN challenges c ON c.id = v.challenge_id
+         LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
+       ON CONFLICT (id) DO NOTHING`,
+      [grade(800), JSON.stringify({ fixture: 'standing-order' })]
+    );
+
+    // The two players' season-event snapshot rows, carrying the #6039
+    // columns. The score is worked out by the SAME service the board (and
+    // the builder) use, so the fixture can never drift from the rule:
+    // eventA1 is graded and broad (score above its own points), eventA2 is
+    // neither (score above its points only by its single scored challenge).
+    // Each row's `total` is the snapshot's OWN total_points on this event
+    // (900607 is 2,500, 900608 is 2,400) — the value the builder scores a
+    // per-event snapshot from. The season board sums these with the pair's
+    // other events and re-derives the score from the sums (3,800/0/1 for
+    // participant-4 against 3,200/2,400/3 for participant-3), which is what
+    // swaps them.
+    const updates = [
+      // eventA2 — participant-4, the higher-points of the pair: nothing
+      // graded, one challenge scored.
+      { id: 900607, graded: 0, challenges: 1, total: 2500 },
+      // eventA1 — participant-3, the lower-points: every point it scored on
+      // the event was graded, across all three challenges.
+      { id: 900608, graded: 2400, challenges: 3, total: 2400 },
+    ];
+    for (const row of updates) {
+      await pool.query(
+        `UPDATE leaderboard_snapshots
+            SET graded_points = $2, distinct_challenges = $3, standings_score = $4,
+                updated_at = NOW()
+          WHERE id = $1`,
+        [row.id, row.graded, row.challenges, standingScore({
+          totalPoints: row.total, gradedPoints: row.graded, distinctChallenges: row.challenges,
+        })]
+      );
+    }
+
+    log.info('db', 'Staging standing-order fixture seeded');
+  } catch (err) {
+    log.warn('db', 'Staging standing-order fixture skipped', { message: err.message });
+  }
+}
+
 // A credit on a challenge's page that links to its change (#3247). No fresh
 // copy has a credit with a merge behind it for the shots' member, so this seeds
 // one: a weekly challenge nothing scores, a fake merged change on the self app,
@@ -20005,6 +20146,7 @@ module.exports = {
   markChangesWithoutWorkState,
   seedStagingTranslations,
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingCountedCredit,
+  seedStagingStandingOrder,
   seedStagingProfileCustomization,
   seedTermsVersions, TERMS_VERSIONS,
   seedStagingBotChatRequest,

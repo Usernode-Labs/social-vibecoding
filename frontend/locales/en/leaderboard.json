@@ -631,6 +631,10 @@
     "text": "Open Anonymous's details",
     "description": "Accessible name of a row in the Standings table: pressing it shows that participant's activities. \"Open\" is a verb. Used for a person with no display name, who is listed as \"Anonymous\"."
   },
+  "standings.orderNote": {
+    "text": "Place is worked out from points, plus a lift for work that was judged useful and for scoring on more of the season's challenges. Ties go to the better block success rate.",
+    "description": "Note under the Standings table: how a participant's place is worked out, and who wins a tie. \"Place\" is a position in the ranking; \"challenges\" are the season's tasks."
+  },
   "drill.activities": {
     "text": "Activities",
     "description": "Heading in a participant's details under the Standings table, over the list of things they earned points for."
