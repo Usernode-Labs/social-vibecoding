@@ -1729,6 +1729,17 @@ bot owes them there. One instance per person (`person:<userId>`).
   try waiting on the timer, each say so once (`dm.stopped`), and no `dm.sorry` follows. A
   Stop of some other message, or one heard more than five minutes after it was pressed
   (asked again after a rollout), stops nothing; nor does one that finds no answer under way.
+- **Saved drafts.** While the bot works on their message, words typed in the composer are
+  saved, not sent: Send's place is Stop and, beside it, "Save draft", and Enter saves too
+  (`features/messages/bot-stop.ts` is the rule; the agent chats' list,
+  `routes/agent-session-drafts.js`, is its model). Drafts are the person's own, text only,
+  twenty to a list (the chat's, and one for each thread), kept in `conversation_drafts`
+  (`staging:private`) through `GET/POST/DELETE /api/conversations/:id/bot-drafts`, which
+  answer only for their own chat with the bot; their other devices hear
+  `conversation_drafts_changed` and re-read. A draft is sent by a tap on its row once the
+  bot is free, never on its own, as an ordinary message. The machine knows nothing of
+  drafts: a message that does arrive while an answer is under way (another client, the
+  connector) still waits its turn as before.
 - **Taps and hellos.** A tap under one of the bot's offers, or Build it under a plan, is
   decided once here (`Tapped` → `dm.act`, claimed by its work item; an act that fails for
   good is settled as failed and said). A hello owed (joining a project by an invite, the

@@ -8,6 +8,7 @@ import { botTabAddress, botTabFromMessages, goBotAddress, knownBotConversation, 
 import { navStore } from '../nav/nav-store.js';
 import { messagesDrawerApplies } from '../nav-drawer/messages-drawer';
 import * as api from './api';
+import { botDraftsChanged, resyncBotDrafts } from './bot-drafts';
 import { WORK_CHANGED_EVENT, inMainStream, openAppTarget, threadsAllowed } from './bot-shared';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
 import { platformHubServed, platformSlug, subscribePlatformSlug } from './channel-hub';
@@ -3064,6 +3065,8 @@ function showing(): boolean {
 export async function resync(): Promise<void> {
   void flushQueued();
   void loadAppDiscussions();
+  // The saved drafts on screen in the chat with Homeroom bot (./bot-drafts.ts).
+  resyncBotDrafts();
   const reads = [loadConversations(true)];
   const conversationId = state.route.conversationId;
   if (conversationId && onScreen(conversationId)) {
@@ -3124,6 +3127,12 @@ export function handleEvent(raw: ConversationEvent): void {
       }
       break;
     }
+    case 'conversation_drafts_changed':
+      // Another tab or device of the viewer's saved, sent or deleted a draft
+      // in their chat with Homeroom bot: the list on screen there is read
+      // again (./bot-drafts.ts). The event carries no words.
+      botDraftsChanged(event);
+      break;
     case 'conversation_read':
       void loadConversations(true);
       // The reader's OWN other tabs, and only those: the event goes to every

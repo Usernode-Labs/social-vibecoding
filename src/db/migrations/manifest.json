@@ -360,6 +360,11 @@
       "id": "release-hold-notices",
       "sha256": "787953b2ba2b54988c0ef53422acf44366e98d0ebd8d4be7daf148f36e84dbc4",
       "schemaSha256": "025a3702a827c62429e965fa3c9c9b820fa0fa7203d45f672073a7141e7126c1"
+    },
+    {
+      "id": "conversation-drafts",
+      "sha256": "bfb84fc6fbcb0d1b28422dc23384f236e7d6c79c317403953e038dc4daa00178",
+      "schemaSha256": "53c9078889e9e621a67c6801e700e962d91f3d4c9e3ec1e8e5a8f2632a1e76f5"
     }
   ]
 }

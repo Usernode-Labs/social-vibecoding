@@ -7,11 +7,14 @@
 //   1. The rule, as its whole table: Stop only in the viewer's own chat with
 //      the bot, only while the bot is answering in the place on screen, only
 //      with nothing to send; "Stopping" once pressed, until the answer ends.
+//      With words typed while it works there, Send's place is "Save draft"
+//      beside Stop (saved drafts: tests/messages-bot-drafts.test.js).
 //   2. What the bot is answering comes from its typing event, and is kept on
 //      its entry among those typing.
 //   3. The composer draws it: the same disc as Send, a filled square, named
 //      for a screen reader, Send again in a first render and with a person.
-//   4. The keyboard never stops the bot: Enter only sends, Escape is as it was.
+//   4. The keyboard never stops the bot: Enter sends (or saves a draft while
+//      the bot works), Escape is as it was.
 //   5. Its press asks the server about that one message.
 //
 // The server's part is in tests/homeroom-bot-stop.test.js and
@@ -34,48 +37,66 @@ const rule = loadTsx('frontend/src/features/messages/bot-stop.ts');
 
 // ── 1. The rule ──────────────────────────────────────────────────────────
 
-test('Send, Stop or Stopping: the whole table', () => {
+test('Send, Save, Stop or Stopping: the whole table', () => {
   const A = 71; // the message the bot is answering in the place on screen
   const rows = [
-    // botChat, answering, empty, stopping → what the button is
+    // botChat, answering, words, empty, stopping → what takes Send's place
     // In the chat with Homeroom bot, the bot working, nothing to send: Stop.
-    [true, A, true, null, 'stop'],
+    [true, A, false, true, null, 'stop'],
     // Pressed, and on its way: Stopping.
-    [true, A, true, A, 'stopping'],
-    // With words, a file or an item in the box it is Send, as it always was,
-    // whether or not a Stop is on its way.
-    [true, A, false, null, 'send'],
-    [true, A, false, A, 'send'],
+    [true, A, false, true, A, 'stopping'],
+    // With words in the box it is "Save draft" (beside Stop): what is typed
+    // while the bot works is saved, not sent. Whether or not a Stop is on
+    // its way, and whatever else is staged with the words.
+    [true, A, true, false, null, 'save'],
+    [true, A, true, false, A, 'save'],
+    // A file or an item alone (no words) is not a draft: Send, as it was.
+    [true, A, false, false, null, 'send'],
+    [true, A, false, false, A, 'send'],
     // The bot is not working here (it never was, or the answer ended): Send.
-    [true, null, true, null, 'send'],
-    [true, null, false, null, 'send'],
+    [true, null, false, true, null, 'send'],
+    [true, null, true, false, null, 'send'],
+    [true, null, false, false, null, 'send'],
     // The Stop's answer ended, so its typing cleared: Send, not Stopping.
-    [true, null, true, A, 'send'],
-    [true, null, false, A, 'send'],
+    [true, null, false, true, A, 'send'],
+    [true, null, true, false, A, 'send'],
     // A Stop pressed for one answer does not hold the next one's button.
-    [true, 72, true, A, 'stop'],
-    [true, 72, false, A, 'send'],
+    [true, 72, false, true, A, 'stop'],
+    [true, 72, true, false, A, 'save'],
+    [true, 72, false, false, A, 'send'],
     // Any other conversation (a person, a group, a channel): always Send,
-    // whoever is typing there.
-    [false, A, true, null, 'send'],
-    [false, A, true, A, 'send'],
-    [false, A, false, null, 'send'],
-    [false, A, false, A, 'send'],
-    [false, null, true, null, 'send'],
-    [false, null, false, null, 'send'],
+    // whoever is typing there and whatever is in the box.
+    [false, A, false, true, null, 'send'],
+    [false, A, false, true, A, 'send'],
+    [false, A, true, false, null, 'send'],
+    [false, A, true, false, A, 'send'],
+    [false, A, false, false, null, 'send'],
+    [false, null, false, true, null, 'send'],
+    [false, null, true, false, null, 'send'],
   ];
-  for (const [botChat, answering, empty, stopping, want] of rows) {
-    assert.equal(rule.sendMode({ botChat, answering, empty, stopping }), want,
-      JSON.stringify({ botChat, answering, empty, stopping }));
+  for (const [botChat, answering, words, empty, stopping, want] of rows) {
+    assert.equal(rule.sendMode({ botChat, answering, words, empty, stopping }), want,
+      JSON.stringify({ botChat, answering, words, empty, stopping }));
   }
-  // Every combination of the four is one of the three, and Stop or Stopping
-  // only ever in the bot's chat, with the bot answering and an empty box.
-  for (const botChat of [true, false]) for (const answering of [null, A, 72]) for (const empty of [true, false]) for (const stopping of [null, A, 72]) {
-    const mode = rule.sendMode({ botChat, answering, empty, stopping });
-    assert.ok(['send', 'stop', 'stopping'].includes(mode));
-    if (mode !== 'send') assert.ok(botChat && answering && empty);
+  // Every combination of the five is one of the four. Anything but Send only
+  // ever in the bot's chat with the bot answering; Stop or Stopping only
+  // with an empty box; Save only with words.
+  for (const botChat of [true, false]) for (const answering of [null, A, 72]) for (const words of [true, false]) for (const empty of [true, false]) for (const stopping of [null, A, 72]) {
+    if (words && empty) continue; // words in the box are something to send
+    const mode = rule.sendMode({ botChat, answering, words, empty, stopping });
+    assert.ok(['send', 'save', 'stop', 'stopping'].includes(mode));
+    if (mode !== 'send') assert.ok(botChat && answering);
+    if (mode === 'stop' || mode === 'stopping') assert.ok(empty && !words);
+    if (mode === 'save') assert.ok(words);
+    if (botChat && answering && words) assert.equal(mode, 'save');
     if (mode === 'stopping') assert.equal(stopping, answering);
   }
+  // The Stop button itself, alone or beside "Save draft": pressable, or on
+  // its way for the answer it was pressed for.
+  assert.equal(rule.stopMode({ answering: A, stopping: null }), 'stop');
+  assert.equal(rule.stopMode({ answering: A, stopping: A }), 'stopping');
+  assert.equal(rule.stopMode({ answering: 72, stopping: A }), 'stop');
+  assert.equal(rule.stopMode({ answering: null, stopping: null }), 'stop');
   assert.equal(rule.STOPPING_MAX_MS, 15000, '"Stopping" gives way to Send after 15 seconds at the latest');
 });
 
@@ -174,12 +195,15 @@ test('a first render, a bot that is not working and any other conversation draw 
 
 test('the composer decides with the rule, from what is in the box, and "Stopping" ends with the answer or after its cap', () => {
   assert.match(COMPOSER, /const answering = conversationId \? answeringIn\(typingUsers\(conversationId, threadRootId\)\) : null;/);
-  assert.match(COMPOSER, /const sendKind = sendMode\(\{\n\s+botChat: active\?\.homeroomBot === true,\n\s+answering,\n\s+empty: !value\.trim\(\) && !attachments\.length && !object && !uploading && !dictating,\n\s+stopping: stoppingFor,\n\s+\}\);/,
-    'words, a file (attached or on its way up), an item or dictation keep it Send');
+  // The viewer's own chat with the bot, and the one the route is on.
+  assert.match(COMPOSER, /const botChat = active\?\.homeroomBot === true && active\.id === conversationId;/);
+  assert.match(COMPOSER, /const sendKind = sendMode\(\{\n\s+botChat,\n\s+answering,\n\s+words: !!value\.trim\(\),\n\s+empty: !value\.trim\(\) && !attachments\.length && !object && !uploading && !dictating,\n\s+stopping: stoppingFor,\n\s+\}\);/,
+    'words make it Save; a file (attached or on its way up), an item or dictation alone keep it Send');
+  assert.match(COMPOSER, /const stopKind = stopMode\(\{ answering, stopping: stoppingFor \}\);/);
   // The answer ended, or another began: no longer "Stopping". Else the cap.
   assert.match(COMPOSER, /if \(stoppingFor !== answering\) \{ setStoppingFor\(null\); return undefined; \}\n\s+const timer = window\.setTimeout\(\(\) => setStoppingFor\(null\), STOPPING_MAX_MS\);\n\s+return \(\) => window\.clearTimeout\(timer\);/);
   // The disabled state is "Stopping", by name.
-  assert.match(COMPOSER, /disabled=\{sendKind === 'stopping'\} className="messages-send messages-send-stop" data-bot-stop=\{sendKind\} aria-label=\{t\(sendKind === 'stopping' \? 'messages:composer\.stopping' : 'messages:composer\.stop'\)\}/);
+  assert.match(COMPOSER, /disabled=\{stopKind === 'stopping'\} className="messages-send messages-send-stop" data-bot-stop=\{stopKind\} aria-label=\{t\(stopKind === 'stopping' \? 'messages:composer\.stopping' : 'messages:composer\.stop'\)\}/);
   // The same disc as Send, so it keeps Send's size and its 44px target; an
   // empty field fades Send, never a Stop that can be pressed.
   assert.match(CSS, /\n\.messages-composer-card:not\(\[data-gc-files\]\):has\(textarea:placeholder-shown\) \.messages-send\.messages-send-stop:not\(:disabled\) \{ opacity: 1; \}\n/);
@@ -189,16 +213,19 @@ test('the composer decides with the rule, from what is in the box, and "Stopping
 
 // ── 4. The keyboard ──────────────────────────────────────────────────────
 
-test('only a press of the button stops the bot: Enter sends, an empty box sends nothing, Escape is as it was', () => {
+test('only a press of the button stops the bot: Enter sends or saves, an empty box sends nothing, Escape is as it was', () => {
   // The one caller of stopBot is the Stop button's click.
   assert.equal((COMPOSER.match(/stopBot\b/g) || []).length, 2, 'declared, and pressed');
-  assert.match(COMPOSER, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\} onClick=\{stopBot\} disabled=\{sendKind === 'stopping'\}/,
+  assert.match(COMPOSER, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\} onClick=\{stopBot\} disabled=\{stopKind === 'stopping'\}/,
     'and the press keeps the field focused, as Send\'s does');
-  // The field's keys: Enter is submit, which returns at once on an empty box.
+  // The field's keys: Enter is submit, which returns at once on an empty
+  // box, and with words while the bot works saves them as a draft.
   const field = /<textarea ref=\{inputRef\}[^\n]*/.exec(COMPOSER)[0];
   assert.match(field, /if \(enterSends\(event\.nativeEvent\)\) \{ event\.preventDefault\(\); submit\(\); \} else if \(event\.key === 'Escape' && reply\) setReply\(scope, null\);/);
   assert.doesNotMatch(field, /stop/i);
-  assert.match(COMPOSER, /function submit\(\) \{\n\s+if \(dictating \|\| uploading \|\| \(!value\.trim\(\) && !attachments\.length && !object\)\) return;/);
+  assert.match(COMPOSER, /function submit\(\) \{\n\s+if \(dictating \|\| uploading \|\| \(!value\.trim\(\) && !attachments\.length && !object\)\) return;\n[^\n]*\n[^\n]*\n\s+if \(sendKind === 'save'\) \{ saveTyped\(\); return; \}/);
+  const submit = COMPOSER.slice(COMPOSER.indexOf('function submit() {'), COMPOSER.indexOf('\n  }\n', COMPOSER.indexOf('function submit() {')));
+  assert.doesNotMatch(submit, /stopBot/, 'no key reaches Stop');
   // Send is the button it was (the suites that pin it read the first one).
   assert.match(COMPOSER, /<button type="button" onMouseDown=\{\(event\) => event\.preventDefault\(\)\} onClick=\{submit\} disabled=\{dictating \|\| !!uploading \|\| \(!value\.trim\(\) && !attachments\.length && !object\)\} className="messages-send" aria-label=\{t\('messages:composer\.send'\)\}/);
 });
