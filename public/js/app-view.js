@@ -16200,10 +16200,21 @@ const AppView = {
     }
     if (f.needsVote) {
       if (kind === 'proposal') {
-        // Same condition as the card's pulsing "Vote" badge (isUnvoted). A
-        // project's first version needs nobody's vote (D1).
+        // The card's pulsing "Vote" badge's condition (isUnvoted), narrowed.
+        // A project's first version needs nobody's vote (D1).
         // #6594: its votes are in, so it asks nobody for one.
-        if (!(it.status === 'promoted' && !it.my_vote && it.first_version !== true && it.votes_in !== true)) return false;
+        // And only once its vote is open (`vote_open`, the stored work
+        // state's answer on the /promoted row, routes/votes.js): the rule
+        // the Needs you page lists by (GET /api/workshop/needs-feed,
+        // VOTE_OPEN_SQL). A change still being checked, or whose shots are
+        // still being taken, was counted here as waiting on your vote while
+        // the page said nothing was. It stays on the board with its own
+        // status and its card's own Vote pill (statusPillState is not asked
+        // this), and its own page still takes an early vote. A row without
+        // the field (an older saved copy, a demo row) reads as open, so a
+        // vote is never hidden for want of it.
+        if (!(it.status === 'promoted' && !it.my_vote && it.first_version !== true && it.votes_in !== true
+          && it.vote_open !== false)) return false;
       } else if (kind === 'gov') {
         if (it.my_vote) return false;
       } else {

@@ -4261,6 +4261,11 @@ function voteRoutes(config) {
       // (services/merge-requirements.js FORCE_SQL), so the card can say it is
       // queued, which step it waits on, and that it skips the vote.
       const { FORCE_SQL: forceSql, FORCE_DROPPED_SQL: forceDroppedSql } = require('../services/merge-requirements');
+      // Whether a change is open for votes now: the Needs you feed's own
+      // fragment (work_states.vote_open), so the project's count of votes
+      // owed, worked out from these rows, and its Needs you page, which
+      // reads the feed, ask for a vote at the same moment.
+      const voteOpenSql = require('./workshop-overview').VOTE_OPEN_SQL;
       // Include 'merging' alongside 'promoted' so the PR stays visible
       // during the GitHub merge + prod rebuild + staging teardown
       // pipeline (~30s). Otherwise the card disappears the instant the
@@ -4386,6 +4391,13 @@ function voteRoutes(config) {
            (SELECT pv.vote FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.user_id = $2
                AND ${currentVotePredicateSql('pv', 'cs')}) as my_vote,
+           -- Open for votes now (its checks passed on its head, it merges
+           -- cleanly, its before & after shots are taken, no update on its
+           -- way): the stored work state's answer, which the Needs you feed
+           -- lists by. The card still shows the change and its real status
+           -- while this is false; only "this waits on your vote" reads it
+           -- (AppView._devCardMatches, needsVote).
+           ${voteOpenSql('cs')} AS vote_open,
            -- #6282: an update on its way. The Votes card says so and holds
            -- its Vote button until it lands (AppView._changeVotesView).
            ${updateComingSql('cs')} AS update_coming,
