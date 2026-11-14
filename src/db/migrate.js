@@ -98,6 +98,9 @@ async function migrate(config) {
   // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
   // a slot, handed back, never read, an operator task), for its shots.
   await seedStagingBotWaitingRows(pool);
+  // #6667: a request whose bot-built change was handed back to its asker, so
+  // the Homeroom bot tab's Needs you row has a state to show.
+  await seedStagingBotHandedBackFix(pool);
   // #6533: a change's thread whose bot reply already holds its email pictures.
   await seedStagingChangePictures(pool);  // #6420's shots: a change on one request's page that names another request
   // as one it closes, so that request's page shows "Change #N says it closes
@@ -305,6 +308,7 @@ async function migrate(config) {
   await seedStagingAppSortSignals(pool);
   // Must run AFTER seedStagingYourApps — it features that fixture's apps.
   await seedStagingFeaturedApps(pool);
+  await seedStagingFeaturedKinds(pool);
   await seedStagingAppQuotaUsers(pool);
   // Must run AFTER seedStagingYourApps (it references those demo apps) and
   // AFTER seedStagingAppQuotaUsers (it seeds the zero-quota fixture's grid).
@@ -341,6 +345,10 @@ async function migrate(config) {
   // such row for the shots' member fixture, so one is seeded, with the news
   // that the same change went live beside it (that row stays after).
   await seedStagingMergedVoteRow(pool, config);
+  // After it: a private thread about that live change, for the shots'
+  // member fixture. Since a thread about a change is finished with its
+  // change, History has it ("Live") and Needs you does not.
+  await seedStagingLiveChangePrivateThread(pool);
   // #6124's before/after shots follow a change renamed before it had a pull
   // request: the correction is in proposed_pr_title and the session still
   // carries the old name. A fresh clone has no such row for the shots'
@@ -2251,6 +2259,71 @@ async function seedStagingChangeClaim(pool) {
   }
 }
 
+// #6667: the Homeroom bot tab moves a request to Needs you once the bot
+// hands its failing change back to the person who asked for it. A fresh
+// staging copy has no such change (nothing there runs a model), so the before
+// & after shots get one: an obviously fake request on the self-hosted
+// Homeroom project, filed by the shots' member fixture (usernode-capture),
+// with a promoted bot change whose checks failed and a run that gave it to a
+// person. Nothing here is a signal the code reads to decide anything, and a
+// staging copy never acts on its queue. Idempotent by request number and
+// branch; strictly a no-op outside staging.
+async function seedStagingBotHandedBackFix(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query(
+      "SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')",
+    );
+    const appId = apps.rows[0]?.id;
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    if (!appId || !member || !bot) return;
+    const number = 9109;
+    const head = 'stagingdemo6667';
+    const branch = 'staging-fixture/bot-handed-back-6667';
+    const title = 'Staging demo: a change Homeroom bot handed back';
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, $3, 'Staging demo: obviously fake. Homeroom bot built a change for this request, its checks failed, and it handed the fix back to a person.', $4, NOW() - INTERVAL '3 hours', NOW() - INTERVAL '1 hour'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [appId, number, title, member.id],
+    );
+    // The asker, so the tab knows this request is theirs.
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+       VALUES ($1, $2, $3, $4) ON CONFLICT (app_id, issue_number) DO NOTHING`,
+      [appId, number, member.id, title],
+    );
+    // The bot's change: promoted, its checks failing on the head it reviewed.
+    let change = (await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch],
+    )).rows[0];
+    if (!change) {
+      change = (await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_title, status, linked_issues, check_state,
+            reviewed_head_sha, promoted_at, last_activity_at, created_at)
+         VALUES ($1, $2, $3, $4, $5, 'promoted', ARRAY[$4]::int[], 'failing', $6,
+                 NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 hour', NOW() - INTERVAL '3 hours')
+         RETURNING id`,
+        [appId, bot.id, branch, number, title, head],
+      )).rows[0];
+    }
+    // The run that tried and gave up: the change's page and the tab read it.
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id, checks_head_sha, created_at)
+       SELECT $1, $2, 'live', 'person', $3, $4, NOW() - INTERVAL '1 hour'
+        WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs
+                           WHERE proposal_session_id = $3 AND LOWER(checks_head_sha) = $4 AND verdict = 'person')`,
+      [appId, number, change.id, head],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging bot handed-back fix seeding failed', { message: err.message });
+  }
+}
+
 // #6533: the before & after shots show a change's thread whose Homeroom bot
 // reply already carries its email pictures. A fresh staging copy has no model
 // to answer in a change's thread, so the two pictures (the same admit email,
@@ -2703,6 +2776,88 @@ async function seedStagingClosedPrivateThread(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging closed private thread seeding failed', { message: err.message });
+  }
+}
+
+// 13 Nov 2026: a private thread about a change is finished with its change
+// (services/ai-work.js ABOUT_CHANGE_END_SQL): once the change is live or
+// closed the thread leaves Needs you and History lists it. A fresh staging
+// copy has no private thread about a change, so this seeds one for the
+// shots' member fixture (usernode-capture), about the fake change
+// seedStagingMergedVoteRow has already put live, opened and written in the
+// day before it went live. Staging has no model, so the bot's lines are
+// stored. Nothing here is a signal the bot reads to decide anything.
+// Idempotent through the root message's key and the private thread's unique
+// root; strictly a no-op outside staging.
+async function seedStagingLiveChangePrivateThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const changes = await pool.query(
+      `SELECT cs.app_id, cs.pr_number, cs.thread_id, cs.live_at, a.slug, a.name,
+              COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, '')) AS title
+         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+        WHERE cs.branch_name = 'staging-fixture/merged-vote-row' AND cs.status = 'merged'
+          AND cs.live_at IS NOT NULL AND cs.pr_number IS NOT NULL
+        ORDER BY cs.id DESC LIMIT 1`,
+    );
+    const change = changes.rows[0];
+    const people = await pool.query(
+      `SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')`,
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    if (!change || !member || !bot || member.id === bot.id) return;
+    const low = Math.min(member.id, bot.id);
+    const high = Math.max(member.id, bot.id);
+    const found = await pool.query(
+      'SELECT conversation_id FROM conversation_direct_pairs WHERE user_low_id = $1 AND user_high_id = $2',
+      [low, high],
+    );
+    const conversationId = found.rows[0]?.conversation_id;
+    // The seeds above made their chat; without it there is nothing to hang a thread on.
+    if (!conversationId) return;
+    const key = 'staging-demo-live-change-private-thread';
+    const had = await pool.query(
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3',
+      [conversationId, bot.id, key],
+    );
+    let rootId = had.rows[0]?.id;
+    if (!rootId) {
+      // The bot's line in Main the thread hangs off, as startAbout writes it
+      // (services/private-threads.js aboutLine and its metadata).
+      const root = await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata, idempotency_key, created_at)
+         VALUES ($1, $2, $3, $4::jsonb, $5, $6::timestamptz - INTERVAL '1 day')
+         RETURNING id`,
+        [
+          conversationId, bot.id,
+          `New thread about change #${Number(change.pr_number)} ${change.title || 'Staging demo change'}. Only you can see it.`,
+          JSON.stringify({ homeroomBot: {
+            kind: 'opened_about', appSlug: change.slug, appName: change.name || change.slug,
+            aboutKind: 'change', aboutNumber: Number(change.pr_number),
+            ...(change.title ? { aboutTitle: change.title } : {}),
+          } }),
+          key, change.live_at,
+        ],
+      );
+      rootId = root.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, 'Staging demo: does this list keep the books I finished?', $4, $5::timestamptz - INTERVAL '1 day' + INTERVAL '1 minute'),
+                ($1, $3, 'Staging demo: yes, finished books stay on the list, at the end.', $4, $5::timestamptz - INTERVAL '1 day' + INTERVAL '2 minutes')`,
+        [conversationId, member.id, bot.id, rootId, change.live_at],
+      );
+    }
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state,
+                                    about_thread_id, about_kind, about_number, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'ask', 'open', $5, 'change', $6,
+               $7::timestamptz - INTERVAL '1 day', $7::timestamptz - INTERVAL '1 day')
+       ON CONFLICT (root_message_id) DO NOTHING`,
+      [member.id, conversationId, rootId, change.app_id, change.thread_id, change.pr_number, change.live_at],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging live change private thread seeding failed', { message: err.message });
   }
 }
 
@@ -11313,6 +11468,32 @@ async function seedStagingFeaturedApps(pool) {
   }
 }
 
+// #6660: Home's Featured heading names the chosen kind ("Featured in Games")
+// once one is picked, and the sort beside More communities needs two cards to
+// order, so the after copy needs featured games and more than one game. The
+// featured fixtures above carry no category, and a fresh staging copy has no
+// app_inferred_categories rows either. Two of them are games here, and so is
+// the unfeatured chess fixture, which leaves something under More
+// communities: display data on fake apps only, and only where no category is
+// set, so a real one is never overwritten. Idempotent on every boot; strictly
+// a no-op outside staging.
+async function seedStagingFeaturedKinds(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `UPDATE apps AS a
+          SET manifest_snapshot = COALESCE(a.manifest_snapshot, '{"secrets": []}'::jsonb)
+                || '{"category": "games"}'::jsonb
+        WHERE a.slug IN ('staging-demo-puzzle-chain', 'staging-demo-word-garden',
+                         'staging-demo-chess-arena')
+          AND NOT (COALESCE(a.manifest_snapshot, '{}'::jsonb) ? 'category')`
+    );
+    log.info('db', 'Staging featured-app kinds seeded');
+  } catch (err) {
+    log.warn('db', 'Staging featured-app kinds seeding failed', { message: err.message });
+  }
+}
+
 // Per-user app-quota fixtures. The admin Users list is a data-dependent
 // rows UI, so staging needs users spanning the quota states to exercise
 // the inline quota edit, the "N used" indicator, and the bulk "Set all"
@@ -19845,6 +20026,8 @@ module.exports = {
   seedStagingFoldedLiveNotifications,
   seedStagingDesignThread,
   seedStagingCapturedPageThread,
+  // The private thread about a change that is live, which History lists.
+  seedStagingLiveChangePrivateThread,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   followPlatformDefaultModel,

@@ -150,3 +150,23 @@ test('no user-visible copy still spells the reset in UTC alone', () => {
   assert.match(read('frontend/src/features/settings/sections/usage.tsx'), /id="settings-spend-reset"/,
     'the spend card names its reset line so Settings can localize it');
 });
+
+test('#6479: the reset moment is read in the zone picked in Settings › Language', () => {
+  const zone = loadTsx('frontend/src/lib/time-zone.ts', { cache: false });
+  const rt = loadTsx('frontend/src/lib/reset-time.ts', { cache: false, stubs: { './time-zone': zone } });
+  // Monday 00:00 UTC is Monday 9:00 AM in Tokyo, whatever the device's zone.
+  const at = '2026-10-05T00:00:00Z';
+  try {
+    zone.setTimeZone('Asia/Tokyo');
+    const tokyo = rt.resetMoment('weekly', { at, locale: 'en-US' });
+    assert.equal(tokyo.day, 'Monday');
+    assert.equal(tokyo.time, '9:00 AM');
+    zone.setTimeZone('America/New_York');
+    assert.deepEqual({ ...rt.resetMoment('weekly', { at, locale: 'en-US' }) }, { day: 'Sunday', time: '8:00 PM' });
+    zone.setTimeZone(null);
+    assert.deepEqual({ ...rt.resetMoment('weekly', { at, locale: 'en-US' }) }, { ...RT.resetMoment('weekly', { at, locale: 'en-US' }) },
+      'Auto is the device, as before');
+  } finally {
+    zone.setTimeZone(null);
+  }
+});

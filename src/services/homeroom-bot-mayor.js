@@ -634,6 +634,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  request, from the "id ..." in a picture\'s history line. Give context.request whenever they name a request',
     '  number, and ask which project when a bare number is ambiguous; put what they saw in context.saw. Propose one',
     '  to three doneWhen checks in their words, of what is true when it is done. They see all of it on the draft.',
+    '- Write every draft as a request in its own right, for somebody who has not seen this chat: what is',
+    '  asked, why it matters, how it fits what the project already does, and what is still undecided. When they',
+    '  rework an idea, offer the whole request again as it now stands. Never refer back to, contrast with, or say',
+    '  it replaces or revises an earlier draft: nobody else ever saw it.',
     '- A request on one of their projects that is about Homeroom itself (its header, its request form, a project\'s',
     '  description or invite message, how votes or notifications work), not the project\'s code, belongs on Homeroom\'s',
     '  own board: request_detail says aboutHomeroom when you left it for that reason. When they filed it or asked for',
@@ -877,7 +881,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'offer_request',
-      description: 'Offer to file a NEW request on one of their projects. They see the request under your reply with File it and Not now; nothing is filed unless they tap File it. Up to three offers under one reply; to file the same request on several projects, pass them all in projects: one card files them all.',
+      description: 'Offer to file a NEW request on one of their projects. They see the request under your reply with File it and Not now; nothing is filed unless they tap File it. Up to three offers under one reply; to file the same request on several projects, pass them all in projects: one card files them all. Each offer is a whole request on its own: an earlier offer they did not file was never seen by anyone else.',
       parameters: {
         type: 'object',
         properties: {
@@ -897,7 +901,7 @@ const TOOLS = [
           },
           named: { type: 'string', description: 'The project\'s name exactly as they wrote it, when they named one. A name that is not exactly the project\'s is asked about on the card ("Did you mean ...?").' },
           title: { type: 'string', description: 'A short title for the request, in their words.' },
-          details: { type: 'string', description: 'What they asked for, in their words, with anything they said that matters.' },
+          details: { type: 'string', description: 'The request on its own, for somebody who never saw this chat: what is asked and why it matters, in their words where they gave them, how it fits what the project already does, and what is still undecided. Never refer to, compare with, or say it replaces or revises an earlier draft.' },
           attachmentIds: {
             type: 'array', maxItems: 3,
             items: { type: 'string' },
@@ -937,7 +941,7 @@ const TOOLS = [
           doneWhen: {
             type: 'array', minItems: 1, maxItems: 3,
             items: { type: 'string' },
-            description: 'One to three short checks, in their words, of what is true when it is done.',
+            description: 'One to three short checks, in their words, of what is true when it is done. Each one reads on its own, never against an earlier draft.',
           },
         },
         required: ['title', 'details', 'doneWhen'],
@@ -2371,6 +2375,43 @@ function imagePart(picture) {
 }
 
 /**
+ * Pure: which of the attached `files` ({ id, message_id, kind }) a turn sends
+ * as pictures. Only for a model that can look (`imageInput`): the images on
+ * the newest IMAGE_REPLAY_MESSAGES of `theirs` (people's message ids, oldest
+ * first) and on `always` (the messages a turn answers, when they are not the
+ * newest: a project's thread), those first, then newest message first, as
+ * many as `takeImages` (the turn's allowance, mcp-shim.js) still allows. The
+ * one rule for the bot's own chat (historyMessages) and for the threads it
+ * answers in on a project (homeroom-bot-voice.js).
+ */
+function picturesToSend(files, { theirs = [], always = [], imageInput = false, takeImages = null } = {}) {
+  if (!imageInput) return [];
+  const first = new Set(always.map(Number));
+  const recent = new Set(theirs.slice(-IMAGE_REPLAY_MESSAGES).map(Number));
+  const rank = (f) => (first.has(Number(f.message_id)) ? 1 : 0);
+  const wanted = files
+    .filter((f) => f.kind === 'image' && (first.has(Number(f.message_id)) || recent.has(Number(f.message_id))))
+    .sort((a, b) => rank(b) - rank(a) || Number(b.message_id) - Number(a.message_id));
+  return takeImages ? takeImages({ images: wanted }).images : wanted;
+}
+
+/**
+ * Pure: one attached file as the model reads it under its message. `picture`
+ * is its bytes when they are sent with it. #6251: in the bot's own chat the
+ * id is on the line, so offer_request can name the pictures that belong with
+ * the request it drafts; a project's thread has no tool that takes one
+ * (`withId: false`).
+ */
+function attachedLine(f, { picture = null, imageInput = false, withId = true } = {}) {
+  const named = `${clip(f.filename, 120)}${withId ? ` (id ${f.id})` : ''}`;
+  if (picture) return `[Homeroom: they attached the picture ${named}, shown below.]`;
+  if (f.kind !== 'image') return `[Homeroom: they attached the file ${named}, which you cannot open.]`;
+  return imageInput
+    ? `[Homeroom: they attached the picture ${named}. Only the newest pictures are shown.]`
+    : `[Homeroom: they attached the picture ${named}, which you cannot see: your model reads text only.]`;
+}
+
+/**
  * The last messages of the DM, oldest first, as the model reads them.
  *
  * What the person attached is named on their message. For a model that can
@@ -2426,12 +2467,7 @@ async function historyMessages(pool, {
     : { rows: [] };
   // Which pictures are sent, newest messages first so the allowance goes to
   // what they just said, then read in one query.
-  const recent = new Set(theirs.slice(-IMAGE_REPLAY_MESSAGES));
-  const wanted = imageInput
-    ? files.filter((f) => f.kind === 'image' && recent.has(Number(f.message_id)))
-      .sort((a, b) => Number(b.message_id) - Number(a.message_id))
-    : [];
-  const kept = takeImages ? takeImages({ images: wanted }).images : wanted;
+  const kept = picturesToSend(files, { theirs, imageInput, takeImages });
   // WP1 (#10): what each of the bot's activity cards shows now, by message.
   // Its words say only that work began; the card itself follows it, and the
   // model never saw it ("Nothing broke" beside a card that read "Didn't
@@ -2479,16 +2515,8 @@ async function historyMessages(pool, {
     const parts = [];
     const lines = attached.map((f) => {
       const picture = shown.get(f.id);
-      // #6251: the id is on the line, so offer_request can name the ones
-      // that belong with the request it drafts.
-      if (picture) {
-        parts.push(imagePart(picture));
-        return `[Homeroom: they attached the picture ${clip(f.filename, 120)} (id ${f.id}), shown below.]`;
-      }
-      if (f.kind !== 'image') return `[Homeroom: they attached the file ${clip(f.filename, 120)} (id ${f.id}), which you cannot open.]`;
-      return imageInput
-        ? `[Homeroom: they attached the picture ${clip(f.filename, 120)} (id ${f.id}). Only the newest pictures are shown.]`
-        : `[Homeroom: they attached the picture ${clip(f.filename, 120)} (id ${f.id}), which you cannot see: your model reads text only.]`;
+      if (picture) parts.push(imagePart(picture));
+      return attachedLine(f, { picture, imageInput });
     });
     const card = fromBot && kind === 'activity' ? cardNow.get(Number(m.id)) : null;
     if (card) lines.push(`[Homeroom: this activity card now reads "${card}".]`);
@@ -6934,6 +6962,10 @@ module.exports = {
   changeRefs,
   listChangeFiles,
   historyMessages,
+  // A project's threads send people's pictures by the same rule (homeroom-bot-voice.js).
+  imagePart,
+  picturesToSend,
+  attachedLine,
   picturesMessage,
   withoutPictures,
   modelSeesImages,

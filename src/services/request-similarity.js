@@ -81,3 +81,48 @@ module.exports = {
   openSimilar,
   titleWords,
 };
+
+/** The closest other open request, using the same title rule as the bot. */
+function closestTwins(issues, { together = () => false } = {}) {
+  const rows = (Array.isArray(issues) ? issues : []).filter((i) => i && i.state !== 'closed' && !i.title_fallback
+    && Number.isSafeInteger(Number(i.number)) && Number(i.number) > 0)
+    .map((i) => ({ ...i, number: Number(i.number), words: titleWords(i.title) }));
+  const scored = new Map();
+  for (let i = 0; i < rows.length; i += 1) for (let j = i + 1; j < rows.length; j += 1) {
+    const a = rows[i]; const b = rows[j];
+    if (a.number === b.number || together(a, b) || Math.min(a.words.size, b.words.size) < MIN_SHARED) continue;
+    let shared = 0;
+    for (const word of a.words) if (b.words.has(word)) shared += 1;
+    const overlap = shared / Math.min(a.words.size, b.words.size);
+    if (shared < MIN_SHARED || overlap < MIN_OVERLAP) continue;
+    for (const [mine, other] of [[a, b], [b, a]]) {
+      const old = scored.get(mine.number);
+      if (!old || overlap > old.overlap || (overlap === old.overlap && (shared > old.shared
+        || (shared === old.shared && other.number > old.number)))) {
+        scored.set(mine.number, { number: other.number, title: String(other.title || '').trim(), shared, overlap });
+      }
+    }
+  }
+  return new Map([...scored].map(([number, { number: twin, title }]) => [number, { number: twin, title }]));
+}
+
+/** Optional decoration, never a reason to lose the board if its read fails. */
+async function boardTwins(pool, appId, issues, fallbackTitle) {
+  let stored = [];
+  try {
+    stored = (await pool.query(
+      "SELECT number, title, thread_id FROM requests WHERE app_id = $1 AND state = 'open' AND title <> $2",
+      [appId, fallbackTitle])).rows;
+  } catch { /* the existing board still answers without hints */ }
+  const threads = new Map(stored.map((i) => [Number(i.number), i.thread_id]));
+  const byNumber = new Map(stored.map((i) => [Number(i.number), i]));
+  for (const issue of issues) byNumber.set(Number(issue.number), { ...issue,
+    title_fallback: issue.title_fallback || issue.title === fallbackTitle });
+  return closestTwins([...byNumber.values()], { together: (a, b) => {
+    const thread = threads.get(a.number);
+    return thread != null && thread === threads.get(b.number);
+  } });
+}
+
+module.exports.closestTwins = closestTwins;
+module.exports.boardTwins = boardTwins;

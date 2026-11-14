@@ -282,7 +282,7 @@ test('B4: what one first version rings for its maker, against the full PostgreSQ
   const fv = { appSlug: plantPal.slug, appName: plantPal.name, issueNumber: 1, firstVersion: true };
   const said = [
     ['first_version_started', 'Thanks! I\'m setting up Plant Pal now.'],
-    ['activity', 'Waiting for a free builder.'],
+    ['activity', 'I\'ll start on this by myself as soon as I have a free slot.'],
     ['question', 'I have a question before I build the first version.'],
     ['activity', 'I\'m working on the first version now.'],
     ['spec', 'I\'m building the first version now.'],

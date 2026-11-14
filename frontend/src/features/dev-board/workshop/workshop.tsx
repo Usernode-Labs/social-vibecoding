@@ -98,7 +98,7 @@ import { communityScopeStore, describe as describeCommunity, openSwitcher } from
 import { registerLevel } from '../../workshop/tab-ladder';
 import { firstUnseenIndex, markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import {
-  ApprovalLine, CommunityCard, HubCardClose, ShareItCard, approvalStep, canLeave,
+  ApprovalLine, CommunityCard, HubCardClose, InviteHeroCard, ShareItCard, approvalStep, canLeave,
   communityPending, leaveCommunity, openInviteLinks, reloadCommunity, ruleHasWait, useCommunity,
 } from './community-card';
 import {
@@ -4142,6 +4142,8 @@ export function DevWorkshop(): ReactNode {
           iconUrl={own ? app.iconUrl : null}
           iconEmoji={own ? app.iconEmoji : null}
           canOpenApp={!actions.selfHosted}
+          // Invite is the card after this hero (InviteHeroCard).
+          inviteCard
           // #3700: Join through the invite link this page was opened from
           // opens Needs you at its first card when votes are already
           // waiting on the new member, and otherwise stays on this hub.
@@ -4207,6 +4209,9 @@ export function DevWorkshop(): ReactNode {
           )}
         />
       ) : null}
+      {/* INVITE, AS A CARD (request 6654): beside the hero on a wide window,
+          under it on a phone. See ./community-card.tsx InviteHeroCard. */}
+      {slug ? <InviteHeroCard data={community} /> : null}
       {/* ── First version: where Homeroom bot's build stands ──
           Under the hero while the bot builds the project from its
           description, so a new project's hub says what it is becoming and
@@ -4276,11 +4281,12 @@ export function DevWorkshop(): ReactNode {
           onDiscussion={() => openTab('discussion')}
         />
       ) : null}
-      {/* TOPICS, on a phone (3 Nov 2026): the Hub is the way to every place
-          now that no drawer lists them beside the page, so each live topic's
-          channel has a row here. A wide window lists them in its sidebar.
-          See ./hub-cards.tsx TopicsCard. */}
-      {slug && drawerOn ? <TopicsCard data={community} onOpen={(key) => openTab(key)} /> : null}
+      {/* TOPICS, at every width (request 6654): each live topic's channel has
+          a row here. It was the phone's alone (3 Nov 2026), a wide window
+          listing them in its sidebar only; now a wide window draws For you
+          and Topics side by side (app.css, "THE HUB IN TWO COLUMNS"). See
+          ./hub-cards.tsx TopicsCard. */}
+      {slug ? <TopicsCard data={community} onOpen={(key) => openTab(key)} /> : null}
       {/* FROM ITS VERSIONS, on an original (docs/plans/versions.md): what
           its versions sent it, what went live in them lately, and how its
           last update went down. Nothing on a project nobody has made a
@@ -4496,7 +4502,10 @@ export function DevWorkshop(): ReactNode {
         // A project's Needs you drawn by the review flow, the same one the
         // Communities tab draws. ../../review-flow/. Its back, "‹ <community>",
         // leaves the run for the community's hub, never an earlier change.
-        <ProjectReviewFlow slug={slug} onDone={() => openTab('status')} />
+        // It reads the feed again when a change's state moves, so it lists a
+        // vote when the count above (`owed`) starts to count it; `project`
+        // is the name its empty line says nothing waits in.
+        <ProjectReviewFlow slug={slug} onDone={() => openTab('status')} project={projectName} />
       ) : null}
       {/* WHENEVER THE TAB IS UP, not only while there is a theme to draw. This
           was `tab === 'all' && themes.length`, and the second half was #2090:

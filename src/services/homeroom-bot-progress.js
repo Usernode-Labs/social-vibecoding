@@ -704,8 +704,8 @@ function stageOf(input, { now = new Date() } = {}) {
     // a vote: the loop does not follow up on a proposal being merged.
     if (row.queue_id && row.proposal_status === 'promoted') {
       return row.queue_reason === 'checks_failing'
-        ? { stage: 'fix_queued', since: row.enqueued_at, doing: 'waiting for a free builder to fix what its tests found' }
-        : { stage: 'followup_queued', since: row.enqueued_at, doing: 'waiting for a free builder to follow up on the newest replies on the change' };
+        ? { stage: 'fix_queued', since: row.enqueued_at, doing: 'waiting for a free slot of mine to fix what its tests found' }
+        : { stage: 'followup_queued', since: row.enqueued_at, doing: 'waiting for a free slot of mine to follow up on the newest replies on the change' };
     }
     if (row.question_at && !closed) {
       return { stage: 'question', since: row.question_at, doing: 'waiting for an answer to the question asked', waitingOn: 'them' };
@@ -879,7 +879,7 @@ function stageOf(input, { now = new Date() } = {}) {
     if (replyWaits(row, { now })) {
       return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'reading the new reply in a moment' };
     }
-    return { stage: 'queued', since: row.enqueued_at, doing: 'waiting for a free builder',
+    return { stage: 'queued', since: row.enqueued_at, doing: QUEUE_WAIT,
       ...(planFailed(row) ? { retry: 'plan' } : {}) };
   }
   // #6228: a reply nobody has queued a read for yet still reads as one
@@ -1422,6 +1422,12 @@ async function projectsBusy(pool, rows) {
 // ready one whose build is held the same way.
 const FIRST_VERSION_WAIT = 'waiting for the first version to go live; I\'ll start on this as soon as it does';
 const FIRST_VERSION_BUILD_WAIT = 'ready to build; I\'ll start as soon as the first version goes live';
+// 13 Nov 2026: what a request waiting to be read waits for, in the bot's
+// words. It is the bot's own line (per project), and it starts by itself: a
+// tester read "waiting for a free builder" as waiting for another person,
+// and wondered whether the project had to be made public for one.
+const QUEUE_WAIT = 'waiting its turn in my own line; I\'ll start on it by myself when I have a free slot';
+const QUEUE_NEXT = 'next in my own line; I\'ll start on it by myself as soon as I have a free slot';
 
 /**
  * Pure: whether `row` waits for its project's first version, from `holds`
@@ -1457,6 +1463,10 @@ async function waitingHolds(pool, staged) {
 
 // 1 Nov 2026: a request whose requester works on it with the bot in a
 // private thread waits for their plan (rules/bot-loop.ts planHoldSql).
+// 13 Nov 2026: whatever it had reached before a build started: waiting to
+// be read, its build waiting its turn, or held at one of the project's
+// limits (the lane takes none of them up while the thread holds it).
+const PLAN_HELD_STAGES = new Set(['queued', 'build_queued', 'held']);
 const PLAN_WAIT = 'waiting for your plan: you are working on it with me in a private thread; I\'ll start once a plan is posted on it, or once you tap Let the bot build it now on its page';
 
 /**
@@ -1522,12 +1532,12 @@ function queuedWait(row, {
       waitingFor: { reason: 'person_limit', inProgress: working, most: perPerson },
     };
   }
-  if (queuePosition === 1) return { doing: 'next in line for a free builder', waitingFor: { reason: 'queue', ahead: 0 } };
+  if (queuePosition === 1) return { doing: QUEUE_NEXT, waitingFor: { reason: 'queue', ahead: 0 } };
   if (Number.isInteger(queuePosition) && queuePosition > 1) {
     // How many are ahead stays in `waitingFor`, for the model to answer
     // "how long?" with; the words say what it waits for.
     return {
-      doing: 'waiting for a free builder',
+      doing: QUEUE_WAIT,
       waitingFor: { reason: 'queue', ahead: queuePosition - 1 },
     };
   }
@@ -1653,11 +1663,11 @@ async function requestStates(pool, { userId, settings = null, now = new Date(), 
   const perPerson = Number(settings?.perPerson) || 2;
   const readsPerApp = Number(settings?.readsPerApp) || require('./homeroom-bot').DEFAULTS.readsPerApp;
   const holds = await waitingHolds(pool, staged);
-  const plans = staged.some((s) => s.state?.stage === 'queued' || s.state?.stage === 'build_queued')
+  const plans = staged.some((s) => PLAN_HELD_STAGES.has(s.state?.stage))
     ? await planHolds(pool, userId) : new Set();
   return staged.map((s) => {
     // Their plan comes first, whatever else it would wait for.
-    if ((s.state?.stage === 'queued' || s.state?.stage === 'build_queued') && !s.row.first_version
+    if (PLAN_HELD_STAGES.has(s.state?.stage) && !s.row.first_version
       && plans.has(`${Number(s.row.app_id)}:${Number(s.row.issue_number)}`)) {
       return { row: s.row, state: { ...s.state, doing: PLAN_WAIT, waitingOn: 'them', waitingFor: { reason: 'awaiting_plan' } } };
     }
@@ -1733,6 +1743,8 @@ module.exports = {
   queuedWait,
   buildWait,
   FIRST_VERSION_WAIT,
+  QUEUE_WAIT,
+  QUEUE_NEXT,
   PLAN_WAIT,
   FIRST_VERSION_BUILD_WAIT,
   firstVersionWait,

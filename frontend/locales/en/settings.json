@@ -27,6 +27,26 @@
     "text": "Could not load that language. Try again.",
     "description": "Status line under the Language list in Settings when the chosen language's text could not be downloaded."
   },
+  "timezone.title": {
+    "text": "Time zone",
+    "description": "Heading of the Time zone section in Settings, under the Language section, where the person picks the time zone Homeroom shows times in."
+  },
+  "timezone.intro": {
+    "text": "The time zone Homeroom uses for the times it shows you, on every device you sign in on. Auto follows this device's clock.",
+    "description": "Explanation under the Time zone heading in Settings: the choice is saved to the account, and Auto uses the phone's or computer's own time zone."
+  },
+  "timezone.auto": {
+    "text": "Auto: use device time zone ({{zone}})",
+    "description": "First option in the Time zone list in Settings: follow the phone's or computer's own time zone. {{zone}} is that zone's name, for example \"Europe / Paris\"."
+  },
+  "timezone.saved": {
+    "text": "✓ Saved: {{zone}}",
+    "description": "Status line under the Time zone list in Settings after the choice was saved. {{zone}} is the chosen zone's name, for example \"America / New York\", or the device's zone when Auto was chosen. Keep the check mark."
+  },
+  "timezone.saveFailed": {
+    "text": "Could not save the time zone. Try again.",
+    "description": "Status line under the Time zone list in Settings when the choice could not be saved (no connection, or the server refused it)."
+  },
   "connectors.title": {
     "text": "Connectors",
     "description": "Heading of the Connectors section in Settings, where a person connects AI chat products (Claude, ChatGPT, Codex) to Homeroom."
@@ -1369,7 +1389,7 @@
   },
   "experimental.look.brand": {
     "text": "Paper, simplified, with brand styling",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style. It draws Homeroom's usual pages the clean way the Paper look does (white cards with no outlines on a cream page), in the website's own colours and typefaces. \"Paper\" is the name of another look in the same menu; translate it the same way there and here."
+    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style. It draws Homeroom's usual pages the clean way the Paper look does (cards with no outlines, white on a cream page in light and one step off a deep green page in dark), in the website's own colours and typefaces. \"Paper\" is the name of another look in the same menu; translate it the same way there and here."
   },
   "experimental.look.glass": {
     "text": "Glass",
@@ -1392,7 +1412,7 @@
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (white cards and a peach-to-lavender main button). A proper name; translate it as a short name, not a sentence."
   },
   "experimental.look.description": {
-    "text": "Try another look for Homeroom. One keeps every page as it is and draws it in the website's colours, in light mode only. The other five each have their own typeface, colours and shapes, in light and dark, and not every screen is drawn in them yet. Admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",
+    "text": "Try another look for Homeroom, in light and dark. One keeps every page as it is and draws it in the website's colours. The other five each have their own typeface, colours and shapes, and not every screen is drawn in them yet. Admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",
     "description": "Explanation under the Look menu in Settings, Experimental, which only admins see while the looks are being drawn. Homeroom is the product name; Home is its first screen."
   },
   "experimental.localAgents.title": {
@@ -2876,7 +2896,7 @@
     "description": "Not shown on screen. Extra search words for \"Accessibility\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.language": {
-    "text": "language languages locale translate translation english auto device bahasa idioma langue sprache lingua taal dil 语言 言語 언어 язык لغة",
+    "text": "language languages locale translate translation english auto device time zone timezone clock region bahasa idioma langue sprache lingua taal dil 语言 言語 언어 язык لغة",
     "description": "Not shown on screen. Extra search words for \"Language\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words. The non-English words are the word for \"language\" in other languages, so someone whose screen is in the wrong language can still find this page: keep them."
   },
   "nav.keywords.alerts": {

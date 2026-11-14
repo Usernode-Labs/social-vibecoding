@@ -146,7 +146,7 @@ test('Share it: a ✕ that closes it, and one line about the invite that is out'
   assert.match(src, /const \[closed, close\] = useHubDismissed\(slug, 'share'\);\s*if \(!data \|\| data\.audience !== 'solo' \|\| closed\) return null;/);
   assert.match(src, /<HubCardClose card="share" onClose=\{close\} \/>/);
   // What it offered stays on the page: Invite in the hero's row.
-  assert.match(src, /\{member \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/);
+  assert.match(src, /\{member && !\(inviteCard && showsInviteHero\(data\)\) \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/);
   assert.match(read('public/css/app.css'), /\.dev-ws-card-close \{\s*margin-block: -6px -6px; margin-inline: auto -6px;/);
 });
 

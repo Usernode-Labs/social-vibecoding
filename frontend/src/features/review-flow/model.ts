@@ -529,6 +529,59 @@ export function orderForReview(items: ReviewItem[]): ReviewItem[] {
   return [...items.filter((i) => i.kind !== 'governance'), ...items.filter((i) => i.kind === 'governance')];
 }
 
+/**
+ * Pure: a run with what a later read of the feed added, at its end. The run
+ * itself never moves: what it holds keeps its place and its own copy, so the
+ * change on show, a vote and a skip stay where they are, and a change the
+ * person already voted on or skipped is never added a second time (it is
+ * still in the run, by its key). The same array back when the read holds
+ * nothing new. A project's own Needs you grows this way when a vote opens
+ * while the page is up (review-flow.tsx).
+ */
+export function growRun(run: ReviewItem[], read: ReviewItem[]): ReviewItem[] {
+  const held = new Set(run.map((it) => it.key));
+  const added = read.filter((it) => !held.has(it.key));
+  return added.length ? [...run, ...added] : run;
+}
+
+/** Where a run stands when a later read lands (review-flow.tsx's own state). */
+export interface RunStanding {
+  list: ReviewItem[];
+  /** The change on show, as an index into the run the vote-type chips leave. */
+  index: number;
+  /** The end is on show. */
+  done: boolean;
+  votes: Record<string, unknown>;
+  skipped: Record<string, unknown>;
+}
+
+/**
+ * Pure: what a later read of the feed does to a run that grows. `list` is the
+ * run with what arrived at its end (growRun; the same array when nothing
+ * did), and `open` is where the page opens, or null to leave it as it is:
+ *
+ *   - a change is on show: it stays, and the arrival is reached by Next;
+ *   - nothing is on show (the empty line, the list of pages decided
+ *     elsewhere, the end): the page opens on the first change that has no
+ *     vote or skip from you, which is one that arrived. Changes skipped
+ *     earlier keep their skip, and wait at the end as they did.
+ *
+ * `shown` is the run the vote-type chips leave (filterByVoteType); `index`
+ * and `open` count in it.
+ */
+export function takeRead(
+  run: RunStanding,
+  read: ReviewItem[],
+  shown: (list: ReviewItem[]) => ReviewItem[] = (list) => list,
+): { list: ReviewItem[]; open: number | null } {
+  const list = growRun(run.list, read);
+  if (list === run.list) return { list, open: null };
+  const here = shown(run.list)[run.index];
+  if (!run.done && !!here && here.kind !== 'governance') return { list, open: null };
+  const first = shown(list).findIndex((it) => it.kind !== 'governance' && !run.votes[it.key] && !run.skipped[it.key]);
+  return { list, open: first >= 0 ? first : null };
+}
+
 /** The largest changed area on a screen's after side, for a title shot that zooms in on it. */
 export function largestRegion(screen: ReviewScreen): Box | null {
   let best: Box | null = null;
