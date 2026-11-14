@@ -540,7 +540,11 @@ test('#6246: a waiting plan stays in Needs you past the 25-request window and a 
 
 test('the demo rows are obviously fake, and staging-only', () => {
   const src = fs.readFileSync(require.resolve('../src/routes/ai-work.js'), 'utf8');
-  assert.match(src, /if \(IS_STAGING && req\.query\.demo === '1'\) return res\.json\(demoWork\(\)\);/);
+  // 14 Nov 2026: the demo's own threads with Homeroom bot (a hello, a first
+  // version, Earlier chat, the private ones) lead the fake rows, so the
+  // demo's chat is reached from the list now that Main Chat is gone.
+  assert.match(src, /const demo = demoWork\(\);\n\s+const mine = await demoPrivate\(pool, req\.user\);\n\s+return res\.json\(\{ \.\.\.demo, private: \[\.\.\.mine, \.\.\.demo\.private\] \}\);/);
+  assert.match(src, /async function demoPrivate\(pool, user\) \{\n\s+try \{\n\s+await require\('\.\.\/services\/staging-messages'\)\.ensureBotDmFixture\(pool, user\);\n\s+return await aiWork\.privateFor\(pool, \{ user \}\);/);
   const { demoWork } = require('../src/routes/ai-work');
   const demo = demoWork();
   for (const row of [...demo.private, ...demo.needs, ...demo.next, ...demo.waiting, ...demo.live]) {

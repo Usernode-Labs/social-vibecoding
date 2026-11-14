@@ -67,6 +67,12 @@ export interface AiPrivate {
    * that is live or closed (13 Nov 2026): History's, not Needs you's.
    */
   resultDone?: boolean;
+  /**
+   * 14 Nov 2026: how many of its messages are new to the viewer. A thread
+   * carries its own count now that no Main Chat counts them for it. Absent
+   * from an older server, which reads as none.
+   */
+  unread?: number;
 }
 
 export interface AiThread {
@@ -213,7 +219,7 @@ function needNumber(item: NeedItem): number | null {
 
 /**
  * Pure: the number a Needs you row shows. A change for a request goes by the
- * request's, as Homeroom bot names it in Main and as the request's own rows
+ * request's, as Homeroom bot names it in its threads and as the request's own rows
  * here do (30 Oct 2026: the tab said #6032 where the bot said #6038).
  */
 function shownNumber(item: NeedItem): number | null {
@@ -241,14 +247,13 @@ export interface WorkRow {
   pill: Phrase | null;
   /** The row's second line, where it is news (whyOf): a hand-back's reason, said by its stage. */
   why?: Phrase | null;
-  /** Where the row goes: a page, or a private thread of Main. */
+  /** Where the row goes: a page, or a private thread. */
   href: string | null;
   rootId: number | null;
   /**
    * #6262: the thread whose page the row opens, where it has one (a private
-   * thread has none: Main Chat's own "N new" covers it), and how many
-   * messages in it are new. Above zero, the row draws a blue dot and a bold
-   * title.
+   * thread has none: it is known by `rootId`), and how many messages in it
+   * are new. Above zero, the row draws a blue dot and a bold title.
    */
   threadId: number | null;
   unread: number;
@@ -729,9 +734,10 @@ export function needsYou(needs: NeedItem[] | null, work: AiWork | null): WorkRow
       pill: null,
       href: null,
       rootId: p.rootId,
-      // A private thread is not a `threads` row: Main Chat's "N new" counts it.
+      // A private thread is not a `threads` row; its new mark is its own
+      // (14 Nov 2026: no Main Chat counts it).
       threadId: null,
-      unread: 0,
+      unread: Math.max(0, Number(p.unread) || 0),
       at: p.at || null,
     });
   }

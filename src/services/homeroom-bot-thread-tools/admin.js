@@ -812,7 +812,9 @@ async function appendToConversation(pool, { userId, botId, threadRootId, content
     if (!bot?.id) return null;
     return await dm.sendDm(pool, {
       bot, userId: Number(userId), content, moment: null,
-      ...(threadRootId ? { threadRootId: Number(threadRootId) } : { threadRootId: false }),
+      // In the thread the action was asked for in (a card from before
+      // threads, asked for in Main Chat, gets a thread of its own).
+      ...(threadRootId ? { threadRootId: Number(threadRootId) } : {}),
       idempotencyKey: `hrbot-admin-action-${actionId}`,
       metadata: { kind: 'admin_result', tool },
     });

@@ -681,7 +681,7 @@ test('short: a blur under a press keeps it until the press\'s click, as the open
 });
 
 test('short: app.css folds the page\'s chrome on it, the platform header only in a browser tab', () => {
-  assert.match(APP_CSS, /html\.platform-kb-short :is\(\.messages-thread-header, #ai-screen \.ai-main-head, \.dev-request-back\) \{\s*display: none;/);
+  assert.match(APP_CSS, /html\.platform-kb-short :is\(\.messages-thread-header, \.dev-request-back\) \{\s*display: none;/);
   assert.match(APP_CSS, /html\.web-browser-chrome\.platform-kb-short #platform-header \{\s*display: none;/);
   assert.match(APP_CSS, /html\.web-browser-chrome\.platform-kb-short \{\s*--platform-header-h: 0px;/);
   assert.match(APP_CSS, /html\.platform-kb-short #mobile-install-banner:not\(\.hidden\) \{\s*display: none;/);

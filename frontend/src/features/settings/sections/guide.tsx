@@ -81,7 +81,7 @@ export function GuideSection() {
           <Row title={t('settings:guide.term.workshop.title')} body={t('settings:guide.term.workshop.body')} />
           <Row title={t('settings:guide.term.channels.title')} body={t('settings:guide.term.channels.body')} />
           <Row title={t('settings:guide.term.needsYou.title')} body={t('settings:guide.term.needsYou.body')} />
-          <Row title={t('settings:guide.term.mainChat.title')} body={t('settings:guide.term.mainChat.body')} />
+          <Row title={t('settings:guide.term.newChat.title')} body={t('settings:guide.term.newChat.body')} />
           <Row title={t('settings:guide.term.justYou.title')} body={t('settings:guide.term.justYou.body')} />
           <Row title={t('settings:guide.term.private.title')} body={t('settings:guide.term.private.body')} />
           <Row title={t('settings:guide.term.public.title')} body={t('settings:guide.term.public.body')} />

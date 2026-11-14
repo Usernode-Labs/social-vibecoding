@@ -247,7 +247,7 @@ async function sendCard(pool, {
     } : {}),
     idempotencyKey: key,
     // #3707: news about a request they started in the DM points back at it,
-    // said in Main when that is under an earlier card (outsideCardThread).
+    // never under an earlier card of the request's (outsideCardThread).
     replyToId: started,
     ...(typeof dm.outsideCardThread === 'function' ? await dm.outsideCardThread(pool, started) : {}),
   });

@@ -8,7 +8,9 @@
 //
 // What this pins:
 //   1. Every kind has a profile; every project-thread place type has a kind;
-//      a message in a person's chat is Main, private or design.
+//      a message in a person's chat is private or design. 14 Nov 2026: Main
+//      Chat is gone, and so is its kind `main`: every message there is in a
+//      thread, and no tool exists only to open one from Main.
 //   2. No surface offers a tool its kinds' profiles do not list, and every
 //      rule a profile names is one the voice's gate runs.
 //   3. The surfaces' limits are their profiles' (nothing changed in value).
@@ -25,7 +27,8 @@ const profiles = require('../src/services/bot-profiles');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 test('every thread kind has its profile, and every place its kind', () => {
-  assert.deepEqual(profiles.KINDS, ['main', 'private', 'design', 'request', 'change', 'channel', 'reply']);
+  assert.deepEqual(profiles.KINDS, ['private', 'design', 'request', 'change', 'channel', 'reply']);
+  assert.ok(!('main' in profiles.PROFILES), 'Main Chat\'s profile is retired');
   for (const kind of profiles.KINDS) {
     const p = profiles.profileOf(kind);
     assert.equal(p.kind, kind);
@@ -38,7 +41,7 @@ test('every thread kind has its profile, and every place its kind', () => {
     assert.ok(profiles.profileOf(kind).places.includes(type));
   }
   assert.equal(profiles.kindOfPlace({ type: 'nowhere' }), null);
-  assert.equal(profiles.kindInChat({}), 'main');
+  assert.equal(profiles.kindInChat({}), 'private', 'never Main: a message in no other thread is its own thread\'s first');
   assert.equal(profiles.kindInChat({ threadRootId: 9 }), 'private');
   assert.equal(profiles.kindInChat({ threadRequest: { appId: 1, issueNumber: 2 } }), 'private', 'a request card\'s thread from before');
   assert.equal(profiles.kindInChat({ design: { rootId: 9 } }), 'design');
@@ -54,8 +57,16 @@ test('no surface offers a tool its profile does not list, and every rule named i
       for (const t of voice.toolsFor({ type, ref: 1 }, f)) assert.ok(listed.includes(t.function.name), `${type}: ${t.function.name}`);
     }
   }
-  const main = profiles.profileOf('main').tools;
-  for (const t of require('../src/services/homeroom-bot-mayor').TOOLS) assert.ok(main.includes(t.function.name), `main: ${t.function.name}`);
+  const chat = profiles.profileOf('private').tools;
+  const mayorTools = require('../src/services/homeroom-bot-mayor').TOOLS.map((t) => t.function.name);
+  for (const name of mayorTools) assert.ok(chat.includes(name), `private: ${name}`);
+  // What Main could do, a thread still can: draft a request, start a
+  // project, draw a screen, answer a question. Only the tool that opened a
+  // thread from Main is gone.
+  for (const name of ['offer_request', 'offer_new_project', 'draw_screen', 'answer_question', 'my_work', 'close_thread', 'reply']) {
+    assert.ok(mayorTools.includes(name) && chat.includes(name), name);
+  }
+  assert.ok(!mayorTools.includes('start_project_thread') && !chat.includes('start_project_thread'));
   const design = profiles.profileOf('design').tools;
   for (const t of require('../src/services/design-bot').TOOLS) assert.ok(design.includes(t.function.name), `design: ${t.function.name}`);
   for (const kind of ['request', 'change', 'channel', 'reply']) {
@@ -74,7 +85,7 @@ test('#6389: the change thread may make its own version of somebody else\'s chan
 });
 
 test('#6384: a plan is read in the chat, on a request and on a change, and nowhere else', () => {
-  for (const kind of ['main', 'private', 'request', 'change']) {
+  for (const kind of ['private', 'request', 'change']) {
     assert.ok(profiles.profileOf(kind).tools.includes('get_spec'), kind);
   }
   for (const kind of ['channel', 'reply', 'design']) {
@@ -149,7 +160,8 @@ test('the one entry runs each kind on its surface, and the callers use it', asyn
     designBot: { answer: async (_p, _c, args) => { ran.push(['design', args.design.rootId]); return 'design'; } },
     voice: { runTurn: async (_p, _c, args) => { ran.push(['thread', args.place.type]); return 'thread'; } },
   };
-  assert.equal(await threadBot.answer({}, {}, { kind: 'main', conversationId: 5, deps }), 'chat');
+  await assert.rejects(threadBot.answer({}, {}, { kind: 'main', conversationId: 5, deps }), /no thread kind main/);
+  assert.equal(await threadBot.answer({}, {}, { kind: 'private', conversationId: 5, deps }), 'chat');
   assert.equal(await threadBot.answer({}, {}, { kind: 'private', conversationId: 6, deps }), 'chat');
   assert.equal(await threadBot.answer({}, {}, { kind: 'design', design: { rootId: 9 }, deps }), 'design');
   assert.equal(await threadBot.answer({}, {}, { kind: 'request', place: { type: 'issue', ref: 4 }, deps }), 'thread');

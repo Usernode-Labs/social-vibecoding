@@ -1,9 +1,10 @@
 'use strict';
 
 // Threads, stage 5 of #6019: private threads. A person's chat with Homeroom
-// bot (the AI tab, its main stream Main) is private, and any thread they
-// start in it is a private thread: a draft of a request, a reply for a
-// public thread, an idea with no project yet. Nothing in it is public until
+// bot (the AI tab) is private, and every conversation in it is a private
+// thread (14 Nov 2026: Main Chat, its one mixed stream, is gone): a draft of
+// a request, a reply for a public thread, an idea with no project yet, the
+// bot's hello, a project's first version. Nothing in it is public until
 // they choose one of two doors, each their own tap:
 //
 //   File it  files its words as a request on a project they pick, under
@@ -92,7 +93,9 @@ async function stateOf(pool, { user, rootId, bot = null, deps = {} }) {
   const { rows: [row] } = await pool.query(
     `SELECT p.state, p.result_ref, p.kind, a.slug, a.name, t.number AS target_number,
             d.title AS design_title,
-            (SELECT MAX(v.version) FROM design_versions v WHERE v.private_thread_id = p.id) AS design_version
+            (SELECT MAX(v.version) FROM design_versions v WHERE v.private_thread_id = p.id) AS design_version,
+            (SELECT m.metadata->'homeroomBot'->>'appName' FROM conversation_messages m
+              WHERE m.id = p.root_message_id) AS root_app_name
        FROM private_threads p
        LEFT JOIN design_threads d ON d.private_thread_id = p.id
        LEFT JOIN apps a ON a.id = p.app_id
@@ -106,9 +109,16 @@ async function stateOf(pool, { user, rootId, bot = null, deps = {} }) {
     return { state: 'open', kind: 'idea', app: null, target: null, mine };
   }
   const app = row.slug ? { slug: row.slug, name: row.name || row.slug } : null;
+  // The project's name, or the one the thread's first message names when
+  // the project itself is gone: the name its row has on the Homeroom bot
+  // page (ai-work.js shapePrivate), so the open thread's head says the same.
+  const title = kindTitle({ kind: row.kind, appName: app?.name || row.root_app_name || null });
   return {
     state: row.state,
     kind: row.kind,
+    // 14 Nov 2026: Earlier chat and a first version's thread are named by
+    // what they are, never by their first words.
+    ...(title ? { title } : {}),
     number: row.result_ref == null ? null : Number(row.result_ref),
     app,
     target: row.target_number == null ? null : Number(row.target_number),
@@ -128,8 +138,10 @@ async function record(pool, { user, root, app, threadId, kind, state, ref }) {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (root_message_id) DO UPDATE
        SET app_id = EXCLUDED.app_id, target_thread_id = EXCLUDED.target_thread_id,
-           -- A design thread stays one once it is filed or posted (design-threads.js reads the kind).
-           kind = CASE WHEN private_threads.kind = 'design' THEN private_threads.kind ELSE EXCLUDED.kind END,
+           -- A design thread stays one once it is filed or posted (design-threads.js reads the kind),
+           -- and so do a first version's thread and Earlier chat, which are found by their kind.
+           kind = CASE WHEN private_threads.kind IN ('design', 'first_version', 'earlier')
+                       THEN private_threads.kind ELSE EXCLUDED.kind END,
            state = EXCLUDED.state, result_ref = EXCLUDED.result_ref, updated_at = NOW()`,
     [user.id, root.conversation_id, root.id, app.id, threadId || null, kind, state, ref]
   );
@@ -246,7 +258,7 @@ const CHANGE_KINDS = Object.freeze({
   design: 'change how a screen looks',
 });
 
-/** Pure: the bot's line in Main that a new thread hangs off. */
+/** Pure: the bot's line a new thread starts with. */
 function startLine({ kind, appName }) {
   const what = CHANGE_KINDS[kind] || null;
   if (what && appName) return `New thread, to ${what} on ${appName}.`;
@@ -256,20 +268,23 @@ function startLine({ kind, appName }) {
 }
 
 /**
- * Start a thread with the bot, from its "+": the bot's line in Main the
- * thread hangs off (metadata kind 'opened_thread', with what the welcome
- * block picked), and the thread's row (kind 'ask'), which the bot reads for
- * what the thread is for (homeroom-bot-dm.js messageThread). The person's
- * first message is then sent into it, and the bot answers there. Resolves
+ * Start a thread with the bot, from its "+": the bot's line the thread
+ * starts with (metadata kind 'opened_thread', with what the welcome block
+ * picked), and the thread's row (kind 'ask'), written with it, which the
+ * bot reads for what the thread is for (homeroom-bot-dm.js messageThread).
+ * The person's first message is then sent into it, and the bot answers
+ * there. `ungated` (a message posted outside any thread, threadForPost):
+ * opened whether or not the bot works for them, so the message has its
+ * thread and the bot's answer, or its "not yet", lands in it. Resolves
  * { ok, conversationId, rootId } or a refusal.
  */
-async function startThread(pool, { user, project = null, kind = 'any', deps = {} }) {
+async function startThread(pool, { user, project = null, kind = 'any', ungated = false, deps = {} }) {
   const dm = deps.dm || require('./homeroom-bot-dm');
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
   if (!user?.id || user.isSynthetic) return { ok: false, status: 403, error: 'forbidden' };
   const changeKind = Object.prototype.hasOwnProperty.call(CHANGE_KINDS, kind) ? kind : 'any';
   // #6632: a new thread is the bot working for them.
-  const locked = await require('./homeroom-bot-verified').refusalFor(pool, user, { botSvc: deps.botSvc });
+  const locked = ungated ? null : await require('./homeroom-bot-verified').refusalFor(pool, user, { botSvc: deps.botSvc });
   if (locked) return locked;
   let app = null;
   if (project) {
@@ -283,7 +298,9 @@ async function startThread(pool, { user, project = null, kind = 'any', deps = {}
     bot,
     userId: user.id,
     content: startLine({ kind: changeKind, appName }),
-    threadRootId: false,
+    // The thread's first message, its row written with it; they opened it
+    // themselves, so its line is nothing new to them.
+    thread: { kind: 'ask', appId: app ? app.id : null, read: true },
     moment: null,
     metadata: {
       kind: 'opened_thread', changeKind,
@@ -291,11 +308,6 @@ async function startThread(pool, { user, project = null, kind = 'any', deps = {}
     },
   });
   if (!said?.messageId) return { ok: false, status: 502, error: 'The thread could not be started just now.' };
-  await pool.query(
-    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
-     VALUES ($1, $2, $3, $4, 'ask', 'open') ON CONFLICT (root_message_id) DO NOTHING`,
-    [user.id, said.conversationId, said.messageId, app ? app.id : null],
-  );
   return { ok: true, conversationId: Number(said.conversationId), rootId: Number(said.messageId) };
 }
 
@@ -304,7 +316,7 @@ async function startThread(pool, { user, project = null, kind = 'any', deps = {}
 // 1 Nov 2026: "Work on this with Homeroom bot" on a request's page (and the
 // quieter one on a change's, and after filing a request) opens a private
 // thread about it in the person's chat with the bot, as the "+" does: the
-// bot's line in Main it hangs off, which names what it is about (metadata
+// bot's line it starts with, which names what it is about (metadata
 // kind 'opened_about': a kind that starts `opened_` is a thread, never a
 // request's story, frontend/src/features/messages/request-page.ts), and its
 // row (kind 'ask', with the about columns). The bot reads what it is about
@@ -326,7 +338,7 @@ function threadHref(rootId) {
   return `#homeroom-bot/thread/${Number(rootId)}`;
 }
 
-/** Pure: the bot's line in Main that a thread about a request or a change hangs off. */
+/** Pure: the bot's line a thread about a request or a change starts with. */
 function aboutLine({ kind, number, title = null, holds = false }) {
   const what = kind === 'change' ? `change #${Number(number)}` : `#${Number(number)}`;
   const named = title ? `${what} ${clip(title, MAX_ABOUT_TITLE)}` : what;
@@ -423,7 +435,11 @@ async function startAbout(pool, { user, app, kind, number, deps = {} }) {
     bot,
     userId: user.id,
     content: aboutLine({ kind, number: about.number, title: about.title, holds }),
-    threadRootId: false,
+    // The thread's first message, its row written with it (sendDm `thread`).
+    thread: {
+      kind: 'ask', appId: app.id, aboutThreadId: about.threadId, aboutKind: kind, aboutNumber: about.number, holds,
+      read: true,
+    },
     moment: null,
     metadata: {
       kind: 'opened_about',
@@ -433,12 +449,6 @@ async function startAbout(pool, { user, app, kind, number, deps = {} }) {
     },
   });
   if (!said?.messageId) return { ok: false, status: 502, error: 'The thread could not be started just now.' };
-  await pool.query(
-    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state,
-                                  about_thread_id, about_kind, about_number, holds_bot)
-     VALUES ($1, $2, $3, $4, 'ask', 'open', $5, $6, $7, $8) ON CONFLICT (root_message_id) DO NOTHING`,
-    [user.id, said.conversationId, said.messageId, app.id, about.threadId, kind, about.number, holds],
-  );
   log.info('private-threads', 'Opened a private thread about a public one', {
     app: app.slug, kind, number: about.number, userId: user.id, holds,
   });
@@ -709,7 +719,238 @@ async function finishForRequest(pool, { appId, issueNumber, deps = {} }) {
   return rows.map((row) => ({ userId: Number(row.user_id), rootId: Number(row.root_message_id), conversationId: Number(row.conversation_id) }));
 }
 
+// ── Every message is in a thread (14 Nov 2026) ───────────────────────────
+//
+// Main Chat is gone. What the bot says is placed by homeroom-bot-dm.js
+// sendDm; what a PERSON posts with no thread named (an older client, the
+// connector, anything else) is given one here before it is sent
+// (threadForPost), so it is exactly a New thread: the bot's opener, their
+// words as its first reply, and the bot's answer under them.
+
+/** The names of the threads that are named by what they are, not by their words. */
+const EARLIER_TITLE = 'Earlier chat';
+function firstVersionTitle(appName) {
+  return `${appName || 'Your project'}, first version`;
+}
+
+/**
+ * Pure: the name of a thread that is named by its kind: Earlier chat, and a
+ * project's first version ("Plant Pal, first version"). Null for any other,
+ * which is named by its words (ai-work.js shapePrivate).
+ */
+function kindTitle({ kind, appName = null }) {
+  if (kind === 'earlier') return EARLIER_TITLE;
+  if (kind === 'first_version') return firstVersionTitle(appName);
+  return null;
+}
+
+/**
+ * The thread a message a person is about to post in their chat with the bot
+ * goes in, when they named none: the thread of the message it quotes, else a
+ * new one opened as the "+" opens it (startThread, whoever they are). Null
+ * when `conversationId` is not their chat with the bot (the message is sent
+ * as it is), when the same message was sent before (its idempotency key: the
+ * send answers the duplicate), or when no thread could be opened (the
+ * message is then its own thread's first message: homeroom-bot-dm.js
+ * heardInDm). Never throws.
+ */
+async function threadForPost(pool, { user, conversationId, replyToId = null, idempotencyKey = null, deps = {} }) {
+  try {
+    if (!user?.id || user.isSynthetic) return null;
+    const dm = deps.dm || require('./homeroom-bot-dm');
+    const bot = deps.bot || await dm.botAccount(pool);
+    if (!bot || Number(bot.id) === Number(user.id)) return null;
+    if (!(await dm.isBotDirect(pool, Number(conversationId), bot.id, user.id))) return null;
+    // A key the send would refuse opens nothing: the send says so itself.
+    const key = require('./conversations').normalizeIdempotencyKey(idempotencyKey);
+    if (idempotencyKey != null && !key) return null;
+    if (key) {
+      const { rows } = await pool.query(
+        'SELECT 1 FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3 LIMIT 1',
+        [Number(conversationId), user.id, key],
+      );
+      if (rows.length) return null;
+    }
+    const quotedId = Number(replyToId);
+    if (Number.isSafeInteger(quotedId) && quotedId > 0 && quotedId <= 2147483647) {
+      const { rows: [quoted] } = await pool.query(
+        'SELECT id, thread_root_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2',
+        [quotedId, Number(conversationId)],
+      );
+      if (quoted) return Number(quoted.thread_root_id) || Number(quoted.id);
+    }
+    const started = await startThread(pool, { user, ungated: true, deps: { ...deps, bot } });
+    return started.ok ? Number(started.rootId) : null;
+  } catch (err) {
+    log.warn('private-threads', 'Could not give a message a thread (it starts its own)', { userId: user?.id, err: err.message });
+    return null;
+  }
+}
+
+/**
+ * A message a person posted in their chat with the bot is its own thread's
+ * first message when it is in no other (threadForPost could open none): its
+ * row, in the message's own transaction (`db`), so the page lists it and the
+ * bot answers under it.
+ */
+async function ownThreadFor(db, { userId, conversationId, messageId }) {
+  await db.query(
+    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, kind, state, last_read_message_id)
+     SELECT $1, m.conversation_id, m.id, 'idea', 'open', m.id
+       FROM conversation_messages m
+      WHERE m.id = $3 AND m.conversation_id = $2 AND m.thread_root_id IS NULL AND m.sender_id = $1
+     ON CONFLICT (root_message_id) DO NOTHING`,
+    [Number(userId), Number(conversationId), Number(messageId)],
+  );
+}
+
+// ── A thread's own unread (14 Nov 2026) ──────────────────────────────────
+//
+// `private_threads.last_read_message_id` is its owner's cursor in the thread.
+// A message of the thread above it (its first message or a reply) is unread
+// when somebody else wrote it, it is not deleted, it is a message (not a
+// system line), it is not one of the bot's quiet lines, and its sender is
+// not somebody the reader blocked. A done thread has nothing unread: writing
+// in it brings it back. The Homeroom bot page marks each thread with its
+// count (ai-work.js) and the tab's badge is their sum (conversations.js
+// serializeConversation), so the two always agree.
+const THREAD_UNREAD_WHERE = `m.deleted_at IS NULL AND m.msg_type = 'message'
+        AND m.sender_id IS DISTINCT FROM p.user_id
+        AND m.id > COALESCE(p.last_read_message_id, 0)
+        AND (m.metadata->'homeroomBot'->>'quiet') IS DISTINCT FROM 'true'
+        AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                         WHERE b.blocker_id = p.user_id AND b.blocked_user_id = m.sender_id)`;
+
+/** How many messages are unread in each of `userId`'s threads `rootIds`: Map(rootId → count), zeros left out. */
+async function unreadFor(db, userId, rootIds) {
+  const ids = [...new Set((rootIds || []).map(Number).filter((n) => Number.isSafeInteger(n) && n > 0))].slice(0, 500);
+  const out = new Map();
+  if (!userId || !ids.length) return out;
+  const { rows } = await db.query(
+    `SELECT p.root_message_id AS root_id, COUNT(*)::int AS unread
+       FROM private_threads p
+       JOIN conversation_messages m
+         ON m.conversation_id = p.conversation_id AND (m.id = p.root_message_id OR m.thread_root_id = p.root_message_id)
+      WHERE p.user_id = $1 AND p.root_message_id = ANY($2::int[]) AND p.state <> 'done'
+        AND ${THREAD_UNREAD_WHERE}
+      GROUP BY p.root_message_id`,
+    [Number(userId), ids],
+  );
+  for (const row of rows) out.set(Number(row.root_id), Number(row.unread) || 0);
+  return out;
+}
+
+/** How many messages are unread across `userId`'s threads in `conversationId` (their chat with the bot). */
+async function unreadInChat(db, { userId, conversationId }) {
+  const { rows } = await db.query(
+    `SELECT COUNT(*)::int AS unread
+       FROM private_threads p
+       JOIN conversation_messages m
+         ON m.conversation_id = p.conversation_id AND (m.id = p.root_message_id OR m.thread_root_id = p.root_message_id)
+      WHERE p.user_id = $1 AND p.conversation_id = $2 AND p.state <> 'done'
+        AND ${THREAD_UNREAD_WHERE}`,
+    [Number(userId), Number(conversationId)],
+  );
+  return Number(rows[0]?.unread) || 0;
+}
+
+/**
+ * The person read their thread `rootId` up to message `messageId` (its first
+ * message or a reply): the cursor moves there, never back. Resolves whether
+ * it is a thread of theirs.
+ */
+async function markThreadRead(db, { userId, rootId, messageId }) {
+  const { rowCount } = await db.query(
+    `UPDATE private_threads
+        SET last_read_message_id = GREATEST(COALESCE(last_read_message_id, 0), $3::int)
+      WHERE root_message_id = $2 AND user_id = $1`,
+    [Number(userId), Number(rootId), Number(messageId)],
+  );
+  return rowCount > 0;
+}
+
+/** Mark a thread of theirs unread from its message `messageId` on: the cursor moves back to just before it. */
+async function markThreadUnread(db, { userId, rootId, messageId }) {
+  const { rowCount } = await db.query(
+    `UPDATE private_threads
+        SET last_read_message_id = LEAST(COALESCE(last_read_message_id, $3::int - 1), $3::int - 1)
+      WHERE root_message_id = $2 AND user_id = $1`,
+    [Number(userId), Number(rootId), Number(messageId)],
+  );
+  return rowCount > 0;
+}
+
+// ── Where a message, a first version and Earlier chat are (GET /api/ai/where) ──
+
+/** The person's Earlier chat thread (its first message's id), or null. */
+async function earlierRootFor(db, userId) {
+  if (!userId) return null;
+  const { rows: [row] = [] } = await db.query(
+    `SELECT root_message_id FROM private_threads WHERE user_id = $1 AND kind = 'earlier' LIMIT 1`,
+    [Number(userId)],
+  );
+  return row ? Number(row.root_message_id) : null;
+}
+
+/** The first-version thread of project `slug` in the person's chat with the bot, or null. */
+async function firstVersionRootFor(db, { userId, slug }) {
+  if (!userId || typeof slug !== 'string' || !slug) return null;
+  // By its project, else (a project that is gone, a staging fixture with
+  // none behind it) by the project its first message names.
+  const { rows: [row] = [] } = await db.query(
+    `SELECT p.root_message_id FROM private_threads p
+       JOIN conversation_messages m ON m.id = p.root_message_id
+       LEFT JOIN apps a ON a.id = p.app_id
+      WHERE p.user_id = $1 AND p.kind = 'first_version'
+        AND (a.slug = $2 OR (p.app_id IS NULL AND m.metadata->'homeroomBot'->>'appSlug' = $2))
+      ORDER BY p.id LIMIT 1`,
+    [Number(userId), slug.slice(0, 255)],
+  );
+  return row ? Number(row.root_message_id) : null;
+}
+
+/**
+ * The thread message `messageId` is in, in the person's OWN chat with the
+ * bot: its first message's id (the message's own when it is one), or null
+ * when it is no message of that chat (somebody else's, another chat's, or
+ * none at all). The chat is resolved here, from the person and the bot.
+ */
+async function threadOfMessage(db, { userId, botId, messageId }) {
+  const id = Number(messageId);
+  if (!userId || !botId || !Number.isSafeInteger(id) || id <= 0 || id > 2147483647) return null;
+  const low = Math.min(Number(userId), Number(botId));
+  const high = Math.max(Number(userId), Number(botId));
+  const { rows: [row] = [] } = await db.query(
+    `SELECT m.id, m.thread_root_id
+       FROM conversation_messages m
+       JOIN conversation_direct_pairs d ON d.conversation_id = m.conversation_id
+      WHERE m.id = $1 AND d.user_low_id = $2 AND d.user_high_id = $3`,
+    [id, low, high],
+  );
+  if (!row) return null;
+  return Number(row.thread_root_id) || Number(row.id);
+}
+
+/**
+ * What GET /api/ai/where answers for `user`: { rootId, earlierRootId }.
+ * `rootId` is the thread `message` is in, else (with `firstVersion`) the
+ * first-version thread of `project`, else null; `earlierRootId` their
+ * Earlier chat thread. Only ever their own chat with the bot.
+ */
+async function whereFor(pool, { user, message = null, project = null, firstVersion = false, deps = {} }) {
+  if (!user?.id) return { rootId: null, earlierRootId: null };
+  const dm = deps.dm || require('./homeroom-bot-dm');
+  const bot = deps.bot !== undefined ? deps.bot : await dm.botAccount(pool);
+  let rootId = null;
+  if (message != null && bot) rootId = await threadOfMessage(pool, { userId: user.id, botId: bot.id, messageId: message });
+  else if (firstVersion && project) rootId = await firstVersionRootFor(pool, { userId: user.id, slug: String(project) });
+  return { rootId, earlierRootId: await earlierRootFor(pool, user.id) };
+}
+
 module.exports = {
+  EARLIER_TITLE, firstVersionTitle, kindTitle, threadForPost, ownThreadFor,
+  unreadFor, unreadInChat, markThreadRead, markThreadUnread,
+  earlierRootFor, firstVersionRootFor, threadOfMessage, whereFor,
   ownRoot, stateOf, fileIt, postIt, startThread, startLine, CHANGE_KINDS, MAX_TEXT, MAX_TITLE,
   ABOUT_KINDS, aboutLine, aboutTarget, startAbout, liftHold, holdsFor, aboutContext, threadHref,
   markDone, reopen, reopenOnReply, finishForRequest,

@@ -568,7 +568,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-layout,
 .dev-ws-discussion,
 /* #6431: the column's heading beside the bot page is the same kind of row as
-   Main's, and its ⋯ menu is Messages' own (.messages-thread-menu). Those
+   a thread's, and its ⋯ menu is Messages' own (.messages-thread-menu). Those
    tokens are only declared where they are drawn, so the menu's fill resolved
    to nothing there and the page showed through it. */
 .side-panel-head,
@@ -930,12 +930,11 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    audit, 1 November 2026). An iPhone held sideways is 393px tall and its
    keys leave about 184: the platform's header, this one (66px) and the
    reply box came to more than that, so the box ended behind the keys and
-   the transcript above it had no height at all. Main Chat's head on the
-   bot tab folds the same way. While a field has the keys
+   the transcript above it had no height at all. While a field has the keys
    on a screen that short, the transcript and the box take the room; the
    header comes back the moment the keyboard drops. */
 @media (max-height: 500px) {
-  html:is(.un-kb, .platform-kb-open) :is(.messages-thread-header, #ai-screen .ai-main-head) {
+  html:is(.un-kb, .platform-kb-open) .messages-thread-header {
     display: none;
   }
 }
@@ -953,7 +952,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    the room. Not in the app, whose header is also the band under the status
    bar. The rail beside a page stays, as the keyboard rule for 768px and up
    says it must. All of it comes back the moment the keys go. */
-html.platform-kb-short :is(.messages-thread-header, #ai-screen .ai-main-head, .dev-request-back) {
+html.platform-kb-short :is(.messages-thread-header, .dev-request-back) {
   display: none;
 }
 html.web-browser-chrome.platform-kb-short #platform-header {
@@ -1692,93 +1691,6 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   font-size: 11px;
   font-weight: 600;
   opacity: .7;
-}
-/* #6426: Main Chat's "Welcome back" card, just above the message box. It is
-   the message box's own card (same surface, radius, shadow and width) with a
-   hairline, and its chips are the suggested-reply pill above, in one row
-   that scrolls sideways with a soft fade at its right edge. */
-.messages-welcome {
-  position: relative;
-  /* The message box's own width: the bar around that box holds 12px each
-     side (and the 720px reading column on a wide Main), so the card takes
-     the same inset. */
-  margin: 0 12px 8px;
-  padding-block: 12px;
-  padding-inline: 14px 44px;
-  border-radius: 22px;
-  background: var(--messages-surface);
-  box-shadow: var(--messages-disc-shadow), inset 0 0 0 1px var(--app-sheet-line);
-}
-.messages-welcome-title {
-  font-size: 15px;
-  font-weight: 650;
-  color: var(--text-primary);
-}
-.messages-welcome-line {
-  margin: 2px 0 10px;
-  font-size: 13px;
-  color: var(--text-muted);
-}
-.messages-welcome-chips {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 7px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
-  /* A soft edge says the row goes on, at the inline end of the text. */
-  -webkit-mask-image: linear-gradient(to right, #000 85%, transparent);
-  mask-image: linear-gradient(to right, #000 85%, transparent);
-}
-[dir='rtl'] .messages-welcome-chips {
-  -webkit-mask-image: linear-gradient(to left, #000 85%, transparent);
-  mask-image: linear-gradient(to left, #000 85%, transparent);
-}
-.messages-welcome-chips::-webkit-scrollbar { display: none; }
-.messages-welcome-chips button {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  min-height: 36px;
-  padding: 6px 13px;
-  border-radius: 9999px;
-  color: var(--brand-ink);
-  background: var(--brand-tint);
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 1.2;
-  white-space: nowrap;
-}
-.messages-welcome-chips button:hover { filter: brightness(.97); }
-.messages-welcome-chips button:focus-visible,
-.messages-welcome-dismiss:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.messages-welcome-dismiss {
-  position: absolute;
-  top: 6px;
-  inset-inline-end: 6px;
-  display: flex;
-  width: 32px;
-  height: 32px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9999px;
-  color: var(--text-muted);
-  font-size: 18px;
-  line-height: 1;
-}
-.messages-welcome-dismiss:hover { background: var(--messages-surface-2); }
-@media (max-width: 767px) {
-  /* On a phone the chips run off the card's edge, behind the 44px ×. */
-  .messages-welcome-chips { margin-inline-end: -44px; }
-  .messages-welcome-dismiss { top: 0; inset-inline-end: 0; width: 44px; height: 44px; }
-}
-/* Main Chat's 720px reading column (see `.chat-composer-bar` below): the
-   card keeps the box's inset at every width. */
-#ai-screen .ai-main-pane .messages-layout[data-main-chat] .messages-welcome {
-  margin-inline: max(12px, calc((100% - 720px) / 2));
 }
 .messages-bot-answered {
   margin-top: 4px;
@@ -18678,8 +18590,8 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
 }
 /* THE COLUMN'S LANE IS KEPT ONLY WHILE IT IS OPEN (6 Nov 2026, #6425): a
    desktop opens on the lists alone, and they take the room the column would
-   have. A row, a link or Main Chat's row opens it, and the list gives the
-   lane up again. */
+   have. A row, New chat or a link opens it, and the list gives the lane up
+   again. */
 #ai-screen[data-ai-docked][data-ai-open] { padding-inline-end: var(--ai-main-w); }
 /* NO GUTTER AFTER THE RAIL WHILE MAIN IS DOCKED (1 Nov 2026). Every screen
    beside the rail pads a gutter after it and mirrors it on the far edge, so
@@ -18737,38 +18649,30 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
 @container (max-width: 260px) {
   #ai-screen [data-ai-hero] h1 { font-size: 1.25rem; }
 }
-/* Its name over it, as a conversation's header names a room: the rows' 15
-   over 13. The chat fills what is left (as a project page's chat does). */
-#ai-screen .ai-main-head {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding-block: 12px; padding-inline: 18px calc(18px + var(--ai-edge, 0px));
-  border-bottom: 1px solid var(--app-sheet-line);
-  background-color: var(--dc-sheet-fill);
+/* NEW CHAT KEEPS ITS WORDS WHERE THE HEADING HAS ROOM FOR THEM (14 Nov
+   2026). It is the page's one labelled button, a plus and "New chat" in the
+   accent. Beside the bot's picture, its name and search, the words fit from
+   about 400px of heading: a desktop's lists. Narrower (a phone, or the lists
+   beside an open column), the button is the accent disc with its plus, and
+   the words stay its name for a screen reader; a phone's Ask bar says them. */
+#ai-screen [data-ai-hero] [data-ai-new-chat] { padding-inline: 14px 16px; }
+@container (max-width: 400px) {
+  #ai-screen [data-ai-hero] [data-ai-new-chat] { padding-inline: 0; }
+  #ai-screen [data-ai-hero] [data-ai-new-chat] > span {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
 }
+/* The chat fills the column (as a project page's chat does). */
 #ai-screen .ai-main-pane > .messages-layout { flex: 1 1 auto; height: auto; min-height: 0; }
-/* ONE SHEET (30 Oct 2026). The chat is the Messages screen's, which lifts
-   itself off the page as a sheet of its own: a rounded corner, a hairline
-   and a shadow. Inside this column that drew a card under a band, its
-   corner cutting into the first row. Here the column is the sheet: the
-   name above wears the chat's fill, and the chat lies flat under it. */
-#ai-screen .ai-main-pane .messages-thread-pane {
-  border-radius: 0;
-  border-top: 0;
-  box-shadow: none;
-}
-/* A THREAD IN MAIN CHAT (31 Oct 2026). Main Chat is a column of 400 to
-   720px, too narrow for the chat and a thread side by side: Messages draws
-   them so from a 768px window, and here that made two panes of about 200px,
-   a word a line. The thread covers the chat, as it does on a phone, and
-   lies flat as the chat does. 1 Nov 2026: it is alone in the column, under
-   its own head (ReplyThreadPanel `inMain`), with no bar of Main Chat's over
-   it. 4 Nov 2026: it leads with a back arrow to Main Chat. The phone's
-   drawer holds the column the same way. */
-.messages-layout[data-main-chat].messages-has-reply-thread > .messages-thread-pane { display: none; }
-.messages-layout[data-main-chat] > .messages-reply-pane {
+/* A THREAD FILLS THE COLUMN (31 Oct 2026; 14 Nov 2026: threads only). The
+   column is 400 to 720px, and the chat is drawn there as its threads alone
+   (EmbeddedConversation `threadsOnly`, `[data-bot-threads]`): one thread, or
+   a new chat, under its own head (ReplyThreadPanel `alone`), lying flat as
+   the column's one sheet, with no corner, hairline or shadow of its own and
+   no divider to drag (the column's edge is the handle). The phone's drawer
+   holds the column the same way. */
+.messages-layout[data-bot-threads] > .messages-reply-pane {
   flex: 1 1 auto;
   width: 100%;
   margin: 0;
@@ -18776,29 +18680,27 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
   border-top: 0;
   box-shadow: none;
 }
-.messages-layout[data-main-chat] > .messages-reply-pane > .messages-reply-resizer { display: none; }
-/* Its head is the column's head then, Main Chat's own not being drawn, so
-   it pads its contents by iPhone Duo's column of system chrome as Main
-   Chat's does (`--ai-edge`, 0 everywhere else): unpadded, a thread's long
-   title ran under the clock and the Wi-Fi ring (1 Nov 2026). */
-#ai-screen .ai-main-pane .messages-thread-header[data-reply-head="main"] {
+.messages-layout[data-bot-threads] > .messages-reply-pane > .messages-reply-resizer { display: none; }
+/* Its head is the column's head, so it pads its contents by iPhone Duo's
+   column of system chrome (`--ai-edge`, 0 everywhere else): unpadded, a
+   thread's long title ran under the clock and the Wi-Fi ring (1 Nov 2026). */
+#ai-screen .ai-main-pane .messages-thread-header[data-reply-head="alone"] {
   padding-inline-end: calc(16px + var(--ai-edge, 0px));
 }
-/* A WIDER MAIN CHAT KEEPS A READABLE LINE (3 Nov 2026). With the 720px cap
-   gone Main is 800px or more on a wide window, and a plan card's sentences
-   ran the width of it. The chat's three standing parts are held to 720px,
-   the widest Main was before (`--ai-main-auto` above), centred by an inline
-   gutter: below that width the gutter is 0 and their own 12px or 16px
-   stands, so a narrower column is drawn exactly as it was. A thread in
-   Main's place uses the same parts and is held the same way. The Duo's rule
-   below still takes the end side to its column. */
-#ai-screen .ai-main-pane .messages-layout[data-main-chat] :is(.chat-transcript, .chat-status, .chat-composer-bar) {
+/* A WIDER COLUMN KEEPS A READABLE LINE (3 Nov 2026). With the 720px cap
+   gone the column is 800px or more on a wide window, and a plan card's
+   sentences ran the width of it. A thread's three standing parts are held to
+   720px, the widest the column was before (`--ai-main-auto` above), centred
+   by an inline gutter: below that width the gutter is 0 and their own 12px
+   or 16px stands, so a narrower column is drawn exactly as it was. The Duo's
+   rule below still takes the end side to its column. */
+#ai-screen .ai-main-pane .messages-layout[data-bot-threads] :is(.chat-transcript, .chat-status, .chat-composer-bar) {
   padding-inline: max(0px, calc((100% - 720px) / 2));
 }
-#ai-screen .ai-main-pane .messages-layout[data-main-chat] .chat-status {
+#ai-screen .ai-main-pane .messages-layout[data-bot-threads] .chat-status {
   padding-inline: max(16px, calc((100% - 720px) / 2));
 }
-#ai-screen .ai-main-pane .messages-layout[data-main-chat] .chat-composer-bar {
+#ai-screen .ai-main-pane .messages-layout[data-bot-threads] .chat-composer-bar {
   padding-inline: max(12px, calc((100% - 720px) / 2));
 }
 /* AND THE CHAT UNDER THE HEAD STOPS AT THE DUO'S COLUMN TOO (overnight
@@ -18808,10 +18710,9 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
    other screen, and the column's head above, stop short of it. The sheet
    still reaches the screen's edge, so no band of another colour is left
    beside it: the chat's own sheet carries on under the column as padding,
-   and only what is drawn in it stops. A thread opened in the column does the
-   same, its head keeping its own clearance above. */
-html[data-side-strip] #ai-screen .ai-main-pane .messages-layout[data-main-chat] > .messages-thread-pane,
-html[data-side-strip] #ai-screen .ai-main-pane .messages-layout[data-main-chat] > .messages-reply-pane :is(.chat-transcript, .chat-status, .chat-composer-bar) {
+   and only what is drawn in it stops, its head keeping its own clearance
+   above. */
+html[data-side-strip] #ai-screen .ai-main-pane .messages-layout[data-bot-threads] > .messages-reply-pane :is(.chat-transcript, .chat-status, .chat-composer-bar) {
   padding-inline-end: var(--ai-edge, 0px);
 }
 /* A request or a change opened from the list: the side panel in Main's
@@ -19001,7 +18902,7 @@ body:has(#ai-screen:not(.hidden)) #ai-screen[data-ai-preview="three"] #ai-main-d
 /* ── The AI tab on a phone, as a drawer (features/ai/phone-drawer.tsx) ──
    The Messages drawer's strip: the list at 85% of the screen, the thread
    beside it, peeking at the list's right until it is opened, then the whole
-   screen. The thread is Main Chat. The page does not scroll; the list does. */
+   screen. The page does not scroll; the list does. */
 #ai-screen[data-ai-drawer] { overflow: hidden; }
 .ai-drawer { position: absolute; inset: 0; overflow: hidden; touch-action: pan-y; }
 .ai-drawer-strip { position: absolute; inset: 0; will-change: transform; }
@@ -19024,8 +18925,7 @@ body:has(#ai-screen:not(.hidden)) #ai-screen[data-ai-preview="three"] #ai-main-d
 .ai-drawer-pane > .messages-layout { flex: 1 1 auto; height: auto; min-height: 0; }
 .ai-drawer-thread .messages-thread-pane { border-radius: 0; border-top: 0; box-shadow: none; }
 /* On the list a thread's arrow has nowhere to go: it arrives as the thread
-   opens. Main Chat's is the platform header's (3 Nov 2026,
-   features/nav-drawer/bot-drawer.ts), which moves with the strip itself. */
+   opens. */
 .ai-drawer[data-level="0"] .messages-thread-back { opacity: 0; transform: translateX(calc(8px * var(--rtl-sign))); pointer-events: none; }
 /* The Ask bar sits at the list's foot, in its column, not over the screen.
    ON THE TAB BAR, NOT UNDER IT (overnight audit B14, 2 November 2026). The
@@ -20909,10 +20809,9 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 @media (min-width: 768px) {
   .messages-layout-embedded > .messages-reply-pane { margin-inline-start: 8px; }
 }
-/* #6071 follow-up: a new thread from Homeroom bot's "+" in the Homeroom bot
-   tab's Main Chat (features/messages/new-thread.tsx) takes the chat's place,
-   docked beside the lists or not: it is a fresh start, and its ✕ brings Main
-   back. In Messages it opens beside the chat, as a thread does. */
+/* #6071 follow-up: a new chat with Homeroom bot on its tab
+   (features/messages/new-thread.tsx) takes the column, docked beside the
+   lists or not: it is a fresh start, and its ✕ gives the lists back. */
 .messages-layout-embedded.messages-has-blank-thread > .messages-thread-pane { display: none; }
 .messages-layout-embedded.messages-has-blank-thread > .messages-reply-pane { flex: 1 1 auto; margin-inline-start: 0; }
 /* THE BLANK THREAD'S OPENING (5 Nov 2026, new-thread.tsx). In the middle of
@@ -27633,7 +27532,6 @@ html[data-skin] .fr.fr-shell .fr-pagearea { overflow: visible; }
 html[data-skin] :where(.fr.fr-shell:not(.fr-shell-under)) .fr-bar { background: color-mix(in srgb, var(--fr-ground) 90%, transparent); }
 /* The line under the bar's first row on a phone (a title's second line
    that did not fit, frame-app.tsx lineUnder) is more bar: the same ground. */
-html[data-skin] :where(.fr.fr-shell:not(.fr-shell-under)) .fr-barline { background: color-mix(in srgb, var(--fr-ground) 90%, transparent); }
 /* What a look gives the page column itself (Paper's white sheet) is
    painted by an inert copy BEHIND the screens, so a page reads on it; the
    copy over the screens paints nothing there. */
@@ -27812,7 +27710,7 @@ html[data-skin] #ai-screen[data-frame-list] > .fr-pane { container: fr-botlist /
 @media (max-width: 767.98px) {
   html[data-skin]:where(:not([data-skin="brand"])) #ai-screen[data-frame-list] .messages-reply-pane > .messages-thread-scroll { padding-inline: 16px; }
 }
-/* With nothing open beside it (#6425: Main opens from its row) the list is
+/* With nothing open beside it (#6425: the column opens from a row) the list is
    a page of one column: the kit's narrow page (784px), not the whole width. */
 @media (min-width: 768px) {
   html[data-skin] #ai-screen[data-frame-list]:not([data-ai-open]) > .fr-pane > .fr-scroll { max-width: 784px; margin-inline: auto; }
@@ -27820,10 +27718,10 @@ html[data-skin] #ai-screen[data-frame-list] > .fr-pane { container: fr-botlist /
   html[data-skin] #ai-screen[data-frame-list] .ai-main-pane { top: var(--fr-shell-top); background: none; border-top: 0; border-inline-start: 1px solid var(--fr-line); border-radius: 0; }
   html[data-skin] #ai-screen[data-frame-list] #ai-main-divider { display: none; }
   /* The chat in the column keeps the kit's 32px gutter (the Messages
-     pane's, below). Main's own centring rule (`A WIDER MAIN CHAT KEEPS A
+     pane's, below). The column's own centring rule (`A WIDER COLUMN KEEPS A
      READABLE LINE`) names the screen's id and floors the gutter at 0, so a
      column under 784px ran its lines to the window's edge. */
-  html[data-skin]:where(:not([data-skin="brand"])) #ai-screen[data-frame-list] .ai-main-pane .messages-layout[data-main-chat] .chat-transcript { padding-inline: max(32px, calc((100% - 720px) / 2)); }
+  html[data-skin]:where(:not([data-skin="brand"])) #ai-screen[data-frame-list] .ai-main-pane .messages-layout[data-bot-threads] .chat-transcript { padding-inline: max(32px, calc((100% - 720px) / 2)); }
   /* A request or a decision opened from the list stands in the column
      through the shell's side panel, which is in <body> and reads the
      column's width there: the same width, so it ends where the list ends,
@@ -30466,7 +30364,6 @@ html[data-skin] .fr-btnrow.fr-inrow{padding:0 16px 12px;flex-wrap:wrap}
 html[data-skin] .fr-botpage .fr-tabs,html[data-skin]:where(:not([data-skin="brand"])) .fr-botpage #notifications-screen-tabs,html[data-skin]:where(:not([data-skin="brand"])) .fr-botpage [data-new-message] [role="tablist"]{margin-top:-8px;overflow-x:auto;scrollbar-width:none}
 html[data-skin] .fr-botpage .fr-search,html[data-skin]:where(:not([data-skin="brand"])) .fr-botpage .ui-search:is(#settings-root *){margin-bottom:16px}
 html[data-skin] .fr-tab>.fr-ic,html[data-skin]:where(:not([data-skin="brand"])) #notifications-screen-tabs > [role="tab"]>.fr-ic,html[data-skin]:where(:not([data-skin="brand"])) [data-new-message] [role="tab"]>.fr-ic{margin-inline-start:-4px}
-html[data-skin] .fr-card.fr-main .fr-row{min-height:52px;width:100%}
 html[data-skin] .fr-rowx{display:flex;align-items:center;min-width:0;padding-inline-end:8px}
 html[data-skin] .fr-rowx>.fr-row,html[data-skin]:where(:not([data-skin="brand"])) .fr-rowx>:is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *),html[data-skin]:where(:not([data-skin="brand"])) .fr-rowx>.rf-help-row,html[data-skin]:where(:not([data-skin="brand"])) .fr-rowx>.messages-object-card:is(.messages-message *){flex:1;padding-inline-end:4px}
 html[data-skin] .fr-list .fr-row,html[data-skin]:where(:not([data-skin="brand"])) .fr-list :is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *),html[data-skin]:where(:not([data-skin="brand"])) .fr-list .rf-help-row,html[data-skin]:where(:not([data-skin="brand"])) .fr-list .messages-object-card:is(.messages-message *){position:relative;width:100%}
@@ -30521,8 +30418,6 @@ html[data-skin] .fr-lookrow{display:flex;align-items:center;justify-content:spac
 html[data-skin] .fr-lookrow .fr-v{color:var(--fr-mut);font-weight:500}
 html[data-skin] .fr-lookrow select{position:absolute;top:0;inset-inline-start:0;width:100%;height:100%;opacity:0}
 html[data-skin] .fr-sro{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
-html[data-skin] .fr-crumb .fr-cs.fr-off{height:0}
-html[data-skin] .fr-barline{display:none}
 html[data-skin] .fr-fcard .fr-fdoor{display:flex;flex-direction:column;flex:1;min-width:0;color:inherit;text-decoration:none}
 html[data-skin] .fr-fcard>.fr-fm{margin:0;padding:0 12px 12px;font-size:13px;color:var(--fr-mut)}
 html[data-skin] .fr-fcard>.fr-fm .fr-fmt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -30593,8 +30488,6 @@ html[data-skin][data-skin] .fr-cols.fr-mix>.fr-stack{display:contents}
 html[data-skin][data-skin] .fr-cols.fr-mix>.fr-stack>.fr-tail{order:1}
 html[data-skin][data-skin] .fr-grid.fr-c4:not(.fr-across){grid-template-columns:repeat(2,minmax(0,1fr))}
 html[data-skin][data-skin] .fr-crumb>.fr-keep{color:var(--fr-ink)}
-html[data-skin][data-skin] .fr-barline{display:block;flex:none;padding:0 12px 8px;font:500 12px/1.35 var(--fr-f);color:var(--fr-mut);border-bottom:1px solid var(--fr-line)}
-html[data-skin][data-skin] .fr-bar:has(+.fr-barline){border-bottom-color:transparent}
 }
 html[data-skin]:where(:not([data-skin="brand"])) body{--fr-ground:var(--home-ground)}
 /* ── THE GLASS LOOK (data-skin="glass") ── */
@@ -30690,7 +30583,6 @@ html[data-skin="glass"][data-skin] .fr-facts.fr-f5 .fr-fact:first-child{padding-
 html[data-skin="glass"][data-skin] .fr-facts.fr-f5 .fr-fact .fr-l{white-space:normal;line-height:1.2}
 html[data-skin="glass"][data-skin] .fr-pane+.fr-pane{border-inline-start:0}
 html[data-skin="glass"][data-skin] .fr-sheet,html[data-skin="glass"][data-skin] .fr-ov.fr-right .fr-sheet,html[data-skin="glass"][data-skin] .fr-ov.fr-pop .fr-sheet{width:auto;margin:0 8px 8px;border-radius:32px;padding:24px 16px 16px}
-html[data-skin="glass"][data-skin] .fr-barline{border-bottom:0}
 }
 @supports not (backdrop-filter: blur(1px)){
 html[data-skin="glass"]{--fr-surface:#fbfbfd}
@@ -30817,7 +30709,6 @@ html[data-skin="paper"][data-skin] .fr-ov.fr-right .fr-sheet{border-radius:22px 
 html[data-skin="paper"][data-skin] .fr-tabbar{background:var(--fr-surface);border-top:1px solid var(--fr-line2)}
 html[data-skin="paper"][data-skin] .fr-dock{background:var(--fr-surface);border-top:1px solid var(--fr-line2)}
 html[data-skin="paper"][data-skin] .fr-facts.fr-f5 .fr-fact .fr-l{white-space:normal;line-height:1.2}
-html[data-skin="paper"][data-skin] .fr-barline{border-bottom-color:var(--fr-line2)}
 }
 /* ── THE PASTEL LOOK (data-skin="pastel") ── */
 @font-face{font-family:'DM Sans';src:url('/fonts/dm-sans/DMSans-Variable.woff2') format('woff2');font-weight:100 1000;font-style:normal;font-display:swap;unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
@@ -30919,7 +30810,6 @@ html[data-skin="pastel"][data-skin] .fr-facts.fr-f5 .fr-fact{padding-block:12px 
 html[data-skin="pastel"][data-skin] .fr-facts.fr-f5 .fr-fact:first-child{padding-inline-start:14px}
 html[data-skin="pastel"][data-skin] .fr-pane+.fr-pane{border-inline-start:0}
 html[data-skin="pastel"][data-skin] .fr-dock{border-top:0;background:transparent;padding:4px 12px 12px}
-html[data-skin="pastel"][data-skin] .fr-barline{border-bottom:0}
 }
 /* ── THE MOSAIC LOOK (data-skin="mosaic") ── */
 @font-face{font-family:'Urbanist';src:url('/fonts/urbanist/Urbanist-Variable.woff2') format('woff2');font-weight:100 900;font-style:normal;font-display:swap;unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
@@ -31013,7 +30903,6 @@ html[data-skin="mosaic"][data-skin] .fr-cols>.fr-stack:first-child .fr-card:has(
 html[data-skin="mosaic"][data-skin] .fr-tab,html[data-skin="mosaic"][data-skin] #notifications-screen-tabs > [role="tab"],html[data-skin="mosaic"][data-skin] [data-new-message] [role="tab"]{height:40px}
 html[data-skin="mosaic"][data-skin] .fr-btn.fr-sm,html[data-skin="mosaic"][data-skin] :is(.ui-btn,:is(button,a,label):is(.bg-violet-600,.bg-zinc-100,.bg-zinc-900,.bg-red-500\/10,.bg-red-50,.border:is(.rounded,.rounded-md,.rounded-lg,.rounded-full)):not(.ui-lrow,.ui-row,[role="radio"],.ui-plain)):is(#settings-root *):is(.text-xs,.text-sm:not(.w-full),.py-1,.py-0\.5,.py-1\.5,.ui-btn-sm),html[data-skin="mosaic"][data-skin] :is(.rf-go,.rf-desc-go,.rf-end-btn,.rf-morph,.rf-chip,[data-needs-vote-chip])[data-needs-vote-chip],html[data-skin="mosaic"][data-skin] :is(a[data-waiting-look-around][href="#apps"],form[data-waiting-invite] button[type="submit"],#waiting-about-save,#waiting-about-discovery > button,#auth-landing-screen [data-landing-invite-dead-continue]):is(#waiting-about-discovery > *){height:40px;padding:0 16px}
 html[data-skin="mosaic"][data-skin] .fr-facts.fr-f5 .fr-fact .fr-l{white-space:normal;line-height:1.2;margin-top:6px}
-html[data-skin="mosaic"][data-skin] .fr-barline{border-bottom:0}
 }
 @supports not (backdrop-filter: blur(1px)){
 html[data-skin="mosaic"]{--fr-surface:#fbfbfd}
@@ -31099,7 +30988,6 @@ html[data-skin="sunrise"][data-skin] .fr-ib,html[data-skin="sunrise"][data-skin]
 html[data-skin="sunrise"][data-skin] .fr-ib .fr-dot,html[data-skin="sunrise"][data-skin] :is(.messages-thread-action,.messages-composer-action) .fr-dot,html[data-skin="sunrise"][data-skin] :is(.rf-back,.rf-bar-toggle) .fr-dot{top:7px;inset-inline-end:7px}
 html[data-skin="sunrise"][data-skin] .fr-btn.fr-sm,html[data-skin="sunrise"][data-skin] :is(.ui-btn,:is(button,a,label):is(.bg-violet-600,.bg-zinc-100,.bg-zinc-900,.bg-red-500\/10,.bg-red-50,.border:is(.rounded,.rounded-md,.rounded-lg,.rounded-full)):not(.ui-lrow,.ui-row,[role="radio"],.ui-plain)):is(#settings-root *):is(.text-xs,.text-sm:not(.w-full),.py-1,.py-0\.5,.py-1\.5,.ui-btn-sm),html[data-skin="sunrise"][data-skin] :is(.rf-go,.rf-desc-go,.rf-end-btn,.rf-morph,.rf-chip,[data-needs-vote-chip])[data-needs-vote-chip],html[data-skin="sunrise"][data-skin] :is(a[data-waiting-look-around][href="#apps"],form[data-waiting-invite] button[type="submit"],#waiting-about-save,#waiting-about-discovery > button,#auth-landing-screen [data-landing-invite-dead-continue]):is(#waiting-about-discovery > *){height:36px;padding:0 14px}
 html[data-skin="sunrise"][data-skin] .fr-tb.fr-on{border-radius:14px}
-html[data-skin="sunrise"][data-skin] .fr-barline{border-bottom:0}
 }
 /* looks:end */
 

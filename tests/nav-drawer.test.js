@@ -140,7 +140,7 @@ test('nothing pans the page or moves it: places are the Hub\'s rows, All communi
   assert.doesNotMatch(island, /addEventListener\('touch|createPortal|style\.transform/, 'no strip, no pan, no transform on #app-view');
   assert.doesNotMatch(island, /pushDismissible/, 'no Back record: there is no level off the page to hold one for');
   // A gesture surface, not a page slide (tests/phone-no-page-slides.test.js).
-  for (const file of ['nav-drawer.tsx', 'drawer-store.ts', 'header-drawer.tsx', 'bot-drawer.ts']) {
+  for (const file of ['nav-drawer.tsx', 'drawer-store.ts', 'header-drawer.tsx']) {
     assert.doesNotMatch(read(`${DIR}/${file}`), /PlatformUI\.transition\(/, file);
   }
   const css = read('public/css/app.css');
@@ -224,7 +224,7 @@ test('the lit tab climbs the same ladder on a phone: a place to its Hub, the Hub
 
 test('its words are catalog entries', () => {
   const core = JSON.parse(read('frontend/locales/en/core.json'));
-  for (const key of ['header.drawer.toHome', 'header.drawer.toHub', 'header.drawer.toPlace', 'header.drawer.toBot',
+  for (const key of ['header.drawer.toHome', 'header.drawer.toHub', 'header.drawer.toPlace',
     'header.drawer.messages', 'header.drawer.toMessages']) {
     assert.ok(core[key] && core[key].description, key);
   }

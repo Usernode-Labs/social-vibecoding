@@ -1,25 +1,32 @@
 /**
- * THE WAY INTO HOMEROOM BOT'S CHAT (1 Nov 2026). The chat with the bot lives
- * on its tab only (./index.tsx): its list, and the column beside it with Main
- * Chat or one thread. It used to be a conversation of the Messages screen as
- * well, where a thread opened beside Main; that copy is gone. So every door
- * into the chat lands here and says where in it:
+ * THE WAY INTO HOMEROOM BOT'S CHAT (1 Nov 2026; 14 Nov 2026: threads only).
+ * The chat with the bot lives on its tab only (./index.tsx): its lists, and
+ * the column beside them with one thread. Every conversation with the bot is
+ * a thread: there is no Main Chat, the one mixed stream the chat used to
+ * open on. So every door into the chat lands here and says where in it:
  *
  *   #homeroom-bot                       the lists alone, nothing beside them
- *   #homeroom-bot/main                  Main Chat
- *   #homeroom-bot/thread/<id>           a thread of it, alone in the column
- *   …either with /m/<id>                at that message
+ *   #homeroom-bot/new                   a new chat (`?project=`, `?with=`)
+ *   #homeroom-bot/thread/<id>           a thread, alone in the column
+ *   …with /m/<id>                       at that message
+ *   #homeroom-bot/m/<id>                a message, whichever thread it is in
  *   #homeroom-bot/request/<slug>/<n>    a request of a project, in the column
  *   #homeroom-bot/change/<slug>/<n>     a change, by its pull request's number
  *   #homeroom-bot/decision/<slug>/<n>   a group decision of a project
  *
+ * OLD ADDRESSES STILL LAND. `#homeroom-bot/main` was Main Chat: it opens the
+ * thread the person's old Main Chat messages were moved under ("Earlier
+ * chat"), or a new chat when they had none; `#homeroom-bot/main/m/<id>` is
+ * the message, in the thread it is in now. The server says which thread
+ * (./where.ts), and the address is rewritten in place.
+ *
  * The router (public/js/app.js) shows the tab and hands the place to
- * `askBotTab` (Main and its threads) or `askBotItem` (an item), which the page
- * takes once, in its column; an item's own page is the fallback when the column
- * does not fit. A Messages address of
- * the bot's chat (`#messages/<id>`, with its `/thread/<id>` and `/m/<id>`
- * forms: a bell row, an email, a bookmark) is the same place, by its old
- * address: the router and the Messages store swap it for the tab's
+ * `askBotTab` (a thread), `askBotItem` (an item), `askBotNew` (a new chat) or
+ * ./where.ts (an old address), which the page takes once, in its column; an
+ * item's own page is the fallback when the column does not fit. A Messages
+ * address of the bot's chat (`#messages/<id>`, with its `/thread/<id>` and
+ * `/m/<id>` forms: a bell row, an email, a bookmark) is the same place, by
+ * its old address: the router and the Messages store swap it for the tab's
  * (`botTabFromMessages`), in place.
  *
  * Which conversation is the bot's is noted here by whoever learns it first
@@ -32,7 +39,7 @@
 
 import { useSyncExternalStore } from 'react';
 
-/** A place in the chat: Main (no thread) or a thread, and a message in it to land on. */
+/** A place in the chat: a thread, and a message to land on (in it, or in whichever thread holds it). */
 export interface BotAt {
   threadRootId: number | null;
   focusMessageId: number | null;
@@ -52,16 +59,36 @@ export function cleanAt(at: Partial<BotAt> | null | undefined): BotAt {
   return { threadRootId: root, focusMessageId: focus };
 }
 
-/** Pure: the tab's address for a place in the chat. */
+/** The old Main Chat address, which still lands (./where.ts): a bookmark, an email, a bell row. */
+export const BOT_OLD_MAIN = `${BOT_TAB}/main`;
+
+/**
+ * Pure: the tab's address for a place in the chat. A thread, at a message
+ * of it when one is named; a message alone (`/m/<id>`), which the router
+ * finds the thread of; with neither, the page itself.
+ */
 export function botTabAddress(at: Partial<BotAt> | null | undefined): string {
   const { threadRootId, focusMessageId } = cleanAt(at);
-  const base = threadRootId ? `${BOT_TAB}/thread/${threadRootId}` : `${BOT_TAB}/main`;
+  if (!threadRootId) return focusMessageId ? `${BOT_TAB}/m/${focusMessageId}` : BOT_TAB;
+  const base = `${BOT_TAB}/thread/${threadRootId}`;
   return focusMessageId ? `${base}/m/${focusMessageId}` : base;
 }
 
 /**
- * Pure: the place a `#homeroom-bot/…` address names, or null for the page
- * itself (`#homeroom-bot`) and anything else.
+ * Pure: the tab's address for a place in the bot's chat as an address from
+ * before named it: the chat itself was Main Chat (BOT_OLD_MAIN), and
+ * anything else is the place it is now.
+ */
+export function botOldAddress(at: Partial<BotAt> | null | undefined): string {
+  const { threadRootId, focusMessageId } = cleanAt(at);
+  return threadRootId || focusMessageId ? botTabAddress({ threadRootId, focusMessageId }) : BOT_OLD_MAIN;
+}
+
+/**
+ * Pure: the place a `#homeroom-bot/…` address names (a thread, a message,
+ * or the old `main` with either), or null for the page itself
+ * (`#homeroom-bot`) and anything else. An old Main Chat address with
+ * nothing after it is a place with no thread and no message.
  */
 export function botTabAt(hash: string | null | undefined): BotAt | null {
   const parts = String(hash || '').replace(/^#/, '').split('?')[0].split('/');
@@ -79,7 +106,7 @@ export function botTabAt(hash: string | null | undefined): BotAt | null {
 
 // ── A request, a change or a decision, in the column ────────────────────
 
-/** What the column can hold beside the list besides Main and its threads. */
+/** What the column can hold beside the list besides a thread. */
 export type BotItemKind = 'request' | 'change' | 'decision';
 
 /** An item opened in the column, named by its project and its number. */
@@ -201,10 +228,10 @@ export function botTabFromMessages(href: string | null | undefined, botId: numbe
     if (rest[i] === 'thread') at.threadRootId = Number(rest[i + 1]);
     else if (rest[i] === 'm') at.focusMessageId = Number(rest[i + 1]);
   }
-  return botTabAddress(at);
+  return botOldAddress(at);
 }
 
-// ── A new thread, already set (10 Nov 2026) ─────────────────────────────
+// ── A new chat, already set (10 Nov 2026) ───────────────────────────────
 
 /** Who a new thread is for (../messages/thread-builder.tsx Builder), as an address says it. */
 export const BOT_NEW_BUILDERS = ['homeroom', 'claude-code', 'chatgpt'] as const;
@@ -284,8 +311,36 @@ export function askBotTab(at: Partial<BotAt> | null | undefined): void {
   listeners.forEach((fn) => fn());
 }
 
-/** The router's half: close what is open beside the lists (a bare `#homeroom-bot`). */
+/**
+ * Pure: whether a `hashchange` is the second pass of a navigation to a new
+ * chat, arriving after the page has put its own address in the new chat's
+ * place. `went` is where that navigation went (the event's `newURL`), `hash`
+ * the address in the bar now.
+ */
+export function isNewChatEcho(event: { type?: string; newURL?: unknown } | null | undefined, hash: string | null | undefined): boolean {
+  if (!event || event.type !== 'hashchange' || typeof event.newURL !== 'string') return false;
+  const at = event.newURL.indexOf('#');
+  const went = at === -1 ? '' : event.newURL.slice(at);
+  return went !== String(hash || '') && !!botNewAt(went);
+}
+
+/**
+ * The router's half: close what is open beside the lists (a bare `#homeroom-bot`).
+ *
+ * NOT THE ECHO OF A NEW CHAT'S OWN ADDRESS (14 Nov 2026). A link to
+ * `#homeroom-bot/new…` (a project's Workshop row) fires popstate and then
+ * hashchange, and the router runs on each. The first pass asks for the new
+ * chat; where the page already knows the bot's chat it opens at once and
+ * writes its own address in place (`#homeroom-bot`, with its filter: a new
+ * chat has no address of its own, ./column.ts). The second pass then read
+ * that bare address as the tab pressed and closed the new chat it had just
+ * opened: the row landed on the lists alone. The event being handled says
+ * where the navigation really went, so that one pass is told apart from the
+ * tab pressed and dropped.
+ */
 export function askBotClose(): void {
+  if (asked?.fresh && typeof window !== 'undefined'
+    && isNewChatEcho(window.event as { type?: string; newURL?: unknown } | undefined, window.location.hash)) return;
   seq += 1;
   asked = { at: null, item: null, close: true, seq };
   listeners.forEach((fn) => fn());

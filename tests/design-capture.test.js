@@ -34,10 +34,11 @@ function fakePool() {
 test('findPage matches a key, a name and a demo route, with any app slug', () => {
   assert.equal(capture.findPage('Homeroom bot page').key, 'homeroom-bot');
   assert.equal(capture.findPage('homeroom-bot').key, 'homeroom-bot');
-  assert.equal(capture.findPage('main chat').key, 'main-chat');
-  assert.equal(capture.findPage('Main Chat').key, 'main-chat');
+  // 14 Nov 2026: Main Chat is gone; there is no such page to copy.
+  assert.equal(capture.findPage('main chat'), null);
+  assert.equal(capture.findPage('Main Chat'), null);
   assert.equal(capture.findPage('/?demo=1#homeroom-bot').key, 'homeroom-bot');
-  assert.equal(capture.findPage('#homeroom-bot/main').key, 'main-chat');
+  assert.equal(capture.findPage('#homeroom-bot/main'), null);
   assert.equal(capture.findPage('messages').key, 'messages');
   assert.equal(capture.findPage('/?demo=1#app/some-other-slug/dev').key, 'project');
   assert.equal(capture.findPage('/app/some-other-slug/workshop?demo=1').key, 'workshop');
@@ -104,7 +105,7 @@ test('capturePage copies the demo route at the asked size, signed in as the fixt
 test('a desktop capture is 1280 wide when they do not say', async () => {
   let payload = null;
   await capture.capturePage(CONFIG, fakePool(), {
-    page: 'main-chat',
+    page: 'homeroom-bot',
     deps: {
       copy: { url: 'http://copy:3000' }, token: 'T',
       runJob: async (job) => { payload = job; return { stdout: frames('<html>ok</html>') }; },

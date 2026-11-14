@@ -224,6 +224,7 @@ test('a private thread about a request or a change, and the hold, against the fu
     const where = await dm.messageThread(pool, { userId: ada.id, conversationId: opened.conversationId, message: said });
     assert.deepEqual(where, {
       rootId: adaRoot,
+      kind: 'ask',
       draft: {
         kind: 'ask', state: 'open', appSlug: 'pa-plants', appName: 'Plant Pal', changeKind: 'any',
         about: { kind: 'request', number: 18 }, holds: true,

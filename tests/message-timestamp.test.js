@@ -538,8 +538,9 @@ test('#6479: day words and day groups elsewhere read the picked zone too', () =>
   const { liveDay } = stub('frontend/src/features/messages/bot-ready.tsx', '../../lib/time-zone');
   const { dayKey } = stub('frontend/src/features/ai/model.ts', '../../lib/time-zone');
   const { monthKey } = stub('frontend/src/features/ai/history.ts', '../../lib/time-zone');
-  const { visitDay } = stub('frontend/src/features/messages/welcome-back.tsx', '../../lib/time-zone');
   const { liveSinceLine } = stub('frontend/src/features/dev-board/workshop/hub-cards.tsx', '../../../lib/time-zone');
+  // 14 Nov 2026: Main Chat's Welcome back card went with Main Chat, and its
+  // "since your last visit" day with it.
   try {
     zone.setTimeZone('Asia/Tokyo');
     // 23:00Z on the 10th is 08:00 on the 11th in Tokyo; 00:30Z on the 11th is
@@ -549,15 +550,12 @@ test('#6479: day words and day groups elsewhere read the picked zone too', () =>
     // 16:00Z on 31 Oct is 1 Nov in Tokyo: the AI tab's day and History's month.
     assert.equal(dayKey('2026-10-31T16:00:00Z'), '2026-11-01');
     assert.equal(monthKey('2026-10-31T16:00:00Z'), '2026-11');
-    // A visit at 23:30Z on the 10th was this morning (08:30) in Tokyo on the 11th.
-    assert.equal(visitDay('2026-11-10T23:30:00Z', new Date('2026-11-11T03:00:00Z'), 'en-US').kind, 'thisMorning');
     assert.equal(liveSinceLine('2026-11-10T23:30:00Z', Date.parse('2026-11-11T03:00:00Z')),
       message('project:hub.recent.own.today'));
     zone.setTimeZone('Europe/London');
     assert.deepEqual({ ...liveDay('2026-11-11T00:30:00Z', new Date('2026-11-10T23:00:00Z'), 'en-US') }, { kind: 'tomorrow' });
     assert.equal(dayKey('2026-10-31T16:00:00Z'), '2026-10-31');
     assert.equal(monthKey('2026-10-31T16:00:00Z'), '2026-10');
-    assert.equal(visitDay('2026-11-10T23:30:00Z', new Date('2026-11-11T03:00:00Z'), 'en-US').kind, 'yesterday');
   } finally {
     zone.setTimeZone(null);
   }

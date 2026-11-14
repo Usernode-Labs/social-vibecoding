@@ -6,9 +6,6 @@
  *          Needs you: 15 · …           chips to see only some projects' work
  *   ( All ) ( Homeroom ) ( Game Corner ) ( Run Club )    ( 28 more ⌄ )
  *
- *   [bot] Main Chat          2 new   ← 1 Nov 2026: the list's first row, the
- *                                      chat with the bot itself (./index.tsx)
- *
  *   NEEDS YOU · 15                   ← a band, the sheet's width
  *   [tile] Homeroom
  *     ☑ #6038  Spell out the approval rules…      Vote
@@ -40,16 +37,16 @@
  *                    (./project-picker.tsx, 30 Oct 2026: a chip a project
  *                    was unusable with dozens).
  *   no row lines     space and the project's name group the rows.
- *   search           the box by the plus narrows every list to the threads
+ *   search           the box by New chat narrows every list to the threads
  *                    that match (#6398) and, under them, lists the messages
- *                    in the chat with the bot and its threads that do, each
- *                    a link to that message (13 Nov 2026, ./search.ts).
+ *                    in the person's threads with the bot that do, each a
+ *                    link to that message (13 Nov 2026, ./search.ts).
  *
  * Rows here are 14px over one line, not the shell's 15 over 13 (AGENTS.md,
  * "Type and colour"): this page's exception, recorded there.
  *
- * The row whose place is in the column beside the list (Main Chat, a
- * private thread, or a request, a change or a decision on its page: #6218)
+ * The row whose place is in the column beside the list (a private thread,
+ * or a request, a change or a decision on its page: #6218)
  * is drawn lit, where you are (`--lit-tint`, `--lit-ink`). A row is lit by
  * the column it opens (./column.ts rowKey), the one the page says is open.
  * #6153: a design thread filed as a request is that request's row (In
@@ -70,7 +67,6 @@ import {
 
 import { useMessages } from '../../lib/i18n/react';
 import { getDateLocale } from '../../lib/i18n/runtime';
-import { BOT_AVATAR } from '../messages/format';
 import {
   GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder,
   type AiApp, type AiThread, type WorkRow,
@@ -89,9 +85,6 @@ import type { Found } from './search';
 // The plane a list stands on, as GroupedList draws one: the sheet's solid
 // fill, 20px, one inset hairline. Complete literals for Tailwind.
 const PLANE = 'mx-4 rounded-[20px] bg-[color:var(--dc-sheet-solid)] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
-// #6424: Main Chat's card holds one row, so when that chat is open the card
-// itself is lit. A tinted box inside the round card left an uneven white ring.
-const MAIN_LIT = 'mx-4 rounded-[20px] bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
 // A chip on a sheet: the sheet's own hairline round it, so a white chip does not melt into it.
 const CHIP_EDGE = 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
 
@@ -116,9 +109,6 @@ const GLYPH_OWE = 'flex shrink-0 text-violet-600 dark:text-violet-300';
 const GLYPH = 'flex shrink-0 text-zinc-400 dark:text-zinc-500';
 // Where you are: the row whose chat is in the column, on the lit tint.
 const LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start rounded-md bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)]';
-// #6424: the row inside a lit card: the lit row's layout without its own
-// fill and radius, so the card's edges are the only ones on screen.
-const MAIN_LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start';
 
 function LineRow({ line, quiet = false, freshTitles = false }: { line: Line; quiet?: boolean; freshTitles?: boolean }): ReactNode {
   // #6159: a private thread's row has its ⋯ beside it, with Mark done.
@@ -294,40 +284,6 @@ function FreshBadge({ count, className = '' }: { count: number; className?: stri
       <span aria-hidden="true">{count}</span>
       <span className="sr-only">{t('messages:ai.filter.fresh', { count })}</span>
     </span>
-  );
-}
-
-/**
- * 1 Nov 2026: Main Chat, the chat with the bot itself, as the list's first
- * row: the bot's mark, its name and, on the right, what is new in it, in
- * words ("2 new"), or nothing. Pressed, it is the column's (./index.tsx).
- */
-function MainChatRow({ lit, unread, open }: { lit: boolean; unread: number; open: () => void }): ReactNode {
-  const t = useMessages('messages');
-  return (
-    <div className={`${lit ? MAIN_LIT : PLANE} px-2 py-1.5`} data-ai-sheet="main">
-      <button
-        type="button"
-        className={`${lit ? MAIN_LIT_ROW : ROW} px-2`}
-        onClick={open}
-        data-ai-main-row=""
-        data-ai-lit={lit ? '' : undefined}
-        aria-current={lit ? 'true' : undefined}
-      >
-        <img src={BOT_AVATAR} alt="" className="h-6 w-6 shrink-0 rounded-[8px] object-cover" />
-        <span className={lit
-          ? 'min-w-0 flex-1 truncate text-sm leading-5 font-semibold'
-          : 'min-w-0 flex-1 truncate text-sm leading-5 font-semibold text-zinc-900 dark:text-zinc-100'}
-        >
-          {t('messages:store.header.main')}
-        </span>
-        {unread > 0 ? (
-          <span className="shrink-0 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-main-unread="">
-            {t('messages:ai.main.new', { count: unread })}
-          </span>
-        ) : null}
-      </button>
-    </div>
   );
 }
 
@@ -663,7 +619,7 @@ function ListsFailed({ failed, onRetry }: { failed: 'unreachable' | 'failed'; on
 }
 
 export function AiLists({
-  hero, main, query = '', found, onFoundRetry, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone,
+  hero, query = '', found, onFoundRetry, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone,
   picked: pickedIn = [], onPick, appFor, history = null, historyKind = null, onHistoryKind, openHistory, historyRef,
 }: {
   /** The page's title, drawn in the sheet the chips are in. */
@@ -671,23 +627,21 @@ export function AiLists({
   /**
    * #6398: what the page's search box says. The lists keep only the threads
    * whose title, number or project name contains it, upper and lower case
-   * alike; a section with no match folds away, and Main Chat steps aside
-   * while you search. '' (the box closed or empty) filters nothing.
+   * alike; a section with no match folds away. '' (the box closed or
+   * empty) filters nothing.
    */
   query?: string;
   /**
-   * 13 Nov 2026: the messages in the chat with the bot and its threads that
+   * 13 Nov 2026: the messages in the person's threads with the bot that
    * match what the box says (./search.ts useBotSearch), listed under the
    * threads that do; null while the first answer is on its way.
    */
   found?: Found | null;
   /** Search the messages again: the Try again of the note that says they could not be. */
   onFoundRetry?: () => void;
-  /** Main Chat's row: whether it is the one in the column, what is new in it, and its press. */
-  main: { lit: boolean; unread: number; open: () => void };
   /**
-   * What the column shows (./column.ts columnKey): `main`, `private:<root>`
-   * or `page:<route>`. The row that opens it is lit: a private thread's row,
+   * What the column shows (./column.ts columnKey): `private:<root>` or
+   * `page:<route>`. The row that opens it is lit: a private thread's row,
    * the row of the request it was filed as (#6153), or a request's, a
    * change's or a decision's row while its page is in the column (#6218).
    */
@@ -775,11 +729,9 @@ export function AiLists({
           </div>
         ) : <div className="pb-3" />}
       </div>
-      {/* #6398: Main Chat is not a thread you are searching for, so it steps
-          aside while a search is on, and one short note says when nothing on
-          the page matched: no thread, and (13 Nov 2026) no message either,
-          once the messages' answer is in (./lines.ts noneWords). */}
-      {searching ? null : <MainChatRow lit={main.lit} unread={main.unread} open={main.open} />}
+      {/* #6398: one short note says when nothing on the page matched: no
+          thread, and (13 Nov 2026) no message either, once the messages'
+          answer is in (./lines.ts noneWords). */}
       {noMatches ? (
         <div className={`${PLANE} px-4 py-3`} data-ai-search-empty="">
           <p className="text-sm text-zinc-500 dark:text-zinc-400">{noneWords}</p>

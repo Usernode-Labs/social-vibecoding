@@ -36,9 +36,9 @@
  * button"): the project the page is in, which opens it, the page's own name,
  * its ⋯ and a ×, which closes it; no title, Expand, Close, Back or divider,
  * and the page in it leaves out its own "‹ Workshop" (controller
- * BESIDE_AI_CLASS). Closing it gives the lists back, or Main Chat or a
- * private thread when one of those was open behind it (6 Nov 2026, #6425:
- * the × replaced the "‹ Main Chat" chip).
+ * BESIDE_AI_CLASS). Closing it gives the lists back, or a private thread
+ * when one was open behind it (6 Nov 2026, #6425: the × replaced a back
+ * chip).
  * Both rows are always rendered and app.css shows the one that applies
  * (`body:has(#ai-screen:not(.hidden))`), so the prerender is one markup.
  *
@@ -204,10 +204,9 @@ export function SidePanel(): ReactNode {
             project and number (30 Oct 2026). */}
         <PanelHeading route={s.route} place={s.place} reported={s.reported} label={s.label} head={s.head} />
         <PanelMore route={s.route} />
-        {/* 6 Nov 2026 (#6425): the × that closes the page, in the "‹ Main
-            Chat" chip's place: the lists alone behind it, or Main Chat or a
-            thread when one of those was open there. The round disc the
-            panel's own Close draws. */}
+        {/* 6 Nov 2026 (#6425): the × that closes the page, in a back chip's
+            place: the lists alone behind it, or a thread when one was open
+            there. The round disc the panel's own Close draws. */}
         <Button
           type="button"
           variant="unstyled"
@@ -478,11 +477,12 @@ interface WidthRange {
  * The value is published only once it is known — after mount, while the panel
  * is on screen — so the prerender and the first client render carry none.
  *
- * The Homeroom bot page's Main is the same column (features/ai, 30 Oct
- * 2026): its left edge is this handle too, with its own `id` and the pane it
- * controls. Since 3 Nov 2026 it sets Main Chat's own width, stored under its
- * own key, not the side panel's: a panel narrowed beside an app no longer
- * narrows Main, and dragging Main leaves the panel's width alone. A page
+ * The Homeroom bot page's own column, where a thread opens, is the same
+ * column (features/ai, 30 Oct 2026): its left edge is this handle too, with
+ * its own `id` and the pane it controls. Since 3 Nov 2026 it sets that
+ * column's own width, stored under its own key, not the side panel's: a
+ * panel narrowed beside an app no longer narrows it, and dragging it leaves
+ * the panel's width alone. A page
  * opened in Main's place on that page is drawn as Main's column, so its edge
  * sets Main's width too.
  */

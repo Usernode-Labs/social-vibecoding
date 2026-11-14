@@ -1,12 +1,18 @@
 'use strict';
 
-// #6207 (3 Nov 2026): Main Chat on the Homeroom bot page holds what you said
-// there and the bot's replies to it. A request's news (its activity card,
-// plan, questions, building / ready / live lines) is on that request's page,
-// so Main's stream, its unread count and its preview leave it out, old and
-// new; a first version's news stays, as it has no request page yet. The
-// server's test is conversations.js REQUEST_NEWS; the client's copy, for a
-// message that arrives live, is bot-request.ts isRequestNews.
+// WHAT A REQUEST'S NEWS IS (#6207, 3 Nov 2026; renamed from
+// main-chat-request-news on 14 Nov 2026).
+//
+// A request's news from Homeroom bot (its activity card, plan, questions,
+// building / ready / live lines) is on that request's page. The rule was
+// written to keep it out of Main Chat's stream, unread count and preview; a
+// first version's news stayed, having no request page. Main Chat is gone,
+// and the same test (conversations.js REQUEST_NEWS) now decides what that
+// removal leaves alone: old news in the chat that belongs to no thread is
+// not moved under Earlier chat (earlier-chat.js), is not found by the bot
+// page's search as a message of the chat (ai-search.js), and is still left
+// out of the conversation's own stream, count and preview. The client's
+// copy, for a message that arrives live, is bot-request.ts isRequestNews.
 //
 // The predicate runs against PostgreSQL when one is reachable (as the
 // repository's other *-postgres suites do), else that part skips.
@@ -42,7 +48,7 @@ test('the client and the server agree on what a request\'s news is', () => {
   const kinds = [...conversations.BOT_CONVERSATION_KINDS];
   const client = /const CONVERSATION_KINDS = new Set\(\[([\s\S]*?)\]\);/.exec(src)[1].match(/'([a-z_]+)'/g).map((k) => k.slice(1, -1));
   assert.deepEqual(client.sort(), kinds.sort());
-  // Main draws none of it, live or read.
+  // A conversation's own stream draws none of it, live or read.
   const index = read('frontend/src/features/messages/index.tsx');
   assert.match(index, /if \(botDm && isRequestNews\(message\)\) continue;/);
   // The stream, the preview and the unread count all leave it out.

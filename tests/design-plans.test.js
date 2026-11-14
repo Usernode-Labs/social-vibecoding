@@ -142,16 +142,23 @@ test('the design pane posts on the thread\'s request when it has one, and may po
   assert.match(route, /const planOn = await designThreads\(\)\.planTargetOf\(pool, design\)\.catch\(\(\) => null\);/);
 });
 
-test('a new project\'s thread: the Mayor opens it from Main, and its turns know what it is for', () => {
+test('a new project\'s thread: its turns know what it is for, and a new one is the thread they are in', () => {
   const mayor = require('../src/services/homeroom-bot-mayor');
-  assert.equal(mayor.projectThreadLine('a plant watering reminder.'), 'New thread, for a new project: a plant watering reminder. Only you can see it.');
-  const tool = mayor.TOOLS.find((t) => t.function.name === 'start_project_thread').function;
-  assert.deepEqual(tool.parameters.required, ['idea']);
-  assert.match(tool.description, /Not for a change to a project that exists\./);
+  // 14 Nov 2026: Main Chat is gone, and with it the tool that opened a
+  // thread for a new project from Main. A new project starts in the thread
+  // the person is in (a New thread among them): the bot offers New project
+  // there (offer_new_project) and draws its first screen there.
+  assert.equal(mayor.TOOLS.some((t) => t.function.name === 'start_project_thread'), false);
+  assert.equal(mayor.projectThreadLine, undefined);
+  assert.ok(mayor.TOOLS.some((t) => t.function.name === 'offer_new_project'));
+  const fresh = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'any', state: 'open' } } });
+  assert.match(fresh, /call\n  offer_new_project so New project shows under your reply/);
+  assert.match(fresh, /call draw_screen: it is drawn here, in this thread/);
+  // A thread opened for one before keeps its own words.
   const prompt = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'project', state: 'open' } } });
   assert.match(prompt, /It is the private thread you opened for a NEW project, which does not exist yet\./);
   const src = read('src/services/homeroom-bot-mayor.js');
-  assert.match(src, /\.\.\.\(ctx\.projectThread \? \{ replyToId: null, threadRootId: ctx\.projectThread\.rootId \} : \{\}\),/);
+  assert.doesNotMatch(src, /ctx\.projectThread|start_project_thread/);
   assert.match(read('src/services/homeroom-bot-dm.js'), /changeKind: \['fix', 'add', 'design', 'project'\]\.includes\(p\.change_kind\)/);
 });
 

@@ -379,7 +379,7 @@ test('composer and moderation payloads match the backend contracts', () => {
     'selecting or creating a destination consumes the one-shot on route change');
   // The pending-share effect's own dependencies (this used to match the
   // typing cleanup's `[conversationId]` instead, which now names the thread).
-  assert.match(composer, /window\.removeEventListener\('usernode:messages-attach', attachPending\);\s*\};\s*\}, \[conversationId, inThread\]\);/,
+  assert.match(composer, /window\.removeEventListener\('usernode:messages-share', onShare\);\s*\};\s*\}, \[conversationId, inThread\]\);/,
     'the pending-share effect follows destination changes');
   const share = store.slice(store.indexOf('export async function share('),
     store.indexOf('export function takePendingShare'));
@@ -402,29 +402,24 @@ test('composer and moderation payloads match the backend contracts', () => {
 
 });
 
-test('#6212: the composer keeps the list\'s attachment apart from the person\'s own', () => {
-  // Where the chip came from decides whether moving around the bot page may
-  // take it off; the person's own (Share, Ask for changes, the picker) stays.
-  assert.match(composer, /const objectFrom = useRef<'list' \| 'person' \| null>\(null\);/);
-  assert.match(composer, /const objectRef = useRef<StagedObject \| null>\(null\);/);
-  assert.match(composer, /const \{ conversationId: to, source, \.\.\.object \} = detail;/, 'the source never rides along as part of the item');
-  assert.match(composer, /if \(source === 'list' && objectFrom\.current === 'person' && objectRef\.current\) return;/,
-    'the list never replaces an item the person chose');
-  assert.match(composer, /setChip\(object, source === 'list' \? 'list' : 'person'\)/, 'a detail with no source is the person\'s');
-  assert.match(composer, /setChip\(pending\.object, 'person'\)/, 'Ask for changes is the person\'s');
-  assert.match(composer, /window\.addEventListener\('usernode:messages-object-cleared', onCleared\);/);
-  assert.match(composer, /window\.removeEventListener\('usernode:messages-object-cleared', onCleared\);/);
-  assert.match(composer, /const onCleared = \(event: Event\) => \{[\s\S]{0,420}if \(objectFrom\.current !== 'list'\) return;\s+setChip\(null, null\);/,
-    'a clear takes off only what the list attached');
-  // Sending, changing scope and × also forget where the chip came from.
-  assert.match(composer, /objectRef\.current = null; objectFrom\.current = null;\s+const input = \{ content: value\.trim\(\)/,
-    'sending forgets where the chip came from');
-  assert.match(composer, /setValue\(draftFor\(scope\)\); setAttachments\(draftAttachmentsFor\(scope\)\); setChip\(null, null\);/);
-  assert.match(composer, /onClick=\{\(\) => \{ setChip\(null, null\); setPrompt\(null\); \}\}/);
-  // A request page opened from a bot message in Main Chat is the same
-  // automatic attach the list itself makes.
-  assert.match(read('frontend/src/features/messages/request-page.ts'),
-    /issueNumber: page\.issueNumber, title: page\.label, conversationId, source: 'list' \}/);
+test('the composer\'s chip is only an item the person chose: nothing attaches one for them', () => {
+  // #6212 kept the Homeroom bot tab's list attaching what a row opened to
+  // Main Chat's box, apart from an item the person chose. 14 Nov 2026: Main
+  // Chat is gone, so nothing attaches for the person: no source rides on the
+  // event, no clear event takes a chip off, and Ask for changes carries its
+  // change into a new chat's box (new-thread.tsx,
+  // tests/ask-for-changes-attach.test.js).
+  assert.match(composer, /const \[object, setObject\] = useState<StagedObject \| null>\(null\);/);
+  assert.match(composer, /const \{ conversationId: to, \.\.\.object \} = detail;\n\s+if \(to != null && to !== conversationId\) return;\n\s+setObject\(object\); inputRef\.current\?\.focus\(\);/,
+    'the conversation it is addressed to never rides along as part of the item');
+  assert.doesNotMatch(composer, /objectFrom|objectRef|setChip|source === 'list'|messages-object-cleared|setPrompt|focusWanted/);
+  // Sending, changing scope and × take the chip off.
+  assert.match(composer, /setValue\(''\); setAttachments\(\[\]\); setObject\(null\);/, 'sending');
+  assert.match(composer, /setValue\(draftFor\(scope\)\); setAttachments\(draftAttachmentsFor\(scope\)\); setObject\(null\);/);
+  assert.match(composer, /onClick=\{\(\) => setObject\(null\)\} aria-label=\{t\('messages:composer\.removeSharedItem'\)\}/);
+  // A request's page opened from a bot message attaches nothing either.
+  assert.doesNotMatch(read('frontend/src/features/messages/request-page.ts'), /messages-object-selected|source: 'list'/);
+  assert.doesNotMatch(read('frontend/src/features/ai/index.tsx'), /messages-object-selected|messages-object-cleared/);
 });
 
 test('#6249: attached files are kept with the draft they were attached in', () => {

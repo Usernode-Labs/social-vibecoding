@@ -499,10 +499,16 @@ export function init() {
         firstWork.disabled = false;
       }
     });
-    // B8: Open chat is the chat with Homeroom bot, where the request's card is.
+    // B8: Open chat, after a request was filed. 14 Nov 2026: the request's
+    // own story (its plan's thread, else its page: messages/store.ts
+    // openBotRequest), since there is no Main Chat for its card to be in;
+    // with nothing filed to name, a new chat with Homeroom bot.
     sentChat?.addEventListener('click', () => {
+      const filed = sentFiled;
       closeFeedback();
-      window.UsernodeReact?.messages?.openBot?.();
+      const messages = window.UsernodeReact?.messages;
+      if (filed?.appSlug && filed.issueNumber && messages?.openBotRequest) messages.openBotRequest(filed.appSlug, filed.issueNumber);
+      else messages?.openBot?.();
     });
     // B8: building it yourself instead, as the first-request moment's Try a
     // fix yourself does: the request on the board, and a change from it.

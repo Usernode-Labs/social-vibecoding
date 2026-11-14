@@ -539,6 +539,10 @@
     "text": "On hold",
     "description": "First line of a notification from Homeroom bot: work on the viewer's requests waits until Monday, because this week's building time is used up. The request's title (or how many requests) is on the line below."
   },
+  "row.bot.label.buildingTime": {
+    "text": "Building time",
+    "description": "First line of a notification from Homeroom bot, the built-in assistant that builds what people ask for: a notice about the viewer's own weekly building time, the amount of the bot's work on their requests a week allows. The notice itself is on the line below. Tapping the row opens the Settings page that shows how much is used."
+  },
   "row.bot.onHoldNote.allowance": {
     "text": "Until Monday: this week's building time is used up.",
     "description": "Small line under the title of an \"On hold\" notification from Homeroom bot: why the viewer's request or requests wait. It may stand for one request or several, so it has no verb of its own."
@@ -622,6 +626,10 @@
   "row.bot.subject.onHold_other": {
     "text": "{{count}} requests on hold",
     "description": "Second line of a notification from Homeroom bot, in bold: how many of the viewer's requests wait until Monday. {{count}} is that number."
+  },
+  "row.bot.subject.buildingTimeLow": {
+    "text": "You're close to this week's building time.",
+    "description": "Second line of a notification from Homeroom bot, in bold, under the label \"Building time\": most of the viewer's weekly building time is used, so their requests will soon wait until Monday. Nothing is on hold yet."
   },
   "row.bot.meta": {
     "text": "{{project}} · Homeroom bot",
@@ -1738,6 +1746,58 @@
   "row.projectOpened.label": {
     "text": "It’s open: ready to use",
     "description": "A notification row in the notifications sheet: a project the reader joined while it was still being made has just gone live. The project's name is shown on the line beside it. \"It\" is the project."
+  },
+  "row.inviteNudge.voted": {
+    "text": "You voted in {{project}}",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they voted on something. The line below asks them to invite a friend or two. {{project}} is the project's name. Tapping the row opens the project's page, where Invite is."
+  },
+  "row.inviteNudge.votedUnnamed": {
+    "text": "You voted in a project",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they voted on something. Used when the project's name is not known. The line below asks them to invite a friend or two."
+  },
+  "row.inviteNudge.posted": {
+    "text": "You posted in {{project}}",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they wrote a message. The line below asks them to invite a friend or two. {{project}} is the project's name. Tapping the row opens the project's page, where Invite is."
+  },
+  "row.inviteNudge.postedUnnamed": {
+    "text": "You posted in a project",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they wrote a message. Used when the project's name is not known. The line below asks them to invite a friend or two."
+  },
+  "row.inviteNudge.asked": {
+    "text": "You asked for a change in {{project}}",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they asked for a change. The line below asks them to invite a friend or two. {{project}} is the project's name. Tapping the row opens the project's page, where Invite is."
+  },
+  "row.inviteNudge.askedUnnamed": {
+    "text": "You asked for a change in a project",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they asked for a change. Used when the project's name is not known. The line below asks them to invite a friend or two."
+  },
+  "row.inviteNudge.changed": {
+    "text": "You made a change in {{project}}",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they made a change. The line below asks them to invite a friend or two. {{project}} is the project's name. Tapping the row opens the project's page, where Invite is."
+  },
+  "row.inviteNudge.changedUnnamed": {
+    "text": "You made a change in a project",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they made a change. Used when the project's name is not known. The line below asks them to invite a friend or two."
+  },
+  "row.inviteNudge.used": {
+    "text": "You used {{project}}",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they used its app. The line below asks them to invite a friend or two. {{project}} is the project's name. Tapping the row opens the project's page, where Invite is."
+  },
+  "row.inviteNudge.usedUnnamed": {
+    "text": "You used a project's app",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there: they used its app. Used when the project's name is not known. The line below asks them to invite a friend or two."
+  },
+  "row.inviteNudge.plain": {
+    "text": "You're new in {{project}}",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there, when what that was is not known. The line below asks them to invite a friend or two. {{project}} is the project's name. Tapping the row opens the project's page, where Invite is."
+  },
+  "row.inviteNudge.plainUnnamed": {
+    "text": "You're new in a project",
+    "description": "First line of a notification from Homeroom bot to somebody new to a project, sent once after the first thing they did there, when neither what that was nor the project's name is known. The line below asks them to invite a friend or two."
+  },
+  "row.inviteNudge.ask": {
+    "text": "It's better with your people: invite one or two friends? They can use it straight away and help shape it.",
+    "description": "Second line of a notification from Homeroom bot to somebody new to a project, under a line saying what they first did there. \"It\" is the project. Tapping the row opens the project's page, where the Invite button is."
   },
   "ask.invite_sent.title": {
     "text": "Hear when they join?",

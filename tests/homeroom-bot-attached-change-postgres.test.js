@@ -241,13 +241,21 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
   const chatOf = async (person) => (await conversations.ensureAdmittedDirect(pool, bot.id, person.id)).conversationId;
   const samChat = await chatOf(sam);
   const olaChat = await chatOf(ola);
-  const send = async (person, conversationId, content, object = null) => (await conversations.sendMessage(
-    pool, person, conversationId, { content, ...(object ? { object } : {}) },
+  // 14 Nov 2026: every message is in a thread. One sent with none named is
+  // its own thread's first message; `inThread` puts a later one under it.
+  const send = async (person, conversationId, content, object = null, inThread = null) => (await conversations.sendMessage(
+    pool, person, conversationId, { content, ...(object ? { object } : {}), ...(inThread ? { thread_root_id: inThread } : {}) },
   )).message;
+  let samThread = null;
   const change = (sessionId) => ({ type: 'proposal', appId: app.id, sessionId });
+  // The bot's newest answer to a message: after it, in its thread (in a
+  // thread, what it answers is the line above it, so it quotes nothing).
   const reply = async (conversationId, messageId) => (await pool.query(
-    `SELECT id, content, reply_to_id, metadata FROM conversation_messages
-      WHERE conversation_id = $1 AND sender_id = $2 AND reply_to_id = $3 ORDER BY id DESC LIMIT 1`,
+    `SELECT a.id, a.content, a.reply_to_id, a.metadata FROM conversation_messages a
+       JOIN conversation_messages q ON q.id = $3
+      WHERE a.conversation_id = $1 AND a.sender_id = $2 AND a.id > q.id
+        AND a.thread_root_id = COALESCE(q.thread_root_id, q.id)
+      ORDER BY a.id DESC LIMIT 1`,
     [conversationId, bot.id, messageId],
   )).rows[0] || null;
   const turnsOf = async (person) => Number((await pool.query(
@@ -258,26 +266,28 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
     threadPosts.length = 0;
     await clearQueue();
     const message = await send(sam, samChat, 'Tapping mark as done doesn\'t do anything for me', change(pending.id));
+    samThread = message.id;
     await dm.noteUserMessage(pool, CONFIG, {
       user: sam, conversationId: samChat, message,
       deps: { chat: noModel, apiKey: 'sk-test', openMcp: async () => null, seesImages: false },
     });
-    // #6019: this chat is private. Drafted in a private thread of its own
-    // (Main's line for it quotes his message), with the change's card, and
-    // nothing sent or queued yet.
-    const opener = await reply(samChat, message.id);
-    assert.match(opener.content, /^I drafted that to post on Flat 4B Chores, in a thread only you can see\./);
+    // #6019: this chat is private. 14 Nov 2026: drafted in the thread he
+    // wrote in, right under his message (no second thread is opened for it),
+    // with the change's card, and nothing sent or queued yet.
     const draft = (await pool.query(
       `SELECT id, content, reply_to_id, metadata FROM conversation_messages
         WHERE conversation_id = $1 AND sender_id = $2 AND thread_root_id = $3 ORDER BY id LIMIT 1`,
-      [samChat, bot.id, opener.id],
+      [samChat, bot.id, message.id],
     )).rows[0];
+    assert.equal((await pool.query(
+      `SELECT COUNT(*)::int AS n FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND thread_root_id IS NULL`,
+      [samChat, bot.id])).rows[0].n, 0, 'nothing of the bot\'s outside a thread');
     assert.deepEqual(draft.metadata.homeroomBot.answers, ['Post it', 'Keep it private']);
     const { rows: draftObjects } = await pool.query('SELECT object_type, object_ref FROM conversation_message_objects WHERE message_id = $1', [draft.id]);
     assert.deepEqual(draftObjects.map((o) => `${o.object_type}:${o.object_ref}`), [`code_proposal:${pending.id}`]);
     assert.equal(threadPosts.length, 0);
     assert.equal(await queueRow(), null);
-    const tap = (await conversations.sendMessage(pool, sam, samChat, { content: 'Post it', reply_to_id: draft.id })).message;
+    const tap = (await conversations.sendMessage(pool, sam, samChat, { content: 'Post it', reply_to_id: draft.id, thread_root_id: message.id })).message;
     await mayor.decideOffer(pool, CONFIG, {
       bot, user: sam, settings: await homeroomBot.readSettings(pool), deps: {}, message: tap,
     });
@@ -305,7 +315,7 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
     threadPosts.length = 0;
     await clearQueue();
     const seen = [];
-    const message = await send(sam, samChat, 'What does this change do?', change(pending.id));
+    const message = await send(sam, samChat, 'What does this change do?', change(pending.id), samThread);
     await dm.noteUserMessage(pool, CONFIG, {
       user: sam, conversationId: samChat, message,
       deps: { chat: scripted([[['reply', { text: 'It shows whose turn each chore is.' }]]], seen), apiKey: 'sk-test', openMcp: async () => null, seesImages: false },
@@ -315,7 +325,7 @@ test('B and C against the full PostgreSQL schema', { timeout: 180000 }, async (t
     assert.equal(seen.length, 1);
     const last = seen[0].messages.filter((m) => m.role === 'user').pop();
     assert.equal(last.content, `What does this change do?\n[Homeroom: they attached your own change "Show whose turn each chore is" on Flat 4B Chores (proposal ${pending.id}), waiting for approval. It is not live yet: what they say is wrong with it, or want different in it, goes to that change with revise_proposal (proposal ${pending.id}), never into a new request.]`);
-    // The earlier message in the history carries its card too.
+    // The earlier message of the thread, in the history, carries its card too.
     assert.ok(seen[0].messages.some((m) => m.role === 'user' && /^Tapping mark as done[^\n]*\n\[Homeroom: they attached your own change /.test(m.content)));
   });
 

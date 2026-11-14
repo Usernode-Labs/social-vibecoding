@@ -30,7 +30,7 @@ export const SEARCH_WAIT = 250;
 /** One message that matched, as the server sends it. */
 export interface FoundRow {
   messageId: number;
-  /** Its thread's first message, or null for the chat itself. */
+  /** Its thread's first message; null when the answer names none (the tab then asks which, ./where.ts). */
   rootId: number | null;
   /** That thread's name, as the tab's list names it. */
   threadTitle: string | null;

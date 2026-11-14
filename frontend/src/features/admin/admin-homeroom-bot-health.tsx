@@ -233,7 +233,7 @@ export function rereadRows(r: Rereads): RereadRow[] {
     },
     {
       key: 'repair',
-      label: 'Main Chat answers repaired',
+      label: 'Chat answers repaired',
       value: percent(r.claimRepair.rate),
       lines: [`${r.claimRepair.recovered} of ${plural(r.claimRepair.turns, 'answer')} in the last ${r.days} days were asked again before they were sent: a request that failed, or a claim it had not done.`],
     },
