@@ -159,11 +159,18 @@ test('the Friday row counts the week; the vote row quotes the line; the merge ro
   assert.equal(subjectOf(digest), '5 changes went live · 1 change is waiting for approval');
 
   const no = controller()._rowView({ ...ROW, kind: 'proposal_vote', detail: 'no', voteReason: ' The new colors clash on mobile. ' });
-  assert.equal(no.label, 'Voted no');
+  assert.equal(no.label, '@ada voted no', 'the row names the voter');
   assert.equal(subjectOf(no), 'Tighten the header spacing “The new colors clash on mobile.”');
+  assert.equal(no.by, null, 'the name is in the label, not said twice');
   const yes = controller()._rowView({ ...ROW, kind: 'proposal_vote', detail: 'yes', voteReason: null });
-  assert.equal(yes.label, 'Voted yes');
+  assert.equal(yes.label, '@ada voted yes');
   assert.equal(subjectOf(yes), 'Tighten the header spacing', 'no line, no quote');
+  assert.equal(yes.by, null);
+  // #6665: no voter known (an old row, or one with no source) — the plain
+  // wording stays, and still no `by` line.
+  const unknown = controller()._rowView({ ...ROW, kind: 'proposal_vote', detail: 'yes', sourceUsername: null, voteReason: null });
+  assert.equal(unknown.label, 'Voted yes');
+  assert.equal(unknown.by, null);
 
   const merged = controller()._rowView({ ...ROW, kind: 'pr_merged', detail: 'Backed by alice and bob, shaped by carol.' });
   assert.equal(merged.label, 'Live');
