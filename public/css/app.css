@@ -2295,6 +2295,11 @@ form.agent-session-composer:focus-within {
    disabled; with an empty field and no file staged it reads as the same
    faded disc Messages' own Send is. */
 .messages-composer-card:not([data-gc-files]):has(textarea:placeholder-shown) .messages-send { opacity: .35; }
+/* Task 2148: Stop, in Send's place while Homeroom bot works on the viewer's
+   message and the box is empty (features/messages/bot-stop.ts). The empty
+   field fades Send; a Stop that can be pressed is not faded, and one on its
+   way ("Stopping", disabled) is, by the rule for a disabled Send above. */
+.messages-composer-card:not([data-gc-files]):has(textarea:placeholder-shown) .messages-send.messages-send-stop:not(:disabled) { opacity: 1; }
 /* #3735: ONE COMPACT LINE ON A PHONE. Below 768px the card is the "+", the
    field and the send disc on a single 44px row, and it grows only with what
    is typed, up to the field's 140px ceiling as everywhere. It was about 75px:
@@ -23838,6 +23843,20 @@ html[data-side-strip="left"] #platform-header {
   padding-left: calc(1rem + var(--platform-strip-w, 0px));
 }
 
+/* THE NOTIFICATION SHEET IS FIXED TOO, so it is not in the body's content
+   box: like the header, its ground spans the screen while its content
+   stops beside the column. Every control moves together — the close disc,
+   Mark all read, the search field, the tabs and the rows' ends — and on
+   the Duo's wider inner screen, where the sheet docks as a side panel,
+   the panel keeps its 26rem width and its content gets the padding
+   instead. */
+html[data-side-strip="right"] #notifications-sheet {
+  padding-right: var(--platform-strip-w, 0px);
+}
+html[data-side-strip="left"] #notifications-sheet {
+  padding-left: var(--platform-strip-w, 0px);
+}
+
 /* The strip's own pieces (features/nav/strip-back.tsx, side-apps.tsx)
    exist only here. */
 .platform-side-strip-top,
@@ -24441,6 +24460,16 @@ html[data-side-strip="left"] #platform-header {
   html[data-side-corner="left"] #platform-header {
     margin-left: calc(-1 * var(--platform-corner-w, 0px));
     padding-left: calc(1rem + 84px);
+  }
+  /* The bell's sheet, fixed like the header, keeps its ground and moves its
+     content by the corner's own width rather than the header's 84px: the
+     sheet's 16px row padding plus that width already clears the pill, and
+     84px on a 466px screen would squeeze every row. */
+  html[data-side-corner="right"] #notifications-sheet {
+    padding-right: var(--platform-corner-w, 0px);
+  }
+  html[data-side-corner="left"] #notifications-sheet {
+    padding-left: var(--platform-corner-w, 0px);
   }
   /* The five cells stay left of the corner; the bar's ground does not. */
   html[data-side-corner="right"] #platform-tabs {

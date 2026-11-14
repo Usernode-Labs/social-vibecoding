@@ -98,6 +98,9 @@ async function migrate(config) {
   // #6158: a mix of Waiting rows on the Homeroom bot tab (queued, held for
   // a slot, handed back, never read, an operator task), for its shots.
   await seedStagingBotWaitingRows(pool);
+  // #6667: a request whose bot-built change was handed back to its asker, so
+  // the Homeroom bot tab's Needs you row has a state to show.
+  await seedStagingBotHandedBackFix(pool);
   // #6533: a change's thread whose bot reply already holds its email pictures.
   await seedStagingChangePictures(pool);  // #6420's shots: a change on one request's page that names another request
   // as one it closes, so that request's page shows "Change #N says it closes
@@ -2253,6 +2256,71 @@ async function seedStagingChangeClaim(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging change-claim seeding failed', { message: err.message });
+  }
+}
+
+// #6667: the Homeroom bot tab moves a request to Needs you once the bot
+// hands its failing change back to the person who asked for it. A fresh
+// staging copy has no such change (nothing there runs a model), so the before
+// & after shots get one: an obviously fake request on the self-hosted
+// Homeroom project, filed by the shots' member fixture (usernode-capture),
+// with a promoted bot change whose checks failed and a run that gave it to a
+// person. Nothing here is a signal the code reads to decide anything, and a
+// staging copy never acts on its queue. Idempotent by request number and
+// branch; strictly a no-op outside staging.
+async function seedStagingBotHandedBackFix(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query(
+      "SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')",
+    );
+    const appId = apps.rows[0]?.id;
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    if (!appId || !member || !bot) return;
+    const number = 9109;
+    const head = 'stagingdemo6667';
+    const branch = 'staging-fixture/bot-handed-back-6667';
+    const title = 'Staging demo: a change Homeroom bot handed back';
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, $3, 'Staging demo: obviously fake. Homeroom bot built a change for this request, its checks failed, and it handed the fix back to a person.', $4, NOW() - INTERVAL '3 hours', NOW() - INTERVAL '1 hour'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [appId, number, title, member.id],
+    );
+    // The asker, so the tab knows this request is theirs.
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+       VALUES ($1, $2, $3, $4) ON CONFLICT (app_id, issue_number) DO NOTHING`,
+      [appId, number, member.id, title],
+    );
+    // The bot's change: promoted, its checks failing on the head it reviewed.
+    let change = (await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch],
+    )).rows[0];
+    if (!change) {
+      change = (await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_title, status, linked_issues, check_state,
+            reviewed_head_sha, promoted_at, last_activity_at, created_at)
+         VALUES ($1, $2, $3, $4, $5, 'promoted', ARRAY[$4]::int[], 'failing', $6,
+                 NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 hour', NOW() - INTERVAL '3 hours')
+         RETURNING id`,
+        [appId, bot.id, branch, number, title, head],
+      )).rows[0];
+    }
+    // The run that tried and gave up: the change's page and the tab read it.
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id, checks_head_sha, created_at)
+       SELECT $1, $2, 'live', 'person', $3, $4, NOW() - INTERVAL '1 hour'
+        WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs
+                           WHERE proposal_session_id = $3 AND LOWER(checks_head_sha) = $4 AND verdict = 'person')`,
+      [appId, number, change.id, head],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging bot handed-back fix seeding failed', { message: err.message });
   }
 }
 

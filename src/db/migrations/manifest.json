@@ -367,9 +367,14 @@
       "schemaSha256": "1f9e69bb624ad8113d3c51d5d5cf2b0ca9dc8690cd841506f5f1e5cb06ad0bef"
     },
     {
+      "id": "conversation-drafts",
+      "sha256": "bfb84fc6fbcb0d1b28422dc23384f236e7d6c79c317403953e038dc4daa00178",
+      "schemaSha256": "4d4d42c5bbff283662b84925b75e248f09099b7881985e25b3acaa79172c1a45"
+    },
+    {
       "id": "home-activity-seen",
       "sha256": "dfc1467dab85ecaf5682a66c553795459d3f41fd2ebe2d14067fe65fa93a9058",
-      "schemaSha256": "d5ad18a3f531e5be18e7e49015829fdeb4d1a01c6ece9f4fa0fd065401eddfd9"
+      "schemaSha256": "4e6f646fbb8cb166859fb8dd029c13b7a9a6164e760a31977b9c926f64425156"
     }
   ]
 }
