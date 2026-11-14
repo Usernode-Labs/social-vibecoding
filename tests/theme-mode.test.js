@@ -162,7 +162,7 @@ function runTheme({ osDark, stored }) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(themeScript(), sandbox);
-  return { classes, metas: metas.map((m) => m.attrs.get('content')) };
+  return { classes, metas: metas.map((m) => m.attrs.get('content')), theme: sandbox.Theme };
 }
 
 test('an explicit Light choice overwrites both media-keyed metas on a dark OS', () => {
@@ -392,4 +392,44 @@ test('the theme button click handler does NOT close the drawer', () => {
   const body = src.slice(at, src.indexOf('export function ThemeSection()', at));
   assert.ok(!/<a\b/.test(body),
     'an anchor here would be closed by the drawer\'s delegated link handler');
+});
+
+
+test('the header toggles the same persisted theme as Settings (#6459)', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'frontend/src/features/header/theme-toggle.tsx'), 'utf8');
+  assert.match(source, /window.Theme\?\.set\?\./);
+  assert.match(source, /aria-pressed=\{dark\}/);
+  assert.doesNotMatch(source, /localStorage/, 'the header creates no second preference');
+  const { renderComponent } = require('./lib/render-tsx');
+  const html = renderComponent('frontend/src/features/header/theme-toggle.tsx', 'HeaderThemeToggle', {});
+  assert.match(html, /aria-label="Dark mode" aria-pressed="false"/);
+  assert.match(html, /title="Switch to dark mode"/);
+});
+
+test('the header toggle shows the glyph for the theme on screen, and follows it (#6459)', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'frontend/src/features/header/theme-toggle.tsx'), 'utf8');
+  // The glyph is where a press goes, as the look picker's switch draws it.
+  assert.match(source, /\{dark \? <SunIcon [^>]*\/> : <MoonIcon [^>]*\/>\}/);
+  assert.match(source, /const sync = \(\) => setDark\(document\.documentElement\.classList\.contains\('dark'\)\);/,
+    'what is on screen, so "System" reads as what the device shows');
+  const icons = fs.readFileSync(path.join(ROOT, 'frontend/@/components/ui/icons.tsx'), 'utf8');
+  const d = (name) => icons.match(new RegExp(`export const ${name}Icon = stroked\\(\\s*['"]${name}Icon['"],\\s*'([^']+)'`))[1];
+  const { renderComponent } = require('./lib/render-tsx');
+  const html = renderComponent('frontend/src/features/header/theme-toggle.tsx', 'HeaderThemeToggle', {});
+  assert.ok(html.includes(d('Moon')) && !html.includes(d('Sun')), 'light on the first render: the moon');
+});
+
+test('the header toggle stops listening to Theme when it unmounts (#6459)', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'frontend/src/features/header/theme-toggle.tsx'), 'utf8');
+  assert.match(source, /const stop = window\.Theme\?\.onChange\?\.\(sync\);/);
+  assert.match(source, /return \(\) => \{ if \(typeof stop === 'function'\) stop\(\); \};/);
+  // Theme.onChange hands back the way to stop: a listener removed hears nothing more.
+  const { theme } = runTheme({ osDark: false });
+  const heard = [];
+  const stop = theme.onChange((mode) => heard.push(mode));
+  assert.equal(typeof stop, 'function');
+  theme.set('dark');
+  stop();
+  theme.set('light');
+  assert.deepEqual(heard, ['dark']);
 });

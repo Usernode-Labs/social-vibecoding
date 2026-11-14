@@ -47,6 +47,7 @@ import { ChromelessPill } from './chromeless-pill';
 import { useCommunityHeaderTint } from './community-tint';
 import { HeaderTitle } from './header-title';
 import { PlatformMark } from './platform-mark';
+import { HeaderThemeToggle } from './theme-toggle';
 import { InAppActions } from './in-app-actions';
 import { SidebarToggle } from '../nav/sidebar-toggle';
 import { improveStore, topicBackHref } from '../improve/improve-store.js';
@@ -731,9 +732,6 @@ export function PlatformHeader() {
               and it is checked BEFORE preventDefault — the rule
               tests/nav-new-tab.test.js pins across the whole shell.
           */}
-          {/* An admin's look picker (../frame/look-picker.tsx), beside the bell:
-              the way out of a look as well as the way in. */}
-          <LookPicker variant="shell" />
           {/*
               The experimental chat toggle rode here, between Improve and the
               bell, as a pill flipping `Chat` / `Classic`. It went to the
@@ -749,6 +747,12 @@ export function PlatformHeader() {
               only on hover. Same for #sidebar-toggle; the back button and
               the app chip keep theirs.
           */}
+          {/* An admin's look picker (../frame/look-picker.tsx), beside the bell:
+              the way out of a look as well as the way in. Then the light and
+              dark switch everyone has (./theme-toggle.tsx, #6459), between
+              the picker and the bell; the picker leaves its own to it here. */}
+          <LookPicker variant="shell" />
+          <HeaderThemeToggle />
           <a
             id="notifications-btn"
             href="#notifications"

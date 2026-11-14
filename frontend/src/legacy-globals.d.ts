@@ -367,7 +367,8 @@ declare global {
       get(): 'light' | 'dark' | 'system';
       set(mode: string): void;
       apply(): void;
-      onChange(fn: (mode: string) => void): void;
+      /** Returns a function that removes `fn` again. */
+      onChange(fn: (mode: string) => void): () => void;
     };
     /** The inline head-blocking display module in src/head.html (#3969):
      *  text size, high contrast and reduce motion (#6510), as data-*

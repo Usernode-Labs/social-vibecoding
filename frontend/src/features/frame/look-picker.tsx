@@ -14,7 +14,9 @@
  * BESIDE IT, ONE PRESS FLIPS LIGHT AND DARK: a look is judged in both. It
  * is the theme's own switch (window.Theme, as Settings > Theme sets it),
  * and shows the moon while the screen is light and the sun while it is
- * dark, whoever changed it.
+ * dark, whoever changed it. In the platform's header that switch is
+ * everyone's (../header/theme-toggle.tsx), drawn after the picker, so the
+ * shell variant leaves its own out.
  *
  * REAL ADMINS ONLY, as the Settings menu is (App._realIsAdmin, the answer
  * "view as a member" does not mask). Never on the first render: the
@@ -162,7 +164,9 @@ export function LookPicker({ variant }: { variant: 'frame' | 'shell' }) {
         try { window.scrollTo(0, 0); } catch { /* no window to scroll */ }
       }}
       dark={dark}
-      onDark={() => { window.Theme?.set?.(dark ? 'light' : 'dark'); }}
+      // The platform's header draws a switch of its own for everyone
+      // (../header/theme-toggle.tsx, #6459), so the shell's picker leaves it out.
+      onDark={variant === 'frame' ? () => { window.Theme?.set?.(dark ? 'light' : 'dark'); } : undefined}
     />
   );
 }
