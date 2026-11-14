@@ -47,6 +47,7 @@ import { AppWindowIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, ChatIcon, FlagIc
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { enterSends, useEnterSends } from '../../lib/enter-sends';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { MAX_ATTACHMENTS, stageFiles } from '../attachments/limits';
 import { SpeakButton } from '../dictation/speak-button';
@@ -221,6 +222,8 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   const scroller = useRef<HTMLDivElement>(null);
   useComposerKeyboard(scroller);
   useAutoGrow(inputRef, words);
+  // Plain Enter sends on this device: the hint and the tooltip say so.
+  const enterKey = useEnterSends();
   // The starts in the reader's language: what each writes, and what it is for.
   const starts = NEW_THREAD_STARTS.map((start) => ({ ...start, text: t(start.text) }));
   const begun = startOf(words, starts);
@@ -366,6 +369,9 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
 
   // Where the count turns amber, as in every other box.
   const nearLimit = words.length > 7600;
+  // What the keys do, once the text runs to a second line, as under every
+  // message box (./composer.tsx).
+  const keysHint = enterKey && words.includes('\n') && !nearLimit;
 
   return (
     <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:newThread.title')} data-bot-new-thread-pane="" data-bot-new-thread-own={own || undefined} data-bot-new-thread-setup={setup ? builder : undefined}>
@@ -509,7 +515,8 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
               onChange={(e) => setWords(e.currentTarget.value)}
               onPaste={(e) => { const files = [...e.clipboardData.files]; if (files.length) { e.preventDefault(); void addFiles(files); } }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); }
+                // Enter sends where there is a keyboard, as in every message box (lib/enter-sends.ts).
+                if (enterSends(e.nativeEvent)) { e.preventDefault(); void send(); }
               }}
             />
             <SpeakButton scope="messages:new-thread" getText={() => inputRef.current?.value || ''} onText={setWords} maxLength={8000} onBusyChange={setDictating} disabled={busy} />
@@ -520,12 +527,13 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
                 <ArrowTopRightOnSquareIcon aria-hidden="true" />
               </button>
             ) : (
-              <button type="submit" className="messages-send" onMouseDown={(event) => event.preventDefault()} disabled={busy || dictating || uploading > 0 || (!words.trim() && !attachments.length)} aria-label={t('messages:composer.send')} data-bot-new-thread-send="">
+              <button type="submit" className="messages-send" onMouseDown={(event) => event.preventDefault()} disabled={busy || dictating || uploading > 0 || (!words.trim() && !attachments.length)} aria-label={t('messages:composer.send')} title={enterKey ? t('messages:composer.sendShortcut') : undefined} data-bot-new-thread-send="">
                 <ArrowUpIcon aria-hidden="true" />
               </button>
             )}
           </div>
           {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
+          {keysHint ? <p className="mt-1 px-3 text-end text-[11px] leading-[15px] text-zinc-500 dark:text-zinc-400" data-enter-hint="">{t('messages:composer.newLineHint')}</p> : null}
           <div className="messages-composer-count mt-1 px-1 flex justify-end h-[15px]" data-near-limit={nearLimit ? '' : undefined} aria-hidden={!words.length}><span className={`text-[10px] leading-[15px] ${nearLimit ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{words.length ? `${words.length}/8000` : ''}</span></div>
         </div>
         {drop.dragging ? <DropOverlay className="messages-drop-overlay" /> : null}

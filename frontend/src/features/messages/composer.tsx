@@ -13,6 +13,7 @@ import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjec
 import { fileSize, MessageMarkdown, pendingObjectLabel, senderName } from './format';
 import { plainText } from './plain-text';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { enterSends, useEnterSends } from '../../lib/enter-sends';
 import { MAX_ATTACHMENTS, stageFiles } from '../attachments/limits';
 import { registerComposerDrop } from './pane-drop';
 import { prefixLookup, type PrefixLookup } from '../../lib/prefix-lookup';
@@ -159,6 +160,10 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const lastPointer = useRef('');
   // #1408: grow with the message, up to the max-height already in app.css.
   useAutoGrow(inputRef, value);
+  // Plain Enter sends on this device (lib/enter-sends.ts): what the hint
+  // under the box and the send button's tooltip say. False on the first
+  // render, so the prerender and the hydration draw neither.
+  const enterKey = useEnterSends();
   const fileRef = useRef<HTMLInputElement>(null);
   const typingStop = useRef<number | null>(null);
   const reply = replyFor(scope);
@@ -330,8 +335,11 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // suggesting. Now the open list is a listbox the textarea drives through
   // `aria-activedescendant`: the first row is highlighted, ArrowUp/ArrowDown
   // move the highlight, Enter or Tab picks it, and Escape closes the list
-  // for the text as it stands (typing brings it back). Enter is a new line;
-  // Ctrl/Cmd+Enter sends while no list is showing (#5361).
+  // for the text as it stands (typing brings it back). While no list is
+  // showing, Enter sends where there is a keyboard and Shift+Enter is a new
+  // line, as in a project's channel; on a touch device Enter stays a new
+  // line. Ctrl/Cmd+Enter sends everywhere (lib/enter-sends.ts, which
+  // replaced #5361's Enter-is-a-new-line rule).
   const listId = useId();
   const [highlight, setHighlight] = useState(0);
   const [dismissedAt, setDismissedAt] = useState<string | null>(null);
@@ -790,6 +798,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   const planReply = reply?.sender.bot && reply.metadata?.homeroomBot?.kind === 'plan' ? reply.metadata.homeroomBot : null;
   // Where the count turns amber, and the only length a phone shows it at.
   const nearLimit = value.length > 7600;
+  const keysHint = enterKey && value.includes('\n') && !nearLimit;
   // #6035, Drea: the draft as it will be sent, drawn by the same renderer a
   // sent message is. It is shown once the draft carries formatting, so a
   // plain message's box stays the one row it was; the field keeps the
@@ -910,11 +919,19 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
             </div>
           ) : null}
         </div>
-        <textarea ref={inputRef} dir="auto" value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); else if (onFormatKey(event)) return; }} onBlur={() => notifyTyping(false, threadRootId)} onPointerDown={(event) => { lastPointer.current = event.pointerType; }} onContextMenu={onTextareaContextMenu} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : (prompt || t('messages:composer.placeholder'))} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
+        <textarea ref={inputRef} dir="auto" value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (enterSends(event.nativeEvent)) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); else if (onFormatKey(event)) return; }} onBlur={() => notifyTyping(false, threadRootId)} onPointerDown={(event) => { lastPointer.current = event.pointerType; }} onContextMenu={onTextareaContextMenu} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : (prompt || t('messages:composer.placeholder'))} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
         <SpeakButton scope={`messages:${scope}`} getText={() => inputRef.current?.value || ''} onText={updateValue} maxLength={8000} onBusyChange={setDictating} disabled={!boxShown} />
-        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={dictating || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={t('messages:composer.send')}><ArrowUpIcon aria-hidden="true" /></button>
+        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={dictating || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={t('messages:composer.send')} title={enterKey ? t('messages:composer.sendShortcut') : undefined}><ArrowUpIcon aria-hidden="true" /></button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
+      {/* What the keys do, said where there is a keyboard and only once the
+          text already runs to a second line (typed with Shift + Enter, or
+          pasted): the box has grown by then, so the first keystroke still
+          does not push the composer up by a line (#4202). A touch device,
+          where Enter is a new line already, never draws it. It gives its
+          line to the count once the text nears the limit, and it is in the
+          count's own muted ink. */}
+      {keysHint ? <p className="mt-1 px-3 text-end text-[11px] leading-[15px] text-zinc-500 dark:text-zinc-400" data-enter-hint="">{t('messages:composer.newLineHint')}</p> : null}
       {/* The count's line is not laid out until the text nears the limit
           (`data-near-limit`, app.css): on a phone since #3735, and at every
           width since #4202, so the card stays one row and the first
