@@ -56,7 +56,7 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import type * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Chip, FadeRail } from '@/components/ui/chip';
+import { Chip } from '@/components/ui/chip';
 import { SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
@@ -291,10 +291,48 @@ function MainChatRow({ lit, unread, open }: { lit: boolean; unread: number; open
  * The chips' rail inside the title's sheet: one line that scrolls, as the
  * shell's ChipRail does, fading out toward whichever edge has more chips past
  * it rather than cutting the last one off against the sheet's border (Evan,
- * 30 Oct: wrapping to a second line read worse). The fade itself is the chip
- * primitive's, shared with Home's kind chips; this call site keeps the
- * spacing of the sheet's border.
+ * 30 Oct: wrapping to a second line read worse). The fade is a mask, so it
+ * fades to whatever the sheet is, in either theme.
  */
+const FADE = 40;
+function FadeRail({ className = '', children, ...props }: React.ComponentProps<'div'>): ReactNode {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [edges, setEdges] = useState({ start: false, end: false });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const sync = () => {
+      // scrollLeft runs negative from the start in a right-to-left scroller.
+      const at = Math.abs(el.scrollLeft);
+      const start = at > 1;
+      const end = at + el.clientWidth < el.scrollWidth - 1;
+      setEdges((e) => (e.start === start && e.end === end ? e : { start, end }));
+    };
+    sync();
+    el.addEventListener('scroll', sync, { passive: true });
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(sync);
+    ro?.observe(el);
+    return () => { el.removeEventListener('scroll', sync); ro?.disconnect(); };
+  }, []);
+  const mask = edges.start || edges.end
+    ? `linear-gradient(to right, ${edges.start ? 'transparent' : '#000'}, #000 ${FADE}px, #000 calc(100% - ${FADE}px), ${edges.end ? 'transparent' : '#000'})`
+    : undefined;
+  return (
+    <div
+      ref={ref}
+      // ChipRail's own classes, with a ref, and its clip kept 6px inside the
+      // sheet's border (mx-1.5): a chip fades out short of the border, never
+      // under it. The first chip still starts 16px in, as the title does.
+      className={`mx-1.5 flex gap-2 overflow-x-auto px-2.5 pt-3 pb-4 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}
+      style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
+      data-fade-start={edges.start ? '' : undefined}
+      data-fade-end={edges.end ? '' : undefined}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
 
 /**
  * A project's own Show more, under its rows: centred, its arrow pointing down
@@ -654,7 +692,7 @@ export function AiLists({
           // rail never scrolls it out of reach. Drawn too whenever a link
           // picked a project, however few there are, so All is a tap away.
           <div className="flex items-start" data-ai-project-filter="">
-            <FadeRail role="group" aria-label={t('messages:ai.filter.label')} data-ai-project-chips="" className="mx-1.5 min-w-0 flex-1 gap-2 px-2.5 pt-3 pb-4">
+            <FadeRail role="group" aria-label={t('messages:ai.filter.label')} data-ai-project-chips="" className="min-w-0 flex-1">
               <Chip size="bar" className={`px-4 ${CHIP_EDGE}`} selected={!picked.length} onClick={() => setOnly([])}>
                 {t('messages:ai.filter.all')}
                 <FreshBadge count={freshAll} className={!picked.length ? 'bg-white text-zinc-900 dark:bg-zinc-900 dark:text-white' : 'bg-violet-600 text-white'} />
