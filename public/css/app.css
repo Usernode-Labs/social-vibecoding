@@ -31007,17 +31007,20 @@ html[data-skin="sunrise"][data-skin] .fr-tb.fr-on{border-radius:14px}
      white with a soft lift and no outline, so a card differs from the page
      by its fill. (The website's own cream, #fffeea, is too close to white
      for that without the ink outline its cards wear.) In dark the page is
-     the dark of the website's ink, a deep green, a card is one step
-     lighter, and words are the cream the light page is made of.
+     a dark purple, the standard dark's own ground made flat, a card is
+     one step lighter in the same hue, and words are a white tinted the
+     same way.
    - A frame around the page: a deep sky sidebar with white words, and a
      navy top bar, darker than the sidebar so the two read as two pieces. A
      community's own header colour stays on its pages. In dark both are
-     deeper, so the frame does not glare beside a dark page.
+     much deeper, a dark blue sidebar under a purple-navy bar, so the
+     frame does not glare beside a dark page.
    - One job per colour. Sun (#ffee6f) means "you are here" on the sidebar
      and the tab bar, and "do this" on the main button, which in light also
      wears the website's ink outline and hard foot. Deep sky (#1a63c4) is a
      link, and a count that asks for you; in dark a link is a light sky,
-     which reads on a dark card. Ink (#121a0e) is text, cream in dark.
+     which reads on a dark card. Ink (#121a0e) is text; in dark, text is
+     a white tinted toward the page's purple.
    - Geist for words, Young Serif for titles, Geist Mono for counts. A
      label over a group is sentence case, not small caps.
    - The website's own figures in two empty states.
@@ -31128,63 +31131,66 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-contrast="more"]) {
   --app-sheet-line: rgba(18, 26, 14, 0.07);
 }
-/* DARK. The same roles on a deep green page. As in the standard dark the
-   surfaces climb from the page: --bg-primary is the page, a card is
-   --bg-secondary, and what stands on a card is --bg-tertiary. */
+/* DARK. The same roles on a dark purple page: the hue of the standard
+   dark's washes, flat (13 Nov 2026 it was a deep green, the dark of the
+   website's ink, which read as a different product beside the standard
+   dark). As in the standard dark the surfaces climb from the page:
+   --bg-primary is the page, a card is --bg-secondary, and what stands on
+   a card is --bg-tertiary. The greys are tinted toward the same purple. */
 html[data-skin="brand"].dark:not([data-app-tone="light"]) {
-  --bl-page: #141a11;
-  --bl-card: #20281c;
-  --bl-raise: #2b3426;
-  --bl-label: #cfceb7;
-  --bl-tile-ink: #cfceb7;
-  --bl-bar: #232c4f;
-  --bl-side: #143a75;
+  --bl-page: #181127;
+  --bl-card: #28203c;
+  --bl-raise: #372d4e;
+  --bl-label: #cdc7da;
+  --bl-tile-ink: #cdc7da;
+  --bl-bar: #2a2452;
+  --bl-side: #12245a;
   --bl-sun: #ffee6f;
   --bl-sun-lit: #fff6ac;
   --bl-on-sun: #121a0e;
-  --bl-wash: #3a3714;
+  --bl-wash: rgba(255, 238, 111, 0.14);
   --bl-sky: #7fbcf7;
   --bl-count: #1a63c4;
   --bl-on-count: #ffffff;
-  --bl-solid: #f6f2d8;
-  --bl-on-solid: #121a0e;
+  --bl-solid: #f2eff7;
+  --bl-on-solid: #181127;
   --bl-tint-sun: rgba(255, 238, 111, 0.18);
   --bl-tint-sky: rgba(127, 188, 247, 0.18);
   --bl-tint-leaf: rgba(150, 184, 133, 0.22);
-  --bl-on-tint: #f6f2d8;
-  --bl-edge: rgba(246, 242, 216, 0.08);
-  --bl-pic-line: rgba(246, 242, 216, 0.12);
+  --bl-on-tint: #f2eff7;
+  --bl-edge: rgba(233, 226, 248, 0.08);
+  --bl-pic-line: rgba(233, 226, 248, 0.12);
   /* A shadow has to out-darken the page to lift anything from it. */
   --bl-lift: 0 1px 2px rgba(0, 0, 0, 0.35), 0 14px 30px -22px rgba(0, 0, 0, 0.9);
-  --bl-raise-edge: inset 0 0 0 1px rgba(246, 242, 216, 0.1), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --bl-raise-edge: inset 0 0 0 1px rgba(233, 226, 248, 0.1), 0 1px 2px rgba(0, 0, 0, 0.3);
   /* An ink outline would vanish on the dark page: the pill keeps its hard
      foot, in a deeper sun. */
   --bl-pill-edge: 0 2px 0 #a3962b;
   --bl-pill-edge-down: 0 0 0 #a3962b;
-  --bg-primary: #141a11;
-  --bg-secondary: #20281c;
-  --bg-tertiary: #2b3426;
-  --dev-press: #374131;
-  --bg-input: #20281c;
-  --bg-code: #10150d;
-  --bg-code-header: #20281c;
-  --bg-card: rgba(246, 242, 216, 0.06);
-  --dc-strip: #141a11;
-  --dc-sheet: #20281c;
-  --dc-sheet-raise: #2b3426;
-  --dc-raised: #2b3426;
-  --dc-sheet-solid: #20281c;
-  --dc-strip-solid: #141a11;
+  --bg-primary: #181127;
+  --bg-secondary: #28203c;
+  --bg-tertiary: #372d4e;
+  --dev-press: #453960;
+  --bg-input: #28203c;
+  --bg-code: #120d20;
+  --bg-code-header: #28203c;
+  --bg-card: rgba(233, 226, 248, 0.06);
+  --dc-strip: #181127;
+  --dc-sheet: #28203c;
+  --dc-sheet-raise: #372d4e;
+  --dc-raised: #372d4e;
+  --dc-sheet-solid: #28203c;
+  --dc-strip-solid: #181127;
   /* In dark the lighter line is the stronger one, as in the standard dark. */
-  --border: rgba(246, 242, 216, 0.12);
-  --border-light: rgba(246, 242, 216, 0.18);
-  /* Cream and its greys. */
-  --text-primary: #f6f2d8;
-  --text-secondary: #dedbc4;
-  --text-muted: #a9ad98;
-  --text-faint: #8f937f;
-  --text-code: #dedbc4;
-  /* The accent is the light sky here, not the cream that would mirror
+  --border: rgba(233, 226, 248, 0.12);
+  --border-light: rgba(233, 226, 248, 0.18);
+  /* White and its greys, tinted toward the page. */
+  --text-primary: #f2eff7;
+  --text-secondary: #dcd7e6;
+  --text-muted: #aaa3bd;
+  --text-faint: #8e87a3;
+  --text-code: #dcd7e6;
+  /* The accent is the light sky here, not the white that would mirror
      light's ink: rules that put white words on the accent stay as readable
      as they are in the standard dark. */
   --accent: #7fbcf7;
@@ -31192,19 +31198,19 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]) {
   --accent-ink: #121a0e;
   --accent-tint: rgba(127, 188, 247, 0.14);
   --accent-tint-ink: #7fbcf7;
-  --accent-wash: #3a3714;
+  --accent-wash: rgba(255, 238, 111, 0.14);
   --accent-wash-ink: #ffee6f;
   /* Lit things on the page: sun words on a wash of sun. */
   --lit-ink: #ffee6f;
   --lit-tint: rgba(255, 238, 111, 0.16);
   --lit-line: transparent;
-  --brand-ink: #f6f2d8;
-  --brand-tint: #20281c;
-  --brand-line: rgba(246, 242, 216, 0.14);
+  --brand-ink: #f2eff7;
+  --brand-tint: #28203c;
+  --brand-line: rgba(233, 226, 248, 0.14);
 }
-/* Hairlines in cream at 7%, unless high contrast asked for stronger ones. */
+/* Hairlines in that white at 7%, unless high contrast asked for stronger ones. */
 html[data-skin="brand"].dark:not([data-app-tone="light"]):not([data-contrast="more"]) {
-  --app-sheet-line: rgba(246, 242, 216, 0.07);
+  --app-sheet-line: rgba(233, 226, 248, 0.07);
 }
 
 /* THE PAGE. The wallpaper is drawn on <body> by the route rule (one id
@@ -31462,26 +31468,27 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-500 { 
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-400 { color: #858a7c; }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .border-zinc-200 { border-color: rgba(18, 26, 14, 0.1); }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .border-zinc-300 { border-color: rgba(18, 26, 14, 0.18); }
-/* WARM DARKS. In dark the same elements wear dark: utilities, a cool
-   near-black ramp; on the green page they take the look's own steps. The
-   inverted solid (a light fill with dark words) is cream with ink. */
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-950 { background-color: #141a11; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-900 { background-color: #20281c; }
+/* THE DARK STEPS. In dark the same elements wear dark: utilities, a
+   neutral near-black ramp; on the purple page they take the look's own
+   steps. The inverted solid (a light fill with dark words) is the look's
+   white with the page's own dark. */
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-950 { background-color: #181127; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-900 { background-color: #28203c; }
 html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-800,
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:hover\:bg-zinc-800:hover { background-color: #2b3426; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:hover\:bg-zinc-800:hover { background-color: #372d4e; }
 html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-700,
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:hover\:bg-zinc-700:hover { background-color: #374131; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-600 { background-color: #4a5443; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-100 { background-color: #f6f2d8; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-100 { color: #f6f2d8; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-200 { color: #e4e1c9; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-300 { color: #cfceb7; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-400 { color: #a9ad98; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-500 { color: #8f937f; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-900 { color: #121a0e; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:border-zinc-800 { border-color: rgba(246, 242, 216, 0.1); }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:border-zinc-700 { border-color: rgba(246, 242, 216, 0.16); }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:border-zinc-600 { border-color: rgba(246, 242, 216, 0.24); }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:hover\:bg-zinc-700:hover { background-color: #453960; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-600 { background-color: #584c76; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-100 { background-color: #f2eff7; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-100 { color: #f2eff7; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-200 { color: #e4dfee; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-300 { color: #cdc7da; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-400 { color: #aaa3bd; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-500 { color: #8e87a3; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-900 { color: #181127; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:border-zinc-800 { border-color: rgba(233, 226, 248, 0.1); }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:border-zinc-700 { border-color: rgba(233, 226, 248, 0.16); }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:border-zinc-600 { border-color: rgba(233, 226, 248, 0.24); }
 /* MORE CONTRAST keeps its word under the look. The standard rules deepen
    the muted inks and the lines from <html>; the look's own tokens and
    ramps would outrank them, so each mode restates them here, in its own
@@ -31495,13 +31502,13 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"])[data-contrast="mo
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"])[data-contrast="more"] :is(.text-zinc-400, .text-zinc-500) { color: #2a3125; }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"])[data-contrast="more"] .border-zinc-200 { border-color: rgba(18, 26, 14, 0.28); }
 html[data-skin="brand"].dark:not([data-app-tone="light"])[data-contrast="more"] {
-  --text-muted: #e4e1c9;
-  --text-faint: #cfceb7;
-  --border: rgba(246, 242, 216, 0.5);
-  --border-light: rgba(246, 242, 216, 0.3);
+  --text-muted: #e4dfee;
+  --text-faint: #cdc7da;
+  --border: rgba(233, 226, 248, 0.5);
+  --border-light: rgba(233, 226, 248, 0.3);
 }
-html[data-skin="brand"].dark:not([data-app-tone="light"])[data-contrast="more"] :is(.dark\:text-zinc-400, .dark\:text-zinc-500) { color: #e4e1c9; }
-html[data-skin="brand"].dark:not([data-app-tone="light"])[data-contrast="more"] .dark\:border-zinc-800 { border-color: rgba(246, 242, 216, 0.3); }
+html[data-skin="brand"].dark:not([data-app-tone="light"])[data-contrast="more"] :is(.dark\:text-zinc-400, .dark\:text-zinc-500) { color: #e4dfee; }
+html[data-skin="brand"].dark:not([data-app-tone="light"])[data-contrast="more"] .dark\:border-zinc-800 { border-color: rgba(233, 226, 248, 0.3); }
 
 /* CARDS: plain on the page (white in light, one step off the page in
    dark), with a soft lift. The outline every card is drawn with is the
@@ -31559,7 +31566,7 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   color: var(--bl-label);
 }
 
-/* A PROJECT'S HUB. Open app is the solid (ink in light, cream in dark): it
+/* A PROJECT'S HUB. Open app is the solid (ink in light, white in dark): it
    goes somewhere, it does not ask for you. Invite and the ⋯ beside it are
    raised plain buttons. */
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-open-app[data-ws-community-open-app] {
