@@ -878,7 +878,7 @@ test('#6616: an approvers-only gate keeps the author\'s change in Needs you, and
     .map((row) => Number(row.change && row.change.id)).filter((id) => id > 0));
   const owed = (await pool.query(
     `WITH mine AS (${aiWork.threadsInSql('$1')})
-     SELECT cs.id
+     SELECT DISTINCT cs.id
        FROM chat_sessions cs
        JOIN mine ON mine.thread_id = cs.thread_id
        JOIN work_states w ON w.session_id = cs.id

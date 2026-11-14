@@ -1149,12 +1149,6 @@ async function needsFeedFor(pool, { user, showSelfHosted = false, inThreads = fa
   await withPictures(pool, rows, { shotsPresent, viewer: user });
   await withViewerDecides(pool, rows, user.id);
   const voted = await withVotesRequired(pool, rows, user.id);
-  // #6616: whether each of the viewer's own changes has its votes in, from
-  // the same governed gate the stored work state and the merge read. Only
-  // their own proposal rows pay for a read; everybody else's change can never
-  // be dropped by authorGateMet.
-  await attachVotes(pool, voted, (row) => (row.kind === 'proposal'
-    && Number(row.author_id) === Number(user.id) ? { id: Number(row.id), prefix: '' } : null), new Date());
   // #6389: a row that is the viewer's own change says what it waits on once
   // its vote is in, and leaves Needs you when nothing is left for them to
   // fix (only testing is running).

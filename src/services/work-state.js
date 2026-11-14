@@ -2091,7 +2091,6 @@ module.exports = {
   phrasesOf,
   english,
   APPROVED_SQL,
-  attachVotes,
   votesIn,
   stageSays,
   lineSays,
