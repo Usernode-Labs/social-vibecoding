@@ -23689,12 +23689,13 @@ html[data-side-strip="left"] #platform-header {
   padding-left: calc(1rem + var(--platform-strip-w, 0px));
 }
 
-/* THE BELL'S SHEET IS FIXED TOO, so it is not in the body's content box:
-   like the header, its ground spans the screen while its content stops
-   beside the column. Every control moves together — the close disc, Mark
-   all read, the search field, the tabs and the rows' ends — and on the
-   Duo's wider inner screen, where the sheet docks as a side panel, the
-   panel keeps its 26rem width and its content gets the padding instead. */
+/* THE NOTIFICATION SHEET IS FIXED TOO, so it is not in the body's content
+   box: like the header, its ground spans the screen while its content
+   stops beside the column. Every control moves together — the close disc,
+   Mark all read, the search field, the tabs and the rows' ends — and on
+   the Duo's wider inner screen, where the sheet docks as a side panel,
+   the panel keeps its 26rem width and its content gets the padding
+   instead. */
 html[data-side-strip="right"] #notifications-sheet {
   padding-right: var(--platform-strip-w, 0px);
 }
