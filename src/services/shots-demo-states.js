@@ -338,17 +338,34 @@ async function roomToMake(client, ctx) {
   return rows.map((row) => Number(row.room));
 }
 
+// 14 Nov 2026: Main Chat is gone, and every message in the chat with the bot
+// is in a thread the Homeroom bot page lists. A state's messages are one
+// thread: its first message's row (private_threads), read up to `readTo`,
+// and where the thread opens. The columns a state names for it:
+const THREAD_COLUMNS = Object.freeze(['user_id', 'conversation_id', 'root_message_id', 'app_id', 'kind', 'state',
+  'last_read_message_id']);
+
+async function listThread(client, ctx, chat, { rootId, kind, appId = null, readTo }) {
+  await client.query(
+    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state, last_read_message_id)
+     VALUES ($1, $2, $3, $4, $5, 'open', $6)`,
+    [ctx.member.id, chat.conversationId, rootId, appId, kind, readTo]
+  );
+  return `/#homeroom-bot/thread/${Number(rootId)}`;
+}
+
 // The bot's message to the member, and its record as news about one of
 // their requests (homeroom-bot-dm.js sendDm, then the record its sender
-// writes). Resolves the message's id.
+// writes). `threadRootId` is the thread it is a reply in. Resolves the
+// message's id.
 async function insertBotDm(client, ctx, chat, {
-  appId, issueNumber, kind, runId = null, content, key, metadata, minutesAgo,
+  appId, issueNumber, kind, runId = null, content, key, metadata, minutesAgo, threadRootId = null,
 }) {
   const sent = await client.query(
-    `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
-     VALUES ($1, $2, $3, $4, $5::jsonb, NOW() - make_interval(mins => $6))
+    `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at, thread_root_id)
+     VALUES ($1, $2, $3, $4, $5::jsonb, NOW() - make_interval(mins => $6), $7)
      RETURNING id`,
-    [chat.conversationId, chat.botId, content, key, JSON.stringify({ homeroomBot: metadata }), minutesAgo]
+    [chat.conversationId, chat.botId, content, key, JSON.stringify({ homeroomBot: metadata }), minutesAgo, threadRootId]
   );
   const messageId = sent.rows[0].id;
   await client.query(
@@ -1310,7 +1327,8 @@ const STATES = [
       conversation_members: ['conversation_id', 'user_id', 'role', 'status', 'invited_by', 'responded_at',
         'joined_at', 'last_read_message_id'],
       conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'idempotency_key', 'metadata',
-        'created_at'],
+        'created_at', 'thread_root_id'],
+      private_threads: THREAD_COLUMNS,
       homeroom_bot_requesters: ['app_id', 'issue_number', 'user_id', 'issue_title', 'first_version', 'asked_text',
         'created_at'],
       homeroom_bot_runs: ['id', 'app_id', 'issue_number', 'mode', 'verdict', 'determined', 'build_note',
@@ -1376,7 +1394,18 @@ const STATES = [
          RETURNING id`,
         [ctx.member.id, chat.conversationId, appId, `The plan for ${name}`]
       );
+      // The first version's thread, opened by the line that says its project
+      // is being set up (homeroom-bot-dm.js startFirstVersion); its plan and
+      // the thanks are replies in it.
+      const { rows: [opener] } = await client.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
+         VALUES ($1, $2, $3, 'shots-fixture-hrbot-first-version', $4::jsonb, NOW() - INTERVAL '40 minutes')
+         RETURNING id`,
+        [chat.conversationId, chat.botId, dm.firstVersionStartedText({ name }),
+          JSON.stringify({ homeroomBot: { kind: 'first_version_started', appSlug: FIRST_VERSION_SLUG, appName: name } })]
+      );
       const planMessage = await insertBotDm(client, ctx, chat, {
+        threadRootId: opener.id,
         appId, issueNumber: 1, kind: 'plan', runId: run.id, minutesAgo: 8, key: `hrbot-plan-${run.id}`,
         content: dm.planCardText({ appName: name, plan }),
         metadata: {
@@ -1387,6 +1416,7 @@ const STATES = [
       });
       await client.query('UPDATE bot_cards SET message_id = $2 WHERE id = $1', [action.id, planMessage]);
       const thanks = await insertBotDm(client, ctx, chat, {
+        threadRootId: opener.id,
         appId, issueNumber: 1, kind: 'activity', minutesAgo: 5, key: `hrbot-activity-run-${run.id}`,
         content: activity.thanksText(name),
         metadata: {
@@ -1401,10 +1431,11 @@ const STATES = [
         'UPDATE conversation_members SET last_read_message_id = $3 WHERE conversation_id = $1 AND user_id = $2',
         [chat.conversationId, ctx.member.id, thanks]
       );
+      const path = await listThread(client, ctx, chat, { rootId: opener.id, kind: 'first_version', appId, readTo: thanks });
       return {
         shows: [{
-          state: `Your chat with Homeroom bot: the plan for your new project ${name}, answered with Build it, and under it the bot's thanks for answering over the project's card, whose build line reads Building it. Nothing in it is unread.`,
-          path: `/#messages/${IDS.botConversation}`,
+          state: `Your thread with Homeroom bot named "${name}, first version", on the Homeroom bot page: the bot's line that it is setting ${name} up, the plan for it, answered with Build it, and under it the bot's thanks for answering over the project's card, whose build line reads Building it. Nothing in it is unread.`,
+          path,
         }],
       };
     },
@@ -1430,8 +1461,9 @@ const STATES = [
       conversation_direct_pairs: ['conversation_id', 'user_low_id', 'user_high_id'],
       conversation_members: ['conversation_id', 'user_id', 'role', 'status', 'invited_by', 'responded_at',
         'joined_at', 'last_read_message_id'],
-      conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'reply_to_id', 'idempotency_key',
+      conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'thread_root_id', 'idempotency_key',
         'metadata', 'created_at'],
+      private_threads: THREAD_COLUMNS,
       bot_cards: ['id', 'user_id', 'conversation_id', 'message_id', 'app_id', 'kind', 'title',
         'details', 'status', 'source_issue_number', 'created_at'],
     },
@@ -1461,7 +1493,7 @@ const STATES = [
       const metadata = mayor.closeOfferMeta({ app, name, actionId: Number(action.id), issueNumber: number });
       const { rows: [offer] } = await client.query(
         `INSERT INTO conversation_messages
-           (conversation_id, sender_id, content, reply_to_id, idempotency_key, metadata, created_at)
+           (conversation_id, sender_id, content, thread_root_id, idempotency_key, metadata, created_at)
          VALUES ($1, $2, $3, $4, 'shots-fixture-hrbot-close-offer', $5::jsonb, NOW() - INTERVAL '2 minutes')
          RETURNING id`,
         [chat.conversationId, chat.botId, mayor.closeOfferText({ name, issueNumber: number, title, why }), ask.id,
@@ -1474,10 +1506,12 @@ const STATES = [
         'UPDATE conversation_members SET last_read_message_id = $3 WHERE conversation_id = $1 AND user_id = $2',
         [chat.conversationId, ctx.member.id, offer.id]
       );
+      // Their message is its own thread's first, and the offer its reply.
+      const path = await listThread(client, ctx, chat, { rootId: ask.id, kind: 'idea', readTo: offer.id });
       return {
         shows: [{
-          state: `Your chat with Homeroom bot, at the bottom: your message saying request #${number} is done, and the bot's offer quoting it to open a vote on closing it, with Propose to close and Keep it open, waiting for your answer. Nothing in it is unread. A tap on Propose to close cannot open the vote on these copies (the request is a staging mock GitHub does not have): the bot answers that it couldn't propose closing it just now.`,
-          path: `/#messages/${IDS.botConversation}`,
+          state: `Your thread with Homeroom bot that starts with your message saying request #${number} is done, on the Homeroom bot page: under it, the bot's offer to open a vote on closing it, with Propose to close and Keep it open, waiting for your answer. Nothing in it is unread. A tap on Propose to close cannot open the vote on these copies (the request is a staging mock GitHub does not have): the bot answers that it couldn't propose closing it just now.`,
+          path,
         }],
       };
     },
@@ -1502,8 +1536,9 @@ const STATES = [
       conversation_direct_pairs: ['conversation_id', 'user_low_id', 'user_high_id'],
       conversation_members: ['conversation_id', 'user_id', 'role', 'status', 'invited_by', 'responded_at',
         'joined_at', 'last_read_message_id'],
-      conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'reply_to_id', 'idempotency_key',
+      conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'thread_root_id', 'idempotency_key',
         'metadata', 'created_at'],
+      private_threads: THREAD_COLUMNS,
       bot_cards: ['id', 'user_id', 'conversation_id', 'message_id', 'app_id', 'kind', 'title',
         'details', 'status', 'created_at'],
       conversation_message_attachments: ['id', 'conversation_id', 'message_id', 'user_id', 'kind', 'filename',
@@ -1527,7 +1562,7 @@ const STATES = [
         related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
         context: { saw: 'the insights page' },
         doneWhen: ['Insights show week by week, not only as a total', 'The same weeks are counted however the list is sorted'],
-        chatHref: '#homeroom-bot/main',
+        chatHref: '#homeroom-bot',
       };
       const { rows: [ask] } = await client.query(
         `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
@@ -1559,7 +1594,7 @@ const STATES = [
       ].join('\n');
       const { rows: [offer] } = await client.query(
         `INSERT INTO conversation_messages
-           (conversation_id, sender_id, content, reply_to_id, idempotency_key, metadata, created_at)
+           (conversation_id, sender_id, content, thread_root_id, idempotency_key, metadata, created_at)
          VALUES ($1, $2, $3, $4, 'shots-fixture-hrbot-file-offer', $5::jsonb, NOW() - INTERVAL '2 minutes')
          RETURNING id`,
         [chat.conversationId, chat.botId, content, ask.id, JSON.stringify({ homeroomBot: metadata })]
@@ -1590,10 +1625,12 @@ const STATES = [
         'UPDATE conversation_members SET last_read_message_id = $3 WHERE conversation_id = $1 AND user_id = $2',
         [chat.conversationId, ctx.member.id, offer.id]
       );
+      // Their message is its own thread's first, and the draft its reply.
+      const path = await listThread(client, ctx, chat, { rootId: ask.id, kind: 'idea', readTo: offer.id });
       return {
         shows: [{
-          state: `Your chat with Homeroom bot, at the bottom: your message asking for a request with the screenshot you attached under it, and the bot's reply quoting it with the drafted request under it, ${name}, new request: ${title}, the same picture as a thumbnail, then Where (the insights page), Related (#6230 One detail column for plans and designs, build together) and Done when (two checks), and File it (filled) and Not now waiting for your answer. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
-          path: `/#messages/${IDS.botConversation}`,
+          state: `Your thread with Homeroom bot that starts with your message asking for a request, with the screenshot you attached under it, on the Homeroom bot page: under it, the bot's reply with the drafted request, ${name}, new request: ${title}, the same picture as a thumbnail, then Where (the insights page), Related (#6230 One detail column for plans and designs, build together) and Done when (two checks), and File it (filled) and Not now waiting for your answer. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
+          path,
         }],
       };
     },
