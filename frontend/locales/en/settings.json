@@ -2128,8 +2128,8 @@
     "description": "Row title in Settings > User guide, about the AI assistant. The bot's own name."
   },
   "guide.place.bot.body": {
-    "text": "Homeroom bot is your AI assistant: ask it a question, have it build a change, file an idea or fix a bug. It has its own tab. Main Chat is the first row there, and under it is the work you are part of across your projects. Messages is a separate tab, for your conversations with people.",
-    "description": "Paragraph in Settings > User guide. \"Main Chat\" is the name of the person's main chat with the bot. \"Messages\" is the name of a tab."
+    "text": "Homeroom bot is your AI assistant: ask it a question, have it build a change, file an idea or fix a bug. It has its own tab. New chat starts a conversation there, and the tab lists your chats with the bot beside the work you are part of across your projects. Messages is a separate tab, for your conversations with people.",
+    "description": "Paragraph in Settings > User guide. \"New chat\" is the name of the button on the Homeroom bot tab that starts a conversation with the bot. \"Messages\" is the name of a tab."
   },
   "guide.place.you.title": {
     "text": "You and Settings",
@@ -2239,13 +2239,13 @@
     "text": "Everything waiting on you, such as a vote or a question from Homeroom bot. Home shows a shortcut to it while a vote waits, and each project's page has its own.",
     "description": "Paragraph in Settings > User guide, explaining \"Needs you\"."
   },
-  "guide.term.mainChat.title": {
-    "text": "Main Chat",
-    "description": "Row title in Settings > User guide: the name of the person's main chat with Homeroom bot. Same words as on screen."
+  "guide.term.newChat.title": {
+    "text": "New chat",
+    "description": "Row title in Settings > User guide: the name of the button that starts a conversation with Homeroom bot. Same words as on screen."
   },
-  "guide.term.mainChat.body": {
-    "text": "Your own chat with Homeroom bot, the first row of its tab. News about a request is on the request's page instead.",
-    "description": "Paragraph in Settings > User guide, explaining \"Main Chat\"."
+  "guide.term.newChat.body": {
+    "text": "How you start talking to Homeroom bot: on its tab, or from a project's Workshop, where it is already about that project. Each chat is its own thread that only you can see, listed on the bot's tab. News about a request is on the request's page instead.",
+    "description": "Paragraph in Settings > User guide, explaining \"New chat\". \"Workshop\" is the name of a place on a project's page."
   },
   "guide.term.justYou.title": {
     "text": "Just you",
