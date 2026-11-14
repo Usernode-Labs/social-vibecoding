@@ -67,8 +67,19 @@ import type { BotTrack } from './types';
 export interface PrivateThreadState {
   /** #6159: `done` once it was finished (its request went live or closed, Mark done, or asked). */
   state: 'open' | 'filed' | 'posted' | 'dropped' | 'done';
-  /** What it is (open only): absent from an older server, which reads as an idea. */
-  kind?: 'draft_request' | 'draft_reply' | 'idea' | 'ask' | 'design';
+  /**
+   * What it is: absent from an older server, which reads as an idea. 14 Nov
+   * 2026: the kinds the bot opens itself are `hello` (its hello), `note`
+   * (anything else it says to the person), `first_version` (a project's
+   * first version) and `earlier` (the person's old Main Chat messages).
+   */
+  kind?: 'draft_request' | 'draft_reply' | 'idea' | 'ask' | 'design' | 'hello' | 'note' | 'first_version' | 'earlier';
+  /**
+   * 14 Nov 2026: the thread's name, when the server names it by what it is
+   * ("Earlier chat", "Plant Pal, first version": services/private-threads.js
+   * kindTitle) and not by its words. Absent for any other thread.
+   */
+  title?: string | null;
   /**
    * 1 Nov 2026: whether it is the viewer's private thread at all: a row of
    * theirs, or a root that is their own message (services/private-threads.js
@@ -211,6 +222,40 @@ export function privateThreadWords(root: ThreadMessage | null | undefined, repli
   return firstOwn(replies, meId)?.content || '';
 }
 
+// ── A thread the server names (14 Nov 2026) ─────────────────────────────
+//
+// Earlier chat and a project's first version are named by what they are,
+// never by their first words (services/private-threads.js kindTitle): the
+// Homeroom bot page's row says "Earlier chat", and the open thread's head
+// must say the same, not the first thing the person said in their old Main
+// Chat. The name comes with the row (GET /api/ai/work) and with where the
+// thread stands (GET …/threads/<root>); whichever is read first is kept
+// here, so the head is right from its first paint and not a beat later.
+
+/** The kinds a thread is named by, as the server's kindTitle knows them. */
+export const KINDS_NAMED: ReadonlySet<string> = new Set(['earlier', 'first_version']);
+
+const serverNames = new Map<number, string>();
+
+/** Keep the server's name for a thread. Anything that is not a name is ignored. */
+export function noteThreadName(rootId: number | null | undefined, name: string | null | undefined): void {
+  const said = typeof name === 'string' ? name.trim() : '';
+  if (rootId && said) serverNames.set(rootId, said);
+}
+
+/** Keep the names of the rows the server names by kind (the Homeroom bot page's read of its lists). */
+export function noteThreadNames(rows: ReadonlyArray<{ rootId?: number | null; kind?: string | null; title?: string | null }> | null | undefined): void {
+  for (const row of rows || []) {
+    if (row && KINDS_NAMED.has(String(row.kind))) noteThreadName(row.rootId, row.title);
+  }
+}
+
+/** The server's name for a thread, when it gave one: from where it stands, else as its row said it. */
+export function serverThreadName(rootId: number | null | undefined, where: PrivateThreadState | null = null): string | null {
+  const said = typeof where?.title === 'string' ? where.title.trim() : '';
+  return said || (rootId ? serverNames.get(rootId) || null : null);
+}
+
 /** Where a private thread stands, read when it opens; null for no thread, or until it is read. */
 export function usePrivateThread(rootId: number | null): [PrivateThreadState | null, (next: PrivateThreadState) => void] {
   const [where, setWhere] = useState<PrivateThreadState | null>(null);
@@ -220,7 +265,11 @@ export function usePrivateThread(rootId: number | null): [PrivateThreadState | n
     let live = true;
     fetch(`/api/conversations/homeroom-bot/threads/${rootId}`, { credentials: 'same-origin' })
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => { if (live && data && typeof data.state === 'string') setWhere(data); })
+      .then((data) => {
+        if (!data || typeof data.state !== 'string') return;
+        noteThreadName(rootId, data.title);
+        if (live) setWhere(data);
+      })
       .catch(() => {});
     return () => { live = false; };
   }, [rootId]);

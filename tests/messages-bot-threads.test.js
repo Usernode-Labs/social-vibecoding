@@ -216,6 +216,37 @@ test('a plan in its request\'s thread hides no card and reads the card it hangs 
   assert.equal(layout.answersOpen, true);
 });
 
+// 14 Nov 2026: with no Main Chat, a project's first version is one thread:
+// its opening line, then the activity card, the plan and the card Build it
+// moves under the plan, each a reply. They were messages of the main stream,
+// read together; a thread that hangs off no card reads its replies the same
+// way, so the plan still carries its request's step and the card above it
+// is not drawn a second time.
+test('a first version\'s thread reads its replies as the stream they were: the plan carries the card\'s step', () => {
+  const { planLayout } = loadTsx('frontend/src/features/messages/bot-plan.tsx');
+  const fv = { appSlug: 'plant-pal', appName: 'Plant Pal', issueNumber: 1, firstVersion: true };
+  const reply = (id, meta) => message(BOT, id, { threadRootId: 60, content: 'x', metadata: { homeroomBot: meta } });
+  const card = reply(61, { kind: 'activity', ...fv });
+  const plan = reply(62, { kind: 'plan', ...fv, status: 'open', actionId: 5, plan: { bullets: ['A list of plants'], questions: [] } });
+  const live = reply(63, { kind: 'merged', ...fv, live: true });
+  // As the pane hands them over: its own replies, with no thread above them.
+  const flat = (rows) => planLayout(rows.map((row) => ({ ...row, threadRootId: null })));
+  const waiting = flat([card, plan, live]);
+  assert.deepEqual([...waiting.hidden], [61], 'the card above its plan is not drawn');
+  assert.equal(waiting.cardOf.get(62), 61, 'the plan reads its step');
+  // Read as replies of a request's thread, nothing is hidden and the plan hangs off the root.
+  const threaded = planLayout([card, plan, live]);
+  assert.deepEqual([...threaded.hidden], []);
+  assert.equal(threaded.cardOf.get(62), 60);
+  const screen = read('frontend/src/features/messages/index.tsx');
+  assert.match(screen, /const flatPlans = botChat && !cardId\s+\? planLayout\(replies\.map\(\(message\) => \(message\.threadRootId \? \{ \.\.\.message, threadRootId: null \} : message\)\)\)\s+: NO_PLAN_LAYOUT;/);
+  assert.match(screen, /const carried = \(message: ConversationMessage\) => botChat && !cardId\s+&& \(flatPlans\.hidden\.has\(message\.id\) \|\| isMovedActivity\(message\)\);/);
+  assert.match(screen, /\.\.\.replies\.filter\(\(message\) => !carried\(message\)\)\.map\(\(message\) => \(\{ kind: 'reply' as const, message \}\)\),/);
+  assert.match(screen, /planCardId=\{isPlanMessage\(message\) \? cardId \|\| flatPlans\.cardOf\.get\(message\.id\) \|\| null : null\}/);
+  // The New line stands above the first reply drawn from the first unread on.
+  assert.match(screen, /const line = firstUnread && !newLineDrawn && message\.id >= firstUnread/);
+});
+
 test('an answer to a message in a request\'s thread goes in that thread, from either place', () => {
   const store = read('frontend/src/features/messages/store.ts');
   assert.match(store, /const rootId = botThreadOf\(question\);\s*const scope = scopeKey\(conversationId, rootId\);/);

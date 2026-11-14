@@ -2862,12 +2862,20 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
       },
     });
     applyPendingQuote();
-    const newest = known.reduce((top, item) => Math.max(top, item.id), 0);
+    // 14 Nov 2026: in the chat with Homeroom bot a thread's first message is
+    // unread like any reply (the bot's hello, with nothing under it yet:
+    // services/private-threads.js THREAD_UNREAD_WHERE), so a thread nobody
+    // has replied in is read up to it. Opening the hello left its row's new
+    // mark and the tab's badge standing for good. Only there: anywhere else
+    // a thread's first message is the main stream's, and reading up to it
+    // would move the conversation's own cursor.
+    const first = state.route.threadsOnly && state.route.conversationId === conversationId ? rootId : 0;
+    const newest = known.reduce((top, item) => Math.max(top, item.id), first);
     if (newest) {
       readWhenThere(`thread:${conversationId}:${rootId}`, conversationId, () => {
         // The newest reply drawn when they are back, in the thread still open.
         if (state.thread?.conversationId !== conversationId || state.thread.rootId !== rootId) return;
-        const now = state.thread.messages.reduce((top, item) => Math.max(top, item.id), 0);
+        const now = state.thread.messages.reduce((top, item) => Math.max(top, item.id), first);
         if (now > 0) void markThreadRead(conversationId, rootId, now);
       });
     }

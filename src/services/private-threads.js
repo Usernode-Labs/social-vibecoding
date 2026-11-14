@@ -93,7 +93,9 @@ async function stateOf(pool, { user, rootId, bot = null, deps = {} }) {
   const { rows: [row] } = await pool.query(
     `SELECT p.state, p.result_ref, p.kind, a.slug, a.name, t.number AS target_number,
             d.title AS design_title,
-            (SELECT MAX(v.version) FROM design_versions v WHERE v.private_thread_id = p.id) AS design_version
+            (SELECT MAX(v.version) FROM design_versions v WHERE v.private_thread_id = p.id) AS design_version,
+            (SELECT m.metadata->'homeroomBot'->>'appName' FROM conversation_messages m
+              WHERE m.id = p.root_message_id) AS root_app_name
        FROM private_threads p
        LEFT JOIN design_threads d ON d.private_thread_id = p.id
        LEFT JOIN apps a ON a.id = p.app_id
@@ -107,7 +109,10 @@ async function stateOf(pool, { user, rootId, bot = null, deps = {} }) {
     return { state: 'open', kind: 'idea', app: null, target: null, mine };
   }
   const app = row.slug ? { slug: row.slug, name: row.name || row.slug } : null;
-  const title = kindTitle({ kind: row.kind, appName: app?.name || null });
+  // The project's name, or the one the thread's first message names when
+  // the project itself is gone: the name its row has on the Homeroom bot
+  // page (ai-work.js shapePrivate), so the open thread's head says the same.
+  const title = kindTitle({ kind: row.kind, appName: app?.name || row.root_app_name || null });
   return {
     state: row.state,
     kind: row.kind,

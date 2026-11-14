@@ -327,3 +327,45 @@ test('a done thread says so under its head, with Reopen; its ⋯ has Mark done, 
   assert.match(lists, /<ThreadDoneMenu rootId=\{rootId\} done=\{false\} onChanged=\{\(state\) => \{ if \(state === 'done'\) mark\(\); \}\} className="shrink-0" \/>/);
   assert.match(read('frontend/src/features/ai/model.ts'), /if \(p\.state === 'done'\) continue;/);
 });
+
+// 14 Nov 2026: THE HEAD SAYS WHAT THE ROW SAYS. Earlier chat and a project's
+// first version are named by what they are (services/private-threads.js
+// kindTitle), never by their first words: the row read "Earlier chat" while
+// the open thread's head read the first thing the person had said in their
+// old Main Chat.
+test('a thread the server names is headed by that name, from its row or from where it stands', () => {
+  const bar = loadTsx(BAR);
+  const { kindTitle } = require('../src/services/private-threads');
+  // The kinds named by what they are: the same on both sides.
+  const kinds = ['draft_request', 'draft_reply', 'idea', 'ask', 'design', 'hello', 'note', 'first_version', 'earlier'];
+  assert.deepEqual(kinds.filter((kind) => bar.KINDS_NAMED.has(kind)).sort(),
+    kinds.filter((kind) => kindTitle({ kind, appName: 'Plant Pal' })).sort());
+  assert.equal(bar.serverThreadName(41), null, 'nothing known yet');
+  // From the Homeroom bot page's read of its lists, only the rows named by kind.
+  bar.noteThreadNames([
+    { rootId: 41, kind: 'earlier', title: 'Earlier chat' },
+    { rootId: 42, kind: 'first_version', title: 'Plant Pal, first version' },
+    { rootId: 43, kind: 'ask', title: 'could you add a dark mode' },
+    { rootId: 44, kind: 'hello', title: 'Hi, I\'m Homeroom bot' },
+    { rootId: null, kind: 'earlier', title: 'no thread' },
+  ]);
+  assert.equal(bar.serverThreadName(41), 'Earlier chat');
+  assert.equal(bar.serverThreadName(42), 'Plant Pal, first version');
+  assert.equal(bar.serverThreadName(43), null, 'any other thread keeps the name its words give it');
+  assert.equal(bar.serverThreadName(44), null);
+  assert.equal(bar.serverThreadName(null), null);
+  // Where the thread stands says it too, and wins (a project renamed since the lists were read).
+  assert.equal(bar.serverThreadName(42, { state: 'open', title: 'Plant Pals, first version' }), 'Plant Pals, first version');
+  assert.equal(bar.serverThreadName(45, { state: 'open', title: 'Earlier chat' }), 'Earlier chat', 'a thread in no list (History\'s)');
+  assert.equal(bar.serverThreadName(43, { state: 'open' }), null);
+  // The name is over the thread's own words in the head, and both reads feed it.
+  const src = read(BAR);
+  assert.match(src, /\.then\(\(data\) => \{\s+if \(!data \|\| typeof data\.state !== 'string'\) return;\s+noteThreadName\(rootId, data\.title\);\s+if \(live\) setWhere\(data\);/);
+  const screen = read('frontend/src/features/messages/index.tsx');
+  assert.match(screen, /const aloneTitle = alone\s+\? serverThreadName\(privateRoot, privateWhere\)\s+\|\| privateThreadTitle\(root, replies, meId\)/);
+  assert.match(read('frontend/src/features/ai/index.tsx'), /useEffect\(\(\) => \{ noteThreadNames\(work\?\.private\); \}, \[work\]\);/);
+  // The server names it the same in all three reads: the row, the open thread and History.
+  const server = read('src/services/private-threads.js');
+  assert.match(server, /const title = kindTitle\(\{ kind: row\.kind, appName: app\?\.name \|\| row\.root_app_name \|\| null \}\);/);
+  assert.match(read('src/services/ai-history.js'), /m\.metadata->'homeroomBot'->>'appName' AS root_app_name,/);
+});

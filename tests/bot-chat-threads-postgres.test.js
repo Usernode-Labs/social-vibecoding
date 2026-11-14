@@ -243,6 +243,8 @@ test('every conversation with Homeroom bot is a thread', { timeout: 170000 }, as
     const titled = (await aiWork.privateFor(pool, { user: ada })).find((p) => p.rootId === started.messageId);
     assert.equal(titled.title, 'Plant Pal, first version');
     assert.equal(titled.kind, 'first_version');
+    assert.equal((await privateThreads.stateOf(pool, { user: ada, rootId: started.messageId, bot })).title, 'Plant Pal, first version',
+      'the open thread\'s head says what its row says');
   });
 
   await t.test('2. a message posted outside a thread becomes one', async () => {
@@ -587,6 +589,14 @@ test('the staging demo\'s chat with Homeroom bot is threads', { timeout: 120000 
   assert.equal(hello.unread, 1);
   // The first version: one thread from its opening line to live.
   assert.equal(firstVersion.title, 'Staging demo plants, first version');
+  // The open thread's head reads its name from where the thread stands, and
+  // must say what its row says: this one's project is no real project, so
+  // the name comes from the thread's first message on both.
+  const bot = await require('../src/services/homeroom-bot-dm').botAccount(pool);
+  assert.equal((await privateThreads.stateOf(pool, { user: viewer, rootId: firstVersion.rootId, bot })).title, firstVersion.title);
+  assert.equal((await privateThreads.stateOf(pool, { user: viewer, rootId: earlier.rootId, bot })).title, 'Earlier chat');
+  assert.equal((await privateThreads.stateOf(pool, { user: viewer, rootId: hello.rootId, bot })).title, undefined,
+    'a hello is named by its words, as any other thread');
   const firstLines = await thread(firstVersion.rootId);
   assert.deepEqual(firstLines.map((m) => m.kind), ['first_version_started', 'activity', 'plan', 'merged']);
   assert.match(firstLines[0].content, /I'm setting up Staging demo plants now\./);

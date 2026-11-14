@@ -93,6 +93,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { EmbeddedConversation } from '../messages';
 import { closeNewThread, startNewThread, useNewThread, type NewThreadPreset } from '../messages/new-thread';
+import { noteThreadNames } from '../messages/private-thread-bar';
 import { keptConversations, openBotConversation } from '../messages/api';
 import { BOT_AVATAR } from '../messages/format';
 import { closeThread, embed, loadConversations, useMessagesSnapshot } from '../messages/store';
@@ -411,6 +412,11 @@ export function AiScreen(): ReactNode {
     });
     return () => { live = false; clearTimeout(early); };
   }, [visible, session, moved]);
+
+  // The threads the server names by what they are ("Earlier chat", a
+  // project's first version): kept for the open thread's head, which must
+  // say what its row says (../messages/private-thread-bar.tsx).
+  useEffect(() => { noteThreadNames(work?.private); }, [work]);
 
   // Which chat is the bot's, asked once: a thread or a new chat opens in it.
   // The list of conversations is read here too, for the tab's badge.

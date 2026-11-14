@@ -259,6 +259,21 @@ test('threads only: the conversation\'s own stream is never read, drawn or marke
   assert.doesNotMatch(read('frontend/locales/en/messages.json'), /"welcome\.|Main Chat/);
 });
 
+// In the chat with Homeroom bot a thread's first message is unread like any
+// reply (services/private-threads.js THREAD_UNREAD_WHERE): the bot's hello
+// is a thread with nothing under it. Read only up to its newest reply, such
+// a thread was never read, and its row's new mark and the tab's badge stood
+// for good after it was opened.
+test('a thread nobody has replied in is read up to its first message, in the bot\'s chat only', () => {
+  const src = read('frontend/src/features/messages/store.ts');
+  assert.match(src, /const first = state\.route\.threadsOnly && state\.route\.conversationId === conversationId \? rootId : 0;\s+const newest = known\.reduce\(\(top, item\) => Math\.max\(top, item\.id\), first\);\s+if \(newest\) \{/);
+  assert.match(src, /const now = state\.thread\.messages\.reduce\(\(top, item\) => Math\.max\(top, item\.id\), first\);\s+if \(now > 0\) void markThreadRead\(conversationId, rootId, now\);/);
+  // The server moves that thread's own cursor to it, and counts its first message.
+  const server = read('src/services/conversations.js');
+  assert.match(server, /const privateRoot = message\.rows\[0\]\.thread_root_id \|\| message\.rows\[0\]\.id;\s+if \(await require\('\.\/private-threads'\)\.markThreadRead\(db, \{ userId: user\.id, rootId: privateRoot, messageId \}\)\) \{/);
+  assert.match(read('src/services/private-threads.js'), /ON m\.conversation_id = p\.conversation_id AND \(m\.id = p\.root_message_id OR m\.thread_root_id = p\.root_message_id\)/);
+});
+
 test('a quote goes to the thread its message is in, into that thread\'s own box', () => {
   const src = read('frontend/src/features/messages/store.ts');
   const fn = src.slice(src.indexOf('function applyPendingQuote('), src.indexOf('/** The app-channel message link last revealed'));

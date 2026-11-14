@@ -39,7 +39,7 @@ import {
 } from './bot-shared';
 import { BotWorkSync, loadBotWork, newestBotMessageId, useBotWork, useWorkChanged } from './bot-work';
 import {
-  PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, newProjectInvited, privateThreadTitle, privateThreadWords,
+  PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, newProjectInvited, privateThreadTitle, privateThreadWords, serverThreadName,
   usePrivateThread,
 } from './private-thread-bar';
 import { requestPageOf } from './request-page';
@@ -3009,12 +3009,31 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
     : request ? request.project : active ? (kind === 'channel' ? `#${active.channelKey || active.title}` : active.title) : '';
   const replies = thread?.messages || [];
   // 1 Nov 2026: alone in the bot tab's column a thread is named as the tab's
-  // list names it (./private-thread-bar.tsx privateThreadTitle).
+  // list names it (./private-thread-bar.tsx privateThreadTitle). 14 Nov
+  // 2026: by the server's name for it when it has one ("Earlier chat",
+  // "Plant Pal, first version"), never by the first words under it.
   const aloneTitle = alone
-    ? privateThreadTitle(root, replies, meId) || (started ? startedThreadTitle(t, started.changeKind) : t('messages:replies.title'))
+    ? serverThreadName(privateRoot, privateWhere)
+      || privateThreadTitle(root, replies, meId) || (started ? startedThreadTitle(t, started.changeKind) : t('messages:replies.title'))
     : null;
   // #6118: the name the reply header ellipsises, computed once for its hint.
   const replyTitle = started ? startedThreadTitle(t, started.changeKind) : request ? botThreadTitle(request) : t('messages:replies.title');
+  // A plan in a request's thread carries the step of the card it hangs off (./bot-plan.tsx).
+  const cardId = root && isActivityMessage(root) ? root.id : null;
+  // 14 Nov 2026: A FIRST VERSION'S PLAN IS A REPLY OF ITS OWN THREAD. With no
+  // Main Chat, a project's first version has one thread: the line that says
+  // it is being set up, then its activity card, its plan and the card Build
+  // it moves under the plan, each a reply. They used to be messages of the
+  // main stream, which read them together (planLayout): the card above its
+  // plan is not drawn, the plan carries its step, and a card Build it moved
+  // is drawn where it went. A thread that hangs off no card reads its own
+  // replies the same way, as the stream they now are. Drawn one by one, the
+  // card stood above the plan as a strip of its own and the plan had no step.
+  const flatPlans = botChat && !cardId
+    ? planLayout(replies.map((message) => (message.threadRootId ? { ...message, threadRootId: null } : message)))
+    : NO_PLAN_LAYOUT;
+  const carried = (message: ConversationMessage) => botChat && !cardId
+    && (flatPlans.hidden.has(message.id) || isMovedActivity(message));
   // #5219: on a request's thread the request's public discussion rides
   // along, and the two read in one transcript, in the order they were said.
   // Ties keep the DM replies first (the sort is stable); a reply still in
@@ -3024,7 +3043,7 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
     | { kind: 'reply'; message: ConversationMessage }
     | { kind: 'discussion'; message: DiscussionMessage };
   const merged: MergedRow[] = [
-    ...replies.map((message) => ({ kind: 'reply' as const, message })),
+    ...replies.filter((message) => !carried(message)).map((message) => ({ kind: 'reply' as const, message })),
     ...(discussion?.messages || []).map((message) => ({ kind: 'discussion' as const, message })),
   ];
   if (merged.length > 1) {
@@ -3036,8 +3055,6 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
         ...inFlight);
     }
   }
-  // A plan in a request's thread carries the step of the card it hangs off (./bot-plan.tsx).
-  const cardId = root && isActivityMessage(root) ? root.id : null;
   // One request, one story: a story from before threads opens on its oldest
   // piece (./bot-request.ts storyRootIn), and the pieces after it, still in
   // the main stream, are drawn under it, whole.
@@ -3046,6 +3063,7 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
     ? snap.messages.filter((item) => item.id > root.id && !item.threadRootId && !item.thread && isBotNews(item) && requestKey(item.metadata?.homeroomBot || {}) === storyKey)
     : [];
   let previous: MergedRow | null = null;
+  let newLineDrawn = false;
   // Which try each entry belongs to: one divider where a try begins.
   const tryStarts = track && track.tryStarts.length > 1 ? track.tryStarts.map((at) => Date.parse(at)).filter(Number.isFinite) : [];
   let lastTry = 0;
@@ -3190,9 +3208,12 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
             );
           previous = entry;
           // B19 follow-up: the "New" line above the first reply not read when it opened.
-          const line = firstUnread && message.id === firstUnread
+          // (Above the first reply drawn from there on: the one it names may be
+          // a card its plan carries, which is not drawn.)
+          const line = firstUnread && !newLineDrawn && message.id >= firstUnread
             ? <NewMessagesDivider key="unread-line" ref={unreadLine} /> : null;
-          const row = <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped && !divider} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === message.id} planCardId={cardId && isPlanMessage(message) ? cardId : null} />;
+          if (line) newLineDrawn = true;
+          const row = <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped && !divider} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === message.id} planCardId={isPlanMessage(message) ? cardId || flatPlans.cardOf.get(message.id) || null : null} />;
           return divider || line ? <Fragment key={message.clientKey || message.id}>{divider}{line}{row}</Fragment> : row;
         })}
         {threadWorking ? <BotWorkingCard typist={threadWorking} /> : null}
