@@ -221,7 +221,7 @@ function composerHtml() {
   const store = {
     channels: () => [], draftFor: () => '', draftAttachmentsFor: () => [], notifyTyping() {}, replyFor: () => null,
     scopeKey: (c, t) => (t ? `${c}:t${t}` : c), send: async () => {}, setDraft() {}, setDraftAttachments() {}, setReply() {},
-    takePendingShare: () => undefined, useMessagesSnapshot: () => snap,
+    takePendingShare: () => undefined, typingUsers: () => [], useMessagesSnapshot: () => snap,
   };
   const { MessageComposer } = loadTsx('frontend/src/features/messages/composer.tsx', {
     stubs: {

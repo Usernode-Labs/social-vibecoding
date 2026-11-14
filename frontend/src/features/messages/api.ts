@@ -407,6 +407,19 @@ export async function cardAction(messageId: number, action: string, value?: unkn
   }));
 }
 
+/**
+ * Task 2148: Stop, while Homeroom bot is working on the viewer's message
+ * `messageId` in their chat with it (the message its typing event named).
+ * Resolves whether an answer is being stopped: false when it had already
+ * ended. Throws when the server could not be asked.
+ */
+export async function stopBotAnswer(conversationId: number, messageId: number): Promise<boolean> {
+  const data = record(await request<unknown>(`/api/conversations/${conversationId}/bot-stop`, {
+    method: 'POST', body: JSON.stringify({ messageId }),
+  }));
+  return pick(data, 'stopping') === true;
+}
+
 export function normalizeMember(input: unknown): ConversationMember {
   const row = record(input);
   const user = normalizeUser(record(pick(row, 'user') ?? row));

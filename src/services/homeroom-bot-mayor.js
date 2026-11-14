@@ -93,6 +93,8 @@ const progressSvc = require('./homeroom-bot-progress');
 const repoRef = require('./repo-ref');
 const { isStandIn, lastRoundNote, standInNote, readingDoneNote } = require('./homeroom-bot-reply-guards');
 const turnEngine = require('./homeroom-bot-turn-engine');
+// A person's Stop of the turn (task 2148).
+const botStop = require('./homeroom-bot-stop');
 const { GITHUB_ISSUE_BODY_MAX } = require('./issue-body-limit');
 // The one reply checker every surface runs (Homeroom bot one model, step 2).
 const claims = require('./reply-claims');
@@ -3340,6 +3342,9 @@ function avoidProviders(before, err) {
 async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_ATTEMPTS, retryOutputTokens, ...rest }) {
   let overrides = {};
   for (let attempt = 1; ; attempt += 1) {
+    // A person's Stop (homeroom-bot-stop.js): nothing more is asked, a retry
+    // after its wait included.
+    botStop.check(t.signal);
     try {
       const res = await t.chat({
         apiKey: t.apiKey,
@@ -3366,6 +3371,8 @@ async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_
         ...(Array.isArray(t.avoid) && t.avoid.length ? { ignoreProviders: t.avoid } : {}),
         // P1: streamed, so the answer shows as it is written (draftWriter).
         ...(typeof t.onDelta === 'function' ? { onDelta: t.onDelta } : {}),
+        // Their Stop cuts the request off (openrouter.js: code 'cancelled').
+        ...(t.signal ? { signal: t.signal } : {}),
         ...rest,
         ...overrides,
       });
@@ -3380,6 +3387,9 @@ async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_
       }
       return res;
     } catch (err) {
+      // Cut off by their Stop, or failed as they stopped: not the model's
+      // failure. It is not recorded as one and never asked again.
+      if (t.signal?.aborted) throw botStop.stopError();
       const code = codeOf(err);
       t.failures.push(`${where}:${code}${err?.status ? `:${err.status}` : ''}`);
       log.warn('homeroom-bot-mayor', 'A DM model request failed', {
@@ -3581,6 +3591,8 @@ async function answerLater(pool, config, { bot, user, conversationId, message, d
     ? dm.whileTyping(pool, {
       botId: bot.id, conversationId, ws: deps.ws,
       threadRootId: Number(message.threadRootId ?? message.thread_root_id) || null,
+      // Task 2148: a later try can be stopped as the first one can.
+      answering: deps.stop ? message.id : null,
     }, run)
     : run();
 }
@@ -3603,6 +3615,25 @@ async function turn(pool, config, { bot, user, settings, conversationId, message
     // cards, the offer) ended the turn with no answer at all, and nothing
     // recorded it. It is recorded and said, with its code.
     const code = codeOf(err);
+    // Task 2148: the person stopped this turn, and a step outside its rounds
+    // failed (or its one line could not be sent just now). Said as a stop,
+    // with what the turn had done, never as "I couldn't answer".
+    if (deps.stop?.signal?.aborted) {
+      if (!state.recorded) {
+        const t = state.turn;
+        await recordTurn(pool, {
+          userId: user.id, conversationId, messageId: message.id, model: t?.model, rounds: state.rounds, tools: state.tools,
+          inputTokens: t?.usage.inputTokens, outputTokens: t?.usage.outputTokens, costUsd: t?.usage.costUsd,
+          error: null, failures: t?.failures, fallback: 'stopped',
+        });
+      }
+      return say(botStop.stoppedText(deps.stop.did)).catch((sendErr) => {
+        // `strict`: nothing reached them, so the work is tried again, and
+        // says it then (answerOwed, stopped before the try began).
+        if (deps.strict) throw sendErr;
+        return null;
+      });
+    }
     log.warn('homeroom-bot-mayor', 'DM turn failed outside the model', {
       userId: user.id, messageId: message.id, code, err: clip(err?.message, 300),
     });
@@ -3649,6 +3680,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     // 9 Nov 2026 (#6523): the bot offered to make this idea a project, so the
     // reply carries `newProject` and the thread's foot shows New project.
     newProjectOffer: false,
+    // Their Stop (homeroom-bot-stop.js), for a tool that waits (look_into).
+    stopSignal: deps.stop?.signal || null,
   };
   // B01, B07 (audit 2 Nov 2026): once start_project_thread opened a new
   // project's thread, everything this turn says goes in it, whichever way
@@ -3676,6 +3709,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     // The providers that failed this turn, left out of its later requests
     // (avoidProviders); null once a request was refused as it was built.
     avoid: [],
+    // Their Stop: a request in flight is cut off, none is asked after it.
+    signal: deps.stop?.signal || null,
   };
   // #6346: a stand-in refused by its reply tool is recorded with the turn.
   ctx.failures = t.failures;
@@ -3698,6 +3733,28 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   let error = null;
   let errorStatus = null;
   let history = [{ role: 'user', content: ctx.userText || '(attachment)' }];
+  // Task 2148: the person stopped this turn (homeroom-bot-stop.js). The
+  // reply it was writing is not sent, no fallback answers in its place, and
+  // one line says so where they wrote, with what the turn had already done
+  // that stays done. It is recorded as a turn that cost what it cost, with
+  // no error: the model did not fail. The line is sent as written, never
+  // through the reply checks, under the answer's own key, so a retry finds
+  // the message answered and no apology follows.
+  const stoppedNow = () => deps.stop?.signal?.aborted === true;
+  const sayStopped = async () => {
+    draft?.close({ clear: true });
+    await recordTurn(pool, {
+      userId: user.id, conversationId, messageId: message.id, model: t.model, rounds: turnRounds.rounds, tools: toolsUsed,
+      inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, costUsd: t.usage.costUsd, error: null,
+      failures: t.failures, fallback: 'stopped',
+    });
+    state.recorded = true;
+    await turnEngine.chargeTurn(pool, bot.id, t.usage.costUsd, { what: 'a DM turn', category: 'homeroom-bot-mayor' });
+    log.info('homeroom-bot-mayor', 'A DM turn was stopped by the person', {
+      userId: user.id, messageId: message.id, rounds: turnRounds.rounds, did: deps.stop.did?.length ?? null,
+    });
+    return sayOutside(botStop.stoppedText(deps.stop.did));
+  };
   if (t.apiKey === undefined) {
     try {
       t.apiKey = await botKey(pool, config, bot.id);
@@ -3817,6 +3874,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         // #3685: one failed request used to end the turn with "I couldn't
         // answer just now", whatever the round had already read.
         ask: (options) => askModel(t, options),
+        // Their Stop, looked at before each request and each call (the engine).
+        signal: t.signal,
         where: (n) => `r${n}`,
         // The turn ends with its reply, or with a screen handed to the designer.
         done: () => !!ctx.reply || !!ctx.drawScreen,
@@ -3889,6 +3948,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           claims.noteTool(ctx, result);
           // P1: what it read, for the reply's "Looked at" line.
           noteLookup(ctx, name, args, result);
+          // What it did that stays done, for the line a Stop says.
+          await deps.stop?.note?.(name, args, result);
           return result;
         },
         afterCalls: ({ rounds }) => {
@@ -3943,6 +4004,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         try {
           await runRounds();
         } catch (err) {
+          if (botStop.isStop(err)) throw err;
           // The first answer, less what it should not have said, still goes.
           log.info('homeroom-bot-mayor', 'The second pass failed; sending the first answer, checked', { userId: user.id, code: codeOf(err) });
         }
@@ -3952,13 +4014,18 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     } catch (err) {
       error = codeOf(err);
       errorStatus = err?.status ?? null;
-      log.warn('homeroom-bot-mayor', 'DM turn failed', {
-        userId: user.id, messageId: message.id, code: error, status: err?.status ?? null, err: clip(err?.message, 300),
-      });
+      if (!botStop.isStop(err)) {
+        log.warn('homeroom-bot-mayor', 'DM turn failed', {
+          userId: user.id, messageId: message.id, code: error, status: err?.status ?? null, err: clip(err?.message, 300),
+        });
+      }
     } finally {
       try { await platform?.close?.(); } catch {}
     }
   }
+  // Stopped during its rounds, or as they ended: the last safe point before
+  // anything is sent.
+  if (stoppedNow()) return sayStopped();
   // #6307: a paragraph said once, and the draft's own words left to the card
   // under the reply, before what it still claims is cut.
   let text = dropDraftEcho(dropRepeatedParagraphs(cleanReply(answerText(ctx.besides, ctx.reply?.text || finalText))), ctx.offer);
@@ -3991,6 +4058,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         : turnRounds.rounds >= MAX_ROUNDS && !ctx.reply ? 'no_reply' : 'empty_answer';
     }
     ({ text, cards, fallback, defer } = await fallbackAnswer(pool, t, { error, errorStatus, history }));
+    // Stopped while the fallback's one plain request ran: nothing it wrote is sent.
+    if (stoppedNow()) return sayStopped();
   }
   await recordTurn(pool, {
     userId: user.id, conversationId, messageId: message.id, model: t.model, rounds: turnRounds.rounds, tools: toolsUsed,

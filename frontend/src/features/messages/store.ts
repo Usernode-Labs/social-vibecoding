@@ -50,6 +50,12 @@ export interface Typist {
   bot?: boolean;
   /** What the bot says it is doing now (its typing event's `doing`); null while it thinks. */
   doing?: BotDoing | null;
+  /**
+   * Task 2148: the viewer's message the bot is answering, when that answer
+   * can be stopped (its typing event's `answering`, services/homeroom-bot-
+   * dm.js pushTyping). The composer's Stop sends it back (./bot-stop.ts).
+   */
+  answering?: number;
 }
 
 /**
@@ -93,10 +99,14 @@ export function botDoingOf(raw: unknown): BotDoing | null {
  * words are held: the bot's message takes the card's place when the typing
  * stops.
  */
-export function botTypist(prior: Typist | undefined, shown: string, doing: BotDoing | null): Typist {
+export function botTypist(prior: Typist | undefined, shown: string, doing: BotDoing | null, answering: number | null = null): Typist {
   // The furthest step named this turn, kept through a wordless one.
   const held = doing ?? prior?.doing ?? null;
-  return { name: shown, unnamed: false, bot: true, doing: held };
+  // Task 2148: the message it answers, as its newest event names it; an
+  // event that names none keeps the one before (every event of an answer
+  // that can be stopped names it).
+  const answered = answering ?? prior?.answering ?? null;
+  return { name: shown, unnamed: false, bot: true, doing: held, ...(answered ? { answering: answered } : {}) };
 }
 
 interface InternalState extends MessagesSnapshot {
@@ -3185,7 +3195,7 @@ export function handleEvent(raw: ConversationEvent): void {
         // nobody else's event carries that.
         const prior = current.find((each) => each.name === shown);
         const entry: Typist = botPeer
-          ? botTypist(prior?.bot ? prior : undefined, shown, botDoingOf(event.doing))
+          ? botTypist(prior?.bot ? prior : undefined, shown, botDoingOf(event.doing), api.strictId(event.answering) || null)
           : { name: shown, unnamed: [...holders.values()].every(Boolean) };
         next = isShown ? current.map((each) => (each.name === shown ? entry : each)) : [...current, entry];
       }

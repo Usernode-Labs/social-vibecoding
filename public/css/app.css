@@ -2295,6 +2295,11 @@ form.agent-session-composer:focus-within {
    disabled; with an empty field and no file staged it reads as the same
    faded disc Messages' own Send is. */
 .messages-composer-card:not([data-gc-files]):has(textarea:placeholder-shown) .messages-send { opacity: .35; }
+/* Task 2148: Stop, in Send's place while Homeroom bot works on the viewer's
+   message and the box is empty (features/messages/bot-stop.ts). The empty
+   field fades Send; a Stop that can be pressed is not faded, and one on its
+   way ("Stopping", disabled) is, by the rule for a disabled Send above. */
+.messages-composer-card:not([data-gc-files]):has(textarea:placeholder-shown) .messages-send.messages-send-stop:not(:disabled) { opacity: 1; }
 /* #3735: ONE COMPACT LINE ON A PHONE. Below 768px the card is the "+", the
    field and the send disc on a single 44px row, and it grows only with what
    is typed, up to the field's 140px ceiling as everywhere. It was about 75px:

@@ -6,8 +6,9 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
 import * as api from './api';
 import { applyFormat, hasFormatting, normalizeLinkUrl, type FormatKind } from './composer-format';
 import { waitingFor } from './waiting-for';
-import { channels, draftAttachmentsFor, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setDraftAttachments, setReply, takePendingAttach, takePendingShare, useMessagesSnapshot, type ComposerScope } from './store';
+import { channels, draftAttachmentsFor, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setDraftAttachments, setReply, takePendingAttach, takePendingShare, typingUsers, useMessagesSnapshot, type ComposerScope } from './store';
 import { mirrorsReplies } from './bot-question';
+import { answeringIn, sendMode, STOPPING_MAX_MS } from './bot-stop';
 import { botRequestNames, threadsAllowed } from './bot-shared';
 import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjectReference, StagedObject } from './types';
 import { fileSize, MessageMarkdown, pendingObjectLabel, senderName } from './format';
@@ -139,6 +140,9 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // whose own news rings as it is): the notification ask, "Hear when they
   // answer?" (../notify-ask/notify-ask.tsx), over the box.
   const [askReply, setAskReply] = useState(false);
+  // Task 2148: the message whose answer the viewer pressed Stop for, while
+  // that Stop is on its way (./bot-stop.ts).
+  const [stoppingFor, setStoppingFor] = useState<number | null>(null);
   // #1955: the paperclip and the share tray were two adjacent icons that both
   // answered "put something in this message", and neither said which was
   // which — two guesses at a 40px target, on the narrowest row in the app.
@@ -259,6 +263,38 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     if (typingStop.current) window.clearTimeout(typingStop.current);
     notifyTyping(false, threadRootId);
   }, [conversationId, threadRootId]);
+
+  // Task 2148: Stop, in the viewer's chat with Homeroom bot (./bot-stop.ts).
+  // What the bot is answering in THIS place (the chat, or this thread) is
+  // its typing entry's; nothing types on a first render, so that draws Send.
+  const answering = conversationId ? answeringIn(typingUsers(conversationId, threadRootId)) : null;
+  const sendKind = sendMode({
+    botChat: active?.homeroomBot === true,
+    answering,
+    empty: !value.trim() && !attachments.length && !object && !uploading && !dictating,
+    stopping: stoppingFor,
+  });
+  // "Stopping" ends when the bot's typing clears here (the answer ended, or
+  // another began), or after STOPPING_MAX_MS, and the button is Send again.
+  useEffect(() => {
+    if (stoppingFor == null) return undefined;
+    if (stoppingFor !== answering) { setStoppingFor(null); return undefined; }
+    const timer = window.setTimeout(() => setStoppingFor(null), STOPPING_MAX_MS);
+    return () => window.clearTimeout(timer);
+  }, [stoppingFor, answering]);
+  function stopBot() {
+    if (!conversationId || !answering || stoppingFor === answering) return;
+    const stopped = answering;
+    setError('');
+    setStoppingFor(stopped);
+    api.stopBotAnswer(conversationId, stopped)
+      // Nothing was being answered any more: the answer is on its way in.
+      .then((stopping) => { if (!stopping) setStoppingFor((now) => (now === stopped ? null : now)); })
+      .catch(() => {
+        setStoppingFor((now) => (now === stopped ? null : now));
+        setError(t('messages:composer.stopFailed'));
+      });
+  }
 
   const boxShown = !!active && active.membershipStatus === 'member' && !!active.canSend;
   useEffect(() => {
@@ -921,7 +957,15 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
         </div>
         <textarea ref={inputRef} dir="auto" value={value} onChange={onComposerChange} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (onEmojiKeyDown(event)) return; if (suggestionKeys(event)) return; if (enterSends(event.nativeEvent)) { event.preventDefault(); submit(); } else if (event.key === 'Escape' && reply) setReply(scope, null); else if (onFormatKey(event)) return; }} onBlur={() => notifyTyping(false, threadRootId)} onPointerDown={(event) => { lastPointer.current = event.pointerType; }} onContextMenu={onTextareaContextMenu} rows={1} maxLength={8000} placeholder={inThread ? threadPlaceholder : (prompt || t('messages:composer.placeholder'))} aria-label={inThread ? t('messages:composer.labelThread') : t('messages:composer.label')} aria-autocomplete="list" aria-controls={suggestions.length ? listId : undefined} aria-activedescendant={activeOption >= 0 ? optionId(activeOption) : undefined} className="messages-composer-input" />
         <SpeakButton scope={`messages:${scope}`} getText={() => inputRef.current?.value || ''} onText={updateValue} maxLength={8000} onBusyChange={setDictating} disabled={!boxShown} />
-        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={dictating || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={t('messages:composer.send')} title={enterKey ? t('messages:composer.sendShortcut') : undefined}><ArrowUpIcon aria-hidden="true" /></button>
+        {/* Task 2148: while Homeroom bot works on the viewer's message here and
+            the box is empty, Send's place is Stop (./bot-stop.ts): the same
+            disc, a filled square, and its press is the only way to stop.
+            Enter in the box still only sends, and an empty box sends nothing. */}
+        {sendKind === 'send' ? (
+          <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={dictating || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={t('messages:composer.send')} title={enterKey ? t('messages:composer.sendShortcut') : undefined}><ArrowUpIcon aria-hidden="true" /></button>
+        ) : (
+          <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={stopBot} disabled={sendKind === 'stopping'} className="messages-send messages-send-stop" data-bot-stop={sendKind} aria-label={t(sendKind === 'stopping' ? 'messages:composer.stopping' : 'messages:composer.stop')} title={t(sendKind === 'stopping' ? 'messages:composer.stopping' : 'messages:composer.stop')}><span className="h-3.5 w-3.5 rounded-sm bg-current" aria-hidden="true" /></button>
+        )}
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
       {/* What the keys do, said where there is a keyboard and only once the

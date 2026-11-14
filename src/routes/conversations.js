@@ -1095,6 +1095,40 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // Task 2148: Stop, while Homeroom bot is working on the person's message
+  // in their chat with it. `messageId` is the message the bot's typing named
+  // on their screen (its typing event's `answering`), so a Stop only ever
+  // ends the answer they were looking at. Their own chat with the bot only:
+  // any other conversation, somebody else's included, is not found. The
+  // bot's turn ends at its next safe point and says "Stopped." there
+  // (services/homeroom-bot-stop.js); nothing it had already done is undone,
+  // and a build it started carries on (that has its own Stop).
+  //
+  //   POST /api/conversations/:id/bot-stop  { messageId }
+  //   → 200 { ok: true, stopping }   (stopping: false when no answer to that
+  //                                   message is under way: it ended first)
+  //
+  // A browser's own press only: same-origin, and on no connector's list
+  // (services/cli-api-policy.js is fail-closed).
+  router.post('/api/conversations/:id/bot-stop', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    const id = conversations.strictId(req.params.id);
+    const messageId = conversations.strictId(req.body?.messageId ?? req.body?.message_id);
+    if (!id || !messageId) return sendNotFound(res);
+    try {
+      if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      // The staging demo's chat is a fixture: nothing is being answered there.
+      if (isDemo(req)) return res.json({ ok: true, stopping: false, demo: true });
+      const botDm = require('../services/homeroom-bot-dm');
+      const bot = await botDm.botAccount(pool);
+      if (!bot || !(await botDm.isBotDirect(pool, id, bot.id, req.user.id))) return sendNotFound(res);
+      const out = await require('../workflow/platform.ts').stopDmAnswer({ userId: Number(req.user.id), conversationId: id, messageId });
+      return res.json({ ok: true, stopping: !!out.stopping });
+    } catch (err) {
+      log.error('conversations', 'stopping the Homeroom bot failed', { id, err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/conversations/:id/messages/:messageId/report', conversationReportLimiter, async (req, res) => {
     const id = conversations.strictId(req.params.id);
     const messageId = conversations.strictId(req.params.messageId);

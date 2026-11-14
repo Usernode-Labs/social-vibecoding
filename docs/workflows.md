@@ -1713,6 +1713,22 @@ bot owes them there. One instance per person (`person:<userId>`).
   one. An answer whose work fails for good gets one fixed line (`dm.sorry`: "I couldn't
   answer just now", or for a later try, that it still could not), and a retry of an answer
   that had said "I'll get back to you" still owes the later try it promised.
+- **Stop.** While the bot works on their message the composer offers Stop
+  (`POST /api/conversations/:id/bot-stop`, naming the message the bot's typing event says
+  it is answering). `StopRequested` marks the answer under way (`current.stop`) and
+  **cancels nothing**: the answer's own work watches for the mark
+  (`services/homeroom-bot-stop.js`: read as the try begins and every second after, in
+  whichever process runs it, with nothing kept between calls), ends its turn at the next
+  safe point (before a
+  model request or a tool call; a request in flight is cut off) and says "Stopped." in the
+  answer's place, under the answer's own key, with what the turn had already done that
+  stays done. So the turn is never still running after the chat says it stopped, and the
+  next message waits for it as ever. The watch's signal is the turn's own, never the work
+  item's lease signal, which also aborts when the process stops for a release. A stopped
+  answer is never asked again: one that deferred or failed for good after the Stop, and a
+  try waiting on the timer, each say so once (`dm.stopped`), and no `dm.sorry` follows. A
+  Stop of some other message, or one heard more than five minutes after it was pressed
+  (asked again after a rollout), stops nothing; nor does one that finds no answer under way.
 - **Taps and hellos.** A tap under one of the bot's offers, or Build it under a plan, is
   decided once here (`Tapped` → `dm.act`, claimed by its work item; an act that fails for
   good is settled as failed and said). A hello owed (joining a project by an invite, the

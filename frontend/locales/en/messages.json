@@ -2071,6 +2071,18 @@
     "text": "Send (Enter)",
     "description": "Tooltip on the arrow button beside a message box, shown on a device with a keyboard: pressing the Enter key sends the message. Enter is the key's name."
   },
+  "composer.stop": {
+    "text": "Stop Homeroom bot",
+    "description": "Accessible name and tooltip of the square button that takes the send button's place in the chat with Homeroom bot while the bot is working on the person's message and the message box is empty: pressing it stops the bot's answer. Homeroom bot is the bot's name."
+  },
+  "composer.stopping": {
+    "text": "Stopping",
+    "description": "Accessible name and tooltip of the same button after it was pressed, while the bot's answer is being stopped. The button cannot be pressed in this state."
+  },
+  "composer.stopFailed": {
+    "text": "Homeroom bot wasn’t stopped. Try again.",
+    "description": "Error under the message box in the chat with Homeroom bot when pressing the stop button did not reach the server. Homeroom bot is the bot's name."
+  },
   "composer.newLineHint": {
     "text": "Shift + Enter for a new line",
     "description": "Small muted line under a message box while its text runs to more than one line, shown on a device with a keyboard, where Enter sends the message: holding Shift and pressing Enter starts a new line instead. Shift and Enter are key names."
