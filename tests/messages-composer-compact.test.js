@@ -240,6 +240,10 @@ test('an empty composer renders the count\'s line without the near-limit mark', 
   assert.ok(count, 'the count\'s line is still rendered (a declared check selects it), only not laid out');
   assert.doesNotMatch(count[0], /data-near-limit/);
   assert.match(html, /<div class="messages-composer-card">/);
+  // Nor the keys' hint or the send button's tooltip: an empty box is one
+  // row, and the first render knows nothing of the device (lib/enter-sends.ts).
+  assert.doesNotMatch(html, /data-enter-hint/);
+  assert.doesNotMatch(/<button[^>]*class="messages-send"[^>]*>/.exec(html)[0], /title=/);
 });
 
 test('the rendered microphone stays between the editable field and Send in the compact row', () => {

@@ -437,7 +437,7 @@ test('the status card says what Homeroom bot is really doing, or waiting for', (
   // #6156: held for its turn among the project's builds, not for a vote.
   assert.equal(lead({ standing: standing('building', { whoseMove: 'bot', line: { code: 'held_builds' } }) }),
     'Ready to build · Waiting for one of the project\'s builds to finish');
-  assert.equal(lead({ standing: standing('reading', { whoseMove: 'bot', line: { code: 'queued', place: 2 } }) }), 'Not started yet · Number 2 in line');
+  assert.equal(lead({ standing: standing('reading', { whoseMove: 'bot', line: { code: 'queued', place: 2 } }) }), 'Not started yet. Number 2 in Homeroom bot’s line; it starts by itself.');
   // Its sentence is where the work stands: no "Plan v1 is ready for comments." after it.
   assert.match(fs.readFileSync(path.join(__dirname, '..', HEAD), 'utf8'), /const specLine = stage === 'spec' && !s\.botSays/);
   assert.equal(av._requestStatusView(issue({ standing: plan(false) })).botSays, true);

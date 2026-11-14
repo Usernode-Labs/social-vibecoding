@@ -207,6 +207,66 @@ test('screens of different widths are shown without outlines rather than guessed
   assert.deepEqual(shown.regions, []);
 });
 
+test('changes whose after screens differ keep their own screen, so a new page keeps its after shot', async () => {
+  // A new page's address showed the landing before: the same before screen as
+  // the landing change, but its own after screen.
+  const before = screen(240, 200, [...glyphs(10, 10, 18), [20, 40, 80, 20, [37, 99, 235]], ...glyphs(20, 120, 10)]);
+  const landing = screen(240, 200, [...glyphs(10, 10, 18), [20, 40, 180, 20, [37, 99, 235]], ...glyphs(20, 120, 10)]);
+  const communities = screen(240, 200, [...glyphs(10, 10, 18), [20, 40, 80, 20, [160, 160, 180]], ...glyphs(60, 150, 6)]);
+  const stories = [
+    { id: 'landing', intent: { baseState: 'present' }, viewports: [{ name: 'desktop', width: 240 }] },
+    { id: 'communities', intent: { baseState: 'present' }, viewports: [{ name: 'desktop', width: 240 }] },
+  ];
+  const files = [
+    file('landing', 'desktop', 'base', 'context', before), file('landing', 'desktop', 'head', 'context', landing),
+    file('communities', 'desktop', 'base', 'context', before), file('communities', 'desktop', 'head', 'context', communities),
+  ];
+  const screens = await diff.screensFor(stories, files);
+  assert.equal(screens.length, 2, 'the new page gets its own screen');
+  assert.deepEqual(screens.map((shown) => shown.shot), ['landing', 'communities']);
+  assert.deepEqual(screens.map((shown) => shown.stories), [['landing'], ['communities']]);
+});
+
+test('a change declared not present before never folds, in either declaration order', async () => {
+  const before = screen(240, 200, glyphs(10, 10, 18));
+  const after = screen(240, 200, [...glyphs(10, 10, 18), [20, 150, 180, 20, [240, 240, 250]]]);
+  const present = { id: 'landing', intent: { baseState: 'present' }, viewports: [{ name: 'desktop', width: 240 }] };
+  const fresh = { id: 'communities', intent: { baseState: 'not_present' }, viewports: [{ name: 'desktop', width: 240 }] };
+  const files = [
+    file('landing', 'desktop', 'base', 'context', before), file('landing', 'desktop', 'head', 'context', after),
+    file('communities', 'desktop', 'base', 'context', before), file('communities', 'desktop', 'head', 'context', after),
+  ];
+  for (const stories of [[present, fresh], [fresh, present]]) {
+    const screens = await diff.screensFor(stories, files);
+    assert.equal(screens.length, 2, `not folded with ${stories[0].id} first`);
+    assert.deepEqual(screens.map((shown) => shown.stories.length), [1, 1]);
+    assert.deepEqual(screens.flatMap((shown) => shown.foldedAfter), []);
+  }
+});
+
+test('afters that match within the comparison tolerance fold, and only a differing own after is named', async () => {
+  const before = screen(240, 200, [...glyphs(10, 10, 18), [20, 40, 80, 20, [37, 99, 235]]]);
+  const shownAfter = screen(240, 200, [...glyphs(10, 10, 18), [20, 40, 120, 20, [37, 99, 235]]]);
+  // Same picture, one channel nudged by less than the tolerance: nothing to
+  // outline, so the two changes still share the screen.
+  const nudged = screen(240, 200, [...glyphs(10, 10, 18, [34, 34, 44]), [20, 40, 120, 20, [37, 99, 235]]]);
+  const stories = [
+    { id: 'first', intent: { baseState: 'present' }, viewports: [{ name: 'desktop', width: 240 }] },
+    { id: 'second', intent: { baseState: 'present' }, viewports: [{ name: 'desktop', width: 240 }] },
+  ];
+  const files = (secondAfter) => [
+    file('first', 'desktop', 'base', 'context', before), file('first', 'desktop', 'head', 'context', shownAfter),
+    file('second', 'desktop', 'base', 'context', before), file('second', 'desktop', 'head', 'context', secondAfter),
+  ];
+  const [folded] = await diff.screensFor(stories, files(nudged));
+  assert.deepEqual(folded.stories, ['first', 'second']);
+  assert.deepEqual(folded.foldedAfter, ['second'], 'its own after is not the one shown');
+
+  const [same] = await diff.screensFor(stories, files(shownAfter));
+  assert.deepEqual(same.stories, ['first', 'second'], 'byte-identical afters still fold');
+  assert.deepEqual(same.foldedAfter, [], 'nothing is withheld when the shown after is its own');
+});
+
 test('unchangedStories names the changes whose every screen shows no difference', () => {
   const screens = [
     { viewport: 'desktop', shot: 'a', stories: ['a'], regions: [] },

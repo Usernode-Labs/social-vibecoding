@@ -258,9 +258,13 @@ test('a tile waits for its picture in the look\'s sunk tone, not as a blank whit
   assert.match(src, /onLoad=\{\(\) => setSeen\(picture\)\}\s*onError=\{\(\) => setLost\(picture\)\}/, 'white once it has loaded; its letter if it never does');
 });
 
-test('a picture card: its tile on the community\'s colour, a sentence on two lines, and the note that ends a list', () => {
+test('a picture card: its tile on the community\'s colour, a sentence with its whole self on hover, and the note that ends a list', () => {
   assert.equal(html(h(K.PicCard, { href: '/app/x', tile: 'TILE', color: '#224466', title: 'X', line: 'Says.', two: true, flag: 'New', label: 'X, 5 people' })),
-    '<a class="fr-card fr-fcard" href="/app/x" aria-label="X, 5 people"><span class="fr-fcover fr-tc" style="--fr-tc:#224466">TILE<span class="fr-pill fr-new">New</span></span><span class="fr-fbody"><span class="fr-t">X</span><span class="fr-s fr-two">Says.</span></span></a>');
+    '<a class="fr-card fr-fcard" href="/app/x" aria-label="X, 5 people"><span class="fr-fcover fr-tc" style="--fr-tc:#224466">TILE<span class="fr-pill fr-new">New</span></span><span class="fr-fbody"><span class="fr-t">X</span><span class="fr-s fr-two" title="Says.">Says.</span></span></a>');
+  assert.equal(html(h(K.PicCard, { href: '/app/x', title: 'X', line: 'One line, then an ellipsis.' })),
+    '<a class="fr-card fr-fcard" href="/app/x"><span class="fr-fcover"></span><span class="fr-fbody"><span class="fr-t">X</span><span class="fr-s" title="One line, then an ellipsis.">One line, then an ellipsis.</span></span></a>', 'one line unless asked for two, with the whole sentence on hover (#6659)');
+  assert.equal(html(h(K.PicCard, { href: '/app/x', title: 'X', line: h('b', {}, 'Rich') })),
+    '<a class="fr-card fr-fcard" href="/app/x"><span class="fr-fcover"></span><span class="fr-fbody"><span class="fr-t">X</span><span class="fr-s"><b>Rich</b></span></span></a>', 'a node that is not a string gets no title');
   assert.equal(html(h(K.PicCard, { href: '/app/x', cover: '/c.png', title: 'X' })),
     '<a class="fr-card fr-fcard" href="/app/x"><span class="fr-fcover"><img src="/c.png" alt="" loading="lazy" class="fr-sun"/></span><span class="fr-fbody"><span class="fr-t">X</span></span></a>', 'as it was, with a picture');
   assert.equal(html(h(K.SecNote, { end: true }, 'That is all.')), '<p class="fr-secnote fr-end">That is all.</p>');

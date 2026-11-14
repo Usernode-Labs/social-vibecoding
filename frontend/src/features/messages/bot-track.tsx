@@ -15,6 +15,7 @@ import { BotActivityCard, ActivityLink, spanText } from './bot-activity';
 import { requestKey } from './bot-request';
 import { useBotWork } from './bot-work';
 import type { BotFiledNext, BotTrack, BotTrackStep, ConversationMessage, HomeroomBotWork } from './types';
+import { inZone } from '../../lib/time-zone';
 
 /*
  * One track per request (16 Oct 2026), drawn the same everywhere.
@@ -99,7 +100,7 @@ export function trackLine(track: BotTrack): string {
   if (track.held?.limit === 'allowance' && track.held.until) {
     const date = new Date(track.held.until);
     if (!Number.isNaN(date.getTime())) {
-      const when = date.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+      const when = date.toLocaleString(undefined, inZone({ weekday: 'short', hour: 'numeric', minute: '2-digit' }));
       return translate('messages:bot.track.line.held.until', { date: when });
     }
   }
@@ -107,7 +108,7 @@ export function trackLine(track: BotTrack): string {
   if (work.line?.code === 'cooldown' && track.retryAt) {
     const date = new Date(track.retryAt);
     if (!Number.isNaN(date.getTime())) {
-      const when = date.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+      const when = date.toLocaleString(undefined, inZone({ weekday: 'short', hour: 'numeric', minute: '2-digit' }));
       return translate('messages:bot.track.line.cooldown.until', { date: when });
     }
   }

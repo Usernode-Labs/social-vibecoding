@@ -2747,7 +2747,9 @@ const tr = englishPlatformI18n().t;
 const dotTextSrc = settingsJs.match(/\n  const dotText = \(parts\) => \{\n[\s\S]*?\n  \};\n/);
 assert.ok(dotTextSrc, 'settings.js defines dotText');
 const dotText = new Function('tr', `${dotTextSrc[0]}\nreturn dotText;`)(tr);
-const sliced = (...methods) => new Function('tr', 'dotText', `return ({${methods.join(',')}})`)(tr, dotText);
+// #6479: and the module's `inZone`, which adds the picked time zone; the
+// harness has none picked, so it hands the options back as they came.
+const sliced = (...methods) => new Function('tr', 'dotText', 'inZone', `return ({${methods.join(',')}})`)(tr, dotText, (options = {}) => options);
 const tierView = () => sliced(
   sliceMethod(settingsJs, '_socialIdentityMoney'),
   sliceMethod(settingsJs, '_socialIdentityTierView'),

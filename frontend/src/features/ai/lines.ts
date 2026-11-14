@@ -10,15 +10,18 @@
  * Nothing here draws: a glyph is a name (`Glyph`), and each face has its own
  * icon for it.
  */
+import { dayNumber, inZone, zonedDay } from '../../lib/time-zone';
 import { getDateLocale } from '../../lib/i18n/runtime';
 import { useMessages } from '../../lib/i18n/react';
 import { tabLacks, useTabBuild } from '../../lib/tab-build';
 import { rowKey } from './column';
+import { botTabAddress } from './door';
 import { byMonth, historyGlyph, historyTooltip, historyWords, type HistoryRow, type HistoryState } from './history';
 import {
   changeOnGithub, freshByProject, freshCount, nextWords, notMoving, prWord, railProjects, rankProjects, shortWords, threadWhy, whyOf, withProjects,
   type AiApp, type AiThread, type Phrase, type WorkRow,
 } from './model';
+import { cleanQuery, foundDay, markParts, type Found, type MarkPart } from './search';
 
 /** What a row's glyph shows, by name. */
 export type Glyph =
@@ -56,6 +59,24 @@ export interface Line {
   at?: string | null;
 }
 
+/**
+ * A message the search found (13 Nov 2026, ./search.ts): a link to it, its
+ * snippet split at the words that matched, where it is (its thread's name,
+ * or the chat itself), its day, and the whole of that as its name.
+ */
+export interface FoundLine {
+  key: string;
+  /** The tab's address of the message: its thread, or the chat, at it (./door.ts). */
+  href: string;
+  /** It is in a thread; otherwise in the chat itself. */
+  thread: boolean;
+  parts: MarkPart[];
+  place: string;
+  date: string;
+  /** The row's accessible name and tooltip: who wrote it, its words, where and when. */
+  name: string;
+}
+
 /** Needs you's glyph, by what the row asks. */
 function needGlyph(row: WorkRow): Glyph {
   const kind = row.key.startsWith('need:') ? row.key.split(':')[1] : row.key.split(':')[0];
@@ -90,11 +111,11 @@ type Say = (id: string, values?: Record<string, string | number>) => string;
 function dayOf(at: string | null, t: Say): string {
   if (!at) return '';
   const d = new Date(at);
-  const today = new Date();
-  const days = Math.round((new Date(today.toDateString()).getTime() - new Date(d.toDateString()).getTime()) / 86400000);
+  // #6479: calendar days in the zone picked in Settings > Language.
+  const days = dayNumber(new Date(Date.now())) - dayNumber(d);
   if (days <= 0) return t('messages:ai.short.today');
   if (days === 1) return t('messages:ai.short.yesterday');
-  return d.toLocaleDateString(undefined, { weekday: 'short' });
+  return d.toLocaleDateString(undefined, inZone({ weekday: 'short' }));
 }
 
 /**
@@ -105,13 +126,15 @@ function dayOf(at: string | null, t: Say): string {
 export function dayHeading(at: string | null | undefined, t: Say, locale: string | undefined): string {
   const d = new Date(String(at || ''));
   if (!Number.isFinite(d.getTime())) return '';
-  const today = new Date();
-  const days = Math.round((new Date(today.toDateString()).getTime() - new Date(d.toDateString()).getTime()) / 86400000);
+  const today = new Date(Date.now());
+  // #6479: calendar days in the zone picked in Settings > Language, the same
+  // zone ./model.ts dayKey groups by, so a heading names its group's day.
+  const days = dayNumber(today) - dayNumber(d);
   if (days <= 0) return t('messages:ai.short.today');
   if (days === 1) return t('messages:ai.short.yesterday');
   // The year too, only when it is another one (as History's months say it).
-  const other = d.getFullYear() !== today.getFullYear();
-  return d.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', ...(other ? { year: 'numeric' } : {}) });
+  const other = zonedDay(d).year !== zonedDay(today).year;
+  return d.toLocaleDateString(locale, inZone({ weekday: 'long', day: 'numeric', month: 'long', ...(other ? { year: 'numeric' } : {}) }));
 }
 
 /** What the page hands its list, whichever face draws it (./lists.tsx AiLists says each). */
@@ -132,6 +155,12 @@ export interface AiLinesInput {
   appFor?: (slug: string) => AiApp | null;
   history?: HistoryState | null;
   openHistory?: (row: HistoryRow) => void;
+  /**
+   * What the search in messages answered (./search.ts useBotSearch): null
+   * while the first answer is on its way. Left out by a caller that has no
+   * such search, for which only the threads are searched.
+   */
+  found?: Found | null;
 }
 
 /**
@@ -140,7 +169,7 @@ export interface AiLinesInput {
  */
 export function useAiLines({
   query = '', lit = null, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone,
-  picked: pickedIn = [], onPick, appFor, history = null, openHistory,
+  picked: pickedIn = [], onPick, appFor, history = null, openHistory, found,
 }: AiLinesInput) {
   const t = useMessages('messages');
   const say = (p: Phrase | null): string | null => {
@@ -314,15 +343,44 @@ export function useAiLines({
   const owedShown = picked.length || searching ? needLines.filter((line) => line.owe).length : owed;
   // One project picked: its chip names it, so its name is not said again over every section.
   const heads = picked.length !== 1;
+  // MESSAGES (13 Nov 2026, ./search.ts): what was said in the chat with the
+  // bot and its threads that matches, under the threads that do. The last
+  // answer stays drawn while the next is read, so the list does not blink;
+  // nothing is drawn with no search on.
+  const asked = cleanQuery(query);
+  const foundLines: FoundLine[] = searching && found && found.state === 'answered' ? found.rows.map((row) => {
+    const place = row.rootId && row.threadTitle ? row.threadTitle : t('messages:ai.search.inChat');
+    const date = foundDay(row.at, locale);
+    return {
+      key: `found:${row.messageId}`,
+      href: botTabAddress({ threadRootId: row.rootId, focusMessageId: row.messageId }),
+      thread: !!row.rootId,
+      parts: markParts(row.snippet, row.ranges),
+      place,
+      date,
+      name: t(row.mine ? 'messages:ai.search.rowYou' : 'messages:ai.search.rowBot', { snippet: row.snippet, place, date }),
+    };
+  }) : [];
+  // The answer for what the box says now; an earlier query's is not it.
+  const foundNow = searching && found && found.q === asked ? found : null;
+  const foundMore = foundLines.length > 0 && !!found?.more;
+  const foundFailed = foundNow?.state === 'failed';
   // Nothing on the page matches what was searched for: one short note says
   // so, in place of the rows (the Needs you warning, if there is one, stays).
+  // It waits for the messages' answer, and says "messages" only when they
+  // were searched: a query too short to ask, or a read that failed, is a
+  // note about the threads alone.
   const noMatches = searching && ready
-    && !needLines.length && !busyLines.length && !stillLines.length && !liveLines.length && !historyLines.length;
+    && !needLines.length && !busyLines.length && !stillLines.length && !liveLines.length && !historyLines.length
+    && !foundLines.length && (found === undefined || !!foundNow);
+  const noneWords = foundNow?.state === 'answered'
+    ? t('messages:ai.search.none', { query: query.trim() })
+    : t('messages:ai.search.noneThreads', { query: query.trim() });
 
   return {
     say, searching, ranked, picked, rail, past, setOnly, toggle, freshAll, freshByApp, freshShown, freshProjects,
     needLines, busyLines, stillLines, liveLines, liveBehind, onlyApp, nothingHere, locale, historyLines, historyMonths,
-    owedShown, heads, noMatches,
+    owedShown, heads, noMatches, noneWords, foundLines, foundMore, foundFailed,
   };
 }
 

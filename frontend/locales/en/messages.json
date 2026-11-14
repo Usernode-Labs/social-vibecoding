@@ -2067,6 +2067,14 @@
     "text": "Send message",
     "description": "Accessible name of the arrow button beside the message box: sends the message."
   },
+  "composer.sendShortcut": {
+    "text": "Send (Enter)",
+    "description": "Tooltip on the arrow button beside a message box, shown on a device with a keyboard: pressing the Enter key sends the message. Enter is the key's name."
+  },
+  "composer.newLineHint": {
+    "text": "Shift + Enter for a new line",
+    "description": "Small muted line under a message box while its text runs to more than one line, shown on a device with a keyboard, where Enter sends the message: holding Shift and pressing Enter starts a new line instead. Shift and Enter are key names."
+  },
   "composer.format.bar": {
     "text": "Formatting",
     "description": "Accessible name of the row of formatting buttons above a community channel's message box; it groups the six buttons that format the message being written."
@@ -2094,6 +2102,38 @@
   "composer.format.bullets": {
     "text": "Bulleted list",
     "description": "Tooltip and accessible name of a formatting button above a channel's message box: turns the selected lines, or the cursor's line, into bullet points. Pressing it again removes the bullets."
+  },
+  "composer.format.strike": {
+    "text": "Strikethrough",
+    "description": "Tooltip and accessible name of a formatting button above a channel's message box, and of the same row in the right-click menu: draws a line through the selected text, or starts struck-through text at the cursor. Pressing it again removes the line."
+  },
+  "composer.format.link": {
+    "text": "Insert link",
+    "description": "Tooltip and accessible name of a formatting button above a channel's message box, and of the same row in the right-click menu: asks for a web address and makes the selected text a link to it."
+  },
+  "composer.format.copy": {
+    "text": "Copy",
+    "description": "Row in the right-click menu over selected text in a channel's message box: puts the selected words on the clipboard."
+  },
+  "composer.format.menu": {
+    "text": "Format selected text",
+    "description": "Accessible name of the small menu that opens when selected text in a channel's message box is right-clicked; it holds the formatting actions and Copy."
+  },
+  "composer.format.linkField": {
+    "text": "Web address",
+    "description": "Accessible name of the field that replaces a channel's formatting row while inserting a link: the web address the selected words should link to."
+  },
+  "composer.format.linkPlaceholder": {
+    "text": "https://",
+    "description": "Placeholder inside the web address field shown while inserting a link in a channel's message box; it shows the shape of an address."
+  },
+  "composer.format.linkAdd": {
+    "text": "Add link",
+    "description": "Button beside the web address field that turns the selected words into a link to the typed address."
+  },
+  "composer.format.linkCancel": {
+    "text": "Cancel",
+    "description": "Button beside the web address field that closes it and leaves the message unchanged."
   },
   "composer.format.preview": {
     "text": "Preview",
@@ -5104,16 +5144,48 @@
     "description": "The AI tab's main view: button at the foot of the More projects panel (a menu under the last chip from 768px, a sheet on a phone), which lists every project in the lists to pick the ones whose work they show; closes it. Picks apply as they are made."
   },
   "ai.search.open": {
-    "text": "Search your threads",
-    "description": "The Homeroom bot tab, beside the round plus at the top: the name and tooltip of the round search button, which opens a box that narrows every list on the page to the threads whose title, number or project matches what is typed."
+    "text": "Search threads and messages",
+    "description": "The Homeroom bot tab, beside the round plus at the top: the name and tooltip of the round search button, which opens a box that narrows every list on the page to the threads whose title, number or project matches what is typed, and lists the messages in the person's chat with Homeroom bot that contain it."
   },
   "ai.search.label": {
-    "text": "Search your threads",
-    "description": "The Homeroom bot tab: placeholder and accessible name of the search box under the heading, which narrows every list on the page to the threads whose title, number or project matches what is typed."
+    "text": "Search threads and messages",
+    "description": "The Homeroom bot tab: placeholder and accessible name of the search box under the heading, which narrows every list on the page to the threads whose title, number or project matches what is typed, and lists the messages in the person's chat with Homeroom bot that contain it."
   },
   "ai.search.none": {
+    "text": "Nothing in your threads or messages matches “{{query}}”",
+    "description": "The Homeroom bot tab: shown in place of the lists when the search box's text matches no thread on the page and no message in the person's chat with Homeroom bot. {{query}} is what the person typed."
+  },
+  "ai.search.noneThreads": {
     "text": "No threads match “{{query}}”",
-    "description": "The Homeroom bot tab: shown in place of the lists when the search box's text matches no thread on the page. {{query}} is what the person typed."
+    "description": "The Homeroom bot tab: shown in place of the lists when the search box's text matches no thread on the page and the person's messages were not searched: what they typed is a single character, too short to search messages for, or the search of their messages could not be read. {{query}} is what the person typed."
+  },
+  "ai.search.messages_one": {
+    "text": "In your messages · {{count}}",
+    "description": "The Homeroom bot tab, while searching: small caps label over the card that lists the messages in the person's chat with Homeroom bot that contain what they typed, under the threads that match. {{count}} is how many messages are listed; a translation may use it in this singular form too."
+  },
+  "ai.search.messages_other": {
+    "text": "In your messages · {{count}}",
+    "description": "The Homeroom bot tab, while searching: small caps label over the card that lists the messages in the person's chat with Homeroom bot that contain what they typed, under the threads that match. {{count}} is how many messages are listed."
+  },
+  "ai.search.inChat": {
+    "text": "Your chat with Homeroom bot",
+    "description": "The Homeroom bot tab, while searching: on the row of a message the search found, where that message is when it was written in the person's chat with Homeroom bot itself and not in one of its threads (a message in a thread shows the thread's name there instead)."
+  },
+  "ai.search.rowYou": {
+    "text": "You: {{snippet}} · {{place}} · {{date}}",
+    "description": "The Homeroom bot tab, while searching: accessible name and tooltip of the row of a message the person wrote that the search found; the row is a link that opens the message. {{snippet}} is a short piece of the message round the words searched for, {{place}} is the name of the thread it is in or the words for the chat itself, {{date}} is the day it was written, for example 3 Nov."
+  },
+  "ai.search.rowBot": {
+    "text": "Homeroom bot: {{snippet}} · {{place}} · {{date}}",
+    "description": "The Homeroom bot tab, while searching: accessible name and tooltip of the row of a message Homeroom bot wrote that the search found; the row is a link that opens the message. {{snippet}} is a short piece of the message round the words searched for, {{place}} is the name of the thread it is in or the words for the chat itself, {{date}} is the day it was written, for example 3 Nov."
+  },
+  "ai.search.more": {
+    "text": "These are the newest matches. Type more to narrow them down.",
+    "description": "The Homeroom bot tab, while searching: line under the list of messages the search found, shown when more messages matched than the list holds."
+  },
+  "ai.search.failed": {
+    "text": "Your messages could not be searched.",
+    "description": "The Homeroom bot tab, while searching: note shown when the search of the person's messages with Homeroom bot could not be read (offline, or a server error); the threads on the page are still searched. A Try again button follows it."
   },
   "ai.live.number": {
     "text": "#{{number}}",
@@ -5189,11 +5261,11 @@
   },
   "ai.history.live": {
     "text": "Live {{date}}",
-    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a change that went live (people using the app have it). {{date}} is the day, short, as \"Oct 24\"."
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a change that went live (people using the app have it), or for a private thread with Homeroom bot about such a change. {{date}} is the day, short, as \"Oct 24\"."
   },
   "ai.history.closed": {
     "text": "Closed",
-    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a change closed without being merged, or a request closed with nothing built."
+    "description": "The Homeroom bot tab's History card, below Live this week: the person's own work once it has finished (changes they built or Homeroom bot built from their request, requests they filed, votes they cast, their private threads with the bot). The word at the end of a row for a change closed without being merged, a request closed with nothing built, or a private thread with Homeroom bot about a change that was closed."
   },
   "ai.history.shipped": {
     "text": "Shipped",

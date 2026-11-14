@@ -75,7 +75,7 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ChevronRightIcon, LockIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon, XIcon } from '@/components/ui/icons';
+import { ChevronRightIcon, LockIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon, UserPlusIcon, XIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../messages/format';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { listText, t as translate } from '../../../lib/i18n/runtime';
@@ -927,7 +927,7 @@ export function InviteCard({ offer, name, unnamed = false, busy, onJoin, joinRef
   );
 }
 
-export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, menu, canOpenApp = false, onJoinedByInvite }: {
+export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, menu, canOpenApp = false, onJoinedByInvite, inviteCard = false }: {
   slug: string;
   /** The app's identity as the page already knows it (improveStore), so the
       hero draws the same tile and name as the header's chip. */
@@ -945,6 +945,9 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
   /** Where Join through the invite link this page was opened from lands
       (./invite-offer.ts): the page's own choice, Needs you or the hub. */
   onJoinedByInvite?: () => void;
+  /** The page draws the Invite card beside this hero (InviteHeroCard), so
+      the row's small Invite is left out: one Invite on a page. */
+  inviteCard?: boolean;
 }) {
   const t = useMessages('project');
   const data = useCommunity(slug);
@@ -1280,7 +1283,7 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       <div className="dev-ws-hero-row">
       <div className="dev-ws-hero-actions">
         {appButton}
-        {member ? (
+        {member && !(inviteCard && showsInviteHero(data)) ? (
           <Button
             type="button"
             variant="pillNeutral"
@@ -1307,6 +1310,69 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
           <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
         </a>
       ) : null}
+    </section>
+  );
+}
+
+/**
+ * Whether the hub draws the Invite card (InviteHeroCard): for a member of a
+ * community other people are in. A project that is just yours keeps the
+ * row's small Invite beside "Just you so far" (#4896) and its Share it card.
+ */
+export function showsInviteHero(data: CommunityPayload | null | undefined): boolean {
+  if (!data || !data.is_member || data.audience === 'solo') return false;
+  return (Number(data.member_count) || 0) > 1;
+}
+
+/** How many faces fan out at the top of the Invite card, before its "+". */
+const INVITE_FACES = 3;
+
+/**
+ * INVITE, AS A CARD (request 6654): the hub's Invite was a small grey pill
+ * in the hero's row and was easy to miss. It is a card of its own now, drawn
+ * as Home's New project card is: faces of people already here fanned out
+ * with an open seat after them, what an invite does, one full-width button
+ * and how many people are in. Beside the hero on a wide window, under it on
+ * a phone (app.css `.dev-ws-invite-hero`). The button opens the same invite
+ * pane the small Invite did (openInviteLinks).
+ */
+export function InviteHeroCard({ data }: { data: CommunityPayload | null | undefined }): ReactNode {
+  const t = useMessages('project');
+  if (!showsInviteHero(data) || !data) return null;
+  const people = (data.activity?.active_people || []).filter((p) => p && p.username).slice(0, INVITE_FACES);
+  const members = Number(data.member_count) || 0;
+  const active = Number(data.activity?.active_week) || 0;
+  return (
+    <section className="dev-ws-invite-hero" data-ws-invite-hero="" aria-label={t('project:hub.invite.title')}>
+      <span className="dev-ws-invite-hero-fan" aria-hidden="true">
+        {people.map((p) => (
+          <span key={p.id} className="dev-ws-invite-hero-face" style={{ background: swatchFor(p.username) }}>
+            {(p.username || '?').charAt(0).toUpperCase()}
+          </span>
+        ))}
+        <span className="dev-ws-invite-hero-face dev-ws-invite-hero-seat">+</span>
+      </span>
+      <h2 className="dev-ws-invite-hero-title">{t('project:hub.invite.title')}</h2>
+      <p className="dev-ws-invite-hero-text">{t('project:hub.invite.text', { community: data.name || '' })}</p>
+      <Button
+        type="button"
+        layout="fullIconRow"
+        variant="roundedFull"
+        size="pill"
+        ink="solid"
+        className="dev-ws-invite-hero-btn"
+        data-ws-community-invite=""
+        title={t('project:communityCard.invite.title')}
+        onClick={openInviteLinks}
+      >
+        <UserPlusIcon className="w-[18px] h-[18px]" aria-hidden="true" />
+        {t('project:hub.invite.button')}
+      </Button>
+      <p className="dev-ws-invite-hero-count" data-ws-invite-hero-count="">
+        {active
+          ? t('project:hub.invite.membersActive', { members: t('project:communityCard.people.members', { count: members }), active: t('project:hub.people.active', { count: active }) })
+          : t('project:communityCard.people.members', { count: members })}
+      </p>
     </section>
   );
 }

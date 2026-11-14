@@ -174,7 +174,7 @@ export interface BotSuggestView {
  * named says so.
  */
 export interface BotRequestState {
-  stage: 'waiting_first_version' | 'reading' | 'waiting' | 'building' | 'question' | 'checking' | 'proposed' | 'approved'
+  stage: 'waiting_first_version' | 'reading' | 'waiting' | 'waiting_plan' | 'building' | 'question' | 'checking' | 'proposed' | 'approved'
     | 'live' | 'closed' | 'person' | 'stopped' | 'fixing' | 'asked' | 'answered';
   sessionId?: number;
   youApprove?: boolean;

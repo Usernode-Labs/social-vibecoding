@@ -6,9 +6,10 @@ const appAccess = require('../services/app-access');
 const threadReads = require('../services/thread-reads');
 const aiWork = require('../services/ai-work');
 const aiHistory = require('../services/ai-history');
+const aiSearch = require('../services/ai-search');
 const log = require('../services/logger');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
-const { appChatReadLimiter } = require('../middleware/rate-limits');
+const { appChatReadLimiter, userDirectoryLimiter } = require('../middleware/rate-limits');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -173,6 +174,38 @@ function aiWorkRoutes(config = {}) {
       return res.json(await aiHistory.historyFor(pool, { user: req.user, showSelfHosted, before, project, kind }));
     } catch (err) {
       log.error('ai-work', 'Failed to read the AI tab\'s history', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/ai/search?q=<words> (13 Nov 2026): the Homeroom bot tab's
+  // search, in what was said: the signed-in person's own chat with Homeroom
+  // bot and its threads (services/ai-search.js), the newest matches first.
+  // It takes no conversation, message or user: whose chat is read is who is
+  // signed in. A query under two characters is answered with no rows.
+  //   → { q, rows: [{ messageId, rootId | null, threadTitle | null, mine,
+  //                   snippet, ranges: [start, end][], at }], more }
+  // A browser's read, not a connector's: it is on no list
+  // (services/cli-api-policy.js is fail-closed). Limited by account with
+  // the other lookups made while somebody types (userDirectoryLimiter).
+  //
+  // `?demo=1` on staging searches the demo's own chat, made first if it is
+  // not there yet, as the tab's other reads of it do
+  // (routes/conversations.js POST /api/conversations/homeroom-bot).
+  router.get('/api/ai/search', userDirectoryLimiter, sameOriginBrowserOnly, async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      const q = aiSearch.cleanQuery(req.query.q);
+      if (q.length < aiSearch.MIN_CHARS) return res.json({ q, rows: [], more: false });
+      if (IS_STAGING && req.query.demo === '1') {
+        await require('../services/staging-messages').ensureBotDmFixture(pool, req.user).catch((err) => {
+          log.warn('ai-work', 'Staging bot DM fixture failed', { message: err.message });
+        });
+      }
+      return res.json(await aiSearch.searchFor(pool, { user: req.user, q }));
+    } catch (err) {
+      log.error('ai-work', 'Failed to search the chat with Homeroom bot', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

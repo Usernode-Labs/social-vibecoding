@@ -576,6 +576,54 @@ test('a transcript line says who wrote it, what it replied to, and the bot as "y
     /replying to #6 by @homeroom_bot: "Done"/);
 });
 
+test('a transcript line ends with Homeroom\'s notes on what its writer attached', () => {
+  const at = new Date('2026-11-13T12:30:00Z');
+  const row = { id: 5, user_id: 2, username: 'evan', msg_type: 'message', created_at: at, metadata: {} };
+  const note = '[Homeroom: they attached the picture desktop.png, shown below.]';
+  assert.equal(voice.transcriptLine({ ...row, content: 'It looks like this on desktop.' }, 1, { attached: [note] }),
+    `#5 [2026-11-13] @evan: It looks like this on desktop. ${note}`);
+  // A picture sent with no words is still a line of its own.
+  assert.equal(voice.transcriptLine({ ...row, content: '' }, 1, { attached: [note] }), `#5 [2026-11-13] @evan: ${note}`);
+  assert.equal(voice.transcriptLine({ ...row, content: 'no files' }, 1, { attached: undefined }), '#5 [2026-11-13] @evan: no files');
+});
+
+test('which attached pictures a turn sends, and what a file\'s line says, are the bot\'s own chat\'s rule', () => {
+  const mayor = require('../src/services/homeroom-bot-mayor');
+  const { turnImageBudget, MAX_TURN_IMAGES } = require('../src/services/mayor/mcp-shim');
+  const file = (id, message, kind = 'image') => ({ id, message_id: message, kind, filename: `${id}.png` });
+  const files = [file('a', 10), file('b', 11), file('c', 12, 'markdown'), file('d', 13), file('e', 14)];
+  const theirs = [10, 11, 12, 13, 14];
+  // A text-only model is sent none.
+  assert.deepEqual(mayor.picturesToSend(files, { theirs, always: [11], imageInput: false }), []);
+  // The bot's own chat: the people's newest two messages, newest first.
+  assert.deepEqual(mayor.picturesToSend(files, { theirs, imageInput: true }).map((f) => f.id), ['e', 'd']);
+  // A project's thread: the message it answers first, wherever it sits, then those.
+  assert.deepEqual(mayor.picturesToSend(files, { theirs, always: [11], imageInput: true }).map((f) => f.id), ['b', 'e', 'd']);
+  // Never a file that is not a picture, and never more than the turn's allowance.
+  assert.deepEqual(mayor.picturesToSend(files, { theirs, always: [12], imageInput: true }).map((f) => f.id), ['e', 'd']);
+  const many = Array.from({ length: 9 }, (_, i) => file(`p${i}`, 14));
+  assert.equal(mayor.picturesToSend(many, { theirs, imageInput: true, takeImages: turnImageBudget() }).length, MAX_TURN_IMAGES);
+  assert.equal(mayor.picturesToSend([file('a', 10), ...many], { theirs, always: [10], imageInput: true, takeImages: turnImageBudget() })[0].id, 'a',
+    'the allowance goes to the answered message first');
+
+  const shot = { id: 'f1', kind: 'image', filename: 'desktop.png' };
+  assert.equal(mayor.attachedLine(shot, { picture: { mimeType: 'image/png', data: 'AAAA' }, imageInput: true, withId: false }),
+    '[Homeroom: they attached the picture desktop.png, shown below.]');
+  assert.equal(mayor.attachedLine(shot, { imageInput: false, withId: false }),
+    '[Homeroom: they attached the picture desktop.png, which you cannot see: your model reads text only.]');
+  assert.equal(mayor.attachedLine(shot, { imageInput: true, withId: false }),
+    '[Homeroom: they attached the picture desktop.png. Only the newest pictures are shown.]');
+  assert.equal(mayor.attachedLine({ id: 'f2', kind: 'markdown', filename: 'notes.md' }, { imageInput: true, withId: false }),
+    '[Homeroom: they attached the file notes.md, which you cannot open.]');
+  // #6251: in its own chat the id stays on the line.
+  assert.equal(mayor.attachedLine(shot, { imageInput: false }),
+    '[Homeroom: they attached the picture desktop.png (id f1), which you cannot see: your model reads text only.]');
+  // The thread's prompt says what such a note is, and never to deny the picture.
+  const prompt = voice.systemPrompt({ app: { name: 'Maps' }, place: { type: 'issue', ref: 1 }, tools: [] });
+  assert.match(prompt, /A note in \[Homeroom: \.\.\.\] at the end of a message says what its writer attached to it\./);
+  assert.match(prompt, /Never say that no picture or file came through/);
+});
+
 test('#6406: a change is named the way the screen does, never by its internal id', () => {
   assert.deepEqual(voice.changeRef({ id: 12758, pr_number: 178, title: 'Design: Recipe home' }),
     { change: 12758, name: 'Change #178', pr: 178, title: 'Design: Recipe home' });

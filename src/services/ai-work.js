@@ -230,6 +230,41 @@ SELECT t.id, t.app_id, mine.own, t.number, t.kind, t.title AS thread_title, t.st
  WHERE place <= $4
  ORDER BY sort_at DESC`;
 
+// How the change a private thread is about ended, as one row (at, outcome),
+// or none while the thread is still Needs you's. Written for the two reads
+// that list private threads (PRIVATE_SQL here, HISTORY_PRIVATE_SQL in
+// ai-history.js): `p` is their private_threads row and $1 their viewer. A
+// constant, not a builder, so both reads stay ones `npm run lint:sql` checks.
+//
+// 13 Nov 2026: a thread about a request is finished with it (finishForRequest
+// in private-threads.js), but one about a change had no such rule, so a
+// change that went live was listed twice: its thread under Needs you and the
+// change under Live this week. The thread is finished with its change: merged
+// and live ('live', at the moment it went live), or closed ('closed'). The
+// change is the one the thread opens (aboutTarget: the newest session with
+// that pull request number), so a closed change that is reopened brings its
+// thread back. Read, never stored, so the threads of changes already live
+// leave too, and the change's page still opens the same thread (startAbout
+// reuses an open one).
+//
+// A thread they opened after the change ended, or wrote in since, is theirs
+// again: it stays listed, the way writing in a done thread reopens it
+// (reopenOnReply). Mark done then closes it like any other.
+const ABOUT_CHANGE_END_SQL = `SELECT ended.at, ended.outcome FROM (
+      SELECT CASE cs.status WHEN 'merged' THEN cs.live_at
+                            WHEN 'archived' THEN COALESCE(cs.archived_at, cs.last_activity_at) END AS at,
+             CASE cs.status WHEN 'merged' THEN 'live' ELSE 'closed' END AS outcome
+        FROM chat_sessions cs
+       WHERE p.about_kind = 'change' AND p.state = 'open'
+         AND cs.app_id = p.app_id AND cs.pr_number = p.about_number AND cs.is_headless = FALSE
+       ORDER BY cs.id DESC
+       LIMIT 1
+    ) ended
+    WHERE ended.at IS NOT NULL AND ended.at >= p.created_at
+      AND NOT EXISTS (SELECT 1 FROM conversation_messages w
+                       WHERE w.thread_root_id = p.root_message_id AND w.sender_id = $1
+                         AND w.deleted_at IS NULL AND w.created_at > ended.at)`;
+
 // $1 viewer, $2 the bot, $3 the most rows, $4 days a done thread stays
 // listed. A thread they started is one of their own messages in the chat
 // with the bot that has replies; a draft the bot opened is a row of
@@ -264,15 +299,17 @@ SELECT m.id AS root_id, m.content, m.created_at, p.kind, p.state, p.result_ref, 
        -- Filed (or posted) as a request that has finished: live for longer
        -- than Live this week keeps it, or closed with nothing merged. It is
        -- History's then (services/ai-history.js reads it by the same rule),
-       -- not a Needs you row with nothing left to do.
-       (p.state IN ('filed', 'posted') AND p.result_ref > 0 AND (
+       -- not a Needs you row with nothing left to do. Or about a change
+       -- that is live or closed (ABOUT_CHANGE_END_SQL), which is History's too.
+       (EXISTS (${ABOUT_CHANGE_END_SQL})
+        OR (p.state IN ('filed', 'posted') AND p.result_ref > 0 AND (
           EXISTS (SELECT 1 FROM chat_sessions cs
                    WHERE cs.app_id = p.app_id AND p.result_ref = ANY(cs.linked_issues) AND cs.status = 'merged'
                      AND cs.live_at <= NOW() - make_interval(days => $4))
           OR EXISTS (SELECT 1 FROM requests r
                       WHERE r.app_id = p.app_id AND r.number = p.result_ref AND r.state = 'closed'
                         AND NOT EXISTS (SELECT 1 FROM chat_sessions m
-                                         WHERE m.app_id = r.app_id AND r.number = ANY(m.linked_issues) AND m.status = 'merged')))) AS result_done
+                                         WHERE m.app_id = r.app_id AND r.number = ANY(m.linked_issues) AND m.status = 'merged'))))) AS result_done
   FROM conversations c
   JOIN conversation_members mine ON mine.conversation_id = c.id AND mine.user_id = $1
   JOIN conversation_members bot ON bot.conversation_id = c.id AND bot.user_id = $2
@@ -617,7 +654,8 @@ function shapePrivate(row) {
     ...(Number(row.result_ref) > 0 ? { resultRef: Number(row.result_ref) } : {}),
     // #6271: the day it was closed, for Live this week.
     ...(row.done_at ? { doneAt: iso(row.done_at) } : {}),
-    // Filed as a request that has finished: History's, not Needs you's.
+    // Filed as a request that has finished, or about a change that is live
+    // or closed: History's, not Needs you's.
     ...(row.result_done === true ? { resultDone: true } : {}),
   };
 }
@@ -643,7 +681,8 @@ function unfiledPrivate(privates, listed) {
   return (privates || []).filter((p) => {
     // #6271: a done thread is closed; it is not Needs you's, but Live's.
     if (p.state === 'done') return false;
-    // Filed as a request that has finished: History's.
+    // Filed as a request that has finished, or about a change that is live
+    // or closed: History's.
     if (p.resultDone === true) return false;
     const key = filedKey(p);
     if (!key || folded.has(key)) return true;
@@ -914,6 +953,8 @@ module.exports = {
   yoursOf,
   yoursOn,
   PRIVATE_SQL,
+  // Spelled out, not shorthand: scripts/check-sql.js follows it into ai-history.js.
+  ABOUT_CHANGE_END_SQL: ABOUT_CHANGE_END_SQL,
   VIEWER_SQL,
   threadsInSql,
   THREADS_MAX,

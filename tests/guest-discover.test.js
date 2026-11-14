@@ -59,14 +59,17 @@ const APPS = [
 
 // ─── guest-data.ts ────────────────────────────────────────────────
 
-test('the sorts: most active, newest, most built, ties in the directory\'s order', () => {
+test('the sorts: most active, newest, most built, most members, ties in the directory\'s order', () => {
   const { sortApps } = loadTsx(DATA);
   const slugs = (sort) => sortApps(APPS, sort).map((a) => a.slug);
   assert.deepEqual(slugs('trending'), ['game-corner', 'todo-list', 'fresh-one']);
   assert.deepEqual(slugs('new'), ['fresh-one', 'game-corner', 'todo-list']);
   assert.deepEqual(slugs('built'), ['fresh-one', 'game-corner', 'todo-list']);
+  assert.deepEqual(slugs('popular'), ['game-corner', 'todo-list', 'fresh-one'], 'the most members first');
   const tie = [{ slug: 'a', active_users: 1 }, { slug: 'b', active_users: 1 }];
   assert.deepEqual(sortApps(tie, 'trending').map((a) => a.slug), ['a', 'b']);
+  const memberTie = [{ slug: 'a', member_count: 2 }, { slug: 'b', member_count: 2 }];
+  assert.deepEqual(sortApps(memberTie, 'popular').map((a) => a.slug), ['a', 'b'], 'a tie keeps the directory order');
   // Popular is people active and nothing else: a project a visitor can try
   // does not jump a busier one it cannot (Evan, 21 Oct 2026).
   assert.equal(sortApps.length, 2, 'no tryable-first argument');
@@ -389,9 +392,14 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   // internal state), so pin the source: the heading stays inside the
   // list.length branch, and the non-search list leaves the featured slugs
   // out (they follow the kind, like Featured does).
-  assert.match(read(JOIN), /\{featured\.length \? <h3 className=\{`\$\{SMALL_CAPS_LABEL\} px-1 pb-2`\} data-home-join-rest="">\{t\('home:join\.more'\)\}<\/h3> : null\}/, 'the heading is not limited to a chosen kind');
+  assert.match(read(JOIN), /: featured\.length \? \(\s*<h3 className=\{`\$\{SMALL_CAPS_LABEL\} px-1 pb-2`\} data-home-join-rest="">\{t\('home:join\.more'\)\}<\/h3>/, 'the heading is not limited to a chosen kind');
   const src = read(JOIN);
-  assert.match(src, /const lead = new Set\(featured\.map\(\(a\) => a\.slug\)\);\s+return \(query \? joinOrder\(pool\) : sortApps\(pool, 'trending'\)\.filter\(\(a\) => !lead\.has\(a\.slug\)\)\)/, 'the non-search list leaves out what Featured shows');
+  assert.match(src, /const lead = new Set\(featured\.map\(\(a\) => a\.slug\)\);\s+return \(query \? joinOrder\(pool, sort\) : sortApps\(pool, sort\)\.filter\(\(a\) => !lead\.has\(a\.slug\)\)\)/, 'the non-search list leaves out what Featured shows');
+  // The kind chips fade at whichever edge has more chips, the AI page's own
+  // rail, and a chosen kind names itself in Featured's heading (#6660).
+  assert.match(src, /<FadeRail role="group" aria-label=\{ta\('auth:guest\.categories\.label'\)\}/);
+  assert.match(src, /kind \? t\('home:join\.featuredKind', \{ kind: ta\(`auth:guest\.category\.\$\{kind\}`\) \}\) : t\('home:join\.featured'\)/);
+  assert.equal(message('home:join.featuredKind', { kind: 'Games' }), 'Featured in Games');
   // Each featured card is the visitor's card, with no Join and no footer (#6609).
   assert.doesNotMatch(cardOf(html, 'game-corner'), /data-home-join=|data-guest-card-footer/);
   // A community already on this Home is in neither.
@@ -526,14 +534,29 @@ test('the card grows into its project\'s page and back: a view transition with o
   assert.match(read('public/css/app.css'), /::view-transition-group\(guest-hero\) \{\s+animation-duration: 0\.4s;/);
 });
 
-test('the kinds, and no sort; what an account adds is the hero\'s, not a card in the grid', () => {
-  const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
+test('the kinds, and the sort of the rest; what an account adds is the hero\'s, not a card in the grid', () => {
+  // Nothing featured, so all three cards are the list the sort orders.
+  const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: APPS.map((a) => ({ ...a, featured: false })) }));
   assert.match(html, /aria-pressed="true"[^>]*data-home-join-kind="all"[^>]*>All</);
   assert.match(html, /data-home-join-kind="games"/);
   assert.match(html, /data-home-join-kind="tools"/);
   assert.doesNotMatch(html, /data-home-join-kind="learning"/, 'only kinds some app has');
-  // One Home (#6361): one order, featured then most active; no sort control.
+  // One Home (#6361): featured then the rest, and the rest ordered by the
+  // menu beside its heading (on its own line when nothing is featured). The
+  // old Discover sort control is gone.
   assert.doesNotMatch(html, /data-guest-sort=/);
+  const sort = html.match(/<select[^>]*data-home-join-sort=""[^>]*>([\s\S]*?)<\/select>/);
+  assert.ok(sort, 'the rest has a sort menu');
+  assert.match(sort[0], new RegExp(`aria-label="${message('home:join.sort.label')}"`));
+  assert.deepEqual([...sort[1].matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]), ['new', 'popular', 'trending'],
+    'New, Popular and Most active, in that order');
+  assert.match(sort[1], new RegExp(`<option value="trending" selected="">${message('home:join.sort.active')}</option>`),
+    'most active until another is picked');
+  assert.equal(message('home:join.sort.new'), 'New');
+  assert.equal(message('home:join.sort.popular'), 'Popular');
+  // One card is nothing to order: the menu is not drawn.
+  const one = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: APPS.filter((a) => a.slug === 'fresh-one') }));
+  assert.doesNotMatch(one, /data-home-join-sort=/, 'one card, no sort');
   // The "Want to join in?" card is gone (Evan, 22 Oct 2026): it said what
   // the hero says, with a second way in, partway down the grid.
   assert.doesNotMatch(html, /data-guest-join=|data-guest-join-continue=/);

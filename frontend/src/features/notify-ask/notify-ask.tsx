@@ -23,7 +23,9 @@ import type { NotifyMoment } from './decide';
  *   In the Homeroom app it is "Notify me / Not now", and only Notify me shows
  *   the phone's own permission prompt (iOS shows it once, Android twice).
  *   Allowed, the card settles to "✓ We'll let you know"; refused, it says
- *   notifications are off, with the way to the phone's settings.
+ *   notifications are off, with the way to the phone's settings. When the
+ *   phone's answer could not be read, it says so and keeps the ask, rather
+ *   than claiming notifications are off.
  *   In a browser Homeroom has no push, so it is "Get the app": the store on a
  *   phone, a code to scan on a computer (./get-app-sheet.tsx), with "Until
  *   then, we'll email you" where email stands in for that moment.
@@ -38,7 +40,7 @@ import type { NotifyMoment } from './decide';
  * this card only in a browser.
  */
 
-type Phase = 'hidden' | 'app' | 'web' | 'asking' | 'on' | 'off';
+type Phase = 'hidden' | 'app' | 'web' | 'asking' | 'on' | 'off' | 'unsure';
 
 // The computer's "Get the app" sheet, loaded on the tap that opens it: the
 // sheet's back-button seam (lib/back-stack.ts) listens on the window as it
@@ -150,14 +152,26 @@ export function NotifyAsk({ moment, project = '', small = false, tone = 'plane',
   };
 
   const notifyMe = async () => {
-    if (phase !== 'app') return;
+    if (phase !== 'app' && phase !== 'unsure') return;
     setPhase('asking');
     const telemetry = askTelemetry();
-    void recordAsk('app', moment, 'yes');
     const answer = await askOs();
-    telemetry.done(answer.granted ? 'success' : 'failure', answer.granted ? {} : { errorCode: 'access_denied' });
-    setSettings(answer.settings);
-    setPhase(answer.granted ? 'on' : 'off');
+    // Only a clear answer is the account's: an unreadable one may ask again.
+    if (answer.outcome === 'granted' || answer.outcome === 'denied') {
+      void recordAsk('app', moment, 'yes');
+    }
+    if (answer.outcome === 'granted') {
+      telemetry.done('success');
+      setSettings(answer.settings);
+      setPhase('on');
+    } else if (answer.outcome === 'denied') {
+      telemetry.done('failure', { errorCode: 'access_denied' });
+      setSettings(answer.settings);
+      setPhase('off');
+    } else {
+      telemetry.done('failure', { errorCode: 'unknown' });
+      setPhase('unsure');
+    }
   };
 
   // The web's yes: they were given the app. The card goes once it has.
@@ -198,7 +212,11 @@ export function NotifyAsk({ moment, project = '', small = false, tone = 'plane',
             <BellIcon className="mt-0.5 h-5 w-5 shrink-0 text-violet-600 dark:text-violet-400" aria-hidden="true" />
             <div className="min-w-0 flex-1">
               <p data-notify-ask-title="" className="text-[15px] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">{title}</p>
-              <p className="mt-0.5 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{body}</p>
+              {phase === 'unsure' ? (
+                <p data-notify-ask-unsure="" className="mt-0.5 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{t('notifications:ask.unsure')}</p>
+              ) : (
+                <p className="mt-0.5 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{body}</p>
+              )}
             </div>
           </div>
           <div className="mt-3 flex flex-wrap gap-2 ps-8">

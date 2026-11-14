@@ -430,11 +430,14 @@ const ADDED_IDS = {
   // ── iPhone Duo: the side strip (24 Oct 2026) ───────────────────────
   'platform-side-strip-top': 'iPhone Duo: the top of the column of system chrome down the screen\'s edge, holding the header\'s back controls while <html data-side-strip> is set (features/nav/strip-back.tsx, app.css THE SIDE STRIP). Ships drawn as nothing; display:none off the strip.',
   'platform-side-strip-back': 'iPhone Duo: #back-btn\'s copy in the side strip, rendered from the same useBackSlot hook and handing its press to #back-btn. Ships hidden with no href, as #back-btn does.',
-  // ── New look (an experiment) ───────────────────────────────────────
-  'new-look-enabled': 'New look: the switch in Settings, Experimental (off by default, kept on the device by the head\'s window.Skin) that sets data-skin="brand" on <html>, which app.css draws the new look from in light mode. settings.js paints and saves it through window.Skin.',
-  // ── The frame's looks (an admin's preview) ─────────────────────────
-  'settings-look-section': 'Look: the menu\'s own wrapper under New look in Settings, Experimental, shipped hidden. settings.js _renderAdminSection lifts the class only for a real admin (App._realIsAdmin): the looks are an admin\'s preview while they are drawn screen by screen.',
-  'settings-look': 'Look: the menu of the one frame\'s five looks (Standard, then glass, paper, pastel, mosaic, sunrise). Kept on the device by the head\'s window.Skin, which sets the chosen id as data-skin on <html> for app.css to draw from, light and dark. Exclusive with New look; settings.js paints and saves both through window.Skin.',
+  // ── The looks (an admin's preview) ─────────────────────────────────
+  // New look's switch, #new-look-enabled, stood here from request #6278
+  // until 13 Nov 2026. Its look was redrawn as "Paper, simplified, with
+  // brand styling" and became the Look menu's first option, so the switch
+  // and its id are gone. The id leaves THIS map rather than entering
+  // RETIRED_IDS, because the frozen baseline never recorded it.
+  'settings-look-section': 'Look: the menu\'s own wrapper in Settings, Experimental, shipped hidden. settings.js _renderAdminSection lifts the class only for a real admin (App._realIsAdmin), or on a device left in one of the menu\'s looks: the looks are an admin\'s preview while they are drawn screen by screen.',
+  'settings-look': 'Look: the menu of the looks (Standard, then brand, which keeps the standard pages in the website\'s colours, then the one frame\'s five: glass, paper, pastel, mosaic, sunrise). Kept on the device by the head\'s window.Skin, which sets the chosen id as data-skin on <html> for app.css to draw from. settings.js paints and saves it through window.Skin.',
   // ── #5097: Settings > Privacy, "Share usage analytics" ──────────────
   // ── #5097: Settings > Privacy, usage data ──────────────
   'settings-usage-analytics-section': '#5097: the usage data block, the last of Settings > Privacy under #5104\'s contact settings (features/settings/sections/usage-analytics.tsx): what Homeroom keeps, and the address to write to be left out of screen usage data.',
@@ -1237,6 +1240,12 @@ const ADDED_IDS = {
   'platform-rail-pinned': 'The sidebar\'s Pinned section (role=group), between #platform-tab-messages and #platform-rail-communities, hidden while nothing is pinned. Home\'s drag recognizer drops a My apps tile on it; dapp.json pins the bar order through it.',
   'platform-rail-pinned-label': 'The section\'s "Pinned" heading, which names the group.',
   'platform-rail-search': 'D: the search beside that heading, shown on hover or focus: Home with its search box focused (features/workshop/communities-search.ts; All communities\' search until One Home, #6361). dapp.json selects on it.',
+  // Request #6479: Settings › Language's Time zone list, under the language
+  // (features/settings/sections/language.tsx). It ships with the Auto option
+  // alone; settings.js adds the world's zones after mount.
+  'settings-timezone-section': '#6479: the Time zone block under #settings-language-section.',
+  'settings-timezone': '#6479: the Time zone select. settings.js fills and saves it (POST /api/me/timezone); dapp.json\'s language check selects on it.',
+  'settings-timezone-status': '#6479: the Saved / failed line under the Time zone select.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

@@ -16,6 +16,9 @@
 //   4. Private threads: done more than a week ago, put away, or filed as a
 //      request that has finished, which then leaves Needs you.
 //   5. Pages, a kind and a project narrow it; the route is signed in only.
+//   6. Staging's seeded private thread about a change that is live
+//      (migrate.js seedStagingLiveChangePrivateThread) is History's for the
+//      shots' member fixture, and not Needs you's.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/ai-history-postgres.test.js
 
@@ -225,6 +228,51 @@ test('the Homeroom bot tab\'s History against the full schema', { timeout: 12000
   const body = await res.json();
   assert.ok(Array.isArray(body.rows) && body.rows.length > 0 && body.rows.every((r) => r.kind === 'change'));
   assert.ok('next' in body);
+
+  // Staging's seed (13 Nov 2026): a private thread about the fake change
+  // seedStagingMergedVoteRow puts live, for the shots' member fixture. It is
+  // History's ("Live"), never a Needs you row, and seeding twice adds nothing.
+  const migrate = require('../src/db/migrate');
+  const source = require('node:fs').readFileSync(require.resolve('../src/db/migrate'), 'utf8');
+  assert.equal(source.split('\'staging-fixture/merged-vote-row\'').length - 1, 2,
+    'the thread is about the change seedStagingMergedVoteRow seeds, found by its branch');
+  assert.ok(source.indexOf('await seedStagingLiveChangePrivateThread(pool);') > source.indexOf('await seedStagingMergedVoteRow(pool, config);'),
+    'seeded after its change');
+  const capture = await user('usernode-capture');
+  const stagingBot = await user('homeroom_bot', true);
+  const home = await project('ah-home', 'public');
+  await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name, pr_number, pr_title, session_title, status, merged_at, live_at, created_at)
+     VALUES ($1, $2, 'staging-fixture/merged-vote-row', 9042, '[staging fixture] Books read list', '[staging fixture] Books read list',
+             'merged', NOW() - INTERVAL '3 hours', NOW() - INTERVAL '3 hours', NOW() - INTERVAL '1 day')`,
+    [home.id, bob.id]);
+  const theirs = await one(`INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`, [capture.id]);
+  await pool.query(
+    `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id) VALUES ($1, $2, $3)`,
+    [theirs.id, Math.min(capture.id, stagingBot.id), Math.max(capture.id, stagingBot.id)]);
+  await pool.query(
+    `INSERT INTO conversation_members (conversation_id, user_id, role, status) VALUES ($1, $2, 'member', 'member'), ($1, $3, 'member', 'member')`,
+    [theirs.id, capture.id, stagingBot.id]);
+  const env = process.env.USERNODE_ENV;
+  try {
+    delete process.env.USERNODE_ENV;
+    await migrate.seedStagingLiveChangePrivateThread(pool);
+    assert.equal((await one('SELECT COUNT(*)::int AS n FROM private_threads WHERE user_id = $1', [capture.id])).n, 0, 'a no-op outside staging');
+    process.env.USERNODE_ENV = 'staging';
+    await migrate.seedStagingLiveChangePrivateThread(pool);
+    await migrate.seedStagingLiveChangePrivateThread(pool);
+  } finally {
+    if (env === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = env;
+  }
+  const seeded = (await pool.query(
+    'SELECT root_message_id, about_kind, about_number, state FROM private_threads WHERE user_id = $1', [capture.id])).rows;
+  assert.deepEqual(seeded.map((r) => [r.about_kind, r.about_number, r.state]), [['change', 9042, 'open']], 'one thread, however often it is seeded');
+  assert.equal((await one('SELECT COUNT(*)::int AS n FROM conversation_messages WHERE conversation_id = $1', [theirs.id])).n, 3);
+  const theirWork = await aiWork.workFor(pool, { user: { id: capture.id }, deps: { bot: stagingBot } });
+  assert.equal(theirWork.private.find((p) => p.rootId === Number(seeded[0].root_message_id)).resultDone, true);
+  assert.deepEqual(aiWork.listsOf([], theirWork).needsYou.filter((r) => /Books read list/.test(r.title)), [], 'not under Needs you');
+  const theirPast = (await aiHistory.historyFor(pool, { user: { id: capture.id }, kind: 'solo', deps: { bot: stagingBot } })).rows;
+  assert.deepEqual(theirPast.map((r) => `${r.title}:${r.outcome}:${r.app.slug}`), ['[staging fixture] Books read list:live:ah-home']);
 });
 
 test('History\'s demo rows are obviously fake, two pages of them', () => {

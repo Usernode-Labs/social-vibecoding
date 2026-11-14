@@ -352,6 +352,18 @@ export function isWorkStatePush(event: unknown): event is WorkStatePush {
   return !!e && e.type === 'work_state' && !!e.item && !!e.state && isStage(e.state.stage);
 }
 
+/**
+ * Pure: whether an events-socket message is a work_state push about one
+ * project (by its slug). A push that names no project could be about any of
+ * them, so it counts. A project's own Needs you reads its feed again on one
+ * (features/review-flow/review-flow.tsx ProjectReviewFlow): a vote that
+ * opened is listed without leaving the page.
+ */
+export function pushIsFor(event: unknown, slug: string): boolean {
+  if (!isWorkStatePush(event)) return false;
+  return !event.appSlug || event.appSlug === slug;
+}
+
 /** Pure: the standing a push carries, with which item it is, or null. */
 export function standingOfPush(push: WorkStatePush): Standing | null {
   const state = normalizeWorkState(push.state);

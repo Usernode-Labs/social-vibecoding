@@ -480,6 +480,13 @@ export const TagIcon = stroked(
 // a check for Assigned to you, a pen for Created by you. New glyphs, so not
 // transcribed from older markup: lucide's user-check and user-pen, on the
 // same 24 grid at the same 2px stroke as UserIcon.
+/** A person and a plus: invite somebody (the hub's Invite card, community-card.tsx InviteHeroCard). */
+export const UserPlusIcon = stroked('UserPlusIcon', [
+  'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2',
+  'M5 7a4 4 0 108 0 4 4 0 10-8 0z',
+  'M19 8v6M22 11h-6',
+]);
+
 export const UserCheckIcon = stroked('UserCheckIcon', [
   'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2',
   'M5 7a4 4 0 108 0 4 4 0 10-8 0z',
@@ -1044,6 +1051,12 @@ export const BoldIcon = stroked('BoldIcon', [
 export const ItalicIcon = stroked('ItalicIcon', 'M10 4.5h7.5M6.5 19.5H14M14.5 4.5l-5 15');
 
 export const UnderlineIcon = stroked('UnderlineIcon', 'M7 4.5v6.75a5 5 0 0 0 10 0V4.5M5 20h14');
+
+/** Strikethrough: an S with a line drawn through it (#6653). */
+export const StrikethroughIcon = stroked('StrikethroughIcon', [
+  'M16.5 6.4c-.9-1.2-2.5-1.9-4.4-1.9-2.6 0-4.3 1.2-4.3 3.1 0 2.4 2.6 3 5.1 3.6M8 17.6c.9 1.2 2.5 1.9 4.4 1.9 2.7 0 4.6-1.3 4.6-3.2 0-1.2-.6-2-1.8-2.6',
+  'M4.5 12h15',
+]);
 
 export const HeadingIcon = stroked('HeadingIcon', 'M6 4.5v15M18 4.5v15M6 12h12');
 

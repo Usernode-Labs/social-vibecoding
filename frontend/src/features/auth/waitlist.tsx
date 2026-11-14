@@ -95,6 +95,7 @@ import {
   useSurveyAnswered,
   WaitlistStatus,
 } from './waitlist-shared';
+import { inZone } from '../../lib/time-zone';
 
 /**
  * The advertised gap between code requests, in seconds, and where it is
@@ -144,7 +145,7 @@ function formatJoinedOn(iso: string | null | undefined): string {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return '';
   try {
-    return at.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+    return at.toLocaleDateString(undefined, inZone({ day: 'numeric', month: 'long', year: 'numeric' }));
   } catch {
     return '';
   }

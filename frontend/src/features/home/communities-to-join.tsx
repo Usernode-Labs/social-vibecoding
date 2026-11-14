@@ -8,19 +8,23 @@
  * the community is about; joining there takes the community off this list
  * (sv:membership-changed).
  *
- * Kind chips over the cards. Then FEATURED, the communities an admin
- * featured, in their order (featured_order), in the same wrapping grid as
- * the rest (#6434): the first group of the section, of the chosen kind, and
- * left out while a search is typed (its matches are the grid, featured
- * first). Then the rest under "More communities" whenever Featured is
- * shown, under All or a chosen kind (#6584, #6597): every community of the
- * kind that Featured does not already show, most used first, so no
+ * Kind chips over the cards, fading at whichever edge has more chips past it
+ * so the row is never just cut off (the same rail as the AI page's project
+ * chips). Then FEATURED, the communities an admin featured, in their order
+ * (featured_order), in the same wrapping grid as the rest (#6434): the first
+ * group of the section, of the chosen kind, and left out while a search is
+ * typed (its matches are the grid, featured first). Its heading names the
+ * chosen kind ("Featured in Games") so the group reads as that kind's. Then
+ * the rest under "More communities" whenever Featured is shown, under All or
+ * a chosen kind (#6584, #6597): every community of the kind that Featured
+ * does not already show, in the sort picked beside that heading (New,
+ * Popular or Most active; most active until somebody picks another), so no
  * community appears twice. The heading tells the rest apart from Featured;
  * when every community of the kind is featured there is nothing left and
  * it is not drawn. No heading while searching, or with nothing featured:
- * then there is one grid. More load as the reader reaches the end (an
- * IntersectionObserver on the last card's sentinel, inside Home's own
- * scroller), with two
+ * then there is one grid, and the sort sits on its own line above it. More
+ * load as the reader reaches the end (an IntersectionObserver on the last
+ * card's sentinel, inside Home's own scroller), with two
  * placeholder cards while they come. The directory is
  * GET /api/public/apps, which answers every public project at once today,
  * so "more" pages through it here.
@@ -28,21 +32,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { Chip, ChipRail } from '@/components/ui/chip';
+import { Chip, FadeRail } from '@/components/ui/chip';
+import { Select } from '@/components/ui/select';
 
 import { useMessages } from '../../lib/i18n/react';
 import { CARD_GRID, Card, SMALL_CAPS_LABEL } from '../guest/guest-discover';
-import { featuredApps, presentCategories, sortApps, type GuestApp } from '../guest/guest-data';
+import { featuredApps, presentCategories, sortApps, type GuestApp, type GuestSort } from '../guest/guest-data';
 import { SectionHeading } from './panels/ui';
 import { matchesQuery } from './use-home-query';
 
 /** How many cards a page brings. */
 export const JOIN_PAGE = 8;
 
-export function joinOrder(apps: readonly GuestApp[]): GuestApp[] {
+/** The sorts the "More communities" control offers, in the order it shows them. */
+export const JOIN_SORTS = ['new', 'popular', 'trending'] as const;
+export type JoinSort = (typeof JOIN_SORTS)[number];
+
+export function joinOrder(apps: readonly GuestApp[], sort: GuestSort = 'trending'): GuestApp[] {
   const featured = featuredApps(apps);
   const first = new Set(featured.map((a) => a.slug));
-  return [...featured, ...sortApps(apps, 'trending').filter((a) => !first.has(a.slug))];
+  return [...featured, ...sortApps(apps, sort).filter((a) => !first.has(a.slug))];
 }
 
 export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onRetry }: {
@@ -61,6 +70,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   const t = useMessages('home');
   const ta = useMessages('auth');
   const [kind, setKind] = useState<string | null>(null);
+  const [sort, setSort] = useState<JoinSort>('trending');
   const [shown, setShown] = useState(JOIN_PAGE);
   const [loadingMore, setLoadingMore] = useState(false);
   const sentinel = useRef<HTMLDivElement | null>(null);
@@ -70,15 +80,15 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   const featured = useMemo(() => (query ? [] : featuredApps(pool).filter((a) => !kind || a.category === kind)), [pool, kind, query]);
   const list = useMemo(() => {
     // Searching keeps the join order (featured first); otherwise this is the
-    // rest, most used first, the featured ones left out because Featured
+    // rest, in the chosen sort, the featured ones left out because Featured
     // already shows them (#6597). When every community of the kind is
     // featured, nothing is left and the list is empty.
     const lead = new Set(featured.map((a) => a.slug));
-    return (query ? joinOrder(pool) : sortApps(pool, 'trending').filter((a) => !lead.has(a.slug)))
+    return (query ? joinOrder(pool, sort) : sortApps(pool, sort).filter((a) => !lead.has(a.slug)))
       .filter((a) => !kind || a.category === kind)
       .filter((a) => matchesQuery(query, a.name, a.slug, a.description));
-  }, [pool, kind, query, featured]);
-  useEffect(() => { setShown(JOIN_PAGE); }, [kind, query]);
+  }, [pool, kind, query, sort, featured]);
+  useEffect(() => { setShown(JOIN_PAGE); }, [kind, query, sort]);
   const more = list.length > shown;
 
   useEffect(() => {
@@ -114,7 +124,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
       {/* #6650: signed in, the heading says what the section is for. */}
       {signedIn ? <p className="m-0 -mt-1 pb-1 text-[13px] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">{t('home:join.sub')}</p> : null}
       {!query && kinds.length ? (
-        <ChipRail role="group" aria-label={ta('auth:guest.categories.label')} className="-mx-3 gap-2 px-3 pt-1 pb-3">
+        <FadeRail role="group" aria-label={ta('auth:guest.categories.label')} className="-mx-3 gap-2 px-3 pt-1 pb-3">
           <Chip size="bar" className="min-h-11" selected={!kind} data-home-join-kind="all" onClick={() => setKind(null)}>
             {ta('auth:guest.category.all')}
           </Chip>
@@ -123,11 +133,13 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
               {ta(`auth:guest.category.${k}`)}
             </Chip>
           ))}
-        </ChipRail>
+        </FadeRail>
       ) : null}
       {featured.length ? (
         <div data-home-join-featured="" className="pb-4">
-          <h3 id={signedIn ? 'home-join-featured-label' : 'guest-join-featured-label'} className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>{t('home:join.featured')}</h3>
+          <h3 id={signedIn ? 'home-join-featured-label' : 'guest-join-featured-label'} className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>
+            {kind ? t('home:join.featuredKind', { kind: ta(`auth:guest.category.${kind}`) }) : t('home:join.featured')}
+          </h3>
           <div
             role="list"
             aria-labelledby={signedIn ? 'home-join-featured-label' : 'guest-join-featured-label'}
@@ -163,8 +175,29 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
             every card reads as featured (#6434, #6584). It is not drawn when
             nothing is left (every community of the kind is featured, #6597).
             A search leaves Featured out, and then there is one grid with no
-            heading. */}
-        {featured.length ? <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`} data-home-join-rest="">{t('home:join.more')}</h3> : null}
+            heading, and the sort sits on its own line above it. The sort is
+            drawn only when there are two cards it could order. */}
+        {list.length > 1 ? (
+          <div className={`flex items-center gap-2 px-1 pb-2${featured.length ? '' : ' justify-end'}`}>
+            {featured.length ? <h3 className={`${SMALL_CAPS_LABEL} flex-1`} data-home-join-rest="">{t('home:join.more')}</h3> : null}
+            <Select
+              variant="plain"
+              className="w-auto min-h-11"
+              aria-label={t('home:join.sort.label')}
+              data-home-join-sort=""
+              value={sort}
+              onChange={(e) => setSort(e.target.value as JoinSort)}
+            >
+              {JOIN_SORTS.map((s) => (
+                <option key={s} value={s}>
+                  {s === 'trending' ? t('home:join.sort.active') : t(`home:join.sort.${s}`)}
+                </option>
+              ))}
+            </Select>
+          </div>
+        ) : featured.length ? (
+          <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`} data-home-join-rest="">{t('home:join.more')}</h3>
+        ) : null}
         <div className={`${CARD_GRID} px-1`}>
           {list.slice(0, shown).map((app, i) => (
             <Card

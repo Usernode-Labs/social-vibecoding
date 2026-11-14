@@ -684,7 +684,10 @@ export function RowArrow() {
 export function PicCard({ href, onClick, cover, darkCover, tile, color, title, line, two, meta, word, end, badge, flag, label, ...data }: {
   /** With no picture: the colour the tile stands on (the community's own). */
   color?: string | null;
-  /** The sentence may take two lines (a directory's card). */
+  /**
+   * The sentence may take two lines. Off by default: one line ending in "…",
+   * with the whole sentence in its hover title (#6659).
+   */
   two?: boolean;
   /** Said to a screen reader in place of the card's text. */
   label?: string;
@@ -718,7 +721,7 @@ export function PicCard({ href, onClick, cover, darkCover, tile, color, title, l
       </span>
       <span className={k('fbody')}>
         <span className={k('t')}>{title}</span>
-        {line ? <span className={k('s', two && 'two')}>{line}</span> : null}
+        {line ? <span className={k('s', two && 'two')} title={typeof line === 'string' ? line : undefined}>{line}</span> : null}
         {!end && (meta || word) ? <span className={k('fm')}>{meta}{word ? <span className={k('btn', 'quiet', 'sm')}>{word}</span> : null}</span> : null}
       </span>
     </>

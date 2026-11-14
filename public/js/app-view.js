@@ -4235,15 +4235,22 @@ const AppView = {
   _liveDay(at, now = new Date(), locale) {
     const when = new Date(at);
     if (!Number.isFinite(when.getTime())) return null;
-    const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-    // Rounded: a day across a clock change is 23 or 25 hours long.
-    const days = Math.round((midnight(when) - midnight(now)) / 86400000);
+    // #6479: calendar days, and the words, in the zone picked in Settings ›
+    // Language (else the device's), as messages/bot-ready.tsx liveDay.
+    const timeZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
+    const zone = timeZone ? { timeZone } : {};
+    const dayOf = (d) => {
+      const z = PlatformI18n.zonedDay ? PlatformI18n.zonedDay(d)
+        : { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() };
+      return Math.round(Date.UTC(z.year, z.month - 1, z.day) / 86400000);
+    };
+    const days = dayOf(when) - dayOf(now);
     if (when.getTime() > now.getTime()) {
       if (days === 0) return { kind: 'today', day: null };
       if (days === 1) return { kind: 'tomorrow', day: null };
-      if (days < 7) return { kind: 'weekday', day: new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(when) };
+      if (days < 7) return { kind: 'weekday', day: new Intl.DateTimeFormat(locale, { ...zone, weekday: 'long' }).format(when) };
     }
-    return { kind: 'date', day: new Intl.DateTimeFormat(locale, { month: 'long', day: 'numeric' }).format(when) };
+    return { kind: 'date', day: new Intl.DateTimeFormat(locale, { ...zone, month: 'long', day: 'numeric' }).format(when) };
   },
 
   /** Try it, on the first version's screen: its change's preview, as its ready card's Try it opens it. */
@@ -6709,6 +6716,12 @@ const AppView = {
   // the assignee chip, the work note, its "Also:", the admins' Claims line
   // and the thread's claim line); the status card says it once, and the
   // thread's claim line reads as what happened.
+  _twinOf(issue) {
+    const number = Number(issue?.similar?.number);
+    return Number.isSafeInteger(number) && number > 0 && number !== Number(issue.number)
+      ? { number, title: String(issue.similar.title || '') } : null;
+  },
+
   _requestView(issue) {
     const n = issue.number;
     const top = issue.category && issue.category.top;
@@ -6730,6 +6743,7 @@ const AppView = {
       askedTime: stamp.text,
       askedTitle: stamp.title,
       title: issue.title || '',
+      similar: AppView._twinOf(issue),
       titleEditing: canEditTitle && AppView._editingIssueTitle === n ? { issue: n, initial: issue.title || '' } : null,
       bodyHtml: words.text.trim() ? AppView._issueBodyHtml({ body: words.text }) : '',
       bodyMarkdown: words.text,
@@ -6876,11 +6890,19 @@ const AppView = {
 
   // The standing's words as the status card's sentence: its stage, and its
   // second line after it. Homeroom bot's own sentence (its reason) follows as
-  // a sentence of its own.
+  // a sentence of its own. 13 Nov 2026: a request waiting its turn says
+  // whose line it is and that it starts by itself, where a row's label says
+  // "Number 1 in line": a tester could not tell whether that line was the
+  // bot's, another person's or theirs.
   _standingSays(words) {
     const t = PlatformI18n.t;
     const stage = t(words.stage.id, words.stage.values || {});
     if (!words.line) return t('changes:request.status.lead.stands', { stage });
+    if (words.line.id === 'core:work.line.queuedAt') {
+      const place = Number(words.line.values && words.line.values.place) || 1;
+      return t('changes:request.status.lead.botLineAt', { stage, place });
+    }
+    if (words.line.id === 'core:work.line.queued') return t('changes:request.status.lead.botLine', { stage });
     const line = t(words.line.id, words.line.values || {});
     return words.line.id === 'core:work.line.said'
       ? t('changes:request.status.lead.standsSaid', { stage, said: line })
@@ -8689,7 +8711,10 @@ const AppView = {
     }
     // A change has no fixed deadline, only these two clocks (statusPillState).
     if ((pill.key === 'merge_countdown' || pill.key === 'reject_countdown') && Number.isFinite(pill.countdown)) {
+      // In the zone picked in Settings › Language (#6479), else the device's.
+      const timeZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
       const when = new Intl.DateTimeFormat(PlatformI18n.dateLocale(), {
+        ...(timeZone ? { timeZone } : {}),
         weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
       }).format(new Date(pill.countdown));
       facts.push({ key: 'ends', text: PlatformI18n.t('changes:page.votes.facts.ends', { when }) });
@@ -13146,7 +13171,7 @@ const AppView = {
       }
       const cat = it.category && it.category.top ? AppView._categoryMeta(it.category.top) : null;
       return {
-        ...base, kind: 'request', noun: 'request', n: Number(it.number) || null,
+        ...base, kind: 'request', noun: 'request', n: Number(it.number) || null, twin: AppView._twinOf(it),
         category: cat ? cat.label : '', replies: Number(it.chatCount) || 0,
         stage: ws && ws.key !== 'claimed' && ws.key !== 'in_review' ? 'worked' : (ws && ws.key === 'in_review' ? 'vote' : 'request'),
         // Nobody has taken it (the Workshop's "Nobody is on these"), so a
@@ -16192,10 +16217,21 @@ const AppView = {
     }
     if (f.needsVote) {
       if (kind === 'proposal') {
-        // Same condition as the card's pulsing "Vote" badge (isUnvoted). A
-        // project's first version needs nobody's vote (D1).
+        // The card's pulsing "Vote" badge's condition (isUnvoted), narrowed.
+        // A project's first version needs nobody's vote (D1).
         // #6594: its votes are in, so it asks nobody for one.
-        if (!(it.status === 'promoted' && !it.my_vote && it.first_version !== true && it.votes_in !== true)) return false;
+        // And only once its vote is open (`vote_open`, the stored work
+        // state's answer on the /promoted row, routes/votes.js): the rule
+        // the Needs you page lists by (GET /api/workshop/needs-feed,
+        // VOTE_OPEN_SQL). A change still being checked, or whose shots are
+        // still being taken, was counted here as waiting on your vote while
+        // the page said nothing was. It stays on the board with its own
+        // status and its card's own Vote pill (statusPillState is not asked
+        // this), and its own page still takes an early vote. A row without
+        // the field (an older saved copy, a demo row) reads as open, so a
+        // vote is never hidden for want of it.
+        if (!(it.status === 'promoted' && !it.my_vote && it.first_version !== true && it.votes_in !== true
+          && it.vote_open !== false)) return false;
       } else if (kind === 'gov') {
         if (it.my_vote) return false;
       } else {
@@ -26344,7 +26380,8 @@ const AppView = {
     // detail differs.
     const heldUntil = p.integration && p.integration.heldUntil ? Date.parse(p.integration.heldUntil) : NaN;
     const heldSoon = !Number.isFinite(heldUntil) || heldUntil <= Date.now();
-    const heldTime = heldSoon ? null : new Date(heldUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const heldZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
+    const heldTime = heldSoon ? null : new Date(heldUntil).toLocaleTimeString([], { ...(heldZone ? { timeZone: heldZone } : {}), hour: '2-digit', minute: '2-digit' });
     if (served.includes('github_busy')) {
       out.push({
         key: 'github_busy',
@@ -27752,7 +27789,7 @@ const AppView = {
         ? `<button type="button" data-shots-stop="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.stopShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.stop')}</button>`
         : '';
       const override = state === 'overridden' && shots.overriddenAt
-        ? `<div class="text-[0.68rem] text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:shots.card.overriddenAt', { when: new Date(shots.overriddenAt).toLocaleString() })}</div>`
+        ? `<div class="text-[0.68rem] text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:shots.card.overriddenAt', { when: new Date(shots.overriddenAt).toLocaleString(undefined, PlatformI18n.timeZone && PlatformI18n.timeZone() ? { timeZone: PlatformI18n.timeZone() } : {}) })}</div>`
         : '';
       return `<section data-shots="1" data-shots-state="${attr(state)}" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
         <div class="flex items-center justify-between gap-3"><strong class="text-sm">${esc(copy[0])}</strong>${badge}</div>
@@ -28853,8 +28890,12 @@ const AppView = {
     try {
       const d = new Date(ms);
       const locale = PlatformI18n.dateLocale ? PlatformI18n.dateLocale() : undefined;
-      const other = d.getFullYear() !== new Date().getFullYear();
+      // #6479: the zone picked in Settings › Language, else the device's.
+      const timeZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
+      const yearOf = (x) => (PlatformI18n.zonedDay ? PlatformI18n.zonedDay(x).year : x.getFullYear());
+      const other = yearOf(d) !== yearOf(new Date());
       return d.toLocaleDateString(locale, {
+        ...(timeZone ? { timeZone } : {}),
         month: 'short', day: 'numeric', ...(other ? { year: 'numeric' } : {}),
       });
     } catch { return ''; }
@@ -33456,15 +33497,19 @@ function relStamp(iso, now) {
   // Interface language, device region (#6103), as GroupChat._stamp and
   // lib/timestamp.ts read it; the device default where the runtime predates it.
   const locale = PlatformI18n.dateLocale ? PlatformI18n.dateLocale() : undefined;
+  // The zone the account picked (#6479); the device's where none is.
+  const timeZone = PlatformI18n.timeZone ? PlatformI18n.timeZone() : undefined;
+  const zone = timeZone ? { timeZone } : {};
+  const yearOf = (x) => (PlatformI18n.zonedDay ? PlatformI18n.zonedDay(x).year : x.getFullYear());
   const title = date.toLocaleString(locale, {
-    year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    ...zone, year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   });
   const elapsed = ref.getTime() - date.getTime();
   if (elapsed >= REL_FLOOR_MS) {
     return {
-      text: date.toLocaleDateString(locale, date.getFullYear() === ref.getFullYear()
-        ? { month: 'short', day: 'numeric' }
-        : { year: 'numeric', month: 'short', day: 'numeric' }),
+      text: date.toLocaleDateString(locale, yearOf(date) === yearOf(ref)
+        ? { ...zone, month: 'short', day: 'numeric' }
+        : { ...zone, year: 'numeric', month: 'short', day: 'numeric' }),
       title,
     };
   }

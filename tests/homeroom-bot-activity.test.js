@@ -102,6 +102,19 @@ test('a card still going takes its step from its request\'s work state; with not
   // Waiting its turn to be read, or on hold, it says so.
   assert.equal(activity.entryOfWork({ stage: 'reading', line: { code: 'queued', place: 2 }, whoseMove: 'bot' }).stage, 'queued');
   assert.equal(activity.entryOfWork({ stage: 'reading', line: { code: 'cooldown' }, whoseMove: 'bot' }).stage, 'cooldown');
+  // 13 Nov 2026: and whose line it waits in, in the bot's own words: its own,
+  // which starts by itself. "Ready to build · Number 1 in line" did not say
+  // whether it waited for the bot, for another person or for its requester.
+  const doing = (w) => activity.entryOfWork({ whoseMove: 'bot', ...w }).doing;
+  assert.equal(doing({ stage: 'building', line: { code: 'queued', place: 1 } }), 'Ready to build · Number 1 in my own line; I\'ll start by myself');
+  assert.equal(doing({ stage: 'building', line: { code: 'queued' } }), 'Ready to build · Waiting its turn in my own line; I\'ll start by myself');
+  assert.equal(doing({ stage: 'reading', line: { code: 'queued', place: 2 } }), 'Not started yet · Number 2 in my own line; I\'ll start by myself');
+  // A limit that holds it keeps the words every screen says.
+  assert.equal(doing({ stage: 'building', line: { code: 'held_builds' } }), 'Ready to build · Waiting for one of the project\'s builds to finish');
+  // Held for its requester's plan, whatever it had reached: it waits on them, and is no build under way.
+  const planning = activity.entryOfWork({ stage: 'planning', line: { code: 'planning_with_you', ready: true }, whoseMove: 'requester' });
+  assert.deepEqual([planning.doing, planning.waitingOn, planning.typicalMinutes],
+    ['Planning · Planning it with you in a private thread', 'them', undefined]);
   // A request that ended, or was handed back, has no work going on.
   for (const ended of [{ stage: 'live' }, { stage: 'closed' }, { stage: 'stopped', reason: 'build_failed' },
     { stage: 'waiting_for_you', why: 'decide' }]) {
