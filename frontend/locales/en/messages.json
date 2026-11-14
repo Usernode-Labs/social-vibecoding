@@ -6011,6 +6011,22 @@
     "text": "·",
     "description": "Main Chat's Welcome back card: the dot between the parts of the line under the heading, for example between '3 changes went live' and '2 wait for your vote'."
   },
+  "inbox.section.discussion": {
+    "text": "Discussion",
+    "description": "Heading over channel shortcuts in Messages; each opens its project page."
+  },
+  "inbox.channels.show_one": {
+    "text": "{{count}} other channel",
+    "description": "Opens the folded project channel shortcuts in Messages."
+  },
+  "inbox.channels.show_other": {
+    "text": "{{count}} other channels",
+    "description": "Opens the folded project channel shortcuts in Messages."
+  },
+  "inbox.channels.hide": {
+    "text": "Hide other channels",
+    "description": "Folds project channel shortcuts in Messages, keeping general visible."
+  },
   "inbox.toEnd.label": {
     "text": "Oldest chats",
     "description": "Floating shortcut at the foot of a long Messages list. Scrolls to the oldest chats."

@@ -363,7 +363,7 @@ is no replay plan to write and nothing to verify locally.
   merges, its channel a `'category'` thread; a new topic, a rename, a merge
   or an archive is a proposal (Settings & rules › Topics). A project's channel lives on its page,
   not in Messages, and #general is the Homeroom community's channel;
-  Messages is people and agents. **A channel
+  Messages is people and agents, with a Discussion shortcut (#6467): #general and other channels folded behind their count, each opening its channel on the project page. **A channel
   is what people said:** Homeroom writes no activity (a proposal put up for a
   vote, a merge, a check verdict, a setting changed) into a project's channel
   or #general. `ws.sendSystemMessage` writes nothing without a thread, so a
