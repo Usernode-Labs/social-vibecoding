@@ -173,9 +173,9 @@ test('every kind names itself the same way for every row of that kind', async ()
 });
 
 // #3181: the row the bell shows when a dev-session turn stopped before
-// finishing. The app is on the meta line, never in the label; the subject
-// falls back the way session_done's does; and an agent session's change says
-// who stopped, as its finished row says who finished.
+// finishing. No new one is written, but the rows already sent still draw:
+// the app is on the meta line, never in the label, and the subject falls
+// back the way session_done's does.
 test('a session that stopped before finishing says so, and where', async () => {
   const stalled = await lines({ kind: 'session_stalled', sourceUsername: null, sessionTitle: 'Kanban filters' });
   assert.equal(stalled.label, 'Session stopped before finishing');
@@ -186,11 +186,6 @@ test('a session that stopped before finishing says so, and where', async () => {
     kind: 'session_stalled', sourceUsername: null, sessionTitle: null, branchName: 'dev/ada-1',
   });
   assert.equal(untitled.subject, 'dev/ada-1', 'the same fallback ladder as session_done');
-
-  const agent = await lines({
-    kind: 'session_stalled', sourceUsername: null, sessionTitle: 'Kanban filters', agentSessionId: 9,
-  });
-  assert.equal(agent.label, 'The coding agent stopped before finishing');
 
   const view = (await load())({ ...ROW, kind: 'session_stalled', sourceUsername: null });
   assert.notEqual(view.icon, (await load())({ ...ROW, kind: 'session_done' }).icon,
