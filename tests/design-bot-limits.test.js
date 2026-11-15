@@ -208,6 +208,23 @@ test('#6681: the look is held once and skipped when no render can be made', asyn
   assert.equal(turn.versions.length, 1, 'the version is shown without the look');
 });
 
+test('#6681: the look renders a first drawing at the size it was drawn for', async () => {
+  const clean = '<main class="paper"><svg width="20" height="20" viewBox="0 0 24 24"></svg>Recipes</main>';
+  const sizes = [];
+  const turn = appTurn([
+    { calls: [callOf('write_screen', { title: 'Recipes', size: 'desktop', html: clean, note: 'the home list' })] },
+    { calls: [callOf('reply', { text: 'Here is the recipe list.' })] },
+  ], {
+    deps: {
+      designCapture: {
+        async renderDesign(_config, args) { sizes.push([args.width, args.height]); return { ok: false, reason: 'no_render' }; },
+      },
+    },
+  });
+  await turn.run;
+  assert.deepEqual(sizes, [[1280, 800]], 'a desktop first drawing is looked at at 1280 by 800, not the phone default');
+});
+
 test('#6681: the markup an app\'s scripts build is pulled out, and its own file comes first', async () => {
   const js = 'const a = "<div class=\\"card\\">x</div>"; const b = \'<p>no class</p>\';'
     + ' const c = `<span class="tile">${name}</span>`; const d = "<div class=\\"card\\">x</div>";'

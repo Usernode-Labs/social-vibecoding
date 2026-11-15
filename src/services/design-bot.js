@@ -1669,8 +1669,13 @@ async function answer(pool, config, {
         const picture = (pictures || [])[pictures.length - 1];
         if (picture?.data) comparePng = Buffer.from(picture.data, 'base64');
       }
-      const width = Math.round(Number(design?.width) || 390);
-      const height = Math.round(Number(design?.height) || 844);
+      // A first version has no design row yet: it is rendered at the size it
+      // is drawn for, which is the size the design is made at below.
+      const size = design?.width && design?.height
+        ? { width: design.width, height: design.height }
+        : (drawn?.size === 'desktop' ? { width: 1280, height: 800 } : { width: 390, height: 844 });
+      const width = Math.round(Number(size.width) || 390);
+      const height = Math.round(Number(size.height) || 844);
       const render = await capture.renderDesign(config, { html, width, height, compare: compareHtml, deps });
       if (!render?.ok || !render.png) {
         t.failures.push(lookSkipped(turnRounds.rounds));
