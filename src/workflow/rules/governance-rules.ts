@@ -124,7 +124,7 @@ const USERNAME_MAX = 64;
  * is the fewest yeses it passes on (absent when it has none).
  */
 export interface Rule { group: string; kind: Measure; n: number | null; min?: number | null }
-export interface Group { name: string; people: string[] }
+export interface Group { name: string; people: string[]; keptByApp?: boolean }
 export interface RulesValue { preset: PresetKey | null; groups: Group[]; rules: Rule[] }
 
 /** Each preset, as the rules it stands for. */
@@ -189,8 +189,13 @@ function parseGroup(raw: unknown, i: number): Group {
   if (BUILT_IN_GROUPS.includes(groupKey(name))) {
     throw new RulesError(`"${name}" is a built-in group; name yours something else`);
   }
+  const keptByApp = raw.keptByApp === true;
   const people = raw.people == null ? [] : raw.people;
   if (!Array.isArray(people)) throw new RulesError(`governance.groups[${i}].people must be a list of usernames`);
+  if (keptByApp && people.length) {
+    throw new RulesError('A group the app keeps has no people list');
+  }
+  if (keptByApp) return { name, people: [], keptByApp: true };
   const seen = new Set<string>();
   const out: string[] = [];
   for (const p of people) {
@@ -342,7 +347,9 @@ export function blockFor({ preset = null, groups = [], rules = [] }: Partial<Rul
   if (same) return { preset: same };
   const nameOf = new Map(groups.map((g) => [groupKey(g.name), g.name]));
   const out: Record<string, unknown> = {};
-  if (groups.length) out.groups = groups.map((g) => ({ name: g.name, people: [...g.people] }));
+  if (groups.length) out.groups = groups.map((g) => (g.keptByApp
+    ? { name: g.name, keptByApp: true }
+    : { name: g.name, people: [...g.people] }));
   out.rules = rules.map((r) => {
     const group = BUILT_IN_GROUPS.includes(r.group) ? r.group : (nameOf.get(r.group) || r.group);
     const rule: Record<string, unknown> = r.kind === 'majority' ? { group, majority: true } : { group, [r.kind]: r.n };
@@ -363,7 +370,8 @@ export function storedForm(value: Partial<RulesValue>, idsByGroup: Map<string, n
     groups: (value.groups || []).map((g) => ({
       name: g.name,
       people: [...(g.people || [])],
-      ids: [...(idsByGroup.get(groupKey(g.name)) || [])],
+      ...(g.keptByApp ? { keptByApp: true } : {}),
+      ids: g.keptByApp ? [] : [...(idsByGroup.get(groupKey(g.name)) || [])],
     })),
     rules: (value.rules || []).map((r) => ({
       group: r.group, kind: r.kind, n: r.kind === 'majority' ? null : r.n,
@@ -471,9 +479,12 @@ export function diffRules(
   const wasByKey = new Map(wasGroups.map((g) => [groupKey(g.name), g]));
   const nowByKey = new Map(nowGroups.map((g) => [groupKey(g.name), g]));
   const peopleChanged: RulesDiff['peopleChanged'] = [];
+  // A group that flips between kept by the app and hand-picked is not the
+  // same group, so it reads as one removed and one added.
+  const sameKind = (a: Group, b: Group) => !!a.keptByApp === !!b.keptByApp;
   for (const g of nowGroups) {
     const before = wasByKey.get(groupKey(g.name));
-    if (!before) continue;
+    if (!before || !sameKind(before, g) || g.keptByApp) continue;
     const wasPeople = new Set(before.people.map((p) => p.toLowerCase()));
     const nowPeople = new Set(g.people.map((p) => p.toLowerCase()));
     const added = g.people.filter((p) => !wasPeople.has(p.toLowerCase()));
@@ -483,8 +494,14 @@ export function diffRules(
   return {
     added: nowRules.filter((r) => !wasSignatures.has(ruleSignature(r))),
     removed: wasRules.filter((r) => !nowSignatures.has(ruleSignature(r))),
-    groupsAdded: nowGroups.filter((g) => !wasByKey.has(groupKey(g.name))),
-    groupsRemoved: wasGroups.filter((g) => !nowByKey.has(groupKey(g.name))),
+    groupsAdded: nowGroups.filter((g) => {
+      const was = wasByKey.get(groupKey(g.name));
+      return !was || !sameKind(was, g);
+    }),
+    groupsRemoved: wasGroups.filter((g) => {
+      const now = nowByKey.get(groupKey(g.name));
+      return !now || !sameKind(g, now);
+    }),
     peopleChanged,
   };
 }

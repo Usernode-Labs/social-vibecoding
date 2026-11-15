@@ -65,7 +65,7 @@ const VISIBILITIES: readonly Visibility[] = ['private', 'public'];
 /** What the approval section has picked: a preset, or rules of the project's own. */
 type Choice = { kind: 'preset'; key: PresetKey } | { kind: 'own'; value: RulesValue };
 
-interface GroupDraft { index: number | null; name: string; people: string[] }
+interface GroupDraft { index: number | null; name: string; people: string[]; keptByApp: boolean; size?: number; reportedAt?: string | null }
 interface RuleDraft { index: number | null; group: string; kind: Kind; n: number; min: number | null }
 
 /** Where a rule's minimum starts when it is switched on. */
@@ -273,7 +273,10 @@ export function WhoDecidesDialog() {
 
   function editGroup(index: number | null) {
     const g = index != null && draft ? draft.groups[index] : null;
-    setGroupDraft({ index, name: g ? g.name : '', people: g ? [...g.people] : [] });
+    setGroupDraft({
+      index, name: g ? g.name : '', people: g ? [...g.people] : [],
+      keptByApp: !!g?.keptByApp, size: g?.size, reportedAt: g?.reportedAt ?? null,
+    });
     setScreen('group');
   }
 
@@ -281,7 +284,9 @@ export function WhoDecidesDialog() {
     if (!draft || !groupDraft) return;
     const problem = groupNameProblem(groupDraft.name, draft.groups, groupDraft.index != null ? groupKey(draft.groups[groupDraft.index].name) : null);
     if (problem) return;
-    const nextGroup: Group = { name: groupDraft.name.replace(/\s+/g, ' ').trim(), people: groupDraft.people };
+    const nextGroup: Group = groupDraft.keptByApp
+      ? { name: groupDraft.name.replace(/\s+/g, ' ').trim(), people: [], keptByApp: true, size: groupDraft.size ?? 0, reportedAt: groupDraft.reportedAt ?? null }
+      : { name: groupDraft.name.replace(/\s+/g, ' ').trim(), people: groupDraft.people };
     const groups = [...draft.groups];
     let rules = draft.rules;
     if (groupDraft.index != null) {
@@ -575,7 +580,11 @@ export function WhoDecidesDialog() {
             trailing={<span className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('dialogs:whoDecides.group.builtIn')}</span>} />
           {draft.groups.map((g, i) => (
             <ListRow key={groupKey(g.name)} as="button" data-who-group={i} onClick={() => editGroup(i)} title={g.name}
-              subtitle={g.people.length ? g.people.join(', ') : t('dialogs:whoDecides.group.nobody')} subtitleClassName="whitespace-normal" />
+              subtitle={g.keptByApp
+                ? t('dialogs:whoDecides.group.keptByAppSub', { count: g.size ?? 0 })
+                : (g.people.length ? g.people.join(', ') : t('dialogs:whoDecides.group.nobody'))}
+              subtitleClassName="whitespace-normal"
+              trailing={g.keptByApp ? <span className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('dialogs:whoDecides.group.keptByApp')}</span> : undefined} />
           ))}
           {draft.groups.length < MAX_GROUPS ? (
             <ListRow as="button" data-who-add-group="" onClick={() => editGroup(null)}
@@ -630,30 +639,64 @@ export function WhoDecidesDialog() {
           />
           {problem ? <p className="mt-1 px-1 text-[13px] text-red-700 dark:text-red-400" role="alert">{problem}</p> : null}
         </div>
-        <SectionHeader className="px-1 pb-2 pt-5">{t('dialogs:whoDecides.group.people', { count: groupDraft.people.length })}</SectionHeader>
-        <GroupedList className="mx-0" data-who-group-people="">
-          {groupDraft.people.map((p) => (
-            <ListRow key={p} leading={<Face name={p} />} title={p} chevron={false}
-              trailing={(
-                <button type="button" aria-label={t('dialogs:whoDecides.group.removePerson', { name: p })} onClick={() => setPeople(groupDraft.people.filter((x) => x !== p))}
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-zinc-500 dark:text-zinc-400">
-                  <XIcon className="h-4 w-4" aria-hidden="true" />
-                </button>
-              )} />
-          ))}
-          {!groupDraft.people.length ? <ListRow title={t('dialogs:whoDecides.group.nobody')} chevron={false} /> : null}
-          {pool.length ? (
-            <div className="flex flex-wrap items-center gap-2 px-4 py-3">
-              <span className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('dialogs:whoDecides.group.add')}</span>
-              {pool.slice(0, 24).map((p) => (
-                <Button key={p} type="button" variant="pillNeutral" size="sm" ink="neutral" onClick={() => setPeople([...groupDraft.people, p])} className="flex items-center gap-1.5">
-                  <PlusIcon className="h-3.5 w-3.5" aria-hidden="true" />{p}
-                </Button>
-              ))}
-            </div>
-          ) : null}
+        <GroupedList className="mx-0 mt-3">
+          <label className="flex w-full cursor-pointer items-start gap-4 px-4 py-3.5">
+            <span className="ui-lrow-tx min-w-0 flex-1">
+              <span className="ui-lrow-t block text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">
+                {t('dialogs:whoDecides.group.keptSwitch')}
+              </span>
+              <span className="ui-lrow-s mt-0.5 block text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
+                {t('dialogs:whoDecides.group.keptSwitchSub')}
+              </span>
+            </span>
+            <Switch
+              data-who-kept-switch=""
+              checked={groupDraft.keptByApp}
+              onChange={(e) => setGroupDraft({
+                ...groupDraft,
+                keptByApp: e.currentTarget.checked,
+                people: e.currentTarget.checked ? [] : groupDraft.people,
+              })}
+            />
+          </label>
         </GroupedList>
-        <p className={`mt-2 ${NOTE}`}>{t('dialogs:whoDecides.group.note', { name })}</p>
+        {groupDraft.keptByApp ? (
+          <>
+            <SectionHeader className="px-1 pb-2 pt-5">{t('dialogs:whoDecides.group.people', { count: groupDraft.size ?? 0 })}</SectionHeader>
+            <p className={`mt-2 ${NOTE}`} data-who-kept-line="">
+              {groupDraft.reportedAt
+                ? t('dialogs:whoDecides.group.keptReported', { when: new Date(groupDraft.reportedAt).toLocaleString() })
+                : t('dialogs:whoDecides.group.keptNever')}
+            </p>
+          </>
+        ) : (
+          <>
+            <SectionHeader className="px-1 pb-2 pt-5">{t('dialogs:whoDecides.group.people', { count: groupDraft.people.length })}</SectionHeader>
+            <GroupedList className="mx-0" data-who-group-people="">
+              {groupDraft.people.map((p) => (
+                <ListRow key={p} leading={<Face name={p} />} title={p} chevron={false}
+                  trailing={(
+                    <button type="button" aria-label={t('dialogs:whoDecides.group.removePerson', { name: p })} onClick={() => setPeople(groupDraft.people.filter((x) => x !== p))}
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-zinc-500 dark:text-zinc-400">
+                      <XIcon className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  )} />
+              ))}
+              {!groupDraft.people.length ? <ListRow title={t('dialogs:whoDecides.group.nobody')} chevron={false} /> : null}
+              {pool.length ? (
+                <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+                  <span className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('dialogs:whoDecides.group.add')}</span>
+                  {pool.slice(0, 24).map((p) => (
+                    <Button key={p} type="button" variant="pillNeutral" size="sm" ink="neutral" onClick={() => setPeople([...groupDraft.people, p])} className="flex items-center gap-1.5">
+                      <PlusIcon className="h-3.5 w-3.5" aria-hidden="true" />{p}
+                    </Button>
+                  ))}
+                </div>
+              ) : null}
+            </GroupedList>
+            <p className={`mt-2 ${NOTE}`}>{t('dialogs:whoDecides.group.note', { name })}</p>
+          </>
+        )}
         {usedBy.length ? (
           <>
             <SectionHeader className="px-1 pb-2 pt-5">{t('dialogs:whoDecides.group.usedBy', { count: usedBy.length })}</SectionHeader>

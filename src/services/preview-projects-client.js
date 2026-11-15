@@ -310,7 +310,8 @@ function projectEnv(env, s = settings()) {
     out[key] = String(value);
   }
   for (const key of ['DATABASE_URL', 'PORT', 'USERNODE_ENV',
-    'USERNODE_LLM_PROXY_URL', 'USERNODE_STORAGE_URL', 'USERNODE_STORAGE_TOKEN']) delete out[key];
+    'USERNODE_LLM_PROXY_URL', 'USERNODE_STORAGE_URL', 'USERNODE_STORAGE_TOKEN',
+    'USERNODE_GROUPS_URL', 'USERNODE_GROUPS_TOKEN']) delete out[key];
   const key = require('./platform-jwt').signingPublicKeyPem();
   if (key) {
     out.USERNODE_JWT_PUBLIC_KEY = key;

@@ -200,6 +200,25 @@ test('a minimum on a majority or a share, in words, sent and read back as the se
     'the same rule with and without a minimum are two rules');
 });
 
+test('a group the app keeps shows how many people the app last reported (#6669)', () => {
+  const model = loadTsx(MODEL);
+  const ctx = {
+    groups: [
+      { name: 'App users', people: [], keptByApp: true, size: 12, reportedAt: '2026-11-15T10:00:00.000Z' },
+      { name: 'Unreported', people: [], keptByApp: true, size: 0, reportedAt: null },
+    ],
+    creator: 'evan', memberCount: 4, adminCount: 0,
+  };
+  assert.equal(model.groupSize('app users', ctx), 12);
+  assert.equal(model.groupSize('unreported', ctx), 0);
+  assert.equal(model.ruleToday({ group: 'app users', kind: 'atLeast', n: 2 }, ctx), 'Needs 2 yeses today. Never more than the group has.');
+  // The block sends nobody beside a kept group, and the server reads it back.
+  const value = { preset: null, groups: ctx.groups, rules: [{ group: 'app users', kind: 'majority', n: null }] };
+  const block = model.blockFor(value);
+  assert.deepEqual(block.groups, [{ name: 'App users', keptByApp: true }, { name: 'Unreported', keptByApp: true }]);
+  assert.deepEqual(serverRules.parseRulesBlock(block).groups.map((g) => g.keptByApp), [true, true]);
+});
+
 test('a creator whose account is gone is said as gone, not as no creator (#6281)', () => {
   const model = loadTsx(MODEL);
   const dialogs = JSON.parse(read('frontend/locales/en/dialogs.json'));

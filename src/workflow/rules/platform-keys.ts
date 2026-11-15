@@ -38,6 +38,8 @@ export const RESERVED_KEYS = new Set([
   'USERNODE_LLM_PROXY_TOKEN',
   'USERNODE_STORAGE_URL',
   'USERNODE_STORAGE_TOKEN',
+  'USERNODE_GROUPS_URL',
+  'USERNODE_GROUPS_TOKEN',
   'USERNODE_PLATFORM_API_URL',
   'USERNODE_PLATFORM_API_V1_URL',
   // The platform's public origin (services/app-identity-env.js). Reserved
@@ -59,7 +61,7 @@ export const RESERVED_KEYS = new Set([
 // and app-platform-API (#744) env-var families — any future
 // USERNODE_LLM_PROXY_* / USERNODE_STORAGE_* / USERNODE_PLATFORM_API_*
 // addition stays platform-owned without another set entry.
-export const RESERVED_KEY_PREFIXES = ['USERNODE_LLM_PROXY', 'USERNODE_STORAGE', 'USERNODE_PLATFORM_API'];
+export const RESERVED_KEY_PREFIXES = ['USERNODE_LLM_PROXY', 'USERNODE_STORAGE', 'USERNODE_GROUPS', 'USERNODE_PLATFORM_API'];
 
 export const KEY_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
 
