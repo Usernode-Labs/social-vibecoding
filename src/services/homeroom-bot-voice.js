@@ -174,9 +174,10 @@ function liveModule(deps) { return deps.liveSvc || require('./homeroom-bot-live'
 function takeoverModule(deps = {}) { return deps.takeover || require('./homeroom-bot-takeover'); }
 function wsModule(deps) { return deps.ws || require('./ws'); }
 function chatModule(deps) { return deps.chatSvc || require('./homeroom-bot-chat'); }
-// #6684: steering a build from the request's own discussion.
+// #6684: steering a build from the request's own discussion. The note, its
+// card and its gate are homeroom-bot-steer.js's own: a public thread loads no
+// thread-tool module but pictures (tests/homeroom-bot-prod-debug.test.js).
 function steerModule(deps) { return deps.steer || require('./homeroom-bot-steer'); }
-function steerToolModule(deps) { return deps.steerTool || require('./homeroom-bot-thread-tools/steer'); }
 function workflowModule(deps) { return deps.replies || require('../workflow/platform.ts'); }
 
 // Where links point: the platform's own domain, as the mayor's own posts use it.
@@ -2574,20 +2575,23 @@ async function runTool(pool, ctx, name, args, { platform = null } = {}) {
       // #6684: the requester's or owner's comment while the build runs.
       case 'add_to_build': {
         if (place.type !== 'issue') return { error: 'Not here.' };
-        if (ctx.offer) return { error: 'One per turn: a note, a redo or a follow-up request, not several.' };
-        const out = await steerToolModule(deps).addToBuild(pool, ctx, args, {
-          onRequest: { app, n: Number(place.ref), commentId: ctx.triggerMessage?.id || null },
+        if (ctx.offer || ctx.steered) return { error: 'One per turn: a note, a redo or a follow-up request, not several.' };
+        const out = await steerModule(deps).noteFromRequest(pool, {
+          app, n: Number(place.ref), user, note: args.note, deps,
+          commentId: ctx.triggerMessage?.id || null, conversationId: ctx.conversationId,
         });
-        if (out?.ok && out.card) ctx.buildNote = out.card;
+        if (out?.ok) { ctx.steered = true; ctx.buildNote = out.card; }
         return out;
       }
       case 'stop_and_redo': {
         if (place.type !== 'issue') return { error: 'Not here.' };
-        if (ctx.offer) return { error: 'One per turn: a note, a redo or a follow-up request, not several.' };
-        const out = await steerToolModule(deps).stopAndRedo(pool, ctx, args, {
-          onRequest: { app, n: Number(place.ref), commentId: ctx.triggerMessage?.id || null },
+        if (ctx.offer || ctx.steered) return { error: 'One per turn: a note, a redo or a follow-up request, not several.' };
+        const out = await steerModule(deps).redoFromRequest(pool, {
+          app, n: Number(place.ref), user, note: args.note, deps,
+          commentId: ctx.triggerMessage?.id || null, conversationId: ctx.conversationId,
         });
-        if (out?.ok && out.card) {
+        if (out?.ok) {
+          ctx.steered = true;
           ctx.buildNote = out.card;
           ctx.offer = { kind: 'build_redo', forUserId: user.id, args: { noteId: Number(out.card.noteId) } };
         }
@@ -2754,11 +2758,13 @@ async function askChanged(pool, ctx, args) {
       if (build) {
         const comment = String(ctx.triggerMessage?.content || '').trim();
         const note = comment ? `${what}\n\n${comment}` : what;
-        const out = await steerToolModule(deps).addToBuild(pool, ctx, { note }, {
-          onRequest: { app, n: issueNumber, commentId: ctx.triggerMessage?.id || null },
+        const out = await steer.noteFromRequest(pool, {
+          app, n: issueNumber, user: ctx.user, note, deps,
+          commentId: ctx.triggerMessage?.id || null, conversationId: ctx.conversationId,
         });
         if (out?.ok) {
-          if (out.card) ctx.buildNote = out.card;
+          ctx.steered = true;
+          ctx.buildNote = out.card;
           return out;
         }
       }

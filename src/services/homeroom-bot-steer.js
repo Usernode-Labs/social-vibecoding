@@ -160,6 +160,98 @@ async function addNote(pool, {
   return Number(row.id);
 }
 
+// A COMMENT ON THE REQUEST'S OWN DISCUSSION (#6684). The request's
+// discussion reaches a running build the same way the private chat does: the
+// requester's (or the project's owner's) correction is the note add_to_build
+// sends, Stop and redo is offered under the reply, and a second piece of work
+// is offered as its own request. It lives here, not in
+// homeroom-bot-thread-tools/steer.js, because the request's discussion is a
+// public surface and loads no thread-tool module but pictures
+// (tests/homeroom-bot-prod-debug.test.js): the note, its card and the gate
+// are the service's own, and the tools are a thin wrapper over them.
+
+function cardOf({ id, state, app, n, note, title = null }) {
+  return {
+    type: 'build_note', v: 1, state, noteId: id,
+    project: app.slug, projectName: app.name || app.slug, number: n, ...(title ? { title } : {}), note,
+  };
+}
+
+async function titleOf(pool, appId, n) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT COALESCE((SELECT NULLIF(BTRIM(title), '') FROM issues WHERE app_id = $1 AND github_issue_number = $2 ORDER BY id DESC LIMIT 1),
+                       (SELECT NULLIF(BTRIM(issue_title), '') FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2)) AS title`,
+      [Number(appId), Number(n)],
+    );
+    return rows[0]?.title ? String(rows[0].title).slice(0, 160) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The note a comment on the request itself sends into its build. { ok, card, sent, shown } or { ok: false, error }. */
+async function noteFromRequest(pool, { app, n, user, note, commentId = null, conversationId = null, deps = {} }) {
+  const number = Number(n);
+  const name = app?.name || app?.slug || 'the project';
+  const text = noteText(note);
+  if (!text) return { ok: false, error: 'Say what they want added or changed. If they have not said, ask them. Nothing was sent.' };
+  if (!app || !Number.isInteger(number) || number <= 0) return { ok: false, error: 'No such request. Nothing was sent.' };
+  const gate = await maySteer(pool, { app, user, issueNumber: number, deps });
+  if (!gate.ok) {
+    return { ok: false, error: `Only whoever asked for ${name} request #${number}, or the project's owner, can change its build while it runs. Nothing was sent.` };
+  }
+  const build = await buildForRequest(pool, app.id, number);
+  if (!build) {
+    return { ok: false, error: `You are not building ${name} request #${number} right now, so there is no build to send it to. Nothing was sent.` };
+  }
+  const id = await addNote(pool, {
+    app, issueNumber: number, build, user, note: text, conversationId, origin: 'request', commentId,
+  });
+  return {
+    ok: true,
+    card: cardOf({ id, state: 'waiting', app, n: number, note: text, title: await titleOf(pool, app.id, number) }),
+    sent: build.lastSteps
+      ? `The build of ${name} request #${number} has already stopped coding, so their note goes into the change's next update by itself. Nothing more is needed from them.`
+      : `Their note waits for the build of ${name} request #${number}: it is handed it at its next step, before it finishes, and works it in then.`,
+    shown: 'A card under your reply shows the note and says when the build has it. It has not read it yet, so never say it has, or that the change is made.',
+  };
+}
+
+/** Stop and redo, offered under a reply on the request: nothing stops until it is tapped (redo). */
+async function redoFromRequest(pool, { app, n, user, note, commentId = null, conversationId = null, deps = {} }) {
+  const number = Number(n);
+  const name = app?.name || app?.slug || 'the project';
+  const text = noteText(note);
+  if (!text) return { ok: false, error: 'Say what they want done instead. If they have not said, ask them. Nothing was stopped.' };
+  if (!app || !Number.isInteger(number) || number <= 0) return { ok: false, error: 'No such request. Nothing was stopped.' };
+  const gate = await maySteer(pool, { app, user, issueNumber: number, deps });
+  if (!gate.ok) {
+    return { ok: false, error: `Only whoever asked for ${name} request #${number}, or the project's owner, can change its build while it runs. Nothing was stopped.` };
+  }
+  const build = await buildForRequest(pool, app.id, number);
+  if (!build) {
+    return { ok: false, error: `You are not building ${name} request #${number} right now, so there is nothing to stop. Nothing was stopped.` };
+  }
+  if (!build.running) {
+    return {
+      ok: false,
+      error: build.lastSteps
+        ? 'Its build has already stopped coding, so there is nothing to stop: send the note with add_to_build and it goes into the change\'s next update. Nothing was stopped.'
+        : 'Its build has not started yet, so there is nothing to stop: send the note with add_to_build and the build reads it as it works. Nothing was stopped.',
+    };
+  }
+  const id = await addNote(pool, {
+    app, issueNumber: number, build, user, note: text, conversationId,
+    kind: 'redo', state: 'offered', origin: 'request', commentId,
+  });
+  return {
+    ok: true,
+    card: cardOf({ id, state: 'offer_redo', app, n: number, note: text, title: await titleOf(pool, app.id, number) }),
+    offered: 'Stop and redo and Keep going are under your reply, for them to tap. Nothing is stopped until they tap Stop and redo: then the build stops, their note is the comment already on the request, and you read the request again first. Keep going sends the note into the running build instead. Never say it was stopped.',
+  };
+}
+
 async function noteRow(pool, id) {
   const n = Number(id);
   if (!Number.isInteger(n) || n <= 0) return null;
@@ -667,6 +759,10 @@ module.exports = {
   buildForRequest,
   maySteer,
   addNote,
+  cardOf,
+  titleOf,
+  noteFromRequest,
+  redoFromRequest,
   patchCard,
   forwardFromRequest,
   noteRow,
