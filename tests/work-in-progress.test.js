@@ -20,7 +20,6 @@ const assert = require('node:assert/strict');
 const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
-const { loadTsx } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
