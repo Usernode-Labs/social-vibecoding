@@ -10,14 +10,11 @@ import { cn } from '@/lib/utils';
  *
  * Stock shadcn's Select renders a `<button role="combobox">` plus a portalled
  * listbox — no `<select>` element and no `<option>`s anywhere in the document.
- * The three selects on this screen cannot survive that:
+ * The select on this screen cannot survive that:
  *
  *   #settings-locale              settings.js reads `.value` and writes
  *                                 `.value` on it, and dapp.json anchors a
  *                                 rendered check on the element itself
- *   #settings-openrouter-model    settings.js BUILDS its <option> list from
- *                                 the catalogue response
- *   #settings-openrouter-reasoning  settings.js reads/writes `.value`
  *
  * A portalled combobox would move the control out of its section, break every
  * one of those id-bound reads, and change the rendered DOM on a screen whose
@@ -32,8 +29,7 @@ import { cn } from '@/lib/utils';
 const selectVariants = cva('w-full rounded-lg', {
   variants: {
     variant: {
-      // #settings-openrouter-model / -reasoning — the filled field box, same
-      // fill and focus ring as Input's `default`.
+      // The filled field box, same fill and focus ring as Input's `default`.
       default:
         'bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500',
       // #settings-locale — a lighter fill and no focus ring. Kept as its own

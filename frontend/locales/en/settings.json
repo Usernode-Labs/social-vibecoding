@@ -828,8 +828,8 @@
     "description": "Security note under the key field in Settings > Anthropic API key. Tag 0 is a link to the page on Anthropic's site where spend limits are set; the sentence continues after the link."
   },
   "openrouter.intro": {
-    "text": "Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your account comes with an included OpenRouter key, so OpenRouter is the default and GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Models marked Claude Code in the model list run in Claude Code. Keys are encrypted at rest and injected only for each turn.",
-    "description": "Explanation under the OpenRouter heading in Settings. OpenRouter, Claude, Claude Code and GLM 5.3 Flash are product and model names. \"Key-visible\" means the models this API key is allowed to see. A \"turn\" is one round of the AI agent working."
+    "text": "Voice input uses this key: when you press Speak, it turns what you say into text. Your account comes with an included OpenRouter key, and what it spends counts toward your weekly allowance. You can use your own OpenRouter key instead, billed to your OpenRouter account. Keys are encrypted at rest.",
+    "description": "Explanation under the OpenRouter heading in Settings. OpenRouter is a company name. \"Voice input\" is speaking a message instead of typing it; \"Speak\" is the label of the button that starts it (core:dictation.speak), so use the same word. The weekly allowance is the AI spending the platform includes for the person each week."
   },
   "openrouter.included.title": {
     "text": "Included OpenRouter key",
@@ -846,70 +846,6 @@
   "openrouter.personalKey.remove": {
     "text": "Remove",
     "description": "Button under the personal key field in Settings > OpenRouter: deletes the person's own saved OpenRouter API key."
-  },
-  "openrouter.model.label": {
-    "text": "OpenRouter model",
-    "description": "Label of the list in Settings > OpenRouter where the person picks which AI model their coding sessions use."
-  },
-  "openrouter.model.filterPlaceholder": {
-    "text": "Filter by model or provider…",
-    "description": "Placeholder of the search field above the model list in Settings > OpenRouter. \"Provider\" is the company that makes a model."
-  },
-  "openrouter.model.filterAria": {
-    "text": "Filter OpenRouter models",
-    "description": "Accessible name of the search field above the model list in Settings > OpenRouter."
-  },
-  "openrouter.model.favoritesOff": {
-    "text": "☆ Favorites",
-    "description": "Toggle button above the model list in Settings > OpenRouter, in its off state: pressing it narrows the list to the models the person starred. Keep the outlined star."
-  },
-  "openrouter.model.refresh": {
-    "text": "Refresh",
-    "description": "Button above the model list in Settings > OpenRouter: fetches the current list of models from OpenRouter again."
-  },
-  "openrouter.model.addFavorite": {
-    "text": "Add selected model to favorites",
-    "description": "Accessible name and tooltip of the star button beside the model list in Settings > OpenRouter, when the selected model is not starred yet."
-  },
-  "openrouter.model.favoritesNote": {
-    "text": "Platform recommendations start starred. Your changes override those defaults on every device. OpenRouter filters this catalog for your key and account policies.",
-    "description": "Note under the model list in Settings > OpenRouter, about the star (favorite) marks. \"This catalog\" is the list of models."
-  },
-  "openrouter.reasoning.label": {
-    "text": "Reasoning effort",
-    "description": "Label of a list in Settings > OpenRouter: how much thinking the chosen AI model should spend before answering."
-  },
-  "openrouter.reasoning.default": {
-    "text": "Default",
-    "description": "Option in the \"Reasoning effort\" list in Settings > OpenRouter: let the model use its own default amount of reasoning."
-  },
-  "openrouter.reasoning.minimal": {
-    "text": "Minimal",
-    "description": "Option in the \"Reasoning effort\" list in Settings > OpenRouter: the least reasoning."
-  },
-  "openrouter.reasoning.low": {
-    "text": "Low",
-    "description": "Option in the \"Reasoning effort\" list in Settings > OpenRouter: little reasoning."
-  },
-  "openrouter.reasoning.medium": {
-    "text": "Medium",
-    "description": "Option in the \"Reasoning effort\" list in Settings > OpenRouter: a medium amount of reasoning."
-  },
-  "openrouter.reasoning.high": {
-    "text": "High",
-    "description": "Option in the \"Reasoning effort\" list in Settings > OpenRouter: a lot of reasoning."
-  },
-  "openrouter.reasoning.xhigh": {
-    "text": "Extra high",
-    "description": "Option in the \"Reasoning effort\" list in Settings > OpenRouter: the most reasoning."
-  },
-  "openrouter.saveDefault": {
-    "text": "Save as my default coding agent",
-    "description": "Button in Settings > OpenRouter: makes OpenRouter, with the model selected above, the coding agent used for the person's new sessions."
-  },
-  "openrouter.useClaudeDefault": {
-    "text": "Use Claude Code as my default instead",
-    "description": "Button in Settings > OpenRouter: switches the person's default coding agent back from OpenRouter to Claude Code."
   },
   "screen.signOut": {
     "text": "Sign out",
@@ -1846,14 +1782,6 @@
   "alerts.push.invitations.description": {
     "text": "Collaboration and approver invitations, including when yours are accepted.",
     "description": "What the Invitations category covers, under its name in Settings > Mobile push categories. An approver is someone whose approval a project's changes need."
-  },
-  "alerts.push.sharedWork.label": {
-    "text": "Shared work",
-    "description": "Name of a phone notification category in Settings > Mobile push categories: work other people shared with this person."
-  },
-  "alerts.push.sharedWork.description": {
-    "text": "Plans that someone privately shares with you.",
-    "description": "What the Shared work category covers, under its name in Settings > Mobile push categories. A plan is a written description of a change, made before it is built."
   },
   "alerts.push.developerSessions.label": {
     "text": "Your coding agent",
@@ -2820,7 +2748,7 @@
     "description": "Not shown on screen. Extra search words for \"Anthropic API key\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.openrouter": {
-    "text": "model glm deepseek reasoning default coding agent key",
+    "text": "key voice speak dictation microphone transcription personal",
     "description": "Not shown on screen. Extra search words for \"OpenRouter\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.connectors": {
@@ -3395,184 +3323,44 @@
     "text": "Network error: {{reason}}",
     "description": "Error under the Anthropic API key field in Settings when the request did not reach the server. {{reason}} is the browser's own technical message."
   },
-  "openrouter.cost.free": {
-    "text": "Free",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Price tier: the model costs nothing."
-  },
-  "openrouter.cost.low": {
-    "text": "Low cost",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Price tier of the model."
-  },
-  "openrouter.cost.medium": {
-    "text": "Medium cost",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Price tier of the model."
-  },
-  "openrouter.cost.high": {
-    "text": "High cost",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Price tier of the model."
-  },
-  "openrouter.cost.unknown": {
-    "text": "Price unavailable",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Shown in place of a price tier when the model's price is not known."
-  },
-  "openrouter.cost.inputPrice": {
-    "text": "{{price}} /M input",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Price per million input tokens (text sent to the model). {{price}} is a dollar amount such as $0.25, or \"?\" when unknown. \"/M\" means per million."
-  },
-  "openrouter.cost.outputPrice": {
-    "text": "{{price}} /M output",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Price per million output tokens (text the model writes). {{price}} is a dollar amount such as $1.50, or \"?\" when unknown. \"/M\" means per million."
-  },
-  "openrouter.model.badgeRecommended": {
-    "text": "Recommended",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Tag after the name of the model Homeroom recommends."
-  },
-  "openrouter.model.badgeNew": {
-    "text": "New",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Tag after the name of a model released in the last 30 days."
-  },
-  "openrouter.model.compatVerified": {
-    "text": "verified",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Last fact on the line: Homeroom has verified that the model works for coding in a repository. Lower case."
-  },
-  "openrouter.model.compatLimited": {
-    "text": "limited",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Last fact on the line: the model is known to have limits that can make coding fail. Lower case."
-  },
-  "openrouter.model.compatUnverified": {
-    "text": "unverified",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Last fact on the line: Homeroom has not checked yet whether the model works for coding. Lower case."
-  },
-  "openrouter.model.unknown": {
-    "text": "Unknown model",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Stands in for the model's name when it has none."
-  },
-  "openrouter.model.optionLabel": {
-    "text": "{{model}}: {{details}}",
-    "description": "One line of the OpenRouter model list in Settings. {{model}} is the model's name, possibly followed by tags (\"GLM 5.3 Flash · Recommended\"); {{details}} is its price and whether it is verified (\"Low cost · $0.25 /M input · $1.50 /M output · verified\"). Only the colon between them is translated."
-  },
-  "openrouter.catalog.updatedJustNow": {
-    "text": "Updated just now",
-    "description": "After the model count under the OpenRouter model list in Settings: the list of models was fetched less than a minute ago."
-  },
-  "openrouter.catalog.updatedMinutesAgo_one": {
-    "text": "Updated {{count}}m ago",
-    "description": "After the model count under the OpenRouter model list in Settings: how long ago the list of models was fetched. {{count}} is minutes; \"m\" abbreviates minutes."
-  },
-  "openrouter.catalog.updatedMinutesAgo_other": {
-    "text": "Updated {{count}}m ago",
-    "description": "After the model count under the OpenRouter model list in Settings: how long ago the list of models was fetched. {{count}} is minutes; \"m\" abbreviates minutes."
-  },
-  "openrouter.catalog.updatedHoursAgo_one": {
-    "text": "Updated {{count}}h ago",
-    "description": "After the model count under the OpenRouter model list in Settings: how long ago the list of models was fetched. {{count}} is hours; \"h\" abbreviates hours."
-  },
-  "openrouter.catalog.updatedHoursAgo_other": {
-    "text": "Updated {{count}}h ago",
-    "description": "After the model count under the OpenRouter model list in Settings: how long ago the list of models was fetched. {{count}} is hours; \"h\" abbreviates hours."
-  },
-  "openrouter.catalog.shownOfTotal_one": {
-    "text": "{{shown}} of {{count}} models",
-    "description": "Line under the OpenRouter model list in Settings: how many models match the search out of all available. {{shown}} is the number listed, {{count}} the total."
-  },
-  "openrouter.catalog.shownOfTotal_other": {
-    "text": "{{shown}} of {{count}} models",
-    "description": "Line under the OpenRouter model list in Settings: how many models match the search out of all available. {{shown}} is the number listed, {{count}} the total."
-  },
-  "openrouter.catalog.noMatch": {
-    "text": "No models match. Clear the search or show all models",
-    "description": "Line under the OpenRouter model list in Settings when the search or the Favorites filter leaves nothing. It has no final full stop because \"· Updated 5m ago\" may follow it."
-  },
-  "openrouter.effort.defaultMinimal": {
-    "text": "Default (Minimal)",
-    "description": "First choice in the reasoning effort list in Settings > OpenRouter: use the platform's default level, which is currently Minimal."
-  },
-  "openrouter.effort.defaultLow": {
-    "text": "Default (Low)",
-    "description": "First choice in the reasoning effort list in Settings > OpenRouter: use the platform's default level, which is currently Low."
-  },
-  "openrouter.effort.defaultMedium": {
-    "text": "Default (Medium)",
-    "description": "First choice in the reasoning effort list in Settings > OpenRouter: use the platform's default level, which is currently Medium."
-  },
-  "openrouter.effort.defaultHigh": {
-    "text": "Default (High)",
-    "description": "First choice in the reasoning effort list in Settings > OpenRouter: use the platform's default level, which is currently High."
-  },
-  "openrouter.effort.defaultExtraHigh": {
-    "text": "Default (Extra high)",
-    "description": "First choice in the reasoning effort list in Settings > OpenRouter: use the platform's default level, which is currently Extra high."
-  },
-  "openrouter.model.sortHint": {
-    "text": "Models are sorted by average input/output price. Actual spend depends on token usage.",
-    "description": "Tooltip on the OpenRouter model list in Settings when no model is selected."
-  },
-  "openrouter.model.removeFavorite": {
-    "text": "Remove selected model from favorites",
-    "description": "Tooltip and accessible name of the star button beside the OpenRouter model list in Settings, when the selected model is already a favorite."
-  },
-  "openrouter.model.notYetVerified": {
-    "text": "Not yet verified for repository coding.",
-    "description": "Sentence in the tooltip of the selected OpenRouter model in Settings: Homeroom has not checked yet that this model can edit code in a repository."
-  },
-  "openrouter.model.verified": {
-    "text": "Verified for repository coding.",
-    "description": "Sentence in the tooltip of the selected OpenRouter model in Settings: Homeroom has checked that this model can edit code in a repository."
-  },
-  "openrouter.model.mayFail": {
-    "text": "This model may lack repository tools or enough context, so an OpenRouter turn may fail.",
-    "description": "Sentence in the tooltip of the selected OpenRouter model in Settings, for a model below the minimum requirements. \"Context\" is how much text the model can read at once; a \"turn\" is one request to the model."
-  },
-  "openrouter.model.tooltip": {
-    "text": "{{cost}}. {{compatibility}} Actual spend depends on token usage.",
-    "description": "Tooltip of the selected model in the OpenRouter model list in Settings. {{cost}} is its price summary without a full stop (\"Low cost · $0.25 /M input · $1.50 /M output\"); {{compatibility}} is a complete sentence saying whether it is verified for coding."
-  },
-  "openrouter.effort.unsupported": {
-    "text": "This model does not expose reasoning-effort controls.",
-    "description": "Tooltip on the disabled reasoning effort list in Settings > OpenRouter when the selected model has no such setting."
-  },
-  "openrouter.effort.hint": {
-    "text": "How long this model thinks before it answers. Default is the level the platform runs at; your choice overrides it.",
-    "description": "Tooltip on the reasoning effort list in Settings > OpenRouter. \"Default\" is the name of the first choice in that list."
-  },
   "openrouter.included.activeWeekly": {
-    "text": "Active. It carries the platform's {{amount}} weekly allowance, and you may choose any available model.",
+    "text": "Active. It carries the platform's {{amount}} weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00. The amount renews every week."
   },
   "openrouter.included.activeWeeklyWithKey": {
-    "text": "Active (sk-or-…{{last4}}). It carries the platform's {{amount}} weekly allowance, and you may choose any available model.",
+    "text": "Active (sk-or-…{{last4}}). It carries the platform's {{amount}} weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00; {{last4}} is the last four characters of the key, and \"sk-or-…\" is the start every such key has. Keep the parentheses and that prefix. The amount renews every week."
   },
   "openrouter.included.activeDaily": {
-    "text": "Active. It carries a {{amount}} daily limit until it is moved to the platform's weekly allowance, and you may choose any available model.",
+    "text": "Active. It carries a {{amount}} daily limit until it is moved to the platform's weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00. This older key still has a limit that renews every day."
   },
   "openrouter.included.activeDailyWithKey": {
-    "text": "Active (sk-or-…{{last4}}). It carries a {{amount}} daily limit until it is moved to the platform's weekly allowance, and you may choose any available model.",
+    "text": "Active (sk-or-…{{last4}}). It carries a {{amount}} daily limit until it is moved to the platform's weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00; {{last4}} is the last four characters of the key, and \"sk-or-…\" is the start every such key has. Keep the parentheses and that prefix. This older key still has a limit that renews every day."
   },
   "openrouter.included.activeMonthly": {
-    "text": "Active. It carries a {{amount}} monthly limit until it is moved to the platform's weekly allowance, and you may choose any available model.",
+    "text": "Active. It carries a {{amount}} monthly limit until it is moved to the platform's weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00. This older key still has a limit that renews every month."
   },
   "openrouter.included.activeMonthlyWithKey": {
-    "text": "Active (sk-or-…{{last4}}). It carries a {{amount}} monthly limit until it is moved to the platform's weekly allowance, and you may choose any available model.",
+    "text": "Active (sk-or-…{{last4}}). It carries a {{amount}} monthly limit until it is moved to the platform's weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00; {{last4}} is the last four characters of the key, and \"sk-or-…\" is the start every such key has. Keep the parentheses and that prefix. This older key still has a limit that renews every month."
   },
   "openrouter.included.activeLimit": {
-    "text": "Active. It carries a {{amount}} limit until it is moved to the platform's weekly allowance, and you may choose any available model.",
+    "text": "Active. It carries a {{amount}} limit until it is moved to the platform's weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00. This older key has a limit that never renews."
   },
   "openrouter.included.activeLimitWithKey": {
-    "text": "Active (sk-or-…{{last4}}). It carries a {{amount}} limit until it is moved to the platform's weekly allowance, and you may choose any available model.",
+    "text": "Active (sk-or-…{{last4}}). It carries a {{amount}} limit until it is moved to the platform's weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00; {{last4}} is the last four characters of the key, and \"sk-or-…\" is the start every such key has. Keep the parentheses and that prefix. This older key has a limit that never renews."
   },
   "openrouter.included.activeOther": {
-    "text": "Active. It carries a {{amount}} {{cadence}} limit until it is moved to the platform's weekly allowance, and you may choose any available model.",
+    "text": "Active. It carries a {{amount}} {{cadence}} limit until it is moved to the platform's weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00. {{cadence}} is the provider's own English word for how often the limit renews, shown as it is; this form is a fallback for a word Homeroom does not know."
   },
   "openrouter.included.activeOtherWithKey": {
-    "text": "Active (sk-or-…{{last4}}). It carries a {{amount}} {{cadence}} limit until it is moved to the platform's weekly allowance, and you may choose any available model.",
+    "text": "Active (sk-or-…{{last4}}). It carries a {{amount}} {{cadence}} limit until it is moved to the platform's weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00; {{last4}} is the last four characters of the key, and \"sk-or-…\" is the start every such key has. Keep the parentheses and that prefix. {{cadence}} is the provider's own English word for how often the limit renews, shown as it is; this form is a fallback for a word Homeroom does not know."
   },
   "openrouter.included.blocked": {
@@ -3659,10 +3447,6 @@
     "text": "Remaining: {{remaining}}",
     "description": "Last fact on the line under the saved OpenRouter key in Settings: how much of the key's spending limit is left. {{remaining}} is a dollar amount, or empty when unknown."
   },
-  "openrouter.model.favoritesOn": {
-    "text": "★ Favorites",
-    "description": "Toggle button over the OpenRouter model list in Settings, while it is on: only models the person starred are listed. Keep the filled star."
-  },
   "usage.spend.platformOfLimit": {
     "text": "{{spent}} of {{limit}}",
     "description": "Value in the \"Today's spend\" block of Settings > Anthropic API key: how much of the platform's allowance is used. Both are dollar amounts such as $1.20 and $5.00."
@@ -3674,42 +3458,6 @@
   "usage.spend.resetsWeekly": {
     "text": "Resets {{day}} at {{time}}.",
     "description": "Line in the spend block of Settings > Anthropic API key saying when the weekly platform allowance starts again. \"Resets\" is a verb; its subject, the allowance, is left out. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\"."
-  },
-  "openrouter.catalog.loadFailed": {
-    "text": "Could not load OpenRouter models.",
-    "description": "Status line in Settings > OpenRouter when the list of AI models could not be fetched and the server gave no reason."
-  },
-  "openrouter.catalog.refreshing": {
-    "text": "Refreshing…",
-    "description": "Label of the Refresh button beside the OpenRouter model list in Settings while the list is being fetched again."
-  },
-  "openrouter.catalog.refreshingStatus": {
-    "text": "Refreshing the key-visible catalog from OpenRouter…",
-    "description": "Status line in Settings > OpenRouter while the list of models is fetched again. \"Key-visible catalog\" is the list of models this key may use."
-  },
-  "openrouter.catalog.refreshed_one": {
-    "text": "Loaded {{count}} current OpenRouter models.",
-    "description": "Status line in Settings > OpenRouter after the list of models was fetched again. {{count}} is how many models it holds."
-  },
-  "openrouter.catalog.refreshed_other": {
-    "text": "Loaded {{count}} current OpenRouter models.",
-    "description": "Status line in Settings > OpenRouter after the list of models was fetched again. {{count}} is how many models it holds."
-  },
-  "openrouter.catalog.refreshFailed": {
-    "text": "Could not refresh OpenRouter models.",
-    "description": "Status line in Settings > OpenRouter when fetching the list of models again failed without a more specific message."
-  },
-  "openrouter.favorite.failed": {
-    "text": "Could not update that favorite.",
-    "description": "Status line in Settings > OpenRouter when starring or un-starring the selected model could not be saved."
-  },
-  "openrouter.favorite.added": {
-    "text": "{{model}} added to favorites.",
-    "description": "Status line in Settings > OpenRouter after the selected model was starred. {{model}} is the AI model's name."
-  },
-  "openrouter.favorite.removed": {
-    "text": "{{model}} removed from favorites.",
-    "description": "Status line in Settings > OpenRouter after the star was taken off the selected model. {{model}} is the AI model's name."
   },
   "openrouter.key.pasteFirst": {
     "text": "Paste an OpenRouter API key first.",
@@ -3724,8 +3472,8 @@
     "description": "Status line in Settings > OpenRouter when the pasted key could not be saved and the server gave no reason."
   },
   "openrouter.key.saved": {
-    "text": "Saved, encrypted, and selected as your default coding agent.",
-    "description": "Status line in Settings > OpenRouter after the person's own OpenRouter key was saved: it is stored encrypted, and OpenRouter is now what their coding sessions use by default."
+    "text": "Saved and encrypted. Voice input now uses this key.",
+    "description": "Status line in Settings > OpenRouter after the person's own OpenRouter key was saved: it is stored encrypted, and voice input (speaking a message instead of typing it) now uses it."
   },
   "openrouter.key.networkError": {
     "text": "Network error: {{reason}}",
@@ -3738,38 +3486,6 @@
   "openrouter.key.removed": {
     "text": "Key removed.",
     "description": "Status line in Settings > OpenRouter after the person's own OpenRouter key was removed."
-  },
-  "openrouter.key.removedDefaultReset": {
-    "text": "Key removed. Key removed; your default agent was reset to Claude Code.",
-    "description": "Status line in Settings > OpenRouter after the person's own OpenRouter key was removed and, because of that, their default coding agent went back to Claude Code (a product name). The English says \"Key removed\" twice; once is enough in translation."
-  },
-  "openrouter.default.chooseModelFirst": {
-    "text": "Choose an OpenRouter model first.",
-    "description": "Status line in Settings > OpenRouter when \"Save as my default coding agent\" was pressed with no model selected."
-  },
-  "openrouter.default.saveFailed": {
-    "text": "Failed to save.",
-    "description": "Status line in Settings > OpenRouter when making OpenRouter the default coding agent could not be saved and the server gave no reason."
-  },
-  "openrouter.default.saved": {
-    "text": "OpenRouter saved as your default session AI.",
-    "description": "Status line in Settings > OpenRouter after OpenRouter, with the selected model, became what the person's coding sessions use by default."
-  },
-  "openrouter.default.networkError": {
-    "text": "Network error.",
-    "description": "Status line in Settings > OpenRouter when making OpenRouter the default coding agent did not reach the server."
-  },
-  "openrouter.claudeDefault.saveFailed": {
-    "text": "Failed to save.",
-    "description": "Status line in Settings > OpenRouter when making Claude Code the default coding agent could not be saved and the server gave no reason."
-  },
-  "openrouter.claudeDefault.saved": {
-    "text": "Claude Code is now your default coding agent.",
-    "description": "Status line in Settings > OpenRouter after \"Use Claude Code as my default instead\" was pressed. Claude Code is a product name."
-  },
-  "openrouter.claudeDefault.networkError": {
-    "text": "Network error.",
-    "description": "Status line in Settings > OpenRouter when making Claude Code the default coding agent did not reach the server."
   },
   "password.status.tooShort": {
     "text": "New password must be at least 8 characters.",

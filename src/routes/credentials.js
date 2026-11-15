@@ -1,15 +1,13 @@
 'use strict';
 
-// OpenRouter credential + coding-agent preference APIs (plan.md §6, §7).
+// OpenRouter credential APIs (plan.md §6): the account's OpenRouter key,
+// which voice input (routes/dictation.js) transcribes with.
 //
 // Distinct from the legacy /api/me/api-key route (which is
 // Anthropic-specific). These routes own the OpenRouter key lifecycle:
 //   GET    /api/me/credentials/openrouter   status (last4, limits)
 //   PUT    /api/me/credentials/openrouter   save/replace personal key
 //   DELETE /api/me/credentials/openrouter   revoke
-//   GET    /api/me/coding-agent             current preferences
-//   PATCH  /api/me/coding-agent            set default backend/model/effort
-//   GET    /api/me/coding-agent/models      user-filtered catalog
 //
 // The raw OpenRouter key is verified against GET /api/v1/key before it is
 // stored, encrypted with the existing AES-256-GCM envelope, and only the
@@ -21,10 +19,6 @@ const log = require('../services/logger');
 const credentialStore = require('../services/credential-store');
 const openrouterClient = require('../services/openrouter-client');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
-const agentModels = require('../services/agent-models');
-const registry = require('../agents/registry');
-const agentPreferences = require('../services/agent-preferences');
-const defaultModelSetting = require('../services/default-model');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 function credentialRoutes(config) {
@@ -33,74 +27,10 @@ function credentialRoutes(config) {
   const OPENROUTER = { provider: 'openrouter', purpose: 'coding_agent' };
 
   // #2568 retired the gradual-rollout allowlist. What is left is the one
-  // deployment switch, which is not per-user at all — the name is kept
-  // because the client field it feeds is still `codexAvailable`.
+  // deployment switch (config.codexOpenrouterEnabled), which is not
+  // per-user at all.
   function codexAvailable() {
     return config.codexOpenrouterEnabled === true;
-  }
-
-  async function openRouterCatalogForUser(userId, { forceRefresh = false } = {}) {
-    const meta = await credentialStore.readMetadata({ pool, userId, ...OPENROUTER });
-    if (!meta || meta.status !== 'valid') {
-      return {
-        catalog: {
-          backend: 'codex_openrouter',
-          credentialRevision: meta?.revision || null,
-          recommendedModelId: null,
-          models: [],
-        },
-        hasCredential: false,
-      };
-    }
-    const apiKey = await credentialStore.readSecret({
-      pool, userId, ...OPENROUTER, dataKey: config.dataEncryptionKey,
-    });
-    if (!apiKey) {
-      return {
-        catalog: {
-          backend: 'codex_openrouter',
-          credentialRevision: meta.revision,
-          recommendedModelId: null,
-          models: [],
-        },
-        hasCredential: false,
-      };
-    }
-    const catalog = await agentModels.listOpenRouterModels({
-      pool, userId, credentialRevision: meta.revision,
-      apiKey, config, forceRefresh,
-    });
-    return { catalog, hasCredential: true };
-  }
-
-  async function openRouterFavoriteOverrides(userId) {
-    const { rows } = await pool.query(
-      `SELECT model_id, is_favorite FROM user_agent_model_favorites
-        WHERE user_id = $1 AND backend = 'codex_openrouter'`,
-      [userId],
-    );
-    return new Map(rows.map((row) => [row.model_id, row.is_favorite === true]));
-  }
-
-  function decorateCatalogFavorites(catalog, overrides) {
-    const models = (catalog.models || []).map((model) => ({
-      ...model,
-      // Recommendations are the useful first-run shortlist. A stored TRUE or
-      // FALSE always wins, so starring and unstarring are both durable.
-      isFavorite: overrides.has(model.id)
-        ? overrides.get(model.id)
-        : model.isRecommended === true,
-      isDefaultFavorite: !overrides.has(model.id) && model.isRecommended === true,
-      // #3296: which CLI a turn on this model runs in ('claude' or 'codex').
-      harness: registry.openRouterHarnessForModel(model.id, config),
-      // What a prompt-cache read and write cost, where the catalog lists
-      // them. agent-models.js keeps them off the shared catalog's own JSON;
-      // the picker reads them here to price a typical change's cached share
-      // on a model it derives an estimate for (model-choice.ts modelCost).
-      ...(model.cacheReadPricePerMillion != null ? { cacheReadPricePerMillion: model.cacheReadPricePerMillion } : {}),
-      ...(model.cacheWritePricePerMillion != null ? { cacheWritePricePerMillion: model.cacheWritePricePerMillion } : {}),
-    }));
-    return { ...catalog, totalModels: models.length, models };
   }
 
   // ── OpenRouter key status ──────────────────────────────────────────
@@ -108,6 +38,16 @@ function credentialRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     res.setHeader('Cache-Control', 'no-store');
     try {
+      // #2568: the lazy safety net for an account that has no included key
+      // yet (one created before keys were issued at signup, or one whose
+      // signup ran while OpenRouter's management API was down), so this
+      // status reports the key rather than one being set up. Voice input's
+      // key read (routes/dictation.js) runs it too. ensureIncludedKey is
+      // idempotent and never throws; an account that already has a key (or
+      // a personal one) costs one metadata read.
+      await managedOpenRouter.ensureIncludedKey({
+        pool, userId: req.user.id, config, reason: 'settings_read',
+      });
       // #2119: the included key carries the platform's weekly allowance for
       // this user. It is resolved once here, for the claim card and for the
       // sync, and the managed state is synced before the credential's
@@ -136,8 +76,8 @@ function credentialRoutes(config) {
         managed,
         // #2568: nothing here is a claim gate any more — an account's
         // included key is created with the account (and, failing that, by
-        // GET /api/me/coding-agent's ensureIncludedKey), and Settings renders
-        // this as a status line rather than a button.
+        // the ensureIncludedKey above), and Settings renders this as a
+        // status line rather than a button.
         managedProvisioning: {
           available,
           alreadyIssued: !!managed,
@@ -189,18 +129,6 @@ function credentialRoutes(config) {
     }
     try {
       const last4 = clean.slice(-4);
-      let defaultModel = await defaultModelSetting.effective(pool, config);
-      try {
-        const catalog = await agentModels.listOpenRouterModels({
-          pool, userId: req.user.id, credentialRevision: 'personal-save',
-          apiKey: clean, config, forceRefresh: true,
-        });
-        defaultModel = catalog.recommendedModelId || defaultModel;
-      } catch (err) {
-        log.warn('credentials', 'catalog unavailable while saving OpenRouter key', {
-          userId: req.user.id, err: err.message,
-        });
-      }
       const saved = await credentialStore.withTransaction(pool, async (client) => {
         // Serialize with managed-key reservation. The earlier ownership
         // check gives fast feedback, while this in-transaction re-check
@@ -219,18 +147,14 @@ function credentialRoutes(config) {
             'This OpenRouter key is managed by Homeroom. Ask an admin to block or remove it.',
           );
         }
-        const credential = await credentialStore.writeOpenRouterCodingAgentOnClient({
+        return credentialStore.writeOpenRouterCodingAgentOnClient({
           client, userId: req.user.id, apiKey: clean,
           dataKey: config.dataEncryptionKey,
           metadata: { source: 'personal', keyInfo },
         });
-        await agentPreferences.setDefaultBackend(client, req.user.id, {
-          backend: 'codex_openrouter', model: defaultModel, reasoningEffort: null,
-        });
-        return credential;
       });
-      log.info('credentials', 'OpenRouter key saved and selected as default', { userId: req.user.id });
-      res.json({ ok: true, last4, revision: saved?.revision, keyInfo, defaultModel });
+      log.info('credentials', 'OpenRouter key saved', { userId: req.user.id });
+      res.json({ ok: true, last4, revision: saved?.revision, keyInfo });
     } catch (err) {
       if (err instanceof managedOpenRouter.ManagedOpenRouterError) {
         return res.status(err.statusCode).json({ error: err.message, code: err.code });
@@ -249,252 +173,11 @@ function credentialRoutes(config) {
         return res.status(409).json({ error: 'Company-funded keys can only be blocked or removed by an admin.' });
       }
       await credentialStore.revoke({ pool, userId: req.user.id, ...OPENROUTER });
-      // Key-removal consistency (review #8, plan 9.4): if Codex/OpenRouter
-      // is the user's DEFAULT coding agent, reset the default back to
-      // Claude, so the stored default never names a backend the account has
-      // no key for. The "clear Codex default + upsert Claude
-      // default" pair runs in ONE transaction so a failure between them can
-      // never leave the user with NO default backend. Existing sessions are
-      // left untouched (they stay on whatever backend they were created
-      // with).
-      const prefClient = await pool.connect();
-      try {
-        await prefClient.query('BEGIN');
-        await agentPreferences.setDefaultBackend(prefClient, req.user.id, {
-          backend: 'claude_code',
-        });
-        await prefClient.query('COMMIT');
-      } catch (prefErr) {
-        await prefClient.query('ROLLBACK').catch(() => {});
-        throw prefErr;
-      } finally {
-        prefClient.release();
-      }
-      log.info('credentials', 'OpenRouter key removed; default agent reset to Claude', { userId: req.user.id });
-      res.json({ ok: true, defaultReset: true });
+      log.info('credentials', 'OpenRouter key removed', { userId: req.user.id });
+      res.json({ ok: true });
     } catch (err) {
       log.error('credentials', 'Failed to remove OpenRouter key', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // ── Coding-agent preferences ───────────────────────────────────────
-  router.get('/api/me/coding-agent', async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    try {
-      const { rows } = await pool.query(
-        `SELECT backend, model_id, reasoning_effort, is_default
-         FROM user_agent_preferences WHERE user_id = $1`,
-        [req.user.id],
-      );
-      const backends = {};
-      for (const r of rows) {
-        backends[r.backend] = {
-          model: r.model_id, reasoningEffort: r.reasoning_effort,
-          isDefault: r.is_default,
-        };
-      }
-      let defaultBackend = rows.find((r) => r.is_default)?.backend || null;
-      // #2568: this read is the new-change screen's, and it is the lazy
-      // safety net for an account that has no included key yet — one
-      // created before keys were issued at signup, or one whose signup
-      // ran while OpenRouter's management API was down. ensureIncludedKey
-      // is idempotent and never throws; an account that already has a key
-      // (or a personal one) costs one metadata read.
-      await managedOpenRouter.ensureIncludedKey({
-        pool, userId: req.user.id, config, reason: 'coding_agent_read',
-      });
-      // A key on file means OpenRouter is the default, whether or not a
-      // preference row was ever written for it.
-      if (!defaultBackend && codexAvailable()) {
-        const meta = await credentialStore.readMetadata({
-          pool, userId: req.user.id, ...OPENROUTER,
-        });
-        if (meta?.status === 'valid') {
-          defaultBackend = 'codex_openrouter';
-          backends.codex_openrouter ||= {
-            model: await defaultModelSetting.effective(pool, config),
-            reasoningEffort: null,
-            isDefault: true,
-          };
-        }
-      }
-      defaultBackend ||= (backends.claude_code ? 'claude_code' : registry.DEFAULT_BACKEND);
-      res.json({
-        defaultBackend,
-        backends,
-        codexAvailable: codexAvailable(),
-        // #2600: what a coding turn thinks at when this account has not
-        // picked an effort, so Settings can name it instead of offering an
-        // unlabelled "Default".
-        defaultReasoningEffort: config.openrouterDefaultCodexReasoning || null,
-      });
-    } catch (err) {
-      log.error('credentials', 'coding-agent prefs read failed', { userId: req.user.id, err: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  router.patch('/api/me/coding-agent', async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    const { defaultBackend, model, reasoningEffort } = req.body || {};
-    let backend = defaultBackend || 'codex_openrouter';
-    try { registry.resolveBackend(backend); } catch { return res.status(400).json({ error: 'Unknown backend' }); }
-    if (backend === 'codex_openrouter' && !codexAvailable()) {
-      return res.status(403).json({ error: 'OpenRouter is not available on this deployment.' });
-    }
-    if (reasoningEffort != null && !['minimal', 'low', 'medium', 'high', 'xhigh'].includes(reasoningEffort)) {
-      return res.status(400).json({ error: 'Invalid reasoning effort' });
-    }
-    // Validate the model against the OpenRouter catalog (review P1) —
-    // model ids become executable Codex config.toml, so arbitrary strings
-    // (with quotes/newlines) could inject TOML/MCP sections. Only allow
-    // a model the catalog lists. Wrapped in try/catch
-    // (review P6): listOpenRouterModels rethrows on failure, and Express 4
-    // does not catch rejected async handlers — a transient catalog outage
-    // must become a clean 400, never an unhandled rejection.
-    if (backend === 'codex_openrouter' && model) {
-      try {
-      const meta = await credentialStore.readMetadata({
-        pool, userId: req.user.id, provider: 'openrouter', purpose: 'coding_agent',
-      });
-      if (!meta || meta.status !== 'valid') {
-        return res.status(400).json({ error: 'Add your OpenRouter API key in Settings first.' });
-      }
-      const apiKey = await credentialStore.readSecret({
-        pool, userId: req.user.id, provider: 'openrouter', purpose: 'coding_agent',
-        dataKey: config.dataEncryptionKey,
-      });
-      if (!apiKey) return res.status(400).json({ error: 'OpenRouter key not available.' });
-      const catalog = await agentModels.listOpenRouterModels({
-        pool, userId: req.user.id, credentialRevision: meta.revision,
-        apiKey, config, forceRefresh: false,
-      });
-      const allowed = catalog.models.some((m) => m.id === model);
-      if (!allowed) {
-        return res.status(400).json({ error: 'That model is not in the OpenRouter catalog.' });
-      }
-      } catch (err) {
-        log.warn('credentials', 'model validation failed; rejecting safe', { userId: req.user.id, err: err.message });
-        return res.status(400).json({ error: 'Could not validate that model right now; try again.' });
-      }
-    }
-    try {
-      // Clear other defaults BEFORE the upsert (review P2): the partial
-      // unique index `user_agent_preferences_one_default` (one
-      // is_default=TRUE per user) would reject the upsert if another
-      // backend is already the default, because the ON CONFLICT fires
-      // after the INSERT attempts a second is_default=TRUE row.
-      if (defaultBackend) {
-        await agentPreferences.setDefaultBackend(pool, req.user.id, {
-          backend, model, reasoningEffort,
-        });
-      } else {
-        // Behaviour preserved verbatim from before the helper existed: this
-        // branch upserts is_default = TRUE WITHOUT clearing the others.
-        await pool.query(
-          `INSERT INTO user_agent_preferences
-             (user_id, backend, model_id, reasoning_effort, is_default)
-          VALUES ($1, $2, $3, $4, TRUE)
-           ON CONFLICT (user_id, backend) DO UPDATE SET
-             model_id = EXCLUDED.model_id,
-             reasoning_effort = EXCLUDED.reasoning_effort,
-             is_default = EXCLUDED.is_default,
-             updated_at = NOW()`,
-          [req.user.id, backend, model || null, reasoningEffort || null],
-        );
-      }
-      res.json({ ok: true });
-    } catch (err) {
-      log.error('credentials', 'coding-agent prefs write failed', { userId: req.user.id, err: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // ── Model catalog ──────────────────────────────────────────────────
-  // The platform's shared OpenRouter catalog (services/agent-models.js),
-  // answered from what is held, with this user's stars on it.
-  router.get('/api/me/coding-agent/models', async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    // The stars are private account state: no shared or PWA cache.
-    res.setHeader('Cache-Control', 'private, no-store');
-    res.setHeader('Pragma', 'no-cache');
-    const backend = (req.query.backend || 'codex_openrouter');
-    if (backend !== 'codex_openrouter') return res.json({ backend, models: [] });
-    if (!codexAvailable()) return res.status(403).json({ error: 'Not available' });
-    try {
-      const [{ catalog }, favoriteOverrides] = await Promise.all([
-        openRouterCatalogForUser(req.user.id, { forceRefresh: req.query.refresh === '1' }),
-        openRouterFavoriteOverrides(req.user.id),
-      ]);
-      res.json(decorateCatalogFavorites(catalog, favoriteOverrides));
-    } catch (err) {
-      log.warn('credentials', 'model catalog failed', { userId: req.user.id, err: err.message });
-      res.status(400).json({ error: 'Failed to load models.' });
-    }
-  });
-
-  // Persist one star independently of the selected/default model. TRUE is
-  // validated against the same catalog as selection; FALSE is
-  // also stored, rather than deleting the row, so a platform-recommended
-  // model a user unstarred does not reappear as a favorite on the next read.
-  router.patch('/api/me/coding-agent/models/favorite', async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    res.setHeader('Cache-Control', 'private, no-store');
-    res.setHeader('Pragma', 'no-cache');
-    if (!codexAvailable()) return res.status(403).json({ error: 'Not available' });
-    const modelId = typeof req.body?.modelId === 'string' ? req.body.modelId.trim() : '';
-    const favorite = req.body?.favorite;
-    if (!modelId || modelId.length > 255 || /[\u0000-\u001f\u007f]/.test(modelId)) {
-      return res.status(400).json({ error: 'Valid model id required' });
-    }
-    if (typeof favorite !== 'boolean') {
-      return res.status(400).json({ error: 'favorite must be true or false' });
-    }
-    try {
-      if (favorite) {
-        const { catalog, hasCredential } = await openRouterCatalogForUser(req.user.id);
-        if (!hasCredential) {
-          return res.status(400).json({ error: 'Add your OpenRouter API key in Settings first.' });
-        }
-        if (!(catalog.models || []).some((model) => model.id === modelId)) {
-          return res.status(400).json({ error: 'That model is not in the OpenRouter catalog.' });
-        }
-      }
-      if (favorite) {
-        await pool.query(
-          `INSERT INTO user_agent_model_favorites (user_id, backend, model_id, is_favorite)
-           VALUES ($1, 'codex_openrouter', $2, TRUE)
-           ON CONFLICT (user_id, backend, model_id)
-           DO UPDATE SET is_favorite = TRUE`,
-          [req.user.id, modelId],
-        );
-      } else {
-        const updated = await pool.query(
-          `UPDATE user_agent_model_favorites SET is_favorite = FALSE
-            WHERE user_id = $1 AND backend = 'codex_openrouter' AND model_id = $2`,
-          [req.user.id, modelId],
-        );
-        // A default favorite has no row yet. Persist the negative override;
-        // arbitrary non-recommended ids cannot manufacture unbounded rows.
-        const recommended = Array.isArray(config.openrouterRecommendedModels)
-          && config.openrouterRecommendedModels.includes(modelId);
-        if (!updated.rowCount && recommended) {
-          await pool.query(
-            `INSERT INTO user_agent_model_favorites (user_id, backend, model_id, is_favorite)
-             VALUES ($1, 'codex_openrouter', $2, FALSE)
-             ON CONFLICT (user_id, backend, model_id)
-             DO UPDATE SET is_favorite = FALSE`,
-            [req.user.id, modelId],
-          );
-        }
-      }
-      res.json({ ok: true, modelId, favorite });
-    } catch (err) {
-      log.warn('credentials', 'model favorite update failed', {
-        userId: req.user.id, modelId, err: err.message,
-      });
-      res.status(400).json({ error: 'Could not update that favorite right now.' });
     }
   });
 

@@ -27,12 +27,6 @@ const DENIED_SEGMENTS = Object.freeze([
   'wallet-change-password',
   'wallet-link',
 ]);
-// Coding-agent model/preference routes are also credential-adjacent:
-// a CLI bearer token must not set the default backend or list models
-// under another user's key.
-const DENIED_PREFIXES_EXTRA = Object.freeze([
-  '/api/me/coding-agent',
-]);
 const SECRET_DECLARATION_BRANCH_PREFIX = 'secret-declare/';
 
 function hasPrefix(pathname, prefix) {
@@ -63,7 +57,6 @@ function canonicalApiTarget(value) {
   const lowerPathname = url.pathname.toLowerCase();
   const segments = lowerPathname.split('/');
   if (DENIED_PREFIXES.some((prefix) => hasPrefix(lowerPathname, prefix))
-      || DENIED_PREFIXES_EXTRA.some((prefix) => hasPrefix(lowerPathname, prefix))
       || segments.some((segment) => DENIED_SEGMENTS.includes(segment))) {
     return null;
   }

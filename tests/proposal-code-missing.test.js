@@ -358,13 +358,11 @@ test('a change underway is read live before anything runs on it: gone, pushed ba
   assert.equal(await codeMissing.branchGone({ query: async () => { throw new Error('pool gone'); } }, change, { readRef }), null);
   assert.ok(warned.length >= 2, 'a failed read is logged');
 
-  // What the Mayor is told, and what the change says.
-  assert.match(codeMissing.dispatchRefusal(41), /^code_missing: change 41's code didn't come across/);
-  assert.match(codeMissing.dispatchRefusal(41), /Do not suggest retrying\. Offer to start a new change from the current version/);
+  // What the change says.
   assert.equal(codeMissing.BRANCH_GONE, "This change's code didn't come across when Homeroom moved off GitHub, so it can't be continued here. "
     + 'Nothing was changed. Start a new change from the current version (its plan comes with it), '
     + "or wait: Homeroom restores the code when GitHub's copy arrives.");
-  assert.doesNotMatch(codeMissing.BRANCH_GONE + codeMissing.dispatchRefusal(41), /—/);
+  assert.doesNotMatch(codeMissing.BRANCH_GONE, /—/);
 });
 
 // native-pulls / native-merge with their database stubbed: the app lookup

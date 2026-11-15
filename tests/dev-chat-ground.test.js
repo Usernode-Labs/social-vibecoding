@@ -1,22 +1,22 @@
 'use strict';
 
-// THE SESSION SITS ON THE PLATFORM'S GROUND, AND YOUR TURN IS TELLABLE FROM
-// THE AGENT'S. Two regressions from the transcript work, reported together
-// because one change caused both.
+// THE LIFT SITS ON THE PLATFORM'S GROUND, AND ITS GROUNDS CLIMB IN BOTH
+// THEMES.
 //
-// The three-layer lift gave the dev chat depth by putting two opaque planes
-// over it — #f5f5f7 on #ffffff in light, #131316 on #1c1c1e in dark. The
-// comment it replaced said what that cost: "before this the whole screen sat
-// on the bare wallpaper". The platform's ground (the cream, the three washes,
-// the star) was covered by a flat white or a flat black across the entire
-// session, on the one route where the wallpaper had always been the page.
+// The three-layer lift (`.dc-lift`, `.dc-lift-strip`, `.dc-lift-session`; the
+// `dc-` prefix is the retired dev chat's, which it was built for) gives
+// Messages, a project's channel and a request's thread sheet their depth.
+// It first did that with two opaque planes over the screen: #f5f5f7 on
+// #ffffff in light, #131316 on #1c1c1e in dark. The comment it replaced said
+// what that cost: "before this the whole screen sat on the bare wallpaper".
+// The platform's ground (the cream, the three washes, the star) was covered
+// by a flat white or a flat black. So the planes are glass, and the surface
+// tokens the cards inside them fill with stay opaque.
 //
-// The same pass filled the user's message with --dc-raised, which is the
-// token the coding-run card, the PR card and the stopped card also use, and
-// removed the visible "You" label on the argument that "side and surface
-// already say whose turn it is". Neither did: the fill was identical, and
-// `.dc-msg`'s 92% cap makes a message of any length indistinguishable from
-// full width, so `margin-left: auto` had nothing to push against.
+// And the tokens had to be re-ordered for dark: --bg-secondary and
+// --bg-primary ascend in light and DESCEND in dark, so the sheet built on
+// them came out as the darkest thing on the screen. The grounds climb now,
+// light mode is untouched, and no .dc- surface reads the raw tokens.
 //
 // Run with: node --test tests/dev-chat-ground.test.js
 
@@ -89,34 +89,104 @@ test('both planes keep their fills and blur nothing, on every platform', () => {
   assert.doesNotMatch(APP_CSS, /\.dc-lift-session \{ background-color: var\(--dc-sheet\); \}/);
 });
 
-test('your message does not wear the agent cards\' fill', () => {
-  const user = rule('.dc-msg-user');
-  assert.doesNotMatch(user, /var\(--dc-raised\)/,
-    'that is the token the coding-run, PR and stopped cards fill with');
-  assert.match(user, /background: var\(--accent-tint\)/);
-
-  // A TINT, not the fill that was retired here for contrast: white on the
-  // accent is 3.93:1, which is why that fill needed --accent-ink and a whole
-  // inverted vocabulary. At 8% the page's own ink still reads.
-  const tint = (APP_CSS.match(/--accent-tint:[^;]+;/g) || []);
-  assert.ok(tint.length >= 2);
-  for (const d of tint) assert.ok(alphaOf(d) <= 0.2, `--accent-tint must stay a tint: ${d.trim()}`);
+test('the lift takes the running app\'s radius, and neither layer clips', () => {
+  // The lift is the move a running app makes, repeated per layer: a sheet
+  // that rounds its top corners over the layer above (#app-frame-host). The
+  // geometry is asked for BY CLASS, so the three cannot drift apart the way
+  // hand-copied radii could.
+  const lift = APP_CSS.slice(APP_CSS.indexOf('\n.dc-lift {'));
+  const frame = APP_CSS.slice(APP_CSS.indexOf('\n#app-frame-host {'));
+  const radius = (block) => (block.match(/border-start-start-radius: ([^;]+);/) || [])[1];
+  assert.ok(radius(lift), '.dc-lift declares its radius');
+  assert.equal(radius(lift), radius(frame),
+    'the layers take the running app\'s radius, not one of their own');
+  // A sheet's shoulder is the area INSIDE its border box and OUTSIDE its
+  // arc, so `overflow: hidden` would remove exactly the thing this is for.
+  assert.doesNotMatch(lift.slice(0, lift.indexOf('\n.dc-lift-strip')), /overflow: hidden/);
 });
 
-test('…and it leaves a gutter no agent row crosses', () => {
-  const user = rule('.dc-msg-user');
-  const m = /max-width: (\d+)%/.exec(user);
-  assert.ok(m, '.dc-msg-user must cap its own width');
-  const pct = Number(m[1]);
-  const shared = /max-width: (\d+)%/.exec(rule('.dc-msg'));
-  assert.ok(pct < Number(shared[1]),
-    `92% is indistinguishable from full width; ${pct}% must be narrower`);
-  assert.ok(pct <= 80, `${pct}% does not leave a legible gutter`);
+test('--bubble-bg is retired; --accent-ink is not', () => {
+  // --bubble-bg existed only because --bg-primary IS the page ground in dark,
+  // so a bubble drawn on it vanished. It had no other reader.
+  assert.doesNotMatch(APP_CSS, /--bubble-bg\s*:/, 'the token is gone');
+  assert.doesNotMatch(APP_CSS, /var\(--bubble-bg\)/, 'and so is every use');
 
-  // The gutter only means anything because the agent's rows are full-bleed.
-  // If a card ever took a max-width, the cue would go with it.
-  for (const sel of ['.dc-failure', '.dc-pr-card']) {
-    assert.doesNotMatch(rule(sel), /max-width/,
-      `${sel} must stay full-bleed, or the gutter stops being a signal`);
+  // --accent-ink STAYS. It is the near-black-on-light-accent pair, and
+  // .messages-state button is still a real accent fill: retiring it would
+  // take a live button's contrast with it.
+  assert.match(APP_CSS, /--accent-ink: #ffffff;/);
+  assert.match(APP_CSS, /--accent-ink: #0b0b0c;/);
+  assert.match(rule('\n.messages-state button'), /color: var\(--accent-ink\)/);
+});
+
+test('the three GROUNDS ascend in both themes; the card only has to differ', () => {
+  // The bug: --bg-secondary / --bg-primary ascend in light (#f5f5f7 →
+  // #ffffff) and DESCEND in dark (#1c1c1e → #0b0b0c). The lift was built on
+  // that pairing, so in dark the sheet came out as the darkest thing on the
+  // screen: a near-black hole in the #0b0d1b wallpaper, with the strip above
+  // it lighter than both. Measured before the fix: wallpaper (11,13,27) →
+  // strip (28,28,30) → sheet (11,11,12).
+  //
+  // The GROUNDS are what must climb: each layer nearer the reader is lighter
+  // than the one behind it, in both themes. A CARD is the other kind of
+  // step (on white a grey inset, on near-black a lighter raise), so its
+  // direction flips by theme and only its DISTANCE from the sheet is the
+  // invariant. Asserting "lighter" on it is what a first draft of this test
+  // did, and light mode caught it.
+  const lum = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const val = (block, name) => {
+    const m = block.match(new RegExp(`${name}: (#[0-9a-f]{6});`));
+    assert.ok(m, `${name} must be declared`);
+    return m[1];
+  };
+  const light = APP_CSS.slice(0, APP_CSS.indexOf('\n.dark {'));
+  const dark = APP_CSS.slice(APP_CSS.indexOf('\n.dark {'));
+  for (const [theme, block, ground] of [
+    ['light', light, '#f4f2e4'],
+    ['dark', dark, '#0b0d1b'],
+  ]) {
+    const grounds = [ground, val(block, '--dc-strip'), val(block, '--dc-sheet')];
+    for (let i = 1; i < grounds.length; i++) {
+      assert.ok(lum(grounds[i]) > lum(grounds[i - 1]),
+        `${theme}: ${grounds[i]} must be nearer the reader than ${grounds[i - 1]}`);
+    }
+    const sheet = val(block, '--dc-sheet');
+    const raised = val(block, '--dc-raised');
+    assert.ok(Math.abs(lum(raised) - lum(sheet)) >= 8,
+      `${theme}: a card (${raised}) must be visibly off the sheet (${sheet})`);
   }
+});
+
+test('light mode is byte-identical: only dark moved', () => {
+  // The ladder's light values ARE the tokens the lift shipped with, so a
+  // reader who liked light mode sees exactly what they saw.
+  const light = APP_CSS.slice(0, APP_CSS.indexOf('\n.dark {'));
+  assert.match(light, /--dc-strip: #f5f5f7;/, "--bg-secondary's value");
+  assert.match(light, /--dc-sheet: #ffffff;/, "--bg-primary's value");
+  assert.match(light, /--dc-raised: #f5f5f7;/, "--bg-secondary's value again");
+});
+
+test('no .dc- surface reads the raw surface tokens', () => {
+  // The sweep this pins. Moving the sheet in dark left every OTHER card on
+  // the lift sitting on the wrong step: a rule on --bg-secondary was flush
+  // with the new sheet (both #1c1c1e) and one on --bg-primary was DARKER
+  // than it (#0b0b0c), a hole rather than an inset.
+  //
+  // The swap is light-identical BY CONSTRUCTION, which is the only reason it
+  // could be done mechanically: --dc-sheet is --bg-primary's light value and
+  // --dc-raised is --bg-secondary's, asserted above.
+  const rules = APP_CSS.split('}');
+  const offenders = [];
+  for (const r of rules) {
+    const head = r.slice(0, r.indexOf('{'));
+    if (!/\.dc-[a-z0-9-]/.test(head)) continue;
+    if (/background(-color)?\s*:\s*var\(--bg-(primary|secondary)\)/.test(r)) {
+      offenders.push(head.trim().split('\n').pop().trim());
+    }
+  }
+  assert.deepEqual(offenders, [],
+    'a .dc- surface must take the ladder, not the raw token');
 });

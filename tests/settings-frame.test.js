@@ -142,12 +142,11 @@ test('a section\'s parts stack with no rule between them, and a one-part page\'s
 });
 
 test('a switch row in a static pane is a neutral wrapper, laid out by the stylesheet: no node is moved', () => {
-  for (const [file, id] of [['dev-console.tsx', 'dev-console-always-show'], ['admin-preview.tsx', 'view-as-non-admin'], ['alerts.tsx', 'devchat-alerts-toggle']]) {
+  for (const [file, id] of [['dev-console.tsx', 'dev-console-always-show'], ['admin-preview.tsx', 'view-as-non-admin']]) {
     assert.match(section(file), new RegExp(`<div className="ui-card ui-swrow">\\s*<SwitchRow id="${id}">`), file);
   }
   const exp = section('experimental.tsx');
-  assert.match(exp, /<div className="ui-card">\s*<InterfaceModeControl \/>\s*<div className="ui-swrow">\s*<SwitchRow id="ai-progress-estimate">/, 'the three switches are one card');
-  assert.match(exp, /<div className="ui-swrow mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">\s*<SwitchRow id="session-bridge-enabled">/);
+  assert.match(exp, /<div className="ui-card">\s*<InterfaceModeControl \/>\s*<\/div>/, 'its one switch is a card');
   assert.doesNotMatch(exp, /new-look-enabled/, 'New look\'s switch is gone: its look is one of the Look menu\'s');
   assert.match(exp, /<div id="settings-look-section" className="hidden ui-card ui-fields /);
   assert.match(settings, new RegExp(`${ANY} #settings-screen #settings-section-content \\[data-settings-section\\] \\.ui-swrow \\{ display: grid; grid-template-columns: minmax\\(0, 1fr\\) auto;`));
@@ -178,7 +177,7 @@ test('`hidden` still hides a worn node, since settings.js shows and hides by tha
 });
 
 test('the lists of small cards are one card of rows, and the hand-made cards wear the kit\'s', () => {
-  for (const file of ['notification-prefs-list.tsx', 'app-permissions-list.tsx', 'grants-list.tsx', 'agent-files-list.tsx', 'cli-tokens-list.tsx', 'local-agents-list.tsx']) {
+  for (const file of ['notification-prefs-list.tsx', 'app-permissions-list.tsx', 'grants-list.tsx', 'agent-files-list.tsx', 'cli-tokens-list.tsx']) {
     assert.match(read('frontend/src/features/settings', file), /const ROW_CLASS = 'ui-mini rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';/, file);
   }
   assert.match(section('app-permissions.tsx'), /<div id="app-permissions-list" className="ui-card space-y-2">/);
@@ -218,7 +217,7 @@ test('OpenRouter is one card: a neutral wrapper round its parts, each keeping it
   const close = src.indexOf('<StatusLine id="settings-openrouter-status"');
   assert.ok(open > 0 && close > open);
   const inside = src.slice(open, close);
-  const ids = ['settings-openrouter-included', 'settings-openrouter-key-display', 'settings-openrouter-key-info', 'settings-openrouter-personal-controls', 'settings-openrouter-models-wrap'];
+  const ids = ['settings-openrouter-included', 'settings-openrouter-key-display', 'settings-openrouter-key-info', 'settings-openrouter-personal-controls'];
   let at = 0;
   for (const id of ids) {
     const i = inside.indexOf(`id="${id}"`, at);

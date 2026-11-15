@@ -129,7 +129,7 @@ test('no converted control opts into target=_blank', () => {
   // system browser, which is the opposite of the intent here.
   assert.ok(!/id="back-btn"[^>]*target=/.test(html),
     'the header control must not carry target — see NavLink\'s header comment');
-  for (const [name, src] of [['app-view.js', appViewJs], ['dev-chat.js', devChatJs],
+  for (const [name, src] of [['app-view.js', appViewJs],
     ['leaderboard.js', leaderboardJs],
     ['kudos-pane.tsx', kudosPaneTsx]]) {
     for (const id of ['dc-back', 'dev-chat-back', 'dev-topic-back', 'data-lb-back']) {
@@ -402,10 +402,6 @@ test('a topic page has exactly one back control: the chip, and no header arrow (
   // …and no longer maps a topic to the board itself: that answer is the chip's.
   assert.doesNotMatch(headerTsx, /subTab === 'topic'\) return boardHref/,
     "the header's ladder no longer sends a topic anywhere");
-  // Dev SESSIONS are Messages threads, not topics (#2770): they keep the
-  // header arrow and never get the chip.
-  assert.match(headerTsx, /subTab === 'sessions'\) return sessionOrigin \|\| '#messages';/,
-    'a dev session still climbs by the header arrow');
 });
 
 test('no other in-page back control is left anywhere in the Dev area', () => {

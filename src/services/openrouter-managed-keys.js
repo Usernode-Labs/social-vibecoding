@@ -4,7 +4,6 @@ const log = require('./logger');
 const credentialStore = require('./credential-store');
 const managementClient = require('./openrouter-management-client');
 const agentModels = require('./agent-models');
-const agentPreferences = require('./agent-preferences');
 const defaultModelSetting = require('./default-model');
 const notifications = require('./notifications');
 const limits = require('./limits');
@@ -293,14 +292,6 @@ async function provisionHere({ pool, userId, config }) {
           WHERE id = $1`,
         [reservation.id, credential.id],
       );
-      // No model: the account follows the platform default
-      // (services/default-model.js) until its person picks one. Storing the
-      // default of the day pinned every account to it, and a later change
-      // of default reached none of them. The first session still runs on
-      // the model chosen above (defaultModel below).
-      await agentPreferences.setDefaultBackend(client, userId, {
-        backend: 'codex_openrouter', model: null, reasoningEffort: null,
-      });
       return { credential, modelId };
     });
 
@@ -331,9 +322,10 @@ async function provisionHere({ pool, userId, config }) {
 
 // #2568: the ONE place an account's included key is created. Every
 // account-creation path calls it right after the user row is inserted, and
-// the coding-agent preference read calls it again for anybody who arrived
-// without one — an account created before this change, or one created while
-// OpenRouter's management API was down.
+// Settings' key status read and voice input's key read
+// (routes/credentials.js, routes/dictation.js) call it again for anybody who
+// arrived without one — an account created before this change, or one
+// created while OpenRouter's management API was down.
 //
 // It never throws and it never blocks the caller's own success: signing up
 // must not fail because a third-party key could not be minted. Every refusal
@@ -370,7 +362,7 @@ async function ensureIncludedKey({ pool, userId, config, reason = 'signup' }) {
     const code = err instanceof ManagedOpenRouterError ? err.code : 'provision_failed';
     // `already_issued` and `byok_configured` are the concurrent-caller and
     // personal-key cases; everything else is a real failure this account will
-    // retry the next time it opens the new-change screen.
+    // retry the next time it opens Settings or uses voice input.
     const expected = code === 'already_issued' || code === 'byok_configured';
     log[expected ? 'info' : 'warn'](
       'openrouter-managed',
@@ -453,9 +445,6 @@ async function removeHere({ pool, id, config, actorId }) {
           WHERE id = $1`,
         [id],
       );
-      await agentPreferences.setDefaultBackend(client, row.user_id, {
-        backend: 'claude_code', model: null, reasoningEffort: null,
-      });
     });
   } catch (err) {
     await markNeedsReview(pool, id, row.user_id, err);
@@ -472,7 +461,7 @@ async function removeHere({ pool, id, config, actorId }) {
 // change the user's weekly cap, the platform default can move. Rather than a
 // boot-time sweep that talks to the provider for every row, each key is
 // brought in line lazily, the next time its owner's credential status is
-// read (the settings screen and the first-use build flow both read it), and
+// read (the settings screen reads it), and
 // eagerly when an admin sets that user's weekly cap or a coding turn starts.
 // Best-effort with a short failure backoff: an outage must not strand an old
 // limit until the next deployment. Successful targets are never memoized —

@@ -219,12 +219,6 @@
     _connectorLoadId: 0,
     _connectorSteps: null,
     _githubLink: null,
-    _openRouterModels: [],
-    _openRouterSelectedModelId: '',
-    _openRouterRecommendedModelId: '',
-    _openRouterCatalogRefreshedAt: null,
-    _openRouterCatalogTotal: 0,
-    _openRouterFavoritesOnly: false,
     _mobilePushPreferences: null,
     _mobilePushLoading: false,
     _mobilePushSaving: false,
@@ -360,9 +354,9 @@
       // next: each row is faster to find under a heading that
       // says what it is about.
       // The allowance leads: it is the figure most builders open Settings to
-      // find. OpenRouter follows it — the included key and the default
-      // session model — and the Anthropic key, the one you add when the
-      // allowance runs out, comes last.
+      // find. OpenRouter follows it — the included key voice input uses —
+      // and the Anthropic key, the one you add when the allowance runs out,
+      // comes last.
       { key: 'usage', label: 'settings:nav.part.usage', group: 'settings:nav.group.aiModels', page: 'ai' },
       { key: 'openrouter', label: 'settings:nav.part.openrouter', group: 'settings:nav.group.aiModels', page: 'ai' },
       { key: 'api-key', label: 'settings:nav.part.apiKey', group: 'settings:nav.group.aiModels', page: 'ai' },
@@ -572,37 +566,15 @@
 
       // The static shell is still under the markup-parity migration guard,
       // so provider copy is normalized at runtime while this hidden section
-      // mounts. Users should only see the provider they configured; the
-      // worker implementation behind OpenRouter is not a product choice.
+      // mounts.
       this._normalizeOpenRouterCopy();
 
-      // OpenRouter & Codex (BYOK). Section bindings — all guarded on
-      // existence so the section degrades cleanly if the feature flag is
-      // off server-side (the section markup stays, the controls no-op).
+      // OpenRouter key (the one voice input uses). Section bindings, guarded
+      // on existence so the section degrades cleanly if its markup is absent.
       const orSave = document.getElementById('settings-openrouter-save');
       const orRemove = document.getElementById('settings-openrouter-remove');
-      const orSetDefault = document.getElementById('settings-openrouter-set-default');
-      const orModel = document.getElementById('settings-openrouter-model');
-      const orModelSearch = document.getElementById('settings-openrouter-model-search');
-      const orFavoritesOnly = document.getElementById('settings-openrouter-favorites-only');
-      const orRefreshModels = document.getElementById('settings-openrouter-refresh-models');
-      const orStarModel = document.getElementById('settings-openrouter-star-model');
-      const claudeSetDefault = document.getElementById('settings-claude-set-default');
       if (orSave) orSave.addEventListener('click', () => this._saveOpenRouterKey());
       if (orRemove) orRemove.addEventListener('click', () => this._removeOpenRouterKey());
-      if (orSetDefault) orSetDefault.addEventListener('click', () => this._saveOpenRouterDefault());
-      if (orModel) orModel.addEventListener('change', () => {
-        this._openRouterSelectedModelId = orModel.value;
-        this._syncOpenRouterModelDetails();
-      });
-      if (orModelSearch) orModelSearch.addEventListener('input', () => this._renderOpenRouterModelOptions());
-      if (orFavoritesOnly) orFavoritesOnly.addEventListener('click', () => {
-        this._openRouterFavoritesOnly = !this._openRouterFavoritesOnly;
-        this._renderOpenRouterModelOptions();
-      });
-      if (orRefreshModels) orRefreshModels.addEventListener('click', () => this._refreshOpenRouterModelsNow());
-      if (orStarModel) orStarModel.addEventListener('click', () => this._toggleSelectedOpenRouterFavorite());
-      if (claudeSetDefault) claudeSetDefault.addEventListener('click', () => this._saveClaudeDefault());
 
       const linkBtn = document.getElementById('wallet-link-btn');
       if (linkBtn) linkBtn.addEventListener('click', () => this._startWalletLink());
@@ -3783,219 +3755,15 @@
       }
     },
 
-    // ── OpenRouter (BYOK) ──────────────────────────────────────
+    // ── OpenRouter key ─────────────────────────────────────────
     _normalizeOpenRouterCopy() {
       const section = document.querySelector('[data-settings-section="openrouter"]');
       if (!section) return;
       const heading = section.querySelector('h3');
       const intro = section.querySelector('p');
-      const modelLabel = section.querySelector('label[for="settings-openrouter-model"]');
       if (heading) heading.textContent = 'OpenRouter';
-      if (intro) {
-        // #3296: the one worker detail worth naming. The platform runs some
-        // OpenRouter models in Claude Code, and the model list tags them; the
-        // default runner stays unnamed, like every other implementation
-        // detail. sections/openrouter.tsx renders this same text statically.
-        intro.textContent = tr('settings:openrouter.intro');
-      }
-      if (modelLabel) modelLabel.textContent = tr('settings:openrouter.model.label');
-    },
-
-    _formatOpenRouterPrice(value) {
-      if (value == null || value === '') return null;
-      const price = Number(value);
-      if (!Number.isFinite(price) || price < 0) return null;
-      if (price === 0) return '$0';
-      const decimals = price < 0.01 ? 4 : price < 10 ? 2 : price < 100 ? 1 : 0;
-      const fixed = price.toFixed(decimals);
-      const compact = fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed;
-      return `$${compact}`;
-    },
-
-    _openRouterModelCostSummary(model) {
-      const tier = tr({
-        free: 'settings:openrouter.cost.free',
-        low: 'settings:openrouter.cost.low',
-        medium: 'settings:openrouter.cost.medium',
-        high: 'settings:openrouter.cost.high',
-        unknown: 'settings:openrouter.cost.unknown',
-      }[model?.costTier] || 'settings:openrouter.cost.unknown');
-      const input = this._formatOpenRouterPrice(model?.inputPricePerMillion);
-      const output = this._formatOpenRouterPrice(model?.outputPricePerMillion);
-      if (!input && !output) return tier;
-      return dotText([
-        tier,
-        tr('settings:openrouter.cost.inputPrice', { price: input || '?' }),
-        tr('settings:openrouter.cost.outputPrice', { price: output || '?' }),
-      ]);
-    },
-
-    _openRouterModelOptionLabel(model) {
-      const badges = [];
-      if (model?.isFavorite) badges.push('★');
-      if (model?.isRecommended) badges.push(tr('settings:openrouter.model.badgeRecommended'));
-      // #3296: the platform runs some OpenRouter models in Claude Code rather
-      // than Codex. Only that exception is named; Codex is every other row.
-      if (model?.harness === 'claude') badges.push('Claude Code');
-      if (model?.createdAt) {
-        const age = Date.now() - Date.parse(model.createdAt);
-        if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push(tr('settings:openrouter.model.badgeNew'));
-      }
-      const compatibility = model?.compatibility === 'verified'
-        ? tr('settings:openrouter.model.compatVerified')
-        : (model?.compatibility === 'blocked'
-          ? tr('settings:openrouter.model.compatLimited')
-          : tr('settings:openrouter.model.compatUnverified'));
-      // "<name · badges>: <cost · compatibility>". Every piece is a whole
-      // message or a name; the two runs of facts are joined by dotText.
-      return tr('settings:openrouter.model.optionLabel', {
-        model: dotText([model?.name || model?.id || tr('settings:openrouter.model.unknown'), ...badges]),
-        details: dotText([this._openRouterModelCostSummary(model), compatibility]),
-      });
-    },
-
-    _openRouterModelsForPicker(models, { query = '', favoritesOnly = false } = {}) {
-      const needle = String(query || '').trim().toLocaleLowerCase();
-      return (Array.isArray(models) ? models : [])
-        .map((model, index) => ({ model, index }))
-        .filter(({ model }) => {
-          if (favoritesOnly && model?.isFavorite !== true) return false;
-          if (!needle) return true;
-          return [model?.name, model?.id, model?.provider, model?.canonicalSlug]
-            .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
-        })
-        .sort((a, b) => {
-          if (!!a.model?.isFavorite !== !!b.model?.isFavorite) return a.model?.isFavorite ? -1 : 1;
-          if (!!a.model?.isRecommended !== !!b.model?.isRecommended) return a.model?.isRecommended ? -1 : 1;
-          return a.index - b.index;
-        })
-        .map(({ model }) => model);
-    },
-
-    _openRouterCatalogAgeText(refreshedAt) {
-      const refreshed = Date.parse(refreshedAt || '');
-      if (!Number.isFinite(refreshed)) return '';
-      const seconds = Math.max(0, Math.round((Date.now() - refreshed) / 1000));
-      if (seconds < 60) return tr('settings:openrouter.catalog.updatedJustNow');
-      const minutes = Math.round(seconds / 60);
-      if (minutes < 60) return tr('settings:openrouter.catalog.updatedMinutesAgo', { count: minutes });
-      return tr('settings:openrouter.catalog.updatedHoursAgo', { count: Math.round(minutes / 60) });
-    },
-
-    _renderOpenRouterModelOptions() {
-      const select = document.getElementById('settings-openrouter-model');
-      if (!select) return;
-      const search = document.getElementById('settings-openrouter-model-search');
-      const favoritesOnlyButton = document.getElementById('settings-openrouter-favorites-only');
-      const meta = document.getElementById('settings-openrouter-catalog-meta');
-      const visibleModels = this._openRouterModelsForPicker(this._openRouterModels, {
-        query: search?.value || '',
-        favoritesOnly: this._openRouterFavoritesOnly,
-      });
-      select.innerHTML = '';
-      for (const model of visibleModels) {
-        const option = document.createElement('option');
-        option.value = model.id;
-        option.textContent = this._openRouterModelOptionLabel(model);
-        select.appendChild(option);
-      }
-      if (!visibleModels.some((model) => model.id === this._openRouterSelectedModelId)) {
-        const fallback = visibleModels.find((model) => model.id === this._openRouterRecommendedModelId)
-          || visibleModels.find((model) => model.isRecommended)
-          || visibleModels[0]
-          || null;
-        if (fallback) this._openRouterSelectedModelId = fallback.id;
-      }
-      select.value = visibleModels.some((model) => model.id === this._openRouterSelectedModelId)
-        ? this._openRouterSelectedModelId
-        : '';
-      select.disabled = visibleModels.length === 0;
-      if (favoritesOnlyButton) {
-        favoritesOnlyButton.setAttribute('aria-pressed', String(this._openRouterFavoritesOnly));
-        favoritesOnlyButton.textContent = this._openRouterFavoritesOnly
-          ? tr('settings:openrouter.model.favoritesOn')
-          : tr('settings:openrouter.model.favoritesOff');
-      }
-      if (meta) {
-        const age = this._openRouterCatalogAgeText(this._openRouterCatalogRefreshedAt);
-        meta.textContent = dotText([
-          visibleModels.length
-            ? tr('settings:openrouter.catalog.shownOfTotal', {
-              shown: visibleModels.length,
-              count: this._openRouterCatalogTotal || this._openRouterModels.length,
-            })
-            : tr('settings:openrouter.catalog.noMatch'),
-          age,
-        ]);
-      }
-      this._syncOpenRouterModelDetails();
-    },
-
-    // #2600: the reasoning-effort picker's first choice is a real level, not
-    // an absence of one, so name the level the platform runs at when nobody
-    // has chosen. The server is the only thing that knows it; if the read
-    // fails the option keeps its plain wording rather than inventing a level.
-    _labelOpenRouterDefaultEffort(effort) {
-      const select = document.getElementById('settings-openrouter-reasoning');
-      const option = Array.from(select?.options || []).find((item) => item.value === '');
-      if (!option) return;
-      // One whole message per level: "Default (Medium)".
-      const labels = {
-        minimal: 'settings:openrouter.effort.defaultMinimal',
-        low: 'settings:openrouter.effort.defaultLow',
-        medium: 'settings:openrouter.effort.defaultMedium',
-        high: 'settings:openrouter.effort.defaultHigh',
-        xhigh: 'settings:openrouter.effort.defaultExtraHigh',
-      };
-      option.textContent = tr(labels[String(effort || '')] || 'settings:openrouter.reasoning.default');
-    },
-
-    _syncOpenRouterModelDetails() {
-      const select = document.getElementById('settings-openrouter-model');
-      const effort = document.getElementById('settings-openrouter-reasoning');
-      const model = this._openRouterModels.find((item) => item.id === select?.value) || null;
-      const star = document.getElementById('settings-openrouter-star-model');
-      const saveDefault = document.getElementById('settings-openrouter-set-default');
-      if (!model) {
-        if (select) select.title = tr('settings:openrouter.model.sortHint');
-        if (effort) effort.disabled = true;
-        if (star) {
-          star.disabled = true;
-          star.textContent = '☆';
-          star.setAttribute('aria-pressed', 'false');
-        }
-        if (saveDefault) saveDefault.disabled = true;
-        return;
-      }
-      if (saveDefault) saveDefault.disabled = false;
-      if (star) {
-        star.disabled = false;
-        star.textContent = model.isFavorite ? '★' : '☆';
-        star.setAttribute('aria-pressed', String(model.isFavorite === true));
-        const label = model.isFavorite
-          ? tr('settings:openrouter.model.removeFavorite')
-          : tr('settings:openrouter.model.addFavorite');
-        star.setAttribute('aria-label', label);
-        star.title = label;
-      }
-      let compatibility = tr('settings:openrouter.model.notYetVerified');
-      if (model.compatibility === 'verified') compatibility = tr('settings:openrouter.model.verified');
-      else if (!model.meetsCodexMinimums) {
-        compatibility = model.compatibilityNote
-          || tr('settings:openrouter.model.mayFail');
-      }
-      if (select) {
-        select.title = tr('settings:openrouter.model.tooltip', {
-          cost: this._openRouterModelCostSummary(model), compatibility,
-        });
-      }
-      if (effort) {
-        effort.disabled = model.supportsReasoning !== true;
-        if (effort.disabled) effort.value = '';
-        effort.title = effort.disabled
-          ? tr('settings:openrouter.effort.unsupported')
-          : tr('settings:openrouter.effort.hint');
-      }
+      // sections/openrouter.tsx renders this same text statically.
+      if (intro) intro.textContent = tr('settings:openrouter.intro');
     },
 
     _setOrStatus(text, kind) {
@@ -4011,26 +3779,12 @@
       const removeBtn = document.getElementById('settings-openrouter-remove');
       const input = document.getElementById('settings-openrouter-key');
       const saveBtn = document.getElementById('settings-openrouter-save');
-      const modelsWrap = document.getElementById('settings-openrouter-models-wrap');
       const includedCard = document.getElementById('settings-openrouter-included');
       const includedStatus = document.getElementById('settings-openrouter-included-status');
       const personalControls = document.getElementById('settings-openrouter-personal-controls');
       try {
-        // #2568: reading this is also what creates an included key for an
-        // account that somehow has none, so it stays ahead of the status
-        // line below. `codexAvailable` is a deployment switch now, not a
-        // per-account allowlist: off means the whole section has nothing
-        // to offer.
-        const r = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
-        const prefs = r.ok ? await r.json() : {};
-        if (!prefs.codexAvailable) {
-          if (includedCard) includedCard.classList.add('hidden');
-          if (modelsWrap) modelsWrap.classList.add('hidden');
-          return;
-        }
-        this._labelOpenRouterDefaultEffort(prefs.defaultReasoningEffort);
-      } catch {}
-      try {
+        // #2568: this read is also what creates an included key for an
+        // account that somehow has none (routes/credentials.js).
         const r = await fetch('/api/me/credentials/openrouter', { credentials: 'same-origin' });
         const j = r.ok ? await r.json() : {};
         const managed = j.managed || null;
@@ -4113,108 +3867,14 @@
               // The key's own label, which may be empty: the separator stays.
               : tr('settings:list.dot', { first: owner, second: j.keyInfo?.label || '' });
           }
-          await this._loadOpenRouterModels();
         } else {
           if (display) display.classList.add('hidden');
           if (removeBtn) removeBtn.classList.add('hidden');
           if (input) input.placeholder = 'sk-or-...';
           if (saveBtn) saveBtn.textContent = tr('settings:openrouter.personalKey.testAndSave');
           if (info) info.classList.add('hidden');
-          if (modelsWrap) modelsWrap.classList.add('hidden');
         }
       } catch {}
-    },
-
-    async _loadOpenRouterModels({ forceRefresh = false } = {}) {
-      const sel = document.getElementById('settings-openrouter-model');
-      const wrap = document.getElementById('settings-openrouter-models-wrap');
-      if (!sel) return;
-      try {
-        const refresh = forceRefresh ? '&refresh=1' : '';
-        const r = await fetch(`/api/me/coding-agent/models?backend=codex_openrouter${refresh}`, {
-          credentials: 'same-origin', cache: 'no-store',
-        });
-        const errorBody = r.ok ? null : await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(errorBody?.error || tr('settings:openrouter.catalog.loadFailed'));
-        const cat = await r.json();
-        const models = Array.isArray(cat.models) ? cat.models : [];
-        this._openRouterModels = models;
-        this._openRouterRecommendedModelId = cat.recommendedModelId || '';
-        this._openRouterCatalogRefreshedAt = cat.refreshedAt || null;
-        this._openRouterCatalogTotal = Number.isInteger(cat.totalModels) ? cat.totalModels : models.length;
-        if (!models.length) {
-          this._openRouterSelectedModelId = '';
-          this._renderOpenRouterModelOptions();
-          if (wrap) wrap.classList.remove('hidden');
-          return;
-        }
-        const recommended = models.some((model) => model.id === cat.recommendedModelId)
-          ? cat.recommendedModelId
-          : (models.find((model) => model.isRecommended)?.id
-            || models.find((model) => model.compatibility === 'verified')?.id
-            || models[0].id);
-        if (!forceRefresh || !models.some((model) => model.id === this._openRouterSelectedModelId)) {
-          this._openRouterSelectedModelId = recommended;
-        }
-        if (!forceRefresh) {
-          // Restore the previously-saved model/effort on the initial load.
-          const prefs = await (await fetch('/api/me/coding-agent', {
-            credentials: 'same-origin', cache: 'no-store',
-          })).json();
-          const saved = prefs.backends?.codex_openrouter;
-          if (saved?.model && models.some((model) => model.id === saved.model)) {
-            this._openRouterSelectedModelId = saved.model;
-          }
-          const eff = document.getElementById('settings-openrouter-reasoning');
-          if (eff) eff.value = saved?.reasoningEffort || '';
-        }
-        this._renderOpenRouterModelOptions();
-        if (wrap) wrap.classList.remove('hidden');
-      } catch (err) {
-        if (!this._openRouterModels.length && wrap) wrap.classList.add('hidden');
-        throw err;
-      }
-    },
-
-    async _refreshOpenRouterModelsNow() {
-      const button = document.getElementById('settings-openrouter-refresh-models');
-      if (button) { button.disabled = true; button.textContent = tr('settings:openrouter.catalog.refreshing'); }
-      this._setOrStatus(tr('settings:openrouter.catalog.refreshingStatus'), 'info');
-      try {
-        await this._loadOpenRouterModels({ forceRefresh: true });
-        this._setOrStatus(tr('settings:openrouter.catalog.refreshed', { count: this._openRouterModels.length }), 'ok');
-      } catch (err) {
-        this._setOrStatus(err.message || tr('settings:openrouter.catalog.refreshFailed'), 'error');
-      } finally {
-        if (button) { button.disabled = false; button.textContent = tr('settings:openrouter.model.refresh'); }
-      }
-    },
-
-    async _toggleSelectedOpenRouterFavorite() {
-      const button = document.getElementById('settings-openrouter-star-model');
-      const model = this._openRouterModels.find(
-        (item) => item.id === this._openRouterSelectedModelId,
-      );
-      if (!model || button?.disabled) return;
-      const favorite = model.isFavorite !== true;
-      if (button) button.disabled = true;
-      try {
-        const r = await fetch('/api/me/coding-agent/models/favorite', {
-          method: 'PATCH', credentials: 'same-origin', cache: 'no-store',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ modelId: model.id, favorite }),
-        });
-        const body = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(body.error || tr('settings:openrouter.favorite.failed'));
-        model.isFavorite = favorite;
-        this._renderOpenRouterModelOptions();
-        this._setOrStatus(favorite
-          ? tr('settings:openrouter.favorite.added', { model: model.name || model.id })
-          : tr('settings:openrouter.favorite.removed', { model: model.name || model.id }), 'ok');
-      } catch (err) {
-        this._setOrStatus(err.message || tr('settings:openrouter.favorite.failed'), 'error');
-        if (button) button.disabled = false;
-      }
     },
 
     async _saveOpenRouterKey() {
@@ -4250,59 +3910,14 @@
         const r = await fetch('/api/me/credentials/openrouter', { method: 'DELETE', credentials: 'same-origin' });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) { this._setOrStatus(j.error || tr('settings:openrouter.key.removeFailed'), 'error'); return; }
-        this._setOrStatus(j.defaultReset
-          ? tr('settings:openrouter.key.removedDefaultReset')
-          : tr('settings:openrouter.key.removed'), 'ok');
+        this._setOrStatus(tr('settings:openrouter.key.removed'), 'ok');
         if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = false;
-        this._openRouterModels = [];
-        this._openRouterSelectedModelId = '';
-        this._openRouterRecommendedModelId = '';
-        this._openRouterCatalogRefreshedAt = null;
-        this._openRouterCatalogTotal = 0;
         await this._refreshOpenRouter();
       } catch {
         this._setOrStatus(tr('settings:openrouter.key.removeFailed'), 'error');
       } finally {
         if (removeBtn) removeBtn.disabled = false;
       }
-    },
-
-    async _saveOpenRouterDefault() {
-      const model = document.getElementById('settings-openrouter-model')?.value;
-      if (!model) { this._setOrStatus(tr('settings:openrouter.default.chooseModelFirst'), 'error'); return; }
-      const reasoningEffort = document.getElementById('settings-openrouter-reasoning')?.value || null;
-      // Preserve the user's existing cost cap across this save (review P3):
-      // include it explicitly so an omission can't drop the safety limit,
-      // and the server also COALESCEs when omitted.
-      let maxTurnCostUsd = null;
-      try {
-        const prefs = await (await fetch('/api/me/coding-agent', { credentials: 'same-origin' })).json();
-        maxTurnCostUsd = prefs.backends?.codex_openrouter?.maxTurnCostUsd ?? null;
-      } catch {}
-      try {
-        const r = await fetch('/api/me/coding-agent', {
-          method: 'PATCH', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ defaultBackend: 'codex_openrouter', model, reasoningEffort, maxTurnCostUsd }),
-        });
-        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || tr('settings:openrouter.default.saveFailed'), 'error'); return; }
-        this._setOrStatus(tr('settings:openrouter.default.saved'), 'ok');
-      } catch { this._setOrStatus(tr('settings:openrouter.default.networkError'), 'error'); }
-    },
-
-    async _saveClaudeDefault() {
-      // Reciprocal default control (review #8): set Claude Code (the
-      // legacy backend) as the user's default coding agent. Sends no model
-      // so it doesn't pin a Claude model either.
-      try {
-        const r = await fetch('/api/me/coding-agent', {
-          method: 'PATCH', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ defaultBackend: 'claude_code' }),
-        });
-        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || tr('settings:openrouter.claudeDefault.saveFailed'), 'error'); return; }
-        this._setOrStatus(tr('settings:openrouter.claudeDefault.saved'), 'ok');
-      } catch { this._setOrStatus(tr('settings:openrouter.claudeDefault.networkError'), 'error'); }
     },
 
     // ── Change password (issue #282) ─────────────────────────────
@@ -7467,7 +7082,6 @@
       repaint(() => Settings._renderConnectorProgress());
       repaint(() => { if (Settings._githubLink) Settings._renderGithubLink(); });
       repaint(() => { if (Settings._cliTokens.length) Settings._renderCliTokens(); });
-      repaint(() => { if (Settings._openRouterModels.length) Settings._renderOpenRouterModelOptions(); });
       repaint(() => Settings._publishUsernode());
     });
     // The languages the cache offers arrive after boot: the open pane lists them.

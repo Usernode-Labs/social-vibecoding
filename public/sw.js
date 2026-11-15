@@ -617,11 +617,6 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // returning visitor saw the cached SPA home page in place of the provider
   // redirect, and again in place of the status page on the way back.
   if (p.startsWith('/waitlist/connect/')) return 'bypass';
-  // The OpenRouter catalog is private, key-filtered, and has its own short
-  // server cache plus an explicit refresh control. Replaying the PWA's much
-  // longer offline copy can hide newly released models and account-policy
-  // changes, while an offline picker cannot start a usable run anyway.
-  if (p === '/api/me/coding-agent/models') return 'bypass';
   if (p.startsWith('/.well-known/oauth-')) return 'bypass';
   // Auth endpoints are online-only — EXCEPT /api/auth/me, which is cached
   // so the SPA's boot check succeeds offline for a logged-in user.

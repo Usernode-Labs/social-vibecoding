@@ -31,7 +31,6 @@ const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 
 const SHEET_PATH = 'frontend/src/features/notifications/notifications-sheet.tsx';
 const SHEET_SRC = read(SHEET_PATH);
-const DEVCHAT_SRC = read('frontend/src/features/dev-chat/dev-chat.js');
 const APP_CSS = read('public/css/app.css');
 const { agoStamp } = loadTsx('frontend/src/lib/timestamp.ts');
 const { createStore } = loadTsx('frontend/src/lib/plain-store.js');
@@ -100,10 +99,6 @@ test('the bell, the browser tab and the sheet print one number through one cap',
   N.invites = [];
   N._renderBadge();
   assert.equal(sandbox.document.title, 'Homeroom');
-});
-
-test('the dev chat keeps a capped count outermost when it decorates the title', () => {
-  assert.match(DEVCHAT_SRC, /const countMatch = full\.match\(\/\^\\\(\\d\+\\\+\?\\\)\\s\*\/\);/);
 });
 
 test('the Unread tab reads the bell\'s number, not the rows it has paged in', () => {

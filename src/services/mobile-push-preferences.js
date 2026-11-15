@@ -38,11 +38,13 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   Object.freeze({
     key: 'shared_work',
     label: 'Shared work',
-    description: 'Plans someone privately shared with you. Homeroom no longer sends these.',
+    description: 'Plans that someone privately shared with you.',
     defaultEnabled: true,
-    // spec_shared is no longer created: private plan sharing is retired. It
-    // stays listed, and the category with it, so the mapping matches the
-    // seed in db/schema.sql, which still holds its row.
+    // spec_shared is not created any more: private plan sharing went with the
+    // dev chat. The category stays defined, so the mapping matches the seed in
+    // db/schema.sql and a saved choice still reads, but it is not offered:
+    // a switch for something nothing sends would only mislead.
+    listed: false,
     kinds: Object.freeze(['spec_shared']),
   }),
   Object.freeze({
@@ -201,7 +203,7 @@ function isKindEnabled(kind, overrides = {}) {
 }
 
 function serializePreferences(overrides = {}) {
-  return CATEGORY_DEFINITIONS.map((category) => ({
+  return CATEGORY_DEFINITIONS.filter((category) => category.listed !== false).map((category) => ({
     key: category.key,
     label: category.label,
     description: category.description,

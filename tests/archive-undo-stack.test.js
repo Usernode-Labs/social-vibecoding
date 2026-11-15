@@ -1,16 +1,15 @@
 // Undo several archives in a row, newest first (#6132).
 //
 // Archiving or withdrawing a proposal on a project's board (app-view.js
-// _archiveSession / withdrawProposal) and archiving an agent session from
-// Messages (agent-session/store.ts archiveCurrentSession) each push the
-// session on a stack and show a priority toast with Undo. Each press of Undo
-// brings back the newest one (POST .../unarchive) and re-toasts while entries
-// remain; the last restore toasts with no action. A failure puts the entry
-// back with Undo still attached, a 404 drops it, an entry for another project
-// clears the board's stack, and the stacks hold 20 at most.
+// _archiveSession / withdrawProposal) pushes the session on a stack and
+// shows a priority toast with Undo. Each press of Undo brings back the
+// newest one (POST .../unarchive) and re-toasts while entries remain; the
+// last restore toasts with no action. A failure puts the entry back with
+// Undo still attached, a 404 drops it, an entry for another project clears
+// the stack, and the stack holds 20 at most.
 //
 // app-view.js is loaded into a vm sandbox the way archive-proposal-card.test.js
-// does; the store through tests/fixtures/agent-session-api.ts.
+// does.
 //
 // Run with: node --test tests/archive-undo-stack.test.js
 
@@ -20,11 +19,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { englishPlatformI18n, message } = require('./lib/platform-i18n');
-const { loadTsx } = require('./lib/render-tsx');
-const { withStateRead } = require('./lib/agent-session-state-read');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
-const STORE = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'agent-session', 'store.ts'), 'utf8');
 
 const ME = 42;
 
@@ -280,128 +276,4 @@ test('the board pins the plan: push only after the POST, priority toast, newest 
   assert.match(SRC, /fetch\(`\/api\/sessions\/\$\{entry\.id\}\/unarchive`, \{ method: 'POST' \}\)/);
   const withdraw = SRC.slice(SRC.indexOf('  async withdrawProposal('), SRC.indexOf('  async withdrawProposal(') + 2500);
   assert.match(withdraw, /verb: 'withdrawn'/);
-});
-
-// ── Messages: the agent session's own stack ─────────────────────────────
-
-function agentWorld({ unarchive = () => 200 } = {}) {
-  const requests = [];
-  const toasts = [];
-  const sessions = {
-    7: { id: 7, title: 'Dark mode', status: 'open', focusApp: null, focusContext: {}, busy: false, activeChange: null, changes: [] },
-    8: { id: 8, title: 'Faster search', status: 'open', focusApp: null, focusContext: {}, busy: false, activeChange: null, changes: [] },
-  };
-  globalThis.window = {
-    location: { hash: '' },
-    App: { setHeaderTitle() {} },
-    UsernodeReact: {},
-    PlatformUI: {
-      toast(msg, opts) { toasts.push({ message: msg, opts: opts || {} }); },
-      confirm: async () => true,
-    },
-  };
-  globalThis.EventSource = class { close() {} };
-  globalThis.fetch = withStateRead(async (url, init = {}) => {
-    const method = init.method || 'GET';
-    requests.push([method, url]);
-    const m = /^\/api\/agent-sessions\/(\d+)/.exec(url);
-    const id = m ? Number(m[1]) : null;
-    if (/\/archive$/.test(url)) sessions[id] = { ...sessions[id], status: 'archived' };
-    if (/\/unarchive$/.test(url)) {
-      const status = unarchive(id);
-      if (status !== 200) return { ok: false, status, json: async () => ({ error: `HTTP ${status}` }) };
-      sessions[id] = { ...sessions[id], status: 'open' };
-    }
-    const body = /\/messages\?/.test(url) ? { messages: [], nextAfter: null }
-      : /\/actions$/.test(url) ? { actions: [] }
-        : /\/drafts$/.test(url) ? { drafts: [] }
-          : /\/api\/agent-sessions(\?|$)/.test(url) ? { sessions: Object.values(sessions).filter((s) => s.status === 'open') }
-            : { session: sessions[id], turn: null };
-    return { ok: true, status: 200, json: async () => body };
-  });
-  const api = loadTsx('tests/fixtures/agent-session-api.ts');
-  const last = () => toasts[toasts.length - 1];
-  const pressUndo = async () => {
-    const t = last();
-    assert.equal(t.opts.action.label, message('agent:session.archiveUndo.undo'));
-    t.opts.action.handler();
-    await new Promise((resolve) => setImmediate(resolve));
-    await new Promise((resolve) => setImmediate(resolve));
-  };
-  const done = () => {
-    delete globalThis.window;
-    delete globalThis.fetch;
-    delete globalThis.EventSource;
-  };
-  return { api, requests, toasts, last, pressUndo, done };
-}
-
-const agentUnarchives = (requests) => requests.filter(([m, u]) => m === 'POST' && /\/unarchive$/.test(u)).map(([, u]) => u);
-
-test('archiving agent sessions from Messages toasts with Undo, and Undo calls /api/agent-sessions/:id/unarchive newest first', async () => {
-  const w = agentWorld();
-  try {
-    await w.api.openAgentSession({ id: 7, host: 'messages' });
-    await w.api.archiveCurrentSession();
-    assert.equal(w.api.getAgentSessionState().session.status, 'archived');
-    assert.equal(w.last().message, message('agent:session.archiveUndo.archived', { title: 'Dark mode', count: 1 }));
-    assert.equal(w.last().message, 'Archived “Dark mode”');
-    assert.equal(w.last().opts.priority, true);
-    assert.equal(w.last().opts.duration, 8000);
-    assert.equal(w.last().opts.action.label, 'Undo');
-
-    await w.api.openAgentSession({ id: 8, host: 'messages' });
-    await w.api.archiveCurrentSession();
-    assert.deepEqual(w.api.archiveUndoEntries().map((e) => e.id), [7, 8], 'newest last');
-    assert.equal(w.last().message, 'Archived “Faster search”. 2 to undo');
-
-    await w.pressUndo();
-    assert.deepEqual(agentUnarchives(w.requests), ['/api/agent-sessions/8/unarchive']);
-    assert.equal(w.api.getAgentSessionState().session.status, 'open', 'the open conversation leaves its read-only state');
-    assert.equal(w.last().message, message('agent:session.archiveUndo.restored', { title: 'Faster search', count: 1 }));
-    assert.equal(w.last().message, 'Brought back “Faster search”. 1 more to undo');
-    assert.ok(w.last().opts.action);
-
-    await w.pressUndo();
-    assert.deepEqual(agentUnarchives(w.requests), ['/api/agent-sessions/8/unarchive', '/api/agent-sessions/7/unarchive']);
-    assert.equal(w.last().message, message('agent:session.archiveUndo.restoredLast', { title: 'Dark mode' }));
-    assert.equal(w.last().opts.action, undefined, 'nothing left: no Undo');
-    assert.deepEqual(w.api.archiveUndoEntries(), []);
-    // The lists' read waits for the platform viewer, which this world has
-    // none of (as agent-session-controls.test.js's archive case): pin the
-    // call in the source instead.
-    const undo = STORE.slice(STORE.indexOf('export async function undoLastArchive'), STORE.indexOf('export async function undoLastArchive') + 1200);
-    assert.match(undo, /if \(state\.id === entry\.id\) publish\(\{ session \}\);\s*void loadAgentSessions\(\);/, 'the open conversation is published and the lists are read again');
-  } finally {
-    w.done();
-  }
-});
-
-test('in Messages a 503 keeps the entry with Undo attached and a 404 drops it; the stack holds 20', async () => {
-  let busy = 1;
-  const w = agentWorld({ unarchive: (id) => (id === 8 ? 404 : busy-- > 0 ? 503 : 200) });
-  try {
-    await w.api.openAgentSession({ id: 7, host: 'messages' });
-    await w.api.archiveCurrentSession();
-    await w.api.openAgentSession({ id: 8, host: 'messages' });
-    await w.api.archiveCurrentSession();
-
-    await w.pressUndo();
-    assert.deepEqual(w.api.archiveUndoEntries().map((e) => e.id), [7], '404: eight is gone');
-    assert.equal(w.last().message, 'Archived “Dark mode”', 'the rest re-toast');
-
-    await w.pressUndo();
-    assert.deepEqual(w.api.archiveUndoEntries().map((e) => e.id), [7], '503: put back');
-    assert.equal(w.last().message, 'HTTP 503');
-    assert.equal(w.last().opts.action.label, 'Undo');
-
-    await w.pressUndo();
-    assert.deepEqual(w.api.archiveUndoEntries(), []);
-    assert.equal(w.last().message, 'Brought back “Dark mode”');
-    assert.equal(w.api.ARCHIVE_UNDO_MAX, 20);
-    assert.match(STORE, /while \(archiveUndo\.length > ARCHIVE_UNDO_MAX\) archiveUndo\.shift\(\);/, 'a 21st push drops the oldest');
-    assert.match(STORE, /pushArchiveUndo\(\{ id, title: session\.title/, 'pushed after api.archiveSession resolved');
-  } finally {
-    w.done();
-  }
 });

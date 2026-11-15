@@ -89,13 +89,6 @@ export function AlertsSection() {
               </span>
               <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
             </label>
-            <label className="ui-row flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="shared_work">
-              <span className="ui-row-tx">
-                <span className="ui-row-t block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.sharedWork.label')}</span>
-                <span className="ui-row-s block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings:alerts.push.sharedWork.description')}</span>
-              </span>
-              <input type="checkbox" className="un-switch mt-0.5 shrink-0" disabled />
-            </label>
             <label className="ui-row flex items-start justify-between gap-4 cursor-pointer select-none" data-mobile-push-category="developer_sessions">
               <span className="ui-row-tx">
                 <span className="ui-row-t block text-sm font-medium text-zinc-800 dark:text-zinc-200">{t('settings:alerts.push.developerSessions.label')}</span>

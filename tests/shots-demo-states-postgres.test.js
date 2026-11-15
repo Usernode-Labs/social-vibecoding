@@ -19,7 +19,6 @@ const dbManager = require('../src/services/db-manager');
 const shotsFixtures = require('../src/services/shots-fixtures');
 const demoStates = require('../src/services/shots-demo-states');
 const readyStates = require('../src/services/shots-ready-states');
-const agentSessions = require('../src/services/agent-sessions');
 const friends = require('../src/services/friends');
 const { loadOnboarding } = require('../src/services/topochain/challenge-onboarding');
 const { loadCadence } = require('../src/services/topochain/challenge-scorer');
@@ -247,8 +246,7 @@ test('demo states go into both shots copies or neither, once', { timeout: 180000
 
   // The same rows on both sides, and nothing left to add a second time.
   const shape = async (pool) => (await pool.query(
-    `SELECT (SELECT array_agg(id ORDER BY id) FROM agent_sessions) AS sessions,
-            (SELECT array_agg(id ORDER BY id) FROM chat_sessions) AS changes,
+    `SELECT (SELECT array_agg(id ORDER BY id) FROM chat_sessions) AS changes,
             (SELECT array_agg(id ORDER BY id) FROM challenges) AS challenges,
             (SELECT array_agg(measure ORDER BY measure) FROM challenge_scoring_rules) AS rules,
             (SELECT array_agg(slug ORDER BY slug) FROM apps) AS apps,
@@ -267,7 +265,7 @@ test('demo states go into both shots copies or neither, once', { timeout: 180000
 
   // Every row is in the reserved block or marked as the fixture's.
   const [low, high] = demoStates.RESERVED_RANGE;
-  for (const table of ['agent_sessions', 'chat_sessions', 'challenges', 'challenge_templates', 'apps', 'conversations']) {
+  for (const table of ['chat_sessions', 'challenges', 'challenge_templates', 'apps', 'conversations']) {
     const { rows } = await base.pool.query(`SELECT id FROM ${table} WHERE id >= 990000`);
     assert.ok(rows.every((row) => Number(row.id) >= low && Number(row.id) <= high), table);
   }
@@ -297,28 +295,6 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
        ('usernode-capture', 'usernode-capture-admin', 'usernode-shots-full-admin', 'staging-demo-general-lin')`))
     .rows.map((row) => [row.username, Number(row.id)]));
   const member = ids['usernode-capture'];
-
-  // Agent runs: two working conversations, one asked to stop, both untitled
-  // so that no list on every screen (the rail's Recents, the menu) spins;
-  // and six titled ones, so the menu's list (five) offers Show more.
-  const { sessions } = await agentSessions.listAgentSessions(pool, { userId: member });
-  const busy = sessions.filter((s) => s.busy);
-  assert.deepEqual(busy.map((s) => s.id).sort(), [demoStates.IDS.runningSession, demoStates.IDS.stoppingSession]);
-  assert.ok(busy.every((s) => !s.title && !s.activeChange));
-  assert.equal(sessions.filter((s) => s.title).length, 6, 'the preview change and five more');
-  const running = await agentSessions.readState(pool, { userId: member, id: demoStates.IDS.runningSession });
-  assert.equal(running.busy !== false && !!running.lease, true, 'its turn reads as running');
-  assert.equal(running.lease.stopping, false);
-  const stopping = await agentSessions.readState(pool, { userId: member, id: demoStates.IDS.stoppingSession });
-  assert.equal(stopping.lease.stopping, true);
-  assert.ok(Date.now() - stopping.lease.stopRequestedAt >= 3000, 'past the "Stopping the agent…" moment');
-
-  // A change of the member's with its deployed preview, still proposable.
-  const preview = await agentSessions.readState(pool, { userId: member, id: demoStates.IDS.previewSession });
-  const card = preview.messages.find((message) => message.metadata?.stagingUrl);
-  assert.equal(card.changeId, demoStates.IDS.previewChange);
-  assert.match(card.metadata.stagingUrl, /^https:\/\/[a-z-]+\.invalid$/);
-  assert.equal(preview.session.activeChange.status, 'active');
 
   // A proposal whose only vote is the member's, on an earlier version.
   const { rows: [votes] } = await pool.query(
@@ -943,10 +919,6 @@ test('both copies hold the same demo-state rows, every time in them from the pai
   }
   assert.ok(compared > 200, `the states wrote what was compared (${compared} values)`);
   // And the times the screens order by are the moment's, not either clock's.
-  const { rows: [running] } = await head.pool.query(
-    'SELECT last_activity_at, active_turn FROM agent_sessions WHERE id = $1', [demoStates.IDS.runningSession]);
-  assert.equal(running.last_activity_at.toISOString(), new Date(Date.parse(at) - 60000).toISOString());
-  assert.equal(Date.parse(running.active_turn.startedAt), Date.parse(at) - 40000);
   const { rows: [remix] } = await base.pool.query('SELECT forked_from FROM apps WHERE id = $1', [demoStates.IDS.memberRemix]);
   assert.equal(remix.forked_from.forkedAt, new Date(Date.parse(at) - 2 * 86400000).toISOString());
   // Two moments for one pair are refused.

@@ -101,25 +101,9 @@ test('native and imported proposal creation assign inside their transactions', (
   );
 });
 
-test('Mayor-started, shared and cloned work assigns before it is exposed', () => {
-  const sessions = source('src/routes/sessions.js');
-  orderedSlice(sessions, "router.post('/api/apps/:slug/sessions'", 'start a HEADLESS auto session', [
-    ['session insert', 'INSERT INTO chat_sessions'],
-    ['issuer assignment', 'await topicAttrs.selfAssignProposal('],
-    ['start event', 'events.record(pool'],
-    ['success response', 'res.status(201).json'],
-  ]);
-  orderedSlice(sessions, "router.post('/api/sessions/:id/clone-headless'", "router.post('/api/sessions/:id/share'", [
-    ['session insert', 'INSERT INTO chat_sessions'],
-    ['issuer assignment', 'await topicAttrs.selfAssignProposal('],
-  ]);
-  // #2779: forking a chat into a new classic session is retired; the route
-  // writes nothing now.
-  const fork = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/fork'"),
-    sessions.indexOf("router.post('/api/sessions/:id/pause'"));
-  assert.doesNotMatch(fork, /INSERT INTO chat_sessions/);
+test('shared work assigns before it is exposed', () => {
   // A shared piece of work is made on a conductor (the `work.share`
-  // operation), in the same order.
+  // operation): the row, its issuer's assignment, then the broadcast.
   orderedSlice(
     source('src/services/fork-operations.js'),
     'const share = {',

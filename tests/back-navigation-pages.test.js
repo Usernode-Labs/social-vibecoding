@@ -12,9 +12,9 @@
 //      Back skipped the hub. A press now pushes an entry at the same address
 //      naming its tab (AppView._pushWorkshopTab), and the router shows the tab
 //      an entry names when Back or Forward lands on it.
-//   2. An up arrow (the header's, a topic's "‹ Workshop", a dev session's;
-//      Discover's detail had one until One Home, #6361) is a STEP BACK when the entry below is where it
-//      points (App._stepBackTo). Following its href pushed the parent on top
+//   2. An up arrow (the header's, a topic's "‹ Workshop"; Discover's detail
+//      had one until One Home, #6361) is a STEP BACK when the entry below is
+//      where it points (App._stepBackTo). Following its href pushed the parent on top
 //      of the page, so the next Back reopened the page just left.
 //   3. The Leaderboard's tabs push when pressed; a router pass still replaces.
 //   4. A Discover row bound one more click listener on every list render, so
@@ -42,7 +42,6 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const APP_JS = read('public/js/app.js');
 const APP_VIEW = read('public/js/app-view.js');
 const WORKSHOP = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-const DEV_CHAT = read('frontend/src/features/dev-chat/dev-chat.js');
 const TOPIC_BACK = read('frontend/src/features/dev-board/topic/topic-back.tsx');
 const LEADERBOARD = read('frontend/src/features/leaderboard/leaderboard.js');
 const DAPP = JSON.parse(read('dapp.json'));
@@ -350,10 +349,6 @@ test('every up arrow that followed its href asks to step back first', () => {
   const chain = backBtn.slice(0, backBtn.indexOf('App.navigateHome();'));
   assert.match(chain, /if \(App\._stepBackTo\(href\)\) return;[^\n]*\n\s*window\.location\.hash = href;/,
     'the header\'s arrow');
-  const leave = DEV_CHAT.slice(DEV_CHAT.indexOf('  leaveSession() {'));
-  const leaveBody = leave.slice(0, leave.indexOf('\n  },'));
-  assert.match(leaveBody, /if \(!stepBack\(origin\)\) location\.hash = origin;/, 'a dev session\'s arrow');
-  assert.match(leaveBody, /if \(!stepBack\('#messages'\)\) location\.hash = '#messages';/);
   assert.match(TOPIC_BACK, /if \(app\?\._stepBackTo\?\.\(href\)\) return;\s*\n\s*window\.location\.hash = href;/,
     'a topic\'s "‹ Workshop"');
 });
@@ -627,7 +622,6 @@ test('#6110: a write of the page\'s own address waits while the panel holds an i
   const writes = [];
   const ctx = vm.createContext({
     location: win.location, history: win.history, URL, AppView,
-    DevChat: undefined,
   });
   const App = vm.runInContext(`const App = { _isRestoring: false, currentApp: 'garden', currentTab: 'dev', currentSubTab: 'forum',
     chromeless: false, _historyPushes: 0,

@@ -1,301 +1,32 @@
-// Tests for #249 — meaningful default session names.
+// Tests for #249 — meaningful default change names.
 //
-//  - llm.parseSessionTitleText: tolerant parsing (JSON shape, raw text,
-//    fences/quotes), sanitization, length cap, throws on empty.
-//  - services/session-title: first-message hook fires only when both
-//    session_title and pr_number are unset; success persists with the
-//    `pr_number IS NULL` guard and emits session_titled; failures
-//    resolve null and touch nothing (never throw); the turn-end refresh
-//    gathers the full request history + live spec.
+//  - services/session-title: deterministicTitle is the shared, LLM-free
+//    trim a change's name and its pull request's title come from: markdown
+//    dropped, whitespace collapsed, a conversational lead-in skipped, a
+//    whole sentence preferred, cut at a word under 72 characters.
+//  - #2500 / #3518 / #3183 the scaffolding: parseIssueSeed peels the issue
+//    card's `Please implement GitHub issue #N: "…"` and the Homeroom bot's
+//    `Build issue #N:` off, and parseTitledRequest a work order's TITLE:
+//    line, so the deterministic name (change AND pull request) is what the
+//    wrapper wraps.
 //  - services/pr-metadata: both PR UPDATE statements mirror pr_title
-//    into session_title.
-//  - #1949 OpenRouter sessions: deterministicTitle is the shared,
-//    LLM-free trim; titleFromFirstMessage names an untitled, PR-less
-//    session from its first user message with no model call and no
-//    spend, and an OpenRouter PR title equals that session name.
-//  - #2500 the issue-card scaffolding: parseIssueSeed peels
-//    `Please implement GitHub issue #N: "…"` off, so the deterministic
-//    name (session AND pull request) is the issue title and the helper
-//    model is handed that title as its issueTitle input; titleAtTurnEnd is
-//    the shared turn-end hook, which now falls back to that deterministic
-//    name when no payer resolves instead of leaving the branch name; and a
-//    hand-chosen title outranks every generated one.
+//    into session_title, and an OpenRouter PR title equals the change's
+//    deterministic name (#1949).
 //
 // Run with: node --test tests/session-title.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const llmReal = require('../src/services/llm');
-
-// ---- parseSessionTitleText ----
-
-test('parseSessionTitleText accepts the JSON shape', () => {
-  assert.equal(llmReal.parseSessionTitleText('{"title": "Session naming defaults"}'), 'Session naming defaults');
-});
-
-test('parseSessionTitleText accepts fenced JSON', () => {
-  assert.equal(
-    llmReal.parseSessionTitleText('```json\n{"title": "Fix login redirect"}\n```'),
-    'Fix login redirect'
-  );
-});
-
-test('parseSessionTitleText accepts plain text and strips quotes/fences/trailing period', () => {
-  assert.equal(llmReal.parseSessionTitleText('Leaderboard pagination'), 'Leaderboard pagination');
-  assert.equal(llmReal.parseSessionTitleText('"Leaderboard pagination."'), 'Leaderboard pagination');
-  assert.equal(llmReal.parseSessionTitleText('```\nLeaderboard pagination\n```'), 'Leaderboard pagination');
-});
-
-test('parseSessionTitleText collapses whitespace and newlines', () => {
-  assert.equal(llmReal.parseSessionTitleText('  Fix   session\nnaming  '), 'Fix session naming');
-});
-
-test('parseSessionTitleText hard-caps at 256 chars', () => {
-  const long = 'x'.repeat(400);
-  assert.equal(llmReal.parseSessionTitleText(long).length, 256);
-});
-
-test('parseSessionTitleText throws on empty/unusable input', () => {
-  assert.throws(() => llmReal.parseSessionTitleText(''));
-  assert.throws(() => llmReal.parseSessionTitleText('   '));
-  assert.throws(() => llmReal.parseSessionTitleText('"."'));
-});
-
 // ---- session-title service ----
 
-// Stub ./llm and ./limits in require.cache, then force-load the subject.
-function loadServiceWithStubs({ onGenerate, spends = [] }) {
-  const llmPath = require.resolve('../src/services/llm');
-  const limitsPath = require.resolve('../src/services/limits');
+// The subject, loaded fresh for each test.
+function loadService() {
   const subjectPath = require.resolve('../src/services/session-title');
-  const orig = {
-    llm: require.cache[llmPath],
-    limits: require.cache[limitsPath],
-    subject: require.cache[subjectPath],
-  };
-
-  require.cache[llmPath] = {
-    exports: {
-      generateSessionTitle: async (args) => onGenerate(args),
-      estimateCostCents: () => 0.01,
-    },
-    loaded: true, id: llmPath, filename: llmPath, paths: orig.llm ? orig.llm.paths : [],
-  };
-  require.cache[limitsPath] = {
-    exports: { recordSpend: async (...a) => { spends.push(a); } },
-    loaded: true, id: limitsPath, filename: limitsPath, paths: orig.limits ? orig.limits.paths : [],
-  };
   delete require.cache[subjectPath];
   const subject = require('../src/services/session-title');
-
-  const restore = () => {
-    if (orig.llm) require.cache[llmPath] = orig.llm; else delete require.cache[llmPath];
-    if (orig.limits) require.cache[limitsPath] = orig.limits; else delete require.cache[limitsPath];
-    delete require.cache[subjectPath];
-    if (orig.subject) require.cache[subjectPath] = orig.subject;
-  };
-  return { subject, restore };
+  return { subject, restore: () => { delete require.cache[subjectPath]; } };
 }
-
-function mockPool({ updateRowCount = 1, userRows = [], specMd = '' } = {}) {
-  return {
-    queries: [],
-    async query(sql, params) {
-      this.queries.push({ sql, params });
-      if (/UPDATE chat_sessions SET session_title/.test(sql)) return { rowCount: updateRowCount, rows: [] };
-      if (/FROM chat_session_messages/.test(sql)) return { rows: userRows };
-      if (/SELECT spec_md FROM chat_sessions/.test(sql)) return { rows: [{ spec_md: specMd }] };
-      return { rows: [], rowCount: 0 };
-    },
-  };
-}
-
-test('headlessTitle derives "#N · title" and truncates to 256', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
-  try {
-    assert.equal(subject.headlessTitle(249, 'Session naming should default to meaningful identifiers'),
-      '#249 · Session naming should default to meaningful identifiers');
-    assert.equal(subject.headlessTitle(7, '  spaced \n out  '), '#7 · spaced out');
-    assert.equal(subject.headlessTitle(7, 'x'.repeat(400)).length, 256);
-    // Degraded fetch (no title) and bogus numbers -> null, branch fallback.
-    assert.equal(subject.headlessTitle(7, ''), null);
-    assert.equal(subject.headlessTitle(7, null), null);
-    assert.equal(subject.headlessTitle(null, 'title'), null);
-    assert.equal(subject.headlessTitle(0, 'title'), null);
-  } finally {
-    restore();
-  }
-});
-
-test('maybeTitleFirstMessage titles a fresh session and emits session_titled', async () => {
-  const captured = [];
-  const spends = [];
-  const { subject, restore } = loadServiceWithStubs({
-    onGenerate: async (args) => { captured.push(args); return { title: 'Session naming defaults', usage: { input_tokens: 10, output_tokens: 5 }, model: 'claude-haiku-4-5' }; },
-    spends,
-  });
-  try {
-    const pool = mockPool();
-    const session = { id: 5, session_title: null, pr_number: null };
-    const events = [];
-    const title = await subject.maybeTitleFirstMessage({
-      pool, session, message: 'fix the session naming please',
-      userId: 3, apiKey: null, send: (type, data) => events.push({ type, data }),
-    });
-
-    assert.equal(title, 'Session naming defaults');
-    assert.deepEqual(captured[0].requests, ['fix the session naming please']);
-    assert.equal(session.session_title, 'Session naming defaults');
-    // The persist is guarded so a PR-mirrored title can't be clobbered.
-    const upd = pool.queries.find((q) => /UPDATE chat_sessions SET session_title/.test(q.sql));
-    assert.match(upd.sql, /pr_number IS NULL/);
-    assert.match(upd.sql, /proposed_pr_title IS NULL/,
-      'a later automatic title cannot replace an author-chosen proposal title');
-    assert.deepEqual(upd.params, ['Session naming defaults', 5]);
-    assert.deepEqual(events, [{ type: 'session_titled', data: { sessionTitle: 'Session naming defaults' } }]);
-    // The Haiku call was debited to the requesting user.
-    assert.equal(spends.length, 1);
-    assert.equal(spends[0][1], 3);
-  } finally {
-    restore();
-  }
-});
-
-test('maybeTitleFirstMessage skips when the session already has a title or a PR', async () => {
-  let calls = 0;
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => { calls++; return { title: 'x' }; } });
-  try {
-    const pool = mockPool();
-    assert.equal(await subject.maybeTitleFirstMessage({
-      pool, session: { id: 1, session_title: 'Already named', pr_number: null }, message: 'hi',
-    }), null);
-    assert.equal(await subject.maybeTitleFirstMessage({
-      pool, session: { id: 2, session_title: null, pr_number: 42 }, message: 'hi',
-    }), null);
-    assert.equal(calls, 0, 'no LLM call when title or PR already exists');
-    assert.equal(pool.queries.length, 0, 'no DB writes either');
-  } finally {
-    restore();
-  }
-});
-
-// #2500: an unreachable helper model used to leave the session showing its
-// branch name forever, which is exactly the case the issue-title fallback
-// exists for. The failure is still non-fatal and still never throws — it
-// just leaves a readable name behind now.
-test('a failed generation falls back to the deterministic name (never throws)', async () => {
-  const { subject, restore } = loadServiceWithStubs({
-    onGenerate: async () => { throw new Error('LLM down'); },
-  });
-  try {
-    const pool = mockPool();
-    const session = { id: 9, session_title: null, pr_number: null };
-    const events = [];
-    const title = await subject.maybeTitleFirstMessage({
-      pool, session, message: 'do the thing', userId: 1, send: (t, d) => events.push(t),
-    });
-    assert.equal(title, 'do the thing');
-    assert.equal(session.session_title, 'do the thing');
-    assert.deepEqual(events, ['session_titled']);
-    assert.equal(pool.queries.length, 1, 'one guarded UPDATE, no model call');
-  } finally {
-    restore();
-  }
-});
-
-test('a failed generation on an issue-started session falls back to the ISSUE TITLE', async () => {
-  const { subject, restore } = loadServiceWithStubs({
-    onGenerate: async () => { throw new Error('LLM down'); },
-  });
-  try {
-    const pool = mockPool();
-    const session = { id: 9, session_title: null, pr_number: null };
-    const title = await subject.maybeTitleFirstMessage({
-      pool,
-      session,
-      message: 'Please implement GitHub issue #2496: "Add claimed issues to workshop current work".'
-        + '\n\nThe workshop only lists proposals today.\n\n'
-        + 'Open a PR that closes this issue (include "Closes #2496" so it links and closes the issue on merge).',
-      userId: 1,
-      send: () => {},
-    });
-    assert.equal(title, 'Add claimed issues to workshop current work');
-  } finally {
-    restore();
-  }
-});
-
-// A refresh must never trade a name the model already produced for the
-// deterministic trim just because THIS call failed.
-test('a failed refresh leaves an already-named session alone', async () => {
-  const { subject, restore } = loadServiceWithStubs({
-    onGenerate: async () => { throw new Error('LLM down'); },
-  });
-  try {
-    const pool = mockPool({ userRows: [{ content: 'do the thing' }] });
-    const session = { id: 9, session_title: 'Paginated leaderboard rows', pr_number: null };
-    const events = [];
-    const title = await subject.refreshFromHistory({
-      pool, session, userId: 1, send: (t) => events.push(t),
-    });
-    assert.equal(title, null);
-    assert.equal(session.session_title, 'Paginated leaderboard rows', 'session left untouched');
-    assert.equal(events.length, 0, 'no event emitted');
-    assert.equal(
-      pool.queries.filter((q) => /UPDATE chat_sessions SET session_title/.test(q.sql)).length,
-      0,
-      'no UPDATE attempted',
-    );
-  } finally {
-    restore();
-  }
-});
-
-test('losing the race to a PR-mirrored title emits nothing', async () => {
-  const { subject, restore } = loadServiceWithStubs({
-    onGenerate: async () => ({ title: 'Slow early title', usage: undefined, model: 'claude-haiku-4-5' }),
-  });
-  try {
-    // rowCount 0 = the guarded UPDATE matched nothing (PR landed meanwhile).
-    const pool = mockPool({ updateRowCount: 0 });
-    const session = { id: 9, session_title: null, pr_number: null };
-    const events = [];
-    const title = await subject.maybeTitleFirstMessage({
-      pool, session, message: 'do the thing', send: (t) => events.push(t),
-    });
-    assert.equal(title, null);
-    assert.equal(session.session_title, null);
-    assert.equal(events.length, 0);
-  } finally {
-    restore();
-  }
-});
-
-test('refreshFromHistory feeds the full request history + live spec to the LLM', async () => {
-  const captured = [];
-  const { subject, restore } = loadServiceWithStubs({
-    onGenerate: async (args) => { captured.push(args); return { title: 'Fix session naming defaults', usage: undefined, model: 'claude-haiku-4-5' }; },
-  });
-  try {
-    const pool = mockPool({
-      userRows: [{ content: "something's off with naming" }, { content: 'yes, default the titles' }],
-      specMd: '# Spec: session naming',
-    });
-    const session = { id: 5, session_title: 'Old vague title', pr_number: null };
-    const events = [];
-    const title = await subject.refreshFromHistory({
-      pool, session, userId: 3, send: (type, data) => events.push({ type, data }),
-    });
-    assert.equal(title, 'Fix session naming defaults');
-    assert.deepEqual(captured[0].requests, ["something's off with naming", 'yes, default the titles']);
-    assert.deepEqual(captured[0].specs, ['# Spec: session naming']);
-    assert.equal(session.session_title, 'Fix session naming defaults');
-    assert.deepEqual(events, [{ type: 'session_titled', data: { sessionTitle: 'Fix session naming defaults' } }]);
-  } finally {
-    restore();
-  }
-});
 
 // ---- #2500: the issue card's kickoff scaffolding ----
 
@@ -304,7 +35,7 @@ const ISSUE_SEED = 'Please implement GitHub issue #2496: "Add claimed issues to 
   + 'Open a PR that closes this issue (include "Closes #2496" so it links and closes the issue on merge).';
 
 test('parseIssueSeed splits the issue card seed and ignores anything else', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     const seed = subject.parseIssueSeed(ISSUE_SEED);
     assert.equal(seed.number, 2496);
@@ -322,7 +53,7 @@ test('parseIssueSeed splits the issue card seed and ignores anything else', () =
 });
 
 test('deterministicTitle names an issue-started session after its ISSUE, not the instruction', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     // The reported #2500 title, before: `Please implement GitHub issue 2496:
     // "Add claimed issues to workshop cur…` — the `#` eaten by the markdown
@@ -343,66 +74,6 @@ test('deterministicTitle names an issue-started session after its ISSUE, not the
   }
 });
 
-test('titleInputsFromRequests hands the model the issue title and drops the wrapper', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
-  try {
-    const prepared = subject.titleInputsFromRequests([ISSUE_SEED, 'also sort them by date']);
-    assert.equal(prepared.issueTitle, 'Add claimed issues to workshop current work');
-    assert.deepEqual(prepared.requests, [
-      'Add claimed issues to workshop current work'
-        + '\n\nThe workshop lists proposals but not the issues people have claimed.',
-      'also sort them by date',
-    ]);
-    // Nothing to peel: requests pass through and there is no issue signal.
-    const plain = subject.titleInputsFromRequests(['make the leaderboard paginate']);
-    assert.equal(plain.issueTitle, null);
-    assert.deepEqual(plain.requests, ['make the leaderboard paginate']);
-  } finally {
-    restore();
-  }
-});
-
-test('refreshFromHistory passes the issue title through to generateSessionTitle', async () => {
-  const captured = [];
-  const { subject, restore } = loadServiceWithStubs({
-    onGenerate: async (args) => {
-      captured.push(args);
-      return { title: 'Claimed issues on the workshop board', usage: undefined, model: 'claude-haiku-4-5' };
-    },
-  });
-  try {
-    const pool = mockPool({ userRows: [{ content: ISSUE_SEED }, { content: 'group them by owner' }] });
-    const session = { id: 11, session_title: 'dev/tester-1789', pr_number: null };
-    const title = await subject.refreshFromHistory({ pool, session, userId: 3, send: () => {} });
-    assert.equal(title, 'Claimed issues on the workshop board');
-    assert.equal(captured[0].issueTitle, 'Add claimed issues to workshop current work');
-    assert.doesNotMatch(captured[0].requests[0], /Please implement GitHub issue/);
-    assert.match(captured[0].requests[0], /^Add claimed issues to workshop current work/);
-  } finally {
-    restore();
-  }
-});
-
-// The guarded UPDATE is the whole defence against clobbering a name its
-// author chose: `proposed_pr_title` is set by PATCH /api/sessions/:id/title
-// (#2327) and by submit_work's title, so a manual rename outranks every
-// generated one without needing a flag of its own.
-test('every generated title loses to a hand-chosen one', async () => {
-  const { subject, restore } = loadServiceWithStubs({
-    onGenerate: async () => ({ title: 'Generated name', usage: undefined, model: 'claude-haiku-4-5' }),
-  });
-  try {
-    const pool = mockPool();
-    const session = { id: 12, session_title: null, pr_number: null };
-    await subject.maybeTitleFirstMessage({ pool, session, message: 'do the thing', send: () => {} });
-    const update = pool.queries.find((q) => /UPDATE chat_sessions SET session_title/.test(q.sql));
-    assert.match(update.sql, /pr_number IS NULL/);
-    assert.match(update.sql, /proposed_pr_title IS NULL/);
-  } finally {
-    restore();
-  }
-});
-
 // ---- #3518: the Homeroom bot's build seed ----
 
 // The first message of every build session the bot opens
@@ -413,7 +84,7 @@ const BOT_SEED = 'Build issue #3233: Quota notifications are cryptic codes\n\n'
   + 'Keep the fallback line for a detail that is not two numbers.';
 
 test('parseIssueSeed peels the Homeroom bot\'s build seed too (#3518)', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     const seed = subject.parseIssueSeed(BOT_SEED);
     assert.equal(seed.number, 3233);
@@ -434,7 +105,7 @@ test('parseIssueSeed peels the Homeroom bot\'s build seed too (#3518)', () => {
 });
 
 test('the bot\'s deterministic name is the issue, not "Build issue N:" and a severed plan (#3518)', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     // Before: `Build issue 3233: Quota notifications are cryptic codes Edit
     // the app…`, the title every bot proposal on the platform carried.
@@ -446,96 +117,6 @@ test('the bot\'s deterministic name is the issue, not "Build issue N:" and a sev
       + 'a hundred and fifty with no reason given anywhere'}\n\nShow the reason.`);
     assert.ok(long.length <= 72, long);
     assert.equal(long, 'Accepted proposals scored one point versus a hundred and fifty with no…');
-    // The model is handed the issue title as its own signal, and the plan.
-    const prepared = subject.titleInputsFromRequests([BOT_SEED]);
-    assert.equal(prepared.issueTitle, 'Quota notifications are cryptic codes');
-    assert.doesNotMatch(prepared.requests[0], /Build issue/);
-  } finally {
-    restore();
-  }
-});
-
-// ---- #2500: the shared turn-end hook ----
-
-test('titleAtTurnEnd re-titles from history, and names a first turn from its ask', async () => {
-  const captured = [];
-  const { subject, restore } = loadServiceWithStubs({
-    onGenerate: async (args) => {
-      captured.push(args);
-      return { title: 'Claimed issues on the board', usage: undefined, model: 'claude-haiku-4-5' };
-    },
-  });
-  try {
-    // firstTurn: the cheap path, titled straight from the turn's message.
-    const firstPool = mockPool();
-    const fresh = { id: 21, session_title: null, pr_number: null };
-    assert.equal(await subject.titleAtTurnEnd({
-      pool: firstPool, session: fresh, message: 'make the board show claims',
-      userId: 3, firstTurn: true, resolveBilling: async () => ({ apiKey: 'sk-x' }), send: () => {},
-    }), 'Claimed issues on the board');
-    assert.deepEqual(captured[0].requests, ['make the board show claims']);
-
-    // Every later turn, and every OpenRouter turn (their eager trim already
-    // named them), re-reads the whole history instead.
-    const laterPool = mockPool({ userRows: [{ content: 'make the board show claims' }, { content: 'and sort by date' }] });
-    const named = { id: 22, session_title: 'make the board show claims', pr_number: null };
-    assert.equal(await subject.titleAtTurnEnd({
-      pool: laterPool, session: named, message: 'and sort by date',
-      userId: 3, firstTurn: false, resolveBilling: async () => ({ apiKey: 'sk-x' }), send: () => {},
-    }), 'Claimed issues on the board');
-    assert.deepEqual(captured[1].requests, ['make the board show claims', 'and sort by date']);
-  } finally {
-    restore();
-  }
-});
-
-// The whole point of the hook: no payer used to mean no name at all, which
-// is how an OpenRouter or over-budget session kept its branch name.
-test('titleAtTurnEnd falls back to the deterministic name when no payer resolves', async () => {
-  let generateCalls = 0;
-  const { subject, restore } = loadServiceWithStubs({
-    onGenerate: async () => { generateCalls += 1; return { title: 'never' }; },
-  });
-  try {
-    const seeded = 'Please implement GitHub issue #2496: "Add claimed issues to workshop current work".'
-      + '\n\nThe workshop lists proposals but not the issues people have claimed.';
-    for (const resolveBilling of [
-      async () => ({ error: 'over_budget', reason: 'daily cap' }),
-      async () => { throw new Error('billing lookup exploded'); },
-    ]) {
-      const pool = mockPool({ userRows: [{ content: seeded }] });
-      const session = { id: 23, session_title: null, pr_number: null };
-      const events = [];
-      const title = await subject.titleAtTurnEnd({
-        pool, session, message: seeded, userId: 3, firstTurn: true,
-        resolveBilling, send: (t) => events.push(t),
-      });
-      assert.equal(title, 'Add claimed issues to workshop current work');
-      assert.deepEqual(events, ['session_titled']);
-    }
-    assert.equal(generateCalls, 0, 'no helper-model call was bought');
-  } finally {
-    restore();
-  }
-});
-
-test('titleAtTurnEnd leaves a session that already has a PR to applyPrMetadata', async () => {
-  let billingCalls = 0;
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({ title: 'never' }) });
-  try {
-    const pool = mockPool();
-    const title = await subject.titleAtTurnEnd({
-      pool,
-      session: { id: 24, session_title: 'Mirrored PR title', pr_number: 2151 },
-      message: 'another turn',
-      userId: 3,
-      firstTurn: false,
-      resolveBilling: async () => { billingCalls += 1; return { apiKey: 'sk-x' }; },
-      send: () => {},
-    });
-    assert.equal(title, null);
-    assert.equal(billingCalls, 0, 'no payer is even resolved');
-    assert.equal(pool.queries.length, 0);
   } finally {
     restore();
   }
@@ -544,7 +125,7 @@ test('titleAtTurnEnd leaves a session that already has a PR to applyPrMetadata',
 // ---- #1949: deterministic OpenRouter titles ----
 
 test('deterministicTitle trims markdown, collapses whitespace and caps at 72 chars', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     assert.equal(subject.deterministicTitle('  Fix   the\nlogin  redirect  '), 'Fix the login redirect');
     assert.equal(subject.deterministicTitle('## Fix `login` [redirect](x) *now*'), 'Fix login redirect x now');
@@ -581,7 +162,7 @@ test('deterministicTitle trims markdown, collapses whitespace and caps at 72 cha
 // mid-word. These pin the three rules that replaced it.
 
 test('a message that already fits is returned in the person\'s own words', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     // The rules below exist to spend a budget. With no budget to spend,
     // rephrasing would be taking words out of somebody's mouth for nothing
@@ -595,7 +176,7 @@ test('a message that already fits is returned in the person\'s own words', () =>
 });
 
 test('a conversational lead-in does not spend the title budget', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     // 88 characters, of which the first 21 say nothing at all. The old trim
     // produced "Hey! Could you please make the leaderboard paginate so it
@@ -615,7 +196,7 @@ test('a conversational lead-in does not spend the title budget', () => {
 });
 
 test('several lead-ins stack, and one made only of them survives', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     const long = (opener) => `${opener}the avatar upload rejects anything over `
       + 'four megabytes with an unhelpful five hundred error page';
@@ -638,7 +219,7 @@ test('several lead-ins stack, and one made only of them survives', () => {
 });
 
 test('a whole sentence beats a truncated one', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     const ask = 'Fix the login redirect. It sends people to the dashboard '
       + 'instead of back to where they started, which is confusing.';
@@ -657,7 +238,7 @@ test('a whole sentence beats a truncated one', () => {
 });
 
 test('an opening fragment is not mistaken for a name', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     // "Two things" is a complete sentence and tells you nothing. It has to
     // clear a length AND a word count before it can win, so this falls
@@ -673,7 +254,7 @@ test('an opening fragment is not mistaken for a name', () => {
 });
 
 test('an abbreviation is not the end of a sentence', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     const ask = 'Fix the e.g. case in the markdown parser, which currently '
       + 'cuts the sentence off at the abbreviation instead of continuing.';
@@ -686,7 +267,7 @@ test('an abbreviation is not the end of a sentence', () => {
 });
 
 test('a truncated title is cut at a word boundary', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     const ask = 'Rework the notification digest so it groups by app rather '
       + 'than by day, and drops anything already read elsewhere';
@@ -705,7 +286,7 @@ test('a truncated title is cut at a word boundary', () => {
 });
 
 test('an issue-started session is still named after its issue, untouched', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     // The issue title is already a name — none of the rules above may
     // rewrite it. "Let us…" here is deliberately a phrase the lead-in
@@ -724,7 +305,7 @@ test('an issue-started session is still named after its issue, untouched', () =>
 const OVERFLOW = ' and this part makes the whole message run past the cap';
 
 test('a hyphen glued to an opening word is part of that word', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     // "right" and "hi" are both lead-ins, and the punctuation that follows
     // a lead-in used to include the hyphen — so these became "click the
@@ -742,7 +323,7 @@ test('a hyphen glued to an opening word is part of that word', () => {
 });
 
 test('a word that is only sometimes a greeting needs the punctuation', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     // "OK" and "Right" are greetings in "OK, do this" and control names or
     // directions in "OK button" and "Right sidebar". Stripping them
@@ -771,7 +352,7 @@ test('a word that is only sometimes a greeting needs the punctuation', () => {
 });
 
 test('a dotted initialism is not a sentence end, listed or not', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     // An allowlist got "e.g." right and still cut "U.S." — so the shape is
     // recognised instead of the word. These are read whole.
@@ -789,7 +370,7 @@ test('a dotted initialism is not a sentence end, listed or not', () => {
 });
 
 test('an over-long issue title is cut, never re-sentenced', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     // An issue title is already a name. Picking a sentence out of it is a
     // rewrite, and it silently drops the half that says what changes.
@@ -805,7 +386,7 @@ test('an over-long issue title is cut, never re-sentenced', () => {
 });
 
 test('a link is left exactly where the person put it', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     // Two revisions tried to drop URLs, on the reasoning that a link is long
     // and is rarely the name of a change. Both destroyed the subject of a
@@ -835,7 +416,7 @@ test('a link is left exactly where the person put it', () => {
 });
 
 test('a cut never splits a character in half', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     // Lengths here are UTF-16 units, so an emoji is two of them. A no-space
     // run of them reaches the hard cut, and slicing at an odd offset used to
@@ -848,106 +429,6 @@ test('a cut never splits a character in half', () => {
       assert.doesNotMatch(title, LONE, `lone surrogate at padding ${pad}`);
       assert.ok(title.length <= 72, `over the cap at padding ${pad}`);
     }
-  } finally {
-    restore();
-  }
-});
-
-test('titleFromFirstMessage names an untitled OpenRouter session from its first user message', async () => {
-  let generateCalls = 0;
-  const spends = [];
-  const { subject, restore } = loadServiceWithStubs({
-    onGenerate: async () => { generateCalls += 1; return { title: 'never' }; },
-    spends,
-  });
-  try {
-    // The FIRST user row wins over the turn's own message — a session
-    // whose opening turn was refused or stopped is still named from its
-    // opening ask, and that is the request the PR title comes from too.
-    const pool = mockPool({ userRows: [{ content: 'Make the **leaderboard** paginate' }, { content: 'try again' }] });
-    const session = { id: 5, session_title: null, pr_number: null };
-    const events = [];
-    const title = await subject.titleFromFirstMessage({
-      pool, session, message: 'try again', send: (type, data) => events.push({ type, data }),
-    });
-
-    assert.equal(title, 'Make the leaderboard paginate');
-    assert.equal(session.session_title, 'Make the leaderboard paginate');
-    const sel = pool.queries.find((q) => /FROM chat_session_messages/.test(q.sql));
-    assert.match(sel.sql, /role = 'user'/);
-    assert.match(sel.sql, /ORDER BY id ASC LIMIT 1/);
-    assert.deepEqual(sel.params, [5]);
-    const upd = pool.queries.find((q) => /UPDATE chat_sessions SET session_title/.test(q.sql));
-    assert.match(upd.sql, /pr_number IS NULL/, 'same guard as the Haiku path');
-    assert.deepEqual(upd.params, ['Make the leaderboard paginate', 5]);
-    assert.deepEqual(events, [{ type: 'session_titled', data: { sessionTitle: 'Make the leaderboard paginate' } }]);
-    assert.equal(generateCalls, 0, 'no model call');
-    assert.equal(spends.length, 0, 'nothing to debit');
-  } finally {
-    restore();
-  }
-});
-
-test('titleFromFirstMessage falls back to the turn message and skips when nothing is usable', async () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
-  try {
-    // No stored row yet -> the turn's own message names the session.
-    const pool = mockPool({ userRows: [] });
-    const session = { id: 6, session_title: null, pr_number: null };
-    assert.equal(await subject.titleFromFirstMessage({ pool, session, message: 'Add a dark mode toggle' }),
-      'Add a dark mode toggle');
-    assert.equal(session.session_title, 'Add a dark mode toggle');
-
-    // Nothing readable at all -> no title, no UPDATE, branch name stays.
-    const empty = mockPool({ userRows: [{ content: '```\ncode only\n```' }] });
-    const bare = { id: 7, session_title: null, pr_number: null };
-    assert.equal(await subject.titleFromFirstMessage({ pool: empty, session: bare, message: '   ' }), null);
-    assert.equal(bare.session_title, null);
-    assert.ok(!empty.queries.some((q) => /UPDATE chat_sessions/.test(q.sql)), 'no UPDATE attempted');
-  } finally {
-    restore();
-  }
-});
-
-test('titleFromFirstMessage skips titled and PR sessions without touching the DB', async () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
-  try {
-    const pool = mockPool();
-    assert.equal(await subject.titleFromFirstMessage({
-      pool, session: { id: 1, session_title: 'Already named', pr_number: null }, message: 'hi',
-    }), null);
-    assert.equal(await subject.titleFromFirstMessage({
-      pool, session: { id: 2, session_title: null, pr_number: 42 }, message: 'hi',
-    }), null);
-    assert.equal(await subject.titleFromFirstMessage({ pool, session: null, message: 'hi' }), null);
-    assert.equal(pool.queries.length, 0, 'no reads or writes');
-  } finally {
-    restore();
-  }
-});
-
-test('titleFromFirstMessage never throws: a DB failure resolves null, a lost race emits nothing', async () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
-  try {
-    const broken = {
-      async query() { throw new Error('db down'); },
-    };
-    const session = { id: 9, session_title: null, pr_number: null };
-    const events = [];
-    assert.equal(await subject.titleFromFirstMessage({
-      pool: broken, session, message: 'do the thing', send: (t) => events.push(t),
-    }), null);
-    assert.equal(session.session_title, null, 'session left untouched');
-    assert.equal(events.length, 0);
-
-    // rowCount 0 = the guarded UPDATE matched nothing (PR landed meanwhile).
-    const raced = mockPool({ updateRowCount: 0, userRows: [{ content: 'do the thing' }] });
-    const late = { id: 10, session_title: null, pr_number: null };
-    assert.equal(await subject.titleFromFirstMessage({
-      pool: raced, session: late, message: 'do the thing', send: (t) => events.push(t),
-    }), null);
-    assert.equal(late.session_title, null);
-    assert.equal(events.length, 0);
   } finally {
     restore();
   }
@@ -1043,7 +524,7 @@ test('the update-PR UPDATE mirrors pr_title into session_title', async () => {
   }
 });
 
-test('an OpenRouter PR title is the session name titleFromFirstMessage gave it (#1949)', async () => {
+test('an OpenRouter PR title is the change\'s deterministic name (#1949)', async () => {
   const githubCalls = [];
   const { subject, restore } = loadPrMetadataWithStubs({ githubCalls });
   try {
@@ -1162,8 +643,8 @@ test('a deterministic PR title for a bot build never carries "Build issue N:" (#
 
 // #3183: sessions driven by a templated work order were named after the
 // template — "implement this change in the app: TITLE: Add Calm mode: slower
-// sheep…" — on the payer-free path (titleFromFirstMessage) and in the PR
-// title deterministicPrMetadataDraft derives from the same trim.
+// sheep…" — by the deterministic trim and in the PR title
+// deterministicPrMetadataDraft derives from it.
 const WORK_ORDER = 'Please implement this change in the app: TITLE: Add Calm mode: slower sheep, '
   + 'softer colors, same rounds. DETAIL: A Calm mode toggle in the Grown-ups panel that slows '
   + "the flock's movement and softens the meadow's colors, without changing flock sizes, seeds "
@@ -1172,7 +653,7 @@ const WORK_ORDER = 'Please implement this change in the app: TITLE: Add Calm mod
   + 'DONE + summary when the code is ready.';
 
 test('a work order is named after its TITLE, not its instruction (#3183)', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     assert.equal(subject.deterministicTitle(WORK_ORDER),
       'Add Calm mode: slower sheep, softer colors, same rounds');
@@ -1198,7 +679,7 @@ test('a work order is named after its TITLE, not its instruction (#3183)', () =>
 });
 
 test('the instruction to make a change is dropped even from a message that fits (#3183)', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  const { subject, restore } = loadService();
   try {
     assert.equal(subject.deterministicTitle('Please implement this change in the app: Add dark mode'),
       'Add dark mode');
@@ -1222,15 +703,3 @@ test('the instruction to make a change is dropped even from a message that fits 
   }
 });
 
-test('the model is handed a work order\'s title and detail, not its template (#3183)', () => {
-  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
-  try {
-    const prepared = subject.titleInputsFromRequests([WORK_ORDER]);
-    assert.equal(prepared.issueTitle, null);
-    assert.match(prepared.requests[0],
-      /^Add Calm mode: slower sheep, softer colors, same rounds\n\nA Calm mode toggle/);
-    assert.doesNotMatch(prepared.requests[0], /implement this change|TITLE:|DETAIL:/);
-  } finally {
-    restore();
-  }
-});
