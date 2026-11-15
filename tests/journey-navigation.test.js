@@ -65,8 +65,9 @@ test('every screen root maps to a navigation code the server accepts', () => {
   // recorded still read (src/services/ui-telemetry.js). `my_proposals` was
   // Me › Your work's screen, which History on the Homeroom bot tab replaced,
   // and `discover` Discover's and `communities` the Communities list's,
-  // retired with One Home (#6361) the same way.
-  const retired = ['assistant', 'my_proposals', 'discover', 'communities'];
+  // retired with One Home (#6361) the same way. `agent_session` was the
+  // agent chat's screen, retired with agent chats.
+  const retired = ['assistant', 'my_proposals', 'discover', 'communities', 'agent_session'];
   assert.deepEqual([...codes, ...overlays, ...retired].sort(), [...serverTelemetry.NAV_SCREENS].sort(),
     'the shell and the collector name the same screens');
   for (const code of retired) assert.ok(!codes.has(code), `${code} is no screen's any more`);

@@ -192,11 +192,10 @@ test('Q19: where a slop cannot hang off the control, the control or its row grow
   const bandBody = CSS.slice(band, CSS.indexOf('\n}\n', band));
   assert.match(bandBody, /\.gc-card-actions > :is\(\.gc-vote-btn, \.dev-vote-btn\),[\s\S]*?\{ height: 32px; \}/);
   assert.match(bandBody, /\.gc-card-actions > \.dev-card-menu-btn \{ width: 32px; \}/);
-  // A <select> draws no ::after.
-  assert.match(CSS, /@media \(pointer: coarse\) \{\n  \.dc-model-select \{ min-height: 32px; \}\n\}/);
-  // The agent-session composer's shown-line picker (a span under a
-  // transparent select) is gone: its model pill is a 40px button.
-  assert.doesNotMatch(CSS, /span\.dc-model-select/);
+  // The dev chat composer's model <select> (a select draws no ::after, so it
+  // grew instead) is gone with the dev chat, and the agent-session
+  // composer's shown-line picker with the agent session.
+  assert.doesNotMatch(CSS, /\.dc-model-select/);
 });
 
 test('Q19: chip and Save slops never cover a neighbour\'s own box', () => {

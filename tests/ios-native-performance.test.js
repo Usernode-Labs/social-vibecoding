@@ -94,20 +94,16 @@ test('only decorative loops stop; progress indicators and other platforms retain
     '.status-dot.creating',
     '.work-cog-spinning',
     '.app-version-pill--stale .app-version-pill-dot',
-    '.dc-active-dot-busy.dc-active-dot-active',
-    '.dc-active-dot-busy.dc-active-dot-promoted',
   ]) {
     assert.ok(block.includes(selector), `stops decorative loop ${selector}`);
   }
-  assert.match(block, /dc-active-dot-busy[\s\S]*?box-shadow:/,
-    'busy state keeps a non-motion affordance');
   assert.doesNotMatch(block, /dc-send-spinner|app-version-pill-spinner|import-spinner|\.spin\b/,
     'functional progress spinners stay animated');
   assert.doesNotMatch(block, /un-android|un-desktop/,
     'Android and desktop are outside the optimization scope');
   // Motion is reduced in the app only; Safari and the PWA keep their loops.
-  const loops = [...block.matchAll(/^(html[^\n{]*(?:status-dot\.creating|work-cog-spinning|app-version-pill-dot|dc-active-dot-busy)[^\n{]*)/gm)];
-  assert.equal(loops.length, 5, 'the five decorative-loop selectors');
+  const loops = [...block.matchAll(/^(html[^\n{]*(?:status-dot\.creating|work-cog-spinning|app-version-pill-dot)[^\n{]*)/gm)];
+  assert.equal(loops.length, 3, 'the three decorative-loop selectors');
   for (const [, sel] of loops) {
     assert.match(sel, /^html\.un-ios\.in-native-webview /, `native-only: ${sel}`);
   }

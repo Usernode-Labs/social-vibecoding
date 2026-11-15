@@ -101,7 +101,7 @@ test('a non-author who may not view the session still gets the 404', async () =>
   assert.deepEqual(res.body, { error: 'Session not found' });
 });
 
-test('a failed read answers the author null, so the meter keeps its figure', async () => {
+test('a failed read answers the author null, so a reader keeps the figure it had', async () => {
   const res = await statusAs(AUTHOR, { status: 'active', costFails: true });
   assert.equal(res.status, 200);
   assert.equal(res.body.costTotalCents, null);

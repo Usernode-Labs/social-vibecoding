@@ -29,7 +29,6 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {
   api, cardHtml, hasAction, listRowHtml, mySessionCardHtml, sharedSessionCardHtml,
-  transcriptHtml,
 } = require('./lib/dev-card-html');
 const { renderToHtml, createElement } = require('./lib/render-tsx');
 
@@ -351,62 +350,40 @@ test('private own card offers no public discussion and keeps Make visible', () =
   assert.match(html, />Make visible</);
 });
 
-// ── Transcript sharing: the second, narrower opt-in ─────────────────────────
+// ── What the subtitle says ──────────────────────────────────────────────────
 
-test('private own card offers NO chat-sharing row (nowhere to read it from yet)', () => {
+test('a private own card says only its owner can see it', () => {
   const AppView = makeAppView();
   AppView._sharedById = {};
   const html = mySessionCardHtml(AppView, mySess({}));
-  assert.ok(!menuHas(AppView, html, /Share chat|Chat shared/));
-  assert.doesNotMatch(html, /chat readable/);
   assert.match(html, /Only you can see this here\. Its code is public\./, 'subtitle names the unshared state');
 });
 
-test('visible own card offers "Share chat"; the subtitle stays plain', () => {
+test('a visible own card says it is visible to everyone', () => {
   const AppView = makeAppView();
   AppView._sharedById = { 51: { id: 51, chat_count: 0 } };
   const html = mySessionCardHtml(AppView, mySess({ shared_at: '2026-06-01T03:00:00Z' }));
-  assert.ok(menuHas(AppView, html, /^Share chat$/), 'the second opt-in is offered');
-  assert.ok(!menuHas(AppView, html, /Chat shared/));
-  // Visible ≠ readable: the card must not claim the chat is shared.
   assert.match(html, /Visible to everyone</);
-  assert.doesNotMatch(html, /chat readable/);
 });
 
-test('chat-shared own card flips to the revoke row and says so in the subtitle', () => {
-  const AppView = makeAppView();
-  AppView._sharedById = { 51: { id: 51, chat_count: 0 } };
-  const html = mySessionCardHtml(AppView, mySess({
-    shared_at: '2026-06-01T03:00:00Z',
-    transcript_shared_at: '2026-06-01T03:05:00Z',
-  }));
-  assert.ok(menuHas(AppView, html, /Chat shared/), 'the revoke row');
-  assert.ok(!menuHas(AppView, html, /^Share chat$/));
-  assert.match(html, /Visible to everyone · chat readable/);
-});
-
-test('the ⋯ rows come in chat-sharing → discussion → checks → Archive order', () => {
+test('the ⋯ rows come in discussion → checks → Archive order', () => {
   const AppView = makeAppView();
   AppView._sharedById = { 51: { id: 51, chat_count: 0 } };
   const html = mySessionCardHtml(AppView, mySess({ shared_at: '2026-06-01T03:00:00Z' }));
   const labels = menuLabels(AppView, html).join('|');
   // Visibility used to lead this list; it is the promoted pill now, so the
-  // menu starts at the narrower second opt-in. Archive stays last — it is the
+  // menu starts at the public discussion. Archive stays last — it is the
   // destructive row.
-  assert.match(labels, /^Share chat\|Open public discussion\|View checks\|Archive$/);
+  assert.match(labels, /^Open public discussion\|View checks\|Archive$/);
   assert.match(html, /gc-card-actions[\s\S]*?>Hide</, 'visibility leads the ACTION band');
 });
 
-test('the "Read chat" PILL is gone — the transcript lives on the detail page', () => {
+test('the "Read chat" PILL is gone; a tap on the card opens its page', () => {
   const AppView = makeAppView();
   const on = sharedSessionCardHtml(AppView, sharedSess({ transcript_shared: true }));
   assert.doesNotMatch(on, /data-read-chat/, 'no Read chat pill');
   assert.doesNotMatch(on, /Read chat/);
-  // The shared transcript is hosted by the session's own detail page, which
-  // is exactly where a tap on this card already goes.
   assert.match(on, /data-shared-session-row="71"/);
-  assert.match(transcriptHtml(AppView, sharedSess({ transcript_shared: true })),
-    /data-transcript-section="71"/, 'the detail page hosts it');
 });
 
 test('a shared card offers View checks from its menu', () => {
@@ -415,70 +392,7 @@ test('a shared card offers View checks from its menu', () => {
   assert.equal(menuLabels(AppView, html).join('|'), 'View checks');
 });
 
-test('read-only viewers still reach a published transcript (via the detail page)', () => {
-  // #621: read-only viewers may READ a shared transcript.
-  const AppView = makeAppView();
-  AppView.appData = { can_collaborate: false };
-  const html = sharedSessionCardHtml(AppView, sharedSess({ transcript_shared: true }));
-  assert.match(html, /data-shared-session-row="71"/, 'the card still navigates');
-  assert.match(transcriptHtml(AppView, sharedSess({ transcript_shared: true })),
-    /read-only/);
-});
-
-// ── The transcript section + fork button on the topic page ──────────────────
-
-test('transcript section renders only when the item reports the chat shared', () => {
-  const AppView = makeAppView();
-  assert.strictEqual(transcriptHtml(AppView, { id: 5 }), '');
-  assert.strictEqual(transcriptHtml(AppView, { id: 5, transcript_shared: false }), '');
-  assert.strictEqual(transcriptHtml(AppView, null), '');
-
-  // Shared-session / proposal rows carry the boolean…
-  const shared = transcriptHtml(AppView, { id: 5, transcript_shared: true, message_count: 9 });
-  assert.match(shared, /data-transcript-section="5"/);
-  assert.match(shared, /data-transcript-toggle="5"/);
-  assert.match(shared, /data-transcript-body="5"/);
-  assert.match(shared, /read-only/);
-  // …the viewer's OWN rows carry the timestamp instead (the owner gets the
-  // section too, as the "preview what everyone else sees" path).
-  const mine = transcriptHtml(AppView, { id: 5, transcript_shared_at: '2026-07-01T00:00:00Z' });
-  assert.match(mine, /data-transcript-section="5"/);
-});
-
-test('transcript section starts collapsed unless the reader asked to read it', () => {
-  const AppView = makeAppView();
-  const collapsed = transcriptHtml(AppView, { id: 5, transcript_shared: true });
-  assert.match(collapsed, /aria-expanded="false"/);
-  assert.match(collapsed, /hidden/);
-
-  AppView._transcriptOpen = 5;
-  const open = transcriptHtml(AppView, { id: 5, transcript_shared: true });
-  assert.match(open, /aria-expanded="true"/);
-  assert.doesNotMatch(open, /data-transcript-body="5" hidden/);
-});
-
-test('an expanded transcript SURVIVES a topic-head repaint', () => {
-  // _renderTopicHead re-innerHTML's the head on every WS/poll refresh, so
-  // an open flag held only in the DOM gets wiped seconds after the reader
-  // expands the chat (observed in the browser before this was state-backed).
-  // Re-rendering the section must therefore paint it open again.
-  const AppView = makeAppView();
-  const item = { id: 5, transcript_shared: true, message_count: 3 };
-  AppView._transcriptOpen = 5;
-  for (let repaint = 0; repaint < 3; repaint++) {
-    assert.match(transcriptHtml(AppView, item), /aria-expanded="true"/,
-      'stays expanded across repaints');
-  }
-  // …and an explicit collapse likewise sticks across repaints.
-  AppView._transcriptOpen = null;
-  assert.match(transcriptHtml(AppView, item), /aria-expanded="false"/);
-  // The flag is per-session: another session's open state never leaks.
-  AppView._transcriptOpen = 5;
-  assert.match(
-    transcriptHtml(AppView, { id: 6, transcript_shared: true }),
-    /aria-expanded="false"/
-  );
-});
+// ── Retired ─────────────────────────────────────────────────────────────────
 
 test('"Fork this chat" is retired with classic sessions (#2779)', () => {
   const AppView = makeAppView();
@@ -488,10 +402,11 @@ test('"Fork this chat" is retired with classic sessions (#2779)', () => {
 
 // ── Private/visible split around the archived toggle ────────────────────────
 
+// Homeroom bot is building it: a request's work state, read off its standing.
 const issueEntry = () => ({
   kind: 'issue',
   item: {
-    number: 5, title: 'Issue five', headless: { status: 'generating' },
+    number: 5, title: 'Issue five', standing: { stage: 'building', line: null, whoseMove: 'bot', since: null },
     priority: null, assignee: null,
   },
 });
@@ -572,8 +487,8 @@ test('kanban Underway: only the issue row carries the work-state chip', () => {
 
   // Exactly one work-state chip in the whole column, on the issue.
   const chips = html.match(/data-work-state="[a-z_]+"/g) || [];
-  assert.deepEqual(chips, ['data-work-state="auto_solving"']);
-  assert.match(html, /Auto-solving…/);
+  assert.deepEqual(chips, ['data-work-state="bot"']);
+  assert.match(html, /Homeroom bot is building this/);
 
   // The session rows keep their own status tags, untouched by #1112.
   assert.match(html, /working…/, 'the busy session still says working…');
@@ -746,44 +661,7 @@ test('the 15s _stripTimer and the 8s headless poller are gone', () => {
   assert.equal(AppView._syncSessionPolling, undefined,
     'replaced by the SessionState subscription');
   assert.equal(AppView._syncHeadlessPolling, undefined,
-    'replaced by _onSessionStateEvent patching the cached issue row');
+    'retired with the auto-run it polled');
   assert.equal(AppView._stripTimer, undefined);
   assert.equal(AppView._headlessPollTimer, undefined);
-});
-
-test('_onSessionStateEvent patches the cached issue row for an auto-run', () => {
-  const { AppView } = makeAppViewWithStore();
-  AppView.appData = { slug: 'demo-app' };
-  AppView._ghIssues = [
-    { number: 900003, headless: { sessionId: 5, status: 'generating' }, bounty: { local: 'edit' } },
-    { number: 900004, headless: null },
-  ];
-
-  AppView._onSessionStateEvent({
-    sessionId: 5, appSlug: 'demo-app',
-    headless: { status: 'ready', outcome: 'spec', issueNumber: 900003 },
-  });
-
-  // Spread into this realm before comparing — app-view.js built the object
-  // inside the vm context, so its prototype isn't ours and deepStrictEqual
-  // would fail on two structurally identical objects.
-  assert.deepEqual({ ...AppView._ghIssues[0].headless },
-    { sessionId: 5, status: 'ready', outcome: 'spec' });
-  // Field-scoped merge: optimistic local bounty edits must survive, exactly
-  // as they did under the poller this replaced.
-  assert.deepEqual({ ...AppView._ghIssues[0].bounty }, { local: 'edit' });
-  assert.equal(AppView._ghIssues[1].headless, null);
-});
-
-test('_onSessionStateEvent ignores events for another app', () => {
-  const { AppView } = makeAppViewWithStore();
-  AppView.appData = { slug: 'demo-app' };
-  AppView._ghIssues = [{ number: 900003, headless: { status: 'generating' } }];
-
-  AppView._onSessionStateEvent({
-    sessionId: 5, appSlug: 'other-app',
-    headless: { status: 'ready', outcome: 'spec', issueNumber: 900003 },
-  });
-  assert.equal(AppView._ghIssues[0].headless.status, 'generating',
-    'issue numbers are per-repo, so a cross-app event must not patch this row');
 });

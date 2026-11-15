@@ -317,37 +317,14 @@ test('conductor completion durably publishes a committed turn without repeating 
         const f = await fixture(mode);
         await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [f.id]);
         worker.adoptWarmWorker(f.id, `sv-worker-s${f.id}`);
-        let reset = null;
-        if (mode === 'build') {
-          await pool.query(`UPDATE chat_sessions SET agent_backend = $2, cc_session_id = 'old-claude-thread',
-            agent_thread_id = 'old-openrouter-thread', agent_model = 'old/model' WHERE id = $1`, [f.id, backend]);
-          const { switchSessionAgent } = require('../src/routes/sessions');
-          reset = await switchSessionAgent(pool, { sessionId: f.id, userId: f.target.userId,
-            pref: { backend, provider: backend === 'claude_code' ? 'anthropic' : 'openrouter', model: backend === 'claude_code' ? 'claude-sonnet-5-5' : 'new/model', reasoningEffort: null } });
-          assert.equal(reset.ok, true);
-          assert.equal(reset.session.cc_session_id, null); assert.equal(reset.session.agent_thread_id, null);
-          assert.equal(reset.session.agent_config_version, 2);
-          assert.equal((await pool.query(`SELECT 1 FROM wf_events WHERE machine = 'worker-release'`)).rowCount, 0, 'reset never schedules eviction');
-          if (backend === 'codex_openrouter') {
-            const agent = require('../src/services/agent-turn');
-            await assert.rejects(agent.startCodexAttempt({ pool, session: reset.session, userId: f.target.userId,
-              logicalTurnId: randomUUID(), attemptNumber: 1, model: 'old/model', mode,
-              runtimeContext: { agentConfigVersion: 1 } }), e => e.code === 'agent_context_changed');
-          }
-        }
         const prior = publishes; const dispatched = dispatches.length;
         journalText = `__USERNODE_RESULT__ cc_exit=0 ahead=${mode === 'sync' ? 0 : 1} sha=${SHA} push_ok=${legacyPush ? 1 : 0} mode=${mode}`
           + `${mode === 'sync' ? ' sync_result=clean' : ''}\n__USERNODE_EXIT__ 0\n`;
         const out = await worker.execInWorker(f.id, { mode, branchName: f.branchName, prompt: 'No paid model runs in this test.',
-          model: reset ? reset.session.agent_model : 'claude-test', systemPrompt: backend === 'claude_code' ? 'A synthetic system prompt.' : null, agentBackend: backend, agentHarness: harness,
-          agentModel: reset ? reset.session.agent_model : 'test/model', resumeSessionId: reset?.session.agent_thread_id || reset?.session.cc_session_id || null,
+          model: 'claude-test', systemPrompt: backend === 'claude_code' ? 'A synthetic system prompt.' : null, agentBackend: backend, agentHarness: harness,
+          agentModel: 'test/model', resumeSessionId: null,
           openrouterApiKey: 'synthetic-provider-key', holdTurnRecord: true });
         assert.equal(out.pushOk, true); assert.equal(publishes, prior + 1); assert.equal(dispatches.length, dispatched + 1);
-        if (reset) {
-          assert.ok(dispatches.at(-1).includes(`export ${backend === 'claude_code' ? 'MODEL' : 'AGENT_MODEL'}='${reset.session.agent_model}'`));
-          assert.ok(!dispatches.at(-1).includes('old-claude-thread') && !dispatches.at(-1).includes('old-openrouter-thread'));
-          assert.match(dispatches.at(-1), /export (?:AGENT_THREAD_ID|CLAUDE_RESUME_SESSION_ID)=''/);
-        }
         const { rows: [row] } = await pool.query('SELECT active_turn FROM chat_sessions WHERE id = $1', [f.id]);
         assert.equal(row.active_turn.tail.pushOk, true);
         worker._registryForgetForTests(f.id);
@@ -359,7 +336,7 @@ test('conductor completion durably publishes a committed turn without repeating 
         worker._registryForgetForTests(f.id);
       });
     }
-    await t.test('a reset keeps saved work and a failed rescue prevents every reused-worker harness from starting', async t => {
+    await t.test('a failed rescue of a saved commit prevents every reused-worker harness from starting', async t => {
       t.mock.method(github, 'getInstallationToken', async () => null);
       for (const harness of ['codex', 'claude']) {
         const f = await fixture(); const count = dispatches.length;
@@ -367,9 +344,7 @@ test('conductor completion durably publishes a committed turn without repeating 
           cc_session_id = 'old', agent_thread_id = 'old' WHERE id = $1`, [f.id]);
         assert.equal(await require('../src/services/worker-unpushed-commit').record(pool, f.id, { sha: SHA, branchName: f.branchName }), true);
         worker.adoptWarmWorker(f.id, `sv-worker-s${f.id}`);
-        const reset = await require('../src/routes/sessions').switchSessionAgent(pool, { sessionId: f.id, userId: f.target.userId,
-          pref: { backend: 'codex_openrouter', provider: 'openrouter', model: 'new/model', reasoningEffort: null } });
-        assert.equal(reset.ok, true); assert.equal(await f.saved(), SHA);
+        assert.equal(await f.saved(), SHA);
         await assert.rejects(worker.execInWorker(f.id, { mode: 'build', branchName: f.branchName, prompt: 'not dispatched',
           agentBackend: 'codex_openrouter', agentHarness: harness, agentModel: 'new/model', openrouterApiKey: 'synthetic-key' }),
         e => e.unpushedCommit && e.code === 'no_token' && e.permanent);

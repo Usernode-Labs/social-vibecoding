@@ -4992,82 +4992,10 @@ test('an EXPIRED reservation stops blocking the same brief for ever', async () =
 
 // ── Per-session work orders ─────────────────────────────────────────────
 //
-// The walkthrough used to resolve its task per (user, app), so one open work
-// order answered for every session: "New change" opened a fresh session
-// already showing an unrelated, often long-finished order.
-
-const SESSION_LOAD_SQL = 'FROM external_agent_tasks t JOIN apps a';
-
-test('loadOpenTaskForSession finds THIS session\'s task, not the app\'s newest', async () => {
-  const q = [];
-  const row = await svc.loadOpenTaskForSession(
-    fakePool([[SESSION_LOAD_SQL, [{ id: 7, origin_session_id: 990404 }]]], q),
-    3, 'recipe-box', 990404, { unexpiredOnly: true }
-  );
-  assert.equal(row.id, 7);
-  assert.equal(q.length, 1, 'one query: its own task was there, so no orphan scan');
-  assert.match(q[0].sql, /AND t\.origin_session_id = \$3/);
-  assert.match(q[0].sql, /AND t\.expires_at > NOW\(\)/);
-  assert.deepEqual(q[0].params, [3, 'recipe-box', 990404]);
-
-  // Without unexpiredOnly it is the same lookup minus that predicate.
-  const q2 = [];
-  await svc.loadOpenTaskForSession(
-    fakePool([[SESSION_LOAD_SQL, [{ id: 7 }]]], q2), 3, 'recipe-box', 990404
-  );
-  assert.doesNotMatch(q2[0].sql, /expires_at/);
-  assert.match(q2[0].sql, /AND t\.origin_session_id = \$3/);
-});
-
-test('...and no session means no task, rather than the app\'s newest', async () => {
-  // The failure that would reintroduce the bug: falling back to the app-wide
-  // row here would make every session show every other session's order again.
-  for (const bad of [undefined, null, 0, -3, 1.5, NaN, 'abc', {}]) {
-    const q = [];
-    assert.equal(
-      await svc.loadOpenTaskForSession(fakePool([[SESSION_LOAD_SQL, [{ id: 7 }]]], q), 3, 'r', bad),
-      null,
-      `${JSON.stringify(bad)} is not a session`
-    );
-    assert.equal(q.length, 0, 'and no query is issued for it');
-  }
-});
-
-test('a work order belonging to no session is NOT handed to a new one', () => {
-  // The inverse of what this used to do, and the whole point of the change.
-  // Adopting the newest orphan turned one permanently stale launchpad into a
-  // QUEUE of them: every new change claimed the next one off the pile.
-  //
-  // The reasoning behind adoption was wrong twice. Factually, orphans were
-  // never invisible — listOpenWorkOrders filters on `session_id` (the shared
-  // column) and expiry, never on origin_session_id, so the Improve panel
-  // listed them throughout. Conceptually, a work order is one ATTEMPT at an
-  // issue, so an attempt whose session is gone is not a backlog item to hand
-  // out; it is over.
-  const svcSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/external-agent-tasks.js'), 'utf8');
-  const fn = svcSrc.slice(
-    svcSrc.indexOf('async function loadOpenTaskForSession('),
-    svcSrc.indexOf('async function abandonTasksForSession(')
-  );
-  assert.ok(fn.length > 0, 'the lookup is where this test thinks it is');
-  assert.ok(!/origin_session_id IS NULL/.test(fn), 'no orphan scan remains');
-  assert.ok(!/adoptTaskForSession/.test(fn), 'and nothing is claimed on a read');
-  assert.equal((fn.match(/await pool\.query\(/g) || []).length, 2,
-    'two literals: this session with and without the expiry filter, and nothing else');
-});
-
-test('...so a session with no work order of its own gets none', async () => {
-  const q = [];
-  assert.equal(
-    await svc.loadOpenTaskForSession(
-      fakePool([['FROM external_agent_tasks t JOIN apps a', []]], q),
-      3, 'recipe-box', 990404, { unexpiredOnly: true }
-    ),
-    null
-  );
-  assert.equal(q.length, 1, 'one query, and no second look for somebody else\'s order');
-  assert.match(q[0].sql, /AND t\.origin_session_id = \$3/);
-});
+// A work order the dev chat's walkthrough prepared remembers the session it
+// was prepared in (origin_session_id). The walkthrough and its per-session
+// lookup are retired with the dev chat; abandonTasksForSession, which ends
+// the open attempts a session made, is what reads the column now.
 
 test('archiving a session ends the attempt it was making', async () => {
   const q = [];

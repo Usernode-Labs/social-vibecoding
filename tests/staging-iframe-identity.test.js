@@ -2,12 +2,12 @@
 //
 // `#staging-overlay` is a React island now (frontend/src/features/staging/), and
 // it holds `#staging-iframe`. Every state change the overlay has — open, close,
-// the #771 docked ↔ fullscreen toggle, the #816 loader copy, the #127 testing
-// panel, a "Test this change" retarget — must leave that iframe ELEMENT alone.
-// Re-creating it (a changed `key`, a conditional wrapper, a `src` prop React
-// decides to re-apply) reloads the previewed app and throws away whatever the
-// user was doing inside it. #771 states the requirement outright: "Same element,
-// same iframe: toggling never reloads the preview."
+// the #816 loader copy, the #127 testing panel, a "Test this change" retarget —
+// must leave that iframe ELEMENT alone. Re-creating it (a changed `key`, a
+// conditional wrapper, a `src` prop React decides to re-apply) reloads the
+// previewed app and throws away whatever the user was doing inside it. #771
+// stated the requirement outright: "Same element, same iframe: toggling never
+// reloads the preview."
 //
 // This file proves it two ways, and both matter:
 //
@@ -109,10 +109,9 @@ async function makeHarness() {
   // Reset the module-scope stores between cases (they are singletons, like the
   // island they feed).
   storeMod.stagingStore.set({
-    open: false, mode: 'fullscreen', dockRect: null, urlLabel: '', solo: false,
+    open: false, urlLabel: '', solo: false,
     loaderRetry: false, loaderVisible: false, loaderTitle: 'Opening preview…', loaderSub: '',
     testBtnHidden: true, testBtnTitle: '', testPanelHidden: true, testHtml: '',
-    fsBtnHidden: true, fsBtnText: 'Full screen', fsBtnTitle: '',
   });
   for (const key of Object.keys(storeMod.stagingHandlers)) storeMod.stagingHandlers[key] = null;
 
@@ -222,11 +221,6 @@ test('the preview iframe is the SAME element across every overlay state change',
   const steps = [
     ['loader copy', () => AppView._setStagingLoader(true, { title: 'Loading the preview…', sub: '' })],
     ['loader hidden', () => AppView._setStagingLoader(false)],
-    ['dock', () => AppView._setStagingMode('docked')],
-    ['dock geometry', () => AppView._syncStagingDockGeometry()],
-    ['un-dock', () => AppView._setStagingMode('fullscreen')],
-    ['re-dock', () => AppView._setStagingMode('docked')],
-    ['fullscreen-button state', () => AppView._updateStagingModeUi()],
     ['testing panel open', () => bridge.setTestPanelHidden(false)],
     ['testing content', () => bridge.setTestHtml('<p>steps</p>')],
     ['testing panel close', () => bridge.setTestPanelHidden(true)],
@@ -295,20 +289,26 @@ test('#16: opening a preview words its banner by who the app is for, without a r
 
 test('a "Test this change" retarget navigates once, and only when the src differs', async () => {
   const h = await makeHarness();
-  const { AppView, iframe, bridge } = h;
+  const { AppView, iframe, bridge, handlers } = h;
 
-  // #127/#237: opening with testing notes + jump lands straight on the deep
-  // link and auto-shows the panel.
-  await AppView.swapToStaging('https://preview.example', { md: 'do the thing', path: '/deep' }, { verified: true, jump: true });
-  assert.equal(iframe.loads, 1, 'one navigation to the deep link');
+  // #127/#237: a preview with testing notes opens with the panel closed, and
+  // its Test this change button retargets to the deep link, showing the panel.
+  await AppView.swapToStaging('https://preview.example', { md: 'do the thing', path: '/deep' }, { verified: true });
+  assert.equal(iframe.loads, 1, 'one navigation for the open');
+  assert.equal(bridge.isTestPanelHidden(), true, 'the panel starts closed');
+  handlers.onTest();
+  assert.equal(iframe.loads, 2, 'one navigation to the deep link');
   assert.match(iframe.src, /\/deep\?token=tok-1&un-theme=dark$/, 'jumped to the testing path');
-  assert.equal(bridge.isTestPanelHidden(), false, 'the panel auto-opened for the jump path');
+  assert.equal(bridge.isTestPanelHidden(), false, 'the panel opened with the jump');
   const afterJump = iframe.contentWindow;
 
-  // Re-rendering the controls while already pointing there must be a no-op:
-  // re-assigning the same src would reload the app the user is testing.
-  AppView._renderTestingControls((p) => `https://preview.example${p || '/'}?token=tok-1`, { src: iframe.src }, false);
-  assert.equal(iframe.loads, 1, 'no re-navigation when already on the target');
+  // Closing the panel and pressing again while already pointing there must be
+  // a no-op: re-assigning the same src would reload the app the user is testing.
+  handlers.onTest();
+  assert.equal(bridge.isTestPanelHidden(), true, 'a second press closes the panel');
+  handlers.onTest();
+  assert.equal(bridge.isTestPanelHidden(), false, 'and a third opens it again');
+  assert.equal(iframe.loads, 2, 'no re-navigation when already on the target');
   assert.equal(iframe.contentWindow, afterJump, 'same document');
   assert.equal(bridge.frame(), iframe, 'same element');
 });
@@ -333,21 +333,21 @@ test('#4917 a plain Preview opens on the page the change is about, with the pane
     'an unsafe start path lands at the root');
   assert.equal(bridge.isTestPanelHidden(), true);
 
-  // The panel rule is untouched: jump (Test this change) still retargets to
-  // the testing path and auto-opens, even when the preview already sits on
-  // the same page — the retarget must not reload what the user is testing.
+  // The panel rule is untouched: Test this change opens the panel, and when
+  // the preview already sits on the testing page it does not reload what the
+  // user is testing.
   await AppView.swapToStaging(
     'https://preview.example', { md: 'do the thing', path: '/deep' },
-    { verified: true, startPath: '/deep', jump: true }
+    { verified: true, startPath: '/deep' }
   );
-  assert.equal(iframe.loads, 3, 'the jump landed on the testing path');
-  assert.match(iframe.src, /\/deep\?token=tok-1&un-theme=dark$/,
-    'the testing deep link wins for Test this change');
-  assert.equal(bridge.isTestPanelHidden(), false, 'the panel auto-opened for the jump');
-  const afterJump = iframe.contentWindow;
-  AppView._renderTestingControls((p) => `https://preview.example${p || '/'}?token=tok-1`, { src: iframe.src }, false);
+  assert.equal(iframe.loads, 3, 'opened on the declared page');
+  assert.match(iframe.src, /\/deep\?token=tok-1&un-theme=dark$/);
+  assert.equal(bridge.isTestPanelHidden(), true, 'with the panel closed');
+  const afterOpen = iframe.contentWindow;
+  h.handlers.onTest();
+  assert.equal(bridge.isTestPanelHidden(), false, 'Test this change opens the panel');
   assert.equal(iframe.loads, 3, 'no reload when the start path already equals the testing path');
-  assert.equal(iframe.contentWindow, afterJump, 'same document');
+  assert.equal(iframe.contentWindow, afterOpen, 'same document');
 });
 
 test('the visual-compare overlay opens over the preview without disturbing it', async () => {
@@ -436,11 +436,9 @@ test('runtime class toggles go through refs, so every className stays constant',
   // and app.css / the native kit write classes onto these same nodes.
   for (const [hook, target] of [
     ['useHiddenClass(overlayRef, !state.open)', 'the overlay'],
-    ["useClassToggle(overlayRef, 'staging-overlay-docked', state.mode === 'docked')", 'the #771 docked class'],
     ['useHiddenClass(loaderRef, !state.loaderVisible)', 'the loader'],
     ['useHiddenClass(panelRef, state.testPanelHidden)', 'the testing panel'],
     ['useHiddenClass(testBtnRef, state.testBtnHidden)', 'the test button'],
-    ['useHiddenClass(fsBtnRef, state.fsBtnHidden)', 'the fullscreen button'],
   ]) {
     assert.ok(OVERLAY.includes(hook), `${target} toggles its class through a ref`);
   }
@@ -452,7 +450,7 @@ test('runtime class toggles go through refs, so every className stays constant',
     'staging-overlay', 'staging-iframe', 'staging-back', 'staging-loader',
     'staging-loader-title', 'staging-loader-sub', 'staging-url-label',
     'staging-test-btn', 'staging-testing-panel', 'staging-testing-content',
-    'staging-testing-close', 'staging-fullscreen-btn', 'staging-dock-close',
+    'staging-testing-close',
     'staging-dev-console-btn', 'staging-dev-console-badge',
   ]) {
     assert.ok(OVERLAY.includes(`id="${id}"`), `#${id} is still rendered`);
@@ -475,9 +473,6 @@ test('`src` is not state, and the store starts from the shipped markup', () => {
   assert.equal(message('devchat:staging.loader.opening'), 'Opening preview…');
   assert.match(STORE, /loaderSub: '',/, 'no sub-line');
   assert.match(STORE, /testPanelHidden: true,/, 'the testing panel ships hidden');
-  assert.match(STORE, /fsBtnText: null,/, "#771's shipped label");
-  assert.match(OVERLAY, /\{state\.fsBtnText \?\? t\('devchat:staging\.fullScreen'\)\}/, "#771's shipped label");
-  assert.equal(message('devchat:staging.fullScreen'), 'Full screen');
   assert.match(STORE, /solo: false,/, '#16: the banner ships in its group wording');
   // The bridge's writes are all store writes, except the two src ones.
   const srcWrites = BRIDGE.match(/el\.src = /g) || [];
@@ -519,7 +514,6 @@ test('the legacy module makes no DOM write into the React-owned overlay', async 
     'staging-overlay', 'staging-back', 'staging-loader', 'staging-loader-title',
     'staging-loader-sub', 'staging-url-label', 'staging-test-btn',
     'staging-testing-panel', 'staging-testing-content', 'staging-testing-close',
-    'staging-fullscreen-btn', 'staging-dock-close',
     'visual-compare-overlay', 'visual-compare-back', 'visual-compare-label',
     'visual-compare-body',
   ];
@@ -543,8 +537,8 @@ test('the legacy module makes no DOM write into the React-owned overlay', async 
   // And the drive above never asked the document for an overlay-owned node.
   const h = await makeHarness();
   await h.AppView.swapToStaging('https://preview.example', null, { verified: true });
-  h.AppView._setStagingMode('docked');
-  h.AppView._updateStagingModeUi();
+  h.AppView._setStagingLoader(true, { title: 'Loading the preview…', sub: '' });
+  h.AppView._setStagingLoader(false);
   h.AppView.closeStagingOverlay();
   const leaked = h.asked.filter((id) => overlayIds.includes(id) || id === 'staging-iframe');
   assert.deepEqual(leaked, [], 'the module asked the document for no overlay-owned node');
@@ -584,8 +578,6 @@ test('preview background changes do not navigate and clear with the preview', as
   const navigations = h.bridge.stats().navigations;
   h.bridge.setBackground('#0a0d14');
   assert.equal(h.store.get().background, '#0a0d14');
-  h.bridge.setMode('docked');
-  h.bridge.setMode('fullscreen');
   assert.equal(h.bridge.frame(), frame);
   assert.equal(h.bridge.stats().navigations, navigations);
   assert.equal(h.store.get().background, '#0a0d14');

@@ -1,7 +1,6 @@
 // Tests for the sync-with-main progress plumbing (#252).
 //
-// Covers the three backend guarantees the dev-chat sync banner depends
-// on:
+// Covers the backend guarantees a change's sync banner depends on:
 //   1. A sync (services/sync-main.js runSyncWork, the proposal machine's
 //      branch.sync work) broadcasts sync_status lifecycle events
 //      (starting → phase changes → done/failed) over pushSessionUpdate,
@@ -9,7 +8,7 @@
 //      time is the proposal machine's guard
 //      (tests/workflow-merge-postgres.test.js M7).
 //   2. The routes: POST /sync-main asks the proposal machine and 409s
-//      (friendly, structured) when it refuses because a chat turn holds
+//      (friendly, structured) when it refuses because somebody works on
 //      the session, joins a sync already under way, and GET /status
 //      exposes the `sync` field.
 //
@@ -82,7 +81,6 @@ function loadSyncMain({ execImpl, reconcileImpl = async () => ({ ok: true, appli
     logger: require.resolve('../src/services/logger'),
     worker: require.resolve('../src/services/worker'),
     ws: require.resolve('../src/services/ws'),
-    sessionBus: require.resolve('../src/services/session-bus'),
     cliHandoffSync: require.resolve('../src/services/cli-handoff-sync'),
     subject: require.resolve('../src/services/sync-main'),
   };
@@ -92,7 +90,6 @@ function loadSyncMain({ execImpl, reconcileImpl = async () => ({ ok: true, appli
   const execCalls = [];
   const updates = [];   // pushSessionUpdate (banner channel)
   const globals = [];   // broadcastGlobal (session_event channel)
-  const busEvents = []; // sessionBus.publish (per-session ring buffer)
   const reconcileCalls = [];
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.worker, {
@@ -111,7 +108,6 @@ function loadSyncMain({ execImpl, reconcileImpl = async () => ({ ok: true, appli
     pushSessionUpdate(data) { updates.push(data); },
     broadcastGlobal(data) { globals.push(data); },
   });
-  stub(ids.sessionBus, { publish(sessionId, event) { busEvents.push({ sessionId, event }); } });
   stub(ids.cliHandoffSync, {
     async reconcileCliHandoffSync(args) {
       reconcileCalls.push(args);
@@ -133,7 +129,7 @@ function loadSyncMain({ execImpl, reconcileImpl = async () => ({ ok: true, appli
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, execCalls, updates, globals, busEvents, reconcileCalls, restore };
+  return { subject, execCalls, updates, globals, reconcileCalls, restore };
 }
 
 function syncPool() {
@@ -621,15 +617,11 @@ test('GET /status: exposes the merge lifecycle status of the session', async () 
   // client reads this today — it stays, like the neighbouring
   // `resolving` field, as a cheap honest fact for admin/debug tooling,
   // and the poll must keep serving it.
+  // The status comes from the row the visibility check already reads (it is
+  // a 3s poll, so one round trip).
   poolQueryHandler = async (sql) => {
-    // #907 widened this read to fetch last_turn_runner/local_agent_label in
-    // the same round-trip (it is a 3s poll), so match the column list loosely
-    // — what this test is about is the `status` field reaching the payload.
     if (/SELECT user_id, status, shared_at FROM chat_sessions/.test(sql)) {
       return { rows: [{ user_id: VIEWER.id, status: 'promoted', shared_at: null }] };
-    }
-    if (/SELECT status[\s\S]*?FROM chat_sessions/.test(sql)) {
-      return { rows: [{ status: 'promoted' }] };
     }
     return { rows: [] };
   };
@@ -647,10 +639,10 @@ test('GET /status: exposes the merge lifecycle status of the session', async () 
     assert.equal(res.status, 200);
     assert.equal(body.status, 'promoted');
 
-    // Missing status column → null (fail-safe: the client keeps its banner
+    // No status on the row → null (fail-safe: the client keeps its banner
     // up). The row itself is still visible to its owner.
     poolQueryHandler = async (sql) => (/SELECT user_id, status, shared_at FROM chat_sessions/.test(sql)
-      ? { rows: [{ user_id: VIEWER.id, status: 'active', shared_at: null }] }
+      ? { rows: [{ user_id: VIEWER.id, status: null, shared_at: null }] }
       : { rows: [] });
     const res2 = await fetch(`http://127.0.0.1:${port}/api/sessions/46/status`);
     assert.equal((await res2.json()).status, null);
