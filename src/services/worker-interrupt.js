@@ -4,7 +4,6 @@ const { withSessionLock } = require('../db/session-locks');
 const { WORKER_EVICTION_LOCK } = require('./advisory-locks');
 const { stopTarget, sameScope, sameTurn } = require('../workflow/worker-stop/target.ts');
 const turnLifecycle = require('./turn-lifecycle');
-const log = require('./logger');
 
 function workflowOnly() {
   const role = require('./process-role');

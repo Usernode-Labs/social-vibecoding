@@ -982,15 +982,12 @@ function authRoutes(config) {
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
       profile = shapeProfile(rows[0], verifiedLinks);
     } catch {}
-    // #1055 staging fixture: report a saved BYOK key so the composer's
-    // session-options menu renders its "Change your API key (…7f2c)" branch
-    // (and the meter its "your key" one). STRICTLY request-time — nothing is
+    // #1055 staging fixture: report a saved BYOK key so the screens that
+    // show one render that state. STRICTLY request-time — nothing is
     // written, users.anthropic_key_enc is untouched, and dropping `demo=1`
     // gives the honest unset state back on the very next request. A no-op in
     // production: same IS_STAGING && ?demo=1 gate as /api/me/ai-budget below.
-    let demoKey = false;
     if (IS_STAGING && req.query.demo === '1') {
-      demoKey = true;
       hasApiKey = true;
       keyLast4 = '7f2c';
     }
@@ -1049,10 +1046,6 @@ function authRoutes(config) {
         // Experimental: opt-in AI progress estimate for coding runs
         // (Settings → Experimental). Default OFF.
         aiProgressEstimate: !!req.user.aiProgressEstimate,
-        // #1281: opt-in for the session-CLI bridge, the bottom rung of the
-        // spec's routing tree. build-venues.js requires this AND the
-        // deployment's cliAuthEnabled before offering the `local` venue.
-        sessionBridgeEnabled: !!req.user.sessionBridgeEnabled,
         // Platform-level language preference (issue #757): a BCP-47 tag or
         // null when unset. Settings → Language renders from this; apps read
         // it via the iframe JWT `locale` claim and the bridge's
@@ -1120,10 +1113,6 @@ function authRoutes(config) {
         // In-chat venue availability: feature flag + beta eligibility + a
         // currently usable personal or company OpenRouter credential.
         openrouterAvailable,
-        // Marks the two fields above as the staging fixture rather than
-        // real state, the same way every other ?demo=1 payload labels
-        // itself (GET /api/budget).
-        ...(demoKey ? { demoKey: true } : {}),
         usernodePubkey,
         walletLinkEnabled: !!config.usernodeAppPubkey,
         // Profile customization (#982). `username` stays the permanent
@@ -1389,28 +1378,6 @@ function authRoutes(config) {
       res.json({ ok: true, enabled });
     } catch (err) {
       log.error('settings', 'Failed to toggle AI progress estimate', { userId: req.user.id, err: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // #1281: opt in to the session-CLI bridge (Settings -> Experimental).
-  // Same shape as the progress-estimate toggle above; see
-  // users.session_bridge_enabled in schema.sql for why it defaults off.
-  router.post('/api/me/session-bridge', async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    const { enabled } = req.body || {};
-    if (typeof enabled !== 'boolean') {
-      return res.status(400).json({ error: 'enabled must be a boolean' });
-    }
-    try {
-      await pool.query(
-        'UPDATE users SET session_bridge_enabled = $1 WHERE id = $2',
-        [enabled, req.user.id]
-      );
-      log.info('settings', 'Session bridge toggled', { userId: req.user.id, enabled });
-      res.json({ ok: true, enabled });
-    } catch (err) {
-      log.error('settings', 'Failed to toggle session bridge', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

@@ -483,8 +483,6 @@ function authMiddleware(config) {
             // Experimental per-user opt-in (default FALSE) — read by
             // runClaudeCodeTool to gate the Haiku progress estimator.
             aiProgressEstimate: !!rows[0].ai_progress_estimate,
-            // #1281: opt-in for the session-CLI bridge venue. Default FALSE.
-            sessionBridgeEnabled: !!rows[0].session_bridge_enabled,
             // Platform-level language preference (issue #757): a BCP-47
             // tag or null when unset. Surfaced via /api/auth/me.
             locale: rows[0].locale || null,
@@ -660,7 +658,6 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
     canAdminWrite: !!userRow.is_admin && !userRow.admin_readonly,
     appQuota: userRow.app_quota ?? 0,
     aiProgressEstimate: !!userRow.ai_progress_estimate,
-    sessionBridgeEnabled: !!userRow.session_bridge_enabled,
     locale: userRow.locale || null,
     timeZone: userRow.timezone || null,
     hasPlatformAccess: !!userRow.has_platform_access,

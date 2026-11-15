@@ -135,36 +135,10 @@ test('a full admin gets the raised proposal ceiling through the connector too', 
   assert.match(full.message, new RegExp(`${caps.promotedSessions} changes waiting for approval`));
 });
 
-// ── The platform-build fallback ────────────────────────────────────────
-
-test('the fallback counts builds running, against the platform session cap', async () => {
-  const pool = poolCounting(0);
-  await limits.checkFallbackStart(pool, {}, ordinary);
-  assert.equal(pool.asked.length, 1, 'the per-day quota is gone; only in-flight is counted');
-  assert.match(pool.asked[0].sql, /headless_status = 'generating'/);
-
-  const caps = effectiveSessionCaps({}, ordinary);
-  const refused = await limits.checkFallbackStart(poolCounting(caps.activeSessions), {}, ordinary);
-  assert.equal(refused.code, 'at_capacity');
-  assert.match(refused.message, new RegExp(`${caps.activeSessions} Homeroom builds running`));
-  assert.doesNotMatch(refused.message, /24 hours|daily limit/);
-
-  // Same tiering as a dev session in the browser.
-  assert.equal(
-    await limits.checkFallbackStart(poolCounting(caps.activeSessions), {}, admin), null
-  );
-});
-
-test('the fallback ceiling comes from session-caps, not a literal', () => {
-  const block = SRC.slice(SRC.indexOf('async function checkFallbackStart'));
-  assert.match(block, /effectiveSessionCaps\(config, user\)/);
-  assert.match(block, /caps\.activeSessions/);
-});
-
 // ── Posture ────────────────────────────────────────────────────────────
 
 test('the browser walkthrough and the connector share ONE limiter', () => {
-  // "Prepare a work order for Claude Code" in the dev chat runs through the
+  // "Prepare a work order for Claude Code" in the browser runs through the
   // same prepareWork as the connector's prepare_work, and both inject THIS
   // module as `limits`. That shared seam is what makes "the connector is
   // never more limited than the browser" checkable rather than aspirational,
@@ -184,5 +158,4 @@ test('a cap that cannot be measured refuses rather than waves through', async ()
   const down = { query: async () => { throw new Error('db down'); } };
   assert.equal((await limits.checkOpenWorkOrders(down, 7)).code, 'platform_unavailable');
   assert.equal((await limits.checkPromotedCap(down, {}, ordinary)).code, 'platform_unavailable');
-  assert.equal((await limits.checkFallbackStart(down, {}, ordinary)).code, 'platform_unavailable');
 });

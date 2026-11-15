@@ -378,8 +378,8 @@ html.un-kb .platform-safe-sheet {
 
 /* Keyboard up: reserve its height on a COMPOSER COLUMN (#1937, #1491).
 
-   Four screens are built the same way — the topic thread, the general chat,
-   the dev chat and Messages. Each is a flex column holding a `flex-1`
+   Three screens are built the same way — the topic thread, the general chat
+   and Messages. Each is a flex column holding a `flex-1`
    scroller with the typing slot and composer pinned BELOW it as `shrink-0`
    siblings, OUTSIDE the scroller. That shape is deliberate (thread-shell.tsx
    explains it), and it is exactly what the kit's keyboard avoidance cannot
@@ -2566,34 +2566,6 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    the height of. */
 .messages-discussion-host { display: flex; flex-direction: column; min-height: 0; }
 .messages-discussion-host > * { flex: 1 1 auto; min-height: 0; }
-
-/* ── An agent thread, as a thread of this inbox (#2813) ─────────────────
-   An agent session is its own panel drawn on the conversation pane's
-   sheet, so the panel adds no plane of its own. A dev session is
-   DevChat's whole session view in a host, which draws its own sheet — the
-   same arrangement as a discussion above, so the host only has to fill the
-   pane. The bar above it carries what the pane adds: the session's own
-   full-window address, for the spec and preview at full width, and the
-   full-width toggle every discussion pane ends its header with. */
-.messages-thread-agent { overflow: hidden; }
-.messages-session-host { display: flex; flex-direction: column; min-height: 0; }
-.messages-session-host > * { flex: 1 1 auto; min-height: 0; }
-.messages-session-host[hidden] { display: none; }
-.messages-session-bar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  flex: 0 0 auto;
-  padding: 0 4px 6px;
-}
-.messages-session-full {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-}
-.messages-session-full:hover { color: var(--text-primary); }
-.messages-inbox-session-active > a { background: var(--messages-selected); }
 /* #5378: A CHANGE IN FLIGHT TAKES THE INBOX'S OWN ROW GEOMETRY on the
    cards: a conversation row's 16px of padding and 14px gap around the 44px
    tile, so its tile shares the avatars' left edge and its title their 74px
@@ -9183,24 +9155,9 @@ html.un-kb .un-modal {
   translate: 0 var(--platform-vv-top, 0px);
 }
 
-/* Docked mode for the staging overlay (#771): the same fixed element,
-   pinned over the placeholder slot instead of the whole screen. The
-   inline top/left/width/height come from the geometry sync
-   (AppView._syncStagingDockGeometry). Drops below platform modals /
-   popovers (z-30 vs the fullscreen z-40) since it no longer needs to
-   cover the app header. */
-#staging-overlay.staging-overlay-docked {
-  inset: auto;
-  z-index: 30;
-  border-inline-start: 1px solid var(--border, rgba(255,255,255,0.12));
-}
-
-/* Fullscreen, the overlay is `inset: 0` — it covers the status bar, so
-   its own chrome bar has to clear the notch. Docked, it is pinned over
-   the in-page slot by the geometry sync and needs no inset at all,
-   hence the :not(). Under-chrome is excluded for the same reason docked
-   is: the platform header is above it and already holds the notch. */
-#staging-overlay:not(.staging-overlay-docked):not(.staging-overlay-under-chrome) .staging-chrome-bar {
+/* The overlay is `inset: 0` — it covers the status bar, so its own chrome
+   bar has to clear the notch. */
+#staging-overlay .staging-chrome-bar {
   padding-top: calc(0.5rem + var(--platform-safe-top));
 }
 
@@ -9216,48 +9173,16 @@ html.un-kb .un-modal {
    critical <style> values (frontend/src/head.html): keep them in step.
    Only in the app (.in-native-webview): a browser's or an installed web
    app's status bar is not drawn from this theme. */
-html.in-native-webview:not(.native-status-bar-tone) #staging-overlay:not(.staging-overlay-docked):not(.staging-overlay-under-chrome) .staging-chrome-bar {
+html.in-native-webview:not(.native-status-bar-tone) #staging-overlay .staging-chrome-bar {
   background-image: linear-gradient(#f4f2e4 var(--platform-safe-top), transparent var(--platform-safe-top));
 }
-html.dark.in-native-webview:not(.native-status-bar-tone) #staging-overlay:not(.staging-overlay-docked):not(.staging-overlay-under-chrome) .staging-chrome-bar {
+html.dark.in-native-webview:not(.native-status-bar-tone) #staging-overlay .staging-chrome-bar {
   background-image: linear-gradient(#0b0d1b var(--platform-safe-top), transparent var(--platform-safe-top));
 }
 
-/* ── A session's preview sits UNDER that session's own bars ───────────
-   The Streamlined Concept board's APP PREVIEW frame keeps the header and
-   the session strip on screen and puts the preview below them, which is
-   also what makes the strip's doing<->seeing switch a real toggle rather
-   than a one-way door: the pencil segment has to be reachable from here.
-
-   `top` is set by the component, which measures the strip's bottom edge;
-   this rule owns everything that does not need a number. The z-index pair
-   is deliberate and deliberately LOW: the chrome goes to 30 rather than the
-   overlay to something below 0, and 30 is under the sheets' 40/50 so a
-   Notifications or Messages backdrop still dims the header the way it dims
-   everything else. */
-#staging-overlay.staging-overlay-under-chrome {
-  z-index: 20;
-}
-body:has(#staging-overlay.staging-overlay-under-chrome) #platform-header {
-  position: relative;
-  z-index: 30;
-}
-
-/* Docked chrome: "Back to session" makes no sense beside the still-
-   visible session — the ×-close (.staging-dock-only) replaces it. */
-#staging-overlay.staging-overlay-docked #staging-back { display: none; }
-.staging-dock-only { display: none; }
-#staging-overlay.staging-overlay-docked .staging-dock-only { display: inline-flex; }
-
-/* The docked header is narrow — let the url label give way first. */
-#staging-overlay.staging-overlay-docked #staging-url-label { min-width: 0; }
-
-/* The "How to test" panel's sm:w-96 cap can exceed a 320px panel. */
-#staging-overlay.staging-overlay-docked #staging-testing-panel { max-width: calc(100% - 16px); }
-
 /* #196: two-half spec tabs (User-facing / Technical). Rendered only
    when the doc contains both marker headings — legacy specs keep the
-   single untabbed body (see public/js/spec-sections.js). */
+   single untabbed body. */
 .dc-spec-viewer-preamble {
   margin-bottom: 12px;
 }
@@ -9400,8 +9325,7 @@ body:has(#staging-overlay.staging-overlay-under-chrome) #platform-header {
 }
 .gc-spec-pr:hover { text-decoration: underline; }
 
-/* Group-chat spec side-panel. Mirrors the dev-chat spec viewer
-   (.dc-spec-viewer): the slot is rendered as a sibling of the chat
+/* Group-chat spec side-panel: the slot is rendered as a sibling of the chat
    pane inside the gc-tab-body flex row, so it occupies space within
    the chat tab — never covering the app header or the vote/issue
    panel that sits above the row.
@@ -9483,8 +9407,7 @@ body:has(#staging-overlay.staging-overlay-under-chrome) #platform-header {
 
 /* Draggable divider between chat pane and spec panel. Hidden by
    default, only visible when the panel is open AND the viewport is
-   wide enough for side-panel layout. Same shape as the dev-chat
-   spec-resizer for visual consistency. */
+   wide enough for side-panel layout. */
 .gc-spec-resizer {
   display: none;
   width: 4px;
@@ -9540,8 +9463,7 @@ body:has(#staging-overlay.staging-overlay-under-chrome) #platform-header {
 }
 .gc-spec-panel-close:hover { color: var(--text-primary, #e4e4e7); }
 
-/* (#1012) "Copy markdown" in the shared-spec panel header. Matches
-   .dc-spec-action-btn so the two spec surfaces read as one family; the
+/* (#1012) "Copy markdown" in the shared-spec panel header; the
    min-width reserves room for the "Copy failed" label flash. */
 .gc-spec-panel-copy {
   font-size: 12px;
@@ -10936,11 +10858,11 @@ button.attr-chip { cursor: pointer; }
   .dev-kanban-col.dev-kanban-col-active { display: block; }
 }
 
-/* ── Shared dev-chat transcript (read-only) ─────────────────────────────
-   The "Dev chat" section on a shared session's / a proposal's topic page,
-   painted by public/js/session-transcript.js. It reuses the dev chat's
-   dc-* message and status classes so a shared transcript reads like the
-   real chat; everything here is the read-only frame around them.
+/* ── Shared build transcript (read-only) ────────────────────────────────
+   The transcript section on a shared session's / a proposal's topic page,
+   painted by public/js/session-transcript.js. Its rows wear the dc-*
+   message and status classes; everything here is the read-only frame
+   around them.
 
    Deliberately no composer/send styling exists for this surface — there
    is no composer to style (see the renderer's rule 2). */
@@ -11015,8 +10937,8 @@ button.attr-chip { cursor: pointer; }
 .st-timeline { display: flex; flex-direction: column; }
 
 /* Messages sit full-width here (no 92% inset): the topic page column is
-   already narrower than the dev-chat pane, and the alignment asymmetry is
-   what distinguishes the two speakers. */
+   narrow already, and the alignment asymmetry is what distinguishes the
+   two speakers. */
 .st-msg { max-width: 100%; }
 .st-msg-who { color: var(--text-secondary); font-weight: 600; }
 .st-msg-when { color: var(--text-muted); font-size: 10px; }
@@ -17784,10 +17706,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
      pan-y themselves, so a sideways drag on them is the drawer's. */
   .messages-layout.messages-drawer .messages-list-scroll,
   .messages-layout.messages-drawer .messages-thread-scroll { touch-action: pan-y; }
-  /* An agent session's bar names it in the pane, over its pills; on the
-     drawer the header does (messages/index.tsx agentThreadWords), so the
-     pane leaves its own copy out, as a conversation's sheet does. */
-  .messages-layout.messages-drawer [data-agent-session-bar] > div:first-child:not([data-agent-session-pills]) { display: none; }
   .messages-layout.messages-drawer > .messages-list-pane {
     position: absolute; top: 0; bottom: 0; inset-inline-start: 0; width: 85%;
     will-change: transform;
@@ -18519,9 +18437,8 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 /* Reduce motion setting (#6510): the same, when Settings asks for it. */
 :where(html[data-motion="reduce"]) .dev-ws-ask-pending { animation: none; }
 .dev-ws-ask-failed { color: var(--state-blocked); background: var(--state-blocked-bg); }
-/* THE COMPOSER is the dev session's (`.dc-card`), padded evenly so its
-   resting line sits on its own middle — `.dc-card`'s 14-over-10 is for a
-   tall field with controls under it. */
+/* THE COMPOSER is a card padded evenly, so its resting line sits on its
+   own middle. */
 .dev-ws-ask-composer { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; flex: none; }
 .dev-ws-ask-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .dev-ws-ask-line > .dev-ws-ask-input { flex: 1 1 auto; }
@@ -22035,12 +21952,7 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
      "the app is the whole window" means, and the rail is hidden there anyway
      so the token would be 0 even if it were listed.
 
-     #agent-session-screen was absent by omission (QA 2026-09-24 Q23): it
-     arrived after this list, drew from the window's left edge, and its app
-     and change chips, the reply suggestions and the start of the composer sat
-     under the rail where they could not be clicked.
-
-     #profile-proposals-screen likewise (#3498): Your requests and Your votes
+     #profile-proposals-screen is listed (#3498): Your requests and Your votes
      centred in the whole window, so from a laptop width down their cards
      began under the rail. */
   :is(#home-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #leaderboard-screen,
