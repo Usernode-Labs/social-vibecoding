@@ -29383,11 +29383,6 @@ const AppView = {
       window.UITelemetry?.cancel?.(AppView._stagingTelemetryAttempt);
     }
     AppView._stagingTelemetryAttempt = telemetryAttempt;
-    // Streamlined Concept: every preview open funnels through here (#439),
-    // so this is where "the viewer is SEEING" gets published — it flips the
-    // header's eye/pencil pair and the session strip's Preview chip. The
-    // matching false is closeStagingOverlay's.
-    window.Improve?.setPreviewActive?.(true);
     // What the preview is showing, for the comment files (#4918): the change
     // (its session id), the app it shows and whether that app is self-hosted.
     // The name: the session's own, else the open app's when it is this app.
@@ -30288,9 +30283,6 @@ const AppView = {
   closeStagingOverlay() {
     const staging = AppView._staging();
     const iframe = staging.frame();
-    // The "seeing" half of the doing↔seeing loop ends here — see the
-    // matching publish in ensureStaging.
-    window.Improve?.setPreviewActive?.(false);
     AppView._stagingPreview = null;
     // Invalidate any in-flight readiness poll and hide the loader.
     AppView._stagingLoadId += 1;

@@ -926,31 +926,6 @@ async function resolveCodexTurn(args) {
   return { ...ctx, ...attempt };
 }
 
-// Back-compat terminalization (used by pre-Commit-5 call sites). Delegates
-// to the idempotent completeCodexAttempt. No threadId is available on this
-// bridge, so the delta baseline is a fresh thread — correct for a single
-// physical dispatch per logical turn (the retry case is migrated in Commit
-// 5 with explicit thread propagation).
-async function completeCodexTurn({ pool, turnUuid, status = 'completed', errorDetail = null, errorCode = null, usage = null }) {
-  if (!turnUuid) return { updated: false, alreadyTerminal: true };
-  const u = usage || {};
-  const hasUsage = (u.inputTokens != null && Number.isFinite(u.inputTokens))
-    || (u.outputTokens != null && Number.isFinite(u.outputTokens));
-  return completeCodexAttempt({
-    pool, turnUuid, status, errorCode, errorDetail,
-    threadId: null,
-    usageTotal: hasUsage
-      ? {
-          inputTokens: u.inputTokens != null ? u.inputTokens : null,
-          cachedInputTokens: u.cachedInputTokens != null ? u.cachedInputTokens : null,
-          cacheWriteInputTokens: u.cacheWriteInputTokens != null ? u.cacheWriteInputTokens : null,
-          outputTokens: u.outputTokens != null ? u.outputTokens : null,
-          reasoningOutputTokens: u.reasoningOutputTokens != null ? u.reasoningOutputTokens : null,
-        }
-      : null,
-  });
-}
-
 
 // ── Shared backend-aware recovery settlement (plan 7.5) ───────────────
 // Used by BOTH interactive (server.js resumeDetachedTurnInner) and
@@ -1128,7 +1103,6 @@ module.exports = {
   changedPaths,
   routedProvidersOf,
   shortlistFallbacksOf,
-  completeCodexTurn,
   resolveCodexTurn,
   settleRecoveredAgentAttempt,
   persistRecoveredAgentThread,

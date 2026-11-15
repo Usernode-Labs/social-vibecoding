@@ -145,23 +145,11 @@ function buildForkFollowUpMessage(src) {
 One thing to know: I have the transcript above, but not the coding agent's own memory of that work, so if a detail from their chat matters, say it again rather than assuming I remember it. Tell me what you want to change and I'll take it from here.`;
 }
 
-// Static next-step pills for the fork follow-up, so the pill row above the
-// message box is populated from the first screen instead of empty (same
-// reasoning as buildHeadlessFollowUpQuickReplies in routes/sessions.js). Kept
-// to 3 short first-person replies, matching sanitizeQuickReplies' invariant —
-// the route runs them through it anyway.
-const FORK_FOLLOWUP_REPLIES = Object.freeze([
-  'Explain where this got to',
-  'Continue this work',
-  'Take it a different way',
-]);
-
 module.exports = {
   sanitizeTranscriptMessage,
   sanitizeTranscript,
   MAX_TRANSCRIPT_MESSAGES,
   buildForkFollowUpMessage,
-  FORK_FOLLOWUP_REPLIES,
   // Exported for the tests' deny-by-default assertions.
   ROW_FIELDS,
   METADATA_KEYS,

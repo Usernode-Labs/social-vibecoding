@@ -58,24 +58,6 @@ async function perform(pool, { target, action }, { renew, signal }) {
   }, { onLost: () => { lost = true; } });
 }
 
-// Retry-time cancellation is already owned by the running conductor turn.
-// Keep its existing bounded idle wait here, outside the HTTP module.
-async function waitForTurnStopped(sessionId, containerName, { timeoutMs = 30000 } = {}) {
-  try { workflowOnly(); } catch {
-    log.warn('worker-stop', 'Retry idle wait skipped outside the conductor', { sessionId });
-    return false;
-  }
-  const worker = require('./worker');
-  try { await worker.stopTurn(sessionId); } catch {}
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const busy = await worker.isWorkerExecuting(containerName).catch(() => null);
-    if (busy === false) return true;
-    if (Date.now() >= deadline) return false;
-    await new Promise(r => setTimeout(r, 2000));
-  }
-}
-
 // A classic dispatch can cross Stop before its record exists. Its owning
 // conductor supplies the actual new record, never a session-wide retarget.
 async function confirmDispatchedStop(pool, { sessionId, turnId, journal, by = null }) {
@@ -85,4 +67,4 @@ async function confirmDispatchedStop(pool, { sessionId, turnId, journal, by = nu
   });
 }
 
-module.exports = { perform, waitForTurnStopped, confirmDispatchedStop };
+module.exports = { perform, confirmDispatchedStop };

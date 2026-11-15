@@ -224,47 +224,11 @@ function buildSyncShellScript(files) {
   return lines.join('\n') + '\n';
 }
 
-// Compact metadata block for the Mayor's system prompt — names +
-// descriptions only, never contents (those belong to Claude Code, which
-// reads them from disk in the worker). Returns '' when the user has no
-// files so the prompt stays byte-identical for everyone else.
-function buildMayorAgentFilesBlock(files) {
-  const list = Array.isArray(files) ? files : [];
-  if (!list.length) return '';
-  const line = (f) => `- [${f.kind}] ${f.name}${f.description ? ` — ${f.description}` : ''}`;
-  return `
-
-==== USER'S PERSONAL AGENT FILES ====
-
-The user has personal agent instruction/skill files configured in their
-platform Settings. They apply automatically to every build and spec run
-this user dispatches (the coding agent reads them from disk); you never
-see their full contents — only this list. If asked, you can name them
-and remind the user they're managed in Settings → "Agent instructions &
-skills". Platform conventions still override them on any platform-wide
-rule.
-
-${list.map(line).join('\n')}
-
-==== END USER'S PERSONAL AGENT FILES ====`;
-}
-
 // ── DB accessors ───────────────────────────────────────────────────────
 
 async function listForUser(pool, userId) {
   const { rows } = await pool.query(
     `SELECT kind, name, description, size_bytes, updated_at
-       FROM user_agent_files
-      WHERE user_id = $1
-      ORDER BY kind, name`,
-    [userId]
-  );
-  return rows;
-}
-
-async function loadAllForUser(pool, userId) {
-  const { rows } = await pool.query(
-    `SELECT kind, name, description, content
        FROM user_agent_files
       WHERE user_id = $1
       ORDER BY kind, name`,
@@ -374,9 +338,7 @@ module.exports = {
   skillDescription,
   buildUserClaudeMd,
   buildSyncShellScript,
-  buildMayorAgentFilesBlock,
   listForUser,
-  loadAllForUser,
   getFile,
   upsertFile,
   deleteFile,

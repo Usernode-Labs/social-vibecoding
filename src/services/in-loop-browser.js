@@ -169,36 +169,10 @@ const IN_LOOP_BROWSER_GUIDANCE = `- OPTIONAL in-loop browser (encouraged, NOT re
     this optional check, and finish the commit. Do not alter authentication
     code, users, or seed passwords to make an unrelated UI check pass.`;
 
-// Hosted Claude builds fail closed unless the authoritative platform handbook
-// is supplied through --append-system-prompt-file. Repeating the handbook's
-// full browser/checks summary in every user turn therefore adds history but no
-// information. Keep a high-salience pointer plus the runner syntax that is not
-// currently spelled out in the handbook. Local Claude and Codex/OpenRouter do
-// not have this independently verified system-context transport and continue
-// to receive IN_LOOP_BROWSER_GUIDANCE unchanged.
-const HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE = `- Follow the complete "In-loop browser (build turns)", "Proposal tests",
-  "Staging mock data", and screenshot-state rules supplied in the authoritative
-  system instructions. The browser remains optional for ordinary work and is
-  expected when verifying a screenshot-state deep link added this turn.
-  - \`usernode-run-inloop\` builds the app and serves the platform's hosted
-    assets as production does, so a blank page or a failed stylesheet or
-    script there is a real bug. Never silence one with an empty response.
-  - For an app that verifies the platform's identity token, the launch signs
-    it in and prints a signed-in link (\`usernode-run-inloop --link <route>\`
-    prints one for any route). Open that, never mint a token of your own.
-  - If you changed \`dapp.json\` tests, try to boot the app and run
-    \`usernode-run-checks --changed\`. If you changed a screen covered by an
-    unchanged check, use \`usernode-run-checks --filter <distinctive name or path>\`;
-    \`--changed\` would run nothing. No flags runs the full declared suite.
-    \`npm test\` does not run these proposal checks. If local runtime or
-    fixture authentication fails promptly, report the setup gap and finish
-    the commit; do not edit app authentication merely to satisfy the check.`;
-
 module.exports = {
   INLOOP_PORT,
   INLOOP_DATABASE_URL,
   browserToolingEnabledForMode,
   browserEnvForMode,
   IN_LOOP_BROWSER_GUIDANCE,
-  HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE,
 };

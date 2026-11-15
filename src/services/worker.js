@@ -2618,31 +2618,6 @@ async function noteTailMilestone(sessionId, milestones, { turnId = null, journal
   }
 }
 
-// Mark a completed missing-thread attempt as prepared for the one allowed
-// live retry. Preparation remains a tail_pending state: only the atomic
-// startCodexAttempt transaction may advance the durable record back to
-// dispatch_pending with attempt two's ledger identity.
-async function markTurnRetryPending(sessionId, {
-  turnUuid, logicalTurnId, attemptNumber = 1,
-} = {}) {
-  const pool = _getPoolSafe();
-  if (!pool) throw new Error('markTurnRetryPending: database pool unavailable');
-  await turnLifecycle.transitionTurn(pool, {
-    sessionId,
-    turnId: logicalTurnId,
-    turnUuid,
-    from: [turnLifecycle.PHASE_TAIL_PENDING, 'tail', 'retry_pending'],
-    to: turnLifecycle.PHASE_TAIL_PENDING,
-    patch: {
-      retryFresh: true,
-      logicalTurnId,
-      attemptNumber,
-      retryPreparedAt: new Date().toISOString(),
-    },
-  });
-  return true;
-}
-
 // End of the whole turn (exec + tail): drop the durable record and the
 // journal it pointed at. This is what execInWorker's `finally` does for
 // callers that DON'T hold the record; holders call it themselves when
@@ -2911,24 +2886,6 @@ const BOOTSTRAP_LOG_TAIL = 50;
 const BOOTSTRAP_MAX_ATTEMPTS = 3;
 const BOOTSTRAP_RETRY_BASE_MS = 500;
 
-// Stable, machine-matchable prefixes. `die` in worker-run.sh emits
-// "clone failed: <git stderr>" / "checkout failed: <git stderr>" and
-// _awaitWarmReady rejects with "warm-ready timeout for <name>" or
-// "warm wrapper exited before warm-ready (code=N)".
-//
-// Classification is by PREFIX and never by the text after the colon: that
-// text is exactly what this change lets vary, so matching on it would tie
-// the retry policy to git's wording.
-const BOOTSTRAP_ERROR_PREFIXES = Object.freeze([
-  'clone failed',
-  'checkout failed',
-  'warm-ready timeout',
-  'warm wrapper exited before warm-ready',
-  // Kubernetes only: the kubelet could not start the worker container at
-  // all. Carries a typed `bootstrapReason` (see kubernetes-worker-bootstrap).
-  'worker could not start',
-]);
-
 // Only the two failure modes with a plausible transient cause. A private
 // or missing repo, and a checkout that git refused, are deterministic —
 // retrying them just spends another container slot to be told the same
@@ -2943,13 +2900,6 @@ const BOOTSTRAP_RETRYABLE_PREFIXES = Object.freeze([
 function _messageHasPrefix(err, prefixes) {
   const msg = String((err && err.message) || '');
   return prefixes.some((prefix) => msg.startsWith(prefix));
-}
-
-// True for any failure raised between `docker run` and warm-ready — i.e.
-// the coding agent never started and no code was touched. Exported so the
-// route layer can say that honestly instead of surfacing the raw string.
-function isBootstrapError(err) {
-  return err?.bootstrapFailed === true || _messageHasPrefix(err, BOOTSTRAP_ERROR_PREFIXES);
 }
 
 function isRetryableBootstrapError(err) {
@@ -6347,10 +6297,6 @@ module.exports = {
   ensureWorkerImage,
   // long-lived API
   ensureWorker,
-  // Cold-bootstrap failure classification. The route layer uses
-  // isBootstrapError to tell "the coding agent never started" apart from
-  // "the coding agent ran and failed" — the two need very different copy.
-  isBootstrapError,
   isRetryableBootstrapError,
   isTransientStartError,
   _setGithubStartRetryDelaysForTests,
@@ -6370,7 +6316,6 @@ module.exports = {
   TURN_PHASE_TAIL,
   markTurnTail,
   noteTailMilestone,
-  markTurnRetryPending,
   finishTurn,
   isTailPhase,
   evictWorker,
