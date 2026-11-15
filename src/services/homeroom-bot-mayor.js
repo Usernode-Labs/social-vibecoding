@@ -3050,6 +3050,75 @@ function draftExtrasText(extras) {
   return lines.join('\n');
 }
 
+/**
+ * #6682: the offer_request tool, shared by the chat's turn and a design
+ * thread's (design-bot.js). `ctx` carries what a draft needs (user, bot,
+ * conversationId, messageId, appIds, deps); the offer lands in ctx.offer or
+ * ctx.moreOffers. Any project they can file on is offered, Homeroom's own
+ * included. Resolves { ok, note, shown, similarOpen? } or { ok: false, error }.
+ */
+async function checkRequestOffer(pool, ctx, args = {}) {
+  const { user, deps } = ctx;
+  if (!offerRoom(ctx)) return { ok: false, error: `${OFFERS_FULL}` };
+  const title = clip(withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ')).replace(/:+$/, ''), MAX_TITLE_CHARS);
+  const details = clip(args.details, MAX_DETAILS_CHARS);
+  if (title.length < 3) return { ok: false, error: 'The title is too short.' };
+  // #6251: what the draft carries besides its words, checked against
+  // this person's own chat and the project's open board.
+  const doneWhen = draftDoneWhen(args.doneWhen);
+  if (!doneWhen) {
+    return { ok: false, error: 'Give one to three short Done when checks, in their words, of what will be true when it is done.' };
+  }
+  const pictures = await draftPictures(pool, { ids: args.attachmentIds, conversationId: ctx.conversationId, userId: user.id });
+  if (!pictures.ok) return { ok: false, error: pictures.error };
+  const place = await draftPlace(pool, { ctx });
+  const baseExtras = {
+    attachmentIds: pictures.ids,
+    doneWhen,
+    chatHref: place.href,
+  };
+  // #6305: one request on several projects, filed from one card. Rows
+  // in the order they named them; each named row settled on the card.
+  if (Array.isArray(args.projects) && args.projects.length) {
+    const rows = await resolveRows(pool, { items: args.projects, user });
+    if (rows.length < 2) {
+      // Only one project came out of it: today's single-request card.
+      return withNote(await offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures }));
+    }
+    // Before drafting: read each app's code the way its first read
+    // would, so a row for an app that already does it says so.
+    const exact = rows.filter((r) => r.match === 'exact' && !r.disabled);
+    const already = exact.length
+      ? await require('./homeroom-bot-already-done').alreadyDoes(pool, {
+        user, apps: exact.map((r) => ({ slug: r.slug, name: r.name })), title, details,
+        deps, ctx,
+      })
+      : {};
+    for (const row of exact) {
+      const found = already && already[row.slug];
+      if (found && found.done) {
+        row.done = clip(withoutEmDashes(String(found.sentence || '').trim()), 140) || null;
+        row.ticked = false;
+      }
+    }
+    ctx.card = {
+      type: 'file_many', v: 1, state: 'open', forUserId: Number(user.id), title, details, rows,
+    };
+    if (!addOffer(ctx, {
+      kind: 'file_many', rows, title, details, extras: baseExtras,
+      projects: rows.filter((r) => r.match === 'exact').map((r) => r.slug),
+    })) return { ok: false, error: SAME_OFFER };
+    const shown = `One card under your reply, "New request on ${rows.length} projects", with a tick on each row and File on all. Nothing is filed until they tap it. ${rows.some((r) => r.match !== 'exact') ? 'A row whose name does not match says "Did you mean ...?" on the card; do not ask about names in your reply. ' : ''}${rows.some((r) => r.done) ? 'A row for an app that already does it says so and starts unticked. ' : ''}Answer once how it works, then stop explaining it.`;
+    return { ok: true, note: shown, shown };
+  }
+  return withNote(await offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures }));
+}
+
+/** The offer tool's answer, with the same words under `note` for a design turn. */
+function withNote(out) {
+  return out && out.ok && !out.note ? { ...out, note: out.shown } : out;
+}
+
 /** Run one tool call for this person. Never throws: errors are results. */
 async function runTool(pool, ctx, name, args) {
   const { user, settings, deps } = ctx;
@@ -3138,63 +3207,7 @@ async function runTool(pool, ctx, name, args) {
       case 'revise_proposal': return await reviseProposal(pool, ctx, args);
       case 'withdraw_proposal': return await withdrawProposal(pool, ctx, args);
       case 'report_problem': return await reportProblem(pool, ctx, args);
-      case 'offer_request': {
-        if (!offerRoom(ctx)) return { ok: false, error: `${OFFERS_FULL}` };
-        const title = clip(withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ')).replace(/:+$/, ''), MAX_TITLE_CHARS);
-        const details = clip(args.details, MAX_DETAILS_CHARS);
-        if (title.length < 3) return { ok: false, error: 'The title is too short.' };
-        // #6251: what the draft carries besides its words, checked against
-        // this person's own chat and the project's open board.
-        const doneWhen = draftDoneWhen(args.doneWhen);
-        if (!doneWhen) {
-          return { ok: false, error: 'Give one to three short Done when checks, in their words, of what will be true when it is done.' };
-        }
-        const pictures = await draftPictures(pool, { ids: args.attachmentIds, conversationId: ctx.conversationId, userId: user.id });
-        if (!pictures.ok) return { ok: false, error: pictures.error };
-        const place = await draftPlace(pool, { ctx });
-        const baseExtras = {
-          attachmentIds: pictures.ids,
-          doneWhen,
-          chatHref: place.href,
-        };
-        // #6305: one request on several projects, filed from one card. Rows
-        // in the order they named them; each named row settled on the card.
-        if (Array.isArray(args.projects) && args.projects.length) {
-          const rows = await resolveRows(pool, { items: args.projects, user });
-          if (rows.length < 2) {
-            // Only one project came out of it: today's single-request card.
-            return offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures });
-          }
-          // Before drafting: read each app's code the way its first read
-          // would, so a row for an app that already does it says so.
-          const exact = rows.filter((r) => r.match === 'exact' && !r.disabled);
-          const already = exact.length
-            ? await require('./homeroom-bot-already-done').alreadyDoes(pool, {
-              user, apps: exact.map((r) => ({ slug: r.slug, name: r.name })), title, details,
-              deps, ctx,
-            })
-            : {};
-          for (const row of exact) {
-            const found = already && already[row.slug];
-            if (found && found.done) {
-              row.done = clip(withoutEmDashes(String(found.sentence || '').trim()), 140) || null;
-              row.ticked = false;
-            }
-          }
-          ctx.card = {
-            type: 'file_many', v: 1, state: 'open', forUserId: Number(user.id), title, details, rows,
-          };
-          if (!addOffer(ctx, {
-            kind: 'file_many', rows, title, details, extras: baseExtras,
-            projects: rows.filter((r) => r.match === 'exact').map((r) => r.slug),
-          })) return { ok: false, error: SAME_OFFER };
-          return {
-            ok: true,
-            shown: `One card under your reply, "New request on ${rows.length} projects", with a tick on each row and File on all. Nothing is filed until they tap it. ${rows.some((r) => r.match !== 'exact') ? 'A row whose name does not match says "Did you mean ...?" on the card; do not ask about names in your reply. ' : ''}${rows.some((r) => r.done) ? 'A row for an app that already does it says so and starts unticked. ' : ''}Answer once how it works, then stop explaining it.`,
-          };
-        }
-        return offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures });
-      }
+      case 'offer_request': return await checkRequestOffer(pool, ctx, args);
       case 'offer_move_request': return await offerMoveRequest(pool, ctx, args);
       case 'offer_copy_request': return await offerCopyRequest(pool, ctx, args);
       case 'offer_close_request': return await offerCloseRequest(pool, ctx, args);
@@ -4637,7 +4650,7 @@ async function checkPlanOffer(pool, { user, design, args = {}, deps = {}, html =
     if (asked) {
       const named = await findApp(pool, asked);
       if (named && Number(named.id) !== Number(app.id)) {
-        return { ok: false, error: `This design is a screen of ${app.name || app.slug}, so it posts there. Offer it without project.` };
+        return { ok: false, error: `This design is a screen of ${app.name || app.slug}, so it posts there. Offer it without project. To file an ordinary request there, use offer_request.` };
       }
     }
   }
@@ -4698,16 +4711,20 @@ function checkProjectOffer({ design, args = {} }) {
  * Pure: the line above a card, from the model's own words (sendDesignOffer).
  * Sentences naming a request other than the card's own (`issueNumber`) are
  * dropped whole, so a card's sentence can never name a request its button
- * does not post to; with no request, any sentence naming one is dropped. The
+ * does not post to; with no request, any sentence naming one is dropped. With
+ * `plan` ({ appName, appSlug, title }), a sentence saying the card files some
+ * other request (reply-claims.js planCardOther, #6682) is dropped too. The
  * sentences kept are rejoined, and `fallback` says it when none is left.
  */
-function cardSentence(text, { issueNumber = null, fallback = '' } = {}) {
+function cardSentence(text, { issueNumber = null, fallback = '', plan = null } = {}) {
   const own = Number(issueNumber) > 0 ? Number(issueNumber) : null;
   const keeps = (sentence) => {
     const named = [];
     for (const m of sentence.matchAll(/#\s?(\d+)/g)) named.push(Number(m[1]));
     for (const m of sentence.matchAll(/\brequests?\s+#?(\d+)/gi)) named.push(Number(m[1]));
-    return !named.length || (!!own && named.every((named_) => named_ === own));
+    if (named.length && !(own && named.every((named_) => named_ === own))) return false;
+    if (plan && claims.planCardOther(sentence, plan)) return false;
+    return true;
   };
   const kept = String(text || '')
     .split(/\n{2,}/)
@@ -4777,7 +4794,11 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
       sourceIssueNumber: n, privateThreadId: design.threadId, designVersion: v,
     },
     content: [
-      cardSentence(text, { issueNumber: n, fallback }),
+      cardSentence(text, {
+        issueNumber: n,
+        fallback,
+        plan: { appName: name, appSlug: app.slug, title: design.title },
+      }),
       '',
       n ? `**${name}** · a plan on request #${n}: version ${v} of ${design.title}` : `**${name}** · a plan: version ${v} of ${design.title}`,
       ...(o.gap ? ['', `${o.gap.reason} I can write the rows into the screen first.`] : []),
@@ -6860,6 +6881,7 @@ module.exports = {
   answersFor,
   checkPlanOffer,
   checkProjectOffer,
+  checkRequestOffer,
   cardSentence,
   sendDesignOffer,
   // #6427: an offer's card, and the line a database read in its thread puts on it.
