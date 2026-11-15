@@ -7,8 +7,6 @@ const log = require('../services/logger');
 const appManifest = require('../services/app-manifest');
 const dbManager = require('../services/db-manager');
 const { encrypt } = require('../services/secrets');
-// #1037: the draft-card row copy lives with the service that writes real
-// drafts, so the staging fixture can't drift from what production emits.
 const { reindexAfterHostMove } = require('./reindex-after-host-move');
 const { applySchemaWithLockRetry } = require('./schema-migrations');
 const { seedReferenceData } = require('./reference-data');

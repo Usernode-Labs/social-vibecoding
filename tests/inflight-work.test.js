@@ -9,8 +9,8 @@
 // cut every handler and every fire-and-forget merge mid-write. These pin
 // the two halves the drain now reads: the registry holds exactly what is
 // running, and the request count leaves out the requests that are held open
-// by design (event streams, long polls), which would otherwise hold every
-// shutdown to its deadline. tests/server-graceful-shutdown.test.js drives
+// by design (event streams), which would otherwise hold every shutdown to
+// its deadline. tests/server-graceful-shutdown.test.js drives
 // cleanup() itself against both.
 //
 // Run with: node --test tests/inflight-work.test.js
