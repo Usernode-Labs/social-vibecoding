@@ -81,6 +81,7 @@ const { profileRoutes } = require('./src/routes/profile');
 const { stakingRoutes } = require('./src/routes/staking');
 const { appFileServeRoutes, appFileShellRoutes } = require('./src/routes/app-files');
 const appStorageRoutes = require('./src/routes/app-storage');
+const appGroupRoutes = require('./src/routes/app-groups');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const { credentialRoutes } = require('./src/routes/credentials');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
@@ -610,6 +611,12 @@ app.use(appLlmProxyRoutes(config));
 // the app-LLM proxy above; mounted before authMiddleware because
 // callers are app containers, not browser sessions.
 app.use(appStorageRoutes(config));
+
+// Dapp → platform app-groups API (#6669). An app creates a group and keeps
+// its member list up to date; a project's approval rules may name it. Same
+// private-IP gate and per-app credential shape as app-storage, mounted
+// before authMiddleware because callers are app containers.
+app.use(appGroupRoutes(config));
 
 // Versioned app-facing read-only platform API (#744, #1908). App containers
 // call /api/app-platform/v1/* with the same per-app token

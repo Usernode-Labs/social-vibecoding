@@ -140,6 +140,34 @@ test('a rule list that is a preset says so, in any order, and is written as it',
   assert.deepEqual(back.rules, [{ group: 'lifeguards', kind: 'percentOfEveryone', n: 60 }]);
 });
 
+test('a group the app keeps has no people list, and round-trips through the block', () => {
+  const v = rules.parseRulesBlock({
+    groups: [{ name: 'App users', keptByApp: true }],
+    rules: [{ group: 'App users', majority: true }],
+  });
+  assert.deepEqual(v.groups, [{ name: 'App users', people: [], keptByApp: true }]);
+  assert.deepEqual(rules.blockFor(v).groups, [{ name: 'App users', keptByApp: true }]);
+  assert.deepEqual(rules.parseRulesBlock(rules.blockFor(v)).groups, v.groups);
+  // Nobody may be listed beside the app's own list.
+  assert.throws(
+    () => rules.parseRulesBlock({ groups: [{ name: 'App users', keptByApp: true, people: ['evan'] }], rules: [{ group: 'App users', atLeast: 1 }] }),
+    /no people list/,
+  );
+  // Stored, it keeps the flag and resolves no ids.
+  const stored = rules.storedForm(v);
+  assert.equal(stored.groups[0].keptByApp, true);
+  assert.deepEqual(stored.groups[0].ids, []);
+  assert.equal(governance.rulesFromColumn(stored).groups[0].keptByApp, true);
+  // Flipping between kept and hand-picked is a group removed and added.
+  const flipped = rules.diffRules(
+    { preset: null, groups: [{ name: 'App users', people: ['evan'] }], rules: [{ group: 'app users', kind: 'majority', n: null }] },
+    v,
+  );
+  assert.deepEqual(flipped.groupsAdded.map((g) => g.name), ['App users']);
+  assert.deepEqual(flipped.groupsRemoved.map((g) => g.name), ['App users']);
+  assert.deepEqual(flipped.peopleChanged, []);
+});
+
 test('new projects start on You or the group', () => {
   assert.equal(rules.DEFAULT_PRESET, 'you_or_the_group');
 });

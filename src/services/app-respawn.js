@@ -20,6 +20,7 @@ const dbManager = require('./db-manager');
 const appSecrets = require('./app-secrets');
 const appLlmEnv = require('./app-llm-env');
 const appStorageEnv = require('./app-storage-env');
+const appGroupsEnv = require('./app-groups-env');
 const { appIdentityEnv } = require('./app-identity-env');
 const { getPool } = require('../db/pool');
 
@@ -105,6 +106,7 @@ async function runExistingImage(config, app) {
   // the app-storage pair (#752).
   const llmEnv = await appLlmEnv.productionLlmEnv(pool, app.id);
   const storageEnv = await appStorageEnv.productionStorageEnv(pool, app.id);
+  const groupsEnv = await appGroupsEnv.productionGroupsEnv(pool, app.id);
   // On docker, pin the mutable tag to the image id it names right now and
   // run THAT id: the label check below and the container then describe the
   // same image even if a build retags `:latest` in between. Kubernetes'
@@ -125,6 +127,7 @@ async function runExistingImage(config, app) {
       USERNODE_ENV: 'production',
       ...llmEnv,
       ...storageEnv,
+      ...groupsEnv,
       ...merge.env,
     },
   });

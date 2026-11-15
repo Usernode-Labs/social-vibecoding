@@ -2063,6 +2063,67 @@ await fetch(`${process.env.USERNODE_STORAGE_URL}/files?filename=${encodeURICompo
   (smaller quota, deleted after 7 days) — fine for testing, never for
   durable content.
 
+## App groups — a group the project's app keeps
+
+A project's approval rules can name a group that **the app itself keeps**.
+The app sends Homeroom its whole member list, and Homeroom stores it; a
+rule naming that group then passes on those people's yeses. The app decides
+nothing about voting itself, and Homeroom never calls the app when it
+decides: the last reported list stands.
+
+The group must be declared in `dapp.json` first (a change to who decides,
+so it goes through a vote like any other rules change):
+
+```json
+"governance": {
+  "groups": [{ "name": "App users", "keptByApp": true }],
+  "rules": [
+    { "group": "creator", "atLeast": 1 },
+    { "group": "App users", "majority": true }
+  ]
+}
+```
+
+Once it is merged, the app keeps the list up to date with two environment
+vars provisioned on a **production** container (never on a staging preview):
+
+- `USERNODE_GROUPS_URL` — `http://usernode:3000/api/app-groups`
+- `USERNODE_GROUPS_TOKEN` — a 64-hex per-app credential
+
+**A staging preview has neither.** Check for the token and do nothing when
+it is absent, so unreviewed code cannot change who decides.
+
+```js
+// Who counts as a user is YOUR rule, held here, where your data is.
+const users = await db.query(
+  'SELECT DISTINCT user_id FROM workouts WHERE minutes > 15 AND completed_at IS NOT NULL',
+);
+if (!process.env.USERNODE_GROUPS_TOKEN) return; // staging: no token, no report
+await fetch(`${process.env.USERNODE_GROUPS_URL}/App%20users/members`, {
+  method: 'PUT',
+  headers: {
+    'content-type': 'application/json',
+    'x-usernode-app-token': process.env.USERNODE_GROUPS_TOKEN,
+  },
+  // Homeroom account ids, as your requests' iframe token gave them to you.
+  body: JSON.stringify({ userIds: users.rows.map((r) => r.user_id) }),
+});
+```
+
+The list replaces the old one whole: someone missing from it stops counting,
+and counts again if a later list includes them. Only real Homeroom accounts
+are kept; other ids are ignored, and a list holds at most 5,000 people. Being
+in the group does not make someone a project member: to vote they still have
+to join the project.
+
+Routes (all need `x-usernode-app-token`, and are reachable only from inside
+the platform network):
+
+- `GET  /api/app-groups` — `{ groups: [{ name, key, size, reportedAt, named }] }`
+- `PUT  /api/app-groups/<name>` — create it if missing
+- `PUT  /api/app-groups/<name>/members` with `{ userIds: [int] }` — replace
+  the list; answers `{ size, ignored }`
+
 ## App-facing platform API — use the pinned v1 base
 
 Server-side app features that read Homeroom data use the private,

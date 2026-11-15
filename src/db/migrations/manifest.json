@@ -380,6 +380,11 @@
       "id": "homeroom-bot-build-notes-from-request",
       "sha256": "7aa510b81e752bec19e350a568ff42880f3a56d907d067af8db770109f7025fb",
       "schemaSha256": "db9042a114208849f917b88b72bdc3fcec361b3a45a2f40397dd01b7f7d6c90f"
+    },
+    {
+      "id": "app-groups",
+      "sha256": "7b459f85190080a0edc52fa7d047d879b9e96fbcf752d943feca525653e99e0f",
+      "schemaSha256": "e236854d0d060d4c66b2d503372217ddb09cc2646ee879add12f4a4df9ec5570"
     }
   ]
 }
