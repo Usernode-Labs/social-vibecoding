@@ -38,6 +38,8 @@ export const RESERVED_KEYS = new Set([
   'USERNODE_LLM_PROXY_TOKEN',
   'USERNODE_STORAGE_URL',
   'USERNODE_STORAGE_TOKEN',
+  'USERNODE_GROUPS_URL',
+  'USERNODE_GROUPS_TOKEN',
   'USERNODE_PLATFORM_API_URL',
   'USERNODE_PLATFORM_API_V1_URL',
   // The platform's public origin (services/app-identity-env.js). Reserved

@@ -1713,9 +1713,9 @@ Rules the room keeps for you, and a new game should too:
   page only shows the result. A guest (no account) can watch, never play.
 - Time on the server is \`Date.now()\` inside the room: games run on real
   time, not a preview's chosen \`req.now\`.
-- Content rules: no weapons, combat or attacking characters, and no
-  gambling or wagering. Shooting games are out; breaking rocks, racing,
-  building and quizzes are fine.
+- Content rules: cartoon and fantasy combat, weapons and shooting are
+  fine in a game, and so is wagering pretend points. Nothing realistic or
+  graphic, and no real-money gambling.
 
 Update \`README.md\` when what the game does changes.
 

@@ -2530,7 +2530,7 @@ function adminRoutes(config) {
   // to a full admin's browser as a file download. The dumped file contains
   // every bcrypt hash in `users`, every live row of `sessions`, every
   // activation code, every app's db_password / llm_proxy_token /
-  // storage_api_token, and the AES-GCM ciphertext of every BYOK key and
+  // storage_api_token / groups_api_token, and the AES-GCM ciphertext of every BYOK key and
   // app secret. It deliberately bypasses BOTH containment mechanisms the
   // platform otherwise relies on — the `staging:private` scrub in
   // db-manager.js and the grant-level deny lists in debug-access.js.

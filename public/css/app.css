@@ -20041,11 +20041,17 @@ a.dev-ws-hero-pending {
    does, one full-width dark button and how many are in. Under the hero on a
    phone; beside it on a wide window ("THE HUB IN TWO COLUMNS" below). */
 .dev-ws-invite-hero {
+  position: relative;
   display: flex; flex-direction: column; gap: 10px; min-width: 0;
   padding: 20px 20px 16px; border-radius: 20px;
   background: #f6f2fc; box-shadow: inset 0 0 0 1px #d9d0ec;
 }
 .dark .dev-ws-invite-hero { background: #201b2f; box-shadow: inset 0 0 0 1px #3a3152; }
+/* Its ✕ (request 6687), the same button Share it's head carries: the card
+   has no head row, so it sits in the top corner, over the faces' right. */
+.dev-ws-invite-hero > .dev-ws-card-close {
+  position: absolute; top: 12px; inset-inline-end: 12px; margin: 0;
+}
 .dev-ws-invite-hero-fan { display: flex; align-items: center; margin-bottom: 2px; }
 .dev-ws-invite-hero-face {
   flex: none; width: 40px; height: 40px; margin-inline-end: -10px;
@@ -31135,6 +31141,8 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
   --bl-pic-line: rgba(18, 26, 14, 0.1);
   --bl-lift: 0 1px 2px rgba(18, 26, 14, 0.06), 0 14px 30px -22px rgba(18, 26, 14, 0.3);
   --bl-raise-edge: inset 0 0 0 1px rgba(18, 26, 14, 0.1), 0 1px 2px rgba(18, 26, 14, 0.06);
+  /* A field on a card (a reply box): firmer than a raised button's edge. */
+  --bl-field-edge: inset 0 0 0 1px rgba(18, 26, 14, 0.16), 0 1px 2px rgba(18, 26, 14, 0.06);
   --bl-pill-edge: inset 0 0 0 1px #121a0e, 0 2px 0 #121a0e;
   --bl-pill-edge-down: inset 0 0 0 1px #121a0e, 0 0 0 #121a0e;
   /* Surfaces: white cards on the cream page. */
@@ -31216,6 +31224,7 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]) {
   /* A shadow has to out-darken the page to lift anything from it. */
   --bl-lift: 0 1px 2px rgba(0, 0, 0, 0.35), 0 14px 30px -22px rgba(0, 0, 0, 0.9);
   --bl-raise-edge: inset 0 0 0 1px rgba(220, 230, 248, 0.1), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --bl-field-edge: inset 0 0 0 1px rgba(220, 230, 248, 0.14), 0 1px 2px rgba(0, 0, 0, 0.35);
   /* An ink outline would vanish on the dark page: the pill keeps its hard
      foot, in a deeper sun. */
   --bl-pill-edge: 0 2px 0 #a3962b;
@@ -31603,6 +31612,31 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section > .grid {
   padding: 16px 8px 14px;
+}
+/* A REPLY BOX on its sheet. The standard interface draws it white on a
+   half-clear sheet, so the tinted page shows round it; here the sheet is
+   the card's own colour, and the box vanished into it. It takes the
+   raised fill and an edge of its own, firmer than a card's hairline, as a
+   field does, and keeps its focus ring outside that edge. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.messages-composer-card, .gc-composer-card) {
+  background: var(--bl-raise);
+  box-shadow: var(--bl-field-edge);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-composer-card:focus-within {
+  box-shadow: var(--bl-field-edge), 0 0 0 2px var(--accent);
+}
+/* THE COLUMN'S HEADER beside Homeroom bot's page, over a request, a change
+   or a decision opened there. The standard header is the sheet's
+   half-clear fill, a pale band of the page here (and a grey one in dark):
+   it is the card's own colour, as Main Chat's header already is, above
+   its hairline. Its ⋯ disc, white on white, is raised as the look's other
+   plain buttons are. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(#ai-screen:not(.hidden)) .side-panel-head {
+  background-color: var(--bl-card);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(#ai-screen:not(.hidden)) .side-panel-head .messages-thread-action {
+  background: var(--bl-raise);
+  box-shadow: var(--bl-raise-edge);
 }
 /* Unread conversations: coral, the colour of people talking. */
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-tab-badge {

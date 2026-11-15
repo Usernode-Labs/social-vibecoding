@@ -28,7 +28,7 @@ const ACCESS_COLUMNS = 'id, slug, created_by, self_hosted, collab_visibility, vi
 // column lists at the call sites below — the SQL layer is what keeps
 // these values from ever leaving Postgres; this is the fail-closed net
 // for the day a response site regresses to `SELECT *`.
-const SECRET_APP_COLUMNS = ['db_password', 'llm_proxy_token', 'storage_api_token'];
+const SECRET_APP_COLUMNS = ['db_password', 'llm_proxy_token', 'storage_api_token', 'groups_api_token'];
 
 // Shallow-copies `row` with every SECRET_APP_COLUMNS key removed.
 // Safe to call on a row that already lacks them (no-op) or on

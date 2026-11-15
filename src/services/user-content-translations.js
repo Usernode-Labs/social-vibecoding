@@ -169,7 +169,7 @@ function systemPrompt(language, languageName, glossary) {
       `- Never translate these names; write them exactly as they are: ${names}.`,
       '- Do not use an em dash (—) unless the source has one.',
       '- If the text is already in the target language, answer with "same": true and an empty text.',
-      '- If the text breaks Homeroom\'s content rules (sexual content or nudity, graphic violence, or real-money or simulated gambling), answer with an empty text and no translation.',
+      '- If the text breaks Homeroom\'s content rules (sexual content or nudity, graphic violence, or real-money gambling), answer with an empty text and no translation.',
     ].join('\n'),
   ];
   if (terms.length) parts.push(`Use these translations for Homeroom's own terms, inflected as the sentence needs:\n${terms.join('\n')}`);

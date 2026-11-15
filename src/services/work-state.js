@@ -694,9 +694,11 @@ function stagePhrase(item, yours) {
   // #6531: a conflicting change the lane is catching up says so in the stage
   // word itself ("Syncing with main", not "Checking"), and carries no line.
   if (item.stage === 'checking' && code === 'syncing') return { id: 'core:work.stage.syncing' };
-  // #6594: its votes are in, so it is approved and its checks are what it
-  // waits on, not a vote.
-  if (item.stage === 'checking' && code === 'approved_checking') return { id: 'core:work.stage.approved' };
+  // #6594: its votes are in, so nothing asks for a vote any more. #6695: its
+  // own tests are still running, so the word says what is happening
+  // (Checking), not Approved: Approved waits only on GitHub's required
+  // checks now (below).
+  if (item.stage === 'checking' && code === 'approved_checking') return { id: 'core:work.stage.checking' };
   // Its tests passed and only its before & after screenshots are left: the
   // stage word says that ("Taking screenshots"), not "Checking", which read
   // as tests that might still fail.

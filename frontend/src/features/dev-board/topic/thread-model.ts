@@ -520,6 +520,11 @@ export function requestPill(
   // flight. The standing says so in its own words (Approved), here before
   // the settled stages, since waiting on GitHub's checks is still Approved.
   const approvedPill = { ...base, key: 'approved', label: say('project:topic.thread.pill.approved'), tone: 'progress', spinner: true };
+  // #6695: its votes are in but its own tests are still running, so the pill
+  // says Checking, not Approved. Its change is not open for votes (voteOpen
+  // is false), so it would otherwise fall through the review counting below.
+  const checkingPill = { ...base, key: 'checking', label: say('project:topic.thread.pill.checking'), tone: 'progress', spinner: true };
+  if (work && work.stage === 'checking' && work.line?.code === 'approved_checking') return checkingPill;
   if (work && work.words?.stage.id === 'core:work.stage.approved') return approvedPill;
   if (work && isSettled(work)) return work.stage === 'live' ? livePill : goingLivePill;
   // #6439: an ended vote to close still draws its card, but the header only

@@ -2087,7 +2087,10 @@ async function currentRulesColumn(pool, appId) {
 function sameRules(a, b) {
   const canon = (v) => (v ? JSON.stringify({
     preset: v.preset || null,
-    groups: (v.groups || []).map((g) => ({ name: g.name, people: g.people || [], ids: g.ids || [] })),
+    groups: (v.groups || []).map((g) => ({
+      name: g.name, people: g.people || [], ids: g.ids || [],
+      ...(g.keptByApp ? { keptByApp: true } : {}),
+    })),
     rules: (v.rules || []).map((r) => ({ group: r.group, kind: r.kind, n: r.n ?? null, min: r.min ?? null })),
   }) : null);
   return canon(a) === canon(b);
