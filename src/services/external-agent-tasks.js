@@ -2682,8 +2682,8 @@ function renderPreparedTask({
     agentLabelText: agent,
     platformRules: workOrderEssentials(prompts),
     targetProposal: targetProposal || null,
-    // The browser walkthrough registers its jobs under `usernode-web:<agent>`
-    // (routes/dev-flow.js); everything else is a chat assistant's connector.
+    // A job the browser walkthrough prepared carries `usernode-web:<agent>`
+    // as its client id; everything else is a chat assistant's connector.
     startedFromWalkthrough: String(task.client_id || '').startsWith('usernode-web'),
     specs,
     // #4264: minted by prepareWork for this rendering only, never stored.
@@ -2863,83 +2863,24 @@ async function withTaskLock(pool, taskId, fn) {
 // for an agent that has lost its task id. Falls back to task-less submission
 // (with the attribution gate fully applied) when there is none.
 //
-// `unexpiredOnly` is OFF by default and only routes/dev-flow.js's walkthrough
-// passes it, because the two readers want different things from an expired
-// row — the same split findOpenTaskBySession already documents:
-//
-//   submitWork's `slug` + `branch` recovery must keep seeing it. The row is
-//   the only record of the base commit that branch was cut from, and
-//   mirrorForkBranch runs its ancestry check `if (baseSha)` — so hiding an
-//   expired task there would quietly drop the base_mismatch protection from
-//   exactly the long-running job most likely to need it.
-//
-//   The WALKTHROUGH must not. Nothing sweeps expired rows, and every other
-//   reader that decides whether the user still has a live work order already
-//   filters them (findOpenTaskByRequest, and the open-work-order listing that
-//   feeds the cap). Left unfiltered here, one dangling reservation pins the
-//   launchpad to a dead task for good: step 3 renders `done`, its "what should
-//   it build?" field never appears, and "Copy work order" hands the agent a
-//   work order for something finished weeks ago.
-//
-// Two call sites, each with its SQL written out in full, rather than one query
-// with the predicate spliced in. scripts/check-sql.js Parse/Describes every
-// query it can read as a literal against a real PostgreSQL planner; anything
-// assembled at runtime — an interpolated fragment, or even a constant passed by
-// name — falls out of that inventory into the hand-reviewed dynamic baseline.
-// Both shapes of this one are worth keeping under the planner, and the repeated
-// SELECT list is the price of that.
-async function loadLatestOpenTaskForSlug(pool, userId, slug, opts = {}) {
+// An EXPIRED row still answers here, unlike findOpenTaskByRequest: it is the
+// only record of the base commit that branch was cut from, and
+// mirrorForkBranch runs its ancestry check `if (baseSha)`, so hiding an
+// expired task would quietly drop the base_mismatch protection from exactly
+// the long-running job most likely to need it.
+async function loadLatestOpenTaskForSlug(pool, userId, slug) {
   try {
-    const { rows } = opts.unexpiredOnly
-      ? await pool.query(
-        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
-          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
-            AND t.expires_at > NOW()
-          ORDER BY t.id DESC LIMIT 1`,
-        [userId, slug]
-      )
-      : await pool.query(
-        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
-          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
-          ORDER BY t.id DESC LIMIT 1`,
-        [userId, slug]
-      );
+    const { rows } = await pool.query(
+      `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+         FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
+        WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
+        ORDER BY t.id DESC LIMIT 1`,
+      [userId, slug]
+    );
     return rows[0] || null;
   } catch {
     return null;
   }
-}
-
-// "Start over" on the walkthrough (#1049): put ONE open task away by its id.
-//
-// Deliberately not prepareWork's `restart`, which abandons by `request_key`.
-// That is the right key for starting the SAME request over, and the wrong one
-// here: a user who wants to build something else types a different brief, which
-// hashes to a different request_key, so restart's UPDATE matches nothing — the
-// stale row stays open, still holding one of the caller's ten slots and still
-// the newest thing loadLatestOpenTaskForSlug can see.
-//
-// Scoped to the caller's own OPEN rows FOR THIS APP, so a replayed request can
-// reach neither somebody else's reservation nor one of the caller's own under a
-// different app whose slug happens to be in the URL.
-//
-// Returns the id it closed, or null when it matched nothing — which the route
-// turns into `unknown_task`. A database failure THROWS rather than returning
-// null: the two are not the same answer to the user, and collapsing them would
-// paint "Work order put away" over a write that never happened.
-async function discardTask(pool, userId, appId, taskId) {
-  const id = Number(taskId);
-  if (!Number.isSafeInteger(id) || id <= 0) return null;
-  const { rows } = await pool.query(
-    `UPDATE external_agent_tasks
-        SET status = 'abandoned'
-      WHERE id = $1 AND user_id = $2 AND app_id = $3 AND status = 'open'
-      RETURNING id`,
-    [id, userId, appId]
-  );
-  return rows[0] ? Number(rows[0].id) : null;
 }
 
 // ── The work orders that hold the caller's slots (#4266) ──────────────
@@ -3008,12 +2949,11 @@ async function listHeldWorkOrders(pool, userId) {
 
 // Put ONE of the caller's work orders away by its id, from anywhere (#4266).
 //
-// The ending prepare_work's `restart` writes, and the walkthrough's "Start
-// over": `abandoned`. So nothing downstream learns a new state. A later
-// submit_work for the id is refused as closed, and prepare_work for the same
-// request mints a fresh order at the app's current head. Unlike discardTask it
-// is not scoped to one app, because whoever reads list_my_work_orders is
-// looking at every app at once.
+// The ending prepare_work's `restart` writes: `abandoned`. So nothing
+// downstream learns a new state. A later submit_work for the id is refused as
+// closed, and prepare_work for the same request mints a fresh order at the
+// app's current head. It is not scoped to one app, because whoever reads
+// list_my_work_orders is looking at every app at once.
 //
 // What it will not close, each with its own answer, because "nothing matched"
 // is four different situations to the person asking:
@@ -5011,18 +4951,9 @@ module.exports = {
   // `propose: true` puts the session in front of the group.
   findOpenTaskBySession,
   closeTaskForSession,
-  // Both used by routes/dev-flow.js (#1049) to RE-RENDER a work order the
-  // user already has — the in-platform walkthrough is resumable, so
-  // reopening the chat must show the same branch and base commit rather
-  // than mint a second task.
   loadLatestOpenTaskForSlug,
-  // "Start over" on that same walkthrough: the only way to put a work order
-  // away without submitting it, and the reason a stale one stops being
-  // permanent.
-  discardTask,
-  // Its connector counterpart (#4266): the work orders holding the caller's
-  // slots, exactly as the cap counts them, and putting one away by its id
-  // from any app.
+  // The work orders holding the caller's slots (#4266), exactly as the cap
+  // counts them, and putting one away by its id from any app.
   listHeldWorkOrders,
   closeWorkOrder,
   abandonExpiredRequest,

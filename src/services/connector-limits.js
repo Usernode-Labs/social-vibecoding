@@ -216,9 +216,8 @@ async function checkOpenWorkOrders(pool, userId) {
 }
 
 // What a CONNECTOR caller refused by the cap above can do about it, by tool
-// name (#4266). Not written into that refusal, because the browser
-// walkthrough shows the same sentence (routes/dev-flow.js) and a tool name
-// means nothing on the platform's own screen. services/mcp-tools.js appends
+// name (#4266). Not written into that refusal, which is worded for any
+// caller, where a tool name means nothing. services/mcp-tools.js appends
 // it to prepare_work's `at_capacity`. The last sentence is there because a
 // closed work order cannot be submitted: an agent may still be building it.
 const OPEN_WORK_ORDERS_CONNECTOR_HINT = 'To see which ones, call list_my_work_orders. close_work_order '

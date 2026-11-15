@@ -1137,11 +1137,10 @@ function authRoutes(config) {
         // Same shape as walletLinkEnabled / cliAuthEnabled above: the client
         // renders what the server reports and never sniffs the environment.
         // A staging clone has no GitHub OAuth app, so this would be false
-        // there and the whole #1049 surface would be unreviewable. Saying
-        // "offerable" in staging unlocks nothing: the two writes answer 503
-        // (routes/dev-flow.js), and the status route still reports
-        // available:false unless the request carries the ?demo=1 fixture
-        // flag — so the card only appears where a reviewer asks for it.
+        // there and the screens that offer a person's own coding agent would
+        // be unreviewable. Saying "offerable" in staging unlocks nothing: the
+        // dev-flow status route (routes/dev-flow.js) still reports what the
+        // GitHub link can actually do.
         externalFlowsAvailable: IS_STAGING || githubLink.isEnabled(config),
         // The platform's own app row — slug, display name, repo and deployed
         // short sha — or null on a deployment that has no self-hosted row.

@@ -1243,7 +1243,6 @@
 "tests/language-runtime.test.js":[0.6,1.1],
 "tests/language-sync.test.js":[0.3,1.1],
 "tests/late-notice.test.js":[0.6,0.8],
-"tests/launchpad-instructions.test.js":[0.1,1.1],
 "tests/layout-audit-rules.test.js":[0.4,0.7],
 "tests/leaderboard-title-sync.test.js":[0.2,1],
 "tests/leaderboard-user-prs.test.js":[0.3,1.5],

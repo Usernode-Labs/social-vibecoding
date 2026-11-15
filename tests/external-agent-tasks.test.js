@@ -667,14 +667,9 @@ test('an explicitly chosen agent beats sniffing the calling client', async () =>
 
 test('the browser flow round-trips its agent through client_id', async () => {
   // There is no `agent` column on external_agent_tasks, and #1049 did not
-  // add one: src/routes/dev-flow.js records the picked agent in client_id as
-  // 'usernode-web:<agent>', and normalizeAgent recovers it from that on a
-  // later read. This is what makes the walkthrough resumable — reload the
-  // page and the card still says "Building with Codex".
-  const ROUTE_SRC = fs.readFileSync(
-    path.join(__dirname, '../src/routes/dev-flow.js'), 'utf8'
-  );
-  assert.match(ROUTE_SRC, /usernode-web:/, 'the route stamps the agent into client_id');
+  // add one: a job the browser walkthrough prepared carries the picked agent
+  // in client_id as 'usernode-web:<agent>', and normalizeAgent recovers it
+  // from that on a later read.
   assert.equal(svc.normalizeAgent(null, 'usernode-web:claude-code'), 'claude-code');
   assert.equal(svc.normalizeAgent(null, 'usernode-web:codex'), 'codex');
 
@@ -2770,8 +2765,8 @@ test('the update work order says the same for a missing connector, in its own te
 });
 
 test('renderPreparedTask derives "started from the walkthrough" from client_id', async () => {
-  // The browser flow stamps `usernode-web:<agent>` into client_id
-  // (routes/dev-flow.js); that is the only record of where a job came from.
+  // A job the browser flow prepared carries `usernode-web:<agent>` in
+  // client_id; that is the only record of where a job came from.
   const row = {
     id: 77, fork_owner: 'someuser', fork_repo: 'recipe-box',
     branch_name: 'usernode/x', base_sha: BASE_SHA, issue_number: null, brief: 'x',
@@ -4873,15 +4868,12 @@ test('the lease is a force-with-lease pinned to the commit the platform read', (
 
 
 // ── The stale-work-order fix ────────────────────────────────────────────
-//
-// Two readers, one row, and they want opposite things from an expired
-// reservation — the same split findOpenTaskBySession already documents.
 
-test('loadLatestOpenTaskForSlug filters expiry only when the caller asks', async () => {
+test('loadLatestOpenTaskForSlug still sees an expired row', async () => {
   const LOAD_SQL = 'FROM external_agent_tasks t JOIN apps a';
 
-  // submitWork's `slug` + `branch` recovery: the default, and it must still
-  // see an expired row. That row is the only record of the base commit the
+  // submitWork's `slug` + `branch` recovery reads it, and it must still see
+  // an expired row. That row is the only record of the base commit the
   // pushed branch was cut from, and mirrorForkBranch runs its ancestry check
   // `if (baseSha)` — so filtering it here would drop base_mismatch protection
   // from exactly the long-running job most likely to need it.
@@ -4893,60 +4885,9 @@ test('loadLatestOpenTaskForSlug filters expiry only when the caller asks', async
     'recovery keeps seeing an expired task');
   assert.deepEqual(recovery[0].params, [3, 'recipe-box']);
 
-  // The walkthrough: opts in, because resumable is not the same as permanent.
-  const walkthrough = [];
-  await svc.loadLatestOpenTaskForSlug(
-    fakePool([[LOAD_SQL, [{ id: 7 }]]], walkthrough), 3, 'recipe-box', { unexpiredOnly: true }
-  );
-  assert.match(walkthrough[0].sql, /AND t\.expires_at > NOW\(\)/,
-    'an expired reservation stops pinning the launchpad');
-  // Same parameters either way: the filter is a literal, never interpolated
-  // user input.
-  assert.deepEqual(walkthrough[0].params, [3, 'recipe-box']);
-
-  // Still open to the caller's OWN rows for this app, both ways round.
-  for (const q of [recovery[0], walkthrough[0]]) {
-    assert.match(q.sql, /t\.user_id = \$1 AND a\.slug = \$2 AND t\.status = 'open'/);
-    assert.match(q.sql, /ORDER BY t\.id DESC LIMIT 1/);
-  }
-});
-
-test('discardTask abandons one open row of the caller\'s, for one app, and nothing else', async () => {
-  const queries = [];
-  const pool = fakePool([['UPDATE external_agent_tasks', [{ id: 4242 }]]], queries);
-  assert.equal(await svc.discardTask(pool, 3, 7, 4242), 4242);
-
-  const update = queries[0];
-  assert.match(update.sql, /SET status = 'abandoned'/,
-    "'abandoned' is the status the CHECK constraint already allows");
-  // Owner AND app AND still-open, all three: a replayed request must reach
-  // neither somebody else's reservation, nor one of the caller's own filed
-  // under a different app whose slug happens to be in the URL, nor reopen
-  // bookkeeping on one already submitted.
-  assert.match(update.sql, /WHERE id = \$1 AND user_id = \$2 AND app_id = \$3 AND status = 'open'/);
-  assert.deepEqual(update.params, [4242, 3, 7]);
-
-  // Matching nothing is null, not a cheerful success — the route turns that
-  // into unknown_task rather than telling the user it put something away.
-  const q2 = [];
-  assert.equal(
-    await svc.discardTask(fakePool([['UPDATE external_agent_tasks', []]], q2), 3, 7, 4242),
-    null
-  );
-
-  // A junk id never reaches the database at all.
-  const q3 = [];
-  const junkPool = fakePool([['UPDATE external_agent_tasks', [{ id: 1 }]]], q3);
-  for (const bad of [0, -3, 1.5, NaN, null, undefined, '1; DROP TABLE apps']) {
-    assert.equal(await svc.discardTask(junkPool, 3, 7, bad), null, `${bad} is not a task id`);
-  }
-  assert.equal(q3.length, 0, 'no query is issued for any of them');
-
-  // A database that THROWS propagates. It used to be flattened to null, which
-  // the route answers as 404 and the client treats as success — so a transient
-  // pool error painted "Work order put away" over a write that never happened.
-  const throwing = { async query() { throw new Error('database is on fire'); } };
-  await assert.rejects(() => svc.discardTask(throwing, 3, 7, 4242), /database is on fire/);
+  // Still open to the caller's OWN rows for this app.
+  assert.match(recovery[0].sql, /t\.user_id = \$1 AND a\.slug = \$2 AND t\.status = 'open'/);
+  assert.match(recovery[0].sql, /ORDER BY t\.id DESC LIMIT 1/);
 });
 
 test('an EXPIRED reservation stops blocking the same brief for ever', async () => {

@@ -9,7 +9,11 @@
 // result into an ordinary proposal (submit_work). The request page's "own
 // agent" link reads where that stands for the viewer:
 //
-//   GET  /api/apps/:slug/dev-flow/status         → the walkthrough's state
+//   GET  /api/apps/:slug/dev-flow/status         → connector count and fork
+//
+// It answers whether the app's repository and the GitHub link are available,
+// the viewer's GitHub login, how many connectors they have, and their fork of
+// the app's repository. The link reads `connectors` and `fork`.
 //
 // AUTH: behind the global /api/* gate (middleware/auth.js), and the app is
 // re-resolved through appAccess with 'collab', the same bar the browser's
@@ -20,7 +24,6 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const externalAgentTasks = require('../services/external-agent-tasks');
-const prompts = require('../services/prompts');
 const githubLink = require('../services/github-link');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
@@ -87,18 +90,10 @@ const STATUS_BY_CODE = {
   code_missing: 409,
 };
 
-// The origin the service stamps into work orders and settings links. The
-// canonical public origin, never the Host header a caller controls.
-function originOf(config) {
-  return config.cliAuthOrigin || '';
-}
-
-// How many live connector grants this account has. Advisory only — the
-// walkthrough never requires one — but worth showing at the hand-off step,
-// where "you already have Claude connected" changes the instructions from
-// "paste this" to "or just tell Claude to pick it up". A delegated grant
-// (#2779) is the platform's own agent, not a connected chat product, so it
-// never counts.
+// How many live connector grants this account has. Advisory only: the own
+// agent link works without one, and ticks its "connector" item when there is
+// one. A delegated grant (#2779) is the platform's own agent, not a connected
+// chat product, so it never counts.
 async function connectorCount(pool, userId) {
   if (IS_STAGING) return 0;
   try {
@@ -119,67 +114,15 @@ async function connectorCount(pool, userId) {
   }
 }
 
-// The proposal an open UPDATE task revises (#1054), re-derived so reopening
-// the chat resumes the update walkthrough instead of showing a work order
-// that has forgotten what it was for. Deliberately the SAME describe function
-// the prepare path uses, against the same row, so the resumed order cannot
-// disagree with the original one — including its refusals: a proposal that
-// merged while the agent worked stops being offered here too.
-// One loader for both callers, so the prepare path and the resume path read
-// the same columns. `session_title` is here for #1071: a session that was
-// never promoted has no `pr_title`, and the work order still wants to name the
-// work it is continuing.
-async function loadTargetSession(pool, proposalId) {
-  const { rows } = await pool.query(
-    `SELECT id, user_id, app_id, status, source, branch_name,
-            imported_pr_head_sha, pr_title, session_title
-       FROM chat_sessions
-      WHERE id = $1`,
-    [proposalId]
-  );
-  return rows[0] || null;
-}
-
-async function reloadTargetProposal(pool, user, app, origin, task) {
-  const proposalId = Number(task && task.target_session_id);
-  if (!Number.isSafeInteger(proposalId) || proposalId <= 0) return null;
-  let session = null;
-  try {
-    session = await loadTargetSession(pool, proposalId);
-  } catch (err) {
-    log.warn('dev-flow', 'target proposal reload failed', { proposalId, err: err.message });
-    return null;
-  }
-  if (!session) return null;
-  const described = externalAgentTasks.describeTargetProposal(session, user, app, origin);
-  return described.ok ? described : null;
-}
-
-// inspectPushedBranch answers with a bare string. The walkthrough wants a
-// shape it can render three ways, so the mapping lives here rather than
-// being re-derived in the client.
-function shapeBranch(state) {
-  return {
-    state,
-    pushed: state === 'pushed',
-    // 'unpushed' is the one state worth naming out loud: the branch exists
-    // but still points at the commit it started from, which is "you
-    // committed locally and never pushed" almost every time.
-    unpushed: state === 'unpushed',
-    missing: state === 'missing',
-  };
-}
-
 function devFlowRoutes(config) {
   const router = Router();
   const pool = getPool();
 
-  // ── The walkthrough's state ──────────────────────────────────────────
+  // ── The hand-off status ──────────────────────────────────────────────
   //
-  // One request answers every step: is GitHub linked, is there a fork, is
-  // there a work order already, has the branch been pushed. The client
-  // re-polls this on "Check again" and when the tab regains focus, which is
-  // what makes the guided flow feel like it is watching along.
+  // One request answers both things the link shows: is a connector there,
+  // and is the fork ready. The link reads it when it is opened and again
+  // when the tab regains focus, so adding the connector in another tab shows.
   router.get('/api/apps/:slug/dev-flow/status', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
@@ -190,15 +133,15 @@ function devFlowRoutes(config) {
       const parsed = app.repo_url ? gh.parseGithubUrl(app.repo_url) : null;
       const linkAvailable = githubLink.isEnabled(config);
 
-      // Staging mock data (#555 convention): external_agent_tasks and
-      // mcp_tokens are both staging:private, and a staging clone has no
-      // GitHub OAuth app either — so without this a reviewer sees the
-      // "unavailable" branch and can review nothing. Obviously-fake,
-      // read-only, written nowhere, and a strict no-op in production.
+      // Staging mock data (#555 convention): mcp_tokens is staging:private,
+      // and a staging clone has no GitHub OAuth app either — so without
+      // this a reviewer sees the "unavailable" branch and can review
+      // nothing. Obviously-fake, read-only, written nowhere, and a strict
+      // no-op in production.
       if (IS_STAGING) {
         // The state a first-time user meets: nothing is linked, no connector,
-        // no fork, no work order. The own agent link then leaves the
-        // repository to the person and says a connector is needed.
+        // no fork. The own agent link then leaves the repository to the person
+        // and says a connector is needed.
         return res.json({
           available: true,
           reason: null,
@@ -207,8 +150,6 @@ function devFlowRoutes(config) {
           github: { linked: false, login: null, available: true },
           connectors: { count: 0 },
           fork: null,
-          task: null,
-          branch: null,
         });
       }
 
@@ -220,8 +161,6 @@ function devFlowRoutes(config) {
           github: { linked: false, login: null, available: linkAvailable },
           connectors: { count: await connectorCount(pool, req.user.id) },
           fork: null,
-          task: null,
-          branch: null,
         });
       }
 
@@ -234,14 +173,12 @@ function devFlowRoutes(config) {
         github: { linked, login: linked ? link.login : null, available: true },
         connectors: { count: await connectorCount(pool, req.user.id) },
         fork: null,
-        task: null,
-        branch: null,
       };
 
       if (!linked) return res.json(payload);
 
-      // Step 2. Advisory exactly as it is inside prepareWork: a read that
-      // fails reports 'unknown' rather than asserting the user has no fork.
+      // Advisory exactly as it is inside prepareWork: a read that fails
+      // reports 'unknown' rather than asserting the user has no fork.
       const fork = await externalAgentTasks.inspectFork(link.login, parsed);
       const forkState = ['ready', 'name_conflict', 'unknown'].includes(fork.state)
         ? fork.state
@@ -257,93 +194,6 @@ function devFlowRoutes(config) {
         pageUrl: `https://github.com/${parsed.owner}/${parsed.repo}/fork`,
       };
 
-      // Steps 3-5. An open task is RE-RENDERED from its stored values —
-      // same branch, same base commit — so reopening the chat resumes the
-      // walkthrough instead of restarting it.
-      //
-      // `unexpiredOnly` because resumable is not the same as permanent. Nothing
-      // sweeps expired rows, so without it a reservation nobody ever submitted
-      // keeps answering for this app after it has stopped counting against the
-      // cap and stopped being reusable by prepareWork — leaving the launchpad
-      // showing step 3 done, with no way to say what to build instead.
-      //
-      // What the launchpad hands over now: short, static platform copy telling
-      // the agent to ask what to build and then mint its own work order.
-      //
-      // Set unconditionally, and that is the point — it must NOT hang off a
-      // task the way everything here used to, because the browser no longer
-      // mints one.
-      payload.targetKind = null;
-      payload.instructions = prompts.getLaunchpadInstructions({
-        appName: app.name,
-        slug: app.slug,
-        targetProposalId: null,
-      });
-
-      const task = await externalAgentTasks.loadLatestOpenTaskForSlug(
-        pool, req.user.id, app.slug, { unexpiredOnly: true }
-      );
-      if (task) {
-        const targetProposal = await reloadTargetProposal(
-          pool, req.user, app, originOf(config), task
-        );
-        const rendered = externalAgentTasks.renderPreparedTask({
-          task,
-          app,
-          owner: parsed.owner,
-          repo: parsed.repo,
-          origin: originOf(config),
-          targetProposal,
-          // The agent this task was prepared for. The browser flow records
-          // it as the client id (`usernode-web:<agent>`), which is exactly
-          // what normalizeAgent reads — so the choice survives a reload
-          // without a column of its own.
-          clientId: task.client_id,
-          prompts: require('../services/prompts'),
-          forkStatus: forkState,
-          reused: true,
-        });
-        payload.task = {
-          id: rendered.taskId,
-          agent: rendered.agent,
-          branch: rendered.branch,
-          baseSha: rendered.baseSha,
-          forkOwner: rendered.forkOwner,
-          forkRepo: rendered.forkRepo,
-          forkUrl: rendered.forkUrl,
-          forkPageUrl: rendered.forkPageUrl,
-          issueNumber: task.issue_number || null,
-          brief: task.brief || '',
-          guidance: rendered.guidance,
-          workOrder: rendered.workOrder,
-          // Present only for an UPDATE task (#1054). `null` on every ordinary
-          // work order, which is what the client branches on: with it, the
-          // walkthrough's last step submits onto an existing proposal instead
-          // of opening a new one.
-          targetProposal: targetProposal
-            ? {
-              id: targetProposal.proposalId,
-              title: targetProposal.title,
-              // 'proposal' | 'session' (#1071). The walkthrough says "Submit
-              // the update" either way, and everything it says ABOUT the
-              // submission — votes cleared or not — branches on this.
-              targetKind: targetProposal.targetKind || 'proposal',
-              branchHome: targetProposal.branchHome,
-              webPath: targetProposal.webPath,
-            }
-            : null,
-        };
-        let branchState = 'unknown';
-        try {
-          branchState = await externalAgentTasks.inspectPushedBranch(
-            task, task.branch_name, task.fork_repo
-          );
-        } catch (err) {
-          log.warn('dev-flow', 'branch inspect failed', { taskId: task.id, err: err.message });
-        }
-        payload.branch = shapeBranch(branchState);
-      }
-
       return res.json(payload);
     } catch (err) {
       log.error('dev-flow', 'status failed', { slug: req.params.slug, err: err.message });
@@ -354,4 +204,4 @@ function devFlowRoutes(config) {
   return router;
 }
 
-module.exports = { devFlowRoutes, STATUS_BY_CODE, shapeBranch };
+module.exports = { devFlowRoutes, STATUS_BY_CODE };
