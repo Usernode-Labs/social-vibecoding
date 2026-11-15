@@ -1,5 +1,5 @@
 import {
-  Fragment, useEffect, useRef, type ComponentType, type KeyboardEvent, type ReactNode, type Ref,
+  Fragment, useEffect, useRef, useState, type ComponentType, type KeyboardEvent, type ReactNode, type Ref,
 } from 'react';
 
 import {
@@ -88,10 +88,44 @@ export function MessageActionBar({
 }) {
   const t = useMessages('messages');
   const quick = onReact ? recents.slice(0, 3) : [];
+  // #6697: the bar sits just above the row it acts on, or just below it when
+  // there is no room above (the first visible row of a scroller). Measured
+  // once when the pointer or the keyboard enters the row, the way the picker
+  // and the menu measure with placementFor, never while it stays open.
+  const ownBar = useRef<HTMLDivElement | null>(null);
+  const [below, setBelow] = useState(false);
+
+  function setBar(node: HTMLDivElement | null) {
+    ownBar.current = node;
+    if (typeof barRef === 'function') barRef(node);
+    else if (barRef) (barRef as { current: HTMLDivElement | null }).current = node;
+  }
+
+  useEffect(() => {
+    const node = ownBar.current;
+    if (!node || typeof window === 'undefined') return;
+    // Somebody else's bubble on the Messages screen keeps its bar beside its
+    // name line (message-row.tsx `barBesideHead`), which already sits beside
+    // the message rather than over its words: nothing to measure there.
+    if (node.parentElement?.classList.contains('messages-message-head')) return;
+    let row: HTMLElement | null = node.parentElement;
+    while (row && getComputedStyle(row).position === 'static') row = row.parentElement;
+    if (!row) return;
+    const target = row;
+    // 40px pill, the 4px gap and 2px of slack.
+    const place = () => setBelow(!roomAbove(target, 46));
+    target.addEventListener('pointerenter', place);
+    target.addEventListener('focusin', place);
+    return () => {
+      target.removeEventListener('pointerenter', place);
+      target.removeEventListener('focusin', place);
+    };
+  }, []);
+
   return (
     <div
-      ref={barRef}
-      className={`${className} msgx-bar ${pickerOpen || moreOpen ? 'msgx-bar-open' : ''} ${hidden ? 'messages-message-actions-reserved' : ''}`}
+      ref={setBar}
+      className={`${className} msgx-bar ${below ? 'msgx-bar-below' : ''} ${pickerOpen || moreOpen ? 'msgx-bar-open' : ''} ${hidden ? 'messages-message-actions-reserved' : ''}`}
       role="toolbar"
       aria-label={t('messages:actions.toolbar')}
       aria-hidden={hidden || undefined}
@@ -249,4 +283,22 @@ export function placementFor(anchor: Element | null, height: number): 'above' | 
   const rect = anchor.getBoundingClientRect();
   if (rect.bottom + height <= floor) return 'below';
   return rect.top - height >= ceiling ? 'above' : 'below';
+}
+
+/**
+ * Whether a message's bar fits just above its row (#6697): the row's top has
+ * to clear the top of the nearest scroller (else the page's top, 0) by the
+ * bar's height. Read when the pointer or the keyboard enters the row, the
+ * way placementFor reads its popover's room.
+ */
+export function roomAbove(row: Element, height: number): boolean {
+  if (!row || typeof window === 'undefined') return false;
+  let ceiling = 0;
+  for (let node = row.parentElement; node; node = node.parentElement) {
+    if (/(auto|scroll)/.test(getComputedStyle(node).overflowY)) {
+      ceiling = node.getBoundingClientRect().top;
+      break;
+    }
+  }
+  return row.getBoundingClientRect().top - height >= ceiling;
 }

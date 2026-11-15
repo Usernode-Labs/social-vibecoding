@@ -10,6 +10,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
@@ -104,6 +106,45 @@ test('the hover bar: three recents, the picker, reply, save and ⋯, in that ord
     className: 'x', recents: ['👍'], onReact: noop, hidden: true,
   }));
   assert.match(pending, /aria-hidden="true"/, 'a send in flight keeps the bar laid out but hidden');
+});
+
+test('the hover bar sits above the row, not on it, and below it when there is no room above', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  const rule = (selector) => {
+    const at = css.indexOf(`${selector} {`);
+    assert.ok(at >= 0, `${selector} is in app.css`);
+    return css.slice(at, css.indexOf('}', at));
+  };
+  for (const selector of ['.gc-msg-actions', '.messages-message-actions']) {
+    const body = rule(selector);
+    assert.match(body, /bottom:\s*calc\(100% \+ 4px\)/, `${selector} is placed just above its row`);
+    assert.match(body, /top:\s*auto/, `${selector} no longer hangs over the row`);
+    assert.doesNotMatch(body, /top:\s*-/, `${selector} has no negative top`);
+  }
+  const below = rule('.gc-msg-actions.msgx-bar-below');
+  assert.match(below, /top:\s*calc\(100% \+ 4px\)/, 'the below placement sits under the row');
+  assert.match(below, /bottom:\s*auto/);
+  // The bridge across the gap, and the beside-the-name variant keeping its
+  // own place and no bridge.
+  assert.match(rule('.messages-message-actions::after,\n.gc-msg-actions::after'), /height:\s*6px/);
+  assert.match(rule('.messages-message-head > .messages-message-actions::after'), /content:\s*none/);
+
+  // roomAbove reads the room from the row's top to the nearest scroller's top.
+  const { roomAbove } = loadTsx(`${DIR}/action-bar.tsx`);
+  const scroller = { getBoundingClientRect: () => ({ top: 100 }), parentElement: null };
+  const inside = { parentElement: scroller };
+  const rowAt = (top) => ({ getBoundingClientRect: () => ({ top }), parentElement: inside });
+  global.window = {};
+  global.getComputedStyle = (node) => ({ overflowY: node === scroller ? 'auto' : 'visible' });
+  try {
+    assert.equal(roomAbove(rowAt(140), 46), false,
+      'a row 40px below the scroller top leaves less than the bar needs');
+    assert.equal(roomAbove(rowAt(146), 46), true, 'exactly the height it needs is room enough');
+    assert.equal(roomAbove(rowAt(200), 46), true, 'a row further down has room above it');
+  } finally {
+    delete global.window;
+    delete global.getComputedStyle;
+  }
 });
 
 test('the thread chip counts replies and says what it opens', () => {
