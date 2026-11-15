@@ -30,8 +30,9 @@ function stagePhrase(item, yours) {
   if (item.stage === 'stopped' && item.reason) return { id: `core:work.reason.${camel(item.reason)}` };
   const code = item.line && item.line.code;
   if (item.stage === 'checking' && code === 'syncing') return { id: 'core:work.stage.syncing' };
-  // #6594: its votes are in: Approved while its checks (or GitHub's) finish.
-  if (item.stage === 'checking' && code === 'approved_checking') return { id: 'core:work.stage.approved' };
+  // #6594: its votes are in. #6695: its own tests are still running, so it
+  // says Checking; Approved waits only on GitHub's required checks.
+  if (item.stage === 'checking' && code === 'approved_checking') return { id: 'core:work.stage.checking' };
   // Only its before & after screenshots are left: Taking screenshots.
   if (item.stage === 'checking' && code === 'shots') return { id: 'core:work.stage.shots' };
   if (item.stage === 'going_live' && code === 'github_checks') return { id: 'core:work.stage.approved' };

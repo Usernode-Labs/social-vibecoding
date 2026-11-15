@@ -6451,9 +6451,13 @@
     "text": "Up for a vote",
     "description": "Status pill beside a request's number in its page's header: a change built for it is up for a vote."
   },
+  "topic.thread.pill.checking": {
+    "text": "Checking",
+    "description": "Status pill beside a request's number in its page's header: the change built for it has the votes its project's rule needs and its own tests are still running."
+  },
   "topic.thread.pill.approved": {
     "text": "Approved",
-    "description": "Status pill beside a request's number in its page's header: the change built for it has the votes its project's rule needs, and it waits for its checks before it goes live."
+    "description": "Status pill beside a request's number in its page's header: the change built for it has the votes its project's rule needs and has passed its own tests, and it waits for GitHub's required checks before it goes live."
   },
   "topic.thread.pill.close": {
     "text": "Vote to close",
