@@ -273,7 +273,7 @@ test('each mode sets every one of the look\'s colours, and the shared rules read
   // A rule for either mode carries no colour of its own for those roles.
   for (const rule of lookRules()) {
     if (!rule.selectors.every((sel) => sel.startsWith(EITHER))) continue;
-    for (const colour of ['#f6f2d8', '#181127', '#28203c', '#37477b', '#2a2452', '#1a63c4', '#12245a', '#7fbcf7']) {
+    for (const colour of ['#f6f2d8', '#0d1421', '#182135', '#37477b', '#232b43', '#1a63c4', '#122a52', '#7fbcf7']) {
       assert.ok(!rule.body.includes(colour), `"${rule.selectors[0]}" names ${colour}: read the mode's variable instead`);
     }
   }
@@ -288,22 +288,24 @@ test('a card differs from the page by its fill, in both modes, with no outline',
   assert.equal(valueOf(light, '--bg-secondary'), '#f6f2d8', 'the page');
   assert.equal(valueOf(light, '--bg-primary'), '#ffffff', 'a card');
   assert.doesNotMatch(light, /#fffeea/, 'not the website\'s own cream: white cards would not stand out on it');
-  // Dark: a dark purple page, and a card one step lighter in the same hue.
-  // The surfaces climb from the page, as in the standard dark.
-  assert.equal(valueOf(dark, '--bl-page'), '#181127');
-  assert.equal(valueOf(dark, '--bl-card'), '#28203c');
-  assert.equal(valueOf(dark, '--bg-primary'), '#181127', 'the page');
-  assert.equal(valueOf(dark, '--bg-secondary'), '#28203c', 'a card');
-  assert.equal(valueOf(dark, '--text-primary'), '#f2eff7', 'words are a white tinted toward the page');
-  // The page is purple, the hue of the standard dark's washes, not the green
-  // of the website's ink it was first drawn in: red and blue both above green.
-  for (const name of ['--bl-page', '--bl-card', '--bl-raise']) {
+  // Dark: a very dark navy page, and a card one step lighter in the same
+  // blue. The surfaces climb from the page, as in the standard dark.
+  assert.equal(valueOf(dark, '--bl-page'), '#0d1421');
+  assert.equal(valueOf(dark, '--bl-card'), '#182135');
+  assert.equal(valueOf(dark, '--bg-primary'), '#0d1421', 'the page');
+  assert.equal(valueOf(dark, '--bg-secondary'), '#182135', 'a card');
+  assert.equal(valueOf(dark, '--text-primary'), '#eef2f8', 'words are a white tinted toward the page');
+  // Dark keeps to the look's two families, blue and sun. The page was first
+  // a green and then a purple, each a third family beside the blue frame;
+  // every surface, the sidebar and the bar are blues now: blue above green
+  // above red.
+  for (const name of ['--bl-page', '--bl-card', '--bl-raise', '--bl-side', '--bl-bar']) {
     const [r, g, b] = valueOf(dark, name).match(/^#(..)(..)(..)$/).slice(1).map((h) => parseInt(h, 16));
-    assert.ok(b > r && r > g, `${name} is a purple`);
+    assert.ok(b > g && g > r, `${name} is a blue`);
   }
   // The outline every card is drawn with is a hairline too faint to read as
   // one; the fill and a lift say where a card ends.
-  for (const [mode, ink] of [[LIGHT, '18, 26, 14'], [DARK, '233, 226, 248']]) {
+  for (const [mode, ink] of [[LIGHT, '18, 26, 14'], [DARK, '220, 230, 248']]) {
     const line = ruleAt(`${mode}:not([data-contrast="more"])`);
     assert.ok(line, 'the look sets the sheet line, and leaves More contrast its own');
     const alpha = Number(valueOf(line.body, '--app-sheet-line').match(new RegExp(`^rgba\\(${ink}, ([\\d.]+)\\)$`))[1]);
@@ -331,7 +333,7 @@ test('the sidebar is blue with white words, and the row you are on is sun', () =
   assert.ok(bar, 'the bar itself, for either mode');
   assert.match(bar.body, /background:\s*var\(--bl-side\);/);
   assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-side'), '#1a63c4', 'the deep sky');
-  assert.equal(valueOf(ruleAt(DARK).body, '--bl-side'), '#12245a', 'a dark blue in dark, so it does not glare beside a dark page');
+  assert.equal(valueOf(ruleAt(DARK).body, '--bl-side'), '#122a52', 'a dark blue in dark, so it does not glare beside a dark page');
   // Its rows draw from the tokens, so hover and focus follow without a rule each.
   assert.match(bar.body, /--text-primary:\s*rgba\(255, 255, 255, 0\.94\);/);
   assert.match(bar.body, /--lit-tint:\s*rgba\(255, 255, 255, 0\.24\);/, 'what is hovered is a wash of white');
@@ -358,7 +360,7 @@ test('the top bar is navy, not the sidebar\'s blue, and a community\'s bar keeps
   assert.match(bar.body, /background-color:\s*var\(--bl-bar\);/);
   assert.match(bar.body, /--brand-ink:\s*#ffffff;/, 'white words');
   assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-bar'), '#37477b');
-  assert.equal(valueOf(ruleAt(DARK).body, '--bl-bar'), '#2a2452');
+  assert.equal(valueOf(ruleAt(DARK).body, '--bl-bar'), '#232b43');
   for (const mode of [LIGHT, DARK]) {
     assert.notEqual(valueOf(ruleAt(mode).body, '--bl-bar'), valueOf(ruleAt(mode).body, '--bl-side'), 'the two read as two pieces');
   }
