@@ -179,7 +179,7 @@ test('sessionTakenElsewhere: every kind of work on the session, from its durable
   // A turn on the session is somebody else's unless its record names this
   // look's work item.
   assert.match(sql, /cs\.active_turn IS NOT NULL\s+AND NOT \(cs\.active_turn->'owner'->>'machine' IS NOT DISTINCT FROM \$2\s+AND cs\.active_turn->'owner'->>'key' IS NOT DISTINCT FROM \$3\)/);
-  assert.match(sql, /FROM local_agent_turns t/, 'a turn on a local agent');
+  assert.doesNotMatch(sql, /local_agent_turns/, 'no local agent runs a turn: its table is not read');
   // #4575: before & after shots hold the proposal from their first build,
   // but wrote no turn record until their agent started, minutes later. A
   // follow-up that started in that gap took the session, and the shots
