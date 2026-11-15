@@ -866,6 +866,37 @@ test('#6158: a Waiting row says what it waits on, and the rows nobody is moving 
   assert.match(src, /onClick=\{\(\) => setStillOpen\(\(o\) => !o\)\}/, 'and a press toggles it');
 });
 
+test('a change waiting only on its before & after screenshots reads "Taking screenshots", with a camera', () => {
+  const { shortWords, nextWords, notMoving } = loadTsx(MODEL);
+  const { waitGlyph } = loadTsx('frontend/src/features/ai/lines.ts');
+  const shots = thread(1, 7, 'checking', { work: { line: { code: 'shots' } } });
+  // Its word is its own, not Checking (its tests passed) nor Building
+  // (nobody is changing it); its line says the one thing left.
+  assert.equal(words(shortWords(shots)), 'Taking screenshots');
+  assert.equal(words(nextWords(shots)),
+    'Garden club · #7 · Taking screenshots · Tests passed: only the before and after screenshots are left');
+  assert.equal(notMoving(shots), false, 'it is moving: it is not folded under Not moving');
+  // The camera is for that wait alone: tests still running keep the clock.
+  assert.equal(waitGlyph(shots), 'camera');
+  assert.equal(waitGlyph(thread(2, 8, 'checking')), 'clock');
+  assert.equal(waitGlyph(thread(3, 9, 'checking', { work: { line: { code: 'checks_running', minutes: 4 } } })), 'clock');
+  assert.equal(waitGlyph(thread(4, 10, 'queued')), 'clock');
+  // Both faces draw the name: the standard list's camera, the kit's picture.
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  assert.match(lists, /clock: ClockIcon, camera: CameraIcon,/);
+  assert.match(read('frontend/src/features/ai/frame-list.tsx'), /clock: 'clock', camera: 'image',/);
+  assert.match(read('frontend/src/features/ai/lines.ts'), /const waitingLine = threadLine\(waitGlyph\);/);
+  const { renderComponent } = require('./lib/render-tsx');
+  const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, ready: true, rows: [], owed: 0,
+    progress: [], live: [], openRow() {}, openThread() {},
+    waiting: [shots],
+  });
+  assert.match(html, /Taking screenshots/, 'the word on the row\'s right');
+  // The camera's own path (icons.tsx CameraIcon), on the row.
+  assert.match(html, /M6\.827 6\.175A2\.31 2\.31 0 015\.186 7\.23/, 'drawn with the camera glyph');
+});
+
 test('#6237: a change on a GitHub-hosted project is "PR N" on the bot tab\'s rows and tooltips', () => {
   const { nextWords, changeOnGithub, prWord, needsYou } = loadTsx(MODEL);
   const github = { ...app, changesOnGithub: true };

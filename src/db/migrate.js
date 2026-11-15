@@ -175,6 +175,10 @@ async function migrate(config) {
   // Homeroom), so Needs you has the row that says what it waits on, its page
   // the Votes card and the bot's plain reply.
   await seedStagingOwnChangeWaitingOnFix(pool);
+  // The capture member's own change with its tests passed and its before &
+  // after screenshots still being taken, on that same demo project, so the
+  // Homeroom bot tab has the row that says so.
+  await seedStagingOwnChangeTakingScreenshots(pool);
   // #6651's shots: the capture member's own change still waiting on a vote,
   // which the badge counts and Needs you must list.
   await seedStagingOwnChangeWaitingOnVote(pool);
@@ -3605,6 +3609,64 @@ async function seedStagingOwnChangeWaitingOnFix(pool) {
   }
 }
 
+// A change of the capture member's own whose tests passed and whose before
+// & after screenshots are still being taken: the row the Homeroom bot tab
+// words "Taking screenshots". A fresh staging copy has no such change (a
+// screenshots run is the platform's own, and nothing there runs one), so the
+// shots get an obviously fake one on the demo project the seed above makes.
+// It is no run: nothing reads this row to take screenshots, and no turn is
+// on it. The hold it shows lasts 45 minutes from the later of its checks'
+// verdict and its screenshots' last move (bot-readiness.ts heldUntil), both
+// the moment the row is made, as a copy boots for the first time; after
+// that it reads as up for a vote, like the fake change of
+// seedStagingOwnChangeWaitingOnVote. The row is written once, whole: the
+// screenshots' columns are the shots machine's to update, never a seed's.
+// Idempotent by session id, and a no-op outside staging.
+async function seedStagingOwnChangeTakingScreenshots(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const SESSION_ID = 999_999_994;
+  try {
+    const member = (await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
+    // The demo project seedStagingOwnChangeWaitingOnFix makes and joins.
+    const appId = (await pool.query('SELECT id FROM apps WHERE id = 900097')).rows[0]?.id;
+    if (!member || !appId) return;
+    // Short enough for the number's column on the Homeroom bot tab's rows.
+    const changeNumber = 900093;
+    const head = 'stagingdemotakingscreenshots';
+    const title = 'Staging demo: say which app a sign-in token was made for';
+    // A thread of its own, so the change is in the member's own threads.
+    const thread = await pool.query(
+      `INSERT INTO threads (app_id, number, kind, title, created_at)
+       SELECT $1::int, $2::int, 'work', $3::text, NOW() - INTERVAL '20 minutes'
+        WHERE NOT EXISTS (SELECT 1 FROM threads WHERE app_id = $1::int AND number = $2::int AND kind = 'work')
+        RETURNING id`,
+      [appId, changeNumber, title],
+    );
+    const threadId = thread.rows[0]?.id || (await pool.query(
+      "SELECT id FROM threads WHERE app_id = $1 AND number = $2 AND kind = 'work'", [appId, changeNumber],
+    )).rows[0]?.id || null;
+    // Promoted, its tests passed on the head up for a vote, and its
+    // screenshots under way on that head, as of now.
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, session_title, pr_title, pr_number, status,
+          thread_id, promoted_at, external_agent, check_state, check_phase, mergeability,
+          integration_merges_clean, checks_commit_sha, reviewed_head_sha, votes_required, approval_epoch,
+          checks_checked_at, shots_state, shots_run_id, shots_detail, shots_updated_at,
+          created_at, last_activity_at)
+       SELECT $1::int, $2::int, $3::int, 'staging-fixture/own-change-taking-screenshots', $4::text, $4::text,
+              $5::int, 'promoted', $6::int, NOW() - INTERVAL '10 minutes',
+              'claude-code', 'passing', 'done', 'clean', TRUE, $7::text, $7::text, 1, 0,
+              NOW(), 'exploring', $8::varchar, $9::jsonb, NOW(),
+              NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '10 minutes'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE id = $1::int)`,
+      [SESSION_ID, appId, member.id, title, changeNumber, threadId, head,
+        'stagingdemotakingscreenshots0001', JSON.stringify({ headSha: head, required: true })],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging own-change taking-screenshots seeding failed', { message: err.message });
+  }
+}
 
 // #6599 (11 Nov 2026): a built draft of the shots' member fixture
 // (usernode-capture), its checks passing and nothing working on it, on its

@@ -403,6 +403,24 @@ test('the new wait words are the catalog\'s, keyed by the same entries', () => {
   assert.equal(ws.lineSays({ line: { code: 'shots' } }), core['work.line.shots'].text);
 });
 
+test('a change waiting only on its screenshots says so in its stage word, not Checking', () => {
+  const core = require('../frontend/locales/en/core.json');
+  const held = { stage: 'checking', line: { code: 'shots' } };
+  assert.deepEqual(ws.phrasesOf(held), {
+    stage: { id: 'core:work.stage.shots' },
+    stageOthers: { id: 'core:work.stage.shots' },
+    line: { id: 'core:work.line.shots' },
+  });
+  assert.equal(core['work.stage.shots'].text, 'Taking screenshots');
+  assert.equal(ws.stageSays(held), 'Taking screenshots');
+  assert.equal(ws.stageSays(held, { yours: false }), 'Taking screenshots');
+  assert.equal(ws.says(held), 'Taking screenshots · Tests passed: only the before and after screenshots are left');
+  // Tests still running, or failing, are still Checking.
+  assert.equal(ws.stageSays({ stage: 'checking' }), core['work.stage.checking'].text);
+  assert.equal(ws.stageSays({ stage: 'checking', line: { code: 'checks_running', minutes: 3 } }), core['work.stage.checking'].text);
+  assert.equal(ws.stageSays({ stage: 'checking', line: { code: 'checks_failing' } }), core['work.stage.checking'].text);
+});
+
 test('#6528: a passing change reads Checking until its before & after shots settle, then rings ready', () => {
   const head = 'a'.repeat(40);
   const change = {
