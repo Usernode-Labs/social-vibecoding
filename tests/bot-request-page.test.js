@@ -11,6 +11,10 @@
 //
 //   1. Which page a bot message stands for (request-page.ts), and that the
 //      bot's own private threads (a draft, a design) are not one of them.
+//      Nor is a project's first version (15 Nov 2026): its news is the
+//      first message of a thread the bot page lists, and while it stood for
+//      the project's hub that thread closed as it opened, with the hub in
+//      its place.
 //   2. Every way in goes there: a thread opened by id and a link to an old
 //      thread. (14 Nov 2026: a moment's "↳ in …" label, one more way in,
 //      went with Main Chat, and so did the one-line news rows of the chat's
@@ -38,15 +42,30 @@ const ADA = { id: 7, username: 'ada' };
 const msg = (sender, homeroomBot, extra = {}) => ({ id: 40, sender, content: 'x', metadata: { homeroomBot }, ...extra });
 const plain = (v) => JSON.parse(JSON.stringify(v));
 
-test('a bot message about a request stands for the request\'s page; a first version for its project\'s hub', () => {
+test('a bot message about a request stands for the request\'s page', () => {
   const { requestPageOf } = loadTsx(PAGE);
   assert.deepEqual(plain(requestPageOf(msg(BOT, { kind: 'activity', appSlug: 'plant-pal', appName: 'Plant Pal', issueNumber: 18, requestTitle: 'Dark mode' }))), {
     route: 'app/plant-pal/dev/issues/18', label: 'Dark mode', place: { slug: 'plant-pal', name: 'Plant Pal' }, issueNumber: 18,
   });
   assert.equal(requestPageOf(msg(BOT, { kind: 'question', appSlug: 'plant-pal', issueNumber: 7 })).label, 'Request #7');
-  assert.deepEqual(plain(requestPageOf(msg(BOT, { kind: 'activity', appSlug: 'plant-pal', appName: 'Plant Pal', firstVersion: true }))), {
-    route: 'app/plant-pal/dev', label: 'Plant Pal', place: { slug: 'plant-pal', name: 'Plant Pal' }, issueNumber: null,
-  });
+});
+
+test('a first version\'s message stands for no page: its thread is drawn, not swapped for the project\'s hub', () => {
+  const { requestPage, requestPageOf } = loadTsx(PAGE);
+  // What a first version's thread starts on: an older Main Chat message
+  // listed as one (earlier-chat.js), each kind the bot stamped that way, or
+  // the notice that opened it. Its number is 1 under its own project, never
+  // a request's page either.
+  for (const kind of ['activity', 'plan', 'merged', 'ack', 'first_version_failed']) {
+    assert.equal(requestPageOf(msg(BOT, { kind, appSlug: 'plant-pal', appName: 'Plant Pal', firstVersion: true })), null, kind);
+    assert.equal(requestPageOf(msg(BOT, { kind, appSlug: 'plant-pal', appName: 'Plant Pal', issueNumber: 1, firstVersion: true })), null, `${kind}, numbered`);
+  }
+  assert.equal(requestPageOf(msg(BOT, { kind: 'first_version_started', appSlug: 'plant-pal', appName: 'Plant Pal' })), null);
+  assert.equal(requestPage({ appSlug: 'plant-pal', appName: 'Plant Pal', issueNumber: 1, firstVersion: true }), null);
+  // The server has the same rule: a first version's news is not a request's.
+  const { isRequestNewsMeta } = require('../src/services/conversations');
+  assert.equal(isRequestNewsMeta({ kind: 'merged', appSlug: 'plant-pal', issueNumber: 1, firstVersion: true }), false);
+  assert.equal(isRequestNewsMeta({ kind: 'merged', appSlug: 'plant-pal', issueNumber: 18 }), true);
 });
 
 test('the bot\'s own private threads, a person\'s message and a message about no request are none', () => {
@@ -66,7 +85,8 @@ test('it opens beside the bot page, in its column, when the panel takes it, else
   // Chat, so opening a request's page attaches it to nothing.
   assert.doesNotMatch(source, /messages-object-selected|conversationId/);
   assert.match(source, /Improve\?\.enterTopicFrom\?\.\(window\.location\.hash/);
-  assert.match(source, /AppView\?\._landOnHub\?\.\(page\.place\.slug\)/, 'a door to a project\'s hub lands on the hub');
+  // Every page it opens is a request's now: the hub was a first version's.
+  assert.doesNotMatch(source, /_landOnHub|dev`, label/, 'no first version\'s door to its project\'s hub');
   assert.match(source, /window\.location\.hash = page\.route;/);
 });
 

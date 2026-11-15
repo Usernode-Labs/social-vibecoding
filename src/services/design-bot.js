@@ -22,7 +22,9 @@
 // recorded per turn like every DM turn (homeroom_bot_dm_turns). It reads the
 // thread alone, never the main chat: it reads a project's code and the open
 // requests of any project the person can see (list_requests, get_request:
-// #6260), and still cannot file or post anything from here. What becomes
+// #6260), and files or posts nothing itself: it offers the design as a plan
+// (offer_plan, offer_project) and anything else as a request draft
+// (offer_request, #6682), and their tap on a card does it. What becomes
 // public is always the person's own tap.
 
 // Its limits are a design thread's (bot-profiles.js, step 5).
@@ -458,6 +460,7 @@ const TOOLS = Object.freeze([
         + 'before); with none, the card asks New request or Add to an existing request. target "new" offers a new '
         + 'request; target "request" with issueNumber offers the request they named, by the number they gave you. '
         + 'For a design with no project yet, pass project when they name an existing project to put it on. '
+        + 'Only this design: never for another request, which is offer_request. '
         + 'Never say it was posted: it is posted only when they tap.',
       parameters: {
         type: 'object',
@@ -481,6 +484,81 @@ const TOOLS = Object.freeze([
         type: 'object',
         properties: { name: { type: 'string', description: 'A short name for the project, in their words where they gave one.' } },
         required: ['name'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'offer_request',
+      description: 'Offer to file a request that is NOT this design: a problem they noticed, a follow-up idea, on this '
+        + 'project or another they can file on, Homeroom included. A draft with a title and details goes under your '
+        + 'reply with File it and Not now; nothing is filed unless they tap File it. Never use offer_plan for a request '
+        + 'that is not this design.',
+      parameters: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: 'The project\'s name or short name, from my_projects. Leave it out when you pass projects.' },
+          projects: {
+            type: 'array', minItems: 2, maxItems: 12,
+            items: {
+              type: 'object',
+              properties: {
+                project: { type: 'string', description: 'The project\'s name or short name, from my_projects.' },
+                named: { type: 'string', description: 'The project\'s name exactly as they wrote it, when it is not the project\'s own name.' },
+              },
+              required: ['project'],
+              additionalProperties: false,
+            },
+            description: 'Several projects for the SAME request: one card with a row for each files them all at one tap.',
+          },
+          named: { type: 'string', description: 'The project\'s name exactly as they wrote it, when they named one. A name that is not exactly the project\'s is asked about on the card ("Did you mean ...?").' },
+          title: { type: 'string', description: 'A short title for the request, in their words.' },
+          details: { type: 'string', description: 'The request on its own, for somebody who never saw this chat: what is asked and why it matters, in their words where they gave them.' },
+          attachmentIds: {
+            type: 'array', maxItems: 3,
+            items: { type: 'string' },
+            description: 'Ids of pictures THEY attached in this chat that go with the request. At most three.',
+          },
+          related: {
+            type: 'array', maxItems: 3,
+            items: {
+              type: 'object',
+              properties: {
+                number: { type: 'integer', description: 'An open request number on this project.' },
+                relation: { type: 'string', enum: ['same', 'part_of', 'depends_on', 'build_together'], description: 'How it relates. "same" means it is the same request, so offer comment_on_request instead.' },
+                why: { type: 'string', description: 'One line saying how, at most 140 characters.' },
+              },
+              required: ['number', 'relation'],
+              additionalProperties: false,
+            },
+            description: 'Open requests on this project that overlap, from list_requests.',
+          },
+          context: {
+            type: 'object',
+            properties: {
+              request: {
+                type: 'object',
+                properties: {
+                  project: { type: 'string', description: 'The request\'s project, its name or short name.' },
+                  number: { type: 'integer', description: 'The request number.' },
+                },
+                required: ['project', 'number'],
+                additionalProperties: false,
+              },
+              saw: { type: 'string', description: 'What they saw and where, in a few words, at most 200 characters.' },
+            },
+            additionalProperties: false,
+            description: 'Where it happened, when they named a request or described something they saw.',
+          },
+          doneWhen: {
+            type: 'array', minItems: 1, maxItems: 3,
+            items: { type: 'string' },
+            description: 'One to three short checks, in their words, of what is true when it is done.',
+          },
+        },
+        required: ['title', 'details', 'doneWhen'],
         additionalProperties: false,
       },
     },
@@ -879,6 +957,10 @@ function designPrompt({
     '  offer it with offer_plan and project when they name an existing project to put it on, and with offer_project',
     '  only when they want a new project. Request it above the preview does the same. After "Add to an existing',
     '  request", ask which one.',
+    '- Anything else they want filed, such as a problem you noticed or a follow-up idea, is offered with',
+    '  offer_request, on the project they name, Homeroom included: a draft with File it and Not now goes under your',
+    '  reply, and nothing is filed until they tap it. offer_plan is only for this design, never for another request.',
+    '  Never tell them to file it themselves.',
     // Homeroom bot parity (P2, P8).
     '- When they ask you to close or finish this thread, call close_thread, then reply "Done. Reply here to pick it up',
     '  again." Never tell them to close it on their side: there is no such control.',
@@ -1311,10 +1393,20 @@ async function answer(pool, config, {
   const checkTurn = {
     user, bot, conversationId, deps, app: project || null,
     appIds: new Set(Number(project?.id) > 0 ? [Number(project.id)] : []), design: true,
+    designTitle: design?.title || null,
+  };
+  // #6682: a request that is not this design (offer_request), drafted by the
+  // chat turn's own offer code on any project they can file on, Homeroom
+  // included. One reply holds either this or the design's card.
+  const requestCtx = {
+    user, settings, config, bot, conversationId, messageId: message.id,
+    appIds: new Set(Number(project?.id) > 0 ? [Number(project.id)] : []),
+    sourceReads: 0, deps: { ...deps, threadRootId: room.rootId },
   };
   const turnNow = () => Object.assign(checkTurn, {
     drew: (!!html && html !== (current?.html || '')) || !!offered || !!card,
-    offer: offered, closedThread, filedDesign: filed, designBuilds: builds,
+    offer: requestCtx.offer || offered, closedThread, filedDesign: filed, designBuilds: builds,
+    designTitle: design?.title || drawn?.title || null,
   });
   // #6257: a first drawing that may ask what the screen is for answers with
   // its question: "I'll draw it for you. What is the app for?" draws later,
@@ -1384,7 +1476,7 @@ async function answer(pool, config, {
     const seenIds = new Set();
     // A version made, an offer or a card (a comparison, pictures): something
     // this turn shows, which is an answer in itself.
-    const shownNow = () => (!!html && html !== (current?.html || '')) || !!offered || !!card;
+    const shownNow = () => (!!html && html !== (current?.html || '')) || !!offered || !!card || !!requestCtx.offer;
     // 1 Nov 2026: words that end the turn before it drew go back once or
     // twice (notDrawnYet), while the next round still has its tools: the
     // last one only replies.
@@ -1404,7 +1496,7 @@ async function answer(pool, config, {
       }
       const changedNow = !!html && html !== (current?.html || '');
       // A card (a comparison, pictures) is an answer in itself, as an offer is.
-      const why = notDrawnYet(said, { changed: changedNow, offered: !!offered || !!card, handoff, drawnBefore: !!current, mayAsk, mayor });
+      const why = notDrawnYet(said, { changed: changedNow, offered: !!offered || !!card || !!requestCtx.offer, handoff, drawnBefore: !!current, mayAsk, mayor });
       if (!why) return null;
       nudges += 1;
       t.failures.push(`d${turnRounds.rounds}:${why}`);
@@ -1548,25 +1640,44 @@ async function answer(pool, config, {
             : { ok: false };
           if (went.ok) closedThread = true;
           result = went.ok ? { ok: true, state: 'done', reply: 'Done. Reply here to pick it up again.' } : { ok: false, error: 'No such thread.' };
+        } else if (name === 'offer_request') {
+          // #6682: a request that is not this design, on any project they can
+          // file on, Homeroom included. One reply holds one kind of card.
+          if (offered) {
+            result = { ok: false, error: 'One reply holds one kind of card: this turn already offers the design. Reply now, and offer the request in a new turn.' };
+          } else {
+            const checked = await mayor.checkRequestOffer(pool, requestCtx, args);
+            result = checked.ok
+              ? {
+                ok: true,
+                note: checked.note,
+                ...(checked.similarOpen ? { similarOpen: checked.similarOpen, similarNote: checked.similarNote } : {}),
+              }
+              : { ok: false, error: checked.error };
+          }
         } else if (name === 'offer_plan' || name === 'offer_project') {
-          // The design as it will be once this turn's screen is saved: a
-          // thread drawing its first one has no design row yet.
-          const drawnNow = !!html && html !== (current?.html || '');
-          const offering = design || drawnNow ? {
-            ...(design || {}),
-            threadId: design?.threadId || room.threadId,
-            rootId: room.rootId,
-            app: design?.app || (project?.slug ? { id: project.id, slug: project.slug, name: project.name || project.slug } : null),
-            title: design?.title || drawn?.title || 'Screen',
-            latest: (design?.latest || 0) + (drawnNow ? 1 : 0),
-          } : null;
-          const checked = !offering
-            ? { ok: false, error: 'There is no screen yet: draw it with write_screen first.' }
-            : name === 'offer_plan'
-              ? await mayor.checkPlanOffer(pool, { user, design: offering, args, deps, html })
-              : mayor.checkProjectOffer({ design: offering, args });
-          if (checked.ok) offered = checked.offer;
-          result = checked.ok ? { ok: true, note: checked.note } : { ok: false, error: checked.error };
+          if (requestCtx.offer) {
+            result = { ok: false, error: 'One reply holds one kind of card: a request draft is already under this reply. Offer the design in a new turn.' };
+          } else {
+            // The design as it will be once this turn's screen is saved: a
+            // thread drawing its first one has no design row yet.
+            const drawnNow = !!html && html !== (current?.html || '');
+            const offering = design || drawnNow ? {
+              ...(design || {}),
+              threadId: design?.threadId || room.threadId,
+              rootId: room.rootId,
+              app: design?.app || (project?.slug ? { id: project.id, slug: project.slug, name: project.name || project.slug } : null),
+              title: design?.title || drawn?.title || 'Screen',
+              latest: (design?.latest || 0) + (drawnNow ? 1 : 0),
+            } : null;
+            const checked = !offering
+              ? { ok: false, error: 'There is no screen yet: draw it with write_screen first.' }
+              : name === 'offer_plan'
+                ? await mayor.checkPlanOffer(pool, { user, design: offering, args, deps, html })
+                : mayor.checkProjectOffer({ design: offering, args });
+            if (checked.ok) offered = checked.offer;
+            result = checked.ok ? { ok: true, note: checked.note } : { ok: false, error: checked.error };
+          }
         } else if (name === 'compare_versions') {
           // P2: the versions side by side, a card under the reply.
           const drawnNow = !!html && html !== (current?.html || '');
@@ -1652,7 +1763,7 @@ async function answer(pool, config, {
   // #6144: on every design turn, an edit too, filler is no answer, and nor is
   // a reply the last round forced (`reply` is its only tool) unless it asks
   // a real question back: `end:filler`, `end:forced`.
-  const shown = changed || (!error && (!!offered || !!card));
+  const shown = changed || (!error && (!!offered || !!card || !!requestCtx.offer));
   const forced = turnRounds.rounds === MAX_ROUNDS && !!replyText;
   const unkept = shown || (error && !replyText) ? null
     : notDrawnYet(replyText, { handoff, drawnBefore: !!current, mayAsk, mayor }) || (forced && !realQuestion(replyText) ? 'forced' : null);
@@ -1690,6 +1801,26 @@ async function answer(pool, config, {
   }
   // P2, P8: the card under the reply, once the turn went through.
   const withCard = card && !error ? { card } : {};
+  // #6682: the request draft this turn made (offer_request), sent as any
+  // thread's is: File it and Not now, in this thread, on the project it names.
+  // A version made this turn wins, as it does over the design's own card.
+  if (requestCtx.offer && !changed && !error) {
+    const extra = {
+      ...withCard,
+      ...(requestCtx.card && typeof requestCtx.card === 'object' ? { card: requestCtx.card } : {}),
+    };
+    const sent = await mayor.offer(pool, {
+      bot, user, conversationId, message, text: withoutEmDashes(clip(said, MAX_REPLY_CHARS)),
+      offer: requestCtx.offer, deps: { ...deps, threadRootId: room.rootId }, extra: Object.keys(extra).length ? extra : null,
+    });
+    for (const [i, more] of (requestCtx.moreOffers || []).slice(0, mayor.MAX_OFFERS - 1).entries()) {
+      await mayor.offer(pool, {
+        bot, user, conversationId, message, text: null, offer: more,
+        deps: { ...deps, threadRootId: room.rootId }, keySuffix: `-${i + 2}`,
+      });
+    }
+    return sent;
+  }
   if (!changed) {
     if (error === 'no_key') return say(mayor.KEY_TEXT);
     // Task 2020 follow-up: an answer with no new version may come laid out,

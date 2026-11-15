@@ -2,10 +2,11 @@
 
 // #6423, #6428: a build whose plan names files another open change touches
 // (a person's change, one up for a vote, or a running build's branch) is
-// never held for it: it builds now and says once, in the request's thread,
-// what it shares. Append-only shared files say Homeroom combines them, and
-// a failed diff read, or a running build with no commits yet, says nothing.
-// A build held for an overlap before #6428 starts on the next pass.
+// never held for it: it builds now. The shared files are logged for the bot's
+// own console, and nothing is said in the request's thread. A build put on top
+// of another change still posts its note. A failed diff read, or a running
+// build with no commits yet, says nothing. A build held for an overlap before
+// #6428 starts on the next pass.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -102,26 +103,24 @@ const OPEN = {
 
 const kinds = (pool) => pool.state.posts.map((p) => p.kind);
 
-test('an overlap in a file that is not append-only starts the build and posts the parallel note', async () => {
+test('an overlap in a file that is not append-only starts the build and says nothing', async () => {
   const pool = buildPool({ sessions: [OPEN] });
   const deps = depsFor(pool, { diffs: { 'dev/other': ['src/features/ai/lists.tsx'] } });
   const out = await start(deps, pool);
   assert.notEqual(out.outcome, 'held', 'never held for another change');
   assert.equal(out.outcome, 'fault', 'it went on to the build (the stubbed issue is unreadable)');
-  assert.deepEqual(kinds(pool), ['overlap_parallel']);
-  assert.equal(pool.said.length, 1, 'one note in the request\'s thread');
-  assert.equal(pool.said[0], 'This and PR #6404 both touch `src/features/ai/lists.tsx`. '
-    + 'Building now; whichever merges second gets an automatic sync with main.');
+  assert.deepEqual(kinds(pool), []);
+  assert.equal((pool.said || []).length, 0, 'nothing is said in the request\'s thread');
 });
 
-test('the note is said once across rechecks', async () => {
+test('nothing is said across rechecks', async () => {
   const pool = buildPool({ sessions: [OPEN] });
   const deps = depsFor(pool, { diffs: { 'dev/other': ['src/features/ai/lists.tsx'] } });
   await start(deps, pool);
   const second = await start(deps, pool);
   assert.notEqual(second.outcome, 'held');
-  assert.equal(pool.state.posts.length, 1, 'one post for the run');
-  assert.equal(pool.said.length, 1, 'said once, not on every start');
+  assert.equal(pool.state.posts.length, 0, 'no post for the run');
+  assert.equal((pool.said || []).length, 0, 'nothing said on either start');
 });
 
 test('a running build or a person\'s open change never holds another build', async () => {
@@ -134,14 +133,15 @@ test('a running build or a person\'s open change never holds another build', asy
     const deps = depsFor(pool, { diffs: { [session.branch_name]: ['src/features/ai/lists.tsx'] } });
     const out = await start(deps, pool);
     assert.equal(out.outcome, 'fault', `${subject}: it went on to the build`);
-    assert.match(pool.said[0], new RegExp(`^This and ${subject} both touch`));
+    assert.deepEqual(kinds(pool), [], `${subject}: nothing is said`);
+    assert.equal((pool.said || []).length, 0, `${subject}: nothing is said in the thread`);
   }
   // One up for a vote is not built on: sharing files alone never stacks.
   const pool = buildPool({ sessions: [{ ...OPEN, status: 'promoted' }] });
   const deps = depsFor(pool, { diffs: { 'dev/other': ['src/features/ai/lists.tsx'] } });
   const out = await start(deps, pool);
   assert.equal(out.outcome, 'fault');
-  assert.deepEqual(kinds(pool), ['overlap_parallel'], 'beside it, not on top of it');
+  assert.deepEqual(kinds(pool), [], 'beside it, not on top of it, and nothing is said');
 });
 
 test('a running build whose branch has no commits yet is skipped', async () => {
@@ -152,7 +152,7 @@ test('a running build whose branch has no commits yet is skipped', async () => {
   assert.equal((pool.said || []).length, 0, 'and nothing is said');
 });
 
-test('a build with an append-only overlap goes ahead, and says Homeroom combines it', async () => {
+test('a build with an append-only overlap goes ahead, and says nothing', async () => {
   const pool = buildPool({
     sessions: [OPEN],
     run: waitingRun({ build_note: 'The plan: add a row to `tests/baselines/test-durations.json`.' }),
@@ -160,9 +160,8 @@ test('a build with an append-only overlap goes ahead, and says Homeroom combines
   const deps = depsFor(pool, { diffs: { 'dev/other': ['tests/baselines/test-durations.json'] } });
   const out = await start(deps, pool, { runId: 900 });
   assert.equal(out.outcome, 'fault', 'it went on to the build (the stubbed issue is unreadable)');
-  assert.equal(pool.said.length, 1);
-  assert.match(pool.said[0], /, which Homeroom combines on its own\. /);
-  assert.match(pool.said[0], /automatic sync with main/);
+  assert.deepEqual(kinds(pool), []);
+  assert.equal((pool.said || []).length, 0);
 });
 
 test('a failed diff read counts as no overlap: the build goes ahead', async () => {
@@ -171,6 +170,21 @@ test('a failed diff read counts as no overlap: the build goes ahead', async () =
   const out = await start(deps, pool);
   assert.equal(out.outcome, 'fault', 'nothing could be compared');
   assert.equal((pool.said || []).length, 0, 'and nothing is said');
+});
+
+// The note for a build on top of another change stays; the one for a build
+// that only shares files is gone from the code and from what a request's
+// thread may hear.
+test('only a build on top of another change still posts a note', () => {
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+  const startSrc = read('src/services/homeroom-bot.js');
+  assert.match(startSrc, /kind: 'overlap_stack'/);
+  assert.match(startSrc, /building it on top of that change/);
+  assert.doesNotMatch(startSrc, /overlap_parallel/);
+  assert.doesNotMatch(startSrc, /both touch/);
+  const postSrc = read('src/services/bot-post.js');
+  assert.match(postSrc, /plan: Object\.freeze\(\['plan', 'spec', 'overlap_stack'\]\)/);
+  assert.doesNotMatch(postSrc, /overlap_parallel/);
 });
 
 // The stack is passed down the build's calls, which cannot run in a test

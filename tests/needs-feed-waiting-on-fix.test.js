@@ -5,6 +5,10 @@
 // it waits on instead of Vote. First for a change a coding agent submitted;
 // every change since proposing stopped being its author's yes (11 Nov 2026).
 //
+// #6616: "the votes are in" is the change's own governed gate (`votes_in`),
+// never a raw count of yes votes. Under an approvers-only rule a
+// non-approver's Yes does not count, so the author still owes the vote.
+//
 // Run with: node --test tests/needs-feed-waiting-on-fix.test.js
 
 const test = require('node:test');
