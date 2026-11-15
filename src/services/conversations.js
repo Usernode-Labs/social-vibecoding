@@ -401,12 +401,13 @@ async function threadSummaries(db, user, rootIds) {
 }
 
 /**
- * The chat with the Homeroom bot draws the bot's news about a request as one
- * short row (frontend/src/features/messages/bot-request.ts isBotNews, which
- * this mirrors: keep the two in step), never the request's card under it;
- * the card is drawn in the request's story, whose read fills it. So its main
- * stream sends those rows without their cards: each one was a live GitHub
- * read for a closed request, one after another, before the page could answer.
+ * The chat with the Homeroom bot drew the bot's news about a request as one
+ * short row, never the request's card under it; the card is drawn in the
+ * request's story, whose read fills it. So its main stream sends those rows
+ * without their cards: each one was a live GitHub read for a closed request,
+ * one after another, before the page could answer. (A client from before 14
+ * Nov 2026 still reads that stream. The current one draws it on no screen,
+ * and its own copy of this test, which this mirrored, is gone.)
  */
 const BOT_CONVERSATION_KINDS = new Set([
   'chat', 'ack', 'reply', 'confirm', 'hello', 'welcome', 'tour', 'joiner', 'maker', 'member', 'general',
@@ -647,10 +648,10 @@ const ALSO_IN_CHAT = `(m.metadata->'homeroomBot'->>'alsoInChat') = 'true'`;
 // activity card, plan, questions and building / ready / live lines are on
 // that request's page, which is where its row goes. Nothing is deleted: old
 // news is only left out of the stream, its unread count and its preview. A
-// first version's news stays, as it has no request page yet. The client's
-// copy of this test is frontend/src/features/messages/bot-request.ts
-// isRequestNews, for a message that arrives live; isBotNewsRow above is its
-// row form, less the first version's news.
+// first version's news stays, as it has no request page yet. isBotNewsRow
+// above is its row form, less the first version's news. (The client kept a
+// copy of this test for a message arriving live in that stream, until it
+// stopped drawing the stream, 14 Nov 2026.)
 const REQUEST_NEWS = `COALESCE(m.metadata->'homeroomBot' IS NOT NULL
           AND COALESCE(m.metadata->'homeroomBot'->>'moment', '') <> 'reply'
           AND COALESCE(m.metadata->'homeroomBot'->>'firstVersion', '') <> 'true'

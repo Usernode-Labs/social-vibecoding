@@ -15,7 +15,8 @@
 //     shape the conversation's own stream, its preview and its count, which
 //     an older client and the connector still read;
 //   - the client's copy of the first (bot-request.ts isPlusThreadOpener)
-//     reads a live message the same way;
+//     reads a message the same way, for the thread's pane, which does not
+//     draw that line (#6668);
 //   - the client no longer reads the `alsoInChat` stamp that listed a
 //     thread's reply in Main as well: a reply is never a position in a
 //     conversation's own stream (bot-shared.ts inMainStream).
@@ -82,12 +83,12 @@ test('the client and the server agree on which thread was started from New chat'
   assert.equal(shared.inMainStream({ threadRootId: null }), true);
   assert.equal(shared.alsoInChat, undefined, 'the stamp has no reader');
 
-  // A conversation's own stream leaves the "+" thread's opener line out, live or read.
+  // #6668: the thread pane skips that line, so a "+" thread opens on what
+  // the person wrote instead of on the bot's "New thread.". Nothing draws
+  // the bot chat's own stream, so nothing else on the client asks.
   const index = read('frontend/src/features/messages/index.tsx');
-  assert.match(index, /if \(botDm && isPlusThreadOpener\(message\)\) continue;/);
-  // #6668: the thread pane skips that line too, so a "+" thread opens on what
-  // the person wrote instead of on the bot's "New thread.".
   assert.match(index, /\{root && !\(botChat && isPlusThreadOpener\(root\)\) \? <MessageRow /);
+  assert.equal((index.match(/isPlusThreadOpener\(/g) || []).length, 1);
   // The stream, the preview and the unread count all leave the plus thread out.
   const server = read('src/services/conversations.js');
   assert.match(server, /const PLUS_THREAD_OPENER = `COALESCE\(m\.metadata->'homeroomBot'->>'kind' = 'opened_thread'\s+AND m\.reply_to_id IS NULL, FALSE\)`;/);

@@ -68,7 +68,9 @@ test('the row, the transcript, the thread pane, the composer and the store all a
   assert.doesNotMatch(row, /kind !== 'direct';/, 'no second reading of who has threads');
   const screen = read('frontend/src/features/messages/index.tsx');
   assert.match(screen, /const botChat = kind === 'direct' && threadsAllowed\(active\);/);
-  assert.match(screen, /botChat=\{botDm\}/);
+  // Only a thread's pane draws a row the bot's way: the chat is its threads alone.
+  assert.equal((screen.match(/botChat=\{/g) || []).length, 2);
+  assert.equal((screen.match(/ inThread botChat=\{botChat\}/g) || []).length, 2, 'the thread\'s first message and its replies');
   assert.match(read('frontend/src/features/messages/composer.tsx'), /inThread && active\.kind === 'direct' && threadsAllowed\(active\)/);
   assert.match(read('frontend/src/features/messages/store.ts'), /!threadsAllowed\(state\.active\)/);
 });
@@ -170,24 +172,20 @@ test('a message the old stamp listed in Main Chat is a reply like any other, wit
   }
 });
 
-test('a request\'s card says how many updates its thread holds, in words; rooms keep their chip', () => {
+test('a room\'s message with a thread keeps the rooms\' chip; a card in a thread of the bot\'s chat says nothing of updates', () => {
   const { MessageRow } = loadTsx('frontend/src/features/messages/message-row.tsx');
-  // 31 Oct 2026: a card that names its project's request has no thread here:
-  // its story is the request's page (./bot-request-page.test.js).
-  const named = message(BOT, 31, { content: 'Dark mode', metadata: { homeroomBot: META }, thread: THREAD });
-  const namedHtml = renderToHtml(createElement(MessageRow, { message: named, conversationId: 42, kind: 'direct', botChat: true }));
-  assert.doesNotMatch(namedHtml, /data-bot-thread-link|msgx-thread-summary/);
-  // One from before cards named their project keeps its thread.
-  const { appSlug: _slug, ...older } = META;
-  const card = message(BOT, 31, { content: 'Dark mode', metadata: { homeroomBot: older }, thread: THREAD });
-  const html = renderToHtml(createElement(MessageRow, { message: card, conversationId: 42, kind: 'direct', botChat: true }));
-  assert.match(html, /data-bot-thread-link="31">3 updates in its thread ›<\/button>/);
-  assert.doesNotMatch(html, /msgx-thread-summary|msgx-thread-face/);
-  const one = renderToHtml(createElement(MessageRow, { message: { ...card, thread: { ...THREAD, replyCount: 1 } }, conversationId: 42, kind: 'direct', botChat: true }));
-  assert.match(one, />1 update in its thread ›</);
+  // The bot chat's own stream drew a request's card with "N updates in its
+  // thread" under it. No screen draws that stream since 14 Nov 2026: a card
+  // is a row of its thread, where there is nothing under it to count.
+  const card = message(BOT, 31, { content: 'Dark mode', metadata: { homeroomBot: META }, thread: null, threadRootId: 31 });
+  const html = renderToHtml(createElement(MessageRow, { message: card, conversationId: 42, kind: 'direct', botChat: true, inThread: true }));
+  assert.doesNotMatch(html, /data-bot-thread-link|msgx-thread-chip|updates? in its thread/);
+  assert.doesNotMatch(read('frontend/src/features/messages/message-row.tsx'), /data-bot-thread-link|row\.botThread/);
+  assert.equal(JSON.parse(read('frontend/locales/en/messages.json'))['row.botThread.updates_one'], undefined);
   // A room's message with a thread keeps the rooms' summary.
   const room = message(ADA, 50, { content: 'lunch?', thread: { ...THREAD, participants: [ADA] } });
   const roomHtml = renderToHtml(createElement(MessageRow, { message: room, conversationId: 42, kind: 'group' }));
+  assert.match(roomHtml, /class="msgx-thread-chip /);
   assert.doesNotMatch(roomHtml, /data-bot-thread-link/);
 });
 

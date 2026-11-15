@@ -1,9 +1,8 @@
 /*
  * One request, one story: which request a piece of the bot's news or a tray
  * entry is about, and the colour its number wears. Shared by the activity
- * drawer (./bot-strip.tsx), the chat's news rows (./bot-news-line.tsx) and
- * the bot's own words (./format.tsx), with no imports but types, so any of
- * them can read it.
+ * drawer (./bot-strip.tsx) and the bot's own words (./format.tsx), with no
+ * imports but types, so any of them can read it.
  */
 
 import type { ConversationMessage } from './types';
@@ -32,67 +31,17 @@ export function requestKey(item: { appSlug?: string | null; appName?: string | n
   return Number.isInteger(n) && n > 0 ? `${project}|${n}` : null;
 }
 
-/** The bot's own messages that are conversation, never news: they stay messages. */
-const CONVERSATION_KINDS = new Set([
-  'chat', 'ack', 'reply', 'confirm', 'hello', 'welcome', 'tour', 'joiner', 'maker', 'member', 'general',
-  'hello_welcome', 'hello_tour', 'hello_joiner', 'hello_maker', 'filed', 'withdraw_proposal', 'close_request', 'move_request', 'unknown',
-]);
-
-/** Pure: whether a message in the chat with the bot is news about a request, drawn as one line. */
-export function isBotNews(message: ConversationMessage): boolean {
-  const meta = message.sender.bot ? message.metadata?.homeroomBot : null;
-  if (!meta || typeof meta !== 'object' || message.deleted || !(message.id > 0)) return false;
-  if (meta.moment === 'reply' || CONVERSATION_KINDS.has(meta.kind)) return false;
-  return (Number(meta.issueNumber) > 0) || !!meta.firstVersion || meta.kind === 'activity';
-}
-
-/**
- * Pure (#6207, 3 Nov 2026): whether a message is a request's news, which
- * the chat's own stream does not draw: a request's news is on that
- * request's page, where its row goes (its plan with Build it, the bot's
- * posts, its progress). A first version's news is not a request's: it has
- * no request page yet. The server leaves the same messages out of the
- * conversation's own stream (services/conversations.js REQUEST_NEWS); this
- * is for one that arrives live. (The rule was Main Chat's, which is gone
- * since 14 Nov 2026; the stream it describes is drawn on no screen.)
- */
-export function isRequestNews(message: ConversationMessage): boolean {
-  return isBotNews(message) && !message.metadata?.homeroomBot?.firstVersion;
-}
-
 /**
  * Pure (#6250, 4 Nov 2026): the bot's line that opens a private thread from
- * its "+" (New chat), which the chat's own stream does not draw. The rule
- * was Main Chat's, gone since 14 Nov 2026: a private thread's origin decided
- * (Evan, 4 Nov) what Main showed of it, and only one started from the "+"
- * stayed out. One the bot opened from Main quotes the message it answered, so its line
- * carries a reply (`message.reply`) and stays, as the way to its row in the
- * list; one opened from a request's page or a captured screen has its own
- * kind (`opened_about`, `opened_design`) and stays too. The server leaves the
- * same lines out (services/conversations.js PLUS_THREAD_OPENER); this is for
- * one that arrives live.
+ * its "+" (New chat): "New thread.", with no quoted message. The thread's
+ * pane does not draw it (#6668, ./index.tsx ReplyThreadPanel): the thread
+ * opens on what the person wrote. One the bot opened answering a message
+ * quotes it (`message.reply`), and one opened from a request's page or a
+ * captured screen has its own kind (`opened_about`, `opened_design`): those
+ * lines are drawn. The server's test of the same line is
+ * services/conversations.js PLUS_THREAD_OPENER.
  */
 export function isPlusThreadOpener(message: ConversationMessage): boolean {
   const meta = message.sender.bot ? message.metadata?.homeroomBot : null;
   return !!meta && meta.kind === 'opened_thread' && !message.reply;
-}
-
-/**
- * Pure: the message a request's story opens on, read from the main stream:
- * its thread's root, else (news from before threads) its oldest piece, which
- * the story pane draws with the pieces after it. Null when the chat holds
- * nothing about it.
- */
-export function storyRootIn(messages: readonly ConversationMessage[], key: string | null): number | null {
-  if (!key) return null;
-  let oldest: number | null = null;
-  for (const message of messages) {
-    if (!isBotNews(message)) continue;
-    const meta = message.metadata?.homeroomBot;
-    if (!meta || requestKey(meta) !== key) continue;
-    if (message.threadRootId) return message.threadRootId;
-    if (meta.kind === 'activity' && message.thread) return message.id;
-    if (oldest === null) oldest = message.id;
-  }
-  return oldest;
 }

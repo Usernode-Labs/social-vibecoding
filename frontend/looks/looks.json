@@ -433,15 +433,7 @@
         "to": "#dev-topic-thread #gc-thread-messages .dev-request-event",
         "parts": {
           "ei": ".dev-request-event-glyph"
-        },
-        "also": [
-          {
-            "to": ":is(button:is(.messages-bot-news > *),div:is(.messages-bot-settled-run > *))",
-            "parts": {
-              "ei": ":is([data-bot-badge],[data-bot-settled-tile])"
-            }
-          }
-        ]
+        }
       },
       "sechead": {
         "to": "#dev-topic-thread .dev-request #gc-thread-messages",

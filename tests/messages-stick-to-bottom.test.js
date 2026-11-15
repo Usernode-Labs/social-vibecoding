@@ -417,7 +417,7 @@ test('B19 follow-up: a reply thread opens at its first unread reply, with the Ne
   assert.match(panel, /const opening = openingScrollTop\(\{ lineTop: lineTopIn\(el, line\), scrollHeight: el\.scrollHeight, clientHeight: el\.clientHeight \}\);\s*el\.scrollTop = opening\.top;\s*pinned\.current = opening\.pinned;/);
   // Once per open, and never over a message the thread was opened at.
   assert.match(panel, /if \(!el \|\| !thread \|\| thread\.loading \|\| openedAt\.current === key\) return;/);
-  assert.match(panel, /if \(!firstUnread \|\| !line \|\| snap\.threadFocusId \|\| snap\.route\.focusMessageId\) return;/,
+  assert.match(panel, /if \(!firstUnread \|\| !line \|\| snap\.route\.focusMessageId\) return;/,
     'nothing unread: it stays at its newest reply');
   // The New line, once, above that reply.
   // (Above the first reply drawn from there on: the one it names can be a
