@@ -50,7 +50,6 @@ const APP_JS = read('public/js/app.js');
 const HEADER = read('frontend/src/features/header/platform-header.tsx');
 const STORE = read('frontend/src/features/header/back-button-store.js');
 const MOUNT = read('frontend/src/features/header/mount.ts');
-const DEV_CHAT = read('frontend/src/features/dev-chat/dev-chat.js');
 const IMPROVE_CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
 const IMPROVE_STORE = read('frontend/src/features/improve/improve-store.js');
 
@@ -174,11 +173,10 @@ test('the route decides where UP is, inside an app', () => {
   assert.match(body, /if \(!slug \|\| tab !== 'dev'\) return null;/,
     'the app tab itself has no level above it inside the app — it gets the '
     + '✕, which leaves to the page the app was opened from');
-  // #2770 REVERSED THE FALLBACK: a change is an agent conversation, a thread
-  // of Messages, so a session with no captured origin goes up to that inbox
-  // rather than to the board it used to fall back to.
-  assert.match(body, /subTab === 'sessions'\) return sessionOrigin \|\| '#messages';/,
-    'a session goes where it was opened from, falling back to Messages');
+  // The dev chat's session route had a rung here (where it was opened
+  // from, else Messages); the route is retired, and the router sends its old
+  // address to the change's page, so the ladder has no session rung.
+  assert.doesNotMatch(body, /'sessions'|sessionOrigin/, 'no session rung is left');
   // THE DISCUSSION IS A THREAD OF MESSAGES (#2718 review, #2763). The old
   // full-screen route still resolves for a legacy link, and its ‹ climbed to
   // the board — so a bell mention's Back landed on a Workshop the reader had
@@ -217,7 +215,7 @@ test('the derived answer outranks the imperative one, and only inside an app', (
   // views are rows of the mark's menu now, not a chevron's destination — so
   // a sub-route that used to earn an arrow gets the ✕ instead. The
   // DESTINATION is untouched: resolvedBackHref still prefers the route's
-  // up-level href, so ✕ from a session lands on that app's Workshop as ← did.
+  // up-level href, so ✕ from a sub-route lands where its ← did.
   // #2916 put one answer between the two: a Workshop topic draws its back
   // in the pane, so the bar's slot is 'none' there whatever setBackIcon last
   // published. It is derived from the same function the chip renders from,
@@ -236,12 +234,12 @@ test('the derived answer outranks the imperative one, and only inside an app', (
   assert.match(HEADER, /const \{ mode, href: resolvedBackHref, paneBack \} = useBackSlot\(\);/);
 });
 
-// ── 5. The session origin, actually executed ───────────────────────────
+// ── 5. The Improve store, actually executed ───────────────────────────
 
 function loadImprove(initial) {
   const store = makeStoreStub({
     slug: null, tab: 'app', subTab: null, selfHosted: false,
-    sessionOrigin: null, topicOrigin: null, boardView: 'workshop', ...initial,
+    topicOrigin: null, boardView: 'workshop', ...initial,
   });
   const sandbox = {
     console, Promise, setTimeout, clearTimeout,
@@ -294,110 +292,6 @@ function loadImprove(initial) {
     topicWorkshopHref: sandbox.__improveStore.topicWorkshopHref,
   };
 }
-
-test('the first routing pass of a page load captures no origin', () => {
-  // A COLD DEEP LINK has no previous screen, and the store cannot say so by
-  // itself: its INITIAL is `tab: 'app'`, indistinguishable from having been
-  // on the app tab. Reading it as one sent a shared session link's back arrow
-  // to a screen the tab had never shown — and on the platform's own app, to
-  // one that does not exist.
-  const { Improve, store } = loadImprove({ slug: 'demo-app' });
-  Improve.setTab('dev', 'sessions');
-  assert.equal(store.state.sessionOrigin, null,
-    'nothing to go back to, so the header falls back to Messages');
-});
-
-test('a door that names its origin wins, once (#2770)', () => {
-  // New change and the Messages inbox's session rows record where the
-  // session hangs off BEFORE they navigate: the Improve store's `prev` is the
-  // last APP route, and Messages is not one.
-  const { Improve, store } = loadImprove({ slug: 'demo-app' });
-  Improve.setTab('dev', 'forum');
-  Improve.enterSessionFrom('#messages');
-  Improve.setTab('dev', 'sessions');
-  assert.equal(store.state.sessionOrigin, '#messages', 'the named origin is recorded');
-  Improve.setTab('dev', 'forum');
-  Improve.setTab('dev', 'sessions');
-  assert.equal(store.state.sessionOrigin, '#app/demo-app/workshop',
-    'and it is taken once, so it cannot outlive the entry it was set for');
-  Improve.enterSessionFrom('https://elsewhere.example/');
-  assert.equal(Improve._nextSessionOrigin, null, 'only a hash is accepted');
-});
-
-test('entering a session serialises the route being left', () => {
-  for (const [label, from, expected] of [
-    ['the app tab', { tab: 'app', subTab: null }, '#app/demo-app/app'],
-    ['the Workshop', { tab: 'dev', subTab: 'forum' }, '#app/demo-app/workshop'],
-    ['the general chat', { tab: 'dev', subTab: 'chat' }, '#app/demo-app/dev/chat'],
-  ]) {
-    const { Improve, store } = loadImprove({ slug: 'demo-app' });
-    // The first call is the page's own first routing pass; the second is the
-    // navigation being measured.
-    Improve.setTab(from.tab, from.subTab);
-    Improve.setTab('dev', 'sessions');
-    assert.equal(store.state.sessionOrigin, expected,
-      `a session opened from ${label} goes back to it`);
-  }
-});
-
-test('Workshop and Board are one screen in two layouts, and back knows which', () => {
-  // The layout IS the route (see the alias block in app.js's
-  // restoreFromHash), so an origin that always said "board" would drop the
-  // viewer into the other layout of the screen they had just been reading.
-  const { Improve, store, sandbox } = loadImprove({ slug: 'demo-app' });
-  sandbox.AppView = { _getViewMode: () => 'workshop' };
-  Improve.setTab('dev', 'forum');
-  Improve.setTab('dev', 'sessions');
-  assert.equal(store.state.sessionOrigin, '#app/demo-app/workshop');
-});
-
-test('the origin survives hops inside the session and dies on the way out', () => {
-  const { Improve, store } = loadImprove({ slug: 'demo-app' });
-  Improve.setTab('app');
-  Improve.setTab('dev', 'sessions');
-  assert.equal(store.state.sessionOrigin, '#app/demo-app/app');
-  // A re-publish while still on the session (a preview opening, a lifecycle
-  // change) must not overwrite the origin with the session itself.
-  Improve.setTab('dev', 'sessions');
-  assert.equal(store.state.sessionOrigin, '#app/demo-app/app', 'kept');
-  // …and leaving clears it, so it cannot outlive the session it belonged to.
-  Improve.setTab('dev', 'forum');
-  assert.equal(store.state.sessionOrigin, null, 'cleared on the way out');
-});
-
-test("the platform's own app can never be an origin's app tab", () => {
-  const { Improve, store } = loadImprove({ slug: 'usernode-x', selfHosted: true });
-  Improve.setTab('app');
-  Improve.setTab('dev', 'sessions');
-  assert.equal(store.state.sessionOrigin, null,
-    'it has no app tab to go back to, so the Messages fallback is the answer');
-});
-
-// ── 6. The click path agrees with the href ─────────────────────────────
-
-test('leaving a session follows the same origin the arrow shows', () => {
-  // A control whose href says one thing and whose handler does another is
-  // exactly the bug that made this bar's href "decorative" once before.
-  // leaveSession() unconditionally ran App.switchTab('dev') — the Board.
-  const at = DEV_CHAT.indexOf('  leaveSession() {');
-  assert.ok(at > 0, 'leaveSession must exist');
-  const body = DEV_CHAT.slice(at, DEV_CHAT.indexOf('\n  },', at));
-  assert.match(body, /const origin = window\.Improve\?\.sessionOrigin\?\.\(\);/,
-    'it reads the captured origin through the window bridge — dev-chat.js is '
-    + 'loaded as a SCRIPT by a dozen vm harnesses, where a top-level import '
-    + 'is a syntax error');
-  assert.match(body, /if \(origin[\s\S]{0,80}?location\.hash = origin;/,
-    'and goes there');
-  // #2770: the fallback is Messages now — a change is an agent conversation
-  // and that is its inbox — matching the header's own fallback.
-  assert.match(body, /location\.hash = '#messages';/,
-    'with Messages the fallback when there is no origin');
-  const code = body.replace(/\/\/.*$/gm, '');
-  assert.ok(code.indexOf('location.hash = origin') < code.indexOf("location.hash = '#messages'"),
-    'the origin is preferred over the fallback, not the other way round');
-  assert.doesNotMatch(code, /App\.switchTab\('dev'\)/,
-    'and the Board is no longer where a session with no origin goes back to');
-});
 
 // ── 5b. Which board "back to the board" means ──────────────────────────
 
@@ -463,8 +357,8 @@ test('a topic route, and only a topic route, has an in-pane back to its board (#
     '…in the layout it was opened from, never a literal');
   for (const subTab of ['sessions', 'chat', 'forum', null]) {
     assert.equal(at(subTab), null,
-      `subTab ${subTab}: no chip (a dev session and the discussion are Messages `
-      + 'threads and keep the header arrow; the Workshop has nowhere up to go)');
+      `subTab ${subTab}: no chip (the discussion is a Messages thread and keeps `
+      + 'the header arrow; the Workshop has nowhere up to go; nor does a retired session route)');
   }
   assert.equal(at('topic', { tab: 'app' }), null, 'never on the running app');
   assert.equal(at('topic', { slug: null }), null, 'and never without an app');
@@ -591,32 +485,13 @@ test('the shared card and the router wire the Messages origin (#3103)', () => {
   assert.ok(fn.indexOf('isNativeClick?.(event)') !== -1, 'a modified click records nothing');
   assert.match(fn, /here\.startsWith\('#messages'\) \? here : '#messages'/,
     'the origin is the conversation address on screen, or the inbox');
-  assert.match(fn, /\/dev\\\/sessions\\\/\/\.test\(href\)\) w\.Improve\?\.enterSessionFrom\?\.\(origin\)/,
-    'a shared spec opens a session, whose arrow reads sessionOrigin');
-  assert.match(fn, /\(\?:issues\|proposals\|changes\|governance\)\\\/\/\.test\(href\)\) w\.Improve\?\.enterTopicFrom\?\.\(origin\)/,
-    'an issue, proposal or governance card opens a topic, whose chip reads topicOrigin');
+  // A change's old /dev/sessions/ address is routed to its page, so it is a
+  // topic like the others.
+  assert.match(fn, /\(\?:issues\|proposals\|changes\|governance\|sessions\)\\\/\/\.test\(href\)\) w\.Improve\?\.enterTopicFrom\?\.\(origin\)/,
+    'an issue, proposal, governance or change card opens a topic, whose chip reads topicOrigin');
+  assert.doesNotMatch(fn, /enterSessionFrom/, 'and no session origin is recorded any more');
   assert.match(APP_JS, /if \(revealId !== 'app-view'\) window\.Improve\?\.clearTopicOrigin\?\.\(\);/,
     'App._showOnlyScreen ends the origin with the app-view visit');
-});
-
-test('a session origin and the topic chip answer with the same board', () => {
-  // One expression, used by both (features/improve/improve-store.js), so the
-  // captured origin and the in-pane chip (#2916; the header's arrow before
-  // it) cannot name different screens.
-  const { Improve, store, sandbox, boardHref } = loadImprove({ slug: 'demo-app' });
-  sandbox.AppView = { _getViewMode: () => 'workshop' };
-  Improve.setTab('dev', 'forum');
-  Improve.setTab('dev', 'sessions');
-  assert.equal(store.state.sessionOrigin, boardHref('demo-app', store.state.boardView));
-});
-
-test('the accessor the click path reads is published on the controller', () => {
-  const { Improve, store } = loadImprove({ slug: 'demo-app' });
-  Improve.setTab('app');
-  Improve.setTab('dev', 'sessions');
-  assert.equal(typeof Improve.sessionOrigin, 'function');
-  assert.equal(Improve.sessionOrigin(), store.state.sessionOrigin,
-    'one source of truth for the href and the click');
 });
 
 // ── 7. The order of the right group ────────────────────────────────────

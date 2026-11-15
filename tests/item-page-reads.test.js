@@ -1,18 +1,16 @@
-// What an item's page and the dev chat's session list read.
+// What an item's page and an app's session list read.
 //
 // Measured on production (the platform app): a proposal's own row was 265 KB,
-// 255 KB of it the names of the 821 checks that passed, and the dev chat's
-// session list was every session its author ever started there (1,112 rows,
-// 693 KB; 1,015 merged and 97 archived), re-read on every open of a change.
-// Pinned here:
+// 255 KB of it the names of the 821 checks that passed, and an author's
+// session list was every session they ever started there (1,112 rows,
+// 693 KB; 1,015 merged and 97 archived). Pinned here:
 //   - the item's own read (/proposals/:id, /api/sessions/:id/details) takes
 //     `?results=failing` and then counts its passing checks instead of naming
 //     them, once there are more than the verdict lists without a fold;
 //   - the verdict's fold reads the names when opened, and keeps them for that
 //     run, so a later refresh in the short form does not take them away;
 //   - `GET /api/apps/:slug/sessions?recent=N` answers every session under
-//     way and the N newest finished ones, counting the rest, and the dev
-//     chat's list ends with "Show N older sessions" that reads the whole list.
+//     way and the N newest finished ones, counting the rest.
 //
 // Run with: node --test tests/item-page-reads.test.js
 
@@ -174,7 +172,7 @@ function loadAppView({ fetchImpl } = {}) {
   sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
-    `${read('public/js/merge-status.js')}\n${read('public/js/session-transcript.js')}\n`
+    `${read('public/js/merge-status.js')}\n`
     + `${read('public/js/app-view.js')}\n;globalThis.__AppView = AppView;`, sandbox);
   return { AppView: sandbox.__AppView, calls };
 }
@@ -242,73 +240,8 @@ test('the item reads ask for the short form; an underway change reads /details',
     'the ledger\'s checks row carries it');
 });
 
-// ── The client: the dev chat's session list ────────────────────────────
-function loadDevChat(answer) {
-  const calls = [];
-  let published = null;
-  const sandbox = {
-    console,
-    document: {
-      getElementById: (id) => (id === 'dc-session-list' ? {} : null),
-      querySelector: () => null, querySelectorAll: () => ({ forEach: () => {} }),
-      addEventListener: () => {}, removeEventListener: () => {},
-      createElement: () => ({ style: {}, classList: { add: () => {}, remove: () => {} }, appendChild: () => {}, setAttribute: () => {} }),
-      body: { appendChild: () => {}, addEventListener: () => {} },
-    },
-    escapeHtml: (s) => String(s == null ? '' : s),
-    requestAnimationFrame: () => {}, alert: () => {},
-    fetch: async (url) => { calls.push(String(url)); return { ok: true, json: async () => answer(String(url)) }; },
-    setTimeout, clearTimeout, setInterval, clearInterval,
-    addEventListener: () => {}, removeEventListener: () => {},
-    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
-    UsernodeReact: { devChat: { publishSessionList: (state) => { published = state; } } },
-  };
-  sandbox.window = sandbox; sandbox.globalThis = sandbox;
-  sandbox.PlatformI18n = englishPlatformI18n();
-  vm.createContext(sandbox);
-  vm.runInContext(`${read('frontend/src/features/dev-chat/dev-chat.js')}\n;globalThis.__DevChat = DevChat;`, sandbox);
-  sandbox.AppView = { appData: { slug: 'demo' } };
-  return { DevChat: sandbox.__DevChat, calls, published: () => JSON.parse(JSON.stringify(published)), sandbox };
-}
-
-test('the dev chat reads its recent sessions, and "Show older" reads the whole list for this app from then on', async () => {
-  const row = (id, status) => ({ id, status, session_title: `s${id}`, created_at: '2026-09-01T00:00:00Z' });
-  const h = loadDevChat((url) => (url.includes('?recent=')
-    ? { sessions: [row(1, 'active'), row(2, 'merged')], older_finished: 1092 }
-    : { sessions: [row(1, 'active'), row(2, 'merged'), row(3, 'archived')] }));
-  assert.equal(h.DevChat.SESSIONS_RECENT, 20);
-  await h.DevChat.loadSessions('demo');
-  h.DevChat.renderSessionList();
-  assert.deepEqual(h.calls, ['/api/apps/demo/sessions?recent=20']);
-  assert.equal(h.published().older, 1092);
-  assert.equal(h.published().rows.length, 2);
-
-  await h.DevChat.showOlderSessions();
-  assert.equal(h.calls[1], '/api/apps/demo/sessions', 'the whole list');
-  assert.equal(h.published().older, 0);
-  assert.equal(h.published().rows.length, 3);
-  await h.DevChat.loadSessions('demo');
-  assert.equal(h.calls[2], '/api/apps/demo/sessions', 'a later reload keeps the whole list');
-
-  h.DevChat.reset();
-  await h.DevChat.loadSessions('other');
-  assert.equal(h.calls[3], '/api/apps/other/sessions?recent=20', 'another app starts short again');
-});
-
 // ── What the reader sees ───────────────────────────────────────────────
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
-
-test('the list ends with "Show N older sessions" only when it left some out', () => {
-  const { SessionListView } = loadTsx('tests/fixtures/dev-session-list-api.ts');
-  const r = { id: 1, status: 'active', statusTone: 'active', title: 'One', branch: 'b', busy: false, pr: null, createdAt: '2026-09-01T00:00:00Z', actions: [] };
-  const withOlder = renderToHtml(createElement(SessionListView, { rows: [r], older: 1092 }));
-  assert.match(withOlder, /class="dc-session-older[^"]*"[^>]*>Show 1,092 older sessions</);
-  assert.match(renderToHtml(createElement(SessionListView, { rows: [r], older: 1 })), />Show 1 older session</);
-  assert.doesNotMatch(renderToHtml(createElement(SessionListView, { rows: [r], older: 0 })), /dc-session-older/);
-  assert.doesNotMatch(renderToHtml(createElement(SessionListView, { rows: [], older: 5 })), /Just ask/,
-    'rows left out are not "no sessions"');
-  assert.match(renderToHtml(createElement(SessionListView, { rows: [], older: 0 })), /Just ask/);
-});
 
 test('a fold whose names are not here yet says so, and opening it is what reads them', () => {
   const { ChecksVerdictView } = loadTsx('tests/fixtures/dev-card-api.ts');

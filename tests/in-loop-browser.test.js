@@ -9,8 +9,8 @@
 //     page's own console and assets, then seed data), a time/cycle budget,
 //     and the graceful
 //     "commit anyway if it won't boot" instruction
-//   - the build prompt interpolates backend-appropriate guidance while the
-//     scout prompt does not mention a browser
+//   - Homeroom bot's build prompt carries the guidance while its spec
+//     (scout) prompt does not mention a browser
 //
 // Run with: node --test tests/in-loop-browser.test.js
 
@@ -104,35 +104,18 @@ test('guidance carries the usage hooks that make it likely to be used', () => {
 
 // ── wiring: build prompt includes the guidance; scout prompt does not ────
 
-test('the build prompt interpolates backend guidance; the scout prompt has no browser', () => {
-  const src = fs.readFileSync(
-    path.join(__dirname, '..', 'src', 'routes', 'sessions.js'),
-    'utf8'
-  );
-  // The build prompt uses the pure backend selector, per transport: a turn
-  // whose CLI takes the handbook as system context (hosted Claude, or an
-  // OpenRouter model in Claude Code) receives the compact reminder; Codex and
-  // local runs receive the full inline constant through the same selector.
-  assert.match(src, /buildCodingAgentBuildGuidance\(\{/);
-  assert.match(src, /\$\{guidance\.browserGuidance\}/);
-  assert.match(src, /\$\{guidance\.testingGuidance\}/);
-  assert.match(src, /require\('\.\.\/services\/in-loop-browser'\)/);
-
-  // The scout prompt template must NOT offer a browser. Slice out the
-  // scoutPrompt literal and assert it's browser-free.
-  const start = src.indexOf('const scoutPrompt = `');
-  assert.ok(start !== -1, 'scoutPrompt literal not found');
-  const end = src.indexOf('`;', start);
-  const scoutLiteral = src.slice(start, end);
-  assert.doesNotMatch(scoutLiteral, /browser_navigate|Playwright|in-loop browser|INLOOP_/i);
+test('the build prompt carries the guidance; the scout prompt has no browser', () => {
+  const live = require('../src/services/homeroom-bot-live');
+  const build = live.buildPrompt({ seed: 'ISSUE', buildNote: 'plan', readsImages: true });
+  assert.ok(build.includes(inLoop.IN_LOOP_BROWSER_GUIDANCE), 'the build reads the block as written');
+  // The spec turn is the read-only scout: it must NOT be offered a browser.
+  const spec = live.specPrompt({ seed: 'ISSUE', buildNote: 'plan' });
+  assert.doesNotMatch(spec, /browser_navigate|Playwright|in-loop browser|INLOOP_/i);
 });
 
-// ── production parity is stated where hosted Claude reads it ──────────────
+// ── production parity is stated where a build reads it ───────────────────
 
-test('the hosted reminder and the handbook carry the parity launch and the no-silencing rule', () => {
-  const hosted = inLoop.HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE;
-  assert.match(hosted, /builds the app and serves the platform's hosted\s+assets as production does/);
-  assert.match(hosted, /Never silence one with an empty response/);
+test('the handbook carries the parity launch and the no-silencing rule', () => {
   const handbook = fs.readFileSync(path.join(__dirname, '..', 'src', 'prompts', 'app-conventions.md'), 'utf8');
   const inLoopSection = handbook.slice(handbook.indexOf('## In-loop browser (build turns)'),
     handbook.indexOf('## Content rules'));

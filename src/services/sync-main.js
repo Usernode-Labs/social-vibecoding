@@ -5,8 +5,8 @@
 // pushed head as its revision.
 //
 // Every sync is the proposal machine's `branch.sync` work
-// (src/workflow/proposal/), whoever asks for it: a person ("Sync with main",
-// the connector's sync_change), a resume of a session behind main,
+// (src/workflow/proposal/), whoever asks for it: a person ("Sync with main"),
+// a resume of a session behind main,
 // the merge queue's conflict lane, a preview that will not start because
 // main moved (boot-failure-sync.js) and a check main has fixed since
 // (fixed-check-sync.js, the Homeroom bot). The machine decides whether it may

@@ -620,12 +620,11 @@ const FAILING_CHECKS_MAX = 12;
 
 // The failing checks as DATA rather than prose, capped the same way.
 //
-// #1766: the coding agent has been told exactly which checks fail, with
-// names, paths and reasons, since buildFailingChecksBlock below started
-// injecting them into its prompt. The person watching the card got a number.
-// So the board renders these same rows now, and both callers derive from one
-// function — an agent and a human reading different answers about the same
-// run is the failure this shape prevents.
+// #1766: a coding agent fixing a change is told exactly which checks fail,
+// with names, paths and reasons; the person watching the card once got only
+// a number. So the board renders these same rows, and every reader derives
+// them from this one function: an agent and a human reading different
+// answers about the same run is the failure this shape prevents.
 //
 // Both caps bend for the repo unit suite's row. It is ONE row standing for
 // every failing unit test, and its reason is the only place the fix turn

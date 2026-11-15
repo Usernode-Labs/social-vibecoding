@@ -4,12 +4,11 @@
 //   1. Unit tests for the pure helpers in services/user-agent-files.js —
 //      name normalization, content validation, skill frontmatter
 //      synthesis, the generated ~/.claude/CLAUDE.md, the docker-exec
-//      sync script, the Mayor metadata block, and the per-kind cap
-//      (exercised through upsertFile against a scripted fake pool).
+//      sync script, and the per-kind cap (exercised through upsertFile
+//      against a scripted fake pool).
 //   2. Source guards — the feature spans schema, server.js mounting, the
-//      dispatch-time sync in sessions.js, the worker export, and the
-//      Settings UI. Each guard pins the contract so a refactor can't
-//      silently drop a link in the chain.
+//      worker export, and the Settings UI. Each guard pins the contract so
+//      a refactor can't silently drop a link in the chain.
 //
 // Run with: node --test tests/user-agent-files.test.js
 
@@ -248,19 +247,6 @@ test('buildSyncShellScript: writes each skill to its own SKILL.md and skips bad 
   assert.ok(!script.includes('escape'), 'invalid slug must not reach the script');
 });
 
-// ── buildMayorAgentFilesBlock ────────────────────────────────────────
-
-test('buildMayorAgentFilesBlock: empty for no files, lists metadata otherwise', () => {
-  assert.equal(uaf.buildMayorAgentFilesBlock([]), '');
-  const block = uaf.buildMayorAgentFilesBlock([
-    { kind: 'instruction', name: 'code-style', description: '' },
-    { kind: 'skill', name: 'changelog-writer', description: 'writes logs' },
-  ]);
-  assert.match(block, /USER'S PERSONAL AGENT FILES/);
-  assert.match(block, /- \[instruction\] code-style/);
-  assert.match(block, /- \[skill\] changelog-writer — writes logs/);
-});
-
 // ── upsertFile per-kind cap (scripted fake pool) ─────────────────────
 
 function fakePool(responses) {
@@ -312,15 +298,6 @@ test('server.js mounts the /api/me/agent-files router', () => {
 test('server.js global 100kb parser skips the upload POST (scoped 256kb parser owns it)', () => {
   const src = read('server.js');
   assert.match(src, /req\.path === '\/api\/me\/agent-files' && req\.method === 'POST'\) return next\(\)/);
-});
-
-test('sessions.js syncs personal files on both build and scout dispatch', () => {
-  // #2779: the dev-chat turn moved from routes/sessions.js to services/mayor/turn.js.
-  const src = `${read('src/routes/sessions.js')}\n${read('src/services/mayor/turn.js')}`;
-  const calls = src.match(/worker\.syncUserAgentFiles\(session\.id, personalFiles\)/g) || [];
-  assert.ok(calls.length >= 2, `expected build + scout sync calls, found ${calls.length}`);
-  assert.match(src, /loadAllForUser\(pool, session\.user_id\)/);
-  assert.match(src, /buildMayorAgentFilesBlock/);
 });
 
 test('worker.js exports syncUserAgentFiles and pipes the script via stdin', () => {

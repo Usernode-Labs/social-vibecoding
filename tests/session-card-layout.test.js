@@ -573,9 +573,15 @@ const SESSION_STATE_SRC = fs.readFileSync(
 );
 
 // app-view.js with the live store loaded alongside it, as index.html does.
+// The store arms its safety tick (up to five minutes) on every event; each
+// copy is reset once the file is done, so the run ends with its tests.
+const stores = [];
+test.after(() => { for (const store of stores) store._reset(); });
+
 function makeAppViewWithStore() {
   const sandbox = makeCtx();
   vm.runInContext(SESSION_STATE_SRC, sandbox);
+  stores.push(sandbox.window.SessionState);
   return { AppView: sandbox.__AppView, SessionState: sandbox.window.SessionState };
 }
 

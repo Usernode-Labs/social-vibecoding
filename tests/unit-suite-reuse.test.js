@@ -183,8 +183,8 @@ test('every way a person asks for the checks again reaches the manual-recheck tr
   assert.match(route.slice(0, 12000), /recheckSessionChecks\(\{ config, pool, session, reason: 'manual-recheck' \}\)/);
   assert.match(read('src/services/mcp-tools.js'), /callPlatform\(baseUrl, accessToken, 'POST', `\/api\/sessions\/\$\{changeId\}\/recheck`/);
   assert.match(read('src/cli/main.js'), /target: `\/api\/sessions\/\$\{sessionId\}\/recheck`/);
-  // Deploying a preview by hand, and every other preview a person asks for:
-  // the preview machine runs its checks as 'manual-recheck'.
+  // Every preview a person asks for: the preview machine runs its checks as
+  // 'manual-recheck'.
   assert.match(read('src/workflow/preview/machine.ts'), /to: \(s, e, f, ctx\) => \{\s+const trigger = 'manual-recheck';\s+const only = e\.payload\.reason === 'preview';/);
   const recovery = read('src/services/staging-recovery.js');
   assert.match(recovery, /'manual-recheck': 'manual-recheck',/);

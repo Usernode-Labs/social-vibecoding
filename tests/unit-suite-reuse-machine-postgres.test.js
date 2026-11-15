@@ -335,59 +335,6 @@ test('unit-suite reuse through the preview machine, against the full PostgreSQL 
     assert.equal((await row(p.id)).check_state, 'passing');
   });
 
-  // routes/sessions.js deploy-staging: a preview deployed by hand is a
-  // person's request for the head's checks. When the branch cannot be read,
-  // the head is the one the machine resolves (a promoted proposal's reviewed
-  // head), and the request is recorded on it before the machine is asked:
-  // joined to a run that copied a pass, that verdict is refused and their own
-  // run follows.
-  await t.test('deploying a preview by hand during a run that copied a pass gets a fresh suite, whether or not the branch could be read', async (st) => {
-    const github = require('../src/services/github');
-    st.mock.method(require('../src/db/pool'), 'getPool', () => pool);
-    st.mock.method(github, 'isEnabled', () => true);
-    st.mock.method(github, 'getBranchSha', async () => null);
-    const previewFlow = require('../src/services/preview-workflow');
-    st.mock.method(previewFlow, 'request', async (opts) => {
-      const ev = await send(opts.session, 'PreviewRequested', { sessionId: opts.session.id, head: opts.head, reason: opts.reason }, { kind: 'route' });
-      await rt.drain();
-      const out = (await pool.query('SELECT result, reason FROM wf_events WHERE id = $1', [ev])).rows[0];
-      return { status: out.result === 'accepted' ? 'accepted' : 'rejected', reason: out.reason };
-    });
-    const router = require('../src/routes/sessions').sessionRoutes({ databaseUrl: String(url) });
-    const layer = router.stack.find((x) => x.route?.path === '/api/sessions/:id/deploy-staging');
-    const handler = layer.route.stack.at(-1).handle;
-    let lookupWorks = false;
-    let tip = null;
-    st.mock.method(github, 'getInstallationOctokit', async () => ({ request: async () => {
-      if (!lookupWorks) throw new Error('branch lookup 404');
-      return { data: { object: { sha: tip } } };
-    } }));
-    for (const works of [false, true]) {
-      const s = await proposal({ status: 'promoted' });
-      const head = works ? SHA('5') : SHA('4');
-      await pool.query('UPDATE chat_sessions SET reviewed_head_sha = $2 WHERE id = $1', [s.id, head]);
-      answers.next = result({ results: [browser, copied], unitEarned: UNIT_KEY });
-      answers.byTrigger['manual-recheck'] = result({ results: [browser, unitPass], unitObserved: UNIT_KEY,
-        history: [{ checkKey: UNIT_KEY, name: unitSuiteRow.UNIT_CHECK_NAME, path: 'package.json', passed: true }] });
-      let answered = null;
-      during.press = async () => {
-        lookupWorks = works;
-        tip = head;
-        const res = { statusCode: 200, status(n) { this.statusCode = n; return this; }, json(b) { this.body = b; return this; } };
-        await handler({ params: { id: String(s.id) }, user: { id: s.user_id } }, res);
-        answered = res;
-      };
-      await submit(s, head);
-      await settle();
-      const r = await row(s.id);
-      const runs = (await runsOf(s)).map((w) => w.input.trigger);
-      assert.deepEqual([answered.statusCode, answered.body.status], [200, 'deploying']);
-      assert.equal(!!r.test_results.find((x) => x.index === -3)?.reused, false, `lookup ${works ? 'read' : 'failed'}: not the copy`);
-      assert.deepEqual([r.check_state, r.unit_suite_fresh_sha], ['passing', null]);
-      assert.deepEqual(runs, ['commit-push', 'manual-recheck']);
-    }
-    delete answers.byTrigger['manual-recheck'];
-  });
   // routes/sessions.js recheck → staging-recovery.recheckSessionChecks →
   // preview-workflow → the machine, with a run that copied a pass of the
   // head starting while the request is on its way (another proposal earned

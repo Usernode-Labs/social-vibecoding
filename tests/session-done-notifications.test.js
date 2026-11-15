@@ -1,14 +1,11 @@
-// Tests for the #161 completion-notification plumbing.
-//
-// Three layers:
-//   1. Route test for POST /api/sessions/:id/notify-on-done — the
-//      client's arm/disarm endpoint (owner-only, idempotent, 204).
-//   2. Unit tests for the sessions.js helpers behind the turn-completion
-//      hooks: notifySessionDone (#138 always clear + insert +
-//      WS push; not armed → nothing) and notifyAutoSolveDone (always
-//      insert + push; dedup'd insert → no push).
-//   3. Service tests for the notification creators' unread dedup and the
-//      session_opened / headless_cloned auto-dismiss registry entries.
+// The completion notifications a change's turns used to write (#161, #138,
+// #3181): session_done and session_stalled. Nothing creates them any more,
+// but rows already written still draw in the bell, so:
+//   1. GET /api/sessions/:id dismisses them only when a person opened the
+//      change (`?opened=1`), and only the owner's;
+//   2. the session_opened auto-dismiss registry entry clears both kinds,
+//      scoped by session;
+//   3. serialize and the list/get hydrations carry what the bell draws.
 //
 // Like kudos.test.js, the pool is an in-memory mock that pattern-matches
 // SQL, and the ws module is stubbed via require.cache so pushes are
@@ -69,7 +66,6 @@ function makeMockPool(initial = {}) {
   const state = {
     sessions: new Map(initial.sessions || []),
     notifications: (initial.notifications || []).slice(),
-    nextId: 1000,
   };
   const calls = [];
 
@@ -77,92 +73,10 @@ function makeMockPool(initial = {}) {
     const s = String(sql);
     calls.push({ sql: s, params });
 
-    // Arm/disarm endpoint: UPDATE ... SET notify_on_done = $1 WHERE id = $2 AND user_id = $3
-    if (/SET notify_on_done = \$1\s+WHERE id = \$2 AND user_id = \$3/i.test(s)) {
-      const [armed, id, userId] = params;
-      const row = state.sessions.get(Number(id));
-      if (!row || row.user_id !== userId) return { rows: [], rowCount: 0 };
-      row.notify_on_done = armed;
-      return { rows: [], rowCount: 1 };
-    }
-    // Done hook: atomic check-and-clear.
-    if (/SET notify_on_done = FALSE\s+WHERE id = \$1 AND notify_on_done = TRUE\s+RETURNING/i.test(s)) {
-      const row = state.sessions.get(Number(params[0]));
-      if (!row || !row.notify_on_done) return { rows: [], rowCount: 0 };
-      row.notify_on_done = false;
-      return { rows: [{ user_id: row.user_id, app_id: row.app_id }], rowCount: 1 };
-    }
-    // #138 done hook: unconditional clear + RETURNING (always-create).
-    if (/SET notify_on_done = FALSE\s+WHERE id = \$1\s+RETURNING/i.test(s)) {
-      const row = state.sessions.get(Number(params[0]));
-      if (!row) return { rows: [], rowCount: 0 };
-      row.notify_on_done = false;
-      return { rows: [{ user_id: row.user_id, app_id: row.app_id }], rowCount: 1 };
-    }
-    // Activity bump on the session view. Carries the notify_on_done disarm
-    // only when the fetch said a person opened the session (?opened=1).
+    // Activity bump on the session view.
     if (/UPDATE chat_sessions SET last_activity_at = NOW\(\)/i.test(s)) {
       const row = state.sessions.get(Number(params[0]));
-      if (row && /notify_on_done = FALSE/i.test(s)) row.notify_on_done = false;
       return { rows: [], rowCount: row ? 1 : 0 };
-    }
-    // Unconditional disarm (stop handler / recovered turns / view).
-    if (/SET notify_on_done = FALSE WHERE id = \$1/i.test(s)) {
-      const row = state.sessions.get(Number(params[0]));
-      if (row) row.notify_on_done = false;
-      return { rows: [], rowCount: row ? 1 : 0 };
-    }
-    // createSessionDoneNotification / createSessionStalledNotification (#3181)
-    // / createAutoSolveDoneNotification:
-    // INSERT ... SELECT ... WHERE NOT EXISTS (unread dedup, per kind).
-    const turnEndInsert = s.match(/INSERT INTO notifications[\s\S]*'(session_done|session_stalled)'[\s\S]*WHERE NOT EXISTS/i);
-    if (turnEndInsert) {
-      const kind = turnEndInsert[1];
-      const [userId, appId, sessionId] = params;
-      const dup = state.notifications.find(
-        (n) => n.user_id === userId && n.session_id === sessionId
-          && n.kind === kind && !n.read_at
-      );
-      if (dup) return { rows: [] };
-      const row = {
-        id: state.nextId++, user_id: userId, app_id: appId, session_id: sessionId,
-        source_user_id: null, kind, detail: null, read_at: null,
-        created_at: new Date().toISOString(),
-      };
-      state.notifications.push(row);
-      return { rows: [row] };
-    }
-    if (/INSERT INTO notifications[\s\S]*'auto_solve_done'[\s\S]*WHERE NOT EXISTS/i.test(s)) {
-      const [userId, appId, sessionId, detail] = params;
-      const dup = state.notifications.find(
-        (n) => n.user_id === userId && n.session_id === sessionId
-          && n.kind === 'auto_solve_done' && !n.read_at
-      );
-      if (dup) return { rows: [] };
-      const row = {
-        id: state.nextId++, user_id: userId, app_id: appId, session_id: sessionId,
-        source_user_id: null, kind: 'auto_solve_done', detail, read_at: null,
-        created_at: new Date().toISOString(),
-      };
-      state.notifications.push(row);
-      return { rows: [row] };
-    }
-    // hydrateAndPush's single-row hydrate.
-    if (/SELECT n\.id, n\.kind[\s\S]*FROM notifications n[\s\S]*WHERE n\.id = \$1/i.test(s)) {
-      // #971: the hydrate MUST join in the session's display title — without
-      // it the client renderer falls back to the branch name on a session
-      // that already has a perfectly good name.
-      assert.match(s, /cs\.session_title/, 'hydrate selects cs.session_title');
-      const n = state.notifications.find((x) => x.id === params[0]);
-      if (!n) return { rows: [] };
-      return {
-        rows: [{
-          ...n, app_slug: 'my-app', app_name: 'My App', message_content: null,
-          session_title: 'Add a feature',
-          pr_title: 'Add a feature', pr_number: 7, headless_issue_number: 42,
-          branch_name: 'dev/alice-123', source_username: null,
-        }],
-      };
     }
     // GET /api/sessions/:id — the session record (owner OR admin).
     if (/FROM chat_sessions cs\s+JOIN apps a ON cs\.app_id = a\.id/i.test(s)) {
@@ -199,9 +113,7 @@ function makeMockPool(initial = {}) {
   };
 }
 
-// Express harness: sessions router + a req.user shim. The drainGuard /
-// chatLimiter middlewares ride along untouched (no draining, generous
-// limiter) — only the notify-on-done route is exercised here.
+// Express harness: sessions router + a req.user shim.
 async function startTestServer(loaded, user = { id: 1, username: 'alice' }) {
   const app = express();
   app.use(express.json());
@@ -217,77 +129,13 @@ async function startTestServer(loaded, user = { id: 1, username: 'alice' }) {
   });
 }
 
-// ── 1. Arm/disarm endpoint ──────────────────────────────────────────────
-
-test('POST /notify-on-done arms, disarms, and is owner-only', async () => {
-  const pool = makeMockPool({
-    sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: false }]],
-  });
-  const loaded = loadSessions(pool);
-  const srv = await startTestServer(loaded);
-  try {
-    // Arm.
-    let res = await fetch(`${srv.baseUrl}/api/sessions/10/notify-on-done`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ armed: true }),
-    });
-    assert.equal(res.status, 204);
-    assert.equal(pool.state.sessions.get(10).notify_on_done, true);
-
-    // Idempotent re-arm.
-    res = await fetch(`${srv.baseUrl}/api/sessions/10/notify-on-done`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ armed: true }),
-    });
-    assert.equal(res.status, 204);
-    assert.equal(pool.state.sessions.get(10).notify_on_done, true);
-
-    // Disarm.
-    res = await fetch(`${srv.baseUrl}/api/sessions/10/notify-on-done`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ armed: false }),
-    });
-    assert.equal(res.status, 204);
-    assert.equal(pool.state.sessions.get(10).notify_on_done, false);
-  } finally {
-    await srv.close();
-    loaded.restore();
-  }
-});
-
-test('POST /notify-on-done 404s for a session the caller does not own', async () => {
-  const pool = makeMockPool({
-    sessions: [[10, { id: 10, user_id: 999, app_id: 5, notify_on_done: false }]],
-  });
-  const loaded = loadSessions(pool);
-  const srv = await startTestServer(loaded, { id: 1, username: 'alice' });
-  try {
-    const res = await fetch(`${srv.baseUrl}/api/sessions/10/notify-on-done`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ armed: true }),
-    });
-    assert.equal(res.status, 404);
-    assert.equal(pool.state.sessions.get(10).notify_on_done, false);
-  } finally {
-    await srv.close();
-    loaded.restore();
-  }
-});
-
-// ── 1b. GET /api/sessions/:id and the "user saw it" gate ────────────────
+// ── 1. GET /api/sessions/:id and the "user saw it" gate ─────────────────
 //
-// Every turn completion writes a session_done row (#138), and the cog's
-// green badge is exactly "an unread one of these exists". The dev chat
-// refetches this route programmatically the moment a turn ends (the
-// fallback-done reconcile, the progress poll's !busy branch, the
-// sync-terminal refresh), so when the route dismissed unconditionally the
-// completion was read within ~200ms of being written and the badge never
-// appeared. The dismiss — and the notify_on_done disarm — now require the
-// caller to say a person opened the session with ?opened=1.
+// An unread session_done row is what the bell's badge counts. Screens
+// refetch this route programmatically, so when it dismissed unconditionally
+// the completion was read within ~200ms of being written and the badge
+// never appeared. The dismiss requires the caller to say a person opened
+// the session with ?opened=1.
 
 async function getSession(srv, id, qs = '') {
   const res = await fetch(`${srv.baseUrl}/api/sessions/${id}${qs}`);
@@ -305,7 +153,7 @@ function unreadDone(pool, sessionId) {
 
 test('GET /api/sessions/:id leaves the completion unread for a machine refetch', async () => {
   const pool = makeMockPool({
-    sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: true }]],
+    sessions: [[10, { id: 10, user_id: 1, app_id: 5 }]],
     notifications: [
       { id: 1, user_id: 1, app_id: 5, session_id: 10, kind: 'session_done', read_at: null },
     ],
@@ -320,20 +168,18 @@ test('GET /api/sessions/:id leaves the completion unread for a machine refetch',
     assert.equal(pool.issued(/UPDATE notifications/i), false);
     assert.equal(loaded.pushes.length, 0);
     // The activity bump still runs (an owner's poll means the session is in
-    // use) but must not carry the notify_on_done disarm.
+    // use).
     const bump = pool.calls.filter((c) => /UPDATE chat_sessions SET last_activity_at/i.test(c.sql));
     assert.equal(bump.length, 1);
-    assert.doesNotMatch(bump[0].sql, /notify_on_done/);
-    assert.equal(pool.state.sessions.get(10).notify_on_done, true);
   } finally {
     await srv.close();
     loaded.restore();
   }
 });
 
-test('GET /api/sessions/:id?opened=1 dismisses the completion and disarms notify_on_done', async () => {
+test('GET /api/sessions/:id?opened=1 dismisses the completion', async () => {
   const pool = makeMockPool({
-    sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: true }]],
+    sessions: [[10, { id: 10, user_id: 1, app_id: 5 }]],
     notifications: [
       { id: 1, user_id: 1, app_id: 5, session_id: 10, kind: 'session_done', read_at: null },
       // A different session's completion is out of scope and stays unread.
@@ -347,7 +193,6 @@ test('GET /api/sessions/:id?opened=1 dismisses the completion and disarms notify
 
     assert.equal(unreadDone(pool, 10), 0);
     assert.equal(unreadDone(pool, 11), 1);
-    assert.equal(pool.state.sessions.get(10).notify_on_done, false);
     // Other tabs repaint their badge off the change.
     assert.deepEqual(loaded.pushes, [{ userId: 1, payload: { type: 'notifications_changed' } }]);
   } finally {
@@ -358,7 +203,7 @@ test('GET /api/sessions/:id?opened=1 dismisses the completion and disarms notify
 
 test('GET /api/sessions/:id?opened=1 as a non-owner admin dismisses nothing', async () => {
   const pool = makeMockPool({
-    sessions: [[10, { id: 10, user_id: 999, app_id: 5, notify_on_done: true }]],
+    sessions: [[10, { id: 10, user_id: 999, app_id: 5 }]],
     notifications: [
       { id: 1, user_id: 999, app_id: 5, session_id: 10, kind: 'session_done', read_at: null },
     ],
@@ -369,10 +214,8 @@ test('GET /api/sessions/:id?opened=1 as a non-owner admin dismisses nothing', as
     await getSession(srv, 10, '?opened=1');
 
     // An admin (or the capture suite) reading someone's session must not
-    // resolve the owner's notification, keep the session awake, or cancel
-    // their "tell me when it's done".
+    // resolve the owner's notification or keep the session awake.
     assert.equal(unreadDone(pool, 10), 1);
-    assert.equal(pool.state.sessions.get(10).notify_on_done, true);
     assert.equal(pool.issued(/UPDATE chat_sessions SET last_activity_at/i), false);
     assert.equal(loaded.pushes.length, 0);
   } finally {
@@ -381,169 +224,7 @@ test('GET /api/sessions/:id?opened=1 as a non-owner admin dismisses nothing', as
   }
 });
 
-// ── 2. Turn-completion helpers ──────────────────────────────────────────
-
-test('notifySessionDone: armed → clears flag, inserts session_done, pushes WS', async () => {
-  const pool = makeMockPool({
-    sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: true }]],
-  });
-  const loaded = loadSessions(pool);
-  try {
-    await loaded.subject.notifySessionDone(pool, 10);
-
-    assert.equal(pool.state.sessions.get(10).notify_on_done, false);
-    const rows = pool.state.notifications.filter((n) => n.kind === 'session_done');
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].user_id, 1);
-    assert.equal(rows[0].session_id, 10);
-    assert.equal(rows[0].source_user_id, null);
-
-    assert.equal(loaded.pushes.length, 1);
-    assert.equal(loaded.pushes[0].userId, 1);
-    assert.equal(loaded.pushes[0].payload.type, 'notification_new');
-    assert.equal(loaded.pushes[0].payload.notification.kind, 'session_done');
-    // The hydrate carries the session label fields the drawer renders.
-    // #971: sessionTitle is the one the row prefers; prTitle/branchName ride
-    // along as the second and last rungs of the fallback ladder.
-    assert.equal(loaded.pushes[0].payload.notification.sessionTitle, 'Add a feature');
-    assert.equal(loaded.pushes[0].payload.notification.prTitle, 'Add a feature');
-    assert.equal(loaded.pushes[0].payload.notification.branchName, 'dev/alice-123');
-  } finally {
-    loaded.restore();
-  }
-});
-
-// #138: completions now ALWAYS create the persistent green bell item — the
-// done hook no longer gates on notify_on_done. An unarmed session still
-// produces exactly one session_done insert + WS push.
-test('notifySessionDone: unarmed → still creates session_done and pushes once', async () => {
-  const pool = makeMockPool({
-    sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: false }]],
-  });
-  const loaded = loadSessions(pool);
-  try {
-    await loaded.subject.notifySessionDone(pool, 10);
-    const rows = pool.state.notifications.filter((n) => n.kind === 'session_done');
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].user_id, 1);
-    assert.equal(rows[0].session_id, 10);
-    assert.equal(loaded.pushes.length, 1);
-    assert.equal(loaded.pushes[0].payload.notification.kind, 'session_done');
-  } finally {
-    loaded.restore();
-  }
-});
-
-// Unread-dedup still collapses repeats: a second done for the same session
-// (while the first is unread) inserts nothing new and pushes nothing.
-test('notifySessionDone: repeat while unread → dedup, no second insert/push', async () => {
-  const pool = makeMockPool({
-    sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: false }]],
-  });
-  const loaded = loadSessions(pool);
-  try {
-    await loaded.subject.notifySessionDone(pool, 10);
-    await loaded.subject.notifySessionDone(pool, 10);
-    const rows = pool.state.notifications.filter((n) => n.kind === 'session_done');
-    assert.equal(rows.length, 1, 'unread-dedup keeps it to one row');
-    assert.equal(loaded.pushes.length, 1, 'only the first push fires');
-  } finally {
-    loaded.restore();
-  }
-});
-
-// #3181: a turn that ended without finishing says so. Same arming clear, same
-// hydrate and WS push, same one-unread-per-session dedup; only the kind
-// differs, and it is a separate kind, so it neither swallows nor is swallowed
-// by an unread session_done for the same session.
-test('notifySessionStalled: clears the flag, inserts session_stalled, pushes WS, dedups', async () => {
-  const pool = makeMockPool({
-    sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: true }]],
-  });
-  const loaded = loadSessions(pool);
-  try {
-    await loaded.subject.notifySessionStalled(pool, 10);
-
-    assert.equal(pool.state.sessions.get(10).notify_on_done, false);
-    const rows = pool.state.notifications.filter((n) => n.kind === 'session_stalled');
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].user_id, 1);
-    assert.equal(rows[0].session_id, 10);
-    assert.equal(rows[0].source_user_id, null, 'system-generated: nobody did this');
-    assert.equal(pool.state.notifications.filter((n) => n.kind === 'session_done').length, 0,
-      'a stalled turn is not also a finished one');
-
-    assert.equal(loaded.pushes.length, 1);
-    assert.equal(loaded.pushes[0].payload.type, 'notification_new');
-    assert.equal(loaded.pushes[0].payload.notification.kind, 'session_stalled');
-    assert.equal(loaded.pushes[0].payload.notification.sessionTitle, 'Add a feature');
-
-    await loaded.subject.notifySessionStalled(pool, 10);
-    assert.equal(pool.state.notifications.filter((n) => n.kind === 'session_stalled').length, 1,
-      'unread-dedup keeps it to one row');
-    assert.equal(loaded.pushes.length, 1, 'and one push');
-
-    // Its own kind: a later clean finish is still news.
-    await loaded.subject.notifySessionDone(pool, 10);
-    assert.equal(pool.state.notifications.filter((n) => n.kind === 'session_done').length, 1);
-  } finally {
-    loaded.restore();
-  }
-});
-
-test('notifyAutoSolveDone: always inserts with detail and pushes; dedup suppresses the push', async () => {
-  const pool = makeMockPool({ sessions: [] });
-  const loaded = loadSessions(pool);
-  try {
-    await loaded.subject.notifyAutoSolveDone(pool, {
-      userId: 2, appId: 5, sessionId: 30, detail: 'spec',
-    });
-    const rows = pool.state.notifications.filter((n) => n.kind === 'auto_solve_done');
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].detail, 'spec');
-    assert.equal(loaded.pushes.length, 1);
-    assert.equal(loaded.pushes[0].userId, 2);
-    assert.equal(loaded.pushes[0].payload.notification.kind, 'auto_solve_done');
-    assert.equal(loaded.pushes[0].payload.notification.headlessIssueNumber, 42);
-
-    // A second terminal fire (e.g. a resume re-driving the same run)
-    // hits the unread dedup: no second row, no second push.
-    await loaded.subject.notifyAutoSolveDone(pool, {
-      userId: 2, appId: 5, sessionId: 30, detail: 'spec',
-    });
-    assert.equal(pool.state.notifications.filter((n) => n.kind === 'auto_solve_done').length, 1);
-    assert.equal(loaded.pushes.length, 1);
-  } finally {
-    loaded.restore();
-  }
-});
-
-// ── 3. Service: creators' dedup + auto-dismiss registry ────────────────
-
-test('createSessionDoneNotification: at most one UNREAD row per (user, session)', async () => {
-  const pool = makeMockPool();
-  const loaded = loadSessions(pool);
-  try {
-    const first = await loaded.notifications.createSessionDoneNotification(pool, {
-      userId: 1, appId: 5, sessionId: 10,
-    });
-    assert.equal(first.length, 1);
-
-    const dup = await loaded.notifications.createSessionDoneNotification(pool, {
-      userId: 1, appId: 5, sessionId: 10,
-    });
-    assert.equal(dup.length, 0);
-
-    // Once read, a new completion may notify again.
-    pool.state.notifications[0].read_at = new Date().toISOString();
-    const again = await loaded.notifications.createSessionDoneNotification(pool, {
-      userId: 1, appId: 5, sessionId: 10,
-    });
-    assert.equal(again.length, 1);
-  } finally {
-    loaded.restore();
-  }
-});
+// ── 2. The auto-dismiss registry ─────────────────────────────────────────
 
 test('session_opened auto-dismiss also answers "stopped before finishing" (#3181)', async () => {
   const pool = makeMockPool({
@@ -589,27 +270,7 @@ test('session_opened auto-dismiss clears unread session_done scoped by session',
   }
 });
 
-test('headless_cloned auto-dismiss clears unread auto_solve_done for the source session', async () => {
-  const pool = makeMockPool({
-    notifications: [
-      { id: 1, user_id: 1, app_id: 5, session_id: 30, kind: 'auto_solve_done', read_at: null },
-      { id: 2, user_id: 2, app_id: 5, session_id: 30, kind: 'auto_solve_done', read_at: null },
-    ],
-  });
-  const loaded = loadSessions(pool);
-  try {
-    assert.deepEqual(
-      loaded.notifications.ACTION_COMPLETIONS.headless_cloned,
-      { kinds: ['auto_solve_done'], scope: 'session_id' }
-    );
-    const cleared = await loaded.notifications.markReadForAction(pool, 1, 'headless_cloned', 30);
-    assert.equal(cleared, 1);
-    // Another user's notification for the same auto session is untouched.
-    assert.equal(pool.state.notifications.find((n) => n.id === 2).read_at, null);
-  } finally {
-    loaded.restore();
-  }
-});
+// ── 3. What the bell draws ───────────────────────────────────────────────
 
 test('serialize exposes headlessIssueNumber and branchName for the drawer', () => {
   const pool = makeMockPool();

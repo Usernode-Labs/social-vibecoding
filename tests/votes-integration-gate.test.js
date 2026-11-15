@@ -219,7 +219,7 @@ test('a measured conflict is refused and handed to the conflict lane, with the a
     assert.ok(msg, 'posted the conflict');
     assert.match(msg, /2 files \(dapp\.json, src\/app\.js\)/);
     assert.match(msg, /The platform will try to resolve it automatically/);
-    assert.match(msg, /<@3> needs to resolve it from the session's dev-chat/);
+    assert.match(msg, /if it can't, <@3> needs to resolve it\./);
   } finally { restore(); }
 });
 
