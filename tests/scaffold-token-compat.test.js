@@ -76,7 +76,8 @@ function loadScaffoldMiddleware(source, env) {
     },
     get: () => {},
     post: () => {},
-    listen: (_port, cb) => { if (typeof cb === 'function') cb(); },
+    // Returns a server, as express does: start() sets its keepAliveTimeout.
+    listen: (_port, cb) => { if (typeof cb === 'function') cb(); return {}; },
   };
   const express = () => app;
   express.json = () => '__json__';

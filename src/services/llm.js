@@ -664,11 +664,9 @@ const HELPER_OUTPUT_LIMIT = Object.freeze({
 // type).
 const HELPER_KEY_TTL_MS = 60 * 1000;
 const HELPER_TIME_LIMIT_MS = Object.freeze({
-  // Somebody is waiting: the feedback title preview as they type, the pills
-  // backstop (inside the 5s budget services/mayor/pills.js gives it), the
+  // Somebody is waiting: the feedback title preview as they type, the
   // create dialog's description, a reply to "@Homeroom bot", the ask box.
   issue_title: 4000,
-  quick_replies: 2500,
   short_description: 5000,
   chat_ask: 5000,
   workshop_ask: 6000,
@@ -683,12 +681,9 @@ const HELPER_TIME_LIMIT_MS = Object.freeze({
   // waits on the made screen for its questions, while the project is set
   // up (about 40 seconds), and it is a longer answer than the card's.
   first_version_plan: 20000,
-  // Nobody is waiting.
-  session_title: 8000,
-  // The change's page shows the failure's own words until it answers
+  // Nobody is waiting: the change's page shows the failure's own words until it answers
   // (services/checks-explanation.js).
   checks_explanation: 10000,
-  progress_estimate: 10000,
   challenge_grade: 20000,
   report_summary: 25000,
   content_review: 30000,

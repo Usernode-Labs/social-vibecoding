@@ -10,8 +10,8 @@
  * 'codex_openrouter' in chat_sessions.agent_backend, 'claude-code' /
  * 'codex' in external_agent, 'imported' and 'cli_handoff' in
  * chat_sessions.source, and chat_sessions.build_venue, which stores one of
- * these ids verbatim. That column, its CHECK, and BUILD_VENUES in
- * src/routes/sessions.js are the other copies of this id list.
+ * these ids verbatim. That column and its CHECK are the other copy of this
+ * id list.
  */
 (function () {
   'use strict';

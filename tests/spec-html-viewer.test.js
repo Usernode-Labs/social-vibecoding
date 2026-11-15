@@ -104,17 +104,12 @@ test('the setting: HTML specs for every app by default; a list of slugs or `none
   assert.match(configSrc, /htmlSpecApps: \(\(\) => \{\s*const raw = process\.env\.HTML_SPEC_APPS;\s*if \(raw == null \|\| raw\.trim\(\) === ''\) return \['\*'\];\s*if \(raw\.trim\(\)\.toLowerCase\(\) === 'none'\) return \[\];/);
 });
 
-test('the scout is asked for HTML on apps in the setting, with the right stylesheet, and an HTML spec is revised as HTML', () => {
-  const src = read('src/routes/sessions.js');
-  assert.match(src, /const htmlSpec = specHtml\.htmlSpecsEnabledFor\(config, session\.app_slug\);/);
-  assert.match(src, /const existingShown = htmlSpec && existingDoc\.html \? existingDoc\.html\.trim\(\) : existingSpec;/);
-  assert.match(src, /produce \$\{htmlSpec \? 'an HTML SPEC' : 'a MARKDOWN SPEC'\} for the change/);
-  assert.match(src, /\$\{htmlSpec \? specHtmlContract\(platformStyles\) : `The spec is rendered as markdown/);
-  assert.match(src, /const platformStyles = specHtml\.specStylesFor\(\{ slug: session\.app_slug, self_hosted: session\.app_self_hosted \}\) === 'platform';/);
-  // Each capture site stores the document beside its markdown copy.
-  assert.equal((src.match(/const capturedSpec = captureSpecOutput\(result\.lastResultText\);/g) || []).length, 2);
-  assert.equal((src.match(/contentHtml: capturedSpec\.html,/g) || []).length, 2);
-  assert.match(read('src/services/turn-recovery.js'), /contentHtml: capturedSpec\.html,/);
+test('a recovered spec stores the document beside its markdown, and the contract names every rule', () => {
+  // The capture site a recovered turn publishes through stores the document
+  // beside its markdown copy.
+  const recovery = read('src/services/turn-recovery.js');
+  assert.match(recovery, /const capturedSpec = captureSpecOutput\(result\.lastResultText\);/);
+  assert.match(recovery, /contentHtml: capturedSpec\.html,/);
   const { SPEC_HTML_CONTRACT } = require('../src/services/prompts.js');
   for (const rule of ['<article data-spec>', '<section data-spec-tab="user">', '<figure data-screens>', 'data-side="before"', 'data-change="N"', 'data-focus="x y w h"', 'scripts off and no network', 'spec-box-new']) {
     assert.ok(SPEC_HTML_CONTRACT.includes(rule), `the contract names ${rule}`);
@@ -150,11 +145,7 @@ test('the browser half holds an author\'s markup to the rules: prose sanitised, 
   assert.match(src, /\.filter\(\(c\) => \/\^spec-\[a-z0-9-\]\+\$\/\.test\(c\)\)/);
 });
 
-test('the three surfaces render an HTML spec from its document and keep copying the markdown', () => {
-  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
-  assert.match(devChat, /DevChat\.specViewer\.draftHtml = data\.html \|\| null;/);
-  assert.match(devChat, /DevChat\.specViewer\.viewVersionHtml = data\.spec\.content_html \|\| null;/);
-  assert.match(devChat, /raw: displayContent,/, 'Copy markdown still copies the markdown');
+test('the spec panel renders an HTML spec from its document and keeps copying the markdown', () => {
   // #6230: the reader's document and its raw markdown are the detail store's
   // now; group-chat.js hands both to it and no longer builds the body.
   const detail = read('frontend/src/features/ai/detail.ts');
@@ -163,11 +154,7 @@ test('the three surfaces render an HTML spec from its document and keep copying 
   const groupChat = read('public/js/group-chat.js');
   assert.match(groupChat, /html: html \|\| null,/);
   assert.match(groupChat, /markdown: content == null \? '' : String\(content\)/);
-  const pane = read('frontend/src/features/agent-session/index.tsx');
-  assert.match(pane, /sheet\.html \? renderSpecHtml\(sheet\.html, \{ key: `as-\$\{sheet\.changeId\}-\$\{sheet\.version \?\? 'latest'\}` \}\) : null/);
-  for (const file of ['frontend/src/features/dev-chat/spec-viewer.tsx', 'frontend/src/features/group-chat/spec-panel.tsx', 'frontend/src/features/agent-session/index.tsx']) {
-    assert.match(read(file), /useSpecFrames\(ref, /, `${file} fits the screens`);
-  }
+  assert.match(read('frontend/src/features/group-chat/spec-panel.tsx'), /useSpecFrames\(ref, /, 'the panel fits the screens');
 });
 
 test('every app writes HTML specs; the platform\'s screens draw with its stylesheet, every other app\'s with the native kit', async () => {

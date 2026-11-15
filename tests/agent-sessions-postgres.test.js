@@ -6,7 +6,8 @@
 // they are there:
 //
 //   1. THE BLOCK APPLIES on any database, idempotently, and its tables stay
-//      private to staging copies ('staging:private').
+//      private to staging copies ('staging:private'), as does the dev chats'
+//      saved drafts table, chat_session_drafts.
 //   2. ACCOUNT DELETION still clears a person's conversation-only rows
 //      (services/account-deletion.js), and a change outlives the
 //      conversation it was started from.
@@ -172,6 +173,13 @@ test('the migration is idempotent', async (t) => {
   } finally {
     await done(client);
   }
+});
+
+test('the dev chats\' saved drafts stay private to staging copies, forced', () => {
+  // chat_session_drafts FKs the private chat_sessions, and a PUBLIC table
+  // FK-ing a private one is exactly the combination the clone's FK-closure
+  // discovery forbids.
+  assert.match(SCHEMA, /COMMENT ON TABLE chat_session_drafts IS 'staging:private'/);
 });
 
 test('account deletion clears a conversation\'s own rows; the change and its rows outlive it', async (t) => {

@@ -758,7 +758,6 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
 
   assert.match(schema, /CREATE TABLE IF NOT EXISTS credentials\.managed_openrouter_keys/);
   assert.match(schema, /user_id\s+BIGINT NOT NULL UNIQUE/);
-  assert.match(routes, /post\('\/api\/me\/credentials\/openrouter\/managed'/);
   assert.match(routes, /Cache-Control', 'no-store'/);
   assert.match(admin, /patch\('\/api\/admin\/openrouter-keys\/:id'/);
   assert.match(admin, /delete\('\/api\/admin\/openrouter-keys\/:id'/);
@@ -907,21 +906,23 @@ test('configured GLM 5.3 Flash is preferred without filtering the remaining mode
 
 // QA 2026-09-24: "Start work" toasted "Ask an administrator to check
 // USERNODE_OPENROUTER_MANAGEMENT_API_KEY". A person cannot act on a server
-// variable. Both user-facing doors (session creation and the managed-key
-// claim) answer in plain words and leave the variable to the server log;
-// the error itself, which the admin console and the log print, keeps it.
+// variable. The one door a person meets it at now, Settings' key status,
+// answers with a reason, and the screen says it in plain words; the error
+// itself, which the admin console and the log print, keeps the variable.
 test('an unconfigured deployment tells the person in plain words, and the log keeps the variable', () => {
-  const managed = require('../src/services/openrouter-managed-keys');
-  const text = managed.NOT_CONFIGURED_USER_MESSAGE;
-  assert.equal(typeof text, 'string');
-  assert.doesNotMatch(text, /USERNODE_|OPENROUTER|API_KEY/, 'no environment variable');
-  assert.doesNotMatch(text, /—/, 'and no em dash');
   const service = fs.readFileSync(path.join(root, 'src/services/openrouter-managed-keys.js'), 'utf8');
   assert.match(service, /'Company OpenRouter keys are not configured yet\. Ask an administrator to check USERNODE_OPENROUTER_MANAGEMENT_API_KEY\.'/,
     'the error keeps the variable for the log and the admin console');
-  const sessions = fs.readFileSync(path.join(root, 'src/routes/sessions.js'), 'utf8');
-  assert.match(sessions, /err\.code === 'not_configured'\s*\? managedOpenRouter\.NOT_CONFIGURED_USER_MESSAGE/);
-  assert.doesNotMatch(sessions, /Ask an administrator to check USERNODE_OPENROUTER_MANAGEMENT_API_KEY/);
   const credentials = fs.readFileSync(path.join(root, 'src/routes/credentials.js'), 'utf8');
-  assert.match(credentials, /if \(err\.code === 'not_configured'\) \{[\s\S]{0,300}?log\.warn\([\s\S]{0,200}?err: err\.message[\s\S]{0,200}?error: managedOpenRouter\.NOT_CONFIGURED_USER_MESSAGE/);
+  assert.match(credentials, /!managedOpenRouter\.managedKeysEnabled\(config\) \? 'not_configured'/,
+    'the key status names the reason, not the variable');
+  const settings = fs.readFileSync(path.join(root, 'frontend/src/features/settings/settings.js'), 'utf8');
+  assert.match(settings, /includedStatus\.textContent = tr\('settings:openrouter\.included\.notConfigured'\);/);
+  const text = require('./lib/platform-i18n').message('settings:openrouter.included.notConfigured');
+  assert.equal(text, 'Included keys are not configured by the platform administrator yet.');
+  assert.doesNotMatch(text, /USERNODE_|OPENROUTER|API_KEY/, 'no environment variable');
+  for (const file of ['src/routes/credentials.js', 'src/routes/dictation.js', 'src/routes/sessions.js']) {
+    assert.doesNotMatch(fs.readFileSync(path.join(root, file), 'utf8'), /Ask an administrator to check USERNODE_OPENROUTER_MANAGEMENT_API_KEY/,
+      `${file} does not spell the variable out to a person`);
+  }
 });

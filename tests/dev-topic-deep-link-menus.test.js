@@ -8,8 +8,8 @@
 //   _attrInit()      the priority / category / assignee chip dropdowns, and
 //                    the "?" / "How voting works" popover
 //
-// — while the topic, chat and session branches each return long before
-// reaching it. So pasting, sharing or reloading
+// — while the topic and chat branches (and the dev chat's session branch,
+// since retired) each returned long before reaching it. So pasting, sharing or reloading
 // #app/<slug>/dev/proposals/<id> painted a proposal whose ⋯ menu and chips
 // did nothing at all on click, and the same page opened by tapping the card
 // on the board worked, because the card list had rendered first and
@@ -80,6 +80,10 @@ function makeSandbox() {
     fetch: async () => ({ ok: true, json: async () => ({}) }),
     alert: () => {},
     setTimeout, clearTimeout, setInterval, clearInterval,
+    // The card list binds its delegated handlers through an AbortController
+    // (so a re-render unbinds them); without one its render rejects after
+    // the test has ended and fails the file.
+    AbortController,
     addEventListener: () => {},
     localStorage: { getItem: () => null, setItem: () => {} },
     innerWidth: 1000,
@@ -100,7 +104,6 @@ function stubBranches(AppView, calls = {}) {
   AppView._teardownDevRoots = () => {};
   AppView._renderTopicSubView = async () => { calls.topic = (calls.topic || 0) + 1; };
   AppView._renderChatSubView = () => { calls.chat = (calls.chat || 0) + 1; };
-  AppView.renderDevChatTab = async () => { calls.session = (calls.session || 0) + 1; };
   return calls;
 }
 
@@ -196,12 +199,11 @@ test('every direct topic link replaces another app\'s remembered header title', 
 
 test('every early-returning Dev sub-view installs both handler sets', async () => {
   // The proposal topic is not special: an issue topic renders the same
-  // chips and the same ⋯ menu, and chat / session return from the same
-  // function just as early.
+  // chips and the same ⋯ menu, and chat returns from the same function just
+  // as early.
   for (const [subTab, ref] of [
     ['topic', { kind: 'issue', id: 42 }],
     ['chat', null],
-    ['sessions', 7],
   ]) {
     const { AppView } = makeSandbox();
     stubBranches(AppView);
@@ -228,11 +230,13 @@ test('source guard: both installers sit above the first early return', () => {
 
   const attrAt = SRC.indexOf('AppView._attrInit();', start);
   const menuAt = SRC.indexOf('AppView._cardMenuInit();', start);
-  const firstBranchReturn = SRC.indexOf('await AppView.renderDevChatTab(ref);', start);
+  // The Activity sub-view is the first branch that returns early now; the
+  // dev chat's session branch, which used to come first, is retired.
+  const firstBranchReturn = SRC.indexOf("if (subTab === 'chat') {", start);
 
   assert.ok(attrAt > start, 'renderDevView still calls _attrInit');
   assert.ok(menuAt > start, 'renderDevView still calls _cardMenuInit');
-  assert.ok(firstBranchReturn > start, 'the session branch is still the first early return');
+  assert.ok(firstBranchReturn > start, 'the Activity branch is the first early-returning sub-view');
 
   assert.ok(attrAt < firstBranchReturn,
     '_attrInit must sit ABOVE the first early-returning sub-view branch — '
