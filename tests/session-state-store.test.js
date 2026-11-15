@@ -118,15 +118,12 @@ test('reconcile adopts non-idle rows from the snapshot', () => {
   S.reconcile({
     bootId: 'boot-1',
     sessions: [
-      { id: 5, busy: true, phase: 'cc', stopping: false, status: 'active', headless: null },
-      { id: 6, busy: false, status: 'active', headless: { status: 'generating', issueNumber: 900003 } },
+      { id: 5, busy: true, phase: 'cc', stopping: false, status: 'active' },
     ],
   });
   assert.equal(S.isBusy(5, false), true);
   assert.equal(S.get(5).phase, 'cc');
-  assert.equal(S.isBusy(6, false), false);
-  assert.equal(S.get(6).headless.status, 'generating');
-  assert.equal(S.anyActive(), true, 'a generating auto-run counts as active');
+  assert.equal(S.anyActive(), true, 'a busy session counts as active');
 });
 
 test('a changed bootId clears every override', () => {
@@ -187,12 +184,12 @@ test('onEvent runs immediately, even when the derived state is unchanged', () =>
 
   S.applyEvent({ sessionId: 14, busy: true, status: 'active' });
   S.applyEvent({ sessionId: 14, busy: true, status: 'active' });
-  // Two raw deliveries: the auto-run outcome that rides on an otherwise
-  // unchanged payload must still reach the issue-card patcher.
+  // Two raw deliveries: a reader that acts on the event itself (a change's
+  // page re-reading its detail) hears each one.
   assert.deepEqual(seen, [14, 14]);
 });
 
-test('anyActive reflects busy, stopping and generating auto-runs', () => {
+test('anyActive reflects a stop still unwinding', () => {
   const { S } = load();
   assert.equal(S.anyActive(), false);
 

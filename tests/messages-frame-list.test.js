@@ -2,11 +2,11 @@
 // list.tsx), version 2 of the screen tour's s15 and s20: the first tour's
 // layout (the page's head, People and Agents as tabs, the conversations as
 // the kit's one row) holding what the standard list holds: the product's
-// search, a group's member count, "N new", an agent chat's project and
-// state, this week's agent chats with the older ones behind "N older
-// chats", and the archived ones behind "Show archived". It is the product's
-// own list (./index.tsx ConversationList) with another face: the pane
-// builds each row, folds Agents by the standard rule and hands them in.
+// search, a group's member count, "N new", a change's project and where it
+// stands, and this week's changes with the older ones behind "N older
+// changes". It is the product's own list (./index.tsx ConversationList) with
+// another face: the pane builds each row, folds Agents by the standard rule
+// and hands them in.
 //
 // Run with: node --test tests/messages-frame-list.test.js
 
@@ -48,7 +48,6 @@ const base = {
 };
 const OLDER = [
   row('session:s2', 'New Needs you', { line: 'Homeroom · 29 Oct', time: null, status: { text: 'Ready', kind: 'ok' } }),
-  row('mayor:7', '#4098 · Add support for diagrams', { line: 'Homeroom · No active change', time: '12 Oct', said: ', finished' }),
 ];
 const render = (over) => renderComponent(LIST, 'MessagesFrameList', { ...base, ...over }, { cache: false });
 // A conversation's name is in the span that is cut short; a fold's words are the title itself.
@@ -89,42 +88,25 @@ test('the open conversation\'s row is lit, and every row is a link to its own ad
   assert.equal((html.match(/class="fr-row fr-on"/g) || []).length, 1);
 });
 
-test('Agents is the second tab: its sentence, this week\'s chats, then "N older chats" as the card\'s centred link', () => {
+test('Agents is the second tab: its sentence, this week\'s changes, then "N older changes" as the card\'s centred link', () => {
   const html = render({ tab: 'agents' });
-  assert.match(html, /<p class="fr-purpose">Chats with coding agents\.<\/p>/);
+  assert.match(html, /<p class="fr-purpose">Changes your agents are building\.<\/p>/);
   assert.doesNotMatch(html, /Homeroom bot tab|Older chats with coding agents/, 'the first tour\'s sentence sending new work to the bot is gone');
   assert.match(html, /placeholder="Search"/, 'the same search');
   assert.match(html, /<button type="button" class="fr-tab fr-on" aria-pressed="true">Agents<\/button>/);
   assert.doesNotMatch(html, /fr-cap/, 'no counted label over the group');
-  assert.deepEqual(titles(html), ['Simplify the admin console', '2 older chats']);
+  assert.deepEqual(titles(html), ['Simplify the admin console', '2 older changes']);
   assert.match(html, /<span class="fr-s">Homeroom · Handed off · 29 Oct<\/span><\/span><span class="fr-pill" data-kind="none">Handed off<\/span>/, 'a change in flight: the project, what is known and when on the line, its state the pill');
-  assert.match(html, /<button type="button" class="fr-row fr-sm fr-showall" aria-expanded="false" data-inbox-more="agents"><span class="fr-tx"><span class="fr-t">2 older chats<\/span><\/span><\/button><\/div><\/section>/,
+  assert.match(html, /<button type="button" class="fr-row fr-sm fr-showall" aria-expanded="false" data-inbox-more="agents"><span class="fr-tx"><span class="fr-t">2 older changes<\/span><\/span><\/button><\/div><\/section>/,
     'the link ends the card and says it is shut');
-  assert.equal(message('messages:inbox.older.show_one').replace('{{count}}', '1'), '1 older chat');
+  assert.equal(message('messages:inbox.older.show_one').replace('{{count}}', '1'), '1 older change');
 });
 
-test('pressed, the link stays where it was and the older chats open under it', () => {
+test('pressed, the link stays where it was and the older changes open under it', () => {
   const html = render({ tab: 'agents', olderOpen: true, olderRows: OLDER });
-  assert.deepEqual(titles(html), ['Simplify the admin console', 'Hide older chats', 'New Needs you', '#4098 · Add support for diagrams']);
+  assert.deepEqual(titles(html), ['Simplify the admin console', 'Hide older changes', 'New Needs you']);
   assert.match(html, /aria-expanded="true" data-inbox-more="agents"/);
   assert.match(html, /<span class="fr-s">Homeroom · 29 Oct<\/span><\/span><span class="fr-pill fr-ok" data-kind="ok">Ready<\/span>/);
-  assert.match(html, /<span class="fr-t"><span class="fr-cut">#4098 · Add support for diagrams<\/span><span class="sr-only">, finished<\/span><\/span><span class="fr-s">Homeroom · No active change<\/span><\/span><span class="fr-meta" title="7 Nov 2026, 10:02">12 Oct<\/span>/,
-    'an agent chat with no change says so, ends in its date, and says what it is doing to a screen reader');
-});
-
-test('Show archived ends the card where the standard list offers it, and opens the archived chats under their own label', () => {
-  const shut = render({ tab: 'agents', older: 0, archive: { open: false, onToggle() {}, rows: null, error: '', onRetry() {} } });
-  assert.match(shut, /<button type="button" class="fr-row fr-sm fr-showall" aria-expanded="false" data-inbox-archived=""><span class="fr-tx"><span class="fr-t">Show archived<\/span><\/span><\/button><\/div><\/section>/);
-  assert.doesNotMatch(shut, /data-inbox-section="archived"/);
-  assert.doesNotMatch(render({ tab: 'agents' }), /Show archived/, 'not offered: not drawn');
-  assert.doesNotMatch(render({ archive: { open: true, onToggle() {}, rows: [], error: '', onRetry() {} } }), /archived/i, 'People has none of it');
-  const open = (over) => render({ tab: 'agents', older: 0, archive: { open: true, onToggle() {}, rows: null, error: '', onRetry() {}, ...over } });
-  assert.match(open(), /Hide archived<\/span><\/span><\/button><\/div><\/section><section class="fr-sec" data-inbox-section="archived"><div class="fr-sechead"><h2 class="fr-cap">Archived<\/h2><\/div><p class="fr-txt" role="status">Loading conversations<\/p>/);
-  assert.match(open({ rows: [] }), /<div class="fr-card fr-pad">No archived agent chats\.<\/div>/);
-  assert.match(open({ error: 'Could not load.' }), /<div class="fr-txt" role="status">Could not load\. <button type="button" class="fr-link">Try again<\/button><\/div>/);
-  assert.deepEqual(titles(open({ rows: [OLDER[1]] })), ['Simplify the admin console', 'Hide archived', '#4098 · Add support for diagrams']);
-  assert.match(render({ tab: 'agents', agents: [], older: 0, archive: { open: false, onToggle() {}, rows: null, error: '', onRetry() {} } }), /Show archived/,
-    'with no open chat left the link is still the way to the archived ones');
 });
 
 test('what the list says when it has nothing to list is the standard list\'s sentence', () => {
@@ -163,7 +145,7 @@ test('the list pane hands its own conversations to the kit list under a look, an
   assert.match(block, /const face = c\.kind === 'group' && !invited\s+\? c\.members\.find\(\(member\) => member\.status === 'member' && Number\(member\.id\) !== me\) \|\| null\s+: peer;/,
     'a group wears the face of someone in it who is not you');
   assert.match(block, /members: Number\.isFinite\(count\) && count > 0 \? \{ count, words: t\('messages:inbox\.memberCount', \{ count \}\) \} : null,/, 'the member count in GroupMemberCount\'s words; a zero says nothing');
-  assert.match(block, /const fold = shownInSection\('agents', agentEntries, \{ expanded: agentsExpanded, searching, openKey, keep: asksForYou \}\);/,
+  assert.match(block, /const fold = shownInSection\('agents', agentEntries, \{ expanded: agentsExpanded, searching, keep: asksForYou \}\);/,
     'Agents folds by the standard list\'s own rule and state');
   assert.match(block, /onOlder=\{\(\) => setAgentsExpanded\(!agentsExpanded\)\}/);
   assert.match(block, /const archive = mounted && !!agentChatsShown && !searching && \(!fold\.older \|\| agentsExpanded\);/, 'Show archived where the standard list offers it');

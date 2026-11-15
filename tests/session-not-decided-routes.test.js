@@ -5,12 +5,12 @@
 // restarting, and a move with a deadline it reaches too late is refused as
 // `expired`. Either way nothing changed and asking again may work, so the
 // route says exactly that: 503, `code: 'not_decided'`, Retry-After. Never a
-// 404 ("cannot be paused"), a 409 ("already merging") or "still being
-// closed", which were each false for a move nobody had decided.
+// 409 ("already merging") or "still being closed", which were each false for
+// a move nobody had decided.
 //
-// Same harness as tests/session-cap-enforcement.test.js: getPool is replaced
-// before the route module loads, the lifecycle service's functions are
-// swapped for the answer under test, and the router is mounted on express.
+// The harness: getPool is replaced before the route module loads, the
+// lifecycle service's functions are swapped for the answer under test, and
+// the router is mounted on express.
 //
 // Run with: node --test tests/session-not-decided-routes.test.js
 
@@ -105,16 +105,6 @@ test('unarchive: not decided yet is told apart from a session still being closed
   const closing = await post(`/api/sessions/${SESSION_ID}/unarchive`);
   assert.equal(closing.status, 503);
   assert.match(closing.body.error, /still being closed/);
-});
-
-test('pause: not decided yet is a retryable 503, not "cannot be paused"', async () => {
-  rowStatus = 'active';
-  try {
-    swap(lifecycle, 'pauseSession', async () => ({ paused: false, reason: 'not_decided' }));
-    assertNotDecided(await post(`/api/sessions/${SESSION_ID}/pause`), 'pause');
-    swap(lifecycle, 'pauseSession', async () => ({ paused: false, reason: 'worked_on' }));
-    assert.equal((await post(`/api/sessions/${SESSION_ID}/pause`)).status, 404, 'a refusal is still a 404');
-  } finally { rowStatus = 'paused'; }
 });
 
 test('resume, and the sync that resumes first: a resume not decided yet is a retryable 503', async () => {

@@ -1,7 +1,8 @@
 'use strict';
 
 // The coding agent's read-only Homeroom tools (#2779, spec:
-// docs/agent-sessions.md, "Coding agent"): the per-turn `worker_read` grant
+// docs/security/delegated-connector-grants.md, "Where each is used"): the
+// per-turn `worker_read` grant
 // execInWorker issues, the stdio bridge that serves it to the agent, and the
 // two runners that wire the bridge in without ever writing the grant down.
 //
@@ -396,16 +397,6 @@ test('the image carries the bridge and its secret-free config', () => {
   assert.match(dockerfile, /\/usr\/local\/bin\/homeroom-read-mcp\.js \\\n/);
   const config = JSON.parse(fs.readFileSync(path.join(ROOT, 'worker', 'homeroom-mcp.json'), 'utf8'));
   assert.deepEqual(config, { mcpServers: { homeroom: { command: 'node', args: ['/usr/local/bin/homeroom-read-mcp.js'] } } });
-});
-
-test('hosted build and scout prompts mention the tools; a local run does not', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'src', 'routes', 'sessions.js'), 'utf8');
-  const uses = [...src.matchAll(/\$\{runLocally \? '' : `\\n\$\{HOMEROOM_READ_NOTE\}\\n`\}/g)];
-  assert.equal(uses.length, 2, 'one in the scout prompt, one in the build prompt');
-  const note = src.match(/const HOMEROOM_READ_NOTE = '([^\n]*)';/)[1];
-  for (const name of WORKER_READ_TOOLS) assert.ok(note.includes(name), name);
-  assert.match(note, /cannot write anything/);
-  assert.match(note, /If they are not in your tool list this turn, carry on without them/);
 });
 
 test('a Homeroom bearer never reaches the host logs', () => {

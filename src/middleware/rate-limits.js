@@ -878,9 +878,9 @@ const agentFileWriteLimiter = makeLimiter({
 
 // Native app/group-chat JSON writes: 60 / minute / user. Browser clients
 // normally use the WebSocket path, while CLI/MCP clients use
-// POST /api/apps/:slug/messages. Keep this bucket separate from chatLimiter:
-// posting native discussion replies must not consume the budget for agent
-// turns (which can incur an LLM spend), or vice versa.
+// POST /api/apps/:slug/messages. A bucket of its own: posting discussion
+// replies must not consume a budget meant for calls that spend on a model,
+// or the other way round.
 const groupChatWriteLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 60,
@@ -1015,9 +1015,8 @@ const friendshipLimiter = makeLimiter({
 });
 
 // #556: live title previews for the feedback modal (POST /api/feedback/
-// title). Same sizing rationale as chatLimiter — each call is a Haiku
-// spend against the daily LLM budget, so this must not become a faster
-// drain path. The FE debounces to ~1–3 calls per modal in honest use
+// title). Each call is a Haiku spend against the daily LLM budget, so this
+// must not become a faster drain path. The FE debounces to ~1–3 calls per modal in honest use
 // (plus its own per-open cap), so 20/min never bites, while a scripted
 // loop bounces quickly. Per-user keyed for shared-NAT fairness.
 const feedbackTitleLimiter = makeLimiter({

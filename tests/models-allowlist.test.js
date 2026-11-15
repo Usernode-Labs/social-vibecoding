@@ -57,16 +57,15 @@ test('the platform runs no call of its own on Sonnet 5 (#3579)', () => {
   assert.equal(llm.WORKSHOP_THEME_MODEL, 'claude-sonnet-5-5');
   assert.equal(llm.PR_METADATA_MODEL, 'claude-sonnet-5-5');
   // The id may appear only where a retired id is mapped or priced for
-  // recorded history: the two RETIRED_MODELS maps and RETIRED_PRICING.
+  // recorded history: the RETIRED_MODELS map and RETIRED_PRICING.
   const root = path.join(__dirname, '..');
   const allowed = {
     'src/services/models.js': /^\s*'claude-sonnet-5': 'claude-sonnet-5-5',$/,
-    'frontend/src/features/dev-chat/dev-chat.js': /^\s*RETIRED_MODELS: \{.*'claude-sonnet-5': 'claude-sonnet-5-5' \},$/,
     'src/services/model-costs.js': /^\s*'claude-sonnet-5': \{ inputPricePerMillion: 2, outputPricePerMillion: 10, cacheReadPricePerMillion: 0\.2, cacheWritePricePerMillion: 2\.5 \},$/,
   };
   const files = [
     'src/services/models.js', 'src/services/llm.js', 'src/services/model-costs.js',
-    'src/services/sync-main.js', 'frontend/src/features/dev-chat/dev-chat.js', 'worker/run-cc.sh',
+    'src/services/sync-main.js', 'frontend/src/lib/platform-models.js', 'worker/run-cc.sh',
   ];
   for (const file of files) {
     const lines = fs.readFileSync(path.join(root, file), 'utf8').split('\n');

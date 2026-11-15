@@ -27,7 +27,6 @@ test('requested worker releases are conductor work', { timeout: 60000 }, async t
   await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
   t.mock.method(require('../src/db/pool'), 'getPool', () => pool);
   const worker = require('../src/services/worker');
-  const { switchSessionAgent } = require('../src/routes/sessions');
   const { appendWorkerRelease } = require('../src/workflow/platform.ts');
   const removals = []; const effects = []; let beforeProceed = null;
   t.mock.method(worker, 'evictWorker', () => { throw new Error('direct eviction must not run'); });
@@ -69,17 +68,6 @@ test('requested worker releases are conductor work', { timeout: 60000 }, async t
     try { await conductor.runServices(); await conductor.drain(); } finally { process.env.PROCESS_ROLE = 'web'; }
   }
 
-  await t.test('reset keeps the worker, clears both resume ids and commits no release event', async () => {
-    const s = await session('active');
-    await pool.query("UPDATE chat_sessions SET cc_session_id = 'old', agent_thread_id = 'old' WHERE id = $1", [s.sessionId]);
-    const reset = await switchSessionAgent(pool, { sessionId: s.sessionId, userId: s.userId,
-      pref: { backend: 'claude_code', provider: 'anthropic', model: null, reasoningEffort: null } });
-    assert.equal(reset.ok, true); assert.equal(reset.session.agent_config_version, 3);
-    assert.equal(reset.session.cc_session_id, null); assert.equal(reset.session.agent_thread_id, null);
-    assert.equal((await pool.query("SELECT 1 FROM wf_events WHERE machine = 'worker-release'")).rowCount, 0);
-    await conductor.drain(); await settle(); assert.deepEqual(removals, []);
-    assert.equal((await pool.query('SELECT 1 FROM session_workers WHERE session_id = $1', [s.sessionId])).rowCount, 1);
-  });
   await t.test('an older conductor leaves the intent pending until a build that knows the machine runs', async () => {
     const s = await session(); const id = await queue(s);
     const { workerStop } = require('../src/workflow/worker-stop/machine.ts');
@@ -156,21 +144,6 @@ test('requested worker releases are conductor work', { timeout: 60000 }, async t
     await pool.query(`UPDATE chat_sessions SET active_turn = '{"turnId":"later-turn"}'::jsonb WHERE id = $1`, [s.sessionId]);
     await conductor.drain(); assert.equal((await outcome(id)).status, 'rejected');
     await settle(); assert.equal(removals.length, before);
-  });
-  await t.test('the promoted Pause HTTP path only enqueues and leaves worker I/O to the conductor', async () => {
-    const s = await session('promoted', 'pause-this-turn'); const before = removals.length;
-    const app = express(); app.use(express.json());
-    app.use((req, _res, next) => { req.user = { id: s.userId, username: 'owner' }; next(); });
-    app.use(require('../src/routes/sessions').sessionRoutes({}));
-    const server = await new Promise(resolve => { const server = app.listen(0, '127.0.0.1', () => resolve(server)); });
-    try {
-      const response = await fetch(`http://127.0.0.1:${server.address().port}/api/sessions/${s.sessionId}/pause`, {
-        method: 'POST', headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' }, body: '{}',
-      });
-      assert.equal(response.status, 200); assert.deepEqual(await response.json(), { ok: true, keptPromoted: true });
-      assert.equal(removals.length, before); assert.equal((await row(s)).status, 'promoted');
-      await conductor.drain(); await settle(); assert.equal(removals.at(-1), s.sessionId);
-    } finally { await new Promise(resolve => server.close(resolve)); }
   });
   await t.test('release work accidentally invoked on a web process refuses before I/O', async () => {
     await assert.rejects(services[WORK].run({ input: {}, checkpoint: () => { throw new Error('web touched checkpoint'); } }), /requires a workflow process/);
