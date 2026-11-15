@@ -175,32 +175,6 @@ function shapeBranch(state) {
   };
 }
 
-// The spec an agent session's hand-off carries (#3078). The caller names its
-// change as `specFrom`; that id is a claim, not a grant, so the spec is read
-// only when the change is the VIEWER'S OWN, on this same app. Anyone else's
-// change, or one on another app, carries nothing and the instructions fall
-// back to asking what to build, exactly as without the parameter. The source
-// is the one the spec pane reads for its owner (GET /api/sessions/:id/spec):
-// chat_sessions.spec_md, the live draft, which equals the newest version.
-async function ownSpecForHandoff(pool, user, app, specFrom) {
-  const id = /^\d+$/.test(String(specFrom || '')) ? parseInt(specFrom, 10) : null;
-  if (!id || !user || !app) return null;
-  try {
-    const { rows } = await pool.query(
-      `SELECT spec_md, COALESCE(pr_title, session_title) AS title
-         FROM chat_sessions
-        WHERE id = $1 AND user_id = $2 AND app_id = $3`,
-      [id, user.id, app.id]
-    );
-    const row = rows[0];
-    if (!row || !String(row.spec_md || '').trim()) return null;
-    return { text: row.spec_md, title: row.title || '' };
-  } catch (err) {
-    log.warn('dev-flow', 'hand-off spec read failed', { id, err: err.message });
-    return null;
-  }
-}
-
 function devFlowRoutes(config) {
   const router = Router();
   const pool = getPool();
@@ -331,45 +305,17 @@ function devFlowRoutes(config) {
       //
       // Set unconditionally, and that is the point — it must NOT hang off a
       // task the way everything here used to, because the browser no longer
-      // mints one. `proposalId` and `targetKind` are the continuation the
-      // launchpad is offering; they only choose copy, and prepare_work
-      // re-checks ownership when the agent actually calls it, so nothing is
-      // trusted here beyond its shape.
-      const targetId = /^\d+$/.test(String(req.query.proposalId || ''))
-        ? parseInt(req.query.proposalId, 10)
-        : null;
-      payload.targetKind = targetId && req.query.targetKind === 'session' ? 'session'
-        : (targetId ? 'proposal' : null);
-      const spec = req.query.specFrom
-        ? await ownSpecForHandoff(pool, req.user, app, req.query.specFrom)
-        : null;
+      // mints one.
+      payload.targetKind = null;
       payload.instructions = prompts.getLaunchpadInstructions({
         appName: app.name,
         slug: app.slug,
-        targetProposalId: targetId,
-        spec,
+        targetProposalId: null,
       });
-      // Only for a caller that asked (the agent session's "Build with"), so
-      // the dev chat's payload is exactly what it was.
-      if (req.query.specFrom) payload.specCarried = !!spec;
 
-      // Per SESSION when the caller names one, which the dev chat always does.
-      // Keyed on the app alone, one open work order spoke for every session in
-      // it: "New change" opened a fresh session already showing an unrelated,
-      // often long-finished order, which is the bug this resolves. The
-      // app-wide lookup is kept for a caller that names no session, so a
-      // client running older JS degrades to the previous behaviour rather
-      // than to a blank walkthrough.
-      const sessionId = /^\d+$/.test(String(req.query.sessionId || ''))
-        ? parseInt(req.query.sessionId, 10)
-        : null;
-      const task = sessionId
-        ? await externalAgentTasks.loadOpenTaskForSession(
-          pool, req.user.id, app.slug, sessionId, { unexpiredOnly: true }
-        )
-        : await externalAgentTasks.loadLatestOpenTaskForSlug(
-          pool, req.user.id, app.slug, { unexpiredOnly: true }
-        );
+      const task = await externalAgentTasks.loadLatestOpenTaskForSlug(
+        pool, req.user.id, app.slug, { unexpiredOnly: true }
+      );
       if (task) {
         const targetProposal = await reloadTargetProposal(
           pool, req.user, app, originOf(config), task

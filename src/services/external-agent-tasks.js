@@ -3141,65 +3141,6 @@ async function adoptTaskForSession(pool, taskId, userId, sessionId) {
   }
 }
 
-// THE WALKTHROUGH'S LOOKUP: the caller's open work order for one app AND ONE
-// SESSION.
-//
-// loadLatestOpenTaskForSlug, which this replaces here, is keyed on the app
-// alone — so a single open work order answered for every session in it, and
-// "New change" opened a fresh session already showing somebody's half-finished
-// order for something else. That function stays exactly as it is for
-// submitWork's `slug` + `branch` recovery, which is deliberately NOT
-// session-scoped: an agent that lost its task id knows the app and the branch
-// it pushed, and nothing about the browser session a human minted it in.
-//
-// This session's own order, or none. There is deliberately no fallback.
-//
-// It used to ADOPT the newest order belonging to no session, on the reasoning
-// that an unadopted one would be invisible while still holding a cap slot.
-// That was wrong twice over. Factually: those rows were listed in the Improve
-// panel the whole time, which filters on `session_id` (the shared-session
-// column) and expiry, never on `origin_session_id`. And conceptually: a work
-// order is not a durable thing to keep reachable. It is one ATTEMPT at an
-// issue — active work, finished or abandoned — so an attempt whose session is
-// gone is not a backlog item, it is over. Adopting them turned one permanently
-// stale launchpad into a QUEUE of them: every new change claimed the next
-// orphan off the pile.
-//
-// What was actually missing is the ending. An attempt had a beginning
-// (prepare) and two endings (submit, "Start over") but none for "the session
-// it belonged to is over" — so dead ones leaked. finalizeArchivedSession
-// closes them now, and the backfill in schema.sql closed the ones that had
-// already accumulated.
-//
-// `unexpiredOnly` carries the same meaning it has on the app-wide lookup.
-async function loadOpenTaskForSession(pool, userId, slug, sessionId, opts = {}) {
-  const session = sessionRef(sessionId);
-  if (!session) return null;
-  try {
-    const mine = opts.unexpiredOnly
-      ? await pool.query(
-        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
-          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
-            AND t.origin_session_id = $3
-            AND t.expires_at > NOW()
-          ORDER BY t.id DESC LIMIT 1`,
-        [userId, slug, session]
-      )
-      : await pool.query(
-        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
-          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
-            AND t.origin_session_id = $3
-          ORDER BY t.id DESC LIMIT 1`,
-        [userId, slug, session]
-      );
-    return mine.rows[0] || null;
-  } catch {
-    return null;
-  }
-}
-
 // The ending that was missing: a session is over, so the attempt it was making
 // is over. Called from finalizeArchivedSession, which every archive path
 // funnels through.
@@ -5085,8 +5026,7 @@ module.exports = {
   listHeldWorkOrders,
   closeWorkOrder,
   abandonExpiredRequest,
-  // The walkthrough's own lookup (per session), and the adoption behind it.
-  loadOpenTaskForSession,
+  // A session's work orders: adopted by it, and closed with it.
   adoptTaskForSession,
   abandonTasksForSession,
   renderPreparedTask,

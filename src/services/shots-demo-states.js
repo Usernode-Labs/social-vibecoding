@@ -20,9 +20,9 @@
 // writes, as NOW() in its SQL or from `ctx.at`, is that instant on both,
 // never a read of either side's own clock.
 //
-// Reserved ids: 990840-990895, across every table here (990840-990848 are
-// retired and stay unused). tests/staging-demo-id-ranges.test.js keeps the
-// staging seeds and mocks out of the block.
+// Reserved ids: 990840-990895, across every table here.
+// tests/staging-demo-id-ranges.test.js keeps the staging seeds and mocks out
+// of the block.
 //
 // The states are written by the DEPLOYED platform's copy of this file, not
 // by either revision under test, so a state a proposal adds here reaches
@@ -1749,13 +1749,12 @@ const STATES = [
     },
   },
   {
-    // A weekly building allowance nearly spent (#4784): the credits pill
-    // beside Send is red, and a new agent conversation shows the low-credits
-    // note above the send row. These copies spend nothing, so the shots of
-    // that change found a green pill (PR 4829, 2026-10-12). The full admin's,
-    // not the member's: the member is shot far more often, and on every one
-    // of their agent conversations and changes the pill would be red and the
-    // low-credits banner up. The allowance is set as an admin sets one
+    // A weekly building allowance nearly spent (#4784): Settings' AI credit
+    // line says what is left in red. These copies spend nothing, so the
+    // shots of that change found a full allowance (PR 4829, 2026-10-12). The
+    // full admin's, not the member's: the member is shot far more often, and
+    // theirs would read as nearly spent in every one of those shots. The
+    // allowance is set as an admin sets one
     // (users.weekly_limit_cents), so it reads the same whatever credit policy
     // a copy runs, and this week's spend is one day's row (limits.js
     // getWeeklyTotalsCents), on the pair's own date.
@@ -1785,8 +1784,8 @@ const STATES = [
       const dollars = (cents) => `$${(cents / 100).toFixed(2)}`;
       return {
         shows: [
-          { state: `Your weekly building allowance nearly spent, ${dollars(leftCents)} of ${dollars(limitCents)} left: a new agent conversation, before its first message, has a red credits pill beside Send and the low-credits note above the send row.`,
-            path: '/#agent/new' },
+          { state: `Your weekly building allowance nearly spent, ${dollars(leftCents)} of ${dollars(limitCents)} left: Settings' AI credit line says what is left this week, in red.`,
+            path: '/#settings/api-key' },
         ],
       };
     },
@@ -1858,7 +1857,7 @@ const STATES = [
 // ── Context ─────────────────────────────────────────────────────────────
 
 // The personas, the platform app, and the member's membership of it, which a
-// genuine collaborator has (copyMemberAgentSession grants the same). `at` is
+// genuine collaborator has. `at` is
 // the pair's moment, for a state that works out a time in JavaScript.
 async function context(client, selfAppSlug, { grant = false, at = null } = {}) {
   const users = await client.query(

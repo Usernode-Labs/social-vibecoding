@@ -121,7 +121,7 @@ staging for FK attribution but a few columns carry secrets).
 **Acceptance criteria:**
 
 - A child app with `COMMENT ON TABLE foo IS 'staging:private'`,
-  triggered through dev-chat to spawn a staging container, observes
+  whose change gets a staging container, observes
   `foo` schema-only in the staging DB.
 - The same app's *public* tables still come over fully populated.
 - A unit/integration test in
@@ -250,7 +250,7 @@ COMMENT ON COLUMN users.wallet_link_expires_at IS 'staging:private';
 
 `users` rows survive cloning so FK attribution
 (`chat_messages.user_id`, `apps.created_by`, `notifications.source_user_id`,
-…) keeps working in self-app staging — without this, every dev-chat
+…) keeps working in self-app staging — without this, every chat
 message in a staging clone would render as "(deleted user)".
 `usernode_pubkey` is intentionally NOT scrubbed: it's an on-chain public
 identity, and a self-app dev wants to see it to test wallet-linking
@@ -334,7 +334,7 @@ in case the auto-migration ever needs to be done by hand.
 
 **Acceptance:** platform comes back, `\l` shows both `usernode`
 and `app_usernode_2d5619` databases, and all app-creator /
-votes / dev-chat flows still work.
+votes / build flows still work.
 
 **Risk:** moderate. This is the most invasive single step. A
 botched dump/restore loses recent data. Mitigations: the auto-
@@ -596,37 +596,21 @@ in the platform depends on it. Results are cached for 5 minutes
 demo rows because a self-app staging container has no GitHub
 credentials at all.
 
-### 2i. Mayor refuse-list paragraph (self-app-only)
+### 2i. Mayor refuse-list paragraph (self-app-only) (retired)
 
-[src/services/prompts.js](./src/services/prompts.js) is where
-Mayor's system prompt is assembled. When the chat session's app
-has `self_hosted = TRUE`, append a paragraph (after the existing
-`getAppConventions()` block):
+**Retired with the session Mayor.** The paragraph was appended to the
+session Mayor's system prompt when a change's app had
+`self_hosted = TRUE`, and made it ask for an explicit
+`allow_risky: true` before proposing edits to the bootstrap path, the
+auth middleware, the secrets code, non-append-only migrations, Docker
+socket mounts, `docker-compose.yml` and
+`.github/workflows/deploy.yml`. Agent chats and dev chats, and the
+Mayor that ran them, are removed; a change to the platform is built by
+Homeroom bot or by a person's own coding agent, and is held by its
+checks and the group's vote like any other.
 
-> **You are editing the Homeroom platform itself.** Refuse to
-> propose edits to any of the following without an explicit
-> `allow_risky: true` confirmation from the user in the same
-> message: `server.js` bootstrap path; `src/middleware/auth.js`;
-> any code that reads or writes `JWT_SECRET`,
-> `DATA_ENCRYPTION_KEY`, the `IFRAME_JWT_*` pair,
-> `WORKER_JWT_SECRET`, `EDGE_JWT_SECRET`, or anything in
-> `src/services/secrets.js` / `src/workflow/rules/secrets.ts` /
-> `src/services/platform-jwt.js`;
-> `src/db/migrate.js` for anything
-> beyond append-only DDL; files configuring
-> `/var/run/docker.sock` mounting; `docker-compose.yml`;
-> `.github/workflows/deploy.yml`. If the user asks you to touch
-> these, surface the risk first and require explicit
-> confirmation; do not silently include such edits in a broader
-> change.
-
-The list combines the doc's globs plus two added by the
-assessment: `docker-compose.yml` (sidecar-volume hazard) and
-`.github/workflows/deploy.yml` (`DATA_ENCRYPTION_KEY` rotation
-hazard — see below).
-
-Where the rotation hazard actually lives, after phase-1 key
-separation: **`DATA_ENCRYPTION_KEY`**, not the signing keys.
+The rotation hazard the list was written around still holds:
+**`DATA_ENCRYPTION_KEY`**, not the signing keys.
 `services/secrets.js` derives its AES-256-GCM key from it, so
 rotating it makes every stored BYOK Anthropic key, app secret and
 platform-variable value undecryptable — and `decrypt()` swallows
@@ -636,16 +620,11 @@ no automatic recovery. In the deploy workflow it is sourced from
 `secrets.USERNODE_JWT_SECRET` precisely so that no second GitHub
 secret exists that someone could regenerate by accident; a genuine
 rotation needs a re-encryption migration behind a new `v2:`
-envelope. The three new signing keys are the opposite: rotating
+envelope. The three signing keys are the opposite: rotating
 `WORKER_JWT_SECRET` evicts warm workers (they re-bootstrap),
 rotating `EDGE_JWT_SECRET` makes people re-authorize, and rotating
 the `IFRAME_JWT_*` pair re-auths app identities once phase 2 puts
 it in the path — all recoverable.
-
-**Acceptance:** dev-chat against the self-app, with Mayor asked
-to "edit `DATA_ENCRYPTION_KEY` to a new value," produces a refusal
-+ explanation; with `allow_risky: true`, produces the proposed
-change. Other apps' Mayor planning is unchanged.
 
 ### 2j. Admin-only filter on `/api/apps`
 
@@ -736,9 +715,9 @@ that survive:
 
 Per-proposal state is unaffected: the `Merging…` /
 `Resolving conflicts…` / `⚠ Conflict resolution failed` badges in
-[merge-status.js](./public/js/merge-status.js), the dev-chat sync
-banner and the group-chat play-by-play all still report what is
-happening to a specific proposal.
+[merge-status.js](./public/js/merge-status.js) and the group-chat
+play-by-play all still report what is happening to a specific
+proposal.
 
 **Kept from this phase:** `selfHosted` on the `vote_update` broadcasts,
 `status` on `GET /api/sessions/:id/status`, and `selfAppSlug` on
@@ -764,7 +743,7 @@ non-admins don't see the self-app row in `/api/apps`, get 404 on
 When `true`: the visibility filter is relaxed at all three
 sites. Non-admins can:
 - see the self-app row in the home grid
-- load its app view, group chat, dev chat
+- load its app view, its channels and its changes
 - list its promoted PRs and cast votes via the existing PR
   voting UI (which has no admin gate, so once visibility is
   granted, voting works)
@@ -785,7 +764,6 @@ guards):
 - 2h — credential / deploy-owned keys still unwritable (a
   declared tunable IS writable by a full admin, and proposable by
   anyone — that's the point of the panel)
-- 2i — Mayor refuse-list still appended to self-app sessions
 - 2k — `USERNODE_PLATFORM_REPO` import still blocked
 
 **To enable:** append `SELF_APP_PUBLIC_VOTING=true` to `.env`
@@ -802,8 +780,8 @@ document doesn't answer.
 
 ## Phase 5 — Self-staging iframe-auth login flow (shipped)
 
-**Goal:** make the self-app eligible for the same dev-chat → staging
-preview → iframe edit loop that already works for child apps, without
+**Goal:** make the self-app eligible for the same change → staging
+preview → iframe loop that already works for child apps, without
 copying any prod password material across the staging boundary.
 
 **Wrinkle:** the cloned `users.password` column is a hard sentinel
@@ -974,7 +952,7 @@ Usernode-Labs defaults rendered in its staging preview UI.
   below.
 
 **What works in self-staging:** anything that's read-only against the
-clone (UI, dev-chat history view, `/api/version`, status surfaces,
+clone (UI, a change's record, `/api/version`, status surfaces,
 secrets list), anything that writes only to the clone DB (chat
 sessions, votes scoped to staging rows). The cookie minted by Phase 5
 is real, so all session-gated routes work.
@@ -1009,8 +987,8 @@ docs / pure-Node logic edits, not for end-to-end testing of the
 infra-spawning code paths. Tests for those still run against a real
 prod-like environment in CI.
 
-**Acceptance:** open the self-app row in the parent's dev-chat,
-trigger a staging build, click the "App" tab. The staging container's
+**Acceptance:** open a change to the self-app on the parent, wait
+for its staging build, and open its preview. The staging container's
 HTML loads with `?token=…` present in the iframe URL bar; the
 middleware verifies the token, sets the `session` cookie on the
 staging origin, and the platform UI renders authenticated as the
@@ -1023,7 +1001,7 @@ description tweak in [dapp.json](./dapp.json), this section.
 
 **Risks (none specific to Phase 5; these are pre-existing properties
 of any staging clone, called out here because Phase 5 makes the
-clone routinely accessible through dev-chat preview):**
+clone routinely accessible through a change's preview):**
 
 - The staging container's `DATABASE_URL` must embed the real postgres
   superuser password — the clone lives in the same postgres cluster
@@ -1125,7 +1103,7 @@ flowchart LR
     P2f[2f: boot-time seed]
     P2g[2g: ownership guards]
     P2h[2h: platform-variables panel]
-    P2i[2i: Mayor refuse-list]
+    P2i[2i: refuse-list<br/>retired]
     P2j[2j: admin-only filter]
     P2k[2k: import-flow guard]
     P3[Phase 3: banner<br/>if needed]
@@ -1166,15 +1144,14 @@ self-staging from racing the prod platform on shared resources).
 |------|-------|------------|
 | Botched DB rename loses data | 2d | Keep original `usernode` DB for ~1 week; rehearse on local-dev first. |
 | Phase 0 TRUNCATE kills production data accidentally | 0 | TRUNCATE runs on the cloned DB only, never on the source; staging.js call site is the only invocation. |
-| Self-app PR breaks prompts.js, removing the refuse-list | 2i | rollback.sh restores the previous SHA. The refuse-list is built into the prompt at runtime, so it can't fail-open silently — a bug that breaks prompts.js takes the whole platform down loudly. |
-| `DATA_ENCRYPTION_KEY` rotation via deploy.yml edit orphans every stored ciphertext, silently | 2i | Refuse-list explicitly covers `.github/workflows/deploy.yml` and the key by name. The workflow sources it from `USERNODE_JWT_SECRET` rather than a second secret, so there is nothing to regenerate by accident; `services/secrets.js` carries a do-not-touch note on the KDF and the `v1:` envelope. |
+| `DATA_ENCRYPTION_KEY` rotation via deploy.yml edit orphans every stored ciphertext, silently | 2i | The workflow sources it from `USERNODE_JWT_SECRET` rather than a second secret, so there is nothing to regenerate by accident; `services/secrets.js` carries a do-not-touch note on the KDF and the `v1:` envelope. |
 | Signing-key rotation (`WORKER_JWT_SECRET` / `EDGE_JWT_SECRET` / `IFRAME_JWT_*`) | 2i | Recoverable by design — workers re-bootstrap, edge users re-authorize. The `usernode.proxy` label bump is what evicts warm workers eagerly on a worker-key change. |
-| Sidecar `usernode-node` archive cache lost in rolling restart | 2i | Refuse-list covers `docker-compose.yml`; archive volume is named and persistent so even an accidental recreate-recovers ([docker-compose.yml#L153-L166](./docker-compose.yml)). |
+| Sidecar `usernode-node` archive cache lost in rolling restart | 2i | The archive volume is named and persistent so even an accidental recreate-recovers ([docker-compose.yml#L153-L166](./docker-compose.yml)). |
 | Admin accidentally merges a hostile self-app PR | All | Manual review in shadow mode; rollback.sh as backstop. |
 
 ## Open questions
 
-- **Who's an "admin" for self-app dev-chat?** `users.is_admin`
+- **Who's an "admin" for changes to the self-app?** `users.is_admin`
   exists; the bar is "set by the bootstrap admin user." Fine for
   shadow mode (1–2 people) but the doc's "open-source-by-live-
   dev-chat (future)" gate needs a real permission model before
