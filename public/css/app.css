@@ -31228,6 +31228,12 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])):not([data-community-tint]) body:has(#platform-tabs) #platform-header#platform-header::before {
   display: none;
 }
+/* The side panel starts below the flat bar, as the chat column and the
+   Workshop's side panel do: the 8px it tucks under the standard bar's
+   rounded edge would show here over the navy. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])):not([data-community-tint]) body:has(#platform-tabs) .side-panel {
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px) + .5rem);
+}
 /* On either bar, the navy one or a community's own, everything read off
    the bar is white: its muted words, and what is lit on it (the sidebar's
    switch while the sidebar is open) is a wash of white, not the page's
