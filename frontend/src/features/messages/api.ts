@@ -1195,6 +1195,44 @@ export async function setTyping(conversationId: number, typing: boolean, threadR
   });
 }
 
+/**
+ * 14 Nov 2026 (#6674): what Homeroom bot is doing in one conversation or one
+ * of its threads now, so a page coming back from the background draws its
+ * working card at once (services/homeroom-bot-dm.js botWorkingNow). Live
+ * state only, and never served from a cached copy.
+ */
+export interface BotWorking {
+  typing: boolean;
+  doing: { kind: string; number?: number; project?: string } | null;
+  answering: number | null;
+  botId: number | null;
+}
+
+function botWorkingDoing(raw: unknown): BotWorking['doing'] {
+  if (!raw || typeof raw !== 'object') return null;
+  const value = raw as JsonRecord;
+  const kind = typeof value.kind === 'string' && /^[a-z_]{1,32}$/.test(value.kind) ? value.kind : null;
+  if (!kind) return null;
+  const number = Number(value.number);
+  const project = typeof value.project === 'string' ? value.project.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+  return {
+    kind,
+    ...(Number.isSafeInteger(number) && number > 0 ? { number } : {}),
+    ...(project ? { project } : {}),
+  };
+}
+
+export async function getBotWorking(conversationId: number, threadRootId: number | null = null): Promise<BotWorking> {
+  const query = threadRootId ? `?thread_root_id=${threadRootId}` : '';
+  const data = record(await request<unknown>(`/api/conversations/${conversationId}/bot-working${query}`, readInit({ fresh: true })));
+  return {
+    typing: pick(data, 'typing') === true,
+    doing: botWorkingDoing(pick(data, 'doing')),
+    answering: strictId(pick(data, 'answering')),
+    botId: strictId(pick(data, 'botId')),
+  };
+}
+
 export async function uploadAttachment(conversationId: number, file: File): Promise<MessageAttachment> {
   const response = await fetch(`/api/conversations/${conversationId}/attachments?filename=${encodeURIComponent(file.name)}`, {
     method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': file.type || 'application/octet-stream', Accept: 'application/json' }, body: file,
