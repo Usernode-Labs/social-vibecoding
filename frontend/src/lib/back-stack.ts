@@ -22,11 +22,10 @@
  *
  * Popping it must therefore NOT reach the page's own popstate listeners, and
  * the shell's router (`App._routeFromHash`) above all. Re-running it at an
- * unchanged address is not the no-op it looks like: on a dev session page
- * `restoreFromHash` -> `switchTab` -> `renderDevView` rebuilds `#dev-section`
- * from scratch, so the whole transcript blanked for a few hundred ms every
- * time a dialog closed over it (#2811: "after submitting an issue on a dev
- * session page, the screen flickers"). The listener at the bottom of this
+ * unchanged address is not the no-op it looks like: on a project's Dev page
+ * `restoreFromHash` -> `switchTab` rebuilds `#dev-section`
+ * from scratch, so the whole page blanked for a few hundred ms every
+ * time a dialog closed over it (#2811). The listener at the bottom of this
  * file runs in the capture phase and stops the event when `handlePopstate`
  * says the traversal was one of ours AND left the address where it was. A
  * traversal that did move the address (something navigated while the

@@ -1811,9 +1811,9 @@ function changeRefSentence(session) {
 // One table, so the three cannot describe different states.
 const CHANGE_NEXT_STEP_WORDS = Object.freeze({
   agent_mayor: {
-    build: 'It is built in a coding turn of its own.',
-    fixTests: 'A new revision of the change fixes them; its page re-runs the checks when the failure came from outside this change.',
-    fixBuild: 'A new revision of the change fixes the build; checks gate merge.',
+    build: 'It is built when a coding turn runs on it.',
+    fixTests: 'They are fixed by revising the change. Re-running the checks from its page is only for a failure that came from outside this change.',
+    fixBuild: 'The build is fixed by revising the change; checks gate merge.',
     deferred: 'Syncing it with main from its page merges main in and resolves the conflict; its votes stand as long as the resolution stays inside the files that conflicted.',
     ready: 'its owner puts it there from its page.',
     behind: 'that alone needs no sync, and syncing it with main cleanly keeps its votes.',
@@ -1870,7 +1870,7 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
   // process's record), but no coding turn is on record: it can ask again.
   if (live.held && !live.turn && kind !== 'worker_read') {
     return `No coding turn is running on ${ref}, though other work on it may still be finishing. `
-      + 'Ask for the work again; if that answers that the change is busy, wait a minute and retry.';
+      + 'Ask for the work again; if it answers that the change is busy, wait a minute and retry.';
   }
   if (!session.branch_name) {
     return `Nothing has been built on ${ref} yet. ${words.build}`;

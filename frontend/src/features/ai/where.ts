@@ -1,12 +1,15 @@
 /**
  * WHICH THREAD (14 Nov 2026). Every conversation with Homeroom bot is a
  * thread, and Main Chat, the one mixed stream the chat opened on, is gone.
- * Some doors still know only a message, a project's first version, or the
- * old Main Chat address. The server says which thread each of those is:
+ * Some doors still know only a message, a project's first version, the old
+ * Main Chat address, or the address of an agent chat or a dev chat, which
+ * are gone too. The server says which thread each of those is:
  *
  *   GET /api/ai/where                              { rootId: null, earlierRootId }
  *   GET /api/ai/where?message=<id>                 the thread that message is in
  *   GET /api/ai/where?project=<slug>&firstVersion=1  that project's first-version thread
+ *   GET /api/ai/where?agentChat=<id>               the thread that agent chat's history was moved under
+ *   GET /api/ai/where?devChat=<id>                 the same, for a dev chat
  *
  * `earlierRootId` is always the person's "Earlier chat": the thread their
  * old Main Chat messages were moved under, or null when they had none.
@@ -14,12 +17,16 @@
  * The doors here use it:
  *
  *   openOldMain      the router's half for `#homeroom-bot/main`,
- *                    `#homeroom-bot/main/m/<id>` and `#homeroom-bot/m/<id>`.
- *                    The old Main Chat opens Earlier chat, or a new chat
- *                    when there is none; a message opens the thread it is in,
- *                    at it, or the page itself when it is in none. The
- *                    address is rewritten in place (no step for Back), and
- *                    only while it is still the one that was asked.
+ *                    `#homeroom-bot/main/m/<id>`, `#homeroom-bot/m/<id>`,
+ *                    `#homeroom-bot/old/agent/<id>` and
+ *                    `#homeroom-bot/old/session/<id>`. The old Main Chat
+ *                    opens Earlier chat, or a new chat when there is none;
+ *                    a message opens the thread it is in, at it, or the page
+ *                    itself when it is in none; an agent chat or a dev chat
+ *                    opens the thread its history was moved under, or the
+ *                    page itself when there is none. The address is
+ *                    rewritten in place (no step for Back), and only while
+ *                    it is still the one that was asked.
  *   openBotMessage   the same for a message, from a door that is not an
  *                    address (a card's button).
  *   openFirstVersion a project's first-version thread, or the Homeroom bot
@@ -30,7 +37,7 @@
  */
 
 import {
-  BOT_TAB, askBotNew, askBotTab, botTabAddress, botTabAt, goBotAddress, type BotAt,
+  BOT_TAB, askBotNew, askBotTab, botOldChatAt, botTabAddress, botTabAt, goBotAddress, type BotAt, type BotOldChat,
 } from './door';
 
 /** The server's answer: the thread asked for, and the person's Earlier chat. */
@@ -39,9 +46,14 @@ export interface BotWhere {
   earlierRootId: number | null;
 }
 
-/** What to ask about: a message, or a project's first version; nothing asks only for Earlier chat. */
+/**
+ * What to ask about: a message, an agent chat or a dev chat from before, or
+ * a project's first version; nothing asks only for Earlier chat.
+ */
 export interface WhereQuery {
   message?: number | null;
+  agentChat?: number | null;
+  devChat?: number | null;
   project?: string | null;
   firstVersion?: boolean;
 }
@@ -58,8 +70,12 @@ const SLUG = /^[a-z0-9][a-z0-9-]{0,254}$/;
 export function wherePath(query: WhereQuery | null | undefined, demo = false): string {
   const said = new URLSearchParams();
   const message = id(query?.message);
+  const agentChat = id(query?.agentChat);
+  const devChat = id(query?.devChat);
   const project = typeof query?.project === 'string' && SLUG.test(query.project) ? query.project : null;
   if (message) said.set('message', String(message));
+  else if (agentChat) said.set('agentChat', String(agentChat));
+  else if (devChat) said.set('devChat', String(devChat));
   else if (project && query?.firstVersion) {
     said.set('project', project);
     said.set('firstVersion', '1');
@@ -114,13 +130,33 @@ function rewrite(href: string, asked: string): void {
   } catch { /* the place is shown all the same */ }
 }
 
+/** Pure: the read for a chat from before. */
+export function oldChatQuery(chat: BotOldChat): WhereQuery {
+  return chat.kind === 'agent' ? { agentChat: chat.id } : { devChat: chat.id };
+}
+
 /**
- * The router's half for an address from before: Main Chat, or a message
- * named without its thread. Taken once per call; the answer is dropped when
- * the reader has moved on to another address.
+ * The router's half for an address from before: Main Chat, a message named
+ * without its thread, or an agent chat or a dev chat. Taken once per call;
+ * the answer is dropped when the reader has moved on to another address.
  */
 export function openOldMain(hash: string): void {
   if (typeof window === 'undefined') return;
+  const chat = botOldChatAt(hash);
+  if (chat) {
+    const asked = window.location.hash;
+    void readWhere(oldChatQuery(chat)).then((where) => {
+      if (window.location.hash !== asked) return;
+      if (where.rootId) {
+        const thread: BotAt = { threadRootId: where.rootId, focusMessageId: null };
+        rewrite(botTabAddress(thread), asked);
+        askBotTab(thread);
+      } else {
+        rewrite(BOT_TAB, asked);
+      }
+    });
+    return;
+  }
   const at = botTabAt(hash);
   if (!at) return;
   if (at.threadRootId) { askBotTab(at); return; }

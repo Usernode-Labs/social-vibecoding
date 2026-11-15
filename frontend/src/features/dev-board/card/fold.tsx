@@ -20,11 +20,7 @@
  * link, with the same label, on both surfaces (#1884 round two). It used to
  * open the topic screen's sections in place on the Workshop and relabel to
  * "Open page ›" on a second tap, which meant one word meant two things
- * depending on which screen you had reached the card from. A card about the
- * viewer's OWN session carries one more link, "Open session", to the dev
- * chat behind it (#1887): the session is a destination inside the open
- * card, never what a tap on the row does — that tap unfolds the card, as
- * it does for every other kind.
+ * depending on which screen you had reached the card from.
  *
  * ── The item's hooks stay on, at both sizes ──────────────────────────
  *
@@ -116,24 +112,6 @@ export function openHref(slug: string, card: DevCardModel): string | null {
   if (a['data-shared-session-row']) return `#app/${slug}/dev/proposals/${a['data-shared-session-row']}`;
   if (a['data-session-chip']) return `#app/${slug}/dev/proposals/${a['data-session-chip']}`;
   return null;
-}
-
-/**
- * Where the SESSION behind a card about the viewer's own session lives: the
- * owner's dev chat, at its own route. Only `data-session-chip` names one —
- * an imported PR of the viewer's wears `data-shared-session-row` and has no
- * dev chat (#846) — and `openHref` never answers with it: a tap on the row
- * unfolds the card, the open card's "Open page ›" pill is the change's page
- * (#1886), and the session is this link INSIDE the open card (#1887).
- */
-export function sessionHref(slug: string, card: DevCardModel): string | null {
-  const a = card.attrs || {};
-  if (!slug || !a['data-session-chip']) return null;
-  // #3081: a change an agent session started is worked on in THAT
-  // conversation (#2779); its dev chat takes no new messages, so the link
-  // leads to the agent session, as the change page's door already does.
-  if (a['data-session-agent']) return `#messages/agent/${a['data-session-agent']}`;
-  return `#app/${slug}/dev/sessions/${a['data-session-chip']}`;
 }
 
 /** How many of the card's own chips ride along on a folded row. */
@@ -372,17 +350,9 @@ export function FoldedRow({
  * card whole rather than growing a chimera.
  */
 export function UnfoldedRow({
-  row, slug, canPost, detail: placement = 'actions', sessionLink = true, onFold,
+  row, slug, canPost, detail: placement = 'actions', onFold,
 }: {
   row: CardRow; slug: string; canPost: boolean; detail?: DetailPlacement;
-  /**
-   * Whether the sheet draws #1887's "Open session ›" line under it. The
-   * Workshop does; the Board's columns do not, and have no rule to style it
-   * with — the one surface difference left in this component, and all that
-   * remained of the retired `expand` mode once "Open card" stopped
-   * branching on which screen it was drawn from.
-   */
-  sessionLink?: boolean;
   /** Folds the card back to its row: what the fold mark at the card's top right does. */
   onFold?: () => void;
 }): ReactNode {
@@ -410,7 +380,6 @@ export function UnfoldedRow({
   // exception; this is the rule now.
   const t = useMessages('project');
   const href = openHref(slug, row.card);
-  const session = sessionHref(slug, row.card);
   // ── Where the toggle sits ──────────────────────────────────────────
   //
   // In the card's action band, after its own pills and before the hamburger
@@ -432,10 +401,7 @@ export function UnfoldedRow({
   // the Workshop ("Open on its own page ›") beside a pill that also said
   // Open, which read as the same action twice; #1886 folded the two into
   // one control and this makes that control mean one thing. Folding the
-  // card back is the fold mark's job. A card about the viewer's own session
-  // still carries one link under the sheet, to the session itself (#1887) —
-  // a different destination than the page link, so it is not folded into
-  // that control, and it is the only line drawn there.
+  // card back is the fold mark's job.
   // No chevron on the open card. It is the Board's "this opens" mark at the
   // card's right edge, and inside a fold a click on the card FOLDS it; the
   // way out is the link under the card. The row it folds to wears none
@@ -454,16 +420,6 @@ export function UnfoldedRow({
       ) : null}
       {row.thread && slug ? (
         <FeedThread slug={slug} type={row.thread.type} refId={row.thread.ref} canPost={canPost} />
-      ) : null}
-      {session && sessionLink ? (
-        // The viewer's own session, under the sheet (#1887). A real link, so
-        // what a bookmark of it holds is the route this opens; the wrapper's
-        // click guard excludes anchors, so it does not fold the card on its
-        // way out. The page link itself rides the pill (#1886) — this is the
-        // one destination the pill does not cover.
-        <div className="dev-ws-sheet-actions">
-          <a href={session} className="dev-ws-link" data-ws-open-session={row.key}>{t('project:card.fold.openSession')}</a>
-        </div>
       ) : null}
     </div>
   );
@@ -486,13 +442,11 @@ export function voteSpecs(card: DevCardModel): { yes: ActionSpec; no: ActionSpec
  * nothing left to differ about — and the Board's columns are a sixth caller.
  */
 export function CardRowView({
-  row, slug, canPost, open, onToggle, detail, sessionLink,
+  row, slug, canPost, open, onToggle, detail,
 }: {
   row: CardRow; slug: string; canPost: boolean; open: boolean; onToggle: () => void;
   /** Where "Open card" sits on the open card: the action band, on both surfaces. */
   detail?: DetailPlacement;
-  /** Whether the sheet draws #1887's session link under it (the Workshop does). */
-  sessionLink?: boolean;
 }): ReactNode {
   // EITHER the compressed row OR the card — never both. The two are one item
   // at two sizes, and drawing them together is what made the open state read
@@ -532,7 +486,7 @@ export function CardRowView({
       } : undefined}
     >
       {open ? (
-        <UnfoldedRow row={row} slug={slug} canPost={canPost} detail={detail} sessionLink={sessionLink} onFold={onToggle} />
+        <UnfoldedRow row={row} slug={slug} canPost={canPost} detail={detail} onFold={onToggle} />
       ) : (
         <FoldedRow row={row} open={open} onToggle={onToggle} />
       )}

@@ -63,13 +63,7 @@ const inputVariants = cva('', {
      * multi-line box the auto-grow produces. Call site:
      * features/group-chat/composer.tsx.
      */
-    /**
-     * `devComposer` is `.dc-textarea` — the dev chat's composer field, whose
-     * rule is a `max-height` cap and the scroll that goes with it, tuned
-     * against the same auto-grow. Call site:
-     * features/dev-chat/composer.tsx.
-     */
-    lead: { composer: 'gc-composer-input', devComposer: 'dc-textarea', none: '' },
+    lead: { composer: 'gc-composer-input', none: '' },
     // Leads the string on the two fields inside #agent-files-form, which sit
     // under their own label text rather than beside it.
     //
@@ -196,28 +190,6 @@ const inputVariants = cva('', {
       // over. Call site: features/dev-board/card/feed-thread.tsx.
       activityReply:
         'resize-none overflow-y-auto max-h-24 rounded-2xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-1 text-xs leading-5 text-zinc-900 dark:text-zinc-100',
-      // The DEV chat's composer. The same fill and box as `composer` above —
-      // it sits on a chat pane too — but the two shape utilities are written
-      // at the very END of its string rather than in front of the radius, so
-      // they ride in through className there and this value carries neither.
-      // Transcribed rather than normalised onto `composer`: folding them
-      // would move the rendered class attribute on the one field it exists
-      // for. Call site: features/dev-chat/composer.tsx.
-      devComposer:
-        'rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100',
-      // The dev composer's field once the composer became one CARD
-      // (Streamlined Concept). It contributes no box at all — no fill, no
-      // border, no radius, no padding — because the card around it is the
-      // box, and anything here would draw a second one inside the first.
-      // Pair it with `ring={false}`: the focus cue is the card's, not the
-      // field's, for the same reason.
-      //
-      // Kept as its own value rather than folded onto `groupRow`, which is
-      // also box-less: that one sits in a native-kit `.un-group-row` and
-      // carries `py-2` to line up with the row's hairline. This field's
-      // vertical rhythm is the card's padding, so it contributes none.
-      devCard:
-        'bg-transparent border-0 rounded-none p-0 text-[17px] leading-6 text-zinc-900 dark:text-zinc-100',
     },
     // The placeholder colour, written between the box and the focus ring in
     // every string that has it. Named `hint`, not `placeholder`, because

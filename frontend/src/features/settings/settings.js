@@ -823,7 +823,7 @@
         zoneSelect.addEventListener('change', (e) => this._saveTimeZone(e.target.value));
       }
 
-      // #138 "Dev-chat sound & alerts" toggle. Client-only preference
+      // #138 "Sound & alerts" toggle. Client-only preference
       // (localStorage, default ON) owned by DevAlerts — we just mirror its
       // checked state and flip the stored flag. Turning it ON is a user
       // gesture, so unlock audio + request notification permission then.

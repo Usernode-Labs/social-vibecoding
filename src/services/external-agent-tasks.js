@@ -230,15 +230,15 @@ function stripEnvelope(value) {
 // configured, "connect your GitHub account" is the wrong answer — there is
 // no button to press, the link routes 404 by design, and telling the user to
 // go and find one is a dead end. Say the deployment cannot do it and name
-// the fallback that still works, which is the whole reason the fallback is
-// kept. Not retryable: nothing changes until an operator sets the value.
+// what still works: asking Homeroom bot inside Homeroom. Not retryable:
+// nothing changes until an operator sets the value.
 function linkUnavailable() {
   return fail(
     'github_link_unavailable',
     'This Homeroom deployment has no GitHub OAuth app configured, so it cannot verify which GitHub account is '
     + 'yours — and work built by your own coding agent is only submitted under a verified account. Ask an admin '
     + 'to set GITHUB_LINK_CLIENT_ID and GITHUB_LINK_CLIENT_SECRET in the platform variables panel. In the '
-    + 'meantime, start_platform_build has Homeroom build the change itself out of your weekly Homeroom credits — '
+    + 'meantime, you can ask Homeroom bot for the change inside Homeroom, from the Homeroom bot tab — '
     + 'that path needs no GitHub link.',
     { retryable: false }
   );
@@ -2555,10 +2555,10 @@ async function closeTaskForSession(pool, userId, sessionId, fields = {}) {
 }
 
 // The proposals ALREADY up for a vote on this request (#1216), whoever opened
-// them. `linked_issues` is the Mayor's declared linkage and is also what a
+// them. `linked_issues` is a change's declared linkage and is also what a
 // connector submission records (linkedIssuesFor); `created_from_issue_number`
-// catches a dev chat started from the issue row before the Mayor has declared
-// anything. Either one means "somebody's change for this request is in front
+// catches a change started from the issue row before anything was declared.
+// Either one means "somebody's change for this request is in front
 // of the group right now".
 //
 // 'promoted' and 'merging' only — the two statuses list_my_proposals treats as

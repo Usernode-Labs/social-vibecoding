@@ -1139,7 +1139,7 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
         {...foldAttrs}
         data-proposal-id={a.explore}
         title={enabled ? a.title : t('project:card.explore.unavailable')}
-        onClick={(e) => call({ fn: 'exploreProposalInDevChat', args: [a.explore!] }, e.currentTarget)}
+        onClick={() => call({ fn: 'askBotForChanges', args: [a.explore!, a.exploreTitle ?? null, a.exploreNumber ?? null] })}
       >
         <span aria-hidden="true">{'✨'}</span>
         {` ${t('project:card.explore.label')}`}

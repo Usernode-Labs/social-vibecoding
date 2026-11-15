@@ -28,7 +28,6 @@ import type {
   HomeroomBotAction,
   MessageAttachment,
   MessageReaction,
-  MessagesAgentThread,
   MessagesSnapshot,
   ReplyThreadState,
   SharedObjectReference,
@@ -124,7 +123,7 @@ type Listener = () => void;
 
 const listeners = new Set<Listener>();
 let state: InternalState = {
-  route: { open: false, conversationId: null, appSlug: null, agent: null, threadRootId: null, focusMessageId: null },
+  route: { open: false, conversationId: null, appSlug: null, threadRootId: null, focusMessageId: null },
   conversations: [],
   active: null,
   messages: [],
@@ -1170,24 +1169,21 @@ function notifyConversationRead(conversationId: number): void {
 export function route(
   conversationId?: number | null,
   appSlug?: string | null,
-  agent?: MessagesAgentThread | null,
   extras: { threadRootId?: number | null; focusMessageId?: number | null } = {},
 ): void {
   const nextId = validId(conversationId) ? conversationId : null;
   // #2387: a reply thread and a message link ride on a conversation or an
-  // app channel, never on an agent thread or the bare list.
+  // app channel, never on the bare list.
   const nextRoot = (nextId || validSlug(appSlug)) && validId(extras.threadRootId) ? extras.threadRootId : null;
   const nextFocus = (nextId || validSlug(appSlug)) && validId(extras.focusMessageId) ? extras.focusMessageId : null;
   if (unreadHold && unreadHold !== nextId) unreadHold = null;
   // ONE THREAD IS OPEN (#2718 review). An app's discussion and a conversation
   // are both threads of this inbox, addressed differently because one is an
   // app and the other a row in this database — so naming one clears the
-  // other rather than leaving two panes' worth of state half-set. #2813's
-  // agent threads join the same rule, last in precedence.
+  // other rather than leaving two panes' worth of state half-set.
   const nextSlug = nextId ? null : validSlug(appSlug);
-  const nextAgent = nextId || nextSlug ? null : validAgentThread(agent);
   if (state.route.open && state.route.conversationId === nextId
-      && state.route.appSlug === nextSlug && sameAgentThread(state.route.agent, nextAgent)) {
+      && state.route.appSlug === nextSlug) {
     const threadChanged = state.route.threadRootId !== nextRoot;
     const focusChanged = !!nextFocus && state.route.focusMessageId !== nextFocus;
     if (threadChanged || focusChanged) {
@@ -1205,7 +1201,7 @@ export function route(
   // A new address reads its link afresh, even one followed before.
   focusLoaded = null;
   publish({
-    route: { open: true, conversationId: nextId, appSlug: nextSlug, agent: nextAgent, threadRootId: nextRoot, focusMessageId: nextFocus },
+    route: { open: true, conversationId: nextId, appSlug: nextSlug, threadRootId: nextRoot, focusMessageId: nextFocus },
     thread: null,
     nextAfter: null,
     // A conversation opened again is read afresh: its "New" line was the
@@ -1228,46 +1224,6 @@ export function route(
   else publish({ active: null, messages: [], nextBefore: null, loadingThread: false });
   if (nextSlug) void loadDiscussion(nextSlug);
   revealAppFocus(nextSlug, nextFocus);
-}
-
-/**
- * An agent thread out of the address bar (#2813). A session's id is a
- * serial; anything else is not a thread this inbox can open, and the pane
- * falls back to "choose a conversation".
- */
-export function validAgentThread(agent?: MessagesAgentThread | null): MessagesAgentThread | null {
-  if (!agent || typeof agent !== 'object') return null;
-  if (agent.kind === 'session') {
-    const slug = validSlug(agent.slug);
-    return slug && validId(agent.id) ? { kind: 'session', slug, id: agent.id } : null;
-  }
-  if (agent.kind === 'agent') {
-    if (agent.id === 'new') return { kind: 'agent', id: 'new' };
-    return validId(agent.id) ? { kind: 'agent', id: agent.id } : null;
-  }
-  return null;
-}
-
-function sameAgentThread(a: MessagesAgentThread | null, b: MessagesAgentThread | null): boolean {
-  if (!a || !b) return a === b;
-  if (a.kind === 'session' && b.kind === 'session') return a.slug === b.slug && a.id === b.id;
-  if (a.kind === 'agent' && b.kind === 'agent') return a.id === b.id;
-  return false;
-}
-
-/**
- * The inbox's own address for an agent thread (#2813). The rows link here on
- * every viewport; on a phone the router swaps it for `fullScreenAddress`.
- */
-export function agentThreadAddress(agent: MessagesAgentThread): string {
-  if (agent.kind === 'agent') return `#messages/agent/${agent.id}`;
-  return `#messages/session/${encodeURIComponent(agent.slug)}/${agent.id}`;
-}
-
-/** Where the same thread lives as a screen of its own — a phone's destination. */
-export function fullScreenAddress(agent: MessagesAgentThread): string {
-  if (agent.kind === 'agent') return `#agent/${agent.id}`;
-  return `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`;
 }
 
 /**
@@ -1348,7 +1304,7 @@ export function close(): void {
   replyThreadRequest += 1;
   unreadHold = null;
   publish({
-    route: { open: false, conversationId: null, appSlug: null, agent: null, threadRootId: null, focusMessageId: null },
+    route: { open: false, conversationId: null, appSlug: null, threadRootId: null, focusMessageId: null },
     active: null, messages: [], loadingThread: false, threadError: null,
     discussionContext: null, discussionError: null, thread: null, nextAfter: null, unreadMark: null,
   });
@@ -1398,7 +1354,7 @@ export function embed(
   unreadHold = null;
   publish({
     route: {
-      open: false, embedded: true, conversationId, appSlug: null, agent: null, threadRootId: root, focusMessageId: focus,
+      open: false, embedded: true, conversationId, appSlug: null, threadRootId: root, focusMessageId: focus,
       ...(threadsOnly ? { threadsOnly: true } : {}),
     },
     thread: null, nextAfter: null, threadError: null, discussionContext: null, discussionError: null, unreadMark: null,
@@ -1420,7 +1376,7 @@ export function isOpen(): boolean {
 }
 
 export function handleBack(): boolean {
-  const onThread = !!state.route.conversationId || !!state.route.appSlug || !!state.route.agent;
+  const onThread = !!state.route.conversationId || !!state.route.appSlug;
   if (!state.route.open || !onThread || !listAside()) return false;
   // A CHANNEL is not a level of this list: it is its community's room, and
   // its way back is that community's hub, which the header's arrow names
@@ -1531,16 +1487,14 @@ export function syncChrome(): void {
   // #4229: and on a strip too narrow for the list beside it, where the list
   // has stepped aside just as it does on a phone.
   // THE PHONE'S DRAWER (../nav-drawer/messages-drawer.ts): a conversation
-  // with people, an agent chat or an agent session is its second level, and
-  // the header draws the drawer's own arrow (a button, not this href'd one,
-  // so WebKit's history swipe stays off while a finger pans the drawer) and
-  // names it.
-  if ((state.route.conversationId || state.route.agent) && messagesDrawerApplies({
+  // with people is its second level, and the header draws the drawer's own
+  // arrow (a button, not this href'd one, so WebKit's history swipe stays
+  // off while a finger pans the drawer) and names it.
+  if (state.route.conversationId && messagesDrawerApplies({
     phone: isMobile(),
     open: state.route.open,
     conversationId: state.route.conversationId,
     appSlug: state.route.appSlug,
-    agent: state.route.agent,
     threadRootId: state.route.threadRootId,
     embedded: state.route.embedded,
     activeKind: state.active && state.active.id === state.route.conversationId ? state.active.kind : null,
@@ -1550,7 +1504,7 @@ export function syncChrome(): void {
     app.setHeaderTitle?.(t('messages:store.header.messages'));
     return;
   }
-  const thread = listAside() && !!(state.route.conversationId || state.route.appSlug || state.route.agent);
+  const thread = listAside() && !!(state.route.conversationId || state.route.appSlug);
   // #2387: a reply thread, on a phone, is a level over its conversation: the
   // chevron goes back to the conversation, and the bar says "Thread".
   if (isMobile() && state.route.threadRootId && (state.route.conversationId || state.route.appSlug)) {
@@ -1797,20 +1751,6 @@ export function openDiscussion(slug: string): void {
   if (turnsPageInPlace(target)) return;
   if (sidePanelTakes(target)) return;
   if (window.location.hash === target) route(null, safe);
-  else window.location.hash = target;
-}
-
-/**
- * The same, for an agent thread (#2813). The rows are ordinary links to
- * `agentThreadAddress`; this is for the callers that are not a link — and
- * for re-selecting the thread already open, which a link cannot do.
- */
-export function openAgentThread(agent: MessagesAgentThread): void {
-  if (typeof window === 'undefined') return;
-  const safe = validAgentThread(agent);
-  if (!safe) return;
-  const target = agentThreadAddress(safe);
-  if (window.location.hash === target) route(null, null, safe);
   else window.location.hash = target;
 }
 
@@ -2759,7 +2699,7 @@ export function openThread(rootId: number): void {
     return;
   }
   const target = threadAddress(conversationId, rootId);
-  if (window.location.hash === target) route(conversationId, null, null, { threadRootId: rootId });
+  if (window.location.hash === target) route(conversationId, null, { threadRootId: rootId });
   else window.location.hash = target;
 }
 
@@ -3465,7 +3405,6 @@ export const messagesController = {
   openDiscussion,
   openThread,
   closeThread,
-  openAgentThread,
   route,
   close,
   isOpen,

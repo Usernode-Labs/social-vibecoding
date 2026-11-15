@@ -355,8 +355,8 @@ async function rotateRefreshToken(pool, { refreshToken, clientId }) {
 // ── Delegated grants (#2779) ───────────────────────────────────────────
 //
 // The platform's own agents reach the connector's tools on the user's behalf:
-// the Mayor of an agent session, and the coding agent inside a change's
-// worker. Nothing about that goes through consent — the user is already
+// Homeroom bot, and the coding agent inside a change's worker. Nothing about
+// that goes through consent — the user is already
 // signed in to the platform that runs those agents — so a delegated grant is
 // minted here, in-process, and is narrower than a consent in every direction
 // that matters:
@@ -376,11 +376,11 @@ async function rotateRefreshToken(pool, { refreshToken, clientId }) {
 //
 // A worker grant can read only; that is enforced here rather than trusted to
 // the caller, because the worker runs the repository's own code with a shell.
-function normalizeDelegation({ userId, kind, agentSessionId = null, changeId = null, appId = null, scopes, ttlSeconds }) {
+function normalizeDelegation({ userId, kind, changeId = null, appId = null, scopes, ttlSeconds }) {
   const positive = (value) => value == null || (Number.isSafeInteger(value) && value > 0);
   if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error('issueDelegatedAccess: userId is required');
   if (!DELEGATION_KINDS.includes(kind)) throw new Error(`issueDelegatedAccess: unknown kind ${kind}`);
-  if (!positive(agentSessionId) || !positive(changeId) || !positive(appId)) {
+  if (!positive(changeId) || !positive(appId)) {
     throw new Error('issueDelegatedAccess: ids must be positive integers');
   }
   if (kind === 'worker_read' && (changeId == null || appId == null)) {
@@ -396,7 +396,7 @@ function normalizeDelegation({ userId, kind, agentSessionId = null, changeId = n
   const max = DELEGATION_MAX_TTL_SECONDS[kind];
   const ttl = Number.isFinite(ttlSeconds) ? Math.floor(ttlSeconds) : max;
   return {
-    userId, kind, agentSessionId, changeId, appId,
+    userId, kind, changeId, appId,
     scopes: normalized,
     ttlSeconds: Math.max(30, Math.min(max, ttl)),
   };
@@ -410,12 +410,12 @@ async function issueDelegatedAccess(pool, options) {
   return withTransaction(pool, async (client) => {
     const { rows } = await client.query(
       `INSERT INTO mcp_delegations
-         (grant_id, user_id, kind, agent_session_id, change_id, app_id, created_at, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6,
-               clock_timestamp(), clock_timestamp() + ($7 || ' seconds')::interval)
+         (grant_id, user_id, kind, change_id, app_id, created_at, expires_at)
+       VALUES ($1, $2, $3, $4, $5,
+               clock_timestamp(), clock_timestamp() + ($6 || ' seconds')::interval)
        RETURNING expires_at`,
       [
-        grantId, grant.userId, grant.kind, grant.agentSessionId, grant.changeId,
+        grantId, grant.userId, grant.kind, grant.changeId,
         grant.appId, String(grant.ttlSeconds),
       ]
     );

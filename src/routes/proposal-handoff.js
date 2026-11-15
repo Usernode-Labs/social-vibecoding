@@ -1696,8 +1696,8 @@ function proposalHandoffRoutes(config) {
         // Claim the shared session synchronously after the final busy check
         // and before the first GitHub await. Hosted turn dispatch and the sync
         // gate consult the same registry, closing the check-then-act race
-        // between the surfaces. Early returns release here; an accepted build transfers
-        // release ownership to the detached staging/check pipeline.
+        // between the surfaces. Early returns release here; an accepted build
+        // transfers release ownership to the detached staging/check pipeline.
         const releasePipeline = beginHandoffPipeline(session.id);
         let pipelineDetached = false;
         try {

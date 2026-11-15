@@ -107,8 +107,8 @@ const CODEX_CONFIG_TOML = `[mcp_servers.homeroom]
 url = "${CODEX_URL_PLACEHOLDER}"`;
 
 /**
- * The two product walkthroughs moved to ../connector-setup-steps (#2706).
- * The dev session page's hand-off launchpad now teaches the same connector
+ * The two product walkthroughs are in ../connector-setup-steps (#2706).
+ * A new thread's setup steps teach the same connector
  * inline instead of sending the reader here, and a second copy of six and
  * seven steps is a second copy to keep true. `SetupStep` travelled with
  * them because the Codex and generic routes below still render rows in the

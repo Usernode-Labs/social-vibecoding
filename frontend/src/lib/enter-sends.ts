@@ -28,11 +28,6 @@ import { useEffect, useState } from 'react';
  *
  * Touch is `GroupChat._isTouch()`'s reading, `(hover: none)`, so a channel's
  * box and a conversation's agree on every device.
- *
- * NOT under this rule: the Workshop's coding-agent chats
- * (features/dev-chat, features/agent-session). Enter is a new line there
- * because a prompt is often several lines, and Ctrl/Cmd + Enter saves a
- * draft while the agent works.
  */
 export const NO_HOVER_QUERY = '(hover: none)';
 

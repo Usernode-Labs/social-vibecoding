@@ -6,14 +6,13 @@
  * as the page's tabs, the product's search under them, then the tab's
  * conversations as the kit's one row in one card. The standard list's two
  * sections are the two tabs; everything inside a section is as it is there:
- * a group's member count after its name, "N new" or the time, an agent
- * chat's project and where its change stands, this week's agent chats with
- * the older ones behind "N older chats", and the archived ones behind "Show
- * archived" at the end. What the list says when it is offline, failed,
+ * a group's member count after its name, "N new" or the time, a change's
+ * project and where it stands, and this week's changes with the older ones
+ * behind "N older changes". What the list says when it is offline, failed,
  * loading, empty or searched to nothing is the product's sentence.
  *
  * Presentational. The list pane (./index.tsx ConversationList) builds each
- * row from the conversations, sessions and words it already has, folds
+ * row from the conversations, changes and words it already has, folds
  * Agents with the standard list's own rule, and hands the result here in
  * place of its own rows while the device's look is one of the frame's.
  * Nothing is read, searched, folded or opened in this file.
@@ -28,15 +27,13 @@ export type FrameInboxTab = 'people' | 'agents';
 
 export interface FrameInboxRow {
   key: string;
-  /** The picture: a person, a group, or an agent's glyph (kit Av or Lead). */
+  /** The picture: a person, a group, or a change's glyph (kit Av or Lead). */
   lead: ReactNode;
   title: string;
   /** One small word after the name: "AI" on a bot's direct message. */
   tag?: string | null;
   /** A group's size after its name: the figure, and the words a screen reader hears ("4 members"). */
   members?: { count: number; words: string } | null;
-  /** Said after the title to a screen reader: an agent at work, or finished and not yet seen. */
-  said?: string | null;
   line?: string | null;
   /** How long ago, in the list's own words, and the whole instant as its hover. */
   time?: string | null;
@@ -69,15 +66,6 @@ export interface FrameInboxState {
   searched: string | null;
 }
 
-export interface FrameInboxArchive {
-  open: boolean;
-  onToggle: () => void;
-  /** Null while the archived chats are being read. */
-  rows: FrameInboxRow[] | null;
-  error: string;
-  onRetry: () => void;
-}
-
 /** The centred link inside a card that opens more of it in place, and says whether it has. */
 function Fold({ open, onClick, children, ...data }: { open: boolean; onClick: () => void; children: ReactNode } & Record<`data-${string}`, string>) {
   return (
@@ -101,7 +89,6 @@ function InboxRow({ row }: { row: FrameInboxRow }) {
           <span className={k('cut')}>{row.title}</span>
           {row.tag ? <Pill mini>{row.tag}</Pill> : null}
           {row.members ? <span className={k('pill', 'mini')} role="img" aria-label={row.members.words} title={row.members.words}><Icon name="users" size={12} />{row.members.count}</span> : null}
-          {row.said ? <span className="sr-only">{row.said}</span> : null}
         </>
       )}
       line={row.line || undefined}
@@ -120,18 +107,16 @@ function InboxRow({ row }: { row: FrameInboxRow }) {
 }
 
 export function MessagesFrameList({
-  people, agents, older = 0, olderRows = [], olderOpen = false, onOlder, archive = null, unread = 0, working = null, tab, onTab, query, onQuery, onNew, state,
+  people, agents, older = 0, olderRows = [], olderOpen = false, onOlder, unread = 0, working = null, tab, onTab, query, onQuery, onNew, state,
 }: {
   people: FrameInboxRow[];
-  /** Agents, as the standard list shows it: this week's chats, the open one, and any that asks for you. */
+  /** Agents, as the standard list shows it: this week's changes, and any that asks for you. */
   agents: FrameInboxRow[];
-  /** How many more are behind "N older chats", and those rows once it is pressed. */
+  /** How many more are behind "N older changes", and those rows once it is pressed. */
   older?: number;
   olderRows?: FrameInboxRow[];
   olderOpen?: boolean;
   onOlder?: () => void;
-  /** "Show archived" and what it opens; null where the standard list does not offer it. */
-  archive?: FrameInboxArchive | null;
   /** Messages from people not read yet: the People tab's count. */
   unread?: number;
   /** Agents at work, as the standard heading says it ("2 working"); null when none is. */
@@ -147,7 +132,7 @@ export function MessagesFrameList({
   const tc = useMessages('core');
   const onAgents = tab === 'agents';
   const shown = onAgents ? agents : people;
-  const has = shown.length > 0 || (onAgents && (older > 0 || !!archive));
+  const has = shown.length > 0 || (onAgents && older > 0);
   const placeholder = t('messages:inbox.searchPlaceholder');
   const label = t('messages:inbox.searchLabel');
   return (
@@ -190,30 +175,7 @@ export function MessagesFrameList({
                   </Fold>
                 ) : null}
                 {onAgents ? olderRows.map((row) => <InboxRow key={row.key} row={row} />) : null}
-                {onAgents && archive ? (
-                  <Fold open={archive.open} onClick={archive.onToggle} data-inbox-archived="">
-                    {archive.open ? t('messages:inbox.archived.hide') : t('messages:inbox.archived.show')}
-                  </Fold>
-                ) : null}
               </Card>
-            </Sec>
-          ) : null}
-          {onAgents && archive?.open ? (
-            <Sec label={t('messages:inbox.archived.heading')} data-inbox-section="archived">
-              {archive.error ? (
-                <Card pad>
-                  <div className={k('txt')} role="status">
-                    {`${archive.error} `}
-                    <button type="button" className={k('link')} onClick={archive.onRetry}>{tc('core:common.tryAgain')}</button>
-                  </div>
-                </Card>
-              ) : !archive.rows ? (
-                <p className={k('txt')} role="status">{t('messages:inbox.loading')}</p>
-              ) : !archive.rows.length ? (
-                <Card pad>{t('messages:inbox.archived.empty')}</Card>
-              ) : (
-                <Card>{archive.rows.map((row) => <InboxRow key={row.key} row={row} />)}</Card>
-              )}
             </Sec>
           ) : null}
           {state.empty ? (

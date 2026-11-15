@@ -13,13 +13,11 @@
  * change to what it displays is an imperative assignment through a ref
  * (`stagingBridge.setSrc`, `stagingBridge.clearSrc`). If `src` were state, a
  * React re-render would carry it — and a render that re-creates the element,
- * or a `src` prop React decides to re-apply, RELOADS the preview. #771's whole
- * design is that the docked ↔ fullscreen toggle is "the same element, same
- * iframe: toggling never reloads the preview", and the loader/testing-panel
- * states have the same requirement.
+ * or a `src` prop React decides to re-apply, RELOADS the preview. The
+ * loader and testing-panel states must never do that.
  *
  * Click handlers are not state either: they live in a mutable holder the
- * island reads through stable dispatchers, so re-pointing "Back to session"
+ * island reads through stable dispatchers, so re-pointing "Back"
  * (what `back.onclick = …` used to do) never re-renders anything.
  */
 
@@ -30,13 +28,12 @@ import { createStore } from '../../lib/plain-store.js';
  * literal's own type (`null`, `never`) and every island that reads the field
  * fails to compile.
  *
- * @typedef {{ top: number, left: number, width: number, height: number }} DockRect
  * @typedef {{
- *   open: boolean, mode: string, dockRect: DockRect | null, urlLabel: string, background: string, solo: boolean,
+ *   open: boolean, urlLabel: string, background: string, solo: boolean,
  *   clockLabel: string, clockAsNow: boolean,
  *   loaderVisible: boolean, loaderTitle: string | null, loaderSub: string, loaderRetry: boolean, loaderRetryLabel: string | null,
  *   testBtnHidden: boolean, testBtnTitle: string, testPanelHidden: boolean,
- *   testHtml: string, fsBtnHidden: boolean, fsBtnText: string | null, fsBtnTitle: string,
+ *   testHtml: string,
  * }} StagingState
  * @typedef {{ open: boolean, openedAt: number, label: string, bodyHtml: string }} VisualCompareState
  */
@@ -50,10 +47,6 @@ import { createStore } from '../../lib/plain-store.js';
  */
 export const stagingStore = createStore(/** @type {StagingState} */ ({
   open: false,
-  /** 'fullscreen' | 'docked' (#771). */
-  mode: 'fullscreen',
-  /** Pinned rect while docked: { top, left, width, height } | null. */
-  dockRect: null,
   urlLabel: '',
   background: '',
   /**
@@ -73,8 +66,8 @@ export const stagingStore = createStore(/** @type {StagingState} */ ({
   clockAsNow: false,
   loaderVisible: false,
   // `null` is the shipped wording, which the overlay reads from the catalog
-  // when it renders (devchat:staging.loader.opening, .retrySignIn and
-  // devchat:staging.fullScreen); a caller's own text replaces it.
+  // when it renders (devchat:staging.loader.opening and .retrySignIn);
+  // a caller's own text replaces it.
   /** @type {string | null} */
   loaderTitle: null,
   loaderSub: '',
@@ -87,10 +80,6 @@ export const stagingStore = createStore(/** @type {StagingState} */ ({
   testPanelHidden: true,
   /** Sanitized markdown from PlatformMarkdown.render, or escaped plain text. */
   testHtml: '',
-  fsBtnHidden: true,
-  /** @type {string | null} */
-  fsBtnText: null,
-  fsBtnTitle: '',
 }));
 
 /**
@@ -107,13 +96,11 @@ export const stagingRefs = { iframe: null };
 /**
  * Click handlers, re-pointed by app-view.js where it used to assign `.onclick`.
  *
- * @type {Record<'onBack' | 'onDockClose' | 'onFullscreen' | 'onTest' | 'onTestingClose' | 'onRetry' | 'onClockToggle',
+ * @type {Record<'onBack' | 'onTest' | 'onTestingClose' | 'onRetry' | 'onClockToggle',
  *   ((ev?: Event) => void) | null>}
  */
 export const stagingHandlers = {
   onBack: null,
-  onDockClose: null,
-  onFullscreen: null,
   onTest: null,
   onTestingClose: null,
   onRetry: null,

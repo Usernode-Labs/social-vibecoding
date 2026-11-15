@@ -157,8 +157,15 @@ export interface ActionSpec {
    * that are a badge rather than a button (building, unavailable).
    */
   preview?: PreviewSpec;
-  /** #313/#827 — "Explore in dev chat", claimed by a delegated handler. */
+  /**
+   * #313/#827: "Ask Homeroom bot" about a proposal: the change's id, with its
+   * title and its pull request's number where the row has them
+   * (AppView.askBotForChanges opens the viewer's thread about the change by
+   * that number, and a new chat with the change attached without one).
+   */
   explore?: number;
+  exploreTitle?: string | null;
+  exploreNumber?: number | null;
   /**
    * #1688: on the Yes spec, the viewer's vote on an EARLIER version of the
    * proposal — still on their row, no longer counted. The vote button then

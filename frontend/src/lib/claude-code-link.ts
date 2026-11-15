@@ -23,7 +23,7 @@ export const CLAUDE_CODE_WEB_URL = 'https://claude.ai/code';
 /** What prepare_work records for a task this link started. */
 export const CLAUDE_CODE_LINK_SOURCE = 'claude_code_link';
 
-/** An app slug as the platform mints them (agent-sessions.js parseHint). */
+/** An app slug as the platform mints them. */
 const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 /** A GitHub owner or repository name. */
 const REPO_PART = /^[A-Za-z0-9_.-]{1,100}$/;

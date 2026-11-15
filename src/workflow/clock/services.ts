@@ -181,24 +181,6 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/estimate-backfill').sweep(pool),
   },
   {
-    // #907: local agents' leases whose machine stopped heartbeating are
-    // released, and a turn still sitting on one failed, so a change stops
-    // saying it runs on a laptop in a bag (services/local-agent.js). A
-    // lease is a 120 s TTL a 30 s heartbeat refreshes: a minute is well
-    // inside it. The turns it fails are finished by the item that
-    // dispatched them.
-    name: 'local-agent-leases', everyMs: MIN,
-    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/local-agent').sweepExpiredLeases(pool)
-      .then(async (n: number) => ({
-        released: n,
-        // A turn a machine was offered but never picked up is not covered by
-        // a lapsed lease: the machine can heartbeat forever without claiming
-        // it. Freed at the offer timeout, so a dispatch that died partway
-        // does not leave the change answering busy (services/local-agent.js).
-        unclaimed: await legacy('services/local-agent').sweepUnclaimedTurns(pool),
-      })),
-  },
-  {
     // What the triggers marked as changed since (work_state_dirty: a write
     // to what a work state is derived from, made anywhere), derived again
     // and pushed, within seconds (services/work-state.js drainDirty).

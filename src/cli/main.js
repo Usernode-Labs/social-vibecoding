@@ -2151,7 +2151,7 @@ async function runMcp(args, launcherPath) {
   }));
 
   server.registerTool('social_vibecoding.proposal_append_context', {
-    description: 'Append idempotent user-visible prompts or durable summaries to a native CLI proposal so a later local turn retains the useful context and the change's history on Homeroom stays complete. Do not upload hidden reasoning, credentials, or raw tool logs.',
+    description: 'Append idempotent user-visible prompts or durable summaries to a native CLI proposal so a later local turn retains the useful context and the history shown on Homeroom stays complete. Do not upload hidden reasoning, credentials, or raw tool logs.',
     inputSchema: {
       session_id: sessionIdSchema,
       history: proposalHistorySchema.min(1),
