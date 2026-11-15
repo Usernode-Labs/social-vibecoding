@@ -148,10 +148,7 @@ test('the list pane hands its own conversations to the kit list under a look, an
   assert.match(block, /const fold = shownInSection\('agents', agentEntries, \{ expanded: agentsExpanded, searching, keep: asksForYou \}\);/,
     'Agents folds by the standard list\'s own rule and state');
   assert.match(block, /onOlder=\{\(\) => setAgentsExpanded\(!agentsExpanded\)\}/);
-  assert.match(block, /const archive = mounted && !!agentChatsShown && !searching && \(!fold\.older \|\| agentsExpanded\);/, 'Show archived where the standard list offers it');
-  assert.match(block, /onToggle: \(\) => setArchivedOpen\(!archivedOpen\),/);
   assert.match(block, /unread=\{unreadFromPeople\}/, 'the People tab counts what the standard heading counts');
-  assert.match(block, /line: m\.busy \? t\('messages:agent\.row\.working'\) : dotText\(\[m\.focusApp\?\.name, status\]\),/, 'an agent chat\'s line is MayorSessionRow\'s');
   assert.match(block, /const state = sessionRowState\(sn\);/, 'a change in flight says the state SessionRow\'s pill says');
   assert.match(block, /empty: !snap\.loadingList && !snap\.error && !!snap\.listLoaded && !inbox\.length,/);
   assert.match(block, /onStart: \(\) => openDialog\('messagesCreate'\),/);

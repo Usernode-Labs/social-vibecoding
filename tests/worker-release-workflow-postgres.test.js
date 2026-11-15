@@ -1,13 +1,12 @@
 'use strict';
 
-// Real schema, reset transaction, kernel and release handler. Only worker
-// I/O is faked; web requests must leave all of it to the conductor.
+// Real schema, kernel and release handler. Only worker I/O is faked; a web
+// process must leave all of it to the conductor.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { randomUUID } = require('node:crypto');
 const { Pool } = require('pg');
-const express = require('express');
 const { fork } = require('node:child_process');
 const { once } = require('node:events');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
