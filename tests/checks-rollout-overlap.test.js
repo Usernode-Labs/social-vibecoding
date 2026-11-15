@@ -484,7 +484,6 @@ function makeAppView() {
   vm.createContext(sandbox);
   vm.runInContext([
     read('public/js/merge-status.js'),
-    read('public/js/session-transcript.js'),
     read('public/js/app-view.js'),
     ';globalThis.__AppView = AppView;',
   ].join('\n'), sandbox);

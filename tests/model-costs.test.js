@@ -556,7 +556,7 @@ test('the console states the unit: in its table headers, and as the phrase when 
     'Observed median, per typical change']) {
     assert.ok(admin.includes(header), `the table header "${header}" states its unit`);
   }
-  assert.match(admin, /the picker now says about \$\{money\(cents\)\} for a typical change/,
+  assert.match(admin, /the estimate is now about \$\{money\(cents\)\} for a typical change/,
     'the save confirmation uses the phrase too');
 });
 

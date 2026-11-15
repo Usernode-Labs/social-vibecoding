@@ -205,7 +205,6 @@ test('CLI API bearer authenticates all the way through the issue-reply route', a
           is_admin: false,
           admin_readonly: false,
           app_quota: 3,
-          ai_progress_estimate: false,
           locale: null,
         }],
       };
@@ -236,7 +235,6 @@ test('CLI API bearer authenticates all the way through the issue-reply route', a
       adminReadonly: false,
       canAdminWrite: false,
       appQuota: 3,
-      aiProgressEstimate: false,
       locale: null,
     });
   } finally {
