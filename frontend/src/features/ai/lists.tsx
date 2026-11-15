@@ -68,7 +68,7 @@ import {
 import { useMessages } from '../../lib/i18n/react';
 import { getDateLocale } from '../../lib/i18n/runtime';
 import {
-  GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder,
+  GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, recentGroupsFirst,
   type AiApp, type AiThread, type WorkRow,
 } from './model';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
@@ -521,7 +521,9 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
   // #6262: Needs you draws what is new first, before the order is held, so
   // a held list keeps the order it was drawn in (#6245). #6408: Live this
   // week does the same without the styles, so its first few include any new.
-  const ordered = freshStyle || foldFresh ? freshFirst(lines) : lines;
+  // #6672: Needs you then lifts each project by its newest activity, so a
+  // project whose only row is a fresh private chat is not always last.
+  const ordered = freshStyle ? recentGroupsFirst(freshFirst(lines)) : foldFresh ? freshFirst(lines) : lines;
   const held = hold && holding && drawn.current ? holdOrder(ordered, drawn.current) : ordered;
   const startHold = () => {
     if (!hold) return;

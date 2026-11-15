@@ -30,7 +30,7 @@ import { HISTORY_KINDS, type HistoryKind } from './filter-address';
 import { monthName, type HistoryRow, type HistoryState } from './history';
 import { Marked, followFound } from './found';
 import { dayHeading, useAiLines, type FoundLine, type Glyph, type Line } from './lines';
-import { GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, type AiApp, type AiThread, type Phrase, type WorkRow } from './model';
+import { GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, recentGroupsFirst, type AiApp, type AiThread, type Phrase, type WorkRow } from './model';
 import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
 import type { Found } from './search';
@@ -294,8 +294,9 @@ export function AiFrameList({
   const [more, setMore] = useState<DOMRect | null>(null);
   const [stillOpen, setStillOpen] = useState(false);
   const phone = usePhone();
-  // Needs you draws what is new first, then holds the order under the pointer.
-  const needs = useHeld(freshFirst(needLines));
+  // Needs you draws what is new first, then lifts each project by its newest
+  // activity (#6672), then holds the order under the pointer.
+  const needs = useHeld(recentGroupsFirst(freshFirst(needLines)));
   // A row in the folded part that is where you are opens it.
   const stillShown = stillOpen || stillLines.some((line) => line.lit);
   const first = (n: number) => (searching ? Infinity : n);
