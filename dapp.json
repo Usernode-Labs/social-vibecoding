@@ -1144,7 +1144,7 @@
     {
       "name": "#4453: a request's page is one sheet, Messages' reply thread: the header names the request and its category, the request is the root post (its title, its words as a quote, where it stands, its spec), then \"N replies\" and the stream",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900003",
-      "expectSelector": ".dev-request > .dev-request-sheet.dc-lift-session:has(> #gc-thread-bar .messages-thread-name + [data-request-category]) > #gc-thread-scroll.messages-thread-scroll > #gc-thread-head + [data-language=\"request\"] > .messages-reply-count",
+      "expectSelector": ".dev-request > .dev-request-sheet.dc-lift-session:has(> #gc-thread-bar .messages-thread-name + [data-request-category]) > #gc-thread-scroll.messages-thread-scroll > #gc-thread-head + #gc-thread-rail + [data-language=\"request\"] > .messages-reply-count",
       "expectText": "Request #900003"
     },
     {
