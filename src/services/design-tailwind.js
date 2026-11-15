@@ -441,13 +441,12 @@ function styleGaps(html, { linkedCss = '' } = {}) {
   const known = selectorClasses(`${ownCss}\n${linkedCss}`);
   const unmatched = [...used].filter((name) => !known.has(name));
   // An svg with no width/height of its own, no class that could size it, and
-  // no rule naming an svg stretches to fill its box.
+  // no rule for svg itself stretches to fill its box. A rule for an svg
+  // inside one component (app.css has plenty: `.messages-send svg`) does not
+  // size this icon, so only a selector whose subject is the svg counts.
   let unsizedSvgs = 0;
   const css = `${ownCss}\n${linkedCss}`;
-  let genericSvgRule = false;
-  for (const rule of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
-    if (/\bsvg\b/i.test(rule[1]) && /(?:^|;)\s*(?:width|height)\s*:/i.test(rule[2])) { genericSvgRule = true; break; }
-  }
+  const genericSvgRule = sizesEverySvg(css);
   for (const [tag] of doc.matchAll(/<svg\b[^>]*>/gi)) {
     const hasSize = /\b(?:width|height)\s*=\s*["']?[\d.]+/i.test(tag) || /\bstyle\s*=\s*["'][^"']*\b(?:width|height)\s*:/i.test(tag);
     if (hasSize) continue;
@@ -457,6 +456,16 @@ function styleGaps(html, { linkedCss = '' } = {}) {
     unsizedSvgs += 1;
   }
   return { unmatched, total: used.size, unsizedSvgs };
+}
+
+/** Pure: whether a rule sizes every svg (a selector `svg` itself sets a width or height). */
+function sizesEverySvg(css) {
+  for (const rule of String(css || '').matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    if (!/(?:^|;)\s*(?:width|height)\s*:/i.test(rule[2])) continue;
+    const selectors = rule[1].split(',').map((s) => s.trim().replace(/\s+/g, ' ').toLowerCase());
+    if (selectors.includes('svg')) return true;
+  }
+  return false;
 }
 
 /** Pure: whether a version's styling is broken enough to send back once. */

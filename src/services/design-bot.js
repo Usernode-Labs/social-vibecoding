@@ -1235,6 +1235,15 @@ function imagePart(picture) {
 }
 
 /**
+ * Pure: the newest picture of `picturesOf`'s list (newest message first), or
+ * null. A design's look compares the version with the newest picture they sent.
+ */
+function newestPicture(pictures) {
+  const list = (Array.isArray(pictures) ? pictures : []).filter((p) => p?.data);
+  return list[0] || null;
+}
+
+/**
  * For a model that reads text only: the pictures said in words, by one short
  * call to the platform's cheap model that reads pictures (the chat
  * turn's default), on the turn's own key and count. Map(picture id → words);
@@ -1666,7 +1675,8 @@ async function answer(pool, config, {
           .catch(() => null);
         compareHtml = now?.html || null;
       } else {
-        const picture = (pictures || [])[pictures.length - 1];
+        // picturesOf lists them newest message first, so [0] is the newest.
+        const picture = newestPicture(pictures);
         if (picture?.data) comparePng = Buffer.from(picture.data, 'base64');
       }
       // A first version has no design row yet: it is rendered at the size it
@@ -2183,6 +2193,7 @@ module.exports = {
   screenArgs,
   askFirst,
   canHold,
+  newestPicture,
   notDrawnYet,
   isFiller,
   fillerNote,

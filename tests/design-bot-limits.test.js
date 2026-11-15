@@ -80,8 +80,8 @@ const designThreads = require('../src/services/design-threads');
 
 const callOf = (name, args, id = `c${name}`) => ({ id, function: { name, arguments: JSON.stringify(args) } });
 
-/** A design turn on an app surface, with a scripted model and no database. */
-function appTurn(steps, { deps: extra = {} } = {}) {
+/** A design turn on an app surface, with a scripted model and no database. `design`/`current` are a later turn's thread. */
+function appTurn(steps, { deps: extra = {}, design = null, current = null, handoff = true, pictures = [] } = {}) {
   const sent = [];
   const seen = [];
   const versions = [];
@@ -120,7 +120,7 @@ function appTurn(steps, { deps: extra = {} } = {}) {
     designThreads: {
       ...designThreads,
       surfaceFor: () => 'app',
-      async versionOf() { return null; },
+      async versionOf() { return current; },
       async ensureDesign() { return { threadId: 7, title: 'Recipes', app: { id: 5, slug: 'recipebot', name: 'RecipeBot' } }; },
       async addVersion(_pool, args) { versions.push(args); return { version: versions.length }; },
       async noteVersionMessage() {},
@@ -132,7 +132,12 @@ function appTurn(steps, { deps: extra = {} } = {}) {
     },
     ...extra,
   };
-  const pool = { async query() { return { rows: [] }; } };
+  const pool = {
+    async query(sql) {
+      if (pictures.length && /conversation_message_attachments/i.test(String(sql))) return { rows: pictures };
+      return { rows: [] };
+    },
+  };
   const run = designBot.answer(pool, { selfAppSlug: 'homeroom' }, {
     bot: { id: 2, username: 'homeroom_bot' },
     user: { id: 9, username: 'evan' },
@@ -140,7 +145,8 @@ function appTurn(steps, { deps: extra = {} } = {}) {
     conversationId: 41,
     message: { id: 71, content: 'Draw the recipes home screen' },
     thread: { rootId: 500, threadId: 7, conversationId: 41, app: { id: 5, slug: 'recipebot', name: 'RecipeBot' } },
-    handoff: true,
+    design,
+    handoff,
     deps,
   });
   return { run, sent, seen, versions, recorded };
@@ -162,7 +168,11 @@ test('#6681: a version whose classes mostly match nothing, or whose icon has no 
   assert.equal(designBot.styleGaps('<svg class="icon"></svg>', { linkedCss: '.icon{width:1rem}' }).unsizedSvgs, 0);
   assert.equal(designBot.styleGaps('<svg width="20" height="20"></svg>', { linkedCss: '' }).unsizedSvgs, 0);
   assert.equal(designBot.styleGaps('<svg style="width:20px"></svg>', { linkedCss: '' }).unsizedSvgs, 0);
-  assert.equal(designBot.styleGaps('<svg></svg>', { linkedCss: 'svg{width:20px}' }).unsizedSvgs, 0, 'a rule naming svg with a size counts');
+  assert.equal(designBot.styleGaps('<svg></svg>', { linkedCss: 'svg{width:20px}' }).unsizedSvgs, 0, 'a rule for svg with a size counts');
+  assert.equal(designBot.styleGaps('<svg></svg>', { linkedCss: 'img, svg{height:1em}' }).unsizedSvgs, 0,
+    'so does one of a selector list, as preflight writes them');
+  assert.equal(designBot.styleGaps('<svg></svg>', { linkedCss: '.messages-send svg{width:20px}' }).unsizedSvgs, 1,
+    'a rule for an svg inside one component does not size this icon, and app.css has many');
   assert.equal(designBot.styleGaps('<svg></svg>', { linkedCss: 'img,svg{display:block}' }).unsizedSvgs, 1,
     'a rule that only displays svg does not size it (Tailwind preflight has one, and the arrow still stretched)');
 });
@@ -264,4 +274,58 @@ test('#6681: the markup an app\'s scripts build is pulled out, and its own file 
   assert.ok(at > 0, 'the block is there');
   assert.ok(prompt.length - at < 26_000, 'capped to SCRIPT_MARKUP_CHARS, with a line after it');
   assert.match(prompt.slice(at), /…/);
+});
+
+test('#6681: a later turn compiles the classes its edit adds, not only the first drawing\'s', async () => {
+  const first = '<main class="bg-paper p-2">Recipes</main>';
+  const turn1 = appTurn([
+    { calls: [callOf('write_screen', { title: 'Recipes', size: 'phone', html: first, note: 'the home list' })] },
+    { calls: [callOf('reply', { text: 'Here is the recipe list.' })] },
+  ]);
+  await turn1.run;
+  const saved = turn1.versions[0].html;
+  assert.match(saved, /\.p-2\s*\{/, 'the first drawing carries its own utilities');
+  assert.doesNotMatch(saved, /\.mt-6\s*\{/, 'and nothing it does not use yet');
+
+  const design = {
+    latest: 1, rootId: 500, threadId: 7, state: 'open', surface: 'app', title: 'Recipes', width: 390, height: 844,
+    app: { id: 5, slug: 'recipebot', name: 'RecipeBot' }, versions: [],
+  };
+  const card = '<p class="mt-6 flex items-center gap-3 rounded-xl p-4 text-lg shadow">Lemon pasta</p>';
+  const turn2 = appTurn([
+    { calls: [callOf('edit_design', { edits: [{ find: 'Recipes</main>', replace: `Recipes</main>${card}` }] })] },
+    { calls: [callOf('reply', { text: 'Added the recipe.' })] },
+  ], { design, current: { version: 1, html: saved }, handoff: false });
+  await turn2.run;
+  assert.equal(turn2.versions.length, 1);
+  const notes = turn2.seen.flat()
+    .filter((m) => /Homeroom check, not from them/.test(typeof m.content === 'string' ? m.content : ''));
+  assert.equal(notes.length, 0, 'the new classes are compiled before the check, so the version is not sent back');
+  assert.match(turn2.versions[0].html, /\.mt-6\s*\{/, 'the class the edit added is compiled on the later turn too');
+  assert.match(turn2.versions[0].html, /\.rounded-xl\s*\{/, 'and each of the others');
+  assert.match(turn2.versions[0].html, /\.p-2\s*\{/, 'and the version it had still carries its own');
+});
+
+test('#6681: the look compares the version with the newest picture they sent', async () => {
+  const clean = '<main class="bg-paper p-2"><svg width="20" height="20" viewBox="0 0 24 24"></svg>Recipes</main>';
+  const turn = appTurn([
+    { calls: [callOf('write_screen', { title: 'Recipes', size: 'phone', html: clean, note: 'the home list' })] },
+    { calls: [callOf('reply', { text: 'Here is the recipe list.' })] },
+  ], {
+    pictures: [
+      { id: 'pnew', message_id: 12, filename: 'later.png', content_type: 'image/png', data: Buffer.from('NEW') },
+      { id: 'pold', message_id: 9, filename: 'earlier.png', content_type: 'image/png', data: Buffer.from('OLD') },
+    ],
+    deps: {
+      seesImages: true,
+      designCapture: { async renderDesign() { return { ok: true, png: Buffer.from('PNGDATA'), comparePng: null }; } },
+    },
+  });
+  await turn.run;
+  const note = turn.seen.flat().find((m) => Array.isArray(m.content)
+    && m.content.some((part) => part.type === 'text' && /this is your version as the preview/.test(part.text)));
+  assert.ok(note, 'the look\'s picture reaches a model that reads pictures');
+  const urls = note.content.filter((part) => part.type === 'image_url').map((part) => part.image_url.url);
+  assert.equal(urls.length, 2, 'the version and the screen as it is now');
+  assert.ok(urls[1].endsWith(Buffer.from('NEW').toString('base64')), 'the newest picture is the comparison, not an older one');
 });
