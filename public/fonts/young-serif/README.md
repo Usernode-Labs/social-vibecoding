@@ -1,11 +1,13 @@
 # public/fonts/young-serif: the Young Serif typeface, self-hosted
 
-Young Serif is the serif the **brand look** ("Paper, simplified, with brand
-styling") uses for titles: one of the looks of Settings › Experimental ›
-Look, off by default (the head's `window.Skin` sets `data-skin="brand"` on
-`<html>`). It stands in for the serif of the Homeroom website. The
-`@font-face` in `public/css/app.css` is used only by rules scoped to that
-attribute, so a browser without the look never downloads the file.
+Young Serif stands in for the serif of the Homeroom website. The **brand
+look** ("Paper, simplified, with brand styling", one of the looks of
+Settings › Experimental › Look) declares it in its block of
+`public/css/app.css` and drew its titles in it at first. Its titles are
+Geist now, and no rule of the look names the face. The declaration and the
+file are kept for the signed-out pages' look, which draws its headlines in
+it. A browser downloads the file only when a rule that names the face
+matches something on the page.
 
 Served from our own origin, like `public/fonts/geist/`, so the shell still
 makes no cross-origin asset requests. Only the Latin subset is committed:
