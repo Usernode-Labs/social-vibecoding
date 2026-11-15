@@ -61,7 +61,7 @@ export const RESERVED_KEYS = new Set([
 // and app-platform-API (#744) env-var families — any future
 // USERNODE_LLM_PROXY_* / USERNODE_STORAGE_* / USERNODE_PLATFORM_API_*
 // addition stays platform-owned without another set entry.
-export const RESERVED_KEY_PREFIXES = ['USERNODE_LLM_PROXY', 'USERNODE_STORAGE', 'USERNODE_GROUPS', 'USERNODE_PLATFORM_API'];
+export const RESERVED_KEY_PREFIXES = ['USERNODE_LLM_PROXY', 'USERNODE_STORAGE', 'USERNODE_PLATFORM_API'];
 
 export const KEY_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
 
