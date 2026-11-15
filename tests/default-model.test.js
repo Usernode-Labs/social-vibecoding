@@ -10,10 +10,8 @@
 //   2. The bot's settings carry it: the patch accepts an id or blank, the
 //      save refuses a model the stored catalog does not list or that cannot
 //      call tools, and a stage left on the default follows it.
-//   3. A coding-agent preference with no model follows it
-//      (routes/sessions.js resolveDefaultAgentPreference).
-//   4. The one-time migration moves only untouched GLM preferences, once.
-//   5. The console's form sends it.
+//   3. The one-time migration moves only untouched GLM preferences, once.
+//   4. The console's form sends it.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -130,7 +128,7 @@ test('the bot\'s other readers of the default go through the resolver', () => {
   // an admin's choice never reached.
   for (const file of [
     'src/services/homeroom-bot-voice.js', 'src/services/homeroom-bot-mayor.js', 'src/services/agent-turn.js',
-    'src/services/openrouter-mayor.js', 'src/routes/credentials.js',
+    'src/routes/credentials.js',
     'src/services/openrouter-managed-keys.js', 'src/services/agent-models.js',
   ]) {
     assert.match(read(file), /default-model/, `${file} reads the platform default through services/default-model.js`);
@@ -138,67 +136,6 @@ test('the bot\'s other readers of the default go through the resolver', () => {
   const botSrc = read('src/services/homeroom-bot.js');
   assert.doesNotMatch(botSrc.replace(/\/\/.*$/gm, ''), /config\.openrouterDefaultCodexModel/,
     'the bot reads the default through platformDefaultModel or the resolver');
-});
-
-// ── A preference with no model follows the default ──────────────────────
-
-function sessionsHarness({ pref, setting = null }) {
-  const credentialStore = require('../src/services/credential-store');
-  const agentModels = require('../src/services/agent-models');
-  const managed = require('../src/services/openrouter-managed-keys');
-  const saved = {
-    readMetadata: credentialStore.readMetadata,
-    readSecret: credentialStore.readSecret,
-    listOpenRouterModels: agentModels.listOpenRouterModels,
-    provision: managed.provision,
-  };
-  const asked = [];
-  credentialStore.readMetadata = async () => ({ status: 'valid', revision: 3 });
-  credentialStore.readSecret = async () => 'sk-or-v1-test';
-  agentModels.listOpenRouterModels = async (args) => { asked.push(args); return { recommendedModelId: 'z-ai/glm-5.3-flash' }; };
-  managed.provision = async () => { throw new Error('must not provision'); };
-  const client = {
-    async query(sql) {
-      const s = String(sql);
-      if (/FROM user_agent_preferences/.test(s)) return { rows: pref ? [pref] : [] };
-      if (/FROM platform_settings/.test(s)) return { rows: setting ? [{ value: setting }] : [] };
-      return { rows: [] };
-    },
-  };
-  return {
-    client,
-    asked,
-    restore() {
-      credentialStore.readMetadata = saved.readMetadata;
-      credentialStore.readSecret = saved.readSecret;
-      agentModels.listOpenRouterModels = saved.listOpenRouterModels;
-      managed.provision = saved.provision;
-    },
-  };
-}
-
-test('a preference with no model runs on the platform default, the admin\'s when one is stored', async (t) => {
-  const { resolveDefaultAgentPreference: resolve } = require('../src/routes/sessions');
-  const config = { ...DEPLOY, codexOpenrouterEnabled: true, dataEncryptionKey: 'k' };
-
-  const follows = sessionsHarness({ pref: { backend: 'codex_openrouter', model_id: null, reasoning_effort: null }, setting: 'z-ai/glm-5.3-flash' });
-  t.after(() => follows.restore());
-  const chosen = await resolve(follows.client, 7, config);
-  follows.restore();
-  assert.equal(chosen.backend, 'codex_openrouter');
-  assert.equal(chosen.model, 'z-ai/glm-5.3-flash', 'the admin\'s default, already checked against the catalog when saved');
-  assert.equal(follows.asked.length, 0);
-
-  const unset = sessionsHarness({ pref: { backend: 'codex_openrouter', model_id: null, reasoning_effort: null } });
-  t.after(() => unset.restore());
-  assert.equal((await resolve(unset.client, 7, config)).model, DEPLOY.openrouterDefaultCodexModel, 'else the deploy\'s');
-  unset.restore();
-
-  const picked = sessionsHarness({ pref: { backend: 'codex_openrouter', model_id: 'vendor/picked', reasoning_effort: 'low' }, setting: 'z-ai/glm-5.3-flash' });
-  t.after(() => picked.restore());
-  const own = await resolve(picked.client, 7, config);
-  picked.restore();
-  assert.equal(own.model, 'vendor/picked', 'a model the person picked stays theirs');
 });
 
 // ── The one-time migration ──────────────────────────────────────────────

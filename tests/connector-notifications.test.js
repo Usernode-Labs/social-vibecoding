@@ -294,7 +294,7 @@ test('the drawer renders both, and its waiting row uses the same safe wording', 
 
 test('submitted and shared connector changes open the same full change page', () => {
   const at = FE_SRC.indexOf("item.kind === 'connector_submitted'");
-  const block = FE_SRC.slice(at, FE_SRC.indexOf("item.kind === 'auto_solve_done'", at));
+  const block = FE_SRC.slice(at, FE_SRC.indexOf('if (item.kind === ', at + 1));
   assert.match(block, /ref: Notifications\._changeRef\(id, item\.prNumber\)/,
     'the in-app route is lifecycle-neutral');
   assert.match(block, /Notifications\._changeHash\(item\.appSlug, id, item\.prNumber\)/,

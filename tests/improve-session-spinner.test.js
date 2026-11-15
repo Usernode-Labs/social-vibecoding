@@ -2,9 +2,8 @@
 //
 // The report was about consistency, and it was right: everywhere else on the
 // platform that something is happening RIGHT NOW, the same 12px arc turns —
-// the dev screen's session list, a proposal running its checks, "Preview
-// building…" on a board card, "Proposing…" in a transcript, the merge-status
-// badges, the app-launch cover. All of them are `.dc-status-spinner-arc` out
+// a proposal running its checks, "Preview building…" on a board card, the
+// merge-status badges, the app-launch cover. All of them are `.dc-status-spinner-arc` out
 // of public/css/app.css. The Improve row was the one surface that said it a
 // different way, by pulsing its tile badge, so a reader who had learned the
 // arc everywhere else had to learn a second vocabulary for one list.
@@ -38,7 +37,6 @@ const path = require('node:path');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const ROW_TSX = read('frontend/src/features/improve/session-row.tsx');
 const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
-const DEV_CHAT_LIST = read('frontend/src/features/dev-chat/session-list.tsx');
 const APP_CSS = read('public/css/app.css');
 const MANIFEST = JSON.parse(read('dapp.json'));
 const checkCap = require('./lib/check-cap');
@@ -59,10 +57,6 @@ function stateOfBody() {
 test('the busy row draws the shared arc, by the shared class name', () => {
   assert.match(ROW_TSX, /className="dc-status-icon dc-status-spinner-arc"/,
     'both classes: dc-status-icon sizes the 14px box, the arc draws in it');
-  // The same pair the dev screen's own session list renders for the same
-  // fact — that list is the closest comparable surface, and matching it is
-  // the whole of #1597.
-  assert.match(DEV_CHAT_LIST, /dc-status-icon dc-status-spinner-arc/);
   // And it is a real class with real keyframes behind it, not a name that
   // resolves to nothing.
   assert.match(APP_CSS, /\.dc-status-spinner-arc\s*\{/);

@@ -108,13 +108,8 @@ test('the connector carries the task’s request number into the import', () => 
   assert.match(tasks, /buildClosingBlock\(linkedIssuesFor\(task\), \{ repoUrl: task\?\.repo_url/,
     'with the app\'s repository, which decides how the line names the request');
 
-  for (const [label, file] of [
-    ['the connector', '../src/services/mcp-tools.js'],
-    ['the browser twin', '../src/routes/dev-flow.js'],
-  ]) {
-    const src = fs.readFileSync(path.join(__dirname, file), 'utf8');
-    assert.match(src, /extra\.linkedIssues && extra\.linkedIssues\.length/,
-      `${label} forwards the linked issues it is handed`);
-    assert.match(src, /\{ linkedIssues: extra\.linkedIssues \}/, `${label} sends them under the route's own name`);
-  }
+  const src = fs.readFileSync(path.join(__dirname, '../src/services/mcp-tools.js'), 'utf8');
+  assert.match(src, /extra\.linkedIssues && extra\.linkedIssues\.length/,
+    'the connector forwards the linked issues it is handed');
+  assert.match(src, /\{ linkedIssues: extra\.linkedIssues \}/, 'the connector sends them under the route\'s own name');
 });

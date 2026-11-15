@@ -76,7 +76,6 @@ function loadSyncMain({ execImpl }) {
     logger: require.resolve('../src/services/logger'),
     worker: require.resolve('../src/services/worker'),
     ws: require.resolve('../src/services/ws'),
-    sessionBus: require.resolve('../src/services/session-bus'),
     events: require.resolve('../src/services/events'),
     subject: require.resolve('../src/services/sync-main'),
   };
@@ -98,7 +97,6 @@ function loadSyncMain({ execImpl }) {
     },
   });
   stub(ids.ws, { pushSessionUpdate() {}, broadcastGlobal() {} });
-  stub(ids.sessionBus, { publish() {} });
   stub(ids.events, { record() {}, EVENT_TYPES: { SYNC_MAIN: 'sync_main' } });
 
   // limits stays REAL — it's the unit under test for the gate/record.

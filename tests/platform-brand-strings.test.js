@@ -22,7 +22,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -49,16 +48,6 @@ test('the Homeroom button on an app\u2019s own address names the platform', () =
 test('the two committed bridge copies stay byte-identical', () => {
   const [a, b] = BRIDGE_COPIES.map(read);
   assert.equal(a, b, 'edit both copies or neither');
-});
-
-test('the headless-run copy names the platform', () => {
-  const src = read('public/js/app-view.js');
-  // The dialog reads both lines from the catalog.
-  assert.match(src, /: PlatformI18n\.t\('changes:issue\.autoRun\.billing\.homeroom'\);/);
-  assert.match(src, /intro: PlatformI18n\.t\('changes:issue\.autoRun\.intro'\),/);
-  assert.match(message('changes:issue.autoRun.billing.homeroom'), /Uses your available Homeroom credits\./);
-  assert.match(message('changes:issue.autoRun.intro'), /Homeroom will inspect the issue and repository/);
-  assert.doesNotMatch(src, /available Usernode credits|Usernode will inspect/);
 });
 
 test('the node, the identifiers and the org are NOT renamed', () => {
