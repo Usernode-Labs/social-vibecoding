@@ -442,6 +442,7 @@ async function migrate(config) {
   // 14 Nov 2026: Main Chat is removed. What each person and Homeroom bot
   // said there moves, once, under their Earlier chat thread.
   await moveMainChatToThreads(pool);
+  await moveOldChatsToThreads(pool);
   await backfillPlanRows(pool);
   await backfillFiledDraftCards(pool);
   await revokeLegacyGithubGrants(pool, config);
@@ -1128,6 +1129,31 @@ async function moveMainChatToThreads(pool) {
     }
   } catch (err) {
     log.warn('db', 'Moving Main Chat under Earlier chat threads skipped', { err: err.message });
+  }
+}
+
+// 15 Nov 2026: agent chats and dev chats are retired. What was said in each
+// is copied, once, into its owner's chat with Homeroom bot as one finished
+// thread (services/old-chat-move.js says what is copied, why the thread
+// arrives done and read, and how an old link finds it).
+//
+// Here with the other boot repairs, not a file under db/migrations/, for the
+// reason moveMainChatToThreads gives: it is a data move over every such
+// conversation, taken one at a time under the lock a send in that person's
+// chat with the bot takes. The table it records in is the tracked migration
+// moved-chats. The old tables are left as they are: a later migration drops
+// them, once this has run everywhere.
+//
+// Every boot, and a no-op once clean: it also copies what an older instance
+// wrote in an agent chat while a release was rolling. Best-effort: a failure
+// never aborts boot, and a conversation it could not move is left for the
+// next one.
+async function moveOldChatsToThreads(pool) {
+  try {
+    const done = await require('../services/old-chat-move').moveAll(pool);
+    if (done.copied) log.info('db', 'Moved agent chats and dev chats into Homeroom bot threads', done);
+  } catch (err) {
+    log.warn('db', 'Moving agent chats and dev chats into Homeroom bot threads skipped', { err: err.message });
   }
 }
 
@@ -20062,6 +20088,7 @@ module.exports = {
   seedStagingHelperCalls,
   clearAutomatedChannelLines,
   moveMainChatToThreads,
+  moveOldChatsToThreads,
   backfillFiledDraftCards,
   backfillLinkedIssuesFromPrBodies,
   backfillPlanRows,
