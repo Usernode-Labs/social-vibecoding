@@ -1232,24 +1232,25 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 /* ── The hover bar (#2387) ──────────────────────────────────────────────
    Every chat row's controls in one floating pill, Discord's shape: the three
    recent reactions, a divider, then the picker, Reply, Save and ⋯. It sits
-   just above the row at the trailing side, in the gap between rows, so it
-   never covers the text it acts on; when the row is too near the top of the
-   scroller for that, MessageActionBar adds `msgx-bar-below` and it sits just
-   below the row instead (#6697). Hover-revealed on a pointer (and on
-   focus-within, for the keyboard); on a touch screen it is not drawn at all
-   and a long press opens the sheet (.msgx-sheet) instead. The shared parts
-   are the `.msgx-*` rules in the next section; this is where the Messages
-   row places it. */
+   on the row's top edge at the trailing side, over the name line and never
+   the words. A continuation row has no name line and its words start at the
+   row's top, so MessageActionBar raises the pill there just clear of that
+   first line (#6697, `--msgx-bar-lift`); where there is no room above the
+   row it adds `msgx-bar-below` and the pill sits just below the row instead.
+   Hover-revealed on a pointer (and on focus-within, for the keyboard); on a
+   touch screen it is not drawn at all and a long press opens the sheet
+   (.msgx-sheet) instead. The shared parts are the `.msgx-*` rules in the
+   next section; this is where the Messages row places it. */
 .messages-message-actions {
   position: absolute;
   z-index: 6;
-  top: auto;
-  bottom: calc(100% + 4px);
+  /* 16px: the bar's old place, its lower half over the row's name line. */
+  top: calc(-1 * var(--msgx-bar-lift, 16px));
   inset-inline-end: 16px;
   display: none;
 }
-/* A 6px bridge from the pill down to the row, so crossing the 4px gap with
-   the pointer keeps the bar open. Mirrored for the below placement. */
+/* A 6px bridge from the pill to the row, so crossing the gap with the
+   pointer keeps the bar open. Mirrored for the below placement. */
 .messages-message-actions::after,
 .gc-msg-actions::after {
   content: '';
@@ -1261,10 +1262,7 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-message-actions.msgx-bar-below::after,
 .gc-msg-actions.msgx-bar-below::after { top: auto; bottom: 100%; }
 .messages-message-actions.msgx-bar-below,
-.gc-msg-actions.msgx-bar-below {
-  bottom: auto;
-  top: calc(100% + 4px);
-}
+.gc-msg-actions.msgx-bar-below { top: calc(100% + 4px); }
 .messages-message:hover .messages-message-actions,
 .messages-message:focus-within .messages-message-actions,
 .messages-message-actions.msgx-bar-open { display: flex; }
@@ -1275,7 +1273,7 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    its words, so it keeps its own place and takes neither the bridge nor the
    below placement. */
 .messages-message-head:has(> .messages-message-actions) { position: relative; }
-.messages-message-head > .messages-message-actions { top: -10px; bottom: auto; inset-inline-end: auto; inset-inline-start: calc(100% + 8px); }
+.messages-message-head > .messages-message-actions { top: -10px; inset-inline-end: auto; inset-inline-start: calc(100% + 8px); }
 .messages-message-head > .messages-message-actions::after { content: none; }
 
 /* The tray of a message still in flight keeps its place but draws nothing
@@ -1288,18 +1286,19 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    and accented while the pill is up. */
 .messages-message-saved:not(.messages-message-bubble) { box-shadow: inset 3px 0 0 var(--accent); }
 
-/* The app chat's rows place the same bar (#2387): just above the row,
-   trailing side, in the gap between rows, revealed on hover and focus-within
-   — or just below the row when there is no room above (#6697). The row's own
-   actions slot is in the header's flow, so the host takes no width and the
-   bar floats out of it. */
+/* The app chat's rows place the same bar (#2387): on the row's top edge,
+   trailing side, over the name line and revealed on hover and focus-within;
+   a continuation row's pill is raised just clear of its first line, or put
+   below the row where there is no room above (#6697). The row's own actions
+   slot is in the header's flow, so the host takes no width and the bar
+   floats out of it. */
 .gc-msg { position: relative; }
 .gc-msg-bar-host { display: contents; }
 .gc-msg-actions {
   position: absolute;
   z-index: 6;
-  top: auto;
-  bottom: calc(100% + 4px);
+  /* The same `--msgx-bar-lift` as the Messages row above. */
+  top: calc(-1 * var(--msgx-bar-lift, 16px));
   inset-inline-end: 16px;
   display: none;
 }

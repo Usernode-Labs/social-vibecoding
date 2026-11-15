@@ -88,10 +88,12 @@ export function MessageActionBar({
 }) {
   const t = useMessages('messages');
   const quick = onReact ? recents.slice(0, 3) : [];
-  // #6697: the bar sits just above the row it acts on, or just below it when
-  // there is no room above (the first visible row of a scroller). Measured
-  // once when the pointer or the keyboard enters the row, the way the picker
-  // and the menu measure with placementFor, never while it stays open.
+  // #6697: an ordinary row keeps the bar's old place on its top edge, over
+  // the name line; a continuation row's words start at the row's own top, so
+  // the pill is raised there just clear of the first line. Where there is no
+  // room above the row, the pill goes just below it instead. Measured once
+  // when the pointer or the keyboard enters the row, the way the picker and
+  // the menu measure with placementFor, never while it stays open.
   const ownBar = useRef<HTMLDivElement | null>(null);
   const [below, setBelow] = useState(false);
 
@@ -112,8 +114,11 @@ export function MessageActionBar({
     while (row && getComputedStyle(row).position === 'static') row = row.parentElement;
     if (!row) return;
     const target = row;
-    // 40px pill, the 4px gap and 2px of slack.
-    const place = () => setBelow(!roomAbove(target, 46));
+    const place = () => {
+      const lift = barLift(target);
+      node.style.setProperty('--msgx-bar-lift', `${lift}px`);
+      setBelow(!roomAbove(target, lift));
+    };
     target.addEventListener('pointerenter', place);
     target.addEventListener('focusin', place);
     return () => {
@@ -286,10 +291,26 @@ export function placementFor(anchor: Element | null, height: number): 'above' | 
 }
 
 /**
- * Whether a message's bar fits just above its row (#6697): the row's top has
- * to clear the top of the nearest scroller (else the page's top, 0) by the
- * bar's height. Read when the pointer or the keyboard enters the row, the
- * way placementFor reads its popover's room.
+ * How far above its row a message's bar sits (#6697). An ordinary row keeps
+ * the bar's old place, 16px above its top, so the pill covers the name line
+ * and stops short of the words. A continuation row has no name line and its
+ * words start at the row's own top padding, so there the bar is raised just
+ * clear of the first line: the 40px pill and its 4px gap, less that padding.
+ */
+export function barLift(row: Element): number {
+  const grouped = row.hasAttribute('data-grouped')
+    || row.classList.contains('messages-message-grouped');
+  if (!grouped || typeof window === 'undefined') return 16;
+  const top = parseFloat(getComputedStyle(row).paddingTop);
+  return 44 - (Number.isFinite(top) ? top : 0);
+}
+
+/**
+ * Whether a message's bar fits in the room above its row (#6697): the row's
+ * top has to clear the top of the nearest scroller (else the page's top, 0)
+ * by the height of the bar's lift, read from barLift. Read when the pointer
+ * or the keyboard enters the row, the way placementFor reads its popover's
+ * room.
  */
 export function roomAbove(row: Element, height: number): boolean {
   if (!row || typeof window === 'undefined') return false;
