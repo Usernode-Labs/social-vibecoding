@@ -80,7 +80,7 @@ const CHAT_TOOLS = Object.freeze([
 ]);
 const DESIGN_TOOLS = Object.freeze([
   'write_screen', 'edit_design', 'list_source', 'read_source', 'reply', 'read_plan', 'compare_versions',
-  'make_pictures', 'close_thread', 'offer_plan', 'offer_project', 'list_requests', 'get_request', 'capture_page',
+  'make_pictures', 'close_thread', 'offer_plan', 'offer_project', 'offer_request', 'list_requests', 'get_request', 'capture_page',
 ]);
 // Every project thread offers these; each kind adds its own.
 const THREAD_TOOLS = Object.freeze([
