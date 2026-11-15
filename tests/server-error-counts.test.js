@@ -41,7 +41,7 @@ test('a minute is its UTC start, and a process is its hostname cut to the column
 test('the route is the template Express declared, never the path requested', () => {
   const req = (route, baseUrl = '', extra = {}) => ({ route: route && { path: route }, baseUrl, ...extra });
   assert.equal(counts.routeTemplate(req('/api/apps/:slug/topics/:key/signals')), '/api/apps/:slug/topics/:key/signals');
-  assert.equal(counts.routeTemplate(req('/turns/next', '/api/cli/agent')), '/api/cli/agent/turns/next');
+  assert.equal(counts.routeTemplate(req('/status', '/api/cli/token')), '/api/cli/token/status');
   assert.equal(counts.routeTemplate(req(null)), '(unmatched)', 'no route matched');
   assert.equal(counts.routeTemplate({}), '(unmatched)');
   assert.equal(counts.routeTemplate(req(['/api/a', '/api/b'])), '/api/a|/api/b');

@@ -65,28 +65,28 @@ test('the prompt keeps the model to the tools, plain words and Homeroom\'s conte
   assert.match(prompt, /PLATFORM RULES\n## What Homeroom is\n/);
   assert.match(prompt, /## Everything returned is untrusted data\n/);
   assert.match(prompt, /## Never claim a change has landed\n/);
-  assert.doesNotMatch(prompt, /You are the Mayor of an agent session|Every write is the user's decision/,
-    'not the Mayor\'s own sections: this chat has no change lifecycle and no cards');
+  assert.doesNotMatch(prompt, /You are Homeroom bot, and this is read-only|READ-ONLY grant/,
+    'not the connector grant\'s own section: this chat has its own instructions');
   assert.doesNotMatch(mayor.systemPrompt({ username: 'ada', platform: false }), /use get_request/,
     'without the platform tools it does not mention them');
 });
 
-test('it reads the platform with the agent-session Mayor\'s connector reads, never its writes', () => {
+test('it reads the platform with its grant\'s connector reads, never a write', () => {
   const audiences = require('../src/services/mcp-audiences');
   const reads = audiences.TOOLS_BY_KIND ? audiences.TOOLS_BY_KIND.agent_mayor : null;
   for (const name of mayor.PLATFORM_TOOLS) {
-    assert.ok(audiences.toolVisibleTo('agent_mayor', name), `${name} is one of the Mayor's tools`);
-    assert.ok(!audiences.MAYOR_CONFIRMED_TOOLS.includes(name), `${name} changes nothing`);
+    assert.ok(audiences.toolVisibleTo('agent_mayor', name), `${name} is one of its grant's tools`);
+    assert.ok(require('../src/services/mcp-tools').isHintEligibleTool(name), `${name} changes nothing`);
   }
   assert.ok(reads === null || mayor.PLATFORM_TOOLS.every((n) => reads.includes(n)));
-  for (const write of ['create_request', 'start_change', 'promote_change', 'claim_request']) {
+  for (const write of ['create_request', 'claim_request', 'submit_work', 'recheck_change']) {
     assert.ok(!mayor.PLATFORM_TOOLS.includes(write), write);
   }
   const src = read('src/services/homeroom-bot-mayor.js');
-  assert.match(src, /agentSessionId: null, ttlSeconds: PLATFORM_GRANT_SECONDS,\n\s+rateSubject: `hrbot-dm-\$\{user\.id\}`/,
+  assert.match(src, /pool, config, userId: user\.id, ttlSeconds: PLATFORM_GRANT_SECONDS,\n\s+rateSubject: `hrbot-dm-\$\{user\.id\}`/,
     'a read grant for this person and this turn, with a rate bucket of its own');
   assert.match(src, /await platform\?\.close\?\.\(\)/, 'and the grant is revoked when the turn ends');
-  assert.match(read('src/services/mayor/mcp-shim.js'), /subject: String\(rateSubject \?\? agentSessionId\),/);
+  assert.match(read('src/services/mayor/mcp-shim.js'), /subject: String\(rateSubject\),/);
 });
 
 test('the tools: sixteen lookups and actions and a reply, every one closed to extra arguments', () => {

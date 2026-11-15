@@ -611,8 +611,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   min-height: 0;
 }
 /* The sheet. Its top margin is what shows the strip's shoulder above it on
-   a phone — the same reading the dev session gives, where the session sheet
-   sits ON the strip rather than abutting it. */
+   a phone: the sheet sits ON the strip rather than abutting it. */
 .messages-thread-pane {
   /* #6254: the pane is the thread's drop zone, so its outline (which lies
      absolute over its parent) frames the whole thread. */
@@ -905,8 +904,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 
 /* The sheet's title row: who the conversation is with, its context line,
    and the actions as discs. No hairline under it — the transcript's first
-   day label is what separates it, the way the dev session's header sits
-   over its transcript. */
+   day label is what separates it. */
 .messages-thread-header {
   display: flex;
   align-items: center;
@@ -8614,8 +8612,8 @@ html.un-kb #settings-content-col > .settings-sheet {
    The move a running app already makes, repeated once per layer. A
    running app's sheet (#app-frame-host) rounds its TOP two corners over
    the platform header's ground, so the header shows through a notch at
-   each shoulder. Here the session strip does that over the page
-   wallpaper, and the session sheet does it again over the strip: three
+   each shoulder. Here the strip does that over the page
+   wallpaper, and the sheet does it again over the strip: three
    surfaces, each one revealing a shoulder of the one above it.
 
    The geometry is #app-frame-host's, to the token — a 28px top radius, a
@@ -9352,8 +9350,7 @@ html.dark.in-native-webview:not(.native-status-bar-tone) #staging-overlay .stagi
    styled by the drag handler (persisted to localStorage); CSS clamps
    so a stale value can't strand the chat too narrow: 320px less than
    the `.gc-tab-body` row it shares with the chat (the drag's own
-   ceiling), not less than the window (1 November 2026; see
-   `.dc-spec-viewer-open`). */
+   ceiling), not less than the window (1 November 2026). */
 .gc-spec-side-panel.gc-spec-side-panel-open {
   display: flex;
   width: min(560px, 50vw);
@@ -9495,7 +9492,7 @@ html.dark.in-native-webview:not(.native-status-bar-tone) #staging-overlay .stagi
   color: var(--text-primary, #e4e4e7);
 }
 
-/* Markdown styling — same spacing as the dev-chat spec viewer. */
+/* Markdown styling. */
 .gc-spec-panel-body > :first-child { margin-top: 0; }
 .gc-spec-panel-body > :last-child  { margin-bottom: 0; }
 .gc-spec-panel-body .dc-h3 { margin: 16px 0 6px; }
@@ -10875,28 +10872,6 @@ button.attr-chip { cursor: pointer; }
   overflow: hidden;
 }
 
-/* #2605: the dev session page in its READ-ONLY form. The Build door sends a
-   reader who does not own the session here, and what they get is the
-   published chat on the session's own page rather than a sheet folded under
-   a card's discussion. `#dev-section` is a fixed, overflow-hidden flex
-   column, so this — its only child — owns the scroll. */
-.dev-session-read {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 12px 12px 0;
-}
-.dev-session-read > .st-section { margin-top: 0; }
-.dev-session-read-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
 .st-section-head {
   display: flex;
   align-items: center;
@@ -11849,7 +11824,7 @@ body.is-offline [data-offline-disabled] {
 }
 .dev-feed-msg-time { color: var(--text-muted); white-space: nowrap; }
 .dev-feed-msg-text { color: var(--text-primary); }
-/* The reply box: a 36px white pill field and the dev session's send disc
+/* The reply box: a 36px white pill field and a send disc
    (36px, filled accent, up-arrow), the pair every composer on the platform
    now shares. The field's own utilities (input.tsx `activityReply`) draw a
    bordered r16 box; this is the widget-language reading of the same field,
@@ -13082,7 +13057,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ledger-explain { grid-column: 1 / -1; margin: 2px 0 8px; font-size: 12.5px; }
 .dev-ledger-explain-text { margin: 2px 0 0; line-height: 1.45; color: var(--text-primary); }
 .dev-ledger-explain-source { margin-top: 2px; font-size: 11px; color: var(--text-muted); }
-.dev-ledger-fix-refused { flex-basis: 100%; font-size: 12px; color: var(--state-blocked); }
 .dev-ledger-check-glyph { flex: none; }
 .dev-ledger-check-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dev-ledger-check-path { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-muted); }
@@ -14428,7 +14402,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   font-size: 14px;
   font-weight: 600;
 }
-.dev-change-gate-refused { grid-column: 1 / -1; margin: 6px 0 0; font-size: 13px; line-height: 1.4; color: var(--state-blocked); }
 @media (prefers-reduced-motion: reduce) {
   .dev-change-bar-fill { transition: none; }
 }
@@ -19854,8 +19827,6 @@ button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-o
    reader can see where the item ends. Not the comment threads: the sheet
    already carries both, above and below this block. */
 .dev-ws-open-btn { white-space: nowrap; text-decoration: none; }
-/* The "Open session" link under a card about the viewer's own session (#1887). */
-.dev-ws-sheet-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
 .dev-ws-more { font-size: 13px; color: var(--text-muted); padding: 2px 10px; }
 .dev-ws-theme-more { font-size: 13px; color: var(--text-muted); padding: 4px 10px 0; }
 /* The row's vote button, at the right end of its last line (.dev-ws-row-band). */
@@ -23079,14 +23050,6 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   justify-content: center;
   font-size: 18px;
   font-weight: 700;
-}
-/* An agent chat has no artwork of its own — it is a thread with the thing
-   that builds, not with an app — so it wears the accent tint and the same
-   sparkle the Improve panel's own chat rows use. */
-.messages-inbox-agent-tile {
-  background: var(--brand-tint);
-  color: var(--brand-ink);
-  border: 1px solid var(--brand-line);
 }
 /* A change in flight (16 Oct 2026): an agent's pencil on a tint of its
    project's colour (--change-ink, lib/community-color.ts), in the place of

@@ -314,7 +314,7 @@ test('the connector gives people the clean change page, by its pull request numb
   const withPrUrl = (tools.match(/^\s+prUrl: (?!z\.)/gm) || []).length;
   const withLink = (tools.match(/^\s+link: (?!z\.)/gm) || []).length;
   assert.ok(withLink >= 8, `the proposal answers carry link (${withLink})`);
-  assert.ok(withPrUrl - withLink <= 4, 'only promote_change, the error extras and the demo tools carry prUrl alone');
+  assert.ok(withPrUrl - withLink <= 4, 'only the error extras and the demo tools carry prUrl alone');
   const charter = read('src/services/mcp-charter.js');
   assert.match(charter, /When you LINK a person to a proposal, give them `link`/);
   assert.match(charter, /Never send a person to `prUrl`/);

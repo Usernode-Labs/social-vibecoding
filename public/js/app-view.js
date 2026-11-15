@@ -29355,7 +29355,6 @@ const AppView = {
   //   fallbackUrl — the last-known preview URL (may be stale/dead); used
   //                only when the server says `ready` without echoing a URL.
   //   testing    — the session's testing guidance ({ md, path } | null).
-  //   opts.jump  — open the deep link directly (the "Test this change" btn).
   //   opts.app   — the app the preview is of ({ slug, self_hosted }), for a
   //                caller that is not on that app's screen (Homeroom bot's
   //                ready card). Defaults to the app on screen.
@@ -29370,7 +29369,6 @@ const AppView = {
     const app = AppView._stagingApp(opts);
     const slug = app?.slug;
     const readOnly = AppView._stagingReadOnly(opts);
-    const jump = !!(opts && opts.jump);
     const inheritedTelemetryAttempt = opts && opts.telemetryAttempt;
     const telemetryAttempt = inheritedTelemetryAttempt
       || window.UITelemetry?.attempt?.('preview_open', {
@@ -29469,7 +29467,6 @@ const AppView = {
       // hitting the same container, which is the one honest reason a live
       // preview's first load can be slow.
       return AppView.swapToStaging(data.url || fallbackUrl, testing, {
-        jump,
         verified: !!data.verified,
         checksRunning: !!data.checksRunning,
         telemetryAttempt,
@@ -29520,7 +29517,7 @@ const AppView = {
       sub: PlatformI18n.t(data.waking ? 'changes:frame.loader.wakingSub' : 'changes:frame.loader.rebuildingSub'),
     });
     AppView._pendingStagingPreview = {
-      sessionId, slug, jump, testing, loadId, retry,
+      sessionId, slug, testing, loadId, retry,
       telemetryAttempt,
       app: opts && opts.app ? opts.app : null,
       readOnly: opts && typeof opts.readOnly === 'boolean' ? opts.readOnly : undefined,
@@ -29592,7 +29589,6 @@ const AppView = {
       // receives the event. Re-enter ensure-staging so the exact same
       // revision/health/edge gate runs before iframe navigation (#2328).
       return AppView.ensureStaging(sessionId, url, pending.testing, {
-        jump: pending.jump,
         telemetryAttempt: pending.telemetryAttempt,
         ...(pending.app ? { app: pending.app } : {}),
         ...(typeof pending.readOnly === 'boolean' ? { readOnly: pending.readOnly } : {}),
@@ -29605,10 +29601,9 @@ const AppView = {
   // Open staging in the overlay.
   //
   // #127: `testing` is the session's bot-generated testing guidance
-  // ({ md, path } | null) and `opts.jump` opens the iframe directly at the
-  // deep-link path ("Test this change"). Callers must never thread the
-  // markdown through an HTML attribute — use a wrapper that looks the
-  // object up at click time (swapToStagingForSession).
+  // ({ md, path } | null). Callers must never thread the markdown through
+  // an HTML attribute — use a wrapper that looks the object up at click
+  // time (swapToStagingForSession).
   //
   // #816: `opts.verified` means the server confirmed the container answered
   // its healthcheck moments ago, so the readiness poll is skipped entirely
@@ -29726,11 +29721,9 @@ const AppView = {
       if (clock && !clock.asNow) url.searchParams.set(AppView.PREVIEW_NOW_PARAM, clock.at);
       return url.toString();
     };
-    const jump = !!(opts && opts.jump) && !!safePath;
     // #4917: the first load opens on the page the change is about when it
-    // named one (`safeStart`), else the root. `jump` (Test this change)
-    // still wins, and its panel rule below is untouched.
-    const pending = { src: buildSrc(jump ? safePath : safeStart) };
+    // named one (`safeStart`), else the root.
+    const pending = { src: buildSrc(safeStart) };
 
     // "See it as now" and back: the same address with `un-now` dropped or
     // put back, so a deep link the preview was opened at survives. Before the
@@ -29757,7 +29750,7 @@ const AppView = {
       } : null,
     });
 
-    AppView._renderTestingControls(buildSrc, pending, jump);
+    AppView._renderTestingControls(buildSrc, pending);
     const checksRunning = !!(opts && opts.checksRunning);
 
     // #816: FAST PATH. The server verified this container answered its
@@ -29863,7 +29856,7 @@ const AppView = {
     AppView.ensureStaging(sessionId, stagingUrl, (AppView._sessionTesting || {})[sessionId] || null, {});
   },
 
-  // #439: pending on-demand-rebuild marker ({ sessionId, jump, testing,
+  // #439: pending on-demand-rebuild marker ({ sessionId, testing,
   // loadId } | null), set by ensureStaging and consumed by the
   // staging_ready / staging_failed WS handlers via onStagingRebuildResult.
   _pendingStagingPreview: null,
@@ -29934,10 +29927,9 @@ const AppView = {
   _stagingPreview: null,
 
   // #127: show/hide + wire the overlay's "Test this change" button and the
-  // collapsible "How to test" panel for the current preview. `jump` is true
-  // only when the preview was entered via an explicit "Test this change"
-  // button — the one path where the panel auto-opens (#237).
-  _renderTestingControls(buildSrc, pending, jump) {
+  // collapsible "How to test" panel for the current preview. The panel
+  // stays hidden until asked for (#237).
+  _renderTestingControls(buildSrc, pending) {
     const staging = AppView._staging();
 
     staging.setTestPanelHidden(true);
@@ -29985,11 +29977,6 @@ const AppView = {
       },
       onTestingClose: () => staging.setTestPanelHidden(true),
     });
-
-    // #237: the panel no longer auto-opens on every preview. It auto-shows
-    // only when the user entered through an explicit "Test this change"
-    // button (jump) — plain Preview keeps it hidden until asked for.
-    if (jump && t.md) staging.setTestPanelHidden(false);
   },
 
   // Incremented on every swap/close so an in-flight readiness poll for a

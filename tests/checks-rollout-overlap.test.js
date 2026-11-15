@@ -336,7 +336,7 @@ test('the connector says the checks will run again, not to fix the tests', () =>
 
   const change = tools.changeNextStep(rolloutRow(), tools.shapeChecks(rolloutRow()), {}, 'external');
   assert.match(change, /ran while Homeroom was updating, so they will run again on their own/);
-  assert.doesNotMatch(change, /Its coding agent fixes them/);
+  assert.doesNotMatch(change, /A new revision fixes them/);
 
   // Any other error with failing rows keeps today's advice.
   const other = tools.shapeProposal(rolloutRow({ check_error_detail: 'Staging preview unreachable' }), ORIGIN);
@@ -378,7 +378,7 @@ test('#4265: a rerun whose unit suite failed tests names them beside the rerun n
 
   const change = tools.changeNextStep(withUnit(unitRed()), tools.shapeChecks(withUnit(unitRed())), {}, 'external');
   assert.match(change, /^Checks on PR #41 \(change 58\) ran while Homeroom was updating, so they will run again on their own\. That run's unit suite \(npm test\) also reported 18 failing tests, including /);
-  assert.match(change, /Its coding agent fixes them from the change's own page/);
+  assert.match(change, /A new revision fixes them: from the coding agent that built it, or by asking Homeroom bot on the change's own page/);
   assert.doesNotMatch(change, /Nothing to fix yet/);
 });
 
