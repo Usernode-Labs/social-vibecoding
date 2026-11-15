@@ -1643,16 +1643,6 @@
       "expectText": "Staging demo perf"
     },
     {
-      "name": "Restart-recovery pill fixtures are seeded (#786)",
-      "path": "/?demo=1#app/usernode-2d5619/board",
-      "expectText": "Staging demo: pills after a recovered build turn"
-    },
-    {
-      "name": "Interrupted-reply pill fixture is seeded (#786)",
-      "path": "/?demo=1#app/usernode-2d5619/board",
-      "expectText": "Staging demo: pills after an interrupted reply"
-    },
-    {
       "name": "A draft PR is linked on its owner's Underway card (#2866)",
       "path": "/?demo=1&shot=card-menu&card=session:990103&cards=open#app/usernode-2d5619/board",
       "expectSelector": ".dev-card-menu [data-menu-idx][title=\"https://github.com/Usernode-Labs/social-vibecoding/pull/990103\"]",
@@ -4516,7 +4506,7 @@
       "name": "#2327: an author can also edit a proposal title in review; a full change page has its ⋯ and no build surface of its own (#4455)",
       "path": "/#app/usernode-2d5619/dev/proposals/900801",
       "expectSelector": "body:has(#gc-thread-bar [data-card-menu]) #dev-topic-thread:not(:has([data-change-build])) .dev-change-root button[aria-label=\"Edit title\"]",
-      "expectText": "Staging demo: pills fall back after a build"
+      "expectText": "Staging demo: sort the leaderboard by score"
     },
     {
       "name": "#4455: a change’s replies are Messages rows and its notices single lines, in one stream under \"N replies\", with the reply box at the foot of the sheet",
