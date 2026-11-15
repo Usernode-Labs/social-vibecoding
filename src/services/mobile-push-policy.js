@@ -481,13 +481,6 @@ function buildCopy(kind, context, now, t) {
         title: withApp(t('push:approverInviteAccepted.title', { actor })),
         body: t('push:approverInviteAccepted.body'),
       };
-    case 'spec_shared':
-      return {
-        title: withApp(actor
-          ? (titleLabel ? t('push:specShared.title.named', { actor, title: titleLabel }) : t('push:specShared.title.plain', { actor }))
-          : t('push:specShared.title.unnamed')),
-        body: detail ? t('push:specShared.body.version', { version: detail }) : t('push:specShared.body.plain'),
-      };
     // B7 / "one story": the change and its project over who asked for it
     // and what to do ("Water reminders · Plant Pal" over "@ben's change is
     // ready to try. Try it and vote.").

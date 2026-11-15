@@ -71,9 +71,8 @@ function prLabel(session) {
 // #866: post a note into an imported proposal's VISIBLE thread.
 //
 // The native staging flows narrate build start/finish/failure into
-// chat_session_messages — the dev-chat transcript. An imported proposal has
-// no dev chat (nobody in the app owns its session), so those rows render
-// nowhere and every minute of a multi-minute build looks like nothing
+// chat_session_messages — the change's own event log. An imported proposal's
+// session has no owner in the app, so those rows render nowhere and every minute of a multi-minute build looks like nothing
 // happening. The thread an imported proposal DOES have is the group
 // discussion keyed ('session', id) — the same channel the merge's lines and the
 // head-change note use. Best-effort by construction: narration must never

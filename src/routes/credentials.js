@@ -5,7 +5,6 @@
 // Distinct from the legacy /api/me/api-key route (which is
 // Anthropic-specific). These routes own the OpenRouter key lifecycle:
 //   GET    /api/me/credentials/openrouter   status (last4, limits)
-//   POST   /api/me/credentials/openrouter/managed  claim company child key
 //   PUT    /api/me/credentials/openrouter   save/replace personal key
 //   DELETE /api/me/credentials/openrouter   revoke
 //   GET    /api/me/coding-agent             current preferences
@@ -136,14 +135,12 @@ function credentialRoutes(config) {
         source: meta?.metadata?.source || (configured ? 'personal' : null),
         managed,
         // #2568: nothing here is a claim gate any more — an account's
-        // included key is created with the account, and Settings renders
-        // this as a status line rather than a button. `canClaim` is kept
-        // only for the build-time safety net in the dev chat, which still
-        // POSTs the managed route when it finds an account without a key.
+        // included key is created with the account (and, failing that, by
+        // GET /api/me/coding-agent's ensureIncludedKey), and Settings renders
+        // this as a status line rather than a button.
         managedProvisioning: {
           available,
           alreadyIssued: !!managed,
-          canClaim: available && hasAllowance && !managed && !configured,
           limitUsd: allowance.limitUsd,
           limitReset: allowance.limitReset,
           reason: !codexAvailable() ? 'not_available'
@@ -156,94 +153,6 @@ function credentialRoutes(config) {
     } catch (err) {
       log.error('credentials', 'openrouter status read failed', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // ── OpenRouter allowance, read live ────────────────────────────────
-  // What the dev-chat composer's meter shows for an OpenRouter session
-  // (#2118): how much of the key's limit OpenRouter says is left right now.
-  // `keyInfo` on the status route above is the snapshot taken when the key
-  // was saved or issued, and a managed key's remaining figure moves with
-  // every turn, so this asks OpenRouter each time. The response is
-  // allowlisted like the status route's: figures and the last4, never key
-  // material. A key OpenRouter reports no limit for comes back with null
-  // figures, which the meter draws as nothing rather than a guess.
-  router.get('/api/me/credentials/openrouter/allowance', async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    res.setHeader('Cache-Control', 'no-store');
-    let meta;
-    let apiKey;
-    try {
-      meta = await credentialStore.readMetadata({ pool, userId: req.user.id, ...OPENROUTER });
-      if (!meta || meta.status !== 'valid') return res.json({ configured: false });
-      apiKey = await credentialStore.readSecret({
-        pool, userId: req.user.id, ...OPENROUTER, dataKey: config.dataEncryptionKey,
-      });
-      if (!apiKey) return res.json({ configured: false });
-    } catch (err) {
-      log.error('credentials', 'openrouter allowance credential read failed', { userId: req.user.id, err: err.message });
-      return res.status(500).json({ error: 'Internal server error' });
-    }
-    try {
-      const info = await openrouterClient.validateKey(apiKey, {
-        baseUrl: config.openrouterApiBase, origin: config.openrouterOrigin,
-      });
-      res.json({
-        configured: true,
-        source: meta.metadata?.source || 'personal',
-        last4: meta.secret_last4 || null,
-        limit: info.limit,
-        limitRemaining: info.limitRemaining,
-        limitReset: info.limitReset,
-      });
-    } catch (err) {
-      // A transient provider failure leaves the meter blank for this read;
-      // the next usage event or session open asks again.
-      log.warn('credentials', 'openrouter allowance read failed', { userId: req.user.id, err: err.message });
-      res.status(502).json({ error: 'OpenRouter did not report the key\u2019s allowance.' });
-    }
-  });
-
-  // ── Claim the one company-funded OpenRouter child key ─────────────
-  router.post('/api/me/credentials/openrouter/managed', sameOriginBrowserOnly, async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('Pragma', 'no-cache');
-    if (!codexAvailable()) {
-      return res.status(403).json({ error: 'OpenRouter is not available on this deployment.' });
-    }
-    try {
-      const claimed = await managedOpenRouter.provision({
-        pool, userId: req.user.id, config,
-      });
-      // Company-funded credentials stay inside Homeroom. Keep this response
-      // allowlisted so a future provisioning detail cannot accidentally
-      // expose credential material to the claimant's browser.
-      return res.status(201).json({
-        ok: true,
-        revision: claimed.revision,
-        defaultModel: claimed.defaultModel,
-        keyInfo: claimed.keyInfo,
-        managed: claimed.managed,
-      });
-    } catch (err) {
-      if (err instanceof managedOpenRouter.ManagedOpenRouterError) {
-        // QA 2026-09-24: the unconfigured case names an environment variable
-        // in its message. That stays in the log; the person gets plain words.
-        if (err.code === 'not_configured') {
-          log.warn('credentials', 'managed OpenRouter claim refused: not configured', {
-            userId: req.user.id, err: err.message,
-          });
-          return res.status(err.statusCode).json({
-            error: managedOpenRouter.NOT_CONFIGURED_USER_MESSAGE, code: err.code,
-          });
-        }
-        return res.status(err.statusCode).json({ error: err.message, code: err.code });
-      }
-      log.error('credentials', 'managed OpenRouter claim failed', {
-        userId: req.user.id, err: err.message,
-      });
-      return res.status(500).json({ error: 'Internal server error' });
     }
   });
 
@@ -342,9 +251,8 @@ function credentialRoutes(config) {
       await credentialStore.revoke({ pool, userId: req.user.id, ...OPENROUTER });
       // Key-removal consistency (review #8, plan 9.4): if Codex/OpenRouter
       // is the user's DEFAULT coding agent, reset the default back to
-      // Claude — otherwise every future ordinary/headless session copies the
-      // Codex default and immediately fails with `credential_required` until
-      // a key is reconfigured. The "clear Codex default + upsert Claude
+      // Claude, so the stored default never names a backend the account has
+      // no key for. The "clear Codex default + upsert Claude
       // default" pair runs in ONE transaction so a failure between them can
       // never leave the user with NO default backend. Existing sessions are
       // left untouched (they stay on whatever backend they were created

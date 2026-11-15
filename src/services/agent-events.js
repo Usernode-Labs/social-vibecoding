@@ -7,8 +7,8 @@
 // module maps them onto a single schema the UI already understands, so
 // progress rendering and /status stay backend-neutral.
 //
-// The progress "events" below are the same strings the existing
-// dev-chat progress card and cc-progress-summary.js already understand.
+// The progress "events" below are the same strings cc-progress-summary.js
+// already understands.
 // We define the vocabulary centrally here so PR5's Codex JSONL adapter
 // and this module share the same constants instead of each inventing its
 // own labels.

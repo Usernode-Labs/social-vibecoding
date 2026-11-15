@@ -1374,8 +1374,7 @@ function chatRoutes(config) {
 
   // ── Group-chat file attachments (#694) ───────────────────────────
   //
-  // Upload happens BEFORE send, mirroring dev-chat (#450,
-  // src/routes/sessions.js): the client POSTs raw bytes here per file,
+  // Upload happens BEFORE send (#450): the client POSTs raw bytes here per file,
   // gets back an attachment id, and passes the ids on the WS 'chat'
   // message, whose handler links them to the message row. The body is
   // always application/octet-stream (real type derived server-side from

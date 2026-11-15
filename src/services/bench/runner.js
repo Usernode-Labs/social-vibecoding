@@ -52,7 +52,7 @@
 // (services/durable-turn.js), and never cuts its branch again. Its sessions
 // carry the build that owns them (chat_sessions.workflow_owner), which
 // restart recovery in server.js leaves them to. A trial that ran with no
-// workflow runtime is never recovered into the dev-chat tail either
+// workflow runtime is never recovered into a person's turn tail either
 // (server.js adoptOrphanWorker, isBenchSession): its turn is abandoned and
 // the trial run again from the start (services/bench/lane.js).
 

@@ -1,12 +1,11 @@
 'use strict';
 
 // The build contract: the one set of rules every on-platform coding turn that
-// may change an app's code works under — a dev chat build the Mayor
-// dispatches, a direct OpenRouter turn, a headless auto session, and the
-// Homeroom bot.
+// may change an app's code works under: the Homeroom bot's builds and its
+// reviewer's fixes (services/bot-review.js).
 //
 // Why one copy. Until this module the platform had two, and they had drifted
-// as far apart as two lists can. The dev chat's Mayor-dispatched builds still
+// as far apart as two lists can. The Mayor-dispatched builds of the time still
 // ran on the platform's first prompt (2026-04-25, "Initial commit: extract
 // from evanshapi.ro monorepo"):
 //
@@ -122,11 +121,9 @@ const SUMMARY_LINE = [
  *
  * @param {object} [opts]
  * @param {string} [opts.heading] the line that introduces the rules.
- * @param {'agent'|'harness'} [opts.commits] who commits: the agent itself (the
- *   dev chat asks it to) or the harness after it finishes (the Homeroom bot).
- * @param {boolean} [opts.summary] whether to close with the summary line. The
- *   dev chat puts its own required blocks after the rules, so it asks for the
- *   same summary in its own words.
+ * @param {'agent'|'harness'} [opts.commits] who commits: the agent itself or
+ *   the harness after it finishes (the Homeroom bot).
+ * @param {boolean} [opts.summary] whether to close with the summary line.
  */
 function buildContractBlock({
   heading = 'When you change files, work under these rules:',

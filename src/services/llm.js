@@ -18,8 +18,7 @@ const DEFAULT_MODEL = 'claude-opus-5-5';
 // server-side fallback beta re-serves a declined request on the fallback
 // model inside the same call, with cache-read repricing applied
 // automatically. streamChat below is the single funnel for every
-// platform-authored Messages call that can run a user-selected model —
-// all Mayor phases and the headless runner — so
+// platform-authored Messages call that can run a user-selected model, so
 // opting in here covers every retry/regeneration/continuation path.
 // NOTE: any future direct SDK use outside this module bypasses the
 // fallback config, the detection, and the billing attribution — route

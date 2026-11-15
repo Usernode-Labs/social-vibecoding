@@ -123,8 +123,8 @@ async function checkPromotedCap(pool, config, user) {
 // promoted cap above says why: a connector doing what the browser permits
 // must not be cut off earlier than the browser, and a full admin keeps the
 // admin tier here as they do everywhere else. Headless rows are excluded, as
-// they are in every other count in this module — an auto run holds no warm
-// worker of the user's.
+// they are in every other count in this module — an unattended run of the
+// past or a bench preview holds no warm worker of the user's.
 //
 // Counted BEFORE the session row is inserted, so an over-cap share leaves no
 // card behind and no branch copied into the app's repository.

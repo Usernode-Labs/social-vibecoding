@@ -41,8 +41,7 @@
 // The scout runner blanks the push token (worker/run-codex-agent.sh), so
 // "nothing is built" is structural rather than a prompt instruction. The
 // bot's sessions carry an empty linked_issues and is_headless FALSE, so the
-// issue payload's `headless` and `in_progress` derivations never paint them
-// on a card; routes/issues.js excludes synthetic authors there as well, as
+// issue payload's `in_progress` derivation never paints them on a card; routes/issues.js excludes synthetic authors there as well, as
 // defence in depth. The sessions sit `paused` between turns and are
 // excluded from the global session cap (routes/sessions.js), so a bot turn
 // never costs a person a slot.
@@ -4699,8 +4698,8 @@ async function runTriage(pool, config, {
         owner: extra.owner || null,
         resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
           pool, session, userId: bot.id, model, resumeThreadId, config,
-          // The platform's per-model choice of CLI, as the dev chat's scout
-          // makes it (#3296): GLM runs in Claude Code. A first version's
+          // The platform's per-model choice of CLI (#3296): GLM runs in
+          // Claude Code. A first version's
           // configuration may name an Anthropic model, which runs there too.
           harness: triageHarness,
           // And the effort its configuration gives the triage, if it names one.
@@ -5225,7 +5224,7 @@ async function recordBuildSnapshot(pool, {
 
 /**
  * True when restart recovery should hand this session to the bot rather than
- * to a person's dev-chat tail: the bot's own session, while `active`, or
+ * to a person's turn tail: the bot's own session, while `active`, or
  * `paused` with a turn record on it. A session a durable build owns
  * (`workflow_owner`) is that build's, and server.js leaves it alone before
  * it asks this.

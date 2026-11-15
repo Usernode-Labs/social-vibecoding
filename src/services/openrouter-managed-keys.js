@@ -72,13 +72,6 @@ async function usesIncludedKey(pool, userId) {
   }
 }
 
-// QA 2026-09-24: what a PERSON is told when managed keys are not configured.
-// The error's own message names the environment variable an operator has to
-// set, which is exactly right in the server log and the admin console and
-// meaningless in a toast over "Start work". The user-facing routes answer
-// with this instead and log the original.
-const NOT_CONFIGURED_USER_MESSAGE = "AI builds aren't available on this server yet. Ask an admin to finish setting them up.";
-
 class ManagedOpenRouterError extends Error {
   constructor(statusCode, code, message) {
     super(message);
@@ -639,7 +632,6 @@ async function syncAllowance(args) {
 
 module.exports = {
   ManagedOpenRouterError,
-  NOT_CONFIGURED_USER_MESSAGE,
   managedKeysEnabled,
   OPENROUTER,
   LIMIT_RESET,

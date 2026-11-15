@@ -96,9 +96,9 @@
     {
       "source": "src/middleware/auth.js",
       "kind": "structural-template",
-      "fingerprint": "904491a494de6b02d9c2",
+      "fingerprint": "ef2f0b9d89189bbc7836",
       "count": 1,
-      "preview": "`SELECT s.user_id, s.expires_at, s.created_at, s.last_seen_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.review_flow_enab"
+      "preview": "`SELECT s.user_id, s.expires_at, s.created_at, s.last_seen_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.review_flow_enabled, u.private_member_si"
     },
     {
       "source": "src/middleware/topochain-auth.js",
@@ -586,6 +586,20 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
+      "fingerprint": "2bde029ab4c2dc90ff7a",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.session_title, cs.pr_title, cs.pr_number, cs.pr_url, cs.branch_name, cs.status, cs.staging_url, -- #2069, as above: a shared draft has neither"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
+      "fingerprint": "2ed058156ad3706d17f7",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.proposed_pr_title, cs.status, cs.linked_issues, cs.shared_"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
       "fingerprint": "42c89c7dc3cd0cb79eb0",
       "count": 1,
       "preview": "`SELECT DISTINCT ON (s.session_id) s.session_id, s.version, s.built_at FROM chat_session_specs s JOIN chat_sessions owner_session ON owner_session.id = s.sessio"
@@ -607,23 +621,9 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
-      "fingerprint": "b8a81527854525d2e351",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.proposed_pr_title, cs.status, cs.linked_issues, cs.shared_"
-    },
-    {
-      "source": "src/routes/sessions.js",
-      "kind": "structural-template",
       "fingerprint": "ba8110c429c6037d85c2",
       "count": 1,
       "preview": "`SELECT s.version, s.built_at FROM chat_session_specs s WHERE s.session_id = $1 AND ($2::int = $3::int OR ${specVersionSharedVisibilitySql('s', '$3')}) ORDER BY"
-    },
-    {
-      "source": "src/routes/sessions.js",
-      "kind": "structural-template",
-      "fingerprint": "d6def8d6230e5b0888e6",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.session_title, cs.pr_title, cs.pr_number, cs.pr_url, cs.branch_name, cs.status, cs.staging_url, -- #2069, as above: a shared draft has neither"
     },
     {
       "source": "src/routes/status.js",
@@ -1949,20 +1949,6 @@
       "preview": "sql"
     },
     {
-      "source": "src/services/session-bus.js",
-      "kind": "structural-template",
-      "fingerprint": "2258237abfc603d59087",
-      "count": 1,
-      "preview": "`DELETE FROM stream_watchers w WHERE w.opened_at < NOW() - interval '1 minute' AND NOT ${holderAliveSql('w.holder')}`"
-    },
-    {
-      "source": "src/services/session-bus.js",
-      "kind": "structural-template",
-      "fingerprint": "4a479c3887c1957a2b2e",
-      "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS n FROM stream_watchers w WHERE w.stream_key = $1 AND ${holderAliveSql('w.holder')}`"
-    },
-    {
       "source": "src/services/shared-objects.js",
       "kind": "structural-template",
       "fingerprint": "07fc5c0dfd474d4567fc",
@@ -2644,9 +2630,9 @@
     {
       "source": "src/workflow/turn/machine.ts",
       "kind": "structural-template",
-      "fingerprint": "9d44871cf656aeabb6da",
+      "fingerprint": "ff36a9a8b1ab2eb7b023",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, (cs.shared_at IS NOT NULL) AS shared, cs.is_headless, cs.headless_status, cs.headless_outcome, cs.headless_issu"
+      "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, (cs.shared_at IS NOT NULL) AS shared, a.slug AS app_slug, ${workedOnSql({ turns: false })} AS other_work FROM c"
     }
   ]
 }

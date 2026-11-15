@@ -17,7 +17,7 @@
 //                           thread; the same namespace a shared session
 //                           uses before promotion, which is why comments
 //                           carry over when it's promoted)
-//   thread_type='governance' → out of scope (a dev chat can't act on a
+//   thread_type='governance' → out of scope (a build can't act on a
 //                           rename / secret / close-issue vote).
 //   thread_type='message' → out of scope too: #2387's reply threads under
 //                           general-chat messages are app chatter, not a
@@ -125,9 +125,8 @@ function loadIssueThread(pool, appId, issueNumber) {
   return loadThread(pool, appId, 'issue', issueNumber);
 }
 
-// A proposal's discussion thread. `sessionId` is chat_sessions.id —
-// the SAME id the dev chat itself runs under, which is what makes this
-// thread and the Mayor's chat two views of one proposal.
+// A proposal's discussion thread. `sessionId` is chat_sessions.id, the
+// change's own id.
 function loadProposalThread(pool, appId, sessionId) {
   return loadThread(pool, appId, 'session', sessionId);
 }
@@ -201,8 +200,8 @@ function buildIssueDiscussionBlock({
   return `DISCUSSION ON ${label} (oldest first; "github" = a comment on the GitHub issue, "usernode thread" = a message in the issue's Discussion thread on the platform):\n${lines.join('\n\n')}`;
 }
 
-// The discussion on THIS session's proposal — the public thread that
-// sits next to the dev chat on the app's Dev page.
+// The discussion on THIS session's proposal — the public thread on its
+// change page.
 function buildProposalDiscussionBlock({
   sessionId, prNumber = null, threadMessages = [], truncated = false,
 } = {}) {

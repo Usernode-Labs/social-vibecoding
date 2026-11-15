@@ -355,7 +355,7 @@ const EVENT_TYPES = Object.freeze({
   PLATFORM_POD_EXIT: 'platform_pod_exit',
   // A retained recovery of an interrupted turn ran out of attempts and was
   // given up on (services/recovery-retry.js scheduleRetainedRecovery):
-  // { sessionId, recovery: 'interactive' | 'headless' | ..., code, failures }.
+  // { sessionId, recovery: 'interactive' | ..., code, failures }.
   // The turn is left to the stale-turn watchdog; the platform signals file
   // these (signal-observers/turn-recovery.js).
   TURN_RECOVERY_GAVE_UP: 'turn_recovery_gave_up',

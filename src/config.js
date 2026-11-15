@@ -810,11 +810,9 @@ function load() {
     // Session auto-pause: a DB-driven sweeper (server.js) flips idle
     // 'active' sessions to 'paused' so they stop counting against the
     // session caps. Now that pause is cheap (it no longer tears down
-    // staging — see session-lifecycle.js) and activity is kept fresh by
-    // the dev-chat heartbeat while the tab is open, this is tuned to
-    // line up with the worker idle-eviction timescale (~5 min). A
-    // session pauses ~5 min after the user actually leaves (tab closed/
-    // backgrounded → no more heartbeats). Set to 0 to disable.
+    // staging — see session-lifecycle.js), this is tuned to line up with
+    // the worker idle-eviction timescale (~5 min): a session pauses ~5 min
+    // after its last activity. Set to 0 to disable.
     sessionAutopauseIdleMs: parseInt(process.env.SESSION_AUTOPAUSE_IDLE_MS || String(5 * 60 * 1000), 10),
     // Staging preview GC: pause no longer tears staging down, so this
     // sweeper reclaims the staging container + cloned DB from sessions
@@ -934,8 +932,7 @@ function load() {
     // config.previewProjects: false); an admin decides in Admin > Limits
     // (services/preview-projects-setting.js).
     previewProjectsEnabled: process.env.PREVIEW_PROJECTS_ENABLED !== 'false',
-    // #3699: apps whose spec author (an agent chat's or dev chat's scout, and
-    // the Homeroom bot) is asked for an HTML spec (before/after screens,
+    // #3699: apps whose spec author (the Homeroom bot) is asked for an HTML spec (before/after screens,
     // diagrams) instead of markdown. Every app by default; comma-separated
     // slugs to narrow it, `none` to turn it off. See src/services/spec-html.js.
     htmlSpecApps: (() => {

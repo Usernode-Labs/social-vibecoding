@@ -862,7 +862,7 @@ async function applyPrMetadata({
 
   // Deterministic "Before / after" media section (#195), regenerated from
   // the session's stored capture artifacts. Mostly relevant on the lazy-PR
-  // path (headless → promote), where the capture ran long before the PR
+  // path (a change promoted before it had a PR), where the capture ran long before the PR
   // exists; on the interactive path visuals.js patches the live body
   // directly after each capture instead.
   const visibleChanges = shotsDetail && typeof shotsDetail === 'object'

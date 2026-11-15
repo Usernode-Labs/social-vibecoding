@@ -1,7 +1,7 @@
 'use strict';
 
-// #3249: what one change (a dev session) has cost so far, in cents, for the
-// dev chat meter's "this change $X". The same disjoint sources the schema
+// #3249: what one change (a dev session) has cost so far, in cents, for its
+// author and admins ("this change $X"). The same disjoint sources the schema
 // comment on chat_sessions.agent_cost_cents and model-costs.js
 // (observedPerModel) define a change's cost by:
 //

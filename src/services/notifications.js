@@ -12,9 +12,9 @@
 // you; `detail` carries the version number as a string). Actionable managed
 // OpenRouter failures use openrouter_key_review; openrouter_key_created is a
 // historical render-only kind now that successful issuance is routine.
-// 'session_done', 'session_stalled' and 'auto_solve_done' (`detail` holds a
-// run's outcome) are historical render-only kinds too: nothing creates them
-// any more, and a row of one opens its change's page.
+// 'spec_shared', 'session_done', 'session_stalled' and 'auto_solve_done'
+// (`detail` holds a run's outcome) are historical render-only kinds too:
+// nothing creates them any more, and a row of one opens its change's page.
 // #2387 adds 'thread_reply': a reply in an app-chat reply thread you started
 // or replied in (chat_message_id is the reply; its thread_ref the root).
 // #4535 adds 'issue_thread_reply': a message in a request's discussion
@@ -1100,8 +1100,8 @@ function createStalePrNotification(pool, { userId, appId, sessionId, detail = nu
 
 // #237: staging preview failed to boot, so proposal checks can't run and the
 // PR is merge-blocked. Addressed to the proposal owner (system-generated, so
-// source_user_id is NULL). Same unread-dedup as session_done — at most one
-// unread 'check_failed' per (user, session) — so the per-streak nudge can't
+// source_user_id is NULL). At most one unread 'check_failed' per
+// (user, session) — so the per-streak nudge can't
 // pile up if the owner hasn't looked yet. The streak gate in
 // staging-recovery.recordStagingBootFailure already limits this to once per
 // failure streak; the dedup is belt-and-suspenders against re-fires.

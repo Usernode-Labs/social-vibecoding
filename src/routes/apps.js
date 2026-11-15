@@ -787,7 +787,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const appDeployStatus = require('../services/app-deploy-status');
       // SELF-HOSTING.md sub-step 2j: hide self_hosted rows from
       // non-admin listings. Admins see them so they can reach the
-      // self-app's settings, dev-chat, etc. The same filter is applied
+      // self-app's settings, board, etc. The same filter is applied
       // to GET /api/apps/:slug below — a non-admin requesting the slug
       // directly gets a 404, not a 403, so the row's existence isn't
       // disclosed.
@@ -2541,7 +2541,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // change to a list you can't see. PLAINTEXT is still admin-only
       // (see includeValues below), so for a non-admin this stays
       // metadata-only disclosure of information the committed dapp.json
-      // already carries — consistent with "open-source-by-live-dev-chat".
+      // already carries — consistent with the app being open source.
       if (app.self_hosted && !req.user?.isAdmin && !config.selfAppPublicVoting) {
         return res.status(404).json({ error: 'App not found' });
       }

@@ -9,7 +9,7 @@
 // the internal docker network, uploads the artifacts and stores their keys
 // in Postgres (session_visuals, latest set per session only), patches the GitHub PR
 // body's marker-delimited "Before / after" block when a PR exists, and
-// emits a `visuals_ready` event so open dev-chat cards upgrade in place.
+// emits a `visuals_ready` event so open change pages upgrade in place.
 //
 // Capture is an automatic platform pipeline step, not an agent
 // responsibility — the worker image has no browser and the coding turn is
@@ -3285,7 +3285,7 @@ function notifyVisualsReady(sessionId, visuals, send) {
 // re-run, sweeper retry) instead of waiting minutes for the terminal
 // verdict. Always broadcastGlobal (never the turn's `send`) — the pending
 // transition matters to every open vote panel / home strip, not just the
-// focused dev chat, and app.js's existing `checks_ready` handler already
+// change page, and app.js's existing `checks_ready` handler already
 // refreshes both on any state.
 //
 // `phase` rides along so a card that re-renders from the event alone shows

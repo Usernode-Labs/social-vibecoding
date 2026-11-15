@@ -21,7 +21,7 @@ const { WORDS_PATH } = require('./upstream-lineage');
 //
 // Existing apps (created before this feature) won't have this block. The
 // easiest fix is to paste this `<script>` near the top of `<body>` in
-// public/index.html — or ask the coding agent in dev chat.
+// public/index.html — or ask Homeroom bot to.
 // Sentinel: usernode-dev-console@1 (keep this marker so updates/tooling
 // can locate and replace the block in the future).
 const DEV_CONSOLE_FORWARDER = `
@@ -759,7 +759,7 @@ public/private tables, "don't \`git push\`", etc.):
 **Platform conventions (authoritative, always current):**
 ${PLATFORM_BASE_URL}/claude.md
 
-**Inside Homeroom** (its dev chat, and Homeroom bot's builds), do not
+**Inside Homeroom** (Homeroom bot's builds), do not
 fetch that URL: what applies to your change is already in your
 instructions, and the \`homeroom\` MCP server's
 \`get_platform_conventions\` reads any one section of the conventions

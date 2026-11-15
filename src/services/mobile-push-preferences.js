@@ -38,8 +38,11 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   Object.freeze({
     key: 'shared_work',
     label: 'Shared work',
-    description: 'Plans that someone privately shares with you.',
+    description: 'Plans someone privately shared with you. Homeroom no longer sends these.',
     defaultEnabled: true,
+    // spec_shared is no longer created: private plan sharing is retired. It
+    // stays listed, and the category with it, so the mapping matches the
+    // seed in db/schema.sql, which still holds its row.
     kinds: Object.freeze(['spec_shared']),
   }),
   Object.freeze({

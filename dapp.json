@@ -4527,7 +4527,7 @@
     {
       "name": "#2327: an author can also edit a proposal title in review; a full change page has its ⋯ and no build surface of its own (#4455)",
       "path": "/#app/usernode-2d5619/dev/proposals/900801",
-      "expectSelector": "body:has(#gc-thread-bar [data-card-menu]) #dev-topic-thread:not(:has([data-change-build])):not(:has(#dc-view)) .dev-change-root button[aria-label=\"Edit title\"]",
+      "expectSelector": "body:has(#gc-thread-bar [data-card-menu]) #dev-topic-thread:not(:has([data-change-build])) .dev-change-root button[aria-label=\"Edit title\"]",
       "expectText": "Staging demo: pills fall back after a build"
     },
     {

@@ -2338,7 +2338,7 @@ function prImportFailureBody(err) {
 // The linked-issue set an import may carry (#1217). Bounded and sanitized by
 // pr-metadata's own helper — the one that renders `Closes #N` — so the column
 // and the PR body can never disagree about what counts as a linked issue.
-// The cap matches the local-agent handoff route's.
+// The cap matches the CLI handoff route's.
 const MAX_IMPORT_LINKED_ISSUES = 50;
 
 function parseImportLinkedIssues(body) {
@@ -2918,8 +2918,8 @@ function voteRoutes(config) {
   // ── #687: import an existing GitHub PR as a proposal ────────────────
   //
   // The three endpoints (candidate list, preview, import) let a collaborator pull an
-  // externally-authored PR into the vote flow instead of building it in the
-  // platform's AI dev-chat. Preview/candidates are read-only; import creates
+  // externally-authored PR into the vote flow instead of building it on the
+  // platform. Preview/candidates are read-only; import creates
   // a shared `source='imported'` In-progress row. Automated submission paths
   // may explicitly request the historical straight-to-vote result.
   //
@@ -5268,7 +5268,7 @@ function voteRoutes(config) {
         proposal.bot_fix = await require('../services/homeroom-bot-progress')
           .changeBotFix(pool, proposal.id, { viewer: req.user }).catch(() => null);
         // #6116: what it has cost so far at list price, for its author or an
-        // admin only, as the dev chat's meter (services/session-cost.js).
+        // admin only (services/session-cost.js).
         proposal.cost_total_cents = await require('../services/session-cost')
           .sessionCostForViewer(pool, proposal, req.user);
         // #4479: the plan it was built from, for the page's plan card.
@@ -7051,7 +7051,7 @@ async function attemptMerge(config, pool, sessionId, {
 // the merge vote on the revert PR is the single checkpoint.
 //
 // `decider` is the user who requested the undo — becomes the revert
-// session's user_id so they own the resulting PR in dev-chat.
+// session's user_id so they own the resulting PR.
 async function checkAndOpenRevert(config, pool, session, decider, { steps = durableSteps.none() } = {}) {
   // #16: opening a revert is now a direct action (like proposing a
   // forward change) — there's no separate undo-vote gate to clear. We

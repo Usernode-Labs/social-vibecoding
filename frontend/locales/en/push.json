@@ -307,26 +307,6 @@
     "text": "They can try changes and vote on them from now on",
     "description": "Phone notification text under the title: somebody accepted the reader's invitation to help approve changes."
   },
-  "specShared.title.named": {
-    "text": "@{{actor}} shared \"{{title}}\" with you",
-    "description": "Phone notification title: somebody shared a plan with the reader. {{actor}} is a username: keep the @ in front of it. {{title}} is the plan's name, kept as written, in quotation marks of the language."
-  },
-  "specShared.title.plain": {
-    "text": "@{{actor}} shared a plan with you",
-    "description": "Phone notification title: somebody shared a plan with the reader. {{actor}} is a username: keep the @ in front of it."
-  },
-  "specShared.title.unnamed": {
-    "text": "A plan was shared with you",
-    "description": "Phone notification title: a plan was shared with the reader by somebody whose name is not known."
-  },
-  "specShared.body.version": {
-    "text": "Plan v{{version}}. Take a look and leave feedback",
-    "description": "Phone notification text under the title: a plan shared with the reader. {{version}} is the plan's version number; \"v\" stands for version."
-  },
-  "specShared.body.plain": {
-    "text": "Take a look and leave feedback",
-    "description": "Phone notification text under the title: a plan shared with the reader."
-  },
   "changeReady.title": {
     "text": "A change is ready to try",
     "description": "Phone notification title: a change the reader can vote on is ready, when its name is not known."

@@ -467,7 +467,7 @@ function stagingMockIssues(repoUrl) {
       + 'button state. A synthetic per-viewer session is attached to this '
       + "row so the start-work button reads \"Create new proposal\" "
       + 'instead of "Create proposal" — exactly what a viewer who already '
-      + 'started a dev chat on this issue would see.', 7),
+      + 'started a change on this issue would see.', 7),
     // #556: dedicated row for reviewing the author-only "edit title"
     // pencil in the topic head. The staging enrichment block in
     // GET /github-issues marks it as authored by whoever is viewing, so
@@ -1132,8 +1132,8 @@ async function readRequestComments(pool, app, number, { demo = false, max = null
 
 // Pick the "In progress" chip's link destination from an issue's live
 // linked sessions, per viewer. Priority: a promoted/merging session (the
-// proposal — group-visible to everyone) > the viewer's own session (their
-// dev chat) > a shared session (its public discussion). Other users'
+// proposal — group-visible to everyone) > the viewer's own session (its
+// change page) > a shared session (its public discussion). Other users'
 // PRIVATE sessions yield no target — by current semantics they appear on
 // no group surface, so the chip stays informational for those viewers.
 // Ties within a class break to the most recently active session.
@@ -2521,7 +2521,7 @@ function issueRoutes(config) {
       );
       const chatByNumber = new Map(chatRows.map((r) => [r.n, r]));
 
-      // #287: the viewer's own most recent non-archived dev chat started
+      // #287: the viewer's own most recent non-archived change started
       // from each issue's start-work button (created_from_issue_number),
       // so the row can swap "Create proposal" → "Create new proposal".
       // Strictly per-viewer (sessions are owner-scoped — another user's
@@ -2713,7 +2713,7 @@ function issueRoutes(config) {
         // proposal") so the has-session button is reviewable — only where
         // no real session already claimed it. The id is synthetic (the
         // mock issue number); clicking "Create new proposal" still just
-        // spawns a fresh dev chat, so this is purely for visual review of
+        // starts a fresh change, so this is purely for visual review of
         // the button label. Request-time, read-only, no-op in production.
         for (const issue of issues) {
           if (issue.number === 900007 && !issue.myPrSessionId) {
@@ -3063,7 +3063,7 @@ function issueRoutes(config) {
       // list is not loaded behind it — so the work state its card shows has
       // to be composed here, exactly as the list composes it: the live
       // sessions that linked this request, the manual claims still in their
-      // window, and the viewer's own dev chat. Without them a
+      // window, and the viewer's own change. Without them a
       // paused request read "Nobody is working on this yet" and its
       // "Continue work" / "Create new proposal" buttons were missing.
       if (issue.state !== 'closed') {

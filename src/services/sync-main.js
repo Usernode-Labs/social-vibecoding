@@ -49,7 +49,7 @@ const SYNC_PHASE_MAP = new Map([
 const SYNC_BUDGET_MS = 20 * 60 * 1000;
 
 // #8: persist the latest behind-origin/main count for a session and
-// broadcast a session_update so the dev-chat banner refreshes live. A count
+// broadcast a session_update so the change's "Behind main" pill refreshes live. A count
 // for display: nothing decides on it (the merge reads the mirror's
 // measurement, services/integration.js). Best-effort.
 async function persistBehindMain(pool, session, behind) {
@@ -123,7 +123,7 @@ async function getSyncState(pool, sessionId) {
   }
 }
 
-// #252: lifecycle broadcast for the dev-chat sync banner. Same
+// #252: lifecycle broadcast for a change's sync state. Same
 // session_update channel as behind_main; clients key on
 // action='sync_status'. state ∈ starting | merging | resolving |
 // pushing | done | failed; terminal events carry syncResult/message.

@@ -28,7 +28,7 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // #683: feedback-modal screenshot attachments. Uploads are raw bytes
 // (application/octet-stream — deliberately sidesteps the global 100 KB
-// express.json() parser, same reasoning as dev-chat attachments), sniffed
+// express.json() parser, same reasoning as conversation attachments), sniffed
 // to PNG/JPEG by magic bytes, capped at 4 MB, and stored bytea-in-Postgres
 // (issue_screenshots). At filing time POST /api/feedback links the row to
 // the created issue and appends the public embed line the coding agents
@@ -212,7 +212,7 @@ function parseScreenshotPins(body, screenshotIds) {
 // sniffed to MP4/WebM/MOV by magic bytes, and the issue-body embed is a
 // plain markdown LINK, not an image — GitHub renders external <video> as
 // an anchor anyway, and the in-app topic view turns the link into an
-// inline player (DevChat.renderMarkdown). One clip per issue; the client
+// inline player (PlatformMarkdown.render). One clip per issue; the client
 // picks at most one and the server accepts exactly one.
 const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
 const VIDEO_ID_RE = SCREENSHOT_ID_RE;

@@ -1936,8 +1936,8 @@ function newWatchState() {
     ahead: 0,
     // #8: how many commits the branch is behind origin/main, parsed from
     // run-cc.sh's __USERNODE_RESULT__ line. Persisted to
-    // chat_sessions.behind_main on every turn so the dev-chat banner
-    // and merge-time block always reflect the latest state.
+    // chat_sessions.behind_main on every turn so the change's "Behind main"
+    // pill and merge-time block always reflect the latest state.
     behind: 0,
     sha: null,
     pushOk: false,
@@ -2831,8 +2831,7 @@ function _registryUpsert(sessionId, patch, noteUse = true) {
 // gate logic on "a CC turn is in progress for this session". The
 // container-status check predates `keep cc warm between calls` and now
 // over-reports busy for the entire warm-idle window (~10 min until the
-// sweeper evicts), which strands the dev-chat UI in stop-sign mode if
-// the POST SSE drops before delivering its `done` event.
+// sweeper evicts), which would report a finished turn as still running.
 function isInFlight(sessionId) {
   return _warmRegistry.get(sessionId)?.inFlight === true;
 }
@@ -3010,8 +3009,8 @@ async function _bootstrapWarmContainer(sessionId, {
   const privacy = await _checkRepoPublicWithRetry(repoOwner, repoName);
   if (!privacy.ok && privacy.code === 'rate_limited') {
     // GitHub refused the check because Homeroom's hourly budget is used up.
-    // This message reaches people as it is (a dev chat's turn error, a
-    // before/after shots card), so it says that in plain words and when the
+    // This message reaches people as it is (a turn's error, a before/after
+    // shots card), so it says that in plain words and when the
     // budget resets, rather than "Cannot bootstrap worker ... API rate limit
     // exceeded for user ID ...".
     const err = new Error(
@@ -3174,8 +3173,7 @@ async function _bootstrapWarmContainer(sessionId, {
 
       // Wait for the wrapper to reach `__USERNODE_PHASE__ warm-ready`.
       // Bootstrap progress (clone/checkout) flows through onProgress so the
-      // dev-chat UI sees [clone] / [checkout] phase ticks just like the
-      // legacy single-shot path used to surface them.
+      // progress log sees [clone] / [checkout] phase ticks.
       //
       // Attempts after the first get half the warm-ready budget, so three
       // attempts cap at 2x the old single-attempt wall clock rather than 3x.
@@ -3513,8 +3511,8 @@ async function ensureWorkerClaimed(sessionId, containerName, {
 // Run one CC turn inside an already-warm container, detached: the exec
 // is dispatched with `docker exec -d`, its output lands in a journal
 // file in the CC volume, and we follow the journal through the shared
-// `parseLine` state machine. The dev-chat UI sees identical progress
-// markers to the old attached transport — but the turn itself survives
+// `parseLine` state machine. The progress log sees identical markers to
+// the old attached transport — but the turn itself survives
 // a platform restart (boot adoption resumes it via the
 // chat_sessions.active_turn record + resumeTurnFromJournal).
 //
@@ -3572,8 +3570,8 @@ async function execInWorker(sessionId, {
   // commits and pushes nothing, as the Codex runner always does. Only the
   // Claude Code runner reads it (DISCARD_FAILED_TURN, run-cc.sh), and only
   // for an OpenRouter turn: the Homeroom bot asks for it, because what it
-  // pushes is what it proposes, or a revision of a proposal up for a vote. A
-  // person's dev chat keeps a failed turn's work, as it always has.
+  // pushes is what it proposes, or a revision of a proposal up for a vote.
+  // Any other turn keeps its work when it fails, as it always has.
   discardFailedTurn = false,
   // The stop guard: a Claude Code Stop hook (worker/build-stop-hook.js) that
   // sends the agent back to work, twice at most, when it tries to end a turn
@@ -6261,8 +6259,8 @@ async function execPushFromWorker(sessionId, branchName, { expectedRepoUrl, expe
 }
 
 /**
- * #1376: turn an execPushFromWorker rejection into something a dev-chat
- * reader can act on. The old copy was one fixed sentence ending "Retry
+ * #1376: turn an execPushFromWorker rejection into something a reader can
+ * act on. The old copy was one fixed sentence ending "Retry
  * your request to re-push" — which for a `bad_branch` session is advice
  * that can only ever fail again, and which hid the actual reason in a
  * platform WARN line nobody outside the container ever sees.
