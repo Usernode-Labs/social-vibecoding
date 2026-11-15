@@ -339,16 +339,12 @@
         "Dragging a card scrolls the board back to the top.",
         "The board scrolls back to the top when I drag a card.",
         "Example App",
-        "Staging deployed!",
-        "Staging build failed: ${…}",
         "Error",
-        "Codex log",
-        "Claude Code log",
         "Homeroom",
         "staging",
         "dev"
       ],
-      "why": "Fixtures of the ?shot= screenshot-state links: made-up names, a made-up community and text 'a person wrote', standing in for user and server data. One of them (\"Example App\") is also compared by the pose loop. Live copies of server-composed system rows pushed into the dev chat transcript from WebSocket events. The server persists and compares the same literals (src/routes/sessions.js 'Staging deployed!', 'Staging build failed', 'Claude Code log'; src/db/migrate.js seeds them), and a reload shows the server's row. 'Error' is the default error class name. Left as the task's out-of-scope rule says; the dev chat's own row painters decide how they read. \"Homeroom\" as the bare product name in the header title; 'staging' and 'dev' are environment identifiers shown as the version label when no commit SHA exists."
+      "why": "Fixtures of the ?shot= screenshot-state links: made-up names, a made-up community and text 'a person wrote', standing in for user and server data. One of them (\"Example App\") is also compared by the pose loop. 'Error' is the default error class name. \"Homeroom\" as the bare product name in the header title; 'staging' and 'dev' are environment identifiers shown as the version label when no commit SHA exists."
     },
     "public/js/build-venues.js": {
       "texts": [
@@ -357,22 +353,12 @@
       ],
       "why": "Product names."
     },
-    "public/js/dev-flow-select.js": {
-      "texts": [
-        "Claude Code",
-        "Codex",
-        "ChatGPT",
-        "Claude"
-      ],
-      "why": "Product names (agent names, connector products and the two vendor buttons)."
-    },
     "public/js/credit-options.js": {
       "texts": [
         "Today",
-        "midnight UTC",
-        "<button type=\"button\" class=\"dc-pr-btn dc-credits-go\" data-credits-verify=\"1\""
+        "midnight UTC"
       ],
-      "why": "Fallbacks for fields of the server's budget payload (windowLabel, resetLabel) in creditState(). Nothing renders windowLabel from this state; resetLabel is the server's own name for the boundary and only reaches a sentence where window.ResetTime is absent (a bare unit sandbox), as the {{boundary}}/{{when}} parameter. Markup only; the inventory's html heuristic. Its label is session:credits.verify.cta."
+      "why": "Fallbacks for fields of the server's budget payload (windowLabel, resetLabel) in creditState(). Nothing renders windowLabel from this state; resetLabel is the server's own name for the boundary and only reaches a sentence where window.ResetTime is absent (a bare unit sandbox), as the {{boundary}}/{{when}} parameter."
     },
     "public/js/build-log.js": {
       "texts": [
@@ -415,15 +401,6 @@
         "Native bridge capability probe was inconclusive"
       ],
       "why": "Thrown inside the capability probe and caught by it; never shown."
-    },
-    "public/js/session-options.js": {
-      "texts": [
-        "git clone …",
-        "node ./tools/social-vibecoding login",
-        "node ./tools/social-vibecoding agent run --session …",
-        "<session-id>"
-      ],
-      "why": "Shell commands."
     },
     "public/js/merge-status.js": {
       "texts": [

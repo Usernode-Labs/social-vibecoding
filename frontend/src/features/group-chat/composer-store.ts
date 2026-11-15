@@ -44,10 +44,9 @@ export interface QuoteChipView {
   snippet: string;
 }
 
-// `PendingAttachmentView` lived here. It is
-// ../attachments/pending-strip.tsx's now, because the dev chat's composer
-// draws the same strip from the same shape — see that file's header for the
-// two things the two chats actually differ on.
+// `PendingAttachmentView` is ../attachments/pending-strip.tsx's: the strip
+// owns the shape it draws — see that file's header for the two things its
+// caller keeps.
 
 export interface ComposerSlot {
   quote: QuoteChipView | null;

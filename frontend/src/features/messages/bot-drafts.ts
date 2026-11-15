@@ -189,7 +189,7 @@ export function saveBotDraft(conversationId: number, threadRootId: number | null
  * Take a draft off the list, to send it or to put it back in the box: its
  * words, or null when it is no longer there. What the box held (`typed`) is
  * kept as a draft of its own first, so emptying the box for the draft never
- * throws away something the viewer wrote (the dev chat's #1962 rule).
+ * throws away something the viewer wrote (#1962).
  */
 export function takeBotDraft(conversationId: number, threadRootId: number | null, draftId: string, typed = ''): string | null {
   const held = botDraftsFor(conversationId, threadRootId);

@@ -20,9 +20,9 @@
 // writes, as NOW() in its SQL or from `ctx.at`, is that instant on both,
 // never a read of either side's own clock.
 //
-// Reserved ids: 990840-990895, across every table here, beside the shots
-// session copies (990896-990899, shots-fixtures.js). tests/staging-demo-id-
-// ranges.test.js keeps the staging seeds and mocks out of the block.
+// Reserved ids: 990840-990895, across every table here (990840-990848 are
+// retired and stay unused). tests/staging-demo-id-ranges.test.js keeps the
+// staging seeds and mocks out of the block.
 //
 // The states are written by the DEPLOYED platform's copy of this file, not
 // by either revision under test, so a state a proposal adds here reaches
@@ -34,11 +34,6 @@ const dbRetry = require('./db-retry');
 const shotsFixtures = require('./shots-fixtures');
 
 const IDS = Object.freeze({
-  runningSession: 990840,
-  stoppingSession: 990841,
-  previewSession: 990842,
-  previewChange: 990843,
-  listSessions: Object.freeze([990844, 990845, 990846, 990847, 990848]),
   proposal: 990849,
   onboardingTemplates: Object.freeze([990850, 990851, 990852]),
   alwaysOpenTemplate: 990853,
@@ -76,8 +71,7 @@ const FIXTURE_SEASON_ID = 900500;
 const FIXTURE_EVENT_ID = 900501;
 // The one of its three cards the organiser has not closed.
 const FIXTURE_EVENT_CHALLENGE_ID = 900507;
-// A real staging build's preview address (.invalid never resolves): the
-// same one the staging agent-build fixture uses.
+// A staging build's preview address (.invalid never resolves).
 const PREVIEW_URL = 'https://staging-fixture-preview.invalid';
 // Rows without a reserved id are told apart by these.
 const FIXTURE_MARK = 'shots-demo';
@@ -147,8 +141,6 @@ const LOW_ALLOWANCE = Object.freeze({ limitCents: 5000, leftCents: 400 });
 // three quarters done (#4727's case: the bar follows the slower half).
 const CHECKS_PART_WAY = Object.freeze({ ran: 620, expected: 840, unit: 19240 });
 
-const sessionPath = (id) => `/#messages/agent/${id}`;
-
 // ── Shape ────────────────────────────────────────────────────────────────
 
 async function columnsOf(client, tables) {
@@ -173,7 +165,6 @@ async function hasShape(client, needs) {
 
 // Every reserved id a state writes must be free on this side.
 const TAKEN_SQL = Object.freeze({
-  agent_sessions: 'SELECT COUNT(*)::int AS taken FROM agent_sessions WHERE id = ANY($1::bigint[])',
   chat_sessions: 'SELECT COUNT(*)::int AS taken FROM chat_sessions WHERE id = ANY($1::bigint[])',
   challenge_templates: 'SELECT COUNT(*)::int AS taken FROM challenge_templates WHERE id = ANY($1::bigint[])',
   challenges: 'SELECT COUNT(*)::int AS taken FROM challenges WHERE id = ANY($1::bigint[])',
@@ -185,11 +176,6 @@ async function idsFree(client, table, ids) {
   return rows[0].taken === 0;
 }
 
-const AGENT_SESSION_COLUMNS = ['id', 'user_id', 'title', 'title_source', 'status', 'focus_app_id',
-  'focus_context', 'active_change_id', 'last_activity_at', 'created_at'];
-const MESSAGE_COLUMNS = ['session_id', 'agent_session_id', 'role', 'content', 'metadata', 'created_at'];
-const CHANGE_COLUMNS = ['id', 'app_id', 'user_id', 'branch_name', 'session_title', 'status',
-  'agent_session_id', 'created_at', 'last_activity_at'];
 const WEEKLY_TEMPLATE_COLUMNS = ['id', 'category', 'goal', 'task', 'reward', 'description', 'metric_type',
   'metric_target', 'metric_label', 'illustration', 'created_at', 'updated_at'];
 const WEEKLY_CHALLENGE_COLUMNS = ['id', 'season_event_id', 'challenge_template_id', 'enabled', 'completed',
@@ -205,17 +191,6 @@ async function fixtureEventFound(client) {
 }
 
 // ── Writers ─────────────────────────────────────────────────────────────
-
-async function insertAgentSession(client, ctx, { id, title, minutesAgo }) {
-  await client.query(
-    `INSERT INTO agent_sessions
-       (id, user_id, title, title_source, status, focus_app_id, focus_context,
-        last_activity_at, created_at)
-     VALUES ($1, $2, $3::text, CASE WHEN $3::text IS NULL THEN 'auto' ELSE 'manual' END, 'open', $4,
-             '{}'::jsonb, NOW() - make_interval(mins => $5), NOW() - make_interval(mins => $5 + 20))`,
-    [id, ctx.member.id, title, ctx.appId, minutesAgo]
-  );
-}
 
 // A weekly challenge on the fixture event, in a week begun four days ago with
 // three left, which the "This week" header counts down ("3d left").
@@ -235,14 +210,6 @@ async function insertWeeklyChallenge(client, {
        (id, season_event_id, challenge_template_id, enabled, completed, display_order, schedule_start, schedule_end)
      VALUES ($1, $2, $3, TRUE, FALSE, $4, NOW() - INTERVAL '4 days', NOW() + INTERVAL '3 days')`,
     [challengeId, FIXTURE_EVENT_ID, templateId, order]
-  );
-}
-
-async function insertUserMessage(client, { agentSessionId, changeId = null, content, minutesAgo }) {
-  await client.query(
-    `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
-     VALUES ($1, $2, 'user', $3, '{}'::jsonb, NOW() - make_interval(mins => $4))`,
-    [changeId, agentSessionId, content, minutesAgo]
   );
 }
 
@@ -379,117 +346,6 @@ async function insertBotDm(client, ctx, chat, {
 // ── States ──────────────────────────────────────────────────────────────
 
 const STATES = [
-  {
-    // The Stop control and the stopping status exist only during a run, and
-    // these copies cannot start one ("LLM not configured"). Untitled, as a
-    // conversation is before its first reply: a working one draws a spinner
-    // in every list that shows it, and an untitled one stays out of the
-    // rail's Recents and the menu, which are on every screen. Messages lists
-    // it, and its own page is where the run is shown.
-    id: 'shots-demo-member-agent-runs-v1',
-    persona: 'member',
-    needs: {
-      agent_sessions: [...AGENT_SESSION_COLUMNS, 'active_turn'],
-      chat_session_messages: MESSAGE_COLUMNS,
-    },
-    free: (client) => idsFree(client, 'agent_sessions', [IDS.runningSession, IDS.stoppingSession]),
-    async install(client, ctx) {
-      for (const [id, stop] of [[IDS.runningSession, false], [IDS.stoppingSession, true]]) {
-        await insertAgentSession(client, ctx, { id, title: null, minutesAgo: 1 });
-        await insertUserMessage(client, {
-          agentSessionId: id, minutesAgo: 1,
-          content: 'Make the empty state on the dev board friendlier.',
-        });
-        await client.query(
-          `UPDATE agent_sessions SET active_turn = jsonb_build_object(
-             'id', $2::text, 'startedAt', NOW() - INTERVAL '40 seconds', 'phase', 'mayor')
-             || CASE WHEN $3 THEN jsonb_build_object(
-                  'stopRequestedAt', NOW() - INTERVAL '10 seconds', 'stopRequestedBy', $4::text)
-                ELSE '{}'::jsonb END
-           WHERE id = $1`,
-          [id, `shots-fixture-turn-${id}`, stop, ctx.member.username]
-        );
-      }
-      return {
-        shows: [
-          { state: 'An agent run in progress, in a conversation not yet named: the composer shows Stop (and Save draft once you type).',
-            path: sessionPath(IDS.runningSession) },
-          { state: 'An agent run whose Stop was pressed and is taking longer than expected (Retry stop), in a conversation not yet named.',
-            path: sessionPath(IDS.stoppingSession) },
-        ],
-      };
-    },
-  },
-  {
-    // A change of the member's whose staging preview has deployed: the
-    // preview card and its "Propose to group". The read-only admin's
-    // staging conversation has this card already; the member's copy does not.
-    id: 'shots-demo-member-change-preview-v1',
-    persona: 'member',
-    needs: {
-      agent_sessions: AGENT_SESSION_COLUMNS,
-      chat_sessions: [...CHANGE_COLUMNS, 'staging_url', 'check_state'],
-      chat_session_messages: MESSAGE_COLUMNS,
-    },
-    free: async (client) => await idsFree(client, 'agent_sessions', [IDS.previewSession])
-      && idsFree(client, 'chat_sessions', [IDS.previewChange]),
-    async install(client, ctx) {
-      await insertAgentSession(client, ctx, {
-        id: IDS.previewSession, title: '[shots fixture] A change with a deployed preview', minutesAgo: 3,
-      });
-      await client.query(
-        `INSERT INTO chat_sessions
-           (id, app_id, user_id, branch_name, session_title, status, agent_session_id,
-            staging_url, check_state, created_at, last_activity_at)
-         VALUES ($1, $2, $3, 'shots-fixture/member-preview', '[shots fixture] A change with a deployed preview',
-                 'active', $4, $5, 'passing', NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '3 minutes')`,
-        [IDS.previewChange, ctx.appId, ctx.member.id, IDS.previewSession, PREVIEW_URL]
-      );
-      await client.query('UPDATE agent_sessions SET active_change_id = $2 WHERE id = $1',
-        [IDS.previewSession, IDS.previewChange]);
-      await insertUserMessage(client, {
-        agentSessionId: IDS.previewSession, changeId: IDS.previewChange, minutesAgo: 10,
-        content: 'Add a short welcome line above the dev board.',
-      });
-      await client.query(
-        `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
-         VALUES ($1, $2, 'system', 'Staging deployed!', $3::jsonb, NOW() - INTERVAL '3 minutes')`,
-        [IDS.previewChange, IDS.previewSession, JSON.stringify({ stagingUrl: PREVIEW_URL, prNumber: null })]
-      );
-      return {
-        shows: [{
-          state: 'A change with a deployed preview: the preview card, Open preview and Propose to group (do not confirm the proposal).',
-          path: sessionPath(IDS.previewSession),
-        }],
-      };
-    },
-  },
-  {
-    // Enough titled sessions that the menu's Agent sessions list is cut off
-    // and offers "Show more" (it shows five).
-    id: 'shots-demo-member-agent-list-v1',
-    persona: 'member',
-    needs: { agent_sessions: AGENT_SESSION_COLUMNS },
-    free: (client) => idsFree(client, 'agent_sessions', IDS.listSessions),
-    async install(client, ctx) {
-      const titles = [
-        '[shots fixture] Tidy the settings page',
-        '[shots fixture] Sort the request list by votes',
-        '[shots fixture] A clearer empty inbox',
-        '[shots fixture] Bigger tap targets on the board',
-        '[shots fixture] Name the weekly digest',
-      ];
-      for (const [index, id] of IDS.listSessions.entries()) {
-        await insertAgentSession(client, ctx, { id, title: titles[index], minutesAgo: 30 + index * 15 });
-      }
-      return {
-        shows: [{
-          state: 'Six or more titled agent sessions, so the menu\'s Agent sessions list offers Show more.',
-          path: '/#messages',
-        }],
-      };
-    },
-  },
   {
     // A proposal up for a vote whose threshold has moved since voting opened
     // ("was N when voting opened"), with a vote of the member's cast on an

@@ -717,45 +717,6 @@ function stagingMockTranscript(sessionId) {
 // via src/services/limits.js with a 10s in-process cache. Per-user
 // overrides come from users.daily_limit_cents.
 
-// Pull the first ATX-style H1 from a spec's markdown content. Used by
-// the spec-share endpoint so the group-chat card can show "Title"
-// instead of just "spec v3". Returns null if no H1 is found in the
-// first ~30 lines (good enough for AI-generated specs, which always
-// start with a heading near the top). Capped at 120 chars so a
-// pathologically long heading can't blow up card layouts.
-function extractSpecTitle(content) {
-  if (!content) return null;
-  const lines = content.split('\n');
-  for (let i = 0; i < Math.min(lines.length, 30); i++) {
-    const line = lines[i].trim();
-    if (line.startsWith('# ') && !line.startsWith('## ')) {
-      const t = line.slice(2).trim();
-      if (t) return t.slice(0, 120);
-    }
-  }
-  return null;
-}
-
-// Card snippet (body preview), with the title line stripped so the
-// title doesn't render twice (once as the card heading, once at the
-// top of the rendered-markdown snippet). 280 chars is enough for ~4
-// lines of preview after the markdown renderer is done with it.
-function extractSpecSnippet(content, title) {
-  if (!content) return '';
-  if (!title) return content.slice(0, 280);
-  const lines = content.split('\n');
-  let start = 0;
-  for (let i = 0; i < Math.min(lines.length, 30); i++) {
-    if (lines[i].trim() === '') continue;
-    if (lines[i].trim().startsWith('# ') && !lines[i].trim().startsWith('## ')) {
-      start = i + 1;
-    }
-    break;
-  }
-  while (start < lines.length && lines[start].trim() === '') start++;
-  return lines.slice(start).join('\n').slice(0, 280);
-}
-
 // How many failing checks a summary names before it says how many more there are.
 const FAILING_CHECKS_MAX = 12;
 
@@ -3045,14 +3006,14 @@ function sessionRoutes(config) {
   //     are private until explicitly shared).
   //   - Anyone else (any authed user): only versions where
   //     shared_to_group_at IS NOT NULL — i.e. the spec was explicitly
-  //     posted into the app's group chat via /specs/:version/share.
-  //     The group-chat read endpoint has no membership gate, so once
-  //     a spec is shared every logged-in user can already see the
-  //     share card; the body of the spec should be reachable too,
-  //     otherwise the "View full spec" affordance on the card 404s
-  //     for everyone except the original sharer (#6).
-  //   - (#86) A user the owner privately shared this exact version with
-  //     via POST /specs/:version/share-user — the
+  //     posted into the app's group chat, while its owner could do that.
+  //     The group-chat read endpoint has no membership gate, so every
+  //     logged-in user can already see such a share card; the body of
+  //     the spec should be reachable too, otherwise the "View full spec"
+  //     affordance on the card 404s for everyone except the original
+  //     sharer (#6).
+  //   - (#86) A user the owner privately shared this exact version
+  //     with, while that was offered — the
   //     chat_session_spec_user_shares row is the authorization source
   //     of truth, scoped to (session, version, recipient).
   // The non-owner arm lives in specVersionSharedVisibilitySql, shared
@@ -3088,189 +3049,6 @@ function sessionRoutes(config) {
       res.json({ spec: rows[0] });
     } catch (err) {
       log.error('sessions', 'Failed to get spec version', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // (#69) The manual POST /api/sessions/:id/specs "Save version" route
-  // was retired. Every Mayor spec mutation (scout) already
-  // auto-freezes an immutable numbered version via
-  // snapshotSessionSpec(), so the live spec_md is always byte-identical
-  // to the latest chat_session_specs row. The old route just re-snapped
-  // that same content and almost always hit its own dedup branch — a
-  // no-op. snapshotSessionSpec() is now the sole writer of new versions;
-  // the dev-chat spec viewer shares any numbered version directly with
-  // no save step in between.
-
-  // Share a frozen spec snapshot into the app's group chat. The group
-  // chat renders the message as a "spec card" with a snippet + view-
-  // full-spec affordance; the underlying chat_messages row carries
-  // metadata.specShare so the renderer knows to upgrade it from a
-  // plain system line.
-  router.post('/api/sessions/:id/specs/:version/share', sameOriginBrowserOnly, async (req, res) => {
-    const sessionId = parseInt(req.params.id, 10);
-    const version = parseInt(req.params.version, 10);
-    if (Number.isNaN(sessionId) || Number.isNaN(version)) {
-      return res.status(400).json({ error: 'Bad id/version' });
-    }
-
-    try {
-      const { rows: sessionRows } = await pool.query(
-        `SELECT cs.id, cs.app_id, a.slug as app_slug
-         FROM chat_sessions cs
-         JOIN apps a ON cs.app_id = a.id
-         WHERE cs.id = $1 AND cs.user_id = $2`,
-        [sessionId, req.user.id]
-      );
-      if (!sessionRows.length) return res.status(404).json({ error: 'Session not found' });
-      const { app_id: appId, app_slug: appSlug } = sessionRows[0];
-
-      const { rows: specRows } = await pool.query(
-        `SELECT version, content, built_at, commit_sha, pr_number
-         FROM chat_session_specs
-         WHERE session_id = $1 AND version = $2`,
-        [sessionId, version]
-      );
-      if (!specRows.length) return res.status(404).json({ error: 'Plan version not found' });
-      const spec = specRows[0];
-
-      // Title + snippet for the card. The title is the first H1
-      // (`# Heading`) in the spec, used as the card's primary heading
-      // so users see what the spec is *about* instead of just "v3".
-      // The snippet is the body content with the title line stripped
-      // (otherwise it'd appear twice — once in the card header, once
-      // at the top of the snippet body). Old shares predate this
-      // payload shape and have no title; the renderer falls back to
-      // "Spec vN" in that case.
-      const title = extractSpecTitle(spec.content);
-      const snippet = extractSpecSnippet(spec.content, title);
-
-      const shareMeta = {
-        specShare: {
-          sessionId,
-          version: spec.version,
-          builtAt: spec.built_at,
-          commitSha: spec.commit_sha || null,
-          prNumber: spec.pr_number || null,
-          title,
-          snippet,
-          totalChars: (spec.content || '').length,
-          sharedBy: { id: req.user.id, username: req.user.username },
-        },
-      };
-      const summaryLine = title
-        ? `📋 ${req.user.username || 'Someone'} shared "${title}" (plan v${spec.version}).`
-        : `📋 ${req.user.username || 'Someone'} shared plan v${spec.version} from a dev session.`;
-
-      const { rows: msgRows } = await pool.query(
-        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata)
-         VALUES ($1, $2, $3, 'spec_share', $4)
-         RETURNING id, created_at`,
-        [appId, req.user.id, summaryLine, JSON.stringify(shareMeta)]
-      );
-
-      await pool.query(
-        `UPDATE chat_session_specs SET shared_to_group_at = NOW()
-         WHERE session_id = $1 AND version = $2 AND shared_to_group_at IS NULL`,
-        [sessionId, version]
-      );
-
-      // Broadcast to room subscribers using the same envelope the WS
-      // group-chat handler emits, so the existing renderMessageHtml
-      // path picks it up. We also fan out the metadata so the card has
-      // everything it needs without a follow-up fetch.
-      const { broadcast } = require('../services/ws');
-      broadcast(appId, {
-        type: 'chat',
-        id: msgRows[0].id,
-        userId: req.user.id,
-        username: req.user.username,
-        content: summaryLine,
-        msgType: 'spec_share',
-        metadata: shareMeta,
-        createdAt: msgRows[0].created_at,
-      });
-
-      res.json({ ok: true, appSlug, messageId: msgRows[0].id });
-    } catch (err) {
-      log.error('sessions', 'Share spec failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // (#86) Privately share a frozen spec version with ONE user. Unlike
-  // the group share above, nothing is posted to chat and the spec is
-  // NOT marked shared_to_group_at — the recipient gets a 'spec_shared'
-  // notification that deep-links into the read-only spec panel, and the
-  // chat_session_spec_user_shares row widens the GET /specs/:version
-  // gate for exactly (session, version, recipient). Repeatable: the
-  // owner can share with several people one at a time; re-sharing with
-  // the same person is an idempotent no-op (no second notification).
-  router.post('/api/sessions/:id/specs/:version/share-user', async (req, res) => {
-    const sessionId = parseInt(req.params.id, 10);
-    const version = parseInt(req.params.version, 10);
-    if (Number.isNaN(sessionId) || Number.isNaN(version)) {
-      return res.status(400).json({ error: 'Bad id/version' });
-    }
-    const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
-    if (!username) return res.status(400).json({ error: 'Username required' });
-
-    try {
-      // Owner-only, same as the group-share route.
-      const { rows: sessionRows } = await pool.query(
-        `SELECT cs.id, cs.app_id
-         FROM chat_sessions cs
-         WHERE cs.id = $1 AND cs.user_id = $2`,
-        [sessionId, req.user.id]
-      );
-      if (!sessionRows.length) return res.status(404).json({ error: 'Session not found' });
-      const appId = sessionRows[0].app_id;
-
-      const { rows: specRows } = await pool.query(
-        `SELECT version FROM chat_session_specs
-         WHERE session_id = $1 AND version = $2`,
-        [sessionId, version]
-      );
-      if (!specRows.length) return res.status(404).json({ error: 'Plan version not found' });
-
-      const users = await notifications.resolveUsers(pool, [username.toLowerCase()]);
-      if (!users.length) return res.status(404).json({ error: 'User not found' });
-      const recipient = users[0];
-      if (recipient.id === req.user.id) {
-        return res.status(400).json({ error: 'You already have this plan' });
-      }
-
-      // Collab-private apps: a share must not grant a non-member a spec
-      // they'd have no app context for. Explicit error (not a silent
-      // drop) — the sharer needs the feedback.
-      const allowed = await notifications.filterToCollaborators(pool, appId, [recipient.id]);
-      if (!allowed.includes(recipient.id)) {
-        return res.status(400).json({ error: "That user doesn't have access to this app" });
-      }
-
-      const { rowCount } = await pool.query(
-        `INSERT INTO chat_session_spec_user_shares (session_id, version, recipient_id, shared_by)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (session_id, version, recipient_id) DO NOTHING`,
-        [sessionId, version, recipient.id, req.user.id]
-      );
-      if (rowCount === 0) {
-        // Already shared with this person — re-shares must not re-ping.
-        return res.json({ ok: true, alreadyShared: true, recipient: { username: recipient.username } });
-      }
-
-      const rows = await notifications.createSpecSharedNotification(pool, {
-        recipientId: recipient.id,
-        appId,
-        sessionId,
-        sharerId: req.user.id,
-        version,
-      });
-      for (const row of rows) await notifications.hydrateAndPush(pool, row);
-
-      res.json({ ok: true, recipient: { username: recipient.username } });
-    } catch (err) {
-      log.error('sessions', 'Share spec to user failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -3598,58 +3376,6 @@ function sessionRoutes(config) {
       });
     } catch (err) {
       log.error('sessions', 'Budget check failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // Deploy staging for a session
-  router.post('/api/sessions/:id/deploy-staging', drainGuard, sameOriginBrowserOnly, async (req, res) => {
-    try {
-      // #183: headless rows are excluded — their staging is built by the
-      // headless runner itself; humans deploy staging from a CLONED session.
-      const { rows } = await pool.query(
-        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url, a.id as app_id_val
-         FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
-         WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status IN ('active', 'promoted')
-           AND cs.is_headless = FALSE`,
-        [req.params.id, req.user.id]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
-      const session = rows[0];
-      const app = { id: session.app_id_val, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
-
-      // Get latest commit hash from the branch
-      let commitHash = 'latest';
-      if (app.repo_url && (github.isEnabled() || repoRef.isHosted(app.repo_url))) {
-        try {
-          const { owner, repo } = repoRef.ownerRepo(app.repo_url) || {};
-          // On the git host, or GitHub for the platform's own repository
-          // (services/github.js getBranchSha follows the host).
-          if (owner && repo) commitHash = await github.getBranchSha(owner, repo, session.branch_name);
-        } catch {}
-      }
-
-      // The exact head this deploy is for, resolved once: the branch's tip
-      // when it was read, else what the machine resolves for the row (its
-      // pin, its tip, its checks).
-      const head = await previewWorkflow.exactHead(pool, session, commitHash === 'latest' ? null : commitHash);
-      // A preview deployed by hand runs its checks as 'manual-recheck': the
-      // head is owed a unit suite that really runs (services/unit-suite-reuse.js).
-      // Recorded before the machine is asked, so a build or run already going
-      // that answers instead (it may have copied an earlier pass) is not
-      // taken as theirs.
-      await require('../services/unit-suite-reuse').markFreshOwed(pool, { sessionId: session.id, commitSha: head });
-      // The preview machine builds a new attempt of the head (a build or run
-      // already going is the answer).
-      const out = await previewWorkflow.request({
-        pool, session, head, reason: 'deploy', actor: `user:${req.user.id}`,
-      });
-      if (out.status === 'rejected' && ['not_open', 'not_deployable', 'no_head'].includes(out.reason)) {
-        return res.status(409).json({ error: 'This session cannot deploy a preview now', reason: out.reason });
-      }
-      return res.json({ ok: true, status: 'deploying' });
-    } catch (err) {
-      log.error('sessions', 'Deploy staging error', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

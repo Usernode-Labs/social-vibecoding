@@ -209,20 +209,3 @@ export function decorateRefs(root: Element, handles: ReadonlySet<string>, me: st
   };
   walk(root);
 }
-
-/**
- * #5728: a rendered, sanitized reply with its references chipped, for the
- * surfaces that draw markdown without Messages' own row (an agent session's
- * reply, a change's chat). With no project to name, nothing is chipped and
- * the html comes back exactly as it was, so a conversation with no project
- * looks as it always did.
- */
-export function linkRefsInHtml(html: string, appSlug: string | null | undefined): string {
-  if (!html || !appSlug || typeof document === 'undefined') return html;
-  const root = document.createElement('div');
-  root.innerHTML = html;
-  const app = typeof window === 'undefined' ? null : (window as any).App;
-  const me = String(app?.user?.username || '').toLowerCase();
-  decorateRefs(root, new Set(), me, appSlug);
-  return root.innerHTML;
-}

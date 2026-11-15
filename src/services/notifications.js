@@ -1165,26 +1165,6 @@ async function createAgentAwaitingInputNotification(pool, { userId, appId }) {
   return rows;
 }
 
-// #86: private spec share (kind='spec_shared'). Fired by the
-// share-user endpoint after a NEW chat_session_spec_user_shares row is
-// inserted (the endpoint skips this entirely on a duplicate share, so
-// a recipient is pinged at most once per spec version). `session_id`
-// points at the dev session — listForUser/hydrateAndPush already join
-// chat_sessions, so prTitle/branchName ride along for the row label.
-// `detail` carries the spec version as a string (same generic-detail
-// pattern as 'reaction') so the click handler can open the exact
-// version in the read-only spec panel.
-async function createSpecSharedNotification(pool, { recipientId, appId, sessionId, sharerId, version }) {
-  if (!recipientId || !sessionId || version == null) return [];
-  const { rows } = await pool.query(
-    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
-     VALUES ($1, $2, $3, $4, 'spec_shared', $5)
-     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
-    [recipientId, appId, sessionId, sharerId || null, String(version).slice(0, 32)]
-  );
-  return rows;
-}
-
 // Successful company-funded OpenRouter issuance is recorded on the managed
 // key itself and visible in Admin > Users; it is not an actionable inbox
 // event. Only a key that needs review creates a notification, and only full
@@ -2486,7 +2466,6 @@ module.exports = {
   createCheckFailedNotification,
   createConnectorSubmittedNotification,
   createAgentAwaitingInputNotification,
-  createSpecSharedNotification,
   createManagedOpenRouterReviewNotifications,
   notifyManagedOpenRouterReviewAdmins,
   hydrateAndPush,

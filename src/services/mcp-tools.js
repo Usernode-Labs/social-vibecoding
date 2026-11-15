@@ -1818,6 +1818,8 @@ const CHANGE_NEXT_STEP_WORDS = Object.freeze({
     ready: 'its owner puts it there from its page.',
     behind: 'that alone needs no sync, and syncing it with main cleanly keeps its votes.',
     closed: 'Further work on it is a new change.',
+    recheck: 'Its owner can run the checks again from its page.',
+    recheckLater: 'Its owner can run the checks again from its page once the cause has cleared.',
   },
   worker_read: {
     build: 'This turn is where it gets built.',
@@ -1827,6 +1829,8 @@ const CHANGE_NEXT_STEP_WORDS = Object.freeze({
     ready: 'its owner puts it there from its page.',
     behind: 'that alone needs no sync, and a clean sync with main keeps its votes.',
     closed: 'Further work on it is a new change.',
+    recheck: 'Its owner can run the checks again from its page.',
+    recheckLater: 'Its owner can run the checks again from its page once the cause has cleared.',
   },
   external: {
     build: 'It is built on Homeroom: its owner asks Homeroom bot for it from the change\'s own page.',
@@ -1836,6 +1840,8 @@ const CHANGE_NEXT_STEP_WORDS = Object.freeze({
     ready: 'its owner puts it there from its page on Homeroom.',
     behind: 'that alone needs no sync, and syncing it with main cleanly keeps its votes.',
     closed: 'Further work on it is a new change.',
+    recheck: 'recheck_change re-runs the checks.',
+    recheckLater: 'recheck_change re-runs the checks once the cause has cleared.',
   },
 });
 
@@ -1898,7 +1904,7 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
   if (unitSuiteRow.missingUnitError(session)) {
     const again = erroredRunWillRetry(session)
       ? 'Homeroom runs the checks again on its own; call get_change again for the new verdict.'
-      : 'recheck_change re-runs the checks.';
+      : words.recheck;
     // Browser checks that failed in the same run are failures all the same.
     if (checks.failing && checks.failing.length) {
       return `The repo unit suite (npm test) asked for again on ${ref} did not run, and `
@@ -1912,7 +1918,7 @@ function changeNextStep(session, checks, live, kind = 'agent_mayor') {
     return `The repo unit suite (npm test) could not run on ${ref}, so there is no verdict yet, and no test failed. `
       + (erroredRunWillRetry(session)
         ? 'Homeroom runs the checks again on its own; call get_change again for the new verdict.'
-        : 'recheck_change re-runs the checks once the cause has cleared.')
+        : words.recheckLater)
       + paused;
   }
   if (failing) {
