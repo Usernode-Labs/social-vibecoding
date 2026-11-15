@@ -89,6 +89,11 @@ const MAX_SHEET_CHARS = 200_000;
 // A stylesheet main does not hold is read off the project's running copy:
 // one GET at its internal address, given this long.
 const BUILT_SHEET_TIMEOUT_MS = 3000;
+// #6693: the hosted Tailwind runtime an app's first drawing resolved, kept so
+// a later version of the same design recompiles its own classes without
+// reading the app's entry page again. Bounded, oldest first.
+const MAX_REMEMBERED_APPS = 50;
+const rememberedTailwindByApp = new Map();
 
 // Pictures: from the person's newest messages in the thread, at most these
 // many; described for a text-only model in a few sentences each.
@@ -815,6 +820,22 @@ async function sheetsFor(pool, { user, surface, app, config, deps = {}, entry })
     log.warn('design-bot', 'Could not read a project\'s stylesheets', { app: app.slug, err: err.message });
   }
   return { links: [KIT_SHEET], styles: [] };
+}
+
+/** #6693: keep the hosted Tailwind runtime a first drawing resolved for an app (null forgets it). */
+function rememberTailwind(app, runtime) {
+  if (!app?.slug) return;
+  rememberedTailwindByApp.delete(app.slug);
+  if (!runtime) return;
+  rememberedTailwindByApp.set(app.slug, runtime);
+  if (rememberedTailwindByApp.size > MAX_REMEMBERED_APPS) {
+    rememberedTailwindByApp.delete(rememberedTailwindByApp.keys().next().value);
+  }
+}
+
+/** #6693: the hosted Tailwind runtime an app's first drawing resolved here, or null. */
+function rememberedTailwind(app) {
+  return app?.slug ? rememberedTailwindByApp.get(app.slug) || null : null;
 }
 
 /**
@@ -1591,6 +1612,9 @@ async function answer(pool, config, {
   // it came out empty (either way, a later write_screen is refused).
   let wrote = null;
   let sheets = null;
+  // #6693: the app's hosted Tailwind runtime, kept from a first drawing so a
+  // later version can recompile its own classes without reading its page.
+  let tailwindRuntime = null;
   // #6354: the page Homeroom copied for this turn (its html, title, route),
   // or null. The copy is saved as version 1 before any edit of it.
   let captured = null;
@@ -1698,9 +1722,18 @@ async function answer(pool, config, {
     // #6142: read once, for the prompt and for the stylesheets (sheetsFor).
     if (firstDrawing && surface === 'app' && project?.slug) entry = await entryPage(pool, { user, app: project, deps });
     const front = entry ? entryBody(entry.html) : '';
-    // #6681: the sheets are resolved before the prompt, so it can say which
-    // were put in and whether utility classes work in this drawing.
-    if (surface === 'app' && project?.slug) sheets = await sheetsFor(pool, { user, surface, app: project, config, deps, entry });
+    // #6681: the sheets are resolved for a first drawing, so its prompt can
+    // say which were put in and whether utility classes work in it.
+    // #6683/#6693: a later version reads no entry page. Its sheets are the
+    // ones already in its html; only the app's hosted Tailwind runtime is
+    // kept from a first drawing, so an edited version still compiles the
+    // classes it adds.
+    if (firstDrawing && surface === 'app' && project?.slug) {
+      sheets = await sheetsFor(pool, { user, surface, app: project, config, deps, entry });
+      rememberTailwind(project, sheets?.tailwind || null);
+    } else if (surface === 'app' && project?.slug) {
+      tailwindRuntime = rememberedTailwind(project);
+    }
     // #6681: a first drawing of an existing screen starts from the markup
     // its own scripts build (home.js, recipe.js and the like).
     const scriptFiles = firstDrawing && entry
@@ -1928,8 +1961,10 @@ async function answer(pool, config, {
           else {
             const applied = applyEdits(collapseSheets(html), args.edits);
             let next = applied.error ? null : fillSheets(applied.html, html);
-            // #6681: the tailwind block is rebuilt from the changed markup.
-            if (!applied.error && sheets?.tailwind) next = await withTailwind(next, sheets);
+            // #6681: the tailwind block is rebuilt from the changed markup,
+            // with the runtime a first drawing kept (#6693).
+            const runtime = sheets?.tailwind || tailwindRuntime;
+            if (!applied.error && runtime) next = await withTailwind(next, { tailwind: runtime });
             if (applied.error) result = { ok: false, error: applied.error };
             else if (!threads.validHtml(next)) result = { ok: false, error: 'That makes the design too big.' };
             else {
@@ -2187,8 +2222,10 @@ async function answer(pool, config, {
       Object.keys(meta).length ? { metadata: { kind: 'chat', ...meta } } : {});
   }
   // #6681: a version is saved with the utilities its markup uses already
-  // compiled in, so it looks the same in the preview and in the plan.
-  if (sheets?.tailwind) html = await withTailwind(html, sheets);
+  // compiled in, so it looks the same in the preview and in the plan. A
+  // later version uses the runtime a first drawing kept (#6693).
+  const saveRuntime = sheets?.tailwind || tailwindRuntime;
+  if (saveRuntime) html = await withTailwind(html, { tailwind: saveRuntime });
   // #6150: a version about to be saved with a sheet block left empty (an
   // older version's empty duplicate, edited) takes that sheet's CSS from the
   // project's stylesheets again rather than being saved unstyled.
