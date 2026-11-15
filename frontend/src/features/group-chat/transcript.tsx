@@ -81,6 +81,7 @@ import { QuietCard } from './quiet-card';
 import { swatchFor } from './swatch';
 import { LinkEmbeds } from '../messages/link-cards';
 import { BOT_AVATAR } from '../messages/format';
+import { BuildNoteView, buildNoteOf } from '../messages/bot-cards/build-note';
 import { openAppTarget } from '../messages/bot-shared';
 import { setUserBlocked } from '../messages/store';
 import { firstUnreadId, transcriptRow } from '../messages/unread-anchor';
@@ -1043,6 +1044,10 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           ) : null}
           {/* Step 3: what became of them (a refused tap, expired, retired, gone), outliving them. */}
           {msg.botOffer && msg.botOffer.forMe ? <BotOfferStatus offer={msg.botOffer} /> : null}
+          {/* #6684: a note sent into a build from this request: the same card
+              the bot's chat shows, with no buttons of its own (a redo's are
+              the offer's, above). */}
+          {msg.botBuildNote ? <BuildNoteView data={buildNoteOf(msg.botBuildNote)} /> : null}
           {/* 3 Nov 2026: suggested replies under Homeroom bot's message in a
               thread — only while it is the newest comment (#6519). */}
           <BotSuggestGate msg={msg} latest={latest} />

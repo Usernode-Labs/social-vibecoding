@@ -55,15 +55,21 @@ function offered(ctx) {
  * can see, the request on it, its build under way, and they asked for it or
  * manage the project. Resolves { app, n, build, gate, note } or { error }.
  */
-async function resolve(pool, ctx, args, { running = false } = {}) {
+async function resolve(pool, ctx, args, { running = false, onRequest = null } = {}) {
   const steer = steerOf(ctx);
   const note = steer.noteText(args.note);
   if (!note) return { error: 'Say what they want added or changed. If they have not said, ask them. Nothing was sent.' };
-  const mayor = mayorOf(ctx);
-  const app = await mayor.findApp(pool, args.project);
-  const n = Number(args.number);
-  if (!app || !Number.isInteger(n) || n <= 0 || !(await mayor.canView(pool, app, ctx.user))) {
-    return { error: 'No such request on a project they can see. Check progress or my_work. Nothing was sent.' };
+  let app = onRequest?.app || null;
+  let n = onRequest ? Number(onRequest.n) : Number(args.number);
+  if (!app) {
+    const mayor = mayorOf(ctx);
+    app = await mayor.findApp(pool, args.project);
+    if (!app || !Number.isInteger(n) || n <= 0 || !(await mayor.canView(pool, app, ctx.user))) {
+      return { error: 'No such request on a project they can see. Check progress or my_work. Nothing was sent.' };
+    }
+  }
+  if (!app || !Number.isInteger(n) || n <= 0) {
+    return { error: 'No such request. Nothing was sent.' };
   }
   ctx.appIds?.add?.(Number(app.id));
   const name = app.name || app.slug;
@@ -71,14 +77,20 @@ async function resolve(pool, ctx, args, { running = false } = {}) {
   if (!gate.ok) {
     return { error: `Only whoever asked for ${name} request #${n}, or the project's owner, can change its build while it runs. They can comment on the request instead (comment_on_request). Nothing was sent.` };
   }
-  const build = await steer.buildUnderWay(pool, app.id, n);
+  const build = onRequest
+    ? await steer.buildForRequest(pool, app.id, n)
+    : await steer.buildUnderWay(pool, app.id, n);
   if (!build) {
     return { error: `You are not building ${name} request #${n} right now, so there is no build to send it to. If its change is up for a vote, revise_proposal changes it; otherwise comment_on_request adds it to the request. Nothing was sent.` };
   }
   if (running && !build.running) {
-    return { error: `Its build has not started yet, so there is nothing to stop: send the note with add_to_build and the build reads it as it works. Nothing was stopped.` };
+    return {
+      error: build.lastSteps
+        ? 'Its build has already stopped coding, so there is nothing to stop: send the note with add_to_build and it goes into the change\'s next update. Nothing was stopped.'
+        : 'Its build has not started yet, so there is nothing to stop: send the note with add_to_build and the build reads it as it works. Nothing was stopped.',
+    };
   }
-  return { app, n, name, build, gate, note };
+  return { app, n, name, build, gate, note, onRequest };
 }
 
 function cardOf({ id, state, app, n, note, title = null }) {
@@ -101,36 +113,49 @@ async function titleOf(pool, appId, n) {
   }
 }
 
-async function addToBuild(pool, ctx, args) {
+async function addToBuild(pool, ctx, args, opts = {}) {
   if (ctx.steered) return { ok: false, error: 'One note per turn: put everything they said into one.' };
-  const r = await resolve(pool, ctx, args);
+  const r = await resolve(pool, ctx, args, opts);
   if (r.error) return { ok: false, error: r.error };
   const id = await steerOf(ctx).addNote(pool, {
     app: r.app, issueNumber: r.n, build: r.build, user: ctx.user, note: r.note, conversationId: ctx.conversationId,
+    // #6684: a note from the request's own discussion, with the comment.
+    origin: opts.onRequest ? 'request' : null,
+    commentId: opts.onRequest?.commentId || null,
   });
   ctx.steered = true;
-  ctx.card = cardOf({ id, state: 'waiting', app: r.app, n: r.n, note: r.note, title: await titleOf(pool, r.app.id, r.n) });
-  return {
+  const card = cardOf({ id, state: 'waiting', app: r.app, n: r.n, note: r.note, title: await titleOf(pool, r.app.id, r.n) });
+  const out = {
     ok: true,
-    sent: `Your note waits for the build of ${r.name} request #${r.n}: it is handed it at its next step, before it finishes, and works it in then.`,
+    sent: r.build.lastSteps
+      ? `The build of ${r.name} request #${r.n} has already stopped coding, so your note goes into the change's next update by itself. Nothing more is needed from them.`
+      : `Your note waits for the build of ${r.name} request #${r.n}: it is handed it at its next step, before it finishes, and works it in then.`,
     shown: 'A card under your reply shows the note and says when the build has it. It has not read it yet, so never say it has, or that the change is made.',
   };
+  if (opts.onRequest) return { ...out, card };
+  ctx.card = card;
+  return out;
 }
 
-async function stopAndRedo(pool, ctx, args) {
+async function stopAndRedo(pool, ctx, args, opts = {}) {
   if (ctx.steered) return { ok: false, error: 'One per turn.' };
-  const r = await resolve(pool, ctx, args, { running: true });
+  const r = await resolve(pool, ctx, args, { ...opts, running: true });
   if (r.error) return { ok: false, error: r.error };
   const id = await steerOf(ctx).addNote(pool, {
     app: r.app, issueNumber: r.n, build: r.build, user: ctx.user, note: r.note, conversationId: ctx.conversationId,
     kind: 'redo', state: 'offered',
+    origin: opts.onRequest ? 'request' : null,
+    commentId: opts.onRequest?.commentId || null,
   });
   ctx.steered = true;
-  ctx.card = cardOf({ id, state: 'offer_redo', app: r.app, n: r.n, note: r.note, title: await titleOf(pool, r.app.id, r.n) });
-  return {
+  const card = cardOf({ id, state: 'offer_redo', app: r.app, n: r.n, note: r.note, title: await titleOf(pool, r.app.id, r.n) });
+  const out = {
     ok: true,
     offered: 'Stop and redo and Keep going are under your reply, for them to tap. Nothing is stopped until they tap Stop and redo: then the build stops, their note goes on the request\'s discussion under their name, and you read the request again first. Keep going sends the note into the running build instead. Never say it was stopped.',
   };
+  if (opts.onRequest) return { ...out, card };
+  ctx.card = card;
+  return out;
 }
 
 module.exports = {

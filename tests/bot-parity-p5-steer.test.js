@@ -191,7 +191,10 @@ test('a build stopped to be redone says nothing of its own end on the request', 
 test('the build note card, in each state', () => {
   const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
   const { BuildNoteView, buildNoteOf } = loadTsx('frontend/src/features/messages/bot-cards/build-note.tsx');
-  const draw = (card) => renderToHtml(createElement(BuildNoteView, { data: buildNoteOf({ type: 'build_note', number: 12, title: 'Dark mode', note: 'Make it blue <b>now</b>', ...card }) }));
+  const draw = (card, onAction = null) => renderToHtml(createElement(BuildNoteView, {
+    data: buildNoteOf({ type: 'build_note', number: 12, title: 'Dark mode', note: 'Make it blue <b>now</b>', ...card }),
+    ...(onAction ? { onAction } : {}),
+  }));
   const waiting = draw({ state: 'waiting' });
   assert.match(waiting, /data-bot-build-note="waiting"/);
   assert.match(waiting, />Sent to the build of #12</);
@@ -199,15 +202,22 @@ test('the build note card, in each state', () => {
   assert.match(waiting, /Make it blue &lt;b&gt;now&lt;\/b&gt;/, 'their words are text');
   assert.ok(!/data-bot-build-note-action/.test(waiting));
   assert.match(draw({ state: 'delivered' }), />The build of #12 has your note</);
-  const missed = draw({ state: 'missed', change: { sessionId: 31 } });
+  const missed = draw({ state: 'missed', change: { sessionId: 31 } }, () => {});
   assert.match(missed, />The build of #12 finished first</);
   assert.match(missed, /Put your note in its next update\?/);
   assert.match(missed, /class="messages-bot-primary"[^>]*data-bot-build-note-action="forward"><span>Put it in the next update<\/span>/);
+  // #6684: on a request the buttons are the offer's, so a card drawn with no
+  // handler shows none of its own.
+  assert.ok(!/data-bot-build-note-action/.test(draw({ state: 'missed', change: { sessionId: 31 } })));
+  assert.ok(!/data-bot-build-note-action/.test(draw({ state: 'offer_redo' })));
   const lost = draw({ state: 'missed', change: null });
   assert.match(lost, /It ended before it read your note\./);
   assert.ok(!/data-bot-build-note-action/.test(lost));
   assert.match(draw({ state: 'forwarded' }), /It goes into the next update instead\./);
-  const offer = draw({ state: 'offer_redo' });
+  // #6684: queued with no tap, and the build ended with no change.
+  assert.match(draw({ state: 'forwarded', auto: true }), /In the change&#x27;s next update/);
+  assert.match(draw({ state: 'forwarded', reread: true }), /I read the request again with it, for its next build\./);
+  const offer = draw({ state: 'offer_redo' }, () => {});
   assert.match(offer, />Stop the build of #12 and start again\?</);
   assert.match(offer, /goes on the request&#x27;s discussion, under your name/);
   assert.match(offer, /data-bot-build-note-action="redo"><span>Stop and redo<\/span>/);
