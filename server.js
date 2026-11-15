@@ -1435,7 +1435,7 @@ if (require.main === module) {
 }
 
 // Test-only surface (#183): the orphan-adoption + recovered-turn finalize
-// internals, so the headless-recovery guards stay covered by node --test.
+// internals, so the recovery guards stay covered by node --test.
 // `cleanup` + `__setShutdownTargets`
 // (#767) let tests drive the graceful-shutdown sequence against a stubbed
 // listener and pool without booting a server. Not used by any runtime caller.

@@ -1161,7 +1161,7 @@ async function boardRead(pool, config, { user, project, args, name, deps = {}, s
     try {
       const open = deps.openMcp || require('./mayor/mcp-shim').openMayorMcp;
       grant = await open({
-        pool, config, userId: user.id, agentSessionId: null, ttlSeconds: 300,
+        pool, config, userId: user.id, ttlSeconds: 300,
         rateSubject: `hrbot-design-${user.id}`, imageInput: false,
       });
     } catch (err) {

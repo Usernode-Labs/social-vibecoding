@@ -1,19 +1,13 @@
 'use strict';
 
-// Dev-chat file attachments (#450, expanded to any file type):
-// validation + prompt-assembly helpers. Four kinds: 'image' (vision
-// blocks for the Mayor), 'text' (inlined into prompts), 'zip'
-// (central-directory-validated archives the coding agent extracts in
-// its container), and 'binary' (opaque pass-through workspace files).
+// File attachments: upload validation. Four kinds: 'image', 'text', 'zip'
+// (central-directory-validated archives) and 'binary' (opaque files).
 //
-// Everything in this module that doesn't take a `pool` is PURE so
-// tests/attachments.test.js can exercise it without Postgres. Storage is
-// bytea-in-Postgres (chat_session_attachments, staging:private) following
-// the session_visuals pattern — the platform container has no persistent
-// file volume. No new npm deps: magic-byte sniffing instead of a MIME
-// library, raw-body upload instead of multer.
+// Everything in this module is PURE so tests/attachments.test.js can
+// exercise it without Postgres. No new npm deps: magic-byte sniffing
+// instead of a MIME library.
 
-// ── Limits (mirrored client-side in public/js/dev-chat.js) ──────────
+// ── Limits ──────────────────────────────────────────────────────────
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // under Anthropic's 5 MB/image cap
 const MAX_TEXT_BYTES = 200 * 1024; // inline-into-prompt gate; bigger text rides the binary path
 const MAX_ZIP_BYTES = 20 * 1024 * 1024;
@@ -25,43 +19,11 @@ const MAX_ZIP_RATIO = 100;
 const ZIP_RATIO_FLOOR_BYTES = 4 * 1024;
 const MAX_BINARY_BYTES = 10 * 1024 * 1024;
 const MAX_PER_MESSAGE = 4;
-const MAX_SESSION_BYTES = 50 * 1024 * 1024;
 // ── Group-chat attachment limits (#694, mirrored in public/js/group-chat.js) ──
 const MAX_MARKDOWN_BYTES = 512 * 1024;
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
 const MAX_APP_CHAT_BYTES = 200 * 1024 * 1024;
-// Per-file inline cap when text-file content is injected into a prompt.
-const INLINE_CHAR_CAP = 50000;
-// Aggregate inline cap across ALL text files in one dispatch block.
-// Historically this guarded Linux's 128 KiB per-argument cap (the prompt
-// rode a `docker exec -e PROMPT=...` arg and oversized ones E2BIG'd the
-// exec); the prompt now travels as a file (worker.TURN_PROMPT_PATH), so
-// the cap survives purely as a token-cost bound — text files that don't
-// fit the budget degrade to a download instruction.
-const INLINE_TOTAL_CHAR_CAP = 80000;
-// Image replay policy: image blocks are re-sent to the Mayor only for
-// user rows within the last IMAGE_REPLAY_TURNS user turns, and at most
-// IMAGE_REPLAY_MAX images per request. Older rows degrade to a textual
-// placeholder — bounds recurring vision cost on long conversations.
-const IMAGE_REPLAY_TURNS = 4;
-const IMAGE_REPLAY_MAX = 8;
-// PDF replay policy (#3557), the same shape and tighter: a PDF costs far
-// more than an image (every page is read as text and as a picture), so it
-// is sent as a document block only on the last DOCUMENT_REPLAY_TURNS user
-// turns, at most DOCUMENT_REPLAY_MAX per request, and only up to
-// MAX_DOCUMENT_BYTES. Anything else keeps the one-line placeholder.
-const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
-const DOCUMENT_REPLAY_TURNS = 2;
-const DOCUMENT_REPLAY_MAX = 2;
-// A provider refuses a whole request over one PDF it cannot take, so a PDF
-// is checked cheaply before it is sent (see documentProblem).
-const MAX_DOCUMENT_PAGES = 100;
-const PDF_EOF_WINDOW = 1024;
 const PDF_CONTENT_TYPE = 'application/pdf';
-
-// The stored text a user row gets when the user sent attachments with no
-// typed message — downstream code never sees empty content.
-const ATTACHMENTS_ONLY_TEXT = '(attached files)';
 
 const IMAGE_EXT_TYPES = {
   png: 'image/png',
@@ -130,14 +92,6 @@ function isUtf8Text(buf) {
   } catch {
     return false;
   }
-}
-
-// Human-readable byte count for placeholder lines ("3.2 MB", "12 KB").
-function humanSize(bytes) {
-  const n = Number(bytes) || 0;
-  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
-  return `${n} B`;
 }
 
 // Zip central-directory safety validation — pure Node, no decompression,
@@ -412,47 +366,6 @@ function clipText(str, cap = INLINE_CHAR_CAP) {
   return `${s.slice(0, cap)}\n[truncated — file continues past ${cap} characters]`;
 }
 
-function attachedFileBlock(filename, text) {
-  return `==== ATTACHED FILE: ${filename} ====\n${clipText(text)}\n==== END ATTACHED FILE ====`;
-}
-
-// Image replay planning. `imageCounts` is the per-user-turn image count,
-// CHRONOLOGICAL order. Returns a same-length array of booleans: whether
-// that turn's images are included as vision blocks. A turn's images are
-// all-or-nothing (partial inclusion would make the placeholder text lie).
-function planImageInclusion(imageCounts, { turnWindow = IMAGE_REPLAY_TURNS, maxImages = IMAGE_REPLAY_MAX } = {}) {
-  const include = imageCounts.map(() => false);
-  let budget = maxImages;
-  for (let back = 0; back < Math.min(turnWindow, imageCounts.length); back++) {
-    const i = imageCounts.length - 1 - back;
-    const count = imageCounts[i];
-    if (!count) continue;
-    if (count <= budget) {
-      include[i] = true;
-      budget -= count;
-    }
-  }
-  return include;
-}
-
-// #3557: PDF replay planning, per document rather than per turn: the
-// newest turn first, as many of its PDFs as the budget allows (the excess
-// get placeholders), then whatever is left on the turn before, within the
-// window. `documentCounts` is per user turn, CHRONOLOGICAL. Returns how
-// many PDFs of each turn to send.
-function planDocumentInclusion(documentCounts, {
-  turnWindow = DOCUMENT_REPLAY_TURNS, maxDocuments = DOCUMENT_REPLAY_MAX,
-} = {}) {
-  const include = documentCounts.map(() => 0);
-  let budget = maxDocuments;
-  for (let back = 0; back < Math.min(turnWindow, documentCounts.length) && budget > 0; back++) {
-    const i = documentCounts.length - 1 - back;
-    include[i] = Math.min(documentCounts[i] || 0, budget);
-    budget -= include[i];
-  }
-  return include;
-}
-
 // #3557: the line a document block becomes when the provider refused the
 // request it was in.
 function refusedDocumentLine(block) {
@@ -484,249 +397,6 @@ function withoutDocuments(messages) {
   ));
 }
 
-// One-line Mayor-facing placeholder for a zip attachment, built from
-// the manifest captured at upload time. The Mayor never sees archive
-// bytes — this is how it learns enough to write a good dispatch brief.
-function zipPlaceholderLine(att) {
-  const meta = att.meta || {};
-  const size = humanSize(att.sizeBytes != null ? att.sizeBytes : (att.data ? att.data.length : 0));
-  const count = meta.entryCount != null ? `, ${meta.entryCount} files` : '';
-  const top = Array.isArray(meta.topLevel) && meta.topLevel.length
-    ? `; top level: ${meta.topLevel.slice(0, 10).join(', ')}`
-    : '';
-  return `[attached file: ${att.filename} — zip archive, ${size}${count}${top}. Its contents are made available to the coding agent on dispatch.]`;
-}
-
-const DOCUMENT_PROBLEM_TEXT = Object.freeze({
-  too_large: `It is too large for you to read directly (over ${Math.round(MAX_DOCUMENT_BYTES / 1024 / 1024)} MB).`,
-  encrypted: 'It is encrypted, so you cannot read it directly.',
-  too_many_pages: `It has too many pages for you to read directly (over ${MAX_DOCUMENT_PAGES}).`,
-  unreadable: 'It could not be read as a PDF.',
-});
-
-function binaryPlaceholderLine(att) {
-  const size = humanSize(att.sizeBytes != null ? att.sizeBytes : (att.data ? att.data.length : 0));
-  if (isPdfAttachment(att)) {
-    const problem = documentProblem(att);
-    const why = problem ? DOCUMENT_PROBLEM_TEXT[problem] : 'Not sent to you in this turn.';
-    return `[attached file: ${att.filename} — PDF, ${size}. ${why} It is made available to the coding agent on dispatch.]`;
-  }
-  return `[attached file: ${att.filename} — binary file, ${size}. It is made available to the coding agent on dispatch.]`;
-}
-
-// #3557: a stored PDF, re-checked against its bytes so a row's content type
-// alone never decides what is sent to a model.
-function isPdfAttachment(att) {
-  return !!att && att.kind === 'binary'
-    && (att.contentType || att.content_type) === PDF_CONTENT_TYPE && isPdf(att.data);
-}
-
-// Why a stored PDF cannot go to the Mayor as a document block, or null when
-// it can: 'too_large', or a cheap structural check (no PDF library) for the
-// files a provider refuses outright, which would fail the whole request on
-// every turn the PDF is replayed. 'unreadable' when the `%%EOF` trailer is
-// missing from the end (truncated), 'encrypted' for an /Encrypt entry, and
-// 'too_many_pages' when the uncompressed /Type /Page objects (not /Pages)
-// exceed the cap. Pages inside compressed object streams are not counted,
-// so the provider fallback in llm.js / openrouter-mayor.js stays the
-// backstop.
-function documentProblem(att) {
-  if (!isPdfAttachment(att)) return 'unreadable';
-  const data = att.data;
-  if (data.length > MAX_DOCUMENT_BYTES) return 'too_large';
-  if (!data.subarray(Math.max(0, data.length - PDF_EOF_WINDOW)).toString('latin1').includes('%%EOF')) {
-    return 'unreadable';
-  }
-  const source = data.toString('latin1');
-  if (/\/Encrypt\b/.test(source)) return 'encrypted';
-  const pages = source.match(/\/Type\s*\/Page\b/g);
-  if (pages && pages.length > MAX_DOCUMENT_PAGES) return 'too_many_pages';
-  return null;
-}
-
-// A PDF that may be sent to the Mayor as a document block.
-function readableDocument(att) {
-  return isPdfAttachment(att) && documentProblem(att) === null;
-}
-
-// An Anthropic document block. `title` carries the filename, which is how
-// the model (and an adapter that cannot pass the bytes on) names it.
-function documentBlock(att) {
-  return {
-    type: 'document',
-    source: { type: 'base64', media_type: PDF_CONTENT_TYPE, data: att.data.toString('base64') },
-    title: String(att.filename || 'document.pdf'),
-  };
-}
-
-// Build the Mayor-facing content for one user row that has attachments.
-// `attachments` entries: { kind, filename, contentType, data: Buffer }.
-// Returns a plain string when there are no attachments, otherwise an
-// Anthropic content-block array: image and document (PDF) blocks first,
-// then a single text block carrying the user's text + inlined text files
-// (+ placeholders for images and PDFs excluded by the replay policy and
-// for zip/other binary attachments, which are never inlined). Only user
-// rows ever become arrays — assistant rows stay strings
-// (buildMayorMessages merges them). `documentBudget` is how many of this
-// row's readable PDFs, in order, go as document blocks (#3557).
-function buildUserMessageContent({ text, attachments, includeImages, documentBudget = 0 }) {
-  const atts = attachments || [];
-  if (!atts.length) return text;
-
-  const blocks = [];
-  const textParts = [String(text || '')];
-  let documentsLeft = Number.isInteger(documentBudget) && documentBudget > 0 ? documentBudget : 0;
-
-  for (const att of atts) {
-    if (att.kind === 'image') {
-      if (includeImages) {
-        blocks.push({
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: att.contentType || att.content_type,
-            data: att.data.toString('base64'),
-          },
-        });
-      } else {
-        textParts.push(`[image attachment: ${att.filename} — shown in an earlier turn]`);
-      }
-    } else if (att.kind === 'zip') {
-      textParts.push(zipPlaceholderLine(att));
-    } else if (att.kind === 'binary') {
-      // #3557: a PDF inside the replay budget goes as a document block,
-      // which a model that reads PDFs reads and an adapter for one that
-      // does not turns back into a line naming the file.
-      if (documentsLeft > 0 && readableDocument(att)) {
-        documentsLeft -= 1;
-        blocks.push(documentBlock(att));
-      } else {
-        textParts.push(binaryPlaceholderLine(att));
-      }
-    } else {
-      textParts.push(attachedFileBlock(att.filename, att.data.toString('utf8')));
-    }
-  }
-
-  // Anthropic rejects empty text blocks — only emit one when there's
-  // text to carry (the chat route stores a stub caption for
-  // attachments-only sends, so this is belt-and-suspenders).
-  const joined = textParts.filter(Boolean).join('\n\n');
-  if (joined) blocks.push({ type: 'text', text: joined });
-  if (!blocks.length) return String(text || '');
-  return blocks;
-}
-
-// Filenames appear inside suggested shell commands — keep only
-// shell-innocuous characters so a crafted name can't inject anything.
-function safePathName(filename) {
-  const s = String(filename || 'file').replace(/[^A-Za-z0-9._-]/g, '_');
-  return s || 'file';
-}
-
-// The scout/build dispatch prompt block for the CURRENT turn's
-// attachments. Text files are inlined verbatim (clipped, within an
-// aggregate budget — see INLINE_TOTAL_CHAR_CAP); images, zips, and
-// binaries are listed with usernode-attachments CLI instructions so
-// Claude Code can fetch them in the worker container. '' when empty.
-function buildDispatchBlock(attachments) {
-  const atts = attachments || [];
-  if (!atts.length) return '';
-  const parts = [];
-  let hasCliRefs = false;
-  let inlineBudget = INLINE_TOTAL_CHAR_CAP;
-  for (const att of atts) {
-    const safeName = safePathName(att.filename);
-    if (att.kind === 'image') {
-      hasCliRefs = true;
-      parts.push(`image: ${att.filename} (id ${att.id}) — download it with \`usernode-attachments ${att.id} /tmp/${safeName}\` (run via Bash), then use your Read tool on /tmp/${safeName} to view it.`);
-    } else if (att.kind === 'zip') {
-      hasCliRefs = true;
-      const meta = att.meta || {};
-      const count = meta.entryCount != null ? `, ${meta.entryCount} files` : '';
-      const top = Array.isArray(meta.topLevel) && meta.topLevel.length
-        ? `; top level: ${meta.topLevel.join(', ')}`
-        : '';
-      const dirName = safeName.replace(/\.zip$/i, '') || 'archive';
-      parts.push(`zip archive: ${att.filename} (id ${att.id}${count}${top}) — extract it with \`usernode-attachments ${att.id} --unzip /home/node/attachments/${dirName}/\` (run via Bash), then browse that directory with your normal tools. Treat it as read-only reference material — do not copy it wholesale into the repo unless asked.`);
-    } else if (att.kind === 'binary' && isPdfAttachment(att)) {
-      // #3557: Claude Code's Read tool shows a PDF to a model that reads
-      // them; the adapter tells a text-only model it cannot.
-      hasCliRefs = true;
-      parts.push(`PDF: ${att.filename} (id ${att.id}) — download it with \`usernode-attachments ${att.id} /home/node/attachments/${safeName}\` (run via Bash), then use your Read tool on /home/node/attachments/${safeName} to read it. If the tool says this model cannot read PDFs, use a command-line text extractor if one is installed, or work from what the user said about it.`);
-    } else if (att.kind === 'binary') {
-      hasCliRefs = true;
-      parts.push(`binary file: ${att.filename} (id ${att.id}) — download it with \`usernode-attachments ${att.id} /home/node/attachments/${safeName}\` (run via Bash).`);
-    } else {
-      const block = attachedFileBlock(att.filename, att.data.toString('utf8'));
-      if (block.length <= inlineBudget) {
-        inlineBudget -= block.length;
-        parts.push(block);
-      } else {
-        // Aggregate inline budget exhausted — degrade to a download
-        // instruction rather than clipping harder.
-        hasCliRefs = true;
-        parts.push(`text file: ${att.filename} (id ${att.id}) — too large to inline here; download it with \`usernode-attachments ${att.id} /home/node/attachments/${safeName}\` (run via Bash), then Read it.`);
-      }
-    }
-  }
-  const cliNote = hasCliRefs
-    ? '\n\nA read-only helper `usernode-attachments` is available (run it via Bash): with no arguments it lists this session\'s attachments as JSON; `usernode-attachments <id> <outpath>` downloads one attachment\'s bytes to a file; `usernode-attachments <id> --unzip <dir>` downloads a zip attachment and extracts it into <dir>. Use it to fetch the attachments referenced above.'
-    : '';
-  return `\n\n==== USER-ATTACHED FILES (this turn) ====\n\n${parts.join('\n\n')}\n\n==== END USER-ATTACHED FILES ====${cliNote}`;
-}
-
-// ── DB helpers (thin — the pure logic above stays pg-free) ──────────
-
-// Bulk-load attachment rows (with bytes) for the user rows of a loaded
-// chat history. Returns Map<messageId, [{ id, kind, filename,
-// contentType, data }]>. History rows carry metadata.attachments (the
-// render-time summary); the bytea rows are the prompt-time source.
-async function loadForHistory(pool, history) {
-  const ids = [];
-  for (const row of history) {
-    if (row.role === 'user' && row.id != null
-        && Array.isArray(row.metadata?.attachments) && row.metadata.attachments.length) {
-      ids.push(row.id);
-    }
-  }
-  const map = new Map();
-  if (!ids.length) return map;
-  const { rows } = await pool.query(
-    `SELECT id, message_id, kind, filename, content_type, size_bytes, meta, data
-       FROM chat_session_attachments
-      WHERE message_id = ANY($1)
-      ORDER BY created_at ASC, id ASC`,
-    [ids]
-  );
-  for (const r of rows) {
-    const entry = {
-      id: r.id, kind: r.kind, filename: r.filename, contentType: r.content_type,
-      sizeBytes: r.size_bytes, meta: r.meta, data: r.data,
-    };
-    if (!map.has(r.message_id)) map.set(r.message_id, []);
-    map.get(r.message_id).push(entry);
-  }
-  return map;
-}
-
-// Load the current turn's attachments (with bytes) for the dispatch
-// block. `ids` are already ownership-verified by the chat handler.
-async function loadByIds(pool, ids) {
-  if (!ids || !ids.length) return [];
-  const { rows } = await pool.query(
-    `SELECT id, kind, filename, content_type, size_bytes, meta, data
-       FROM chat_session_attachments
-      WHERE id = ANY($1)
-      ORDER BY created_at ASC, id ASC`,
-    [ids]
-  );
-  return rows.map((r) => ({
-    id: r.id, kind: r.kind, filename: r.filename,
-    contentType: r.content_type, sizeBytes: r.size_bytes, meta: r.meta, data: r.data,
-  }));
-}
-
 // Content-Disposition's legacy filename parameter is a header, so Node only
 // accepts Latin-1 in it. Real filenames are not: macOS screenshot names carry
 // a narrow no-break space (U+202F) before AM/PM, and people attach files
@@ -752,42 +422,21 @@ module.exports = {
   MAX_ZIP_ENTRIES,
   MAX_BINARY_BYTES,
   MAX_PER_MESSAGE,
-  MAX_SESSION_BYTES,
   MAX_MARKDOWN_BYTES,
   MAX_HTML_BYTES,
   MAX_APP_CHAT_BYTES,
-  INLINE_CHAR_CAP,
-  INLINE_TOTAL_CHAR_CAP,
-  IMAGE_REPLAY_TURNS,
-  IMAGE_REPLAY_MAX,
-  MAX_DOCUMENT_BYTES,
-  DOCUMENT_REPLAY_TURNS,
-  DOCUMENT_REPLAY_MAX,
-  MAX_DOCUMENT_PAGES,
   PDF_CONTENT_TYPE,
-  ATTACHMENTS_ONLY_TEXT,
   fileExt,
   sniffImageType,
   sniffVideoType,
   isPdf,
-  isPdfAttachment,
-  readableDocument,
-  documentProblem,
-  planDocumentInclusion,
   hasDocumentBlocks,
   withoutDocuments,
   isUtf8Text,
-  humanSize,
   validateZip,
   validateUpload,
   validateChatUpload,
   attachmentDisposition,
   sanitizeAttachmentIds,
   clipText,
-  attachedFileBlock,
-  planImageInclusion,
-  buildUserMessageContent,
-  buildDispatchBlock,
-  loadForHistory,
-  loadByIds,
 };

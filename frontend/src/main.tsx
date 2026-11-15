@@ -92,7 +92,7 @@ import './features/dev-board/mount';
 // The group chat transcript's mount (#1191). Same shape and same reason as the
 // Dev board's above: public/js/group-chat.js is a classic script that cannot
 // import from this bundle, and #gc-messages is created at runtime by
-// AppView.renderDevChatTab — so the API has to exist before anything can reach
+// AppView.renderGroupChatTab — so the API has to exist before anything can reach
 // the chat tab, which means at module-evaluation time rather than from an
 // island's effect.
 import './features/group-chat/mount';

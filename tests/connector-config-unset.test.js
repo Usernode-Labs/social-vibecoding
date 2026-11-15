@@ -13,8 +13,8 @@
 //      without them.
 //   2. An UNSET deployment must degrade, not half-work. The link routes 404
 //      (pinned in github-link.test.js), and the connector's fork tooling has
-//      to say the deployment cannot fork — pointing at the platform-build
-//      fallback — rather than sending the user to Settings to press a button
+//      to say the deployment cannot fork — pointing at Homeroom bot, inside
+//      Homeroom — rather than sending the user to Settings to press a button
 //      that isn't there. Everything that does NOT depend on the OAuth app
 //      keeps working: the OAuth connector itself, the read-only tools, and
 //      the out-of-credits card.
@@ -225,7 +225,8 @@ test('prepare_work reports the DEPLOYMENT cannot fork, not that the user forgot 
       // end. Point at the route that still works instead.
       assert.notEqual(result.code, 'github_not_linked');
       assert.equal(result.settingsUrl, undefined);
-      assert.match(result.message, /start_platform_build/);
+      assert.match(result.message, /ask Homeroom bot for the change inside Homeroom, from the Homeroom bot tab/);
+      assert.match(result.message, /needs no GitHub link/);
       assert.match(result.message, /GITHUB_LINK_CLIENT_ID/);
       assert.equal(fetched, false, 'and no GitHub call is attempted');
     } finally {
@@ -258,8 +259,8 @@ test('the assistant is told the two refusals need different answers', () => {
   assert.match(CHARTER_FULL, /github_not_linked[\s\S]{0,200}settings/i);
   assert.match(
     CHARTER_FULL,
-    /github_link_unavailable[\s\S]{0,200}start_platform_build/,
-    'the unconfigured case must route to the fallback, not to Settings'
+    /github_link_unavailable, do not send them to Settings\.[\s\S]{0,200}ask Homeroom bot for the change inside Homeroom/,
+    'the unconfigured case must route to Homeroom bot, not to Settings'
   );
 });
 

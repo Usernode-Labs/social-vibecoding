@@ -5,9 +5,8 @@
  * ── Why this region goes first ─────────────────────────────────────────
  *
  * It is the rehearsal for `#app-view`. This overlay holds `#staging-iframe`,
- * whose `src` app-view.js clears (`iframe.src = ''`) on every open and close,
- * re-points on a "Test this change" jump, and which #771 toggles between a
- * fullscreen overlay and a docked side panel — all of it on the SAME element,
+ * whose `src` app-view.js clears (`iframe.src = ''`) on every open and close
+ * and re-points on a "Test this change" jump — all of it on the SAME element,
  * because reparenting or re-creating an iframe reloads it and a reload throws
  * away whatever the user was doing inside the previewed app. Proving a
  * React-owned iframe survives every one of those state changes here is the
@@ -20,8 +19,8 @@
  *    component's state can change the element's identity, so React only ever
  *    reconciles attributes around it.
  * 2. Every class the shell toggles at runtime (`hidden` on the overlay, the
- *    loader and the testing panel; `staging-overlay-docked`) is applied through
- *    the `useHiddenClass` / `useClassToggle` refs from lib/legacy-dom.ts, never
+ *    loader and the testing panel) is applied through
+ *    the `useHiddenClass` refs from lib/legacy-dom.ts, never
  *    a rendered `className`. That keeps the `className` props CONSTANT, which is
  *    what makes the prerendered markup byte-identical to the hand-written shell
  *    and what stops React from fighting `app.css`'s runtime classes.
@@ -39,7 +38,7 @@ import { Button } from '@/components/ui/button';
 
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
-import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { stagingHandlers, stagingRefs, stagingStore } from './staging-store.js';
 import { useStoreState } from '../../lib/use-store-state';
 
@@ -78,7 +77,6 @@ export function StagingOverlay(): ReactNode {
   const loaderRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const testBtnRef = useRef<HTMLButtonElement | null>(null);
-  const fsBtnRef = useRef<HTMLButtonElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const retryRef = useRef<HTMLButtonElement | null>(null);
   const spinnerRef = useRef<HTMLDivElement | null>(null);
@@ -95,36 +93,23 @@ export function StagingOverlay(): ReactNode {
   useHiddenClass(spinnerRef, state.loaderRetry);
   useHiddenClass(clockRef, !state.clockLabel);
   useHiddenClass(overlayRef, !state.open);
-  useClassToggle(overlayRef, 'staging-overlay-docked', state.mode === 'docked');
   useHiddenClass(loaderRef, !state.loaderVisible);
   useHiddenClass(panelRef, state.testPanelHidden);
   useHiddenClass(testBtnRef, state.testBtnHidden);
-  useHiddenClass(fsBtnRef, state.fsBtnHidden);
-
-  // #771: the docked overlay is pinned over #dc-staging-panel's bounding rect.
-  // Fullscreen carries NO inline style at all (the CSS `inset: 0` does it), so
-  // the prerendered element has no style attribute — same as the hand-written
-  // shell — and React removes the four properties again on the way back out.
-  const rect = state.dockRect;
-  const style = rect
-    ? { top: `${rect.top}px`, left: `${rect.left}px`, width: `${rect.width}px`, height: `${rect.height}px` }
-    : undefined;
 
   return (
     <div
       id="staging-overlay"
       ref={overlayRef}
       className="hidden fixed inset-0 z-40 bg-zinc-950 flex flex-col"
-      style={style}
     >
       {/*
-          `staging-chrome-bar` is a STYLE HOOK, not decoration: fullscreen,
+          `staging-chrome-bar` is a STYLE HOOK, not decoration:
           this overlay is `inset: 0` and covers the status bar, so app.css
-          adds the top safe-area inset to this bar (and only in the
-          non-docked state — a docked panel is pinned mid-page and needs
-          none). The bar's bottom edge needs nothing: everything below it
-          is the staging iframe, which reaches the true bottom edge and
-          receives the real insets over the safe-area bridge.
+          adds the top safe-area inset to this bar. The bar's bottom edge
+          needs nothing: everything below it is the staging iframe, which
+          reaches the true bottom edge and receives the real insets over the
+          safe-area bridge.
       */}
       <div className="staging-chrome-bar flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
         <button
@@ -149,23 +134,6 @@ export function StagingOverlay(): ReactNode {
           onClick={() => stagingHandlers.onTest?.()}
         >
           {t('devchat:staging.testThisChange')}
-        </button>
-        {/*
-            #771: docked-mode toggle. In the docked side panel it reads
-            "Full screen" (expand to today's fullscreen overlay); in
-            fullscreen — when the preview was opened from dev chat and can
-            re-dock — it reads "Exit full screen". Same element, same
-            iframe: toggling never reloads the preview. Wired in
-            AppView._updateStagingModeUi.
-        */}
-        <button
-          id="staging-fullscreen-btn"
-          ref={fsBtnRef}
-          className="hidden text-xs font-medium px-2.5 py-1 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 shrink-0"
-          title={state.fsBtnTitle || undefined}
-          onClick={() => stagingHandlers.onFullscreen?.()}
-        >
-          {state.fsBtnText ?? t('devchat:staging.fullScreen')}
         </button>
         {/*
             The preview's title, "Flat 4B Chores · Preview", set by
@@ -196,19 +164,6 @@ export function StagingOverlay(): ReactNode {
             className="hidden absolute -top-1 -end-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"
           >
           </span>
-        </button>
-        {/*
-            #771: close button for the docked side panel. CSS shows it only
-            in docked mode (where "Back" is hidden: closing the
-            panel IS going back to the session, which never left).
-        */}
-        <button
-          id="staging-dock-close"
-          className="staging-dock-only text-zinc-400 hover:text-zinc-100 text-lg leading-none px-1 shrink-0"
-          aria-label={t('devchat:staging.closePreview')}
-          onClick={() => stagingHandlers.onDockClose?.()}
-        >
-          &times;
         </button>
       </div>
       {/*

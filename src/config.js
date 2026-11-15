@@ -415,12 +415,6 @@ function load() {
     // user has a usable key; Claude remains the safe fallback for accounts
     // that have not configured or claimed one.
     codexOpenrouterEnabled: String(process.env.CODEX_OPENROUTER_ENABLED || 'true') === 'true',
-    // #2809/#2810: an OpenRouter session's chat runs through the Mayor, on the
-    // session's own OpenRouter model and key (services/openrouter-mayor.js),
-    // so it gets the same plan, spec and wrap-up flow as a Claude session.
-    // False restores the direct path, where the coding agent answers alone.
-    openrouterSessionMayorEnabled:
-      String(process.env.OPENROUTER_SESSION_MAYOR_ENABLED || 'true') === 'true',
     // #717: collection-only emergency switch. Reporting remains readable so
     // operators can inspect already-recorded aggregates after disabling new
     // writes. This never changes provider/model/routing behaviour.

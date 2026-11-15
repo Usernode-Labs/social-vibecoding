@@ -92,8 +92,6 @@ test('the allowlist permits exactly the routes the tools need', () => {
     // proposal.
     ['POST', '/api/apps/recipe-box/proposals/412/update-from-fork'],
     ['GET', '/api/apps/recipe-box/proposals/412/shots/diagnostics'],
-    ['POST', '/api/apps/recipe-box/issues/12/headless-session'],
-    ['POST', '/api/sessions/412/clone-headless'],
     ['POST', '/api/sessions/412/promote'],
     // #2779 — recheck_change: the "Re-run checks" button, on the commit the
     // proposal already has. The handler refuses anyone but the owner or a
@@ -175,8 +173,9 @@ test('fail-closed: anything not listed is refused', () => {
     ['GET', '/api/apps'.concat('/')],
     ['GET', '/api/sessions'],
     ['GET', '/api/sessions/412/status/extra'],
-    ['POST', '/api/apps/recipe-box/issues/12/headless-session/extra'],
-    ['POST', '/api/apps/recipe-box/issues//headless-session'],
+    // The connector starts no build on Homeroom.
+    ['POST', '/api/apps/recipe-box/issues/12/headless-session'],
+    ['POST', '/api/sessions/412/clone-headless'],
     // The update route is one exact shape. Nothing else under /proposals/ is
     // reachable, and the update itself is a POST only.
     ['GET', '/api/apps/recipe-box/proposals/412/update-from-fork'],
@@ -307,16 +306,6 @@ test('every route the tools call is on the allowlist', () => {
   // the tool module calls and check each one.
   const calls = [...TOOLS_SRC.matchAll(/callPlatform\(\s*baseUrl,\s*accessToken,\s*'([A-Z]+)',\s*[`']([^`']*)[`']/g)];
   assert.ok(calls.length >= 6, 'found the tool call sites');
-  // #2779: the four change-lifecycle tools are registered only for an agent
-  // session's Mayor, so their calls are held to the Mayor's own list instead.
-  const { DELEGATED_ONLY_TOOLS } = require('../src/services/mcp-audiences');
-  const delegatedBlocks = DELEGATED_ONLY_TOOLS.map((name) => {
-    const start = TOOLS_SRC.indexOf(`server.registerTool('${name}'`);
-    assert.ok(start > 0, `${name} is registered`);
-    const end = TOOLS_SRC.indexOf('server.registerTool(', start + 10);
-    return [start, end > 0 ? end : TOOLS_SRC.length];
-  });
-  let delegatedCalls = 0;
   for (const match of calls) {
     const [, method, rawPath] = match;
     // Template literals interpolate the slug / proposal id; substitute a
@@ -325,28 +314,19 @@ test('every route the tools call is on the allowlist', () => {
     // routes/cli-auth.js matches on `req.path`, which express has already
     // stripped it from (#1196 added `?include_imported=1` to one call).
     const target = rawPath.replace(/\$\{[^}]*\}/g, 'x').split('?')[0];
-    if (delegatedBlocks.some(([start, end]) => match.index > start && match.index < end)) {
-      delegatedCalls += 1;
-      assert.equal(
-        policy.isDelegatedApiRequest('agent_mayor', method, target), true,
-        `${method} ${target} (called by a Mayor-only tool) is on the Mayor's allowlist`
-      );
-      continue;
-    }
     assert.equal(
       policy.isConnectorApiRequest(method, target), true,
       `${method} ${target} (called by a tool) is on the allowlist`
     );
   }
-  assert.ok(delegatedCalls >= 4, 'found the Mayor-only call sites');
 });
 
-test('#6384: the Mayor may read a plan, and may never post or change one', () => {
+test('#6384: Homeroom bot may read a plan, and may never post or change one', () => {
   // get_spec calls these two GETs; both are plain reads, and the routes check
   // the caller may see the request.
   assert.equal(policy.isDelegatedApiRequest('agent_mayor', 'GET', '/api/apps/recipe-box/issues/12/specs'), true);
   assert.equal(policy.isDelegatedApiRequest('agent_mayor', 'GET', '/api/sessions/412/specs/2'), true);
-  // post_spec edits a plan, so its route stays off the Mayor's list.
+  // post_spec edits a plan, so its route stays off Homeroom bot's list.
   assert.equal(policy.isDelegatedApiRequest('agent_mayor', 'POST', '/api/apps/recipe-box/issues/12/spec'), false);
   // The worker's six reads still include no plan.
   assert.equal(policy.isDelegatedApiRequest('worker_read', 'GET', '/api/apps/recipe-box/issues/12/specs'), false);

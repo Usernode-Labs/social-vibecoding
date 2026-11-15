@@ -225,25 +225,15 @@ declare global {
       /** POST /api/sessions/:id/recheck, with the platform's own toasts; true once it started. */
       castRecheck?(sessionId: number): Promise<boolean | undefined>;
       /**
-       * The staging preview (#439, #771), shared with an agent session's side
-       * pane (#2779): ensure-then-open a change's preview, docked beside the
-       * chat when a dock host's slot is mounted, for an explicit app.
+       * The staging preview (#439, #771): ensure-then-open a change's
+       * preview, for an explicit app.
        */
       ensureStaging?(
         sessionId: number,
         fallbackUrl: string | null,
         testing: { md?: string | null; path?: string | null } | null,
-        opts?: { dock?: boolean; app?: { slug: string; self_hosted?: boolean }; readOnly?: boolean; jump?: boolean },
+        opts?: { app?: { slug: string; self_hosted?: boolean }; readOnly?: boolean },
       ): Promise<void>;
-      closeStagingOverlay?(): void;
-      setStagingDockHost?(host: {
-        slotId: string;
-        live(): boolean;
-        collapse(): void;
-        redock(): void;
-        closed: (() => void) | null;
-      } | null): void;
-      onStagingRebuildResult?(sessionId: number, result: { url?: string | null; failed?: boolean; error?: string | null }): void;
       _syncStagingDockGeometry?(): void;
       [key: string]: unknown;
     };

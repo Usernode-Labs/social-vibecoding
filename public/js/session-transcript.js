@@ -1,19 +1,14 @@
-// Read-only renderer for a SHARED dev-chat transcript.
+// Read-only renderer for a change's SHARED build transcript.
 //
 // Where this appears: the shared-session topic page (and a proposal's page
-// when its owner published the chat), inside the "Dev chat" section
+// when its owner published the chat), inside the transcript section
 // AppView._loadSessionTranscript paints. The payload comes from
 // GET /api/sessions/:id/transcript, already sanitised server-side by
 // services/transcript-share.js — this module renders it and nothing more.
 //
-// Why it is NOT DevChat.renderMessages: that renderer is bound to owner
-// state — DevChat.currentSession, the live progress ticker, Q/A answer
-// chips, platform-issue Report/Dismiss buttons, per-session <details>
-// persistence. A reader has none of those, and several of them post to
-// owner-scoped endpoints. So this is a separate, deliberately small
-// renderer with three rules:
+// A deliberately small renderer with three rules:
 //
-//   1. PURE STRING BUILDER. No DOM reads, no DevChat.currentSession, no
+//   1. PURE STRING BUILDER. No DOM reads, no session state, no
 //      fetches — so tests/session-transcript-render.test.js can vm-load it
 //      and assert on the HTML directly.
 //   2. NOTHING INTERACTIVE THAT WRITES. No composer, no form, no send
@@ -21,13 +16,12 @@
 //      someone's chat can never post into it, and the server enforces the
 //      same thing (POST /chat is owner-scoped) — the missing UI is the
 //      second layer, not the only one.
-//   3. AGENT ACTIVITY COLLAPSED BY DEFAULT. The owner's own view opens
-//      these (they're watching a live run); a reader is skimming a
+//   3. AGENT ACTIVITY COLLAPSED BY DEFAULT. A reader is skimming a
 //      finished conversation, so progress logs and raw agent summaries
 //      start closed.
 //
-// It reuses the dev chat's dc-* classes so a shared transcript reads like
-// the real thing rather than a second visual language.
+// Its rows wear the dc-* classes (app.css), the same ones the Markdown
+// renderer's output carries.
 
 (function () {
   // Standalone-safe helpers: the module is vm-loaded in tests without the
@@ -41,10 +35,10 @@
       .replace(/'/g, '&#39;');
   }
 
-  // Markdown via the dev chat's own renderer when it's loaded (it is, in
-  // the real app — dev-chat.js ships before app-view.js). It's a pure
-  // helper with module-local state only, so calling it cross-module is
-  // safe. Fallback: escaped text in a <pre>-ish wrapper, never raw HTML.
+  // Markdown via the platform's renderer when it's loaded (it is, in the
+  // real app). It's a pure helper with module-local state only, so calling
+  // it cross-module is safe. Fallback: escaped text in a <pre>-ish wrapper,
+  // never raw HTML.
   function md(text) {
     if (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown && typeof PlatformMarkdown.render === 'function') {
       try { return PlatformMarkdown.render(text); } catch { /* fall through */ }
@@ -156,13 +150,8 @@
 
   // #2597: the running row says the EVENT, and the venue underneath.
   //
-  // The owner's dev chat rewrites "<venue> is running" into one heading with
-  // the venue as a muted caption (`_runningRowLabel` in
-  // frontend/src/features/dev-chat/dev-chat.js). These are the same rows read
-  // by somebody who was not in the session, so they have to say the same
-  // thing. The rule is duplicated rather than borrowed on purpose: this
-  // renderer's whole point is that it works without dev-chat.js loaded, and
-  // the markdown fallback path is tested with DevChat absent.
+  // A "<venue> is running" row is one heading with the venue as a muted
+  // caption.
   //
   // The venue comes from the row's metadata, with the sentence's own wording
   // as the fallback the older rows — written before a backend was recorded —

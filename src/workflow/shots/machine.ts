@@ -28,7 +28,7 @@ import type {
   Check, DomainWrite, Event, Json, Machine, Outcome, Push, TimerRequest, TransitionContext, Tx, WorkRef, WorkRequest,
   WorkResultPayload,
 } from '../kernel/index.ts';
-import { toUser, voteUpdate } from '../pushes.ts';
+import { voteUpdate } from '../pushes.ts';
 import { toBotChange, writeBotChange } from '../rules/bot-notes.ts';
 import { missingIntentDetail, pendingDetail, requiredForIntent, runSummary } from '../rules/shots-detail.ts';
 import { SHOTS_LIVE_STATES } from '../session-work.ts';
@@ -925,9 +925,6 @@ async function tell(tx: Tx, ctx: any, sessionId: number, state: string | null) {
     'SELECT cs.app_id, a.slug FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1', [sessionId]);
   if (!s) return;
   ctx.push(voteUpdate({ sessionId, appId: s.app_id, appSlug: s.slug, merged: false, action: 'shots', shotsState: state }));
-  const { rows } = await tx.query(
-    `SELECT id, user_id FROM agent_sessions WHERE active_change_id = $1 AND status = 'open'`, [sessionId]);
-  for (const r of rows) ctx.push(toUser(r.user_id, { type: 'agent_session_changed', agentSessionId: r.id }));
 }
 
 // The run's row moved: the slot shows its summary (with its files, once

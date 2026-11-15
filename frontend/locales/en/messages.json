@@ -3095,14 +3095,6 @@
     "text": "Everyone on Homeroom",
     "description": "Second line of the #general channel's row in the conversation list while nothing has been written there: who the channel is for. Homeroom is the product's name."
   },
-  "inbox.new.agent.label": {
-    "text": "Agent chat",
-    "description": "Choice in the \"New message\" menu: starts a new conversation with the coding agent, which can plan and build a change to any project."
-  },
-  "inbox.new.agent.hint": {
-    "text": "Plan and build a change with a coding agent",
-    "description": "Explains the \"Agent chat\" choice in the \"New message\" menu. \"Change\" is a noun: a change to a project."
-  },
   "inbox.new.direct.label": {
     "text": "Direct message",
     "description": "Choice in the \"New message\" menu: starts a one-to-one conversation."
@@ -3129,7 +3121,7 @@
   },
   "inbox.section.agents": {
     "text": "Agents",
-    "description": "Small-caps heading over the Messages list section that holds the viewer's conversations with AI agents and their changes in flight. It is a button that folds the section away and opens it again."
+    "description": "Small-caps heading over the Messages list section that holds the viewer's changes in flight, each being built by an AI agent. It is a button that folds the section away and opens it again."
   },
   "inbox.section.people": {
     "text": "People",
@@ -3137,11 +3129,11 @@
   },
   "inbox.section.working_one": {
     "text": "{{count}} working",
-    "description": "Beside the Agents heading in the Messages list, also while the section is folded: how many of the viewer's agent conversations are working right now. {{count}} is that number."
+    "description": "Beside the Agents heading in the Messages list, also while the section is folded: how many of the viewer's changes an agent is working on right now. {{count}} is that number."
   },
   "inbox.section.working_other": {
     "text": "{{count}} working",
-    "description": "Beside the Agents heading in the Messages list, also while the section is folded: how many of the viewer's agent conversations are working right now. {{count}} is that number."
+    "description": "Beside the Agents heading in the Messages list, also while the section is folded: how many of the viewer's changes an agent is working on right now. {{count}} is that number."
   },
   "inbox.section.unread_one": {
     "text": "{{count}} unread",
@@ -3156,32 +3148,16 @@
     "description": "Accessible label of the placeholder rows shown while the conversation list loads."
   },
   "inbox.older.show_one": {
-    "text": "{{count}} older chat",
-    "description": "Quiet link at the foot of the Agents section in Messages: shows the agent chat nobody has used in the last seven days. {{count}} is how many there are."
+    "text": "{{count}} older change",
+    "description": "Quiet link at the foot of the Agents section in Messages: shows the change in flight that nothing has happened to in the last seven days. \"Change\" is a noun. {{count}} is how many there are."
   },
   "inbox.older.show_other": {
-    "text": "{{count}} older chats",
-    "description": "Quiet link at the foot of the Agents section in Messages: shows the agent chats nobody has used in the last seven days. {{count}} is how many there are."
+    "text": "{{count}} older changes",
+    "description": "Quiet link at the foot of the Agents section in Messages: shows the changes in flight that nothing has happened to in the last seven days. \"Changes\" is a noun. {{count}} is how many there are."
   },
   "inbox.older.hide": {
-    "text": "Hide older chats",
-    "description": "Quiet link at the foot of the Agents section in Messages, once the older agent chats are shown: folds them away again."
-  },
-  "inbox.archived.show": {
-    "text": "Show archived",
-    "description": "Button at the foot of the Agents list in Messages: opens the group of archived agent chats, which search does not cover."
-  },
-  "inbox.archived.hide": {
-    "text": "Hide archived",
-    "description": "Button at the foot of the Agents list in Messages, once the archived group is open: folds it away again."
-  },
-  "inbox.archived.heading": {
-    "text": "Archived",
-    "description": "Heading over the group of archived agent chats in the Agents list, shown while \"Show archived\" is open."
-  },
-  "inbox.archived.empty": {
-    "text": "No archived agent chats.",
-    "description": "Shown in place of the archived group's rows in the Agents list when nothing has been archived yet."
+    "text": "Hide older changes",
+    "description": "Quiet link at the foot of the Agents section in Messages, once the older changes are shown: folds them away again. \"Changes\" is a noun."
   },
   "inbox.listName": {
     "text": "Conversations",
@@ -3450,54 +3426,6 @@
   "discussion.subtitle.everyone": {
     "text": "Everyone building this project",
     "description": "Line under a project's name in the header of its discussion when the channel has no handle: who the discussion is for."
-  },
-  "agent.sessionName": {
-    "text": "Agent session",
-    "description": "Accessible name of the pane in Messages that shows a working session with a coding agent."
-  },
-  "agent.row.prNumber": {
-    "text": "PR {{number}}",
-    "description": "Stands in for the title of a change on a coding-agent session's row in the conversation list. \"PR\" is the abbreviation of pull request; {{number}} is its number; do not put a # before it."
-  },
-  "agent.row.changeId": {
-    "text": "Change {{id}}",
-    "description": "Stands in for the title of a change on a coding-agent session's row in the conversation list when nothing else names it. \"Change\" is a noun; {{id}} is its number."
-  },
-  "agent.row.noChange": {
-    "text": "No active change",
-    "description": "Second line of a coding-agent session's row in the conversation list when the session is not working on any change. \"Change\" is a noun."
-  },
-  "agent.row.newSession": {
-    "text": "New session",
-    "description": "Name of a coding-agent session that has no title yet, on its row in the conversation list."
-  },
-  "agent.row.activity.working": {
-    "text": ", working",
-    "description": "Read by screen readers right after a coding-agent session's title in the conversation list: the agent is working. Keep the leading comma, which separates it from the title."
-  },
-  "agent.row.activity.done": {
-    "text": ", finished",
-    "description": "Read by screen readers right after a coding-agent session's title in the conversation list: the agent has finished its turn. Keep the leading comma, which separates it from the title."
-  },
-  "agent.row.working": {
-    "text": "Working…",
-    "description": "Second line of a coding-agent session's row in the conversation list while the agent is working."
-  },
-  "agent.session.openFull": {
-    "text": "Open full view",
-    "description": "Link above a coding-agent session shown inside Messages: opens the same session on its own full page. \"Open\" is a verb."
-  },
-  "agent.session.unavailable": {
-    "text": "This session could not be opened here.",
-    "description": "Error in Messages in place of a coding-agent session that could not be shown inside the Messages screen."
-  },
-  "agent.session.openInApp": {
-    "text": "Open it in the app",
-    "description": "Link under \"This session could not be opened here.\": opens the session on the project's own page. \"Open\" is a verb."
-  },
-  "agent.session.loading": {
-    "text": "Loading session…",
-    "description": "Shown in Messages while a coding-agent session loads."
   },
   "thread.empty.title": {
     "text": "Choose a conversation",
@@ -5904,8 +5832,8 @@
     "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Said in place of the list when the chosen tab holds no conversation."
   },
   "frame.inbox.agentsPurpose": {
-    "text": "Chats with coding agents.",
-    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title while the Agents tab is chosen."
+    "text": "Changes your agents are building.",
+    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title while the Agents tab is chosen: the tab lists the person's changes in flight."
   },
   "bot.offer.expired": {
     "text": "This offer has expired.",

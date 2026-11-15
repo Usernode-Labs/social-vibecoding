@@ -1,25 +1,22 @@
-// Dev-chat completion alerts (#138).
+// Completion alerts (#138).
 //
-// Two delivery channels layered on top of the existing #161 completion
-// pipeline (session_done / auto_solve_done) — no new server-side trigger:
+// Two delivery channels layered on top of the notifications that say work
+// finished or waits on you (Notifications.handleIncoming's priority kinds)
+// — no server-side trigger of their own:
 //
 //   document.visibilityState === 'visible'  → play a synthesized Web Audio
 //                                              chime ("you're in the app").
 //   document.visibilityState === 'hidden'   → fire a system notification
 //                                              ("app is backgrounded").
 //
-// The split keys off visibilityState, NOT DevChat._userIsAway(): a merely
-// blurred-but-visible window still counts as "in the app" and should chime.
+// The split keys off visibilityState: a merely blurred-but-visible window
+// still counts as "in the app" and should chime.
 //
-// Everything is gated on the single "Dev-chat sound & alerts" preference
+// Everything is gated on the single sound & alerts preference
 // (localStorage, default ON). The AudioContext and the browser Notification
-// permission are both unlocked LAZILY on a user gesture (first dev-chat
-// send, or the Settings toggle / test button) — never at page load — to
-// satisfy browser autoplay + permission-prompt policies. The first send
-// explains before it asks (offerNotifyPermission, 21 Oct 2026): the
-// browser's own prompt used to arrive on it with no word of what it was
-// for, which is the ask a person refuses and the browser then never shows
-// again.
+// permission are both unlocked LAZILY on a user gesture (the Settings
+// toggle / test button) — never at page load — to satisfy browser autoplay
+// + permission-prompt policies.
 //
 // There is intentionally no service worker / web-push here (none exists in
 // this repo): browser notifications fire from the live page and so only
@@ -33,14 +30,10 @@
   // common case) and any legacy value both read as enabled.
   const PREF_KEY = 'devchat_alerts_enabled';
 
-  // Suppress a second tone within this window so the _finishStreaming()
-  // chime and an incoming notification_new chime for the SAME turn can't
-  // double up (see Notifications.handleIncoming + DevChat._finishStreaming).
+  // Suppress a second tone within this window so two notification_new
+  // chimes for the SAME event can't double up (see
+  // Notifications.handleIncoming).
   const TONE_DEDUP_MS = 1000;
-
-  // Written once the first send has explained the ask on this device, so it
-  // is explained once (the browser's permission is the device's too).
-  const OFFERED_KEY = 'devchat_notify_offered';
 
   const DevAlerts = {
     _audioCtx: null,
@@ -126,7 +119,7 @@
 
     // Lazily ask for OS-notification permission. Browser only — the native
     // host owns its own permission model. Never called at page load; the
-    // call sites are user gestures (first send / Settings toggle / test).
+    // call sites are user gestures (Settings toggle / test).
     requestNotifyPermission() {
       if (DevAlerts._isNative()) return;
       try {
@@ -137,51 +130,11 @@
       } catch { /* non-fatal */ }
     },
 
-    // The first send's ask: an in-app question first, and the browser's
-    // prompt only behind "Notify me" (the notification ask's rule,
-    // frontend/src/features/notify-ask/). Once per device, and only while
-    // the browser has not been answered. Resolves once it is done; never
-    // throws. The Settings switch and its test button ask directly: those
-    // are already somebody saying yes.
-    async offerNotifyPermission() {
-      if (DevAlerts._isNative() || !DevAlerts.enabled()) return;
-      try {
-        if (typeof Notification === 'undefined' || Notification.permission !== 'default') return;
-        if (localStorage.getItem(OFFERED_KEY) === '1') return;
-        localStorage.setItem(OFFERED_KEY, '1');
-      } catch {
-        return;
-      }
-      const ui = window.PlatformUI;
-      if (!ui || typeof ui.confirm !== 'function') return;
-      const t = (id) => (window.PlatformI18n ? window.PlatformI18n.t(id) : id);
-      let yes = false;
-      try {
-        yes = await ui.confirm({
-          title: t('shell:devAlerts.ask.title'),
-          message: t('shell:devAlerts.ask.message'),
-          confirmLabel: t('shell:devAlerts.ask.confirm'),
-          cancelLabel: t('shell:devAlerts.ask.notNow'),
-        });
-      } catch {
-        return;
-      }
-      // Still inside the tap's activation, which the browser's prompt needs.
-      if (yes) DevAlerts.requestNotifyPermission();
-    },
-
     // In-app deep-link hash for a completion, mirroring the routing in
-    // Notifications._onItemClick.
+    // Notifications._onItemClick: the change's page.
     _routeFor(info) {
       if (info?.kind === 'test_alert') return '#settings/alerts';
-      // #2779: a change an agent session started opens the conversation.
-      if (info && info.agentSessionId) return `#messages/agent/${info.agentSessionId}`;
       if (!info || !info.appSlug) return null;
-      if (info.kind === 'auto_solve_done') {
-        return info.headlessIssueNumber
-          ? `#app/${info.appSlug}/dev/issues/${info.headlessIssueNumber}`
-          : `#app/${info.appSlug}/dev/issues`;
-      }
       return info.sessionId
         ? `#app/${info.appSlug}/dev/proposals/${info.sessionId}`
         : null;
@@ -192,18 +145,7 @@
     // back to a hash assignment, exactly like the bell-menu click path.
     _navigate(info) {
       try { window.focus(); } catch {}
-      if (info && info.agentSessionId) {
-        window.location.hash = DevAlerts._routeFor(info);
-        return;
-      }
       if (info && info.appSlug && typeof App !== 'undefined' && App.openAppTab) {
-        if (info.kind === 'auto_solve_done') {
-          App.openAppTab(info.appSlug, 'dev', {
-            subTab: 'issues',
-            ref: info.headlessIssueNumber || null,
-          });
-          return;
-        }
         if (info.sessionId) {
           App.openAppTab(info.appSlug, 'dev', {
             subTab: 'topic',

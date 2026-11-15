@@ -1311,13 +1311,10 @@ function stagingMockProposals(viewer) {
         0.6, 0, 0, 0, { required: 3, windowEndsAt: null }),
       check_state: 'failing',
       // The app's own tests failed on one test, so its page says what went
-      // wrong in plain words and offers its author Fix it, which needs the
-      // build conversation the change was made in (990804 is the staging
-      // fixture's, migrate.js seedStagingAgentFailingChecks). The sentence
+      // wrong in plain words and offers its author Fix it. The sentence
       // is what the model writes for such a run (services/
       // checks-explanation.js), served by the ?demo=1 branch of
       // GET /api/sessions/:id/checks-explanation, since a preview has none.
-      agent_session_id: 990804,
       checks_explanation: 'Every message the app shows needs a Spanish version, and this one doesn’t have one yet: “Pick a date, or choose I don’t remember.”',
       test_results: [
         { name: 'Home loads', path: '/', status: 'pass', consoleErrors: [] },
@@ -2651,9 +2648,6 @@ function mergedRowSelect() {
            cs.included_in_session_id,
            inc.pr_number AS included_in_pr_number,
            inc.pr_title  AS included_in_pr_title,
-           -- #2779: the agent session the change was started from. Only its
-           -- id: the conversation itself answers to its owner alone.
-           cs.agent_session_id,
            -- Transcript sharing: true when this proposal's owner published
            -- the dev chat that produced it, so the proposal page can offer
            -- "Read the dev chat". A boolean only — the transcript itself is
@@ -2823,9 +2817,8 @@ function noNewerMergedTwin(alias = 'cs') {
 // token: the local Homeroom CLI's proposal_promote, or a connector's
 // promote_change and submit_work `propose: true`. cli-auth.js sets
 // req.cliAuthenticated for those two token kinds only, never for a browser
-// session. A delegated grant is the platform's own agent session, whose
-// conversation already tells its owner, and the Homeroom bot promotes
-// in-process as itself; neither counts.
+// session. A delegated grant is the Homeroom bot's own tools, and the bot
+// promotes in-process as itself; neither counts.
 function promotedByOwnersAgent(req) {
   return req.cliAuthenticated === true && !req.mcpDelegation
     && !(req.user && req.user.is_synthetic);
@@ -4278,12 +4271,6 @@ function voteRoutes(config) {
            -- #4490: the card's picture when it has no shots: the author's
            -- diagram, and "What it touches" for the head it was read at.
            cs.pr_diagram, cs.pr_diagram_source, cs.pr_touches, cs.pr_touches_sha,
-           -- #2779: the agent session the change was started from. Only its
-           -- id, as mergedRowSelect carries it for a merged row: the
-           -- conversation itself answers to its owner alone. This list was
-           -- the one copy of a change without it, so the owner's door on a
-           -- change up for a vote led to its dev session instead (#3712).
-           cs.agent_session_id,
            -- #687 (PR-import): provenance so the client can render the
            -- "Imported PR" badge + GitHub-maintained note and hide the
            -- dev-side controls for externally-authored proposals.
@@ -6306,8 +6293,8 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
           : step.actor === 'author' && /checks could not run/.test(step.note || '')
           ? 'Its checks could not run either; once they are re-run and pass, the platform resolves the conflict.'
           : step.actor === 'author'
-          ? `The platform cannot resolve this one; ${owner} needs to resolve it from the session's dev-chat.`
-          : `The platform will try to resolve it automatically; if it can't, ${owner} needs to resolve it from the session's dev-chat.`);
+          ? `The platform cannot resolve this one; ${owner} needs to resolve it.`
+          : `The platform will try to resolve it automatically; if it can't, ${owner} needs to resolve it.`);
       await sendSystemMessage(pool, session.app_id, msg, 'system',
         null, { type: 'session', ref: session.id }).catch(() => {});
       dstep({
@@ -6878,7 +6865,7 @@ async function attemptMerge(config, pool, sessionId, {
     // to date with main once, which runs them again on today's main.
     const githubChecks = kind === 'blocked' ? githubChecksOf(said) : null;
     const message = kind === 'conflict'
-      ? `${label} hit a conflict with main during a merge attempt. Homeroom resolves it automatically when it can; if it can't, ${owner_} can run "Sync with main" from the session's dev-chat.`
+      ? `${label} hit a conflict with main during a merge attempt. Homeroom resolves it automatically when it can; if it can't, ${owner_} can run "Sync with main" on the change.`
       : kind === 'draft'
         ? `${label} wasn't merged: it is a draft on GitHub. Its author has to mark it ready for review, and it merges then.`
         : kind === 'base_moved'

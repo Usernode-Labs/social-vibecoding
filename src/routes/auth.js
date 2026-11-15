@@ -1053,12 +1053,6 @@ function authRoutes(config) {
         // spec's routing tree. build-venues.js requires this AND the
         // deployment's cliAuthEnabled before offering the `local` venue.
         sessionBridgeEnabled: !!req.user.sessionBridgeEnabled,
-        // #2779: new work starts in an agent session for everyone; the
-        // per-user flag and its Settings switch are retired. Still reported
-        // as true for a shell cached before that, whose entry points read it
-        // to choose between an agent session and a classic one the server
-        // no longer creates.
-        agentSessionsEnabled: true,
         // Platform-level language preference (issue #757): a BCP-47 tag or
         // null when unset. Settings → Language renders from this; apps read
         // it via the iframe JWT `locale` claim and the bridge's
@@ -1128,7 +1122,7 @@ function authRoutes(config) {
         openrouterAvailable,
         // Marks the two fields above as the staging fixture rather than
         // real state, the same way every other ?demo=1 payload labels
-        // itself (services/local-agent-demo.js, GET /api/budget).
+        // itself (GET /api/budget).
         ...(demoKey ? { demoKey: true } : {}),
         usernodePubkey,
         walletLinkEnabled: !!config.usernodeAppPubkey,

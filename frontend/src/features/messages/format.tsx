@@ -252,7 +252,7 @@ function ObjectIcon({ object }: { object: SharedObjectCard }) {
   return <span className="messages-object-icon">{objectGlyph(object.type)}</span>;
 }
 
-// #3103: a shared card that opens a Workshop topic or a dev session records
+// #3103: a shared card that opens a Workshop topic records
 // the conversation it was tapped in, so that page's back returns here rather
 // than to the app's Workshop. The Improve store's own "where from" is the last
 // APP route, and a Messages conversation is not one. Plain clicks only: a
@@ -270,15 +270,15 @@ export function recordObjectOrigin(event: MouseEvent<Element>, href: string, inb
   const w = window as unknown as {
     NavLink?: { isNativeClick?: (e: unknown) => boolean };
     App?: { embeddedPanel?: boolean };
-    Improve?: { enterTopicFrom?: (href: string) => void; enterSessionFrom?: (href: string) => void };
+    Improve?: { enterTopicFrom?: (href: string) => void };
   };
   if (!href.startsWith('#app/') || w.App?.embeddedPanel) return;
   if (w.NavLink?.isNativeClick?.(event)) return;
   const here = window.location.hash;
   if (inboxOnly && !here.startsWith('#messages')) return;
   const origin = here.startsWith('#messages') ? here : '#messages';
-  if (/\/dev\/sessions\//.test(href)) w.Improve?.enterSessionFrom?.(origin);
-  else if (/\/dev\/(?:issues|proposals|changes|governance)\//.test(href)) w.Improve?.enterTopicFrom?.(origin);
+  // `sessions` is a change's old address, which the router takes to its page.
+  if (/\/dev\/(?:issues|proposals|changes|governance|sessions)\//.test(href)) w.Improve?.enterTopicFrom?.(origin);
 }
 
 /**

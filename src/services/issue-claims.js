@@ -4,19 +4,13 @@
 // issue "In progress" for its claimer, plus the claimer's assignee vote on
 // the issue (#1648), so taking the work and assigning it are one gesture.
 //
-// Three surfaces create one:
-//   1. POST /api/apps/:slug/github-issues/:number/claim (src/routes/issues.js)
-//      — the explicit "Claim this issue" button and the connector's
-//      claim_request tool.
-//   2. POST /api/apps/:slug/sessions with an issueNumber (#2364) — "Start
-//      work" on an issue card opens a session on it.
-//   3. POST /api/apps/:slug/issues/:number/headless-session (#2364) —
-//      "Generate proposal" and the connector's start_platform_build.
+// One surface creates one: POST /api/apps/:slug/github-issues/:number/claim
+// (src/routes/issues.js), the explicit "Claim this issue" button and the
+// connector's claim_request tool.
 //
 // Every caller confirms the issue is OPEN before calling in here; this
 // module writes, it does not verify. Both writes are platform-local — no
-// GitHub write. The route surfaces a failure as a 500; the session routes
-// treat a claim as best-effort and never fail session creation over it.
+// GitHub write. The route surfaces a failure as a 500.
 'use strict';
 
 const log = require('./logger');

@@ -6,7 +6,7 @@
 //
 // Every sync is the proposal machine's `branch.sync` work
 // (src/workflow/proposal/), whoever asks for it: a person ("Sync with main",
-// the connector's sync_change, the CLI), a resume of a session behind main,
+// the connector's sync_change), a resume of a session behind main,
 // the merge queue's conflict lane, a preview that will not start because
 // main moved (boot-failure-sync.js) and a check main has fixed since
 // (fixed-check-sync.js, the Homeroom bot). The machine decides whether it may
@@ -100,8 +100,6 @@ async function sessionBusy(pool, sessionId) {
   const { botLookingSql, buildHoldSql, operationsLiveSql, shotsRunningSql } = require('../workflow/session-work.ts');
   const { rows: [r] } = await pool.query(
     `SELECT cs.active_turn IS NOT NULL
-            OR EXISTS (SELECT 1 FROM local_agent_turns t
-                        WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
             OR ${operationsLiveSql('cs.id')}
             OR ${shotsRunningSql('cs.id')}
             OR ${buildHoldSql('cs')}

@@ -3769,7 +3769,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     try {
       const open = deps.openMcp || require('./mayor/mcp-shim').openMayorMcp;
       platform = await open({
-        pool, config, userId: user.id, agentSessionId: null, ttlSeconds: PLATFORM_GRANT_SECONDS,
+        pool, config, userId: user.id, ttlSeconds: PLATFORM_GRANT_SECONDS,
         rateSubject: `hrbot-dm-${user.id}`,
         imageInput,
       });

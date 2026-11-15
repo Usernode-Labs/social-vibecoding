@@ -65,7 +65,6 @@ export interface Row {
   archivedAt: string | null;
   ccPurged: boolean;
   linkedIssues: number[];
-  agentSessionId: number | null;
   explicitApproval: boolean;
   explicitReason: string | null;
   mergeAttemptAt: string | null;
@@ -177,7 +176,7 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
   const { rows: [r] } = await tx.query(
     `SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.pr_number, cs.pr_title,
             cs.branch_name, cs.reviewed_head_sha, cs.imported_pr_head_sha, cs.approval_epoch, cs.promoted_at,
-            cs.created_at, cs.stale_notified_at, cs.last_activity_at, cs.archived_at, cs.cc_purged, cs.linked_issues, cs.agent_session_id,
+            cs.created_at, cs.stale_notified_at, cs.last_activity_at, cs.archived_at, cs.cc_purged, cs.linked_issues,
             cs.requires_explicit_approval, cs.explicit_approval_reason, cs.merge_attempt_at,
             cs.check_state, cs.checks_commit_sha, cs.boot_failure_sync_head, cs.fixed_check_sync_head, cs.fixed_check_sync_keys,
             cs.integration_head_sha, cs.integration_main_sha, cs.integration_behind_by, cs.integration_resolved_epoch, cs.imported_pr_head_repo,
@@ -187,8 +186,6 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
               OR EXISTS (SELECT 1 FROM wf_instances sh WHERE sh.machine = 'shots' AND sh.key = 'session:' || cs.id)) AS shots,
             cs.active_turn IS NOT NULL AS active_turn,
             ${movingTurnSql('cs')} AS moving_turn,
-            EXISTS (SELECT 1 FROM local_agent_turns t
-                     WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running')) AS local_turn,
             -- A sync and the Homeroom bot's look are their machines' own work
             -- (session-work.ts), counted as the operations they once recorded.
             (${operationsLiveSql('cs.id', '$2::text')} OR ${syncWorkingSql('cs.id')} OR ${botLookingSql('cs.id')}) AS operations,
@@ -218,13 +215,13 @@ async function readRow(tx: Tx, sessionId: number, ownOperation: string | null): 
     lastActivityAt: iso(r.last_activity_at),
     archivedAt: iso(r.archived_at),
     ccPurged: !!r.cc_purged,
-    linkedIssues: issueNumbers(r.linked_issues), agentSessionId: r.agent_session_id ?? null,
+    linkedIssues: issueNumbers(r.linked_issues),
     explicitApproval: !!r.requires_explicit_approval, explicitReason: r.explicit_approval_reason ?? null,
     mergeAttemptAt: iso(r.merge_attempt_at), shots: !!r.shots,
     fixture: String(r.branch_name || '').startsWith('staging-fixture/'),
-    activeTurn: !!r.active_turn, workedOn: !!r.local_turn || !!r.operations,
-    moving: !!r.active_turn || !!r.local_turn || !!r.moving_operations,
-    mergeMoving: !!r.moving_turn || !!r.local_turn || !!r.moving_operations, shotsRunning: !!r.shots_running,
+    activeTurn: !!r.active_turn, workedOn: !!r.operations,
+    moving: !!r.active_turn || !!r.moving_operations,
+    mergeMoving: !!r.moving_turn || !!r.moving_operations, shotsRunning: !!r.shots_running,
     buildHold: !!r.build_hold, pendingSecret: !!r.pending_secret,
     checkState: r.check_state ?? null, checksCommitSha: sha(r.checks_commit_sha),
     bootFailureSyncHead: sha(r.boot_failure_sync_head), fixedCheckSyncHead: sha(r.fixed_check_sync_head),

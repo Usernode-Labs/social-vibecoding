@@ -5,13 +5,10 @@
 // follows it, and resumes after a dropped connection, whichever process runs
 // the turn.
 //
-// A stream is a change's (its id) or a conversation's (`agent:<id>`). A turn
-// publishes every event it shows (each with its own `_seq`, which a browser
-// dedupes by across channels); GET /api/sessions/:id/events and GET
-// /api/agent-sessions/:id/events subscribe, and a browser that reconnects
-// sends the last `_seq` it saw (Last-Event-Id) and is given everything after
-// it. Before, this was a ring buffer in the process running the turn: a
-// browser whose resume reached another process saw nothing.
+// A stream is a change's (its id). Work on a change publishes every event
+// it shows (each with its own `_seq`, which a browser dedupes by across
+// channels). No route subscribes today: the events reach browsers over the
+// WebSocket broadcast their publishers make beside each publish.
 //
 //   publish(key, event)       the turn's event, written in publish order;
 //                             a run of `token` events is joined into one
@@ -449,9 +446,8 @@ function relay(req, res, key, { afterId = 0, turnId = null, heartbeatMs = 15000 
       try {
         await writeStreamChunk(res, `data: ${JSON.stringify(event)}\n\n`);
       } catch { /* client gone */ }
-      // Its own turn's end (services/turns.js, turn/machine.ts
-      // turnEndEvent): never an earlier turn's, still ending as this one is
-      // asked, nor a later one's.
+      // Its own turn's end: never an earlier turn's, still ending as this
+      // one is asked, nor a later one's.
       if (event.type === 'done' && (turnId == null || event.turnId === String(turnId))) end();
     }, { afterId });
     req.on('close', end);

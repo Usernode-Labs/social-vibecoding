@@ -28,7 +28,7 @@ import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
 import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { getTimeZone, inZone, zonedDay } from '../../lib/time-zone';
 import { useStoreState } from '../../lib/use-store-state';
-import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
 import { BotActivitySync, isActivityMessage, isMovedActivity } from './bot-activity';
 import { NO_PLAN_LAYOUT, asksWithQuestionsCard, isPlanMessage, planLayout } from './bot-plan';
@@ -119,7 +119,7 @@ import type { ConversationDetail, ConversationMessage, ConversationSummary, Disc
 /*
  * ── The screen, in the widget language ─────────────────────────────────
  *
- * Messages is drawn on the dev session's LIFT LADDER (`.dc-lift` and its two
+ * Messages is drawn on the LIFT LADDER (`.dc-lift` and its two
  * plane classes in app.css). The wallpaper is the ground. `.messages-layout`
  * is the frosted STRIP: it carries the screen's title, the New disc and the
  * conversation rows, drawn straight on it. The open conversation is the
@@ -680,9 +680,9 @@ function ConversationRowSkeleton() {
 }
 
 /**
- * #6508: the selector for one row's key. A key is built from a numeric id, an
- * agent-session key or a Mayor session's id (./inbox.ts), and an agent
- * session's key can hold characters a selector would read as syntax, so it is
+ * #6508: the selector for one row's key. A key is built from a numeric id or
+ * a change's key (./inbox.ts), and a change's key can hold characters a
+ * selector would read as syntax, so it is
  * escaped where `CSS.escape` exists (every browser that draws the shell) and
  * quoted with its own quotes and backslashes escaped where it does not.
  */
@@ -1488,8 +1488,8 @@ export function dayLabel(message: ConversationMessage, now: Date = new Date(Date
  * public/js/group-chat.js and features/group-chat/. That is one surface
  * with one owner, and re-implementing it here would be a second copy of a
  * thing that is loaded, merged and invalidated elsewhere — the same reason
- * the agent chats are read from their own store rather than copied into
- * this one. So this renders a HOST and asks the owner to fill it.
+ * the changes in flight are read from the Improve store rather than copied
+ * into this one. So this renders a HOST and asks the owner to fill it.
  *
  * ── The app travels with the mount ────────────────────────────────────
  *
@@ -1633,7 +1633,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const channels = useChannelHandles();
   const scroller = useRef<HTMLDivElement>(null);
   // #3571: the kit's keyboard avoidance on this column's scroller, as the
-  // channel, its threads and a dev session get theirs from attachScreenFx.
+  // channel and its threads get theirs from attachScreenFx.
   // Its settled pin puts back the pan iOS makes on the tap, which otherwise
   // left the composer (lifted by `platform-kb-column`) above the screen.
   useComposerKeyboard(scroller);
@@ -2093,7 +2093,7 @@ function ReplyRowSkeleton() {
 }
 
 // #5691: the divider between a chat and its open thread. The width is this
-// device's own — a key of its own, not a change session's side pane's — kept
+// device's own, under a key of its own, kept
 // between the thread's floor and the room the chat has to keep.
 const REPLY_WIDTH_KEY = 'messages-reply-width-v1';
 const REPLY_MIN_WIDTH = 320;

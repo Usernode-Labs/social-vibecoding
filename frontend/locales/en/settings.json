@@ -321,79 +321,79 @@
   },
   "connectors.claudeSteps.open.title": {
     "text": "Open connector settings.",
-    "description": "Step 1 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader."
+    "description": "Step 1 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader."
   },
   "connectors.claudeSteps.open.body": {
     "text": "Go to <0>Customize → Connectors</0> in Claude (<1>claude.ai/customize/connectors</1>). This is where both directory connectors and your own custom ones live.",
-    "description": "Text of step 1 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Tag 0 is a menu path in Claude's own interface (use Claude's wording in the target language if it differs); tag 1 is a web address and stays exactly as written."
+    "description": "Text of step 1 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Tag 0 is a menu path in Claude's own interface (use Claude's wording in the target language if it differs); tag 1 is a web address and stays exactly as written."
   },
   "connectors.claudeSteps.start.title": {
     "text": "Start a custom connector.",
-    "description": "Step 2 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader."
+    "description": "Step 2 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader."
   },
   "connectors.claudeSteps.start.body": {
     "text": "Click the <0>+</0> button, then choose “Add custom connector”. In the dialog, put <1>homeroom</1> in the Name field, exactly that spelling: Claude Code builds its permission rules from what you type here, and the read-only allowlist Homeroom ships in every app repo matches only the names it knows. On Team or Enterprise plans this option isn’t there for members, so an Owner adds it first from Organization settings → Connectors (Add → hover “Custom” → “Web”).",
-    "description": "Text of step 2 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Tag 0 is the plus sign on a button; tag 1 is the exact name to type and stays \"homeroom\". The quoted words are labels in Claude's own interface."
+    "description": "Text of step 2 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Tag 0 is the plus sign on a button; tag 1 is the exact name to type and stays \"homeroom\". The quoted words are labels in Claude's own interface."
   },
   "connectors.claudeSteps.paste.title": {
     "text": "Paste your MCP server URL.",
-    "description": "Step 3 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader."
+    "description": "Step 3 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader."
   },
   "connectors.claudeSteps.paste.body": {
     "text": "For Homeroom that is the MCP server URL above, a public HTTPS endpoint ending in <0>/mcp</0>. A custom server must be reachable from Anthropic’s cloud, not just from your machine.",
-    "description": "Text of step 3 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. \"The MCP server URL above\" is a field shown above the steps. Tag 0 is a URL ending and stays exactly as written. Anthropic is the company that makes Claude."
+    "description": "Text of step 3 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. \"The MCP server URL above\" is a field shown above the steps. Tag 0 is a URL ending and stays exactly as written. Anthropic is the company that makes Claude."
   },
   "connectors.claudeSteps.oauth.title": {
     "text": "Add OAuth credentials if needed.",
-    "description": "Step 4 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader."
+    "description": "Step 4 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader."
   },
   "connectors.claudeSteps.oauth.body": {
     "text": "If a server requires OAuth, open “Advanced settings” and enter your OAuth Client ID and Client Secret. Skip this for Homeroom: it uses dynamic client registration, so there is nothing to enter.",
-    "description": "Text of step 4 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page: this step can be skipped for Homeroom. The quoted words and \"Client ID\", \"Client Secret\" are labels in Claude's own interface."
+    "description": "Text of step 4 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps: this step can be skipped for Homeroom. The quoted words and \"Client ID\", \"Client Secret\" are labels in Claude's own interface."
   },
   "connectors.claudeSteps.save.title": {
     "text": "Save and authenticate.",
-    "description": "Step 5 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader."
+    "description": "Step 5 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader."
   },
   "connectors.claudeSteps.save.body": {
     "text": "Click “Add” to finish configuring, then click “Connect” next to the connector. You’ll be redirected through the OAuth flow; review the scopes it asks for before approving.",
-    "description": "Text of step 5 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. “Add” and “Connect” are buttons in Claude's own interface. \"Scopes\" are the permissions the connection asks for."
+    "description": "Text of step 5 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. “Add” and “Connect” are buttons in Claude's own interface. \"Scopes\" are the permissions the connection asks for."
   },
   "connectors.claudeSteps.enable.title": {
     "text": "Enable it in a conversation.",
-    "description": "Step 6 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text. \"It\" is the connector; a conversation is a chat in Claude."
+    "description": "Step 6 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text. \"It\" is the connector; a conversation is a chat in Claude."
   },
   "connectors.claudeSteps.enable.body": {
     "text": "In a chat, use the <0>+</0> button at the lower left, then “Connectors”, and toggle your connector on. Toggles are per-conversation, so you control which chats can reach it.",
-    "description": "Text of step 6 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Tag 0 is the plus sign on a button; “Connectors” is a menu item in Claude's own interface."
+    "description": "Text of step 6 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Tag 0 is the plus sign on a button; “Connectors” is a menu item in Claude's own interface."
   },
   "connectors.chatgptSteps.directory.title": {
     "text": "Open the plugins directory.",
-    "description": "Step 1 of the ChatGPT connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader. The plugins directory is a page of ChatGPT."
+    "description": "Step 1 of the ChatGPT connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader. The plugins directory is a page of ChatGPT."
   },
   "connectors.chatgptSteps.directory.body": {
     "text": "Go to <0>chatgpt.com/plugins</0> in your browser. Plugin and MCP setup is currently a web feature.",
-    "description": "Text of step 1 of the ChatGPT connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. <0></0> is a link to that address; keep the address as it is. MCP is the name of the protocol connectors use."
+    "description": "Text of step 1 of the ChatGPT connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. <0></0> is a link to that address; keep the address as it is. MCP is the name of the protocol connectors use."
   },
   "connectors.chatgptSteps.create.title": {
     "text": "Create a custom MCP server.",
-    "description": "Step 2 of the ChatGPT connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader. MCP is a protocol name."
+    "description": "Step 2 of the ChatGPT connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader. MCP is a protocol name."
   },
   "connectors.chatgptSteps.create.body": {
     "text": "Click <0>“Add plugin”</0>, then choose <1>“Create custom MCP server”</1>.",
-    "description": "Text of step 2 of the ChatGPT connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. The two quoted names are buttons in ChatGPT's own interface, drawn in bold; write them as ChatGPT shows them in the reader's language if known, otherwise keep the English."
+    "description": "Text of step 2 of the ChatGPT connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. The two quoted names are buttons in ChatGPT's own interface, drawn in bold; write them as ChatGPT shows them in the reader's language if known, otherwise keep the English."
   },
   "connectors.chatgptSteps.url.title": {
     "text": "Enter Homeroom MCP server URL.",
-    "description": "Step 3 of the ChatGPT connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; the address to enter is shown right after it. Homeroom is the product's name."
+    "description": "Step 3 of the ChatGPT connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; the address to enter is shown right after it. Homeroom is the product's name."
   },
   "connectors.chatgptSteps.use.title": {
     "text": "Turn the server on in a chat.",
-    "description": "Step 4 of the ChatGPT connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader. The server is the MCP server just created."
+    "description": "Step 4 of the ChatGPT connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader. The server is the MCP server just created."
   },
   "connectors.chatgptSteps.use.body": {
     "text": "Open the <0>+</0> / connector picker next to the message box, select the server you just created, and set it as active. Now ask ChatGPT to perform something that uses one of the tools, for example: <1>“Use my MCP server to list the open support tickets.”</1> When appropriate, ChatGPT will call the tools your MCP server exposes and use their results in the conversation.",
-    "description": "Text of step 4 of the ChatGPT connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. <0></0> holds the plus sign that is on the button; keep it. <1></1> is an example request in italics."
+    "description": "Text of step 4 of the ChatGPT connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. <0></0> holds the plus sign that is on the button; keep it. <1></1> is an example request in italics."
   },
   "connectors.chatgptSteps.inShort": {
     "text": "<0>In short:</0> chatgpt.com/plugins → Add plugin → Create custom MCP server → enter the Homeroom MCP server URL → connector picker → set it active.",
@@ -581,7 +581,7 @@
   },
   "cli.guide.title": {
     "text": "Set up a local coding agent",
-    "description": "Title of the setup guide card in Settings > CLI & coding-agent access (also shown on a dev session's own-tools page): how to use a coding agent on one's own computer with Homeroom."
+    "description": "Title of the setup guide card in Settings > CLI & coding-agent access: how to use a coding agent on one's own computer with Homeroom."
   },
   "cli.guide.intro": {
     "text": "Start Codex or Claude Code from a local checkout and ask it to create a proposal.",
@@ -658,18 +658,6 @@
   "cli.guide.copyFailedToast": {
     "text": "Couldn’t copy. Select the text and copy it manually",
     "description": "Brief pop-up message when a Copy button in the local coding agent setup guide could not copy to the clipboard."
-  },
-  "localAgents.lastSeen": {
-    "text": "{{runtime}} · last seen <0>{{when}}</0>",
-    "description": "Third line of an attached machine's row in Settings: which coding agent runs there and when it last reported in. {{runtime}} is the agent's name, for example Claude Code; {{when}} is a short relative time or a date, for example \"5m ago\" or \"Mar 3\". Keep the dot separator."
-  },
-  "localAgents.lastSeenUnknown": {
-    "text": "{{runtime}} · last seen unknown",
-    "description": "Third line of an attached machine's row in Settings when it is not known when the machine last reported in. {{runtime}} is the coding agent's name, for example Claude Code. Keep the dot separator."
-  },
-  "localAgents.detach": {
-    "text": "Detach",
-    "description": "Button on an attached machine's row in Settings: releases that machine's link to the person's dev session, so the coding agent on it stops working for the session."
   },
   "grants.title": {
     "text": "App AI permissions",
@@ -1367,14 +1355,6 @@
     "text": "While the coding agent works, a small AI model skims its progress log about once a minute and guesses how far along it is and roughly how long is left. It's calibrated against how long real runs actually take, but it's still a guess and can be wrong. Adds a tiny per-run cost (billed to your own API key if you've saved one above).",
     "description": "Explanation under the AI progress estimate switch in Settings > Experimental. A \"run\" is one stretch of work by the coding agent."
   },
-  "experimental.sessionBridge.label": {
-    "text": "Session bridge (run this chat on your computer)",
-    "description": "Label of a switch in Settings > Experimental. Session bridge is the feature's name: it lets a coding session on Homeroom do its work on the person's own computer."
-  },
-  "experimental.sessionBridge.description": {
-    "text": "Adds <0>Your computer · Homeroom session</0> to the list of places a session can be built. You keep the platform chat exactly as it is, with the same transcript, branch and proposal, but its turns run through the Homeroom CLI on your own machine, on your own Claude plan. It needs the CLI installed and attached, so it stays off until you ask for it.",
-    "description": "Explanation under the Session bridge switch in Settings > Experimental. The tagged part is the name of an option in another list, shown in a monospace font; translate it as that option is translated. CLI is the command-line tool; Claude is a product name; a \"turn\" is one request and answer of the coding agent."
-  },
   "experimental.look.fold": {
     "text": "Look and theme",
     "description": "Accessible name and tooltip of a round button in the top bar on a phone, which only admins see. It opens a small menu with two rows: Look (the visual style) and Theme (light or dark)."
@@ -1414,14 +1394,6 @@
   "experimental.look.description": {
     "text": "Try another look for Homeroom, in light and dark. One keeps every page as it is and draws it in the website's colours. The other five each have their own typeface, colours and shapes, and not every screen is drawn in them yet. Admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",
     "description": "Explanation under the Look menu in Settings, Experimental, which only admins see while the looks are being drawn. Homeroom is the product name; Home is its first screen."
-  },
-  "experimental.localAgents.title": {
-    "text": "Local coding agent",
-    "description": "Heading of a block in Settings > Experimental that lists the person's own computers attached to run the coding agent."
-  },
-  "experimental.localAgents.intro": {
-    "text": "Machines running <0>{{command}}</0>. While one is attached, that session's plan and coding turns run there on your own Claude subscription instead of on Homeroom. Each turn asks in your terminal before it starts; plan turns are read-only, and after a coding turn Homeroom still opens the pull request, builds the preview and runs the checks. Detaching sends the next turn back to Homeroom.",
-    "description": "Explanation under the Local coding agent heading in Settings > Experimental. {{command}} is a terminal command, shown in a monospace font inside the tag. A \"turn\" is one request and answer of the coding agent; a \"plan turn\" writes the plan for a change and a \"coding turn\" makes it. Claude is a product name."
   },
   "theme.title": {
     "text": "Theme",
@@ -2880,7 +2852,7 @@
     "description": "Not shown on screen. Extra search words for \"Agent instructions & skills\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.experimental": {
-    "text": "beta labs progress estimate session bridge local agent look design",
+    "text": "beta labs progress estimate look design",
     "description": "Not shown on screen. Extra search words for \"Experimental\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.theme": {
@@ -3034,34 +3006,6 @@
   "screen.title": {
     "text": "Settings",
     "description": "Title of the Settings screen in the header (noun: the place where preferences live)."
-  },
-  "localAgents.demoData": {
-    "text": "Demo data: changes are not saved.",
-    "description": "Note under the list of attached machines in Settings when the rows are sample data on a preview server."
-  },
-  "localAgents.unknownApp": {
-    "text": "an app",
-    "description": "Stands in for the app's name in the line under an attached machine in Settings > Connectors & CLI, when the app is unknown. Lower case: it is shown alone or before a session title."
-  },
-  "localAgents.unnamedMachine": {
-    "text": "Unnamed machine",
-    "description": "Title of a row in the list of attached machines (computers running a coding agent for this account) in Settings, when the machine was given no label."
-  },
-  "localAgents.appAndSession": {
-    "text": "{{app}} · {{session}}",
-    "description": "Line under an attached machine in Settings: which app and which coding session it is attached to. {{app}} is the app's name, {{session}} the session's title. Keep the separator dot or use your language's equivalent."
-  },
-  "localAgents.detach.confirmNamed": {
-    "text": "Detach {{machine}}?\n\nIts session's coding turns go back to running on Homeroom. Anything it already committed stays on the branch.",
-    "description": "Confirmation dialog before detaching a person's own computer from a coding session, in Settings. {{machine}} is the label the person gave the machine. \"Detach\" is a verb; \"branch\" is a Git branch. Keep the blank line."
-  },
-  "localAgents.detach.confirmUnnamed": {
-    "text": "Detach this machine?\n\nIts session's coding turns go back to running on Homeroom. Anything it already committed stays on the branch.",
-    "description": "Confirmation dialog before detaching a person's own computer from a coding session, in Settings, when the machine has no label. \"Detach\" is a verb; \"branch\" is a Git branch. Keep the blank line."
-  },
-  "localAgents.detach.failed": {
-    "text": "Could not detach that machine.",
-    "description": "Error under the list of attached machines in Settings when detaching one failed."
   },
   "connectors.setupPrompt": {
     "text": "I want to add a custom MCP connector. The server URL is {{url}} and it uses dynamic client registration, so there is no client ID or secret to enter. Name it exactly \"homeroom\". Walk me through it one step at a time and tell me what to click.",
@@ -3434,14 +3378,6 @@
   "experimental.progressEstimate.networkError": {
     "text": "Network error: {{reason}}",
     "description": "Error under the \"AI progress estimate\" switch in Settings > Experimental. when the request did not reach the server. {{reason}} is the browser's own technical message."
-  },
-  "experimental.sessionBridge.saveFailed": {
-    "text": "Failed to save.",
-    "description": "Error under the session bridge switch (letting a coding session run on the person's own machine) in Settings > Experimental. when the change could not be saved and the server gave no reason."
-  },
-  "experimental.sessionBridge.networkError": {
-    "text": "Network error: {{reason}}",
-    "description": "Error under the session bridge switch in Settings > Experimental. when the request did not reach the server. {{reason}} is the browser's own technical message."
   },
   "mobilePush.invalidResponse": {
     "text": "Invalid preferences response.",

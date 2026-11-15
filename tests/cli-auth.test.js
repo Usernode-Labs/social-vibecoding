@@ -311,20 +311,6 @@ test('the local-agent tables are staging:private, like every other cli table', (
     /access_token_id BIGINT REFERENCES cli_access_tokens\(id\) ON DELETE SET NULL/);
 });
 
-test('revoking a credential detaches the machines that attached with it', () => {
-  const routes = fs.readFileSync(path.join(__dirname, '../src/routes/cli-auth.js'), 'utf8');
-  const service = fs.readFileSync(path.join(__dirname, '../src/services/cli-auth.js'), 'utf8');
-  // All three revocation paths: the CLI revoking itself, Settings revoking a
-  // listed credential, and account recovery revoking everything.
-  assert.equal((routes.match(/releaseLeasesForTokens\(/g) || []).length, 2);
-  assert.match(service, /releaseLeasesForTokens\(\s*\n?\s*client, revoked\.map/);
-  // Inside the caller's transaction, so a rolled-back revocation cannot
-  // strand a machine that is in fact still authorized.
-  assert.match(routes, /releaseLeasesForTokens\(client,/);
-  // …but the wakeup happens after COMMIT.
-  assert.equal((routes.match(/localAgent\.notifyReleased\(/g) || []).length, 2);
-});
-
 test('the shared test fixture pairs CLI_CANONICAL_ORIGIN with the compiled production origin', () => {
   // config.load() exits the process when cliAuthEnabled and the canonical
   // origin is not exactly PRODUCTION_ORIGIN, so the fixture that supplies it

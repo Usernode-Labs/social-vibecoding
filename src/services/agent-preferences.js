@@ -11,18 +11,13 @@
  * were two hand-written copies of that dance in src/routes/credentials.js
  * when #1348 needed a third; this is the one.
  *
- * What reads it: resolveDefaultAgentPreference() in src/routes/sessions.js,
- * which validates the stored answer before applying it. Flag/beta policy
- * can still produce a named Claude fallback; a missing OpenRouter credential
- * is provisioned on the next real build action, and an operational failure
- * stops visibly instead of changing providers.
+ * What reads it: Settings (GET in src/routes/credentials.js).
  *
  * `client` is a pool or a checked-out client. Pass a client to enlist in a
  * caller's transaction (the OpenRouter-revoke path does, so "clear Codex,
  * make Claude the default" cannot half-apply); pass the pool otherwise and
  * the two statements are independently atomic, which is sufficient — the
- * window between them holds NO default rather than two. An eligible resolver
- * that finds none prepares OpenRouter; an explicit Claude row still wins.
+ * window between them holds NO default rather than two.
  */
 
 // Make `backend` this user's default, carrying its model and effort.

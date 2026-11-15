@@ -18,8 +18,7 @@
 //     streams stay open for as long as the work behind them, which restart
 //     recovery carries on, or for as long as the client likes.
 //   - A request its route marks open-ended with `openEnded(res)`: a long
-//     poll that answers "nothing yet" when its window runs out
-//     (routes/cli-agent.js /turns/next).
+//     poll that answers "nothing yet" when its window runs out.
 //
 // WebSocket upgrades never reach Express, so they are not counted either.
 

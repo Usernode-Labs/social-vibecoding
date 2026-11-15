@@ -73,10 +73,9 @@ export function proposalServices({ config, pool }: Deps): Record<string, WorkHan
         }
 
         // The pull request: created when there is none (a failure refuses
-        // the promote), its title backfilled, or rewritten from the change
-        // as it stands for one an agent session started (#2779). Imported
-        // proposals always have theirs.
-        if (!imported && (!row.pr_number || !row.pr_title || row.agent_session_id != null)) {
+        // the promote) or its title backfilled. Imported proposals always
+        // have theirs.
+        if (!imported && (!row.pr_number || !row.pr_title)) {
           const creating = !row.pr_number;
           let result = null;
           let error: any = null;

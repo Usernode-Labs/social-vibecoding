@@ -319,7 +319,7 @@ function opener(deps) {
 async function readNow(pool, ctx, name, args) {
   const started = Date.now();
   const shim = await opener(ctx.deps)({
-    pool, config: ctx.config, userId: Number(ctx.user.id), agentSessionId: null, scopes: [READ_SCOPE],
+    pool, config: ctx.config, userId: Number(ctx.user.id), scopes: [READ_SCOPE],
     ttlSeconds: GRANT_SECONDS, rateSubject: `hrbot-admin-${Number(ctx.user.id)}`, kind: 'bot_admin',
   });
   try {
@@ -866,7 +866,7 @@ async function confirmAction(pool, config, { user, actionId, conversationId, bot
     if (!tool || !WRITES.includes(name)) throw new confirmations.ActionConfirmationError('invalid_action', 'That is not an admin action.');
     const { input } = confirmations.openAction(claimed.sealed_input, claimed.input_hash, config?.dataEncryptionKey);
     const shim = await opener(deps)({
-      pool, config, userId: Number(user.id), agentSessionId: null, scopes: [READ_SCOPE, WRITE_SCOPE],
+      pool, config, userId: Number(user.id), scopes: [READ_SCOPE, WRITE_SCOPE],
       ttlSeconds: GRANT_SECONDS, rateSubject: `hrbot-admin-${Number(user.id)}`, kind: 'bot_admin',
     });
     let result;

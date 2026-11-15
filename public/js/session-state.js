@@ -2,10 +2,8 @@
 //
 // One place that knows "is a turn in flight for session N right now", shared
 // by every surface that shows it: the header cog + its drawer
-// (the Improve panel's session rows), the Dev board's In-progress session
-// cards and its issue
-// cards' auto-run state (app-view.js), and the per-app session list
-// (dev-chat.js).
+// (the Improve panel's session rows), and the Dev board's In-progress
+// session cards and its issue cards' work state (app-view.js).
 //
 // Before this store, each of those re-fetched a full payload on its own
 // timer — 15s for the drawer (and only while it ALREADY thought work was in

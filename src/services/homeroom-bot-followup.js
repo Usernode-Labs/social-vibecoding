@@ -1096,8 +1096,6 @@ async function sessionTakenElsewhere(pool, sessionId, owner = null) {
       `SELECT (cs.active_turn IS NOT NULL
                  AND NOT (cs.active_turn->'owner'->>'machine' IS NOT DISTINCT FROM $2
                           AND cs.active_turn->'owner'->>'key' IS NOT DISTINCT FROM $3))
-              OR EXISTS (SELECT 1 FROM local_agent_turns t
-                          WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
               OR ${sw.shotsRunningSql('cs.id')}
               OR ${sw.operationsLiveSql('cs.id')}
               OR ${sw.syncWorkingSql('cs.id')}

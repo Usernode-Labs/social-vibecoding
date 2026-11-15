@@ -16855,19 +16855,17 @@ const AppView = {
     return !!s.busy;
   },
 
-  // Where this session's turns actually run.
+  // Where this change was built.
   //
-  // The venue was decided once, at creation, from a preference the user set
-  // somewhere else — and then never mentioned again, so a board full of
-  // cards looked identical whether the work was billed to Homeroom credits,
-  // an OpenRouter key or a laptop. Naming it on the card is the cheapest
-  // place to make that visible; the sheet behind it is the same one every
-  // other surface opens (public/js/build-venues.js).
+  // A board full of cards looked identical whether the work was billed to
+  // Homeroom credits, an OpenRouter key or a laptop. Naming it on the card
+  // is the cheapest place to make that visible; the names are
+  // public/js/build-venues.js's.
   //
   // Suppressed on an imported row: that card already carries the amber
   // "Imported PR" badge, and one provenance badge is the right number. Also
-  // returns '' when build-venues.js has not loaded, so the card degrades to
-  // exactly what it rendered before rather than to a broken chip.
+  // returns null when build-venues.js has not loaded, so the card degrades
+  // to exactly what it rendered before rather than to a broken chip.
   _sessionVenueChipSpec(s) {
     const BV = (typeof window !== 'undefined' && window.BuildVenues) || null;
     if (!BV || !s || s.source === 'imported') return null;
@@ -18253,8 +18251,8 @@ const AppView = {
     // ── Actions: Yes / No / Explore + icon Preview; ⋯ is in the rail ──
     // Explore is PROMOTED off the ⋯ menu for a live proposal the pill rule
     // covers — someone else's proposal (the one thing a reader does short of
-    // voting on it) and the viewer's own IMPORTED proposal (which has no
-    // "Open session", so this is its only AI affordance, #1045). Whether a
+    // voting on it) and the viewer's own IMPORTED proposal (this is its
+    // only AI affordance, #1045). Whether a
     // row gets one at all is _showExplorePill's call — the one predicate
     // every render site shares. It stays a ⋯ row on a merged card, where the
     // action band belongs to kudos instead, and on the detail head, which

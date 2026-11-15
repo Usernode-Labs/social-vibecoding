@@ -16,7 +16,6 @@ const { workflowTurnHeldSql } = require('../workflow/session-work.ts');
 const stopRegistry = require('./stop-registry');
 const sessionBus = require('./session-bus');
 const turnEffects = require('./turn-effects');
-const recoveryPills = require('./recovery-pills');
 const stagingRecovery = require('./staging-recovery');
 const stagingSvc = require('./staging');
 const limits = require('./limits');
@@ -24,6 +23,36 @@ const events = require('./events');
 const ws = require('./ws');
 const log = require('./logger');
 const repoRef = require('./repo-ref');
+
+// The breadcrumb text for a recovered scout turn whose journal replay
+// produced no spec text.
+const SCOUT_NO_SPEC_BREADCRUMB =
+  "The scout didn't produce a plan. Please send your request again.";
+
+// The breadcrumb text for a coding turn that could not be resumed at all.
+// One string for every unresumable shape (worker gone, journal unreadable,
+// mid-exec kill) — the shapes differ only to an operator, and
+// metadata.recoveredReason keeps them apart in SQL.
+const TURN_UNFINISHED_BREADCRUMB =
+  "That coding turn didn't finish. Please send your request again.";
+
+// The breadcrumb for a turn that couldn't be resumed BUT whose code
+// already landed: the agent committed and the branch is on GitHub, only
+// the platform-side tail (preview, cards) was lost. Asking for a resend
+// here — which TURN_UNFINISHED_BREADCRUMB does — tells the user to redo
+// work that is already safely pushed, and invites a duplicate run. So this
+// wording reports what landed and what is being repaired instead.
+//
+// `prNumber` is optional: a tail can die after the push but before the PR
+// exists, and naming a PR that isn't there would be worse than vague.
+// Per #896 the platform restart itself stays out of the wording — the
+// user can't act on it — and lives in metadata.recovered / the logs.
+function buildCodeLandedBreadcrumb({ prNumber = null, rebuildingPreview = true } = {}) {
+  const where = prNumber ? `pushed to PR #${prNumber}` : 'pushed to your branch';
+  return rebuildingPreview
+    ? `Your changes are committed and ${where}. Rebuilding the preview now.`
+    : `Your changes are committed and ${where}.`;
+}
 
 let config = null;
 function sharedConfig() {
@@ -470,7 +499,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
          VALUES ($1, 'system', $2, $3)`,
         [
           sessionId,
-          recoveryPills.TURN_UNFINISHED_BREADCRUMB,
+          TURN_UNFINISHED_BREADCRUMB,
           JSON.stringify({
             // #896: the restart moves off the user's screen and into the
             // row's metadata — same text for every unresumable shape,
@@ -482,7 +511,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       ).catch(() => {});
       broadcastGlobal({
         type: 'session_event', sessionId, event: 'status',
-        text: recoveryPills.TURN_UNFINISHED_BREADCRUMB,
+        text: TURN_UNFINISHED_BREADCRUMB,
       });
       worker.adoptWarmWorker(sessionId, containerName);
       return;
@@ -519,7 +548,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
     if (codeLanded) {
       const prNumber = goneTail.prNumber || session.pr_number || null;
-      const landedText = recoveryPills.buildCodeLandedBreadcrumb({
+      const landedText = buildCodeLandedBreadcrumb({
         prNumber, rebuildingPreview: true,
       });
       await pool.query(
@@ -563,7 +592,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
        VALUES ($1, 'system', $2, $3)`,
       [
         sessionId,
-        recoveryPills.TURN_UNFINISHED_BREADCRUMB,
+        TURN_UNFINISHED_BREADCRUMB,
         JSON.stringify({
           recovered: true,
           recoveredReason: 'worker_gone',
@@ -682,10 +711,10 @@ async function narrateDanglingTail({ config, pool, session, sessionId, broadcast
   await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
   const landed = !!session.pr_number;
   const text = landed
-    ? recoveryPills.buildCodeLandedBreadcrumb({
+    ? buildCodeLandedBreadcrumb({
       prNumber: session.pr_number, rebuildingPreview: true,
     })
-    : recoveryPills.TURN_UNFINISHED_BREADCRUMB;
+    : TURN_UNFINISHED_BREADCRUMB;
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, metadata)
      VALUES ($1, 'system', $2, $3)`,
@@ -1490,14 +1519,14 @@ async function resumeDetachedTurnInner({
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
        VALUES ($1, 'system', $2, $3)`,
-      [sessionId, recoveryPills.TURN_UNFINISHED_BREADCRUMB,
+      [sessionId, TURN_UNFINISHED_BREADCRUMB,
         JSON.stringify({
           recovered: true,
           recoveredReason: 'resume_failed',
         })]
     ).catch(() => {});
     emit('status', {
-      text: recoveryPills.TURN_UNFINISHED_BREADCRUMB,
+      text: TURN_UNFINISHED_BREADCRUMB,
     });
     // Cleanup is deliberately last: if its durable clear needs a retry, the
     // retry scheduler can repeat only cleanup without duplicating narration.
@@ -1651,14 +1680,14 @@ async function resumeDetachedTurnInner({
            VALUES ($1, 'system', $2, $3)`,
           [
             sessionId,
-            recoveryPills.SCOUT_NO_SPEC_BREADCRUMB,
+            SCOUT_NO_SPEC_BREADCRUMB,
             JSON.stringify({
               recovered: true,
             }),
           ]
         ).catch(() => {});
         emit('status', {
-          text: recoveryPills.SCOUT_NO_SPEC_BREADCRUMB,
+          text: SCOUT_NO_SPEC_BREADCRUMB,
         });
       }
       // Persist the CC session id for the next --resume.

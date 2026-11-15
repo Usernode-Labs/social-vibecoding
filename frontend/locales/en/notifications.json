@@ -1187,17 +1187,9 @@
     "text": "Claude asked you something",
     "description": "First line of a notification, or its whole text: the AI coding agent asked the viewer a question while working. Claude is the agent's name. Past tense on purpose: it stays true after the viewer has answered."
   },
-  "row.session.agentFinished": {
-    "text": "The coding agent finished",
-    "description": "First line of a notification: the AI coding agent finished the work it was given in an agent session. The session's title is on the line below."
-  },
   "row.session.finished": {
     "text": "Session finished",
     "description": "First line of a notification: the viewer's coding session finished its turn while they were away. The session's title is on the line below."
-  },
-  "row.session.agentStopped": {
-    "text": "The coding agent stopped before finishing",
-    "description": "First line of a notification: the AI coding agent's work in an agent session ended early, by an error or a timeout. The session's title is on the line below."
   },
   "row.session.stopped": {
     "text": "Session stopped before finishing",
@@ -1686,26 +1678,6 @@
   "alert.stalled.bodyYourApp": {
     "text": "Your session on your app stopped before finishing. Open it to continue",
     "description": "Text of the system notification shown when the viewer's coding session ended early and the app's name is not known. \"Open\" is a verb: open the session."
-  },
-  "alert.agentDone.title": {
-    "text": "The coding agent finished",
-    "description": "Title of the system notification shown when the AI coding agent finished the work it was given in an agent session."
-  },
-  "alert.agentDone.body": {
-    "text": "The coding agent finished on {{app}}: {{title}}",
-    "description": "Text of the system notification shown when the AI coding agent finished its work. {{app}} is the app's name. {{title}} is the session's title."
-  },
-  "alert.agentDone.bodyYourApp": {
-    "text": "The coding agent finished on your app: {{title}}",
-    "description": "Text of the system notification shown when the AI coding agent finished its work and the app's name is not known. {{title}} is the session's title."
-  },
-  "alert.agentDone.bodyYourSession": {
-    "text": "The coding agent finished on {{app}}: your session",
-    "description": "Text of the system notification shown when the AI coding agent finished its work and the session has no title. {{app}} is the app's name."
-  },
-  "alert.agentDone.bodyYourAppYourSession": {
-    "text": "The coding agent finished on your app: your session",
-    "description": "Text of the system notification shown when the AI coding agent finished its work, when neither the app's name nor the session's title is known."
   },
   "alert.sessionDone.title": {
     "text": "Agent session finished",

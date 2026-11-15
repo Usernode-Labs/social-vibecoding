@@ -3772,30 +3772,16 @@ exist, data the platform tracks but doesn't expose (e.g. per-app LLM
 spend), a platform limit or convention that blocks a reasonable app
 feature. **Feature requests are as valid as bug reports here** — don't
 build a fragile app-side approximation of something the platform
-should own without also drafting a report for the real capability.
+should own without also saying that the platform lacks the real capability.
 
 When you're confident the root cause is platform-level — you've ruled
 out an app-side fix, you've established the capability simply doesn't
 exist, or you notice you're looping on the same failure without
 progress — **stop patching this app** rather than faking a workaround
-that only hides the problem. On a build turn a helper is available to
-escalate it:
-
-```
-usernode-report-platform-issue "<short title>" <<'EOF'
-What's broken or missing, how to reproduce / what the app needs it
-for, and which app/flow hit it.
-EOF
-```
-
-This does **not** file anything by itself. It posts a draft report
-card into the dev chat; a user must tap **"Report to platform"** on
-that card before the issue is actually filed on the platform repo
-(they can also dismiss it). Draft it **once per distinct problem** —
-it de-dupes against open reports and this session's earlier drafts, so
-don't re-suggest the same thing. Then tell the user you've suggested a
-platform report and that they can confirm it from the card in the
-chat, and continue with any app-side work that isn't blocked by it.
+that only hides the problem. Say so plainly in your final message: what
+is broken or missing, how to reproduce it or what the app needs it for,
+and which app and flow hit it. Then continue with any app-side work that
+isn't blocked by it.
 
 ## Rendering invariants — opt-in self-checks
 

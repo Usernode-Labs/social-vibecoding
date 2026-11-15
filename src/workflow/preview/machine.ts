@@ -710,7 +710,7 @@ function sameHead(s: Live, head: string): boolean {
 // an operation a live process holds): idle and pressure retirement wait.
 function worked(s: Live, f: Facts): boolean {
   const x = f.session;
-  if (x && (x.turnRunning || x.localTurnRunning || x.shotsRunning)) return true;
+  if (x && (x.turnRunning || x.shotsRunning)) return true;
   return s.data.operations.some((o) => f.alive.has(o.holder));
 }
 
@@ -990,7 +990,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       if (c !== true || e.payload.terminal) return c;
       if (['promoted', 'merging'].includes(f.session!.status)) return reject('under_review');
       const x = f.session!;
-      return x.turnRunning || x.localTurnRunning || x.shotsRunning ? reject('worked_on') : ok();
+      return x.turnRunning || x.shotsRunning ? reject('worked_on') : ok();
     },
     to: (s, e, f, ctx) => {
       const d = adopt(e, f, priorOf(s));

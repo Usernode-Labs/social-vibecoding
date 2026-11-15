@@ -1397,10 +1397,9 @@ function buildDescription({ text, spec = null }) {
  *   - the name is proposed_pr_title, the author's own title for a change not
  *     yet proposed, which the route names the pull request with verbatim.
  *     submit_work stores an external agent's title there, and the bot is
- *     this change's author the same way. (#2779 keeps a Mayor's start_change
- *     name out of it because that name is a guess made before any work; the
- *     spec's title is written from the code, and the proposal goes up as
- *     soon as the build ends.) Only written while the session has no pull
+ *     this change's author the same way. (The spec's title is written from
+ *     the code, and the proposal goes up as soon as the build ends.) Only
+ *     written while the session has no pull
  *     request and no chosen title;
  *   - the description is the completion row every dev chat build leaves
  *     (a system row carrying ccOutput and proposalDescription), which

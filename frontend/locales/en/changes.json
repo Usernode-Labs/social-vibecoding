@@ -347,21 +347,9 @@
     "text": "Not shared yet",
     "description": "Status at the end of the small line on the card of a change that is still being built, when only its owner can see it."
   },
-  "card.actions.continueBuilding": {
-    "text": "Continue building",
-    "description": "Button on the card of a person's own proposal: opens the agent session where the change is built so they can keep working on it. \"Building\" is a verb."
-  },
-  "card.actions.continueBuildingTitle": {
-    "text": "Open the agent session behind this change",
-    "description": "Tooltip on the Continue building button of a proposal's card. \"Open\" is a verb; \"change\" is a noun."
-  },
   "card.actions.explore": {
     "text": "Explore in a coding agent",
     "description": "Button on a proposal's card: starts a chat with an AI coding agent, with a message about this proposal already written, so the person can ask what it does."
-  },
-  "card.actions.exploreButton": {
-    "text": "Explore in a coding agent",
-    "description": "Label, after a sparkle icon, of the button on a proposal in the vote list: starts a chat with an AI coding agent, with a message about this proposal already written."
   },
   "card.actions.moveBack": {
     "text": "Move back to Underway",
@@ -959,14 +947,6 @@
     "text": "Ask Homeroom bot to change this, in your chat with it",
     "description": "Tooltip on the Ask for changes row in the ⋯ menu of a proposal's page. \"Homeroom bot\" is the name of the platform's assistant; \"change\" is a verb."
   },
-  "page.menu.buildOwnerTitle": {
-    "text": "Open the agent session behind this change",
-    "description": "Tooltip on the row, in the ⋯ menu of a person's own change, that opens the agent session where the change is built. \"Open\" is a verb; \"change\" is a noun."
-  },
-  "page.menu.buildReadTitle": {
-    "text": "Read the agent session that built this change",
-    "description": "Tooltip on the row, in the ⋯ menu of somebody else's change, that opens the published record of the agent session that built it."
-  },
   "page.actions.openApp": {
     "text": "Open app",
     "description": "Button on the page of a change that is live: opens the running app. \"Open\" is a verb."
@@ -1022,22 +1002,6 @@
   "page.menu.openOnGitHub": {
     "text": "Open on GitHub",
     "description": "Row in the ⋯ menu of a request's page, for a request that is an issue on GitHub: opens the issue on GitHub in a new tab. \"Open\" is a verb."
-  },
-  "page.build.continueInSession": {
-    "text": "Continue in agent session",
-    "description": "Button on a person's own change that was started from a coding agent: opens that agent session."
-  },
-  "page.build.continueBuilding": {
-    "text": "Continue building",
-    "description": "Button on a person's own change that is still being built: opens the session where it is built. \"Building\" is a verb."
-  },
-  "page.build.openBuild": {
-    "text": "Open build",
-    "description": "Button on a person's own change that is up for a vote or finished: opens the session where it was built. \"Open\" is a verb and \"build\" a noun."
-  },
-  "page.build.readBuild": {
-    "text": "Read the build",
-    "description": "Button on somebody else's change whose author published the session it was built in: opens that record to read. \"Build\" is a noun."
   },
   "page.sample.note": {
     "text": "This is a display-only sample. To try editing a description, open \"[Preview sample] Your editable change\" in your sessions.",
@@ -1378,54 +1342,6 @@
   "explore.title": {
     "text": "Open an agent session with a message about this change ready to edit and send",
     "description": "Tooltip on the Explore in a coding agent button of a proposal. \"Open\" is a verb; \"change\" is a noun."
-  },
-  "explore.seed.pr": {
-    "text": "Let's explore PR {{number}} in this app: \"{{title}}\".",
-    "description": "First line of the message Homeroom writes for the person to send to an AI coding agent when they press Explore in a coding agent on a proposal. They can edit it before sending. Keep the straight double quotes around the title. {{number}} is the pull request number and {{title}} its title."
-  },
-  "explore.seed.prBy": {
-    "text": "Let's explore PR {{number}} in this app: \"{{title}}\" by {{author}}.",
-    "description": "First line of the message Homeroom writes for the person to send to an AI coding agent when they press Explore in a coding agent on a proposal. They can edit it before sending. Keep the straight double quotes around the title. {{number}} is the pull request number, {{title}} its title and {{author}} the username of its author."
-  },
-  "explore.seed.prUntitled": {
-    "text": "PR {{number}}",
-    "description": "Stands in for the title, inside the quotes, in the message written for a coding agent about a pull request that has no title. {{number}} is the pull request number."
-  },
-  "explore.seed.proposal": {
-    "text": "Let's explore the proposal \"{{title}}\" in this app.",
-    "description": "First line of the message Homeroom writes for the person to send to an AI coding agent when they press Explore in a coding agent on a proposal. They can edit it before sending. Keep the straight double quotes around the title. Used when the proposal has no pull request number. {{title}} is its title."
-  },
-  "explore.seed.proposalBy": {
-    "text": "Let's explore the proposal \"{{title}}\" in this app by {{author}}.",
-    "description": "First line of the message Homeroom writes for the person to send to an AI coding agent when they press Explore in a coding agent on a proposal. They can edit it before sending. Keep the straight double quotes around the title. Used when the proposal has no pull request number. {{title}} is its title and {{author}} the username of its author."
-  },
-  "explore.seed.proposalUntitled": {
-    "text": "this proposal",
-    "description": "Stands in for the title, inside the quotes, in the message written for a coding agent about a proposal that has no title. Lower case."
-  },
-  "explore.seed.prLink": {
-    "text": "PR link: {{url}}",
-    "description": "Line in the message written for a coding agent about a proposal, giving the address of its pull request on GitHub. {{url}} is that address."
-  },
-  "explore.seed.changeLink": {
-    "text": "Change page: {{url}}",
-    "description": "Line in the message written for a coding agent about a proposal that has no pull request on GitHub, giving the address of the change's own page in Homeroom. {{url}} is that address."
-  },
-  "explore.seed.linkedIssues": {
-    "text": "Linked issues: {{issues}}.",
-    "description": "Line in the message written for a coding agent about a proposal, listing the requests it is linked to. {{issues}} is their numbers, for example \"#12, #15\"."
-  },
-  "explore.seed.merged": {
-    "text": "This proposal is already merged.",
-    "description": "Line in the message written for a coding agent about a proposal that has already been merged into the project."
-  },
-  "explore.seed.merging": {
-    "text": "This proposal is currently being merged.",
-    "description": "Line in the message written for a coding agent about a proposal that is being merged into the project right now."
-  },
-  "explore.seed.tail": {
-    "text": "Please read it and explain in plain terms what it changes, how it works, and anything risky or worth checking. Just explain it for now, don't change any code or open a PR.",
-    "description": "Last paragraph of the message Homeroom writes for the person to send to an AI coding agent about a proposal: what the agent is asked to do. \"PR\" is a pull request."
   },
   "workshop.category.fallbackName": {
     "text": "Category",
@@ -1838,14 +1754,6 @@
   "transcript.readSession": {
     "text": "Read the agent session",
     "description": "Label of the section on a change's page that expands to show the conversation between the author and the coding agent, which the author chose to share."
-  },
-  "transcript.pageTitle": {
-    "text": "Agent session",
-    "description": "Heading of the page that shows a shared conversation between a person and a coding agent, read-only."
-  },
-  "transcript.readOnlyTag": {
-    "text": "read-only",
-    "description": "Small tag after the heading of a shared agent session's page, marking that the viewer can read the conversation but not write in it."
   },
   "transcript.loading": {
     "text": "Loading the chat…",
@@ -2378,14 +2286,6 @@
   "proposal.menu.adminMerge": {
     "text": "Admin merge",
     "description": "Item in a proposal's ⋯ menu, shown to administrators: merges the change immediately without waiting for the vote."
-  },
-  "proposal.menu.openSession": {
-    "text": "Open session",
-    "description": "Item in the ⋯ menu of the viewer's own proposal: opens the agent session that built the change. \"Open\" is a verb."
-  },
-  "proposal.menu.openSessionTitle": {
-    "text": "Open the agent session behind this change",
-    "description": "Tooltip of the \"Open session\" item in the ⋯ menu of the viewer's own proposal."
   },
   "proposal.menu.moveBack": {
     "text": "Move back to Underway",
@@ -4943,69 +4843,9 @@
     "text": "The Homeroom bot is building this request now",
     "description": "Tooltip of the disabled \"Homeroom bot is on it\" / \"Homeroom bot is building…\" button on a request's card."
   },
-  "issue.action.generating": {
-    "text": "Drafting a change…",
-    "description": "Main button on a request's card (a request is a filed issue): disabled, shown while an automatic AI run drafts a change (to vote on) for the request. Keep the ellipsis."
-  },
-  "issue.action.generatingTitle": {
-    "text": "A headless AI session is working on this request",
-    "description": "Tooltip of the disabled \"Drafting a change…\" button on a request's card. \"headless\" means the AI session runs on its own with nobody chatting with it."
-  },
-  "issue.action.generatingTitleBy": {
-    "text": "A headless AI session is working on this request (started by {{username}})",
-    "description": "Tooltip of the disabled \"Drafting a change…\" button on a request's card. \"headless\" means the AI session runs on its own. {{username}} is the person who started it."
-  },
-  "issue.action.goToSession": {
-    "text": "Go to session",
-    "description": "Main button on a request's card (a request is a filed issue): opens the working session the viewer already started from this request's AI-drafted proposal."
-  },
-  "issue.action.goToSessionTitle": {
-    "text": "You already started a session from this request. Open it",
-    "description": "Tooltip of the \"Go to session\" button on a request's card. \"Open it\" is an instruction."
-  },
-  "issue.action.answer": {
-    "text": "Answer & regenerate",
-    "description": "Main button on a request's card (a request is a filed issue): shown when an automatic AI run stopped to ask a question; opens the place to answer it, after which the run tries again."
-  },
-  "issue.action.answerMineTitle": {
-    "text": "Your auto-solve run is waiting on an answer. Open its session to read the question and reply",
-    "description": "Tooltip of the \"Answer & regenerate\" button on a request's card, for the person who started the run. An auto-solve run is an automatic AI attempt at the request. \"Open\" is a verb."
-  },
-  "issue.action.answerOthersTitle": {
-    "text": "This auto-solve run has a question. Answer it on this request",
-    "description": "Tooltip of the \"Answer & regenerate\" button on a request's card, for people who did not start the run. An auto-solve run is an automatic AI attempt at the request."
-  },
-  "issue.action.startWork": {
-    "text": "Start work",
-    "description": "Main button on a request's card (a request is a filed issue): starts a working session with an AI agent on the request."
-  },
-  "issue.action.runFinished.spec": {
-    "text": "An auto-solve run finished here (it drafted a plan). Start an agent session on this request",
-    "description": "Tooltip of the \"Start work\" button on a request's card after an automatic AI run (an auto-solve run) finished on it; the words in parentheses say what the run produced: a written plan."
-  },
-  "issue.action.runFinished.code": {
-    "text": "An auto-solve run finished here (it pushed a code change). Start an agent session on this request",
-    "description": "Tooltip of the \"Start work\" button on a request's card after an automatic AI run (an auto-solve run) finished on it; the words in parentheses say what the run produced: a code change."
-  },
-  "issue.action.runFinished.specCode": {
-    "text": "An auto-solve run finished here (it drafted a plan and pushed a code change). Start an agent session on this request",
-    "description": "Tooltip of the \"Start work\" button on a request's card after an automatic AI run (an auto-solve run) finished on it; the words in parentheses say what the run produced: a written plan and a code change."
-  },
-  "issue.action.runFinished.other": {
-    "text": "An auto-solve run finished here (it finished a run). Start an agent session on this request",
-    "description": "Tooltip of the \"Start work\" button on a request's card after an automatic AI run (an auto-solve run) finished on it; the words in parentheses say what the run produced: nothing more specific is known."
-  },
   "issue.action.askBot": {
     "text": "Ask Homeroom bot to build this",
     "description": "Main button on a request's card (a request is a filed issue): asks the platform's builder bot, named Homeroom bot, to build what the request asks for."
-  },
-  "issue.action.startMore": {
-    "text": "Start more work",
-    "description": "Main button on a request's card (a request is a filed issue): shown when the viewer already has a session on this request; starts another one."
-  },
-  "issue.action.startMoreTitle": {
-    "text": "Start another agent session on this request",
-    "description": "Tooltip of the \"Start more work\" button on a request's card. An agent session is a working conversation with an AI coding agent."
   },
   "issue.action.workWithBot": {
     "text": "Work on this with Homeroom bot",
@@ -5074,18 +4914,6 @@
   "issue.bot.onIt": {
     "text": "Homeroom bot is on it.",
     "description": "Toast shown after Homeroom bot was asked to build a request. \"is on it\" means it has taken the job."
-  },
-  "issue.menu.startMore": {
-    "text": "Start more work",
-    "description": "Row in the ⋯ menu of a request's card: starts another working session on the request after an automatic AI run finished on it."
-  },
-  "issue.menu.buildNow": {
-    "text": "Build it now",
-    "description": "Row in the ⋯ menu of a request's card: starts a session where the viewer builds the request with an AI coding agent, instead of asking Homeroom bot. \"Build\" is a verb."
-  },
-  "issue.menu.buildInSession": {
-    "text": "Build it in an agent session",
-    "description": "Row in the ⋯ menu of a request's card: starts a session where the viewer builds the request with an AI coding agent, instead of working on it with Homeroom bot. An agent session is a working conversation with an AI coding agent. \"Build\" is a verb."
   },
   "issue.menu.alreadyBountied": {
     "text": "You already placed a bounty on this issue",
@@ -5278,106 +5106,6 @@
   "issue.claim.clearFailedWith": {
     "text": "Couldn't stop working on this: {{error}}",
     "description": "Toast shown when \"Stop working on this\" on a request failed. {{error}} is the error's own message."
-  },
-  "issue.autoRun.setupLoading": {
-    "text": "Coding-agent setup is still loading. Try again.",
-    "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") was asked for before the page finished loading the viewer's coding-agent settings."
-  },
-  "issue.autoRun.openRouterModelsFailed": {
-    "text": "Could not load OpenRouter models.",
-    "description": "Toast shown before an automatic AI run that drafts a proposal for a request (\"Generate proposal\") when the list of AI models from OpenRouter (a service's name) could not be loaded and the server gave no message."
-  },
-  "issue.autoRun.modelListFailed": {
-    "text": "Could not load the model list.",
-    "description": "Toast shown before an automatic AI run that drafts a proposal for a request (\"Generate proposal\") when the list of AI models could not be loaded and the server gave no message."
-  },
-  "issue.autoRun.modelListRetry": {
-    "text": "Couldn't load the model list. Try again.",
-    "description": "Toast shown before an automatic AI run that drafts a proposal for a request (\"Generate proposal\") when loading the list of AI models failed with no message at all."
-  },
-  "issue.autoRun.noOpenRouterModels": {
-    "text": "No OpenRouter models are available under your key.",
-    "description": "Toast shown before an automatic AI run that drafts a proposal for a request (\"Generate proposal\") when the viewer's OpenRouter key gives access to no AI model. \"OpenRouter\" is a service's name; \"key\" is an API key."
-  },
-  "issue.autoRun.noModels": {
-    "text": "Couldn't load the model list. Try again.",
-    "description": "Toast shown before an automatic AI run that drafts a proposal for a request (\"Generate proposal\") when the list of AI models came back empty."
-  },
-  "issue.autoRun.openRouterStartFailed": {
-    "text": "The OpenRouter run could not start.",
-    "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") could not start on the viewer's OpenRouter budget and the server gave no message. \"run\" is a noun."
-  },
-  "issue.autoRun.startFailedHttp": {
-    "text": "Couldn't start generating the proposal (HTTP {{status}}).",
-    "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") could not be started and the server gave no message. {{status}} is the HTTP status number."
-  },
-  "issue.autoRun.startFailedWith": {
-    "text": "Couldn't start generating the proposal: {{error}}",
-    "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") could not be started. {{error}} is the error's own message."
-  },
-  "issue.autoRun.outOfCredits": {
-    "text": "You're out of free AI credits.",
-    "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") was refused because the viewer has used up the week's free AI allowance, and no fuller message came back."
-  },
-  "issue.autoRun.model.free": {
-    "text": "Free",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: using this model costs nothing."
-  },
-  "issue.autoRun.model.low": {
-    "text": "Low cost",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: this model is cheap to use."
-  },
-  "issue.autoRun.model.medium": {
-    "text": "Medium cost",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: this model has a middling price."
-  },
-  "issue.autoRun.model.high": {
-    "text": "High cost",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: this model is expensive to use."
-  },
-  "issue.autoRun.model.recommendedFree": {
-    "text": "Recommended · Free",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: Homeroom recommends this model, and using it costs nothing."
-  },
-  "issue.autoRun.model.recommendedLow": {
-    "text": "Recommended · Low cost",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: Homeroom recommends this model, and it is cheap to use."
-  },
-  "issue.autoRun.model.recommendedMedium": {
-    "text": "Recommended · Medium cost",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: Homeroom recommends this model, and it has a middling price."
-  },
-  "issue.autoRun.model.recommendedHigh": {
-    "text": "Recommended · High cost",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: Homeroom recommends this model, and it is expensive to use."
-  },
-  "issue.autoRun.model.recommended": {
-    "text": "Recommended",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: Homeroom recommends this model; its price is not known."
-  },
-  "issue.autoRun.model.openRouter": {
-    "text": "Available through OpenRouter",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: nothing more is known about it than that it can be used through OpenRouter (a service's name)."
-  },
-  "issue.autoRun.model.available": {
-    "text": "Available model",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: nothing more is known about it than that it can be used."
-  },
-  "issue.autoRun.billing.included": {
-    "text": "Uses your included OpenRouter credits.",
-    "description": "Note in the \"Generate proposal\" dialog saying what the run is paid from: the OpenRouter credits that come with the viewer's Homeroom account. \"OpenRouter\" is a service's name."
-  },
-  "issue.autoRun.billing.openRouter": {
-    "text": "Uses your OpenRouter account.",
-    "description": "Note in the \"Generate proposal\" dialog saying what the run is paid from: the viewer's own OpenRouter account. \"OpenRouter\" is a service's name."
-  },
-  "issue.autoRun.billing.homeroom": {
-    "text": "Uses your available Homeroom credits.",
-    "description": "Note in the \"Generate proposal\" dialog saying what the run is paid from: the viewer's AI credits on Homeroom (the product's name)."
-  },
-  "issue.autoRun.intro": {
-    "text": "Homeroom will inspect the issue and repository, then create a proposal for review.",
-    "description": "First line of the \"Generate proposal\" dialog on a request: what the automatic AI run will do. \"Homeroom\" is the product's name; \"the issue\" is the request."
   },
   "badge.reason.conflictFailed.label": {
     "text": "Needs manual resolution",
@@ -8023,10 +7751,6 @@
     "text": "This app could not be loaded. Check your connection and try again.",
     "description": "Message shown in place of a project's build screens when the app's record could not be fetched, above a \"Try again\" button."
   },
-  "session.unavailable": {
-    "text": "That session is private or no longer exists.",
-    "description": "Brief notice after following a link to a build session that the viewer cannot open; they land on the project's Workshop instead. A session is a chat with the coding agent."
-  },
   "menu.secrets.noManifest": {
     "text": "No manifest yet",
     "description": "Small status beside \"App secrets\" in a project's \"+\" menu before the app has been deployed for the first time, so its list of required settings (its manifest) is not known yet."
@@ -8190,22 +7914,6 @@
   "frame.title.plain": {
     "text": "Preview",
     "description": "Title in the bar above a staging preview when the app's name is not known. A noun."
-  },
-  "frame.fullscreen.enter": {
-    "text": "Full screen",
-    "description": "Button in the bar above a preview docked beside the build chat: expands the preview to fill the screen."
-  },
-  "frame.fullscreen.exit": {
-    "text": "Exit full screen",
-    "description": "Button in the bar above a full-screen preview that was opened from the build chat: puts it back beside the chat."
-  },
-  "frame.fullscreen.enterTitle": {
-    "text": "Expand the preview to fill the screen",
-    "description": "Tooltip of the \"Full screen\" button in the bar above a docked preview."
-  },
-  "frame.fullscreen.exitTitle": {
-    "text": "Dock the preview back beside the chat",
-    "description": "Tooltip of the \"Exit full screen\" button in the bar above a preview: puts the preview back in its panel beside the build chat."
   },
   "frame.testing.useButton": {
     "text": "Use the button above to jump to the changed feature.",
@@ -8658,14 +8366,6 @@
   "request.status.closed.byVoteWhen": {
     "text": "This request was closed by vote, {{when}}.",
     "description": "The sentence on the status card of a closed request's page, shown in place of its progress, when the group voted to close it. {{when}} is how long ago or a date, for example \"3h ago\" or \"Oct 5\"."
-  },
-  "request.menu.startMore": {
-    "text": "Start more work",
-    "description": "Row in the ⋯ menu at the top of a request's page, for a person who already has an agent session on the request: starts another one."
-  },
-  "request.menu.startMoreTitle": {
-    "text": "Start another agent session on this request",
-    "description": "Tooltip on the Start more work row in the ⋯ menu of a request's page. An agent session is a working conversation with an AI coding agent."
   },
   "request.menu.releaseClaim": {
     "text": "Release {{username}}’s claim",

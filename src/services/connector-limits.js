@@ -225,42 +225,10 @@ const OPEN_WORK_ORDERS_CONNECTOR_HINT = 'To see which ones, call list_my_work_or
   + 'puts one away by its task id, which frees its slot straight away. Check with the user before '
   + 'closing one, because a coding agent still working on it can no longer submit it.';
 
-// ── 3. The platform-build fallback ─────────────────────────────────────
-//
-// This path spends the platform's credits rather than the user's own
-// coding-agent subscription. The daily credit budget still applies
-// underneath (the platform route consults limits.resolveBillingPath
-// itself) — that is the spend meter, and it is the one the browser's own
-// auto-build route relies on too, so nothing here needs to count a day's
-// worth of builds.
-//
-// What is left is how many builds are RUNNING, bounded by the same per-user
-// session cap the browser applies to a dev session, admin tier included.
-async function checkFallbackStart(pool, config, user) {
-  const caps = effectiveSessionCaps(config, user);
-  const inFlight = await countOr(
-    pool,
-    `SELECT COUNT(*) AS cnt FROM chat_sessions
-      WHERE user_id = $1 AND is_headless = TRUE AND headless_status = 'generating'`,
-    [user.id],
-    'fallback-in-flight'
-  );
-  if (inFlight === null) return UNAVAILABLE;
-  if (inFlight >= caps.activeSessions) {
-    return limitError(
-      'at_capacity',
-      `You already have ${caps.activeSessions} Homeroom builds running. `
-      + 'Wait for one to finish before starting another.'
-    );
-  }
-  return null;
-}
-
 module.exports = {
   LIMITS,
   checkPromotedCap,
   checkActiveCap,
   checkOpenWorkOrders,
   OPEN_WORK_ORDERS_CONNECTOR_HINT,
-  checkFallbackStart,
 };

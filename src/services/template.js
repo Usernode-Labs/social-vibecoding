@@ -476,7 +476,7 @@ because a permission rule names its server literally: the same short list,
 once per spelling the connector may be registered under.
 
 If you want the acting calls (\`submit_work\`, \`create_request\`,
-\`prepare_work\`, \`start_platform_build\`, \`submit_platform_build\`) allowed
+\`prepare_work\`) allowed
 too, grant that on your own account rather than here — set the connector to
 allow-always in Claude's connector settings, or add the rules to your own
 \`~/.claude/settings.json\`, where the decision covers your machine only.

@@ -12,7 +12,6 @@ import type {
   Check, DomainWrite, Event, Json, Machine, Outcome, Push, TransitionContext, Tx, WorkRequest,
   WorkResultPayload, WriteContext,
 } from '../kernel/index.ts';
-import { changeClosed } from '../rules/agent-notes.ts';
 import { resolveIssueBounty } from '../rules/bounties.ts';
 import { KUDOS_PARKED } from '../rules/kudos-parked.ts';
 import { createPrMergedNotification, settleDecidedChange } from '../rules/change-notifications.ts';
@@ -339,7 +338,6 @@ function settleWrites(e: Event<any>, d: Data, s: NonNullable<Facts['session']>):
       ...(d.includedIn ? { includedIn: d.includedIn.sessionId } : {}),
     } },
     { type: 'bounties', eventId: e.id, sessionId: d.sessionId, appId: d.appId, userId: d.authorId, prNumber: d.prNumber, numbers: s.linkedIssues },
-    { type: 'agentNote', sessionId: d.sessionId, agentSessionId: s.agentSessionId, prNumber: d.prNumber },
     { type: 'bell', sessionId: d.sessionId },
     // A change of the Homeroom bot's: its other work on the same request
     // stops, bounded to what had started before the merge.
@@ -833,11 +831,6 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
         [w.userId ?? null, w.appId, w.sessionId, w.eventType, JSON.stringify(w.metadata || {})]),
       secrets: (tx, w, ctx) => writeSecrets(tx, w, deps.dataKey, ctx),
       bounties: writeBounties,
-      agentNote: async (tx, w) => {
-        if (!w.agentSessionId) return;
-        await changeClosed(tx,
-          { change: { id: w.sessionId, agent_session_id: w.agentSessionId, pr_number: w.prNumber }, outcome: 'merged' });
-      },
       // Everyone whose bell the decision changed re-reads it, and their
       // phone's icon re-badges (the badge row platform.ts publishPushes
       // writes for every notifications_changed): the asks it settled,

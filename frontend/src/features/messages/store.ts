@@ -1393,7 +1393,7 @@ export function handleBack(): boolean {
       ? `#messages/app/${encodeURIComponent(state.route.appSlug)}`
       : `#messages/${state.route.conversationId}`;
     try { history.replaceState(null, '', parent); } catch { /* non-fatal */ }
-    route(state.route.conversationId, state.route.appSlug, null);
+    route(state.route.conversationId, state.route.appSlug);
     syncChrome();
     return true;
   }

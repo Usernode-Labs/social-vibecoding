@@ -4,13 +4,9 @@ const CLIENT_ID = 'social-vibecoding-cli';
 const CLIENT_NAME = 'Homeroom CLI';
 const IDENTITY_SCOPE = 'rpc:identity:read';
 const API_SCOPE = 'api:access';
-// #907: the local coding agent. Deliberately its own scope rather than a
-// reuse of api:access — the agent protocol lets a machine claim a session's
-// coding turn and stream its result back, which is a materially larger grant
-// than "read and write the user-facing JSON API". Credentials issued before
-// this scope existed keep working for everything else and get a plain
-// 403 insufficient_scope on /api/cli/agent/*, which the CLI turns into a
-// re-login prompt.
+// #907: the scope the local coding agent's protocol asked for. Nothing
+// checks it any more; it stays among the scopes a credential is issued
+// with because database constraints and credentials already issued name it.
 const AGENT_SCOPE = 'agent:local';
 const REQUIRED_SCOPES = Object.freeze([IDENTITY_SCOPE, API_SCOPE, AGENT_SCOPE]);
 const REQUIRED_SCOPE_TEXT = REQUIRED_SCOPES.join(' ');

@@ -399,14 +399,6 @@
     "text": "{{count}} advisory votes from non-approvers. They don’t count toward merging",
     "description": "Tooltip on the small \"+N\" beside a proposal's vote tally, on an app where only invited approvers' votes count. {{count}} is the number of Yes votes cast by people who are not approvers. No full stop at the end."
   },
-  "venue.group.inChat": {
-    "text": "In this chat",
-    "description": "Heading over the places a change can be built that keep the work inside the current agent-session chat."
-  },
-  "venue.group.elsewhere": {
-    "text": "Somewhere else",
-    "description": "Heading over the places a change can be built outside the current agent-session chat (another tool or website)."
-  },
   "venue.usernodeOpenrouter.label": {
     "text": "Homeroom · OpenRouter",
     "description": "Name of one place a change can be built: Homeroom's own servers, using AI models through the OpenRouter service. Homeroom and OpenRouter are product names; keep the middle dot."
@@ -414,10 +406,6 @@
   "venue.usernodeOpenrouter.blurb": {
     "text": "The preferred in-chat option: use included credits or your own OpenRouter key, and pick any available model.",
     "description": "Explains the \"Homeroom · OpenRouter\" way of building a change, in menus and tooltips where a person chooses where to build. OpenRouter is a product name; a key is an API key."
-  },
-  "venue.usernodeOpenrouter.cta": {
-    "text": "Use OpenRouter",
-    "description": "Button that chooses to build the change on Homeroom through OpenRouter. OpenRouter is a product name."
   },
   "venue.usernodeClaude.label": {
     "text": "Homeroom · Claude",
@@ -427,10 +415,6 @@
     "text": "Homeroom runs the turns right here, on your weekly Claude credits, or your own Anthropic key once they run out.",
     "description": "Explains the \"Homeroom · Claude\" way of building a change, in menus and tooltips where a person chooses where to build. A turn is one request to the coding agent and its reply. Claude and Anthropic are names; a key is an API key."
   },
-  "venue.usernodeClaude.cta": {
-    "text": "Use Claude",
-    "description": "Button that chooses to build the change on Homeroom with the Claude AI model. Claude is a product name."
-  },
   "venue.local.label": {
     "text": "Your computer · Homeroom session",
     "description": "Name of one place a change can be built: the person's own computer, running the turns of this same Homeroom agent session. Homeroom is the product's name; keep the middle dot."
@@ -438,10 +422,6 @@
   "venue.local.blurb": {
     "text": "The Homeroom CLI runs this session’s turns on your machine and your own Claude plan. Same chat, same branch, same proposal. The work just executes locally.",
     "description": "Explains the \"Your computer · Homeroom session\" way of building a change. The Homeroom CLI is Homeroom's command-line program; a turn is one request to the coding agent and its reply; Claude is a product name."
-  },
-  "venue.local.cta": {
-    "text": "Set up the Homeroom CLI",
-    "description": "Button that opens the instructions for installing Homeroom's command-line program, to build the change on the person's own computer."
   },
   "venue.webClaudeCode.label": {
     "text": "Claude Code on the web",
@@ -451,10 +431,6 @@
     "text": "Homeroom writes the work order; Claude Code on the web builds it on your own Claude plan and pushes to your fork. Homeroom opens the pull request and imports it as a proposal. No credits, no API key.",
     "description": "Explains the \"Claude Code on the web\" way of building a change. A fork is the person's own copy of the app's code repository on GitHub; Claude Code and Homeroom are product names."
   },
-  "venue.webClaudeCode.cta": {
-    "text": "Use Claude Code",
-    "description": "Button that chooses to hand the change to Claude Code on the web. Claude Code is a product name."
-  },
   "venue.webCodex.label": {
     "text": "Codex on the web",
     "description": "Name of one place a change can be built: OpenAI's Codex website. Codex is a product name."
@@ -463,10 +439,6 @@
     "text": "The same hand-off for Codex on the web and the ChatGPT plan you already pay for. Homeroom guides you through linking GitHub, forking and submitting.",
     "description": "Explains the \"Codex on the web\" way of building a change, listed right after \"Claude Code on the web\", which works the same way. Codex, ChatGPT, GitHub and Homeroom are product names."
   },
-  "venue.webCodex.cta": {
-    "text": "Use Codex",
-    "description": "Button that chooses to hand the change to Codex on the web. Codex is a product name."
-  },
   "venue.ownToolsPr.label": {
     "text": "Your computer · your own tools",
     "description": "Name of one place a change can be built: the person's own computer with whatever developer tools they like, outside Homeroom. Keep the middle dot."
@@ -474,10 +446,6 @@
   "venue.ownToolsPr.blurb": {
     "text": "Build it however you like (Cursor, Zed, vim, any agent), push a branch, then bring the pull request in with “Import Feature from a PR”.",
     "description": "Explains the \"Your computer · your own tools\" way of building a change. \"Build\" is a verb. Cursor, Zed and vim are names of code editors; “Import Feature from a PR” is the name of a menu item; PR means a GitHub pull request."
-  },
-  "venue.ownToolsPr.cta": {
-    "text": "How importing a PR works",
-    "description": "Button that opens the explanation of how to bring a GitHub pull request (PR) into Homeroom as a proposal."
   },
   "venue.handoff.externalAgent": {
     "text": "External agent",
@@ -494,302 +462,6 @@
   "venue.handoff.authoredWithExternalAgent": {
     "text": "Authored with External agent on your computer.",
     "description": "Tooltip on the label that says where a session was built, for a proposal the viewer wrote on their own computer with a coding tool Homeroom cannot name."
-  },
-  "venue.rowLabel.continueSession": {
-    "text": "Continue this session with {{venue}}",
-    "description": "Menu row in a session already under way: hands the rest of this agent session's work to a web coding agent. {{venue}} is that place's name, such as \"Claude Code on the web\"."
-  },
-  "venue.rowLabel.continueProposal": {
-    "text": "Continue this proposal with {{venue}}",
-    "description": "Menu row in a session whose change is already up for a vote: hands further work on that proposal to a web coding agent. {{venue}} is that place's name, such as \"Codex on the web\"."
-  },
-  "venue.rowLabel.startNew": {
-    "text": "Start new work with {{venue}}",
-    "description": "Menu row in a session that can no longer be continued: starts a separate piece of work with a web coding agent. {{venue}} is that place's name, such as \"Codex on the web\"."
-  },
-  "venue.rowLabel.moveTo": {
-    "text": "Move to {{venue}}",
-    "description": "Menu row in a session already under way: moves where the session's work is built to another place. {{venue}} is that place's name, such as \"Homeroom · Claude\"."
-  },
-  "venue.webNote.sessionPaused": {
-    "text": "It starts from this session's latest commit and pushes its work back onto this session's own branch, the code lands on this session's branch, and its preview and checks catch up when you reopen the session. The agent's own conversation happens there, not in this transcript.",
-    "description": "Tooltip on a menu row that hands a paused agent session to a web coding agent: what will happen. \"It\" is the web agent; \"there\" is the web agent's own site; a commit and a branch are Git terms."
-  },
-  "venue.webNote.session": {
-    "text": "It starts from this session's latest commit and pushes its work back onto this session's own branch, the code lands here, and its preview and checks rebuild. The agent's own conversation happens there, not in this transcript.",
-    "description": "Tooltip on a menu row that hands an active agent session to a web coding agent: what will happen. \"It\" is the web agent; \"there\" is the web agent's own site; a commit and a branch are Git terms."
-  },
-  "venue.webNote.proposal": {
-    "text": "It starts from this proposal's latest commit and pushes back onto the same proposal, submitting clears the votes it has already collected and re-runs its checks. The agent's own conversation happens there, not in this transcript.",
-    "description": "Tooltip on a menu row that hands a proposal already up for a vote to a web coding agent: what will happen. \"It\" is the web agent; \"there\" is the web agent's own site."
-  },
-  "venue.webNote.newWork": {
-    "text": "Homeroom prepares a task for the web agent; what it builds comes back as its own proposal, not as more turns in this session.",
-    "description": "Tooltip on a menu row that starts separate work with a web coding agent. A turn is one request to the coding agent and its reply. Homeroom is the product's name."
-  },
-  "venue.consequence.ownToolsSwitch": {
-    "text": "Starts separate work. This chat stays where it is, and what you import comes back as its own proposal. It can’t be your default.",
-    "description": "Tooltip, in a session already under way, on the row for building with your own tools: what choosing it does. \"default\" is the saved default place to build."
-  },
-  "venue.consequence.ownToolsBlocked": {
-    "text": "Costs no credits: you build it yourself and import the pull request. There is no Homeroom chat for this one, and it can’t be your default.",
-    "description": "Tooltip on the row for building with your own tools, shown after the person ran out of AI credits. \"default\" is the saved default place to build."
-  },
-  "venue.consequence.ownToolsStart": {
-    "text": "No Homeroom chat for this one. You build it, then import the pull request. It can’t be your default.",
-    "description": "Tooltip on the row for building with your own tools, in a session with nothing in it yet. \"default\" is the saved default place to build."
-  },
-  "venue.consequence.inChatSwitch": {
-    "text": "Keeps this chat, this branch and this proposal. Only where the turns run changes.",
-    "description": "Tooltip, in a session already under way, on a row that moves the session to another place that still works inside this chat. A turn is one request to the coding agent and its reply."
-  },
-  "venue.consequence.inChatStart": {
-    "text": "The work happens in this chat.",
-    "description": "Tooltip on a row for a place to build that works inside the current agent-session chat, when the session has not started yet."
-  },
-  "venue.rowTitle.joined": {
-    "text": "{{blurb}} {{consequence}}",
-    "description": "Tooltip on a row of the menu that chooses where to build, and the explanation under a row of the out-of-credits card: two explanations one after the other. {{blurb}} is one or more whole sentences describing the place; {{consequence}} is one or more whole sentences saying what choosing it does. Only what separates them is translated here."
-  },
-  "venue.blocked.creditsSpent": {
-    "text": "Today’s AI credits are spent. They reset at {{time}}.",
-    "description": "Reason shown on the struck-through \"build on Homeroom\" row after the daily AI credits ran out. \"Reset\" is a verb: the credits are given back. {{time}} is the time of day in the person's own clock and format, for example \"9:00 AM\"."
-  },
-  "venue.blocked.creditsSpentUtc": {
-    "text": "Today’s AI credits are spent. They reset at midnight UTC.",
-    "description": "Reason shown on the struck-through \"build on Homeroom\" row after the daily AI credits ran out, when the person's local reset time cannot be worked out. UTC is the time standard."
-  },
-  "venue.chip.title": {
-    "text": "{{venue}}: {{blurb}}",
-    "description": "Tooltip on the small chip that names where a session is built. {{venue}} is the place's name, such as \"Homeroom · Claude\"; {{blurb}} is the sentence or sentences that describe it."
-  },
-  "venue.fallback.flagOff": {
-    "text": "Your default is Homeroom · OpenRouter, but this deployment has it turned off, so this session is building in Homeroom · Claude.",
-    "description": "Note above the composer of a new agent session: the person's saved default place to build could not be used, and why. \"Homeroom · OpenRouter\" and \"Homeroom · Claude\" are the names of two places to build; a deployment is this installation of Homeroom."
-  },
-  "venue.fallback.modelUnavailable": {
-    "text": "Your default is Homeroom · OpenRouter but no model is set for it, so this session is building in Homeroom · Claude. Pick a model in Settings and the next one will use it.",
-    "description": "Note above the composer of a new agent session: the person's saved default place to build could not be used because no AI model is chosen for it. \"Homeroom · OpenRouter\" and \"Homeroom · Claude\" are the names of two places to build; \"the next one\" is the next session."
-  },
-  "venue.fallback.noCredential": {
-    "text": "Your default is Homeroom · OpenRouter but your OpenRouter key is missing or no longer valid, so this session is building in Homeroom · Claude. Re-save the key in Settings.",
-    "description": "Note above the composer of a new agent session: the person's saved default place to build could not be used because their OpenRouter API key is missing or invalid. \"Homeroom · OpenRouter\" and \"Homeroom · Claude\" are the names of two places to build."
-  },
-  "venue.choice.onPlatform.label": {
-    "text": "On-Platform",
-    "description": "Row in the \"Where do you want to work on this?\" sheet: build the change on Homeroom itself, inside this chat."
-  },
-  "venue.choice.onPlatform.blurb": {
-    "text": "Homeroom runs the turns right here, in this chat, on your weekly AI credits or your own key once they run out.",
-    "description": "Tooltip on the \"On-Platform\" row of the sheet that chooses where to build a change. A turn is one request to the coding agent and its reply; a key is an API key."
-  },
-  "venue.choice.webAgent.label": {
-    "text": "Claude or Codex WebUI",
-    "description": "Row in the \"Where do you want to work on this?\" sheet: hand the change to the Claude Code or Codex website. Claude and Codex are product names; WebUI means the tool's web interface."
-  },
-  "venue.choice.webAgent.blurb": {
-    "text": "Homeroom writes the work order and Claude Code or Codex builds it on the plan you already pay for, then pushes back here. You pick which of the two on the next screen.",
-    "description": "Tooltip on the \"Claude or Codex WebUI\" row of the sheet that chooses where to build a change. Claude Code and Codex are product names; the plan is the person's paid subscription to one of them."
-  },
-  "venue.choice.ownTools.label": {
-    "text": "Your Own Developer Tooling",
-    "description": "Row in the \"Where do you want to work on this?\" sheet: build the change yourself with your own developer tools, outside Homeroom."
-  },
-  "venue.choice.ownTools.blurb": {
-    "text": "Build it however you like (Cursor, Zed, vim, any agent), push a branch, then bring the pull request in.",
-    "description": "Tooltip on the \"Your Own Developer Tooling\" row of the sheet that chooses where to build a change. \"Build\" is a verb. Cursor, Zed and vim are names of code editors."
-  },
-  "venue.choice.cliBridge.label": {
-    "text": "Local CLI Bridge",
-    "description": "Row in the \"Where do you want to work on this?\" sheet: run this session's work on the person's own computer through Homeroom's command-line program (CLI)."
-  },
-  "venue.choice.cliBridge.blurb": {
-    "text": "The Homeroom CLI runs this session’s turns on your machine and your own Claude plan. Same chat, same branch, same proposal. The work just executes locally.",
-    "description": "Tooltip on the \"Local CLI Bridge\" row of the sheet that chooses where to build a change. The Homeroom CLI is Homeroom's command-line program; a turn is one request to the coding agent and its reply."
-  },
-  "venue.sheet.rowUnavailable": {
-    "text": "{{choice}} (unavailable)",
-    "description": "Row label in the sheet that chooses where to build a change, for a row that cannot be used right now. {{choice}} is the row's own name, such as \"On-Platform\"."
-  },
-  "venue.sheet.rowCurrent": {
-    "text": "{{choice}} ✓",
-    "description": "Row label in the sheet that chooses where to build a change, for the row the session is already using. {{choice}} is the row's own name, such as \"On-Platform\"; keep the check mark."
-  },
-  "venue.sheet.title": {
-    "text": "Where do you want to work on this?",
-    "description": "Title of the sheet that lets a person choose where a change is built: on Homeroom, on a web coding agent, with their own tools, or on their own computer. \"this\" is the change."
-  },
-  "flow.agent.generic": {
-    "text": "your coding agent",
-    "description": "Stands where the name of a coding tool (Claude Code, Codex) would be, when Homeroom does not know which tool it is. Lower case because it is used as a name inside a label."
-  },
-  "flow.unavailable.noRepository": {
-    "text": "This app has no GitHub repository yet, so it can only be built here on Homeroom.",
-    "description": "Shown on the hand-off card when work on this app cannot be handed to an outside coding agent because the app's code is not on GitHub. Homeroom is the product's name."
-  },
-  "flow.unavailable.platform": {
-    "text": "Handing work to Claude Code or Codex is unavailable on this deployment right now.",
-    "description": "Shown on the hand-off card when this installation of Homeroom cannot hand work to an outside coding agent. Claude Code and Codex are product names."
-  },
-  "flow.unavailable.generic": {
-    "text": "This flow is unavailable right now.",
-    "description": "Shown on the hand-off card when handing work to an outside coding agent is unavailable and no reason is known. \"flow\" is the sequence of steps on the card."
-  },
-  "flow.github.title": {
-    "text": "Link your GitHub account",
-    "description": "Title of the first step on the card that walks a person through handing a change to an outside coding agent."
-  },
-  "flow.github.linkedAs": {
-    "text": "Linked as {{login}}.",
-    "description": "Detail under the \"Link your GitHub account\" step once it is done. {{login}} is the person's GitHub user name."
-  },
-  "flow.github.linked": {
-    "text": "Linked as your GitHub account.",
-    "description": "Detail under the \"Link your GitHub account\" step once it is done, when the GitHub user name is not known."
-  },
-  "flow.github.detail": {
-    "text": "Identity only. Homeroom asks for no access to your repositories and stores no token. It just needs to know which GitHub account is yours, so the work comes back under your name.",
-    "description": "Detail under the \"Link your GitHub account\" step before it is done: reassures the person about what linking gives Homeroom. A token is an access credential."
-  },
-  "flow.github.link": {
-    "text": "Link GitHub",
-    "description": "Button on the \"Link your GitHub account\" step: opens GitHub so the person can connect their GitHub account to Homeroom. \"Link\" is a verb."
-  },
-  "flow.fork.title": {
-    "text": "Fork the app repository",
-    "description": "Title of the second step on the hand-off card. \"Fork\" is a verb: make your own copy of the app's code repository on GitHub."
-  },
-  "flow.fork.checking": {
-    "text": "Your agent needs somewhere to push. Homeroom checks GitHub for your fork of this app.",
-    "description": "Detail under the \"Fork the app repository\" step before Homeroom has looked. A fork is the person's own copy of the app's code repository; to push is to upload code to it."
-  },
-  "flow.fork.found": {
-    "text": "Found {{repository}}.",
-    "description": "Detail under the \"Fork the app repository\" step once the person's fork was found. {{repository}} is its GitHub name, written owner/name."
-  },
-  "flow.fork.nameConflict": {
-    "text": "You already own a repository called {{existing}} that is not a fork of this app, so fork it as {{forkName}} instead.",
-    "description": "Detail under the \"Fork the app repository\" step when the usual fork name is taken. {{existing}} is the name of the repository the person already has; {{forkName}} is the name to give the fork instead."
-  },
-  "flow.fork.unknown": {
-    "text": "Homeroom could not read GitHub just now, so it cannot tell whether you have a fork. Carry on and check again in a moment.",
-    "description": "Detail under the \"Fork the app repository\" step when GitHub could not be reached. A fork is the person's own copy of the app's code repository."
-  },
-  "flow.fork.none": {
-    "text": "No fork yet. Fork the app on GitHub, then come back and check again.",
-    "description": "Detail under the \"Fork the app repository\" step when the person has no fork. The first \"fork\" is a noun (their own copy of the repository), the second a verb."
-  },
-  "flow.fork.open": {
-    "text": "Fork on GitHub",
-    "description": "Button on the \"Fork the app repository\" step: opens the GitHub page where the person makes their own copy of the repository. \"Fork\" is a verb."
-  },
-  "flow.fork.checkAgain": {
-    "text": "Check again",
-    "description": "Button on the \"Fork the app repository\" step: asks Homeroom to look on GitHub again for the person's fork."
-  },
-  "flow.handoff.title": {
-    "text": "Hand it to {{agent}}",
-    "description": "Title of the last step on the hand-off card. \"it\" is the change to be built; {{agent}} is the coding tool's product name, Claude Code or Codex."
-  },
-  "flow.handoff.titleGeneric": {
-    "text": "Hand it to your coding agent",
-    "description": "Title of the last step on the hand-off card, when the coding tool is not one Homeroom can name. \"it\" is the change to be built."
-  },
-  "flow.connect.title": {
-    "text": "Connect Homeroom",
-    "description": "Title of the last step on the hand-off card while Homeroom is not yet connected to the person's Claude or ChatGPT account. \"Connect\" is a verb."
-  },
-  "flow.connect.detail": {
-    "text": "Homeroom hands {{agent}} a short set of instructions; {{agent}} asks what you want to build and takes it from there: writing the work order, reading this app's rules, pushing the branch and opening the proposal. It needs the connector in the {{product}} account it runs as to do any of that.",
-    "description": "Detail under the \"Connect Homeroom\" step. {{agent}} is the coding tool's product name (Claude Code or Codex); {{product}} is the chat product whose account it uses (Claude or ChatGPT). The connector is the Homeroom add-on installed in that account."
-  },
-  "flow.connect.detailGeneric": {
-    "text": "Homeroom hands your coding agent a short set of instructions; your coding agent asks what you want to build and takes it from there: writing the work order, reading this app's rules, pushing the branch and opening the proposal. It needs the connector in the {{product}} account it runs as to do any of that.",
-    "description": "Detail under the \"Connect Homeroom\" step, when the coding tool is not one Homeroom can name. {{product}} is the chat product whose account it uses (Claude or ChatGPT). The connector is the Homeroom add-on installed in that account."
-  },
-  "flow.connect.action": {
-    "text": "Connect Homeroom",
-    "description": "Button on the \"Connect Homeroom\" step: opens the instructions for adding the Homeroom connector to the person's Claude or ChatGPT account. \"Connect\" is a verb."
-  },
-  "flow.connect.checkAgain": {
-    "text": "Check again",
-    "description": "Button on the \"Connect Homeroom\" step: asks Homeroom to look again for a connected Claude or ChatGPT account."
-  },
-  "flow.handoff.detail": {
-    "text": "Copy the instructions and paste them into {{agent}}. It will ask what you want to build, then write the work order, push the branch and open the proposal itself. You do not come back here to finish.",
-    "description": "Detail under the \"Hand it to …\" step, for new work. {{agent}} is the coding tool's product name (Claude Code or Codex); \"It\" is that tool."
-  },
-  "flow.handoff.detailGeneric": {
-    "text": "Copy the instructions and paste them into your coding agent. It will ask what you want to build, then write the work order, push the branch and open the proposal itself. You do not come back here to finish.",
-    "description": "Detail under the \"Hand it to your coding agent\" step, for new work, when the coding tool is not one Homeroom can name. \"It\" is that tool."
-  },
-  "flow.handoff.detailSession": {
-    "text": "Copy the instructions and paste them into {{agent}}. It will ask what you want to build, then write the work order, push the branch and open the proposal itself. You do not come back here to finish. The instructions name the session this continues, so the work lands as an update to it rather than as a second copy.",
-    "description": "Detail under the \"Hand it to …\" step, when the work continues an existing agent session. {{agent}} is the coding tool's product name (Claude Code or Codex); \"It\" is that tool."
-  },
-  "flow.handoff.detailSessionGeneric": {
-    "text": "Copy the instructions and paste them into your coding agent. It will ask what you want to build, then write the work order, push the branch and open the proposal itself. You do not come back here to finish. The instructions name the session this continues, so the work lands as an update to it rather than as a second copy.",
-    "description": "Detail under the \"Hand it to your coding agent\" step, when the work continues an existing agent session and the coding tool is not one Homeroom can name. \"It\" is that tool."
-  },
-  "flow.handoff.detailProposal": {
-    "text": "Copy the instructions and paste them into {{agent}}. It will ask what you want to build, then write the work order, push the branch and open the proposal itself. You do not come back here to finish. The instructions name the proposal this continues, so the work lands as an update to it rather than as a second copy.",
-    "description": "Detail under the \"Hand it to …\" step, when the work continues a proposal already up for a vote. {{agent}} is the coding tool's product name (Claude Code or Codex); \"It\" is that tool."
-  },
-  "flow.handoff.detailProposalGeneric": {
-    "text": "Copy the instructions and paste them into your coding agent. It will ask what you want to build, then write the work order, push the branch and open the proposal itself. You do not come back here to finish. The instructions name the proposal this continues, so the work lands as an update to it rather than as a second copy.",
-    "description": "Detail under the \"Hand it to your coding agent\" step, when the work continues a proposal already up for a vote and the coding tool is not one Homeroom can name. \"It\" is that tool."
-  },
-  "flow.handoff.copy": {
-    "text": "Copy instructions",
-    "description": "Button on the \"Hand it to …\" step: copies the instructions for the coding agent to the clipboard. \"Copy\" is a verb."
-  },
-  "flow.handoff.open": {
-    "text": "Open {{agent}}",
-    "description": "Button on the \"Hand it to …\" step: opens the coding tool's website in a new tab. \"Open\" is a verb; {{agent}} is the tool's product name, Claude Code or Codex."
-  },
-  "flow.handoff.openGeneric": {
-    "text": "Open your coding agent",
-    "description": "Button on the \"Hand it to your coding agent\" step: opens the coding tool's website in a new tab. \"Open\" is a verb."
-  },
-  "flow.vendor.groupLabel": {
-    "text": "Which agent builds this",
-    "description": "Accessible name of the pair of buttons (Claude, ChatGPT) at the top of the hand-off card that choose which coding agent builds the change. \"this\" is the change."
-  },
-  "flow.lead.buildingWith": {
-    "text": "Building with {{agent}}",
-    "description": "Heading of the hand-off card. {{agent}} is the coding tool's product name, Claude Code or Codex."
-  },
-  "flow.lead.buildingWithGeneric": {
-    "text": "Building with your coding agent",
-    "description": "Heading of the hand-off card, when the coding tool is not one Homeroom can name."
-  },
-  "flow.status.checking": {
-    "text": "Checking where you are…",
-    "description": "Shown on the hand-off card while Homeroom loads which of the card's steps the person has already finished."
-  },
-  "flow.cancel.buildHere": {
-    "text": "Build here instead",
-    "description": "Button on the hand-off card when handing off is unavailable: goes back to building the change on Homeroom itself. \"Build\" is a verb."
-  },
-  "flow.brief.placeholder": {
-    "text": "What should it build?",
-    "description": "Placeholder in the text box on the hand-off card where a person describes the change. \"it\" is the coding agent; \"build\" is a verb."
-  },
-  "flow.instructions.summary": {
-    "text": "Instructions",
-    "description": "Label of the collapsed section on the hand-off card that holds the full text to paste into the coding agent. A noun."
-  },
-  "flow.connectors.hint_one": {
-    "text": "You already have {{count}} Claude / ChatGPT connector connected. You can also just ask it to pick this task up. A connector belongs to the {{product}} account it was added in, so pasting into a different account needs its own: <0>show the steps</0>.",
-    "description": "Hint at the bottom of the hand-off card. {{count}} is how many Homeroom connectors the person has added to Claude or ChatGPT accounts; {{product}} is Claude or ChatGPT. \"it\" is the coding agent. <0>…</0> is a button that shows how to add a connector."
-  },
-  "flow.connectors.hint_other": {
-    "text": "You already have {{count}} Claude / ChatGPT connectors connected. You can also just ask it to pick this task up. A connector belongs to the {{product}} account it was added in, so pasting into a different account needs its own: <0>show the steps</0>.",
-    "description": "Hint at the bottom of the hand-off card. {{count}} is how many Homeroom connectors the person has added to Claude or ChatGPT accounts; {{product}} is Claude or ChatGPT. \"it\" is the coding agent. <0>…</0> is a button that shows how to add a connector."
-  },
-  "flow.cancel.buildOnPlatform": {
-    "text": "Build on the Homeroom platform instead",
-    "description": "Button at the foot of the hand-off card: leaves the hand-off and builds the change on Homeroom itself. \"Build\" is a verb."
   },
   "credits.resetIn.underMinute": {
     "text": "under a minute",
@@ -870,158 +542,6 @@
   "credits.reset.atBoundaryWithTimeLeft": {
     "text": "Free credits reset at {{boundary}}, about {{timeLeft}} from now.",
     "description": "Says when the daily free AI credits are given back and how far off that is, when the person's local time cannot be worked out. \"reset\" is a verb. {{boundary}} is the server's name for the moment, in English, such as \"midnight UTC\"; {{timeLeft}} is a short duration such as \"3h 20m\"."
-  },
-  "credits.meter.locked": {
-    "text": "verify account · unlock $10/day",
-    "description": "Text of the AI-credit meter for an account that gets no credits until it is verified: an instruction and what it gives, separated by a middle dot. Lower case; $10/day is ten US dollars a day."
-  },
-  "credits.meter.unavailable": {
-    "text": "credits temporarily unavailable",
-    "description": "Text of the AI-credit meter when Homeroom could not work out whether this account gets credits. Lower case, no full stop."
-  },
-  "credits.meter.sharedBudgetSpent": {
-    "text": "shared budget spent",
-    "description": "Shown on the AI-credit meter after the spent/limit figures when the platform's budget shared by everyone is used up for the day. Lower case, no full stop."
-  },
-  "credits.meter.noneLeft": {
-    "text": "none left",
-    "description": "Shown on the AI-credit meter after the spent/limit figures when the person has used all of their free AI credits. Lower case, no full stop."
-  },
-  "credits.meter.amountLeft": {
-    "text": "{{amount}} left",
-    "description": "Shown on the AI-credit meter after the spent/limit figures: how much of the free AI credits remains. {{amount}} is a sum of money such as \"$36.40\"."
-  },
-  "credits.meter.ownKeySpend": {
-    "text": "your key {{amount}}",
-    "description": "Shown on the AI-credit meter: how much has been spent through the person's own API key rather than the free credits. {{amount}} is a sum of money such as \"$2.10\". Lower case."
-  },
-  "credits.low.thisWeek": {
-    "text": "Running low on free AI credits: {{remaining}} of {{limit}} left this week.",
-    "description": "Warning above the agent-session composer before the weekly free AI credits run out. {{remaining}} and {{limit}} are sums of money such as \"$4.00\" and \"$50.00\"."
-  },
-  "credits.low.today": {
-    "text": "Running low on free AI credits: {{remaining}} of {{limit}} left today.",
-    "description": "Warning above the agent-session composer before the daily free AI credits run out. {{remaining}} and {{limit}} are sums of money such as \"$4.00\" and \"$50.00\"."
-  },
-  "credits.apiKey.savedKeyFailed.title": {
-    "text": "Your saved key couldn't be used",
-    "description": "Title of a row on the out-of-credits card, for a person who has saved their own Anthropic API key but Homeroom could not use it."
-  },
-  "credits.apiKey.savedKeyFailed.blurb": {
-    "text": "Homeroom has a key on file but could not use it for this turn. Open Settings → API key, check it and re-save it. Your weekly allowance is bypassed entirely while a working key is on file.",
-    "description": "Explanation under \"Your saved key couldn't be used\" on the out-of-credits card. \"Settings → API key\" is the path to a Settings section and keeps its arrow; a turn is one request to the coding agent and its reply; the allowance is the free AI credits."
-  },
-  "credits.apiKey.savedKeyFailed.cta": {
-    "text": "Check API key",
-    "description": "Button on the out-of-credits card and banner: opens Settings at the API key section, for a person whose saved key could not be used. \"Check\" is a verb."
-  },
-  "credits.apiKey.useOwn.title": {
-    "text": "Use your own Anthropic API key",
-    "description": "Title of a row on the out-of-credits card: one way to keep building is to pay through your own Anthropic account. Anthropic is a company name."
-  },
-  "credits.apiKey.useOwn.blurb": {
-    "text": "Paste a key in Settings → API key and Homeroom keeps working exactly as it does now, billed to your Anthropic account instead of your weekly allowance.",
-    "description": "Explanation under \"Use your own Anthropic API key\" on the out-of-credits card. \"Settings → API key\" is the path to a Settings section and keeps its arrow; the allowance is the free AI credits."
-  },
-  "credits.apiKey.useOwn.cta": {
-    "text": "Add API key",
-    "description": "Button on the out-of-credits card and banner: opens Settings at the API key section so the person can save their own key."
-  },
-  "credits.verify.line": {
-    "text": "Verify your account to get more: add your phone number, or link GitHub and X.",
-    "description": "Line on the out-of-credits card and banner for an account that is not verified: says how to get more free AI credits. GitHub and X are product names; \"link\" is a verb."
-  },
-  "credits.verify.title": {
-    "text": "Verify your account",
-    "description": "Title of a row in the list of ways to keep building after the AI credits ran out, for an account that is not verified."
-  },
-  "credits.verify.cta": {
-    "text": "Verify my account",
-    "description": "Button on the out-of-credits card and banner: opens the sheet where the person verifies their account with a phone number."
-  },
-  "credits.connector.title": {
-    "text": "Use your Claude.ai or ChatGPT subscription",
-    "description": "Title of a row on the out-of-credits card: one way to keep building is the paid Claude.ai or ChatGPT plan the person already has. Claude.ai and ChatGPT are product names."
-  },
-  "credits.connector.blurb": {
-    "text": "Connect Homeroom to Claude or ChatGPT and let Claude Code on the web or Codex do the work on the plan you already pay for.",
-    "description": "Explanation under \"Use your Claude.ai or ChatGPT subscription\" on the out-of-credits card. Claude, ChatGPT, Claude Code and Codex are product names."
-  },
-  "credits.connector.cta": {
-    "text": "Connect Claude or ChatGPT",
-    "description": "Button on the out-of-credits card: opens Settings at the section where Homeroom is connected to Claude or ChatGPT. \"Connect\" is a verb."
-  },
-  "credits.intro.none": {
-    "text": "No ways to keep building right now:",
-    "description": "Line on the out-of-credits card above an empty list of ways to carry on. \"building\" is working on the change. Ends with a colon."
-  },
-  "credits.intro.one": {
-    "text": "One way to keep building right now:",
-    "description": "Line on the out-of-credits card above a list of exactly one way to carry on working on the change. The number is spelled out. Ends with a colon."
-  },
-  "credits.intro.two": {
-    "text": "Two ways to keep building right now:",
-    "description": "Line on the out-of-credits card above a list of exactly two ways to carry on working on the change. The number is spelled out. Ends with a colon."
-  },
-  "credits.intro.three": {
-    "text": "Three ways to keep building right now:",
-    "description": "Line on the out-of-credits card above a list of exactly three ways to carry on working on the change. The number is spelled out. Ends with a colon."
-  },
-  "credits.intro.four": {
-    "text": "Four ways to keep building right now:",
-    "description": "Line on the out-of-credits card above a list of exactly four ways to carry on working on the change. The number is spelled out. Ends with a colon."
-  },
-  "credits.intro.five": {
-    "text": "Five ways to keep building right now:",
-    "description": "Line on the out-of-credits card above a list of exactly five ways to carry on working on the change. The number is spelled out. Ends with a colon."
-  },
-  "credits.intro.six": {
-    "text": "Six ways to keep building right now:",
-    "description": "Line on the out-of-credits card above a list of exactly six ways to carry on working on the change. The number is spelled out. Ends with a colon."
-  },
-  "credits.intro.seven": {
-    "text": "Seven ways to keep building right now:",
-    "description": "Line on the out-of-credits card above a list of exactly seven ways to carry on working on the change. The number is spelled out. Ends with a colon."
-  },
-  "credits.intro.eight": {
-    "text": "Eight ways to keep building right now:",
-    "description": "Line on the out-of-credits card above a list of exactly eight ways to carry on working on the change. The number is spelled out. Ends with a colon."
-  },
-  "credits.intro.nine": {
-    "text": "Nine ways to keep building right now:",
-    "description": "Line on the out-of-credits card above a list of exactly nine ways to carry on working on the change. The number is spelled out. Ends with a colon."
-  },
-  "credits.intro.counted_one": {
-    "text": "{{count}} way to keep building right now:",
-    "description": "Line on the out-of-credits card above the list of ways to carry on working on the change, when there are more than nine. {{count}} is how many, as a figure. Ends with a colon."
-  },
-  "credits.intro.counted_other": {
-    "text": "{{count}} ways to keep building right now:",
-    "description": "Line on the out-of-credits card above the list of ways to carry on working on the change, when there are more than nine. {{count}} is how many, as a figure. Ends with a colon."
-  },
-  "credits.lead.outToday": {
-    "text": "You're out of today's free AI credits.",
-    "description": "First line of the out-of-credits card and banner in an agent session, when the free AI credits are counted per day."
-  },
-  "credits.lead.outThisWeek": {
-    "text": "You're out of this week's free AI credits.",
-    "description": "First line of the out-of-credits card and banner in an agent session, when the free AI credits are counted per week."
-  },
-  "credits.lead.sharedBudgetOut": {
-    "text": "The platform's shared daily AI budget is used up.",
-    "description": "First line of the out-of-credits card and banner in an agent session, when it is the budget shared by everyone on Homeroom, not the person's own credits, that ran out for the day."
-  },
-  "credits.developer.summary": {
-    "text": "Are you a developer?",
-    "description": "Label of the collapsed section on the out-of-credits card that holds the ways to keep building that need a terminal."
-  },
-  "credits.developer.hint": {
-    "text": "Build it with the tools on your own computer instead.",
-    "description": "Line inside the \"Are you a developer?\" section of the out-of-credits card. \"Build\" is a verb; \"it\" is the change."
-  },
-  "credits.banner.changeSessionType": {
-    "text": "Change session type",
-    "description": "Button on the out-of-credits banner above an agent session: opens the sheet that chooses where the change is built. \"Change\" is a verb; the session type is where the work runs (on Homeroom, on a web agent, on your computer)."
   },
   "buildLog.stage.clone": {
     "text": "Cloning the repository",
@@ -1246,101 +766,5 @@
   "transcript.header.readMessages_other": {
     "text": "Read the agent session ({{count}} messages)",
     "description": "Label of the control on a proposal's page that opens the shared transcript of the agent session behind it. \"Read\" is a verb (imperative); {{count}} is how many messages it holds."
-  },
-  "localRun.cloneComment": {
-    "text": "# clone this app’s repository, then cd into it",
-    "description": "First line of the commands on the \"Run this session on your computer\" card, when the app's repository address is not known: a shell comment telling the person what to do. Keep the leading \"#\" and the command name \"cd\"."
-  },
-  "localRun.leadNoBranch": {
-    "text": "This session stays right here: same transcript, same proposal. Nothing has run in it yet, so it has no branch on GitHub. Homeroom creates one when the first turn pushes. The turns run through Claude Code on your machine, on your own Claude plan, and each one asks in your terminal before it starts.",
-    "description": "Opening paragraph of the \"Run this session on your computer\" card, for an agent session in which nothing has run yet. A turn is one request to the coding agent and its reply; a branch is a Git branch; Claude Code, Claude, GitHub and Homeroom are names."
-  },
-  "localRun.lead": {
-    "text": "This session stays right here: same transcript, same branch, same proposal. Its turns just run through Claude Code on your machine, on your own Claude plan, and each one asks in your terminal before it starts.",
-    "description": "Opening paragraph of the \"Run this session on your computer\" card. A turn is one request to the coding agent and its reply; a branch is a Git branch; Claude Code and Claude are product names."
-  },
-  "localRun.title": {
-    "text": "Run this session on your computer",
-    "description": "Title of the card that gives the commands for running an agent session's work on the person's own computer. \"Run\" is a verb."
-  },
-  "localRun.footnote": {
-    "text": "Homeroom still opens the pull request, builds the preview and runs the checks. Hand the turns back to Homeroom at any time from the composer’s “Run on” selector.",
-    "description": "Paragraph under the commands on the \"Run this session on your computer\" card. A turn is one request to the coding agent and its reply; “Run on” is the name of a selector beside the message box."
-  },
-  "localRun.copy": {
-    "text": "Copy commands",
-    "description": "Button on the \"Run this session on your computer\" card: copies the shell commands shown above it to the clipboard. \"Copy\" is a verb."
-  },
-  "localRun.copied": {
-    "text": "Copied!",
-    "description": "Replaces the \"Copy commands\" button's label for a moment after the commands were copied to the clipboard."
-  },
-  "localRun.copyFailed": {
-    "text": "Copy failed",
-    "description": "Replaces the \"Copy commands\" button's label for a moment when the commands could not be copied to the clipboard."
-  },
-  "progress.elapsed.seconds": {
-    "text": "{{seconds}}s",
-    "description": "How long the coding agent's current run has taken, under a minute: \"42s\". {{seconds}} is a number; \"s\" abbreviates seconds."
-  },
-  "progress.elapsed.minutesSeconds": {
-    "text": "{{minutes}}m {{seconds}}s",
-    "description": "How long the coding agent's current run has taken, under an hour: \"3m 05s\". {{minutes}} is a number and {{seconds}} a two-digit number; \"m\" and \"s\" abbreviate minutes and seconds."
-  },
-  "progress.elapsed.hoursMinutes": {
-    "text": "{{hours}}h {{minutes}}m",
-    "description": "How long the coding agent's current run has taken, an hour or more: \"1h 12m\". {{hours}} is a number and {{minutes}} a two-digit number; \"h\" and \"m\" abbreviate hours and minutes."
-  },
-  "progress.countdown.underMinute": {
-    "text": "· under a minute left",
-    "description": "Follows the estimated length of the coding agent's run in the agent-session chat, after a space: the run should finish within a minute. Keep the leading middle dot, which separates it from the estimate."
-  },
-  "progress.countdown.about": {
-    "text": "· ~{{time}} left",
-    "description": "Follows the estimated length of the coding agent's run in the agent-session chat, after a space: roughly how long is left. {{time}} is a duration such as \"3m 00s\"; \"~\" means about. Keep the leading middle dot, which separates it from the estimate."
-  },
-  "progress.cohort.longerThanMost": {
-    "text": "running longer than most, about 1 in 5 runs do",
-    "description": "Small note beside the progress of a coding agent's run that has passed ten minutes. Lower case, no full stop. \"runs\" is a noun: runs of the coding agent."
-  },
-  "progress.cohort.longOne": {
-    "text": "this is a long one, some runs go 30 min+",
-    "description": "Small note beside the progress of a coding agent's run that has passed thirty minutes. Lower case, no full stop. \"one\" and \"runs\" are runs of the coding agent; \"30 min+\" means thirty minutes or more."
-  },
-  "progress.phase.claudeWorking": {
-    "text": "Claude is working",
-    "description": "Stage shown on the progress card of an agent session while the Claude coding agent is writing the change. Claude is a product name."
-  },
-  "progress.phase.agentWorking": {
-    "text": "Coding agent is working",
-    "description": "Stage shown on the progress card of an agent session while a coding agent other than Claude is writing the change."
-  },
-  "progress.phase.syncingWithMain": {
-    "text": "Syncing with main",
-    "description": "Stage shown on the progress card of an agent session while the session's code is being brought up to date with the app's main branch. \"main\" is the branch's name and stays as it is."
-  },
-  "progress.phase.syncingBranch": {
-    "text": "Syncing branch",
-    "description": "Stage shown on the progress card of an agent session while the session's own Git branch is being refreshed."
-  },
-  "progress.phase.committing": {
-    "text": "Committing",
-    "description": "Stage shown on the progress card of an agent session while the agent's changes are being saved as a Git commit."
-  },
-  "progress.phase.pushing": {
-    "text": "Pushing",
-    "description": "Stage shown on the progress card of an agent session while the commit is being uploaded (pushed) to GitHub."
-  },
-  "progress.phase.finished": {
-    "text": "Finished",
-    "description": "Final stage shown on the progress card of an agent session when the coding agent's run completed."
-  },
-  "progress.phase.pushFailed": {
-    "text": "Push failed",
-    "description": "Final stage shown on the progress card of an agent session when uploading (pushing) the commit to GitHub failed. \"Push\" is a noun."
-  },
-  "progress.phase.interrupted": {
-    "text": "Interrupted",
-    "description": "Final stage shown on the progress card of an agent session when the coding agent's run was cut off before it finished."
   }
 }

@@ -404,14 +404,9 @@ const SHELL_ASSETS = [
   '/js/app-view.js',
   '/js/app.js',
   '/js/build-log.js',
-  '/js/cc-progress-summary.js',
   '/js/topochain-events.js',
   '/js/confirm-modal.js',
   '/js/dev-alerts.js',
-  // '/js/dev-chat.js' — #1084 chunk G moved it into the React bundle
-  // (frontend/src/features/dev-chat/dev-chat.js), which /shell/assets/shell.js
-  // already precaches. Precaching it here as well would 404 the install.
-  '/js/dev-flow-select.js',
   '/js/dev-host.js',
   // #1054: the offline feedback outbox. It has to be precached like any other
   // shell module — the whole point is that it works on the load where the
@@ -438,10 +433,7 @@ const SHELL_ASSETS = [
   // The feedback dialog's screenshot-capture module used to be listed here.
   // #1078 chunk I moved it into the React bundle, so /shell/assets/shell.js
   // above is what precaches it now.
-  '/js/session-options.js',
   '/js/session-transcript.js',
-  '/js/spec-sections.js',
-  '/js/streaming-markdown.js',
   '/js/session-state.js',
   // The Leaderboard screen's three Topochain-domain panes were listed here
   // too, and moved in the same chunk. Only the shared event RULES they read

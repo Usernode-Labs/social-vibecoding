@@ -123,22 +123,6 @@
     "text": "Block production settings (exact alarms and battery) come later, when you ask to produce blocks in Settings, Homeroom app.",
     "description": "Note in the \"Set up your device\" sheet of the Homeroom phone app on Android when only notifications are asked for now. \"Settings, Homeroom app\" is the path to a section of Homeroom's Settings."
   },
-  "devAlerts.ask.title": {
-    "text": "Get a notification when it finishes?",
-    "description": "An in-app question shown once, the first time somebody sends a message in an agent session (a coding conversation) in a web browser, before the browser's own notification permission prompt. Its title."
-  },
-  "devAlerts.ask.message": {
-    "text": "This browser can tell you when the agent is done, while the tab stays open. Your browser will ask you to allow it.",
-    "description": "An in-app question shown once, the first time somebody sends a message in an agent session (a coding conversation) in a web browser, before the browser's own notification permission prompt. The line under the title."
-  },
-  "devAlerts.ask.confirm": {
-    "text": "Notify me",
-    "description": "An in-app question shown once, the first time somebody sends a message in an agent session (a coding conversation) in a web browser, before the browser's own notification permission prompt. Its button that goes on to the browser's prompt."
-  },
-  "devAlerts.ask.notNow": {
-    "text": "Not now",
-    "description": "An in-app question shown once, the first time somebody sends a message in an agent session (a coding conversation) in a web browser, before the browser's own notification permission prompt. Its button that closes it and asks nothing."
-  },
   "pingAsk.appBuilding.title": {
     "text": "Get a ping when your app is ready?",
     "description": "Title of the question asked on an iPhone right after a person starts creating an app: whether Homeroom may notify them when it has been built. A ping is a notification."
@@ -358,10 +342,6 @@
   "title.messages": {
     "text": "Messages",
     "description": "Title shown in the header bar, and as the browser tab's title, on the Messages screen, which lists the person's conversations with people and agents."
-  },
-  "title.agentSession": {
-    "text": "Agent session",
-    "description": "Title shown in the header bar, and as the browser tab's title, on the screen of one agent session, where an AI agent builds a change."
   },
   "title.appNotAvailable": {
     "text": "App not available",

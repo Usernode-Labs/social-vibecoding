@@ -6,9 +6,8 @@ import * as api from './api';
 import type { SavedDraft } from './api';
 
 /*
- * SAVED DRAFTS, IN THE CHAT WITH HOMEROOM BOT. The agent chats' list
- * (features/agent-session/store.ts "Saved drafts", the dev chat's #798),
- * for the viewer's own chat with the bot and each of its threads.
+ * SAVED DRAFTS, IN THE CHAT WITH HOMEROOM BOT, for the viewer's own chat
+ * with the bot and each of its threads.
  *
  * While the bot works on their message the box saves what is typed instead
  * of sending it (./bot-stop.ts). A draft is words only, kept on the server

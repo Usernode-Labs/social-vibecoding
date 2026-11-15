@@ -1350,9 +1350,8 @@ const Notifications = {
       }
       return;
     }
-    // #161/#194: completion notifications deep-link to their change's page.
-    // Nothing creates these three kinds any more; a row from before still
-    // opens the change it was about.
+    // #161/#194: a completion notification opens the page of the change it
+    // is about.
     const completion = item.kind === 'session_done' || item.kind === 'session_stalled'
       || item.kind === 'auto_solve_done';
     if (completion && item.appSlug && item.sessionId) {

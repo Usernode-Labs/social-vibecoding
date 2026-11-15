@@ -2478,9 +2478,8 @@ test('only proposals actually up for a vote count, by either linkage', async () 
   // that as "in progress" and it is not yet a duplicate proposal. 'archived'
   // and 'merged' are over.
   assert.match(q.sql, /cs\.status IN \('promoted', 'merging'\)/);
-  // The Mayor's declared linkage, which is also what a connector submission
-  // records; and the dev chat started from the issue row before anything has
-  // been declared.
+  // The declared linkage, which is what a connector submission records; and
+  // a change started from the issue row before anything has been declared.
   // The job's requests go in as one array, so a job for several finds a
   // proposal for any of them.
   assert.match(q.sql, /cs\.linked_issues && \$2::int\[\]/);
@@ -2887,7 +2886,7 @@ test('submit_work advertises every shape it accepts', () => {
   );
   const block = TOOLS_SRC.slice(
     TOOLS_SRC.indexOf("registerTool('submit_work'"),
-    TOOLS_SRC.indexOf("registerTool('start_platform_build'")
+    TOOLS_SRC.indexOf("registerTool('list_my_work_orders'")
   );
   assert.match(block, /a pushed branch, a patch, or an open PR/);
   assert.match(block, /NO GitHub write access is needed/);
