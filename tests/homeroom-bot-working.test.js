@@ -632,8 +632,7 @@ test('#6142: a first drawing of an app starts from its entry page; an edit, or a
   });
   await editing.run;
   assert.ok(!editing.seen[0][0].content.includes('THE APP\'S SCREEN NOW'), 'an edit reads the version, not the page');
-  assert.deepEqual(editing.reads, ['public/index.html', 'public/app.css'],
-    'the sheets are resolved before the prompt, even for an edit');
+  assert.deepEqual(editing.reads, [], 'an edit reads its version, not the app\'s page');
 
   const locked = designTurn([{ calls: [call('reply', { text: 'Which screen do you mean?' })] }],
     { surface: 'app', files: EAR_FILES, canRead: false });
@@ -664,8 +663,7 @@ test('#6150: an edit after a redraw keeps the app\'s stylesheets', async () => {
   assert.equal(turn.versions.length, 1);
   assert.deepEqual(sheetsOf(turn.versions[0]), [['public/app.css', '.ear{color:teal}']], 'one block, with its CSS');
   assert.match(turn.versions[0], />Pick a key</);
-  assert.deepEqual(turn.reads, ['public/index.html', 'public/app.css'],
-    'the sheets are resolved before the prompt, even for an edit');
+  assert.deepEqual(turn.reads, [], 'the CSS came from the version: nothing read');
 
   const v3 = `<!doctype html><html><head>${block('public/app.css')}${block('public/app.css')}</head>`
     + '<body><main class="keys">Keys</main></body></html>';
