@@ -72,7 +72,17 @@ test('real admins only, and never on the first render', () => {
   const src = read(PICKER);
   assert.match(src, /whenPlatformViewer\(\(\) => setAdmin\(\(window as any\)\.App\?\._realIsAdmin === true\)\)/,
     'the un-masked answer, as Settings reads it: "view as a member" does not take the way back away');
-  assert.match(src, /if \(!admin\) return null;/);
+  // 15 Nov 2026: and only on a device that turned the look tools on in
+  // Settings > Experimental, so an admin's header is everyone's by default.
+  assert.match(src, /const tools = useLookTools\(\);\s*if \(!admin \|\| !tools\) return null;/);
+  const skinMod = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
+  assert.equal(skinMod.lookTools(), false, 'no window: off');
+  for (const [answer, want] of [[true, true], [false, false], [undefined, false], ['on', false]]) {
+    globalThis.window = { Skin: { tools: () => answer } };
+    try { assert.equal(skinMod.lookTools(), want, `tools() answering ${String(answer)}`); } finally { delete globalThis.window; }
+  }
+  globalThis.window = { Skin: {} };
+  try { assert.equal(skinMod.lookTools(), false, 'an older head module with no tools(): off'); } finally { delete globalThis.window; }
   assert.equal(renderComponent(PICKER, 'LookPicker', { variant: 'frame' }, { cache: false, stubs: { '../../lib/platform-viewer': { whenPlatformViewer: () => () => {} } } }), '',
     'the prerendered document and the first client render agree: nothing');
   assert.match(src, /window\.Skin\?\.set\?\.\(next\)/, 'the choice is the head module\'s, kept on the device');

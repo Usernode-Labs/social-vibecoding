@@ -20,7 +20,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
  * The looks of the one frame, in the order the 2026-11-06 screen tour gives
  * them (five of its nine: Brand kit, Workbench, Today and Playground were
  * retired on 12 Nov 2026, and a device that had stored one of them reads as
- * the standard look, here and in the head): every one draws the same frame (title, one sentence, one action,
+ * the default look, here and in the head): every one draws the same frame (title, one sentence, one action,
  * labelled groups of one row) with its own tokens, typeface and a few rules
  * in app.css ("THE FRAME'S LOOKS"). The head's SKINS is 'brand' and these.
  */
@@ -30,7 +30,8 @@ export type Skin = 'standard' | 'brand' | FrameSkin;
 
 /**
  * Every look the Look menu offers after Standard, in its order: 'brand'
- * ("Paper, simplified, with brand styling", which keeps the standard pages)
+ * ("Paper, simplified, with brand styling", which keeps the standard pages
+ * and, since 15 Nov 2026, is what a device with nothing stored is drawn in)
  * and then the looks of the frame. It is the head's SKINS, and the option
  * values of Settings › Experimental › Look and of the look picker.
  */
@@ -49,6 +50,11 @@ declare global {
       set(skin: Skin): void;
       apply(): void;
       onChange(fn: () => void): void;
+      /** Whether this device shows the look tools beside the bell. */
+      tools?(): boolean;
+      setTools?(on: boolean): void;
+      /** The look a device with nothing stored is drawn in. */
+      DEFAULT?: Skin;
     };
   }
 }
@@ -101,4 +107,24 @@ export function subscribeSkin(onChange: () => void): () => void {
  */
 export function useLiveSkin(): Skin {
   return useSyncExternalStore(subscribeSkin, currentSkin, () => 'standard');
+}
+
+/**
+ * Whether this device shows the look menu and the light/dark switch beside
+ * the bell (15 Nov 2026): off unless it was turned on in Settings ›
+ * Experimental, so an admin's header is everyone's until they ask. The
+ * head's window.Skin keeps it on the device beside the look.
+ */
+export function lookTools(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.Skin?.tools?.() === true;
+  } catch {
+    return false;
+  }
+}
+
+/** `lookTools`, kept current: Settings or another tab turning it on or off redraws its reader. */
+export function useLookTools(): boolean {
+  return useSyncExternalStore(subscribeSkin, lookTools, () => false);
 }

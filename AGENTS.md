@@ -720,6 +720,21 @@ carry most of them.
 - **At most one pill on a list row.** Use `AppPills limit={1}`. Pass the
   heading's own words to a row's label so the row does not repeat them.
 
+- **The default look is "Paper, simplified, with brand styling" (15 Nov
+  2026).** A device with nothing stored is drawn in it, signed in or out,
+  admin or not: the head's `window.Skin` (`frontend/src/head.html`) puts
+  `data-skin="brand"` on `<html>` before first paint, and app.css's last
+  block repaints the pages above in the website's colours and typefaces
+  without changing their markup or layout. The rules in this section still
+  describe those pages; that block is where the brand look's values live.
+  Standard, the look before it, is a stored choice (`'standard'`, no
+  `data-skin`), and it and the frame's five looks are an admin's menu in
+  Settings › Experimental. The look menu and the light/dark switch beside
+  the bell (`features/frame/look-picker.tsx`) show only on a device that
+  turned them on there (`window.Skin.tools()`), so an admin's header is
+  everyone's by default. `?skin=<look>|standard` still pins a look for one
+  load.
+
 Tests pin the literals where they live (`tests/section-heading-primitives`,
 `tests/nav-tab-bar`, `tests/workshop-screen`), so a change to one of these is
 a change to the rule. Make it here as well.

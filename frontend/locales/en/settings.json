@@ -1385,7 +1385,7 @@
   },
   "experimental.look.standard": {
     "text": "Standard",
-    "description": "First option of the Look menu in Settings, Experimental: Homeroom's usual visual style, with no experimental look applied."
+    "description": "First option of the Look menu in Settings, Experimental: the visual style Homeroom had before “Paper, simplified, with brand styling” became the default."
   },
   "experimental.look.brand": {
     "text": "Paper, simplified, with brand styling",
@@ -1412,8 +1412,16 @@
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (white cards and a peach-to-lavender main button). A proper name; translate it as a short name, not a sentence."
   },
   "experimental.look.description": {
-    "text": "Try another look for Homeroom, in light and dark. One keeps every page as it is and draws it in the website's colours. The other five each have their own typeface, colours and shapes, and not every screen is drawn in them yet. Admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",
-    "description": "Explanation under the Look menu in Settings, Experimental, which only admins see while the looks are being drawn. Homeroom is the product name; Home is its first screen."
+    "text": "Homeroom is drawn in “Paper, simplified, with brand styling” unless another look is chosen here. Standard is the look it had before. The other five each have their own typeface, colours and shapes, and not every screen is drawn in them yet. Only admins see this menu. Kept for this browser.",
+    "description": "Explanation under the Look menu in Settings, Experimental, which only admins see. It says which look is the default, what Standard is, and that the other five are unfinished. The quoted name is the Look menu's option “Paper, simplified, with brand styling”; translate it the same way there and here. Homeroom is the product name."
+  },
+  "experimental.lookTools.label": {
+    "text": "Show the look menu and the light and dark switch beside the bell",
+    "description": "Label of a switch under the Look menu in Settings, Experimental, which only admins see. On, two small buttons appear beside the bell at the top of every screen: one opens the Look menu, the other flips between light and dark. Off by default."
+  },
+  "experimental.lookTools.description": {
+    "text": "Adds two buttons beside the bell on every screen: one changes the look, the other flips between light and dark. With this off, the top of the screen is the one everyone has, the look is chosen in the menu above, and light or dark is chosen in Settings, Appearance. Kept for this browser.",
+    "description": "Explanation under the switch that shows the look menu and the light and dark switch beside the bell, in Settings, Experimental. Appearance is the name of another section of Settings, where the Theme control is; translate it the same way there and here."
   },
   "experimental.localAgents.title": {
     "text": "Local coding agent",

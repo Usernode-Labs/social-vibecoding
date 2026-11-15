@@ -2824,9 +2824,9 @@
       "expectSelector": "body:not(:has(#__un-platform-link)) #home-search-input"
     },
     {
-      "name": "Home feed renders with the app search bar",
+      "name": "Home feed renders with the app search bar, and a device with nothing stored is drawn in the default look, Paper, simplified, with brand styling (15 Nov 2026)",
       "path": "/",
-      "expectSelector": "#home-search-input"
+      "expectSelector": "html[data-skin=brand] #home-search-input"
     },
     {
       "name": "Mark all read is a pill in the sheet's title row, between the name and the close disc — not a fourth tab in the rail",
@@ -3016,9 +3016,9 @@
       "expectText": "Homeroom news by email"
     },
     {
-      "name": "The header carries the mark and the bell, and no second alerting glyph (#2718)",
+      "name": "The header carries the mark and the bell, and no second alerting glyph (#2718); the look menu and the light and dark switch are not beside the bell until Settings, Experimental turns them on (15 Nov 2026)",
       "path": "/",
-      "expectSelector": "#platform-header:not(:has(#messages-btn)):has(#platform-mark-btn) #notifications-btn"
+      "expectSelector": "#platform-header:not(:has(#messages-btn)):not(:has([data-look-picker])):not(:has([data-look-theme])):has(#platform-mark-btn) #notifications-btn"
     },
     {
       "name": "The sidebar's destination order: Home, then Homeroom bot (AI) above Messages, then Recents (the pinned group, then the rest), then you (One Home, #6361; the Communities node stays in the markup, drawn on neither bar, for the routes that name it)",

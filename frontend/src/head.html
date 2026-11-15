@@ -455,25 +455,36 @@
     }());
   </script>
   <script>
-    // Skin module — the looks, experiments all (Settings › Experimental,
-    // off by default). The same head-blocking pattern as window.Display:
-    // the stored choice lands on <html> before app.css, whose rules read
-    // it, is applied, so a look never flashes in after first paint.
-    //   'homeroom:skin'  → 'brand'  "Paper, simplified, with brand
-    //                      styling": the standard pages in the website's
-    //                      colours and typefaces. The id is the old New
-    //                      look's, whose switch is gone.
+    // Skin module — the look Homeroom is drawn in. The same head-blocking
+    // pattern as window.Display: the look lands on <html> before app.css,
+    // whose rules read it, is applied, so a look never flashes in after
+    // first paint.
+    // 15 Nov 2026: THE DEFAULT IS 'brand', "Paper, simplified, with brand
+    // styling", for everyone: a device with nothing stored is drawn in it.
+    // The other looks are Settings › Experimental's (an admin's menu).
+    //   'homeroom:skin'  → key removed: the default, 'brand' (the standard
+    //                      pages in the website's colours and typefaces;
+    //                      the id is the old New look's)
+    //                    → 'brand'  the same look, as devices that picked
+    //                      it before it was the default stored it
+    //                    → 'standard'  the look Homeroom had before: no
+    //                      data-skin on <html>. It was "key removed" until
+    //                      15 Nov 2026, so a device that had it then now
+    //                      gets the default
     //                    → 'glass', 'paper', 'pastel', 'mosaic',
     //                      'sunrise'  the five looks of the one frame
-    //                      All six are drawn in light and dark, and are
-    //                      the Look menu's, an admin's preview.
+    //                      All are drawn in light and dark.
     //                    → anything else, a retired look's id among them
     //                      ('brandkit', 'workbench', 'today', 'playground',
-    //                      gone 12 Nov 2026), reads as the standard look
-    //                    → key removed for the standard look (the default)
+    //                      gone 12 Nov 2026), reads as the default
+    //   'homeroom:look-tools' → 'on': the look menu and the light/dark
+    //                      switch beside the bell (features/frame/
+    //                      look-picker.tsx) are shown to an admin who
+    //                      turned them on in Settings › Experimental. Key
+    //                      removed: off, so an admin's header is everyone's.
     // Kept on the DEVICE: there is nothing to save or fail. app.css scopes
     // every rule of a look to html[data-skin="<look>"]. Every storage access
-    // sits in try/catch: unreadable storage means the standard look. A pick
+    // sits in try/catch: unreadable storage means the default look. A pick
     // is held in memory for the page's life as well (`chosen`), so it always
     // applies even when the browser refuses to store it; reading storage is
     // only what restores a pick after a reload.
@@ -483,6 +494,9 @@
     // parameter out of the address, so a reload keeps what was picked.
     window.Skin = (function () {
       const SKIN_KEY = 'homeroom:skin';
+      const TOOLS_KEY = 'homeroom:look-tools';
+      // What a device with nothing stored is drawn in.
+      const DEFAULT_SKIN = 'brand';
       // 'brand' keeps the standard pages; the five after it are the looks
       // of the one frame (the 2026-11-06 screen tour), in the tour's order.
       // The same list is MENU_SKINS in src/lib/skin.ts and, less 'brand',
@@ -493,9 +507,13 @@
       let pinned = null;
       // The pick made on this page, held even when storage refuses it.
       let chosen = null;
+      // Whether the look tools are shown, as set on this page (null: read storage).
+      let toolsChosen = null;
+      // A look by name: one of the menu's, or 'standard' (the earlier look).
+      const known = (val) => val === 'standard' || SKINS.includes(val);
       try {
         const want = new URLSearchParams(window.location.search).get('skin');
-        if (want === 'standard' || SKINS.includes(want)) pinned = want;
+        if (known(want)) pinned = want;
       } catch {}
 
       function get() {
@@ -503,9 +521,9 @@
         if (chosen) return chosen;
         try {
           const val = window.localStorage.getItem(SKIN_KEY);
-          return SKINS.includes(val) ? val : 'standard';
+          return known(val) ? val : DEFAULT_SKIN;
         } catch {
-          return 'standard';
+          return DEFAULT_SKIN;
         }
       }
 
@@ -525,12 +543,14 @@
       function set(skin) {
         pinned = null;
         // Held for the page's life whether or not the browser stores it.
-        chosen = SKINS.includes(skin) ? skin : 'standard';
+        chosen = known(skin) ? skin : DEFAULT_SKIN;
         try {
-          if (SKINS.includes(skin)) {
-            window.localStorage.setItem(SKIN_KEY, skin);
-          } else {
+          // The default is the absence of the key, so a device that never
+          // chose follows whatever the default becomes.
+          if (chosen === DEFAULT_SKIN) {
             window.localStorage.removeItem(SKIN_KEY);
+          } else {
+            window.localStorage.setItem(SKIN_KEY, chosen);
           }
         } catch { /* unwritable storage: the pick still holds in memory */ }
         // A pick replaces a look named in the address, so a reload keeps it.
@@ -545,6 +565,30 @@
         _listeners.forEach(function (fn) { try { fn(); } catch {} });
       }
 
+      // Whether the look menu and the light/dark switch beside the bell are
+      // shown (to an admin: the picker asks that itself). Off unless this
+      // device turned them on in Settings › Experimental.
+      function tools() {
+        if (toolsChosen !== null) return toolsChosen;
+        try {
+          return window.localStorage.getItem(TOOLS_KEY) === 'on';
+        } catch {
+          return false;
+        }
+      }
+
+      function setTools(on) {
+        toolsChosen = !!on;
+        try {
+          if (on) {
+            window.localStorage.setItem(TOOLS_KEY, 'on');
+          } else {
+            window.localStorage.removeItem(TOOLS_KEY);
+          }
+        } catch { /* unwritable storage: it still holds for this page */ }
+        _listeners.forEach(function (fn) { try { fn(); } catch {} });
+      }
+
       function onChange(fn) {
         _listeners.push(fn);
       }
@@ -553,6 +597,10 @@
       // through the same listener). The in-memory pick is dropped first, so
       // a choice made in another tab still wins here.
       window.addEventListener('storage', function (e) {
+        if (e.key === TOOLS_KEY) {
+          toolsChosen = null;
+          _listeners.forEach(function (fn) { try { fn(); } catch {} });
+        }
         if (e.key === SKIN_KEY) {
           chosen = null;
           apply();
@@ -563,7 +611,7 @@
       // Apply before first paint: the no-flash guard.
       apply();
 
-      return { get, set, apply, onChange };
+      return { get, set, apply, onChange, tools, setTools, DEFAULT: DEFAULT_SKIN };
     }());
   </script>
   <script>

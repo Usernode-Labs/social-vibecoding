@@ -434,7 +434,8 @@ const ADDED_IDS = {
   // brand styling" and became the Look menu's first option, so the switch
   // and its id are gone. The id leaves THIS map rather than entering
   // RETIRED_IDS, because the frozen baseline never recorded it.
-  'settings-look-section': 'Look: the menu\'s own wrapper in Settings, Experimental, shipped hidden. settings.js _renderAdminSection lifts the class only for a real admin (App._realIsAdmin), or on a device left in one of the menu\'s looks: the looks are an admin\'s preview while they are drawn screen by screen.',
+  'settings-look-section': 'Look: the menu\'s own wrapper in Settings, Experimental, shipped hidden. settings.js _renderAdminSection lifts the class only for a real admin (App._realIsAdmin), or on a device left in a look other than the default or with the look tools on: the other looks are an admin\'s preview while they are drawn screen by screen.',
+  'settings-look-tools': '15 Nov 2026 (the brand look is the default): the switch under the Look menu that shows the look menu and the light/dark switch beside the bell (features/frame/look-picker.tsx). Off by default, so an admin\'s header is everyone\'s; kept on the device by the head\'s window.Skin (tools / setTools), which settings.js paints and saves through.',
   'settings-look': 'Look: the menu of the looks (Standard, then brand, which keeps the standard pages in the website\'s colours, then the one frame\'s five: glass, paper, pastel, mosaic, sunrise). Kept on the device by the head\'s window.Skin, which sets the chosen id as data-skin on <html> for app.css to draw from. settings.js paints and saves it through window.Skin.',
   // ── #5097: Settings > Privacy, "Share usage analytics" ──────────────
   // ── #5097: Settings > Privacy, usage data ──────────────

@@ -20,13 +20,20 @@
  * "view as a member" does not mask). Never on the first render: the
  * prerendered document knows no viewer, so the control arrives after the
  * shell has one.
+ *
+ * AND ONLY WHERE THE DEVICE ASKED FOR IT (15 Nov 2026). The default look is
+ * everyone's now, so an admin's header is everyone's too: the pair shows
+ * once "Show the look menu and the light and dark switch beside the bell"
+ * is on in Settings > Experimental (lib/skin.ts useLookTools, kept on the
+ * device by the head's window.Skin). Off, the Look menu in Settings still
+ * changes the look and Settings > Theme still sets light or dark.
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { Icon } from '@/components/ui/kit';
 import { useMessages } from '../../lib/i18n/react';
 import { whenPlatformViewer } from '../../lib/platform-viewer';
-import { MENU_SKINS, useLiveSkin, type Skin } from '../../lib/skin';
+import { MENU_SKINS, useLiveSkin, useLookTools, type Skin } from '../../lib/skin';
 
 // Whole literals, so the catalog inventory can see each id asked for.
 const NAME: Record<'standard' | (typeof MENU_SKINS)[number], string> = {
@@ -149,7 +156,8 @@ export function LookPicker({ variant }: { variant: 'frame' | 'shell' }) {
   const [admin, setAdmin] = useState(false);
   useEffect(() => whenPlatformViewer(() => setAdmin((window as any).App?._realIsAdmin === true)), []);
   const dark = useSyncExternalStore(subscribeTheme, isDark, () => false);
-  if (!admin) return null;
+  const tools = useLookTools();
+  if (!admin || !tools) return null;
   return (
     <LookPickerView
       variant={variant}

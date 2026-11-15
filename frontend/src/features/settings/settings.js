@@ -797,10 +797,10 @@
 
       // The Look menu (an admin's preview of the looks), kept on the device
       // by the head's window.Skin: the change is the save, and the look
-      // applies at once. Its options are every look there is ('brand',
-      // which keeps the standard pages, and the frame's five); nothing
-      // stored reads as Standard. New look's switch, which set 'brand' on
-      // its own, is gone: that look is the menu's first option now.
+      // applies at once. Its options are every look there is: Standard
+      // (the option with no value, the look Homeroom had before), 'brand',
+      // which keeps the standard pages and is what a device with nothing
+      // stored is drawn in (15 Nov 2026), and the frame's five.
       const lookSelect = document.getElementById('settings-look');
       const paintLooks = () => {
         const skin = window.Skin?.get?.();
@@ -815,6 +815,15 @@
         });
         // Another tab changing it repaints the menu here too.
         window.Skin?.onChange?.(paintLooks);
+      }
+      // Under it: whether the look menu and the light/dark switch are shown
+      // beside the bell. Off by default, kept on the device the same way.
+      const lookTools = document.getElementById('settings-look-tools');
+      if (lookTools) {
+        lookTools.addEventListener('change', (e) => {
+          window.Skin?.setTools?.(!!e.target.checked);
+        });
+        window.Skin?.onChange?.(() => { lookTools.checked = window.Skin?.tools?.() === true; });
       }
 
       // Platform-level language preference (issue #757). Server-side
@@ -1961,6 +1970,8 @@
         const stored = window.Skin?.get?.();
         lookMenu.value = Array.from(lookMenu.options).some((o) => o.value === stored) ? stored : '';
       }
+      const lookTools = document.getElementById('settings-look-tools');
+      if (lookTools) lookTools.checked = window.Skin?.tools?.() === true;
       this._renderLocalAgentsSection();
     },
 
@@ -3735,17 +3746,20 @@
       // app.js wins over the fallback.
       const realAdmin = (typeof App !== 'undefined' ? App._realIsAdmin : undefined)
         ?? (typeof App !== 'undefined' && !!App.user?.isAdmin);
-      // A device left in one of the menu's looks keeps the menu whoever is
-      // signed in (an admin's device in other hands, an admin who lost the
-      // role, a device that had the old New look switch on, which stored
-      // 'brand'): the look is stored on the device and the menu is what
-      // clears it.
+      // A device left in a look other than the default keeps the menu
+      // whoever is signed in (an admin's device in other hands, an admin who
+      // lost the role): the look is stored on the device and the menu is
+      // what clears it. The default ('brand' since 15 Nov 2026) is
+      // everyone's, so it shows the menu to nobody but an admin. A device
+      // that turned the look tools on keeps the menu too, since its switch
+      // is in the same section.
       const lookSection = document.getElementById('settings-look-section');
       if (lookSection) {
-        const lookMenu = document.getElementById('settings-look');
         const stored = window.Skin?.get?.();
-        const inLook = !!lookMenu && Array.from(lookMenu.options).some((o) => o.value && o.value === stored);
-        lookSection.classList.toggle('hidden', !realAdmin && !inLook);
+        const fallback = window.Skin?.DEFAULT || 'brand';
+        const inLook = !!stored && stored !== fallback;
+        const toolsOn = window.Skin?.tools?.() === true;
+        lookSection.classList.toggle('hidden', !realAdmin && !inLook && !toolsOn);
       }
       if (!section || !toggle) return;
       if (!realAdmin) {

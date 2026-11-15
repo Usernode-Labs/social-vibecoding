@@ -64,10 +64,19 @@ function runSkin({ stored = null, broken = false } = {}) {
 
 // ── The inline head module ───────────────────────────────────────────────
 
-test('no look is on by default', () => {
-  const { Skin, attrs } = runSkin();
+// 15 Nov 2026: this look is what a device with nothing stored is drawn in.
+test('with nothing stored, the look is this one, for everyone', () => {
+  const { Skin, attrs, store } = runSkin();
+  assert.equal(Skin.get(), 'brand');
+  assert.equal(Skin.DEFAULT, 'brand');
+  assert.equal(attrs.get('data-skin'), 'brand', 'no stored choice: data-skin="brand" on <html> before first paint');
+  assert.equal(store.size, 0, 'and nothing is written to say so');
+});
+
+test('Standard, the look before it, is a choice a device stores', () => {
+  const { Skin, attrs } = runSkin({ stored: 'standard' });
   assert.equal(Skin.get(), 'standard');
-  assert.equal(attrs.has('data-skin'), false, 'no stored choice: no data-skin on <html>');
+  assert.equal(attrs.has('data-skin'), false, 'the earlier look is no data-skin on <html>');
 });
 
 test('a stored choice is on <html> as soon as the module runs', () => {
@@ -77,38 +86,61 @@ test('a stored choice is on <html> as soon as the module runs', () => {
   assert.equal(attrs.get('data-skin'), 'brand');
 });
 
-test('set() stores the look and removes the key for the standard one', () => {
+test('set() stores a choice, and the default is the absence of the key', () => {
   const { Skin, store, attrs } = runSkin();
   let heard = 0;
   Skin.onChange(() => { heard += 1; });
-  Skin.set('brand');
-  assert.equal(store.get('homeroom:skin'), 'brand');
-  assert.equal(attrs.get('data-skin'), 'brand');
   Skin.set('standard');
-  assert.equal(store.has('homeroom:skin'), false, 'the standard look is the absence of the key');
+  assert.equal(store.get('homeroom:skin'), 'standard', 'the earlier look is stored by name');
   assert.equal(attrs.has('data-skin'), false);
+  Skin.set('brand');
+  assert.equal(store.has('homeroom:skin'), false, 'the default look is the absence of the key');
+  assert.equal(attrs.get('data-skin'), 'brand');
   assert.equal(heard, 2, 'every set() tells its listeners');
 });
 
-test('unknown values read as standard, and a pick applies even with blocked storage', () => {
-  assert.equal(runSkin({ stored: 'neon' }).Skin.get(), 'standard');
+test('the look tools beside the bell are off until a device turns them on', () => {
+  const { Skin, store, listeners } = runSkin();
+  assert.equal(Skin.tools(), false);
+  let heard = 0;
+  Skin.onChange(() => { heard += 1; });
+  Skin.setTools(true);
+  assert.equal(Skin.tools(), true);
+  assert.equal(store.get('homeroom:look-tools'), 'on');
+  Skin.setTools(false);
+  assert.equal(Skin.tools(), false);
+  assert.equal(store.has('homeroom:look-tools'), false, 'off is the absence of the key');
+  assert.equal(heard, 2, 'Settings and the header hear each change');
+  // Another tab turning them on is heard here too.
+  store.set('homeroom:look-tools', 'on');
+  listeners[0]({ key: 'homeroom:look-tools' });
+  assert.equal(Skin.tools(), true);
+  assert.equal(heard, 3);
   const blocked = runSkin({ broken: true });
-  assert.equal(blocked.Skin.get(), 'standard');
-  assert.doesNotThrow(() => blocked.Skin.set('brand'), 'a blocked write never throws');
+  assert.equal(blocked.Skin.tools(), false, 'unreadable storage: off');
+  assert.doesNotThrow(() => blocked.Skin.setTools(true));
+  assert.equal(blocked.Skin.tools(), true, 'and a choice still holds for the page');
+});
+
+test('unknown values read as the default, and a pick applies even with blocked storage', () => {
+  assert.equal(runSkin({ stored: 'neon' }).Skin.get(), 'brand');
+  const blocked = runSkin({ broken: true });
+  assert.equal(blocked.Skin.get(), 'brand');
+  assert.doesNotThrow(() => blocked.Skin.set('standard'), 'a blocked write never throws');
   // #6562: the pick is held in memory for the page's life when the browser
   // refuses to store it, so it is not lost.
-  assert.equal(blocked.attrs.get('data-skin'), 'brand',
+  assert.equal(blocked.attrs.has('data-skin'), false,
     'a choice that could not be stored still applies');
-  assert.equal(blocked.Skin.get(), 'brand', 'and every reader gets it');
+  assert.equal(blocked.Skin.get(), 'standard', 'and every reader gets it');
 });
 
 test('another tab changing the key re-applies it here', () => {
   const { Skin, store, attrs, listeners } = runSkin();
   assert.equal(listeners.length, 1, 'the module listens for storage events');
-  store.set('homeroom:skin', 'brand');
+  store.set('homeroom:skin', 'standard');
   listeners[0]({ key: 'homeroom:skin' });
-  assert.equal(attrs.get('data-skin'), 'brand');
-  assert.equal(Skin.get(), 'brand');
+  assert.equal(attrs.has('data-skin'), false);
+  assert.equal(Skin.get(), 'standard');
 });
 
 test('the Skin module runs before the first stylesheet', () => {

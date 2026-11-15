@@ -72,9 +72,13 @@ test('glass is stored and applied like brand', () => {
   assert.equal(store.get('homeroom:skin'), 'glass');
   assert.equal(attrs.get('data-skin'), 'glass');
   assert.equal(Skin.get(), 'glass');
+  // 15 Nov 2026: Standard is a stored choice; the default is brand.
   Skin.set('standard');
-  assert.equal(store.has('homeroom:skin'), false);
+  assert.equal(store.get('homeroom:skin'), 'standard');
   assert.equal(attrs.has('data-skin'), false);
+  Skin.set('brand');
+  assert.equal(store.has('homeroom:skin'), false, 'the default look is the absence of the key');
+  assert.equal(attrs.get('data-skin'), 'brand');
 });
 
 test('a stored glass is on <html> as soon as the module runs', () => {
@@ -95,7 +99,8 @@ test('?skin= pins the look for this load and stores nothing', () => {
   assert.equal(r.store.get('homeroom:skin'), 'brand', 'the pin is for this load only');
   const off = runSkin({ stored: 'glass', search: '?skin=standard' });
   assert.equal(off.attrs.has('data-skin'), false, 'standard pins the standard look over a stored one');
-  assert.equal(runSkin({ search: '?skin=neon' }).Skin.get(), 'standard', 'an unknown pin is ignored');
+  assert.equal(runSkin({ search: '?skin=neon' }).Skin.get(), 'brand', 'an unknown pin is ignored: the default look');
+  assert.equal(runSkin({ search: '?skin=standard' }).Skin.get(), 'standard', 'standard pins the earlier look over the default');
 });
 
 test('a pick applies and holds even when the browser refuses to store it', () => {
@@ -158,16 +163,17 @@ test('every frame look is stored, applied and pinned like glass', () => {
 });
 
 // A device that chose a retired look keeps its id in storage. Nothing
-// draws it any more, so it must read as the standard design everywhere: no
-// attribute for app.css, no frame for the islands, Standard in the menus.
-test('a retired look, stored or named in the address, is the standard design', () => {
+// draws it any more, so it must read as the default look everywhere (brand
+// since 15 Nov 2026, which keeps the standard pages): never its own
+// attribute for app.css, no frame for the islands.
+test('a retired look, stored or named in the address, is the default look', () => {
   for (const look of RETIRED_LOOKS) {
     const stored = runSkin({ stored: look });
-    assert.equal(stored.Skin.get(), 'standard', `${look} in storage reads as standard`);
-    assert.equal(stored.attrs.has('data-skin'), false, `${look} in storage puts no data-skin on <html>`);
+    assert.equal(stored.Skin.get(), 'brand', `${look} in storage reads as the default`);
+    assert.equal(stored.attrs.get('data-skin'), 'brand', `${look} in storage never reaches <html>`);
     const pinned = runSkin({ search: `?skin=${look}` });
-    assert.equal(pinned.Skin.get(), 'standard', `?skin=${look} pins nothing`);
-    assert.equal(pinned.attrs.has('data-skin'), false);
+    assert.equal(pinned.Skin.get(), 'brand', `?skin=${look} pins nothing`);
+    assert.equal(pinned.attrs.get('data-skin'), 'brand');
     // The address cannot bring one back over a look that is stored.
     assert.equal(runSkin({ stored: 'glass', search: `?skin=${look}` }).Skin.get(), 'glass');
     // A pick after it works as on a fresh device.
@@ -233,8 +239,42 @@ test('Settings › Experimental offers every look in one menu, shipped hidden, a
   assert.doesNotMatch(html, /glass-look-enabled/, 'the one-look switch is gone');
 });
 
+// 15 Nov 2026: with the default look everyone's, the look menu and the
+// light/dark switch beside the bell are asked for, by a switch under the menu.
+test('under the menu, a switch shows the look tools beside the bell, off by default', () => {
+  const { renderComponent } = require('./lib/render-tsx');
+  const { message } = require('./lib/platform-i18n');
+  const html = renderComponent('frontend/src/features/settings/sections/experimental.tsx', 'ExperimentalSection', {});
+  const section = html.slice(html.indexOf('id="settings-look-section"'), html.indexOf('id="settings-local-agents-section"'));
+  assert.ok(section.indexOf('id="settings-look"') < section.indexOf('id="settings-look-tools"'), 'the switch sits under the menu, in the same gated section');
+  assert.ok(section.includes(message('settings:experimental.lookTools.label')));
+  assert.equal(message('settings:experimental.lookTools.label'), 'Show the look menu and the light and dark switch beside the bell');
+  assert.match(message('settings:experimental.look.description'), /^Homeroom is drawn in “Paper, simplified, with brand styling” unless another look is chosen here\./);
+  // The wiring, run: the change is the save, through the head's window.Skin.
+  const src = settingsJs();
+  const start = src.indexOf("const lookTools = document.getElementById('settings-look-tools');");
+  const end = src.indexOf('// Platform-level language preference', start);
+  assert.ok(start > 0 && end > start);
+  const calls = [];
+  const heard = [];
+  let on = false;
+  const box = { checked: false, listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; } };
+  vm.runInNewContext(src.slice(start, end), {
+    document: { getElementById: (id) => (id === 'settings-look-tools' ? box : null) },
+    window: { Skin: { tools: () => on, setTools: (v) => { calls.push(v); on = v; }, onChange: (fn) => heard.push(fn) } },
+  });
+  box.listeners.change({ target: { checked: true } });
+  assert.deepEqual(calls, [true]);
+  // Another tab, or the head module's own listeners, repaint the box.
+  on = false; heard[0]();
+  assert.equal(box.checked, false);
+  on = true; heard[0]();
+  assert.equal(box.checked, true);
+  assert.match(src, /const lookTools = document\.getElementById\('settings-look-tools'\);\s*if \(lookTools\) lookTools\.checked = window\.Skin\?\.tools\?\.\(\) === true;/, 'and the section paints it when it opens');
+});
+
 // The gate, run: settings.js's own method against stub nodes.
-function runAdminGate({ realAdmin, skin = 'standard' }) {
+function runAdminGate({ realAdmin, skin = 'brand', tools = false }) {
   const src = settingsJs();
   const start = src.indexOf('_renderAdminSection() {');
   assert.ok(start > 0);
@@ -252,7 +292,7 @@ function runAdminGate({ realAdmin, skin = 'standard' }) {
     document: { getElementById: (id) => nodes[id] || null },
     App: { _realIsAdmin: realAdmin, user: { isAdmin: realAdmin } },
     localStorage: { getItem: () => null },
-    window: { Skin: { get: () => skin } },
+    window: { Skin: { get: () => skin, DEFAULT: 'brand', tools: () => tools } },
   });
   return { menuShown: !nodes['settings-look-section'].classList.contains('hidden'), adminShown: !nodes['settings-admin-section'].classList.contains('hidden') };
 }
@@ -262,15 +302,18 @@ test('settings.js shows the Look menu only to a real admin', () => {
   assert.deepEqual(runAdminGate({ realAdmin: false }), { menuShown: false, adminShown: false });
 });
 
-test('a device left in one of the looks keeps the menu, so the way back to Standard is never hidden', () => {
+test('a device left in a look other than the default keeps the menu, so the way back is never hidden', () => {
   // An admin's device used by someone else, or an admin who lost the role:
   // the look is stored on the device, and the menu is the control that
   // clears it.
   assert.equal(runAdminGate({ realAdmin: false, skin: 'mosaic' }).menuShown, true);
   assert.equal(runAdminGate({ realAdmin: false, skin: 'mosaic' }).adminShown, false, 'only the menu, never the admin preview');
-  // A device that had the old New look switch on stored 'brand'. The switch
-  // is gone, so the menu is its way back too.
-  assert.equal(runAdminGate({ realAdmin: false, skin: 'brand' }).menuShown, true);
+  assert.equal(runAdminGate({ realAdmin: false, skin: 'standard' }).menuShown, true, 'the earlier look is a choice too');
+  // 15 Nov 2026: brand is the default, everyone's, so it shows the menu to
+  // nobody but an admin.
+  assert.equal(runAdminGate({ realAdmin: false, skin: 'brand' }).menuShown, false);
+  // A device that turned the look tools on keeps the section, whose switch turns them off.
+  assert.equal(runAdminGate({ realAdmin: false, skin: 'brand', tools: true }).menuShown, true);
 });
 
 // The wiring, run: settings.js's own block for the menu, against stub
