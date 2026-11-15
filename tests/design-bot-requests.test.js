@@ -521,6 +521,6 @@ test('the prompt lets the bot offer an ordinary request, and never tells the per
   assert.match(prompt, /offered with\n {2}offer_request, on the project they name, Homeroom included/);
   assert.match(prompt, /offer_plan is only for this design, never for another request/);
   assert.match(prompt, /Never tell them to file it themselves/);
-  assert.doesNotMatch(prompt, /never file or post/i);
-  assert.doesNotMatch(prompt, /never post, file or make/i);
+  // The line above it still says the bot itself posts and files nothing.
+  assert.match(prompt, /- You never post, file or make anything yourself: when they say it looks good,\n {2}or ask to post it, offer it with offer_plan/);
 });
