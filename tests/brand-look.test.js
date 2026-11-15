@@ -373,6 +373,19 @@ test('the top bar is navy, not the sidebar\'s blue, and a community\'s bar keeps
   }
 });
 
+test('the side panel starts below the flat bar, on the chat column\'s line', () => {
+  const rule = ruleAt(`${EITHER}:not([data-community-tint]) body:has(#platform-tabs) .side-panel`);
+  assert.ok(rule, 'the look moves the panel below its flat bar');
+  const top = valueOf(rule.body, 'top');
+  assert.match(top, /\+ \.5rem\)$/, '8px below the bar, not 8px up into its rounded edge');
+  // The same arithmetic #ai-screen .ai-main-pane and .dev-ws-side use.
+  const css = read('public', 'css', 'app.css');
+  const pane = css.match(/#ai-screen \.ai-main-pane \{[\s\S]*?\n\}/);
+  assert.ok(pane, '#ai-screen .ai-main-pane is found');
+  assert.equal(top, valueOf(pane[0].slice(pane[0].indexOf('{') + 1), 'top'),
+    'the panel starts on the line the chat column already starts on');
+});
+
 test('on a phone the tab bar is the sidebar\'s blue and its marker sun', () => {
   const css = lookBlock();
   assert.match(css, /@media \(max-width: 767\.98px\) \{/);
