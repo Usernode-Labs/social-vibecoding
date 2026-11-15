@@ -3172,6 +3172,13 @@ function issueRoutes(config) {
       const issueFields = { ...issue, similar: twins.get(number) || null };
       delete issueFields.mockAddressedBy;
       delete issueFields.mockClosedVia;
+      // #6680: the viewer's own design thread that filed this request, or
+      // posted its plan there, which the request page links back to. Read for
+      // the signing-in viewer alone, so another member's read gets null and
+      // learns nothing of a private thread. Never throws; absent is null.
+      const fromThread = await require('../services/design-threads').threadForRequest(pool, {
+        userId: req.user?.id, appId: app.id, number,
+      });
 
       // #6604: a request's page draws from THIS read alone now — the board's
       // list is not loaded behind it — so the work state its card shows has
@@ -3266,6 +3273,7 @@ function issueRoutes(config) {
           botAwaits,
           botHold,
           standing,
+          fromThread,
           track,
           myPrSessionId: issueFields.myPrSessionId ?? null,
           addressed_by: addressed,

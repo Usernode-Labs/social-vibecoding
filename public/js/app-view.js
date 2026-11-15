@@ -6727,6 +6727,14 @@ const AppView = {
       ? { number, title: String(issue.similar.title || '') } : null;
   },
 
+  // #6680: the viewer's own private thread that filed this request (or posted
+  // its plan there), which the page links back to. The server fills it for
+  // the thread's owner only; absent from an older server.
+  _fromThreadOf(issue) {
+    const rootId = Number(issue?.fromThread?.rootId);
+    return Number.isSafeInteger(rootId) && rootId > 0 ? { rootId } : null;
+  },
+
   _requestView(issue) {
     const n = issue.number;
     const top = issue.category && issue.category.top;
@@ -6749,6 +6757,8 @@ const AppView = {
       askedTitle: stamp.title,
       title: issue.title || '',
       similar: AppView._twinOf(issue),
+      // #6680: the thread the viewer filed it from, for the link under its words.
+      fromThread: AppView._fromThreadOf(issue),
       titleEditing: canEditTitle && AppView._editingIssueTitle === n ? { issue: n, initial: issue.title || '' } : null,
       bodyHtml: words.text.trim() ? AppView._issueBodyHtml({ body: words.text }) : '',
       bodyMarkdown: words.text,

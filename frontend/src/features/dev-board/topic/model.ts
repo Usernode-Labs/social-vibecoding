@@ -551,6 +551,12 @@ export interface ClosesRequestView {
 
 export interface RequestView {
   similar?: { number: number; title: string } | null;
+  /**
+   * #6680: the viewer's own private Homeroom bot thread that filed this
+   * request, or posted its plan there: the head links back to it. Only ever
+   * the thread owner's; another member's read carries null.
+   */
+  fromThread?: { rootId: number } | null;
   number: number;
   /** The category's name, as plain words under "Request #N"; null when unset. */
   category: string | null;

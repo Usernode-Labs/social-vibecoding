@@ -186,6 +186,20 @@ test('voted in: every step is done, with no fill; a closed request says so inste
   assert.match(closed, /This request was closed by vote\./);
 });
 
+// #6680: the person whose private Homeroom bot thread filed the request (or
+// posted its plan) gets a link under its words back to that thread. Nobody
+// else's read carries `fromThread`, so nothing is drawn for them.
+test('#6680: a request filed from a private thread links its owner back to it', () => {
+  const html = renderComponent(HEAD, 'RequestHead', { r: { ...requestView(), fromThread: { rootId: 17372 } } });
+  assert.match(html, /<p class="mt-1 text-\[13px\][^"]*" data-request-from-thread="17372">/);
+  assert.match(html, /href="#homeroom-bot\/thread\/17372"/);
+  assert.match(html, />Open the thread it came from</);
+  // Right after the request's words, before where it stands.
+  assert.match(html, /data-request-words="">[\s\S]*?data-request-from-thread="17372"[\s\S]*?data-request-stage=/);
+  assert.doesNotMatch(renderComponent(HEAD, 'RequestHead', { r: requestView() }), /data-request-from-thread/);
+  assert.doesNotMatch(renderComponent(HEAD, 'RequestHead', { r: { ...requestView(), fromThread: null } }), /data-request-from-thread/);
+});
+
 function appView(username = 'evan', globals = {}) {
   const c = {
     ...globals,
