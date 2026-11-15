@@ -21,7 +21,7 @@ const READY = new Set(['queued', 'held_builds', 'held_waiting']);
 const PLAIN_LINES = new Set([
   'queued', 'first_version_wait', 'held_builds', 'held_waiting', 'on_hold', 'cooldown', 'reply', 'retry_plan',
   'starting', 'proposing', 'fixing', 'revising', 'update_queued', 'checks_failing', 'sync_wait', 'conflict_on_yes',
-  'github_checks', 'github_checks_failing', 'github_wait', 'first_version', 'planning_with_you', 'waiting',
+  'github_checks', 'github_checks_failing', 'github_wait', 'first_version', 'planning_with_you', 'waiting', 'shots',
   'approved_checking',
 ]);
 
@@ -32,6 +32,8 @@ function stagePhrase(item, yours) {
   if (item.stage === 'checking' && code === 'syncing') return { id: 'core:work.stage.syncing' };
   // #6594: its votes are in: Approved while its checks (or GitHub's) finish.
   if (item.stage === 'checking' && code === 'approved_checking') return { id: 'core:work.stage.approved' };
+  // Only its before & after screenshots are left: Taking screenshots.
+  if (item.stage === 'checking' && code === 'shots') return { id: 'core:work.stage.shots' };
   if (item.stage === 'going_live' && code === 'github_checks') return { id: 'core:work.stage.approved' };
   if (item.stage === 'going_live' && code === 'github_wait') return { id: 'core:work.stage.waitingToMerge' };
   if (item.stage === 'reading' && NOT_STARTED.has(code)) return { id: 'core:work.stage.notStarted' };

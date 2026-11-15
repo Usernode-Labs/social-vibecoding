@@ -493,6 +493,37 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     assert.deepEqual(await owedTo(ada, ids), []);
   });
 
+  await t.test('the turn that takes a change\'s screenshots is no update on its way; a build turn still is', async () => {
+    const head = 'abc';
+    const taking = await change(bob, 605, [], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    const turn = (mode) => JSON.stringify({ turnId: `${mode}-turn`, mode, startedAt: new Date().toISOString() });
+    // Its tests passed and the shots agent is at it: a turn on the change.
+    await pool.query(
+      `UPDATE chat_sessions SET shots_state = 'exploring', shots_run_id = $2, shots_updated_at = NOW(),
+              checks_checked_at = NOW(), shots_detail = $3::jsonb, active_turn = $4::jsonb WHERE id = $1`,
+      [taking.id, 's'.repeat(32), JSON.stringify({ headSha: head, required: true }), turn('shots')]);
+    await ws.refresh(pool, [{ sessionId: taking.id }]);
+    let row = (await ws.forChanges(pool, [taking.id])).get(taking.id);
+    assert.deepEqual([row.stage, row.line, row.voteOpen], ['checking', { code: 'shots' }, false]);
+    assert.equal(row.change.update, null, 'nothing is updating it');
+    assert.equal(row.change.shotsHeld, true, 'its screenshots are what hold its vote');
+    assert.deepEqual(row.words.stage, { id: 'core:work.stage.shots' });
+    assert.equal(ws.says(row), 'Taking screenshots · Tests passed: only the before and after screenshots are left');
+    // A turn that writes to it is an update, as before.
+    await pool.query('UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1', [taking.id, turn('build')]);
+    await ws.refresh(pool, [{ sessionId: taking.id }]);
+    row = (await ws.forChanges(pool, [taking.id])).get(taking.id);
+    assert.deepEqual([row.stage, row.line, row.change.update], ['building', { code: 'revising' }, 'running']);
+    // The screenshots settled and the shots turn is still on record (its
+    // release comes a moment later): the change is up for a vote already.
+    await pool.query(
+      `UPDATE chat_sessions SET shots_state = 'verified', active_turn = $2::jsonb WHERE id = $1`, [taking.id, turn('shots')]);
+    await ws.refresh(pool, [{ sessionId: taking.id }]);
+    row = (await ws.forChanges(pool, [taking.id])).get(taking.id);
+    assert.deepEqual([row.stage, row.voteOpen], ['up_for_vote', true]);
+    await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [taking.id]);
+  });
+
   await t.test('a request being built never waits for its plan, anywhere', async () => {
     await ask(50, ada, 'A printable list');
     const build = await change(bot, null, [50], 'active');

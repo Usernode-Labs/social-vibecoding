@@ -597,6 +597,13 @@ function askOnHeadSql(uk, cs) {
  * (homeroom_bot_change_asks) and the durable turn marker
  * (chat_sessions.active_turn), so nothing new is stored.
  *
+ * A turn that takes the change's before & after screenshots (mode 'shots',
+ * shots-orchestrator.js) is not an update: it reads the change and writes
+ * nothing to it. While it ran, a change already checked read "Building ·
+ * Updating the change", counted as a try on its request's track, and held
+ * its vote as an update would. What holds the vote while the screenshots
+ * are taken is their own hold (bot-readiness.ts heldUntil).
+ *
  * Read by the stored work state (services/work-state.js, which the Needs
  * you feed reads as vote_open), the AI tab (ai-work.js THREADS_SQL) and the
  * change's own proposal row (routes/votes.js), so all three agree.
@@ -604,6 +611,7 @@ function askOnHeadSql(uk, cs) {
 function updateComingSql(cs) {
   return `(CASE
     WHEN (${cs}.active_turn IS NOT NULL
+          AND COALESCE(${cs}.active_turn->>'mode', 'build') <> 'shots'
           AND (${cs}.active_turn->>'startedAt' IS NULL
                OR (${cs}.active_turn->>'startedAt')::timestamptz > NOW() - make_interval(hours => ${UPDATE_TURN_HOURS})))
       OR EXISTS (SELECT 1 FROM homeroom_bot_change_asks uk
