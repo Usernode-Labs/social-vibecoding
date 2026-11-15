@@ -7,9 +7,12 @@
 //
 //   - a person's chat with the bot (homeroom-bot-dm.js answerUserMessage,
 //     once it has done what needs no model: a tap typed as words, an answer
-//     to a question, a change to a plan): Main and its private threads run
-//     the chat's turn (homeroom-bot-mayor.js runDmTurn), a design thread the
-//     design bot's (design-bot.js answer);
+//     to a question, a change to a plan): every private thread runs the
+//     chat's turn (homeroom-bot-mayor.js runDmTurn), with all its tools. 15
+//     Nov 2026 (#6683): a thread that holds a design runs it too; only the
+//     design's own message there (a pinned comment, a reply to one of its
+//     versions: homeroom-bot-dm.js designDirect) is the design bot's
+//     (design-bot.js answer);
 //   - a project's thread (the bot-voice machine's turn, src/workflow/
 //     bot-voice/services.ts): the voice's turn for that place
 //     (homeroom-bot-voice.js runTurn), which speaks by the kind's rules.

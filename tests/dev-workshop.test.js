@@ -5240,7 +5240,7 @@ test('10 Nov 2026: somebody who has made nothing here is asked who should build,
   assert.match(src, /return \{ show: !closed && !readOnly && firstChangeFor\(desk, made\), close \};/);
   assert.match(read('frontend/src/features/dev-board/workshop/your-work.tsx'),
     /const first = useFirstChange\(slug, useDesk\(slug\)\);\n\s+if \(first\.show\) return <FirstChangeCard slug=\{slug\} onClose=\{first\.close\} \/>;/);
-  assert.match(read('frontend/src/features/dev-board/workshop/hub-dismissed.ts'), /export type HubCard = 'share' \| 'start' \| 'first' \| `update:\$\{string\}`;/);
+  assert.match(read('frontend/src/features/dev-board/workshop/hub-dismissed.ts'), /export type HubCard = 'share' \| 'invite' \| 'start' \| 'first' \| `update:\$\{string\}`;/);
   assert.match(read('src/routes/ai-work.js'), /router\.get\('\/api\/ai\/history', async \(req, res\) => \{/);
 });
 

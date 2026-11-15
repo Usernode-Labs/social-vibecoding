@@ -172,6 +172,10 @@ async function migrate(config) {
   // Homeroom), so Needs you has the row that says what it waits on, its page
   // the Votes card and the bot's plain reply.
   await seedStagingOwnChangeWaitingOnFix(pool);
+  // The capture member's own change with its tests passed and its before &
+  // after screenshots still being taken, on that same demo project, so the
+  // Homeroom bot tab has the row that says so.
+  await seedStagingOwnChangeTakingScreenshots(pool);
   // #6651's shots: the capture member's own change still waiting on a vote,
   // which the badge counts and Needs you must list.
   await seedStagingOwnChangeWaitingOnVote(pool);
@@ -325,6 +329,10 @@ async function migrate(config) {
   // member fixture. Since a thread about a change is finished with its
   // change, History has it ("Live") and Needs you does not.
   await seedStagingLiveChangePrivateThread(pool);
+  // A first version's thread that starts on an older message, as the move
+  // off Main Chat listed them, for the shots' member fixture: the thread the
+  // bot page could list but never open.
+  await seedStagingOlderFirstVersionThread(pool);
   // #6124's before/after shots follow a change renamed before it had a pull
   // request: the correction is in proposed_pr_title and the session still
   // carries the old name. A fresh clone has no such row for the shots'
@@ -2832,6 +2840,86 @@ async function seedStagingLiveChangePrivateThread(pool) {
   }
 }
 
+// 15 Nov 2026: a first version's thread that starts on an older message.
+// Until 14 Nov 2026 a first version's news was a line of Main Chat. The move
+// to threads (services/earlier-chat.js) listed each such line people had
+// answered as the first message of a thread of its own, "<Project>, first
+// version". That first message carries `firstVersion: true`, which the
+// client read as "the project's hub" (features/messages/request-page.ts),
+// so the thread closed as it opened and the hub came up in its place. A
+// fresh staging copy's first-version thread starts on the bot's "setting it
+// up" line, which never did that, so this seeds one of the older shape for
+// the shots' member fixture (usernode-capture): the "live" line as the bot
+// wrote it then, a question of theirs and the bot's answer under it, on the
+// fake project seedStagingStorageNotices made theirs. Staging has no model,
+// so the bot's lines are stored. Nothing here is a signal the bot reads to
+// decide anything. Idempotent through the first message's key and the
+// private thread's unique root; strictly a no-op outside staging.
+async function seedStagingOlderFirstVersionThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const people = await pool.query(
+      `SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')`,
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    const apps = await pool.query(`SELECT id, slug, name FROM apps WHERE slug = 'staging-demo-recipe-box'`);
+    const app = apps.rows[0];
+    if (!member || !bot || !app || member.id === bot.id) return;
+    const found = await pool.query(
+      'SELECT conversation_id FROM conversation_direct_pairs WHERE user_low_id = $1 AND user_high_id = $2',
+      [Math.min(member.id, bot.id), Math.max(member.id, bot.id)],
+    );
+    const conversationId = found.rows[0]?.conversation_id;
+    // The seeds above made their chat; without it there is nothing to hang a thread on.
+    if (!conversationId) return;
+    const key = 'staging-demo-older-first-version-thread';
+    const had = await pool.query(
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3',
+      [conversationId, bot.id, key],
+    );
+    let rootId = had.rows[0]?.id;
+    if (!rootId) {
+      const name = app.name || app.slug;
+      // The line that told its maker their first version was live, as the
+      // bot sent it into Main Chat (services/homeroom-bot-dm.js requestLine
+      // and mergedText, and the metadata its senders stamp).
+      const root = await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata, idempotency_key, created_at)
+         VALUES ($1, $2, $3, $4::jsonb, $5, NOW() - INTERVAL '20 days')
+         RETURNING id`,
+        [
+          conversationId, bot.id,
+          `**${name}**, its first version\n\nYour first version is live. Open ${name} to try it.`,
+          JSON.stringify({ homeroomBot: {
+            kind: 'merged', appSlug: app.slug, appName: name, issueNumber: 1, firstVersion: true, live: true,
+          } }),
+          key,
+        ],
+      );
+      rootId = root.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, 'Staging demo: can it sort the recipes by how long they take?', $4, NOW() - INTERVAL '20 days' + INTERVAL '5 minutes'),
+                ($1, $3, 'Staging demo: not yet. Ask for it as a change to the project and I will build it.', $4, NOW() - INTERVAL '20 days' + INTERVAL '6 minutes')`,
+        [conversationId, member.id, bot.id, rootId],
+      );
+    }
+    // Read, as a thread from weeks ago is: it opens calm.
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state,
+                                    last_read_message_id, created_at, updated_at)
+       SELECT $1, $2, $3, $4, 'first_version', 'open',
+              (SELECT MAX(m.id) FROM conversation_messages m WHERE m.id = $3 OR m.thread_root_id = $3),
+              NOW() - INTERVAL '20 days', NOW() - INTERVAL '20 days'
+       ON CONFLICT (root_message_id) DO NOTHING`,
+      [member.id, conversationId, rootId, app.id],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging older first version thread seeding failed', { message: err.message });
+  }
+}
+
 // #6566 (10 Nov 2026): the Homeroom bot's reply after it files a problem
 // report now gives the report's number and its card, and asking for the
 // link answers with the report already filed. A staging copy has no model,
@@ -3544,6 +3632,64 @@ async function seedStagingOwnChangeWaitingOnFix(pool) {
   }
 }
 
+// A change of the capture member's own whose tests passed and whose before
+// & after screenshots are still being taken: the row the Homeroom bot tab
+// words "Taking screenshots". A fresh staging copy has no such change (a
+// screenshots run is the platform's own, and nothing there runs one), so the
+// shots get an obviously fake one on the demo project the seed above makes.
+// It is no run: nothing reads this row to take screenshots, and no turn is
+// on it. The hold it shows lasts 45 minutes from the later of its checks'
+// verdict and its screenshots' last move (bot-readiness.ts heldUntil), both
+// the moment the row is made, as a copy boots for the first time; after
+// that it reads as up for a vote, like the fake change of
+// seedStagingOwnChangeWaitingOnVote. The row is written once, whole: the
+// screenshots' columns are the shots machine's to update, never a seed's.
+// Idempotent by session id, and a no-op outside staging.
+async function seedStagingOwnChangeTakingScreenshots(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const SESSION_ID = 999_999_994;
+  try {
+    const member = (await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1")).rows[0];
+    // The demo project seedStagingOwnChangeWaitingOnFix makes and joins.
+    const appId = (await pool.query('SELECT id FROM apps WHERE id = 900097')).rows[0]?.id;
+    if (!member || !appId) return;
+    // Short enough for the number's column on the Homeroom bot tab's rows.
+    const changeNumber = 900093;
+    const head = 'stagingdemotakingscreenshots';
+    const title = 'Staging demo: say which app a sign-in token was made for';
+    // A thread of its own, so the change is in the member's own threads.
+    const thread = await pool.query(
+      `INSERT INTO threads (app_id, number, kind, title, created_at)
+       SELECT $1::int, $2::int, 'work', $3::text, NOW() - INTERVAL '20 minutes'
+        WHERE NOT EXISTS (SELECT 1 FROM threads WHERE app_id = $1::int AND number = $2::int AND kind = 'work')
+        RETURNING id`,
+      [appId, changeNumber, title],
+    );
+    const threadId = thread.rows[0]?.id || (await pool.query(
+      "SELECT id FROM threads WHERE app_id = $1 AND number = $2 AND kind = 'work'", [appId, changeNumber],
+    )).rows[0]?.id || null;
+    // Promoted, its tests passed on the head up for a vote, and its
+    // screenshots under way on that head, as of now.
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, session_title, pr_title, pr_number, status,
+          thread_id, promoted_at, external_agent, check_state, check_phase, mergeability,
+          integration_merges_clean, checks_commit_sha, reviewed_head_sha, votes_required, approval_epoch,
+          checks_checked_at, shots_state, shots_run_id, shots_detail, shots_updated_at,
+          created_at, last_activity_at)
+       SELECT $1::int, $2::int, $3::int, 'staging-fixture/own-change-taking-screenshots', $4::text, $4::text,
+              $5::int, 'promoted', $6::int, NOW() - INTERVAL '10 minutes',
+              'claude-code', 'passing', 'done', 'clean', TRUE, $7::text, $7::text, 1, 0,
+              NOW(), 'exploring', $8::varchar, $9::jsonb, NOW(),
+              NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '10 minutes'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_sessions WHERE id = $1::int)`,
+      [SESSION_ID, appId, member.id, title, changeNumber, threadId, head,
+        'stagingdemotakingscreenshots0001', JSON.stringify({ headSha: head, required: true })],
+    );
+  } catch (err) {
+    log.warn('db', 'Staging own-change taking-screenshots seeding failed', { message: err.message });
+  }
+}
 
 // #6599 (11 Nov 2026): a built draft of the shots' member fixture
 // (usernode-capture), its checks passing and nothing working on it, on its
@@ -15877,6 +16023,7 @@ module.exports = {
   seedStagingCapturedPageThread,
   // The private thread about a change that is live, which History lists.
   seedStagingLiveChangePrivateThread,
+  seedStagingOlderFirstVersionThread,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   seedStagingHelperCalls,

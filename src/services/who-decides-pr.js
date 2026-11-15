@@ -113,7 +113,7 @@ function describeChange({ visibility, governance }) {
  * user. Resolves `{ ok: true }` or throws WhoDecidesError naming who is not.
  */
 async function checkPeople(pool, governance) {
-  const names = [...new Set((governance.groups || []).flatMap((g) => g.people.map((p) => p.toLowerCase())))];
+  const names = [...new Set((governance.groups || []).filter((g) => !g.keptByApp).flatMap((g) => g.people.map((p) => p.toLowerCase())))];
   if (!names.length) return;
   const usernames = require('./usernames');
   const found = await usernames.resolveHandles(pool, names);
@@ -124,8 +124,9 @@ async function checkPeople(pool, governance) {
   }
 }
 
-/** "Lifeguards: @evan, @maya.", or "Lifeguards: nobody yet." */
+/** "Lifeguards: @evan, @maya.", "Lifeguards: nobody yet.", or a kept group. */
 function groupPeopleLine(group) {
+  if (group.keptByApp) return `${group.name}: kept by the app.`;
   return group.people.length
     ? `${group.name}: ${group.people.map((p) => `@${p}`).join(', ')}.`
     : `${group.name}: nobody yet.`;
@@ -154,7 +155,9 @@ function describeRulesChange(change) {
     for (const rule of diff.added) changes.push(`- Added: ${governanceRules.ruleSentence(rule, groups)}.`);
     for (const rule of diff.removed) changes.push(`- Removed: ${governanceRules.ruleSentence(rule, groups)}.`);
     for (const group of diff.groupsAdded) {
-      const people = group.people.length ? ` (${group.people.map((p) => `@${p}`).join(', ')})` : '';
+      const people = group.keptByApp
+        ? ' (kept by the app)'
+        : (group.people.length ? ` (${group.people.map((p) => `@${p}`).join(', ')})` : '');
       changes.push(`- New group: ${group.name}${people}.`);
     }
     for (const group of diff.groupsRemoved) changes.push(`- Group removed: ${group.name}.`);

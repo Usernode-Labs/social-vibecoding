@@ -462,6 +462,32 @@ const THREAD_STATUS_LINES = Object.freeze([
 ]);
 
 /**
+ * Pure (15 Nov 2026, #6683): what a turn written in a thread that holds a
+ * design is told about it (`thread.design`: design-threads.js designFor).
+ * The thread answers like any other; the screen itself is still the
+ * designer's, and draw_screen hands it over in this thread. Empty when the
+ * thread holds no design.
+ */
+function designThreadLines(design) {
+  if (!design) return [];
+  const of = design.app?.slug
+    ? `of the screen of project "${design.app.slug}"`
+    : design.surface === 'platform'
+      ? 'of a page of Homeroom itself'
+      : 'of a project that does not exist yet';
+  const version = Number(design.latest) > 0 ? ` Its newest version is version ${Number(design.latest)}.` : '';
+  return [
+    `- This thread holds a design, "${clip(design.title, 120)}", ${of}.${version} They talk about it here, and the`,
+    '  design is shown beside the thread with Open preview.',
+    '- To draw, change or redraw the screen, to compare its versions, or to post it as a plan, call draw_screen alone:',
+    '  the designer draws or changes it, saves the next version here and answers them itself.',
+    '- Anything else they ask, answer here as you would in any other thread, from the same tools, and a request may',
+    '  be offered on any project they can see: this thread is not limited to the design\'s project. Never say',
+    '  something cannot be done in this thread, and never tell them to do it themselves somewhere else.',
+  ];
+}
+
+/**
  * Pure (31 Oct 2026): what a turn written in a thread that is no request's
  * is told: that the conversation below is that thread, and for a draft's
  * private thread what became of the draft, so "is the card out of date?"
@@ -480,6 +506,9 @@ function otherThreadLines(thread) {
     // #6159: a private thread can be finished, by them or by you.
     '- When they ask you to close or finish this thread, call close_thread, then reply "Done. Reply here to pick it',
     '  up again." Never tell them to close it on their side: there is no such control.',
+    // #6683: a thread that holds a design answers like any other; only the
+    // screen itself is the designer's, and draw_screen hands it over.
+    ...designThreadLines(thread.design),
   ];
   const d = thread.draft;
   if (d?.kind === 'ask' && d.about) {
@@ -773,10 +802,11 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  nothing was done. When you cannot do something, say so plainly, and what they can do instead: leave it, vote',
     '  No on the change, comment on the request, or use Send feedback. When you have not started something you',
     '  can do, offer to do it instead of promising it.',
-    '- Decline, in one friendly sentence, anything sexual, violent, about gambling or otherwise not allowed on',
-    '  Homeroom (suggestive or mature themes, nudity, weapons, simulated gambling and loot boxes too: the',
-    '  platform\'s content rules), and anything that is not about their projects on Homeroom. Never offer or',
-    '  start a request for any of it; offer the closest version that keeps to the rules instead.',
+    '- Decline, in one friendly sentence, what the platform\'s content rules forbid (sexual content or nudity,',
+    '  realistic or graphic violence, real-money gambling and paid loot boxes), and anything that is not about',
+    '  their projects on Homeroom. Never offer or start a request for any of it; offer the closest version that',
+    '  keeps to the rules instead. Cartoon or fantasy combat and weapons in a game, pretend-currency card and',
+    '  casino games, and apps where people post and comment are allowed: never decline those.',
     '- Decline the same way anything the platform\'s data rules forbid: trackers, ads or outside scripts, health,',
     '  religion, sexuality, ethnicity, politics or biometric data, an app for children, collecting passwords or card',
     '  data, or a login of the app\'s own.',
@@ -2843,10 +2873,9 @@ async function resolveCards(pool, user, cards) {
  * thread the turn is in.
  */
 async function drawScreen(pool, ctx, args = {}) {
-  // 14 Nov 2026: a thread that holds a design is the designer's from then
-  // on (design-threads.js threadOf). A project's first-version thread is
-  // where its plan, its progress and its news are said, so no screen is
-  // drawn there: one is drawn in a thread of its own.
+  // A project's first-version thread is where its plan, its progress and its
+  // news are said, so no screen is drawn there: one is drawn in a thread of
+  // its own.
   if (ctx.deps?.threadKind === 'first_version') {
     return {
       ok: false,
@@ -2854,14 +2883,28 @@ async function drawScreen(pool, ctx, args = {}) {
         + '(New thread) and ask for the screen there: you will draw it in that thread.',
     };
   }
+  // 15 Nov 2026 (#6683): a thread that holds a design (threadDesign) answers
+  // like any other, and this is how its screen is drawn: the designer makes
+  // the next version of THIS design. Its title is the design's, so what
+  // alone is enough, and a screen of another project is not drawn into it.
+  const design = ctx.deps?.threadDesign || null;
   const what = clip(String(args.what || '').trim(), 600);
-  const title = clip(String(args.title || '').replace(/\s+/g, ' ').trim(), 120);
+  let title = clip(String(args.title || '').replace(/\s+/g, ' ').trim(), 120);
+  if (!title && design?.title) title = clip(String(design.title).replace(/\s+/g, ' ').trim(), 120);
   if (!what || !title) return { ok: false, error: 'Say what to draw (what) and name the screen (title).' };
   let app = null;
   if (typeof args.project === 'string' && args.project.trim()) {
     app = await findApp(pool, args.project);
     if (!app || !(await canView(pool, app, ctx.user))) {
       return { ok: false, error: `There is no project called ${clip(args.project, 80)} that they can see. Ask which one, or leave project out.` };
+    }
+    if (design?.app?.slug && app.slug !== design.app.slug) {
+      return {
+        ok: false,
+        error: `This thread's design is of ${design.app.name || design.app.slug}, so a screen of `
+          + `${app.name || app.slug} is not drawn into it. Say this thread's design is of its own project, and offer to `
+          + 'start that screen in a new thread (New thread on the Homeroom bot page) as a project\'s first screen.',
+      };
     }
   }
   ctx.drawScreen = { app, title, brief: what };
@@ -3050,6 +3093,75 @@ function draftExtrasText(extras) {
   return lines.join('\n');
 }
 
+/**
+ * #6682: the offer_request tool, shared by the chat's turn and a design
+ * thread's (design-bot.js). `ctx` carries what a draft needs (user, bot,
+ * conversationId, messageId, appIds, deps); the offer lands in ctx.offer or
+ * ctx.moreOffers. Any project they can file on is offered, Homeroom's own
+ * included. Resolves { ok, note, shown, similarOpen? } or { ok: false, error }.
+ */
+async function checkRequestOffer(pool, ctx, args = {}) {
+  const { user, deps } = ctx;
+  if (!offerRoom(ctx)) return { ok: false, error: `${OFFERS_FULL}` };
+  const title = clip(withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ')).replace(/:+$/, ''), MAX_TITLE_CHARS);
+  const details = clip(args.details, MAX_DETAILS_CHARS);
+  if (title.length < 3) return { ok: false, error: 'The title is too short.' };
+  // #6251: what the draft carries besides its words, checked against
+  // this person's own chat and the project's open board.
+  const doneWhen = draftDoneWhen(args.doneWhen);
+  if (!doneWhen) {
+    return { ok: false, error: 'Give one to three short Done when checks, in their words, of what will be true when it is done.' };
+  }
+  const pictures = await draftPictures(pool, { ids: args.attachmentIds, conversationId: ctx.conversationId, userId: user.id });
+  if (!pictures.ok) return { ok: false, error: pictures.error };
+  const place = await draftPlace(pool, { ctx });
+  const baseExtras = {
+    attachmentIds: pictures.ids,
+    doneWhen,
+    chatHref: place.href,
+  };
+  // #6305: one request on several projects, filed from one card. Rows
+  // in the order they named them; each named row settled on the card.
+  if (Array.isArray(args.projects) && args.projects.length) {
+    const rows = await resolveRows(pool, { items: args.projects, user });
+    if (rows.length < 2) {
+      // Only one project came out of it: today's single-request card.
+      return withNote(await offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures }));
+    }
+    // Before drafting: read each app's code the way its first read
+    // would, so a row for an app that already does it says so.
+    const exact = rows.filter((r) => r.match === 'exact' && !r.disabled);
+    const already = exact.length
+      ? await require('./homeroom-bot-already-done').alreadyDoes(pool, {
+        user, apps: exact.map((r) => ({ slug: r.slug, name: r.name })), title, details,
+        deps, ctx,
+      })
+      : {};
+    for (const row of exact) {
+      const found = already && already[row.slug];
+      if (found && found.done) {
+        row.done = clip(withoutEmDashes(String(found.sentence || '').trim()), 140) || null;
+        row.ticked = false;
+      }
+    }
+    ctx.card = {
+      type: 'file_many', v: 1, state: 'open', forUserId: Number(user.id), title, details, rows,
+    };
+    if (!addOffer(ctx, {
+      kind: 'file_many', rows, title, details, extras: baseExtras,
+      projects: rows.filter((r) => r.match === 'exact').map((r) => r.slug),
+    })) return { ok: false, error: SAME_OFFER };
+    const shown = `One card under your reply, "New request on ${rows.length} projects", with a tick on each row and File on all. Nothing is filed until they tap it. ${rows.some((r) => r.match !== 'exact') ? 'A row whose name does not match says "Did you mean ...?" on the card; do not ask about names in your reply. ' : ''}${rows.some((r) => r.done) ? 'A row for an app that already does it says so and starts unticked. ' : ''}Answer once how it works, then stop explaining it.`;
+    return { ok: true, note: shown, shown };
+  }
+  return withNote(await offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures }));
+}
+
+/** The offer tool's answer, with the same words under `note` for a design turn. */
+function withNote(out) {
+  return out && out.ok && !out.note ? { ...out, note: out.shown } : out;
+}
+
 /** Run one tool call for this person. Never throws: errors are results. */
 async function runTool(pool, ctx, name, args) {
   const { user, settings, deps } = ctx;
@@ -3138,63 +3250,7 @@ async function runTool(pool, ctx, name, args) {
       case 'revise_proposal': return await reviseProposal(pool, ctx, args);
       case 'withdraw_proposal': return await withdrawProposal(pool, ctx, args);
       case 'report_problem': return await reportProblem(pool, ctx, args);
-      case 'offer_request': {
-        if (!offerRoom(ctx)) return { ok: false, error: `${OFFERS_FULL}` };
-        const title = clip(withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ')).replace(/:+$/, ''), MAX_TITLE_CHARS);
-        const details = clip(args.details, MAX_DETAILS_CHARS);
-        if (title.length < 3) return { ok: false, error: 'The title is too short.' };
-        // #6251: what the draft carries besides its words, checked against
-        // this person's own chat and the project's open board.
-        const doneWhen = draftDoneWhen(args.doneWhen);
-        if (!doneWhen) {
-          return { ok: false, error: 'Give one to three short Done when checks, in their words, of what will be true when it is done.' };
-        }
-        const pictures = await draftPictures(pool, { ids: args.attachmentIds, conversationId: ctx.conversationId, userId: user.id });
-        if (!pictures.ok) return { ok: false, error: pictures.error };
-        const place = await draftPlace(pool, { ctx });
-        const baseExtras = {
-          attachmentIds: pictures.ids,
-          doneWhen,
-          chatHref: place.href,
-        };
-        // #6305: one request on several projects, filed from one card. Rows
-        // in the order they named them; each named row settled on the card.
-        if (Array.isArray(args.projects) && args.projects.length) {
-          const rows = await resolveRows(pool, { items: args.projects, user });
-          if (rows.length < 2) {
-            // Only one project came out of it: today's single-request card.
-            return offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures });
-          }
-          // Before drafting: read each app's code the way its first read
-          // would, so a row for an app that already does it says so.
-          const exact = rows.filter((r) => r.match === 'exact' && !r.disabled);
-          const already = exact.length
-            ? await require('./homeroom-bot-already-done').alreadyDoes(pool, {
-              user, apps: exact.map((r) => ({ slug: r.slug, name: r.name })), title, details,
-              deps, ctx,
-            })
-            : {};
-          for (const row of exact) {
-            const found = already && already[row.slug];
-            if (found && found.done) {
-              row.done = clip(withoutEmDashes(String(found.sentence || '').trim()), 140) || null;
-              row.ticked = false;
-            }
-          }
-          ctx.card = {
-            type: 'file_many', v: 1, state: 'open', forUserId: Number(user.id), title, details, rows,
-          };
-          if (!addOffer(ctx, {
-            kind: 'file_many', rows, title, details, extras: baseExtras,
-            projects: rows.filter((r) => r.match === 'exact').map((r) => r.slug),
-          })) return { ok: false, error: SAME_OFFER };
-          return {
-            ok: true,
-            shown: `One card under your reply, "New request on ${rows.length} projects", with a tick on each row and File on all. Nothing is filed until they tap it. ${rows.some((r) => r.match !== 'exact') ? 'A row whose name does not match says "Did you mean ...?" on the card; do not ask about names in your reply. ' : ''}${rows.some((r) => r.done) ? 'A row for an app that already does it says so and starts unticked. ' : ''}Answer once how it works, then stop explaining it.`,
-          };
-        }
-        return offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures });
-      }
+      case 'offer_request': return await checkRequestOffer(pool, ctx, args);
       case 'offer_move_request': return await offerMoveRequest(pool, ctx, args);
       case 'offer_copy_request': return await offerCopyRequest(pool, ctx, args);
       case 'offer_close_request': return await offerCloseRequest(pool, ctx, args);
@@ -3456,7 +3512,9 @@ async function plainAnswer(t, history, { later = true } = {}) {
           content: `${systemPrompt({
             username: t.user.username, perPerson: t.settings.perPerson, platform: false,
             // 31 Oct 2026: where they wrote it, as the rounds were told.
-            thread: !t.ctx?.deps?.threadRequest && t.ctx?.deps?.threadRootId ? { draft: t.ctx.deps.threadDraft || null } : null,
+            // 15 Nov 2026 (#6683): and whether the thread holds a design.
+            thread: !t.ctx?.deps?.threadRequest && t.ctx?.deps?.threadRootId
+              ? { draft: t.ctx.deps.threadDraft || null, design: t.ctx.deps.threadDesign || null } : null,
           })}\n\n${later ? PLAIN_NOTE : PLAIN_NOTE_NO_LATER}${t.ctx?.owed ? `\n\n${t.ctx.owed}` : ''}`,
         },
         ...history.slice(-PLAIN_HISTORY).map(plainMessage),
@@ -3823,7 +3881,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           content: systemPrompt({
             username: user.username, perPerson: settings.perPerson, platform: platformTools.length > 0,
             request: deps.threadRequest || null,
-            thread: !deps.threadRequest && deps.threadRootId ? { draft: deps.threadDraft || null } : null,
+            // 15 Nov 2026 (#6683): a thread that holds a design is told so,
+            // and answers like any other (designThreadLines).
+            thread: !deps.threadRequest && deps.threadRootId
+              ? { draft: deps.threadDraft || null, design: deps.threadDesign || null } : null,
             extra: threadTools.promptLines(ctx),
           }),
         },
@@ -4637,7 +4698,7 @@ async function checkPlanOffer(pool, { user, design, args = {}, deps = {}, html =
     if (asked) {
       const named = await findApp(pool, asked);
       if (named && Number(named.id) !== Number(app.id)) {
-        return { ok: false, error: `This design is a screen of ${app.name || app.slug}, so it posts there. Offer it without project.` };
+        return { ok: false, error: `This design is a screen of ${app.name || app.slug}, so it posts there. Offer it without project. To file an ordinary request there, use offer_request.` };
       }
     }
   }
@@ -4698,16 +4759,20 @@ function checkProjectOffer({ design, args = {} }) {
  * Pure: the line above a card, from the model's own words (sendDesignOffer).
  * Sentences naming a request other than the card's own (`issueNumber`) are
  * dropped whole, so a card's sentence can never name a request its button
- * does not post to; with no request, any sentence naming one is dropped. The
+ * does not post to; with no request, any sentence naming one is dropped. With
+ * `plan` ({ appName, appSlug, title }), a sentence saying the card files some
+ * other request (reply-claims.js planCardOther, #6682) is dropped too. The
  * sentences kept are rejoined, and `fallback` says it when none is left.
  */
-function cardSentence(text, { issueNumber = null, fallback = '' } = {}) {
+function cardSentence(text, { issueNumber = null, fallback = '', plan = null } = {}) {
   const own = Number(issueNumber) > 0 ? Number(issueNumber) : null;
   const keeps = (sentence) => {
     const named = [];
     for (const m of sentence.matchAll(/#\s?(\d+)/g)) named.push(Number(m[1]));
     for (const m of sentence.matchAll(/\brequests?\s+#?(\d+)/gi)) named.push(Number(m[1]));
-    return !named.length || (!!own && named.every((named_) => named_ === own));
+    if (named.length && !(own && named.every((named_) => named_ === own))) return false;
+    if (plan && claims.planCardOther(sentence, plan)) return false;
+    return true;
   };
   const kept = String(text || '')
     .split(/\n{2,}/)
@@ -4777,7 +4842,11 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
       sourceIssueNumber: n, privateThreadId: design.threadId, designVersion: v,
     },
     content: [
-      cardSentence(text, { issueNumber: n, fallback }),
+      cardSentence(text, {
+        issueNumber: n,
+        fallback,
+        plan: { appName: name, appSlug: app.slug, title: design.title },
+      }),
       '',
       n ? `**${name}** · a plan on request #${n}: version ${v} of ${design.title}` : `**${name}** · a plan: version ${v} of ${design.title}`,
       ...(o.gap ? ['', `${o.gap.reason} I can write the rows into the screen first.`] : []),
@@ -6860,6 +6929,7 @@ module.exports = {
   answersFor,
   checkPlanOffer,
   checkProjectOffer,
+  checkRequestOffer,
   cardSentence,
   sendDesignOffer,
   // #6427: an offer's card, and the line a database read in its thread puts on it.

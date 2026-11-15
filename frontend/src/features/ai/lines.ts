@@ -26,7 +26,7 @@ import { cleanQuery, foundDay, markParts, type Found, type MarkPart } from './se
 /** What a row's glyph shows, by name. */
 export type Glyph =
   | 'chat' | 'play' | 'hand' | 'check' | 'again' | 'warning' | 'lock' | 'ballot'
-  | 'upload' | 'eye' | 'cog' | 'reply' | 'code' | 'clock' | 'x' | 'bubble';
+  | 'upload' | 'eye' | 'cog' | 'reply' | 'code' | 'clock' | 'camera' | 'x' | 'bubble';
 
 export interface Line {
   key: string;
@@ -101,6 +101,13 @@ function nextGlyph(t: AiThread): Glyph {
   // #6282: an update is the bot following up on it.
   if (code === 'revising') return 'reply';
   return 'code';
+}
+/**
+ * Waiting's glyph: a clock, or a camera while the only thing its change
+ * waits on is its before & after screenshots.
+ */
+export function waitGlyph(t: AiThread): Glyph {
+  return t.work.stage === 'checking' && t.work.line?.code === 'shots' ? 'camera' : 'clock';
 }
 /** A finished item's glyph: what became of it (./history.ts historyGlyph). */
 const HISTORY_GLYPH: Record<ReturnType<typeof historyGlyph>, Glyph> = { live: 'check', closed: 'x', request: 'bubble', vote: 'ballot', private: 'lock' };
@@ -265,7 +272,7 @@ export function useAiLines({
   // under one head.
   const movingShown = waitingShown.filter((th) => !notMoving(th));
   const stillShown = waitingShown.filter((th) => notMoving(th));
-  const waitingLine = threadLine(() => 'clock');
+  const waitingLine = threadLine(waitGlyph);
   // #6398: while searching, the rows nobody is moving join the ones under
   // way in the one card, so a match is never hidden inside the fold; and
   // nothing matching is folded away either (first = Infinity below).

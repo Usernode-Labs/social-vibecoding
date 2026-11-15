@@ -5177,6 +5177,23 @@ async function sayStopped(pool, { userId, conversationId, messageId, attempt = 0
   });
 }
 
+/**
+ * Pure (15 Nov 2026, #6683): whether a message in a thread that holds a
+ * design is the design's own, and so answered by the designer
+ * (design-bot.js) rather than by the chat's turn. Two signals say it is: a
+ * comment pinned on the preview (metadata.designPin), and a reply to one of
+ * the design's versions (design_versions.message_id). Anything else is
+ * answered by the chat's turn, which hands drawing work back to the designer
+ * (homeroom-bot-mayor.js draw_screen).
+ */
+function designDirect(message, design) {
+  if (!design) return false;
+  if (message?.metadata?.designPin) return true;
+  const replyTo = Number(message?.reply?.id ?? message?.replyToId) || null;
+  if (!replyTo) return false;
+  return (Array.isArray(design.versions) ? design.versions : []).some((v) => Number(v?.messageId) === replyTo);
+}
+
 /** What noteUserMessage does with a message from somebody it works for, while the bot types. */
 async function answerUserMessage(pool, config, { bot, user, settings, conversationId, message, deps }) {
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
@@ -5186,15 +5203,20 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
   // or changes its waiting plan; anything else is the model's, told which
   // request it is about. What the bot says back goes in the same thread
   // (sendDm's threadRootFor, from the message it answers).
-  // #6071: written in one of their design threads, it is about the design:
-  // the bot edits it (design-bot.js), and nothing else answers there. 1 Nov
-  // 2026: any private thread that holds a design is one ("+", an idea, a
-  // thread about a request or a change, a draft); one that holds none yet
-  // goes to the turn below, whose draw_screen hands the design bot version 1.
+  // #6071: a design thread is one that holds a design. 1 Nov 2026: any
+  // private thread that holds one is ("+", an idea, a thread about a request
+  // or a change, a draft); one that holds none yet goes to the turn below,
+  // whose draw_screen hands the design bot version 1.
+  // 15 Nov 2026 (#6683): only the design's own message goes to the designer
+  // (designDirect): a comment pinned on the preview, or a reply to one of its
+  // versions. Everything else is answered by the chat's turn here, with all
+  // its usual tools, told which design the thread holds (threadDesign), and
+  // its draw_screen still hands drawing work to the designer.
   const design = await (deps.designThreads || require('./design-threads')).threadOf(pool, { userId: user.id, conversationId, message });
-  if (design) {
+  if (design && designDirect(message, design)) {
     return require('./thread-bot').answer(pool, config, { kind: 'design', bot, user, settings, conversationId, message, design, deps });
   }
+  if (design) deps = { ...deps, threadDesign: design };
   const thread = await threadRequest(pool, { userId: user.id, conversationId, message });
   if (thread && !quoted) {
     const open = await newestOpenQuestion(pool, user.id, { appId: thread.appId, issueNumber: thread.issueNumber });
@@ -6893,6 +6915,7 @@ module.exports = {
   threadRequest,
   messageThread,
   threadDeps,
+  designDirect,
   noteStep,
   // Homeroom bot parity P6: a request's card in a person's chat with the bot.
   cardShown,

@@ -494,7 +494,7 @@ test('#6355: a card\'s sentence names only the request its button posts to', () 
   assert.equal(mayor.cardSentence('Tap it on request #12.', { issueNumber: 6351, fallback: F }), F);
   assert.equal(mayor.cardSentence('', { issueNumber: 6351, fallback: F }), F);
   const src = read('src/services/homeroom-bot-mayor.js');
-  assert.match(src, /cardSentence\(text, \{ issueNumber: n, fallback \}\)/, 'the plan card\'s first line is checked');
+  assert.match(src, /cardSentence\(text, \{[\s\S]{0,220}plan: \{ appName: name, appSlug: app\.slug, title: design\.title \}/, 'the plan card\'s first line is checked');
   assert.match(src, /cardSentence\(text, \{ issueNumber: null, fallback: `Want to make \$\{o\.name\} from this design\?` \}\)/);
   assert.match(src, /Tap the card to post version \$\{v\} on request #\$\{n\} as its plan, publicly, under your name\./);
   assert.match(src, /Tap New request to file a request on \$\{name\} with version \$\{v\} as its plan/);

@@ -146,8 +146,40 @@ test('Share it: a ✕ that closes it, and one line about the invite that is out'
   assert.match(src, /const \[closed, close\] = useHubDismissed\(slug, 'share'\);\s*if \(!data \|\| data\.audience !== 'solo' \|\| closed\) return null;/);
   assert.match(src, /<HubCardClose card="share" onClose=\{close\} \/>/);
   // What it offered stays on the page: Invite in the hero's row.
-  assert.match(src, /\{member && !\(inviteCard && showsInviteHero\(data\)\) \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/);
+  assert.match(src, /\{member && !\(inviteCard && showsInviteHero\(data\) && !inviteClosed\) \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/);
   assert.match(read('public/css/app.css'), /\.dev-ws-card-close \{\s*margin-block: -6px -6px; margin-inline: auto -6px;/);
+});
+
+test('the Invite card: its ✕ closes it, and the hero row\'s small Invite is the way in again', async () => {
+  const record = {
+    slug: 'garden-invite', name: 'Garden', description: null, member_count: 3, is_member: true, is_creator: false,
+    audience: 'invited', audience_label: 'Private community', members: [{ id: 1, username: 'ada' }], channel: null,
+    activity: { active_week: 2, active_people: [{ id: 1, username: 'ada' }] },
+    can_manage: true, audience_change: null, first_version: null,
+    approval: { policy: 'anyone', approvals_required: null, electorate: 3, required: 2 },
+  };
+  let closed = false;
+  const card = loadTsx(CARD, {
+    cache: false,
+    stubs: { './hub-dismissed': { useHubDismissed: (slug, which) => [closed, () => { closed = true; }] } },
+  });
+  const drawCard = () => renderToHtml(createElement(card.InviteHeroCard, { slug: 'garden-invite', data: record }));
+  assert.match(drawCard(), /^<section class="dev-ws-invite-hero" data-ws-invite-hero="" aria-label="[^"]*"><button type="button" class="dev-ws-card-close un-touch-target" data-ws-card-close="invite" aria-label="Close this card" title="Close this card"><svg[^>]*>/,
+    'its ✕ is the one Share it carries, in the card\'s top corner before the faces');
+  closed = true;
+  assert.equal(drawCard(), '', 'closed: gone on this project');
+
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, json: async () => record });
+  try {
+    await card.reloadCommunity('garden-invite');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  const hero = () => renderToHtml(createElement(card.CommunityCard, { slug: 'garden-invite', name: 'Garden', inviteCard: true }));
+  assert.match(hero(), /data-ws-community-invite=""/, 'closed: the row\'s small Invite is back beside Open app and the ⋯');
+  closed = false;
+  assert.doesNotMatch(hero(), /data-ws-community-invite=""/, 'open: one Invite on the page, the card\'s own');
 });
 
 test('the invite line says how many joined and how long the soonest link has left, in words', () => {

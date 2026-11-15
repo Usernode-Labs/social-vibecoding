@@ -250,7 +250,7 @@ test('the block lives last and redeclares none of the counted wallpaper tokens',
 const LOOK_VARS = ['--bl-page', '--bl-card', '--bl-raise', '--bl-label', '--bl-tile-ink', '--bl-bar', '--bl-side',
   '--bl-sun', '--bl-sun-lit', '--bl-on-sun', '--bl-wash', '--bl-sky', '--bl-count', '--bl-on-count', '--bl-solid',
   '--bl-on-solid', '--bl-tint-sun', '--bl-tint-sky', '--bl-tint-leaf', '--bl-on-tint', '--bl-edge', '--bl-pic-line',
-  '--bl-lift', '--bl-raise-edge', '--bl-pill-edge', '--bl-pill-edge-down'];
+  '--bl-lift', '--bl-raise-edge', '--bl-field-edge', '--bl-pill-edge', '--bl-pill-edge-down'];
 
 test('each mode sets every one of the look\'s colours, and the shared rules read them', () => {
   const light = ruleAt(LIGHT);
@@ -452,6 +452,83 @@ test('a label over a group is sentence case', () => {
   for (const sel of ['.messages-section-head', '.dev-ws-places-head']) {
     assert.ok(labels.selectors.some((s) => s.endsWith(sel)), `${sel} too`);
   }
+});
+
+test('a title is Geist like every other word: no rule of the look sets the serif', () => {
+  // The serif was on every h1, which a heading inside a message is too, and
+  // on a project's name on its hub. Nothing names it now, so each title
+  // takes the look's own sans at the weight its screen gave it.
+  for (const rule of lookRules()) {
+    assert.doesNotMatch(rule.body, /Young Serif|\bserif\b(?<!sans-serif)/, `${rule.selectors[0]} sets no serif`);
+  }
+  assert.deepEqual(ruleFor(' h1'), [], 'no rule of the look restyles an h1');
+  assert.ok(!ruleFor('.dev-ws-hero-name').some((rule) => /font-family/.test(rule.body)), 'nor a project\'s name');
+  assert.match(ruleAt(EITHER).body, /font-family:\s*'Geist',/, 'the look\'s one family for words');
+  // The Workshop's counts keep the mono.
+  assert.match(ruleFor('.dev-ws-dash-cell b')[0].body, /font-family:\s*'Geist Mono',/);
+});
+
+test('Home\'s pinned apps and pinned communities each sit on a card, and the launcher grid keeps its box', () => {
+  const card = ruleFor('#app-list').find((rule) => /background-color/.test(rule.body));
+  assert.ok(card, 'the launcher grid is painted');
+  assert.deepEqual(card.selectors, [`${EITHER} #app-list`, `${EITHER} #home-communities-section > .grid`],
+    'both grids, in both modes, and nothing else');
+  assert.match(card.body, /background-color:\s*var\(--bl-card\);/, 'the mode\'s card: white in light, one step off the page in dark');
+  assert.match(card.body, /border-radius:\s*20px;/, 'a card\'s radius');
+  assert.match(card.body, /box-shadow:\s*inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift\);/, 'and its hairline and lift');
+  // The launcher's drag overlay mirrors #app-list's padding, and a dropped
+  // tile is measured against it (app.css .home-grid-overlay, Home._rectForCell):
+  // the look paints the grid and moves nothing.
+  for (const rule of ruleFor('#app-list')) {
+    assert.doesNotMatch(rule.body, /\b(?:padding|margin|gap|width|height|inset|top|left|right|bottom|display|position)\b[^;]*:/,
+      'no rule of the look moves the launcher grid');
+  }
+  // The communities' grid has no overlay: it takes a card's own padding.
+  const pad = ruleAt(`${EITHER} #home-communities-section > .grid`);
+  assert.ok(pad, 'its padding is a rule of its own');
+  assert.match(pad.body, /^\s*padding:\s*16px 8px 14px;\s*$/);
+  // The grids are the ones the look paints: the section's own markup.
+  assert.match(read('frontend', 'src', 'features', 'home', 'pinned-communities.tsx'),
+    /<section id="home-communities-section"[^>]*>\s*<SectionHeading[\s\S]*?<\/SectionHeading>\s*<div className="grid grid-cols-4 /,
+    'the communities\' grid is the section\'s direct child, after its label');
+  assert.match(read('frontend', 'src', 'features', 'home', 'app-grid.tsx'), /id="app-list"/);
+});
+
+test('a reply box stands out from the card it sits on, in both modes', () => {
+  // The sheet a composer sits at the foot of is the card's own colour here,
+  // so the box takes the raised fill and an edge firmer than the raised
+  // buttons' own.
+  const box = ruleAt(`${EITHER} :is(.messages-composer-card, .gc-composer-card)`);
+  assert.ok(box, 'both composers, Messages\' and the group chat\'s, in one rule for both modes');
+  assert.match(box.body, /background:\s*var\(--bl-raise\);/);
+  assert.match(box.body, /box-shadow:\s*var\(--bl-field-edge\);/);
+  const edge = (body) => Number(valueOf(body, '--bl-field-edge').match(/inset 0 0 0 1px rgba\([^)]*,\s*([0-9.]+)\)/)[1]);
+  const raise = (body) => Number(valueOf(body, '--bl-raise-edge').match(/inset 0 0 0 1px rgba\([^)]*,\s*([0-9.]+)\)/)[1]);
+  for (const mode of [LIGHT, DARK]) {
+    assert.ok(edge(ruleAt(mode).body) > raise(ruleAt(mode).body), `${mode}: a field's edge is firmer than a raised button's`);
+  }
+  // Light's raise is the card's own white: the edge is what sets it apart.
+  assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-raise'), valueOf(ruleAt(LIGHT).body, '--bl-card'));
+  // Focus still rings the box, outside its edge (the composer's own rule).
+  const focus = ruleAt(`${EITHER} .messages-composer-card:focus-within`);
+  assert.ok(focus, 'the focus ring is restated over the edge');
+  assert.match(focus.body, /box-shadow:\s*var\(--bl-field-edge\), 0 0 0 2px var\(--accent\);/);
+  assert.match(read('public', 'css', 'app.css'), /\.messages-composer-card:focus-within \{\n  box-shadow: var\(--messages-disc-shadow\), 0 0 0 2px var\(--accent\);/,
+    'the standard composer\'s ring, which the look restates');
+});
+
+test('the column\'s header beside Homeroom bot\'s page is the card\'s colour, and its ⋯ is raised', () => {
+  // The standard header there is the sheet's half-clear fill (a pale band of
+  // this look's page): it outranks it with the same :has() and the look's flag.
+  assert.match(read('public', 'css', 'app.css'),
+    /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel-head \{[^}]*background-color: var\(--dc-sheet-fill\);/);
+  const head = ruleAt(`${EITHER} body:has(#ai-screen:not(.hidden)) .side-panel-head`);
+  assert.ok(head, 'the header, in both modes');
+  assert.match(head.body, /^\s*background-color:\s*var\(--bl-card\);\s*$/);
+  const more = ruleAt(`${EITHER} body:has(#ai-screen:not(.hidden)) .side-panel-head .messages-thread-action`);
+  assert.ok(more, 'its ⋯ disc');
+  assert.match(more.body, /background:\s*var\(--bl-raise\);/);
+  assert.match(more.body, /box-shadow:\s*var\(--bl-raise-edge\);/);
 });
 
 test('Geist loads from our own origin by an absolute path, and only for this look', () => {

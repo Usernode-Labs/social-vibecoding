@@ -1230,28 +1230,49 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 /* ── The hover bar (#2387) ──────────────────────────────────────────────
    Every chat row's controls in one floating pill, Discord's shape: the three
    recent reactions, a divider, then the picker, Reply, Save and ⋯. It sits
-   on the row's top edge at the trailing side, half over the row above, so it
-   never covers the text it acts on. Hover-revealed on a pointer (and on
-   focus-within, for the keyboard); on a touch screen it is not drawn at all
-   and a long press opens the sheet (.msgx-sheet) instead. The shared parts
-   are the `.msgx-*` rules in the next section; this is where the Messages
-   row places it. */
+   on the row's top edge at the trailing side, over the name line and never
+   the words. A continuation row has no name line and its words start at the
+   row's top, so MessageActionBar raises the pill there just clear of that
+   first line (#6697, `--msgx-bar-lift`); where there is no room above the
+   row it adds `msgx-bar-below` and the pill sits just below the row instead.
+   Hover-revealed on a pointer (and on focus-within, for the keyboard); on a
+   touch screen it is not drawn at all and a long press opens the sheet
+   (.msgx-sheet) instead. The shared parts are the `.msgx-*` rules in the
+   next section; this is where the Messages row places it. */
 .messages-message-actions {
   position: absolute;
   z-index: 6;
-  top: -16px;
+  /* 16px: the bar's old place, its lower half over the row's name line. */
+  top: calc(-1 * var(--msgx-bar-lift, 16px));
   inset-inline-end: 16px;
   display: none;
 }
+/* A 6px bridge from the pill to the row, so crossing the gap with the
+   pointer keeps the bar open. Mirrored for the below placement. */
+.messages-message-actions::after,
+.gc-msg-actions::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  top: 100%;
+  height: 6px;
+}
+.messages-message-actions.msgx-bar-below::after,
+.gc-msg-actions.msgx-bar-below::after { top: auto; bottom: 100%; }
+.messages-message-actions.msgx-bar-below,
+.gc-msg-actions.msgx-bar-below { top: calc(100% + 4px); }
 .messages-message:hover .messages-message-actions,
 .messages-message:focus-within .messages-message-actions,
 .messages-message-actions.msgx-bar-open { display: flex; }
 /* Audit D13: on somebody else's bubble the bar is a child of its name line
    (message-row.tsx `barBesideHead`), which is as wide as the name and the
    time, so it hangs just past the time, centred on that line, beside the
-   message it acts on. */
+   message it acts on. It already sits beside the message rather than over
+   its words, so it keeps its own place and takes neither the bridge nor the
+   below placement. */
 .messages-message-head:has(> .messages-message-actions) { position: relative; }
 .messages-message-head > .messages-message-actions { top: -10px; inset-inline-end: auto; inset-inline-start: calc(100% + 8px); }
+.messages-message-head > .messages-message-actions::after { content: none; }
 
 /* The tray of a message still in flight keeps its place but draws nothing
    (#2907) — on touch it is a line of the row, and growing it only once the
@@ -1264,15 +1285,18 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-message-saved:not(.messages-message-bubble) { box-shadow: inset 3px 0 0 var(--accent); }
 
 /* The app chat's rows place the same bar (#2387): on the row's top edge,
-   trailing side, over the row above, revealed on hover and focus-within. The
-   row's own actions slot is in the header's flow, so the host takes no width
-   and the bar floats out of it. */
+   trailing side, over the name line and revealed on hover and focus-within;
+   a continuation row's pill is raised just clear of its first line, or put
+   below the row where there is no room above (#6697). The row's own actions
+   slot is in the header's flow, so the host takes no width and the bar
+   floats out of it. */
 .gc-msg { position: relative; }
 .gc-msg-bar-host { display: contents; }
 .gc-msg-actions {
   position: absolute;
   z-index: 6;
-  top: -16px;
+  /* The same `--msgx-bar-lift` as the Messages row above. */
+  top: calc(-1 * var(--msgx-bar-lift, 16px));
   inset-inline-end: 16px;
   display: none;
 }
@@ -16775,11 +16799,17 @@ a.dev-ws-hero-pending {
    does, one full-width dark button and how many are in. Under the hero on a
    phone; beside it on a wide window ("THE HUB IN TWO COLUMNS" below). */
 .dev-ws-invite-hero {
+  position: relative;
   display: flex; flex-direction: column; gap: 10px; min-width: 0;
   padding: 20px 20px 16px; border-radius: 20px;
   background: #f6f2fc; box-shadow: inset 0 0 0 1px #d9d0ec;
 }
 .dark .dev-ws-invite-hero { background: #201b2f; box-shadow: inset 0 0 0 1px #3a3152; }
+/* Its ✕ (request 6687), the same button Share it's head carries: the card
+   has no head row, so it sits in the top corner, over the faces' right. */
+.dev-ws-invite-hero > .dev-ws-card-close {
+  position: absolute; top: 12px; inset-inline-end: 12px; margin: 0;
+}
 .dev-ws-invite-hero-fan { display: flex; align-items: center; margin-bottom: 2px; }
 .dev-ws-invite-hero-face {
   flex: none; width: 40px; height: 40px; margin-inline-end: -10px;
@@ -27769,8 +27799,8 @@ html[data-skin="sunrise"][data-skin] .fr-tb.fr-on{border-radius:14px}
    - Two families, in both modes. Light is yellow (the cream page, sun)
      and blue (the frame, links). Dark is the same two with the roles
      turned: blue is the page and everything on it, and sun is the accent.
-   - Geist for words, Young Serif for titles, Geist Mono for counts. A
-     label over a group is sentence case, not small caps.
+   - Geist for words and for titles, Geist Mono for counts. A label over
+     a group is sentence case, not small caps.
    - The website's own figures in two empty states.
 
    Appended last on purpose. The declarations other rules count (the home
@@ -27794,6 +27824,9 @@ html[data-skin="sunrise"][data-skin] .fr-tb.fr-on{border-radius:14px}
   font-style: normal;
   font-display: swap;
 }
+/* No rule of this look names Young Serif since its titles went back to
+   Geist. The face stays declared, and its file committed, for the
+   signed-out pages' look, which draws its headlines in it. */
 @font-face {
   font-family: 'Young Serif';
   src: url('/fonts/young-serif/young-serif-latin-400-normal.woff2') format('woff2');
@@ -27832,6 +27865,8 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
   --bl-pic-line: rgba(18, 26, 14, 0.1);
   --bl-lift: 0 1px 2px rgba(18, 26, 14, 0.06), 0 14px 30px -22px rgba(18, 26, 14, 0.3);
   --bl-raise-edge: inset 0 0 0 1px rgba(18, 26, 14, 0.1), 0 1px 2px rgba(18, 26, 14, 0.06);
+  /* A field on a card (a reply box): firmer than a raised button's edge. */
+  --bl-field-edge: inset 0 0 0 1px rgba(18, 26, 14, 0.16), 0 1px 2px rgba(18, 26, 14, 0.06);
   --bl-pill-edge: inset 0 0 0 1px #121a0e, 0 2px 0 #121a0e;
   --bl-pill-edge-down: inset 0 0 0 1px #121a0e, 0 0 0 #121a0e;
   /* Surfaces: white cards on the cream page. */
@@ -27913,6 +27948,7 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]) {
   /* A shadow has to out-darken the page to lift anything from it. */
   --bl-lift: 0 1px 2px rgba(0, 0, 0, 0.35), 0 14px 30px -22px rgba(0, 0, 0, 0.9);
   --bl-raise-edge: inset 0 0 0 1px rgba(220, 230, 248, 0.1), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --bl-field-edge: inset 0 0 0 1px rgba(220, 230, 248, 0.14), 0 1px 2px rgba(0, 0, 0, 0.35);
   /* An ink outline would vanish on the dark page: the pill keeps its hard
      foot, in a deeper sun. */
   --bl-pill-edge: 0 2px 0 #a3962b;
@@ -28286,6 +28322,46 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-discover-card {
   border-color: var(--bl-edge);
 }
+/* HOME. The pinned apps and the pinned communities each sit on a card, as
+   the content of every other page does, under the label that stays on the
+   page. Paint and a radius only on the launcher grid: its box and its
+   padding are what its drag overlay mirrors and what a dropped tile is
+   measured against (Home._rectForCell), so neither moves. The communities'
+   grid has no such overlay and takes a card's own padding. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #app-list,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section > .grid {
+  background-color: var(--bl-card);
+  border-radius: 20px;
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section > .grid {
+  padding: 16px 8px 14px;
+}
+/* A REPLY BOX on its sheet. The standard interface draws it white on a
+   half-clear sheet, so the tinted page shows round it; here the sheet is
+   the card's own colour, and the box vanished into it. It takes the
+   raised fill and an edge of its own, firmer than a card's hairline, as a
+   field does, and keeps its focus ring outside that edge. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.messages-composer-card, .gc-composer-card) {
+  background: var(--bl-raise);
+  box-shadow: var(--bl-field-edge);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-composer-card:focus-within {
+  box-shadow: var(--bl-field-edge), 0 0 0 2px var(--accent);
+}
+/* THE COLUMN'S HEADER beside Homeroom bot's page, over a request, a change
+   or a decision opened there. The standard header is the sheet's
+   half-clear fill, a pale band of the page here (and a grey one in dark):
+   it is the card's own colour, as Main Chat's header already is, above
+   its hairline. Its ⋯ disc, white on white, is raised as the look's other
+   plain buttons are. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(#ai-screen:not(.hidden)) .side-panel-head {
+  background-color: var(--bl-card);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(#ai-screen:not(.hidden)) .side-panel-head .messages-thread-action {
+  background: var(--bl-raise);
+  box-shadow: var(--bl-raise-edge);
+}
 /* Unread conversations: coral, the colour of people talking. */
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-tab-badge {
   background: #ff8a78;
@@ -28360,15 +28436,11 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   outline-offset: -1px;
 }
 
-/* TYPE BY ROLE. A page's title in the serif, the top bar's too (not the
-   small line the made screen keeps in an h1); the Workshop's counts in
-   mono, so the figures line up. */
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) h1:not(#first-session-made-title),
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-hero-name {
-  font-family: 'Young Serif', Georgia, 'Times New Roman', serif;
-  font-weight: 400;
-  letter-spacing: -0.005em;
-}
+/* TYPE BY ROLE. A title is Geist at its own weight, as every other word
+   is: a page's, a project's name on its hub, a heading in a message. (They
+   were a serif; beside the sans of everything else a heading inside a
+   message read as another document.) The Workshop's counts are in mono, so
+   the figures line up. */
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-dash-cell b {
   font-family: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   font-weight: 500;

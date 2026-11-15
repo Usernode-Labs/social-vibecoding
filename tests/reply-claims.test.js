@@ -195,3 +195,50 @@ test('checkedNote runs a server template through the check and never throws', as
   assert.equal(await claims.checkedNote(pool(), { user: { id: 1 }, appIds: new Set() }, 'I\'ve withdrawn the duplicate proposal. It is gone.'), 'It is gone.');
   assert.equal(await claims.checkedNote(null, null, 'Plain words.'), 'Plain words.');
 });
+
+// ── #6682: a plan card never files another request ─────────────────────────
+
+const PLAN = { appName: 'RecipeBot', appSlug: 'recipe-bot', title: 'Recipes with emoji photos' };
+
+test('#6682: planCardOther spots a sentence saying the plan card files another request', () => {
+  // The drawing-rule request is not the design, though it is on the same project.
+  assert.equal(claims.planCardOther('The card under this reply files the drawing-rule request on RecipeBot.', PLAN), true);
+  assert.equal(claims.planCardOther('The card files a request about drawing on RecipeBot.', PLAN), true);
+  // Another project, when the card is RecipeBot's.
+  assert.equal(claims.planCardOther('The card under this reply files the drawing-rule request on Homeroom.', PLAN), true);
+  assert.equal(claims.planCardOther('The card files it on Homeroom.', PLAN), true);
+  // The plan's own card: New request with this design's version as its plan.
+  assert.equal(claims.planCardOther('Tap New request to file a request on RecipeBot with version 7 as its plan.', PLAN), false);
+  assert.equal(claims.planCardOther('Tap the card to post version 7 of Recipes with emoji photos as a plan on RecipeBot.', PLAN), false);
+  assert.equal(claims.planCardOther('Tap the card to post version 7 on request #196 as its plan.', PLAN), false);
+  // Nothing about a card or a filing: not this rule's business.
+  assert.equal(claims.planCardOther('I read the drawing-rule request on RecipeBot.', PLAN), false);
+});
+
+test('#6682: cardSentence drops a sentence claiming the plan card files another request', () => {
+  const mayor = require('../src/services/homeroom-bot-mayor');
+  const F = 'Tap New request to file a request on RecipeBot with version 7 as its plan, publicly, under your name.';
+  const wrong = 'The card under this reply files the drawing-rule request on RecipeBot.';
+  assert.equal(mayor.cardSentence(wrong, { issueNumber: null, fallback: F, plan: PLAN }), F, 'dropped, and the fallback says it');
+  const good = 'Tap New request to file a request on RecipeBot with version 7 as its plan.';
+  assert.equal(mayor.cardSentence(good, { issueNumber: null, fallback: F, plan: PLAN }), good, 'the plan card\'s own sentence stays');
+  assert.equal(mayor.cardSentence(`${wrong} ${good}`, { issueNumber: null, fallback: F, plan: PLAN }), good, 'only the wrong sentence goes');
+  assert.equal(mayor.cardSentence(wrong, { issueNumber: null, fallback: F }), wrong, 'without a plan, this rule does not apply');
+});
+
+test('#6682: "tap File it" is a false claim beside a plan card, and true beside a request draft', async () => {
+  const planTurn = { offer: { kind: 'plan', app: { id: 4, slug: 'recipe-bot', name: 'RecipeBot' } }, designTitle: PLAN.title };
+  assert.deepEqual(await kinds(pool(), planTurn, 'Tap File it below.'), ['drafted'], 'a plan card has no File it');
+  assert.deepEqual(await kinds(pool(), { offer: { app: { id: 4, slug: 'recipe-bot', name: 'RecipeBot' } } }, 'Tap File it below.'), [],
+    'a request draft has one');
+});
+
+test('#6682: the plan_card_other rule cuts the wrong sentence, not the whole reply', async () => {
+  const turn = { offer: { kind: 'plan', app: { id: 4, slug: 'recipe-bot', name: 'RecipeBot' } }, designTitle: PLAN.title };
+  const text = 'The card under this reply files the drawing-rule request on RecipeBot. Version 7 is ready to post.';
+  const found = await claims.checkReply(pool(), turn, text);
+  assert.deepEqual(found.map((p) => p.kind), ['plan_card_other']);
+  assert.equal(claims.cut(text, found, turn), 'Version 7 is ready to post.');
+  // Beside a request draft there is no plan card, so the sentence is left alone.
+  assert.deepEqual(await claims.checkReply(pool(), { offer: { app: { id: 4, slug: 'ear', name: 'Ear Trainer' } } }, text), []);
+});

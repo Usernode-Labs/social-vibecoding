@@ -3195,6 +3195,34 @@
     "text": "Nobody yet",
     "description": "Line under a group that has no people in it yet, on the Make your own screen of the Who can see & change it sheet."
   },
+  "whoDecides.group.keptByApp": {
+    "text": "Kept by the app",
+    "description": "Small badge beside a group the project's app keeps, on the Groups list of the Who can see & change it sheet, where built-in groups say Built in. The app, not a person, decides who is in it."
+  },
+  "whoDecides.group.keptByAppSub_one": {
+    "text": "{{count}} person, the app keeps this list",
+    "description": "Line under a group the project's app keeps, when it has one person. {{count}} is that number."
+  },
+  "whoDecides.group.keptByAppSub_other": {
+    "text": "{{count}} people, the app keeps this list",
+    "description": "Line under a group the project's app keeps. {{count}} is how many people the app last reported."
+  },
+  "whoDecides.group.keptSwitch": {
+    "text": "The app keeps this group",
+    "description": "Switch on the group screen of the Who can see & change it sheet: when on, the project's app decides who is in the group and nobody picks people by hand."
+  },
+  "whoDecides.group.keptSwitchSub": {
+    "text": "Your app tells Homeroom who is in it. Nobody picks people here.",
+    "description": "Line under the The app keeps this group switch, saying what turning it on means."
+  },
+  "whoDecides.group.keptReported": {
+    "text": "The app sent its list {{when}}.",
+    "description": "Line under a group the project's app keeps, saying when the app last sent its member list. {{when}} is a date and time."
+  },
+  "whoDecides.group.keptNever": {
+    "text": "The app has not sent its list yet. Until it does, this group has nobody in it.",
+    "description": "Line under a group the project's app keeps, before the app has ever reported its members."
+  },
   "whoDecides.group.title": {
     "text": "Group",
     "description": "Title of the screen that edits a named group."

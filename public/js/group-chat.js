@@ -1429,7 +1429,20 @@ const GroupChat = {
       botSuggest: GroupChat._botSuggestView(kind === 'message' && !deleted ? meta : null),
       // #6533: what a change looks like, under Homeroom bot's reply in its thread.
       botGallery: GroupChat._botGalleryView(kind === 'message' && !deleted ? meta : null),
+      // #6684: a note sent into a build from this request, under the reply
+      // that says so (homeroom-bot-voice.js say).
+      botBuildNote: GroupChat._botBuildNoteView(kind === 'message' && !deleted ? meta : null),
     };
+  },
+
+  // #6684: the build note card under Homeroom bot's reply on a request
+  // (homeroom-bot-voice.js say, services/homeroom-bot-steer.js), or null.
+  // The server writes it and every reader sees it; its redo buttons, if any,
+  // are the offer's (BotOfferButtons).
+  _botBuildNoteView(meta) {
+    const bot = meta && meta.homeroomBot;
+    const note = bot && bot.buildNote;
+    return note && typeof note === 'object' && !Array.isArray(note) ? note : null;
   },
 
   /** #6533: the pictures under a reply (homeroom-bot-voice.js say), or null. */
@@ -1589,6 +1602,8 @@ const GroupChat = {
     GroupChat._react()?.patchTranscriptMessage(Number(frame.id), {
       botOffer: view.botOffer,
       botSuggest: view.botSuggest,
+      // #6684: the build note card says where the note is now.
+      botBuildNote: view.botBuildNote,
       ...(frame.metadata.specShare ? { specShare: view.specShare } : {}),
     });
   },

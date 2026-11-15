@@ -214,7 +214,7 @@ test('the prompt: a thread with no screen yet is drawn; one with a version is ed
   assert.match(none, /WHAT YOU WERE ASKED TO DRAW\nA seed calendar/);
   assert.doesNotMatch(none, /Main Chat|MAIN CHAT/, '14 Nov 2026: there is no Main Chat to name');
   assert.match(none, /THERE IS NO SCREEN YET: draw it with write_screen\.$/);
-  assert.match(none, /Content rules: nothing sexual, violent,\n  or about weapons or gambling/, 'its content rules kept');
+  assert.match(none, /Content rules: nothing sexual, no\n  realistic or graphic violence and no real-money gambling/, 'its content rules kept');
   assert.doesNotMatch(none, /—/);
   const design = { surface: 'app', app: { slug: 'garden', name: 'Garden club' }, title: 'Plots', width: 390, height: 844 };
   const some = designBot.designPrompt({ username: 'ada', design, version: 3, html: '<p>x</p>' });
@@ -297,7 +297,7 @@ test('the chat draws a screen in place of the screen picker: draw_screen, in the
   assert.doesNotMatch(draw.function.description, /Main Chat/);
   assert.match(draw.function.description, /shows it small in this thread with Open preview/);
   assert.match(read('src/services/homeroom-bot-dm.js'), /const design = await \(deps\.designThreads \|\| require\('\.\/design-threads'\)\)\.threadOf\(/,
-    'a thread that holds a design is the design bot\'s');
+    'a design thread still reads whether it holds a design (designDirect routes each message)');
   assert.doesNotMatch(read('src/services/design-threads.js'), /p\.kind = 'design'/, 'any private thread can hold one');
   assert.match(read('src/db/migrations/0004-design-anywhere.sql'), /CHECK \(surface IN \('platform', 'app', 'new'\)\)/);
 });
@@ -399,4 +399,97 @@ test('a thread about a request is named by it, in its head and in the list', () 
     ['Dark mode', { kind: 'request', number: 18 }]);
   assert.equal(row({ first_own: 'a seed calendar' }).title, 'a seed calendar');
   assert.equal(row({ kind: 'design', content: 'I opened a design thread for Plots…', design_title: 'Plots' }).title, 'Plots', 'a design by its screen');
+});
+
+// #6681: RecipeBot's drawing came out unstyled, then asked "missing styling
+// again?", then showed one huge back arrow. It styles itself with Homeroom's
+// hosted Tailwind runtime and an inline tailwind.config, and links the native
+// kit through the platform origin. The preview has no network and a plan drops
+// scripts, so those utilities did nothing there; this pins what puts them in.
+test('#6681: the kit behind the platform origin is the kit, not a repository file', async () => {
+  const page = '<link rel="stylesheet" href="__USERNODE_PLATFORM_ORIGIN__/usernode-native/v1/native.css">'
+    + '<link rel="stylesheet" href="https://app.test/usernode-native/v1/native.css">'
+    + '<link rel="stylesheet" href="https://cdn.test/other.css">';
+  assert.deepEqual(designBot.linkedSheets(page),
+    ['__USERNODE_PLATFORM_ORIGIN__/usernode-native/v1/native.css', 'https://app.test/usernode-native/v1/native.css'],
+    'a platform form of the kit is kept; another site\'s sheet is still dropped');
+  assert.equal(designBot.sheetPath('public/index.html', '__USERNODE_PLATFORM_ORIGIN__/usernode-native/v1/native.css'), null,
+    'never read as a repository file');
+  assert.equal(designBot.platformAssetPath('__USERNODE_PLATFORM_ORIGIN__/usernode-native/v1/native.css'), '/usernode-native/v1/native.css');
+  assert.equal(designBot.platformAssetPath('https://app.test/usernode-tailwind/v1/tailwind.js?v=1'), '/usernode-tailwind/v1/tailwind.js');
+  assert.equal(designBot.platformAssetPath('https://cdn.test/other.css'), null);
+
+  const entry = {
+    found: { app: { slug: 'recipebot' }, repo: { owner: 'o', repo: 'recipebot' } },
+    path: 'public/index.html',
+    html: page + '<script src="__USERNODE_PLATFORM_ORIGIN__/usernode-tailwind/v1/tailwind.js"></script>',
+  };
+  const deps = {
+    mayor: { SECRET_PATH_RE: /(^|\/)\.env/ },
+    github: { async getFileContent(_o, _r, p) { return p === 'public/css/app.css' ? '.app{}' : null; } },
+  };
+  const sheets = await designBot.sheetsFor(null, { surface: 'app', app: { slug: 'recipebot' }, entry, deps });
+  assert.deepEqual(sheets.links, ['/usernode-native/v1/native.css'], 'the kit link is kept beside app.css');
+  assert.deepEqual(sheets.styles, [], 'no sheet is invented from the placeholder path');
+  assert.ok(sheets.tailwind, 'the runtime is found');
+});
+
+test('#6681: the hosted runtime and its inline config are read as a literal, never evaluated', () => {
+  const page = '<script src="/usernode-tailwind/v1/tailwind.js"></script><script>'
+    + 'tailwind.config = { theme: { extend: { colors: { paper: "#f7f1e6", ink: "#2b2118" }, fontFamily: { serif: ["Georgia", "serif"] } } },'
+    + ' // a comment\n plugins: [require("x")], content: ["public/**/*.html"], darkMode: "class", /* trailing */ };</script>'
+    + '<style type="text/tailwindcss">@layer components { .card { @apply rounded-xl; } }</style>';
+  const runtime = designBot.tailwindRuntime(page);
+  assert.equal(runtime.config.theme.extend.colors.paper, '#f7f1e6');
+  assert.deepEqual(runtime.config.theme.extend.fontFamily.serif, ['Georgia', 'serif']);
+  assert.equal(runtime.config.darkMode, 'class', 'a plain setting is kept');
+  assert.equal('plugins' in runtime.config, false, 'plugins are dropped, never required');
+  assert.equal('content' in runtime.config, false, 'the config\'s own content is dropped');
+  assert.match(runtime.css, /@apply rounded-xl/, 'the app\'s own @layer is kept');
+
+  assert.ok(designBot.tailwindRuntime('<script src="__USERNODE_PLATFORM_ORIGIN__/usernode-tailwind/v1/tailwind.js"></script>'));
+  assert.ok(designBot.tailwindRuntime('<script src="https://cdn.tailwindcss.com/3.4.17"></script>'), 'the old tag is treated the same');
+  assert.equal(designBot.tailwindRuntime('<link rel="stylesheet" href="/tailwind.css">'), null, 'a compiled stylesheet is not a runtime');
+  assert.equal(designBot.tailwindRuntime('<p>no runtime</p>'), null);
+  // A commented-out tag (the starter's own note) does not count as loaded.
+  assert.equal(designBot.tailwindRuntime('<!-- <script src="/usernode-tailwind/v1/tailwind.js"></script> -->'), null);
+});
+
+test('#6681: the drawn markup\'s utilities are compiled with the app\'s config into one Homeroom block', async () => {
+  const sheets = {
+    links: ['/usernode-native/v1/native.css'],
+    styles: [{ path: 'public/css/app.css', css: '.app{}' }],
+    tailwind: { config: { theme: { extend: { colors: { paper: '#f7f1e6' } } } }, css: '' },
+  };
+  const drawn = designBot.withSheets('<main class="bg-paper w-5 text-ink"><svg class="w-5"></svg><b>Recipes</b></main>', sheets);
+  const full = await designBot.withTailwind(drawn, sheets);
+  assert.equal((full.match(/data-design-sheet="tailwind"/g) || []).length, 1, 'exactly one tailwind block');
+  assert.match(full, /\.w-5\s*\{/, 'an icon keeps its real size');
+  assert.match(full, /\.bg-paper\s*\{/, 'the app\'s own colour compiles');
+  assert.ok(full.indexOf('data-design-sheet="public/css/app.css"') < full.indexOf('data-design-sheet="tailwind"'),
+    'after the app\'s sheets');
+  assert.ok(full.indexOf('data-design-sheet="tailwind"') < full.indexOf('</head>'), 'inside the head');
+  const plan = require('../src/services/design-threads').screenMarkup(full);
+  assert.match(plan, /\.bg-paper\s*\{/, 'a plan keeps the compiled CSS when scripts are dropped');
+
+  // A compiled /tailwind.css app has no runtime, so its styling is untouched.
+  const compiled = { links: [], styles: [{ path: 'public/tailwind.css', css: '.flex{display:flex}' }] };
+  assert.equal(await designBot.withTailwind(drawn, compiled), drawn, 'no block, no change');
+});
+
+test('#6681: the prompt says which sheets were put in and whether utilities work', () => {
+  const withRuntime = designBot.sheetWords('app', { links: ['/usernode-native/v1/native.css'], styles: [], tailwind: { config: {} } });
+  assert.match(withRuntime, /any\s+utility class works here/);
+  assert.match(withRuntime, /linked: \/usernode-native\/v1\/native\.css/);
+  const compiled = designBot.sheetWords('app', { links: [], styles: [{ path: 'public/tailwind.css', css: '' }] });
+  assert.match(compiled, /compiled Tailwind/);
+  assert.match(compiled, /does nothing: style what is new/);
+  const bare = designBot.sheetWords('app', { links: [], styles: [] });
+  assert.match(bare, /utility classes do nothing/);
+  const prompt = designBot.designPrompt({
+    username: 'ada', design: { surface: 'app', app: { slug: 'recipebot', name: 'RecipeBot' }, title: 'Recipes', width: 390, height: 844 },
+    version: 1, html: '<p>x</p>', sheets: { links: ['/usernode-native/v1/native.css'], styles: [], tailwind: { config: {} } },
+  });
+  assert.match(prompt, /Give every icon an explicit size/);
+  assert.doesNotMatch(prompt, /—/);
 });

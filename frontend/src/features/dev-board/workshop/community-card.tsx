@@ -946,13 +946,18 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       (./invite-offer.ts): the page's own choice, Needs you or the hub. */
   onJoinedByInvite?: () => void;
   /** The page draws the Invite card beside this hero (InviteHeroCard), so
-      the row's small Invite is left out: one Invite on a page. */
+      the row's small Invite is left out: one Invite on a page. Once that
+      card's ✕ closes it (./hub-dismissed.ts), the row's Invite comes back. */
   inviteCard?: boolean;
 }) {
   const t = useMessages('project');
   const data = useCommunity(slug);
   // The invite link this page was opened from, if it was (#3700).
   const offer = useInviteOffer(slug);
+  // The Invite card's ✕ (InviteHeroCard): once closed, the row's small
+  // Invite is the way in. Read here, above every return, so the pill and the
+  // card agree (./hub-dismissed.ts).
+  const [inviteClosed] = useHubDismissed(slug, 'invite');
   const [busy, setBusy] = useState(false);
   // The open Join question, if one is: its answer goes back to whoever asked
   // (lib/join-required.ts's offerJoin), which does the joining, unless the
@@ -1273,8 +1278,10 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
           nobody else has joined, has nobody else to name. */}
       {others ? <HeroActive activity={data.activity} /> : null}
       {/* WHAT YOU CAN DO HERE, one row: Open app in the community's colour,
-          Invite, the ⋯, and across from them Join. "Make it public" and
-          "Make it private" are rows of the ⋯ (#4045), and so is Leave. A
+          Invite, the ⋯, and across from them Join. Invite is the small one
+          unless the Invite card is drawn below (then it is the card's), and
+          it comes back here once that card's ✕ closes it. "Make it public"
+          and "Make it private" are rows of the ⋯ (#4045), and so is Leave. A
           project that is just yours offers Invite here too, beside "Just
           you so far" (#4896): it was left to the Share it card at the foot
           of the hub (ShareItCard), and a newcomer met "Just you" with
@@ -1283,7 +1290,7 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       <div className="dev-ws-hero-row">
       <div className="dev-ws-hero-actions">
         {appButton}
-        {member && !(inviteCard && showsInviteHero(data)) ? (
+        {member && !(inviteCard && showsInviteHero(data) && !inviteClosed) ? (
           <Button
             type="button"
             variant="pillNeutral"
@@ -1335,15 +1342,21 @@ const INVITE_FACES = 3;
  * and how many people are in. Beside the hero on a wide window, under it on
  * a phone (app.css `.dev-ws-invite-hero`). The button opens the same invite
  * pane the small Invite did (openInviteLinks).
+ *
+ * Its ✕ (request 6687, ./hub-dismissed.ts) closes it for that person on
+ * that project, as Share it's does; Invite is then the hero row's small pill
+ * again (CommunityCard), which does everything this card did.
  */
-export function InviteHeroCard({ data }: { data: CommunityPayload | null | undefined }): ReactNode {
+export function InviteHeroCard({ slug, data }: { slug: string; data: CommunityPayload | null | undefined }): ReactNode {
   const t = useMessages('project');
-  if (!showsInviteHero(data) || !data) return null;
+  const [closed, close] = useHubDismissed(slug, 'invite');
+  if (!showsInviteHero(data) || !data || closed) return null;
   const people = (data.activity?.active_people || []).filter((p) => p && p.username).slice(0, INVITE_FACES);
   const members = Number(data.member_count) || 0;
   const active = Number(data.activity?.active_week) || 0;
   return (
     <section className="dev-ws-invite-hero" data-ws-invite-hero="" aria-label={t('project:hub.invite.title')}>
+      <HubCardClose card="invite" onClose={close} />
       <span className="dev-ws-invite-hero-fan" aria-hidden="true">
         {people.map((p) => (
           <span key={p.id} className="dev-ws-invite-hero-face" style={{ background: swatchFor(p.username) }}>

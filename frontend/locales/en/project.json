@@ -505,7 +505,7 @@
   },
   "hub.card.close": {
     "text": "Close this card",
-    "description": "Accessible name and tooltip of the small close (✕) button at the top right of two cards on a project's hub: \"Share it\" and \"What do you want to change?\". Closing one hides it on that project for good; what it offered stays elsewhere on the page."
+    "description": "Accessible name and tooltip of the small close (✕) button at the top right of the cards on a project's hub: \"Share it\", the Invite card and \"What do you want to change?\". Closing one hides it on that project for good; what it offered stays elsewhere on the page."
   },
   "hub.update.title": {
     "text": "Update from {{project}}",
@@ -6335,9 +6335,13 @@
     "text": "Up for a vote",
     "description": "Status pill beside a request's number in its page's header: a change built for it is up for a vote."
   },
+  "topic.thread.pill.checking": {
+    "text": "Checking",
+    "description": "Status pill beside a request's number in its page's header: the change built for it has the votes its project's rule needs and its own tests are still running."
+  },
   "topic.thread.pill.approved": {
     "text": "Approved",
-    "description": "Status pill beside a request's number in its page's header: the change built for it has the votes its project's rule needs, and it waits for its checks before it goes live."
+    "description": "Status pill beside a request's number in its page's header: the change built for it has the votes its project's rule needs and has passed its own tests, and it waits for GitHub's required checks before it goes live."
   },
   "topic.thread.pill.close": {
     "text": "Vote to close",

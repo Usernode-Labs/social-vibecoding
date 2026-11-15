@@ -377,9 +377,19 @@
       "schemaSha256": "b5893a86e58a422c5fd31e28e17279737fc7531c5f9a517921c56e3e51b96e6c"
     },
     {
+      "id": "homeroom-bot-build-notes-from-request",
+      "sha256": "7aa510b81e752bec19e350a568ff42880f3a56d907d067af8db770109f7025fb",
+      "schemaSha256": "db9042a114208849f917b88b72bdc3fcec361b3a45a2f40397dd01b7f7d6c90f"
+    },
+    {
+      "id": "app-groups",
+      "sha256": "7b459f85190080a0edc52fa7d047d879b9e96fbcf752d943feca525653e99e0f",
+      "schemaSha256": "e236854d0d060d4c66b2d503372217ddb09cc2646ee879add12f4a4df9ec5570"
+    },
+    {
       "id": "moved-chats",
       "sha256": "c8c6b9518cd824e77b7f819f1e910533c4b725e0228e1995f6fa379b1cdccf81",
-      "schemaSha256": "b469000f3e49d7823e1eb452554960832759e7053ff01f7ce149a58d14ce8be6"
+      "schemaSha256": "61b3ca527e4f285f860e86637b0ae0b4b6da4c6f6d1740a034010389ec81e64b"
     }
   ]
 }

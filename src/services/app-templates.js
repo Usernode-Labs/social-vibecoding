@@ -617,7 +617,7 @@ const TEMPLATES = Object.freeze([
     ],
     bot: {
       what: 'a working live multiplayer arcade game: a forward-scrolling run where ships fly together dodging storms of sparks (rings, spirals, fans, comet showers) and collecting stardust, with shields, sectors, a title screen with the hangar and a leaderboard of runs',
-      build: 'Build the creator\'s arcade game by changing the rules (`game/rules.js`: the storms and their patterns, what scores, when a run ends; the server ticks 20 times a second) and the canvas drawing and controls in `public/app.js`. Keep the game room and its live connection, the title screen and the run filling the screen: the hangar, joining a run, frames to every screen, flying your own ship locally and the leaderboard already work. No weapons or attacking anyone: Homeroom\'s content rules forbid them, so a "shooter" dodges, collects, races or breaks rocks.',
+      build: 'Build the creator\'s arcade game by changing the rules (`game/rules.js`: the storms and their patterns, what scores, when a run ends; the server ticks 20 times a second) and the canvas drawing and controls in `public/app.js`. Keep the game room and its live connection, the title screen and the run filling the screen: the hangar, joining a run, frames to every screen, flying your own ship locally and the leaderboard already work. A shooter may shoot: cartoon and fantasy combat is fine under Homeroom\'s content rules, nothing realistic or graphic.',
     },
   }),
   gameStarter({

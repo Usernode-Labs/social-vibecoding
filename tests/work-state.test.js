@@ -89,15 +89,16 @@ test('every phrase an item can carry is in the core catalog', () => {
 });
 
 // #6594: once a change has the votes its rule needs, nothing says "Up for a
-// vote" while its checks run: it is approved, and says what it waits on.
-test('#6594: a change whose votes are in is Approved while its checks run', () => {
+// vote" while its checks run. #6695: it is still being tested, so it says
+// Checking; Approved is kept for GitHub's own required checks.
+test('#6695: a change whose votes are in says Checking while its tests run', () => {
   const request = (extra) => derive({ proposal_status: 'promoted', ...extra });
   const running = request({ votes_in: true, check_state: 'pending' });
   assert.equal(running.stage, 'checking');
   assert.deepEqual(running.line, { code: 'approved_checking' });
-  assert.equal(ws.stageSays(running), 'Approved');
+  assert.equal(ws.stageSays(running), 'Checking');
   assert.equal(ws.lineSays(running), 'Checking the latest version');
-  assert.equal(ws.says(running), 'Approved · Checking the latest version', 'as the request words it');
+  assert.equal(ws.says(running), 'Checking · Checking the latest version', 'as the request words it');
 
   const failing = request({ votes_in: true, check_state: 'failing' });
   assert.equal(failing.stage, 'checking');
@@ -125,17 +126,17 @@ test('#6594: a change whose votes are in is Approved while its checks run', () =
   assert.equal(ws.lineSays({ stage: 'up_for_vote', line: { code: 'earlier_yes', count: 1 } }),
     'Changed since its yes vote, which counts again once confirmed');
   const core = JSON.parse(fs.readFileSync(path.join(ROOT, 'frontend/locales/en/core.json'), 'utf8'));
-  for (const key of ['work.stage.approved', 'work.line.approvedChecking', 'work.line.earlierYes_one', 'work.line.earlierYes_other']) {
+  for (const key of ['work.stage.checking', 'work.line.approvedChecking', 'work.line.earlierYes_one', 'work.line.earlierYes_other']) {
     assert.ok(core[key] && core[key].text, `${key} is in the catalog`);
   }
   // The words ship with the row as phrase ids (`words`); the English is the catalog's.
   assert.deepEqual(ws.phrasesOf(running), {
-    stage: { id: 'core:work.stage.approved' },
-    stageOthers: { id: 'core:work.stage.approved' },
+    stage: { id: 'core:work.stage.checking' },
+    stageOthers: { id: 'core:work.stage.checking' },
     line: { id: 'core:work.line.approvedChecking' },
   });
   assert.deepEqual(ws.phrasesOf(retired).line, { id: 'core:work.line.earlierYes', values: { count: 4 } });
-  assert.equal(core['work.stage.approved'].text, ws.stageSays(running));
+  assert.equal(core['work.stage.checking'].text, ws.stageSays(running));
   assert.equal(core['work.line.approvedChecking'].text, ws.lineSays(running));
   // 11 Nov 2026 (one model): a change whose votes are in is not open for
   // votes, so Needs you and the vote digest never ask for one.
@@ -401,6 +402,24 @@ test('the new wait words are the catalog\'s, keyed by the same entries', () => {
   assert.equal(ws.stageSays({ stage: 'checking', line: { code: 'syncing' } }), core['work.stage.syncing'].text);
   assert.equal(ws.lineSays({ line: { code: 'conflict_on_yes' } }), core['work.line.conflictOnYes'].text);
   assert.equal(ws.lineSays({ line: { code: 'shots' } }), core['work.line.shots'].text);
+});
+
+test('a change waiting only on its screenshots says so in its stage word, not Checking', () => {
+  const core = require('../frontend/locales/en/core.json');
+  const held = { stage: 'checking', line: { code: 'shots' } };
+  assert.deepEqual(ws.phrasesOf(held), {
+    stage: { id: 'core:work.stage.shots' },
+    stageOthers: { id: 'core:work.stage.shots' },
+    line: { id: 'core:work.line.shots' },
+  });
+  assert.equal(core['work.stage.shots'].text, 'Taking screenshots');
+  assert.equal(ws.stageSays(held), 'Taking screenshots');
+  assert.equal(ws.stageSays(held, { yours: false }), 'Taking screenshots');
+  assert.equal(ws.says(held), 'Taking screenshots · Tests passed: only the before and after screenshots are left');
+  // Tests still running, or failing, are still Checking.
+  assert.equal(ws.stageSays({ stage: 'checking' }), core['work.stage.checking'].text);
+  assert.equal(ws.stageSays({ stage: 'checking', line: { code: 'checks_running', minutes: 3 } }), core['work.stage.checking'].text);
+  assert.equal(ws.stageSays({ stage: 'checking', line: { code: 'checks_failing' } }), core['work.stage.checking'].text);
 });
 
 test('#6528: a passing change reads Checking until its before & after shots settle, then rings ready', () => {

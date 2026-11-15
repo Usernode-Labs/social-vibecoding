@@ -5651,6 +5651,14 @@
     "text": "It goes into the next update instead. Your note is on the change's discussion.",
     "description": "Line on the build note card once the note was put in the change's next update: it is posted on the change's discussion under the person's name."
   },
+  "botCards.buildNote.title.forwardedAuto": {
+    "text": "In the change's next update",
+    "description": "Line on the build note card when a comment on the request was queued in the change's next update without the person tapping anything: their words are already public on the request."
+  },
+  "botCards.buildNote.line.reread": {
+    "text": "I read the request again with it, for its next build.",
+    "description": "Line on the build note card when a comment on the request was missed by its build and the build ended without a change: the request is read again with the comment for its next build."
+  },
   "botCards.buildNote.line.offerRedo": {
     "text": "Stop and redo stops it now. Your note goes on the request's discussion, under your name, and Homeroom bot reads the request again first. Keep going sends the note into this build instead.",
     "description": "Line on the Stop and redo card, before anything is tapped: what each button does."

@@ -4198,7 +4198,7 @@ export function DevWorkshop(): ReactNode {
       ) : null}
       {/* INVITE, AS A CARD (request 6654): beside the hero on a wide window,
           under it on a phone. See ./community-card.tsx InviteHeroCard. */}
-      {slug ? <InviteHeroCard data={community} /> : null}
+      {slug ? <InviteHeroCard slug={slug} data={community} /> : null}
       {/* ── First version: where Homeroom bot's build stands ──
           Under the hero while the bot builds the project from its
           description, so a new project's hub says what it is becoming and

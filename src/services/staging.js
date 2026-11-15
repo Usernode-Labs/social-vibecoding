@@ -12,6 +12,7 @@ const appManifest = require('./app-manifest');
 const appSecrets = require('./app-secrets');
 const appLlmEnv = require('./app-llm-env');
 const appStorageEnv = require('./app-storage-env');
+const appGroupsEnv = require('./app-groups-env');
 const { appIdentityEnv } = require('./app-identity-env');
 const stagingEnv = require('./staging-env');
 const events = require('./events');
@@ -1112,6 +1113,9 @@ async function rebuildProductionInner(config, app, options = {}) {
     // Likewise the app-storage env pair (#752) — production only; the
     // staging path above deliberately injects neither storage var.
     const storageEnv = await appStorageEnv.productionStorageEnv(prodPool, app.id);
+    // Likewise the app-groups env pair (#6669) — production only; a staging
+    // container must not be able to change who decides.
+    const groupsEnv = await appGroupsEnv.productionGroupsEnv(prodPool, app.id);
     phase('deploy');
     watch?.start('deploy');
     const deployed = await applicationRuntime.deploy(config, {
@@ -1128,6 +1132,7 @@ async function rebuildProductionInner(config, app, options = {}) {
         USERNODE_ENV: 'production',
         ...llmEnv,
         ...storageEnv,
+        ...groupsEnv,
         ...merge.env,
       },
       // Applied: from here it is the container starting and answering

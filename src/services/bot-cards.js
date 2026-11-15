@@ -57,6 +57,9 @@ const OFFER_WORDS = Object.freeze({
   move_request: { yes: 'Move it to Homeroom', no: 'Keep it here' },
   // #6533: a change's thread, showing what it looks like.
   run_shots: { yes: 'Take the shots', no: 'Not now' },
+  // #6684: a note on a request while its build runs, when the build is
+  // going the wrong way. Nothing stops until Stop and redo is tapped.
+  build_redo: { yes: 'Stop and redo', no: 'Keep going' },
   post_pictures_plan: { yes: 'Post as a plan', no: 'Not now' },
 });
 

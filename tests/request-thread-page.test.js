@@ -954,17 +954,22 @@ test('#6594 an approved change says Approved in the header and the list', () => 
   assert.equal(pill.spinner, true);
   const rows = threadRows(payload([change]), here);
   assert.ok(rows[0].facts.some((f) => f.id === 'project:topic.thread.state.approved'), 'the row says Approved');
-  // 11 Nov 2026 (one model): the header reads the request's standing, which
-  // says Approved in its own words (services/work-state.js phrasesOf): while
-  // its checks finish, and while GitHub's do. A change merely going live
-  // keeps Going live.
+  // 11 Nov 2026 (one model): the header reads the request's standing.
+  // #6695: while its own tests run it says Checking; Approved is kept for
+  // waiting on GitHub's required checks. A change merely going live keeps
+  // Going live.
   const standing = (stage, code) => ({
     stage, why: null, reason: null, line: { code }, whoseMove: null, since: null,
-    words: { stage: { id: code === 'github_checks' || code === 'approved_checking' ? 'core:work.stage.approved' : 'core:work.stage.goingLive' },
+    words: { stage: { id: code === 'github_checks' ? 'core:work.stage.approved'
+      : code === 'approved_checking' ? 'core:work.stage.checking' : 'core:work.stage.goingLive' },
       stageOthers: { id: 'core:work.stage.approved' }, line: null },
     change: { id: 7, number: 6569, status: 'promoted', voteOpen: false },
   });
-  assert.equal(requestPill(layout, standing('checking', 'approved_checking'), (id) => id).key, 'approved');
+  const checking = requestPill(layout, standing('checking', 'approved_checking'), (id) => id);
+  assert.equal(checking.key, 'checking');
+  assert.equal(checking.label, 'project:topic.thread.pill.checking');
+  assert.equal(checking.tone, 'progress', 'Checking takes the in-progress look');
+  assert.equal(checking.spinner, true);
   assert.equal(requestPill(layout, standing('going_live', 'github_checks'), (id) => id).key, 'approved');
   assert.equal(requestPill(layout, { ...standing('going_live', 'none'), line: null }, (id) => id).key, 'going_live');
   // A change still asking for its vote keeps today's pill and row.
