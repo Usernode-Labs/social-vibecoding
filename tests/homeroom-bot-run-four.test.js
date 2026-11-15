@@ -123,7 +123,7 @@ test('a new app\'s CLAUDE.md sends a build inside Homeroom to the conventions to
   for (const tpl of [null, 'empty']) {
     const files = template.getTemplateFiles('Club Votes', 'club-votes', 'postgres://x/y', null, { template: tpl });
     const claude = files.find((f) => f.path === 'CLAUDE.md').content;
-    assert.match(claude, /\*\*Inside Homeroom\*\* \(its dev chat, and Homeroom bot's builds\), do not\nfetch that URL/);
+    assert.match(claude, /\*\*Inside Homeroom\*\* \(Homeroom bot's builds\), do not\nfetch that URL/);
     assert.match(claude, /`get_platform_conventions` reads any one section of the conventions/);
     assert.match(claude, /\*\*Anywhere else\*\* \(Claude Code run against this repo locally, or another\nharness\), fetch it at the start of each session/);
     assert.doesNotMatch(claude, /the fetch is a no-op in\nthat path/, 'the claim that was untrue for the bot\'s builds is gone');
