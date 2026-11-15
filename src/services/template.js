@@ -804,9 +804,8 @@ answers the same question.
 
 A session-start hook (\`${FRESHNESS_HOOK_PATH}\`, see \`.claude/README.md\`) runs
 this check for you and tells you when you are behind. It is silent offline, so
-its silence is not proof the checkout is current. Inside Homeroom (its dev
-chat, and Homeroom bot's builds) the platform fixes the base commit, and none
-of this applies.
+its silence is not proof the checkout is current. Inside Homeroom (Homeroom
+bot's builds) the platform fixes the base commit, and none of this applies.
 
 ${starter ? starterClaudeSection(starter) : `## Starter template
 

@@ -131,6 +131,6 @@ test('a new app\'s CLAUDE.md sends a build inside Homeroom to the conventions to
     assert.match(claude, /^## Connector permission prompts \(outside Homeroom\)$/m);
     const connector = claude.slice(claude.indexOf('## Connector permission prompts'), claude.indexOf('## Check that this checkout is current'));
     assert.ok(connector.split('\n').length <= 10, connector);
-    assert.match(claude, /Inside Homeroom \(its dev\nchat, and Homeroom bot's builds\) the platform fixes the base commit/);
+    assert.match(claude, /Inside Homeroom \(Homeroom\nbot's builds\) the platform fixes the base commit/);
   }
 });
