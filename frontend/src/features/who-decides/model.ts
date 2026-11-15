@@ -263,6 +263,16 @@ export function rulePhrase(rule: Rule, ctx: { groups: readonly Group[]; creator:
   return translate('dialogs:whoDecides.rule.phrase.atLeast', { group, count: rule.n ?? 1 });
 }
 
+/**
+ * What the line under a group's name counts (#6669): the people picked here,
+ * or, for a group the app keeps, how many it last reported. A kept group the
+ * app has not reported yet reads as any empty group does — "Nobody yet".
+ */
+export function groupPeopleKind(g: Group): 'nobody' | 'people' | 'keptByApp' {
+  if (g.keptByApp) return g.reportedAt ? 'keptByApp' : 'nobody';
+  return g.people.length ? 'people' : 'nobody';
+}
+
 /** How many people a group has, from what the screen knows. Null when it cannot say. */
 export function groupSize(group: string, ctx: { groups: readonly Group[]; creator: string | null; memberCount: number; adminCount: number | null }): number | null {
   if (group === 'creator') return ctx.creator ? 1 : 0;

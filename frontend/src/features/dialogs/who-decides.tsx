@@ -48,7 +48,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { radioGroupKeys } from '../../lib/radio-group';
 import { audienceLine, reloadCommunity, useCommunity } from '../dev-board/workshop/community-card';
 import {
-  creatorGroupLine, currentValue, groupKey, groupLabel, groupNameProblem, groupSize, matchPreset, MAX_AT_LEAST,
+  creatorGroupLine, currentValue, groupKey, groupLabel, groupNameProblem, groupPeopleKind, groupSize, matchPreset, MAX_AT_LEAST,
   MAX_GROUPS, MAX_RULES, MIN_MINIMUM, minOf, presetName, presetOf, presetValue, ruleGroupChoices, rulePhrase,
   ruleSignature, ruleToday, sameValue, valueProblem, type Group, type Kind, type PresetKey, type Rule,
   type RulesValue,
@@ -269,6 +269,15 @@ export function WhoDecidesDialog() {
     const asPreset = !draft.groups.length ? matchPreset(draft.rules) : null;
     setChoice(asPreset ? { kind: 'preset', key: asPreset } : { kind: 'own', value: draft });
     setScreen('main');
+  }
+
+  // The line under a group's name on the Groups list: the people picked here,
+  // or, for a group the app keeps, how many it last reported (#6669).
+  function groupLine(g: Group): string {
+    const kind = groupPeopleKind(g);
+    if (kind === 'keptByApp') return t('dialogs:whoDecides.group.keptByAppSub', { count: g.size ?? 0 });
+    if (kind === 'people') return g.people.join(', ');
+    return t('dialogs:whoDecides.group.nobody');
   }
 
   function editGroup(index: number | null) {
@@ -580,9 +589,7 @@ export function WhoDecidesDialog() {
             trailing={<span className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('dialogs:whoDecides.group.builtIn')}</span>} />
           {draft.groups.map((g, i) => (
             <ListRow key={groupKey(g.name)} as="button" data-who-group={i} onClick={() => editGroup(i)} title={g.name}
-              subtitle={g.keptByApp
-                ? t('dialogs:whoDecides.group.keptByAppSub', { count: g.size ?? 0 })
-                : (g.people.length ? g.people.join(', ') : t('dialogs:whoDecides.group.nobody'))}
+              subtitle={groupLine(g)}
               subtitleClassName="whitespace-normal"
               trailing={g.keptByApp ? <span className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('dialogs:whoDecides.group.keptByApp')}</span> : undefined} />
           ))}

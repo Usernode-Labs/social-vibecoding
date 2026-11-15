@@ -217,6 +217,12 @@ test('a group the app keeps shows how many people the app last reported (#6669)'
   const block = model.blockFor(value);
   assert.deepEqual(block.groups, [{ name: 'App users', keptByApp: true }, { name: 'Unreported', keptByApp: true }]);
   assert.deepEqual(serverRules.parseRulesBlock(block).groups.map((g) => g.keptByApp), [true, true]);
+  // The line under the group's name: the count once the app has reported,
+  // and "Nobody yet" until it sends its first list, like any empty group.
+  assert.equal(model.groupPeopleKind(ctx.groups[0]), 'keptByApp');
+  assert.equal(model.groupPeopleKind(ctx.groups[1]), 'nobody');
+  assert.equal(model.groupPeopleKind({ name: 'Lifeguards', people: ['maya'] }), 'people');
+  assert.equal(model.groupPeopleKind({ name: 'Lifeguards', people: [] }), 'nobody');
 });
 
 test('a creator whose account is gone is said as gone, not as no creator (#6281)', () => {
