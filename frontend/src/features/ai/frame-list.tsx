@@ -38,7 +38,8 @@ import type { Found } from './search';
 /** Each glyph's icon in the kit's set (./lines.ts names them). */
 const ICON: Record<Glyph, string> = {
   chat: 'chat', play: 'play', hand: 'hand', check: 'check', again: 'refresh', warning: 'alert', lock: 'lock', ballot: 'vote',
-  upload: 'up', eye: 'eye', cog: 'tool', reply: 'reply', code: 'code', clock: 'clock', x: 'x', bubble: 'chat',
+  // The kit has no camera: a picture stands for the screenshots being taken.
+  upload: 'up', eye: 'eye', cog: 'tool', reply: 'reply', code: 'code', clock: 'clock', camera: 'image', x: 'x', bubble: 'chat',
 };
 
 /**

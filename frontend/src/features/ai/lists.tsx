@@ -61,7 +61,7 @@ import { Chip } from '@/components/ui/chip';
 import { SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
-  ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, ChatBubbleTailIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, CodeIcon,
+  ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, CameraIcon, ChatBubbleTailIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, CodeIcon,
   CogIcon, EyeIcon, HandRaisedIcon, LockIcon, PlayIcon, ReplyArrowIcon, WarningTriangleIcon, XIcon,
 } from '@/components/ui/icons';
 
@@ -93,7 +93,7 @@ const G = 'h-[18px] w-[18px]';
 const GLYPHS: Record<Glyph, (props: { className?: string }) => ReactNode> = {
   chat: ChatIcon, play: PlayIcon, hand: HandRaisedIcon, check: CheckIcon, again: ArrowPathIcon, warning: WarningTriangleIcon,
   lock: LockIcon, ballot: BallotIcon, upload: ArrowUpTrayIcon, eye: EyeIcon, cog: CogIcon, reply: ReplyArrowIcon, code: CodeIcon,
-  clock: ClockIcon, x: XIcon, bubble: ChatBubbleTailIcon,
+  clock: ClockIcon, camera: CameraIcon, x: XIcon, bubble: ChatBubbleTailIcon,
 };
 function GlyphIcon({ name }: { name: Glyph }): ReactNode {
   const Icon = GLYPHS[name];

@@ -697,6 +697,10 @@ function stagePhrase(item, yours) {
   // #6594: its votes are in, so it is approved and its checks are what it
   // waits on, not a vote.
   if (item.stage === 'checking' && code === 'approved_checking') return { id: 'core:work.stage.approved' };
+  // Its tests passed and only its before & after screenshots are left: the
+  // stage word says that ("Taking screenshots"), not "Checking", which read
+  // as tests that might still fail.
+  if (item.stage === 'checking' && code === 'shots') return { id: 'core:work.stage.shots' };
   // #6563: an approved change whose merge GitHub holds is not going live yet;
   // its word says so, and its second line says on what. #6594: waiting on
   // GitHub's checks is still approved; only GitHub itself holding it back
