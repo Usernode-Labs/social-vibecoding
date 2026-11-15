@@ -176,8 +176,7 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'PATCH', pattern: '/api/sessions/:id/description' },
   { method: 'GET', pattern: '/api/me/active-sessions' },
   // The proposal pipeline: submit_work turns a pushed branch into an
-  // ordinary imported proposal, and the platform-build fallback runs an
-  // unattended build and promotes its clone.
+  // ordinary imported proposal.
   { method: 'GET', pattern: '/api/apps/:slug/pr-import/preview' },
   { method: 'POST', pattern: '/api/apps/:slug/pr-import' },
   // Advancing a proposal that is already up for a vote (#1054), from a branch
@@ -199,8 +198,6 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // by the caller and hands it to the same fork-attribution gate every other
   // hand-off goes through; it can write nothing that is not the caller's own.
   { method: 'POST', pattern: '/api/apps/:slug/work/share-in-progress' },
-  { method: 'POST', pattern: '/api/apps/:slug/issues/:number/headless-session' },
-  { method: 'POST', pattern: '/api/sessions/:id/clone-headless' },
   { method: 'POST', pattern: '/api/sessions/:id/promote' },
   // submit_work's `propose: true` reopens a paused session before promoting
   // it — an external update usually lands on a paused one. Owner-scoped like
@@ -401,26 +398,16 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
 // never the CLI denylist. The same fail-closed rule holds: a route not named
 // for that kind is refused, whatever the token's scopes say.
 //
-// `agent_mayor` — the Mayor of an agent session. Every read its tools make,
-// the request writes the external list already carries, and the change
-// lifecycle of the user's own native changes: create, promote, resume,
-// re-check, sync with main, withdraw. What is here and NOT on the external
-// list is exactly the three routes the classic dev chat's own buttons call,
-// each owner-scoped by its handler; and every write a Mayor makes is one the
-// user confirmed first (the token for it is minted at that moment and lives
-// for one action). Still nothing that votes, merges, touches settings,
-// secrets or membership.
+// `agent_mayor` — Homeroom bot reading for the person it answers
+// (services/mayor/mcp-shim.js). Every read its tools make, each already on
+// the external list above, and nothing that writes.
 const AGENT_MAYOR_ALLOWED_ROUTES = Object.freeze([
   { method: 'GET', pattern: '/api/apps' },
   { method: 'GET', pattern: '/api/apps/:slug' },
   { method: 'GET', pattern: '/api/apps/:slug/github-issues' },
   { method: 'GET', pattern: '/api/apps/:slug/github-issues/:number/comments' },
-  { method: 'POST', pattern: '/api/apps/:slug/github-issues/:number/claim' },
-  { method: 'DELETE', pattern: '/api/apps/:slug/github-issues/:number/claim' },
   { method: 'GET', pattern: '/api/apps/:slug/promoted' },
   { method: 'GET', pattern: '/api/apps/:slug/messages' },
-  { method: 'POST', pattern: '/api/apps/:slug/messages' },
-  { method: 'POST', pattern: '/api/apps/:slug/issues' },
   { method: 'GET', pattern: '/api/me/active-sessions' },
   { method: 'GET', pattern: '/api/sessions/:id' },
   { method: 'GET', pattern: '/api/sessions/:id/status' },
@@ -430,16 +417,6 @@ const AGENT_MAYOR_ALLOWED_ROUTES = Object.freeze([
   // the request.
   { method: 'GET', pattern: '/api/apps/:slug/issues/:number/specs' },
   { method: 'GET', pattern: '/api/sessions/:id/specs/:version' },
-  { method: 'PATCH', pattern: '/api/sessions/:id/linked-issues' },
-  // The change lifecycle (start_change, promote_change, recheck_change,
-  // sync_change, withdraw_change). start_change names the change on the
-  // create itself, so the rename route is not on this list.
-  { method: 'POST', pattern: '/api/apps/:slug/sessions' },
-  { method: 'POST', pattern: '/api/sessions/:id/promote' },
-  { method: 'POST', pattern: '/api/sessions/:id/resume' },
-  { method: 'POST', pattern: '/api/sessions/:id/recheck' },
-  { method: 'POST', pattern: '/api/sessions/:id/sync-main' },
-  { method: 'POST', pattern: '/api/sessions/:id/archive' },
 ]);
 
 // `worker_read` — the coding agent inside one change's worker. It runs the

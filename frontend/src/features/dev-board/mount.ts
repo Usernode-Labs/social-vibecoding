@@ -46,7 +46,6 @@ import { releaseStallStore, type ReleaseStallState } from './release-stall-store
 import { codePauseStore, type CodePauseState } from './code-pause-store';
 import { discussionStore, type DiscussionState } from './discussion-store';
 import { kanbanFiltersStore, type KanbanFiltersState } from './kanban-filters-store';
-import { DevSessionShell } from './session-frame';
 import { VotingHelp, type VotingHelpProps } from './voting-help';
 import { DevTopicSubView } from './topic-frame';
 import { publishViewMode } from './view-mode-store';
@@ -72,19 +71,16 @@ import { topicHeadStore, type TopicHeadState } from './topic/topic-store';
 import { publishRequestThread } from './topic/request-model';
 import { askVotesInView } from './topic/votes-in-view';
 import type { TranscriptMessage } from '../group-chat/transcript-store';
-import { AutoSessionModal } from './modals/auto-session-modal';
 import { SessionChecks, type SessionChecksProps } from './modals/session-checks';
 import { CreditOptionsModal } from './modals/credit-options-modal';
 import { LlmConsentModal } from './modals/llm-consent-modal';
 import { PermissionConsentModal } from './modals/permission-consent-modal';
 import {
-  autoSessionModalStore,
   creditOptionsModalStore,
   llmConsentModalStore,
   permissionConsentModalStore,
 } from './modals/modals-store';
 import type {
-  AutoSessionModalView,
   CreditOptionsModalView,
   LlmConsentModalView,
   PermissionConsentModalView,
@@ -116,7 +112,6 @@ export interface DevBoardBridge {
   mountKanbanFilters(host: Element | null): void;
   publishKanbanFilters(patch: Partial<KanbanFiltersState>): void;
   mountVotingHelp(host: Element | null, props: VotingHelpProps): void;
-  mountSessionShell(host: Element | null): void;
   mountWorkshop(host: Element | null): void;
   publishWorkshop(view: DevWorkshopView): void;
   mountKanban(host: Element | null): void;
@@ -130,7 +125,6 @@ export interface DevBoardBridge {
   prefetchThread(slug: string | null, number: number | null): Promise<unknown> | null;
   /** #4453: a request's stream, as `GroupChat.renderThread` publishes it — for its spec cards. */
   publishRequestThread(number: number, rows: TranscriptMessage[]): void;
-  mountAutoSessionModal(host: Element | null, view: AutoSessionModalView): void;
   mountSessionChecks(host: Element | null, props: SessionChecksProps): void;
   mountCreditOptionsModal(host: Element | null, view: CreditOptionsModalView): void;
   mountLlmConsentModal(host: Element | null, view: LlmConsentModalView): void;
@@ -208,7 +202,6 @@ topicHeadStore.setFlush(flushSync);
  * the card has to be in the DOM on the next line — the same contract the
  * `innerHTML` assignment these replace gave them.
  */
-autoSessionModalStore.setFlush(flushSync);
 creditOptionsModalStore.setFlush(flushSync);
 llmConsentModalStore.setFlush(flushSync);
 permissionConsentModalStore.setFlush(flushSync);
@@ -325,10 +318,6 @@ export const devBoardBridge: DevBoardBridge = {
     mountLegacyPortal(host, createElement(VotingHelp, props));
   },
 
-  mountSessionShell(host) {
-    mountLegacyPortal(host, createElement(DevSessionShell));
-  },
-
   // ── The card surfaces ──────────────────────────────────────────────
   //
   // Both list hosts stay app-view.js's (`_repaintDevBody` writes them into
@@ -378,11 +367,6 @@ export const devBoardBridge: DevBoardBridge = {
   // rather than through a separate publish: there is no "already open"
   // state to update, and a mount-then-publish pair would render the scrim
   // empty for one frame.
-  mountAutoSessionModal(host, view) {
-    autoSessionModalStore.set({ view });
-    mountLegacyPortal(host, createElement(AutoSessionModal));
-  },
-
   mountSessionChecks(host, props) {
     mountLegacyPortal(host, createElement(SessionChecks, props));
   },

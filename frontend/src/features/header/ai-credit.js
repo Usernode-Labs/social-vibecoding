@@ -72,12 +72,11 @@ import { aiBudgetStore } from './ai-budget-store.js';
 
   // The figure is one sentence, "$839.99 of $840 left this week"
   // (#5284), then "· your key $4.50" when the person's own key was billed.
-  // It used to copy the dev chat's "limit $13.60/$20.00" glyph for glyph,
-  // which read here as a limit of $13.60. No pill: the row's `flex-wrap`
+  // No pill: the row's `flex-wrap`
   // drops an over-wide value onto its own line intact rather than
   // splitting it mid-figure.
   //
-  // The amount left takes the dev chat's spend thresholds: more than 80% of
+  // The amount left is coloured by spend: more than 80% of
   // the allowance used is red, more than 50% amber, otherwise emerald. The
   // BYOK figure never takes threshold colouring, since no cap applies to
   // it. The THRESHOLDS are here; the class strings they resolve to are in
@@ -149,8 +148,8 @@ import { aiBudgetStore } from './ai-budget-store.js';
       },
 
       // #6493: the ONE writer of the allowance. Every fetch and every push
-      // lands here, so the Settings row, the composer's "$ left" pill and
-      // the dev chat's meter all read one object and cannot disagree.
+      // lands here, so the Settings row and Settings' spend card read one
+      // object and cannot disagree.
       //
       // `byokCents` is the snapshot's spelling; /api/budget also carries the
       // same number as `byokSpentCents`, which is normalised here so a
@@ -182,7 +181,7 @@ import { aiBudgetStore } from './ai-budget-store.js';
       },
 
       // The one figure, for a reader that draws its own copy of it
-      // (features/dev-chat/dev-chat.js, features/settings/settings.js).
+      // (features/settings/settings.js).
       current: function () {
         return AiCredit.Budget.state;
       },
@@ -199,7 +198,7 @@ import { aiBudgetStore } from './ai-budget-store.js';
       _render: function () {
         var s = AiCredit.Budget.state;
         if (!s || typeof s.limitCents !== 'number') {
-          aiBudgetStore.set({ view: null, hidden: true, figures: null });
+          aiBudgetStore.set({ view: null, hidden: true });
           return;
         }
 
@@ -209,15 +208,14 @@ import { aiBudgetStore } from './ai-budget-store.js';
         var byok = Number(s.byokCents) || 0;
         var exhausted = remaining <= 0;
 
-        // #593: the same normalised state the composer's meter and the
-        // low-balance banner read, resolved lazily (credit-options.js is a
+        // #593: the allowance's normalised state (CreditOptions.creditState),
+        // resolved lazily (credit-options.js is a
         // classic script; this module is in the bundle that runs after it,
         // but a bare unit sandbox may have neither). Everything below
         // degrades to the pre-#593 rendering when it is absent.
         var CO = (typeof window !== 'undefined' && window.CreditOptions) || null;
         var state = CO ? CO.creditState(s) : null;
-        // The reset boundary, worded once (CreditOptions.resetSentence) so
-        // this row and the dev chat cannot describe it differently. #3230:
+        // The reset boundary, worded once (CreditOptions.resetSentence). #3230:
         // in the viewer's own clock, with the exact UTC instant in brackets,
         // because this text is itself the tooltip.
         var RT = (typeof window !== 'undefined' && window.ResetTime) || null;
@@ -227,18 +225,7 @@ import { aiBudgetStore } from './ai-budget-store.js';
             RT.resetMoment(weeklyReset ? 'weekly' : 'daily', { at: s.resetsAt }))
             : weeklyReset ? PlatformI18n.t('wallet:credit.tip.resetsWeeklyUtc')
               : PlatformI18n.t('wallet:credit.tip.resetsDailyUtc');
-        // The raw figures ride along for a reader that draws them itself
-        // (the agent-session composer's "$ left" ring): the same numbers the
-        // words below are built from, so the two cannot disagree.
-        var figures = {
-          limitCents: limit,
-          remainingCents: remaining,
-          spentCents: spent,
-          byokCents: byok,
-          weekly: (state ? state.capWindow : s.capWindow) === 'weekly',
-          level: state ? state.level : null,
-        };
-        var show = function (view) { aiBudgetStore.set({ view: view, hidden: false, figures: figures }); };
+        var show = function (view) { aiBudgetStore.set({ view: view, hidden: false }); };
 
         // A zero tier is a real state, not an unknown cap. Render the
         // unlock action without doing spend/limit division (which used to

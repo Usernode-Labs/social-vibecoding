@@ -592,9 +592,9 @@ export interface DevWorkshopView {
    */
   tab: 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | 'bot' | `c:${string}` | null;
   /**
-   * The models the ask box may talk to — the dev session's own list
-   * (`DevChat.MODELS`), not a second one. Empty where DevChat is absent, and
-   * the picker is then not drawn at all.
+   * The models the ask box may talk to: the shared list
+   * (`PlatformModels.MODELS`), not a second one. Empty until it has loaded,
+   * and the picker is then not drawn at all.
    */
   models: { list: { id: string; label: string; note: string }[]; selected: string | null };
   /**

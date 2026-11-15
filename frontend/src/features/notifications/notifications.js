@@ -289,7 +289,6 @@ const Notifications = {
       Notifications.unreadHasMore = !!data.hasMore;
       Notifications.unreadNextBefore = data.nextBefore || null;
       Notifications.refreshTick += 1;
-      Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       // Rendered UNCONDITIONALLY now, where this was gated on `open`.
       //
@@ -502,28 +501,9 @@ const Notifications = {
         Notifications.messageUnread = (Notifications.messageUnread || 0) + 1;
       }
     }
-    // #161: a completion arriving while the user is away from the
-    // browser tab sets the dedicated tab-title marker (the replacement
-    // for the old streaming-driven "✅ Done"). If they're actively
-    // looking at the page, the badge + drawer suffice.
-    // #3181: a turn that stopped before finishing is the other half of a
-    // finished one, and arrives on the same channels with its own marker.
-    if (PRIORITY_KINDS.has(notif.kind)
-        && !notif.readAt
-        && window.DevChat && DevChat.setCompletionTitle
-        && DevChat._userIsAway && DevChat._userIsAway()) {
-      DevChat.setCompletionTitle(notif.kind === 'session_done'
-        ? 'sessionDone'
-        : notif.kind === 'session_stalled'
-          ? 'sessionStalled'
-          : (notif.detail === 'failed' ? 'autoSolveFailed' : 'autoSolveDone'));
-    }
     // #138: route an arriving completion through the alert channels — a
     // chime when the app is visible, an OS notification when it's hidden.
-    // The visible/hidden split lives in DevAlerts.onCompletion. This is the
-    // "user is elsewhere in the app, or backgrounded" path (notify_on_done
-    // was armed, so a notification_new arrives); the "watching the same dev
-    // chat" path is handled by DevChat._finishStreaming's direct tone.
+    // The visible/hidden split lives in DevAlerts.onCompletion.
     if (PRIORITY_KINDS.has(notif.kind)
         && !notif.readAt
         && window.DevAlerts && typeof DevAlerts.onCompletion === 'function') {
@@ -667,7 +647,6 @@ const Notifications = {
       Notifications.items = Notifications.items.map((n) => (
         { ...n, readAt: n.readAt || now }
       ));
-      Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       Notifications._renderList();
       // #449: an open group chat may be showing unread dots for the
@@ -726,7 +705,6 @@ const Notifications = {
       for (const n of Notifications.items) {
         if (inWindow(n)) n.readAt = now;
       }
-      Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       Notifications._renderList();
       // #449's reason: an open group chat may be drawing dots for the
@@ -798,7 +776,6 @@ const Notifications = {
       for (const n of Notifications.items) {
         if (n && n.appId === appId && !n.readAt) n.readAt = now;
       }
-      Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       Notifications._renderList();
       // #449's reason, for one app: an open group chat may be drawing dots
@@ -842,7 +819,6 @@ const Notifications = {
       for (const n of Notifications.items) {
         if (inHand(n)) n.readAt = now;
       }
-      Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       Notifications._renderList();
       // #449's reason, for the app-less group: an open group chat may be
@@ -854,15 +830,6 @@ const Notifications = {
       failed();
       return false;
     }
-  },
-
-  // #161: drop the tab-title completion marker once no unread completion
-  // notification remains (drawer click, group/app mark-read, mark-all,
-  // or a cross-tab notifications_changed refresh). The visibility/focus
-  // return handler in dev-chat.js is the other clearing path.
-  _reconcileCompletionTitle() {
-    if (!window.DevChat || !DevChat.setCompletionTitle || !DevChat._titleCompletion) return;
-    if (!Notifications.items.some(isPriorityNotif)) DevChat.setCompletionTitle(null);
   },
 
   // Resolves whether the server took it (#3538). The row click ignores the
@@ -882,7 +849,6 @@ const Notifications = {
     if (item) {
       item.readAt = new Date().toISOString();
       if (Notifications.unread > 0) Notifications.unread -= 1;
-      Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       Notifications._renderList();
     }
@@ -958,7 +924,6 @@ const Notifications = {
     Notifications.unread = Math.max(0, Notifications.unread - members.length);
     Notifications.messageUnread = Math.max(0, (Notifications.messageUnread || 0)
       - members.filter((n) => /^(conversation|channel)_message$/.test(n.kind)).length);
-    Notifications._reconcileCompletionTitle();
     Notifications._renderBadge();
     Notifications._renderList();
     // #449's reason, for one row: an open chat may be drawing a dot for a
@@ -1385,21 +1350,12 @@ const Notifications = {
       }
       return;
     }
-    // #161/#194: completion notifications deep-link to their change.
-    // session_done opens the lifecycle-aware detail page around its workspace;
-    // auto_solve_done opens the Issues tab with that issue's accordion
-    // expanded.
-    // #2779: a change an agent session started is worked on in that
-    // conversation, so its completion opens the conversation.
-    // #3181: a session that stopped before finishing opens exactly where a
-    // finished one does, since continuing it is what the row asks for.
-    const sessionTurnEnd = item.kind === 'session_done' || item.kind === 'session_stalled';
-    if (sessionTurnEnd && item.agentSessionId) {
-      Notifications._dismissSheetForNav();
-      window.location.hash = `#messages/agent/${encodeURIComponent(item.agentSessionId)}`;
-      return;
-    }
-    if (sessionTurnEnd && item.appSlug && item.sessionId) {
+    // #161/#194: completion notifications deep-link to their change's page.
+    // Nothing creates these three kinds any more; a row from before still
+    // opens the change it was about.
+    const completion = item.kind === 'session_done' || item.kind === 'session_stalled'
+      || item.kind === 'auto_solve_done';
+    if (completion && item.appSlug && item.sessionId) {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) {
         return App.openAppTab(item.appSlug, 'dev', {
@@ -1452,20 +1408,6 @@ const Notifications = {
         });
       } else {
         window.location.hash = Notifications._changeHash(item.appSlug, id, item.prNumber);
-      }
-      return;
-    }
-    if (item.kind === 'auto_solve_done' && item.appSlug) {
-      Notifications._dismissSheetForNav();
-      if (typeof App !== 'undefined' && App.openAppTab) {
-        return App.openAppTab(item.appSlug, 'dev', {
-          subTab: 'issues',
-          ref: item.headlessIssueNumber || null,
-        });
-      } else {
-        window.location.hash = item.headlessIssueNumber
-          ? `#app/${item.appSlug}/dev/issues/${item.headlessIssueNumber}`
-          : `#app/${item.appSlug}/dev/issues`;
       }
       return;
     }
@@ -2268,7 +2210,7 @@ const Notifications = {
     // Straight through, in `items` order. No partition and no re-sort: the
     // feed is already newest-first, and a flat list that reorders itself is
     // exactly the thing #1385 asked to stop. (Unread completion notifications
-    // used to float to the top of the grouped list; see PRIORITY_KINDS.)
+    // used to float to the top of the grouped list.)
     store.set({
       list: Notifications._bellItems().map(rowView),
       screenList: screenViews(Notifications.items),
@@ -2428,31 +2370,14 @@ function parsePlatformIncidentDetail(detail) {
   return { type: 'digest', total: Number(d[1]), kinds };
 }
 
-// #161 defined these as the kinds that "demand attention": a finished dev
-// session or headless run, while still unread.
-//
-// #1385 stopped the DRAWER acting on it. The pin was a grouped-list device — it
-// floated an app's group above the others and led within it, which is also what
-// made it the collapsed header's preview — and a flat list the request asked to
-// be chronological cannot also reorder itself. Nothing was deleted: the set
-// still drives DevChat's completion title through isPriorityNotif() below, and
-// restoring a top-of-list pin is one stable partition in _renderList if the
-// group decides it wants one.
-//
-// Deliberately limited to these kinds; grow this set rather than adding a
-// server-side priority column if more "priority" kinds emerge. #3181 grew it
-// by session_stalled: a session that stopped before finishing demands the
-// same attention as one that finished, on the same channels (the tab title,
-// the chime, the OS notification; see handleIncoming).
+// #161 defined these as the kinds that "demand attention": a change's turn
+// that finished or stopped, while still unread. One arriving goes through the
+// alert channels (the chime, the OS notification; see handleIncoming).
 const PRIORITY_KINDS = new Set(['session_done', 'session_stalled', 'auto_solve_done']);
 // The rows that ask for the reader's vote on one change: the asks a vote
 // clears (services/notifications.js, `vote_cast`), and the daily digest
 // when it names one change. Each opens the change at its Votes card.
 const VOTE_ASK_KINDS = new Set(['pr_proposed', 'stale_pr', 'revision_recheck', 'change_ready', 'vote_digest']);
-function isPriorityNotif(n) {
-  return !!n && PRIORITY_KINDS.has(n.kind) && !n.readAt;
-}
-
 // The system-generated (source-user-less) notifications about the
 // viewer's OWN sessions and proposals. Everything social — mentions,
 // replies, reactions, kudos, vote nudges, invites, spec shares — is
@@ -2620,8 +2545,6 @@ const ALERT_CHANGE_IDS = {
 };
 // The same for a finished session: the app and the title both known, the app
 // unknown, the title unknown ("your session"), neither known.
-const ALERT_AGENT_DONE_IDS = ['notifications:alert.agentDone.body', 'notifications:alert.agentDone.bodyYourApp',
-  'notifications:alert.agentDone.bodyYourSession', 'notifications:alert.agentDone.bodyYourAppYourSession'];
 const ALERT_SESSION_DONE_IDS = ['notifications:alert.sessionDone.body', 'notifications:alert.sessionDone.bodyYourApp',
   'notifications:alert.sessionDone.bodyYourSession', 'notifications:alert.sessionDone.bodyYourAppYourSession'];
 
@@ -2648,7 +2571,6 @@ function completionAlertInfo(n) {
       kind: 'session_stalled',
       appSlug: n.appSlug || null,
       sessionId: n.sessionId || null,
-      ...(n.agentSessionId ? { agentSessionId: n.agentSessionId } : {}),
       headlessIssueNumber: null,
       title: t('notifications:alert.stalled.title'),
       body: app ? t('notifications:alert.stalled.body', { app }) : t('notifications:alert.stalled.bodyYourApp'),
@@ -2658,18 +2580,6 @@ function completionAlertInfo(n) {
   // and only then the machine-generated branch name.
   const title = n.sessionTitle || n.prTitle || n.branchName || '';
   const which = (title ? 0 : 2) + (app ? 0 : 1);
-  if (n.agentSessionId) {
-    // #2779: a run in an agent session (a spec drafted or a build done).
-    return {
-      kind: 'session_done',
-      appSlug: n.appSlug || null,
-      sessionId: n.sessionId || null,
-      agentSessionId: n.agentSessionId,
-      headlessIssueNumber: null,
-      title: t('notifications:alert.agentDone.title'),
-      body: t(ALERT_AGENT_DONE_IDS[which], { app, title }),
-    };
-  }
   return {
     kind: 'session_done',
     appSlug: n.appSlug || null,
@@ -3931,8 +3841,7 @@ function rowWords(n) {
       wrap: true,
       icon: '✅',
       ...headline(
-        // #2779: a run in an agent session says what finished, not "session".
-        n.agentSessionId ? t('notifications:row.session.agentFinished') : t('notifications:row.session.finished'),
+        t('notifications:row.session.finished'),
         n.sessionTitle || prLabel || n.branchName || t('notifications:row.session.yourSession'),
       ),
     };
@@ -3948,13 +3857,13 @@ function rowWords(n) {
       wrap: true,
       icon: '⏸️',
       ...headline(
-        n.agentSessionId ? t('notifications:row.session.agentStopped') : t('notifications:row.session.stopped'),
+        t('notifications:row.session.stopped'),
         n.sessionTitle || prLabel || n.branchName || t('notifications:row.session.yourSession'),
       ),
     };
   }
 
-  // #161: headless proposal-run completion. #150: a question outcome isn't
+  // #161: an unattended build's completion. #150: a question outcome isn't
   // "ready" work product — it is the run asking the reporter for input, so the
   // label says so.
   if (n.kind === 'auto_solve_done') {

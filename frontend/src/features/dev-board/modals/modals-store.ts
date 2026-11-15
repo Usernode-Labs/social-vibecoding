@@ -8,19 +8,16 @@
  * mount and the publish on the same tick.
  *
  * All three install `setFlush(flushSync)` in ../mount.ts, because the module
- * binds the dialog's dismissal — and, for the Generate-proposal picker, reads
- * the option list back — on the line after it publishes.
+ * binds the dialog's dismissal on the line after it publishes.
  */
 
 import { createStore } from '../../../lib/plain-store.js';
 import type {
-  AutoSessionModalView,
   CreditOptionsModalView,
   LlmConsentModalView,
   PermissionConsentModalView,
 } from './model';
 
-export const autoSessionModalStore = createStore<{ view: AutoSessionModalView | null }>({ view: null });
 export const creditOptionsModalStore = createStore<{ view: CreditOptionsModalView | null }>({ view: null });
 export const llmConsentModalStore = createStore<{ view: LlmConsentModalView | null }>({ view: null });
 export const permissionConsentModalStore = createStore<{ view: PermissionConsentModalView | null }>({ view: null });

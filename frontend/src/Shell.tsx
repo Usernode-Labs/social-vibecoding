@@ -86,7 +86,6 @@ import { MessagesScreen } from './features/messages';
 import { ParkedStrip, PlatformTabs, SkipToNavigation, StripBack } from './features/nav';
 import { FrameApp } from './features/frame/frame-app';
 import { SidePanel } from './features/side-panel';
-import { AgentSessionScreen } from './features/agent-session';
 import { AiScreen } from './features/ai';
 import { WorkshopScreen } from './features/workshop';
 import { WeeklyDigestScreen } from './features/weekly-digest';
@@ -299,15 +298,6 @@ export function Shell() {
           which is how every messaging product on earth models it.
       */}
       <Island name="MessagesScreen"><MessagesScreen /></Island>
-      {/*
-          Agent sessions (#2779): one conversation with the Mayor that works
-          on any app. A React-owned sibling screen like Messages above,
-          shipped hidden and empty, revealed by the hash router at #agent/<id>
-          (a phone's surface; a desktop draws the same panel in the Messages
-          pane). Listed in App.REACT_SCREEN_IDS, so React alone writes its
-          `hidden`.
-      */}
-      <Island name="AgentSessionScreen"><AgentSessionScreen /></Island>
       <Island name="AiScreen"><AiScreen /></Island>
       {/*
           The Topochain leaderboard used to be its own <main> screen here
@@ -702,7 +692,7 @@ export function Shell() {
           Read-only renderer for a SHARED dev-chat transcript. Pure string
           builder; app-view.js's topic page calls SessionTranscript.renderHtml.
           Load order is unconstrained relative to dev-chat.js — it looks up
-          DevChat.renderMarkdown at CALL time (and falls back to escaped text
+          PlatformMarkdown.render at CALL time (and falls back to escaped text
           if it's missing), not at load time.
       */}
       <script src={assetUrl('/js/session-transcript.js')} />

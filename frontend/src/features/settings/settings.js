@@ -206,7 +206,7 @@
     // use below goes through `?.` for exactly that reason.
     _store: null,
     _footerHome: null,
-    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, locale: null, timeZone: null },
+    state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, locale: null, timeZone: null },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -215,8 +215,6 @@
     _cliTokenCursor: null,
     _cliTokensLoading: false,
     _cliTokenLoadId: 0,
-    // #907: machines currently attached to one of this account's sessions.
-    _localAgents: [],
     _connectors: [],
     _connectorLoadId: 0,
     _connectorSteps: null,
@@ -787,14 +785,6 @@
         estimateToggle.addEventListener('change', (e) => this._saveAiProgressEstimate(e.target.checked));
       }
 
-      // #1281: the session-bridge opt-in, same shape as the toggle above —
-      // POST on change so the venue appears (or stops appearing) on the next
-      // paint of any picker, without closing the modal.
-      const bridgeToggle = document.getElementById('session-bridge-enabled');
-      if (bridgeToggle) {
-        bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
-      }
-
       // The Look menu (an admin's preview of the looks), kept on the device
       // by the head's window.Skin: the change is the save, and the look
       // applies at once. Its options are every look there is ('brand',
@@ -958,16 +948,10 @@
         const j = await this._readMe(meDemoQ);
         if (!j) return;
         this.state.hasApiKey = !!j.user?.hasApiKey;
-        // Staging only, and only under ?demo=1: the key reported above is a
-        // fixture, not something anything can be billed to. Carried so the
-        // surfaces that branch on "a key is on file" can tell the two apart
-        // (DevChat._creditsExhausted is the one that has to).
-        this.state.demoKey = !!j.user?.demoKey;
         this.state.keyLast4 = j.user?.keyLast4 || null;
         this.state.usernodePubkey = j.user?.usernodePubkey || null;
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
-        this.state.sessionBridgeEnabled = !!j.user?.sessionBridgeEnabled;
         this.state.locale = j.user?.locale || null;
         this.state.timeZone = j.user?.timeZone || null;
         // Same payload the CLI-credentials gate needs, so prime its memo.
@@ -993,15 +977,15 @@
      * it. Returns the parsed body, or null when there is no usable answer.
      *
      * This runs from init(), which a React layout effect fires at document
-     * load on EVERY screen — the byok dot rides the Profile screen and
-     * DevChat's budget indicator, so the state is genuinely needed before
+     * load on EVERY screen — the byok dot rides the Profile screen, so the
+     * state is genuinely needed before
      * #settings is ever opened. It just does not need its own request:
      * every field read above is on the same `user` object App.init is
      * fetching 16ms later, and the two were queueing behind each other for
      * ~130ms on the first paint of every screen. See App.bootSession.
      *
      * `?demo=1` still reads for itself, and must: staging answers that
-     * request differently (the fixture key behind `demoKey`), so the boot's
+     * request differently (with a fixture key), so the boot's
      * plain answer is the wrong one — not a stale copy of the right one.
      */
     async _readMe(meDemoQ) {
@@ -1043,11 +1027,6 @@
       // screen's account group, which React renders only once profile data
       // lands. See App.renderAdminButton for the same move and why.
       window.App?.Visibility?.publish?.('switcher-byok-dot', !!this.state.hasApiKey);
-      // Let dev-chat swap its budget indicator for the BYOK badge
-      // without having to observe us directly.
-      if (window.DevChat && typeof DevChat.renderBudget === 'function') {
-        try { DevChat.renderBudget(); } catch {}
-      }
     },
 
     isOpen() { return Settings._open; },
@@ -1952,122 +1931,10 @@
       if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
       const status = document.getElementById('ai-progress-estimate-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
-      const bridge = document.getElementById('session-bridge-enabled');
-      if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
-      const bridgeStatus = document.getElementById('session-bridge-status');
-      if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
       const lookMenu = document.getElementById('settings-look');
       if (lookMenu) {
         const stored = window.Skin?.get?.();
         lookMenu.value = Array.from(lookMenu.options).some((o) => o.value === stored) ? stored : '';
-      }
-      this._renderLocalAgentsSection();
-    },
-
-    // #907: the machines currently attached to one of this account's dev
-    // sessions. GET /api/me/local-agents is deliberately NOT part of the CLI
-    // token surface — a lease is routing state, not a credential — so unlike
-    // the token list above it answers on staging too.
-    //
-    // The block hides itself outright when nothing is attached. An empty
-    // "Local coding agent — none" panel would be noise on every account that
-    // has never used the CLI, which is nearly all of them.
-    async _renderLocalAgentsSection() {
-      const section = document.getElementById('settings-local-agents-section');
-      const list = document.getElementById('settings-local-agents-list');
-      const status = document.getElementById('settings-local-agents-status');
-      if (!section || !list) return;
-      if (status) { status.classList.add('hidden'); status.textContent = ''; }
-
-      let agents = [];
-      try {
-        const query = this._cliTokensDemo() ? '?demo=1' : '';
-        const r = await fetch(`/api/me/local-agents${query}`, { credentials: 'same-origin' });
-        if (r.ok) {
-          const j = await r.json();
-          if (Array.isArray(j.agents)) agents = j.agents;
-        }
-      } catch {}
-
-      this._localAgents = agents;
-      // The SECTION's own `hidden` is a sibling concern and stays here: an
-      // empty "Local coding agent — none" panel would be noise on every
-      // account that has never used the CLI, which is nearly all of them.
-      section.classList.toggle('hidden', agents.length === 0);
-      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
-        ? window.UsernodeReact.settingsLocalAgents : null;
-      if (bridge) {
-        bridge.publish({
-          phase: 'ready',
-          agents: agents.map((agent) => this._localAgentView(agent)),
-        });
-      }
-      if (status && agents.some((a) => a.demo)) {
-        status.textContent = tr('settings:localAgents.demoData');
-        status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
-      }
-    },
-
-    // One attached machine, as ./local-agents-list.tsx draws it.
-    //
-    // This was `_localAgentCard`, built with DOM calls rather than innerHTML
-    // for one reason: the label is free text the user typed on their own
-    // machine and arrives verbatim. React escapes it for the same reason, so
-    // the safety property survives the renderer swap — `leaseId` and `demo`
-    // collapse into the one fact the row needs, which is whether there is a
-    // lease to release at all.
-    _localAgentView(agent) {
-      const app = agent.appName || agent.appSlug || tr('settings:localAgents.unknownApp');
-      return {
-        leaseId: agent.leaseId || null,
-        label: agent.label || null,
-        title: agent.label || tr('settings:localAgents.unnamedMachine'),
-        where: agent.sessionTitle
-          ? tr('settings:localAgents.appAndSession', { app, session: agent.sessionTitle })
-          : String(app),
-        runtime: agent.runtime || 'claude-code',
-        // #1808: the raw instant, NOT a formatted time. This was
-        // `toLocaleTimeString()`, so a machine last seen in March read
-        // "last seen 10:00" — the same words as one seen this morning, on a
-        // row whose entire job is to say whether the machine is still there.
-        // ./local-agents-list.tsx stamps it with the shared helper, which
-        // this module cannot import: four test harnesses run its real source
-        // through `vm.runInContext` as a classic script, where a top-level
-        // `import` is a syntax error. Formatting in the renderer is the
-        // arrangement that needs no second copy of the helper.
-        lastSeenAt: Number.isFinite(Date.parse(agent.lastSeenAt)) ? agent.lastSeenAt : null,
-        // Demo rows (staging ?demo=1) are fabricated per request and own no
-        // lease, so there is nothing for a button to release.
-        detachable: !agent.demo && !!agent.leaseId,
-      };
-    },
-
-    // Releasing from here must not need the machine to cooperate: the common
-    // case is a laptop that was closed or lost its network, and the whole
-    // point is to get the session's turns back without waiting out the lease.
-    async _detachLocalAgent(agent, button) {
-      const question = agent.label
-        ? tr('settings:localAgents.detach.confirmNamed', { machine: agent.label })
-        : tr('settings:localAgents.detach.confirmUnnamed');
-      if (!window.confirm(question)) return;
-      const status = document.getElementById('settings-local-agents-status');
-      button.disabled = true;
-      try {
-        const r = await fetch(`/api/me/local-agents/${encodeURIComponent(agent.leaseId)}`, {
-          method: 'DELETE',
-          credentials: 'same-origin',
-        });
-        // 404 means it already went away (it detached itself, or the sweeper
-        // expired it) — the user's intent is satisfied either way.
-        if (r.status !== 204 && r.status !== 404) throw new Error(tr('settings:localAgents.detach.failed'));
-        await this._renderLocalAgentsSection();
-      } catch (err) {
-        button.disabled = false;
-        if (status) {
-          status.textContent = err.message || tr('settings:localAgents.detach.failed');
-          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
-          status.classList.add('text-red-700', 'dark:text-red-400');
-        }
       }
     },
 
@@ -3666,43 +3533,6 @@
       }
     },
 
-    // #1281: opt in to the session-CLI bridge. A failed save reverts the
-    // checkbox to the stored value rather than leaving it showing a
-    // preference the server never took — the venue list is painted from
-    // App.user, so a lying checkbox would be a venue that never appears.
-    async _saveSessionBridge(enabled) {
-      const toggle = document.getElementById('session-bridge-enabled');
-      const status = document.getElementById('session-bridge-status');
-      const fail = (msg) => {
-        if (toggle) toggle.checked = !!this.state.sessionBridgeEnabled;
-        if (status) {
-          status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-red-700', 'dark:text-red-400');
-        }
-      };
-      try {
-        const r = await fetch('/api/me/session-bridge', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ enabled: !!enabled }),
-        });
-        if (!r.ok) {
-          const j = await r.json().catch(() => ({}));
-          return fail(j.error || tr('settings:experimental.sessionBridge.saveFailed'));
-        }
-        this.state.sessionBridgeEnabled = !!enabled;
-        // The venue pickers read App.user, not Settings.state, so the live
-        // object has to move with it or the next sheet opened in this same
-        // page load would still be missing the row that was just enabled.
-        if (typeof App !== 'undefined' && App.user) App.user.sessionBridgeEnabled = !!enabled;
-        if (status) { status.classList.add('hidden'); status.textContent = ''; }
-      } catch (err) {
-        fail(tr('settings:experimental.sessionBridge.networkError', { reason: err.message }));
-      }
-    },
-
     // Show the admin-preview section only when the server reports the
     // user as a *real* admin. App._realIsAdmin is the un-masked value
     // captured in app.js before the localStorage override gets
@@ -3727,7 +3557,7 @@
       // app.js declares `App` with `const`, which does NOT write to
       // `window` in non-module browser scripts, so `window.App` is
       // undefined. Using the bare identifier matches the rest of the
-      // codebase (dev-chat.js etc.). Fallback to `App.user.isAdmin`
+      // codebase. Fallback to `App.user.isAdmin`
       // covers a stale-cached app.js from before `_realIsAdmin` was
       // introduced; safe because a stale app.js can't have applied
       // the mask either, so the live value still reflects the server
@@ -6264,7 +6094,9 @@
     // working out whether the widget's icon verdict is stale — and "02:41 PM"
     // with no day cannot answer that. It is a plain `toLocaleString()` rather
     // than the shared helper because a diagnostics line elides nothing and
-    // this module cannot import (see _localAgentView).
+    // this module cannot import: four test harnesses run its real source
+    // through `vm.runInContext` as a classic script, where a top-level
+    // `import` is a syntax error.
     _widgetIconTime(ms) {
       try { return new Date(ms).toLocaleString(undefined, inZone()); } catch (_) { return String(ms); }
     },
@@ -7667,7 +7499,7 @@
   };
 
   // Published at module scope, not from the island's effect: app.js,
-  // app-view.js, dev-chat.js and credit-options.js call window.Settings
+  // app-view.js and credit-options.js call window.Settings
   // unguarded, and the bundle's entry runs before any of their init()s. The
   // typeof guard is for the SSG prerender pass, which evaluates this whole
   // module graph in Node (#1081 chunk D).
@@ -7697,14 +7529,6 @@
       repaint(() => Settings._renderConnectorProgress());
       repaint(() => { if (Settings._githubLink) Settings._renderGithubLink(); });
       repaint(() => { if (Settings._cliTokens.length) Settings._renderCliTokens(); });
-      repaint(() => {
-        if (Settings._localAgents.length) {
-          window.UsernodeReact?.settingsLocalAgents?.publish({
-            phase: 'ready',
-            agents: Settings._localAgents.map((agent) => Settings._localAgentView(agent)),
-          });
-        }
-      });
       repaint(() => { if (Settings._openRouterModels.length) Settings._renderOpenRouterModelOptions(); });
       repaint(() => Settings._publishUsernode());
     });

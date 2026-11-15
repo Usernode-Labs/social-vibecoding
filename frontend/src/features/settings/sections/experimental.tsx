@@ -3,30 +3,19 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { SwitchRow } from '@/components/ui/switch';
 
-import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { useMessages } from '../../../lib/i18n/react';
 
 import { InterfaceModeControl } from '../interface-mode-control';
-
-import { LocalAgentsList } from '../local-agents-list';
 
 /**
  * Experimental: AI progress estimate (default OFF). When enabled, a small
  * Haiku call skims the in-flight Claude Code progress log about once a minute
  * and shows a vague "AI guess" plus a live countdown next to the timer on the
- * running line in dev-chat. #892: the model is now given the MEASURED
+ * running line. #892: the model is now given the MEASURED
  * run-length distribution as prompt input (llm.js RUN_LENGTH_PRIORS) rather
  * than the old "bias toward 2-10 minutes" instruction that flattened its
  * output; nothing scales its answer afterwards. Server-gated per user;
  * settings.js wires the change handler to POST /api/me/ai-progress-estimate.
- *
- * #1281 Session bridge (default OFF) gates the `local` build venue. The spec
- * marks that venue settings-gated and "most users: no" — it is the only one
- * that wants software installed before it can do anything — so it is absent
- * from every venue list until this is on. Deployment support (cliAuthEnabled)
- * is still required on top; see VENUES in public/js/build-venues.js.
- *
- * #2779 Agent sessions used to have a switch here too. They are no longer
- * experimental: new work starts in one for everyone, so the switch is gone.
  *
  * #3624 Homeroom bot used to have a switch here too, while it was tried out
  * one person at a time. It works for everyone now, so the switch is gone.
@@ -64,14 +53,6 @@ import { LocalAgentsList } from '../local-agents-list';
  * through window.Skin. The option values are MENU_SKINS, in its order
  * (tests/glass-skin.test.js holds the two together); each name is read by
  * a whole literal id.
- *
- * #907 Local coding agent lives in the same pane (not the CLI section) because
- * it is a preview of the same feature the dev chat's "Run on" selector
- * exposes, and because a lease is NOT a credential: revoking a CLI token is a
- * security action, detaching a machine is a routing one. Painted by
- * settings.js _renderLocalAgentsSection() from GET /api/me/local-agents; the
- * whole block hides itself when no machine has ever attached, so it costs
- * nothing for the overwhelming majority who never run the CLI.
  */
 export function ExperimentalSection() {
   const t = useMessages('settings');
@@ -82,7 +63,7 @@ export function ExperimentalSection() {
           {t('settings:experimental.intro')}
         </SectionHeading>
         {/* Two neutral wrappers (looks v2), nothing in the standard look:
-            ui-card round the three switches, one card under a look, and
+            ui-card round the two switches, one card under a look, and
             ui-swrow round each switch with its sentence, a row of it with
             the switch at the end (app.css, SETTINGS). */}
         <div className="ui-card">
@@ -95,18 +76,6 @@ export function ExperimentalSection() {
             {t('settings:experimental.progressEstimate.description')}
           </p>
           <StatusLine id="ai-progress-estimate-status" size="xs" />
-        </div>
-        <div className="ui-swrow mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
-          <SwitchRow id="session-bridge-enabled">
-            {t('settings:experimental.sessionBridge.label')}
-          </SwitchRow>
-          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-            <RichMessage
-              id="settings:experimental.sessionBridge.description"
-              components={[<span className="font-mono" />]}
-            />
-          </p>
-          <StatusLine id="session-bridge-status" size="xs" />
         </div>
         </div>
         <div id="settings-look-section" className="hidden ui-card ui-fields mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
@@ -124,19 +93,6 @@ export function ExperimentalSection() {
             {t('settings:experimental.look.description')}
           </p>
         </div>
-      </div>
-      <div id="settings-local-agents-section" className="hidden mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
-        <SectionHeading title={t('settings:experimental.localAgents.title')}>
-          <RichMessage
-            id="settings:experimental.localAgents.intro"
-            values={{ command: 'social-vibecoding agent run' }}
-            components={[<span className="font-mono" />]}
-          />
-        </SectionHeading>
-        <div id="settings-local-agents-list" className="ui-card space-y-2">
-          <LocalAgentsList />
-        </div>
-        <StatusLine id="settings-local-agents-status" size="xs" />
       </div>
     </div>
   );

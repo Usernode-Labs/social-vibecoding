@@ -82,19 +82,6 @@ import '../improve/improve-status.js';
 import '../notifications/mount';
 import { LookPicker } from '../frame/look-picker';
 
-// THE SESSION LIFECYCLE PILL MOVED INTO THE CHIP.
-//
-// It used to render here, in the bar's left seat beside the back arrow, as
-// `function SessionStatusPill()` wrapping a #header-status-pill span. On a new
-// change that left the top of the screen reading as one grey word — "Draft" —
-// with nothing naming the app being changed, because #1431 also left the chip
-// empty on this route.
-//
-// Both halves are fixed in one place instead: the chip renders on session
-// routes now, and the pill is its subtitle. Same store, same component, same
-// #header-status-pill id and still inside #platform-header — see
-// ./header-title.tsx.
-
 // LIGHT-MODE SURFACES ARE zinc-50, NOT zinc-100. tailwind.config.js overrides
 // the ramp, and `zinc-100` there is #eaeaea — byte-identical to the light page
 // ground these controls sit on, so every one of these discs was invisible in
@@ -390,10 +377,7 @@ export function PlatformHeader() {
           It was `rounded-b-lg` + `-mb-1` (8px over 4px) until #1571, which
           asked for a corner that reads as INTENDED rather than as a
           rendering artifact — doubling it is the whole of that half of the
-          request. Keep the two in step: the overlap is half the radius, and
-          features/dev-chat/view.tsx's #dc-session-header carries the same
-          radius token because it is the second bar on that screen
-          (tests/dev-chat-view.test.js pins them to each other).
+          request. Keep the two in step: the overlap is half the radius.
 
           WHAT THIS CORNER CANNOT REACH, and what does instead: the notch is
           cut out of the BAR, so it needs the bar to have a surface. On the

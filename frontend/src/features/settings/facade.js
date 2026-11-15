@@ -9,7 +9,7 @@
  * run at boot is small and specific:
  *
  *   - refresh(): /api/auth/me (joining the boot read) into Settings.state.
- *     dev-chat, app-view and the budget pill read `hasApiKey` / `keyLast4`
+ *     app-view reads `hasApiKey` / `keyLast4`
  *     before the screen is ever opened, and the byok dot on the profile
  *     screen is published from here. This cannot wait for a chunk.
  *   - the calls app.js makes on EVERY navigation — isOpen(), close(),
@@ -58,12 +58,10 @@ settingsChunkStore.setFlush(flushSync);
 // literal in settings.js; the parity test pins that.
 const state = {
   hasApiKey: false,
-  demoKey: false,
   keyLast4: null,
   usernodePubkey: null,
   walletLinkEnabled: false,
   aiProgressEstimate: false,
-  sessionBridgeEnabled: false,
   locale: null,
   timeZone: null,
 };
@@ -182,7 +180,7 @@ function demoQuery() {
 // The /api/auth/me payload, JOINING the boot read rather than repeating it
 // (App.bootSession) — every field below is on the same `user` object App.init
 // fetches. `?demo=1` still reads for itself: staging answers that request
-// differently (the fixture key behind `demoKey`).
+// differently (with a fixture key).
 async function readMe(meDemoQ) {
   if (!meDemoQ && typeof window.App?.bootSession === 'function') {
     const boot = await window.App.bootSession();
@@ -198,11 +196,6 @@ function renderIndicator() {
   // Published rather than written by id: the dot rides the Profile screen's
   // account group, which React renders only once profile data lands.
   window.App?.Visibility?.publish?.('switcher-byok-dot', !!state.hasApiKey);
-  // Let dev-chat swap its budget indicator for the BYOK badge without having
-  // to observe us directly.
-  if (window.DevChat && typeof window.DevChat.renderBudget === 'function') {
-    try { window.DevChat.renderBudget(); } catch { /* the pill repaints on its own next tick */ }
-  }
 }
 
 // Forward a call to the module, once it is in. `open` and `route` are what
@@ -240,12 +233,10 @@ const Facade = {
       if (!j) return;
       const u = j.user || {};
       state.hasApiKey = !!u.hasApiKey;
-      state.demoKey = !!u.demoKey;
       state.keyLast4 = u.keyLast4 || null;
       state.usernodePubkey = u.usernodePubkey || null;
       state.walletLinkEnabled = !!u.walletLinkEnabled;
       state.aiProgressEstimate = !!u.aiProgressEstimate;
-      state.sessionBridgeEnabled = !!u.sessionBridgeEnabled;
       state.locale = u.locale || null;
       state.timeZone = u.timeZone || null;
       // The CLI-credentials gate's memo, primed from the same payload. Written
@@ -289,8 +280,8 @@ const Facade = {
   },
 };
 
-// Published at module scope, like the module it stands in for: app.js,
-// app-view.js and dev-chat.js call window.Settings unguarded, and the bundle's
+// Published at module scope, like the module it stands in for: app.js and
+// app-view.js call window.Settings unguarded, and the bundle's
 // entry runs before any of their init()s. The typeof guard is for the SSG
 // prerender pass, which evaluates this module graph in Node.
 if (typeof window !== 'undefined' && !window.Settings) window.Settings = Facade;

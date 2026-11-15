@@ -85,7 +85,7 @@ export const stagingStore = createStore(/** @type {StagingState} */ ({
   testBtnHidden: true,
   testBtnTitle: '',
   testPanelHidden: true,
-  /** Sanitized markdown from DevChat.renderMarkdown, or escaped plain text. */
+  /** Sanitized markdown from PlatformMarkdown.render, or escaped plain text. */
   testHtml: '',
   fsBtnHidden: true,
   /** @type {string | null} */

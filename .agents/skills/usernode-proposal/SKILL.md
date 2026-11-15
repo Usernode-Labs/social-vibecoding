@@ -1,12 +1,12 @@
 ---
 name: usernode-proposal
-description: Run the native Homeroom proposal lifecycle from a coding agent on the user's own machine, including pinning the base commit, starting the proposal, implementing and testing locally, uploading commits, submitting staging builds, polling checks, and promoting for voting. Do not use inside a Homeroom hosted dev-chat worker or for an ordinary GitHub branch or pull request.
+description: Run the native Homeroom proposal lifecycle from a coding agent on the user's own machine, including pinning the base commit, starting the proposal, implementing and testing locally, uploading commits, submitting staging builds, polling checks, and promoting for voting. Do not use inside a Homeroom hosted worker or for an ordinary GitHub branch or pull request.
 ---
 
 # Homeroom Proposal
 
 This workflow is for an agent running outside Homeroom on the user's machine.
-Inside a Homeroom hosted dev-chat worker, use the supplied `declare_visible_changes` tool,
+Inside a Homeroom hosted worker, use the supplied `declare_visible_changes` tool,
 commit on the assigned branch, and finish the turn. The platform harness owns
 push, PR creation, staging, checks, and the before/after shots there.
 

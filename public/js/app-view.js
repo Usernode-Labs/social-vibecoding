@@ -13336,14 +13336,14 @@ const AppView = {
       || (typeof key === 'string' && AppView.WORKSHOP_CHANNEL_RE.test(key));
   },
   _workshopModels() {
-    const src = (typeof DevChat !== 'undefined' && DevChat && DevChat.MODELS) || null;
+    const src = (typeof PlatformModels !== 'undefined' && PlatformModels && PlatformModels.MODELS) || null;
     if (!src || typeof src !== 'object') return { list: [], selected: null };
     const list = Object.keys(src).map((id) => ({
       id,
       label: (src[id] && src[id].label) || id,
       note: (src[id] && src[id].changeSize && src[id].changeSize.short) || '',
     }));
-    const def = (typeof DevChat !== 'undefined' && DevChat._defaultModel) || null;
+    const def = (typeof PlatformModels !== 'undefined' && PlatformModels.defaultModel) || null;
     return { list, selected: list.some((m) => m.id === def) ? def : (list[0] ? list[0].id : null) };
   },
 
@@ -15381,8 +15381,8 @@ const AppView = {
   _feedCommentsHtml(comments) {
     const list = Array.isArray(comments) ? comments : [];
     if (!list.length) return '';
-    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (s) => DevChat.renderMarkdown(s)
+    const renderMd = (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render)
+      ? (s) => PlatformMarkdown.render(s)
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     const tail = list.slice(-AppView.FEED_COMMENT_PREVIEW);
     const hidden = list.length - tail.length;
@@ -18146,8 +18146,8 @@ const AppView = {
   _issueBodyHtml(issue) {
     // #683: images opt-in so attached screenshots (the **Screenshot:**
     // embed appended by routes/feedback.js) render inline.
-    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (s) => DevChat.renderMarkdown(s, { images: true })
+    const renderMd = (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render)
+      ? (s) => PlatformMarkdown.render(s, { images: true })
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     // No box of its own: the About sheet is the box (topic/topic-head.tsx).
     // #3132: issues filed before the rename say "**Source:** usernode user
@@ -18263,7 +18263,7 @@ const AppView = {
   //
   // What #396 and #1808 decided stays here: which authors are bots, and the
   // SANITIZER — a comment body is arbitrary GitHub markdown, run through
-  // `DevChat.renderMarkdown` (images opt-in, the raw <img> form GitHub
+  // `PlatformMarkdown.render` (images opt-in, the raw <img> form GitHub
   // writes for a resized screenshot rebuilt from its safe fields), with an
   // escaped-`<pre>` fallback for a page where dev-chat.js did not load. The
   // stamp is the thread's own (`GroupChat._stamp`): the reader's zone, a
@@ -18278,11 +18278,11 @@ const AppView = {
     if (!slug) return null;
     const entry = AppView._ghComments.get(AppView._ghCommentsKey(slug, Number(number)));
     if (!entry) return null;
-    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (str) => DevChat.renderMarkdown(str, { images: true })
+    const renderMd = (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render)
+      ? (str) => PlatformMarkdown.render(str, { images: true })
       : (str) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(str)}</pre>`;
-    const renderSpec = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (str) => DevChat.renderMarkdown(str, { breaks: false })
+    const renderSpec = (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render)
+      ? (str) => PlatformMarkdown.render(str, { breaks: false })
       : (str) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(str)}</pre>`;
     // #3952: as in the request's body (_issueBodyHtml).
     const mentions = typeof renderRequestMentions === 'function' ? renderRequestMentions : (h) => h;
@@ -18525,15 +18525,15 @@ const AppView = {
   // The proposal's plain-language summary (pr_summary_md), rendered at the
   // top of the proposal topic sub-view above the proposer/linked-issues/
   // roster details. Mirrors _issueBodyHtml: light markdown through the same
-  // DevChat.renderMarkdown (marked + DOMPurify) pipeline, same styled
+  // PlatformMarkdown.render (marked + DOMPurify) pipeline, same styled
   // container. Empty string when no summary was generated (legacy proposals,
   // or an LLM-unavailable turn) so nothing renders and the rest of the view
   // is unchanged.
   _proposalSummaryHtml(pr) {
     const md = pr && typeof pr.pr_summary_md === 'string' ? pr.pr_summary_md.trim() : '';
     if (!md) return '';
-    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (s) => DevChat.renderMarkdown(s)
+    const renderMd = (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render)
+      ? (s) => PlatformMarkdown.render(s)
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     return `<div class="dev-issue-body">${renderMd(md)}</div>`;
   },
@@ -18597,15 +18597,15 @@ const AppView = {
 
   // A change's summary as the hero reads it: `summaryHtml` (the lead) and
   // `summaryMore`, the rest as a disclosure model, or null when there is no
-  // rest. `html` is DevChat.renderMarkdown's output, sanitised where built.
+  // rest. `html` is PlatformMarkdown.render's output, sanitised where built.
   _changeSummaryView(item) {
     const { lead, more } = AppView._summaryParts(item);
     const summaryHtml = AppView._proposalSummaryHtml({ pr_summary_md: lead });
     if (!more) return { summaryHtml, summaryMore: null };
     const id = Number(item && item.id);
     const hasStableId = Number.isInteger(id) && id > 0;
-    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (s) => DevChat.renderMarkdown(s)
+    const renderMd = (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render)
+      ? (s) => PlatformMarkdown.render(s)
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     return {
       summaryHtml,
@@ -18635,7 +18635,7 @@ const AppView = {
   // flag stays HERE rather than becoming component state, for the reason the
   // note above gives — a repaint must not collapse it — and because that is
   // the same seam the before/after visuals and the transcript section use.
-  // `html` is `DevChat.renderMarkdown`'s output: another renderer's markup,
+  // `html` is `PlatformMarkdown.render`'s output: another renderer's markup,
   // sanitised where it is built, rendered through a sink.
   _proposalBodyView(pr) {
     let md = pr && typeof pr.pr_body === 'string' ? pr.pr_body.trim() : '';
@@ -18656,12 +18656,12 @@ const AppView = {
     if (!md) return null;
     const id = Number(pr && pr.id);
     const hasStableId = Number.isInteger(id) && id > 0;
-    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+    const renderMd = (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render)
       // Proposal descriptions can carry the same reviewer evidence as issue
       // bodies (for example an annotated screenshot). Keep image rendering
       // opt-in at this trusted surface; renderMarkdown still permits only
       // HTTPS or same-origin absolute URLs and sanitizes the resulting HTML.
-      ? (s) => DevChat.renderMarkdown(s, { images: true })
+      ? (s) => PlatformMarkdown.render(s, { images: true })
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     return {
       // A proposal with no stable id cannot have its open state remembered,
@@ -31429,8 +31429,8 @@ const AppView = {
     // `const`, which never becomes a `window` property (#237; same pitfall
     // documented in group-chat.js).
     if (t.md) {
-      staging.setTestHtml((typeof DevChat !== 'undefined' && typeof DevChat.renderMarkdown === 'function')
-        ? DevChat.renderMarkdown(t.md)
+      staging.setTestHtml((typeof PlatformMarkdown !== 'undefined' && typeof PlatformMarkdown.render === 'function')
+        ? PlatformMarkdown.render(t.md)
         : `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(t.md)}</pre>`);
     } else {
       staging.setTestHtml(`<span class="text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:frame.testing.useButton')}</span>`);

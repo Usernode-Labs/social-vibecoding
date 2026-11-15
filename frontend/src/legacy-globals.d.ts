@@ -6,7 +6,7 @@
  * two of those modules INTO this bundle (features/notifications/
  * notifications.js) while keeping
  * their `window.X = X` publication so their remaining legacy callers — app.js,
- * app-view.js, dev-chat.js, home.js — keep working untouched.
+ * app-view.js, home.js — keep working untouched.
  *
  * Declared loosely on purpose: these are untyped JS modules, and pretending
  * otherwise here would be a type that lies rather than a type that helps. Only
@@ -16,22 +16,6 @@
 export {};
 
 declare global {
-  /**
-   * An agent session's hint as a legacy caller hands it over
-   * (features/agent-session/api.ts AgentHint). `message` and `handoff` are
-   * the screen's alone: the unsent conversation's first message, and the
-   * "Build with" tab it opens on.
-   */
-  interface LegacyAgentHint {
-    slug?: string;
-    issueNumber?: number;
-    proposalId?: number;
-    entry?: string;
-    issueTitle?: string;
-    message?: string;
-    handoff?: 'claude-code' | 'codex';
-  }
-
   /** What a kit presentation returns; `el` is the shell it built. */
   interface KitHandle {
     el?: HTMLElement | null;
@@ -337,30 +321,17 @@ declare global {
         resync(reason: string, url?: string | null): void;
         FRESH: RequestInit;
       };
-      /**
-       * features/agent-session/store.ts (#2779). `new` is the conversation
-       * New change opens, unsent until its first message creates it.
-       */
-      agentSession?: {
-        open(id: number | 'new', options?: { host?: 'screen' | 'messages' }): Promise<void> | void;
-        route(id: number | 'new', options?: { drawer?: boolean }): Promise<void> | void;
-        start(hint?: LegacyAgentHint | null): void;
-        prepareDraft(hint?: LegacyAgentHint | null): void;
-        deactivate(): void;
-        isOpen(): boolean;
-        currentId(): number | 'new' | null;
-        refreshList(): Promise<void> | void;
-      };
       [key: string]: unknown;
     };
-    /** features/dev-chat/dev-chat.js — sanitized Markdown renderer. */
-    DevChat?: {
-      renderMarkdown(text: string, opts?: { breaks?: boolean; images?: boolean }): string;
-      dismissReturnHint(): void;
-      _importOwnToolsPr(): void;
-      /** An agent session's turn is running on screen: the tab's "⏳ Thinking…". */
-      setAgentSessionThinking?(on: boolean): void;
-      [key: string]: unknown;
+    /** lib/platform-markdown.js: Markdown in, sanitized HTML out. */
+    PlatformMarkdown?: {
+      render(text: string, opts?: { breaks?: boolean; images?: boolean; cache?: boolean }): string;
+    };
+    /** lib/platform-models.js: the models a person may pick, from GET /api/models. */
+    PlatformModels?: {
+      MODELS: Record<string, { label: string; changeSize?: { short?: string; long?: string } | null }>;
+      defaultModel: string;
+      load(): Promise<void>;
     };
     /** The inline head-blocking theme module in src/head.html. */
     Theme?: {

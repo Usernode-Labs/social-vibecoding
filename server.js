@@ -46,7 +46,6 @@ const { conversationRoutes } = require('./src/routes/conversations');
 const { friendRoutes } = require('./src/routes/friends');
 const { contentReportRoutes } = require('./src/routes/content-reports');
 const { sessionRoutes } = require('./src/routes/sessions');
-const { agentSessionRoutes } = require('./src/routes/agent-sessions');
 const { proposalHandoffRoutes } = require('./src/routes/proposal-handoff');
 const { voteRoutes } = require('./src/routes/votes');
 const { demoModeRoutes } = require('./src/routes/demo-mode');
@@ -104,8 +103,6 @@ const { homePanelRoutes } = require('./src/routes/home-panels');
 const { onboardingRoutes } = require('./src/routes/onboarding');
 const { adultAttestationRoutes } = require('./src/routes/adult-attestation');
 const { homeLayoutRoutes } = require('./src/routes/home-layout');
-const { chatDraftsRoutes } = require('./src/routes/chat-drafts');
-const { agentSessionDraftsRoutes } = require('./src/routes/agent-session-drafts');
 const { devFlowRoutes } = require('./src/routes/dev-flow');
 const { pmOrderRoutes } = require('./src/routes/pm-order');
 const { debugRoutes } = require('./src/routes/debug');
@@ -768,8 +765,6 @@ app.use(require('./src/routes/dictation').dictationRoutes(config));
 app.use(friendRoutes(config));
 app.use(contentReportRoutes(config));
 app.use(proposalHandoffRoutes(config));
-// #2779: agent sessions, the per-user conversation that starts changes.
-app.use(agentSessionRoutes(config));
 // #4313: the ?demo=1 Needs-you cards' votes, answered before the session
 // routers' guard refuses their negative ids (staging only).
 app.use(demoNeedsVoteRoutes());
@@ -901,11 +896,6 @@ app.use(homeLayoutRoutes(config));
 // separate public avatarRoutes mounted above.
 app.use(profileRoutes(config));
 app.use(stakingRoutes(config));
-// #940: saved dev-chat drafts, now server-backed so they follow a user
-// across devices. Owner-scoped per session, like the /api/sessions/* family
-// in routes/sessions.js.
-app.use(chatDraftsRoutes(config));
-app.use(agentSessionDraftsRoutes(config));
 // #1049: the alternate development flows (Claude Code / Codex web UI) as
 // ordinary browser routes rather than MCP-only tools. App-scoped with the
 // same 'collab' bar as the other dev surfaces, so behind authMiddleware.

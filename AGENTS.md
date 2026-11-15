@@ -127,7 +127,7 @@ Use the matching skill whenever its description fits:
 - `usernode-api` — inspect or change Homeroom app/platform state.
 - `usernode-proposal` — run a locally authored native proposal through
   staging, checks, and optional promotion from an agent on the user's own
-  machine. This skill does not apply inside a Homeroom hosted dev-chat worker:
+  machine. This skill does not apply inside a Homeroom hosted worker:
   that worker commits on its assigned branch, declares its visible changes
   with its supplied tool, and leaves push, PR, and staging to the harness.
 - `react-shell-migration` — convert a legacy-owned shell region to React.
@@ -194,7 +194,7 @@ transaction boundaries, preview compatibility and PostgreSQL checks.
 ## Declare visible changes for before/after shots
 
 Every proposal that changes something people can see gets before/after shots.
-A hosted dev-chat worker declares its changes with its supplied tool. An
+A hosted worker declares its changes with its supplied tool. An
 external agent sends the same version-1 object as `visibleChanges` on
 `submit_work`. Homeroom's shots agent then follows each declared change on
 the exact before and after builds and saves what it sees: a still for each

@@ -52,8 +52,8 @@ function fallbackMarkdown(value: string): string {
  */
 export function MessageMarkdown({ content, channels, appSlug, requestColors = false }: { content: string; channels?: ReadonlySet<string>; appSlug?: string | null; requestColors?: boolean }) {
   const html = useMemo(() => {
-    const rendered = typeof window !== 'undefined' && window.DevChat?.renderMarkdown
-      ? window.DevChat.renderMarkdown(content, { breaks: true })
+    const rendered = typeof window !== 'undefined' && window.PlatformMarkdown?.render
+      ? window.PlatformMarkdown.render(content, { breaks: true })
       : fallbackMarkdown(content);
     if (typeof document === 'undefined') return rendered;
     const root = document.createElement('div');

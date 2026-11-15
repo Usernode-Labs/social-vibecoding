@@ -46,8 +46,8 @@
   // helper with module-local state only, so calling it cross-module is
   // safe. Fallback: escaped text in a <pre>-ish wrapper, never raw HTML.
   function md(text) {
-    if (typeof DevChat !== 'undefined' && DevChat && typeof DevChat.renderMarkdown === 'function') {
-      try { return DevChat.renderMarkdown(text); } catch { /* fall through */ }
+    if (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown && typeof PlatformMarkdown.render === 'function') {
+      try { return PlatformMarkdown.render(text); } catch { /* fall through */ }
     }
     return '<p class="dc-p">' + esc(text).replace(/\n/g, '<br>') + '</p>';
   }

@@ -1203,7 +1203,7 @@ const GroupChat = {
   // transcript.tsx renders it and is the only writer below #gc-messages.
   //
   // `bodyHtml` stays markup: renderMessageBody runs the content through
-  // DevChat.renderMarkdown and a sanitizer, and a second copy of that pipeline
+  // PlatformMarkdown.render and a sanitizer, and a second copy of that pipeline
   // in React is exactly how the two drift apart.
   // The same "is this mine" rule `_messageView` stamps on each row.
   _isOwnMessage(msg) {
@@ -5037,11 +5037,11 @@ const GroupChat = {
   // level, which does NOT install it as a property on `window` (only `var` /
   // function declarations do). It IS visible as a global identifier across
   // <script> tags because both files share the same script scope, so a bare
-  // `DevChat.renderMarkdown(...)` works; the `typeof` keeps things safe if
+  // `PlatformMarkdown.render(...)` works; the `typeof` keeps things safe if
   // dev-chat.js ever fails to load.
   _specShareView(meta, msg) {
-    const renderMd = typeof DevChat !== 'undefined' && DevChat.renderMarkdown
-      ? (str) => DevChat.renderMarkdown(str)
+    const renderMd = typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render
+      ? (str) => PlatformMarkdown.render(str)
       : null;
     // #1808: composed from `_stamp` rather than spelling its own options
     // table, which had no `year` — a spec built last June read "Jun 16,
@@ -5593,7 +5593,7 @@ function renderRefChips(html) {
 }
 
 // #328: the authoritative renderer for a USER message body. Renders a safe
-// markdown subset via the shared DevChat.renderMarkdown (marked + DOMPurify,
+// markdown subset via the shared PlatformMarkdown.render (marked + DOMPurify,
 // strict allowlist, https-only links, raw HTML escaped) and then layers the
 // existing @mention + PR/issue-ref decoration on top. All three message
 // surfaces (main chat, thread replies, inline edit) funnel through here so
@@ -5613,13 +5613,13 @@ function renderRefChips(html) {
 // DevChat aren't available (CDN blocked, native shell, the test sandbox).
 function renderMessageBody(raw) {
   const text = raw == null ? '' : String(raw);
-  const renderMd = typeof DevChat !== 'undefined' && DevChat.renderMarkdown;
+  const renderMd = typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render;
   if (!renderMd || typeof document === 'undefined' || !document.createElement) {
     return renderWithMentions(text);
   }
   let html;
   try {
-    html = DevChat.renderMarkdown(text, { breaks: true });
+    html = PlatformMarkdown.render(text, { breaks: true });
   } catch {
     return renderWithMentions(text);
   }
@@ -5775,7 +5775,7 @@ function tokenizeMentionsAndRefs(text, me, channels, opts) {
 // here, and stays text. The guard comes out of every text node, display
 // only, so what reads (and copies) is what was typed, a code block's
 // `@scope/pkg` included. Takes and returns sanitized HTML (the output of
-// DevChat.renderMarkdown); app-view.js calls it for a request's body and its
+// PlatformMarkdown.render); app-view.js calls it for a request's body and its
 // GitHub comments.
 const GC_MENTION_GUARD = '@​';
 

@@ -5,10 +5,10 @@ import { SwitchRow } from '@/components/ui/switch';
 import { useMessages } from '../../../lib/i18n/react';
 
 /**
- * #138: Dev-chat sound & alerts (default ON). Client-only preference
+ * #138: Sound & alerts (default ON). Client-only preference
  * (localStorage key devchat_alerts_enabled); wired in settings.js. Plays a
- * chime when an AI dev-chat turn finishes while you're in the app, or a system
- * notification when it's in the background.
+ * chime when a completion notification arrives while you're in the app, or a
+ * system notification when it's in the background (public/js/dev-alerts.js).
  *
  * Below it, the mobile push categories. Those rows are NOT SwitchRows: their
  * shape is the other way round (caption block first, switch right-aligned and

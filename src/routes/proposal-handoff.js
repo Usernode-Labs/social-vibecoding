@@ -63,9 +63,7 @@ const MAX_TESTS = 50;
 const COMMIT_UPLOAD_JSON_LIMIT = '12mb';
 const RFC3339_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
-// The staging/visuals tail moved to services/handoff-pipeline.js in #907, so
-// a local coding agent attached to an ordinary native session finishes
-// through exactly the same code path this route has always used.
+// The staging/visuals tail lives in services/handoff-pipeline.js.
 // Re-exported below for existing importers and tests. A submission's
 // adoption is ordered per session by the proposal lock, on any process: an
 // older request can never persist its SHA after a newer one and regress the
@@ -376,11 +374,10 @@ function requireCliMiddleware(req, res, next) {
 }
 
 // A local commit's upload is written on a conductor, as `proposal.commit`
-// (services/proposal-commit-operation.js), from here and from a local
-// agent's turn (routes/cli-agent.js). The route asks with what it checked,
-// which the conductor reads again; the message and the files are the
-// operation's payload. Waited for inside the CLI's own deadline for an
-// upload (two minutes: src/cli/main.js, src/cli/agent-command.js).
+// (services/proposal-commit-operation.js). The route asks with what it
+// checked, which the conductor reads again; the message and the files are
+// the operation's payload. Waited for inside the CLI's own deadline for an
+// upload (two minutes: src/cli/main.js).
 const COMMIT_WAIT_MS = 90 * 1000;
 
 function commitInput(surface, session, expectedParent, upload, extra = {}) {
@@ -624,9 +621,9 @@ function matchesStartRequest(session, app, input) {
 }
 
 // The exact commit whose staging/check verdict currently describes this
-// shared local/web proposal. handoff_head_sha remains the audit record of the
-// last commit submitted through MCP; a later web turn naturally advances
-// checks_commit_sha through the ordinary Dev workflow.
+// proposal. handoff_head_sha remains the audit record of the last commit
+// submitted through MCP; a later hosted turn (Homeroom bot's) or a sync with
+// main advances checks_commit_sha through the ordinary Dev workflow.
 function currentCheckedHead(session) {
   return session?.checks_commit_sha || session?.handoff_head_sha || null;
 }
@@ -639,9 +636,9 @@ function hasUnsubmittedUpload(session) {
 }
 
 // An upload advances the managed Git branch before proposal_submit_build
-// starts checks. Once that uploaded SHA has been submitted, ordinary web Dev
-// turns own the branch/checks head again. This distinction prevents a stale
-// local audit SHA from hiding a newer web-authored branch tip.
+// starts checks. Once that uploaded SHA has been submitted, the ordinary Dev
+// workflow owns the branch/checks head again. This distinction prevents a
+// stale local audit SHA from hiding a newer branch tip written on Homeroom.
 function currentProposalBranchHead(session) {
   if (hasUnsubmittedUpload(session)) {
     return session.handoff_uploaded_sha;
@@ -1159,7 +1156,7 @@ function proposalHandoffRoutes(config) {
         }
         // Creation commits the session/spec/history atomically below. A retry
         // therefore reads only; importantly it cannot append the original
-        // spec again after a later local/web revision changed the live row.
+        // spec again after a later revision changed the live row.
         return res.json(publicSessionStatus(existing));
       }
 
@@ -1569,7 +1566,7 @@ function proposalHandoffRoutes(config) {
         if (sessionBusy || localPipelineBusy) {
           return res.status(409).json({
             error: 'session_busy',
-            message: 'The shared proposal is currently changing in another local or web turn. Retry when it finishes.',
+            message: 'The shared proposal is currently changing in another turn. Retry when it finishes.',
           });
         }
         // The upload endpoint is the only credential-safe path from a local
@@ -1697,9 +1694,9 @@ function proposalHandoffRoutes(config) {
           }
         }
         // Claim the shared session synchronously after the final busy check
-        // and before the first GitHub await. Web dispatch/sync gates consult
-        // the same registry, closing the check-then-act race between the two
-        // surfaces. Early returns release here; an accepted build transfers
+        // and before the first GitHub await. Hosted turn dispatch and the sync
+        // gate consult the same registry, closing the check-then-act race
+        // between the surfaces. Early returns release here; an accepted build transfers
         // release ownership to the detached staging/check pipeline.
         const releasePipeline = beginHandoffPipeline(session.id);
         let pipelineDetached = false;
@@ -1846,9 +1843,7 @@ function proposalHandoffRoutes(config) {
 
   // Server-side counterpart to proposal_promote's preflight. This router is
   // mounted before voteRoutes, so a handoff promoted from either MCP or its
-  // optionally-open web page goes up for review on exactly the commit its
-  // checks describe. Local and web turns retain the same source/session and
-  // can alternate.
+  // change page goes up for review on exactly the commit its checks describe.
   //
   // #3173 / #3043: submitting does NOT wait for staging or a verdict. The
   // merge gate requires passing checks on the exact reviewed commit
@@ -1909,7 +1904,7 @@ function proposalHandoffRoutes(config) {
       }
       const checkedHead = currentCheckedHead(session);
       if (String(remoteHead).toLowerCase() !== checkedHead) {
-        const detail = 'The proposal branch changed after checks. Rebuild the new head locally or from the web Dev session before promoting.';
+        const detail = 'The proposal branch changed after checks. Fetch the new head, rebuild it locally and submit it before promoting.';
         return res.status(409).json({ error: 'branch_head_changed', message: detail });
       }
       // The common promotion route will create/read the PR after this

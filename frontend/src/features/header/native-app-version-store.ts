@@ -5,9 +5,7 @@
  *
  * `native-app-version.js` is imported by ./header-menu.tsx, so it is an
  * ordinary module in this bundle and imports the store directly — the same
- * arrangement ../improve/improve-controller.js has, and unlike dev-chat.js,
- * which a dozen `vm`-based tests load as a classic SCRIPT and which therefore
- * has to reach React by name.
+ * arrangement ../improve/improve-controller.js has.
  *
  * ── The empty string IS the hidden row ────────────────────────────────
  *
