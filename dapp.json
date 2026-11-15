@@ -591,13 +591,6 @@
       "description": "Emergency availability switch for the OpenRouter coding-agent backend. When true, OpenRouter is preferred for users with a usable key while Claude remains available and is the fallback for users without one. Set false to hide/refuse OpenRouter without affecting Claude."
     },
     {
-      "key": "OPENROUTER_SESSION_MAYOR_ENABLED",
-      "group": "AI & coding agents",
-      "required": false,
-      "default": "true",
-      "description": "When true, an OpenRouter session's chat runs through the Mayor on the session's own OpenRouter model and key: a short plan before the coding agent starts, a spec before a build, and a plain-English wrap-up after, as on a Claude session. Set false to send each message straight to the coding agent instead. Never uses an Anthropic key."
-    },
-    {
       "key": "OPENROUTER_MANAGEMENT_API_KEY",
       "group": "AI & coding agents",
       "required": false,
@@ -643,7 +636,7 @@
       "group": "AI & coding agents",
       "required": false,
       "default": "deepseek/deepseek-v4.1-flash-1017,z-ai/glm-5.3-flash",
-      "description": "Comma-separated exact OpenRouter model ids that receive a Recommended tag, begin starred in model pickers, and are the OpenRouter models the composer's flat picker starts with, in this order. Each user's explicit star or unstar wins. Set none to remove all platform recommendations."
+      "description": "Comma-separated exact OpenRouter model ids the platform's OpenRouter model catalog marks Recommended, in this order. Set none to remove all platform recommendations."
     },
     {
       "key": "GITHUB_LINK_CLIENT_ID",
@@ -3498,10 +3491,10 @@
       "expectText": "Don’t have a password? Create one"
     },
     {
-      "name": "OpenRouter settings name GLM 5.3 Flash as the preferred coding model (#1592)",
+      "name": "OpenRouter settings say the key is what voice input uses",
       "path": "/#settings/openrouter",
-      "expectSelector": "[data-settings-section=\"openrouter\"]:not(.hidden) #settings-openrouter-models-wrap",
-      "expectText": "GLM 5.3 Flash"
+      "expectSelector": "[data-settings-section=\"openrouter\"]:not(.hidden) #settings-openrouter-personal-controls",
+      "expectText": "Voice input uses this key"
     },
     {
       "name": "Settings deep-links App AI permissions with the seeded demo grants",

@@ -328,7 +328,8 @@ test('the status sentence says who is on it once, and when the claim lapses', ()
   const underway = av._requestStatusView(issue({ myPrSessionId: 77, addressed_by: { sessionId: 77, state: 'underway', title: 'Topics' } }));
   assert.equal(underway.stage, 'built');
   assert.equal(underway.action.label, 'Continue your work');
-  assert.deepEqual(JSON.parse(JSON.stringify(underway.action.act)), { fn: 'openChangeWorkspace', args: [77] });
+  assert.deepEqual(JSON.parse(JSON.stringify(underway.action.act)), { fn: 'openTopic', args: ['proposal', 77] },
+    'the change\'s page');
 });
 
 // #4663: Homeroom bot built this request, its change waits for approval, and
@@ -602,7 +603,7 @@ test('⋯ holds the work rows first, then the author\'s edits and the tags', () 
   const row = issue({ myPrSessionId: 77 });
   av._ghIssues = [row];
   const labels = JSON.parse(JSON.stringify(av._requestMenuItems(row).map((item) => item.label)));
-  assert.deepEqual(labels.slice(0, 4), ['Start more work', 'Claim it', 'Edit title', 'Edit request']);
+  assert.deepEqual(labels.slice(0, 3), ['Claim it', 'Edit title', 'Edit request']);
   assert.ok(labels.includes('Set priority…') && labels.includes('Set category…') && labels.includes('Assign someone…'));
   assert.ok(labels.indexOf('Assign someone…') < labels.indexOf('Open on GitHub') || !labels.includes('Open on GitHub'));
 });

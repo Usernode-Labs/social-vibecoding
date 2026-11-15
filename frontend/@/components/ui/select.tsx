@@ -10,11 +10,13 @@ import { cn } from '@/lib/utils';
  *
  * Stock shadcn's Select renders a `<button role="combobox">` plus a portalled
  * listbox — no `<select>` element and no `<option>`s anywhere in the document.
- * The select on this screen cannot survive that:
+ * The selects on this screen cannot survive that:
  *
  *   #settings-locale              settings.js reads `.value` and writes
  *                                 `.value` on it, and dapp.json anchors a
  *                                 rendered check on the element itself
+ *   #settings-timezone            settings.js BUILDS its <option> list from
+ *                                 the browser's own list of zones
  *
  * A portalled combobox would move the control out of its section, break every
  * one of those id-bound reads, and change the rendered DOM on a screen whose

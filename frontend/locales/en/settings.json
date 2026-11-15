@@ -808,7 +808,7 @@
     "description": "Heading of the section in Settings where a person saves their own Anthropic API key. Anthropic is a company name."
   },
   "apiKey.intro": {
-    "text": "Bring your own Anthropic API key to keep working past the weekly limit. Your platform weekly allowance is used first; once it runs out, your key takes over automatically, even in the middle of a running turn, and usage bills directly to your Anthropic account.",
+    "text": "Bring your own Anthropic API key to keep using Homeroom's AI features past the weekly limit. Your weekly allowance is used first; once it runs out, your key takes over automatically, and usage bills directly to your Anthropic account.",
     "description": "Explanation under the \"Anthropic API key\" heading in Settings. A \"turn\" is one round of the AI agent working on a request."
   },
   "apiKey.savedKeyLabel": {
@@ -3316,7 +3316,7 @@
     "description": "Error under the Anthropic API key field in Settings when the key could not be saved and the server gave no reason."
   },
   "apiKey.status.saved": {
-    "text": "Saved. Your chats now bill to your Anthropic account.",
+    "text": "Saved. Once your weekly allowance runs out, AI features bill to your Anthropic account.",
     "description": "Confirmation under the Anthropic API key field in Settings: from now on AI usage is charged to the person's own Anthropic account. \"Bill\" is a verb."
   },
   "apiKey.status.networkError": {
@@ -3592,7 +3592,7 @@
     "description": "Title of the confirmation dialog before removing the saved Anthropic API key in Settings."
   },
   "apiKey.remove.confirmMessage": {
-    "text": "Future chats will fall back to your weekly Homeroom credits.",
+    "text": "Without your key, AI features use your weekly Homeroom allowance only.",
     "description": "Body of the confirmation dialog before removing the saved Anthropic API key in Settings: AI usage will be paid from the platform's allowance again."
   },
   "apiKey.remove.confirmButton": {

@@ -160,7 +160,6 @@ test('default-open managed provisioning stores the key internally and returns on
   let createArgs;
   let reservation;
   let stored;
-  let defaultModel;
   let notificationsSent = 0;
   let identityQueries = 0;
   const client = {
@@ -176,7 +175,6 @@ test('default-open managed provisioning stores the key internally and returns on
         return { rows: [{ id: 17 }] };
       }
       if (/SELECT id FROM credentials\.managed_openrouter_keys/.test(text)) return { rows: [{ id: 17 }] };
-      if (/INSERT INTO user_agent_preferences/.test(text)) defaultModel = params[2];
       return { rows: [] };
     },
   };
@@ -234,10 +232,6 @@ test('default-open managed provisioning stores the key internally and returns on
   assert.equal(stored.apiKey, 'sk-or-v1-issued-once');
   assert.equal(stored.metadata.source, 'usernode_managed');
   assert.equal(stored.metadata.managedKeyId, 17);
-  // The preference stores no model: the account follows the platform
-  // default (services/default-model.js) until its person picks one. The
-  // first session still runs on the model chosen now.
-  assert.equal(defaultModel, null, 'provisioning stores "follow the platform default", not the default of the day');
   assert.equal(result.defaultModel, 'z-ai/glm-5.3-flash');
   assert.equal(result.apiKey, undefined, 'the provisioning result must not expose the credential');
   assert.equal(result.last4, undefined, 'the claim response does not need credential-shaped data');
@@ -353,9 +347,10 @@ test('ensureIncludedKey is idempotent and never throws', async (t) => {
   );
 });
 
-test('every account-creation path creates the included key, and the read is the safety net', () => {
+test('every account-creation path creates the included key, and the reads are the safety net', () => {
   const authSource = fs.readFileSync(path.join(root, 'src/routes/auth.js'), 'utf8');
   const credentialsSource = fs.readFileSync(path.join(root, 'src/routes/credentials.js'), 'utf8');
+  const dictationSource = fs.readFileSync(path.join(root, 'src/routes/dictation.js'), 'utf8');
   const adminUsersSource = fs.readFileSync(
     path.join(root, 'src/routes/topochain/admin/users.js'), 'utf8',
   );
@@ -364,8 +359,10 @@ test('every account-creation path creates the included key, and the read is the 
       `the ${reason} path creates the included key`);
   }
   assert.match(adminUsersSource, /ensureIncludedKey\([\s\S]{0,200}?reason: 'admin_created'/);
-  assert.match(credentialsSource, /ensureIncludedKey\([\s\S]{0,200}?reason: 'coding_agent_read'/,
-    'and the new-change screen\'s preference read retries for anyone without one');
+  assert.match(credentialsSource, /ensureIncludedKey\([\s\S]{0,200}?reason: 'settings_read'/,
+    'Settings\' key status read retries for anyone without one');
+  assert.match(dictationSource, /ensureIncludedKey\)\([\s\S]{0,200}?reason: 'dictation'/,
+    'and so does voice input\'s key read');
   // The gates this issue removed must not come back by another name.
   assert.doesNotMatch(credentialsSource, /betaAllowed/);
   assert.doesNotMatch(authSource, /openrouterBetaUserIds/);
@@ -702,7 +699,7 @@ test('the settings screen states the included key rather than offering to create
   // it carries — and there is no button beside it, because the key was
   // created with the account.
   assert.match(weekly.el('settings-openrouter-included-status').textContent,
-    /^Active \(sk-or-…ab12\)\. It carries the platform's \$175\.00 weekly allowance, and you may choose any available model\.$/);
+    /^Active \(sk-or-…ab12\)\. It carries the platform's \$175\.00 weekly allowance\.$/);
   assert.equal(weekly.el('settings-openrouter-included').classList.contains('hidden'), false);
 
   // A key issued before the weekly policy and not yet re-limited reads truthfully.

@@ -133,12 +133,6 @@ test('the side panel measures itself in figures that hold in Arabic', () => {
   assert.match(panel, /next = now \+ step \* dirSign\(\)/, 'and so do the keys');
 });
 
-test('the agent session\'s spec pane resizes the way its divider moves', () => {
-  const src = read('frontend/src/features/agent-session/index.tsx');
-  assert.match(src, /commit\(startWidth - \(move\.clientX - startX\) \* dirSign\(\)\)/);
-  assert.match(src, /\(event\.key === 'ArrowLeft' \? SPEC_WIDTH_STEP : -SPEC_WIDTH_STEP\) \* dirSign\(\)/);
-});
-
 test('a sideways scroller reads scrollLeft as a distance: it is negative in Arabic', () => {
   for (const file of ['frontend/src/lib/use-scroll-fade.ts', 'frontend/src/features/ai/lists.tsx']) {
     assert.match(read(file), /const at = Math\.abs\(el\.scrollLeft\);/, file);
@@ -195,7 +189,6 @@ test('an arrow key moves to what is on that side of the screen, in every languag
   } finally {
     globalThis.document = before;
   }
-  assert.match(read('frontend/src/features/agent-session/composer-parts.tsx'), /const step = inlineStep\(event\.key\);/);
   assert.match(read('frontend/src/features/dialogs/report.tsx'), /const step = arrowStep\(event\.key\);/);
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const step = arrowStep\(e && e\.key\);/);
   assert.match(read('frontend/src/features/admin/topochain/illustration-gallery.tsx'), /const step = arrowStep\(key\);/);

@@ -390,6 +390,24 @@ const RETIRED_IDS = {
   'waitlist-queued': 'The "already on the list" note a signed-in visitor saw in place of the join form. A signed-in #waitlist goes to the waiting room now, which shows their spot.',
   // ── #6276: Needs you is the review flow, with no switch ────────────
   'review-flow-enabled': 'The New Needs you switch in Settings, Experimental. The review flow is what every Needs you draws now, so there is nothing to turn on and the row is gone (features/settings/sections/experimental.tsx).',
+  // ── Agent chats and dev chats are retired, with the session Mayor ───
+  // The conversations with the Mayor (#agent/<id>) and a change's dev chat
+  // (#app/<slug>/dev/sessions/<id>) are gone; Homeroom bot is where a
+  // person asks for a change, and the change's page is where it is followed.
+  // What only those chats used left the shell with them.
+  'devchat-alerts-toggle': 'Settings > Notifications\' sound and system arrival alerts for a dev chat reply. Retired with the dev chat (public/js/dev-alerts.js is gone); the phone push test (#devchat-alerts-test) and the mobile push categories stay (features/settings/sections/alerts.tsx).',
+  'ai-progress-estimate': 'The "AI progress estimate" switch in Settings, Experimental: an estimated progress bar on a dev chat turn. Retired with the dev chat; Experimental keeps Advanced mode and the Look menu (features/settings/sections/experimental.tsx).',
+  'ai-progress-estimate-status': 'The save line under the AI progress estimate switch, gone with it.',
+  'settings-local-agents-section': 'Settings, Experimental\'s "Local coding agent" block (#907): the machines leased to run a dev chat turn on the account\'s own computer. Retired with the CLI\'s local agent (agent run --session); Settings > CLI still sets up a coding agent for the native proposal flow.',
+  'settings-local-agents-list': 'The leased machines in the Local coding agent block, gone with it.',
+  'settings-local-agents-status': 'The Local coding agent block\'s status line, gone with it.',
+  'staging-fullscreen-btn': 'The staging overlay\'s Full screen / Exit full screen toggle for a preview docked beside a dev chat (#771). The preview only opens full screen now, so there is nothing to toggle (features/staging/staging-overlay.tsx).',
+  'staging-dock-close': 'The close button of a preview docked beside a dev chat or an agent chat. The docked mode left with the chats; the full-screen overlay keeps its own close.',
+  'settings-openrouter-models-wrap': 'Settings > OpenRouter\'s model block: the model the coding agent ran a dev chat or agent chat turn on. Retired with those turns; the section keeps the account\'s OpenRouter key (features/settings/sections/openrouter.tsx).',
+  'settings-openrouter-model': 'The OpenRouter model picker in that block, gone with it.',
+  'settings-openrouter-reasoning': 'The reasoning-effort select in that block, gone with it.',
+  'settings-openrouter-set-default': 'The "make OpenRouter my coding agent" button, which set the backend a new dev chat started on. Gone with the dev chat.',
+  'settings-claude-set-default': 'The "use Claude instead" button beside it, gone with it.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
@@ -673,12 +691,11 @@ const ADDED_IDS = {
   'app-access-open': '#4666: the Access section\'s one button, which opens the Who can see & change it sheet (features/dialogs/who-decides.tsx). It replaced the three access choices and their Propose button (#app-access-propose) and status line (#app-access-status): who can see it and how changes are approved are one proposal now.',
   'members-load-error': '#2304: dialog-level feedback when Members & approvals is opened before its app row has loaded, replacing the misleading visibility-specific status target.',
   'staging-retry-btn': '#1993: retry preview sign-in after token acquisition fails; initially hidden.',
-  // ── OpenRouter catalog controls ──────────────────────────────────
-  'settings-openrouter-model-search': 'Filters the OpenRouter catalog by model name, id or provider without another network request.',
-  'settings-openrouter-favorites-only': 'Limits the settings picker to the viewer\'s saved OpenRouter model favorites.',
-  'settings-openrouter-refresh-models': 'Asks OpenRouter for a fresh catalog (at most once a minute) and reports when it was refreshed.',
-  'settings-openrouter-star-model': 'Adds or removes the selected OpenRouter model from the viewer\'s persistent favorites.',
-  'settings-openrouter-catalog-meta': 'Shows the visible and total model counts plus catalog freshness beside the picker.',
+  // The OpenRouter catalog controls (#settings-openrouter-model-search,
+  // -favorites-only, -refresh-models, -star-model, -catalog-meta) left this
+  // map with Settings > OpenRouter's model block, retired with the dev chat
+  // and agent chat turns it chose a model for (RETIRED_IDS above). They were
+  // only ever ADDED ids, so they simply leave.
   // ── #1538: check my status ────────────────────────────────────────
   // The waitlist confirm step doubles as "read where I stand", so the panel
   // that used to print one fixed sentence now prints what the row actually
@@ -885,11 +902,9 @@ const ADDED_IDS = {
   // #5973: Settings -> User guide, the tour's places to read.
   'settings-guide-section': 'Settings -> User guide, the pane root inside its [data-settings-section="guide"] wrapper.',
   'settings-guide-voting': 'The card saying how a change gets voted in; dapp.json selects on it.',
-  // #1281 — the session-CLI bridge opt-in. The spec marks that venue
-  // settings-gated and "most users: no", so the gate needs somewhere to
-  // live: Settings → Experimental, beside the other per-user preview flag.
-  'session-bridge-enabled': 'Opt-in switch for the session-CLI bridge venue (#1281).',
-  'session-bridge-status': 'Save/error line for the session-bridge switch (#1281).',
+  // #session-bridge-enabled and #session-bridge-status (#1281, the
+  // session-CLI bridge opt-in in Settings, Experimental) left this map with
+  // the CLI's local agent they gated. They were only ever ADDED ids.
   // Username changes — Settings -> Username, the change-your-@handle form. It sits in
   // Settings rather than the profile edit sheet because the endpoint requires
   // the current password, which is the same reason Change password is here.
@@ -1124,9 +1139,9 @@ const ADDED_IDS = {
   // #global-chat-screen and #global-chat-composer left this map when
   // Global Chat (#2377, #2543) was removed with its screen. They were only
   // ever ADDED ids, so they simply leave.
-  // ── #2779: agent sessions (on for everyone; the Experimental pane's
-  //    switch and its status line are retired and left this map) ──
-  'agent-session-screen': '#2779: the React-owned agent session screen, one conversation with the Mayor that works on any app. Ships hidden and empty for hydration parity; the hash router reveals it at #agent/<id>, and App.REACT_SCREEN_IDS keeps its visibility single-owned. Everything inside it renders only once a conversation is open, so the root is its one static id.',
+  // #agent-session-screen (#2779, the agent session screen at #agent/<id>)
+  // left this map when agent chats were retired: #agent/<id> rewrites to
+  // Homeroom bot now (App._oldChatAddress). It was only ever an ADDED id.
   // ── #2707: the feedback destination is chosen, never assumed ────
   'feedback-target-hint': 'The line under the Send Feedback destination row. With both destinations selectable nothing is preselected any more, so Submit is disabled until one is tapped — and a control that refuses without saying why is the dead button #1603 fixed one field down. Ships empty and hidden (the controller owns the text, and the one-destination case never shows it), and carries the radiogroup\'s aria-describedby while it is up.',
   // ── #2718 REVIEW: the Improve panel retired, and ten ids with it ─────

@@ -400,7 +400,7 @@ test('the App tab hands it every answer the server gave, never the worker\'s cop
   assert.doesNotThrow(() => AppView._noteAppRecordRead({ slug: 'x' }, null, Date.now()));
   // Every read path stands its record up through it: the open, the recheck and the recovery poll.
   const src = read('public/js/app-view.js');
-  assert.ok((src.match(/AppView\._noteAppRecordRead\(/g) || []).length >= 4);
+  assert.ok((src.match(/AppView\._noteAppRecordRead\(/g) || []).length >= 3);
   assert.match(src, /if \(!cached\) AppView\._syncBuildActivity\(record\);/);
 });
 

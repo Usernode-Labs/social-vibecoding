@@ -1,8 +1,8 @@
 // Coherence guards for the OpenRouter provider's name where a person reads it.
-// An OpenRouter session is named "OpenRouter", never "Codex", in Settings, and
-// a turn that a restart caught and recovered says which agent ran it rather
-// than a hard-coded "Claude Code" (services/turn-recovery.js, moved out of
-// server.js unchanged).
+// Settings' key card is named "OpenRouter", never "Codex", and a turn that a
+// restart caught and recovered says which agent ran it rather than a
+// hard-coded "Claude Code" (services/turn-recovery.js, moved out of server.js
+// unchanged).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -32,19 +32,17 @@ test('settings and restart recovery use OpenRouter as the user-facing provider n
   const settingsCopy = between(
     settings,
     '_normalizeOpenRouterCopy() {',
-    '_formatOpenRouterPrice(value)',
+    '_setOrStatus(text, kind)',
   );
   assert.match(settingsCopy, /heading\.textContent = 'OpenRouter'/);
-  // The description and the model label are catalog messages now; the copy
-  // people read is their English.
+  // The description is a catalog message; the copy people read is its English.
   assert.match(settingsCopy, /intro\.textContent = tr\('settings:openrouter\.intro'\);/);
-  assert.match(settingsCopy, /modelLabel\.textContent = tr\('settings:openrouter\.model\.label'\);/);
   const { message } = require('./lib/platform-i18n');
   const intro = message('settings:openrouter.intro');
-  assert.match(intro, /all chat and coding in an OpenRouter session/);
-  assert.match(intro, /do not use your platform Claude allowance/);
+  assert.match(intro, /included OpenRouter key/);
+  assert.match(intro, /your own OpenRouter key/);
   assert.doesNotMatch(settingsCopy, /Codex/);
-  assert.doesNotMatch(`${intro} ${message('settings:openrouter.model.label')}`, /Codex/);
+  assert.doesNotMatch(intro, /Codex/);
 
   const recoveryIdentity = between(
     server,

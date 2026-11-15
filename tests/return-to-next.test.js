@@ -397,13 +397,12 @@ test('agent files: name, then the description when a skill has one, then Save; t
     /descWrap\.classList\.toggle\('hidden', kind !== 'skill'\);[\s\S]{0,200}nameInput\.enterKeyHint = kind === 'skill' \? 'next' : 'done';/);
 });
 
-test('OpenRouter: Return in the key tests and saves it; in the filter it goes on to the model list', () => {
+test('OpenRouter: Return in the key tests and saves it', () => {
   const html = renderComponent('frontend/src/features/settings/sections/openrouter.tsx', 'OpenRouterSection');
-  assert.deepEqual(hints(html), [['settings-openrouter-key', 'done'], ['settings-openrouter-model-search', 'next']]);
+  assert.deepEqual(hints(html), [['settings-openrouter-key', 'done']]);
   const src = read('frontend/src/features/settings/sections/openrouter.tsx');
   assert.match(src, /<div id="settings-openrouter-personal-controls" onKeyDown=\{returnKeyHandler\(\{ submit: saveKey \}\)\}>/);
   assert.match(src, /pressButton\(document\.getElementById\('settings-openrouter-save'\)\);/);
-  assert.match(src, /<div id="settings-openrouter-models-wrap" className="ui-card ui-fields hidden mt-4" onKeyDown=\{returnKeyHandler\(\)\}>/);
 });
 
 test('wallet Send: the address goes on to the amount, and the amount sends', () => {

@@ -404,15 +404,15 @@
     "description": "Name of one place a change can be built: Homeroom's own servers, using AI models through the OpenRouter service. Homeroom and OpenRouter are product names; keep the middle dot."
   },
   "venue.usernodeOpenrouter.blurb": {
-    "text": "The preferred in-chat option: use included credits or your own OpenRouter key, and pick any available model.",
-    "description": "Explains the \"Homeroom · OpenRouter\" way of building a change, in menus and tooltips where a person chooses where to build. OpenRouter is a product name; a key is an API key."
+    "text": "Built on Homeroom with an OpenRouter model, on included credits or the author's own OpenRouter key.",
+    "description": "Explains the \"Homeroom · OpenRouter\" venue in the tooltip of a change's card, which says where the change was built. OpenRouter is a product name; a key is an API key."
   },
   "venue.usernodeClaude.label": {
     "text": "Homeroom · Claude",
     "description": "Name of one place a change can be built: Homeroom's own servers, using the Claude AI model. Homeroom and Claude are product names; keep the middle dot."
   },
   "venue.usernodeClaude.blurb": {
-    "text": "Homeroom runs the turns right here, on your weekly Claude credits, or your own Anthropic key once they run out.",
+    "text": "Built on Homeroom with Claude, on weekly credits or the author's own Anthropic key.",
     "description": "Explains the \"Homeroom · Claude\" way of building a change, in menus and tooltips where a person chooses where to build. A turn is one request to the coding agent and its reply. Claude and Anthropic are names; a key is an API key."
   },
   "venue.local.label": {
@@ -420,7 +420,7 @@
     "description": "Name of one place a change was built: the person's own computer, where their coding agent ran the work for a change kept in Homeroom. Homeroom is the product's name; keep the middle dot."
   },
   "venue.local.blurb": {
-    "text": "The Homeroom CLI runs this session’s turns on your machine and your own Claude plan. Same chat, same branch, same proposal. The work just executes locally.",
+    "text": "Built on the author's own machine by the Homeroom CLI, with their own Claude plan, on the same branch and proposal.",
     "description": "Explains the \"Your computer · Homeroom session\" way of building a change. The Homeroom CLI is Homeroom's command-line program; a turn is one request to the coding agent and its reply; Claude is a product name."
   },
   "venue.webClaudeCode.label": {

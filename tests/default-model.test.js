@@ -10,8 +10,7 @@
 //   2. The bot's settings carry it: the patch accepts an id or blank, the
 //      save refuses a model the stored catalog does not list or that cannot
 //      call tools, and a stage left on the default follows it.
-//   3. The one-time migration moves only untouched GLM preferences, once.
-//   4. The console's form sends it.
+//   3. The console's form sends it.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -128,7 +127,6 @@ test('the bot\'s other readers of the default go through the resolver', () => {
   // an admin's choice never reached.
   for (const file of [
     'src/services/homeroom-bot-voice.js', 'src/services/homeroom-bot-mayor.js', 'src/services/agent-turn.js',
-    'src/routes/credentials.js',
     'src/services/openrouter-managed-keys.js', 'src/services/agent-models.js',
   ]) {
     assert.match(read(file), /default-model/, `${file} reads the platform default through services/default-model.js`);
@@ -136,38 +134,6 @@ test('the bot\'s other readers of the default go through the resolver', () => {
   const botSrc = read('src/services/homeroom-bot.js');
   assert.doesNotMatch(botSrc.replace(/\/\/.*$/gm, ''), /config\.openrouterDefaultCodexModel/,
     'the bot reads the default through platformDefaultModel or the resolver');
-});
-
-// ── The one-time migration ──────────────────────────────────────────────
-
-function migrationPool({ markerRows = [], rowCount = 0 } = {}) {
-  const calls = [];
-  return {
-    calls,
-    async query(sql, params) {
-      calls.push({ sql: String(sql), params });
-      if (/SELECT 1 FROM platform_settings/.test(String(sql))) return { rows: markerRows };
-      return { rows: [], rowCount };
-    },
-  };
-}
-
-test('the migration moves untouched GLM preferences to the default once, and records that it ran', async () => {
-  const { followPlatformDefaultModel } = require('../src/db/migrate');
-  const pool = migrationPool({ rowCount: 4 });
-  await followPlatformDefaultModel(pool);
-  const update = pool.calls.find((c) => /^\s*UPDATE user_agent_preferences/.test(c.sql));
-  assert.ok(update, 'it updates the preferences');
-  assert.match(update.sql, /SET model_id = NULL/);
-  assert.match(update.sql, /backend = 'codex_openrouter'/);
-  assert.match(update.sql, /updated_at <= created_at \+ INTERVAL '1 minute'/, 'only rows nobody saved since');
-  assert.deepEqual(update.params, ['z-ai/glm-5.3-flash'], 'only the former default');
-  assert.ok(pool.calls.some((c) => /INSERT INTO platform_settings/.test(c.sql)
-    && /agent_preferences_follow_default_migrated/.test(c.sql)), 'the marker is written');
-
-  const again = migrationPool({ markerRows: [{}] });
-  await followPlatformDefaultModel(again);
-  assert.equal(again.calls.length, 1, 'with the marker present it only reads the marker');
 });
 
 // ── The console ─────────────────────────────────────────────────────────
