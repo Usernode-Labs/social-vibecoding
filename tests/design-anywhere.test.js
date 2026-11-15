@@ -297,7 +297,7 @@ test('the chat draws a screen in place of the screen picker: draw_screen, in the
   assert.doesNotMatch(draw.function.description, /Main Chat/);
   assert.match(draw.function.description, /shows it small in this thread with Open preview/);
   assert.match(read('src/services/homeroom-bot-dm.js'), /const design = await \(deps\.designThreads \|\| require\('\.\/design-threads'\)\)\.threadOf\(/,
-    'a thread that holds a design is the design bot\'s');
+    'a design thread still reads whether it holds a design (designDirect routes each message)');
   assert.doesNotMatch(read('src/services/design-threads.js'), /p\.kind = 'design'/, 'any private thread can hold one');
   assert.match(read('src/db/migrations/0004-design-anywhere.sql'), /CHECK \(surface IN \('platform', 'app', 'new'\)\)/);
 });
