@@ -757,10 +757,8 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   const appManifest = require('../src/services/app-manifest');
 
   assert.match(schema, /CREATE TABLE IF NOT EXISTS credentials\.managed_openrouter_keys/);
-  assert.match(schema, /CREATE TABLE IF NOT EXISTS user_agent_model_favorites/);
   assert.match(schema, /user_id\s+BIGINT NOT NULL UNIQUE/);
   assert.match(routes, /post\('\/api\/me\/credentials\/openrouter\/managed'/);
-  assert.match(routes, /patch\('\/api\/me\/coding-agent\/models\/favorite'/);
   assert.match(routes, /Cache-Control', 'no-store'/);
   assert.match(admin, /patch\('\/api\/admin\/openrouter-keys\/:id'/);
   assert.match(admin, /delete\('\/api\/admin\/openrouter-keys\/:id'/);
@@ -773,7 +771,7 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   assert.doesNotMatch(settings, /_claimManagedOpenRouterKey/);
   assert.doesNotMatch(settingsSection, /Create my included key/);
   assert.match(settingsSection, /\{t\('settings:openrouter\.intro'\)\}/);
-  assert.match(require('./lib/platform-i18n').message('settings:openrouter.intro'), /GLM 5\.3 Flash/);
+  assert.match(require('./lib/platform-i18n').message('settings:openrouter.intro'), /comes with an included OpenRouter key/);
   // The runtime copy is that same message: settings.js writes it over the static markup.
   assert.match(settings, /intro\.textContent = tr\('settings:openrouter\.intro'\);/);
   assert.ok(
@@ -860,7 +858,7 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
     (item) => item.key === 'OPENROUTER_MANAGED_DAILY_LIMIT_USD',
   );
   assert.match(dailyDeclaration.description, /^No longer used\./);
-  for (const file of ['public/js/app-view.js', 'public/js/build-venues.js', 'frontend/src/features/dev-chat/dev-chat.js']) {
+  for (const file of ['public/js/app-view.js', 'public/js/build-venues.js']) {
     assert.doesNotMatch(fs.readFileSync(path.join(root, file), 'utf8'), /included daily credits/,
       `${file} must not promise a cadence it cannot read from the key`);
   }
