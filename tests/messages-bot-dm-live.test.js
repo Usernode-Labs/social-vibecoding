@@ -51,6 +51,12 @@ const DM = {
   id: 42, kind: 'direct', title: 'homeroom-bot', membershipStatus: 'member', canSend: true,
   members: [ME, BOT], unreadCount: 0, lastActivityAt: new Date(Date.UTC(2026, 9, 2)).toISOString(),
 };
+/** The same chat, as the server serializes the bot's DM: the peer is the bot, and it is a member. */
+const BOT_DM = {
+  ...DM,
+  members: [{ ...ME, status: 'member' }, { ...BOT, status: 'member' }],
+  peer: { id: BOT.id, bot: true, displayName: 'Homeroom bot' },
+};
 
 function serverMessage(id, sender, content) {
   return {
@@ -67,6 +73,9 @@ function harness(initial) {
     // what a read already in flight when the change landed brings back.
     stale: null,
     reads: [],
+    // #6674: what the status read answers, and every place it was asked about.
+    botWorking: { typing: false, doing: null, answering: null, botId: BOT.id },
+    botWorkingReads: [],
   };
   const deferred = [];
   const api = {
@@ -77,6 +86,15 @@ function harness(initial) {
     listMessages: async (id, before, options) => {
       server.reads.push(['messages', options]);
       return { messages: (server.stale || server.messages).map((item) => ({ ...item })), nextBefore: null };
+    },
+    // #6674: the status read a returning page makes.
+    getBotWorking: async (id, threadRootId) => {
+      server.botWorkingReads.push([id, threadRootId]);
+      return { ...server.botWorking };
+    },
+    listThread: async (id, rootId, before, options) => {
+      server.reads.push(['thread', rootId, options]);
+      return { root: serverMessage(rootId, ME, 'A question for the bot'), messages: [], nextBefore: null, discussion: null };
     },
     markRead: async () => {},
     // What this device kept to draw offline: nothing, unless a test says so.
@@ -99,6 +117,8 @@ function harness(initial) {
     App: { user: ME },
     location: { search: '', hash: '#messages/42' },
     addEventListener() {}, removeEventListener() {}, dispatchEvent() {},
+    setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
+    clearTimeout: (id) => globalThis.clearTimeout(id),
     matchMedia: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }),
   };
   // The app-discussions read is a plain fetch beside the stubbed API.
@@ -754,8 +774,7 @@ test('when GitHub cannot answer, a request card takes the title Homeroom holds f
   assert.deepEqual(asked.sort(), [4752, 4753]);
 });
 
-test('the chat with the bot sends its news rows without their cards; the server and the client agree on which rows those are', () => {
-  const conversations = require('../src/services/conversations');
+test('the chat with the bot sends its news rows without their cards; the server and the client agree on which rows those are', () => {  const conversations = require('../src/services/conversations');
   const row = (meta, over = {}) => ({ sender_is_synthetic: true, msg_type: 'message', deleted_at: null, metadata: { homeroomBot: meta }, ...over });
   assert.equal(conversations.isBotNewsRow(row({ kind: 'activity', issueNumber: 18 })), true);
   assert.equal(conversations.isBotNewsRow(row({ kind: 'merged', firstVersion: true })), true);
@@ -775,4 +794,116 @@ test('the chat with the bot sends its news rows without their cards; the server 
   const source = read('src/services/conversations.js');
   assert.equal((source.match(/hydrateMessages\((?:pool|db), user, page, \{ cards \}\)/g) || []).length, 3, 'newest, newer and a permalink window');
   assert.match(source, /const \[hydratedRoot, messages\] = await Promise\.all\(\[\s*hydrateMessages\(pool, user, root\.rows\),\s*hydrateMessages\(pool, user, page\),/);
+});
+
+// ── #6674: what the bot is doing, as soon as the page comes back ─────────
+//
+// The card is drawn from the bot's ephemeral typing events, renewed every
+// four seconds, and the store drops an entry six seconds after the last one
+// it heard. A page in the background therefore expired the card, and coming
+// back drew nothing until the next renewal reached it (five to ten seconds).
+// Now a returning page asks the server what the bot is doing, and the answer
+// is fed through the typing event's own path. These pin the store's half.
+
+test('#6674: opening the chat asks what Homeroom bot is doing, and the card is drawn from the answer', async () => {
+  const h = harness([serverMessage(1, BOT, 'Hello.')]);
+  h.api.getConversation = async () => BOT_DM;
+  h.server.botWorking = { typing: true, doing: { kind: 'code', project: 'RecipeBot' }, answering: 88, botId: BOT.id };
+  await openDm(h);
+  assert.deepEqual(h.server.botWorkingReads, [[42, null]], 'the place on screen was asked about');
+  assert.deepEqual(h.store.typingUsers(42), [{
+    name: 'Homeroom bot', unnamed: false, bot: true,
+    doing: { kind: 'code', project: 'RecipeBot' }, answering: 88,
+  }], 'the working card, at once');
+});
+
+test('#6674: a live typing event that arrives while the status is being read wins', async () => {
+  const h = harness([serverMessage(1, BOT, 'Hello.')]);
+  h.api.getConversation = async () => BOT_DM;
+  let answer;
+  h.api.getBotWorking = () => new Promise((resolve) => {
+    answer = () => resolve({ typing: true, doing: { kind: 'request', number: 12 }, answering: null, botId: BOT.id });
+  });
+  await openDm(h);
+  // The open's read is still in flight; a live event says what is happening now.
+  h.store.messagesController.handleEvent({
+    type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: true, doing: { kind: 'drawing' },
+  });
+  assert.deepEqual(h.store.typingUsers(42)[0].doing, { kind: 'drawing' });
+  answer();
+  await h.flush();
+  assert.deepEqual(h.store.typingUsers(42)[0].doing, { kind: 'drawing' }, 'the older answer did not overwrite it');
+});
+
+test('#6674: opening a thread asks about that thread, apart from the conversation', async () => {
+  const h = harness([serverMessage(1, BOT, 'Hello.')]);
+  h.api.getConversation = async () => BOT_DM;
+  h.server.botWorking = { typing: true, doing: { kind: 'request', number: 12 }, answering: null, botId: BOT.id };
+  await openDm(h);
+  h.store.messagesController.route(42, null, null, { threadRootId: 1 });
+  await h.flush();
+  assert.deepEqual(h.server.botWorkingReads.at(-1), [42, 1], 'the thread on screen was asked about');
+  assert.deepEqual(h.store.typingUsers(42, 1)[0].doing, { kind: 'request', number: 12 }, 'the card in that thread');
+});
+
+test('#6674: the card stays on screen while the phone app is away, then a false answer clears it', async (t) => {
+  const h = harness([serverMessage(1, BOT, 'Hello.')]);
+  const timers = [];
+  Object.assign(globalThis.window, {
+    setTimeout: (fn, ms) => { timers.push({ fn, ms, live: true }); return timers.length; },
+    clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].live = false; },
+  });
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  globalThis.document = { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} };
+  t.after(() => {
+    if (original) Object.defineProperty(globalThis, 'document', original);
+    else delete globalThis.document;
+  });
+  h.api.getConversation = async () => BOT_DM;
+  await openDm(h);
+  h.store.messagesController.handleEvent({
+    type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: true, doing: { kind: 'code', project: 'RecipeBot' },
+  });
+  assert.equal(h.store.typingUsers(42).length, 1);
+  // The app is in the background when the entry's six seconds run out.
+  globalThis.document.visibilityState = 'hidden';
+  const expiry = timers.filter((timer) => timer.live && timer.ms === 6000).at(-1);
+  expiry.fn();
+  assert.equal(h.store.typingUsers(42).length, 1, 'the last card stays on screen while away');
+  // Coming back asks, and the bot has finished: the card goes.
+  globalThis.document.visibilityState = 'visible';
+  h.server.botWorking = { typing: false, doing: null, answering: null, botId: BOT.id };
+  await h.store.seedBotWorking(42, null);
+  await h.flush();
+  assert.deepEqual(h.store.typingUsers(42), [], 'the answer removes what it finished');
+});
+
+test('#6674: a failed status read lets the held card expire as it did before', async (t) => {
+  const h = harness([serverMessage(1, BOT, 'Hello.')]);
+  const timers = [];
+  Object.assign(globalThis.window, {
+    setTimeout: (fn, ms) => { timers.push({ fn, ms, live: true }); return timers.length; },
+    clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].live = false; },
+  });
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  globalThis.document = { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} };
+  t.after(() => {
+    if (original) Object.defineProperty(globalThis, 'document', original);
+    else delete globalThis.document;
+  });
+  h.api.getConversation = async () => BOT_DM;
+  await openDm(h);
+  h.store.messagesController.handleEvent({
+    type: 'conversation_typing', conversationId: 42, userId: BOT.id, typing: true, doing: { kind: 'writing' },
+  });
+  globalThis.document.visibilityState = 'hidden';
+  timers.filter((timer) => timer.live && timer.ms === 6000).at(-1).fn();
+  globalThis.document.visibilityState = 'visible';
+  h.api.getBotWorking = async () => { throw new TypeError('Failed to fetch'); };
+  await h.store.seedBotWorking(42, null);
+  await h.flush();
+  assert.equal(h.store.typingUsers(42).length, 1, 'still there while the question fails');
+  const late = timers.filter((timer) => timer.live && timer.ms === 6000).at(-1);
+  late.fn();
+  assert.deepEqual(h.store.typingUsers(42), [], 'and gone by its ordinary expiry');
 });
