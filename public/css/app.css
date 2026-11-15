@@ -29792,6 +29792,168 @@ html[data-skin]:where(:not([data-skin="brand"])) #app-menu-row-workshop { paddin
    the standard sheet's one line 20px short. */
 html[data-skin]:where(:not([data-skin="brand"])) #switcher-nav > [id^="app-menu-row-"] .truncate { white-space: normal; }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   THE THREAD'S RAIL: "How it got here" (dev-board/topic/thread-rail.tsx).
+   A request's and a change's page say their big events down a line: asked,
+   planned, built, tested, and last where the thread stands now. The shell
+   renders the rail's host between the root post and the replies
+   (`#gc-thread-rail`, group-chat/thread-shell.tsx), which is where a narrow
+   page reads it; a wide page stands it beside them as its own card, and the
+   root post and the replies become cards too, on the page's ground.
+
+   The standard look and "Paper, simplified, with brand styling" only: the
+   frame's looks keep their own context column and draw no rail
+   (request-head.tsx), and every rule here is scoped away from them. A
+   decision's page has no rail host.
+   ═══════════════════════════════════════════════════════════════════════ */
+.dev-request-rail:empty { display: none; }
+.dev-rail {
+  --rail-ink: var(--text-primary);
+  --rail-mut: var(--text-secondary);
+  --rail-faint: var(--text-muted);
+  --rail-line: var(--messages-hair);
+  --rail-done: var(--state-ok);
+  --rail-done-tint: color-mix(in srgb, var(--state-ok) 14%, transparent);
+  --rail-bad: var(--state-blocked);
+  --rail-bad-tint: color-mix(in srgb, var(--state-blocked) 13%, transparent);
+  --rail-now: var(--text-primary);
+  --rail-now-ink: var(--messages-surface);
+  --rail-now-ring: color-mix(in srgb, var(--lit-ink) 22%, transparent);
+  --rail-note: var(--lit-tint);
+  --rail-well: var(--messages-surface-2);
+  margin: 4px 0 14px;
+  padding: 12px 10px 6px;
+  border-radius: 16px;
+  background: var(--rail-well);
+}
+.dev-rail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 6px 8px; }
+.dev-rail-title { margin: 0; font-size: 12px; line-height: 16px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--rail-faint); }
+.dev-rail-less { display: none; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; color: var(--accent); }
+.dev-rail-steps { list-style: none; margin: 0; padding: 0; }
+.dev-rail-step { position: relative; display: flex; gap: 12px; padding: 6px 6px 12px; }
+.dev-rail-step::before { content: ""; position: absolute; inset-inline-start: 18px; top: 34px; bottom: -4px; width: 2px; border-radius: 1px; background: var(--rail-line); }
+.dev-rail-step:last-child { padding-bottom: 6px; }
+.dev-rail-step:last-child::before { display: none; }
+.dev-rail-mark {
+  position: relative; z-index: 1; flex: none;
+  width: 26px; height: 26px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--rail-done-tint); color: var(--rail-done);
+}
+.dev-rail-glyph { width: 14px; height: 14px; }
+.dev-rail-mark[data-rail-tone="bad"] { background: var(--rail-bad-tint); color: var(--rail-bad); }
+.dev-rail-mark[data-rail-tone="muted"] { background: var(--rail-line); color: var(--rail-faint); }
+.dev-rail-step[data-rail-now] .dev-rail-mark { background: var(--rail-now); color: var(--rail-now-ink); box-shadow: 0 0 0 4px var(--rail-now-ring); }
+.dev-rail-step[data-rail-now] .dev-rail-mark[data-rail-tone="bad"] { background: var(--rail-bad); color: #fff; box-shadow: 0 0 0 4px var(--rail-bad-tint); }
+.dev-rail-step[data-rail-now] .dev-rail-mark[data-rail-tone="ok"] { background: var(--rail-done); color: #fff; box-shadow: 0 0 0 4px var(--rail-done-tint); }
+.dev-rail-step[data-rail-now] .dev-rail-mark[data-rail-tone="muted"] { background: var(--rail-faint); color: var(--rail-now-ink); box-shadow: 0 0 0 4px var(--rail-line); }
+.dev-rail-mark[data-rail-busy] .dev-rail-glyph { animation: dev-rail-turn 1.4s linear infinite; }
+@keyframes dev-rail-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .dev-rail-mark[data-rail-busy] .dev-rail-glyph { animation: none; } }
+:where(html[data-motion="reduce"]) .dev-rail-mark[data-rail-busy] .dev-rail-glyph { animation: none; }
+.dev-rail-body { flex: 1 1 auto; min-width: 0; padding-top: 2px; }
+.dev-rail-line { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; line-height: 22px; }
+.dev-rail-name { font-size: 15px; font-weight: 650; color: var(--rail-ink); overflow-wrap: anywhere; }
+.dev-rail-step[data-rail-tone="bad"] .dev-rail-name { color: var(--rail-bad); }
+.dev-rail-time { margin-inline-start: auto; font-size: 12.5px; color: var(--rail-faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dev-rail-desc { margin: 0; font-size: 13px; line-height: 19px; color: var(--rail-mut); overflow-wrap: anywhere; }
+.dev-rail-link { font-weight: 600; color: var(--accent); white-space: nowrap; }
+.dev-rail-link:hover { text-decoration: underline; }
+.dev-rail-note { margin: 8px 0 0; padding: 9px 12px; border-radius: 12px; background: var(--rail-note); font-size: 13px; line-height: 19px; color: var(--rail-ink); overflow-wrap: anywhere; }
+
+/* The folded pile: the earlier steps' markers, one over the next down the
+   line, the newest on top with its glyph, and the link that opens them. A
+   narrow page only (below); here it is put away. */
+.dev-rail-pile { display: none; position: relative; align-items: center; gap: 12px; width: 100%; padding: 4px 6px 10px; text-align: start; }
+.dev-rail-pile::before { content: ""; position: absolute; inset-inline-start: 18px; top: 28px; bottom: -6px; width: 2px; border-radius: 1px; background: var(--rail-line); }
+.dev-rail-pile-marks { position: relative; flex: none; width: 26px; }
+.dev-rail-pile-mark { position: absolute; inset-inline-start: 0; display: inline-flex; border-radius: 50%; box-shadow: 0 0 0 2px var(--rail-well); background: var(--rail-well); }
+.dev-rail-pile-more { font-size: 14px; font-weight: 600; color: var(--accent); }
+
+/* NARROW: one column. The rail sits between the root post and the replies,
+   its earlier steps folded into the pile until the reader opens them, and
+   the open steps tighter than a wide page's. */
+@media (max-width: 1179.98px) {
+  .dev-rail[data-rail-fold="shut"] .dev-rail-pile { display: flex; }
+  .dev-rail[data-rail-fold="shut"] .dev-rail-step:not([data-rail-now]) { display: none; }
+  .dev-rail[data-rail-fold="open"] .dev-rail-less { display: inline-flex; }
+  .dev-rail-step { padding: 4px 6px 6px; }
+  .dev-rail-step::before { top: 32px; bottom: -2px; }
+  .dev-rail-step[data-rail-now] { padding-top: 8px; }
+  .dev-rail-step[data-rail-now]::before { top: 36px; }
+  .dev-rail-line { line-height: 20px; }
+  .dev-rail-desc { line-height: 18px; }
+  .dev-rail-note { margin-top: 6px; padding: 8px 12px; }
+}
+
+/* WIDE: two columns. The page's header row runs across both; under it the
+   root post and the replies are cards in the first column, and the rail is
+   a card that stays put beside them. Not in a side panel (the Workshop's,
+   or the embedded one), which is a narrow page however wide the window is,
+   and not while the reader beside the thread is open, which takes the
+   second column's room. */
+@media (min-width: 1180px) {
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) {
+    --thread-rail-w: 332px;
+    --thread-rail-gap: 20px;
+    --thread-card: var(--dc-sheet-fill);
+    --thread-card-edge: inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05);
+    max-width: 1132px;
+  }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet {
+    background: none;
+    border-top-color: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-scroll {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--thread-rail-w);
+    column-gap: var(--thread-rail-gap);
+    align-content: start;
+    padding-bottom: 12px;
+  }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) :is(#gc-thread-head, #gc-thread-messages) {
+    grid-column: 1;
+    min-width: 0;
+    border-radius: 20px;
+    background: var(--thread-card);
+    box-shadow: var(--thread-card-edge);
+    backdrop-filter: var(--dc-frost);
+    -webkit-backdrop-filter: var(--dc-frost);
+  }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-head { grid-row: 1; padding: 8px 4px 4px; }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages { grid-row: 2; margin-top: 14px; padding: 6px 4px 8px; }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages:empty { display: none; }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-rail {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: start;
+    position: sticky;
+    top: 0;
+    max-height: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-radius: 20px;
+    background: var(--thread-card);
+    box-shadow: var(--thread-card-edge);
+    backdrop-filter: var(--dc-frost);
+    -webkit-backdrop-filter: var(--dc-frost);
+  }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-rail {
+    --rail-well: transparent;
+    margin: 0;
+    padding: 16px 10px 8px;
+    border-radius: 0;
+  }
+  /* The card says the title; the header row keeps the number, the pill and ⋯. */
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-bar .dev-request-bar-title { display: none; }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet > :is(.messages-composer, .messages-jump, .messages-status-line) {
+    margin-inline-end: calc(var(--thread-rail-w) + var(--thread-rail-gap));
+  }
+}
+
 /* THE BELL'S SHEET (features/notifications/notifications-sheet.tsx, the
    bar's bell). The sheet stays the product's: its search, its Unread and
    All tabs, its groups, what happened behind a row, the older weeks, its
@@ -31651,3 +31813,34 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   margin: 2px 0 10px;
   background: url('/illustrations/people/log.png') center / contain no-repeat;
 }
+
+/* A THREAD'S PAGE. Its cards on a wide page (the root post, the replies and
+   "How it got here": the block "THE THREAD'S RAIL" lays them out) are this
+   look's cards: opaque on the page, with the lift every card here has. The
+   step the thread stands on is the ink marker in a sun ring, and its second
+   line is on the sun wash, as a thing to do is. The rail's heading is a
+   sentence, as every label over a group is. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-request {
+  --thread-card: var(--bl-card);
+  --thread-card-edge: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-request :is(#gc-thread-head, #gc-thread-messages, .dev-request-rail) {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-rail {
+  --rail-now-ring: var(--bl-sun);
+  --rail-note: var(--bl-wash);
+  --rail-well: var(--bl-page);
+  --rail-done-tint: var(--bl-tint-leaf);
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-rail { --rail-now: var(--bl-solid); --rail-now-ink: var(--bl-on-solid); }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dev-rail { --rail-now: var(--bl-sun); --rail-now-ink: var(--bl-on-sun); --rail-now-ring: rgba(255, 238, 111, 0.3); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-rail-title {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--bl-label);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-rail-link, .dev-rail-less, .dev-rail-pile-more) { color: var(--bl-sky); }

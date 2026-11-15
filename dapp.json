@@ -4993,9 +4993,9 @@
       "expectText": "Open hands this to Claude Code"
     },
     {
-      "name": "A request Homeroom bot is building says where it is on its own page, as its thread in the chat does: its status word and try, where it is and why, and the five steps with the one it is on lit (16 Oct 2026)",
+      "name": "A request Homeroom bot is building says where it is on its own page, as its thread in the chat does: its status word and try, where it is and why, and the five steps with the one it is on lit (16 Oct 2026); and How it got here lists Asked, then Building as where it stands (15 Nov 2026)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900018",
-      "expectSelector": "#gc-thread-head .dev-request-root .dev-request-track[data-request-track=building] [data-bot-track=building]:has([data-bot-track-bar=building] [data-bot-track-step=build][data-state=now]) [data-bot-activity-eyebrow]",
+      "expectSelector": "#gc-thread-scroll:has(> #gc-thread-rail [data-thread-rail] [data-rail-step=asked] + [data-rail-step=\"now:building\"][data-rail-now]) #gc-thread-head .dev-request-root .dev-request-track[data-request-track=building] [data-bot-track=building]:has([data-bot-track-bar=building] [data-bot-track-step=build][data-state=now]) [data-bot-activity-eyebrow]",
       "expectText": "Try 2"
     },
     {

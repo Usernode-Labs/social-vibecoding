@@ -60,9 +60,11 @@ import {
   type RequestSpecCard,
 } from './request-model';
 import { requestShots, togglePinShot } from './request-shots';
+import { requestRail, type RailOpen } from './rail-model';
 import { ThreadItems, pageSlug, useThreadPayload } from './thread-items';
 import { ThreadChanges, ChangeSectionSkeleton } from './thread-changes';
 import { requestPill, threadLayout, type ThreadHere } from './thread-model';
+import { ThreadRail } from './thread-rail';
 import { rereadOnChangeNews } from './change-detail-refresh';
 import { TopicBack } from './topic-back';
 import { saveIssueBody } from './topic-head';
@@ -85,6 +87,20 @@ function appView(): any {
 function call(fn: string, args: unknown[] = []): void {
   const av = appView();
   if (av && typeof av[fn] === 'function') av[fn](...args);
+}
+
+/**
+ * A change's own section on its request's page, brought into view; a change
+ * folded under the ballot is opened first.
+ */
+function showChangeSection(id: number): void {
+  if (typeof document === 'undefined') return;
+  const section = document.querySelector<HTMLElement>(`#gc-thread-head [data-thread-change="${id}"]`);
+  if (!section) return;
+  if (section.getAttribute('data-thread-fold') === 'shut') {
+    section.querySelector<HTMLElement>(`[data-thread-fold-toggle="${id}"]`)?.click();
+  }
+  section.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 
 /** One of the layout's empty hosts, or null when the shell is not the request layout. */
@@ -663,10 +679,42 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
     }] : []),
   ]);
   const threadMenu = ownAgent || agentSession || !!threadRead.data?.follow;
+  // "How it got here": the thread's big events, beside the card on a wide
+  // page and under it on a narrow one (./thread-rail.tsx). The frame's looks
+  // have their own context column, so they draw none.
+  const rail = frame ? null : host('gc-thread-rail');
+  const railSteps = useMemo(() => requestRail({
+    asker: r.asker || null,
+    askedAt: r.askedAt || null,
+    specs,
+    changes: layout.changes,
+    standing,
+    yours: (r.standing as { mine?: boolean } | null | undefined)?.mine !== false,
+    words: !!r.bodyMarkdown?.trim(),
+  }), [r.asker, r.askedAt, r.bodyMarkdown, r.standing, specs, layout.changes, standing]);
+  const openRail = (open: RailOpen) => {
+    if (open.kind === 'request') {
+      // The request's own words, whole, in the reader a plan opens in.
+      (window as any).UsernodeReact?.detail?.open({
+        kind: 'plan',
+        ref: {},
+        version: null,
+        payload: { title: r.title, markdown: r.bodyMarkdown || '', html: r.bodyHtml },
+      });
+    } else if (open.kind === 'plan') {
+      const card = specs.find((s) => s.key === open.key);
+      if (card) void openRequestSpec(card);
+    } else if (open.kind === 'checks') {
+      call('openTechnicalDetails', [open.changeId]);
+    } else {
+      showChangeSection(open.changeId);
+    }
+  };
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
       {bar ? createPortal(<RequestBar r={r} pill={pill} threadMenu={threadMenu} />, bar) : null}
+      {rail ? createPortal(<ThreadRail steps={railSteps} onOpen={openRail} />, rail) : null}
       {images.viewer}
       <article className="messages-message dev-request-root" data-ref-issue={r.number} data-request-root={r.number}>
         <Avatar shape="square" size="sm" color={swatchFor(r.asker)} aria-hidden="true">

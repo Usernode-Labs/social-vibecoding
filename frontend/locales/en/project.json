@@ -6690,5 +6690,97 @@
   "topic.thread.page.claimConfirmed": {
     "text": "You confirmed this closes it",
     "description": "Line in place of the Confirm and \"This doesn't close it\" buttons on the card for a change that says it closes the viewer's request, after the filer pressed Confirm. Shown only to the filer."
+  },
+  "topic.rail.title": {
+    "text": "How it got here",
+    "description": "Heading over the timeline of a thread's big events on a request's or a change's page: who asked, the plan, each change built, its tests, and where it stands now. Also the section's accessible name."
+  },
+  "topic.rail.asked": {
+    "text": "Asked",
+    "description": "Name of the first step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): the request was filed."
+  },
+  "topic.rail.planned": {
+    "text": "Planned",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): a plan was posted for the request."
+  },
+  "topic.rail.plannedVersion": {
+    "text": "Planned, v{{version}}",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): the newest plan is a later version than the first. {{version}} is its number, 2 or more."
+  },
+  "topic.rail.built": {
+    "text": "Built",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): a change was built."
+  },
+  "topic.rail.builtNumbered": {
+    "text": "Change #{{number}} built",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card) when the request has more than one change: which change was built. {{number}} is the change's number."
+  },
+  "topic.rail.tested": {
+    "text": "Tested",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): the change's tests ran and passed."
+  },
+  "topic.rail.testedAll": {
+    "text": "All checks passed.",
+    "description": "Line under the Tested step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card)."
+  },
+  "topic.rail.testsFailed_one": {
+    "text": "{{count}} test failed",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), drawn in red: how many of the change's tests failed. One test."
+  },
+  "topic.rail.testsFailed_other": {
+    "text": "{{count}} tests failed",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), drawn in red: how many of the change's tests failed. Several tests."
+  },
+  "topic.rail.testsFailedPlain": {
+    "text": "Tests failed",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), drawn in red, when the number of failed tests is not known."
+  },
+  "topic.rail.voted": {
+    "text": "Approved",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): the change got the yes votes it needed."
+  },
+  "topic.rail.yesVotes_one": {
+    "text": "{{count}} yes vote.",
+    "description": "Line under the Approved step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): how many members voted yes. One vote."
+  },
+  "topic.rail.yesVotes_other": {
+    "text": "{{count}} yes votes.",
+    "description": "Line under the Approved step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): how many members voted yes. Several votes."
+  },
+  "topic.rail.by": {
+    "text": "By {{name}}.",
+    "description": "Line under a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): who did it. {{name}} is a username or Homeroom bot."
+  },
+  "topic.rail.since": {
+    "text": "since {{when}}",
+    "description": "Stamp beside the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), the one that says where the thread stands now: how long it has stood there. {{when}} is a short date such as Nov 13 or Today."
+  },
+  "topic.rail.readRequest": {
+    "text": "Read the request",
+    "description": "Link on the Asked step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): opens the request's own words, whole, in the reader beside the thread."
+  },
+  "topic.rail.readPlan": {
+    "text": "Read plan",
+    "description": "Link on the Planned step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): opens the plan in the reader beside the thread."
+  },
+  "topic.rail.seeFailed": {
+    "text": "See what failed",
+    "description": "Link on the tests-failed step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): opens the change's details, which list the failed tests."
+  },
+  "topic.rail.openChange": {
+    "text": "Open",
+    "description": "Link on a change's step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card) when the request has more than one change: brings that change's section of the page into view."
+  },
+  "topic.rail.showEarlier_one": {
+    "text": "Show {{count}} earlier step",
+    "description": "Link beside the folded pile of step markers in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card) on a narrow screen: opens the earlier steps. One step."
+  },
+  "topic.rail.showEarlier_other": {
+    "text": "Show {{count}} earlier steps",
+    "description": "Link beside the folded pile of step markers in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card) on a narrow screen: opens the earlier steps. Several steps."
+  },
+  "topic.rail.showLess": {
+    "text": "Show less",
+    "description": "Link beside the heading in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card) on a narrow screen, once the earlier steps are open: folds them back into the pile."
   }
 }

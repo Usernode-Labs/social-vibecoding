@@ -149,13 +149,15 @@ function Composer({ fill, readOnly, notice, placeholder, maxLength, request = fa
  * holding the request as the root post and the replies under it, and the
  * thread's composer at its foot. The page's back chip sits above the sheet.
  *
- * Two more empty hosts than the topic layout, both the topic head's
+ * Three more empty hosts than the topic layout, all the topic head's
  * (features/dev-board/topic/request-head.tsx portals into them), rendered
  * once with a constant className and never looked inside:
  *
  *   * `#gc-thread-back` — the "‹ Workshop" chip, above the sheet.
  *   * `#gc-thread-bar` — the sheet's header: "Request #N", its category,
  *     and the ⋯ disc. Outside the scroller, so it stays put.
+ *   * `#gc-thread-rail` — "How it got here", inside the scroller between the
+ *     root post and the replies (a request's and a change's page only).
  *
  * Messages' tokens (`--messages-surface` and the rest) are defined on
  * `.dev-request` in app.css, as they are on `.messages-layout`.
@@ -212,6 +214,11 @@ function RequestShell(props: ThreadShellProps) {
         <div id="gc-thread-bar" className="dev-request-bar" />
         <div ref={scroll} id="gc-thread-scroll" className="messages-thread-scroll dev-request-scroll overscroll-contain chat-transcript">
           <div id="gc-thread-head" />
+          {/* "How it got here", the thread's big events (dev-board/topic/
+              thread-rail.tsx portals into it): between the root post and the
+              replies, where a narrow page reads it; app.css stands it beside
+              them on a wide one. A decision's page has none. */}
+          {decision ? null : <div id="gc-thread-rail" className="dev-request-rail" />}
           <div id="gc-thread-messages" />
         </div>
         {/* Floating over the transcript's foot, with nothing behind it

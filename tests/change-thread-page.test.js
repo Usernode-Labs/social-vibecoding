@@ -148,7 +148,8 @@ test('the shell draws a change page as the request page’s sheet, with Messages
     fill: true, withHeader: true, readOnly: false, notice: '', placeholder: 'Reply…', maxLength: 4000, change: true,
   });
   assert.match(html, /^<div class="dev-request dev-change platform-kb-column"><div id="gc-thread-back" class="dev-request-back"><\/div><section class="dev-request-sheet dc-lift dc-lift-session" aria-label="Change"><div id="gc-thread-bar" class="dev-request-bar"><\/div>/);
-  assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-messages"><\/div>/);
+  // 15 Nov 2026: "How it got here" has its host between the two (tests/thread-rail.test.js).
+  assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-rail" class="dev-request-rail"><\/div><div id="gc-thread-messages"><\/div>/);
   assert.doesNotMatch(html, /gc-thread-pin/, 'a change page has no pin host any more (#6419)');
   // The bar is the chat foot's (1 November 2026), Messages' own classes kept.
   assert.match(html, /class="messages-composer messages-composer-thread chat-composer-bar platform-safe-bar"/);
