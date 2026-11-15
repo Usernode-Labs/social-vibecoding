@@ -374,8 +374,8 @@ async function channelArchived(pool, appId) {
 
 const CHANNEL_MOVED = 'This discussion is read-only now: Homeroom\'s channel is #general.';
 
-// For session-addressed routes (/api/sessions/:id/...): proposing, voting,
-// cloning a headless run. The rules every gate here shares are stated once,
+// For session-addressed routes (/api/sessions/:id/...): proposing and
+// voting. The rules every gate here shares are stated once,
 // on this one. Each answers only "has the caller joined": a caller without
 // collab access falls through to whichever guard or route refuses them, so
 // a gate is safe on either side of appAccess.sessionCollabGuard.

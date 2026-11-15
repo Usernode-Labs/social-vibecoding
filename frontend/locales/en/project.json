@@ -2719,10 +2719,6 @@
     "text": "How it’s built",
     "description": "Label that unfolds the technical design part of a change's summary on the change's page, under the part written for the people deciding on it. \"It\" is the change."
   },
-  "topic.transcript.readOnly": {
-    "text": "read-only",
-    "description": "Small lower-case tag on the fold that shows the chat in which a change was built: the chat can be read here but not continued."
-  },
   "topic.change.refreshFailed": {
     "text": "Could not refresh this change.",
     "description": "Error at the top of a change's page when re-reading its current state failed and the server gave no message of its own. A Retry button follows it."

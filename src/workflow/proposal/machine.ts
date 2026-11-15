@@ -861,7 +861,7 @@ const abandoned: Handler = (s, e, f, ctx, deps) => {
     messages: told, cancel, work,
     writes: [
       { type: 'abandoned', sessionId: s.data.sessionId },
-      line(e, s.data, `${prLabel(f.row!)} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel. Re-propose it from the session's dev-chat.`),
+      line(e, s.data, `${prLabel(f.row!)} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel. Propose it again from the change's page.`),
     ],
     push: [votes(f, { merging: false, mergeFailed: true, resolving: false, selfHosted: f.row!.selfHosted }), ...board(f, 'paused')],
     timer: timerFor(next, f, ctx, deps),
@@ -1466,7 +1466,7 @@ function synced(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outco
     if (outcome === 'unresolvable') {
       const owner = f.row!.userId ? `<@${f.row!.userId}>` : 'the session owner';
       writes.push({ type: 'line', eventId: e.id, appId: d.appId, sessionId: d.sessionId, msgType: 'conflict', metadata: null,
-        content: `PR #${f.row!.prNumber} conflicts with main and could not be resolved automatically. ${owner}: open the session's dev-chat to resolve it.` });
+        content: `PR #${f.row!.prNumber} conflicts with main and could not be resolved automatically. ${owner}: the conflict needs resolving on its branch before it can merge.` });
     }
   }
   return step({ name: s.name, data: d } as Live, {

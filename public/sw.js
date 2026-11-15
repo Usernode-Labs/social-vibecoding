@@ -432,7 +432,6 @@ const SHELL_ASSETS = [
   // The feedback dialog's screenshot-capture module used to be listed here.
   // #1078 chunk I moved it into the React bundle, so /shell/assets/shell.js
   // above is what precaches it now.
-  '/js/session-transcript.js',
   '/js/session-state.js',
   // The Leaderboard screen's three Topochain-domain panes were listed here
   // too, and moved in the same chunk. Only the shared event RULES they read

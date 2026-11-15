@@ -5849,16 +5849,6 @@ async function seedStagingNotifications(pool, config) {
     sessionId = rows[0].id;
   }
 
-  // #138: give the fixture session a headless issue number so the
-  // auto_solve_done row below renders "issue #9042" and deep-links to the
-  // Issues tab. Idempotent (only fills when unset).
-  await pool.query(
-    `UPDATE chat_sessions
-        SET headless_issue_number = COALESCE(headless_issue_number, 9042)
-      WHERE id = $1`,
-    [sessionId]
-  );
-
   const fixtures = [
     { kind: 'mention', chatMessageId: messageIds.mention, sourceUserId: source.id, minutesAgo: 11 },
     { kind: 'reply', chatMessageId: messageIds.reply, sourceUserId: source.id, minutesAgo: 10 },
@@ -5878,12 +5868,6 @@ async function seedStagingNotifications(pool, config) {
       readAt: true,
       minutesAgo: 6,
     },
-    // #138: two UNREAD rows of kinds that are no longer created
-    // (session_done, auto_solve_done), so the bell's distinct green badge
-    // shows "2" on staging load and an old row is there to open: both are
-    // system-generated (no source user) and open their change's page.
-    { kind: 'session_done', sessionId, sourceUserId: null, minutesAgo: 5 },
-    { kind: 'auto_solve_done', sessionId, sourceUserId: null, detail: 'code', minutesAgo: 4 },
     // #646: approver-invite badge/history row. The actionable pinned
     // Invites card is driven by the app_approvers 'invited' row seeded
     // below, this notification is the badge bump + history entry.
@@ -7102,103 +7086,14 @@ async function seedStagingSharedSession(pool, config) {
   } else {
     const { rows } = await pool.query(
       `INSERT INTO chat_sessions
-         (app_id, user_id, branch_name, pr_number, session_title, status, shared_at,
-          transcript_shared_at, created_at)
+         (app_id, user_id, branch_name, pr_number, session_title, status, shared_at, created_at)
        VALUES
          ($1, $2, $3, 9301, 'Staging demo shared session', 'paused',
-          NOW() - INTERVAL '45 minutes', NOW() - INTERVAL '40 minutes',
-          NOW() - INTERVAL '2 hours')
+          NOW() - INTERVAL '45 minutes', NOW() - INTERVAL '2 hours')
        RETURNING id`,
       [appId, demoUserId, fixtureBranch]
     );
     sessionId = rows[0].id;
-  }
-
-  // The transcript itself. Without these rows the "Read the build chat"
-  // section on the fixture's topic page would expand to an empty box —
-  // chat_session_messages for a session created by THIS seed obviously
-  // doesn't come across in the prod DB clone.
-  //
-  // The set deliberately includes rows the sanitiser must STRIP (a ccLog
-  // row, a platformIssueDraft card, per-message cost_cents) so a tester can
-  // confirm on staging that they don't render, and one attachment row so
-  // the name-only chip path is reviewable. Idempotent per row on
-  // (session_id, content).
-  const transcriptRows = [
-    {
-      role: 'user', mins: 118, model: null,
-      content: '[staging fixture] The session cards get cramped on my phone — the title ends up squeezed against the buttons. Can we fix that?',
-      metadata: { attachments: [{ id: 'b'.repeat(32), filename: 'cramped-card.png', kind: 'image', sizeBytes: 48210 }] },
-    },
-    {
-      role: 'assistant', mins: 117, model: 'claude-opus-5', cost: 3.1,
-      content: "[staging fixture] Agreed — the action buttons are fixed-width, so they crush the title at narrow widths. I'll split the card into a title row and an actions row that wraps.",
-      metadata: {},
-    },
-    {
-      role: 'system', mins: 116, model: null,
-      content: 'Claude Code is running',
-      metadata: { progressLog: [
-        'Reading public/js/app-view.js',
-        'Editing _renderMySessionCard',
-        'Adding tests/session-card-layout.test.js cases',
-        'Running node --test tests/session-card-layout.test.js',
-      ] },
-    },
-    {
-      role: 'system', mins: 112, model: null,
-      content: 'Claude Code log',
-      // MUST NOT render in the read-only view (raw agent stderr).
-      metadata: { ccLog: '[staging fixture] raw stderr — a reader must never see this line' },
-    },
-    {
-      role: 'system', mins: 111, model: null,
-      content: 'Plan drafted',
-      metadata: {
-        specPreview: '# [staging fixture] Readable session cards on narrow screens\n\n- Two-row card layout\n- Actions wrap instead of crushing the title\n',
-        specVersion: 1, specLines: 4,
-      },
-    },
-    {
-      role: 'system', mins: 105, model: null,
-      content: 'Changes ready',
-      metadata: {
-        changesReady: true, prNumber: 9301, ccOutcome: 'success', durationMs: 246000,
-        ccOutput: '[staging fixture] Split the session card into a title row and a wrapping actions row; added layout tests.',
-      },
-    },
-    {
-      role: 'system', mins: 104, model: null,
-      content: 'The AI suggests reporting this to the platform',
-      // MUST NOT render in the read-only view (owner-only action card).
-      metadata: { platformIssueDraft: { body: '[staging fixture] draft report a reader must never see', status: 'pending' } },
-    },
-    {
-      role: 'user', mins: 100, model: null,
-      content: '[staging fixture] Looks good. Do the buttons keep their order when they wrap?',
-      metadata: { suggestions: ['[staging fixture] leaked suggestion chip'] },
-    },
-    {
-      role: 'assistant', mins: 99, model: 'claude-opus-5', cost: 1.8,
-      content: '[staging fixture] Yes — they wrap in source order, so Preview stays first and Archive stays last.',
-      metadata: {},
-    },
-  ];
-  let transcriptInserted = 0;
-  for (const row of transcriptRows) {
-    const { rows: existingMsg } = await pool.query(
-      'SELECT id FROM chat_session_messages WHERE session_id = $1 AND content = $2 LIMIT 1',
-      [sessionId, row.content]
-    );
-    if (existingMsg.length) continue;
-    await pool.query(
-      `INSERT INTO chat_session_messages
-         (session_id, role, content, model, cost_cents, metadata, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW() - (($7::int) * INTERVAL '1 minute'))`,
-      [sessionId, row.role, row.content, row.model, row.cost || 0,
-       JSON.stringify(row.metadata || {}), row.mins]
-    );
-    transcriptInserted++;
   }
 
   // Ensure the flag survives a tester having unshared it in an earlier
@@ -7223,7 +7118,7 @@ async function seedStagingSharedSession(pool, config) {
   }
 
   log.info('db', 'Staging shared-session fixture seeded', {
-    appId, sessionId, threadInserted, transcriptInserted,
+    appId, sessionId, threadInserted,
   });
 }
 
@@ -11072,7 +10967,7 @@ async function seedStagingAnalyticsCharts(pool) {
 //     human messages and not the lifecycle noise.
 //
 // Every message is prefixed "[staging fixture]" so it is recognisable
-// verbatim when the Mayor quotes it back. Idempotent on the first
+// verbatim when an agent quotes it back. Idempotent on the first
 // message's content; a strict no-op outside staging.
 async function seedStagingDiscussionContext(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;

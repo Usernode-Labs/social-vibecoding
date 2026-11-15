@@ -1,17 +1,13 @@
 'use strict';
 
 // `branch.ensure`, a platform operation (services/platform-operations.js):
-// the working branch a new change starts on, created on a conductor. Three
-// routes ask for one after their own checks and slot claims:
+// the working branch a new change starts on, created on a conductor. Two
+// callers ask for one after their own checks and slot claims:
 //
-//   proposal-start   a local agent's native proposal (routes/proposal-handoff.js):
+//   proposal-start   a coding agent's native proposal (routes/proposal-handoff.js):
 //                    `dev/cli-u<requester>-<request>` at the exact base the
 //                    agent and Homeroom agreed on; a different existing ref
 //                    is a conflict, never moved
-//   headless         an issue's unattended run (routes/sessions.js): `dev/…`
-//                    off main
-//   clone-headless   a clone of that run (routes/sessions.js): `dev/…` off the
-//                    source run's own branch, or main when that is gone
 //   session          a change's branch on its first turn, asked by a web
 //                    process (services/session-lifecycle.js
 //                    ensureSessionBranch): `dev/…` off main, while the
@@ -51,13 +47,6 @@ async function sessionFree(pool, request) {
   return !!cs && cs.app_id === request.appId && (!cs.branch_name || cs.branch_name === request.input.branch);
 }
 
-// The source run a clone starts from: its own branch, read now.
-async function sourceBranch(pool, request) {
-  const { rows: [src] } = await pool.query(
-    'SELECT app_id, branch_name FROM chat_sessions WHERE id = $1', [request.input.sourceSessionId]);
-  return src && src.app_id === request.appId ? { branch: src.branch_name || null } : null;
-}
-
 // #6389: the change a session's branch is rebuilt from (a bot's own version
 // of a person's change): its branch, on this app.
 async function rebuiltFrom(pool, request) {
@@ -70,7 +59,7 @@ async function rebuiltFrom(pool, request) {
 
 async function authorize({ pool }, request, user) {
   const { purpose, branch, baseSha } = request.input || {};
-  if (!['proposal-start', 'headless', 'clone-headless', 'session'].includes(purpose)) {
+  if (!['proposal-start', 'session'].includes(purpose)) {
     throw Object.assign(new Error('Unknown branch purpose'), { permanent: true });
   }
   const t = await target(pool, request);
@@ -79,7 +68,6 @@ async function authorize({ pool }, request, user) {
   if (join) return { status: 403, ...join };
   if (!branchAllowed(purpose, branch, user.id)) return { status: 400, error: 'bad_branch_name' };
   if (purpose === 'proposal-start' && !SHA.test(String(baseSha || ''))) return { status: 400, error: 'bad_base_sha' };
-  if (purpose === 'clone-headless' && !(await sourceBranch(pool, request))) return { status: 404, error: 'Auto session not found' };
   if (purpose === 'session' && request.input.fromSessionId && !(await rebuiltFrom(pool, request))) {
     return { status: 404, error: 'source_branch_missing' };
   }
@@ -101,11 +89,6 @@ async function run({ pool }, request, _user, steps) {
   // Where the branch starts, resolved once: a retry makes the same branch.
   const start = await steps.once('start', async () => {
     if (purpose === 'proposal-start') return { sha: baseSha, inherited: false };
-    if (purpose === 'clone-headless') {
-      const src = await sourceBranch(pool, request);
-      const sha = src?.branch ? await github.getBranchSha(t.owner, t.repo, src.branch).catch(() => null) : null;
-      if (sha) return { sha, inherited: true };
-    }
     if (from?.branch) {
       const sha = await github.getBranchSha(t.owner, t.repo, from.branch).catch(() => null);
       if (sha) return { sha, inherited: true };
@@ -120,7 +103,7 @@ async function run({ pool }, request, _user, steps) {
     if (err.code === 'branch_conflict') return { ok: false, status: 409, error: 'branch_conflict' };
     // A host that refuses now is answered at once, with the reason when it
     // has one (an hour's limit used up), as these routes always answered:
-    // the person or the local agent asks again, and the same request makes
+    // the person or the coding agent asks again, and the same request makes
     // the same branch.
     if (steps.stopped) throw err;
     log.warn('branch-operation', 'Branch creation failed', { purpose, branch, ...github.describeGithubError(err) });

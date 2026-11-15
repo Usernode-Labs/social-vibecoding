@@ -1782,7 +1782,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 734 → 735: +1 (Admin › Onboarding flows): the new section's own route,
   // which no existing check opens, drawn on its demo payload with its five
   // views. 735 leaves 145 slots.
-  checkCap.assertPinned(DAPP.tests.length, 735);
+  // 735 → 718: −17 (15 Nov 2026, agent chats, dev chats and headless runs
+  // retired) the checks of the agent session pane, the dev chat's spec
+  // viewer, chat sharing and the auto-solve work states went with them;
+  // three were re-pointed to the old addresses' new landings. 718 leaves 162 slots.
+  checkCap.assertPinned(DAPP.tests.length, 718);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

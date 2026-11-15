@@ -161,8 +161,9 @@ selects a skill.
   `// test:changed: always (…)` line; mark a new one only if it is fast.
   A suite that reaches a file only through a chain of modules declares it
   with a `// test:changed: when <path> (…)` line, and a change to that file
-  or anything under that directory selects it: the Mayor turn golden
-  declares `src/prompts/`, because the prompts it pins are built from there.
+  or anything under that directory selects it: the design-guidance suite
+  declares `src/prompts/design-guidance.md`, because it reads that guidance
+  through `services/prompts.js`.
   A new `tests/*.test.js` needs its entry in `tests/baselines/test-durations.json`
   (`npm run test:durations -- --add <file>`); test:changed reports one that is
   missing and the unit suite fails on it.
@@ -482,9 +483,10 @@ is no replay plan to write and nothing to verify locally.
   answers with a `join_required` frame). Mount the matching gate on any new
   write route of that kind; the client's fetch wrapper
   (`frontend/src/lib/join-required.ts`) turns the 403 into a Join prompt and
-  a retry, so no caller handles it by hand. A Mayor or connector tool keeps
-  the code (`mcp-tools.platformError` answers `join_required` with the app),
-  and the Mayor's refused card offers Join itself. The collab guard in
+  a retry, so no caller handles it by hand. A connector tool keeps the code
+  (`mcp-tools.platformError` answers `join_required` with the app), and
+  Homeroom bot, refused the same way, tells the person to join the project
+  from its page. The collab guard in
   `app-access.js` still decides who may be there at all; admins pass.
   Collaborators and platform access join by trigger — write those rows,
   not `community_members`, unless the action is literally Join or Leave. A

@@ -3,9 +3,8 @@
 // One renderer for every surface that shows text a person or Homeroom bot
 // wrote: message bodies and bot threads (features/messages/format.tsx), a
 // request's and a change's description (features/dev-board/topic/), group
-// chat and channels (public/js/group-chat.js), shared transcripts
-// (public/js/session-transcript.js), the staging overlay and the image
-// viewer. It was a method of the dev chat's module until that chat was
+// chat and channels (public/js/group-chat.js), the staging overlay and the
+// image viewer. It was a method of the dev chat's module until that chat was
 // retired; the output and its `dc-*` classes (styled in public/css/app.css)
 // are unchanged.
 //

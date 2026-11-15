@@ -171,19 +171,17 @@ kanbanFiltersStore.setFlush(flushSync);
  * And every card surface: each publish replaces what used to be an
  * `innerHTML` assignment whose caller's NEXT LINES read the fresh DOM —
  * `_rerenderWorkshop` wires the comment observer and fills the kudos hosts,
- * `_repaintKanbanBoard` re-binds drag and re-anchors an open ⋯ menu, and
- * `_renderTopicHead` binds the transcript toggle it just painted around
- * the card. cardNowStore ticks inside no such read, but flushing it keeps
+ * and `_repaintKanbanBoard` re-binds drag and re-anchors an open ⋯ menu.
+ * cardNowStore ticks inside no such read, but flushing it keeps
  * a countdown label and its expiry refetch on the same beat.
  */
 devWorkshopStore.setFlush(flushSync);
 devKanbanStore.setFlush(flushSync);
 cardNowStore.setFlush(flushSync);
-// The topic head's too, and it is load-bearing three times:
-// `_renderTopicHead` fills the kudos hosts it just rendered,
-// `_loadSessionTranscript` fills the transcript body on the line after the
-// repaint that opened it, and a request's page portals its header and back
-// chip into the thread shell's hosts in the same paint (#4453).
+// The topic head's too, and it is load-bearing twice:
+// `_renderTopicHead` fills the kudos hosts it just rendered, and a request's
+// page portals its header and back chip into the thread shell's hosts in the
+// same paint (#4453).
 topicHeadStore.setFlush(flushSync);
 
 /**

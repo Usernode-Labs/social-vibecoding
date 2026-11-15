@@ -22,10 +22,6 @@
  *   surfaces still call (the admin gallery and its own tests), so it stays
  *   a string builder.
  *
- * And a genuine controller host, rendered once, empty, with a constant
- * className: `[data-transcript-body]`, which public/js/session-transcript.js
- * fills on expand.
- *
  * A request's page is ./request-head.tsx (#4453): the request as a Messages
  * thread's root post, its GitHub comments in the thread's own stream.
  */
@@ -70,7 +66,6 @@ import type {
   IssueProposalRef,
   TextRun,
   TopicBody,
-  TranscriptSection,
   LedgerProgress,
   LedgerBuildStep,
   LedgerRow,
@@ -721,28 +716,6 @@ export function SummaryMore({ m }: { m: NonNullable<TopicBody['summaryMore']> })
       {/* PlatformMarkdown.render's output — sanitised where it is built. */}
       <Html className="dev-issue-body dev-topic-details-body" html={m.html} />
     </details>
-  );
-}
-
-function Transcript({ t: section }: { t: TranscriptSection }): ReactNode {
-  const t = useMessages('project');
-  return (
-    <div className="st-section" data-transcript-section={section.id}>
-      <button
-        type="button"
-        className="st-section-head"
-        data-transcript-toggle={section.id}
-        aria-expanded={section.expanded}
-        onClick={() => call('toggleTranscript', section.id)}
-      >
-        <span className="st-caret" aria-hidden="true"></span>
-        <span data-transcript-label="">{section.label}</span>
-        <span className="st-readonly-tag">{t('project:topic.transcript.readOnly')}</span>
-      </button>
-      {/* The BODY is public/js/session-transcript.js's — a controller host,
-          rendered once with a constant className and never looked inside. */}
-      <div className="st-body" data-transcript-body={section.id} hidden={!section.expanded}></div>
-    </div>
   );
 }
 
@@ -1977,7 +1950,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
               />
             ) : null}
           </div>
-          <TopicBodySections body={owner ? { ...body, transcript: null } : body} />
+          <TopicBodySections body={body} />
         </>
       )}
     </div>
@@ -2103,7 +2076,7 @@ function IssueBody(
 
 /**
  * Everything the topic screen draws BELOW its card: the ledger, the About
- * sheet, the transcript, and the host the GitHub thread mounts into.
+ * sheet, and the host the GitHub thread mounts into.
  *
  * Split out of `TopicHead` so the Workshop can render the same sections
  * under a row it has unfolded (#1787 round four) — same components, same
@@ -2198,11 +2171,6 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
               <Roster r={roster} />
             </div>
           ) : null}
-        </section>
-      ) : null}
-      {body.transcript ? (
-        <section className="dev-topic-sheet dev-topic-transcript" data-topic-sheet="transcript">
-          <Transcript t={body.transcript} />
         </section>
       ) : null}
     </>

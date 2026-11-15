@@ -251,7 +251,7 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/ui-telemetry').pruneAnonymous(pool),
   },
   {
-    // An agent session's delegated connector grants, a week after their turn.
+    // Delegated connector grants (Homeroom bot's turns), a week after they end.
     name: 'delegation-prune', everyMs: HOUR,
     run: async (_ctx: WorkContext, { pool }: JobDeps) => ({ pruned: await legacy('services/mcp-oauth').pruneDelegations(pool) }),
   },

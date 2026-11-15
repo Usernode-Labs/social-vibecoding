@@ -138,9 +138,6 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { al
 }
 
 const { getActiveUserStats } = require('../services/active-users');
-// Read-only transcript sharing: the deny-by-default row/metadata allowlist
-// GET /transcript reads through (see services/transcript-share.js).
-const transcriptShare = require('../services/transcript-share');
 const appAccess = require('../services/app-access');
 const listTestResults = require('../services/list-test-results');
 const communities = require('../services/communities');
@@ -234,20 +231,6 @@ const ensureStagingInFlight = new Set();
 const recheckInFlight = new Set();
 
 // ── Staging mock data ──────────────────────────────────────────────────
-//
-// Read-only transcript for the fake 99xxxx shared-session ids the
-// ?demo=1 branch of GET /shared-sessions injects (those rows exist only in
-// that response, never in the DB, so a real transcript read would 404 and
-// the demo card's "Read chat" button would dead-end). Same convention as
-// stagingMockIssueComments in routes/issues.js: request-time only, never
-// persisted, and a strict no-op outside staging — the caller gates on
-// USERNODE_ENV === 'staging' && ?demo=1 before consulting this.
-//
-// Deliberately includes rows the sanitiser must strip (metadata.ccLog, a
-// platformIssueDraft card, per-message cost) so a tester can confirm on
-// staging that they do NOT render in the read-only view. Because the mock
-// goes through sanitizeTranscript exactly like a real read, that check
-// exercises the real allowlist rather than a hand-written "safe" payload.
 function stagingMockOwnSession(userId, appSlug) {
   return {
     id: 990101, branch_name: 'mock/my-session', pr_number: null,
@@ -302,31 +285,25 @@ function stagingMockOwnSessions(userId, appSlug) {
   },
   // Visible (shared) own session — renders below the archived
   // toggle under the "Visible to everyone." caption, with the
-  // Preview (#689: pr_number set) + Open chat + Share chat + Hide
-  // buttons. transcript_shared_at is NULL here, so this row is the
-  // "visible, chat still private" half of the chip pair.
+  // Preview (#689: pr_number set) + Open discussion + Hide buttons.
   {
     id: 990103, branch_name: 'mock/my-session-visible', pr_number: 990103,
     pr_url: 'https://github.com/Usernode-Labs/social-vibecoding/pull/990103', pr_title: null,
     session_title: '[Mock] Your visible session',
     status: 'active', linked_issues: [],
     shared_at: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-    transcript_shared_at: null,
     created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
     last_activity_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
     app_slug: appSlug, app_name: 'Homeroom', busy: false,
   },
-  // The other half: visible AND transcript-published, so the card
-  // renders the "Chat shared" toggle plus the "· chat readable"
-  // subtitle. A live seed can't hold both states at once (one row,
-  // one flag), which is exactly what the demo path is for.
+  // A second visible own session, with no PR link (the mock notifications
+  // in routes/notifications.js open it).
   {
-    id: 990104, branch_name: 'mock/my-session-chat-shared', pr_number: 990104,
+    id: 990104, branch_name: 'mock/my-session-visible-2', pr_number: 990104,
     pr_url: null, pr_title: null,
-    session_title: '[Mock] Your visible session with the chat shared',
+    session_title: '[Mock] Your second visible session',
     status: 'active', linked_issues: [],
     shared_at: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
-    transcript_shared_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
     created_at: new Date(Date.now() - 70 * 60 * 1000).toISOString(),
     last_activity_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
     app_slug: appSlug, app_name: 'Homeroom', busy: false,
@@ -437,10 +414,6 @@ function stagingMockSharedSessions() {
             created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
             last_activity_at: new Date().toISOString(),
             chat_count: 0, last_message_at: null, busy: true,
-            // Visible but chat NOT published — no "Read chat" chip. Kept
-            // false on two of the three rows so the demo board shows both
-            // states side by side.
-            transcript_shared: false, message_count: 0,
           },
           {
             id: 990002, session_title: '[Mock] Paused shared session with a preview',
@@ -453,10 +426,6 @@ function stagingMockSharedSessions() {
             created_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
             chat_count: 3, last_message_at: new Date().toISOString(), busy: false,
-            // The one demo row with a readable chat: its "Read chat" chip
-            // opens the topic page and stagingMockTranscript serves the
-            // matching id, so the round trip works in a demo preview.
-            transcript_shared: true, message_count: 8,
           },
           // #689: preview asleep (staging GC'd the container) but the
           // branch has pushed changes — the pill still renders and routes
@@ -480,16 +449,12 @@ function stagingMockSharedSessions() {
             created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
             chat_count: 1, last_message_at: new Date().toISOString(), busy: false,
-            transcript_shared: false, message_count: 0,
           }
   ];
 }
 
-const STAGING_MOCK_TRANSCRIPT_IDS = new Set([990002]);
-
-// (#1012) Read-only mock spec version for the group-chat spec panel. Same
-// convention as stagingMockTranscript above: request-time only, never
-// persisted, and a strict no-op outside staging — the caller gates on
+// (#1012) Read-only mock spec version for the group-chat spec panel.
+// Request-time only, never persisted, and a strict no-op outside staging — the caller gates on
 // USERNODE_ENV === 'staging' && ?demo=1 AND on the real lookup finding
 // nothing, so a genuine row always wins.
 //
@@ -502,8 +467,8 @@ const STAGING_MOCK_TRANSCRIPT_IDS = new Set([990002]);
 //
 // The document deliberately conforms to the platform's two-half spec
 // convention (both marker headings), so a reviewer also exercises the
-// dev-chat viewer's tab split and can confirm that "Copy markdown" yields
-// the WHOLE document rather than the open tab's half.
+// viewer's tab split and can confirm that "Copy markdown" yields the WHOLE
+// document rather than the open tab's half.
 const STAGING_MOCK_SPEC_MD = [
   '# [Mock] Readable cards on narrow screens',
   '',
@@ -640,73 +605,6 @@ async function attachChangePlans(pool, rows, viewerId) {
   } catch (err) {
     log.warn('sessions', 'Could not read the plans for a board list', { message: err.message });
   }
-}
-
-function stagingMockTranscript(sessionId) {
-  if (!STAGING_MOCK_TRANSCRIPT_IDS.has(sessionId)) return null;
-  const t = (minsAgo) => new Date(Date.now() - minsAgo * 60 * 1000).toISOString();
-  const raw = [
-    {
-      id: 1, role: 'user', model: null, created_at: t(90), cost_cents: 0,
-      content: '[Mock] Can we make the board cards a bit easier to read on a phone?',
-      metadata: { attachments: [{ id: 'a'.repeat(32), filename: 'phone-screenshot.png', kind: 'image', sizeBytes: 51234 }] },
-    },
-    {
-      id: 2, role: 'assistant', model: 'claude-opus-5', created_at: t(89),
-      token_count: 812, cost_cents: 3.4,
-      content: "[Mock] Sure — the title gets crushed by the action buttons at narrow widths. I'll split the card into a title row and a wrapping actions row.",
-      metadata: {},
-    },
-    {
-      id: 3, role: 'system', model: null, created_at: t(88),
-      content: 'Claude Code is running',
-      metadata: { progressLog: ['Reading public/js/app-view.js', 'Editing the card renderer', 'Running the layout tests'] },
-    },
-    {
-      id: 4, role: 'system', model: null, created_at: t(85),
-      content: 'Claude Code log',
-      // MUST NOT render: raw agent stderr.
-      metadata: { ccLog: '[Mock] raw stderr that a reader must never see' },
-    },
-    {
-      id: 5, role: 'system', model: null, created_at: t(84),
-      content: 'Plan drafted',
-      metadata: { specPreview: '# [Mock] Readable cards on narrow screens\n\n- Two-row card layout\n- Actions wrap instead of crushing the title\n', specVersion: 1, specLines: 4 },
-    },
-    {
-      id: 6, role: 'system', model: null, created_at: t(80),
-      content: 'Changes ready',
-      metadata: { changesReady: true, ccOutput: '[Mock] Split the session card into a title row and an actions row that wraps.', ccOutcome: 'success', durationMs: 252000, prNumber: 9301 },
-    },
-    {
-      id: 7, role: 'system', model: null, created_at: t(79),
-      content: 'The AI suggests reporting this to the platform',
-      // MUST NOT render: owner-only action card.
-      metadata: { platformIssueDraft: { body: '[Mock] draft report a reader must never see', status: 'pending', msgId: 7 } },
-    },
-    {
-      id: 8, role: 'user', model: null, created_at: t(70),
-      content: '[Mock] Nice — can the buttons keep their order when they wrap?',
-      metadata: { suggestions: ['[Mock] leaked suggestion chip'] },
-    },
-  ];
-  return {
-    session: {
-      id: sessionId,
-      session_title: '[Mock] Paused shared session with a preview',
-      pr_title: null,
-      branch_name: 'mock/shared-preview',
-      status: 'paused',
-      username: 'staging-demo-user',
-      transcript_shared_at: t(30),
-      message_count: raw.length,
-      is_owner: false,
-      // Retired with classic sessions (#2779); see the transcript read.
-      can_fork: false,
-    },
-    messages: transcriptShare.sanitizeTranscript(raw),
-    truncated: false,
-  };
 }
 
 // getActiveWorkerCount is imported from services/active-workers and
@@ -1266,7 +1164,8 @@ function sessionRoutes(config) {
   // `proposed_pr_title` is what pr-metadata will use when it creates one;
   // after a managed PR exists, the local proposal title moves immediately
   // and GitHub is a best-effort mirror. Imported PR titles stay with their
-  // external author, and headless issue runs are named by their issue.
+  // external author, and headless rows (unattended runs of the past, bench
+  // previews) are not renamed.
   //
   // The app-level collab gate above runs first. The UPDATE repeats the
   // narrower author/lifecycle/source checks atomically and returns the same
@@ -1369,9 +1268,8 @@ function sessionRoutes(config) {
   // GET /api/me/active-sessions
   //   Cross-app view of the current user's non-archived sessions,
   //   each annotated with whether a CC turn is in flight right now.
-  //   Used by the dev-chat tab's "Active Sessions (x/y)" panel so a
-  //   user can see all their in-progress AI work at a glance — even
-  //   from other projects — without flipping through apps.
+  //   Read by the Dev board's In progress area (the viewer's own cards)
+  //   and by the Improve rows in Messages and the bell.
   //
   //   "busy" comes from the same in-process state the per-session
   //   /status endpoint uses: activeWorkers (chat handler's in-flight
@@ -1379,9 +1277,8 @@ function sessionRoutes(config) {
   //   container-status fallback is intentionally NOT used here, for
   //   the same warm-CC reason described in /api/sessions/:id/status.
   //
-  //   The result includes paused sessions too — the panel's job is
-  //   "see all your dev work across apps and resume any of it", and
-  //   paused rows are exactly what makes that useful.
+  //   The result includes paused sessions too: they are still the
+  //   viewer's work in progress.
   //
   //   "totals" lets the caller render the (x/y) header without a
   //   second pass through the array:
@@ -1412,7 +1309,7 @@ function sessionRoutes(config) {
   router.get('/api/me/active-sessions', async (req, res) => {
     try {
       await require('../services/staging-review-session').ensure(pool, config, req.user);
-      // Imported PRs have no dev-chat worker. Keep them out of callers that
+      // Imported PRs have no worker of their own. Keep them out of callers that
       // use this endpoint as a cross-app worker/session list; the Dev board
       // opts in so it can render the owner's imported In-progress cards.
       const includeImported = req.query.include_imported === '1';
@@ -1457,15 +1354,12 @@ function sessionRoutes(config) {
       const { rows } = await pool.query(
         `SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
                 cs.session_title, cs.proposed_pr_title, cs.status, cs.linked_issues, cs.shared_at,
-                cs.transcript_shared_at, cs.created_at, cs.source,
+                cs.created_at, cs.source,
                 cs.staging_url, cs.imported_pr_author, cs.imported_pr_head_repo,
                 cs.imported_pr_head_sha, cs.reviewed_head_sha, a.repo_url,
                 cs.check_state, cs.check_phase, cs.check_error_detail,
                 cs.test_results, cs.spec_md,
                 cs.agent_backend, cs.agent_model, cs.external_agent, cs.build_venue,
-                -- #2779: a change started from an agent session is listed
-                -- under that conversation in Messages, not as a row of its own.
-                cs.agent_session_id,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 lt.role AS last_turn_role, lt.asks AS last_turn_asks,
                 a.slug AS app_slug, a.name AS app_name,
@@ -1774,17 +1668,6 @@ function sessionRoutes(config) {
       const appRows = [app];
       await require('../services/staging-review-session').ensure(pool, config, req.user, { ...app, slug: req.params.slug });
 
-      // has_spec (#894): a boolean, never the spec body — the dev chat's
-      // quick-reply fallback picks between the post-build and post-spec
-      // pill sets from it, and this list is where DevChat.currentSession
-      // comes from. Shipping spec_md itself would put every session's full
-      // markdown in a list payload for one bit of information.
-      //
-      // created_from_issue_number (#1001): lets the STARTER pills — the one
-      // set that is legitimately generic, since a fresh session has no
-      // conversation to be specific about — name the issue this chat was
-      // started for. Already-present metadata; just wasn't serialized.
-      //
       // agent_backend / agent_model / source / external_agent: the VENUE a
       // session is building in. Every one of these columns has existed for
       // as long as the feature that writes it, but no list payload carried
@@ -1799,12 +1682,8 @@ function sessionRoutes(config) {
       // the distinction a bare agent_backend cannot make — an imported row
       // has a defaulted agent_backend that no turn ever ran through.
       const { rows } = await pool.query(
-        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, proposed_pr_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
-                created_from_issue_number, agent_backend, agent_model, source, external_agent, build_venue,
-                -- #2779: the agent session a change was started from, so the
-                -- owner's Build door can lead back to that conversation.
-                agent_session_id,
-                (spec_md IS NOT NULL AND spec_md <> '') AS has_spec,
+        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, proposed_pr_title, staging_url, status, linked_issues, behind_main, shared_at, created_at,
+                agent_backend, agent_model, source, external_agent, build_venue,
                 -- The same derivation the shared-session list uses, so the
                 -- owner's own card and everyone else's card agree about
                 -- whether a slept preview can be woken. Without it
@@ -1889,9 +1768,8 @@ function sessionRoutes(config) {
   //   sessions on this app — the rows the Dev board renders at the
   //   bottom of everyone's "In progress" area. Ordinary sessions remain
   //   deliberately metadata-only: no pr_url / cc_session_id / anything
-  //   enabling dev-chat access — the dev-chat endpoints stay owner-scoped,
-  //   so "no way to open the owner's dev chat" is enforced by authorization,
-  //   not just missing UI. Imported PR rows are enriched after this privacy
+  //   that reaches the owner's private work, which stays owner-scoped by
+  //   authorization, not just by missing UI. Imported PR rows are enriched after this privacy
   //   query with the proposal metadata that is already group-visible on
   //   promotion; their GitHub description/checks/attributes exist while
   //   Underway and should not disappear merely because voting has not begun.
@@ -1901,7 +1779,7 @@ function sessionRoutes(config) {
   //   changes" — so the card can offer an on-demand rebuild via
   //   ensure-staging even after the idle staging GC has nulled staging_url.
   //   PR number and URL are public GitHub metadata once the author shares a
-  //   session. Keep the dev-chat transcript and private work details scoped.
+  //   session. Keep the change's private work details scoped.
   //
   //   That boolean was `pr_number IS NOT NULL` (#689), which was a fine
   //   proxy while every shared session was a proposal in waiting. It is
@@ -1932,13 +1810,6 @@ function sessionRoutes(config) {
   //   checks have finished without exposing the test result payload or
   //   error detail. Imported rows receive those full details in the scoped
   //   enrichment described above.
-  //
-  //   `transcript_shared` (+ `message_count` for its label) is the ONE
-  //   addition that widens what a viewer can reach: it says the owner took
-  //   the second opt-in and published the conversation, so the card renders
-  //   a "Read chat" chip. Note what it still is NOT — the transcript itself
-  //   is not inlined here; the chip routes to GET /transcript, which
-  //   re-checks both flags server-side. This endpoint stays metadata-only.
   router.get('/api/apps/:slug/shared-sessions', async (req, res) => {
     try {
       // View-level (#621): explicitly-shared rows are metadata-only by
@@ -1961,9 +1832,6 @@ function sessionRoutes(config) {
                 cs.linked_issues, cs.source, cs.imported_pr_author,
                 cs.agent_backend, cs.agent_model, cs.external_agent, cs.build_venue,
                 cs.check_state, cs.check_phase,
-                (cs.transcript_shared_at IS NOT NULL) AS transcript_shared,
-                (SELECT COUNT(*)::int FROM chat_session_messages m
-                  WHERE m.session_id = cs.id) AS message_count,
                 cs.user_id, COALESCE(u.username, 'Deleted user') AS username, cs.shared_at, cs.created_at,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 (SELECT COUNT(*)::int FROM chat_messages cm
@@ -2034,7 +1902,7 @@ function sessionRoutes(config) {
     }
   });
 
-  // Check results are fetched on demand, separately from the private dev
+  // Check results are fetched on demand, separately from the private
   // transcript and the lightweight board feed. The app view gate above still
   // applies; sharing a session exposes these results, never its messages.
   router.get(['/api/sessions/:id/checks', '/api/sessions/:id/details'], async (req, res) => {
@@ -2049,7 +1917,7 @@ function sessionRoutes(config) {
         }
       }
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.user_id, cs.status, cs.shared_at, cs.transcript_shared_at, cs.session_title, cs.pr_title,
+        `SELECT cs.id, cs.user_id, cs.status, cs.shared_at, cs.session_title, cs.pr_title,
                 cs.check_state, cs.check_phase, cs.check_trigger,
                 cs.check_error_detail, cs.checks_checked_at, cs.checks_commit_sha,
                 cs.checks_progress, cs.test_results, cs.checks_base_sha,
@@ -2570,30 +2438,19 @@ function sessionRoutes(config) {
   //   and keeps the ORIGINAL shared_at (COALESCE) so re-sharing doesn't
   //   jump the card to the bottom of other users' In progress area.
   //   Both broadcast a session_update so open Dev boards refresh live.
-  //
-  //   `{ transcript: true }` in the body ALSO publishes the transcript in
-  //   the same write (the "make it visible and readable in one go" path).
-  //   Omitting it — every pre-existing caller — leaves
-  //   transcript_shared_at untouched, so today's behaviour is unchanged
-  //   byte for byte: making a session visible never publishes the chat by
-  //   accident.
   router.post('/api/sessions/:id/share', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
-      const withTranscript = !!(req.body && req.body.transcript);
       const { rows } = await pool.query(
         `UPDATE chat_sessions cs
-            SET shared_at = COALESCE(cs.shared_at, NOW()),
-                transcript_shared_at = CASE WHEN $3::boolean
-                  THEN COALESCE(cs.transcript_shared_at, NOW())
-                  ELSE cs.transcript_shared_at END
+            SET shared_at = COALESCE(cs.shared_at, NOW())
            FROM apps a
           WHERE cs.id = $1 AND cs.user_id = $2 AND cs.is_headless = FALSE
             AND cs.status IN ('active', 'paused', 'promoted')
             AND a.id = cs.app_id
-          RETURNING cs.id, cs.shared_at, cs.transcript_shared_at,
+          RETURNING cs.id, cs.shared_at,
                     a.id AS app_id, a.slug AS app_slug`,
-        [sessionId, req.user.id, withTranscript]
+        [sessionId, req.user.id]
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
       const { pushSessionUpdate } = require('../services/ws');
@@ -2601,7 +2458,6 @@ function sessionRoutes(config) {
       res.json({
         ok: true,
         shared_at: rows[0].shared_at,
-        transcript_shared_at: rows[0].transcript_shared_at,
       });
     } catch (err) {
       log.error('sessions', 'Share failed', { message: err.message });
@@ -2609,9 +2465,9 @@ function sessionRoutes(config) {
     }
   });
 
-  // Unshare clears BOTH stamps. Making a session private again must never
-  // leave the transcript readable behind a card nobody can see any more —
-  // the reader could still hold (or bookmark) the session id.
+  // Unshare clears BOTH stamps: transcript_shared_at is the mark a
+  // transcript published in the past carries, which account deletion still
+  // reads (services/account-deletion.js), and a private session keeps none.
   router.post('/api/sessions/:id/unshare', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
@@ -2629,164 +2485,6 @@ function sessionRoutes(config) {
       res.json({ ok: true });
     } catch (err) {
       log.error('sessions', 'Unshare failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // POST /api/sessions/:id/share-transcript | /unshare-transcript
-  //   The SECOND, narrower opt-in: publish the dev-chat TRANSCRIPT so
-  //   anyone with view access can read it (and fork it). Owner-scoped and
-  //   headless-excluded exactly like /share.
-  //
-  //   share-transcript sets shared_at too — publishing the chat implies
-  //   board visibility, so the reader has a card to reach it from and the
-  //   two flags can never disagree in the "readable but invisible"
-  //   direction. Both stamps use COALESCE so re-sharing is idempotent and
-  //   doesn't reshuffle the board's oldest-shared-first ordering.
-  router.post('/api/sessions/:id/share-transcript', sameOriginBrowserOnly, async (req, res) => {
-    try {
-      const sessionId = parseInt(req.params.id, 10);
-      const { rows } = await pool.query(
-        `UPDATE chat_sessions cs
-            SET shared_at = COALESCE(cs.shared_at, NOW()),
-                transcript_shared_at = COALESCE(cs.transcript_shared_at, NOW())
-           FROM apps a
-          WHERE cs.id = $1 AND cs.user_id = $2 AND cs.is_headless = FALSE
-            AND cs.status IN ('active', 'paused', 'promoted')
-            AND a.id = cs.app_id
-          RETURNING cs.id, cs.shared_at, cs.transcript_shared_at,
-                    a.id AS app_id, a.slug AS app_slug`,
-        [sessionId, req.user.id]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
-      const { pushSessionUpdate } = require('../services/ws');
-      pushSessionUpdate({
-        action: 'transcript_shared', sessionId,
-        appId: rows[0].app_id, appSlug: rows[0].app_slug,
-      });
-      res.json({
-        ok: true,
-        shared_at: rows[0].shared_at,
-        transcript_shared_at: rows[0].transcript_shared_at,
-      });
-    } catch (err) {
-      log.error('sessions', 'Share transcript failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // Revokes transcript reading only — the session stays on everyone's
-  // board with its discussion thread intact. Deliberately NOT
-  // status-filtered: revoking must work on any row whose flag is set,
-  // including one that has since been promoted or archived.
-  router.post('/api/sessions/:id/unshare-transcript', sameOriginBrowserOnly, async (req, res) => {
-    try {
-      const sessionId = parseInt(req.params.id, 10);
-      const { rows } = await pool.query(
-        `UPDATE chat_sessions cs SET transcript_shared_at = NULL
-           FROM apps a
-          WHERE cs.id = $1 AND cs.user_id = $2 AND cs.is_headless = FALSE
-            AND a.id = cs.app_id
-          RETURNING cs.id, cs.shared_at, a.id AS app_id, a.slug AS app_slug`,
-        [sessionId, req.user.id]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
-      const { pushSessionUpdate } = require('../services/ws');
-      pushSessionUpdate({
-        action: 'transcript_unshared', sessionId,
-        appId: rows[0].app_id, appSlug: rows[0].app_slug,
-      });
-      res.json({ ok: true, shared_at: rows[0].shared_at, transcript_shared_at: null });
-    } catch (err) {
-      log.error('sessions', 'Unshare transcript failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // GET /api/sessions/:id/transcript
-  //   The read-only surface: a shared session's conversation, sanitised.
-  //   View-gated by the sessionCollabGuard at the top of this router (GET →
-  //   'view'), so read-only app viewers may read a published transcript
-  //   while writes below stay collab-gated.
-  //
-  //   Deliberately a SEPARATE route from GET /api/sessions/:id rather than a
-  //   relaxation of it: that one auto-resumes paused sessions, bumps
-  //   last_activity_at and clears the owner's notifications. A reader must
-  //   trigger none of those side effects, so this handler only ever SELECTs.
-  //
-  //   Authorization: both stamps non-NULL and non-headless, OR the caller is
-  //   the owner (who gets the identical sanitised payload — that's the
-  //   "preview what everyone else sees" path, and keeping it identical means
-  //   there is no second, laxer code path to get wrong). 404 on deny, never
-  //   403, matching the guard's non-enumerable posture.
-  //
-  //   NOT status-filtered: shared_at survives promotion and merge in
-  //   production, and the proposal page reuses this exact route.
-  router.get('/api/sessions/:id/transcript', async (req, res) => {
-    try {
-      const sessionId = parseInt(req.params.id, 10);
-
-      // Staging-only demo rows (?demo=1): the 99xxxx shared-session ids the
-      // demo branch of GET /shared-sessions injects don't exist in the DB, so
-      // serve a mock transcript for them instead of a 404 — same convention
-      // as stagingMockIssueComments. Strict no-op in production.
-      if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
-        const mock = stagingMockTranscript(sessionId);
-        if (mock) return res.json(mock);
-      }
-
-      const { rows } = await pool.query(
-        `SELECT cs.id, cs.session_title, cs.pr_title, cs.branch_name, cs.status,
-                cs.user_id, COALESCE(u.username, 'Deleted user') AS username, cs.shared_at, cs.transcript_shared_at,
-                cs.created_at,
-                (SELECT COUNT(*)::int FROM chat_session_messages m
-                  WHERE m.session_id = cs.id) AS message_count
-           FROM chat_sessions cs
-           LEFT JOIN users u ON u.id = cs.user_id
-          WHERE cs.id = $1
-            AND cs.is_headless = FALSE
-            AND (cs.user_id = $2
-                 OR (cs.shared_at IS NOT NULL AND cs.transcript_shared_at IS NOT NULL))`,
-        [sessionId, req.user.id]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'Transcript not available' });
-      const row = rows[0];
-      const isOwner = row.user_id === req.user.id;
-
-      // Most recent N by id, then flipped back to oldest-first for render, so
-      // truncation drops the START of a very long chat rather than its
-      // conclusion (the useful end).
-      const { rows: raw } = await pool.query(
-        `SELECT id, role, content, model, metadata, created_at
-           FROM chat_session_messages
-          WHERE session_id = $1
-          ORDER BY id DESC
-          LIMIT $2`,
-        [sessionId, transcriptShare.MAX_TRANSCRIPT_MESSAGES + 1]
-      );
-      const truncated = raw.length > transcriptShare.MAX_TRANSCRIPT_MESSAGES;
-      const newestFirst = truncated
-        ? raw.slice(0, transcriptShare.MAX_TRANSCRIPT_MESSAGES)
-        : raw;
-      const messages = transcriptShare.sanitizeTranscript(newestFirst.slice().reverse());
-
-      res.json({
-        session: {
-          id: row.id,
-          session_title: row.session_title,
-          pr_title: row.pr_title,
-          branch_name: row.branch_name,
-          status: row.status,
-          username: row.username,
-          transcript_shared_at: row.transcript_shared_at,
-          message_count: row.message_count,
-          is_owner: isOwner,
-        },
-        messages,
-        truncated,
-      });
-    } catch (err) {
-      log.error('sessions', 'Transcript read failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -3053,44 +2751,6 @@ function sessionRoutes(config) {
     }
   });
 
-  // #906: the side-slot staging fixtures (seedStagingCcCohortRuns in
-  // src/db/migrate.js) seed active coding-run rows at 5 and 12 minutes
-  // elapsed so a reviewer can see the empty slot and the ten-minute long-run
-  // note without waiting out a real run. But the dev-chat client applies its
-  // `_active` flag — which is what makes the row render as a LIVE run with a
-  // ticking elapsed timer and a side slot at all — only when /status reports
-  // `busy`, and `busy` is derived purely from the in-memory worker
-  // registries below. No DB seed can reach those, so without this the
-  // fixtures render as finished rows and demonstrate nothing.
-  //
-  // This is DATA/STATE gating, not feature gating: the code path, the payload
-  // shape and the whole client are identical, only the seeded rows' state
-  // differs, and it is a strict no-op outside staging. The id set is resolved
-  // once and cached, so the 3s status poll costs nothing.
-  //
-  // #1378: the set became a Map because `stoppable` is now part of the
-  // payload. A seeded fixture has no in-memory stop handle and no durable
-  // active_turn, so it would compute stoppable:false — regressing the
-  // estimator fixtures to the "Finishing up…" spinner — so each one declares
-  // itself stoppable. (A '-unstoppable' fixture kept the false answer until
-  // #4268 removed it: its screen was the composer's, which a read-only
-  // classic session no longer draws.)
-  let stagingCohortFixtureIds = null;
-  async function stagingCohortFixtureSessions() {
-    if (process.env.USERNODE_ENV !== 'staging') return null;
-    if (stagingCohortFixtureIds) return stagingCohortFixtureIds;
-    try {
-      const { rows } = await pool.query(
-        `SELECT id FROM chat_sessions
-          WHERE branch_name LIKE 'staging-fixture/cc-cohort-%'`
-      );
-      stagingCohortFixtureIds = new Map(rows.map((r) => [r.id, { stoppable: true }]));
-    } catch {
-      stagingCohortFixtureIds = new Map();
-    }
-    return stagingCohortFixtureIds;
-  }
-
   // Check if a session has an active worker + get latest progress
   router.get('/api/sessions/:id/status', async (req, res) => {
     const sessionId = parseInt(req.params.id);
@@ -3099,21 +2759,11 @@ function sessionRoutes(config) {
     // here: the worker container stays running between dispatches, so a
     // running container only means "the wrapper is sleep-looping", not "a
     // coding agent is busy".
-    let busy = await isSessionBusyAnywhere(sessionId, { pool });
-    // #906 staging fixtures — see stagingCohortFixtureSessions above.
-    let fixtureStoppable = null;
-    if (!busy) {
-      const fixtures = await stagingCohortFixtureSessions();
-      const fixture = fixtures && fixtures.get(sessionId);
-      if (fixture) {
-        busy = true;
-        fixtureStoppable = fixture.stoppable;
-      }
-    }
+    const busy = await isSessionBusyAnywhere(sessionId, { pool });
 
-    // Same visibility rule as /checks and /details: the progress log, spend
-    // and estimate below are the session's own, so a caller who may not see
-    // the session gets the same 404 as for a missing one.
+    // Same visibility rule as /checks and /details: the progress log and
+    // spend below are the session's own, so a caller who may not see the
+    // session gets the same 404 as for a missing one.
     let mayReadCost = false;
     let mergeStatus = null;
     try {
@@ -3169,30 +2819,20 @@ function sessionRoutes(config) {
     // the session — an adopted turn, a handoff pipeline, a proposal
     // handoff — while only a turn with a stop handle (or a durable
     // active_turn still in a recoverable phase, which the recovery path
-    // will register a handle for) can be stopped. The client used to
-    // assume every busy session was stoppable and painted a live red Stop
-    // that answered { stopped: false }; it now paints the "Finishing up…"
-    // spinner instead when this is false, so the affordance matches what
-    // the server will do.
+    // will register a handle for) can be stopped.
     let durableTurn = null;
     try {
       durableTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
     } catch {}
     const durableRecoverable = !!durableTurn
       && turnLifecycle.RECOVERABLE_PHASES.has(turnLifecycle.phaseOf(durableTurn));
-    const stoppable = fixtureStoppable === null
-      ? (!!stopHandleNow || durableRecoverable)
-      : fixtureStoppable;
+    const stoppable = !!stopHandleNow || durableRecoverable;
 
     // #889: a stop has been requested for this turn but it hasn't unwound
-    // yet. Lets a reloading client (and the 3s poll fallback) repaint the
-    // "Stopping…" button instead of a live red Stop for a turn that is
-    // already being killed.
+    // yet.
     //
-    // #1378: falls back to the durable stamp. A stop clicked just before a
-    // restart lives on the turn record, not in this process's memory, so
-    // without the fallback the client repaints a calm red Stop for a turn
-    // that is already ending.
+    // #1378: falls back to the durable stamp. A stop asked for just before a
+    // restart lives on the turn record, not in this process's memory.
     const durableStop = turnLifecycle.stopRequestOf(durableTurn);
     const stopping = stopHandleNow ? !!stopHandleNow.stopped : !!durableStop;
 
@@ -3210,23 +2850,10 @@ function sessionRoutes(config) {
       };
     }
 
-    // #937: WHEN the stop was requested, so a reloading client (or a second
-    // tab joining mid-stop) rebuilds its escalation ladder at the right
-    // rung instead of restarting a calm "Stopping…" that never escalates.
-    // Null whenever no stop is pending.
+    // #937: WHEN the stop was requested. Null whenever no stop is pending.
     const stopRequestedAt = stopHandleNow
       ? (stopHandleNow.stopRequestedAt || null)
       : (durableStop?.atMs || null);
-
-    // Experimental AI progress estimate: latest in-memory Haiku guess for
-    // the run, so the 3s polling fallback carries it when SSE/WS drop.
-    // Null whenever the per-user toggle is off or no estimate exists yet —
-    // and, since #891, from the coding run's terminal marker onward
-    // (workerProgress.clearEstimate), so the poll stops re-serving a stale
-    // guess through PR creation, the staging build and the Mayor wrap-up.
-    // Carries `estimatedAt` so the client anchors its count-down absolutely
-    // instead of restarting it on every 3s poll.
-    const estimate = workerProgress.get(sessionId)?.estimate || null;
 
     // #239: whether the merge queue's conflict lane currently has a resolve
     // in flight for this session. The client's "resolving merge
@@ -3238,10 +2865,10 @@ function sessionRoutes(config) {
     // `resolving` broadcasts + the merge_conflict_state snapshot.
     const sync = await syncMainSvc.getSyncState(pool, sessionId);
 
-    // #3249: the change's running cost total for the meter, idle or busy.
+    // #3249: the change's running cost total, idle or busy.
     // Its author and admins only (mayReadCost above): anyone else who may
     // view the session gets no such field, and the read does not run. `null`
-    // when the read failed: the client keeps its figure.
+    // when the read failed.
     let costTotalCents = null;
     if (mayReadCost) {
       try {
@@ -3251,21 +2878,15 @@ function sessionRoutes(config) {
       }
     }
 
-    // #252: in-flight sync-with-main state ({ phase, startedAt } |
-    // null) — the dev-chat sync banner's reload recovery and poll
-    // fallback read this the same way the resolving banner reads
-    // `resolving`.
+    // #252: in-flight sync-with-main state ({ phase, startedAt } | null).
     // Keys: busy, progress, phase, stopping, stopRequestedAt, stoppable,
-    // estimate, turn ({ startedAt, kind } | null, #4533), costTotalCents
+    // turn ({ startedAt, kind } | null, #4533), costTotalCents
     // (the change's cost so far in cents | null, #3249; author and admins only,
     // absent for anyone else)
     // (+ resolving, sync, status).
-    // `estimate` is { text, remainingSeconds,
-    // estimatedAt } | null — see workerProgress.setEstimate /
-    // clearEstimate. `stopRequestedAt` is epoch ms | null (#937) and drives
-    // the client's stop-escalation ladder across reloads.
+    // `stopRequestedAt` is epoch ms | null (#937).
     res.json({
-      busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate, turn,
+      busy, progress, phase, stopping, stopRequestedAt, stoppable, turn,
       // The running turn's share of the same figure, under the same rule.
       spend: busy && mayReadCost ? workerProgress.get(sessionId)?.spend || null : null,
       agentBackend: progressAgentBackend,
@@ -3301,8 +2922,8 @@ function sessionRoutes(config) {
     // a reviewer would only ever see the healthy state. ?demo=1 fabricates
     // an exhausted snapshot without touching the database — same idiom as
     // GET /api/me/ai-budget (routes/auth.js) and GET /api/me/cli-tokens.
-    // Strictly a no-op in production. `demo: true` is what the client keys
-    // its one-off card injection off (public/js/dev-chat.js).
+    // Strictly a no-op in production. `demo: true` marks the fabricated
+    // snapshot.
     if (process.env.USERNODE_ENV === 'staging'
         && (req.query.demo === '1' || req.query.demo === 'weekly-out')) {
       // #2571: there is one allowance and one window now, so the two demo
@@ -3353,10 +2974,10 @@ function sessionRoutes(config) {
         'SELECT COALESCE(SUM(total_cost_cents), 0) AS total FROM llm_usage WHERE date = CURRENT_DATE'
       );
       const globalSpent = parseFloat(globalRows[0]?.total || 0);
-      // #297: surface AI availability so client chrome (the proposal
-      // "Explore in dev chat" pill) can disable itself with a tooltip when there's
+      // #297: surface AI availability so client chrome (a proposal's
+      // Explore pills) can disable itself with a tooltip when there's
       // no usable LLM path — the platform key is unset AND the user has
-      // no BYOK key on file. Same degradation posture the dev chat takes.
+      // no BYOK key on file.
       const userApiKey = await limits.loadUserApiKey(pool, req.user.id, config.dataEncryptionKey);
       res.json({
         ...snapshot,
@@ -3370,8 +2991,8 @@ function sessionRoutes(config) {
         // uses `byokCents` internally.
         byokSpentCents: snapshot.byokCents,
         // Availability means a provider exists, not that this request has
-        // allowance headroom. Keep the Explore/dev-chat entry points open so
-        // their locked-tier UI can explain how to connect an identity.
+        // allowance headroom. Keep the Explore entry points open so their
+        // locked-tier UI can explain how to connect an identity.
         aiEnabled: llm.isEnabled() || !!userApiKey,
       });
     } catch (err) {
@@ -3859,17 +3480,13 @@ function questionsBodyHasContent(body) {
 //
 // The transcript already knows. Two things in it are a question the user
 // has not answered, and the row ends up here only if the LAST conversational
-// row (user or assistant — the same rows DevChat._qaCurrentGroups walks) is
-// the assistant's: once the owner has replied it is their turn that is
+// row (user or assistant) is the assistant's: once the owner has replied it is their turn that is
 // pending, not the assistant's question.
 //
 //   1. ANSWER CHIPS. The assistant asked with suggest_answers (#32) and the
-//      chips are still on screen — `metadata.suggestions` on that last row,
-//      the same key the clone path forwards. This is what an auto session
-//      that ended in a question looks like once it is cloned.
+//      chips are still on screen — `metadata.suggestions` on that last row.
 //   2. A SPEC WITH OPEN QUESTIONS. The scout drafted a spec whose Questions
-//      section still has content (specHasBlockingQuestions — the parser the
-//      headless path uses to refuse a build). Only while nothing has been
+//      section still has content (specHasBlockingQuestions). Only while nothing has been
 //      built from it: a session with a pull request is past its spec, which
 //      is the precedence fallbackKindForTurn already gives a PR over a spec,
 //      and without it a spec built despite its questions would read as
@@ -3912,8 +3529,8 @@ function describeStoppedLanding({ sha = null, ahead = null, pushOk = false } = {
 
 // The SAME facts describeStoppedLanding renders as a clause, kept as data.
 // The sentence stays the record — a notification, a plain-text export and a
-// shared transcript all show prose — but the dev chat should not have to
-// parse its own prose back out to draw a commit count, and a stop that
+// shared transcript all show prose — but a reader should not have to
+// parse the prose back out to draw a commit count, and a stop that
 // landed commits is the one turn outcome the transcript most needs to state
 // precisely. `ahead: null` means "a commit landed, quantity unknown" here
 // exactly as it does above; it surfaces as a countless chip rather than as

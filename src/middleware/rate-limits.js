@@ -1028,11 +1028,11 @@ const feedbackTitleLimiter = makeLimiter({
   message: 'Too many title previews. Slow down for a minute.',
 });
 
-// Dev-chat attachment uploads (#450): 30 / minute / user. Each upload is
-// a ≤20 MB bytea INSERT; honest use is a handful per message, so 30/min
-// never bites, while a scripted loop trying to balloon the DB bounces
-// off quickly (per-session totals are additionally capped at 50 MB in
-// the route itself). Per-user keyed for shared-NAT fairness.
+// Attachment uploads (#450; conversations, chat and the illustration
+// routes): 30 / minute / user. Each upload is a bytea INSERT; honest use is
+// a handful per message, so 30/min never bites, while a scripted loop
+// trying to balloon the DB bounces off quickly. Per-user keyed for
+// shared-NAT fairness.
 const attachmentUploadLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 30,

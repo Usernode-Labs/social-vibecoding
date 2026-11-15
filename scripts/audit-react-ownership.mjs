@@ -259,18 +259,13 @@ const OWNED = [
     except: ['#gc-thread-messages', '[data-kudos-host]'],
   },
   // The opened topic's head — the card and everything under it
-  // (features/dev-board/topic/topic-head.tsx). Two seams inside it stay
-  // legacy-FILLED, each rendered once, empty, with a constant className:
-  // `[data-transcript-body]` (public/js/session-transcript.js writes the
-  // chat and its Fork button) and `[data-kudos-host]` in the detail action
-  // row. Swept on the topic route.
+  // (features/dev-board/topic/topic-head.tsx). One seam inside it stays
+  // legacy-FILLED, rendered once, empty, with a constant className:
+  // `[data-kudos-host]` in the detail action row. Swept on the topic route.
   {
     sel: '#gc-thread-head',
     except: [
-      '[data-transcript-body]', '[data-kudos-host]',
-      // The change card's tabs give the existing chat controllers their
-      // own empty hosts. Their React subtrees are audited separately below.
-      '[data-change-discussion]', '[data-change-workspace]',
+      '[data-kudos-host]',
       // saveIssueTitle writes the error line by id while the editor is open.
       '#dev-issue-title-error',
     ],
@@ -294,7 +289,6 @@ const OWNED = [
   { sel: '[data-connector-status]' },        // features/settings/connectors-list.tsx
   { sel: '[data-connector-connections]' },   // ditto
   { sel: '#github-link-body' },              // features/settings/social-identity.tsx
-  { sel: '#settings-local-agents-list' },    // features/settings/local-agents-list.tsx
   { sel: '#agent-files-instructions-list' }, // features/settings/agent-files-list.tsx
   { sel: '#agent-files-skills-list' },
   // The WHOLE Workshop screen (#workshop): features/workshop/index.tsx renders

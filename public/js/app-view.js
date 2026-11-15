@@ -5462,8 +5462,6 @@ const AppView = {
     if (ref.kind === 'gov') AppView._invalidateGovVoteRoster(ref.id);
     // ...and both re-read after a gap while the topic is open.
     AppView._watchTopicLiveReads();
-    // Arriving at a SESSION topic does not open its shared transcript: the
-    // section is a disclosure, and the reader opens it.
     // #363: NOTHING is pinned here now. The topic card/body does not sit in
     // its own capped, separately scrolling box — it's painted into the mounted
     // thread's in-scroll header slot (#gc-thread-head) so the header and the
@@ -6227,7 +6225,6 @@ const AppView = {
     // survives renderThread()'s message-list rewrites and WS-driven refreshes.
     if (!t) return;
     const item = AppView._findTopicItem();
-    const changePage = t.kind === 'session' || t.kind === 'proposal';
     const head = document.getElementById('gc-thread-head');
     if (!head) return;
     // #6608: no row for this topic. If it is the topic already painted (it
@@ -6309,11 +6306,6 @@ const AppView = {
     // the block appears once the answer republishes the head.
     const target = AppView._govRequestNumber(item);
     if (target) AppView._loadGovRequest(target);
-    // An auto-expanded transcript (arrived via "Read chat") loads straight
-    // away; every other one loads when it is opened.
-    if (!changePage && body.transcript && body.transcript.expanded) {
-      AppView._loadSessionTranscript(body.transcript.id);
-    }
   },
 
   /**
@@ -6378,11 +6370,6 @@ const AppView = {
         // summary and the detail block, exactly where it was inserted.
         proposalBody: AppView._proposalBodyView(item),
         details: AppView._proposalDetailsView(item),
-        // shared_at (and so transcript_shared) survives promotion and merge,
-        // so a proposal whose owner published the dev chat keeps offering it
-        // here — the "how did this change come about?" read, available while
-        // voting and after it merged.
-        transcript: AppView._transcriptSectionView(item),
       };
     } else if (t.kind === 'session') {
       // A shared session's public page: the static card (no nav — we're
@@ -6403,7 +6390,6 @@ const AppView = {
         summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
         proposalBody: AppView._proposalBodyView(item),
         details: AppView._proposalDetailsView(item),
-        transcript: AppView._transcriptSectionView(item),
       };
     } else {
       card = AppView._govCardModel(item, { noNav: true });
@@ -16996,7 +16982,6 @@ const AppView = {
     const label = AppView._sessionCardLabel(s);
     const imported = s.source === 'imported';
     const shared = !!s.shared_at;
-    const transcriptShared = !!s.transcript_shared_at;
     // Count comes from the shared-sessions row; a freshly-shared session
     // may not be in _sharedById yet (background refresh pending).
     const sh = shared ? (AppView._sharedById || {})[s.id] : null;
@@ -17009,7 +16994,7 @@ const AppView = {
         ? PlatformI18n.t('changes:session.mine.importedBy', { author: s.imported_pr_author })
         : PlatformI18n.t('changes:session.mine.importedByUnknown'))
       : (shared
-        ? (transcriptShared ? PlatformI18n.t('changes:session.mine.visibleChatReadable') : PlatformI18n.t('changes:session.mine.visible'))
+        ? PlatformI18n.t('changes:session.mine.visible')
         : PlatformI18n.t('changes:session.mine.private'));
 
     // Tapping this card opens the card itself (see above), and the public
@@ -17046,22 +17031,7 @@ const AppView = {
       ? AppView._prMenuItem(s.pr_url, PlatformI18n.t('changes:session.menu.viewPr'), PlatformI18n.t('changes:session.menu.viewCode'))
       : null;
     if (code) menu.push(code);
-    // The SECOND opt-in, offered only once the session is visible (there is
-    // nowhere for a reader to reach an invisible session's chat from).
     if (shared && !imported) {
-      menu.push(transcriptShared
-        ? {
-          label: PlatformI18n.t('changes:session.menu.stopSharingChat'),
-          icon: 'chat',
-          title: PlatformI18n.t('changes:session.menu.stopSharingChatTitle'),
-          act: () => AppView._setTranscriptShared(s.id, false, null),
-        }
-        : {
-          label: PlatformI18n.t('changes:session.menu.shareChat'),
-          icon: 'chat',
-          title: PlatformI18n.t('changes:session.menu.shareChatTitle'),
-          act: () => AppView._setTranscriptShared(s.id, true, null),
-        });
       const chatN = sh ? (parseInt(sh.chat_count, 10) || 0) : 0;
       menu.push({
         label: chatN
@@ -17148,10 +17118,6 @@ const AppView = {
   // Another user's shared session, as a MODEL. Opens the public discussion
   // topic. `opts.noNav` is the static header variant for the topic
   // sub-view.
-  //
-  // "Read chat" is GONE as a pill: the shared transcript lives on this
-  // session's own detail page (and auto-expands there), which is the one
-  // canonical destination a tap on this card already goes to.
   _sharedSessionCardModel(s, opts) {
     const noNav = !!(opts && opts.noNav);
     const label = AppView._sessionCardLabel(s);
@@ -17395,72 +17361,6 @@ const AppView = {
       }
     } catch (err) {
       PlatformUI.toast(PlatformI18n.t('changes:session.visibility.failed', { error: err.message }));
-      if (btn) { btn.disabled = false; btn.textContent = original; }
-    }
-  },
-
-  // Confirmation copy for turning transcript sharing ON. Spelled out
-  // rather than a generic "are you sure?": the whole point is that the
-  // owner knows what becomes readable (their own typed messages included)
-  // and what doesn't, before they publish it.
-  get SHARE_CHAT_CONFIRM() {
-    return {
-      title: PlatformI18n.t('changes:session.shareChat.confirmTitle'),
-      message: PlatformI18n.t('changes:session.shareChat.confirmMessage'),
-      confirmLabel: PlatformI18n.t('changes:session.shareChat.confirmLabel'),
-    };
-  },
-
-  // Publish / revoke the transcript of one of the viewer's own sessions
-  // ("Share chat" / "Chat shared"). Same optimistic shape as
-  // _setSessionShared: flip the cached row, repaint, then reconcile with
-  // server truth in the background.
-  //
-  // Turning it ON is gated behind ConfirmModal (webview-safe — native
-  // confirm() is suppressed in several shells the platform runs in).
-  // Turning it OFF is immediate: revoking access should never be the
-  // slower path.
-  async _setTranscriptShared(sessionId, on, btn) {
-    if (!sessionId) return;
-    if (on) {
-      const ok = await ConfirmModal.show(AppView.SHARE_CHAT_CONFIRM);
-      if (!ok) return;
-    }
-    const original = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = '...'; }
-    try {
-      const resp = await fetch(
-        `/api/sessions/${sessionId}/${on ? 'share-transcript' : 'unshare-transcript'}`,
-        { method: 'POST' }
-      );
-      const body = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        PlatformUI.toast(PlatformI18n.errorText(body) || PlatformI18n.t('changes:session.shareChat.failedHttp', { status: resp.status }));
-        if (btn) { btn.disabled = false; btn.textContent = original; }
-        return;
-      }
-      const s = (AppView._mySessions || []).find((x) => x.id === sessionId);
-      if (s) {
-        s.transcript_shared_at = on
-          ? (body.transcript_shared_at || new Date().toISOString())
-          : null;
-        // share-transcript implies visibility server-side — mirror that
-        // locally so the card jumps to the "Visible to everyone" group in
-        // the same repaint rather than after the background refresh.
-        if (on && !s.shared_at) s.shared_at = body.shared_at || new Date().toISOString();
-      }
-      // Drop any cached transcript for this session: what a reader may see
-      // just changed, and a stale cache would keep serving the old answer
-      // to the owner's own preview.
-      if (AppView._transcripts) delete AppView._transcripts[sessionId];
-      AppView._repaintDevBody();
-      if (AppView.appData) {
-        AppView._refreshSessionCaches(AppView.appData.slug).then((changed) => {
-          if (changed) AppView._repaintDevBody();
-        });
-      }
-    } catch (err) {
-      PlatformUI.toast(PlatformI18n.t('changes:session.shareChat.failed', { error: err.message }));
       if (btn) { btn.disabled = false; btn.textContent = original; }
     }
   },
@@ -17825,146 +17725,6 @@ const AppView = {
     return { rows, truncated: !!entry.truncated, htmlUrl: (item && item.htmlUrl) || null };
   },
 
-  // ── Shared dev-chat transcript (read-only) ─────────────────────────
-  //
-  // Rendered on a shared session's topic page, and on a proposal's page
-  // when its owner published the chat. Collapsed by default and fetched on
-  // expand: a transcript is the biggest payload on either page and most
-  // visits are there for the discussion, not the chat.
-
-  // Per-session transcript cache, so re-expanding (or a WS-driven
-  // _renderTopicHead repaint) paints from memory instead of refetching.
-  // Cleared for a session when its owner toggles sharing (see
-  // _setTranscriptShared).
-  _transcripts: {},
-
-  // The id of the session whose transcript section is currently EXPANDED
-  // (null = collapsed). Deliberately AppView state rather than DOM state:
-  // _renderTopicHead re-innerHTML's the whole head on every WS/poll-driven
-  // refresh, so a DOM-only open flag gets wiped seconds after the reader
-  // expands the chat. Keeping it here means a repaint re-renders the
-  // section already open and repaints from _transcripts cache — no flicker,
-  // no lost scroll. Also what the "Read chat" chip sets to arrive expanded.
-  _transcriptOpen: null,
-
-  // The collapsed section shell. Returns '' when the item's owner hasn't
-  // published the transcript — the ONLY gate on the client; the server
-  // re-checks both share flags on the fetch, so a stale flag here buys
-  // nothing but an empty section.
-  //
-  // `item` is a shared-session row (transcript_shared + message_count from
-  // /shared-sessions) or a proposal row (transcript_shared from
-  // mergedRowSelect). The viewer's OWN rows carry transcript_shared_at
-  // instead, so accept either shape — the owner gets the section too, as
-  // the "preview what everyone else sees" path.
-  // The shared-chat disclosure. Its BODY stays public/js/session-transcript
-  // .js's — a controller host the head renders once, empty, with a constant
-  // className and never looks inside.
-  //
-  // `_transcriptLabels` holds the EXPANDED label, once the transcript
-  // payload has named its owner. It is kept across repaints because a
-  // repaint rebuilds the section from the model, and the collapsed label
-  // would otherwise come back the moment anything else on the head changed.
-  _transcriptLabels: Object.create(null),
-
-  _transcriptSectionView(item) {
-    if (!item) return null;
-    if (!(item.transcript_shared || item.transcript_shared_at)) return null;
-    const expanded = AppView._transcriptOpen === item.id;
-    const cached = expanded ? AppView._transcriptLabels[item.id] : null;
-    return {
-      id: item.id,
-      label: cached
-        || ((typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText)
-          ? SessionTranscript.headerText(item, { expanded: false })
-          : PlatformI18n.t('changes:transcript.readSession')),
-      expanded,
-    };
-  },
-
-  // Expand/collapse + lazy load. Flips _transcriptOpen (the durable state)
-  // as well as the DOM, so the next repaint of the topic head paints the
-  // section in the same state instead of snapping it shut.
-  // The disclosure's `hidden` and `aria-expanded` were written in place
-  // here; both are model fields now (topic/model.ts), so this flips the
-  // durable state and repaints. The body's CONTENTS stay
-  // session-transcript.js's, which is why the load still runs by id.
-  toggleTranscript(id) {
-    const opening = AppView._transcriptOpen !== id;
-    AppView._transcriptOpen = opening ? id : null;
-    AppView._renderTopicHead();
-    if (opening) AppView._loadSessionTranscript(id);
-  },
-
-  // Fetch (or repaint from cache) one session's sanitised transcript.
-  // Best-effort: a failure leaves a short note rather than breaking the
-  // page, and we re-resolve the slot after the await in case a repaint
-  // replaced it.
-  async _loadSessionTranscript(sessionId) {
-    if (!sessionId) return;
-    const paint = (data) => {
-      // Swap the collapsed label ("Read the dev chat (24 messages)") for the
-      // expanded one ("Dev chat by alice · 24 messages · read-only") now that
-      // the payload names the owner. It used to be written straight onto
-      // `[data-transcript-label]`; the head renders that text, so the label
-      // is cached here and the repaint below picks it up.
-      //
-      // THE REPAINT IS CONDITIONAL, and that is not an optimisation.
-      // `_renderTopicHead` calls this loader on every paint of an expanded
-      // transcript, so an unconditional repaint here closes a SYNCHRONOUS
-      // cycle: paint → render → load → (cached) paint → render → … The
-      // first pass survives because it awaits the fetch, which unwinds the
-      // stack; the pass after it finds the cache and recurses until the
-      // stack overflows. That is a hard error on every load of a shared
-      // session's page, where the transcript arrives already expanded.
-      //
-      // Same shape as the vote roster's re-entry (see `_loadVoteRoster`),
-      // and the same rule: a loader a renderer calls per paint must not
-      // unconditionally re-enter that renderer. Here the repaint exists
-      // solely to pick up a CHANGED label, so that is what gates it.
-      let labelChanged = false;
-      if (typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText) {
-        const next = SessionTranscript.headerText(data.session, { expanded: true });
-        labelChanged = AppView._transcriptLabels[sessionId] !== next;
-        AppView._transcriptLabels[sessionId] = next;
-      }
-      if (labelChanged) AppView._renderTopicHead();
-      // The BODY stays session-transcript.js's — a controller host the head
-      // renders once, empty, and never looks inside. The publish above
-      // flushes synchronously, so the fresh host is already here.
-      const slot = document.querySelector(`[data-transcript-body="${sessionId}"]`);
-      if (!slot) return;
-      const body = (typeof SessionTranscript !== 'undefined' && SessionTranscript.renderHtml)
-        ? SessionTranscript.renderHtml(data)
-        : '';
-      slot.innerHTML = body;
-    };
-
-    const cached = AppView._transcripts[sessionId];
-    if (cached) { paint(cached); return; }
-
-    const slot = document.querySelector(`[data-transcript-body="${sessionId}"]`);
-    if (slot) slot.innerHTML = `<div class="st-truncated">${PlatformI18n.htmlText('changes:transcript.loading')}</div>`;
-    try {
-      const res = await fetch(`/api/sessions/${sessionId}/transcript${AppView._demoQS()}`);
-      if (!res.ok) {
-        const after = document.querySelector(`[data-transcript-body="${sessionId}"]`);
-        if (after) {
-          after.innerHTML = `<div class="st-error">${res.status === 404
-            ? PlatformI18n.htmlText('changes:transcript.notShared')
-            : PlatformI18n.htmlText('changes:transcript.loadFailedHttp', { status: res.status })}</div>`;
-        }
-        return;
-      }
-      const data = await res.json();
-      AppView._transcripts[sessionId] = data;
-      paint(data);
-    } catch (err) {
-      const after = document.querySelector(`[data-transcript-body="${sessionId}"]`);
-      if (after) after.innerHTML = `<div class="st-error">${PlatformI18n.htmlText('changes:transcript.loadFailedWith', { error: err.message })}</div>`;
-    }
-  },
-
   // The proposal's plain-language summary (pr_summary_md), rendered at the
   // top of the proposal topic sub-view above the proposer/linked-issues/
   // roster details. Mirrors _issueBodyHtml: light markdown through the same
@@ -18077,7 +17837,7 @@ const AppView = {
   // The disclosure as a MODEL. `topic/topic-head.tsx` draws it; the open
   // flag stays HERE rather than becoming component state, for the reason the
   // note above gives — a repaint must not collapse it — and because that is
-  // the same seam the before/after visuals and the transcript section use.
+  // the same seam the before/after visuals use.
   // `html` is `PlatformMarkdown.render`'s output: another renderer's markup,
   // sanitised where it is built, rendered through a sink.
   _proposalBodyView(pr) {

@@ -705,9 +705,7 @@ async function getBlobContent(owner, repo, sha) {
 }
 
 // `fromBranch` (default 'main') lets callers fork off an arbitrary existing
-// branch — used by the headless-session clone flow (#155), which branches a
-// user's new dev branch off the auto session's branch so any pushed commits
-// carry over.
+// branch.
 async function createBranch(owner, repo, branchName, fromBranch = 'main') {
   require('./code-host-write').requireCodeHostWrite('github.createBranch');
   if (onGitHost(owner)) return hostedGit().createBranch(owner, repo, branchName, fromBranch);

@@ -664,14 +664,6 @@ export function Shell() {
       <script src={assetUrl('/js/credit-options.js')} />
       <script src={assetUrl('/js/group-chat.js')} />
       {/*
-          Read-only renderer for a change's shared build transcript. Pure
-          string builder; app-view.js's topic page calls
-          SessionTranscript.renderHtml. It looks up PlatformMarkdown.render at
-          CALL time (and falls back to escaped text if it's missing), not at
-          load time.
-      */}
-      <script src={assetUrl('/js/session-transcript.js')} />
-      {/*
           #405: canonical merge-lifecycle helper (window.MergeStatus). Loaded
           before app-view.js, which derives and labels proposal merge states
           from it; the board's cards (features/dev-board/card/) read it at

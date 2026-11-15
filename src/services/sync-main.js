@@ -92,8 +92,7 @@ async function persistConflictState(pool, session, { state, files }) {
 }
 
 // A platform sync's wait for the session to be free (the old boot-failure
-// sync's waitForIdle): somebody's turn, a local agent's, or a live operation
-// on the session, read as the proposal machine reads them.
+// sync's waitForIdle): somebody's turn or a live operation on the session, read as the proposal machine reads them.
 const IDLE_POLL_MS = 3000;
 const IDLE_WAIT_MS = 10 * 60 * 1000;
 async function sessionBusy(pool, sessionId) {

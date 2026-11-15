@@ -2430,8 +2430,7 @@ function pushSessionUpdate(data) {
 // has activity.
 //
 //   shared  → broadcastGlobalScoped, i.e. everyone who may VIEW the app
-//             (which is exactly who already sees the shared session card
-//             or the auto-run's issue card).
+//             (which is exactly who already sees the shared session card).
 //   private → the owner's own sockets only. A session nobody else can see
 //             must not announce itself, not even as an anonymous id.
 //

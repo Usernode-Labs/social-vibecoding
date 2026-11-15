@@ -10855,97 +10855,6 @@ button.attr-chip { cursor: pointer; }
   .dev-kanban-col.dev-kanban-col-active { display: block; }
 }
 
-/* ── Shared build transcript (read-only) ────────────────────────────────
-   The transcript section on a shared session's / a proposal's topic page,
-   painted by public/js/session-transcript.js. Its rows wear the dc-*
-   message and status classes; everything here is the read-only frame
-   around them.
-
-   Deliberately no composer/send styling exists for this surface — there
-   is no composer to style (see the renderer's rule 2). */
-
-.st-section {
-  margin-top: 8px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-card-alt);
-  overflow: hidden;
-}
-
-.st-section-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 10px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  text-align: start;
-}
-.st-section-head:hover { background: var(--bg-code); color: var(--text-primary); }
-
-/* Two glyphs rather than a rotated one, matching .dc-cc-attached-chevron's
-   reasoning (a rotated triangle's bounding box flips and drags its visual
-   center off the baseline). */
-.st-caret { font-size: 16px; line-height: 1; color: var(--text-muted); width: 14px; text-align: center; }
-.st-caret::before { content: '\25B8'; /* ▸ */ }
-/* The section is a div + button (not a <details>), so aria-expanded on the
-   header — which _toggleTranscript keeps in sync — is what flips the glyph. */
-.st-section-head[aria-expanded="true"] .st-caret::before { content: '\25BE'; /* ▾ */ }
-
-.st-readonly-tag {
-  margin-inline-start: auto;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.st-body { padding: 4px 10px 10px; }
-.st-body[hidden] { display: none; }
-
-.st-timeline { display: flex; flex-direction: column; }
-
-/* Messages sit full-width here (no 92% inset): the topic page column is
-   narrow already, and the alignment asymmetry is what distinguishes the
-   two speakers. */
-.st-msg { max-width: 100%; }
-.st-msg-who { color: var(--text-secondary); font-weight: 600; }
-.st-msg-when { color: var(--text-muted); font-size: 10px; }
-
-.st-agent-details { margin-block: 2px 2px; margin-inline: 2px 0; }
-.st-agent-body { padding-block: 2px 4px; padding-inline: 8px 0; border-inline-start: 1px solid var(--border-light); margin-inline-start: 6px; }
-.st-cc-summary { font-size: 12px; color: var(--text-secondary); padding-block: 2px 0; padding-inline: 14px 0; }
-
-.st-spec-card {
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  padding: 6px 8px;
-  margin-block: 4px 4px; margin-inline: 22px 0;
-  background: var(--bg-card);
-}
-.st-spec-head { font-size: 0.9375rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
-.st-spec-snippet { font-size: 12px; color: var(--text-secondary); }
-
-/* Attachment chips are inert here — names only, no bytes (the sanitiser
-   strips the ids). Cursor stays default so they don't read as links. */
-.st-att-chip { cursor: default; }
-.st-att-chip:hover { border-color: var(--border); }
-
-.st-truncated,
-.st-empty,
-.st-error {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-style: italic;
-  padding: 4px 0;
-}
-
 /* ────────────────────────────────────────────────────────────────────────
    Admin console — folded-in section styles (#860)
 
@@ -13478,7 +13387,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    words. The ledger's review line rendered outside the ledger, so it takes
    the note's size and its own top margin rather than the row grid's. */
 .dev-topic-roster { margin-top: 10px; font-size: 13px; line-height: 1.5; }
-.dev-topic-transcript .st-section { margin: 0; }
 
 /* ── Discussion ──
    The app's own thread — `#gc-thread-messages`, the group chat's transcript
@@ -28722,8 +28630,7 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-lane-title,
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .community-switcher-title,
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .community-switcher-section,
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .shots-noticed-head,
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .st-spec-head {
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .shots-noticed-head {
   text-transform: none;
   letter-spacing: 0;
 }

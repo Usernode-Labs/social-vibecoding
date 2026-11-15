@@ -235,8 +235,7 @@ function activeTokenMiddleware(pool, scope, auditRoute) {
       let user;
       try {
         const { rows } = await pool.query(
-          `SELECT id, username, is_admin, admin_readonly, app_quota,
-                  ai_progress_estimate, locale
+          `SELECT id, username, is_admin, admin_readonly, app_quota, locale
              FROM users WHERE id = $1`,
           [token.user_id]
         );
@@ -269,7 +268,6 @@ function activeTokenMiddleware(pool, scope, auditRoute) {
         adminReadonly: !!user.admin_readonly,
         canAdminWrite: !!user.is_admin && !user.admin_readonly,
         appQuota: user.app_quota ?? 0,
-        aiProgressEstimate: !!user.ai_progress_estimate,
         locale: user.locale || null,
       };
       req.cliAuthenticated = true;

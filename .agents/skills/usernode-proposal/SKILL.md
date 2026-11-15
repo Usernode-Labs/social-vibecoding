@@ -27,7 +27,7 @@ Use `production` unless the user explicitly requests `local`. Read `../usernode-
 
 If a protected proposal tool returns `host_execution_required`, never retry that MCP tool. Run only its exact returned `argv` in its returned `cwd`. For promotion, that exact vector is the only authorized fallback after the dedicated tool's manual approval.
 
-The returned `webPath` is an optional continuation surface, not a required step. Local and web turns may alternate on the shared branch; always continue from its current head.
+The returned `webPath` opens the change's page on Homeroom; opening it is optional, never a required step. The branch can also gain commits made on Homeroom (Homeroom bot, when the owner asks it there); always continue from its current head.
 
 Treat the request ID and returned session ID as the permanent identity of this work. Retrying, rebasing, pushing, or recovering stalled checks never authorizes another `proposal_start` with a new request ID. If start reports `proposal_already_started`, continue the returned session. Supply `supersedes_session_id` only after the user explicitly asks to replace that named pre-vote proposal; replacement archives it.
 

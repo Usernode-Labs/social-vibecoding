@@ -1519,22 +1519,6 @@
     "text": "View code",
     "description": "Item in the ⋯ menu of the card of a change in progress, when its code is on Homeroom's own git host rather than GitHub: opens that code in a new tab. \"View\" is a verb."
   },
-  "session.menu.stopSharingChat": {
-    "text": "Chat shared. Stop sharing",
-    "description": "Item in the ⋯ menu of the viewer's own card for a change in progress when others can read its build chat. It states that and, when pressed, stops others reading it."
-  },
-  "session.menu.stopSharingChatTitle": {
-    "text": "Stop others reading this chat (they keep the card and the discussion)",
-    "description": "Tooltip of the \"Chat shared. Stop sharing\" item in the ⋯ menu of the viewer's own card for a change in progress."
-  },
-  "session.menu.shareChat": {
-    "text": "Share chat",
-    "description": "Item in the ⋯ menu of the viewer's own card for a change in progress: lets everyone read the conversation with the agent. \"Share\" is a verb."
-  },
-  "session.menu.shareChatTitle": {
-    "text": "Let everyone read this chat, read-only. They can't reply in it, and can't see your costs or uploaded files",
-    "description": "Tooltip of the \"Share chat\" item in the ⋯ menu of the viewer's own card for a change in progress."
-  },
   "session.menu.openDiscussion": {
     "text": "Open public discussion",
     "description": "Item in the ⋯ menu of the viewer's own card for a change in progress: opens the public discussion thread about that change. \"Open\" is a verb."
@@ -1574,10 +1558,6 @@
   "session.mine.importedByUnknown": {
     "text": "Imported by unknown author · not waiting for approval yet",
     "description": "Line under the title of the viewer's own card for an imported pull request that has not been put up for a vote, when the pull request's author is not known."
-  },
-  "session.mine.visibleChatReadable": {
-    "text": "Visible to everyone · chat readable",
-    "description": "Line under the title of the viewer's own card for a change in progress when everyone can see the change and also read its build chat."
   },
   "session.mine.visible": {
     "text": "Visible to everyone",
@@ -1646,26 +1626,6 @@
   "session.visibility.failed": {
     "text": "Failed: {{error}}",
     "description": "Toast shown when making a change in progress visible to everyone, or hiding it again, could not be sent. {{error}} is the technical error message."
-  },
-  "session.shareChat.failedHttp": {
-    "text": "Failed (HTTP {{status}}).",
-    "description": "Toast shown when sharing a change's build chat with everyone, or stopping that, was refused by the server without an explanation. {{status}} is the HTTP status number, for example 500."
-  },
-  "session.shareChat.failed": {
-    "text": "Failed: {{error}}",
-    "description": "Toast shown when sharing a change's build chat with everyone, or stopping that, could not be sent. {{error}} is the technical error message."
-  },
-  "session.shareChat.confirmTitle": {
-    "text": "Let everyone read this chat?",
-    "description": "Title of the dialog that asks the owner of a change in progress to confirm before its build chat is made readable by everyone."
-  },
-  "session.shareChat.confirmMessage": {
-    "text": "Anyone who can see this app will be able to read the whole conversation. your messages, the AI's replies, and what the coding agent did. They can't reply in your chat, and they can't see your costs or your uploaded files. You can turn this off at any time.",
-    "description": "Body of the dialog that asks the owner of a change in progress to confirm before its build chat is made readable by everyone. It says what others will and will not be able to see."
-  },
-  "session.shareChat.confirmLabel": {
-    "text": "Share chat",
-    "description": "Confirm button of the dialog that asks whether to let everyone read a change's build chat. \"Share\" is a verb."
   },
   "session.unarchive.failed": {
     "text": "Failed to unarchive session",
@@ -1738,26 +1698,6 @@
   "archiveUndo.undo": {
     "text": "Undo",
     "description": "Button on the bottom notice shown after archiving or withdrawing a change in progress: brings the most recent one back. A verb."
-  },
-  "transcript.readSession": {
-    "text": "Read the build chat",
-    "description": "Label of the section on a change's page that expands to show the conversation between the author and the coding agent that built the change, which the author chose to share."
-  },
-  "transcript.loading": {
-    "text": "Loading the chat…",
-    "description": "Shown in place of a change's shared build chat while it is being fetched."
-  },
-  "transcript.notShared": {
-    "text": "This chat is no longer shared.",
-    "description": "Shown in place of a change's shared build chat when its owner has stopped sharing it."
-  },
-  "transcript.loadFailedHttp": {
-    "text": "Couldn't load the chat (HTTP {{status}}).",
-    "description": "Shown in place of a change's shared build chat when the server refused to send it. {{status}} is the HTTP status number."
-  },
-  "transcript.loadFailedWith": {
-    "text": "Couldn't load the chat: {{error}}",
-    "description": "Shown in place of a change's shared build chat when it could not be fetched. {{error}} is the technical error message."
   },
   "explicit.fallback.sentence": {
     "text": "This change needs a Yes from another member.",

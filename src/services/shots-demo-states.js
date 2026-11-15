@@ -895,7 +895,7 @@ const STATES = [
   {
     // A request whose change waits for approval (#4446): a change of the
     // member's up for a vote that names request #900017 as one it addresses
-    // (`linked_issues`, as the Mayor's addresses_issues writes it), so the
+    // (`linked_issues`, where a change's addressed requests are stored), so the
     // request's chip reads "Waiting for approval · you" and no Build it now
     // is offered beside it (app-view.js _issueWorkState and
     // _issueAwaitingApproval, read from routes/issues.js composeInProgress

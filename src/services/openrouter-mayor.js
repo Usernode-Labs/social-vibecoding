@@ -607,8 +607,8 @@ function createClient({
     model: boundModel,
     modelLabel: modelLabel(boundModel),
     reasoningEffort,
-    // Read by the agent-session Mayor to decide whether the platform tools
-    // fetch a request's screenshots for this model at all.
+    // Whether the platform tools fetch a request's screenshots for this
+    // model at all.
     imageInput,
     isEnabled: () => true,
     streamChat,

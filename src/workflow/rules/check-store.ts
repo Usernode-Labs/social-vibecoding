@@ -140,7 +140,7 @@ export function unitAnswer(result: CheckResult | null | undefined): { reused: bo
 }
 
 // #3180: a skipped verdict always carries a reason. The checks panel, the
-// status pill and the agent session's card each print it as "Automated
+// status pill and the change page each print it as "Automated
 // checks were skipped: <reason>.", so a caller that passes none records the
 // same fallback those surfaces show for a row without one.
 export const DEFAULT_CHECKS_SKIPPED_REASON = 'there was nothing to test';

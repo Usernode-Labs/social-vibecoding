@@ -2648,14 +2648,6 @@ function mergedRowSelect() {
            cs.included_in_session_id,
            inc.pr_number AS included_in_pr_number,
            inc.pr_title  AS included_in_pr_title,
-           -- Transcript sharing: true when this proposal's owner published
-           -- the dev chat that produced it, so the proposal page can offer
-           -- "Read the dev chat". A boolean only — the transcript itself is
-           -- served by GET /api/sessions/:id/transcript, which re-checks
-           -- both share flags. shared_at survives promotion and merge, so
-           -- this stays meaningful on merged rows too (the post-hoc "how
-           -- did this change come about?" read).
-           (cs.transcript_shared_at IS NOT NULL) AS transcript_shared,
            -- #687 (PR-import): provenance for the "Imported PR" badge +
            -- GitHub-maintained note (kept visible on merged rows too).
            cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,

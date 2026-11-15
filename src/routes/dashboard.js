@@ -973,9 +973,10 @@ function dashboardRoutes(config) {
                               WHEN elapsed_ms < 600000  THEN '5-10m'
                               WHEN elapsed_ms < 1200000 THEN '10-20m'
                               ELSE '20m+' END`;
-    // Mirrors llm.isCompletionClaim's phrase family in SQL, so a claim made
-    // BEFORE suppression shipped is still counted (historical v1 rows have
-    // suppressed=false but the phrase is right there in estimate_text).
+    // The "nearly done" phrase family the estimator used to suppress, in
+    // SQL, so a claim made BEFORE suppression shipped is still counted
+    // (historical v1 rows have suppressed=false but the phrase is right
+    // there in estimate_text).
     const CLAIM_RE = `(nearly|almost|just about)[[:space:]]+(done|finished|complete|there)|wrapping[[:space:]]+up|finishing[[:space:]]+(up|off)|just[[:space:]]+finishing|final[[:space:]]+(touches|tweaks|checks)`;
     const metricsSql = (windowed, groupBy) => `
       SELECT

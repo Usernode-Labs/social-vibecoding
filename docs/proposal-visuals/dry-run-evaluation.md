@@ -56,7 +56,7 @@ restores one dump of the local dev database into two shots databases,
 runs both images on
 `usernode-net` with a credential-free env (fresh secrets, its own iframe key
 pair; it never reads your `.env`), applies the per-side fixtures a hosted
-reset applies (full-admin identity, member agent-session copy, no app cap),
+reset applies (full-admin identity, no app cap),
 mints the three persona tokens and exchanges each for a session on both
 origins with `bootstrapInternalSession`, exactly as the worker does. Before
 is served at `http://127.0.0.1:4101` and after at `http://localhost:4102`:

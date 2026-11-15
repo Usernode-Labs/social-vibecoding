@@ -23,11 +23,6 @@ const externalAgentTasks = require('../services/external-agent-tasks');
 const prompts = require('../services/prompts');
 const githubLink = require('../services/github-link');
 
-// The three values the picker can send. 'external' is deliberately absent:
-// it is what normalizeAgent falls back to for an unrecognised MCP client,
-// not something a person chooses from a list of two products.
-const PICKABLE_AGENTS = ['claude-code', 'codex'];
-
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // Service failure code → HTTP status. Anything unmapped is a 400: the
@@ -201,48 +196,20 @@ function devFlowRoutes(config) {
       // "unavailable" branch and can review nothing. Obviously-fake,
       // read-only, written nowhere, and a strict no-op in production.
       if (IS_STAGING) {
-        // `?demo=1` is the promoted-proposal update order; `?demo=session`
-        // (#1071) is the same walkthrough continuing a session nobody has
-        // voted on. Two payloads because the difference a reviewer has to
-        // check is entirely in the copy, and one of them cannot show both.
-        //
-        // `?order=plain` is a SECOND discriminator, not a third `demo` value,
-        // and the distinction is load-bearing. `demo` is read by dozens of
-        // fixture routes that all test it for exactly '1' — including the
-        // /api/sessions ones that paint the very session this walkthrough is
-        // rendered inside — and the client forwards it through an allowlist.
-        // A new `demo` value therefore either fails that allowlist (no fixture
-        // at all) or passes it and reaches those routes as an unrecognised
-        // string (no session). Riding alongside, it narrows whichever fixture
-        // `demo` already selected to an ORDINARY work order — one that
-        // continues nothing, which both of the others do carry and which is
-        // the only shape "Start over" is offered on.
-        // `?order=link` (#2679, #2680) is the walkthrough at its FIRST step:
-        // nothing linked yet, so the "Link GitHub" anchor is on screen for
-        // the declared check to see.
-        const order = req.query.order === 'connect' ? 'connect'
-          : (req.query.order === 'link' ? 'link'
-            : (req.query.order === 'continue' ? 'continue' : null));
-        return res.json(req.query.demo === '1' || req.query.demo === 'session'
-          ? demoStatus(app, parsed, order)
-          : {
-            // The venue sheet's own state: the web hand-offs are offerable,
-            // nothing is linked, no work order exists. Fixture session
-            // 990403 renders against exactly this, so ?shot=venue-sheet
-            // shows the rows as a first-time user meets them; ?demo=1 moves
-            // it on to the walkthrough behind one of them.
-            // Nothing here can DO anything — both writes answer 503 in
-            // staging — so this only decides what a reviewer can see.
-            available: true,
-            reason: null,
-            demo: true,
-            repo: parsed || null,
-            github: { linked: false, login: null, available: true },
-            connectors: { count: 0 },
-            fork: null,
-            task: null,
-            branch: null,
-          });
+        // The state a first-time user meets: nothing is linked, no connector,
+        // no fork, no work order. The own agent link then leaves the
+        // repository to the person and says a connector is needed.
+        return res.json({
+          available: true,
+          reason: null,
+          demo: true,
+          repo: parsed || null,
+          github: { linked: false, login: null, available: true },
+          connectors: { count: 0 },
+          fork: null,
+          task: null,
+          branch: null,
+        });
       }
 
       if (!parsed || !gh.isEnabled() || !linkAvailable) {
@@ -387,60 +354,4 @@ function devFlowRoutes(config) {
   return router;
 }
 
-// The staging fixture for the walkthrough.
-//
-// Small now, because the walkthrough is. It used to carry a minted task, a
-// branch state and ~100 lines of work-order prose, all of which existed so a
-// reviewer could check copy that Homeroom no longer writes: the agent asks
-// what to build and mints its own order through the connector.
-//
-// `?order=connect` drops the connector, which is the OTHER state worth
-// shooting: the hand-off step becomes "Connect Homeroom", because without one
-// the agent cannot call prepare_work and there is nothing useful to hand it.
-// `?order=continue` makes it a continuation, where the instructions name the
-// proposal being updated. `?order=link` (#2679, #2680) is the walkthrough at
-// its first step, GitHub not linked, so the "Link GitHub" anchor is on screen.
-function demoStatus(app, parsed, order) {
-  const owner = (parsed && parsed.owner) || 'usernode-apps';
-  const repo = (parsed && parsed.repo) || app.slug;
-  const login = 'octo-contributor';
-  const continuing = order === 'continue';
-  const unlinked = order === 'link';
-  return {
-    available: true,
-    reason: null,
-    demo: true,
-    repo: { owner, repo },
-    // Unlinked, the card opens on "Link your GitHub account" with its anchor,
-    // which is the one thing the check for that step needs to see. No fork
-    // either: the fork read is keyed on the linked login, so a real unlinked
-    // user has none yet.
-    github: unlinked
-      ? { linked: false, login: null, available: true }
-      : { linked: true, login, available: true },
-    // Connected, unless the fixture is deliberately showing the other state.
-    // It used to be zero on purpose, to show an advisory note under the
-    // hand-off step; that note is gone, because the connector is a
-    // requirement now rather than a suggestion.
-    connectors: { count: order === 'connect' ? 0 : 2 },
-    fork: unlinked ? null : {
-      state: 'ready',
-      owner: login,
-      repo,
-      url: `https://github.com/${login}/${repo}`,
-      pageUrl: `https://github.com/${owner}/${repo}/fork`,
-    },
-    targetKind: continuing ? 'proposal' : null,
-    // The live route answers an unlinked user before it writes instructions
-    // (`if (!linked) return res.json(payload)` above), so the fixture does too.
-    instructions: unlinked ? null : prompts.getLaunchpadInstructions({
-      appName: app.name,
-      slug: app.slug,
-      targetProposalId: continuing ? 990601 : null,
-    }),
-    task: null,
-    branch: null,
-  };
-}
-
-module.exports = { devFlowRoutes, PICKABLE_AGENTS, STATUS_BY_CODE, shapeBranch, demoStatus };
+module.exports = { devFlowRoutes, STATUS_BY_CODE, shapeBranch };

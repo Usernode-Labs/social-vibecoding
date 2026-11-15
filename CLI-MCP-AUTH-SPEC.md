@@ -1509,7 +1509,7 @@ workflow for work authored in a local Codex or Claude session:
    unknown). The HTTP body calls this optional field `externalAgent`; it is
    persisted in `external_agent` without changing the execution backend. Older
    clients remain compatible and display as External agent. Homeroom creates a native
-   `source='cli_handoff'` Dev session and a platform-managed branch at that
+   `source='cli_handoff'` change (a `chat_sessions` row) and a platform-managed branch at that
    exact base. History contains exact user-visible requests and concise agent
    summaries, each with a stable event ID. It never contains hidden reasoning,
    secrets, credentials, or raw tool logs. Event IDs are unique per session,
