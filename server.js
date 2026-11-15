@@ -141,7 +141,6 @@ const worker = require('./src/services/worker');
 // stop handle and its tail, exported below for the tests that drive them.
 const turnRecovery = require('./src/services/turn-recovery');
 const { adoptOrphanWorker } = turnRecovery;
-const sessionBus = require('./src/services/session-bus');
 const ws = require('./src/services/ws');
 const log = require('./src/services/logger');
 const lifecycle = require('./src/services/lifecycle');
@@ -174,7 +173,7 @@ let startupDiagnostics = null;
 
 // First of all: count every request until it is answered, so the shutdown
 // drain in cleanup() can wait for the handlers still writing rather than
-// exit from under them. Event streams and long polls leave the count (see
+// exit from under them. Event streams leave the count (see
 // src/middleware/inflight-requests.js).
 app.use(inflightRequests.inflightRequests());
 
@@ -1313,9 +1312,6 @@ async function start() {
   // The limiters that gate a send, a bill or a guess count in Postgres: one
   // budget for every process, kept across a deploy (services/rate-limit-store.js).
   require('./src/services/rate-limit-store').setPool(getPool(config));
-  // Turns' streams, kept where a browser served by any process reads them
-  // (services/session-bus.js).
-  sessionBus.init({ pool: getPool(config) });
   // The clients every process that runs the workflow machines makes
   // (src/workflow/setup.ts): the push sender, GitHub, the model.
   await require('./src/workflow/setup.ts').startWorkflowClients(config);
@@ -1455,8 +1451,8 @@ module.exports = {
   // finalizeRecoveredTurn already exposes one level down.
   resumeDetachedTurnInner: turnRecovery.resumeDetachedTurnInner,
   // ...and the handle factory it is driven with, so a test exercises the
-  // real dual-channel `send` (WS broadcast + session bus, `_seq` and all)
-  // rather than a hand-rolled stand-in that could drift from it.
+  // real `send` (the WS broadcast, `_seq` and all) rather than a
+  // hand-rolled stand-in that could drift from it.
   buildRecoveryStopHandle: turnRecovery.buildRecoveryStopHandle,
   finalizeRecoveredTurn: turnRecovery.finalizeRecoveredTurn,
   cleanup,
@@ -1486,7 +1482,7 @@ module.exports = {
 //
 // What the drain waits for, and for how long:
 //   - HTTP handlers still answering (src/middleware/inflight-requests.js,
-//     less event streams and long polls) and the work registered in
+//     less event streams) and the work registered in
 //     services/inflight-work.js — a merge pass, a push send — up to
 //     shutdownDrainMs(): DRAIN_TIMEOUT_MS under docker-compose, a minute by
 //     default on Kubernetes, whose 90s grace period this used to leave almost

@@ -170,10 +170,6 @@
       const state = SocialPush._normalizeState(value);
       if (!state) return null;
       SocialPush._state = state;
-      if (window.DevAlerts &&
-          typeof DevAlerts.setRemoteDeliveryActive === 'function') {
-        DevAlerts.setRemoteDeliveryActive(state.deliveryActive);
-      }
       window.dispatchEvent(new CustomEvent('usernode:social-push-state', {
         detail: state,
       }));
@@ -182,10 +178,6 @@
 
     _clearState() {
       SocialPush._state = null;
-      if (window.DevAlerts &&
-          typeof DevAlerts.setRemoteDeliveryActive === 'function') {
-        DevAlerts.setRemoteDeliveryActive(false);
-      }
     },
 
     getState(options) {

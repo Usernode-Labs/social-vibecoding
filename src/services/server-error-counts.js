@@ -25,7 +25,7 @@
 //                           counts here, /api/ or not (the rest as
 //                           `(non-api)`), and so does a request whose client
 //                           gave up first (aborted). One held open by design
-//                           (an event stream, a long poll) counts in
+//                           (an event stream) counts in
 //                           `streams`, but its time does not: it waits, as
 //                           long as its client likes, at no cost. Only the
 //                           ROUTE_ROWS costliest routes of a minute are kept

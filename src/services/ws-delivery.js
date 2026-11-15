@@ -8,15 +8,15 @@ const notifications = require('./notifications');
 // the handshake's admin flag, cached app visibility, or a bus recipient list
 // as authority to disclose content. The bus only selects candidate sockets.
 const AUTHORIZE_SQL = `
-  SELECT d.n, u.username, u.is_admin, (cs.user_id = u.id) AS session_owner,
+  SELECT d.n, u.username, u.is_admin,
     (u.id IS NOT NULL AND (d.staging OR s.token IS NOT NULL)) AS authenticated,
     shown.notification_row,
     (
       (NOT d.admin OR u.is_admin)
       AND (d.session_id IS NULL OR (
         cs.id IS NOT NULL AND (
-          cs.user_id = u.id OR (d.watching AND u.is_admin)
-          OR (d.fanout AND cs.app_id IS NOT NULL AND (NOT d.shared_only OR cs.shared_at IS NOT NULL OR cs.is_headless))
+          cs.user_id = u.id
+          OR (d.fanout AND cs.app_id IS NOT NULL AND (NOT d.shared_only OR cs.shared_at IS NOT NULL))
         )
       ))
       AND (NOT d.app_required AND cs.app_id IS NULL OR (
@@ -58,7 +58,7 @@ const AUTHORIZE_SQL = `
     FROM jsonb_to_recordset($1::jsonb) AS d(
       n int, user_id int, token text, staging boolean, claim_username text, admin boolean,
       app_required boolean, app_id int, app_slug text,
-      session_id int, watching boolean, fanout boolean, shared_only boolean,
+      session_id int, fanout boolean, shared_only boolean,
       conversation_required boolean, conversation_id int, actor_id int, actor_message_id int,
       notification_required boolean, notification_id int
     )
@@ -129,7 +129,6 @@ function descriptor(client, scope, n) {
     staging, claim_username: claimUsername, admin: !!scope.admin, app_required: !!scope.appRequired,
     app_id: positiveId(scope.appId), app_slug: scope.appSlug || null,
     session_id: positiveId(scope.sessionId),
-    watching: !!scope.watchRequest || (!!scope.watching && !!client.watching?.has(Number(scope.sessionId))),
     fanout: !!scope.fanout, shared_only: !!scope.sharedOnly, conversation_id: positiveId(scope.conversationId),
     conversation_required: !!scope.conversationRequired, actor_id: positiveId(scope.actorUserId),
     actor_message_id: positiveId(scope.actorMessageId),
@@ -157,8 +156,6 @@ function createDelivery({ getPool, send, refuse, onError }) {
 
   function apply(client, row, scope) {
     if (!row?.authenticated) { refuse(client, 'identity'); return false; }
-    // An unwatch received while the query was in flight wins as well.
-    if (scope.watching && !scope.fanout && !row.session_owner && !client.watching?.has(Number(scope.sessionId))) return false;
     if (!row.allowed) {
       if (client.appId != null) refuse(client, 'app');
       return false;

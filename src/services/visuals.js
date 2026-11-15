@@ -31,7 +31,6 @@ const applicationRuntime = require('./application-runtime');
 const github = require('./github');
 const caddy = require('./caddy');
 const prMetadata = require('./pr-metadata');
-const sessionBus = require('./session-bus');
 const appManifest = require('./app-manifest');
 const checkHistory = require('./check-history');
 const checkSignals = require('./check-signals');
@@ -3258,9 +3257,8 @@ function sessionEventEnvelope(sessionId, name, event) {
 }
 
 // Capture completes after staging_ready fired, so the staging card needs a
-// follow-up event to upgrade in place. Prefer the turn's own `send` (POST
-// SSE + global WS + session bus, all dedup'd by _seq client-side); fall
-// back to bus + WS directly when no turn is alive (promote-time capture).
+// follow-up event to upgrade in place. Prefer the turn's own `send`; fall
+// back to the socket directly when no turn is alive (promote-time capture).
 let _notifySeq = 0;
 function notifyVisualsReady(sessionId, visuals, send) {
   const data = { sessionId, visuals };
@@ -3270,7 +3268,6 @@ function notifyVisualsReady(sessionId, visuals, send) {
       return;
     }
     const event = { type: 'visuals_ready', _seq: `vis${Date.now().toString(36)}-${++_notifySeq}`, ...data };
-    sessionBus.publish(sessionId, event);
     const { broadcastGlobal } = require('./ws');
     broadcastGlobal(sessionEventEnvelope(sessionId, 'visuals_ready', event));
   } catch (err) {
@@ -3395,7 +3392,6 @@ function notifyChecksProgress(sessionId, commitSha, progress, phase = null, trig
       ...(trigger === undefined ? {} : { checkTrigger: normalizeCheckTrigger(trigger) }),
       progress: progress || null,
     };
-    sessionBus.publish(sessionId, event);
     const { broadcastGlobal } = require('./ws');
     broadcastGlobal(sessionEventEnvelope(sessionId, 'checks_ready', event));
   } catch (err) {
@@ -3555,7 +3551,6 @@ function notifyChecksPending(sessionId, commitSha, phase = null, trigger = null)
       checkPhase: normalizeCheckPhase(phase),
       checkTrigger: normalizeCheckTrigger(trigger),
     };
-    sessionBus.publish(sessionId, event);
     const { broadcastGlobal } = require('./ws');
     broadcastGlobal(sessionEventEnvelope(sessionId, 'checks_ready', event));
   } catch (err) {
@@ -3586,16 +3581,15 @@ function notifyChecks(sessionId, result, commitSha, send) {
     commitSha: commitSha || null,
   };
   try {
-    // A live turn's `send` fans out to the session bus AND the global
-    // socket itself. Without one, both are published here. A caller with no
-    // turn must pass nothing: a no-op `send` swallows the verdict for every
-    // open page (see captureForSession's `send` note).
+    // A live turn's `send` reaches the global socket itself. Without one,
+    // the event is broadcast here. A caller with no turn must pass nothing:
+    // a no-op `send` swallows the verdict for every open page (see
+    // captureForSession's `send` note).
     if (send) {
       send('checks_ready', data);
       return;
     }
     const event = { type: 'checks_ready', _seq: `chk${Date.now().toString(36)}-${++_notifySeq}`, ...data };
-    sessionBus.publish(sessionId, event);
     const { broadcastGlobal } = require('./ws');
     broadcastGlobal(sessionEventEnvelope(sessionId, 'checks_ready', event));
   } catch (err) {

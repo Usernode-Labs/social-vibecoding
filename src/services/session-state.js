@@ -3,14 +3,13 @@
 // Live session-state notifier (#1038).
 //
 // Every client surface that shows working state (the header cog, the Dev
-// board's session cards, the kanban issue cards' auto-run state) hears a
-// scoped `session_state` WebSocket event when a session's working state may
-// have changed, instead of guessing on a timer:
+// board's session cards) hears a scoped `session_state` WebSocket event when
+// a session's working state may have changed, instead of guessing on a
+// timer:
 //
 //   activeWorkers.add(id)  ─┐
 //   beginSessionOperation() ├─→ touch(id) ─→ coalesce ─→ recompute ─→ publish
-//   worker inFlight change  │
-//   headless_status write  ─┘
+//   worker inFlight change  ─┘
 //
 // A change's own turn starting and ending is told by the turn machine's
 // transition (src/workflow/turn/machine.ts, pushes.ts sessionState), from
@@ -79,7 +78,6 @@ function publish(payload) {
 function isIdleState(state) {
   if (!state) return true;
   if (state.busy || state.stopping) return false;
-  if (state.headless && state.headless.status === 'generating') return false;
   return true;
 }
 
@@ -109,8 +107,6 @@ async function loadRow(sessionId) {
     const { rows } = await _pool.query(
       `SELECT cs.id, cs.app_id, cs.user_id, cs.status,
               (cs.shared_at IS NOT NULL) AS shared,
-              cs.is_headless, cs.headless_status, cs.headless_outcome,
-              cs.headless_issue_number,
               a.slug AS app_slug
          FROM chat_sessions cs
          JOIN apps a ON a.id = cs.app_id
@@ -128,14 +124,6 @@ async function loadRow(sessionId) {
 
 // Build the wire payload for one session from live memory + its row.
 function buildPayload(sessionId, row, live) {
-  const headless = (row && row.is_headless)
-    ? {
-      status: row.headless_status || null,
-      outcome: row.headless_outcome || null,
-      issueNumber: row.headless_issue_number != null
-        ? Number(row.headless_issue_number) : null,
-    }
-    : null;
   return {
     sessionId: Number(sessionId),
     appId: row ? row.app_id : null,
@@ -145,10 +133,7 @@ function buildPayload(sessionId, row, live) {
     phase: live.phase || null,
     stopping: !!live.stopping,
     status: row ? row.status : null,
-    headless,
-    // A headless auto-run is group-visible by design (its card renders on
-    // everyone's board), so it fans out app-scoped like a shared session.
-    shared: !!(row && (row.shared || row.is_headless)),
+    shared: !!(row && row.shared),
     at: Date.now(),
   };
 }

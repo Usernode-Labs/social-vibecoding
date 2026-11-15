@@ -642,12 +642,6 @@ export function Shell() {
       */}
       <script src={assetUrl('/js/native-chrome.js')} />
       <script src={assetUrl('/js/dev-host.js')} />
-      {/*
-          #138: completion alerts (chime + OS notification). The notifications
-          module is in the React bundle (#1079 chunk B) and runs later, so it
-          sees DevAlerts.
-      */}
-      <script src={assetUrl('/js/dev-alerts.js')} />
       <script src={assetUrl('/js/social-push.js')} />
       {/*
           Webview-safe replacement for window.confirm(). Loaded before any

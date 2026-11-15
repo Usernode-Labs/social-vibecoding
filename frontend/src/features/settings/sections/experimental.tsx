@@ -1,21 +1,14 @@
-import { SectionHeading, StatusLine } from '@/components/ui/field';
+import { SectionHeading } from '@/components/ui/field';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
-import { SwitchRow } from '@/components/ui/switch';
 
 import { useMessages } from '../../../lib/i18n/react';
 
 import { InterfaceModeControl } from '../interface-mode-control';
 
 /**
- * Experimental: AI progress estimate (default OFF). When enabled, a small
- * Haiku call skims the in-flight Claude Code progress log about once a minute
- * and shows a vague "AI guess" plus a live countdown next to the timer on the
- * running line. #892: the model is now given the MEASURED
- * run-length distribution as prompt input (llm.js RUN_LENGTH_PRIORS) rather
- * than the old "bias toward 2-10 minutes" instruction that flattened its
- * output; nothing scales its answer afterwards. Server-gated per user;
- * settings.js wires the change handler to POST /api/me/ai-progress-estimate.
+ * Experimental: Advanced mode (./interface-mode-control.tsx), a switch kept
+ * on the DEVICE, and under it the Look menu.
  *
  * #3624 Homeroom bot used to have a switch here too, while it was tried out
  * one person at a time. It works for everyone now, so the switch is gone.
@@ -63,20 +56,11 @@ export function ExperimentalSection() {
           {t('settings:experimental.intro')}
         </SectionHeading>
         {/* Two neutral wrappers (looks v2), nothing in the standard look:
-            ui-card round the two switches, one card under a look, and
-            ui-swrow round each switch with its sentence, a row of it with
-            the switch at the end (app.css, SETTINGS). */}
+            ui-card round the switch, a card under a look, and ui-swrow
+            (in InterfaceModeControl) round the switch with its sentences, a
+            row of it with the switch at the end (app.css, SETTINGS). */}
         <div className="ui-card">
         <InterfaceModeControl />
-        <div className="ui-swrow">
-          <SwitchRow id="ai-progress-estimate">
-            {t('settings:experimental.progressEstimate.label')}
-          </SwitchRow>
-          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-            {t('settings:experimental.progressEstimate.description')}
-          </p>
-          <StatusLine id="ai-progress-estimate-status" size="xs" />
-        </div>
         </div>
         <div id="settings-look-section" className="hidden ui-card ui-fields mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
           <Label className="mb-1" htmlFor="settings-look">{t('settings:experimental.look.label')}</Label>

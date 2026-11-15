@@ -409,7 +409,7 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, s.created_at, s.last_seen_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.review_flow_enabled, u.private_member_since, u.locale, u.timezone, u.has_platform_access, u.is_synthetic,
+          `SELECT s.user_id, s.expires_at, s.created_at, s.last_seen_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.review_flow_enabled, u.private_member_since, u.locale, u.timezone, u.has_platform_access, u.is_synthetic,
              ${nativeWebSessionIsLive('s')} AS native_session_valid
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
@@ -480,9 +480,6 @@ function authMiddleware(config) {
             // `canCreateApps` boolean the client reads is computed in
             // auth/me from this plus a live count.
             appQuota: rows[0].app_quota ?? 0,
-            // Experimental per-user opt-in (default FALSE): Settings'
-            // progress-estimate switch.
-            aiProgressEstimate: !!rows[0].ai_progress_estimate,
             // Platform-level language preference (issue #757): a BCP-47
             // tag or null when unset. Surfaced via /api/auth/me.
             locale: rows[0].locale || null,
@@ -604,7 +601,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
   // personas by their fixed ids, seeded with their fixture roles. Username
   // match is defense-in-depth against a token naming another row's id.
   const findUser = async () => (await pool.query(
-    'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, ai_progress_estimate, locale, timezone, has_platform_access FROM users WHERE id = $1',
+    'SELECT id, username, is_admin, admin_readonly, app_quota, private_member_since, locale, timezone, has_platform_access FROM users WHERE id = $1',
     [payload.id]
   )).rows[0];
   let userRow;
@@ -657,7 +654,6 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res, req = nu
     adminReadonly: !!userRow.admin_readonly,
     canAdminWrite: !!userRow.is_admin && !userRow.admin_readonly,
     appQuota: userRow.app_quota ?? 0,
-    aiProgressEstimate: !!userRow.ai_progress_estimate,
     locale: userRow.locale || null,
     timeZone: userRow.timezone || null,
     hasPlatformAccess: !!userRow.has_platform_access,

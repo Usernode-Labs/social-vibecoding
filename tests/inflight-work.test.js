@@ -177,7 +177,7 @@ test('a handler is counted from arrival until it has answered', async () => {
   });
 });
 
-test('an event stream leaves the count once its headers are out; so does a long poll marked open-ended', async () => {
+test('an event stream leaves the count once its headers are out', async () => {
   await withApp((app) => {
     // Both header styles the routes use: setHeader, and writeHead with an
     // object on a response nothing called setHeader on.
@@ -190,20 +190,15 @@ test('an event stream leaves the count once its headers are out; so does a long 
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
       res.write(': hello\n\n');
     });
-    app.get('/turns/next', (_req, res) => {
-      requests.openEnded(res);
-      // Never answers within the test: the CLI's poll window.
-    });
     app.get('/slow', () => { /* never answers: a stuck handler IS counted */ });
   }, async (port) => {
     const a = open(port, '/sse-set');
     const b = open(port, '/sse-head');
     await Promise.all([a.headers, b.headers]);
-    const c = open(port, '/turns/next');
     const d = open(port, '/slow');
     assert.ok(await until(() => requests.snapshot().some((e) => e.surface === 'GET /slow')));
     assert.equal(requests.pending(), 1, 'only the stuck handler holds the drain');
-    for (const r of [a, b, c, d]) r.req.destroy();
+    for (const r of [a, b, d]) r.req.destroy();
     assert.ok(await until(() => requests.pending() === 0));
   });
 });

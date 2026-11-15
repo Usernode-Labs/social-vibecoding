@@ -1347,14 +1347,6 @@
     "text": "Early features we're still testing. They may change or disappear.",
     "description": "Explanation under the Experimental heading in Settings."
   },
-  "experimental.progressEstimate.label": {
-    "text": "AI progress estimate",
-    "description": "Label of a switch in Settings > Experimental: shows an AI-made guess of how far along the coding agent is."
-  },
-  "experimental.progressEstimate.description": {
-    "text": "While the coding agent works, a small AI model skims its progress log about once a minute and guesses how far along it is and roughly how long is left. It's calibrated against how long real runs actually take, but it's still a guess and can be wrong. Adds a tiny per-run cost (billed to your own API key if you've saved one above).",
-    "description": "Explanation under the AI progress estimate switch in Settings > Experimental. A \"run\" is one stretch of work by the coding agent."
-  },
   "experimental.look.fold": {
     "text": "Look and theme",
     "description": "Accessible name and tooltip of a round button in the top bar on a phone, which only admins see. It opens a small menu with two rows: Look (the visual style) and Theme (light or dark)."
@@ -1792,24 +1784,16 @@
     "description": "Explanation under the \"View as non-admin\" switch in Settings > Admin preview."
   },
   "alerts.title": {
-    "text": "Agent session sound & alerts",
-    "description": "Heading of the section in Settings about being told when an AI coding session finishes."
+    "text": "Test phone notifications",
+    "description": "Heading of the first block on the Notifications page in Settings: a test that sends a sample push notification to the person's phone."
   },
   "alerts.intro": {
-    "text": "Get a heads-up when an agent session finishes and is waiting for your reply.",
-    "description": "Explanation under the \"Agent session sound & alerts\" heading in Settings. An agent session is a conversation with the AI coding agent."
-  },
-  "alerts.toggle.label": {
-    "text": "Play a sound, and notify me when the app is in the background",
-    "description": "Label of the switch in Settings > Agent session sound & alerts."
-  },
-  "alerts.toggle.description": {
-    "text": "When you're in the app a soft chime plays. A browser can show notifications while its tab stays open. To receive push notifications with the mobile app backgrounded or closed, enable Activity notifications on your phone and Agent sessions below. The test queues a phone push with a 10-second delay so you can switch away.",
-    "description": "Explanation under the switch in Settings > Agent session sound & alerts. \"Activity notifications\" is the name of a switch in the Homeroom mobile app's settings and \"Agent sessions\" the name of a switch further down this page; translate them as those are translated."
+    "text": "Check that Homeroom can reach your phone. To get push notifications with the mobile app in the background or closed, turn on Activity notifications on your phone and the categories you want below. The test waits 10 seconds before it sends, so you can switch away.",
+    "description": "Explanation under the \"Test phone notifications\" heading in Settings. \"Activity notifications\" is the name of a switch in the Homeroom mobile app's settings; the categories are the switches under \"Mobile push categories\" further down this page."
   },
   "alerts.test": {
     "text": "Send a test alert",
-    "description": "Button in Settings > Agent session sound & alerts: plays the sound and sends a sample notification so the person can check it works."
+    "description": "Button under \"Test phone notifications\" on the Notifications page in Settings: sends a sample push notification to the person's phone so they can check it arrives."
   },
   "alerts.push.title": {
     "text": "Mobile push categories",
@@ -1872,12 +1856,12 @@
     "description": "What the Shared work category covers, under its name in Settings > Mobile push categories. A plan is a written description of a change, made before it is built."
   },
   "alerts.push.developerSessions.label": {
-    "text": "Agent sessions",
-    "description": "Name of a phone notification category in Settings > Mobile push categories: conversations with the AI coding agent."
+    "text": "Your coding agent",
+    "description": "Name of a phone notification category in Settings > Mobile push categories: news from an AI coding agent the person connected to Homeroom."
   },
   "alerts.push.developerSessions.description": {
-    "text": "Agent sessions and unattended runs that finish while you are away.",
-    "description": "What the Agent sessions category covers, under its name in Settings > Mobile push categories. An unattended run is work the coding agent does without the person watching."
+    "text": "When a coding agent you connected to Homeroom puts up its work or is waiting on you. Test alerts use this switch too.",
+    "description": "What the \"Your coding agent\" category covers, under its name in Settings > Mobile push categories. A test alert is the sample notification sent by the \"Send a test alert\" button on the same page."
   },
   "alerts.push.proposalAlerts.label": {
     "text": "Change alerts",
@@ -2396,8 +2380,8 @@
     "description": "Heading of a block in Settings in the Homeroom mobile app: notifications on the phone about activity in Homeroom."
   },
   "usernode.socialPush.intro": {
-    "text": "Get a device notification when an agent session or unattended run finishes. Notification content is loaded only after you open Social.",
-    "description": "Explanation under the \"Homeroom app: activity notifications\" heading in Settings. Social is the name of this part of the mobile app; an agent session is a conversation with the AI coding agent."
+    "text": "Get a device notification about activity in Homeroom, such as a message, a vote that needs you or a build that is ready. Notification content is loaded only after you open Social.",
+    "description": "Explanation under the \"Homeroom app: activity notifications\" heading in Settings. Social is the name of this part of the mobile app; a build is something Homeroom bot is building for the person."
   },
   "usernode.socialPush.checking": {
     "text": "Checking status…",
@@ -2645,7 +2629,7 @@
   },
   "nav.part.alerts": {
     "text": "Notifications",
-    "description": "Name of a part of Settings: the Notifications page (sound, alerts and phone push). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
+    "description": "Name of a part of Settings: the Notifications page (the phone push test, phone push categories and what apps may send). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
   "nav.part.appPermissions": {
     "text": "App device permissions",
@@ -2852,7 +2836,7 @@
     "description": "Not shown on screen. Extra search words for \"Agent instructions & skills\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.experimental": {
-    "text": "beta labs progress estimate look design",
+    "text": "beta labs advanced basic mode look design",
     "description": "Not shown on screen. Extra search words for \"Experimental\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.theme": {
@@ -2872,7 +2856,7 @@
     "description": "Not shown on screen. Extra search words for \"Language\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words. The non-English words are the word for \"language\" in other languages, so someone whose screen is in the wrong language can still find this page: keep them."
   },
   "nav.keywords.alerts": {
-    "text": "notifications sound push phone mute bell chime",
+    "text": "notifications push phone mute bell test alert",
     "description": "Not shown on screen. Extra search words for \"Notifications\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.appPermissions": {
@@ -2961,47 +2945,31 @@
   },
   "alerts.test.queueing": {
     "text": "Queueing test alert…",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications while the request is being sent."
+    "description": "Status under the \"Send a test alert\" button in Settings > Notifications while the request is being sent."
   },
   "alerts.test.countdown.queued_one": {
-    "text": "Alert in {{count}}s. Phone push queued. Background or close the mobile app to check for a notification. Stay here for the chime if sound is enabled.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications, updated every second while the test counts down, when a push notification was also queued for the phone. {{count}} is the seconds left; \"s\" abbreviates seconds. \"Chime\" is the sound Homeroom plays in the open page."
+    "text": "Alert in {{count}}s. Phone push queued. Background or close the mobile app to check for a notification.",
+    "description": "Status under the \"Send a test alert\" button in Settings > Notifications, updated every second while the test counts down to the moment the push notification is sent to the phone. {{count}} is the seconds left; \"s\" abbreviates seconds."
   },
   "alerts.test.countdown.queued_other": {
-    "text": "Alert in {{count}}s. Phone push queued. Background or close the mobile app to check for a notification. Stay here for the chime if sound is enabled.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications, updated every second while the test counts down, when a push notification was also queued for the phone. {{count}} is the seconds left; \"s\" abbreviates seconds. \"Chime\" is the sound Homeroom plays in the open page."
-  },
-  "alerts.test.countdown.preferenceDisabled_one": {
-    "text": "Alert in {{count}}s. Phone push was not queued. Enable Agent sessions under Mobile push categories and try again. Stay here for the chime if sound is enabled.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications, updated every second while the test counts down, when no phone push was sent because the \"Agent sessions\" category is switched off under \"Mobile push categories\" on the same page. {{count}} is the seconds left; \"s\" abbreviates seconds. \"Chime\" is the sound Homeroom plays in the open page."
-  },
-  "alerts.test.countdown.preferenceDisabled_other": {
-    "text": "Alert in {{count}}s. Phone push was not queued. Enable Agent sessions under Mobile push categories and try again. Stay here for the chime if sound is enabled.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications, updated every second while the test counts down, when no phone push was sent because the \"Agent sessions\" category is switched off under \"Mobile push categories\" on the same page. {{count}} is the seconds left; \"s\" abbreviates seconds. \"Chime\" is the sound Homeroom plays in the open page."
-  },
-  "alerts.test.countdown.unavailable_one": {
-    "text": "Alert in {{count}}s. Phone push was not queued. Sign in on your phone and enable Activity notifications and notification permission. Push delivery must also be available on the server. Stay here for the chime if sound is enabled.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications, updated every second while the test counts down, when no phone push could be sent because no phone is registered for it. \"Activity notifications\" is the name of a switch in the phone app. {{count}} is the seconds left; \"s\" abbreviates seconds. \"Chime\" is the sound Homeroom plays in the open page."
-  },
-  "alerts.test.countdown.unavailable_other": {
-    "text": "Alert in {{count}}s. Phone push was not queued. Sign in on your phone and enable Activity notifications and notification permission. Push delivery must also be available on the server. Stay here for the chime if sound is enabled.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications, updated every second while the test counts down, when no phone push could be sent because no phone is registered for it. \"Activity notifications\" is the name of a switch in the phone app. {{count}} is the seconds left; \"s\" abbreviates seconds. \"Chime\" is the sound Homeroom plays in the open page."
+    "text": "Alert in {{count}}s. Phone push queued. Background or close the mobile app to check for a notification.",
+    "description": "Status under the \"Send a test alert\" button in Settings > Notifications, updated every second while the test counts down to the moment the push notification is sent to the phone. {{count}} is the seconds left; \"s\" abbreviates seconds."
   },
   "alerts.test.after.queued": {
     "text": "The test push is queued for delivery. Check your phone; delivery may take a few more seconds.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications once the countdown ends and a push notification was queued for the phone."
+    "description": "Status under the \"Send a test alert\" button in Settings > Notifications once the countdown ends and a push notification was queued for the phone."
   },
   "alerts.test.after.preferenceDisabled": {
-    "text": "Phone push was not queued. Enable Agent sessions under Mobile push categories and try again.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications once the countdown ends, when no phone push was sent because the \"Agent sessions\" category is switched off under \"Mobile push categories\" on the same page."
+    "text": "Phone push was not queued. Turn on Your coding agent under Mobile push categories and try again.",
+    "description": "Status under the \"Send a test alert\" button in Settings > Notifications when no phone push was sent because the \"Your coding agent\" category is switched off under \"Mobile push categories\" on the same page. Translate both names as they are translated there."
   },
   "alerts.test.after.unavailable": {
     "text": "Phone push was not queued. Sign in on your phone and enable Activity notifications and notification permission. Push delivery must also be available on the server.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications once the countdown ends, when no phone push could be sent because no phone is registered for it. \"Activity notifications\" is the name of a switch in the phone app."
+    "description": "Status under the \"Send a test alert\" button in Settings > Notifications when no phone push could be sent because no phone is registered for it. \"Activity notifications\" is the name of a switch in the phone app."
   },
   "alerts.test.failed": {
     "text": "Could not queue the test push. Please try again.",
-    "description": "Error under the \"Send test alert\" button in Settings > Notifications when the request failed and the server gave no reason."
+    "description": "Error under the \"Send a test alert\" button in Settings > Notifications when the request failed and the server gave no reason."
   },
   "screen.title": {
     "text": "Settings",
@@ -3370,14 +3338,6 @@
   "cliTokens.revoke.done": {
     "text": "Credential revoked.",
     "description": "Confirmation in Settings > CLI access after a command-line credential was revoked and can no longer be used."
-  },
-  "experimental.progressEstimate.saveFailed": {
-    "text": "Failed to save.",
-    "description": "Error under the \"AI progress estimate\" switch in Settings > Experimental. when the change could not be saved and the server gave no reason."
-  },
-  "experimental.progressEstimate.networkError": {
-    "text": "Network error: {{reason}}",
-    "description": "Error under the \"AI progress estimate\" switch in Settings > Experimental. when the request did not reach the server. {{reason}} is the browser's own technical message."
   },
   "mobilePush.invalidResponse": {
     "text": "Invalid preferences response.",

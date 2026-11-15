@@ -160,8 +160,8 @@
     "description": "Status badge on a proposal, shown after a warning sign: merging it was tried and failed because it conflicts with the app's latest code."
   },
   "merge.title.mergeConflict": {
-    "text": "Going live was attempted but this change conflicts with main. The change’s creator needs to bring it up to date from their agent session (\"Sync with main\").",
-    "description": "Tooltip on the \"Merge failed: conflict\" status badge of a proposal. \"change\" is a noun: the proposed change. \"main\" is the app's main code branch and stays as it is; \"Sync with main\" is the name of a button in the agent session."
+    "text": "Going live was attempted but this change conflicts with main. The change’s creator needs to bring it up to date from the change’s page (\"Sync with main\").",
+    "description": "Tooltip on the \"Merge failed: conflict\" status badge of a proposal. \"change\" is a noun: the proposed change. \"main\" is the app's main code branch and stays as it is; \"Sync with main\" is the name of a button on the change's page."
   },
   "merge.status.conflictsWithMain": {
     "text": "Conflicts with main",
@@ -176,19 +176,19 @@
     "description": "Status badge on a proposal, shown after a warning sign: it conflicts with the app's main code. {{count}} is the number of files in conflict, shown bare after a middle dot. \"Conflicts\" is a verb; \"main\" stays as it is."
   },
   "merge.title.conflictUnresolvable": {
-    "text": "Main has moved on and this proposal no longer merges on its own. The platform tried to resolve it and could not. The change’s creator needs to bring it up to date from their agent session (\"Sync with main\").",
-    "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal, when the platform's own attempt to fix the conflict failed. \"Main\"/\"main\" is the app's main code branch; \"Sync with main\" is the name of a button in the agent session."
+    "text": "Main has moved on and this proposal no longer merges on its own. The platform tried to resolve it and could not. The change’s creator needs to bring it up to date from the change’s page (\"Sync with main\").",
+    "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal, when the platform's own attempt to fix the conflict failed. \"Main\"/\"main\" is the app's main code branch; \"Sync with main\" is the name of a button on the change's page."
   },
   "merge.title.conflictForkHead": {
     "text": "Main has moved on and this proposal no longer merges on its own. Its branch lives on the creator’s own fork, which the platform cannot write to, so only the creator can bring it up to date.",
     "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal whose code lives in its creator's own copy (fork) of the repository. \"Main\" is the app's main code branch."
   },
   "merge.title.conflictAwaitingApproval": {
-    "text": "Main has moved on and this proposal no longer merges on its own. The platform resolves it once the vote passes. The creator can bring it up to date sooner from their agent session (\"Sync with main\").",
-    "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal that is still being voted on. \"Main\"/\"main\" is the app's main code branch; \"Sync with main\" is the name of a button in the agent session."
+    "text": "Main has moved on and this proposal no longer merges on its own. The platform resolves it once the vote passes. The creator can bring it up to date sooner from the change’s page (\"Sync with main\").",
+    "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal that is still being voted on. \"Main\"/\"main\" is the app's main code branch; \"Sync with main\" is the name of a button on the change's page."
   },
   "merge.title.conflictChecksFailing": {
-    "text": "Main has moved on and this proposal no longer merges on its own. Its checks are failing too, so the platform does not resolve the conflict yet: the change’s creator fixes the checks first (from their agent session), and then the platform resolves the conflict.",
+    "text": "Main has moved on and this proposal no longer merges on its own. Its checks are failing too, so the platform does not resolve the conflict yet: the change’s creator fixes the checks first, and then the platform resolves the conflict.",
     "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal whose automated checks are failing as well. \"Main\" is the app's main code branch."
   },
   "merge.title.conflictChecksError": {
@@ -196,8 +196,8 @@
     "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal whose automated checks could not run (the test run itself failed). \"Main\" is the app's main code branch."
   },
   "merge.title.conflictAutomatic": {
-    "text": "Main has moved on and this proposal no longer merges on its own. The platform resolves it automatically. The creator can also bring it up to date from their agent session (\"Sync with main\").",
-    "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal, in the ordinary case where the platform will fix the conflict itself. \"Main\"/\"main\" is the app's main code branch; \"Sync with main\" is the name of a button in the agent session."
+    "text": "Main has moved on and this proposal no longer merges on its own. The platform resolves it automatically. The creator can also bring it up to date from the change’s page (\"Sync with main\").",
+    "description": "Tooltip on the \"Conflicts with main\" status badge of a proposal, in the ordinary case where the platform will fix the conflict itself. \"Main\"/\"main\" is the app's main code branch; \"Sync with main\" is the name of a button on the change's page."
   },
   "merge.status.previewFailed": {
     "text": "Preview won't boot",
@@ -389,7 +389,7 @@
   },
   "merge.pill.statusWithTally": {
     "text": "{{status}} · {{yes}}/{{required}}",
-    "description": "Status pill in the header of an agent session whose change is up for a vote. {{status}} is the whole status phrase, already translated (\"Waiting for approval\"); {{yes}} is the number of Yes votes so far and {{required}} the number needed, shown as a fraction."
+    "description": "Status pill in the header of a change that is up for a vote. {{status}} is the whole status phrase, already translated (\"Waiting for approval\"); {{yes}} is the number of Yes votes so far and {{required}} the number needed, shown as a fraction."
   },
   "merge.pill.advisoryVotes_one": {
     "text": "{{count}} advisory vote from non-approvers. They don’t count toward merging",
@@ -417,7 +417,7 @@
   },
   "venue.local.label": {
     "text": "Your computer · Homeroom session",
-    "description": "Name of one place a change can be built: the person's own computer, running the turns of this same Homeroom agent session. Homeroom is the product's name; keep the middle dot."
+    "description": "Name of one place a change was built: the person's own computer, where their coding agent ran the work for a change kept in Homeroom. Homeroom is the product's name; keep the middle dot."
   },
   "venue.local.blurb": {
     "text": "The Homeroom CLI runs this session’s turns on your machine and your own Claude plan. Same chat, same branch, same proposal. The work just executes locally.",
@@ -657,114 +657,114 @@
   },
   "transcript.attachment.unnamed": {
     "text": "file",
-    "description": "Stands in for the name of a file attached to a message in a shared agent-session transcript, when the file has no name. A noun, lower case."
+    "description": "Stands in for the name of a file attached to a message in a change's shared build chat, when the file has no name. A noun, lower case."
   },
   "transcript.attachment.title": {
     "text": "{{filename}} (attachments aren't shared, only their names)",
-    "description": "Tooltip on a file chip under a message in a shared agent-session transcript: readers see the file's name but cannot open it. {{filename}} is the attached file's name."
+    "description": "Tooltip on a file chip under a message in a change's shared build chat: readers see the file's name but cannot open it. {{filename}} is the attached file's name."
   },
   "transcript.attachment.titleUnnamed": {
     "text": "file (attachments aren't shared, only their names)",
-    "description": "Tooltip on a file chip under a message in a shared agent-session transcript: readers see the file's name but cannot open it. Used when the attachment has no name; \"file\" is written as the tooltip has always shown it."
+    "description": "Tooltip on a file chip under a message in a change's shared build chat: readers see the file's name but cannot open it. Used when the attachment has no name; \"file\" is written as the tooltip has always shown it."
   },
   "transcript.activity.stepsAndSummary_one": {
     "text": "Agent activity ({{count}} steps) and summary",
-    "description": "Label of a collapsed section in a shared agent-session transcript that holds the coding agent's progress log and its own summary of the turn. {{count}} is the number of log lines."
+    "description": "Label of a collapsed section in a change's shared build chat that holds the coding agent's progress log and its own summary of the turn. {{count}} is the number of log lines."
   },
   "transcript.activity.stepsAndSummary_other": {
     "text": "Agent activity ({{count}} steps) and summary",
-    "description": "Label of a collapsed section in a shared agent-session transcript that holds the coding agent's progress log and its own summary of the turn. {{count}} is the number of log lines."
+    "description": "Label of a collapsed section in a change's shared build chat that holds the coding agent's progress log and its own summary of the turn. {{count}} is the number of log lines."
   },
   "transcript.activity.steps_one": {
     "text": "Agent activity ({{count}} steps)",
-    "description": "Label of a collapsed section in a shared agent-session transcript that holds the coding agent's progress log. {{count}} is the number of log lines."
+    "description": "Label of a collapsed section in a change's shared build chat that holds the coding agent's progress log. {{count}} is the number of log lines."
   },
   "transcript.activity.steps_other": {
     "text": "Agent activity ({{count}} steps)",
-    "description": "Label of a collapsed section in a shared agent-session transcript that holds the coding agent's progress log. {{count}} is the number of log lines."
+    "description": "Label of a collapsed section in a change's shared build chat that holds the coding agent's progress log. {{count}} is the number of log lines."
   },
   "transcript.activity.summary": {
     "text": "Agent summary",
-    "description": "Label of a collapsed section in a shared agent-session transcript that holds the coding agent's own summary of what it did in a turn."
+    "description": "Label of a collapsed section in a change's shared build chat that holds the coding agent's own summary of what it did in a turn."
   },
   "transcript.spec.version": {
     "text": "Plan v{{version}}",
-    "description": "Heading of a card in a shared agent-session transcript that shows an excerpt of the change's plan (the written description of what the change will do). {{version}} is the plan's version number; \"v\" abbreviates version."
+    "description": "Heading of a card in a change's shared build chat that shows an excerpt of the change's plan (the written description of what the change will do). {{version}} is the plan's version number; \"v\" abbreviates version."
   },
   "transcript.spec.versionLines_one": {
     "text": "Plan v{{version}} · {{lines}} lines",
-    "description": "Heading of a card in a shared agent-session transcript that shows an excerpt of the change's plan (the written description of what the change will do). {{version}} is the plan's version number; {{lines}} is how many lines the whole plan has ({{count}} is the same number, for choosing the plural)."
+    "description": "Heading of a card in a change's shared build chat that shows an excerpt of the change's plan (the written description of what the change will do). {{version}} is the plan's version number; {{lines}} is how many lines the whole plan has ({{count}} is the same number, for choosing the plural)."
   },
   "transcript.spec.versionLines_other": {
     "text": "Plan v{{version}} · {{lines}} lines",
-    "description": "Heading of a card in a shared agent-session transcript that shows an excerpt of the change's plan (the written description of what the change will do). {{version}} is the plan's version number; {{lines}} is how many lines the whole plan has ({{count}} is the same number, for choosing the plural)."
+    "description": "Heading of a card in a change's shared build chat that shows an excerpt of the change's plan (the written description of what the change will do). {{version}} is the plan's version number; {{lines}} is how many lines the whole plan has ({{count}} is the same number, for choosing the plural)."
   },
   "transcript.spec.drafted": {
     "text": "Plan drafted",
-    "description": "Heading of a card in a shared agent-session transcript that shows an excerpt of a plan (the written description of what a change will do) the agent has just drafted, when its version number is not known. \"drafted\" means written as a first version."
+    "description": "Heading of a card in a change's shared build chat that shows an excerpt of a plan (the written description of what a change will do) the agent has just drafted, when its version number is not known. \"drafted\" means written as a first version."
   },
   "transcript.spec.draftedLines_one": {
     "text": "Plan drafted · {{lines}} lines",
-    "description": "Heading of a card in a shared agent-session transcript that shows an excerpt of a plan (the written description of what a change will do) the agent has just drafted. {{lines}} is how many lines the whole plan has ({{count}} is the same number, for choosing the plural)."
+    "description": "Heading of a card in a change's shared build chat that shows an excerpt of a plan (the written description of what a change will do) the agent has just drafted. {{lines}} is how many lines the whole plan has ({{count}} is the same number, for choosing the plural)."
   },
   "transcript.spec.draftedLines_other": {
     "text": "Plan drafted · {{lines}} lines",
-    "description": "Heading of a card in a shared agent-session transcript that shows an excerpt of a plan (the written description of what a change will do) the agent has just drafted. {{lines}} is how many lines the whole plan has ({{count}} is the same number, for choosing the plural)."
+    "description": "Heading of a card in a change's shared build chat that shows an excerpt of a plan (the written description of what a change will do) the agent has just drafted. {{lines}} is how many lines the whole plan has ({{count}} is the same number, for choosing the plural)."
   },
   "transcript.agentRunning": {
     "text": "Coding agent is running{{tail}}",
-    "description": "Status line in a shared agent-session transcript for a turn the coding agent ran. {{tail}} is whatever punctuation followed the server's own sentence, usually three dots or nothing; keep it directly after the last word."
+    "description": "Status line in a change's shared build chat for a turn the coding agent ran. {{tail}} is whatever punctuation followed the server's own sentence, usually three dots or nothing; keep it directly after the last word."
   },
   "transcript.author.unknown": {
     "text": "them",
-    "description": "Stands where the name of the person who owns a shared agent-session transcript would be, over their messages, when the name is not known. Lower case."
+    "description": "Stands where the name of the person who owns a change's shared build chat would be, over their messages, when the name is not known. Lower case."
   },
   "transcript.author.ai": {
     "text": "AI",
-    "description": "Label over the coding assistant's messages in a shared agent-session transcript."
+    "description": "Label over the coding assistant's messages in a change's shared build chat."
   },
   "transcript.empty": {
     "text": "This chat has no messages yet.",
-    "description": "Shown in place of a shared agent-session transcript that has no messages."
+    "description": "Shown in place of a change's shared build chat that has no messages."
   },
   "transcript.truncated": {
     "text": "Showing the most recent part of a long chat. earlier messages aren't included.",
-    "description": "Note at the top of a shared agent-session transcript that was too long to show whole. The second sentence begins lower case in English as written."
+    "description": "Note at the top of a change's shared build chat that was too long to show whole. The second sentence begins lower case in English as written."
   },
   "transcript.header.byAuthor": {
-    "text": "Agent session by {{author}}",
-    "description": "Heading of an opened shared transcript on a proposal's page. {{author}} is the user name of the person whose agent session it is."
+    "text": "Build chat by {{author}}",
+    "description": "Heading of an opened shared transcript on a proposal's page. {{author}} is the user name of the person who built the change."
   },
   "transcript.header.byAuthorMessages_one": {
-    "text": "Agent session by {{author}} · {{count}} message",
-    "description": "Heading of an opened shared transcript on a proposal's page. {{author}} is the user name of the person whose agent session it is; {{count}} is how many messages it holds."
+    "text": "Build chat by {{author}} · {{count}} message",
+    "description": "Heading of an opened shared transcript on a proposal's page. {{author}} is the user name of the person who built the change; {{count}} is how many messages it holds."
   },
   "transcript.header.byAuthorMessages_other": {
-    "text": "Agent session by {{author}} · {{count}} messages",
-    "description": "Heading of an opened shared transcript on a proposal's page. {{author}} is the user name of the person whose agent session it is; {{count}} is how many messages it holds."
+    "text": "Build chat by {{author}} · {{count}} messages",
+    "description": "Heading of an opened shared transcript on a proposal's page. {{author}} is the user name of the person who built the change; {{count}} is how many messages it holds."
   },
   "transcript.header.byUnknown": {
-    "text": "Agent session by them",
-    "description": "Heading of an opened shared transcript on a proposal's page, when the name of the person whose agent session it is is not known. \"them\" is that person."
+    "text": "Build chat by them",
+    "description": "Heading of an opened shared transcript on a proposal's page, when the name of the person who built the change is not known. \"them\" is that person."
   },
   "transcript.header.byUnknownMessages_one": {
-    "text": "Agent session by them · {{count}} message",
-    "description": "Heading of an opened shared transcript on a proposal's page, when the name of the person whose agent session it is is not known. {{count}} is how many messages it holds."
+    "text": "Build chat by them · {{count}} message",
+    "description": "Heading of an opened shared transcript on a proposal's page, when the name of the person who built the change is not known. {{count}} is how many messages it holds."
   },
   "transcript.header.byUnknownMessages_other": {
-    "text": "Agent session by them · {{count}} messages",
-    "description": "Heading of an opened shared transcript on a proposal's page, when the name of the person whose agent session it is is not known. {{count}} is how many messages it holds."
+    "text": "Build chat by them · {{count}} messages",
+    "description": "Heading of an opened shared transcript on a proposal's page, when the name of the person who built the change is not known. {{count}} is how many messages it holds."
   },
   "transcript.header.read": {
-    "text": "Read the agent session",
-    "description": "Label of the control on a proposal's page that opens the shared transcript of the agent session behind it. \"Read\" is a verb (imperative)."
+    "text": "Read the build chat",
+    "description": "Label of the control on a proposal's page that opens the shared transcript of the conversation with the coding agent that built it. \"Read\" is a verb (imperative)."
   },
   "transcript.header.readMessages_one": {
-    "text": "Read the agent session ({{count}} messages)",
-    "description": "Label of the control on a proposal's page that opens the shared transcript of the agent session behind it. \"Read\" is a verb (imperative); {{count}} is how many messages it holds."
+    "text": "Read the build chat ({{count}} messages)",
+    "description": "Label of the control on a proposal's page that opens the shared transcript of the conversation with the coding agent that built it. \"Read\" is a verb (imperative); {{count}} is how many messages it holds."
   },
   "transcript.header.readMessages_other": {
-    "text": "Read the agent session ({{count}} messages)",
-    "description": "Label of the control on a proposal's page that opens the shared transcript of the agent session behind it. \"Read\" is a verb (imperative); {{count}} is how many messages it holds."
+    "text": "Read the build chat ({{count}} messages)",
+    "description": "Label of the control on a proposal's page that opens the shared transcript of the conversation with the coding agent that built it. \"Read\" is a verb (imperative); {{count}} is how many messages it holds."
   }
 }

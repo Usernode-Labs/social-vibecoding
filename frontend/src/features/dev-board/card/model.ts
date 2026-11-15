@@ -43,8 +43,6 @@ import type { BotTrack } from '../../messages/types';
 export interface CardIconSpec {
   tint: string;
   path: string;
-  /** #250 — the whole chip animates while an auto-solve run is generating. */
-  pulse?: boolean;
   title?: string;
   small?: boolean;
 }

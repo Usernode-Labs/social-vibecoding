@@ -61,7 +61,6 @@ const state = {
   keyLast4: null,
   usernodePubkey: null,
   walletLinkEnabled: false,
-  aiProgressEstimate: false,
   locale: null,
   timeZone: null,
 };
@@ -236,7 +235,6 @@ const Facade = {
       state.keyLast4 = u.keyLast4 || null;
       state.usernodePubkey = u.usernodePubkey || null;
       state.walletLinkEnabled = !!u.walletLinkEnabled;
-      state.aiProgressEstimate = !!u.aiProgressEstimate;
       state.locale = u.locale || null;
       state.timeZone = u.timeZone || null;
       // The CLI-credentials gate's memo, primed from the same payload. Written

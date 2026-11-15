@@ -477,26 +477,6 @@ test('a request whose client gave up first still costs what it took, counted as 
   assert.deepEqual(finished.map((e) => [e.route, e.aborted]), [['/api/slow', true]], 'the stall watcher hears of it');
 });
 
-test('a long poll marked open-ended counts as held: no time, and no suspect in a stall', async () => {
-  const { openEnded } = require('../src/middleware/inflight-requests');
-  const c = counts.createCounts({ pod: 'p1' });
-  const finished = [];
-  const app = express();
-  app.use(requestCounts({ counts: c, health: { noteFinished: (e) => finished.push(e) } }));
-  app.get('/api/turns/next', (_req, res) => { openEnded(res); setTimeout(() => res.json({ turn: null }), 300); });
-  const server = await listen(app);
-  try {
-    await (await fetch(`http://127.0.0.1:${server.address().port}/api/turns/next`)).json();
-    for (let i = 0; i < 50 && !c.snapshot().length; i += 1) await new Promise((t) => setTimeout(t, 10));
-  } finally {
-    server.close();
-  }
-  const [r] = c.snapshot()[0].routes;
-  assert.deepEqual([r.route, r.requests, r.streams, r.totalMs], ['/api/turns/next', 1, 1, 0]);
-  assert.equal(c.snapshot()[0].requests, 1, 'it still counts in the /api/ totals');
-  assert.deepEqual(finished, []);
-});
-
 test('pipelined requests each count their own bytes', async () => {
   const net = require('node:net');
   const c = counts.createCounts({ pod: 'p1' });

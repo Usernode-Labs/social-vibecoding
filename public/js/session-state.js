@@ -7,17 +7,16 @@
 //
 // Before this store, each of those re-fetched a full payload on its own
 // timer — 15s for the drawer (and only while it ALREADY thought work was in
-// flight, which is why the cog never started spinning), 15s for the board,
-// 8s for the auto-run cards. Now the server pushes a `session_state` event
-// on every real transition (services/session-state.js) and the surfaces
-// repaint from here.
+// flight, which is why the cog never started spinning) and 15s for the
+// board. Now the server pushes a `session_state` event on every real
+// transition (services/session-state.js) and the surfaces repaint from here.
 //
 // Two channels out, deliberately:
 //   subscribe(cb) — coalesced to one call per frame. For repaints: a burst
 //                   of events must not cause a burst of innerHTML rewrites.
-//   onEvent(cb)   — raw and immediate. For patching cached data that isn't
-//                   keyed by session id (the issue cards' `headless` field),
-//                   which has to happen BEFORE the repaint reads it.
+//   onEvent(cb)   — raw and immediate. For a reader that acts on the event
+//                   itself (a change's page re-reading its detail), which
+//                   has to happen BEFORE the repaint reads it.
 //
 // The correctness rule that makes the phantom spinner go away: a live entry
 // is never dropped merely because the session went idle, and it is never
@@ -29,7 +28,7 @@
 // replaces them (MAX_ENTRIES is only a leak backstop).
 
 const SessionState = {
-  // sessionId -> { busy, phase, stopping, status, headless, at }
+  // sessionId -> { busy, phase, stopping, status, userId, at }
   entries: new Map(),
 
   // The platform process the live entries describe. Busy state is in-process
@@ -84,14 +83,13 @@ const SessionState = {
   anyActive() {
     for (const e of SessionState.entries.values()) {
       if (e.busy || e.stopping) return true;
-      if (e.headless && e.headless.status === 'generating') return true;
     }
     return false;
   },
 
   // Is anything of THIS user's in flight? The Homeroom mark's working
   // indicator reads this, not anyActive(): the store also holds every shared
-  // session and auto-run on the apps the viewer can see, so anyActive() made
+  // session on the apps the viewer can see, so anyActive() made
   // the mark pulse for other people's builds and read as random (#2779
   // follow-up). An entry whose owner is not known yet does not count.
   anyActiveFor(userId) {
@@ -116,22 +114,13 @@ const SessionState = {
       && !!prev.busy === !!next.busy
       && !!prev.stopping === !!next.stopping
       && (prev.phase || null) === (next.phase || null)
-      && (prev.status || null) === (next.status || null)
-      && SessionState._sameHeadless(prev.headless, next.headless)) {
+      && (prev.status || null) === (next.status || null)) {
       prev.at = next.at;
       if (next.userId != null) prev.userId = next.userId;
       return false;
     }
     SessionState.entries.set(id, next);
     return true;
-  },
-
-  _sameHeadless(a, b) {
-    if (!a && !b) return true;
-    if (!a || !b) return false;
-    return (a.status || null) === (b.status || null)
-      && (a.outcome || null) === (b.outcome || null)
-      && (a.issueNumber || null) === (b.issueNumber || null);
   },
 
   // The session's owner, as the payload or row names it, else as already
@@ -146,7 +135,6 @@ const SessionState = {
   _isIdleEntry(e) {
     if (!e) return true;
     if (e.busy || e.stopping) return false;
-    if (e.headless && e.headless.status === 'generating') return false;
     return true;
   },
 
@@ -174,14 +162,12 @@ const SessionState = {
       phase: payload.phase || null,
       stopping: !!payload.stopping,
       status: payload.status || null,
-      headless: payload.headless || null,
       userId: SessionState._ownerOf(payload.userId, prev),
       at,
     });
     SessionState._prune();
     // Raw subscribers run even when the derived state matched, because they
-    // may key off fields the store doesn't model (an auto-run's outcome
-    // landing on an issue card).
+    // may key off fields the store doesn't model.
     for (const cb of SessionState._eventSubs) {
       try { cb(payload); } catch (err) { console.warn('[session-state] event handler failed', err); }
     }
@@ -212,7 +198,6 @@ const SessionState = {
         phase: existing ? existing.phase : null,
         stopping: existing ? !!existing.stopping : false,
         status: row.status || (existing ? existing.status : null) || null,
-        headless: existing ? existing.headless : null,
         userId: SessionState._ownerOf(row.user_id != null ? row.user_id : row.userId, existing),
         at,
       })) changed = true;
@@ -247,7 +232,6 @@ const SessionState = {
         phase: row.phase || null,
         stopping: !!row.stopping,
         status: row.status || null,
-        headless: row.headless || null,
         userId: SessionState._ownerOf(row.userId, SessionState.entries.get(Number(row.id))),
         at,
       })) changed = true;
@@ -259,10 +243,6 @@ const SessionState = {
         busy: false, phase: null, stopping: false,
         status: e.status || null,
         userId: e.userId != null ? e.userId : null,
-        // Keep a terminal auto-run outcome if we have one; only the
-        // "generating" liveness is being cleared here.
-        headless: e.headless && e.headless.status === 'generating'
-          ? { ...e.headless, status: null } : (e.headless || null),
         at,
       })) changed = true;
     }

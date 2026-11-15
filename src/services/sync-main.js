@@ -252,11 +252,9 @@ async function runSyncWork(config, pool, {
   const send = (type, data) => {
     try {
       const { broadcastGlobal } = require('./ws');
-      const sessionBus = require('./session-bus');
       const event = { type, _seq: `s${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, ...data };
       broadcastGlobal({ ...event, type: 'session_event', sessionId: session.id, event: type });
-      sessionBus.publish(session.id, event);
-    } catch (_) { /* ws/bus failures are non-fatal */ }
+    } catch (_) { /* a socket failure is non-fatal */ }
   };
   const sendStatus = async (text, metadata) => {
     send('status', { text, ...(metadata || {}) });

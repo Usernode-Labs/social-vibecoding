@@ -78,8 +78,8 @@ async function isKnownHost(pool, rawDomain) {
 // src/services/worker.js's mintWorkerJwt).
 //
 // Workers carry no Git credentials. Active callbacks expose only their
-// declared purpose: request reads, visual declarations, model/debug access
-// and platform-issue drafts. Git publication and PR creation belong to
+// declared purpose: request reads, visual declarations and model/debug
+// access. Git publication and PR creation belong to
 // conductor completion/recovery; their old callback URLs return 410.
 
 // ── App-host gate (Caddy forward_auth, and the Kubernetes gate proxy) ──

@@ -1,14 +1,12 @@
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 
 import { NotificationPrefsList } from '../notification-prefs-list';
-import { SwitchRow } from '@/components/ui/switch';
 import { useMessages } from '../../../lib/i18n/react';
 
 /**
- * #138: Sound & alerts (default ON). Client-only preference
- * (localStorage key devchat_alerts_enabled); wired in settings.js. Plays a
- * chime when a completion notification arrives while you're in the app, or a
- * system notification when it's in the background (public/js/dev-alerts.js).
+ * The Notifications page. First the phone push test: the button queues a
+ * test push on the server, which sends it ten seconds later so the person
+ * can switch away (wired in settings.js, POST /api/me/test-alert).
  *
  * Below it, the mobile push categories. Those rows are NOT SwitchRows: their
  * shape is the other way round (caption block first, switch right-aligned and
@@ -33,15 +31,6 @@ export function AlertsSection() {
         <SectionHeading title={t('settings:alerts.title')}>
           {t('settings:alerts.intro')}
         </SectionHeading>
-        {/* A neutral wrapper (looks v2); see ./dev-console.tsx. */}
-        <div className="ui-card ui-swrow">
-          <SwitchRow id="devchat-alerts-toggle">
-            {t('settings:alerts.toggle.label')}
-          </SwitchRow>
-          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-            {t('settings:alerts.toggle.description')}
-          </p>
-        </div>
         <button
           id="devchat-alerts-test"
           type="button"

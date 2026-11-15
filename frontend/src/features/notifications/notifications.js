@@ -501,14 +501,6 @@ const Notifications = {
         Notifications.messageUnread = (Notifications.messageUnread || 0) + 1;
       }
     }
-    // #138: route an arriving completion through the alert channels — a
-    // chime when the app is visible, an OS notification when it's hidden.
-    // The visible/hidden split lives in DevAlerts.onCompletion.
-    if (PRIORITY_KINDS.has(notif.kind)
-        && !notif.readAt
-        && window.DevAlerts && typeof DevAlerts.onCompletion === 'function') {
-      DevAlerts.onCompletion(completionAlertInfo(notif));
-    }
     // A live collab invite needs the authoritative pendingInvites list
     // (the notification row alone can't drive the actionable section) —
     // refresh re-pulls it along with the first page.
@@ -2369,10 +2361,6 @@ function parsePlatformIncidentDetail(detail) {
   return { type: 'digest', total: Number(d[1]), kinds };
 }
 
-// #161 defined these as the kinds that "demand attention": a change's turn
-// that finished or stopped, while still unread. One arriving goes through the
-// alert channels (the chime, the OS notification; see handleIncoming).
-const PRIORITY_KINDS = new Set(['session_done', 'session_stalled', 'auto_solve_done']);
 // The rows that ask for the reader's vote on one change: the asks a vote
 // clears (services/notifications.js, `vote_cast`), and the daily digest
 // when it names one change. Each opens the change at its Votes card.
@@ -2513,79 +2501,6 @@ function inviteView(inv) {
       ? t('notifications:invite.alreadyIn')
       : (count ? t('notifications:invite.members', { count }) : '')),
     ...stampFields(inv.createdAt),
-  };
-}
-
-
-// #138: derive the title/body + deep-link fields for a completion alert
-// (chime/OS notification) from a notification row. Mirrors the per-kind copy in
-// rowView so the OS notification reads the same as the bell-menu entry. (It
-// used to name previewText too — that was the collapsed group header's
-// one-liner, which #1385 retired with the rest of the group chrome.)
-// Each body is a whole message, picked by what is known. In order: the
-// request's number and the app both known, the app unknown ("your app"), the
-// number unknown ("a request"), neither known.
-const ALERT_CHANGE_IDS = {
-  failed: {
-    title: 'notifications:alert.change.failed.title',
-    body: ['notifications:alert.change.failed.body', 'notifications:alert.change.failed.bodyYourApp',
-      'notifications:alert.change.failed.bodyARequest', 'notifications:alert.change.failed.bodyARequestYourApp'],
-  },
-  question: {
-    title: 'notifications:alert.change.question.title',
-    body: ['notifications:alert.change.question.body', 'notifications:alert.change.question.bodyYourApp',
-      'notifications:alert.change.question.bodyARequest', 'notifications:alert.change.question.bodyARequestYourApp'],
-  },
-  ready: {
-    title: 'notifications:alert.change.ready.title',
-    body: ['notifications:alert.change.ready.body', 'notifications:alert.change.ready.bodyYourApp',
-      'notifications:alert.change.ready.bodyARequest', 'notifications:alert.change.ready.bodyARequestYourApp'],
-  },
-};
-// The same for a finished session: the app and the title both known, the app
-// unknown, the title unknown ("your session"), neither known.
-const ALERT_SESSION_DONE_IDS = ['notifications:alert.sessionDone.body', 'notifications:alert.sessionDone.bodyYourApp',
-  'notifications:alert.sessionDone.bodyYourSession', 'notifications:alert.sessionDone.bodyYourAppYourSession'];
-
-function completionAlertInfo(n) {
-  const app = n.appName || '';
-  if (n.kind === 'auto_solve_done') {
-    const number = n.headlessIssueNumber || null;
-    const copy = ALERT_CHANGE_IDS[n.detail === 'failed' ? 'failed' : n.detail === 'question' ? 'question' : 'ready'];
-    const title = t(copy.title);
-    const body = t(copy.body[(number ? 0 : 2) + (app ? 0 : 1)], { number, app });
-    return {
-      kind: n.kind,
-      appSlug: n.appSlug || null,
-      sessionId: n.sessionId || null,
-      headlessIssueNumber: n.headlessIssueNumber || null,
-      title,
-      body,
-    };
-  }
-  // #3181: the turn stopped before finishing (an error, a timeout, a lost
-  // worker). Same deep link as a finished one; the copy says what to do.
-  if (n.kind === 'session_stalled') {
-    return {
-      kind: 'session_stalled',
-      appSlug: n.appSlug || null,
-      sessionId: n.sessionId || null,
-      headlessIssueNumber: null,
-      title: t('notifications:alert.stalled.title'),
-      body: app ? t('notifications:alert.stalled.body', { app }) : t('notifications:alert.stalled.bodyYourApp'),
-    };
-  }
-  // session_done — #971: the session's own title first, then the PR title,
-  // and only then the machine-generated branch name.
-  const title = n.sessionTitle || n.prTitle || n.branchName || '';
-  const which = (title ? 0 : 2) + (app ? 0 : 1);
-  return {
-    kind: 'session_done',
-    appSlug: n.appSlug || null,
-    sessionId: n.sessionId || null,
-    headlessIssueNumber: null,
-    title: t('notifications:alert.sessionDone.title'),
-    body: t(ALERT_SESSION_DONE_IDS[which], { app, title }),
   };
 }
 

@@ -178,20 +178,6 @@ declare global {
       refresh(): Promise<string | null>;
       [key: string]: unknown;
     };
-    /**
-     * features/header/header-menu-controller.js — the hamburger drawer's
-     * open/close. It was App.HeaderMenu in app.js, which now forwards onto
-     * this so its own call sites (plus app-view.js, native-chrome.js,
-     * node-pill.js, wallet-sheet.js) are untouched.
-     */
-    HeaderMenu?: {
-      init(): void;
-      open(): void;
-      close(): Promise<void> | void;
-      isPresenting(): boolean;
-      consumeNavPending(): boolean;
-      [key: string]: unknown;
-    };
     /** features/improve/improve-status.js */
     ImproveStatus?: {
       setAppOpen(open: boolean): void;
@@ -234,7 +220,6 @@ declare global {
         testing: { md?: string | null; path?: string | null } | null,
         opts?: { app?: { slug: string; self_hosted?: boolean }; readOnly?: boolean },
       ): Promise<void>;
-      _syncStagingDockGeometry?(): void;
       [key: string]: unknown;
     };
     /** features/home/home.js — refreshed after app creation. */

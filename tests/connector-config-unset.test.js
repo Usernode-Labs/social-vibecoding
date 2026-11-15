@@ -16,8 +16,7 @@
 //      to say the deployment cannot fork — pointing at Homeroom bot, inside
 //      Homeroom — rather than sending the user to Settings to press a button
 //      that isn't there. Everything that does NOT depend on the OAuth app
-//      keeps working: the OAuth connector itself, the read-only tools, and
-//      the out-of-credits card.
+//      keeps working: the OAuth connector itself and the read-only tools.
 //
 // Run with: node --test tests/connector-config-unset.test.js
 
@@ -290,18 +289,4 @@ test('no read-only tool is gated on the GitHub OAuth app', () => {
   const toolsSrc = fs.readFileSync(path.join(ROOT, 'src/services/mcp-tools.js'), 'utf8');
   assert.doesNotMatch(toolsSrc, /githubLink\.isEnabled/,
     'the tool layer must not add a second, drifting gate');
-});
-
-test('the out-of-credits card is unaffected by any of this', () => {
-  // The card renders from a 429 the client already receives; it has no
-  // server config of its own, and must not learn one. All three of its
-  // routes stay reachable on a deployment with no GitHub app: two are
-  // Settings screens, and the third is the connector section, which works
-  // precisely because the connector does not need the fork credentials.
-  const src = fs.readFileSync(path.join(ROOT, 'public/js/credit-options.js'), 'utf8');
-  assert.doesNotMatch(src, /GITHUB_LINK|MCP_CONNECTOR|process\.env/);
-  const opts = [...src.matchAll(/'(#settings\/[a-z-]+)'/g)].map((m) => m[1]);
-  // #4378: and Linked accounts, the verify sheet's fallback for an
-  // unverified account, which needs no GitHub app either (the phone comes first).
-  assert.deepEqual(opts, ['#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/linked-accounts']);
 });

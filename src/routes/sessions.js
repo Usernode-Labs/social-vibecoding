@@ -756,6 +756,9 @@ function extractSpecSnippet(content, title) {
   return lines.slice(start).join('\n').slice(0, 280);
 }
 
+// How many failing checks a summary names before it says how many more there are.
+const FAILING_CHECKS_MAX = 12;
+
 // The failing checks as DATA rather than prose, capped the same way.
 //
 // #1766: the coding agent has been told exactly which checks fail, with
@@ -1699,8 +1702,7 @@ function sessionRoutes(config) {
   //     - always: the viewer's own non-archived sessions;
   //     - with ?app=<slug>, and only behind the same view-level gate
   //       /api/apps/:slug/shared-sessions uses: that app's explicitly
-  //       shared sessions and its headless auto-runs, which render on
-  //       everyone's board.
+  //       shared sessions, which render on everyone's board.
   router.get('/api/me/session-state', async (req, res) => {
     try {
       const appSlug = typeof req.query.app === 'string' ? req.query.app : null;
@@ -1709,8 +1711,7 @@ function sessionRoutes(config) {
       // predicate below decides what is actually reported, so this only has
       // to be a superset of "could plausibly be non-idle right now".
       const { rows: mine } = await pool.query(
-        `SELECT cs.id, cs.status, cs.is_headless, cs.headless_status,
-                cs.headless_outcome, cs.headless_issue_number,
+        `SELECT cs.id, cs.status,
                 (cs.shared_at IS NOT NULL) AS shared,
                 cs.app_id, cs.user_id, a.slug AS app_slug
            FROM chat_sessions cs
@@ -1731,15 +1732,14 @@ function sessionRoutes(config) {
         ).catch(() => null);
         if (app) {
           const { rows } = await pool.query(
-            `SELECT cs.id, cs.status, cs.is_headless, cs.headless_status,
-                    cs.headless_outcome, cs.headless_issue_number,
+            `SELECT cs.id, cs.status,
                     (cs.shared_at IS NOT NULL) AS shared,
                     cs.app_id, cs.user_id, a.slug AS app_slug
                FROM chat_sessions cs
                JOIN apps a ON a.id = cs.app_id
               WHERE cs.app_id = $1
                 AND cs.status IN ('active', 'promoted', 'paused')
-                AND (cs.shared_at IS NOT NULL OR cs.is_headless = TRUE)`,
+                AND cs.shared_at IS NOT NULL`,
             [app.id]
           );
           visible = rows;
@@ -1768,7 +1768,6 @@ function sessionRoutes(config) {
           phase: payload.phase,
           stopping: payload.stopping,
           status: payload.status,
-          headless: payload.headless,
         });
       }
 
@@ -1776,8 +1775,7 @@ function sessionRoutes(config) {
 
       // Staging-only demo rows (?demo=1): the sibling endpoints seed mock
       // BUSY cards (the own-session spinner from /api/me/active-sessions,
-      // the shared-session spinner from /shared-sessions, the generating
-      // auto-run attached to mock issue 900003 in routes/issues.js). Those
+      // the shared-session spinner from /shared-sessions). Those
       // ids have no in-memory state, so without this block the very first
       // reconcile would report them idle and wipe every demo spinner off
       // the board. Read-only, and a strict no-op in production.
@@ -1787,16 +1785,11 @@ function sessionRoutes(config) {
             // The viewer's own mock busy session, so the demo's Homeroom
             // mark shows its working indicator (SessionState.anyActiveFor).
             id: 990102, appSlug: config.selfAppSlug, userId: req.user.id, busy: true, phase: 'cc',
-            stopping: false, status: 'active', headless: null,
+            stopping: false, status: 'active',
           },
           {
             id: 990001, appSlug: config.selfAppSlug, busy: true, phase: 'cc',
-            stopping: false, status: 'active', headless: null,
-          },
-          {
-            id: 990301, appSlug: config.selfAppSlug, busy: true, phase: 'cc',
             stopping: false, status: 'active',
-            headless: { status: 'generating', outcome: null, issueNumber: 900003 },
           }
         );
       }
@@ -4669,11 +4662,10 @@ async function requestSessionStop({ pool, sessionId, user, force = false, expect
     });
 
     // #889: announce the stop on every channel BEFORE any of the work
-    // below. The turn's own `send` fans this out to the global WS broadcast
-    // and the session bus, so every tab watching this session (not just the
-    // one that clicked) flips to the "stopping…" state immediately instead
-    // of waiting for the turn to unwind. It's a synchronous write +
-    // broadcast, so nothing here waits on it.
+    // below. The turn's own `send` fans this out to the global WS broadcast,
+    // so every tab of the session's owner (not just the one that clicked)
+    // hears "stopping" immediately instead of waiting for the turn to
+    // unwind. It's a synchronous broadcast, so nothing here waits on it.
     try {
       handle.send?.('stopping', {
         by: user.username,

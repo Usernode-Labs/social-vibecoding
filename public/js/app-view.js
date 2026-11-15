@@ -203,26 +203,15 @@ const AppView = {
     proposal: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5'],
     gov: ['bg-slate-500/15 text-slate-400', 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z'],
     done: ['bg-emerald-500/10 text-emerald-700 dark:text-emerald-400', 'M5 13l4 4L19 7'],
-    // Document-text (Heroicons outline) — an issue with an auto-generated
-    // proposal attached (#250). Sky keeps "blue = proposal" consistent with
-    // the proposal cards, while the page shape stays distinct from their
-    // thumbs-up: this is a drafted spec on an issue, not a PR up for a vote.
-    issueProposal: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
-    // "Mine" variants — distinguished from their base by GLYPH ONLY: they keep
-    // the same sky tint as the base issue/PR chips but swap in a self-contained
-    // pencil/edit mark = "your work-in-progress, jump back in." They mark the
-    // two feed rows where the viewer already has a session waiting: a ready
-    // issue they cloned (Go to session) and an open PR they authored (Open
-    // session). No manual coordinate compositing: issueProposalMine is a true
-    // document-with-pencil (page + folded corner + pencil) so it still reads
-    // as a document; proposalMine is a plain pencil "edit" mark.
-    issueProposalMine: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M14 3v4a1 1 0 0 0 1 1h4M17 21h-7a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v4M18.42 15.61a2.1 2.1 0 0 1 2.97 2.97l-3.39 3.42h-3v-3l3.42 -3.39z'],
+    // The "mine" variant — distinguished from its base by GLYPH ONLY: it keeps
+    // the same sky tint as the base PR chip but swaps in a plain pencil
+    // "edit" mark = "your work-in-progress, jump back in." It marks the feed
+    // row of an open PR the viewer authored.
     proposalMine: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3'],
   },
 
   // Returns the icon's SPEC — tint classes + SVG path — which
-  // card/dev-card.tsx renders. `pulse` animates the whole chip for
-  // in-progress states (#250); `title` is the tooltip naming the state the
+  // card/dev-card.tsx renders. `title` is the tooltip naming the state the
   // tint encodes. The class literals stay in DEV_CARD_ICONS above, which is
   // where Tailwind's extractor already scanned them.
   _devCardIcon(type, opts) {
@@ -231,7 +220,6 @@ const AppView = {
       tint,
       path: d,
       small: (opts && opts.small) ? true : undefined,
-      pulse: (opts && opts.pulse) ? true : undefined,
       title: (opts && opts.title) || undefined,
     };
   },
@@ -6782,7 +6770,7 @@ const AppView = {
   //   held      the requester's private thread holds it for their plan
   //   start     it stopped, or nothing has happened to it: what can be started
   //   person    a person's own session or claim has it: their sentence instead
-  // A person's own work (a session, a claim, an auto-solve run) says who has
+  // A person's own work (a session, a claim) says who has
   // it, unless the change is settled; a change waiting for approval is the
   // standing's, which says how its checks and its vote stand, once the
   // standing has caught up with it.
@@ -6899,9 +6887,7 @@ const AppView = {
     else if (st.key === 'in_review') {
       lead = who === 'you' ? t('changes:request.status.lead.reviewYours')
         : who ? t('changes:request.status.lead.reviewNamed', { username: who }) : t('changes:request.status.lead.review');
-    } else if (st.key === 'auto_solving') lead = t('changes:request.status.lead.autoSolving');
-    else if (st.key === 'answer_needed') lead = t('changes:request.status.lead.answerNeeded');
-    else if (st.key === 'draft_ready') lead = t('changes:request.status.lead.draftReady');
+    }
     // A paused session: they started it, and nobody is in it right now.
     else if (st.key === 'paused') lead = people(AppView.REQUEST_WORKING_IDS.started);
     else lead = people(AppView.REQUEST_WORKING_IDS.working);
@@ -9829,7 +9815,7 @@ const AppView = {
   //
   // This is what makes the menu usable at all. Every repaint replaces
   // #dev-body's innerHTML, and the board repaints on its own schedule —
-  // the session-cache poll, the headless poll, and every websocket push.
+  // the session-cache poll and every websocket push.
   // The menu itself is body-mounted and position:fixed, so the swap never
   // touches it; only the trigger element it was anchored to is destroyed.
   // Closing on that basis meant a background refresh nobody asked for tore
@@ -12711,9 +12697,6 @@ const AppView = {
         working: 'changes:workshop.row.tag.beingWorkedOn',
         paused: 'changes:workshop.row.tag.started',
         claimed: 'changes:workshop.row.tag.pickedUp',
-        auto_solving: 'changes:workshop.row.tag.autoSolving',
-        answer_needed: 'changes:workshop.row.tag.needsAnswer',
-        draft_ready: 'changes:workshop.row.tag.draftReady',
       };
       if (ws) {
         // #4486: and who is on it ("Picked up · zura", "Started · you"), in
@@ -12736,7 +12719,7 @@ const AppView = {
         }
         tags.push({
           label,
-          tone: ws.spinner ? 'run' : ws.key === 'answer_needed' ? 'warn' : 'plain',
+          tone: ws.spinner ? 'run' : 'plain',
         });
       }
       const cat = it.category && it.category.top ? AppView._categoryMeta(it.category.top) : null;
@@ -15413,8 +15396,8 @@ const AppView = {
   //     sharedSessions — OTHER users' shared (shared_at-set) sessions
   //
   // Returns { issues, inProgress, inReview, done }:
-  //   issues     — open issues with no work under way on them (headless
-  //                none/failed/absent, no claim, no live linked session)
+  //   issues     — open issues with no work under way on them (no claim,
+  //                no live linked session)
   //   inProgress — TYPED entries {kind:'my-session'|'issue'|'shared-session',
   //                item}: the viewer's sessions pinned first (most recent
   //                activity first), then issues with work under way —
@@ -15506,15 +15489,14 @@ const AppView = {
     const col1 = [];
     const col2 = [];
     for (const i of issues) {
-      // Any live work routes the issue to the In-progress column: a
-      // headless run (the historical rule), a live linked dev session,
-      // or a manual claim — the shared _issueInProgress predicate — plus
-      // an open promoted proposal against it (#1251). The proposal case is
-      // named explicitly rather than left to _issueInProgress: the server
-      // sets `in_progress` from the same promoted session in the ordinary
-      // case, but a headless-authored proposal isn't in that query, and an
-      // issue with a live proposal must never sit in "Issues" inviting
-      // someone to start the work over.
+      // Any live work routes the issue to the In-progress column: a live
+      // linked dev session or a manual claim — the shared _issueInProgress
+      // predicate — plus an open promoted proposal against it (#1251). The
+      // proposal case is named explicitly rather than left to
+      // _issueInProgress: the server sets `in_progress` from the same
+      // promoted session in the ordinary case, but an issue with a live
+      // proposal must never sit in "Issues" inviting someone to start the
+      // work over.
       if (linked.has(i.number) || AppView._issueInProgress(i)) col2.push(i);
       else col1.push(i);
     }
@@ -15531,7 +15513,7 @@ const AppView = {
     const done = AppView._onePerPullRequest(merged).sort(AppView._compareMergedRows);
 
     // In progress = pinned own sessions (most recent activity first) →
-    // headless-working issues → other users' shared sessions (oldest
+    // issues being worked on → other users' shared sessions (oldest
     // shared_at first, so newly shared rows append at the bottom).
     const sessT = (s) => Math.max(ts(s.last_activity_at), ts(s.created_at));
     const mine = mySessions.slice().sort((a, b) => sessT(b) - sessT(a));
@@ -16449,9 +16431,6 @@ const AppView = {
       react.mountKanban(board);
       react.publishKanban(AppView._lastKanbanView);
     }
-    // The headless-state poller is keyed off the cached issue data, same
-    // as the list feed — filtering a generating row off-screen doesn't
-    // stop it.
     AppView._fillKudosHosts(board);
     // The comment slots an unfolded card ships empty, same as the Workshop's
     // repaint does (#1884). The store flushed synchronously above, so the
@@ -17654,31 +17633,11 @@ const AppView = {
   _onSessionStateChanged() {
     if (!AppView.appData) return;
     if (typeof App !== 'undefined' && App.currentTab !== 'dev') return;
-    // _repaintCards, not _repaintDevBody: an auto-run can be watched from
-    // the OPENED TOPIC view (#gc-thread-head), where #dev-body isn't
-    // mounted at all. The 8s poller this replaced called that case out
-    // explicitly, and keying on #dev-body alone would silently strand it.
-    // Both halves no-op when their own surface is absent.
+    // _repaintCards, not _repaintDevBody: a request's work state can be
+    // watched from the OPENED TOPIC view (#gc-thread-head), where #dev-body
+    // isn't mounted at all, and keying on #dev-body alone would silently
+    // strand it. Both halves no-op when their own surface is absent.
     AppView._repaintCards();
-  },
-
-  // #1038: an auto-run's card state lives on the cached issue row, not on a
-  // session id, so the raw event has to patch it before the repaint reads
-  // it. Field-scoped merge (same as the retired 8s poller): bounty state can
-  // carry optimistic local edits a broadcast must not clobber.
-  _onSessionStateEvent(payload) {
-    if (!payload || !payload.headless) return;
-    const n = payload.headless.issueNumber;
-    if (n == null) return;
-    if (!AppView.appData || !payload.appSlug || payload.appSlug !== AppView.appData.slug) return;
-    const issue = (AppView._ghIssues || []).find((i) => i && i.number === n);
-    if (!issue) return;
-    issue.headless = {
-      ...(issue.headless || {}),
-      sessionId: payload.sessionId,
-      status: payload.headless.status,
-      outcome: payload.headless.outcome,
-    };
   },
 
   // The issue's body (GitHub markdown), rendered in the topic
@@ -23475,20 +23434,10 @@ const AppView = {
 
   // ---- Open Issues section ------------------------------------------------
 
-  // _headlessRank (the auto-solve rank, #177/#227) used to live here. It
-  // ordered the retired List view's issues group — 'generating' first, then
-  // 'ready', then everything else. The Feed is pure recency and the Kanban
-  // board buckets by column rather than ranking within one, so nothing reads
-  // it any more. The auto-solve STATE is still rendered on every issue row.
-
-
-
   // The Open Issues list exactly as rendered: env-var-proposal twins
   // filtered out (#131 — those rows render in the dedicated Environment
   // variables section). Ordering is owned by _feedItems(), which is pure
-  // recency now — the auto-solve rank it used to fold in ahead of recency
-  // belongs to the Kanban comparator alone. The filter runs on a copy, so
-  // _ghIssues itself keeps the
+  // recency. The filter runs on a copy, so _ghIssues itself keeps the
   // canonical fetch order (GitHub updated-desc). The feed renderer and
   // the open-card index lookup must both use this helper so paging
   // counts match what's on screen.
@@ -23528,19 +23477,7 @@ const AppView = {
     }
     if (issue.title_fallback) meta.push({ t: 'text', s: PlatformI18n.t('changes:issue.card.autoTitlePending') });
 
-    // ── Icon ──
-    // #250: mirrors the auto-solve state so proposal issues read at a
-    // glance — pulsing sky document while generating, steady sky document
-    // once ready, violet document-with-pencil when the viewer already has a
-    // session cloned off it, plain amber issue chip otherwise.
-    const h = issue.headless;
-    const icon = h && h.status === 'generating'
-      ? AppView._devCardIcon('issueProposal', { pulse: true, title: PlatformI18n.t('changes:issue.card.icon.generating') })
-      : h && h.status === 'ready'
-        ? (h.mySessionId
-            ? AppView._devCardIcon('issueProposalMine', { title: PlatformI18n.t('changes:issue.card.icon.mine') })
-            : AppView._devCardIcon('issueProposal', { title: PlatformI18n.t('changes:issue.card.icon.ready') }))
-        : AppView._devCardIcon('issue');
+    const icon = AppView._devCardIcon('issue');
 
     // "Propose to close" — opens the reason modal and files a close_issue
     // governance proposal. While one is already open for this issue (an open
@@ -23602,14 +23539,6 @@ const AppView = {
       const claim = noNav ? null : AppView._issueProgressActionSpec(issue);
       if (claim) actions.push(claim);
     }
-    // A ready auto-solve run with a live preview gets the same icon
-    // affordance every other previewable thing on the board gets.
-    const hasRunPreview = !!(h && h.status === 'ready' && h.stagingUrl
-      && (h.outcome === 'code' || h.outcome === 'spec_code'));
-    const preview = hasRunPreview
-      ? AppView._cardPreviewSpec({ staging_url: h.stagingUrl },
-        { kind: 'issue-run', sessionId: h.sessionId })
-      : null;
     const menu = AppView._issueMenuItems(issue, { noNav, progressOnFace: !noNav && !AppView.readOnly && !closed });
 
     const extra = [];
@@ -23687,13 +23616,11 @@ const AppView = {
       badges,
       chatCount: issue.chatCount,
       actions,
-      // Dense: the eye is pinned to the bottom of the rail. Detail head: it
-      // stays in the (uncapped, chevron-less) action list.
-      actionPreview: noNav ? preview : null,
+      actionPreview: null,
       rail: {
         menuKey: AppView._registerCardMenu(`issue:${n}`, menu),
         chevron: !noNav,
-        preview: noNav ? null : preview,
+        preview: null,
       },
       extra,
       dense: !noNav,
@@ -27477,18 +27404,14 @@ const AppView = {
   // ── "In progress" status on issue cards ──────────────────────────────
   //
   // An issue is in progress while ANY live signal exists: a live linked
-  // session or manual claim (issue.in_progress, from /github-issues) or a
-  // live headless auto-solve run (issue.headless generating/ready — kept
-  // as a separate field so the 8s headless poller's field-scoped merge
-  // stays correct; this predicate ORs the two). Shared by the chip
-  // renderer below and the kanban's In-progress-column routing. The
+  // session or manual claim (issue.in_progress, from /github-issues). Shared
+  // by the chip renderer below and the kanban's In-progress-column routing. The
   // Homeroom bot reading or building the request (its standing, _botOn: the
   // bot is never `in_progress`) is live work too, so its card is underway
   // rather than offered to whoever passes.
   _issueInProgress(issue) {
     if (!issue) return false;
-    const h = issue.headless;
-    return !!(issue.in_progress || AppView._botOn(issue) || (h && (h.status === 'generating' || h.status === 'ready')));
+    return !!(issue.in_progress || AppView._botOn(issue));
   },
 
   // #1112: mirrors IN_PROGRESS_PAUSED_WINDOW_DAYS / ISSUE_CLAIM_TTL_DAYS in
@@ -27508,15 +27431,13 @@ const AppView = {
 
   // ── #1112: the one work state an issue is actually in ────────────────
   //
-  // A single "In progress" chip used to cover seven unrelated situations —
-  // a proposal waiting on reviewers, an agent mid-turn, an auto-solve run,
-  // a session somebody paused days ago, a run waiting on an answer, a
-  // finished draft, and a bare manual claim. All seven read identically, so
-  // the chip told a reader nothing they could act on. This resolves exactly
-  // ONE state, first match wins, in the order below:
+  // A single "In progress" chip used to cover unrelated situations — a
+  // proposal waiting on reviewers, an agent mid-turn, a session somebody
+  // paused days ago, and a bare manual claim. All of them read identically,
+  // so the chip told a reader nothing they could act on. This resolves
+  // exactly ONE state, first match wins, in the order below:
   //
-  //   in_review > working > bot > auto_solving > paused > answer_needed
-  //             > draft_ready > claimed
+  //   in_review > working > bot > paused > claimed
   //
   // `bot` is the Homeroom bot reading or building the request (_botOn, read
   // off its standing). Its sessions are never `in_progress`, so before this
@@ -27531,12 +27452,9 @@ const AppView = {
   _issueWorkState(issue) {
     if (!issue) return null;
     const ip = issue.in_progress || null;
-    const h = issue.headless || null;
-    const hStatus = h ? h.status : null;
-    const headlessLive = hStatus === 'generating' || hStatus === 'ready';
     // 11 Nov 2026: Homeroom bot's work, from the request's standing.
     const bot = AppView._botOn(issue);
-    if (!ip && !headlessLive && !bot) return null;
+    if (!ip && !bot) return null;
 
     const sessUsers = (ip && Array.isArray(ip.users)) ? ip.users.filter(Boolean) : [];
     const claims = (ip && Array.isArray(ip.claims)) ? ip.claims.filter(Boolean) : [];
@@ -27592,16 +27510,10 @@ const AppView = {
     } else if (bot) {
       key = 'bot'; spinner = true;
       at = bot.since || null;
-    } else if (hStatus === 'generating') {
-      key = 'auto_solving'; spinner = true;
     } else if (paused.length) {
       key = 'paused'; tone = 'zinc';
       const s = pick(paused); who = named(s); at = s.lastActivityAt;
       clearAt = clearMs(at, AppView.WORK_PAUSED_WINDOW_DAYS);
-    } else if (hStatus === 'ready' && h.outcome === 'question') {
-      key = 'answer_needed'; tone = 'amber';
-    } else if (hStatus === 'ready') {
-      key = 'draft_ready'; tone = 'amber';
     } else if (claims.length) {
       key = 'claimed';
       const c = claims.find((x) => x.mine) || claims[0];
@@ -27621,21 +27533,17 @@ const AppView = {
     const LABEL_IDS = {
       in_review: 'changes:chips.work.inReview',
       working: 'changes:chips.work.working',
-      auto_solving: 'changes:chips.work.autoSolving',
       // The key stays 'paused' (it orders the states and dates the
       // self-clear), but the word is not shown (#2779 follow-up): the
       // platform pauses any session a few idle minutes after it was used,
       // so what this state means to a reader is "started, not being
       // worked on now".
       paused: 'changes:chips.work.started',
-      answer_needed: 'changes:chips.work.answerNeeded',
-      draft_ready: 'changes:chips.work.draftReady',
       claimed: 'changes:chips.work.pickedUp',
       bot: bot && bot.what === 'queued' ? 'changes:chips.work.botQueued'
         : AppView._botWorkReading(bot) ? 'changes:chips.work.botReading' : 'changes:chips.work.botBuilding',
     };
-    // The bot states name nobody: there is no person to name, and
-    // "Auto-solving… · maya" would imply maya is at a keyboard.
+    // The bot state names nobody: there is no person to name.
     const namesAPerson = key === 'in_review' || key === 'working'
       || key === 'paused' || key === 'claimed';
     let label = PlatformI18n.t(LABEL_IDS[key]);
@@ -27648,7 +27556,7 @@ const AppView = {
     }
 
     const note = AppView._workStateNote({
-      key, who, at, clearAt, claimUsers, headlessLive, bot: bot ? (bot.what || 'building') : null,
+      key, who, at, clearAt, claimUsers, bot: bot ? (bot.what || 'building') : null,
       botMine: !!(bot && bot.mine),
       botAskedBy: bot && !bot.mine ? (bot.askedBy || null) : null,
       otherClaims: key !== 'claimed' && claims.length > 0,
@@ -27809,19 +27717,13 @@ const AppView = {
   },
 
   // The closing "Also: …" sentence, by what else is going on: other people
-  // who picked the request up, an auto-solve run, and the Homeroom bot.
+  // who picked the request up, and the Homeroom bot.
   WORK_ALSO_IDS: {
-    'claims||': 'changes:chips.workNote.also.claims',
-    'claims|auto|': 'changes:chips.workNote.also.claimsAuto',
-    'claims||reading': 'changes:chips.workNote.also.claimsBotReading',
-    'claims||building': 'changes:chips.workNote.also.claimsBotBuilding',
-    'claims|auto|reading': 'changes:chips.workNote.also.claimsAutoBotReading',
-    'claims|auto|building': 'changes:chips.workNote.also.claimsAutoBotBuilding',
-    '|auto|': 'changes:chips.workNote.also.auto',
-    '|auto|reading': 'changes:chips.workNote.also.autoBotReading',
-    '|auto|building': 'changes:chips.workNote.also.autoBotBuilding',
-    '||reading': 'changes:chips.workNote.also.botReading',
-    '||building': 'changes:chips.workNote.also.botBuilding',
+    'claims|': 'changes:chips.workNote.also.claims',
+    'claims|reading': 'changes:chips.workNote.also.claimsBotReading',
+    'claims|building': 'changes:chips.workNote.also.claimsBotBuilding',
+    '|reading': 'changes:chips.workNote.also.botReading',
+    '|building': 'changes:chips.workNote.also.botBuilding',
   },
 
   // One short spell of a day — "2 Nov", or "2 Nov 2025" outside this year —
@@ -27885,24 +27787,17 @@ const AppView = {
       // #4190: Claim is offered beside the bot, and a claim made now does not
       // stop it. Said only while nobody has (the "Also:" below names them).
       if (!s.otherClaims) main = then(main, t('changes:chips.workNote.bot.anyoneCan'));
-    } else if (s.key === 'auto_solving') {
-      main = t('changes:chips.workNote.autoSolving');
     } else if (s.key === 'paused') {
       main = about('paused', 'pausedWhen');
       if (clears) main = then(main, t('changes:chips.workNote.pausedClears', { date: clears }));
-    } else if (s.key === 'answer_needed') {
-      main = t('changes:chips.workNote.answerNeeded');
-    } else if (s.key === 'draft_ready') {
-      main = t('changes:chips.workNote.draftReady');
     } else {
       // B10c: in the words of the button that said it.
       main = about('claimed', 'claimedWhen');
       if (clears) main = then(main, t('changes:chips.workNote.claimedClears', { date: clears }));
     }
     const alsoClaims = !!(s.otherClaims && s.claimUsers && s.claimUsers.length);
-    const alsoAuto = !!(s.headlessLive && s.key !== 'auto_solving' && s.key !== 'answer_needed' && s.key !== 'draft_ready');
     const alsoBot = (s.bot && s.key !== 'bot') ? (s.bot === 'reading' ? 'reading' : 'building') : '';
-    const alsoId = AppView.WORK_ALSO_IDS[`${alsoClaims ? 'claims' : ''}|${alsoAuto ? 'auto' : ''}|${alsoBot}`];
+    const alsoId = AppView.WORK_ALSO_IDS[`${alsoClaims ? 'claims' : ''}|${alsoBot}`];
     return alsoId
       ? then(main, t(alsoId, { names: alsoClaims ? PlatformI18n.listText(s.claimUsers) : '' }))
       : main;
@@ -27913,21 +27808,19 @@ const AppView = {
   // card's four-badge budget is untouched. When the server chose a link
   // target (in_progress.target — proposal > own session > shared session,
   // per-viewer) the chip is a button that opens the linked work; otherwise
-  // a plain informational span (private work, claims-only, or headless-only
-  // — those rows' own buttons navigate).
+  // a plain informational span (private work or claims-only — those rows'
+  // own buttons navigate).
   _WORK_TONE_CLS: {
     violet: 'bg-violet-500/10 text-violet-700 dark:text-violet-400',
     sky: 'bg-sky-500/10 text-sky-700 dark:text-sky-400',
     emerald: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
     zinc: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
-    amber: 'bg-amber-500/10 text-amber-800 dark:text-amber-300',
   },
   _WORK_TONE_HOVER: {
     violet: 'hover:bg-violet-500/20',
     sky: 'hover:bg-sky-500/20',
     emerald: 'hover:bg-emerald-500/20',
     zinc: 'hover:bg-zinc-500/20',
-    amber: 'hover:bg-amber-500/20',
   },
 
   // The work-state chip's SPEC. A chip whose state names a linked session
@@ -28077,13 +27970,13 @@ const AppView = {
   // "Preview" used to be built in four separate places with four different
   // tooltips and four different gating rules: proposal cards (through the
   // since-retired voteButtonsHtml), the viewer's own session cards, other users' shared
-  // session cards, and the headless branch of an issue card. All four
+  // session cards, and an issue card's unattended run. All four
   // already funnelled into swapToStagingForSession(id, url), so the only
   // real differences were wording and which of staging_url / can_preview /
   // staging_building / staging_error they consulted. cardPreviewHtml folds
   // that into one truth table, and every call site now goes through it.
   //
-  // opts.kind ∈ 'proposal' | 'own-session' | 'shared-session' | 'issue-run'
+  // opts.kind ∈ 'proposal' | 'own-session' | 'shared-session'
   //   — picks the tooltip wording only; the gating is uniform.
   // opts.iconOnly (the board default) renders the eye glyph rather than the
   //   word "Preview". Deliberate: a read-only viewer gets no vote buttons,
@@ -28103,7 +27996,6 @@ const AppView = {
     proposal: { live: 'changes:frame.open.proposal', rebuild: 'changes:frame.open.proposalRebuild' },
     'own-session': { live: 'changes:frame.open.ownSession', rebuild: 'changes:frame.open.ownSessionRebuild' },
     'shared-session': { live: 'changes:frame.open.sharedSession', rebuild: 'changes:frame.open.sharedSessionRebuild' },
-    'issue-run': { live: 'changes:frame.open.issueRun', rebuild: 'changes:frame.open.issueRunRebuild' },
   },
 
   // Keep testing guidance out of DOM attributes. Every preview surface —
@@ -32048,15 +31940,11 @@ if (typeof window !== 'undefined') {
     // nothing; the request open there re-reads its own row instead.
     if (refreshed === undefined) AppView._refreshOpenRequestRow();
   });
-  // #1038: wire the Dev board's card surfaces to live session state. Both
-  // subscriptions are registered ONCE here rather than per mount, so no
+  // #1038: wire the Dev board's card surfaces to live session state. The
+  // subscription is registered ONCE here rather than per mount, so no
   // repaint or navigation can leave the board stranded on a stale spinner;
-  // the handlers themselves no-op when no card surface is mounted.
-  //
-  // Order matters: the raw event handler patches the cached issue row's
-  // auto-run state, and the coalesced subscriber repaints from that cache.
+  // the handler itself no-ops when no card surface is mounted.
   if (window.SessionState) {
-    SessionState.onEvent(AppView._onSessionStateEvent);
     SessionState.subscribe(AppView._onSessionStateChanged);
   }
 }

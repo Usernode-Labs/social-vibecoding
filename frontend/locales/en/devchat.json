@@ -156,8 +156,8 @@
     "description": "Button in the developer console header: empties the list of console messages."
   },
   "console.empty": {
-    "text": "No messages yet. If this app was created before dev-console support shipped, ask the coding agent in Dev Chat to \"add dev-console forwarding to public/index.html\".",
-    "description": "Hint at the bottom of the developer console while it has no messages. The quoted sentence is an instruction the person can give the coding agent, and public/index.html is a file name: keep the file name as it is."
+    "text": "No messages yet. If this app was created before dev-console support shipped, ask Homeroom bot to \"add dev-console forwarding to public/index.html\".",
+    "description": "Hint at the bottom of the developer console while it has no messages. The quoted sentence is an instruction the person can give Homeroom bot, Homeroom's building assistant, and public/index.html is a file name: keep the file name as it is."
   },
   "console.counts": {
     "text": "{{total}} total · {{errors}} err · {{warnings}} warn",

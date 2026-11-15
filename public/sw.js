@@ -406,7 +406,6 @@ const SHELL_ASSETS = [
   '/js/build-log.js',
   '/js/topochain-events.js',
   '/js/confirm-modal.js',
-  '/js/dev-alerts.js',
   '/js/dev-host.js',
   // #1054: the offline feedback outbox. It has to be precached like any other
   // shell module — the whole point is that it works on the load where the

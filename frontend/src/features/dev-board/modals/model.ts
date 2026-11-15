@@ -1,21 +1,17 @@
 /**
- * The Dev screen's three body-mounted modals, as plain view models.
+ * The Dev screen's two body-mounted modals, as plain view models.
  *
- * These are the last markup `public/js/app-view.js` builds by hand. Each is
- * the same shape: the module creates a scrim `<div>` at `z-[60]`, appends it
- * to `<body>`, owns its dismissal (backdrop click, Escape) and removes it —
- * the body-mounted floating-host seam the group chat's menus established.
- * React owns only the CHILDREN of that scrim.
+ * Each is the same shape: `public/js/app-view.js` creates a scrim `<div>` at
+ * `z-[60]`, appends it to `<body>`, owns its dismissal (backdrop click,
+ * Escape) and removes it — the body-mounted floating-host seam the group
+ * chat's menus established. React owns only the CHILDREN of that scrim.
  *
- * ── Why they convert together ──────────────────────────────────────────
+ * ── One dialog, drawn twice ────────────────────────────────────────────
  *
- * They are three copies of one dialog: the same centring wrapper, the same
- * white/zinc-900 card, and the same two-button footer written out three
- * times with three slightly different class strings. The widget language has
- * one spelling of each (`DialogCard`, `<Button>`, `<Button variant="neutral"
- * ink="neutral">`), and the difference between a converted dialog's footer
- * and these three is exactly the difference the reskin exists to remove: an
- * OUTLINED secondary on a floating card, which the language never draws.
+ * They share the centring wrapper, the white/zinc-900 card and the
+ * two-button footer, in the widget language's one spelling of each
+ * (`DialogCard`, `<Button>`, `<Button variant="neutral" ink="neutral">`):
+ * the language never draws an OUTLINED secondary on a floating card.
  *
  * ── Resolved data in, markup out ───────────────────────────────────────
  *
@@ -25,15 +21,6 @@
  * extractor is a regex over source text, so a table copied into a component
  * would exist twice with only one copy able to change.
  */
-
-export interface CreditOptionsModalView {
-  /**
-   * `CreditOptions.cardHtml(state)` — another module's markup, sanitised
-   * where it is built, and its own controller (`CreditOptions.wire`) keeps
-   * reading inside it. A controller-host seam, not a second author.
-   */
-  cardHtml: string;
-}
 
 /**
  * The app-permission prompt (#2219).

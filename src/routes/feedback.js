@@ -355,8 +355,7 @@ function normalizeQueuedAt(raw, nowMs) {
 // USERNODE_PLATFORM_REPO fails the platform fast at startup.
 
 // #125 announce (cache seed + issue_update broadcast) lives in
-// services/issue-announce.js — shared with the platform-issue draft
-// confirm path in routes/sessions.js.
+// services/issue-announce.js — shared with services/feedback-reports.js.
 
 // #964: attach a kudos bounty to the issue this request just filed.
 //

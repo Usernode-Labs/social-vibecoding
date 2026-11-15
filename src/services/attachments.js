@@ -359,13 +359,6 @@ function sanitizeAttachmentIds(raw) {
   return out;
 }
 
-// Cap inlined text-file content with an explicit marker.
-function clipText(str, cap = INLINE_CHAR_CAP) {
-  const s = String(str || '');
-  if (s.length <= cap) return s;
-  return `${s.slice(0, cap)}\n[truncated — file continues past ${cap} characters]`;
-}
-
 // #3557: the line a document block becomes when the provider refused the
 // request it was in.
 function refusedDocumentLine(block) {
@@ -438,5 +431,4 @@ module.exports = {
   validateChatUpload,
   attachmentDisposition,
   sanitizeAttachmentIds,
-  clipText,
 };

@@ -206,7 +206,7 @@
     // use below goes through `?.` for exactly that reason.
     _store: null,
     _footerHome: null,
-    state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, locale: null, timeZone: null },
+    state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, locale: null, timeZone: null },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -776,15 +776,6 @@
         });
       }
 
-      // Experimental "AI progress estimate" toggle. Server-side per-user
-      // flag (default OFF) — fire the POST on change so it takes effect
-      // on the next coding run without closing the modal; revert the
-      // checkbox if the save fails.
-      const estimateToggle = document.getElementById('ai-progress-estimate');
-      if (estimateToggle) {
-        estimateToggle.addEventListener('change', (e) => this._saveAiProgressEstimate(e.target.checked));
-      }
-
       // The Look menu (an admin's preview of the looks), kept on the device
       // by the head's window.Skin: the change is the save, and the look
       // applies at once. Its options are every look there is ('brand',
@@ -823,29 +814,13 @@
         zoneSelect.addEventListener('change', (e) => this._saveTimeZone(e.target.value));
       }
 
-      // #138 "Sound & alerts" toggle. Client-only preference
-      // (localStorage, default ON) owned by DevAlerts — we just mirror its
-      // checked state and flip the stored flag. Turning it ON is a user
-      // gesture, so unlock audio + request notification permission then.
-      const alertsToggle = document.getElementById('devchat-alerts-toggle');
-      if (alertsToggle) {
-        alertsToggle.checked = window.DevAlerts ? DevAlerts.enabled() : true;
-        alertsToggle.addEventListener('change', (e) => {
-          if (!window.DevAlerts) return;
-          DevAlerts.setEnabled(e.target.checked);
-          if (e.target.checked) {
-            DevAlerts._unlockAudio();
-            DevAlerts.requestNotifyPermission();
-          }
-        });
-      }
-
-      // The server owns delayed push delivery; this countdown only explains
-      // when the optional live-page chime will run.
+      // "Send a test alert": the server queues a test push for the phone and
+      // delays its delivery (services/test-alert.js), so the person can
+      // switch away first. The countdown says when it is due.
       const alertsTest = document.getElementById('devchat-alerts-test');
       if (alertsTest) {
         alertsTest.addEventListener('click', async () => {
-          if (!window.DevAlerts || alertsTest.disabled) return;
+          if (alertsTest.disabled) return;
           const status = document.getElementById('devchat-alerts-test-status');
           this._clearAlertsTestCountdown();
           alertsTest.disabled = true;
@@ -854,27 +829,24 @@
             status.textContent = tr('settings:alerts.test.queueing');
           }
           try {
-            const result = await DevAlerts.testAlert();
+            const response = await fetch('/api/me/test-alert', {
+              method: 'POST',
+              credentials: 'same-origin',
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || tr('settings:alerts.test.failed'));
             if (!status) return;
-            // What happened to the phone push: each outcome has its own
-            // whole countdown sentence, and its own line once the countdown
-            // ends.
-            const outcome = result.queued
-              ? 'queued'
-              : result.reason === 'preference_disabled' ? 'preferenceDisabled' : 'unavailable';
-            const COUNTDOWN = {
-              queued: 'settings:alerts.test.countdown.queued',
-              preferenceDisabled: 'settings:alerts.test.countdown.preferenceDisabled',
-              unavailable: 'settings:alerts.test.countdown.unavailable',
-            };
-            const AFTER = {
-              queued: 'settings:alerts.test.after.queued',
-              preferenceDisabled: 'settings:alerts.test.after.preferenceDisabled',
-              unavailable: 'settings:alerts.test.after.unavailable',
-            };
+            // A push that was not queued has nothing to count down to: say
+            // why at once.
+            if (!result.queued) {
+              status.textContent = tr(result.reason === 'preference_disabled'
+                ? 'settings:alerts.test.after.preferenceDisabled'
+                : 'settings:alerts.test.after.unavailable');
+              return;
+            }
             let remaining = Math.ceil(result.delayMs / 1000);
             const render = () => {
-              status.textContent = tr(COUNTDOWN[outcome], { count: remaining });
+              status.textContent = tr('settings:alerts.test.countdown.queued', { count: remaining });
             };
             render();
             this._alertsTestTimer = setInterval(() => {
@@ -884,7 +856,7 @@
                 return;
               }
               this._clearAlertsTestCountdown();
-              status.textContent = tr(AFTER[outcome]);
+              status.textContent = tr('settings:alerts.test.after.queued');
             }, 1000);
           } catch (err) {
             if (status) status.textContent = err.message || tr('settings:alerts.test.failed');
@@ -951,7 +923,6 @@
         this.state.keyLast4 = j.user?.keyLast4 || null;
         this.state.usernodePubkey = j.user?.usernodePubkey || null;
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
-        this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
         this.state.locale = j.user?.locale || null;
         this.state.timeZone = j.user?.timeZone || null;
         // Same payload the CLI-credentials gate needs, so prime its memo.
@@ -1927,10 +1898,6 @@
     },
 
     _renderExperimentalSection() {
-      const toggle = document.getElementById('ai-progress-estimate');
-      if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
-      const status = document.getElementById('ai-progress-estimate-status');
-      if (status) { status.classList.add('hidden'); status.textContent = ''; }
       const lookMenu = document.getElementById('settings-look');
       if (lookMenu) {
         const stored = window.Skin?.get?.();
@@ -3504,35 +3471,6 @@
       paint(i18n.t('settings:timezone.saved', { zone: i18n.timeZoneLabel ? i18n.timeZoneLabel(zone) : zone }), true);
     },
 
-    async _saveAiProgressEstimate(enabled) {
-      const toggle = document.getElementById('ai-progress-estimate');
-      const status = document.getElementById('ai-progress-estimate-status');
-      const fail = (msg) => {
-        if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
-        if (status) {
-          status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-red-700', 'dark:text-red-400');
-        }
-      };
-      try {
-        const r = await fetch('/api/me/ai-progress-estimate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ enabled: !!enabled }),
-        });
-        if (!r.ok) {
-          const j = await r.json().catch(() => ({}));
-          return fail(j.error || tr('settings:experimental.progressEstimate.saveFailed'));
-        }
-        this.state.aiProgressEstimate = !!enabled;
-        if (status) { status.classList.add('hidden'); status.textContent = ''; }
-      } catch (err) {
-        fail(tr('settings:experimental.progressEstimate.networkError', { reason: err.message }));
-      }
-    },
-
     // Show the admin-preview section only when the server reports the
     // user as a *real* admin. App._realIsAdmin is the un-masked value
     // captured in app.js before the localStorage override gets
@@ -3602,8 +3540,8 @@
       this._mobilePushLoadToken += 1;
     },
 
-    // Clear the "Send a test alert" countdown interval (#138). Idempotent —
-    // safe to call when none is running (rapid re-clicks, modal close).
+    // Clear the "Send a test alert" countdown interval. Idempotent: safe to
+    // call when none is running (rapid re-clicks, modal close).
     _clearAlertsTestCountdown() {
       if (this._alertsTestTimer) {
         clearInterval(this._alertsTestTimer);

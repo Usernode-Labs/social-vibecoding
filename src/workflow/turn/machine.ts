@@ -65,8 +65,7 @@ async function readChange(tx: Tx, key: string): Promise<Facts['change']> {
   const m = /^session:(\d+)$/.exec(key);
   if (!m) return null;
   const { rows: [change] } = await tx.query(
-    `SELECT cs.id, cs.app_id, cs.user_id, cs.status, (cs.shared_at IS NOT NULL) AS shared, cs.is_headless,
-            cs.headless_status, cs.headless_outcome, cs.headless_issue_number, a.slug AS app_slug,
+    `SELECT cs.id, cs.app_id, cs.user_id, cs.status, (cs.shared_at IS NOT NULL) AS shared, a.slug AS app_slug,
             ${workedOnSql({ turns: false })} AS other_work
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [Number(m[1])]);
   return change || null;

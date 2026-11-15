@@ -137,19 +137,14 @@ test('a full admin gets the raised proposal ceiling through the connector too', 
 
 // ── Posture ────────────────────────────────────────────────────────────
 
-test('the browser walkthrough and the connector share ONE limiter', () => {
-  // "Prepare a work order for Claude Code" in the browser runs through the
-  // same prepareWork as the connector's prepare_work, and both inject THIS
-  // module as `limits`. That shared seam is what makes "the connector is
-  // never more limited than the browser" checkable rather than aspirational,
-  // so a cap can never be reintroduced on one surface alone.
-  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-  for (const rel of ['src/routes/dev-flow.js', 'src/services/mcp-tools.js']) {
-    const src = read(rel);
-    assert.match(src, /require\('\.[./]*(?:\.\.\/)?services\/connector-limits'\)|require\('\.\/connector-limits'\)/,
-      `${rel} resolves the caps from the shared module`);
-    assert.match(src, /limits: connectorLimits/, `${rel} injects it rather than its own numbers`);
-  }
+test('the connector resolves its caps from this one module, never numbers of its own', () => {
+  // prepare_work and submit_work run through external-agent-tasks, and the
+  // tool layer injects THIS module as `limits`. That seam is what keeps
+  // "the connector is never more limited than building on Homeroom itself"
+  // checkable rather than aspirational.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/mcp-tools.js'), 'utf8');
+  assert.match(src, /require\('\.\/connector-limits'\)/, 'the caps come from the shared module');
+  assert.match(src, /limits: connectorLimits/, 'injected rather than restated');
 });
 
 test('a cap that cannot be measured refuses rather than waves through', async () => {

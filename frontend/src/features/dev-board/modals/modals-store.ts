@@ -1,23 +1,18 @@
 /**
  * One store per body-mounted Dev modal.
  *
- * Separate stores rather than one with three slots: each modal's host is
+ * Separate stores rather than one with two slots: each modal's host is
  * created and removed by `public/js/app-view.js` on every open, so they are
  * never on screen together and a shared store would only couple their
  * lifetimes. `null` is "not open" and is what the host renders between the
  * mount and the publish on the same tick.
  *
- * All three install `setFlush(flushSync)` in ../mount.ts, because the module
+ * Both install `setFlush(flushSync)` in ../mount.ts, because the module
  * binds the dialog's dismissal on the line after it publishes.
  */
 
 import { createStore } from '../../../lib/plain-store.js';
-import type {
-  CreditOptionsModalView,
-  LlmConsentModalView,
-  PermissionConsentModalView,
-} from './model';
+import type { LlmConsentModalView, PermissionConsentModalView } from './model';
 
-export const creditOptionsModalStore = createStore<{ view: CreditOptionsModalView | null }>({ view: null });
 export const llmConsentModalStore = createStore<{ view: LlmConsentModalView | null }>({ view: null });
 export const permissionConsentModalStore = createStore<{ view: PermissionConsentModalView | null }>({ view: null });

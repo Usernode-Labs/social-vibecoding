@@ -72,19 +72,10 @@ import { publishRequestThread } from './topic/request-model';
 import { askVotesInView } from './topic/votes-in-view';
 import type { TranscriptMessage } from '../group-chat/transcript-store';
 import { SessionChecks, type SessionChecksProps } from './modals/session-checks';
-import { CreditOptionsModal } from './modals/credit-options-modal';
 import { LlmConsentModal } from './modals/llm-consent-modal';
 import { PermissionConsentModal } from './modals/permission-consent-modal';
-import {
-  creditOptionsModalStore,
-  llmConsentModalStore,
-  permissionConsentModalStore,
-} from './modals/modals-store';
-import type {
-  CreditOptionsModalView,
-  LlmConsentModalView,
-  PermissionConsentModalView,
-} from './modals/model';
+import { llmConsentModalStore, permissionConsentModalStore } from './modals/modals-store';
+import type { LlmConsentModalView, PermissionConsentModalView } from './modals/model';
 
 /** What app-view.js passes for the card list. */
 export interface MountBoardOptions extends DevBoardFrameProps {
@@ -126,7 +117,6 @@ export interface DevBoardBridge {
   /** #4453: a request's stream, as `GroupChat.renderThread` publishes it — for its spec cards. */
   publishRequestThread(number: number, rows: TranscriptMessage[]): void;
   mountSessionChecks(host: Element | null, props: SessionChecksProps): void;
-  mountCreditOptionsModal(host: Element | null, view: CreditOptionsModalView): void;
   mountLlmConsentModal(host: Element | null, view: LlmConsentModalView): void;
   mountPermissionConsentModal(host: Element | null, view: PermissionConsentModalView): void;
   publishCardNow(now: number): void;
@@ -197,12 +187,11 @@ cardNowStore.setFlush(flushSync);
 topicHeadStore.setFlush(flushSync);
 
 /**
- * And the three body-mounted modals'. Each `_show*Modal` appends its scrim to
+ * And the two body-mounted modals'. Each `_show*Modal` appends its scrim to
  * `<body>` and then binds the dialog's dismissal by querying inside it, so
  * the card has to be in the DOM on the next line — the same contract the
  * `innerHTML` assignment these replace gave them.
  */
-creditOptionsModalStore.setFlush(flushSync);
 llmConsentModalStore.setFlush(flushSync);
 permissionConsentModalStore.setFlush(flushSync);
 
@@ -362,18 +351,13 @@ export const devBoardBridge: DevBoardBridge = {
     publishRequestThread(Number(number), rows || []);
   },
 
-  // The three body-mounted modals. Each host is created by app-view.js on
+  // The body-mounted modals. Each host is created by app-view.js on
   // every open and removed on close, so the view rides in with the mount
   // rather than through a separate publish: there is no "already open"
   // state to update, and a mount-then-publish pair would render the scrim
   // empty for one frame.
   mountSessionChecks(host, props) {
     mountLegacyPortal(host, createElement(SessionChecks, props));
-  },
-
-  mountCreditOptionsModal(host, view) {
-    creditOptionsModalStore.set({ view });
-    mountLegacyPortal(host, createElement(CreditOptionsModal));
   },
 
   mountLlmConsentModal(host, view) {

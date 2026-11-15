@@ -14,7 +14,6 @@ const recoveryRetry = require('./recovery-retry');
 const turnLifecycle = require('./turn-lifecycle');
 const { workflowTurnHeldSql } = require('../workflow/session-work.ts');
 const stopRegistry = require('./stop-registry');
-const sessionBus = require('./session-bus');
 const turnEffects = require('./turn-effects');
 const stagingRecovery = require('./staging-recovery');
 const stagingSvc = require('./staging');
@@ -1171,8 +1170,8 @@ async function finalizeRecoveredTurn({
 // Phase is 'cc' for the journal tail: the request drives the in-container
 // kill.
 function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadcastGlobal }) {
-  // Recovery narration fans out on BOTH channels: the global WS broadcast
-  // reaches tabs listening for session_event, and the per-session bus.
+  // Recovery narration goes out on the global WS broadcast, which reaches
+  // tabs listening for session_event.
   const seqPrefix = `rec-${sessionId}-${process.pid}`;
   let seq = 0;
   const send = (event, data) => {
@@ -1182,7 +1181,6 @@ function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadca
     try {
       broadcastGlobal({ ...payload, sessionId, event, type: 'session_event' });
     } catch {}
-    try { sessionBus.publish(sessionId, payload); } catch {}
   };
   const handle = stopRegistry.createHandle({
     sessionId,

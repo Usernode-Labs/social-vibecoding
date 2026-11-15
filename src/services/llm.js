@@ -1646,78 +1646,16 @@ async function catalogBatchAnswers(id, { telemetryContext } = {}) {
   return answers;
 }
 
-// Clamp an estimate phrase to something safe to inline in the dev-chat
-// summary line: single line, trimmed, hard-capped at 90 chars. Pure so
-// tests/ai-progress-estimate.test.js can exercise it directly.
-function sanitizeEstimate(text) {
-  let s = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
-  if (s.length > 90) s = s.slice(0, 89).trimEnd() + '…';
-  return s;
-}
-
-// Coerce the model's `remaining_seconds` guess into a safe integer, or
-// null when it's unusable. Integer-coerce, reject non-finite/negative,
-// and clamp to [0, 7200] (a 2 h ceiling matching the run-bounding posture
-// of the 20-tick estimator cap). Pure + exported so
-// tests/ai-progress-estimate.test.js can exercise it directly.
-function sanitizeRemainingSeconds(v) {
-  if (v == null || v === '') return null;
-  const n = Math.trunc(Number(v));
-  if (!Number.isFinite(n) || n < 0) return null;
-  return Math.min(7200, n);
-}
-
-// Completion-claim detector (#892). The measured "nearly done" phrase family
-// fired 1,355 times in the accuracy dataset and 35% of those had MORE THAN
-// FIVE MINUTES still to run (median 174s remaining), with recorded examples
-// promising "nearly done — just wrapping up tests" 22m41s before the run
-// actually ended. So the phrase may only be shown once the platform KNOWS
-// the coding work is over — i.e. the run has emitted a commit/push/done
-// phase marker. sessions.js does the gating; this is the pure matcher, kept
-// here beside sanitizeEstimate so tests/ai-progress-estimate.test.js can
-// exercise it directly. Matches the phrase family, not generic activity
-// text ("running the test suite" is not a completion claim).
-const COMPLETION_CLAIM_RE =
-  /\b(nearly|almost|just about)\s+(done|finished|complete|there)\b|\bwrapping\s+up\b|\b(finishing|wrapping)\s+(up|off)\b|\bjust\s+finishing\b|\bfinal\s+(touches|tweaks|checks)\b|\blast\s+(few\s+)?(touches|steps)\b/i;
-
-function isCompletionClaim(text) {
-  return COMPLETION_CLAIM_RE.test(String(text == null ? '' : text));
-}
-
-// ── Empirical run-length priors for the progress estimator (#892) ──────
+// ── Run-length facts the progress estimator was given (#892) ───────────
 //
-// WHY THIS EXISTS. The v1 prompt told the model "Typical runs take roughly
-// 2-10 minutes" and "Bias toward the 2-10 minute (120-600 second)
-// typical-run window", and the model obeyed FLATLY: six values accounted
-// for 87% of 4,737 recorded guesses, its prediction spread was 91s against
-// a 679s spread in reality, and its bias flipped from +81s in the first two
-// minutes to -299s past twenty. Its RANKING was good the whole time
-// (corr(ln pred, ln actual) = 0.40-0.56 within an elapsed bucket, versus
-// 0.01 for step count and -0.02 for line count) — only its SCALE was wrong,
-// and the scale was an echo of that instruction. So the instruction is
-// replaced with what actually happens.
+// The estimator read these as prompt input: how much longer a coding run
+// usually went on, by how long it had already been running. It no longer
+// runs, and nothing writes `progress_estimates` any more. The table stays
+// because the admin analytics estimator card shows these committed medians
+// beside the ones it measures from the recorded rows.
 //
-// CALIBRATION LIVES HERE — IN THE MODEL'S INPUTS, NEVER ITS OUTPUTS. A
-// post-hoc multiplier on `remaining_seconds` would measure 40.7% in-band
-// today and then silently distort the estimate the moment the model or the
-// available log signal improves, because it encodes THAT model's error
-// rather than a fact about run durations. These numbers are facts; a better
-// reader simply uses them better. Nothing between the model response and
-// `predicted_remaining_seconds` may scale, blend or bucket-correct it.
-//
-// REFRESHING THIS TABLE. It is a committed constant on purpose (no query
-// latency on the estimator path, no silent mid-run change to the guidance a
-// single run is estimating against, and a reviewable audit trail for every
-// change to what the model is told). The admin analytics estimator card
-// computes the live medians beside these committed ones and flags drift;
-// when it says stale, re-run the SQL below through the read-only production
-// SQL access and open a small PR updating RUN_LENGTH_PRIORS +
-// RUN_LENGTH_PRIORS_SNAPSHOT. A numbers-only refresh must NOT bump
-// PROMPT_VERSION — that would fragment the accuracy comparison for no
-// reason. See also runCohortHint() in public/js/cc-progress-summary.js,
-// whose two long-run thresholds share this snapshot as their refresh anchor.
-//
-// REFRESH SQL (verbatim — do not re-derive the method):
+// HOW THE NUMBERS WERE MEASURED (the card's SQL uses the same buckets and
+// the same SCORED predicate):
 //
 //   -- Per-bucket conditional quantiles of ACTUAL remaining time.
 //   SELECT CASE WHEN elapsed_ms < 120000  THEN '<2m'
@@ -1785,8 +1723,7 @@ const RUN_LENGTH_PRIORS = {
 };
 
 // Provenance for the table above. The dashboard renders this beside the
-// live medians so "are the numbers we tell the model still true?" is
-// answerable without leaving the card.
+// medians it measures.
 const RUN_LENGTH_PRIORS_SNAPSHOT = {
   generatedOn: '2026-08-02',
   windowStart: '2026-06-14',
@@ -1794,27 +1731,6 @@ const RUN_LENGTH_PRIORS_SNAPSHOT = {
   runs: 965,
   users: 6,
 };
-
-// Render the priors as "in case X, the usual pattern is Y" case guidance.
-// Built FROM the constant at call time rather than hand-written into the
-// prompt string, so a refresh is a one-place edit and the prompt can never
-// disagree with the table (a test mutates the constant and asserts the
-// prompt text follows).
-function renderPriorsGuidance(priors) {
-  const p = priors || RUN_LENGTH_PRIORS;
-  const rows = (p.buckets || []).map((b) => {
-    const when = b.maxS == null
-      ? `If it has been running ${b.minS / 60}+ minutes`
-      : b.minS === 0
-        ? `If it has been running less than ${b.maxS / 60} minutes`
-        : `If it has been running ${b.minS / 60}-${b.maxS / 60} minutes`;
-    return `- ${when}: usually about ${b.p50}s remain. A quarter of runs finish within ${b.p25}s, a quarter take longer than ${b.p75}s, and one in ten takes longer than ${b.p90}s. (measured over ${b.n} guesses)`;
-  }).join('\n');
-  const pop = p.population || {};
-  return `${rows}
-
-Whole-run facts: half of all runs finish within ${pop.p50TotalS}s, one in ten runs past ${pop.p90TotalS}s, one in a hundred past ${pop.p99TotalS}s, and the longest observed run was ${pop.maxTotalS}s. About ${Math.round((pop.shareOver10m || 0) * 100)}% of runs last longer than 10 minutes.`;
-}
 
 const SHORT_DESCRIPTION_SCHEMA = {
   type: 'object',
@@ -2157,9 +2073,9 @@ async function gradeChallengeUnit({ system, user, schema, apiKey, telemetryConte
     apiKey,
   });
   const raw = (resp.content || []).find((b) => b.type === 'text')?.text || '';
-  // Same fence/smart-quote fallback as the progress estimator: structured
-  // outputs normally return clean JSON, but a refusal or a truncation can
-  // still put prose in the text block.
+  // A fence/smart-quote fallback: structured outputs normally return clean
+  // JSON, but a refusal or a truncation can still put prose in the text
+  // block.
   const text = raw
     .replace(/```(?:json)?/gi, '')
     .replace(/[“”]/g, '"')
@@ -2422,8 +2338,8 @@ function chatAskVerdict(parsed, offered = []) {
 //
 // One helper call (GLM first, Haiku behind it) turns the server-built
 // report input (report-ai.js) into
-// a plain-language narrative + critical risks + per-owner blurbs. Same
-// posture as estimateRunProgress: structured outputs first, defensive
+// a plain-language narrative + critical risks + per-owner blurbs.
+// Structured outputs first, defensive
 // fence/smart-quote parse as fallback, every field capped server-side
 // before it is returned — the output lands in a SHARED per-app cache, so
 // nothing unvalidated may be persisted.
@@ -2530,9 +2446,8 @@ ${inputJson}`;
   });
 
   const raw = (resp.content || []).find((b) => b.type === 'text')?.text || '';
-  // Same defensive fallback parse as estimateRunProgress (#323): fences and
-  // curly quotes stripped before JSON.parse; only truly off-schema output
-  // throws.
+  // A defensive fallback parse (#323): fences and curly quotes stripped
+  // before JSON.parse; only truly off-schema output throws.
   const text = raw
     .replace(/```(?:json)?/gi, '')
     .replace(/[“”]/g, '"')
@@ -3349,13 +3264,11 @@ module.exports = {
   reviewContentRules,
   // The challenge scorer's one model call (services/topochain/
   // challenge-grader.js owns the rubrics; this owns the transport).
-  gradeChallengeUnit, sanitizeEstimate,
-  sanitizeRemainingSeconds, DEFAULT_MODEL,
-  // Progress-estimator calibration surface (#892). Exported so the admin
-  // analytics route can read the committed priors for its staleness check
-  // (a plain constant read — no init(), no API key) and so tests can pin
-  // the table, the snapshot metadata and the prompt rendering.
-  RUN_LENGTH_PRIORS, RUN_LENGTH_PRIORS_SNAPSHOT, renderPriorsGuidance, isCompletionClaim,
+  gradeChallengeUnit, DEFAULT_MODEL,
+  // The run-length table the progress estimator was given (#892). Exported
+  // so the admin analytics route can read the committed medians (a plain
+  // constant read — no init(), no API key).
+  RUN_LENGTH_PRIORS, RUN_LENGTH_PRIORS_SNAPSHOT,
   stripLoneSurrogates, generateIssueTitle, FEEDBACK_FALLBACK_TITLE,
   // #3193: the guard between the title model and a published issue title.
   issueTitleRejection, feedbackTitleFromDescription, ISSUE_TITLE_SCHEMA,

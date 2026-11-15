@@ -4573,7 +4573,7 @@
   },
   "menu.importPr.sub": {
     "text": "Your computer · your own tools. You have already built it, so there is no chat for this one",
-    "description": "Second line of the 'Import Feature from a PR' row in a project's ⋯ menu. It says the work was done on the person's own machine with their own tools, so no coding-agent chat is opened. Keep the middle dot between the first two phrases."
+    "description": "Second line of the 'Import Feature from a PR' row in a project's ⋯ menu. It says the work was done on the person's own machine with their own tools, so no conversation with Homeroom bot is opened. Keep the middle dot between the first two phrases."
   },
   "menu.settings.title": {
     "text": "Settings & rules",
@@ -5170,10 +5170,6 @@
   "modals.permission.notNow": {
     "text": "Not now",
     "description": "Button in the dialog where an app asks for a permission, such as notifications: closes it without granting the permission."
-  },
-  "modals.credits.notNow": {
-    "text": "Not now",
-    "description": "Button under the card offering ways to get more AI credit: closes the card without choosing one."
   },
   "modals.checks.title": {
     "text": "Proposal checks",

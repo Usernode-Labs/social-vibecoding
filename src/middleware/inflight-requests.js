@@ -10,15 +10,12 @@
 // counts each request from arrival until its response finishes or its
 // connection closes.
 //
-// Two kinds of request are left out of the count, because waiting for them
-// would only hold every shutdown to its deadline:
-//
-//   - An event stream (Content-Type: text/event-stream), once its headers
-//     are out. A streamed turn, the MCP GET stream and the model proxies'
-//     streams stay open for as long as the work behind them, which restart
-//     recovery carries on, or for as long as the client likes.
-//   - A request its route marks open-ended with `openEnded(res)`: a long
-//     poll that answers "nothing yet" when its window runs out.
+// One kind of request is left out of the count, because waiting for it
+// would only hold every shutdown to its deadline: an event stream
+// (Content-Type: text/event-stream), once its headers are out. A streamed
+// turn, the MCP GET stream and the model proxies' streams stay open for as
+// long as the work behind them, which restart recovery carries on, or for as
+// long as the client likes.
 //
 // WebSocket upgrades never reach Express, so they are not counted either.
 
@@ -36,7 +33,7 @@ function isEventStream(res) {
 }
 
 function counted(entry) {
-  return !entry.res.locals?.inflightOpenEnded && !isEventStream(entry.res);
+  return !isEventStream(entry.res);
 }
 
 /** Express middleware: count the request until its response is done. */
@@ -49,12 +46,6 @@ function inflightRequests() {
     res.once('close', done);
     next();
   };
-}
-
-/** Leave this response out of the drain's count: it is held open by design. */
-function openEnded(res) {
-  if (res && res.locals) res.locals.inflightOpenEnded = true;
-  return res;
 }
 
 /** How many handlers the drain is waiting for now. */
@@ -94,4 +85,4 @@ function snapshot(now = Date.now()) {
     .map((entry) => ({ surface: surface(entry.req), route: routeOf(entry.req), ageMs: Math.max(0, now - entry.startedAt) }));
 }
 
-module.exports = { inflightRequests, openEnded, pending, snapshot, isEventStream };
+module.exports = { inflightRequests, pending, snapshot, isEventStream };
