@@ -462,6 +462,32 @@ const THREAD_STATUS_LINES = Object.freeze([
 ]);
 
 /**
+ * Pure (15 Nov 2026, #6683): what a turn written in a thread that holds a
+ * design is told about it (`thread.design`: design-threads.js designFor).
+ * The thread answers like any other; the screen itself is still the
+ * designer's, and draw_screen hands it over in this thread. Empty when the
+ * thread holds no design.
+ */
+function designThreadLines(design) {
+  if (!design) return [];
+  const of = design.app?.slug
+    ? `of the screen of project "${design.app.slug}"`
+    : design.surface === 'platform'
+      ? 'of a page of Homeroom itself'
+      : 'of a project that does not exist yet';
+  const version = Number(design.latest) > 0 ? ` Its newest version is version ${Number(design.latest)}.` : '';
+  return [
+    `- This thread holds a design, "${clip(design.title, 120)}", ${of}.${version} They talk about it here, and the`,
+    '  design is shown beside the thread with Open preview.',
+    '- To draw, change or redraw the screen, to compare its versions, or to post it as a plan, call draw_screen alone:',
+    '  the designer draws or changes it, saves the next version here and answers them itself.',
+    '- Anything else they ask, answer here as you would in any other thread, from the same tools, and a request may',
+    '  be offered on any project they can see: this thread is not limited to the design\'s project. Never say',
+    '  something cannot be done in this thread, and never tell them to do it themselves somewhere else.',
+  ];
+}
+
+/**
  * Pure (31 Oct 2026): what a turn written in a thread that is no request's
  * is told: that the conversation below is that thread, and for a draft's
  * private thread what became of the draft, so "is the card out of date?"
@@ -480,6 +506,9 @@ function otherThreadLines(thread) {
     // #6159: a private thread can be finished, by them or by you.
     '- When they ask you to close or finish this thread, call close_thread, then reply "Done. Reply here to pick it',
     '  up again." Never tell them to close it on their side: there is no such control.',
+    // #6683: a thread that holds a design answers like any other; only the
+    // screen itself is the designer's, and draw_screen hands it over.
+    ...designThreadLines(thread.design),
   ];
   const d = thread.draft;
   if (d?.kind === 'ask' && d.about) {
@@ -2843,10 +2872,9 @@ async function resolveCards(pool, user, cards) {
  * thread the turn is in.
  */
 async function drawScreen(pool, ctx, args = {}) {
-  // 14 Nov 2026: a thread that holds a design is the designer's from then
-  // on (design-threads.js threadOf). A project's first-version thread is
-  // where its plan, its progress and its news are said, so no screen is
-  // drawn there: one is drawn in a thread of its own.
+  // A project's first-version thread is where its plan, its progress and its
+  // news are said, so no screen is drawn there: one is drawn in a thread of
+  // its own.
   if (ctx.deps?.threadKind === 'first_version') {
     return {
       ok: false,
@@ -2854,14 +2882,28 @@ async function drawScreen(pool, ctx, args = {}) {
         + '(New thread) and ask for the screen there: you will draw it in that thread.',
     };
   }
+  // 15 Nov 2026 (#6683): a thread that holds a design (threadDesign) answers
+  // like any other, and this is how its screen is drawn: the designer makes
+  // the next version of THIS design. Its title is the design's, so what
+  // alone is enough, and a screen of another project is not drawn into it.
+  const design = ctx.deps?.threadDesign || null;
   const what = clip(String(args.what || '').trim(), 600);
-  const title = clip(String(args.title || '').replace(/\s+/g, ' ').trim(), 120);
+  let title = clip(String(args.title || '').replace(/\s+/g, ' ').trim(), 120);
+  if (!title && design?.title) title = clip(String(design.title).replace(/\s+/g, ' ').trim(), 120);
   if (!what || !title) return { ok: false, error: 'Say what to draw (what) and name the screen (title).' };
   let app = null;
   if (typeof args.project === 'string' && args.project.trim()) {
     app = await findApp(pool, args.project);
     if (!app || !(await canView(pool, app, ctx.user))) {
       return { ok: false, error: `There is no project called ${clip(args.project, 80)} that they can see. Ask which one, or leave project out.` };
+    }
+    if (design?.app?.slug && app.slug !== design.app.slug) {
+      return {
+        ok: false,
+        error: `This thread's design is of ${design.app.name || design.app.slug}, so a screen of `
+          + `${app.name || app.slug} is not drawn into it. Say this thread's design is of its own project, and offer to `
+          + 'start that screen in a new thread (New thread on the Homeroom bot page) as a project\'s first screen.',
+      };
     }
   }
   ctx.drawScreen = { app, title, brief: what };
@@ -3469,7 +3511,9 @@ async function plainAnswer(t, history, { later = true } = {}) {
           content: `${systemPrompt({
             username: t.user.username, perPerson: t.settings.perPerson, platform: false,
             // 31 Oct 2026: where they wrote it, as the rounds were told.
-            thread: !t.ctx?.deps?.threadRequest && t.ctx?.deps?.threadRootId ? { draft: t.ctx.deps.threadDraft || null } : null,
+            // 15 Nov 2026 (#6683): and whether the thread holds a design.
+            thread: !t.ctx?.deps?.threadRequest && t.ctx?.deps?.threadRootId
+              ? { draft: t.ctx.deps.threadDraft || null, design: t.ctx.deps.threadDesign || null } : null,
           })}\n\n${later ? PLAIN_NOTE : PLAIN_NOTE_NO_LATER}${t.ctx?.owed ? `\n\n${t.ctx.owed}` : ''}`,
         },
         ...history.slice(-PLAIN_HISTORY).map(plainMessage),
@@ -3836,7 +3880,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           content: systemPrompt({
             username: user.username, perPerson: settings.perPerson, platform: platformTools.length > 0,
             request: deps.threadRequest || null,
-            thread: !deps.threadRequest && deps.threadRootId ? { draft: deps.threadDraft || null } : null,
+            // 15 Nov 2026 (#6683): a thread that holds a design is told so,
+            // and answers like any other (designThreadLines).
+            thread: !deps.threadRequest && deps.threadRootId
+              ? { draft: deps.threadDraft || null, design: deps.threadDesign || null } : null,
             extra: threadTools.promptLines(ctx),
           }),
         },

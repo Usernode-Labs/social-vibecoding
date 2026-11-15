@@ -920,6 +920,11 @@ function designPrompt({
         + ' and they open it beside the chat with Open preview.',
     'They tell you what to draw or change, in words, with a picture, or with a comment pinned to a point on the',
     'preview; you draw it with write_screen or change it with edit_design, then reply.',
+    // 15 Nov 2026 (#6683): the chat answers everything else in this thread,
+    // so the designer never turns a question away from here.
+    'A message that is not about this design (a request to file, a change to ask about, where someone\'s work stands)',
+    'is answered by Homeroom bot in this same thread. So never say something cannot be done in this thread, and never',
+    'tell them to ask somewhere else or to do it themselves.',
     '',
     'HOW TO DRAW',
     '- write_screen draws a whole new screen from their words: self-contained HTML for one screen, at the size it is',
@@ -1364,7 +1369,12 @@ async function answer(pool, config, {
   // #6142: a first drawing, handed a screen or with no version yet, draws by
   // DRAW_BY_ROUND, and an app's starts from its entry page (`entry`:
   // undefined while unread, null when there is none they may read).
-  const firstDrawing = handoff || !current;
+  // 15 Nov 2026 (#6683): a hand-over into a thread that already holds a
+  // version edits it, as any later message there does: it is no first
+  // drawing, so no entry page is read and DRAW_BY_ROUND does not force a
+  // whole redraw. `handoff` still skips the hourly count, which the chat's
+  // turn already made.
+  const firstDrawing = !current;
   let entry;
   const notes = [];
   let replyText = '';

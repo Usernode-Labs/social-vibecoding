@@ -454,6 +454,46 @@ test('a label over a group is sentence case', () => {
   }
 });
 
+test('a title is Geist like every other word: no rule of the look sets the serif', () => {
+  // The serif was on every h1, which a heading inside a message is too, and
+  // on a project's name on its hub. Nothing names it now, so each title
+  // takes the look's own sans at the weight its screen gave it.
+  for (const rule of lookRules()) {
+    assert.doesNotMatch(rule.body, /Young Serif|\bserif\b(?<!sans-serif)/, `${rule.selectors[0]} sets no serif`);
+  }
+  assert.deepEqual(ruleFor(' h1'), [], 'no rule of the look restyles an h1');
+  assert.ok(!ruleFor('.dev-ws-hero-name').some((rule) => /font-family/.test(rule.body)), 'nor a project\'s name');
+  assert.match(ruleAt(EITHER).body, /font-family:\s*'Geist',/, 'the look\'s one family for words');
+  // The Workshop's counts keep the mono.
+  assert.match(ruleFor('.dev-ws-dash-cell b')[0].body, /font-family:\s*'Geist Mono',/);
+});
+
+test('Home\'s pinned apps and pinned communities each sit on a card, and the launcher grid keeps its box', () => {
+  const card = ruleFor('#app-list').find((rule) => /background-color/.test(rule.body));
+  assert.ok(card, 'the launcher grid is painted');
+  assert.deepEqual(card.selectors, [`${EITHER} #app-list`, `${EITHER} #home-communities-section > .grid`],
+    'both grids, in both modes, and nothing else');
+  assert.match(card.body, /background-color:\s*var\(--bl-card\);/, 'the mode\'s card: white in light, one step off the page in dark');
+  assert.match(card.body, /border-radius:\s*20px;/, 'a card\'s radius');
+  assert.match(card.body, /box-shadow:\s*inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift\);/, 'and its hairline and lift');
+  // The launcher's drag overlay mirrors #app-list's padding, and a dropped
+  // tile is measured against it (app.css .home-grid-overlay, Home._rectForCell):
+  // the look paints the grid and moves nothing.
+  for (const rule of ruleFor('#app-list')) {
+    assert.doesNotMatch(rule.body, /\b(?:padding|margin|gap|width|height|inset|top|left|right|bottom|display|position)\b[^;]*:/,
+      'no rule of the look moves the launcher grid');
+  }
+  // The communities' grid has no overlay: it takes a card's own padding.
+  const pad = ruleAt(`${EITHER} #home-communities-section > .grid`);
+  assert.ok(pad, 'its padding is a rule of its own');
+  assert.match(pad.body, /^\s*padding:\s*16px 8px 14px;\s*$/);
+  // The grids are the ones the look paints: the section's own markup.
+  assert.match(read('frontend', 'src', 'features', 'home', 'pinned-communities.tsx'),
+    /<section id="home-communities-section"[^>]*>\s*<SectionHeading[\s\S]*?<\/SectionHeading>\s*<div className="grid grid-cols-4 /,
+    'the communities\' grid is the section\'s direct child, after its label');
+  assert.match(read('frontend', 'src', 'features', 'home', 'app-grid.tsx'), /id="app-list"/);
+});
+
 test('Geist loads from our own origin by an absolute path, and only for this look', () => {
   const block = lookBlock();
   assert.match(block, /@font-face\s*\{[^}]*font-family:\s*'Geist'[^}]*url\('\/fonts\/geist\/Geist-Variable\.woff2'\)/,
