@@ -30,7 +30,7 @@ import { HISTORY_KINDS, type HistoryKind } from './filter-address';
 import { monthName, type HistoryRow, type HistoryState } from './history';
 import { Marked, followFound } from './found';
 import { dayHeading, useAiLines, type FoundLine, type Glyph, type Line } from './lines';
-import { GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, type AiApp, type AiThread, type Phrase, type WorkRow } from './model';
+import { GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, recentGroupsFirst, type AiApp, type AiThread, type Phrase, type WorkRow } from './model';
 import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
 import type { Found } from './search';
@@ -38,7 +38,8 @@ import type { Found } from './search';
 /** Each glyph's icon in the kit's set (./lines.ts names them). */
 const ICON: Record<Glyph, string> = {
   chat: 'chat', play: 'play', hand: 'hand', check: 'check', again: 'refresh', warning: 'alert', lock: 'lock', ballot: 'vote',
-  upload: 'up', eye: 'eye', cog: 'tool', reply: 'reply', code: 'code', clock: 'clock', x: 'x', bubble: 'chat',
+  // The kit has no camera: a picture stands for the screenshots being taken.
+  upload: 'up', eye: 'eye', cog: 'tool', reply: 'reply', code: 'code', clock: 'clock', camera: 'image', x: 'x', bubble: 'chat',
 };
 
 /**
@@ -294,8 +295,9 @@ export function AiFrameList({
   const [more, setMore] = useState<DOMRect | null>(null);
   const [stillOpen, setStillOpen] = useState(false);
   const phone = usePhone();
-  // Needs you draws what is new first, then holds the order under the pointer.
-  const needs = useHeld(freshFirst(needLines));
+  // Needs you draws what is new first, then lifts each project by its newest
+  // activity (#6672), then holds the order under the pointer.
+  const needs = useHeld(recentGroupsFirst(freshFirst(needLines)));
   // A row in the folded part that is where you are opens it.
   const stillShown = stillOpen || stillLines.some((line) => line.lit);
   const first = (n: number) => (searching ? Infinity : n);

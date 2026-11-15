@@ -139,6 +139,17 @@ function checksLine(row, now) {
 }
 
 /**
+ * Pure (#6616): whether a change's votes are in. The one predicate every
+ * reader of `votes_in` shares — services/work-state.js's stages and the
+ * Needs you feed's `authorGateMet` — so the list that leaves a vote to the
+ * feed and the feed that keeps the row can never disagree. A missing answer
+ * (a failed gate read) is false: the row stays a Vote.
+ */
+function votesIn(row) {
+  return row?.votes_in === true;
+}
+
+/**
  * Pure (#6531, 11 Nov 2026): a change that conflicts with main where only a
  * yes can move it (syncStand 'vote'). It is up for a vote, and so open for
  * votes, only while it could take one, as voteReadySql reads it: its checks
@@ -188,7 +199,7 @@ function checkingState(row, since, now, onYes = requestOnYes) {
   if (stand === 'author') return state('checking', { since, line: { code: 'sync_wait' } });
   // #6594: its votes are in, so its checks are what it waits on now, not a
   // vote it no longer needs.
-  if (row.votes_in === true) return state('checking', { since, line: { code: 'approved_checking' } });
+  if (votesIn(row)) return state('checking', { since, line: { code: 'approved_checking' } });
   const line = checksLine(row, now);
   return state('checking', { since, ...(line ? { line } : {}) });
 }
@@ -336,7 +347,7 @@ function fromStage(s, row, now = new Date()) {
         if (hold) return state(hold.stage, { since, line: { code: hold.code } });
       }
       // #6594: its votes are in; it is being merged, not voted on.
-      if (row.votes_in === true) return state('going_live', { since });
+      if (votesIn(row)) return state('going_live', { since });
       return upForVote(row, since);
     case 'merging':
       return state('going_live', { since: row.merged_at || since });
@@ -569,7 +580,7 @@ function promotedChange(row, now) {
   // nothing about it: its own checks are still to come. #6594: with its
   // votes in, it is approved and those checks are what it waits on.
   if (!changeChecksOnHead(row)) {
-    return state('checking', { since, ...(row.votes_in === true ? { line: { code: 'approved_checking' } } : {}) });
+    return state('checking', { since, ...(votesIn(row) ? { line: { code: 'approved_checking' } } : {}) });
   }
   // A passing change that has since stopped merging cleanly moves back to
   // Waiting to sync with main: its verdict no longer describes what lands.
@@ -580,7 +591,7 @@ function promotedChange(row, now) {
   if (shotsHeld(row, now)) return state('checking', { since, line: { code: 'shots' } });
   // #6594: its votes are in (the project's rule would let it merge now): it
   // is being merged, not voted on, so it is not open for votes either.
-  if (row.votes_in === true) return state('going_live', { since: row.promoted_at });
+  if (votesIn(row)) return state('going_live', { since: row.promoted_at });
   return upForVote(row, row.promoted_at);
 }
 
@@ -686,6 +697,10 @@ function stagePhrase(item, yours) {
   // #6594: its votes are in, so it is approved and its checks are what it
   // waits on, not a vote.
   if (item.stage === 'checking' && code === 'approved_checking') return { id: 'core:work.stage.approved' };
+  // Its tests passed and only its before & after screenshots are left: the
+  // stage word says that ("Taking screenshots"), not "Checking", which read
+  // as tests that might still fail.
+  if (item.stage === 'checking' && code === 'shots') return { id: 'core:work.stage.shots' };
   // #6563: an approved change whose merge GitHub holds is not going live yet;
   // its word says so, and its second line says on what. #6594: waiting on
   // GitHub's checks is still approved; only GitHub itself holding it back
@@ -2080,6 +2095,7 @@ module.exports = {
   phrasesOf,
   english,
   APPROVED_SQL,
+  votesIn,
   stageSays,
   lineSays,
   says,

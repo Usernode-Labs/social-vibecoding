@@ -139,6 +139,33 @@ async function designFor(pool, { userId, rootId }) {
   };
 }
 
+/**
+ * #6680 (15 Nov 2026): the viewer's own private thread that filed a request,
+ * or posted its plan there, by its root message: { rootId } or null. Read for
+ * the viewer alone, so nobody else's read can learn a private thread exists
+ * (the request page offers the link only to its owner). The newest such
+ * thread when more than one is tied to the request. Never throws.
+ */
+async function threadForRequest(pool, { userId, appId, number }) {
+  const user = id(userId);
+  const app = id(appId);
+  const request = id(number);
+  if (!user || !app || !request) return null;
+  try {
+    const { rows: [row] } = await pool.query(
+      `SELECT root_message_id FROM private_threads
+        WHERE user_id = $1 AND app_id = $2 AND result_ref = $3 AND state IN ('filed', 'posted')
+        ORDER BY updated_at DESC
+        LIMIT 1`,
+      [user, app, request],
+    );
+    return row ? { rootId: Number(row.root_message_id) } : null;
+  } catch (err) {
+    log.warn('design-threads', 'Could not read the thread a request came from', { err: err.message });
+    return null;
+  }
+}
+
 /** Pure: what a design for `app` is of: Homeroom's own pages, a project's app, or a project not made yet. */
 function surfaceFor(config, app) {
   if (!app?.slug) return 'new';
@@ -916,6 +943,7 @@ module.exports = {
   validHtml,
   threadOf,
   designFor,
+  threadForRequest,
   surfaceFor,
   draftingThread,
   ensureDesign,

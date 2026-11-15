@@ -273,7 +273,7 @@ test('each mode sets every one of the look\'s colours, and the shared rules read
   // A rule for either mode carries no colour of its own for those roles.
   for (const rule of lookRules()) {
     if (!rule.selectors.every((sel) => sel.startsWith(EITHER))) continue;
-    for (const colour of ['#f6f2d8', '#141a11', '#20281c', '#37477b', '#232c4f', '#1a63c4', '#143a75', '#7fbcf7']) {
+    for (const colour of ['#f6f2d8', '#0d1421', '#182135', '#37477b', '#232b43', '#1a63c4', '#122a52', '#7fbcf7']) {
       assert.ok(!rule.body.includes(colour), `"${rule.selectors[0]}" names ${colour}: read the mode's variable instead`);
     }
   }
@@ -288,16 +288,24 @@ test('a card differs from the page by its fill, in both modes, with no outline',
   assert.equal(valueOf(light, '--bg-secondary'), '#f6f2d8', 'the page');
   assert.equal(valueOf(light, '--bg-primary'), '#ffffff', 'a card');
   assert.doesNotMatch(light, /#fffeea/, 'not the website\'s own cream: white cards would not stand out on it');
-  // Dark: the dark of the website's ink, and a card one step lighter. The
-  // surfaces climb from the page, as in the standard dark.
-  assert.equal(valueOf(dark, '--bl-page'), '#141a11');
-  assert.equal(valueOf(dark, '--bl-card'), '#20281c');
-  assert.equal(valueOf(dark, '--bg-primary'), '#141a11', 'the page');
-  assert.equal(valueOf(dark, '--bg-secondary'), '#20281c', 'a card');
-  assert.equal(valueOf(dark, '--text-primary'), '#f6f2d8', 'words are the cream the light page is made of');
+  // Dark: a very dark navy page, and a card one step lighter in the same
+  // blue. The surfaces climb from the page, as in the standard dark.
+  assert.equal(valueOf(dark, '--bl-page'), '#0d1421');
+  assert.equal(valueOf(dark, '--bl-card'), '#182135');
+  assert.equal(valueOf(dark, '--bg-primary'), '#0d1421', 'the page');
+  assert.equal(valueOf(dark, '--bg-secondary'), '#182135', 'a card');
+  assert.equal(valueOf(dark, '--text-primary'), '#eef2f8', 'words are a white tinted toward the page');
+  // Dark keeps to the look's two families, blue and sun. The page was first
+  // a green and then a purple, each a third family beside the blue frame;
+  // every surface, the sidebar and the bar are blues now: blue above green
+  // above red.
+  for (const name of ['--bl-page', '--bl-card', '--bl-raise', '--bl-side', '--bl-bar']) {
+    const [r, g, b] = valueOf(dark, name).match(/^#(..)(..)(..)$/).slice(1).map((h) => parseInt(h, 16));
+    assert.ok(b > g && g > r, `${name} is a blue`);
+  }
   // The outline every card is drawn with is a hairline too faint to read as
   // one; the fill and a lift say where a card ends.
-  for (const [mode, ink] of [[LIGHT, '18, 26, 14'], [DARK, '246, 242, 216']]) {
+  for (const [mode, ink] of [[LIGHT, '18, 26, 14'], [DARK, '220, 230, 248']]) {
     const line = ruleAt(`${mode}:not([data-contrast="more"])`);
     assert.ok(line, 'the look sets the sheet line, and leaves More contrast its own');
     const alpha = Number(valueOf(line.body, '--app-sheet-line').match(new RegExp(`^rgba\\(${ink}, ([\\d.]+)\\)$`))[1]);
@@ -325,7 +333,7 @@ test('the sidebar is blue with white words, and the row you are on is sun', () =
   assert.ok(bar, 'the bar itself, for either mode');
   assert.match(bar.body, /background:\s*var\(--bl-side\);/);
   assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-side'), '#1a63c4', 'the deep sky');
-  assert.equal(valueOf(ruleAt(DARK).body, '--bl-side'), '#143a75', 'deeper in dark, so it does not glare beside a dark page');
+  assert.equal(valueOf(ruleAt(DARK).body, '--bl-side'), '#122a52', 'a dark blue in dark, so it does not glare beside a dark page');
   // Its rows draw from the tokens, so hover and focus follow without a rule each.
   assert.match(bar.body, /--text-primary:\s*rgba\(255, 255, 255, 0\.94\);/);
   assert.match(bar.body, /--lit-tint:\s*rgba\(255, 255, 255, 0\.24\);/, 'what is hovered is a wash of white');
@@ -352,7 +360,7 @@ test('the top bar is navy, not the sidebar\'s blue, and a community\'s bar keeps
   assert.match(bar.body, /background-color:\s*var\(--bl-bar\);/);
   assert.match(bar.body, /--brand-ink:\s*#ffffff;/, 'white words');
   assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-bar'), '#37477b');
-  assert.equal(valueOf(ruleAt(DARK).body, '--bl-bar'), '#232c4f');
+  assert.equal(valueOf(ruleAt(DARK).body, '--bl-bar'), '#232b43');
   for (const mode of [LIGHT, DARK]) {
     assert.notEqual(valueOf(ruleAt(mode).body, '--bl-bar'), valueOf(ruleAt(mode).body, '--bl-side'), 'the two read as two pieces');
   }
@@ -365,6 +373,19 @@ test('the top bar is navy, not the sidebar\'s blue, and a community\'s bar keeps
       assert.doesNotMatch(rule.body, /(^|[;\s])background(-color)?:/, `"${sel}" sets inks only`);
     }
   }
+});
+
+test('the side panel starts below the flat bar, on the chat column\'s line', () => {
+  const rule = ruleAt(`${EITHER}:not([data-community-tint]) body:has(#platform-tabs) .side-panel`);
+  assert.ok(rule, 'the look moves the panel below its flat bar');
+  const top = valueOf(rule.body, 'top');
+  assert.match(top, /\+ \.5rem\)$/, '8px below the bar, not 8px up into its rounded edge');
+  // The same arithmetic #ai-screen .ai-main-pane and .dev-ws-side use.
+  const css = read('public', 'css', 'app.css');
+  const pane = css.match(/#ai-screen \.ai-main-pane \{[\s\S]*?\n\}/);
+  assert.ok(pane, '#ai-screen .ai-main-pane is found');
+  assert.equal(top, valueOf(pane[0].slice(pane[0].indexOf('{') + 1), 'top'),
+    'the panel starts on the line the chat column already starts on');
 });
 
 test('on a phone the tab bar is the sidebar\'s blue and its marker sun', () => {
@@ -431,6 +452,46 @@ test('a label over a group is sentence case', () => {
   for (const sel of ['.messages-section-head', '.dev-ws-places-head']) {
     assert.ok(labels.selectors.some((s) => s.endsWith(sel)), `${sel} too`);
   }
+});
+
+test('a title is Geist like every other word: no rule of the look sets the serif', () => {
+  // The serif was on every h1, which a heading inside a message is too, and
+  // on a project's name on its hub. Nothing names it now, so each title
+  // takes the look's own sans at the weight its screen gave it.
+  for (const rule of lookRules()) {
+    assert.doesNotMatch(rule.body, /Young Serif|\bserif\b(?<!sans-serif)/, `${rule.selectors[0]} sets no serif`);
+  }
+  assert.deepEqual(ruleFor(' h1'), [], 'no rule of the look restyles an h1');
+  assert.ok(!ruleFor('.dev-ws-hero-name').some((rule) => /font-family/.test(rule.body)), 'nor a project\'s name');
+  assert.match(ruleAt(EITHER).body, /font-family:\s*'Geist',/, 'the look\'s one family for words');
+  // The Workshop's counts keep the mono.
+  assert.match(ruleFor('.dev-ws-dash-cell b')[0].body, /font-family:\s*'Geist Mono',/);
+});
+
+test('Home\'s pinned apps and pinned communities each sit on a card, and the launcher grid keeps its box', () => {
+  const card = ruleFor('#app-list').find((rule) => /background-color/.test(rule.body));
+  assert.ok(card, 'the launcher grid is painted');
+  assert.deepEqual(card.selectors, [`${EITHER} #app-list`, `${EITHER} #home-communities-section > .grid`],
+    'both grids, in both modes, and nothing else');
+  assert.match(card.body, /background-color:\s*var\(--bl-card\);/, 'the mode\'s card: white in light, one step off the page in dark');
+  assert.match(card.body, /border-radius:\s*20px;/, 'a card\'s radius');
+  assert.match(card.body, /box-shadow:\s*inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift\);/, 'and its hairline and lift');
+  // The launcher's drag overlay mirrors #app-list's padding, and a dropped
+  // tile is measured against it (app.css .home-grid-overlay, Home._rectForCell):
+  // the look paints the grid and moves nothing.
+  for (const rule of ruleFor('#app-list')) {
+    assert.doesNotMatch(rule.body, /\b(?:padding|margin|gap|width|height|inset|top|left|right|bottom|display|position)\b[^;]*:/,
+      'no rule of the look moves the launcher grid');
+  }
+  // The communities' grid has no overlay: it takes a card's own padding.
+  const pad = ruleAt(`${EITHER} #home-communities-section > .grid`);
+  assert.ok(pad, 'its padding is a rule of its own');
+  assert.match(pad.body, /^\s*padding:\s*16px 8px 14px;\s*$/);
+  // The grids are the ones the look paints: the section's own markup.
+  assert.match(read('frontend', 'src', 'features', 'home', 'pinned-communities.tsx'),
+    /<section id="home-communities-section"[^>]*>\s*<SectionHeading[\s\S]*?<\/SectionHeading>\s*<div className="grid grid-cols-4 /,
+    'the communities\' grid is the section\'s direct child, after its label');
+  assert.match(read('frontend', 'src', 'features', 'home', 'app-grid.tsx'), /id="app-list"/);
 });
 
 test('Geist loads from our own origin by an absolute path, and only for this look', () => {

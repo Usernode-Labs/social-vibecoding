@@ -869,8 +869,8 @@ export async function leaveConversation(id: number): Promise<void> {
   await request<unknown>(`/api/conversations/${id}/leave`, { method: 'POST', body: '{}' });
 }
 
-export async function listMessages(id: number, before?: number | null, options?: ReadOptions, limit = 50): Promise<{ messages: ConversationMessage[]; nextBefore: number | null }> {
-  const params = new URLSearchParams({ limit: String(limit) });
+export async function listMessages(id: number, before?: number | null, options?: ReadOptions): Promise<{ messages: ConversationMessage[]; nextBefore: number | null }> {
+  const params = new URLSearchParams({ limit: '50' });
   if (before) params.set('before', String(before));
   const data = record(await request<unknown>(`/api/conversations/${id}/messages?${params}`, readInit(options)));
   // The newest page is the one an offline open draws.
@@ -1193,6 +1193,44 @@ export async function setTyping(conversationId: number, typing: boolean, threadR
   await request<unknown>(`/api/conversations/${conversationId}/typing`, {
     method: 'POST', body: JSON.stringify({ typing, ...(threadRootId ? { thread_root_id: threadRootId } : {}) }),
   });
+}
+
+/**
+ * 14 Nov 2026 (#6674): what Homeroom bot is doing in one conversation or one
+ * of its threads now, so a page coming back from the background draws its
+ * working card at once (services/homeroom-bot-dm.js botWorkingNow). Live
+ * state only, and never served from a cached copy.
+ */
+export interface BotWorking {
+  typing: boolean;
+  doing: { kind: string; number?: number; project?: string } | null;
+  answering: number | null;
+  botId: number | null;
+}
+
+function botWorkingDoing(raw: unknown): BotWorking['doing'] {
+  if (!raw || typeof raw !== 'object') return null;
+  const value = raw as JsonRecord;
+  const kind = typeof value.kind === 'string' && /^[a-z_]{1,32}$/.test(value.kind) ? value.kind : null;
+  if (!kind) return null;
+  const number = Number(value.number);
+  const project = typeof value.project === 'string' ? value.project.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+  return {
+    kind,
+    ...(Number.isSafeInteger(number) && number > 0 ? { number } : {}),
+    ...(project ? { project } : {}),
+  };
+}
+
+export async function getBotWorking(conversationId: number, threadRootId: number | null = null): Promise<BotWorking> {
+  const query = threadRootId ? `?thread_root_id=${threadRootId}` : '';
+  const data = record(await request<unknown>(`/api/conversations/${conversationId}/bot-working${query}`, readInit({ fresh: true })));
+  return {
+    typing: pick(data, 'typing') === true,
+    doing: botWorkingDoing(pick(data, 'doing')),
+    answering: strictId(pick(data, 'answering')),
+    botId: strictId(pick(data, 'botId')),
+  };
 }
 
 export async function uploadAttachment(conversationId: number, file: File): Promise<MessageAttachment> {

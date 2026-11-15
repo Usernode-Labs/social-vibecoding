@@ -220,9 +220,9 @@ test('notes into a running build, against the full PostgreSQL schema', { timeout
     `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_session_id) VALUES ($1, 14, 'live', 'ready', $2) RETURNING id`,
     [app.id, build2.id],
   );
-  const offer = async (by) => steer.noteRow(pool, await steer.addNote(pool, {
+  const offer = async (by, extra = {}) => steer.noteRow(pool, await steer.addNote(pool, {
     app, issueNumber: 14, build: await steer.buildUnderWay(pool, app.id, 14), user: by, note: 'Start over with a list, not a grid.',
-    conversationId, kind: 'redo', state: 'offered',
+    conversationId, kind: 'redo', state: 'offered', ...extra,
   }));
   const stops = [];
   const posts = [];
@@ -306,4 +306,40 @@ test('notes into a running build, against the full PostgreSQL schema', { timeout
   const samsOffer = await offer(sam);
   assert.equal((await steer.redo(pool, {}, { row: samsOffer, user: sam, deps: deps() })).status, 403);
   assert.equal(stops.length, before);
+
+  // ── #6684: a comment on the request itself ──
+  const { rows: cols } = await pool.query(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'homeroom_bot_build_notes' AND column_name = ANY($1) ORDER BY column_name`,
+    [['chat_message_id', 'comment_id', 'origin']],
+  );
+  assert.deepEqual(cols.map((c) => c.column_name), ['chat_message_id', 'comment_id', 'origin']);
+  const hereId = await steer.addNote(pool, {
+    app, issueNumber: 12, build: null, user: ada, note: 'Also the digest.', origin: 'request',
+  });
+  const { rows: [here] } = await pool.query('SELECT origin, state FROM homeroom_bot_build_notes WHERE id = $1', [hereId]);
+  assert.deepEqual([here.origin, here.state], ['request', 'waiting']);
+  // A build that has stopped coding (its session ended) is in its last
+  // steps: buildForRequest finds it, and buildUnderWay does not.
+  let build16 = null;
+  await asKernel(async (c) => {
+    ({ rows: [build16] } = await c.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, branch_name) VALUES ($1, $2, 'archived', 'dev/homeroom_bot-16') RETURNING id`,
+      [app.id, bot.id],
+    ));
+  });
+  const { rows: [run16] } = await pool.query(
+    `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_session_id) VALUES ($1, 16, 'live', 'ready', $2) RETURNING id`,
+    [app.id, build16.id],
+  );
+  assert.deepEqual(await steer.buildForRequest(pool, app.id, 16),
+    { runId: run16.id, sessionId: build16.id, running: false, lastSteps: true });
+  assert.equal(await steer.buildUnderWay(pool, app.id, 16), null);
+  // A redo from the request is not posted again: the person's comment is
+  // already on the request, so only the queue moves.
+  const fromRequest = await offer(ada, { origin: 'request' });
+  posts.length = 0;
+  assert.deepEqual(await steer.redo(pool, {}, { row: fromRequest, user: ada, deps: deps() }),
+    { ok: true, patch: { state: 'redone', posted: true } });
+  assert.equal(posts.length, 0, 'the comment is the note: nothing is posted a second time');
 });

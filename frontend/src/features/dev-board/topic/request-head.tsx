@@ -730,6 +730,20 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               note={!canTranslate || translation.state === 'idle' ? undefined : <TranslateNote view={translation} className="mt-1" />}
             />
           )}
+          {/* #6680: the viewer's own design thread, linked under the request's
+              words (right after "Filed from a design thread…"), which opens it
+              in the Homeroom bot column. Nobody else's read carries it, so no
+              one else sees a hint that the thread exists. */}
+          {!editing && r.fromThread ? (
+            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-request-from-thread={r.fromThread.rootId}>
+              <a
+                className="font-semibold text-violet-700 hover:underline dark:text-violet-300"
+                href={`#homeroom-bot/thread/${r.fromThread.rootId}`}
+              >
+                {t('project:topic.request.fromThread')}
+              </a>
+            </p>
+          ) : null}
           {working && !r.status.closed ? null : (
             <RequestStatus s={r.status} specs={specs} tracked={!!track} frame={frame} />
           )}

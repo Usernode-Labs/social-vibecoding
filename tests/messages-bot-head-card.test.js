@@ -405,12 +405,15 @@ test('#6207: the staging preview’s declared check finds the bot\'s chat withou
   const check = JSON.parse(read('dapp.json')).tests.find((t) => t.id === 'homeroom-bot-old-main-address');
   assert.ok(check, 'declared');
   assert.equal(check.path, '/?demo=1#homeroom-bot/main');
-  // A request's row wears its number tag; a first version's news, which stays, wears none.
-  // The thread it lands on is Earlier chat, alone under its own head, and the
-  // bot's offer to file a request is still a message there, with File it and
-  // Not now (the staging fixture moves the demo's old Main Chat under it).
+  // A request's row wore its number tag, and the selector still says none is
+  // drawn there. The thread it lands on is Earlier chat, alone under its own
+  // head, and the bot's offer to file a request is still a message there,
+  // with File it and Not now (the staging fixture moves the demo's old Main
+  // Chat under it).
   assert.equal(check.expectSelector, '#ai-screen:not(.hidden) #ai-main-pane[data-ai-column] > .messages-layout[data-bot-threads] > .messages-reply-pane:has([data-reply-head=alone]) .messages-reply-scroll:not(:has([data-request-tag])) .messages-quote ~ * > [aria-label^="File this"] > button:last-child:not(.messages-bot-other)');
-  assert.match(read('frontend/src/features/messages/bot-news-line.tsx'), /\{meta\.firstVersion \? null : <RequestTag number=\{meta\.issueNumber\} size="line" \/>\}/);
+  assert.match(read('frontend/src/features/messages/bot-strip.tsx'), /data-request-tag=\{number\}/, 'the tag, as a request\'s number wears it');
+  // The rows that wore it in a transcript were the chat's own stream's, which no screen draws.
+  assert.doesNotMatch(read('frontend/src/features/messages/message-row.tsx'), /RequestTag/);
   const limit = Number(/const MAX_SELECTOR_LEN = (\d+);/.exec(read('capture/capture.js'))[1]);
   assert.ok(check.expectSelector.length <= limit, 'within what the runner reads');
   assert.equal(check.expectText, 'Earlier chat', 'the server\'s name for the thread the old Main Chat messages are under');

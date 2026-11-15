@@ -61,14 +61,14 @@ import { Chip } from '@/components/ui/chip';
 import { SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
-  ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, ChatBubbleTailIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, CodeIcon,
+  ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, CameraIcon, ChatBubbleTailIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, CodeIcon,
   CogIcon, EyeIcon, HandRaisedIcon, LockIcon, PlayIcon, ReplyArrowIcon, WarningTriangleIcon, XIcon,
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { getDateLocale } from '../../lib/i18n/runtime';
 import {
-  GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder,
+  GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, recentGroupsFirst,
   type AiApp, type AiThread, type WorkRow,
 } from './model';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
@@ -93,7 +93,7 @@ const G = 'h-[18px] w-[18px]';
 const GLYPHS: Record<Glyph, (props: { className?: string }) => ReactNode> = {
   chat: ChatIcon, play: PlayIcon, hand: HandRaisedIcon, check: CheckIcon, again: ArrowPathIcon, warning: WarningTriangleIcon,
   lock: LockIcon, ballot: BallotIcon, upload: ArrowUpTrayIcon, eye: EyeIcon, cog: CogIcon, reply: ReplyArrowIcon, code: CodeIcon,
-  clock: ClockIcon, x: XIcon, bubble: ChatBubbleTailIcon,
+  clock: ClockIcon, camera: CameraIcon, x: XIcon, bubble: ChatBubbleTailIcon,
 };
 function GlyphIcon({ name }: { name: Glyph }): ReactNode {
   const Icon = GLYPHS[name];
@@ -521,7 +521,9 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
   // #6262: Needs you draws what is new first, before the order is held, so
   // a held list keeps the order it was drawn in (#6245). #6408: Live this
   // week does the same without the styles, so its first few include any new.
-  const ordered = freshStyle || foldFresh ? freshFirst(lines) : lines;
+  // #6672: Needs you then lifts each project by its newest activity, so a
+  // project whose only row is a fresh private chat is not always last.
+  const ordered = freshStyle ? recentGroupsFirst(freshFirst(lines)) : foldFresh ? freshFirst(lines) : lines;
   const held = hold && holding && drawn.current ? holdOrder(ordered, drawn.current) : ordered;
   const startHold = () => {
     if (!hold) return;

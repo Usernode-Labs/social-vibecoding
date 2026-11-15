@@ -150,7 +150,6 @@ let state: InternalState = {
   listCollapsed: false,
   showMoreChannels: false,
   unreadMark: null,
-  threadFocusId: null,
 };
 
 /*
@@ -239,6 +238,16 @@ const heldTyping = new Map<string, { conversationId: number; scope: ComposerScop
  */
 const typingHolders = new Map<string, Map<number, boolean>>();
 const TYPING_HOLD_MS = 5000;
+/**
+ * #6674: the bot's card while the tab is away, and the answers that correct
+ * it. `staleBotTyping` marks a scope whose bot entry outlived its expiry
+ * because the page was hidden (a phone app does not run timers while it is
+ * gone, and coming back must not flash an empty space);
+ * `botWorkingGeneration` tells a live typing event from a status read that
+ * started before it, so the newest news wins.
+ */
+const staleBotTyping = new Set<ComposerScope>();
+const botWorkingGeneration = new Map<ComposerScope, number>();
 let pendingShare: SharedObjectReference | null | undefined;
 /** A `#messages/channel/<handle>` link followed before the lists landed. */
 let pendingChannel: string | null = null;
@@ -539,7 +548,12 @@ function botToTab(): boolean {
   if (typeof window === 'undefined' || !state.route.open || state.route.embedded) return false;
   const conversationId = state.route.conversationId;
   if (!conversationId || conversationId !== botConversationId()) return false;
-  if (!new RegExp(`^#messages/${conversationId}(?:/|$)`).test(window.location.hash)) return false;
+  // Only from this conversation's own address, read as the router reads it
+  // (public/js/app.js: the query off, the id as a number), so every address
+  // the router opened the chat from here goes on to the tab. The chat's own
+  // stream is drawn on no screen: nothing here may be left showing it.
+  const parts = window.location.hash.replace(/^#/, '').split('?')[0].split('/');
+  if (parts[0] !== 'messages' || Number(parts[1]) !== conversationId) return false;
   // The chat itself was Main Chat: its old address, which the tab resolves
   // to the thread those messages are in now (../ai/where.ts).
   const href = botOldAddress({ threadRootId: state.route.threadRootId, focusMessageId: state.route.focusMessageId });
@@ -737,17 +751,6 @@ function browserOffline(): boolean {
   return typeof navigator !== 'undefined' && navigator.onLine === false;
 }
 
-/**
- * How many messages a page of a conversation reads. The Homeroom bot's chat
- * folds most of its news into a few "N finished" lines (./bot-news-line.tsx),
- * so a page of 50 fills little of the screen and opening it read page after
- * page to fill it, behind its spinner (./open-hold.ts). There it reads the
- * server's most (services/conversations.js caps a page at 100).
- */
-function pageSize(conversation: Pick<ConversationDetail, 'homeroomBot'> | null): number {
-  return conversation?.homeroomBot === true ? 100 : 50;
-}
-
 export async function loadThread(conversationId: number, force = false): Promise<void> {
   if (!validId(conversationId)) return;
   if (leftConversations.has(conversationId)) {
@@ -843,8 +846,8 @@ export async function loadThread(conversationId: number, force = false): Promise
         ? await api.listMessagesAround(conversationId, anchor, read).then((around) => ({
           messages: around.messages, nextBefore: around.nextBefore, nextAfter: around.nextAfter,
           threadRootId: around.focus.threadRootId, focusMessageId: around.focus.messageId,
-        })).catch(() => api.listMessages(conversationId, null, read, pageSize(active)).then((latest) => ({ ...latest, nextAfter: null })))
-        : { ...(await api.listMessages(conversationId, null, read, pageSize(active))), nextAfter: null };
+        })).catch(() => api.listMessages(conversationId, null, read).then((latest) => ({ ...latest, nextAfter: null })))
+        : { ...(await api.listMessages(conversationId, null, read)), nextAfter: null };
     if (request !== threadRequest || state.route.conversationId !== conversationId) return;
     if (focus && page.focusMessageId && page.focusMessageId !== focus) {
       // In its community's page the room has no address of its own (#3653):
@@ -870,6 +873,9 @@ export async function loadThread(conversationId: number, force = false): Promise
       : preserveVisibleThread ? null : markFor(conversationId, active);
     publish({ active, messages, nextBefore: page.nextBefore, nextAfter: page.nextAfter, loadingThread: false, online: true, unreadMark });
     upsertConversation(active);
+    // #6674: in the chat with Homeroom bot, ask what it is doing in the place
+    // on screen, so a thread opened while it works draws the card at once.
+    seedBotWorkingOnScreen();
     // A link to a reply inside a thread opens that thread beside it.
     if (focus && page.threadRootId && state.route.threadRootId !== page.threadRootId) {
       publish({ route: { ...state.route, threadRootId: page.threadRootId } });
@@ -1123,7 +1129,7 @@ export async function loadOlder(): Promise<boolean> {
   if (!conversationId || !state.nextBefore || state.loadingOlder) return true;
   publish({ loadingOlder: true });
   try {
-    const page = await api.listMessages(conversationId, state.nextBefore, undefined, pageSize(state.active));
+    const page = await api.listMessages(conversationId, state.nextBefore);
     if (state.route.conversationId !== conversationId) return true;
     const known = new Set(state.messages.map((message) => message.id));
     const older = page.messages.filter((message) => !known.has(message.id));
@@ -2724,31 +2730,9 @@ export function threadAddress(conversationId: number, rootId: number): string {
   return `#messages/${conversationId}/thread/${rootId}`;
 }
 
-/**
- * Open a request's thread at one of its messages (the strip's buttons, a
- * news line in the chat with Homeroom bot): the thread pane scrolls to it
- * and flashes it (`threadFocusId`). Without a root it opens the message
- * itself, wherever it is, by its link.
- */
-export function openThreadAt(rootId: number | null | undefined, focusId: number | null | undefined = null): void {
-  const conversationId = state.route.conversationId;
-  if (typeof window === 'undefined' || !conversationId) return;
-  if (!validId(rootId)) {
-    if (validId(focusId)) openAddress(messageAddress(conversationId, focusId));
-    return;
-  }
-  publish({ threadFocusId: validId(focusId) && focusId !== rootId ? focusId : null });
-  openThread(rootId);
-}
-
-/** The open conversation's main stream as loaded, for a request's story (./bot-request.ts storyRootIn). */
+/** The open conversation's own stream as loaded: none for the chat with Homeroom bot, which reads its threads only. */
 export function loadedMessages(): readonly ConversationMessage[] {
   return state.messages;
-}
-
-/** The thread pane has shown the message it was opened at. */
-export function clearThreadFocus(): void {
-  if (state.threadFocusId) publish({ threadFocusId: null });
 }
 
 /**
@@ -2870,6 +2854,9 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
       },
     });
     applyPendingQuote();
+    // #6674: the thread was opened while Homeroom bot works in it: ask now
+    // rather than wait for its next renewal.
+    if (state.active?.peer?.bot) void seedBotWorking(conversationId, rootId);
     // 14 Nov 2026: in the chat with Homeroom bot a thread's first message is
     // unread like any reply (the bot's hello, with nothing under it yet:
     // services/private-threads.js THREAD_UNREAD_WHERE), so a thread nobody
@@ -3111,6 +3098,9 @@ export async function resync(): Promise<void> {
   const conversationId = state.route.conversationId;
   if (conversationId && onScreen(conversationId)) {
     reads.push(loadThread(conversationId, true));
+    // #6674: a reconnect is a return to the page: what Homeroom bot is doing
+    // now is read rather than waited for (loadThread asks the main scope).
+    seedBotWorkingOnScreen();
     const rootId = state.route.threadRootId;
     if (rootId && state.thread?.rootId === rootId) reads.push(loadReplyThread(conversationId, rootId, true));
     if (typeof window !== 'undefined' && typeof CustomEvent === 'function') window.dispatchEvent(new CustomEvent(WORK_CHANGED_EVENT));
@@ -3210,6 +3200,11 @@ export function handleEvent(raw: ConversationEvent): void {
       if (!userId || userId === currentUser().id || !username) break;
       // Where they type: the main stream, or the thread the event names.
       const scope = scopeKey(conversationId, api.strictId(event.threadRootId ?? event.thread_root_id) || null);
+      // #6674: a live event is newer than any answer a status read started
+      // before it can bring, and it says where the bot is now: a card held
+      // for the background is no longer held.
+      botWorkingGeneration.set(scope, (botWorkingGeneration.get(scope) || 0) + 1);
+      staleBotTyping.delete(scope);
       const current = state.typing[scope] || [];
       const expiryKey = `${scope}:${userId}`;
       const existingExpiry = typingExpiry.get(expiryKey);
@@ -3252,6 +3247,15 @@ export function handleEvent(raw: ConversationEvent): void {
       if (event.typing !== false && typeof window !== 'undefined') {
         typingExpiry.set(expiryKey, window.setTimeout(() => {
           typingExpiry.delete(expiryKey);
+          // #6674: a page in the background expires the card while its
+          // reader is away. The bot's card is held instead, and coming back
+          // asks what the bot is doing now (seedBotWorking); a person's
+          // typing line still leaves as it always did.
+          if (botPeer && typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+            staleBotTyping.add(scope);
+            return;
+          }
+          staleBotTyping.delete(scope);
           dropTyping(scope, shown);
         }, 6000));
       }
@@ -3278,6 +3282,78 @@ function releaseHeldTyping(conversationId: number): void {
     typingExpiry.delete(key);
     dropTyping(held.scope, held.shown);
   }
+}
+
+/**
+ * #6674: ask the server what Homeroom bot is doing in the place on screen,
+ * and feed the answer through the typing event's own path. A returning page
+ * (from another app, a locked phone, a reconnect) draws the bot's working
+ * card at once instead of waiting for the next renewal of its ephemeral
+ * typing event, which took five to ten seconds.
+ *
+ * A live event for the same place that arrives while the read is in flight
+ * is newer news and wins; a failed read leaves the card the reader last saw
+ * on its ordinary expiry.
+ */
+export async function seedBotWorking(conversationId: number, threadRootId: number | null = null): Promise<void> {
+  if (!validId(conversationId)) return;
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+  const active = state.active;
+  if (!active || active.id !== conversationId || !active.peer?.bot) return;
+  const scope = scopeKey(conversationId, threadRootId);
+  const generation = (botWorkingGeneration.get(scope) || 0) + 1;
+  botWorkingGeneration.set(scope, generation);
+  let working: api.BotWorking;
+  try {
+    working = await api.getBotWorking(conversationId, threadRootId);
+  } catch {
+    expireHeldBotTyping(scope);
+    return;
+  }
+  if (botWorkingGeneration.get(scope) !== generation) return;
+  if (state.route.conversationId !== conversationId) return;
+  const botId = working.botId || (active.peer?.bot ? active.peer.id : 0);
+  if (!botId) return;
+  staleBotTyping.delete(scope);
+  // A synthetic typing event: renewal, the 6s expiry and #4220's hold of the
+  // card while the bot's message is being read behave exactly as live ones.
+  handleEvent({
+    type: 'conversation_typing',
+    conversationId,
+    userId: botId,
+    typing: working.typing,
+    ...(threadRootId ? { threadRootId } : {}),
+    ...(working.typing && working.doing ? { doing: working.doing } : {}),
+    ...(working.typing && working.answering ? { answering: working.answering } : {}),
+  });
+}
+
+/** #6674: the status read failed, so a card held for the background goes on its ordinary expiry. */
+function expireHeldBotTyping(scope: ComposerScope): void {
+  if (!staleBotTyping.delete(scope)) return;
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+  if (typeof window === 'undefined') return;
+  const bot = (state.typing[scope] || []).find((entry) => entry.bot);
+  if (!bot) return;
+  const expiryKey = `${scope}:${api.strictId(state.active?.peer?.id) || 0}`;
+  const existing = typingExpiry.get(expiryKey);
+  if (existing) window.clearTimeout(existing);
+  typingExpiry.set(expiryKey, window.setTimeout(() => {
+    typingExpiry.delete(expiryKey);
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      staleBotTyping.add(scope);
+      return;
+    }
+    dropTyping(scope, bot.name);
+  }, 6000));
+}
+
+/** #6674: seed the scope on screen, when it is the chat with Homeroom bot. */
+function seedBotWorkingOnScreen(): void {
+  const conversationId = state.route.conversationId;
+  if (!conversationId) return;
+  if (!state.active || state.active.id !== conversationId || !state.active.peer?.bot) return;
+  void seedBotWorking(conversationId, state.route.threadRootId || null);
 }
 
 /** The names on a conversation's typing line, or a thread's in it, in the order they came. */
@@ -3448,6 +3524,10 @@ export function initializeMessagesStore(): () => void {
   const onPresence = () => { notePresence(); };
   for (const type of PRESENCE_EVENTS) window.addEventListener(type, onPresence, presence);
   document.addEventListener('visibilitychange', onPresence);
+  // #6674: coming back to the page asks Homeroom bot what it is doing now,
+  // instead of waiting for the next renewal of its typing event.
+  const onVisible = () => { if (document.visibilityState === 'visible') seedBotWorkingOnScreen(); };
+  document.addEventListener('visibilitychange', onVisible);
   // The header's title is written from here: say it again in the language on screen.
   const onLanguage = () => { if (state.route.open) syncChrome(); };
   document.addEventListener('homeroom:language-changed', onLanguage);
@@ -3482,6 +3562,7 @@ export function initializeMessagesStore(): () => void {
     window.removeEventListener(ACTION_OUTBOX_EVENT, onAction);
     for (const type of PRESENCE_EVENTS) window.removeEventListener(type, onPresence, presence);
     document.removeEventListener('visibilitychange', onPresence);
+    document.removeEventListener('visibilitychange', onVisible);
     document.removeEventListener('homeroom:language-changed', onLanguage);
     document.removeEventListener('sv:authed', onAuthed);
   };

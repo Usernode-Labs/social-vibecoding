@@ -59,11 +59,12 @@ test('#4046: while a plan or a question offers its own answers, the bot\'s quest
     'a question\'s own answers are never hidden');
 
   const screen = read('frontend/src/features/messages/index.tsx');
-  // #4564: plans and the change blocks are read by one memo, for the bot's DM alone.
-  assert.match(screen, /if \(!botDm\) return \{ plans: NO_PLAN_LAYOUT, blocks: null as ReadonlyMap<number, ChangeBlock> \| null \};/);
+  // The plans are read for a thread of the bot's chat alone (14 Nov 2026:
+  // its replies, where the plan and its cards are); any other chat gets none.
+  assert.match(screen, /const flatPlans = botChat && !cardId\s+\? planLayout\(replies\.map\(\(message\) => \(message\.threadRootId \? \{ \.\.\.message, threadRootId: null \} : message\)\)\)\s+: NO_PLAN_LAYOUT;/);
   // #6404: a message carrying a Questions card hides its own suggested
   // replies too, so the card is the only set of answers on it.
-  assert.match(screen, /hidePrompts=\{\(plans\.answersOpen \|\| asksWithQuestionsCard\(message\)\) && !!message\.sender\.bot\}/);
+  assert.match(screen, /hidePrompts=\{asksWithQuestionsCard\(message\) && !!message\.sender\.bot\}/);
   const row = read('frontend/src/features/messages/message-row.tsx');
   assert.match(row, /<BotQuestion message=\{message\} conversationId=\{conversationId\} hidePrompts=\{hidePrompts\} \/>/);
 });
@@ -128,9 +129,9 @@ test('#4046: the plan is the one place its request\'s step shows: the cards abov
   assert.doesNotMatch(row, /underPlan|BotPlanFollowUp/);
   assert.match(row, /<BotPlanCard message=\{message\} conversationId=\{conversationId\} cardId=\{planCardId\} \/>/);
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /if \(plans\.hidden\.has\(message\.id\)\) continue;\s*\/\/[^\n]*\n\s*if \(newsFold\?\.hidden\.has\(message\.id\)\) continue;\s*const day = dayKey\(message\);/,
-    'skipped before its day and its name are counted, as a moved card is');
-  assert.match(screen, /planCardId=\{plans\.cardOf\.get\(message\.id\) \?\? null\}\s*hidePrompts=/);
+  assert.match(screen, /const carried = \(message: ConversationMessage\) => botChat && !cardId\s+&& \(flatPlans\.hidden\.has\(message\.id\) \|\| isMovedActivity\(message\)\);/,
+    'in its thread, the card its plan carries is not among the replies drawn, as a moved card is not');
+  assert.match(screen, /planCardId=\{isPlanMessage\(message\) \? cardId \|\| flatPlans\.cardOf\.get\(message\.id\) \|\| null : null\}/);
   const host = read('frontend/src/features/messages/bot-plan.tsx');
   assert.match(host, /const state = planState\(meta, pressed\);\s*const card = cardId \? activity\.cards\.get\(cardId\) : null;/);
   assert.match(host, /progress=\{planProgress\(card, state\)\}/);

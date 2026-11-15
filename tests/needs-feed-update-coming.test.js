@@ -66,6 +66,66 @@ test('#6282: the update-in-flight windows are the bot\'s own', () => {
   assert.equal(progress.UPDATE_QUEUED_DAYS, 7);
 });
 
+test('the turn that takes a change\'s before & after screenshots is no update on its way', () => {
+  const coming = progress.updateComingSql('cs');
+  // The screenshots run is a turn on the change (mode 'shots'), and it
+  // writes nothing to it: only a turn of another mode holds the vote as an
+  // update does. A record with no mode is an older build turn's.
+  assert.match(read('src/services/shots-orchestrator.js'), /pool, session, mode: 'shots', budgetMs, dispatch, owner,/);
+  assert.match(coming, /cs\.active_turn IS NOT NULL\s+AND COALESCE\(cs\.active_turn->>'mode', 'build'\) <> 'shots'/);
+  // The asks and the takeover's own record are read as they were.
+  assert.match(coming, /uk\.status = 'taken'/);
+  assert.match(coming, /bl\.kind = 'update' AND bl\.state = 'running'/);
+  // So a change whose tests passed while its screenshots are taken is what
+  // its own facts say (work-state.js deriveChange): checking, on its shots.
+  const { deriveChange } = require('../src/services/work-state');
+  const head = 'a'.repeat(40);
+  const facts = {
+    status: 'promoted', check_state: 'passing', promoted_at: '2026-11-04T10:00:00Z',
+    reviewed_head_sha: head, checks_commit_sha: head, checks_at: '2026-11-04T11:58:00Z',
+    shots_state: 'exploring', shots_run_id: 'r'.repeat(32),
+    shots_detail: { headSha: head, required: true }, shots_updated_at: '2026-11-04T11:59:00Z',
+  };
+  const now = new Date('2026-11-04T12:00:00Z');
+  const taking = deriveChange({ ...facts, update_coming: null }, { now });
+  assert.deepEqual([taking.stage, taking.line], ['checking', { code: 'shots' }]);
+  // A real update on the same change still reads as one.
+  const updating = deriveChange({ ...facts, update_coming: 'running' }, { now });
+  assert.deepEqual([updating.stage, updating.line], ['building', { code: 'revising' }]);
+});
+
+test('a staging copy has a change whose screenshots are being taken, for the shots to show', () => {
+  // Nothing on a staging copy runs a screenshots run, so the row that says
+  // "Taking screenshots" has a fake change to be drawn for: the capture
+  // member's own, on the demo project the seed before it makes.
+  const migrate = read('src/db/migrate.js');
+  const at = migrate.indexOf('async function seedStagingOwnChangeTakingScreenshots(pool) {');
+  assert.ok(at > 0, 'the seed exists');
+  const seed = migrate.slice(at, migrate.indexOf('\n}\n', at));
+  assert.match(seed, /^async function seedStagingOwnChangeTakingScreenshots\(pool\) \{\n  if \(process\.env\.USERNODE_ENV !== 'staging'\) return;/,
+    'a no-op outside staging');
+  assert.match(migrate, /await seedStagingOwnChangeWaitingOnFix\(pool\);[\s\S]{0,400}await seedStagingOwnChangeTakingScreenshots\(pool\);/,
+    'run after the seed whose demo project it uses');
+  assert.match(seed, /username = 'usernode-capture'/, 'the shots\' member fixture\'s own change');
+  assert.match(seed, /SELECT id FROM apps WHERE id = 900097/);
+  // One row, by a session id no other seed uses.
+  assert.match(seed, /const SESSION_ID = 999_999_994;/);
+  assert.equal(migrate.split('999_999_994').length - 1, 1, 'the id names this one fake change');
+  assert.match(seed, /WHERE NOT EXISTS \(SELECT 1 FROM chat_sessions WHERE id = \$1::int\)/, 'idempotent');
+  // Promoted, its tests passed on the head up for a vote, its screenshots
+  // under way on that head, and no turn on it: it is no run.
+  assert.match(seed, /'promoted', \$6::int/);
+  assert.match(seed, /'claude-code', 'passing', 'done', 'clean', TRUE, \$7::text, \$7::text/, 'checks_commit_sha and reviewed_head_sha are one head');
+  assert.match(seed, /checks_checked_at, shots_state, shots_run_id, shots_detail, shots_updated_at,/);
+  assert.match(seed, /NOW\(\), 'exploring', \$8::varchar, \$9::jsonb, NOW\(\),/, 'its verdict and its screenshots\' last move are the moment it is made');
+  assert.match(seed, /JSON\.stringify\(\{ headSha: head, required: true \}\)/);
+  assert.doesNotMatch(seed.replace(/\/\/.*$/gm, ''), /active_turn/, 'no turn is on it');
+  // Written once, whole: the screenshots' columns are the shots machine's
+  // to update (tests/workflow-process-state.test.js), never a seed's.
+  assert.doesNotMatch(seed, /UPDATE chat_sessions/);
+  assert.match(seed, /Staging demo: /, 'obviously fake');
+});
+
 // ── standing(): where an update on its way puts the change ──────────────
 const NOW = new Date('2026-11-04T12:00:00Z');
 const row = (over = {}) => ({

@@ -200,8 +200,7 @@ export function planLayout(messages: readonly ConversationMessage[]): PlanLayout
     const meta = botMeta(message);
     if (!meta || message.deleted || !(message.id > 0)) continue;
     if (offersAnswers(message)) answersOpen = true;
-    // #4564: the change a message is about, read the same way its change
-    // block is (./bot-shared.ts changeKey), so the two cannot disagree.
+    // The change a message is about (./bot-shared.ts changeKey).
     const key = changeKey(message);
     if (!key) continue;
     if (isPlanMessage(message)) {

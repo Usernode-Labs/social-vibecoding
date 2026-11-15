@@ -21,8 +21,7 @@ import { BotQuestion, botMeta } from './bot-question';
 import { BotPlanCard, BotTwoQuestions, isPlanMessage, isTwoQuestions } from './bot-plan';
 import { BotThanksCard, isThanksMessage } from './bot-thanks-card';
 import { BotReadyCard, isReadyMessage } from './bot-ready';
-import { threadsAllowed, type ChangeBlock } from './bot-shared';
-import { requestPageOf } from './request-page';
+import { threadsAllowed } from './bot-shared';
 import { BotHeadWords, botHead, draftPreviewOf, isHeadCard } from './bot-head-card';
 import { DesignVersionCard, designVersionOf } from './design-card';
 import { BotRichCard, botCardOf } from './bot-cards';
@@ -56,9 +55,9 @@ import { TranslateNote, observeAutoTranslate, useTranslate, worthAsking } from '
  * A CHANNEL KEEPS ITS NAMED ROWS (#2783). #general and every project and
  * topic channel is not a conversation between a few people but a room, so a
  * row there stays the flat named row — square avatar, bold name, muted time —
- * whoever said it. So do the bot's cards, plans, questions, step lines and
- * change blocks wherever they land: they are not something a person said, and
- * a bubble would clip them.
+ * whoever said it. So do the bot's cards, plans, questions and step lines
+ * wherever they land: they are not something a person said, and a bubble
+ * would clip them.
  *
  * CONSECUTIVE MESSAGES GROUP. A message from the same person, close behind
  * their previous one (`groupsWithPrevious`, @/components/ui/chat.tsx — the app
@@ -136,9 +135,7 @@ export const MessageRow = memo(function MessageRow({
   focused = false,
   planCardId = null,
   hidePrompts = false,
-  block = null,
   botChat = false,
-  quoteAgain = false,
 }: {
   message: ConversationMessage;
   conversationId: number;
@@ -159,22 +156,9 @@ export const MessageRow = memo(function MessageRow({
   /** #4046: a plan or a question offers its own answers, so questions to tap give way. */
   hidePrompts?: boolean;
   /**
-   * #4564: this row's part of its change's outlined block, in the chat with
-   * Homeroom bot (./bot-shared.ts changeBlocks, ./index.tsx). Null anywhere
-   * else, and for a bot message about no request: those draw as before.
-   */
-  block?: ChangeBlock | null;
-  /**
-   * B16 (overnight audit, 1 Nov 2026): the bot's answer quotes the same
-   * message its answer just above already quoted, with nothing anybody
-   * said between them (./index.tsx). The quote is left off: it repeated
-   * the whole request over every reply in one exchange.
-   */
-  quoteAgain?: boolean;
-  /**
-   * One request, one story: the row is in the viewer's chat with Homeroom
-   * bot, the one direct chat with threads (./bot-shared.ts threadsAllowed):
-   * each request's card is the root of its thread.
+   * The row is in the viewer's chat with Homeroom bot, the one direct chat
+   * with threads (./bot-shared.ts threadsAllowed). Every conversation there
+   * is a thread, so such a row is always drawn in one (`inThread`).
    */
   botChat?: boolean;
 }) {
@@ -227,17 +211,11 @@ export const MessageRow = memo(function MessageRow({
 
   const live = !message.deleted && !message.pending && !message.failed && message.id > 0;
   const slowSend = useSlowSend(!!message.pending, message.createdAt);
-  // Threads where the chat keeps them (./bot-shared.ts threadsAllowed). In
-  // the chat with Homeroom bot a thread is a request's: it hangs off the
-  // request's card (or a message that already has one).
+  // Threads where the chat keeps them (./bot-shared.ts threadsAllowed): a
+  // channel and a group. A direct chat has none but the chat with Homeroom
+  // bot, whose rows are already in a thread (`inThread`).
   const threads = threadsAllowed({ kind, homeroomBot: botChat });
-  // 31 Oct 2026: in the chat with Homeroom bot a request's story is the
-  // request's own page (./request-page.ts), so its news opens that and has
-  // no thread here: no Reply in thread, no "N updates in its thread".
-  const story = botChat && kind === 'direct' && !inThread ? requestPageOf(message) : null;
-  const threadRoot = !live || inThread || !threads || story ? null
-    : message.threadRootId ? message.threadRootId
-      : kind !== 'direct' || isActivityMessage(message) || message.thread ? message.id : null;
+  const threadRoot = !live || inThread || !threads ? null : message.threadRootId || message.id;
   const canThread = threadRoot !== null;
   // A quiet step line in a request's thread ("Reading it.", "Built. Testing it…").
   const step = !!message.sender.bot && message.metadata?.homeroomBot?.kind === 'step';
@@ -387,25 +365,6 @@ export const MessageRow = memo(function MessageRow({
   // ./bot-head-card.tsx), which is then not drawn again under the words.
   const head = botHead(message.content, botMeta(message));
   const objects = head ? message.objects.filter((object) => !isHeadCard(head, object)) : message.objects;
-  // #4564: a row whose change block repeats the request drops its request
-  // card — the top of the block already shows that request — and its words
-  // carry the card's own label, spoken, in its place. Only on the plain
-  // words path: a card standing in place of the words (thanks, activity,
-  // plan, two questions, ready) keeps everything it draws, and the change's
-  // own card in `objects` is never a repeat.
-  const dropHead = !!block?.repeat && head?.kind === 'request' && !isThanksMessage(message)
-    && !isActivityMessage(message) && !isPlanMessage(message) && !isTwoQuestions(message) && !isReadyMessage(message);
-  // #4564: a repeated request's line goes without its card, and without the
-  // line either — the top of its block already shows that card. `head` is
-  // botHead's own fresh reading of this render's content, so the flag set
-  // here is this row's alone; after `objects`, which must still filter the
-  // card the message carries by it (a hidden head filters nothing).
-  if (dropHead && head) head.hidden = true;
-  const spokenLabel = dropHead && head
-    ? (head.title
-      ? t('messages:row.botBlock.requestLabel', { number: String(head.issueNumber), title: head.title })
-      : t('messages:row.botBlock.requestLabelUntitled', { number: String(head.issueNumber) }))
-    : null;
   // #6151: a design filed as a request says what happens to it next, after
   // its line, in the reader's language (./bot-track.tsx filedNextLine).
   const filedNext = botMeta(message)?.kind === 'design_filed' ? filedNextLine(botMeta(message)?.filedNext) : null;
@@ -424,10 +383,10 @@ export const MessageRow = memo(function MessageRow({
 
   // #5680: which rows have a side. A DM and a group do; a channel does not
   // (#2783), and neither does a row that is not something a person said: the
-  // bot's cards and plans, its step lines, a platform notice, and a change
-  // block, whose outline runs edge to edge. `head` is the bot's line naming a
-  // request or a change, drawn as that thing's card (./bot-head-card.tsx);
-  // `question`/`actions` is its card with taps on it (./bot-question.tsx).
+  // bot's cards and plans, its step lines and a platform notice. `head` is
+  // the bot's line naming a request or a change, drawn as that thing's card
+  // (./bot-head-card.tsx); `question`/`actions` is its card with taps on it
+  // (./bot-question.tsx).
   const isCardMessage = isThanksMessage(message) || isActivityMessage(message) || isPlanMessage(message)
     || isTwoQuestions(message) || isReadyMessage(message) || !!head
     || (!!message.sender.bot && (message.metadata?.homeroomBot?.question || message.metadata?.homeroomBot?.actions?.length)
@@ -436,12 +395,12 @@ export const MessageRow = memo(function MessageRow({
   // own messages and theirs share one style, so a thread reads top to
   // bottom"): every row is the named row a channel draws.
   const frame = isFrameSkin(useLiveSkin());
-  const sided = !frame && kind !== 'channel' && !block && !step && !message.system && !isCardMessage;
+  const sided = !frame && kind !== 'channel' && !step && !message.system && !isCardMessage;
 
   // The quoted reply, the body and the inline editor: the part of the
   // message that stands as the row's text. A deleted message says so in its
   // place and nothing else (#2387).
-  const quote = <>{message.reply && !quoteAgain ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender, { bare: true })}</span><p>{message.reply.deleted ? t('messages:row.quote.deleted') : plainText(message.reply.content) || t('messages:row.quote.attachment')}</p></button> : null}</>;
+  const quote = <>{message.reply ? <button type="button" className="messages-quote" onClick={() => document.getElementById(`messages-message-${message.reply?.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{senderName(message.reply.sender, { bare: true })}</span><p>{message.reply.deleted ? t('messages:row.quote.deleted') : plainText(message.reply.content) || t('messages:row.quote.attachment')}</p></button> : null}</>;
   const body = message.deleted ? (
     <p className="messages-deleted">{t('messages:row.deleted')}</p>
   ) : (
@@ -516,17 +475,7 @@ export const MessageRow = memo(function MessageRow({
           card it names — for this reader, and never one already above. */}
       {message.content && !message.moderated ? <LinkEmbeds text={message.content} exclude={message.objects} /> : null}
       {message.reactions.length ? <div className="messages-reactions">{message.reactions.map((reaction) => <button type="button" key={reaction.emoji} aria-pressed={reaction.reacted} title={reaction.users ? listText(reaction.users) : undefined} onClick={() => void toggle(reaction.emoji)} className={reaction.reacted ? 'messages-reaction-mine' : ''}><span>{reaction.emoji}</span><span>{reaction.count}</span></button>)}</div> : null}
-      {message.thread && !inThread && kind === 'direct' && threads && !story ? (
-        // One request, one story: in the chat with Homeroom bot the thread
-        // under a request's card is its updates, said in words.
-        <button
-          type="button"
-          className="mt-1.5 inline-flex items-center rounded-md text-[0.8125rem] font-semibold text-violet-700 hover:underline dark:text-violet-300"
-          aria-pressed={threadOpen}
-          data-bot-thread-link={message.id}
-          onClick={() => openThread(message.id)}
-        >{t('messages:row.botThread.updates', { count: message.thread.replyCount })}</button>
-      ) : message.thread && !inThread && !story ? (
+      {message.thread && !inThread ? (
         <ThreadSummaryChip
           replyCount={message.thread.replyCount}
           lastReplyAt={message.thread.lastReplyAt}
@@ -613,14 +562,8 @@ export const MessageRow = memo(function MessageRow({
     <span>{t('messages:row.sending')}</span>
   </div> : null;
 
-  // #4564: the change block this row belongs to, as classes and data its
-  // stylesheet draws its outline from. The article's own id, its
-  // data-message-id and its existing classes are unchanged.
-  const blockClass = block ? ` messages-bot-block messages-bot-block-${block.part}` : '';
-  const blockAttrs = block ? { 'data-bot-block': block.key, 'data-bot-block-part': block.part } : {};
-
   return (
-    <article ref={article} id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${sided ? 'messages-message-bubble ' : ''}${grouped ? 'messages-message-grouped' : ''}${blockClass} ${stateClasses}`} {...blockAttrs} {...longPress}>
+    <article ref={article} id={`messages-message-${message.id}`} data-message-id={message.id} className={`messages-message group ${sided ? 'messages-message-bubble ' : ''}${grouped ? 'messages-message-grouped' : ''} ${stateClasses}`} {...longPress}>
       {/* #5680: your own message is already on its side — the tint and the
           right edge say whose it is — so it needs no face, as ChatMessageRow
           draws a turn (`from="me"`) in the general chat. A channel row keeps
@@ -628,7 +571,7 @@ export const MessageRow = memo(function MessageRow({
       {grouped
         ? <time className="messages-message-gutter" dateTime={message.createdAt} title={fullTime(message.createdAt)}>{shortTime}</time>
         : sided && mine ? null : <UserAvatar user={message.sender} size="md" shape="square" />}
-      <div className={block ? 'min-w-0 flex-1 messages-bot-block-body' : sided ? 'min-w-0 flex-1 messages-bubble-wrap' : 'min-w-0 flex-1'}>
+      <div className={sided ? 'min-w-0 flex-1 messages-bubble-wrap' : 'min-w-0 flex-1'}>
         {/* Audit C05/Y06 (2 Nov 2026): the line over a message names its
             author the one way every chat does, their bare username, as a
             direct message and #general already did; a handle in a sentence
@@ -636,10 +579,6 @@ export const MessageRow = memo(function MessageRow({
             so its line says only the time, and your name is there for a
             screen reader alone, not in the accent, which marks an action. */}
         {grouped ? null : <div className="messages-message-head"><span dir="auto" className={`messages-message-author ${mine && sided ? 'sr-only' : ''}`}>{senderName(message.sender, { bare: true })}</span>{message.sender.bot ? <span className="messages-bot-badge">{t('messages:row.aiBadge')}</span> : null}<time dateTime={message.createdAt} title={fullTime(message.createdAt)}>{time}</time>{status}{barBesideHead ? actions : null}</div>}
-        {/* #4564: the dropped card's own label, spoken: a screen reader still
-            hears which request these words are about, as the block's top
-            shows. */}
-        {dropHead ? <span className="sr-only">{spokenLabel}</span> : null}
         {/* #5680: in a conversation the words sit in a bubble on their
             sender's side; the head above them, and everything under them
             (pictures, shared items, reactions, a thread) stays outside it. */}

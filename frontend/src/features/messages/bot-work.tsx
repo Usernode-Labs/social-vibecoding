@@ -10,9 +10,8 @@ export { WORK_CHANGED_EVENT, jobName, jobTitle };
  * Where each of the viewer's requests stands: one track per request (GET
  * /api/ai/tracks, each its stored work state with what its card draws:
  * services/work-state.js, services/homeroom-bot-track.js). A request's
- * thread marks its tries from it, a private thread's bar draws it, a first
- * version's news line in the chat says where it stands, and the Messages
- * list's line for the bot's chat counts it.
+ * thread marks its tries from it, a private thread's bar draws it, and the
+ * Messages list's line for the bot's chat counts it.
  *
  * WHEN IT READS AGAIN (5 Nov 2026: no timer). When a request's stage moves,
  * the server pushes `work_state` to everyone who may view its project, and

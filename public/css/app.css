@@ -723,18 +723,6 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 /* THE HISTORY ABOVE A COMPOSER reserves no band at its foot, only the
    transcript's own 12px end: `.chat-transcript`, under "A chat's foot"
    above, which every chat's scroller wears (1 November 2026). */
-/* THE BOT'S CHAT, OPENING (features/messages/open-hold.ts). Its rows are
-   laid out, so the transcript can tell whether they fill the screen, and
-   not seen until they are what it will stay as; the spinner stays at the
-   top of the scroller over them, however far down it is scrolled. */
-.messages-thread-pane[data-opening] > .messages-thread-scroll > :not(.messages-state),
-.messages-thread-pane[data-opening] > [data-transcript-overlay] {
-  visibility: hidden;
-}
-.messages-thread-pane[data-opening] > .messages-thread-scroll > .messages-state {
-  position: sticky;
-  top: 0;
-}
 
 /* A conversation row, drawn straight on the strip: the square swatch
    avatar, then two lines — the name with the time on its trailing edge, the
@@ -1187,45 +1175,6 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 @media (hover: none) {
   .messages-message-gutter { visibility: visible; }
 }
-
-/* ── The bot's change blocks (#4564) ────────────────────────────────────
-   In the chat with Homeroom bot, everything it says about one change is
-   one outlined block led by that change's card: the same hairline and
-   rounding the cards already wear (20px, one hairline, no fill, so the
-   cards inside keep their own surface), drawn around them. The rows keep
-   every part of a row they had — their id, their data, their action bar —
-   and only the outline and the vertical padding between them change, so
-   the line runs unbroken where one row continues into the next. The part
-   classes sit on the row (message-row.tsx); the box they draw is its
-   content column, which is where the cards already stop (`.messages-
-   object-list`'s 480px, plus this padding). The phone's row padding
-   (the @media rule above for .messages-message) stays: a narrow column
-   keeps the same 12px inside the line. */
-.messages-bot-block-body {
-  max-width: 506px;
-  padding: 0 12px;
-  border-inline-start: 1px solid var(--app-sheet-line);
-  border-inline-end: 1px solid var(--app-sheet-line);
-}
-.messages-bot-block-first .messages-bot-block-body,
-.messages-bot-block-only .messages-bot-block-body {
-  border-top: 1px solid var(--app-sheet-line);
-  border-start-start-radius: 20px; border-start-end-radius: 20px; border-end-end-radius: 0; border-end-start-radius: 0;
-  padding-top: 10px;
-}
-.messages-bot-block-last .messages-bot-block-body,
-.messages-bot-block-only .messages-bot-block-body {
-  border-bottom: 1px solid var(--app-sheet-line);
-  border-start-start-radius: 0; border-start-end-radius: 0; border-end-end-radius: 20px; border-end-start-radius: 20px;
-  padding-bottom: 10px;
-}
-.messages-bot-block-only .messages-bot-block-body { border-radius: 20px; }
-.messages-bot-block-first, .messages-bot-block-only { margin-top: 6px; }
-/* The row's own vertical padding gives way where the block continues, so
-   the outline is unbroken from the top of its first row to the foot of its
-   last. */
-.messages-bot-block-first, .messages-bot-block-middle { padding-bottom: 0; }
-.messages-bot-block-middle, .messages-bot-block-last { padding-top: 0; }
 
 /* ── A conversation has sides (#5680) ───────────────────────────────────
    A direct message and a group chat draw each message on its sender's side,
@@ -17226,24 +17175,34 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 
 /* Votes, then Testing: two cards in the Messages surface. */
 .dev-change-pair { margin-top: 12px; display: grid; gap: 8px; }
-/* 6 Nov 2026 (#6419): on the change's own page the pair sticks under the
-   sheet's header instead of a second Votes card appearing above the replies
-   (#5725, removed). A sticky box travels only within its parent, so it is
-   the pair, not the Votes card alone, that sticks: the pair's parent is the
-   article's content column, which ends with the change's own content, above
-   the replies, so the pair lets go there by itself. The mark is the 1px
-   sentinel above it that says when the pair has left the top of the
-   scroller: it has an area to observe and its -1px margin moves nothing.
-   `-4px` is `.messages-thread-scroll`'s own top padding, as the old pin had.
-   `--dc-sheet-solid` is the plane colour for a surface content passes
-   behind, so nothing shows through the card's padding or the pair's gap. */
+/* 6 Nov 2026 (#6419): on the change's own page the Votes and Testing pair
+   keeps the change's own state in sight while the reader scrolls. #6615
+   (11 Nov 2026): it does so without changing the page's flow. The cards stay
+   at full size where they are (`.dev-change-pair[data-stick]`, in flow and
+   never sticky); the one-line rows float in `.dev-change-pair-float`, a
+   zero-height sticky holder between the mark and the pair that travels within
+   the article's content column and lets go, with no extra code, where the
+   change's own content ends above the replies. The strip is absolutely
+   positioned, so appearing or going changes no height above or below the
+   reader: the first version shrank the pair in place and gave the lost height
+   back as a margin, and while the cards updated that made the page jump back
+   and forth. Because nothing in the flow resizes, the switch cannot feed
+   scroll anchoring, and the pair opts out of being an anchor as well. The
+   mark is the 1px sentinel above the pair that says when it has left the top
+   of the scroller: it has an area to observe and its -1px margin moves
+   nothing, and `-4px` is `.messages-thread-scroll`'s own top padding, as the
+   old pin had. `--dc-sheet-solid` is the plane colour for a surface content
+   passes behind, so nothing shows through the card's padding or the strip's
+   gap. */
 .dev-change-pair-mark { display: block; height: 1px; margin-bottom: -1px; }
-.dev-change-pair[data-stick] { position: sticky; top: -4px; z-index: 10; }
+.dev-change-pair[data-stick] { overflow-anchor: none; }
+.dev-change-pair-float { position: sticky; top: -4px; z-index: 10; height: 0; overflow-anchor: none; }
+.dev-change-pair-float > .dev-change-pair { position: absolute; inset-inline: 0; top: 0; margin-top: 0; }
 .dev-change-pair[data-stuck] { gap: 4px; padding-block: 8px; background-color: var(--dc-sheet-solid); }
 .dev-change-pair[data-stuck] .dev-change-gate { padding: 8px 12px; }
 .dev-change-pair[data-stuck] :is(.dev-change-bar, .dev-change-gate-facts, .dev-change-gate-note,
   .dev-change-gate-why, .dev-change-gate-fix, .dev-change-gate-refused) { display: none; }
-.dev-change-pair[data-stuck] [data-change-gate="testing"] .dev-change-gate-act { display: none; }
+.dev-change-pair[data-stuck] [data-change-gate-line="testing"] .dev-change-gate-act { display: none; }
 .dev-change-gate {
   min-width: 0;
   display: grid;
@@ -20394,9 +20353,8 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 .dev-ws-places-group + .dev-ws-places-group .dev-ws-places-head { padding-top: 12px; }
 .dev-ws-places-foot { margin-top: auto; padding-top: 12px; }
 
-/* THE PLACE BAR (place-bar.tsx): the band's box, one row: the tray's
-   button, then the place's name. On a phone it is the band, in the
-   community's colour; its 44px button sits at the band's left edge. */
+/* THE PLACE BAR (place-bar.tsx): the band's box, one row: the place's
+   name. On a phone it is the band, in the community's colour. */
 .dev-ws-placebar .dev-ws-tabtrack {
   display: flex; align-items: center; gap: 4px; min-width: 0; height: 44px;
 }
@@ -20423,10 +20381,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 .dev-ws-place-title-hash { margin-inline-end: 3px; opacity: 0.6; }
 @media (min-width: 768px) {
   .dev-ws-placebar .dev-ws-tabtrack { height: 52px; }
-  .dev-ws-places-btn { color: var(--text-muted); margin-inline-start: -10px; }
-  .dev-ws-places-btn:focus-visible { outline-color: var(--accent); }
-  @media (hover: hover) { .dev-ws-places-btn:hover { background: var(--bg-secondary); color: var(--text-primary); } }
-  .dev-ws-places-dot { background: var(--text-muted); box-shadow: 0 0 0 2px var(--bg-primary); }
   .dev-ws-place-title { font-size: 20px; font-weight: 700; color: var(--text-primary); }
   /* ON THE HUB THE HERO IS THE PAGE'S HEADING (audit P02, 1 Nov 2026): its
      name is the one large heading, so "Hub" above it is the band's quiet
@@ -20439,8 +20393,8 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
    platform header, and the second coloured row is gone. The band keeps its
    box — the margin, the padding and the 18px tuck the pinned head and the
    pull to refresh are measured against — but it paints nothing and takes no
-   taps: its track is collapsed to nothing, the h2 stays in the DOM for
-   screen readers and the declared checks, and the band's button is hidden.
+   taps: its track is collapsed to nothing, and the h2 stays in the DOM for
+   screen readers and the declared checks.
    The header draws its own button (place-bar.tsx HeaderPlace), 28px like the
    header's other controls, and the place's name beside the switcher as a
    small quiet tag (below); the tint they sit on and the dot's ring are the
@@ -20456,7 +20410,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 @media (max-width: 767.98px) {
   .dev-ws-tabs.dev-ws-band { background: none; pointer-events: none; }
   .dev-ws-placebar .dev-ws-tabtrack { height: 0; overflow: hidden; }
-  .dev-ws-placebar .dev-ws-places-btn { display: none; }
   #platform-header .header-places-btn { width: 28px; height: 28px; margin-inline-start: 0; }
   #platform-header .header-places-btn .dev-ws-places-dot { top: 1px; inset-inline-end: 0; }
   #platform-header:has(.header-place-name) #header-title-name > svg {
@@ -25718,12 +25671,6 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
     color: var(--text-primary);
     font-weight: 650;
   }
-  /* The places are in the sidebar, so the place bar's button to the tray has
-     nothing to open beside it. Folded, the sidebar is away and the button
-     is the way to the places again. */
-  body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) .dev-ws-places-btn {
-    display: none;
-  }
 
   /* ── MESSAGES ON A DESKTOP: THE LIST AS THE PAGE ─────────────────────
      features/messages/index.tsx. With nothing open the whole list is the
@@ -27742,11 +27689,10 @@ html[data-skin] [data-home-frame] :is(#home-waitlist-card, #home-verify-card, #h
 html[data-skin] [data-home-frame] #app-list { color: var(--fr-ink); }
 html[data-skin] [data-home-frame] #widget-strip { border-color: var(--fr-line); background: var(--fr-surface); }
 
-/* THE BOT'S CARDS AND LINES IN A CONVERSATION, UNDER A LOOK (the tour's
-   s10). The cards under a message wear the kit's rows in one card and the
-   bot's news lines the kit's event line (looks.json wear); the product's
-   own fills, corners and gaps step aside here so the look's are the ones
-   drawn. A card on its own (a file) keeps its padding. */
+/* THE BOT'S CARDS IN A CONVERSATION, UNDER A LOOK (the tour's s10). The
+   cards under a message wear the kit's rows in one card (looks.json wear);
+   the product's own fills, corners and gaps step aside here so the look's
+   are the ones drawn. A card on its own (a file) keeps its padding. */
 html[data-skin] .messages-message .messages-object-list { gap: 0; }
 html[data-skin] .messages-message .messages-object-list > :is(.messages-object-card, .messages-pending-object) { border-radius: 0; background: none; box-shadow: none; }
 html[data-skin] .messages-message .messages-object-list > .messages-object-card:hover { background: var(--fr-line2); }
@@ -27754,10 +27700,6 @@ html[data-skin] .messages-message :is(.messages-object-icon, .messages-file-icon
 html[data-skin] .messages-message .messages-object-card :is(.text-base, .text-sm, .text-xs) { color: var(--fr-ink); }
 html[data-skin] .messages-message .messages-object-card :is(.text-sm, .text-xs, span:last-child) { color: var(--fr-mut); }
 html[data-skin] .messages-message .messages-attachment { background: var(--fr-surface); }
-html[data-skin] :is(.messages-bot-news > button, .messages-bot-settled-run > div) :is(.text-\[14px\], .text-\[13px\]) { font-size: 13px; color: var(--fr-mut); }
-html[data-skin] .messages-bot-news > button .text-\[14px\] { color: var(--fr-ink); }
-html[data-skin] .messages-bot-news > button:hover { background: var(--fr-line2); }
-html[data-skin] .messages-bot-news :is([data-bot-badge], [data-bot-settled-tile]) { background: var(--fr-sunk); }
 
 /* A LIST BESIDE ITS OPEN ITEM (the kit's split: Homeroom bot's page). The
    screen stays the scroller and keeps its own column for the open item;
@@ -30209,9 +30151,9 @@ html[data-skin] .fr-post .fr-txt b{color:var(--fr-acc);font-weight:600}
 html[data-skin] .fr-post .fr-re,html[data-skin]:where(:not([data-skin="brand"])) .messages-message .fr-re{display:inline-flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;font-weight:600;color:var(--fr-acc)}
 html[data-skin] .fr-day,html[data-skin]:where(:not([data-skin="brand"])) .messages-day,html[data-skin]:where(:not([data-skin="brand"])) .messages-reply-pane > .messages-thread-scroll > .messages-reply-count{display:flex;align-items:center;gap:12px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--fr-faint)}
 html[data-skin] .fr-day::before,html[data-skin]:where(:not([data-skin="brand"])) .messages-day::before,html[data-skin]:where(:not([data-skin="brand"])) .messages-reply-pane > .messages-thread-scroll > .messages-reply-count::before,html[data-skin] .fr-day::after,html[data-skin]:where(:not([data-skin="brand"])) .messages-day::after,html[data-skin]:where(:not([data-skin="brand"])) .messages-reply-pane > .messages-thread-scroll > .messages-reply-count::after{content:"";flex:1;height:1px;background:var(--fr-line2)}
-html[data-skin] .fr-evt,html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event,html[data-skin]:where(:not([data-skin="brand"])) :is(button:is(.messages-bot-news > *),div:is(.messages-bot-settled-run > *)){display:flex;align-items:center;gap:12px;font-size:13px;color:var(--fr-mut);min-width:0}
-html[data-skin] .fr-evt .fr-ei,html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event .dev-request-event-glyph,html[data-skin]:where(:not([data-skin="brand"])) :is(button:is(.messages-bot-news > *),div:is(.messages-bot-settled-run > *)) :is([data-bot-badge],[data-bot-settled-tile]){width:32px;height:24px;display:grid;place-items:center;flex:none;color:var(--fr-faint)}
-html[data-skin] .fr-evt b,html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event b,html[data-skin]:where(:not([data-skin="brand"])) :is(button:is(.messages-bot-news > *),div:is(.messages-bot-settled-run > *)) b{color:var(--fr-ink);font-weight:650}
+html[data-skin] .fr-evt,html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--fr-mut);min-width:0}
+html[data-skin] .fr-evt .fr-ei,html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event .dev-request-event-glyph{width:32px;height:24px;display:grid;place-items:center;flex:none;color:var(--fr-faint)}
+html[data-skin] .fr-evt b,html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event b{color:var(--fr-ink);font-weight:650}
 html[data-skin] .fr-fields,html[data-skin]:where(:not([data-skin="brand"])) .ui-fields:is(#settings-root *){padding:16px;display:flex;flex-direction:column;gap:16px}
 html[data-skin] .fr-field{display:flex;flex-direction:column;gap:8px;min-width:0}
 html[data-skin] .fr-field label{font-size:13px;font-weight:650}
@@ -30767,7 +30709,7 @@ html[data-skin="paper"] .fr-note.fr-bad{background:var(--fr-bad-t);color:var(--f
 html[data-skin="paper"] .fr-note.fr-wait .fr-ic,html[data-skin="paper"] .fr-note.fr-ok .fr-ic,html[data-skin="paper"] .fr-note.fr-bad .fr-ic{color:inherit}
 html[data-skin="paper"] .fr-day,html[data-skin="paper"] .messages-day,html[data-skin="paper"] .messages-reply-pane > .messages-thread-scroll > .messages-reply-count{letter-spacing:.04em;font-weight:600;color:var(--fr-faint)}
 html[data-skin="paper"] .fr-post .fr-when,html[data-skin="paper"] .messages-message .messages-message-head time,html[data-skin="paper"] .fr-mono{color:var(--fr-faint)}
-html[data-skin="paper"] .fr-evt .fr-ei,html[data-skin="paper"] #dev-topic-thread #gc-thread-messages .dev-request-event .dev-request-event-glyph,html[data-skin="paper"] :is(button:is(.messages-bot-news > *),div:is(.messages-bot-settled-run > *)) :is([data-bot-badge],[data-bot-settled-tile]){color:var(--fr-mut)}
+html[data-skin="paper"] .fr-evt .fr-ei,html[data-skin="paper"] #dev-topic-thread #gc-thread-messages .dev-request-event .dev-request-event-glyph{color:var(--fr-mut)}
 html[data-skin="paper"] .fr-composer,html[data-skin="paper"] .messages-composer-card{background:var(--fr-well);box-shadow:none;padding-inline-start:12px}
 html[data-skin="paper"] .fr-colm>.fr-composer,html[data-skin="paper"] .fr-colm>.messages-composer-card{width:min(1056px,calc(100% - 80px));margin:0 auto 16px}
 html[data-skin="paper"] .fr-composer .fr-send,html[data-skin="paper"] .messages-composer-card .messages-send{background:transparent;color:var(--fr-mut)}
@@ -31111,19 +31053,24 @@ html[data-skin="sunrise"][data-skin] .fr-tb.fr-on{border-radius:14px}
      white with a soft lift and no outline, so a card differs from the page
      by its fill. (The website's own cream, #fffeea, is too close to white
      for that without the ink outline its cards wear.) In dark the page is
-     the dark of the website's ink, a deep green, a card is one step
-     lighter, and words are the cream the light page is made of.
+     a very dark navy, a card is one step lighter in the same blue, and
+     words are a white tinted the same way.
    - A frame around the page: a deep sky sidebar with white words, and a
      navy top bar, darker than the sidebar so the two read as two pieces. A
      community's own header colour stays on its pages. In dark both are
-     deeper, so the frame does not glare beside a dark page.
+     much deeper, a dark blue sidebar under a navy bar, so the frame does
+     not glare beside a dark page.
    - One job per colour. Sun (#ffee6f) means "you are here" on the sidebar
      and the tab bar, and "do this" on the main button, which in light also
      wears the website's ink outline and hard foot. Deep sky (#1a63c4) is a
      link, and a count that asks for you; in dark a link is a light sky,
-     which reads on a dark card. Ink (#121a0e) is text, cream in dark.
-   - Geist for words, Young Serif for titles, Geist Mono for counts. A
-     label over a group is sentence case, not small caps.
+     which reads on a dark card. Ink (#121a0e) is text; in dark, text is
+     a white tinted toward the page's blue.
+   - Two families, in both modes. Light is yellow (the cream page, sun)
+     and blue (the frame, links). Dark is the same two with the roles
+     turned: blue is the page and everything on it, and sun is the accent.
+   - Geist for words and for titles, Geist Mono for counts. A label over
+     a group is sentence case, not small caps.
    - The website's own figures in two empty states.
 
    Appended last on purpose. The declarations other rules count (the home
@@ -31147,6 +31094,9 @@ html[data-skin="sunrise"][data-skin] .fr-tb.fr-on{border-radius:14px}
   font-style: normal;
   font-display: swap;
 }
+/* No rule of this look names Young Serif since its titles went back to
+   Geist. The face stays declared, and its file committed, for the
+   signed-out pages' look, which draws its headlines in it. */
 @font-face {
   font-family: 'Young Serif';
   src: url('/fonts/young-serif/young-serif-latin-400-normal.woff2') format('woff2');
@@ -31232,63 +31182,68 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]):not([data-contrast="more"]) {
   --app-sheet-line: rgba(18, 26, 14, 0.07);
 }
-/* DARK. The same roles on a deep green page. As in the standard dark the
-   surfaces climb from the page: --bg-primary is the page, a card is
-   --bg-secondary, and what stands on a card is --bg-tertiary. */
+/* DARK. The same roles on a very dark navy page, so dark is the look's
+   own blue and yellow and nothing else. It was first a deep green (the
+   dark of the website's ink), then a dark purple after the standard
+   dark's washes: each was a third family beside the blue frame and the
+   sun accents, and purple fought the sun, its opposite. As in the standard
+   dark the surfaces climb from the page: --bg-primary is the page, a card
+   is --bg-secondary, and what stands on a card is --bg-tertiary. The greys
+   are tinted toward the same blue. */
 html[data-skin="brand"].dark:not([data-app-tone="light"]) {
-  --bl-page: #141a11;
-  --bl-card: #20281c;
-  --bl-raise: #2b3426;
-  --bl-label: #cfceb7;
-  --bl-tile-ink: #cfceb7;
-  --bl-bar: #232c4f;
-  --bl-side: #143a75;
+  --bl-page: #0d1421;
+  --bl-card: #182135;
+  --bl-raise: #243047;
+  --bl-label: #c3cad8;
+  --bl-tile-ink: #c3cad8;
+  --bl-bar: #232b43;
+  --bl-side: #122a52;
   --bl-sun: #ffee6f;
   --bl-sun-lit: #fff6ac;
   --bl-on-sun: #121a0e;
-  --bl-wash: #3a3714;
+  --bl-wash: rgba(255, 238, 111, 0.14);
   --bl-sky: #7fbcf7;
   --bl-count: #1a63c4;
   --bl-on-count: #ffffff;
-  --bl-solid: #f6f2d8;
-  --bl-on-solid: #121a0e;
+  --bl-solid: #eef2f8;
+  --bl-on-solid: #0d1421;
   --bl-tint-sun: rgba(255, 238, 111, 0.18);
   --bl-tint-sky: rgba(127, 188, 247, 0.18);
   --bl-tint-leaf: rgba(150, 184, 133, 0.22);
-  --bl-on-tint: #f6f2d8;
-  --bl-edge: rgba(246, 242, 216, 0.08);
-  --bl-pic-line: rgba(246, 242, 216, 0.12);
+  --bl-on-tint: #eef2f8;
+  --bl-edge: rgba(220, 230, 248, 0.08);
+  --bl-pic-line: rgba(220, 230, 248, 0.12);
   /* A shadow has to out-darken the page to lift anything from it. */
   --bl-lift: 0 1px 2px rgba(0, 0, 0, 0.35), 0 14px 30px -22px rgba(0, 0, 0, 0.9);
-  --bl-raise-edge: inset 0 0 0 1px rgba(246, 242, 216, 0.1), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --bl-raise-edge: inset 0 0 0 1px rgba(220, 230, 248, 0.1), 0 1px 2px rgba(0, 0, 0, 0.3);
   /* An ink outline would vanish on the dark page: the pill keeps its hard
      foot, in a deeper sun. */
   --bl-pill-edge: 0 2px 0 #a3962b;
   --bl-pill-edge-down: 0 0 0 #a3962b;
-  --bg-primary: #141a11;
-  --bg-secondary: #20281c;
-  --bg-tertiary: #2b3426;
-  --dev-press: #374131;
-  --bg-input: #20281c;
-  --bg-code: #10150d;
-  --bg-code-header: #20281c;
-  --bg-card: rgba(246, 242, 216, 0.06);
-  --dc-strip: #141a11;
-  --dc-sheet: #20281c;
-  --dc-sheet-raise: #2b3426;
-  --dc-raised: #2b3426;
-  --dc-sheet-solid: #20281c;
-  --dc-strip-solid: #141a11;
+  --bg-primary: #0d1421;
+  --bg-secondary: #182135;
+  --bg-tertiary: #243047;
+  --dev-press: #303e5a;
+  --bg-input: #182135;
+  --bg-code: #0a0f1a;
+  --bg-code-header: #182135;
+  --bg-card: rgba(220, 230, 248, 0.06);
+  --dc-strip: #0d1421;
+  --dc-sheet: #182135;
+  --dc-sheet-raise: #243047;
+  --dc-raised: #243047;
+  --dc-sheet-solid: #182135;
+  --dc-strip-solid: #0d1421;
   /* In dark the lighter line is the stronger one, as in the standard dark. */
-  --border: rgba(246, 242, 216, 0.12);
-  --border-light: rgba(246, 242, 216, 0.18);
-  /* Cream and its greys. */
-  --text-primary: #f6f2d8;
-  --text-secondary: #dedbc4;
-  --text-muted: #a9ad98;
-  --text-faint: #8f937f;
-  --text-code: #dedbc4;
-  /* The accent is the light sky here, not the cream that would mirror
+  --border: rgba(220, 230, 248, 0.12);
+  --border-light: rgba(220, 230, 248, 0.18);
+  /* White and its greys, tinted toward the page. */
+  --text-primary: #eef2f8;
+  --text-secondary: #d5dbe6;
+  --text-muted: #a0a9bb;
+  --text-faint: #838da1;
+  --text-code: #d5dbe6;
+  /* The accent is the light sky here, not the white that would mirror
      light's ink: rules that put white words on the accent stay as readable
      as they are in the standard dark. */
   --accent: #7fbcf7;
@@ -31296,19 +31251,19 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]) {
   --accent-ink: #121a0e;
   --accent-tint: rgba(127, 188, 247, 0.14);
   --accent-tint-ink: #7fbcf7;
-  --accent-wash: #3a3714;
+  --accent-wash: rgba(255, 238, 111, 0.14);
   --accent-wash-ink: #ffee6f;
   /* Lit things on the page: sun words on a wash of sun. */
   --lit-ink: #ffee6f;
   --lit-tint: rgba(255, 238, 111, 0.16);
   --lit-line: transparent;
-  --brand-ink: #f6f2d8;
-  --brand-tint: #20281c;
-  --brand-line: rgba(246, 242, 216, 0.14);
+  --brand-ink: #eef2f8;
+  --brand-tint: #182135;
+  --brand-line: rgba(220, 230, 248, 0.14);
 }
-/* Hairlines in cream at 7%, unless high contrast asked for stronger ones. */
+/* Hairlines in that white at 7%, unless high contrast asked for stronger ones. */
 html[data-skin="brand"].dark:not([data-app-tone="light"]):not([data-contrast="more"]) {
-  --app-sheet-line: rgba(246, 242, 216, 0.07);
+  --app-sheet-line: rgba(220, 230, 248, 0.07);
 }
 
 /* THE PAGE. The wallpaper is drawn on <body> by the route rule (one id
@@ -31367,6 +31322,12 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])):not([data-community-tint]) body:has(#platform-tabs) #platform-header#platform-header::before {
   display: none;
+}
+/* The side panel starts below the flat bar, as the chat column and the
+   Workshop's side panel do: the 8px it tucks under the standard bar's
+   rounded edge would show here over the navy. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])):not([data-community-tint]) body:has(#platform-tabs) .side-panel {
+  top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px) + .5rem);
 }
 /* On either bar, the navy one or a community's own, everything read off
    the bar is white: its muted words, and what is lit on it (the sidebar's
@@ -31566,26 +31527,27 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-500 { 
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .text-zinc-400 { color: #858a7c; }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .border-zinc-200 { border-color: rgba(18, 26, 14, 0.1); }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .border-zinc-300 { border-color: rgba(18, 26, 14, 0.18); }
-/* WARM DARKS. In dark the same elements wear dark: utilities, a cool
-   near-black ramp; on the green page they take the look's own steps. The
-   inverted solid (a light fill with dark words) is cream with ink. */
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-950 { background-color: #141a11; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-900 { background-color: #20281c; }
+/* THE DARK STEPS. In dark the same elements wear dark: utilities, a
+   neutral near-black ramp; on the navy page they take the look's own
+   steps. The inverted solid (a light fill with dark words) is the look's
+   white with the page's own dark. */
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-950 { background-color: #0d1421; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-900 { background-color: #182135; }
 html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-800,
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:hover\:bg-zinc-800:hover { background-color: #2b3426; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:hover\:bg-zinc-800:hover { background-color: #243047; }
 html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-700,
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:hover\:bg-zinc-700:hover { background-color: #374131; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-600 { background-color: #4a5443; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-100 { background-color: #f6f2d8; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-100 { color: #f6f2d8; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-200 { color: #e4e1c9; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-300 { color: #cfceb7; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-400 { color: #a9ad98; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-500 { color: #8f937f; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-900 { color: #121a0e; }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:border-zinc-800 { border-color: rgba(246, 242, 216, 0.1); }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:border-zinc-700 { border-color: rgba(246, 242, 216, 0.16); }
-html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:border-zinc-600 { border-color: rgba(246, 242, 216, 0.24); }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:hover\:bg-zinc-700:hover { background-color: #303e5a; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-600 { background-color: #425270; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:bg-zinc-100 { background-color: #eef2f8; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-100 { color: #eef2f8; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-200 { color: #dfe5ef; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-300 { color: #c3cad8; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-400 { color: #a0a9bb; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-500 { color: #838da1; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:text-zinc-900 { color: #0d1421; }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:border-zinc-800 { border-color: rgba(220, 230, 248, 0.1); }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:border-zinc-700 { border-color: rgba(220, 230, 248, 0.16); }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dark\:border-zinc-600 { border-color: rgba(220, 230, 248, 0.24); }
 /* MORE CONTRAST keeps its word under the look. The standard rules deepen
    the muted inks and the lines from <html>; the look's own tokens and
    ramps would outrank them, so each mode restates them here, in its own
@@ -31599,13 +31561,13 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"])[data-contrast="mo
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"])[data-contrast="more"] :is(.text-zinc-400, .text-zinc-500) { color: #2a3125; }
 html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"])[data-contrast="more"] .border-zinc-200 { border-color: rgba(18, 26, 14, 0.28); }
 html[data-skin="brand"].dark:not([data-app-tone="light"])[data-contrast="more"] {
-  --text-muted: #e4e1c9;
-  --text-faint: #cfceb7;
-  --border: rgba(246, 242, 216, 0.5);
-  --border-light: rgba(246, 242, 216, 0.3);
+  --text-muted: #dfe5ef;
+  --text-faint: #c3cad8;
+  --border: rgba(220, 230, 248, 0.5);
+  --border-light: rgba(220, 230, 248, 0.3);
 }
-html[data-skin="brand"].dark:not([data-app-tone="light"])[data-contrast="more"] :is(.dark\:text-zinc-400, .dark\:text-zinc-500) { color: #e4e1c9; }
-html[data-skin="brand"].dark:not([data-app-tone="light"])[data-contrast="more"] .dark\:border-zinc-800 { border-color: rgba(246, 242, 216, 0.3); }
+html[data-skin="brand"].dark:not([data-app-tone="light"])[data-contrast="more"] :is(.dark\:text-zinc-400, .dark\:text-zinc-500) { color: #dfe5ef; }
+html[data-skin="brand"].dark:not([data-app-tone="light"])[data-contrast="more"] .dark\:border-zinc-800 { border-color: rgba(220, 230, 248, 0.3); }
 
 /* CARDS: plain on the page (white in light, one step off the page in
    dark), with a soft lift. The outline every card is drawn with is the
@@ -31626,6 +31588,21 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .app-icon-tile,
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-discover-card {
   border-color: var(--bl-edge);
+}
+/* HOME. The pinned apps and the pinned communities each sit on a card, as
+   the content of every other page does, under the label that stays on the
+   page. Paint and a radius only on the launcher grid: its box and its
+   padding are what its drag overlay mirrors and what a dropped tile is
+   measured against (Home._rectForCell), so neither moves. The communities'
+   grid has no such overlay and takes a card's own padding. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #app-list,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section > .grid {
+  background-color: var(--bl-card);
+  border-radius: 20px;
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section > .grid {
+  padding: 16px 8px 14px;
 }
 /* Unread conversations: coral, the colour of people talking. */
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-tab-badge {
@@ -31663,7 +31640,7 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   color: var(--bl-label);
 }
 
-/* A PROJECT'S HUB. Open app is the solid (ink in light, cream in dark): it
+/* A PROJECT'S HUB. Open app is the solid (ink in light, white in dark): it
    goes somewhere, it does not ask for you. Invite and the ⋯ beside it are
    raised plain buttons. */
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-open-app[data-ws-community-open-app] {
@@ -31703,15 +31680,11 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   outline-offset: -1px;
 }
 
-/* TYPE BY ROLE. A page's title in the serif, the top bar's too (not the
-   small line the made screen keeps in an h1); the Workshop's counts in
-   mono, so the figures line up. */
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) h1:not(#first-session-made-title),
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-hero-name {
-  font-family: 'Young Serif', Georgia, 'Times New Roman', serif;
-  font-weight: 400;
-  letter-spacing: -0.005em;
-}
+/* TYPE BY ROLE. A title is Geist at its own weight, as every other word
+   is: a page's, a project's name on its hub, a heading in a message. (They
+   were a serif; beside the sans of everything else a heading inside a
+   message read as another document.) The Workshop's counts are in mono, so
+   the figures line up. */
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-dash-cell b {
   font-family: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   font-weight: 500;

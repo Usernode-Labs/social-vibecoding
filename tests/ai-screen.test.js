@@ -189,7 +189,7 @@ test('each section groups its rows by project, and a project shows its first few
   // #6262: Needs you orders its rows with the new ones first, before the
   // drawn order is held, then folds through the same pure rule (which never
   // hides a fresh row either).
-  assert.match(lists, /const ordered = freshStyle \|\| foldFresh \? freshFirst\(lines\) : lines;/);
+  assert.match(lists, /const ordered = freshStyle \? recentGroupsFirst\(freshFirst\(lines\)\) : foldFresh \? freshFirst\(lines\) : lines;/);
   assert.match(lists, /const held = hold && holding && drawn\.current \? holdOrder\(ordered, drawn\.current\) : ordered;/,
     'the new first, then the drawn order held');
   assert.match(lists, /const \{ items, shown, hidden \} = groupRows\(dayHeads \? byDay\(g\.items\) : g\.items, first, open, !foldFresh\);/,
@@ -336,6 +336,52 @@ test('#6262: threads with something new get a dot, a bold title and a count', ()
   assert.ok(!quiet.includes('data-ai-dot'), 'nothing new has no dot');
   assert.ok(!quiet.includes('data-ai-earlier'), 'and no Earlier line');
   assert.ok(!quiet.includes('data-ai-fresh'), 'and no count at all');
+});
+
+// #6672 (14 Nov 2026, Evan): "Private chats are always at the bottom of Needs
+// you, even if they're the most recent active thread." Rows arrive votes and
+// plans first and private chats last, so a project whose only row was a fresh
+// private thread always sat at the bottom. Needs you now lifts each project by
+// its newest activity: the ones with something new first, then newest first.
+test('#6672: Needs you orders its projects by their newest activity', () => {
+  const { recentGroupsFirst } = loadTsx(MODEL);
+  const recipe = { slug: 'recipebot', name: 'RecipeBot', icon_url: null, icon_emoji: null };
+  const now = '2026-11-14T12:00:00Z';
+  const yesterday = '2026-11-13T12:00:00Z';
+  const threeDays = '2026-11-11T12:00:00Z';
+  // A private row in no project is one group ('') among the others, not last.
+  const rows = [
+    { key: 'need:garden', app, at: threeDays },
+    { key: 'private:recipe', app: recipe, at: now },
+    { key: 'private:solo', app: null, at: yesterday },
+  ];
+  assert.deepEqual(recentGroupsFirst(rows).map((r) => r.key), ['private:recipe', 'private:solo', 'need:garden'],
+    'RecipeBot, Only you, then Garden: newest activity first');
+  // A group with something new still comes before one without, even older.
+  assert.deepEqual(recentGroupsFirst([
+    { key: 'old-fresh', app, at: threeDays, fresh: true },
+    { key: 'new-quiet', app: recipe, at: now },
+  ]).map((r) => r.key), ['old-fresh', 'new-quiet'], 'what is new still leads');
+  // A group with no readable time goes after the dated ones, in today's order.
+  assert.deepEqual(recentGroupsFirst([
+    { key: 'undated-b', app: recipe, at: null },
+    { key: 'dated', app, at: yesterday },
+    { key: 'undated-a', app: null, at: null },
+  ]).map((r) => r.key), ['dated', 'undated-b', 'undated-a'], 'no time keeps its place, after the dated groups');
+  // Inside a group nothing moves, and equal times keep the order they came in.
+  assert.deepEqual(recentGroupsFirst([
+    { key: 'garden-newer', app, at: now },
+    { key: 'garden-older', app, at: threeDays },
+    { key: 'recipe', app: recipe, at: now },
+  ]).map((r) => r.key), ['garden-newer', 'garden-older', 'recipe'], 'a group\'s rows keep their order; a tie keeps its place');
+
+  // Both faces of the list apply it, Needs you only, after the new-first pass.
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  assert.match(lists, /const ordered = freshStyle \? recentGroupsFirst\(freshFirst\(lines\)\) : foldFresh \? freshFirst\(lines\) : lines;/,
+    'Needs you lifts the projects after its new-first pass');
+  assert.match(read('frontend/src/features/ai/frame-list.tsx'),
+    /const needs = useHeld\(recentGroupsFirst\(freshFirst\(needLines\)\)\);/,
+    'the kit face draws the same order');
 });
 
 // #6408 (6 Nov 2026, Evan): Live this week showed 50 of a project's 76 rows
@@ -590,6 +636,23 @@ test('the filter: the three projects that need you most as chips, then any picke
   assert.equal(message('messages:ai.filter.note.needs', { count: 3 }), '3 need you');
   assert.equal(message('messages:ai.filter.note.live', { count: 2 }), '2 live this week');
   assert.equal(message('messages:ai.filter.group.busy'), 'In progress or waiting');
+
+  // #6675: the menu stays inside the window. Its right edge lines up with the
+  // More chip's when there is room; a chip near the window's left edge (a
+  // narrow list column, as reported) slides it right to 8px in rather than
+  // leaving the search box and project names off screen.
+  const { pickerMenuBox } = loadTsx('frontend/src/features/ai/picker-box.ts');
+  assert.deepEqual(pickerMenuBox({ right: 900, bottom: 100 }, 1280), { top: 108, left: 540, width: 360 },
+    'right edges together under the chip, 8px under it');
+  assert.equal(pickerMenuBox({ right: 260, bottom: 100 }, 1280).left, 8, 'a chip near the left edge starts the menu 8px in');
+  assert.equal(pickerMenuBox({ right: 1300, bottom: 100 }, 1280).left, 912, 'a chip past the right edge stays 8px in from it');
+  assert.deepEqual(pickerMenuBox({ right: 200, bottom: 100 }, 300), { top: 108, left: 8, width: 284 },
+    'a window narrower than the menu narrows it to the window less 16px');
+  assert.match(picker, /const box = pickerMenuBox\(anchor, window\.innerWidth\);/,
+    'the menu measures against the window it is hung in');
+  assert.match(picker, /const style = \{ top: `\$\{box\.top\}px`, left: `\$\{box\.left\}px` \};/,
+    'placed by its left edge, which the helper has already kept inside the window');
+  assert.doesNotMatch(picker, /right:/, 'and never by a right offset, which is what let it hang off the left');
 });
 
 test('In progress and Waiting each leave out a thread the feed lists, by its request or its change', () => {
@@ -801,6 +864,37 @@ test('#6158: a Waiting row says what it waits on, and the rows nobody is moving 
   const src = read('frontend/src/features/ai/lists.tsx');
   assert.match(src, /const stillShown = stillOpen \|\| !!still\?\.lines\.some\(\(l\) => l\.lit\);/, 'a row where you are opens it');
   assert.match(src, /onClick=\{\(\) => setStillOpen\(\(o\) => !o\)\}/, 'and a press toggles it');
+});
+
+test('a change waiting only on its before & after screenshots reads "Taking screenshots", with a camera', () => {
+  const { shortWords, nextWords, notMoving } = loadTsx(MODEL);
+  const { waitGlyph } = loadTsx('frontend/src/features/ai/lines.ts');
+  const shots = thread(1, 7, 'checking', { work: { line: { code: 'shots' } } });
+  // Its word is its own, not Checking (its tests passed) nor Building
+  // (nobody is changing it); its line says the one thing left.
+  assert.equal(words(shortWords(shots)), 'Taking screenshots');
+  assert.equal(words(nextWords(shots)),
+    'Garden club · #7 · Taking screenshots · Tests passed: only the before and after screenshots are left');
+  assert.equal(notMoving(shots), false, 'it is moving: it is not folded under Not moving');
+  // The camera is for that wait alone: tests still running keep the clock.
+  assert.equal(waitGlyph(shots), 'camera');
+  assert.equal(waitGlyph(thread(2, 8, 'checking')), 'clock');
+  assert.equal(waitGlyph(thread(3, 9, 'checking', { work: { line: { code: 'checks_running', minutes: 4 } } })), 'clock');
+  assert.equal(waitGlyph(thread(4, 10, 'queued')), 'clock');
+  // Both faces draw the name: the standard list's camera, the kit's picture.
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  assert.match(lists, /clock: ClockIcon, camera: CameraIcon,/);
+  assert.match(read('frontend/src/features/ai/frame-list.tsx'), /clock: 'clock', camera: 'image',/);
+  assert.match(read('frontend/src/features/ai/lines.ts'), /const waitingLine = threadLine\(waitGlyph\);/);
+  const { renderComponent } = require('./lib/render-tsx');
+  const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, ready: true, rows: [], owed: 0,
+    progress: [], live: [], openRow() {}, openThread() {},
+    waiting: [shots],
+  });
+  assert.match(html, /Taking screenshots/, 'the word on the row\'s right');
+  // The camera's own path (icons.tsx CameraIcon), on the row.
+  assert.match(html, /M6\.827 6\.175A2\.31 2\.31 0 015\.186 7\.23/, 'drawn with the camera glyph');
 });
 
 test('#6237: a change on a GitHub-hosted project is "PR N" on the bot tab\'s rows and tooltips', () => {
@@ -1200,6 +1294,9 @@ test('every door into the bot\'s chat lands on its tab, never the Messages scree
   // A cold link: once the store learns the chat is the bot's, as for a channel.
   assert.match(store, /if \(active\.homeroomBot && active\.kind !== 'channel'\) \{\s+noteBotConversation\(active\.id\);\s+if \(state\.route\.open && !state\.route\.embedded\) \{\s+publish\(\{ active \}\);\s+if \(botToTab\(\)\) return;/);
   assert.match(store, /channelToHub\(\);\s+botToTab\(\);/, 'and when the list lands');
+  // From any address the router opened the chat at: the query off, the id as a number.
+  const botToTab = store.slice(store.indexOf('function botToTab('), store.indexOf('function resolvePendingChannel('));
+  assert.match(botToTab, /const parts = window\.location\.hash\.replace\(\/\^#\/, ''\)\.split\('\?'\)\[0\]\.split\('\/'\);\s+if \(parts\[0\] !== 'messages' \|\| Number\(parts\[1\]\) !== conversationId\) return false;/);
   // Design threads, bell rows and the first session name the tab.
   assert.match(read('src/services/design-threads.js'), /href: `#homeroom-bot\/thread\/\$\{Number\(opened\.messageId\)\}`,/);
   assert.match(read('frontend/src/features/first-session/index.tsx'), /else if \(screen === 'bot' && conversationId\) void openFirstVersion\(slug\);/);
@@ -1345,10 +1442,12 @@ test('#6160: Waiting & in progress is a card of its own between Needs you and Li
   assert.doesNotMatch(empty, /data-ai-list="busy"/);
 });
 
-// #6153 (2 Nov 2026): a design thread filed as request #14 was listed twice,
-// in Needs you as "Only you" and under In progress as #14, with nothing
-// tying the two together. It is the request's row now, which opens it.
-test('#6153: a design thread filed as a request is the request\'s row, which opens the thread; never a second "Only you" row', () => {
+// #6680 (15 Nov 2026): #6153 folded a design thread filed as a request into
+// that request's row once the request had one. But the row a person had could
+// be a vote in Needs you, which opens the request's page, and the thread had
+// no way in. The thread keeps its own "Only you" row now, beside the
+// request's, saying where it went; the request's row may still open it.
+test('#6680: a design thread filed as (or posted on) a request keeps its own row in Needs you, beside the request\'s', () => {
   const { needsYou, inProgress, upNext, liveThisWeek, filedKey, shortWords } = loadTsx(MODEL);
   const ear = { slug: 'ear-trainer', name: 'Ear Trainer', icon_url: null, icon_emoji: null };
   const design = (rootId, extra = {}) => ({ rootId, title: 'Can you first render the main screen?', kind: 'design', app: ear, at: null, ...extra });
@@ -1358,7 +1457,9 @@ test('#6153: a design thread filed as a request is the request\'s row, which ope
   const building = request(40, 14, 'building', { group: 'next', by: 'bot' });
   const work = { private: [design(731, { state: 'filed', resultRef: 14 })], needs: [], next: [building], waiting: [], live: [] };
 
-  assert.deepEqual(needsYou([], work).map((r) => r.key), [], 'no private: row in Needs you');
+  // The thread keeps its own row, saying where it went, and the request keeps its.
+  assert.deepEqual(needsYou([], work).map((r) => [r.key, r.rootId]), [['private:731', 731]]);
+  assert.equal(words(needsYou([], work)[0].sub), 'Only you · Ear Trainer · Filed as #14');
   const [row, ...more] = inProgress([], work);
   assert.equal(more.length, 0, 'one row, the request\'s');
   assert.deepEqual([row.threadId, row.number, row.rootId, row.href], [40, 14, 731, '#app/ear-trainer/dev/issues/14'],
@@ -1373,12 +1474,13 @@ test('#6153: a design thread filed as a request is the request\'s row, which ope
   assert.equal(inProgress([], open)[0].rootId, undefined);
   assert.equal(inProgress([], { ...work, private: [design(733)] })[0].rootId, undefined, 'nor one from an older server, which says nothing of where it went');
 
-  // Waiting and Live this week carry it the same; posted on a request as its plan, too.
+  // Waiting and Live this week carry the request's thread; the thread stays listed too.
   const later = {
     private: [design(734, { state: 'filed', resultRef: 15 }), design(735, { state: 'posted', resultRef: 16 })],
     needs: [], next: [], waiting: [request(41, 15, 'vote', { myVote: 'yes' })], live: [request(42, 16, 'live', { group: 'live' })],
   };
-  assert.deepEqual(needsYou([], later).map((r) => r.key), []);
+  assert.deepEqual(needsYou([], later).map((r) => [r.key, r.rootId]), [['private:734', 734], ['private:735', 735]]);
+  assert.equal(words(needsYou([], later)[1].sub), 'Only you · Ear Trainer · Posted on #16');
   assert.deepEqual(upNext([], later).map((t) => [t.number, t.rootId]), [[15, 734]]);
   assert.deepEqual(liveThisWeek(later).map((t) => [t.number, t.rootId]), [[16, 735]]);
   assert.deepEqual(liveThisWeek(null), []);
@@ -1397,19 +1499,21 @@ test('#6153: a design thread filed as a request is the request\'s row, which ope
   // An open thread in a project keeps today's line.
   const stillOpen = { private: [design(740, { state: 'open' })], needs: [], next: [building], waiting: [], live: [] };
   assert.equal(words(needsYou([], stillOpen)[0].sub), 'Only you · Ear Trainer · Not posted yet');
-  // A vote you owe on its change is the feed's row, by the request's number: still one row.
+  // A vote you owe on its change is the feed's row, by the request's number; the thread is still its own row too.
   const owed = [{ kind: 'proposal', id: 12229, number: 330, title: 'Ear Trainer home', app: ear, request: { number: 14 } }];
-  assert.deepEqual(needsYou(owed, work).map((r) => r.key), ['need:proposal:12229']);
+  assert.deepEqual(needsYou(owed, work).map((r) => r.key), ['need:proposal:12229', 'private:731']);
+  assert.equal(words(needsYou(owed, work)[1].sub), 'Only you · Ear Trainer · Filed as #14');
   assert.deepEqual(inProgress(owed, work), []);
-  // Two threads filed as one request: the newest is its row; the other is still listed.
+  // Two threads filed as one request: both are listed; the request's row opens the newest.
   const twice = { ...work, private: [design(737, { state: 'posted', resultRef: 14 }), design(731, { state: 'filed', resultRef: 14 })] };
-  assert.deepEqual(needsYou([], twice).map((r) => r.key), ['private:731']);
+  assert.deepEqual(needsYou([], twice).map((r) => r.key), ['private:737', 'private:731']);
   assert.equal(inProgress([], twice)[0].rootId, 737);
   assert.equal(filedKey(design(738, { state: 'filed', resultRef: 14, app: null })), null, 'a thread in no project is no request\'s');
   assert.equal(filedKey(design(738, { state: 'dropped', resultRef: 14 })), null);
   assert.equal(filedKey(design(738, { state: 'filed', resultRef: 14 })), 'ear-trainer#14');
 
-  // The row opens the thread (index.tsx openThread), and is lit while it is in the column.
+  // The rows are lit while they are in the column, and the private row is drawn
+  // beside the request's own, saying where it went.
   const { renderComponent } = require('./lib/render-tsx');
   const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
     hero: null, lit: 'private:731', ready: true, rows: [], owed: 0,
@@ -1419,10 +1523,18 @@ test('#6153: a design thread filed as a request is the request\'s row, which ope
   assert.doesNotMatch(html, /data-ai-line="private"/);
   assert.equal((html.match(/data-ai-lit=""/g) || []).length, 1);
 
-  // Homeroom bot's answer reads the same lists: one row there too.
+  const both = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, lit: null, ready: true, rows: needsYou(owed, work), owed: 1,
+    progress: inProgress([], work), waiting: [], live: [], openRow() {}, openThread() {},
+  });
+  assert.match(both, /title="Only you · Ear Trainer · Filed as #14"[^>]*data-ai-line="private"/);
+  assert.match(both, /data-ai-line="building"[\s\S]*?Design: Ear Trainer 14/);
+
+  // Homeroom bot's own my_work answer (services/ai-work.js listsOf) still
+  // names the request alone; #6680 changes the tab's rows, not this answer.
   const aiWork = require('../src/services/ai-work');
   const lists = aiWork.listsOf([], work, { botUsername: 'homeroom_bot' });
-  assert.deepEqual(lists.needsYou, [], 'no private thread in Needs you');
+  assert.deepEqual(lists.needsYou, [], 'no private thread in the bot\'s own answer');
   assert.deepEqual(lists.inProgress.map((r) => r.number), [14]);
   assert.equal(lists.counts.needsYou, 0);
   const kept = aiWork.listsOf([], gone, { botUsername: 'homeroom_bot' });
