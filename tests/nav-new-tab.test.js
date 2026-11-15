@@ -27,10 +27,8 @@ const html = shellMarkup();
 const swJs = read('public/js/../sw.js');
 const appJs = read('public/js/app.js');
 const appViewJs = read('public/js/app-view.js');
-const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
 const chatFrameTsx = read('frontend/src/features/dev-board/chat-frame.tsx');
 const topicFrameTsx = read('frontend/src/features/dev-board/topic-frame.tsx');
-const sessionHeaderTsx = read('frontend/src/features/dev-chat/session-header.tsx');
 const topicBackTsx = read('frontend/src/features/dev-board/topic/topic-back.tsx');
 const topicHeadTsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
 const headerTsx = read('frontend/src/features/header/platform-header.tsx');
@@ -213,16 +211,16 @@ test('the header click handler guards before it preventDefaults', () => {
   const prevent = body.indexOf('e.preventDefault()');
   assert.ok(guard !== -1, 'the modified-click guard went missing');
   assert.ok(guard < prevent, 'the guard must come FIRST, or cmd-click is swallowed');
-  // The existing screen-hook chain is unchanged and still ordered — with the
-  // dev session's claim (Streamlined Concept) last before the home fallback.
+  // The existing screen-hook chain is unchanged and still ordered, ahead of
+  // the home fallback.
   assert.ok(body.indexOf('AdminConsole?.handleBack') < body.indexOf('Settings?.handleBack'));
   // The Challenges tab's detail page is a level of the Leaderboard screen and
-  // claims the chevron the same way, after Settings and before a dev session.
+  // claims the chevron the same way, after Settings.
   // (Discover's detail claimed it between them until One Home, #6361.)
   assert.ok(body.indexOf('Settings?.handleBack') < body.indexOf('TopochainChallenges?.handleBack'));
   assert.doesNotMatch(body, /Browse\?\.handleBack/);
-  assert.ok(body.indexOf('TopochainChallenges?.handleBack') < body.indexOf('DevChat?.handleBack'));
-  assert.ok(body.indexOf('DevChat?.handleBack') < body.indexOf('App.navigateHome()'));
+  assert.ok(body.indexOf('TopochainChallenges?.handleBack') < body.indexOf('App.navigateHome()'));
+  assert.doesNotMatch(body, /DevChat/, 'no dev session is left to claim it');
 });
 
 test('setBackIcon owns the anchor href, defaulting to home', () => {
@@ -284,11 +282,6 @@ test('the two up-one-level screens pass their own target', () => {
 // ── The converted back controls ────────────────────────────────────────
 
 const ANCHORS = [
-  // 'back out of a dev session' is NOT in this list any more, and for the same
-  // reason as the three below: the session header strip converted, so the
-  // anchor is JSX in frontend/src/features/dev-chat/session-header.tsx and the
-  // plain-click path is DevChat.leaveSession(). It gets the same assertions by
-  // hand below.
   // 'back out of the app-wide dev chat' is NOT in this list: #1084 chunk G
   // converted that sub-view's frame to React, which splits the control across
   // two files, and every entry here has a single source. It gets the same two
@@ -334,30 +327,6 @@ test('the app-wide dev chat carries no back control any more', () => {
   // bar over it would be a second navigation system.
   assert.ok(!/dev-chat-back/.test(chatFrameTsx),
     'chat-frame.tsx: the back anchor is retired');
-});
-
-// The dev session's back control is the PLATFORM HEADER's #back-btn now
-// (Streamlined Concept): renderDevView's session branch calls
-// App.setBackIcon('arrow', '/app/<slug>/board'), so the anchor and its
-// modified-click guard are app.js's — the same real-anchor contract the
-// loop above pins for every other control. The in-strip #dc-back retired.
-test('"back out of a dev session" rides the header back anchor, with a real target', () => {
-  assert.ok(!/dc-back/.test(sessionHeaderTsx),
-    'session-header.tsx: the in-strip back control stays retired');
-  // #2770: a change is an agent conversation, so the anchor hangs off
-  // Messages rather than off the Board.
-  assert.match(appViewJs,
-    /if \(subTab === 'sessions' && ref\) \{[\s\S]{0,900}?setBackIcon\?\.\('arrow', '#messages'\)/,
-    'app-view.js points the header anchor at Messages on the way into a session');
-  // The header listener's guard runs before preventDefault (pinned in
-  // app.js for every screen the anchor serves), and the plain click walks
-  // the handleBack chain into dev-chat.js's.
-  assert.match(appJs, /window\.DevChat\?\.handleBack\?\.\(\)/,
-    'app.js consults DevChat before the navigate-home fallback');
-  assert.match(devChatJs, /handleBack\(\) \{[\s\S]{0,300}?leaveSession\(\)/,
-    'a session claims the click');
-  // And the work the plain click does is still dev-chat.js's.
-  assert.match(devChatJs, /leaveSession\(\) \{[\s\S]{0,2400}?location\.hash = '#messages'/);
 });
 
 // The topic page's back bar is retired, and it stays retired. It was a
@@ -446,7 +415,7 @@ test('no other in-page back control is left anywhere in the Dev area', () => {
   // one in-page back the Dev area has, it lives in topic/topic-back.tsx, and
   // it replaced the header's arrow on those routes rather than joining it.
   for (const [name, src] of [['chat-frame.tsx', chatFrameTsx],
-    ['topic-frame.tsx', topicFrameTsx], ['session-header.tsx', sessionHeaderTsx]]) {
+    ['topic-frame.tsx', topicFrameTsx]]) {
     assert.ok(!/id="d(c|ev)-[a-z-]*back"/.test(src),
       `${name} must carry no in-page back control — the header, or on a topic the chip, has it`);
     assert.ok(!/dev-topic-back/.test(src.replace(/\/\*[\s\S]*?\*\//g, '')),
@@ -515,22 +484,6 @@ test('the retired App/Dev switch left no interception behind', () => {
     'the switch markup is gone from the shell');
   assert.doesNotMatch(html, /class="[^"]*app-mode-seg/,
     'no orphan segment survived the retirement');
-});
-
-// Home's Discover cards were the last row here: a ⌘-click opened the app's
-// details in a new tab. They went with One Home (#6361). The dev
-// chat's cross-app "Active Sessions" rows were the second entry. They are
-// gone (#1367): `#dc-active-list` and `#dc-active-counter` exist in no
-// markup, so `renderActiveSessions` resolved nothing and returned on its
-// first line, and the 5s poll that drove it had no caller left. A
-// modifier-click contract for rows nobody can see is not a contract — the
-// assertion below replaces it, so the wiring cannot come back without the
-// surface.
-
-test('the retired cross-app session rows leave no half of themselves behind', () => {
-  assert.ok(!/dc-active-item/.test(devChatJs), 'no rows');
-  assert.ok(!/dc-active-list|dc-active-counter/.test(devChatJs.replace(/\/\/[^\n]*/g, '')),
-    'and no lookups for the hosts they needed');
 });
 
 // The drawer is retired. The rule it pinned — a modified click belongs to the

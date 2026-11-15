@@ -590,8 +590,9 @@ test('the band ends with Preview, then the hamburger; the chevron stands alone o
 });
 
 test('no dense renderer puts the preview back in the action band', () => {
-  // The four dense card types that have something to preview pass it to the
-  // rail; only the noNav (detail head) branch keeps it in the action list,
+  // The three dense card types that have something to preview pass it to the
+  // rail (a request's card lost its own with the headless run it previewed);
+  // only the noNav (detail head) branch keeps it in the action list,
   // because that head has no chevron for the eye to sit under and its band is
   // uncapped and wrapping.
   // The model says it directly: `actionPreview` is only ever the noNav
@@ -602,7 +603,7 @@ test('no dense renderer puts the preview back in the action band', () => {
       `dense action band must not carry the preview: ${c}`);
   }
   const rails = SRC.match(/(preview: noNav \? null : preview|chevron: [^,]+, preview )/g) || [];
-  assert.ok(rails.length >= 4,
+  assert.ok(rails.length >= 3,
     `expected the dense builders to pass a preview to the rail, saw ${rails.length}`);
 });
 

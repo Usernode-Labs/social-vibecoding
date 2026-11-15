@@ -2,7 +2,7 @@
 
 // GET /api/sessions/:id/status answers what a change cost (`costTotalCents`,
 // #3249) only to the change's author and admins, the rule GET
-// /api/sessions/:id applies to the same figure for the dev chat meter. Anyone
+// /api/sessions/:id applies to the same figure. Anyone
 // else who may view the session (a shared one underway, a proposal up for a
 // vote) still gets the status, with the field absent rather than zero, and the
 // cost is never read for them.
@@ -25,10 +25,6 @@ poolMod.getPool = () => ({
     return poolQueryHandler(String(sql), params);
   },
 });
-
-const sessionBus = require('../src/services/session-bus');
-// Its streams kept in this process: no database here (services/session-bus.js).
-sessionBus.init({ memory: true });
 
 const { sessionRoutes } = require('../src/routes/sessions');
 

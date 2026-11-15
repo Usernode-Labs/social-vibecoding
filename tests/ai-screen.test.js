@@ -1177,9 +1177,10 @@ test('a page drawn before sign-in is confirmed asks again once it is, and its As
 test('#homeroom-bot is the page; /thread/<id> is a thread in its column; the old /main is resolved to one; #ai lands there', () => {
   const app = read('public/js/app.js');
   // 1 Nov 2026: every address is the page's, and says where in its chat.
-  assert.match(app, /if \(parts\[0\] === 'homeroom-bot'\) \{[\s\S]*?App\.setChromeless\(false\);\s+App\.navigateToAi\(\);\s+(?:\/\/[^\n]*\n\s+)*if \(parts\.length === 1\) \{\s+window\.UsernodeReact\?\.ai\?\.closeColumn\?\.\(\);\s+\}\s+if \(parts\[1\] === 'request' \|\| parts\[1\] === 'change' \|\| parts\[1\] === 'decision'\) \{\s+window\.UsernodeReact\?\.ai\?\.openItem\?\.\('#' \+ parts\.join\('\/'\)\);\s+\}\s+if \(parts\[1\] === 'main' \|\| parts\[1\] === 'thread' \|\| parts\[1\] === 'm'\) \{\s+const at = App\._messagesExtras\(parts\[1\] === 'main' \? parts\.slice\(2\) : parts\.slice\(1\)\);\s+if \(at\.threadRootId\) \{\s+window\.UsernodeReact\?\.ai\?\.openAt\?\.\(\{/);
-  // 14 Nov 2026: an address with no thread is from before (Main Chat, or a
-  // message named alone): the tab asks the server which thread it is now.
+  assert.match(app, /if \(parts\[0\] === 'homeroom-bot'\) \{[\s\S]*?App\.setChromeless\(false\);\s+App\.navigateToAi\(\);\s+(?:\/\/[^\n]*\n\s+)*if \(parts\.length === 1\) \{\s+window\.UsernodeReact\?\.ai\?\.closeColumn\?\.\(\);\s+\}\s+if \(parts\[1\] === 'request' \|\| parts\[1\] === 'change' \|\| parts\[1\] === 'decision'\) \{\s+window\.UsernodeReact\?\.ai\?\.openItem\?\.\('#' \+ parts\.join\('\/'\)\);\s+\}\s+if \(parts\[1\] === 'main' \|\| parts\[1\] === 'old' \|\| parts\[1\] === 'thread' \|\| parts\[1\] === 'm'\) \{\s+const at = parts\[1\] === 'old' \? \{\}\s+: App\._messagesExtras\(parts\[1\] === 'main' \? parts\.slice\(2\) : parts\.slice\(1\)\);\s+if \(at\.threadRootId\) \{\s+window\.UsernodeReact\?\.ai\?\.openAt\?\.\(\{/);
+  // 14 Nov 2026: an address with no thread is from before (Main Chat, a
+  // message named alone, or an agent chat's `old/agent/<id>`): the tab asks
+  // the server which thread it is now.
   assert.match(app, /\} else \{\s+(?:\/\/[^\n]*\n\s+)*window\.UsernodeReact\?\.ai\?\.openOld\?\.\('#' \+ parts\.join\('\/'\)\);\s+\}/);
   assert.doesNotMatch(app, /messages\.openBotThread\(root\)/, 'never the Messages screen');
   assert.match(app, /case 'homeroom-bot':[^\n]*\n\s+case 'ai': return 'ai-screen';/);
@@ -1649,7 +1650,7 @@ test('a thread opens on this page: beside the list in its column, or on its page
   // Opened from here on its page, it is still this tab's.
   const app = read('public/js/app.js');
   assert.match(app, /_isBotTopic\(\) \{\s+if \(!\(App\.currentTab === 'dev' && App\.currentSubTab === 'topic'\)\) return false;\s+const origin = window\.Improve\?\.topicOrigin\?\.\(\);/);
-  assert.match(app, /\(App\._isMessagesThread\(\) \? 'messages' : App\._isBotTopic\(\) \? 'ai' : 'workshop'\)/, 'it keeps Homeroom bot lit');
+  assert.match(app, /\(App\._isBotTopic\(\) \? 'ai' : 'workshop'\)/, 'it keeps Homeroom bot lit');
 });
 
 test('on a phone the list and one thread (or a new chat) are one drawer, as Messages\' are; a request opens on its page', () => {
@@ -1750,7 +1751,7 @@ test('beside this page the panel is the page\'s own column: its × and the proje
   const controller = read('frontend/src/features/side-panel/controller.ts');
   assert.match(controller, /export const BESIDE_AI_CLASS = 'side-panel-beside-ai';/);
   assert.match(controller, /classList\.toggle\(BESIDE_AI_CLASS, isBesideAi\(\)\)/);
-  assert.match(controller, /const \{ place = null, label = null, \.\.\.rest \} = given \|\| \{\};/, 'the project and the title are this document\'s, not the page\'s hint');
+  assert.match(controller, /const \{ place = null, label = null \} = given \|\| \{\};/, 'the project and the title are this document\'s to draw');
   const css = read('public/css/app.css');
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(#side-panel-back, #side-panel-title, #side-panel-expand, #side-panel-close\) \{\s+display: none;\s+\}/,
     'the panel\'s controls go, but not its left edge, the handle Main\'s edge is too');

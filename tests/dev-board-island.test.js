@@ -51,7 +51,6 @@ const FRAME_ONLY = read('frontend/src/features/dev-board/board-frame.tsx');
 const ACTIONS = read('frontend/src/features/dev-board/actions-row.tsx');
 const FRAME = FRAME_ONLY + '\n' + ACTIONS;
 const CHAT_FRAME = read('frontend/src/features/dev-board/chat-frame.tsx');
-const SESSION_FRAME = read('frontend/src/features/dev-board/session-frame.tsx');
 const STORE = read('frontend/src/features/dev-board/view-mode-store.ts');
 // The Improve panel WAS read here, as the host of the strip below and of a
 // Kanban|Feed sub-strip under its Board row. The panel retired (#2718
@@ -233,8 +232,6 @@ test('the bridge is published before hydration, and guarded for the SSG pass', (
     'renderDevView mounts the board through the bridge');
   assert.match(APP_VIEW, /AppView\._reactDevBoard\(\)\?\.mountChatSubView\(content\)/,
     'the general-chat sub-view mounts through the bridge');
-  assert.match(APP_VIEW, /AppView\._reactDevBoard\(\)\?\.mountSessionShell\(content\);/,
-    'the session shell mounts through the bridge');
 });
 
 // ── the conversion: React owns the frame, modules keep their hosts ───────
@@ -318,13 +315,9 @@ test('the other legacy-owned leaves render empty or constant, never live', () =>
   // #dc-secrets-state — refreshDevChatSecretsState writes its textContent.
   assert.match(FRAME, /id="dc-secrets-state"[\s\S]{0,140}?><\/span>/,
     'the secrets-state slot is an empty leaf');
-  // #dev-chat-body / #dev-section — hosts for renderGroupChatTab and
-  // renderDevChatTab respectively.
+  // #dev-chat-body — the host renderGroupChatTab fills.
   assert.match(CHAT_FRAME, /<div id="dev-chat-body" className="flex-1 min-h-0"><\/div>/,
     '#dev-chat-body is an empty host');
-  assert.match(SESSION_FRAME, /id="dev-section"/, '#dev-section is rendered');
-  assert.ok(!/dangerouslySetInnerHTML=/.test(SESSION_FRAME),
-    '#dev-section ships empty, so it needs no constant string to keep React out');
 });
 
 test('#2786: the Workshop draws no locked-app banner', () => {
