@@ -98,6 +98,48 @@ test('github-issues route returns the open issue list (no 500)', async () => {
   }
 });
 
+// #6680: a request filed from a private design thread carries that thread's
+// root message for its owner, so the page can link back to it. Another
+// member's read of the same request gets null: the thread is private, and
+// nothing about it may reach anyone else.
+test('#6680: the single-request read carries fromThread for the thread owner alone', async () => {
+  const previous = poolQueryHandler;
+  const asked = [];
+  poolQueryHandler = async (sql, params) => {
+    if (/FROM private_threads/.test(sql) && /result_ref/.test(sql)) {
+      asked.push(params);
+      return { rows: params[0] === 7 ? [{ root_message_id: 17372 }] : [] };
+    }
+    return { rows: [] };
+  };
+  const asUser = (id) => {
+    const app = express();
+    app.use((req, res, next) => { req.user = { id, username: `user${id}` }; next(); });
+    app.use(issueRoutes({}));
+    return new Promise((resolve) => { const server = app.listen(0, () => resolve(server)); });
+  };
+  try {
+    const mine = await asUser(7);
+    try {
+      const res = await realFetch(`http://127.0.0.1:${mine.address().port}/api/apps/demo/github-issues/142`);
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual((await res.json()).issue.fromThread, { rootId: 17372 });
+    } finally { mine.close(); }
+
+    const theirs = await asUser(8);
+    try {
+      const res = await realFetch(`http://127.0.0.1:${theirs.address().port}/api/apps/demo/github-issues/142`);
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual((await res.json()).issue.fromThread, null, 'another member learns nothing of it');
+    } finally { theirs.close(); }
+
+    // The lookup asked for this viewer, this project and this number.
+    assert.deepStrictEqual(asked[0], [7, 1, 142]);
+  } finally {
+    poolQueryHandler = previous;
+  }
+});
+
 test('github-issues route ?refresh=1 returns issues plus refresh metadata', async () => {
   const server = await startServer();
   try {

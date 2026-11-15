@@ -279,6 +279,45 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     assert.deepEqual([notJoined.status, notJoined.code], [403, 'join_required']);
   });
 
+  // #6680: the request page links back to the thread it came from, for its
+  // owner alone. The lookup is the owner's: another person's read, another
+  // project's, an open or done thread, and a signed-out read all get null.
+  await t.test('#6680 threadForRequest: the owner\'s filed or posted thread for a request, and nobody else\'s', async () => {
+    const number = nextIssue;
+    const root = design.rootId;
+    const sql = (state) => pool.query('UPDATE private_threads SET state = $2 WHERE root_message_id = $1', [root, state]);
+    await sql('filed');
+    assert.deepEqual(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number }), { rootId: root });
+    await sql('posted');
+    assert.deepEqual(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number }), { rootId: root },
+      'a plan posted on the request links it too');
+    assert.equal(await designs.threadForRequest(pool, { userId: sam.id, appId: app.id, number }), null,
+      'another person reads nothing of a private thread');
+    assert.equal(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id + 999999, number }), null,
+      'the same number on another project is not it');
+    assert.equal(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number: number + 1 }), null,
+      'nor another request');
+    await sql('open');
+    assert.equal(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number }), null, 'an open thread filed nothing');
+    await sql('done');
+    assert.equal(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number }), null, 'nor a done one');
+    // The newest thread wins when one request has two of yours.
+    const second = await designs.startDesign(pool, config, {
+      user: ada, html: CAPTURE, surface: 'platform', title: 'Second screen', width: 390, height: 844, deps,
+    });
+    await pool.query(
+      `UPDATE private_threads SET state = 'filed', result_ref = $2 WHERE root_message_id = $1`,
+      [second.rootId, number],
+    );
+    await pool.query('UPDATE private_threads SET updated_at = NOW() - INTERVAL \'1 hour\' WHERE root_message_id = $1', [root]);
+    assert.deepEqual(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number }),
+      { rootId: second.rootId }, 'the newest updated thread');
+    // No viewer, no query: null, even from a pool that would fail.
+    const failing = { query: () => { throw new Error('should not be read'); } };
+    assert.equal(await designs.threadForRequest(failing, { userId: null, appId: app.id, number }), null);
+    assert.equal(await designs.threadForRequest(failing, {}), null);
+  });
+
   // ── 1 Nov 2026: a design in any private thread (C1) ──────────────────
   const mayor = require('../src/services/homeroom-bot-mayor');
   const privateThreads = require('../src/services/private-threads');

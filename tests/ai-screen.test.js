@@ -1408,10 +1408,12 @@ test('#6160: Waiting & in progress is a card of its own between Needs you and Li
   assert.doesNotMatch(empty, /data-ai-list="busy"/);
 });
 
-// #6153 (2 Nov 2026): a design thread filed as request #14 was listed twice,
-// in Needs you as "Only you" and under In progress as #14, with nothing
-// tying the two together. It is the request's row now, which opens it.
-test('#6153: a design thread filed as a request is the request\'s row, which opens the thread; never a second "Only you" row', () => {
+// #6680 (15 Nov 2026): #6153 folded a design thread filed as a request into
+// that request's row once the request had one. But the row a person had could
+// be a vote in Needs you, which opens the request's page, and the thread had
+// no way in. The thread keeps its own "Only you" row now, beside the
+// request's, saying where it went; the request's row may still open it.
+test('#6680: a design thread filed as (or posted on) a request keeps its own row in Needs you, beside the request\'s', () => {
   const { needsYou, inProgress, upNext, liveThisWeek, filedKey, shortWords } = loadTsx(MODEL);
   const ear = { slug: 'ear-trainer', name: 'Ear Trainer', icon_url: null, icon_emoji: null };
   const design = (rootId, extra = {}) => ({ rootId, title: 'Can you first render the main screen?', kind: 'design', app: ear, at: null, ...extra });
@@ -1421,7 +1423,9 @@ test('#6153: a design thread filed as a request is the request\'s row, which ope
   const building = request(40, 14, 'building', { group: 'next', by: 'bot' });
   const work = { private: [design(731, { state: 'filed', resultRef: 14 })], needs: [], next: [building], waiting: [], live: [] };
 
-  assert.deepEqual(needsYou([], work).map((r) => r.key), [], 'no private: row in Needs you');
+  // The thread keeps its own row, saying where it went, and the request keeps its.
+  assert.deepEqual(needsYou([], work).map((r) => [r.key, r.rootId]), [['private:731', 731]]);
+  assert.equal(words(needsYou([], work)[0].sub), 'Only you · Ear Trainer · Filed as #14');
   const [row, ...more] = inProgress([], work);
   assert.equal(more.length, 0, 'one row, the request\'s');
   assert.deepEqual([row.threadId, row.number, row.rootId, row.href], [40, 14, 731, '#app/ear-trainer/dev/issues/14'],
@@ -1436,12 +1440,13 @@ test('#6153: a design thread filed as a request is the request\'s row, which ope
   assert.equal(inProgress([], open)[0].rootId, undefined);
   assert.equal(inProgress([], { ...work, private: [design(733)] })[0].rootId, undefined, 'nor one from an older server, which says nothing of where it went');
 
-  // Waiting and Live this week carry it the same; posted on a request as its plan, too.
+  // Waiting and Live this week carry the request's thread; the thread stays listed too.
   const later = {
     private: [design(734, { state: 'filed', resultRef: 15 }), design(735, { state: 'posted', resultRef: 16 })],
     needs: [], next: [], waiting: [request(41, 15, 'vote', { myVote: 'yes' })], live: [request(42, 16, 'live', { group: 'live' })],
   };
-  assert.deepEqual(needsYou([], later).map((r) => r.key), []);
+  assert.deepEqual(needsYou([], later).map((r) => [r.key, r.rootId]), [['private:734', 734], ['private:735', 735]]);
+  assert.equal(words(needsYou([], later)[1].sub), 'Only you · Ear Trainer · Posted on #16');
   assert.deepEqual(upNext([], later).map((t) => [t.number, t.rootId]), [[15, 734]]);
   assert.deepEqual(liveThisWeek(later).map((t) => [t.number, t.rootId]), [[16, 735]]);
   assert.deepEqual(liveThisWeek(null), []);
@@ -1460,19 +1465,21 @@ test('#6153: a design thread filed as a request is the request\'s row, which ope
   // An open thread in a project keeps today's line.
   const stillOpen = { private: [design(740, { state: 'open' })], needs: [], next: [building], waiting: [], live: [] };
   assert.equal(words(needsYou([], stillOpen)[0].sub), 'Only you · Ear Trainer · Not posted yet');
-  // A vote you owe on its change is the feed's row, by the request's number: still one row.
+  // A vote you owe on its change is the feed's row, by the request's number; the thread is still its own row too.
   const owed = [{ kind: 'proposal', id: 12229, number: 330, title: 'Ear Trainer home', app: ear, request: { number: 14 } }];
-  assert.deepEqual(needsYou(owed, work).map((r) => r.key), ['need:proposal:12229']);
+  assert.deepEqual(needsYou(owed, work).map((r) => r.key), ['need:proposal:12229', 'private:731']);
+  assert.equal(words(needsYou(owed, work)[1].sub), 'Only you · Ear Trainer · Filed as #14');
   assert.deepEqual(inProgress(owed, work), []);
-  // Two threads filed as one request: the newest is its row; the other is still listed.
+  // Two threads filed as one request: both are listed; the request's row opens the newest.
   const twice = { ...work, private: [design(737, { state: 'posted', resultRef: 14 }), design(731, { state: 'filed', resultRef: 14 })] };
-  assert.deepEqual(needsYou([], twice).map((r) => r.key), ['private:731']);
+  assert.deepEqual(needsYou([], twice).map((r) => r.key), ['private:737', 'private:731']);
   assert.equal(inProgress([], twice)[0].rootId, 737);
   assert.equal(filedKey(design(738, { state: 'filed', resultRef: 14, app: null })), null, 'a thread in no project is no request\'s');
   assert.equal(filedKey(design(738, { state: 'dropped', resultRef: 14 })), null);
   assert.equal(filedKey(design(738, { state: 'filed', resultRef: 14 })), 'ear-trainer#14');
 
-  // The row opens the thread (index.tsx openThread), and is lit while it is in the column.
+  // The rows are lit while they are in the column, and the private row is drawn
+  // beside the request's own, saying where it went.
   const { renderComponent } = require('./lib/render-tsx');
   const html = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
     hero: null, lit: 'private:731', ready: true, rows: [], owed: 0,
@@ -1482,10 +1489,18 @@ test('#6153: a design thread filed as a request is the request\'s row, which ope
   assert.doesNotMatch(html, /data-ai-line="private"/);
   assert.equal((html.match(/data-ai-lit=""/g) || []).length, 1);
 
-  // Homeroom bot's answer reads the same lists: one row there too.
+  const both = renderComponent('frontend/src/features/ai/lists.tsx', 'AiLists', {
+    hero: null, lit: null, ready: true, rows: needsYou(owed, work), owed: 1,
+    progress: inProgress([], work), waiting: [], live: [], openRow() {}, openThread() {},
+  });
+  assert.match(both, /title="Only you · Ear Trainer · Filed as #14"[^>]*data-ai-line="private"/);
+  assert.match(both, /data-ai-line="building"[\s\S]*?Design: Ear Trainer 14/);
+
+  // Homeroom bot's own my_work answer (services/ai-work.js listsOf) still
+  // names the request alone; #6680 changes the tab's rows, not this answer.
   const aiWork = require('../src/services/ai-work');
   const lists = aiWork.listsOf([], work, { botUsername: 'homeroom_bot' });
-  assert.deepEqual(lists.needsYou, [], 'no private thread in Needs you');
+  assert.deepEqual(lists.needsYou, [], 'no private thread in the bot\'s own answer');
   assert.deepEqual(lists.inProgress.map((r) => r.number), [14]);
   assert.equal(lists.counts.needsYou, 0);
   const kept = aiWork.listsOf([], gone, { botUsername: 'homeroom_bot' });
