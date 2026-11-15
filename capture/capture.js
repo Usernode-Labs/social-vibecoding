@@ -2724,19 +2724,28 @@ function emitPageFail(reason) {
 }
 
 /**
+ * The capture image's browser, for the single-purpose runs (a design page,
+ * a design render). Chrome for Testing, installed by playwright-core at the
+ * worker's Chromium revision, so the image audit can read its version.
+ * Required lazily so the platform's test suite (no puppeteer-core outside
+ * the capture image) can require this file.
+ */
+function launchCaptureBrowser() {
+  const puppeteer = require('puppeteer-core');
+  return puppeteer.launch({
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/local/bin/chromium',
+    headless: true,
+    args: CHROMIUM_LAUNCH_ARGS,
+  });
+}
+
+/**
  * Open one page at one size and emit the design serializer's answer.
  * `deps` is a test seam: launch (a browser factory) and delayMs.
  */
 async function runPageCapture(spec, deps = {}) {
   if (!spec) { emitPageFail('no_page_capture'); return null; }
-  const launch = deps.launch || (async () => {
-    const puppeteer = require('puppeteer-core');
-    return puppeteer.launch({
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/local/bin/chromium',
-      headless: true,
-      args: CHROMIUM_LAUNCH_ARGS,
-    });
-  });
+  const launch = deps.launch || launchCaptureBrowser;
   const delayMs = Number.isFinite(deps.delayMs) ? deps.delayMs : 1000;
   let browser = null;
   try {
@@ -2838,14 +2847,7 @@ async function shootDocument(browser, html, viewport) {
  */
 async function runDesignRender(spec, deps = {}) {
   if (!spec) { emitRenderFail('no_design_render'); return null; }
-  const launch = deps.launch || (async () => {
-    const puppeteer = require('puppeteer-core');
-    return puppeteer.launch({
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/local/bin/chromium',
-      headless: true,
-      args: CHROMIUM_LAUNCH_ARGS,
-    });
-  });
+  const launch = deps.launch || launchCaptureBrowser;
   let browser = null;
   try {
     browser = await launch();
