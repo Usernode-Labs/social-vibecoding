@@ -37,8 +37,8 @@ test('the design bot offers a plan and a project as cards, its tools last, and n
   const prompt = designBot.designPrompt({
     username: 'ada', design: { surface: 'app', app: { name: 'Plant pal' }, title: 'List', width: 390, height: 844 }, version: 2, html: '<p>x</p>',
   });
-  assert.match(prompt, /You never post, file or make anything yourself: when they say it looks good,\n {2}or ask to post it, offer it with offer_plan/);
-  assert.match(prompt, /offer it with offer_plan and project when they name an existing project to put it on, and with offer_project\n {2}only when they want a new project/);
+  assert.match(prompt, /You post and file nothing yourself: their tap on a card does it\. When they say the design looks good, or ask\n {2}to post it, offer it with offer_plan/);
+  assert.match(prompt, /offer it with offer_plan and project when\n {2}they name an existing project to put it on, and with offer_project only when they want a new project/);
   const src = read('src/services/design-bot.js');
   assert.match(src, /if \(offered && !changed && !error\) \{\n {4}return mayor\.sendDesignOffer\(/, 'the card is the turn\'s answer');
   assert.match(src, /key: `hrbot-design-offer-\$\{message\.id\}`/, 'or follows the version the same turn made');
@@ -494,7 +494,7 @@ test('#6355: a card\'s sentence names only the request its button posts to', () 
   assert.equal(mayor.cardSentence('Tap it on request #12.', { issueNumber: 6351, fallback: F }), F);
   assert.equal(mayor.cardSentence('', { issueNumber: 6351, fallback: F }), F);
   const src = read('src/services/homeroom-bot-mayor.js');
-  assert.match(src, /cardSentence\(text, \{ issueNumber: n, fallback \}\)/, 'the plan card\'s first line is checked');
+  assert.match(src, /cardSentence\(text, \{[\s\S]{0,220}plan: \{ appName: name, appSlug: app\.slug, title: design\.title \}/, 'the plan card\'s first line is checked');
   assert.match(src, /cardSentence\(text, \{ issueNumber: null, fallback: `Want to make \$\{o\.name\} from this design\?` \}\)/);
   assert.match(src, /Tap the card to post version \$\{v\} on request #\$\{n\} as its plan, publicly, under your name\./);
   assert.match(src, /Tap New request to file a request on \$\{name\} with version \$\{v\} as its plan/);
