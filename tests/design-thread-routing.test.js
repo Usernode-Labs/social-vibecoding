@@ -154,6 +154,27 @@ test('a thread that holds no design is unchanged: the chat turn, and no design',
   assert.equal(h.turns[0].deps.threadDesign, undefined);
 });
 
+// The spec's edge case: a closed design (`state` not open, posted or filed)
+// no longer takes the thread's ordinary talk, but its own messages still reach
+// it (design-bot.js answers those with CLOSED_TEXT), so closing a design never
+// turns the thread into one that refuses what any other thread does.
+test('a closed design still answers the thread: only its own message reaches the designer', async (t) => {
+  const closed = { ...DESIGN, state: 'closed' };
+  const h = harness(t, { design: closed });
+  await h.send({ id: 76, content: 'Where does my timer change stand?', threadRootId: 500 });
+  assert.equal(h.designAnswers.length, 0, 'a closed design does not take an ordinary message');
+  assert.equal(h.turns.length, 1);
+  assert.equal(h.turns[0].deps.threadDesign, closed, 'the chat turn is told the design is closed');
+
+  await h.send({
+    id: 77, content: 'Darken the header', threadRootId: 500,
+    metadata: { designPin: { version: 2, x: 0.5, y: 0.5 } },
+  });
+  assert.equal(h.designAnswers.length, 1, 'a pinned comment still goes to the designer');
+  assert.equal(h.designAnswers[0].design.state, 'closed');
+  assert.equal(h.turns.length, 1, 'and the chat turn does not answer it as well');
+});
+
 test('designDirect is pure: the pin and a version\'s message, and nothing else', () => {
   assert.equal(dm.designDirect({ content: 'x' }, DESIGN), false);
   assert.equal(dm.designDirect({ metadata: { designPin: { version: 1 } } }, DESIGN), true);
