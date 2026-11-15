@@ -1084,8 +1084,8 @@ function cliBrowserRoutes(config) {
     // Staging mock data: cli_access_tokens is `staging:private` (schema.sql),
     // so a staging clone always has an empty list and the Settings section
     // would review as a blank panel. ?demo=1 fabricates two rows without
-    // touching the DB — same pattern as GET /api/me/llm-grants and
-    // GET /api/me/agent-files, and a strict no-op in production.
+    // touching the DB — same pattern as GET /api/me/llm-grants, and a strict
+    // no-op in production.
     if (req.query.demo === '1' && process.env.USERNODE_ENV === 'staging') {
       return res.json({ tokens: demoCliTokens(), next_cursor: null, demo: true });
     }

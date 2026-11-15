@@ -8,7 +8,7 @@
 // request itself: a GitHub comment and the request's Homeroom thread. This
 // module brings the same news to the person the request is FOR, in their
 // direct conversation with the bot, so somebody who is not a developer can
-// build without opening the agent chat:
+// build without leaving that conversation:
 //
 //   - a question the bot asks arrives in the DM with suggested answers to
 //     tap (and the composer for anything else);

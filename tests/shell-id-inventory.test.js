@@ -408,6 +408,24 @@ const RETIRED_IDS = {
   'settings-openrouter-reasoning': 'The reasoning-effort select in that block, gone with it.',
   'settings-openrouter-set-default': 'The "make OpenRouter my coding agent" button, which set the backend a new dev chat started on. Gone with the dev chat.',
   'settings-claude-set-default': 'The "use Claude instead" button beside it, gone with it.',
+  // ── Settings › Agent instructions & skills is retired ───────────────
+  // A person's instruction and skill files reached a coding agent only
+  // through the dev chat's build and scout turns, which copied them into
+  // the hosted worker. Those turns are gone and Homeroom bot's builds never
+  // read the files, so the pane (#settings/agent-files) configured nothing
+  // and left the shell, with its routes (/api/me/agent-files).
+  'agent-files-section': 'The Agent instructions & skills pane\'s root. Retired with the pane: no build copies the files into the worker any more.',
+  'agent-files-instructions-list': 'The pane\'s list of instruction files (features/settings/agent-files-list.tsx), gone with it.',
+  'agent-files-skills-list': 'The pane\'s list of skill files, gone with it.',
+  'agent-files-input': 'The pane\'s hidden file picker behind the two Upload buttons, gone with it.',
+  'agent-files-form': 'The pending-upload form shown after a file was picked, gone with the pane.',
+  'agent-files-form-title': 'That form\'s title line, gone with it.',
+  'agent-files-name': 'That form\'s name field, gone with it.',
+  'agent-files-desc-wrap': 'The label wrapping that form\'s skill description field, gone with it.',
+  'agent-files-desc': 'That form\'s skill description field, gone with it.',
+  'agent-files-save': 'That form\'s Save button, gone with it.',
+  'agent-files-cancel': 'That form\'s Cancel button, gone with it.',
+  'agent-files-status': 'The pane\'s status line, gone with it.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.

@@ -92,10 +92,9 @@ const EVENT_TYPES = Object.freeze({
   // the terminal path with { syncResult, behind, sha, pushOk, trigger }.
   SYNC_MAIN: 'sync_main',
   // Fable 5 classifier fallback: a platform-authored Anthropic call was
-  // served by the fallback model (usage.iterations detection). Recorded
-  // with { requested, served, category, source } via
-  // services/model-fallback.js. No backfill — detection didn't exist
-  // before these emitters shipped.
+  // served by the fallback model (usage.iterations detection), recorded
+  // with { requested, served, category, source }. No code records it now;
+  // the kind stays so the rows already written keep their name.
   MODEL_FALLBACK: 'model_fallback',
   // Whole-chain refusal: the requested model AND its fallback declined
   // (or the fallback couldn't run and the direct retry declined too).

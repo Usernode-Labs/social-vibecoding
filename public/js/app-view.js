@@ -11261,7 +11261,7 @@ const AppView = {
    * sub-view calls it with nothing and everything comes from AppView.appData,
    * exactly as it always did. The MESSAGES SCREEN calls it with a host and an
    * app, because an app's general discussion is a thread of that inbox now —
-   * listed beside the people and the agent chats, and opened beside the list
+   * listed beside the people, and opened beside the list
    * rather than by navigating to a different screen root.
    *
    * Passing the app in rather than reading AppView.appData is the point: the

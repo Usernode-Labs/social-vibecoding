@@ -349,10 +349,9 @@
       { key: 'wallet', label: 'settings:nav.part.wallet', group: 'settings:nav.group.account', gate: 'wallet-section' },
 
       // ── AI models & usage ───────────────────────────────────────────────
-      // #5994 split the old "AI & building" group, which mixed the allowance,
-      // the connectors and the agent instructions, into this group and the
-      // next: each row is faster to find under a heading that
-      // says what it is about.
+      // #5994 split the old "AI & building" group, which mixed the allowance
+      // and the connectors, into this group and the next: each row is faster
+      // to find under a heading that says what it is about.
       // The allowance leads: it is the figure most builders open Settings to
       // find. OpenRouter follows it — the included key voice input uses —
       // and the Anthropic key, the one you add when the allowance runs out,
@@ -363,15 +362,13 @@
 
       // ── Integrations & automation ───────────────────────────────────────
       // Everything about building from outside Homeroom: the chat connectors
-      // (Claude, ChatGPT, Codex), the CLI credentials and the instruction
-      // files and skills those agents read. The out-of-credits card
-      // deep-links #settings/connectors and #settings/cli; both land on the
-      // Connectors & CLI page (public/js/credit-options.js). Connectors leads
+      // (Claude, ChatGPT, Codex) and the CLI credentials. The out-of-credits
+      // card deep-links #settings/connectors and #settings/cli; both land on
+      // the Connectors & CLI page (public/js/credit-options.js). Connectors leads
       // because the page is keyed by it: a page key that named a LATER part
       // would open the page scrolled past everything above that part.
       { key: 'connectors', label: 'settings:nav.part.connectors', group: 'settings:nav.group.integrations', page: 'connectors' },
       { key: 'cli', label: 'settings:nav.part.cli', group: 'settings:nav.group.integrations', page: 'connectors' },
-      { key: 'agent-files', label: 'settings:nav.part.agentFiles', group: 'settings:nav.group.integrations' },
 
       // ── Preferences ─────────────────────────────────────────────────────
       // THE UI OVERHAUL moved Theme here out of the hamburger drawer.
@@ -451,7 +448,6 @@
       'linked-accounts': 'settings:nav.subtitle.linkedAccounts',
       phones: 'settings:nav.subtitle.phones',
       connectors: 'settings:nav.subtitle.connectors',
-      'agent-files': 'settings:nav.subtitle.agentFiles',
     },
 
     // #5995: a small grey "Beta" label on the rows of features still being
@@ -472,7 +468,6 @@
       wallet: 'wallet',
       ai: 'sparkles',
       connectors: 'terminal',
-      'agent-files': 'lines',
       theme: 'sun',
       accessibility: 'eye',
       language: 'globe',
@@ -528,7 +523,6 @@
       openrouter: 'settings:nav.keywords.openrouter',
       connectors: 'settings:nav.keywords.connectors',
       cli: 'settings:nav.keywords.cli',
-      'agent-files': 'settings:nav.keywords.agentFiles',
       experimental: 'settings:nav.keywords.experimental',
       theme: 'settings:nav.keywords.theme',
       'dev-console': 'settings:nav.keywords.devConsole',
@@ -1003,7 +997,6 @@
       this._loadCliTokens(true);
       this._loadConnectors();
       this._loadGithubLink();
-      this._renderAgentFilesSection();
       this._renderWalletSection();
       this._renderChangeUsernameSection();
       this._renderChangePasswordSection();
@@ -3265,8 +3258,8 @@
       try {
         // The page's ?demo=1 is passed through so the (staging:private,
         // therefore always-empty in a staging clone) credential list has
-        // something to render — same pattern as _renderLlmGrants and
-        // _renderAgentFilesSection. Strictly a no-op in production.
+        // something to render — same pattern as _renderLlmGrants. Strictly a
+        // no-op in production.
         const query = this._cliTokenCursor
           ? `?limit=50&cursor=${encodeURIComponent(this._cliTokenCursor)}`
           : '?limit=50';
@@ -4972,213 +4965,6 @@
       } catch (err) {
         status(tr('settings:appPermissions.status.networkError', { reason: err.message }), 'error');
       }
-    },
-
-    // ── Agent instructions & skills (#460) ───────────────────────
-    // Per-user global files the coding agent loads on every build/scout
-    // run this user dispatches. List/upload/delete against
-    // /api/me/agent-files; in staging the (staging:private, always empty)
-    // table is stood in for by ?demo=1 fabricated rows, passed through
-    // from the page URL exactly like the AI-permissions section above.
-
-    _renderAgentFilesSection() {
-      this._wireAgentFiles();
-      this._hideAgentFilesForm();
-      this._loadAgentFiles();
-    },
-
-    _agentFilesDemo() {
-      return new URLSearchParams(window.location.search).get('demo') === '1';
-    },
-
-    // One-time event wiring (the section markup is static in index.html;
-    // open() re-runs this, so guard against double-binding).
-    _wireAgentFiles() {
-      if (this._agentFilesWired) return;
-      this._agentFilesWired = true;
-
-      const input = document.getElementById('agent-files-input');
-      document.querySelectorAll('[data-agent-files-upload]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          this._pendingAgentKind = btn.dataset.agentFilesUpload;
-          input.value = '';
-          input.click();
-        });
-      });
-
-      input.addEventListener('change', () => {
-        const file = input.files && input.files[0];
-        if (!file) return;
-        if (file.size > 48 * 1024) {
-          this._setAgentFilesStatus(tr('settings:agentFiles.status.tooLarge', { file: file.name }), 'error');
-          return;
-        }
-        const reader = new FileReader();
-        reader.onload = () => {
-          this._pendingAgentFile = {
-            kind: this._pendingAgentKind,
-            content: String(reader.result || ''),
-          };
-          this._showAgentFilesForm(file.name);
-        };
-        reader.onerror = () => this._setAgentFilesStatus(tr('settings:agentFiles.status.unreadable'), 'error');
-        reader.readAsText(file);
-      });
-
-      document.getElementById('agent-files-cancel').addEventListener('click', () => {
-        this._hideAgentFilesForm();
-      });
-      document.getElementById('agent-files-save').addEventListener('click', () => {
-        this._saveAgentFile();
-      });
-    },
-
-    // Client-side twin of the server's normalizeName — purely a
-    // convenience prefill; the server re-normalizes and is authoritative.
-    _slugifyAgentFileName(raw) {
-      return String(raw || '')
-        .trim()
-        .replace(/\.(md|txt)$/i, '')
-        .toLowerCase()
-        .replace(/[\s_.]+/g, '-')
-        .replace(/[^a-z0-9-]/g, '')
-        .replace(/-+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 64);
-    },
-
-    _showAgentFilesForm(filename) {
-      const form = document.getElementById('agent-files-form');
-      const title = document.getElementById('agent-files-form-title');
-      const nameInput = document.getElementById('agent-files-name');
-      const descWrap = document.getElementById('agent-files-desc-wrap');
-      const descInput = document.getElementById('agent-files-desc');
-      const kind = this._pendingAgentFile?.kind || 'instruction';
-      title.textContent = kind === 'skill'
-        ? tr('settings:agentFiles.form.titleSkill', { file: filename })
-        : tr('settings:agentFiles.form.titleInstruction', { file: filename });
-      nameInput.value = this._slugifyAgentFileName(filename);
-      descWrap.classList.toggle('hidden', kind !== 'skill');
-      // Return in the name goes on to the description when there is one and
-      // saves when there is not (#3907); the key says which.
-      nameInput.enterKeyHint = kind === 'skill' ? 'next' : 'done';
-      descInput.value = '';
-      form.classList.remove('hidden');
-      this._setAgentFilesStatus('', 'clear');
-    },
-
-    _hideAgentFilesForm() {
-      this._pendingAgentFile = null;
-      const form = document.getElementById('agent-files-form');
-      if (form) form.classList.add('hidden');
-    },
-
-    async _saveAgentFile() {
-      const pending = this._pendingAgentFile;
-      if (!pending) return;
-      if (this._agentFilesDemo()) {
-        this._setAgentFilesStatus(tr('settings:agentFiles.status.demoData'), 'info');
-        this._hideAgentFilesForm();
-        return;
-      }
-      const name = document.getElementById('agent-files-name').value.trim();
-      if (!name) {
-        this._setAgentFilesStatus(tr('settings:agentFiles.status.nameRequired'), 'error');
-        return;
-      }
-      const description = document.getElementById('agent-files-desc').value.trim();
-      try {
-        const r = await fetch('/api/me/agent-files', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ kind: pending.kind, name, description, content: pending.content }),
-        });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          this._setAgentFilesStatus(j.error || tr('settings:agentFiles.status.saveFailed'), 'error');
-          return;
-        }
-        this._hideAgentFilesForm();
-        this._setAgentFilesStatus(tr('settings:agentFiles.status.saved', { name: j.file?.name || name }), 'ok');
-        this._loadAgentFiles();
-      } catch (err) {
-        this._setAgentFilesStatus(tr('settings:agentFiles.status.networkError', { reason: err.message }), 'error');
-      }
-    },
-
-    async _loadAgentFiles() {
-      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
-        ? window.UsernodeReact.settingsAgentFiles : null;
-      if (!bridge) return;
-      const demo = this._agentFilesDemo();
-      bridge.publish({ phase: 'loading', files: [], demo });
-      let files = [];
-      try {
-        const r = await fetch('/api/me/agent-files' + (demo ? '?demo=1' : ''), { credentials: 'same-origin' });
-        if (!r.ok) throw new Error('fetch failed');
-        const j = await r.json();
-        files = j.files || [];
-      } catch {
-        bridge.publish({ phase: 'error', files: [], demo });
-        return;
-      }
-      bridge.publish({ phase: 'ready', demo, files: files.map((f) => this._agentFileView(f)) });
-    },
-
-    // One file, as DATA. The KB rounding is this module's rule — the same
-    // reason the grant rows arrive with their dollars already formatted.
-    _agentFileView(f) {
-      return {
-        kind: String(f.kind ?? ''),
-        name: String(f.name ?? ''),
-        description: String(f.description ?? ''),
-        kb: Math.max(1, Math.round((f.size_bytes || 0) / 1024)),
-      };
-    },
-
-    // Delete was a closure inside the row builder, wired with
-    // addEventListener to a node it had just created. It is a method now,
-    // called by name from ./agent-files-list.tsx — the component owns the
-    // markup, this module owns the confirm dialog, the write and the reload.
-    async _onAgentFileDelete(kind, name) {
-      const ok = await ConfirmModal.show({
-        title: tr('settings:agentFiles.delete.confirmTitle', { name }),
-        message: tr('settings:agentFiles.delete.confirmMessage'),
-        confirmLabel: tr('settings:agentFiles.delete.confirmButton'),
-        danger: true,
-      });
-      if (!ok) return;
-      if (this._agentFilesDemo()) {
-        this._setAgentFilesStatus(tr('settings:agentFiles.status.demoData'), 'info');
-        return;
-      }
-      try {
-        const r = await fetch('/api/me/agent-files', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ kind, name }),
-        });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) { this._setAgentFilesStatus(j.error || tr('settings:agentFiles.status.deleteFailed'), 'error'); return; }
-        this._setAgentFilesStatus(tr('settings:agentFiles.status.deleted', { name }), 'ok');
-        this._loadAgentFiles();
-      } catch (err) {
-        this._setAgentFilesStatus(tr('settings:agentFiles.status.networkError', { reason: err.message }), 'error');
-      }
-    },
-
-    _setAgentFilesStatus(text, kind) {
-      const el = document.getElementById('agent-files-status');
-      if (!el) return;
-      if (kind === 'clear' || !text) {
-        el.classList.add('hidden');
-        el.textContent = '';
-        return;
-      }
-      paintStatus(el, text, kind);
-      if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
 
     // ── Wallet linking ───────────────────────────────────────────

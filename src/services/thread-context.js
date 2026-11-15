@@ -37,8 +37,7 @@
 //
 // Every loader here swallows its own errors and resolves to an empty
 // result. Discussion context is strictly ADVISORY — a failed lookup must
-// degrade to "no block" and never fail a turn, matching the posture of
-// the open-proposals / agent-files blocks in routes/sessions.js.
+// degrade to "no block" and never fail a turn.
 
 const log = require('./logger');
 

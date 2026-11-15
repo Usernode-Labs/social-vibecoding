@@ -140,9 +140,6 @@ test('the spinner is recoloured to the pill rather than left accent-blue', () =>
   // to exist at all.
   const rule = APP_CSS.slice(APP_CSS.indexOf('.dc-status-spinner-arc {'));
   assert.match(rule.slice(0, 300), /border:\s*2px solid var\(--accent\)/);
-  // Scoped to this pill, exactly as .dc-pr-btn-promote scopes its own
-  // recolour — the shared class stays untouched for everyone else.
-  assert.match(APP_CSS, /\.dc-pr-btn-promote \.dc-status-spinner-arc/);
 });
 
 test('the pill lays its two children out like the platform\'s other one', () => {

@@ -289,8 +289,6 @@ const OWNED = [
   { sel: '[data-connector-status]' },        // features/settings/connectors-list.tsx
   { sel: '[data-connector-connections]' },   // ditto
   { sel: '#github-link-body' },              // features/settings/social-identity.tsx
-  { sel: '#agent-files-instructions-list' }, // features/settings/agent-files-list.tsx
-  { sel: '#agent-files-skills-list' },
   // The WHOLE Workshop screen (#workshop): features/workshop/index.tsx renders
   // and reconciles every node under this root, and no public/js/** module has
   // ever written inside it — App.navigateToWorkshop drives it through the
@@ -365,7 +363,7 @@ const OWNED = [
 
 const ROUTES = [
   '#home', '#workshop', '#week', '#ai', '#settings', '#settings/app-ai',
-  '#settings/email', '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/linked-accounts', '#settings/experimental', '#profile', '#leaderboard', '#leaderboard/challenges', '#messages', '#notifications',
+  '#settings/email', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/linked-accounts', '#settings/experimental', '#profile', '#leaderboard', '#leaderboard/challenges', '#messages', '#notifications',
   '#app/recipebot', '#app/recipebot/app', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   // A TOPIC page, which is the only route that mounts `.dev-thread` — the
   // thread panel, its composer and the topic card app-view.js fills. Without

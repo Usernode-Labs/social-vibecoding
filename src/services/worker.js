@@ -2332,9 +2332,8 @@ function buildTurnResumeFallbackPromptScript(prompt, targetPath = TURN_RESUME_FA
 }
 
 // Materialize the dispatch prompt into the warm worker's CC volume ahead
-// of the detached exec. Unlike syncUserAgentFiles this file is required:
-// a failure here fails the turn (before active_turn is persisted, so
-// there is nothing to clean up).
+// of the detached exec. This file is required: a failure here fails the
+// turn (before active_turn is persisted, so there is nothing to clean up).
 async function writeTurnPrompt(sessionId, prompt, targetPath = TURN_PROMPT_PATH) {
   const meta = _registryGet(sessionId);
   if (!meta) {
@@ -3725,8 +3724,8 @@ async function execInWorker(sessionId, {
   // spinning up. Historically the dispatch upsert below cleared
   // `stopRequestedAt` — it could not tell a previous turn's leftover from
   // a stop aimed at THIS turn seconds ago — so a stop clicked during
-  // ensureWorker/syncUserAgentFiles was erased by the very dispatch it was
-  // meant to prevent, and the agent ran to completion (production session
+  // ensureWorker was erased by the very dispatch it was meant to prevent,
+  // and the agent ran to completion (production session
   // 2974: 17m51s of agent time after the click). The flag is now cleared
   // only at a real new-turn boundary via clearPendingStop(), so reading it
   // here is authoritative.
@@ -5046,35 +5045,6 @@ async function stopOwnedTurn(pool, { sessionId, machine, key, kinds = [], workKe
   return { stopped: killed === 'stopped', reason: killed, turnId, released: !!release };
 }
 
-// #460: materialize the dispatching user's personal agent files into the
-// warm worker's CC volume before a build/scout turn. Wipe-and-rewrite of
-// two managed paths — ~/.claude/CLAUDE.md (user-level memory Claude Code
-// loads natively) and ~/.claude/skills/ (personal skills) — so deletions
-// in Settings take effect on the next dispatch. Both live OUTSIDE the
-// repo checkout, so run-cc.sh's `git add -A` can never commit them.
-//
-// The script travels on the exec child's STDIN (contents base64-inlined
-// within it), never as a CLI arg, so user file contents don't show up in
-// `ps` or `docker inspect`. Callers treat failures as non-fatal: the
-// dispatch proceeds without personal files rather than failing the turn.
-async function syncUserAgentFiles(sessionId, files) {
-  const meta = _registryGet(sessionId);
-  if (!meta) {
-    throw new Error(`syncUserAgentFiles: no warm worker registered for session ${sessionId}`);
-  }
-  const { buildSyncShellScript } = require('./user-agent-files');
-  if (usesKubernetesWorkers()) {
-    await execWorkerCommand(meta.containerName, ['sh', '-s'], buildSyncShellScript(files || []));
-  } else {
-    await docker.execShellStdin(meta.containerName, buildSyncShellScript(files || []), {
-      timeoutMs: 20000, label: 'syncUserAgentFiles',
-    });
-  }
-  log.info('worker', 'Personal agent files synced', {
-    sessionId, count: (files || []).length,
-  });
-}
-
 // Boot-time resume: pick an in-flight (or finished-while-we-were-down)
 // turn back up from its journal. The caller (server.js adoption) owns
 // post-turn processing and clearing chat_sessions.active_turn; this
@@ -6306,7 +6276,6 @@ module.exports = {
   clearPendingStop,
   noteStopPending,
   getPendingStop,
-  syncUserAgentFiles,
   resumeTurnFromJournal,
   clearActiveTurn,
   releaseSkippedDispatch,

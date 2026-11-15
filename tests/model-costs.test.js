@@ -303,13 +303,8 @@ test('input is every prompt token, counted once: the cache counts are parts of i
   assert.match(sql, /cache_write_input_tokens::float8 \/ NULLIF\(input_tokens, 0\)/);
 });
 
-test('the picker and the console are told the profile’s cached parts', async () => {
+test('the console is told the profile’s cached parts', async () => {
   const pool = poolFor([[/FROM agent_turns/, [{ changes: '0' }]]]);
-  const picker = await modelCosts.pickerPayload(pool);
-  assert.deepEqual(picker.typicalChange, {
-    inputTokens: 2_500_000, cachedInputTokens: 2_375_000, cacheWriteInputTokens: 125_000,
-    outputTokens: 120_000, source: 'documented_constant',
-  });
   const admin = await modelCosts.adminPayload(pool, { days: 30 });
   assert.equal(admin.typicalChange.cachedInputTokens, 2_375_000);
   assert.equal(admin.typicalChange.cacheWriteInputTokens, 125_000);
@@ -318,8 +313,6 @@ test('the picker and the console are told the profile’s cached parts', async (
   const src = read('frontend/src/features/admin/admin-model-costs.tsx');
   assert.match(src, /% of it cache reads/);
   assert.match(src, /Cache reads and writes are priced at the model’s own cache rates where it publishes them/);
-  // The route's fallback is the same constant, cached parts and all.
-  assert.match(read('src/routes/chat.js'), /res\.json\(\{ typicalChange: modelCosts\.TYPICAL_CHANGE, models: \{\} \}\)/);
 });
 
 // ── 3. Observed spend is per CHANGE ─────────────────────────────────────
@@ -486,18 +479,21 @@ test('an override replaces the shown estimate and clears back to the derived one
   await modelCosts.writeOverride(pool, { modelId: 'claude-opus-5-5', cents: 250, actorId: 1 });
   assert.deepEqual(await modelCosts.readOverrides(pool), { 'claude-opus-5-5': 250 });
 
-  const picker = await modelCosts.pickerPayload(pool);
-  assert.equal(picker.models['claude-opus-5-5'].estimateCents, 250,
+  const row = (payload, id) => payload.rows.find((r) => r.modelId === id);
+  const admin = await modelCosts.adminPayload(pool, { days: 30 });
+  assert.equal(row(admin, 'claude-opus-5-5').shownCents, 250,
     'the override the admin typed, not the derived 1240');
-  assert.equal(picker.models['claude-opus-5-5'].estimateSource, 'override');
-  assert.equal(picker.models['claude-sonnet-5-5'].estimateSource, 'pricing',
+  assert.equal(row(admin, 'claude-opus-5-5').overrideCents, 250);
+  assert.equal(row(admin, 'claude-sonnet-5-5').overrideCents, null,
     'the models nobody overrode keep their derived figure');
-  assert.equal(picker.typicalChange.source, 'documented_constant');
+  assert.equal(row(admin, 'claude-sonnet-5-5').shownCents, row(admin, 'claude-sonnet-5-5').derivedCents);
+  assert.equal(admin.typicalChange.source, 'documented_constant');
 
   await modelCosts.writeOverride(pool, { modelId: 'claude-opus-5-5', cents: null, actorId: 1 });
   assert.deepEqual(await modelCosts.readOverrides(pool), {});
-  const cleared = await modelCosts.pickerPayload(pool);
-  assert.equal(cleared.models['claude-opus-5-5'].estimateSource, 'pricing');
+  const cleared = await modelCosts.adminPayload(pool, { days: 30 });
+  assert.equal(row(cleared, 'claude-opus-5-5').overrideCents, null);
+  assert.equal(row(cleared, 'claude-opus-5-5').shownCents, row(cleared, 'claude-opus-5-5').derivedCents);
 
   // Garbage in the setting is ignored rather than rendered.
   stored = '{"good/model": 10, "bad/model": "nope", "": 5}';

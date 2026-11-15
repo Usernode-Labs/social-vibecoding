@@ -5,14 +5,11 @@
 // The worker image ships Playwright + a pinned Chromium and the Playwright
 // MCP server (see worker/Dockerfile), wired into `claude` for MODE=build
 // only (see worker/run-cc.sh + worker/worker-run.sh). This module is the
-// JS-side source of truth for three things the host owns:
+// JS-side source of truth for two things the host owns:
 //
-//   1. IN_LOOP_BROWSER_GUIDANCE — the complete inline prompt block used by
-//      local Claude and Codex/OpenRouter builds.
-//   2. HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE — a short build-turn reminder
-//      for hosted Claude, whose required system handbook already contains the
-//      complete browser, proposal-check, staging-data, and screenshot rules.
-//   3. browserEnvForMode(mode) — the INLOOP_* env the agent uses to boot
+//   1. IN_LOOP_BROWSER_GUIDANCE — the complete inline prompt block a
+//      Homeroom bot build reads (homeroom-bot-live.js inLoopGuidance).
+//   2. browserEnvForMode(mode) — the INLOOP_* env the agent uses to boot
 //      the edited app locally (port, USERNODE_ENV, throwaway DB pointer).
 //      Build-only; scout (read-only) and sync (bookkeeping) get nothing.
 //

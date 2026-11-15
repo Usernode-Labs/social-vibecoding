@@ -5094,8 +5094,8 @@ function registerTools(server, ctx) {
     // the only way back to it was a proposal id nothing had reported.
     // `include_settings=1` keeps the platform-written settings proposals
     // (source='settings', #5379) in the universe too: an agent can still see
-    // and look one up by its pull request number, even though they never had
-    // an agent chat.
+    // and look one up by its pull request number, even though the platform
+    // wrote them.
     const result = await callPlatform(baseUrl, accessToken, 'GET', '/api/me/active-sessions?include_imported=1&include_settings=1');
     if (!result.ok) return platformError(result);
     const sessions = Array.isArray(result.body && result.body.sessions) ? result.body.sessions : [];

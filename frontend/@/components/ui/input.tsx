@@ -35,9 +35,9 @@ import { cn } from '@/lib/utils';
  *          difference — normalising it is a byte change for no benefit, and a
  *          byte change is the one thing a like-for-like conversion cannot
  *          make.)
- *   ring   the shell's focus treatment, absent from #agent-files-name and its
- *          sibling in the pending-upload form, and carrying
- *          `focus:border-transparent` on the dialogs' fields.
+ *   ring   the shell's focus treatment, absent from the App AI permissions
+ *          row's cap field, and carrying `focus:border-transparent` on the
+ *          dialogs' fields.
  *   hint   the placeholder colour, which the dialogs and the auth screens
  *          spell differently.
  *
@@ -64,15 +64,12 @@ const inputVariants = cva('', {
      * features/group-chat/composer.tsx.
      */
     lead: { composer: 'gc-composer-input', none: '' },
-    // Leads the string on the two fields inside #agent-files-form, which sit
-    // under their own label text rather than beside it.
-    //
-    // `mt2` / `mt3` lead the same way on the three waitlist-survey fields that
-    // follow a sibling rather than a label: #more-made-note under
-    // #more-made-url, #more-group-need under the tools chip row, and the
-    // bottom margin's mirror on #waitlist-confirm-email (which writes its
-    // `mb-2` AFTER `w-full`, so that one rides in through className).
-    spacing: { mt1: 'mt-1', mt2: 'mt-2', mt3: 'mt-3', none: '' },
+    // Leads the string on the three waitlist-survey fields that follow a
+    // sibling rather than a label: #more-made-note under #more-made-url,
+    // #more-group-need under the tools chip row, and the bottom margin's
+    // mirror on #waitlist-confirm-email (which writes its `mb-2` AFTER
+    // `w-full`, so that one rides in through className).
+    spacing: { mt2: 'mt-2', mt3: 'mt-3', none: '' },
     width: {
       full: 'w-full',
       flex: 'flex-1 min-w-0',
@@ -133,13 +130,8 @@ const inputVariants = cva('', {
       // by the primitive instead of sixteen hand-written copies of it.
       authWhite:
         'rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm',
-      // The compact field inside #agent-files-form's inline card — a lighter
-      // fill on the card's darker one, and a smaller box to match its text-xs
-      // container.
-      inset:
-        'rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1',
-      // `inset` at the App AI permissions row's size: the same card-on-card
-      // fill and radius, with the tighter padding that keeps a number field
+      // The App AI permissions row's field: a white fill on the row's card
+      // and a small radius, with the tight padding that keeps a number field
       // on one line of a `text-xs` row (features/settings/grants-list.tsx).
       // It draws NO focus rule of its own — pair it with `ring={false}`, which
       // leaves the browser's own outline as the cue, exactly as the
@@ -236,8 +228,8 @@ const inputVariants = cva('', {
       seamless:
         'focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent',
     },
-    // Only the `inset` box carries its text colour after the two groups above;
-    // `default` has it inline, where the hand-written string put it.
+    // Only the `insetTight` box carries its text colour after the two groups
+    // above; `default` has it inline, where the hand-written string put it.
     text: { true: 'text-zinc-900 dark:text-zinc-100', false: '' },
   },
   defaultVariants: {

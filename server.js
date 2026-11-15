@@ -86,7 +86,6 @@ const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const appPlatformApiRoutes = require('./src/routes/app-platform-api');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
 const { appPermissionsRoutes, declaredFor, grantedCapabilities, effectiveCapabilities } = require('./src/routes/app-permissions');
-const { userAgentFilesRoutes } = require('./src/routes/user-agent-files');
 const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
 const { boardOrderRoutes } = require('./src/routes/board-order');
 const { reportAiRoutes } = require('./src/routes/report-ai');
@@ -346,10 +345,6 @@ app.use((req, res, next) => {
       && /^\/api\/conversations\/[^/]+\/attachments$/.test(req.path)) {
     return next();
   }
-  // Agent-file uploads (#460) carry up to 48 KB of file content, which
-  // can exceed the 100kb default once JSON-escaped — the route mounts
-  // its own 256kb parser (see routes/user-agent-files.js).
-  if (req.path === '/api/me/agent-files' && req.method === 'POST') return next();
   // Locked report snapshots (report-lock-share) carry the full standalone
   // report HTML, which routinely exceeds 100kb; the route mounts its own
   // 3mb parser (routes/report-snapshots.js).
@@ -840,7 +835,6 @@ app.use(appDirectoryRoutes(config));
 app.use(approverRoutes(config));
 app.use(llmGrantsRoutes(config));
 app.use(appPermissionsRoutes(config));
-app.use(userAgentFilesRoutes(config));
 app.use(topicAttributeRoutes(config));
 app.use(boardOrderRoutes(config));
 app.use(reportAiRoutes(config));

@@ -1786,7 +1786,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // retired) the checks of the agent session pane, the dev chat's spec
   // viewer, chat sharing and the auto-solve work states went with them;
   // three were re-pointed to the old addresses' new landings. 718 leaves 162 slots.
-  checkCap.assertPinned(DAPP.tests.length, 718);
+  // 718 → 717: −1 (15 Nov 2026) Settings › Agent instructions & skills retired
+  // with the builds that copied those files into the worker. 717 leaves 163 slots.
+  checkCap.assertPinned(DAPP.tests.length, 717);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

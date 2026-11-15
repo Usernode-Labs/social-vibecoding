@@ -1,6 +1,6 @@
 // #2438 (from the #2383 audit): one row language on the Settings screen.
 //
-// Five list islands draw rows on that screen. Four already shared
+// Four list islands draw rows on that screen. Three of them already shared
 // `ROW_CLASS` — a white card on the zinc-100 page ground — while the CLI
 // credentials list still drew the pre-reskin row: a zinc-100 fill (the same
 // colour as the page, so it did nothing) held together by a border. Its row
@@ -18,7 +18,6 @@ const ROW_CLASS = "const ROW_CLASS = 'ui-mini rounded-lg bg-white dark:bg-zinc-9
 const LISTS = [
   'grants-list.tsx',
   'notification-prefs-list.tsx',
-  'agent-files-list.tsx',
   'app-permissions-list.tsx',
   'cli-tokens-list.tsx',
 ];

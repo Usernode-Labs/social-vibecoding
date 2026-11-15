@@ -172,17 +172,6 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   for (const f of ['grants-list.tsx', 'app-permissions-list.tsx', 'cli-tokens-list.tsx']) {
     has(`frontend/src/features/settings/${f}`, /bg-red-50 [^"]*touch-target-32"/, `Revoke in ${f}`);
   }
-  const files = read('frontend/src/features/settings/agent-files-list.tsx');
-  assert.equal((files.match(/font-medium touch-target-32"/g) || []).length, 2, 'agent files View and Delete');
-  // Each row's View and Delete name their file, and View says whether it is
-  // open and which <pre> it opens (tests/agent-files-list-aria.test.js renders it).
-  assert.match(files, /aria-expanded=\{open\}/, 'agent files View reports open');
-  assert.match(files, /aria-controls=\{contentId\}/, 'agent files View points at its content');
-  assert.match(files, /aria-label=\{open\s*\? t\('settings:agentFiles\.file\.hideName', \{ file: file\.name \}\)\s*: t\('settings:agentFiles\.file\.viewName', \{ file: file\.name \}\)\}/, 'agent files View names its file');
-  assert.equal(message('settings:agentFiles.file.viewName', { file: 'notes.md' }), 'View notes.md');
-  assert.equal(message('settings:agentFiles.file.hideName', { file: 'notes.md' }), 'Hide notes.md');
-  assert.match(files, /aria-label=\{t\('settings:agentFiles\.file\.deleteName', \{ file: file\.name \}\)\}/, 'agent files Delete names its file');
-  assert.equal(message('settings:agentFiles.file.deleteName', { file: 'notes.md' }), 'Delete notes.md');
 });
 
 test('Q19: where a slop cannot hang off the control, the control or its row grows on touch', () => {

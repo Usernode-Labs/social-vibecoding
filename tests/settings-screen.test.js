@@ -260,8 +260,8 @@ test('the registry groups pages under six headings, Account first and Advanced l
   const byGroup = (key) => sections.find((s) => s.key === key).group;
   assert.deepEqual(['usage', 'openrouter', 'api-key'].map(byGroup),
     Array(3).fill('settings:nav.group.aiModels'), 'the allowance, OpenRouter and the Anthropic key are AI models & usage');
-  assert.deepEqual(['connectors', 'cli', 'agent-files'].map(byGroup),
-    Array(3).fill('settings:nav.group.integrations'), 'connectors, CLI and agent files are Integrations & automation');
+  assert.deepEqual(['connectors', 'cli'].map(byGroup),
+    Array(2).fill('settings:nav.group.integrations'), 'connectors and CLI are Integrations & automation');
   assert.deepEqual(['experimental'].map(byGroup),
     ['settings:nav.group.advanced'], 'Experimental is Advanced');
   assert.equal(sections.at(-1).group, 'settings:nav.group.advanced', 'and Advanced closes the menu');
@@ -279,7 +279,7 @@ test('the registry groups pages under six headings, Account first and Advanced l
   for (const key of [
     'theme', 'language', 'alerts', 'blocked-apps', 'tour', 'username', 'email',
     'password', 'delete-account', 'wallet', 'openrouter',
-    'api-key', 'connectors', 'app-ai', 'app-permissions', 'agent-files', 'cli',
+    'api-key', 'connectors', 'app-ai', 'app-permissions', 'cli',
     'dev-console', 'experimental', 'usernode', 'admin-preview', 'about',
   ]) assert.ok(byKey[key], `${key} is still a registered part`);
 
@@ -293,6 +293,9 @@ test('the registry groups pages under six headings, Account first and Advanced l
   assert.deepEqual(['connectors', 'cli'].map(pageOf), Array(2).fill('connectors'));
   // #4311: "Where changes get built" is gone; nothing acted on its value.
   assert.equal(byKey['build-venue'], undefined, 'the build-venue part is retired');
+  // Agent instructions & skills is gone: no build copies the files into the
+  // worker any more, so the pane had nothing to configure.
+  assert.equal(byKey['agent-files'], undefined, 'the agent-files part is retired');
   // A page key that is also the key of a LATER part on that page would make
   // the page's own nav row resolve as a deep link to that part, opening the
   // page scrolled past everything above it.
@@ -518,8 +521,6 @@ test('every pre-existing settings control id survived the move', () => {
     'cp-current', 'cp-new', 'cp-confirm', 'cp-save', 'cp-wallet-save',
     'llm-grants-list', 'llm-grants-status',
     'cli-tokens-list', 'cli-tokens-more', 'cli-tokens-status',
-    'agent-files-input', 'agent-files-save', 'agent-files-cancel',
-    'agent-files-instructions-list', 'agent-files-skills-list',
     'wallet-link-btn', 'wallet-link-cancel', 'wallet-qr-canvas',
     'view-as-non-admin', 'dev-console-always-show',
     'devchat-alerts-test',
@@ -544,11 +545,10 @@ test('the four formerly-anonymous section roots got stable ids', () => {
 test('no section container is ever innerHTML-written', () => {
   // Section BODIES may still repaint their own dynamic list hosts
   // (#cli-tokens-list) exactly as they did in the modal — those are built by
-  // settings.js and carry no init()-bound listeners. #llm-grants-list and the
-  // two #agent-files-*-list hosts are NOT among them any more: all three are
-  // React-owned end to end (frontend/src/features/settings/grants-list.tsx,
-  // agent-files-list.tsx) and settings.js publishes a view model to each,
-  // which the assertions below pin.
+  // settings.js and carry no init()-bound listeners. #llm-grants-list is NOT
+  // among them any more: it is React-owned end to end
+  // (frontend/src/features/settings/grants-list.tsx) and settings.js
+  // publishes a view model to it, which the assertions below pin.
   //
   // What must never happen is a write that replaces a WRAPPER or the container
   // holding them, which would detach every id-bound control at once.
@@ -571,12 +571,6 @@ test('no section container is ever innerHTML-written', () => {
     '#llm-grants-list is React-owned — settings.js publishes to grants-store instead');
   assert.match(settingsJs, /UsernodeReact\.settingsGrants/,
     'settings.js reaches the grants store through the published bridge');
-  for (const host of ['agent-files-instructions-list', 'agent-files-skills-list']) {
-    assert.doesNotMatch(settingsJs, new RegExp(host),
-      `#${host} is React-owned — settings.js publishes to agent-files-store instead`);
-  }
-  assert.match(settingsJs, /UsernodeReact\.settingsAgentFiles/,
-    'settings.js reaches the agent-files store through the published bridge');
 
   // #1191 slice 6, conversion 8: the two nav hosts are React now
   // (frontend/src/features/settings/settings-nav.tsx), so _renderNav pushes
@@ -1078,7 +1072,7 @@ test('dapp.json covers the settings screen and its deep links', () => {
   const paths = tests.map((t) => t.path);
   assert.ok(paths.includes('/#settings'),
     'the screen itself is checked at its bare route');
-  for (const key of ['password', 'language', 'app-ai', 'agent-files', 'cli', 'admin-preview']) {
+  for (const key of ['password', 'language', 'app-ai', 'cli', 'admin-preview']) {
     assert.ok(
       paths.some((p) => p.includes(`#settings/${key}`)),
       `a rendered check deep-links #settings/${key}`,
@@ -1091,7 +1085,7 @@ test('dapp.json covers the settings screen and its deep links', () => {
   );
   // Data-dependent sections must go through their staging demo injection.
   for (const t of tests) {
-    if (/#settings\/(app-ai|agent-files)/.test(t.path)) {
+    if (/#settings\/app-ai/.test(t.path)) {
       assert.match(t.path, /demo=1/,
         `${t.path} needs ?demo=1 — its table is staging:private / not cloned`);
     }

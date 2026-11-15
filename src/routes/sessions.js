@@ -465,10 +465,10 @@ function stagingMockSharedSessions() {
 // branch and the panel's real layout — including its copy button — can't
 // be reviewed.
 //
-// The document deliberately conforms to the platform's two-half spec
-// convention (both marker headings), so a reviewer also exercises the
-// viewer's tab split and can confirm that "Copy markdown" yields the WHOLE
-// document rather than the open tab's half.
+// The document follows the platform's two-half spec convention (both
+// marker headings), as a real spec does, so the panel draws what a real
+// spec would and a reviewer can confirm that "Copy markdown" yields the
+// WHOLE document.
 const STAGING_MOCK_SPEC_MD = [
   '# [Mock] Readable cards on narrow screens',
   '',

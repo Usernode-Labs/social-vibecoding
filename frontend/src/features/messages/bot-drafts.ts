@@ -36,7 +36,7 @@ import type { SavedDraft } from './api';
 
 export type { SavedDraft } from './api';
 
-/** The server's cap (routes/chat-drafts.js MAX_DRAFTS): a full list refuses a save and evicts nothing. */
+/** The server's cap (services/conversation-drafts.js MAX_DRAFTS): a full list refuses a save and evicts nothing. */
 export const MAX_SAVED_DRAFTS = 20;
 
 const NONE: readonly SavedDraft[] = Object.freeze([]);

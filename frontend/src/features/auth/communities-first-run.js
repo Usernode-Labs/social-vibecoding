@@ -666,10 +666,9 @@
         // The kit's card is the box the body yields inside (#3563): a
         // column, so the panel, and the body in it, can be told how much
         // height is left instead of growing past the card's edge. The card
-        // keeps its own size, centring and scroll; the caller sizing its
-        // card is the same seam session-options.js uses for its width. Only
-        // the modal: the sheet below is a different surface with a scroll
-        // of its own, and the panel inside it just stacks.
+        // keeps its own size, centring and scroll. Only the modal: the sheet
+        // below is a different surface with a scroll of its own, and the
+        // panel inside it just stacks.
         if (sheet && sheet.el) {
           sheet.el.style.display = 'flex';
           sheet.el.style.flexDirection = 'column';

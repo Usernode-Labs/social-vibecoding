@@ -6,8 +6,8 @@
 // that lock, and nothing is cached:
 //
 //   - who is working on the proposal (src/workflow/session-work.ts: its
-//     coding turn, a turn on its author's own machine, its shots run, an old
-//     flow's recorded operation, a durable build that holds it);
+//     coding turn, its shots run, an old flow's recorded operation, a durable
+//     build that holds it);
 //   - for a move into a slot or into review, the caps, counted under a lock
 //     on the owner's users row and, for the platform-wide cap, a
 //     transaction-scoped advisory lock: two such moves for one owner wait for
@@ -74,15 +74,15 @@ export interface Row {
   // A staging fixture (migrate.js seeds it active to show what an active
   // session paints): never paused for being idle on a staging deployment.
   fixture: boolean;
-  // Somebody works on it: its coding turn (activeTurn, its journal), a turn
-  // on its author's own machine or an old flow's recorded operation other
-  // than the caller's own (workedOn), its shots run (shotsRunning).
+  // Somebody works on it: its coding turn (activeTurn, its journal), an old
+  // flow's recorded operation other than the caller's own (workedOn), its
+  // shots run (shotsRunning).
   // `moving`: what may still move its branch under a promote or an
-  // unpromote: its coding turn, a turn on its author's machine, an old
-  // flow's operation (a sync, an upload) other than the caller's own, a
-  // worker's turn record (whose end is recorded after the turn, and is
-  // read as its journal instead) and a hand-off's pipeline (which checks
-  // the very commit being proposed, as [main] let it).
+  // unpromote: its coding turn, an old flow's operation (a sync, an
+  // upload) other than the caller's own, a worker's turn record (whose end
+  // is recorded after the turn, and is read as its journal instead) and a
+  // hand-off's pipeline (which checks the very commit being proposed, as
+  // [main] let it).
   // `mergeMoving`: the same, less the shots agent's turn, for the merge
   // queue's ask (machine.ts askRefusal). It only takes pictures of the head
   // (session-work.ts NOT_MOVING_TURN_MODES), so a merge does not wait for

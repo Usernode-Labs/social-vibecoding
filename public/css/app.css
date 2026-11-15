@@ -74,8 +74,8 @@
   /* ── The surface ladder ──────────────────────────────────
      Three steps, and the ONLY thing they guarantee is that each one is
      nearer the reader than the last: the strip sits on the page wallpaper,
-     the session sheet sits on the strip, and a card (your message, a coding
-     run) sits on the sheet.
+     the session sheet sits on the strip, and a card (a composer, the bot's
+     answer chips) sits on the sheet.
 
      They exist because --bg-secondary / --bg-primary could not express that
      in both themes. In light those two ascend (#f5f5f7 → #ffffff), which is
@@ -548,7 +548,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    Fully React-owned (frontend/src/features/messages). Every rule is scoped
    to messages-* so the app group chat keeps its own contract.
 
-   DRAWN ON THE DEV SESSION'S LIFT LADDER — see `.dc-lift` and its two plane
+   DRAWN ON THE THREE-LAYER LIFT — see `.dc-lift` and its two plane
    classes further down. The wallpaper is the ground (this route is in the
    body:has(…) wallpaper list). `.messages-layout` is the frosted STRIP,
    carrying the screen's title, the New disc and the conversation rows drawn
@@ -2506,8 +2506,8 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-jump-present:hover,
 .messages-jump-present:focus-visible { color: var(--text-primary); text-decoration: underline; }
 
-/* 16 Oct 2026: the agent chats nobody used this week, and the archived
-   ones, behind a quiet link at the foot of Agents. Muted words in the
+/* 16 Oct 2026: the changes nobody touched this week behind a quiet link
+   at the foot of Agents. Muted words in the
    titles' column (16px of padding + the 44px avatar + the 14px gap), and no
    chevron: a chevron there matched the sections' own folds and read as a
    third heading. */
@@ -5825,85 +5825,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   box-shadow: none;
 }
 
-.dc-msg { padding: 8px 12px; max-width: 92%; }
-
-/* ONE bubble, not two.
-   Your turn is a card; the agent's is plain text on the ground. Both were
-   filled surfaces before — yours a solid --accent, the agent's --bubble-bg —
-   which made a two-party conversation two competing blocks of colour, and
-   put the transcript's loudest element on the half of it a reader already
-   wrote and does not need to re-read.
-
-   THE ACCENT FILL IS THE PART TO EXPLAIN, because it took real work to keep
-   legible and all of it is now retired. White on the accent is 3.93:1 at the
-   eyedropped #0a7cff, which is why --accent was darkened to #0a6ee0 in the
-   first place; the fill then needed --accent-ink for the body, a separate
-   inversion for the header, an opacity rule for the stamp that had to be
-   re-scoped off the role label after it took that label to 2.7:1, and two
-   more rules for links and for the header slots that declared colour inline.
-   Seven rules and three contrast incidents, to say "this one is yours" —
-   which side, shape and surface already say. (--accent-ink itself stays: it
-   is the token for near-black-on-light-accent and .messages-state button is
-   still a real fill.)
-
-   The agent's row loses its surface entirely. --bubble-bg existed only
-   because --bg-primary IS the page ground in dark, so a bubble drawn on it
-   vanished; with the session sheet as the ground and the agent's turn drawn
-   as plain text, there is nothing left to keep distinct, and the token has
-   no other reader. Plain text is also the honest shape: the agent's turn is
-   the body of the screen, not an aside in it.
-
-   The tail notch (`… 4px 12px`) is still gone: uniformly rounded, relying on
-   side and surface to say who is speaking. */
-/* YOUR TURN, TOLD APART FROM THE AGENT'S. Two cues, because each of them
-   alone had already failed once.
-
-   SURFACE. This was --dc-raised, which is the SAME token the coding-run
-   card, the PR card and the stopped card fill with. Your message and the
-   agent's cards were the identical grey, and the only thing separating them
-   was an alignment that (see below) was not visible either. It takes the
-   accent as a TINT now — 8% over the sheet, not the saturated fill that was
-   retired above for contrast: at this alpha the body text still reads
-   against the page's own ink and no inverted token is needed.
-
-   WIDTH. `.dc-msg` caps every row at 92%, which on a message of any real
-   length is indistinguishable from full width — so `margin-left: auto` had
-   nothing to push against and the right-alignment cue simply did not exist.
-   76% leaves a gutter down the left that no agent row ever crosses, because
-   the agent's cards are full-bleed with a 12px margin. The gutter is the
-   cue; the tint confirms it. */
-.dc-msg-user {
-  margin-inline-start: auto;
-  max-width: 76%;
-  background: var(--accent-tint);
-  border-radius: 1.25rem;
-  margin-bottom: 4px;
-}
-
-.dc-msg-assistant {
-  margin-inline-end: auto;
-  background: transparent;
-  border-radius: 1.25rem;
-  margin-bottom: 4px;
-}
-
-.dc-msg-header {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 4px;
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.dc-msg-content {
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  word-break: break-word;
-}
-
-.dc-msg-content p, .dc-p { margin-top: 0.5em; }
+.dc-p { margin-top: 0.5em; }
 
 /* ── Markdown ──────────────────────────────────────────── */
 
@@ -5911,23 +5833,6 @@ body:has(#platform-header.hidden) #app-frame-host {
 .dc-h3 { font-size: 17px; font-weight: 700; margin: 14px 0 4px; color: var(--text-primary); }
 .dc-h4 { font-size: 15px; font-weight: 600; margin: 12px 0 4px; color: var(--text-primary); }
 .dc-h5 { font-size: 13px; font-weight: 600; margin: 10px 0 3px; color: var(--text-secondary); text-transform: none; }
-
-.dc-msg-content a { color: var(--accent); text-decoration: underline; word-break: break-all; }
-.dc-msg-content a:hover { color: var(--accent-light); }
-/* #5728: a `#N` / `PR#N` chip in a reply (a change's shared transcript)
-   is the app chat's reference chip, not a markdown link: no underline until
-   it is hovered, and no breaking the number across lines. The issue ink is
-   the chip's own emerald, softened on the light sheet as Messages is; a PR
-   chip keeps the accent ink above, which is the blue it already wears. */
-.dc-msg-content a.gc-ref { text-decoration: none; word-break: normal; }
-.dc-msg-content a.gc-ref-issue { color: var(--state-ok); }
-html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 0.05); }
-@media (hover: hover) {
-  .dc-msg-content a.gc-ref:hover { text-decoration: underline; }
-}
-
-.dc-msg-content strong { font-weight: 600; color: var(--text-primary); }
-.dc-msg-content em { font-style: italic; color: var(--text-faint); }
 
 .dc-code-header {
   font-size: 11px;
@@ -5979,7 +5884,7 @@ html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 
 .dc-task-check { display: inline-block; width: 1em; color: var(--text-muted); font-family: 'JetBrains Mono', 'Fira Code', monospace; }
 .dc-task-check.dc-task-checked { color: var(--accent); }
 
-/* Tables (F1): styled by class, not by .dc-msg-content ancestry, so they
+/* Tables (F1): styled by class, not by a container's ancestry, so they
    render identically in chat, the spec preview snippet, and the viewer. */
 /* #683: inline markdown images (issue-body screenshot embeds). #2349 keeps
    the compact preview but makes its original asset an obvious full-size
@@ -6009,43 +5914,6 @@ html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 
   border-radius: 8px;
   margin: 4px 0 8px;
 }
-.dc-msg-content del { text-decoration: line-through; }
-.dc-msg-content hr { border: none; border-top: 1px solid var(--border-light); margin: 12px 0; }
-
-/* #3415: 12px on each side is the inset .dc-msg and the transcript's cards
-   (.dc-cc-attached) already use, so a step's check
-   lines up with the reply label and card edges instead of touching the pane. */
-.dc-status-line {
-  font-size: 11px;
-  color: var(--text-muted);
-  padding: 2px 12px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/* #2597: the venue caption under a running row's heading.
-   The heading says what is happening ("Coding agent is running"); this says
-   where, as a muted second line.
-
-   .dc-status-line is a single centred flex ROW, and every other row in the
-   transcript depends on it staying one — so the wrap is opted into by the
-   captioned rows alone, and the caption claims a whole line by basis rather
-   than by leaving the flow. The 20px indent is the icon (14px) plus the
-   row's gap (6px), which lands it under the first letter of the heading.
-   Inside .dc-cc-attached-summary the summary is already a COLUMN, so the
-   caption is a row of it and neither rule applies. */
-.dc-status-venue {
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--text-muted);
-  min-width: 0;
-}
-.dc-status-line-captioned { flex-wrap: wrap; }
-.dc-status-line-captioned > .dc-status-venue {
-  flex: 0 0 100%;
-  padding-inline-start: 20px;
-}
 
 /* Explicit square box with centered glyph is required for the
    rotation animation to spin around the glyph's visual center. Without
@@ -6062,18 +5930,8 @@ html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 
   transform-origin: 50% 50%;
 }
 
-.dc-cc-progress {
-  font-size: 11px;
-  color: var(--text-muted);
-  padding-block: 2px 2px; padding-inline: 22px 0;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  opacity: 0.7;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Pure-CSS arc spinner used for "in-progress" status lines. The gear
+/* Pure-CSS arc spinner for anything in flight (a card's run, a change's
+   waiting step, the app's launch cover). The gear
    glyph is too rotationally symmetric to read as spinning; an arc with
    ~270° of border vs a transparent gap is unambiguous. Sized to align
    with the gear so layout doesn't shift when the line transitions from
@@ -6099,15 +5957,6 @@ html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 
 }
 /* Reduce motion setting (#6510): the same, when Settings asks for it. */
 :where(html[data-motion="reduce"]) .dc-status-spinner-arc { animation: none; }
-
-/* Completed state — explicit green check so a glance at the chat tells
-   the user which steps finished. Kept at the same box dimensions as
-   the spinner so nothing shifts when a step transitions from active
-   → done. */
-.dc-status-check {
-  color: #10b981;
-  font-weight: 700;
-}
 
 /* ── Before / after captures ──────────────────────────────
    AppView.visualsTilesHtml builds these as innerHTML into the board's
@@ -6163,18 +6012,6 @@ html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 
 .usn-visual-more-summary::marker { display: none; }
 .usn-visual-more-summary::after { content: ' \203A'; }
 .usn-visual-more[open] > .usn-visual-more-summary::after { content: ' \02C5'; }
-
-.dc-pr-btn-promote { background: var(--accent); color: white; }
-.dc-pr-btn-promote:hover { background: var(--accent-light); }
-.dc-pr-btn-promote:disabled { background: #3f3f46; cursor: not-allowed; }
-/* #558: the shared arc spinner borders in var(--accent) (violet), which is
-   near-invisible on this filled violet/dark button while a proposal is in
-   flight. Scope a white spinner to this button only so the busy state reads
-   clearly; the shared class stays untouched everywhere else. */
-.dc-pr-btn-promote .dc-status-spinner-arc {
-  border-color: rgba(255, 255, 255, 0.85);
-  border-inline-end-color: transparent;
-}
 
 /* A horizontal strip that scrolls without DRAWING a scrollbar over itself.
    The app menu's tile strip is the caller.
@@ -6336,77 +6173,6 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
 }
 .gc-att-action:hover { text-decoration: underline; }
 
-/* ── Claude Code "is running" — status line + inline log ─
-   The status line itself is the disclosure summary; the live log
-   streams inline below as plain monospaced text (no border, no
-   background). Open by default; click the summary to collapse. */
-
-/* THE RUN IS A CARD. It was a status line with a log hanging off it: the
-   summary ran on across three wrapped lines and the log bled to the pane's
-   edges with no boundary, so the thing a reader watches longest on this
-   screen was the one thing on it with no shape. The card gives the run an
-   edge.
-
-   The surface is --bg-secondary, not a hue. "A coding run is happening" is
-   not a state in the platform's vocabulary — --state-progress means
-   something is IN FLIGHT toward a merge, and a run is neither good news nor
-   bad. Tinting it would put a fifth colour on a screen whose colours already
-   mean one thing each; the card's own edge is what separates it. */
-.dc-cc-attached {
-  margin: 8px 12px;
-  border: 1px solid var(--border-light);
-  border-radius: 12px;
-  background: var(--dc-raised);
-  overflow: hidden;
-}
-
-.dc-cc-attached-summary {
-  /* Reuse dc-status-line for icon/baseline, but make it the
-     <summary> of a <details> — suppress the native disclosure
-     marker (we already have the spinner / check glyph plus a
-     dedicated chevron span on the right). */
-  cursor: pointer;
-  list-style: none;
-  /* A COLUMN now: the head, the chip row and the note stack. It stays a
-     <summary> because a collapsed <details> renders nothing else. */
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-  padding: 10px 12px;
-}
-.dc-cc-attached-summary::-webkit-details-marker { display: none; }
-.dc-cc-attached-summary::marker { display: none; }
-.dc-cc-attached-summary:hover { background: var(--dc-strip); }
-
-/* Click affordance — sits to the right of "Claude Code is
-   running…" before the id/ts span. Two distinct glyphs (▸ when
-   the log is collapsed, ▾ when expanded) instead of rotating a
-   single triangle: rotation looks subtly off because the
-   triangle's bounding box flips between portrait and landscape
-   when turned 90°, dragging the visual center off the baseline. */
-.dc-cc-attached-chevron {
-  display: inline-block;
-  margin-inline-start: 6px;
-  font-size: 18px;
-  line-height: 1;
-  color: var(--text-muted);
-  transition: color 120ms ease;
-  /* Reserve a fixed-width slot so the timestamp doesn't shift
-     horizontally when the glyph changes. */
-  width: 18px;
-  text-align: center;
-}
-.dc-cc-attached-chevron::before { content: '\25B8'; /* ▸ */ }
-/* #1944: a descendant, not a child: the chevron may sit inside a head row
-   or be the summary's own child, as the shared transcript draws it. */
-.dc-cc-attached[open] > .dc-cc-attached-summary .dc-cc-attached-chevron::before {
-  content: '\25BE'; /* ▾ */
-}
-.dc-cc-attached-summary:hover .dc-cc-attached-chevron {
-  color: var(--text-faint);
-}
-
 /* Admin "View as non-admin" preview banner. The banner element is
    present in the DOM at all times (see public/index.html) but
    hidden by default; the body class set in app.js reveals it. Kept
@@ -6415,41 +6181,6 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
    mode without the visible reminder. */
 body.is-view-as-non-admin #view-as-non-admin-banner {
   display: flex;
-}
-
-/* The post-turn ccOutput markdown summary under an agent row: indent +
-   muted color, body font and a bit more room for structured markdown
-   elements (paragraphs, lists, code blocks).
-   #3559: it scrolls down, so it scrolled sideways too, and the agent's
-   summary is where a long path in backticks turns up: the block slid under
-   a finger on a phone. This breaks the summary's words inside the block, and
-   a fenced code block, which never wraps, still scrolls sideways inside its
-   own box. */
-.dc-cc-attached-md {
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-  max-height: 360px;
-  overflow-y: auto;
-  margin: 0 12px 12px;
-  padding: 9px 10px;
-  border-radius: 9px;
-  background: var(--dc-sheet);
-  border: 1px solid var(--border-light);
-}
-/* Tighten markdown spacing inside the muted summary block — the
-   default .dc-msg-content treatment is too generous for a summary
-   that sits under a status line. */
-.dc-cc-attached-md p { margin: 4px 0; }
-.dc-cc-attached-md ul, .dc-cc-attached-md ol { margin: 4px 0; padding-inline-start: 20px; }
-.dc-cc-attached-md li { margin: 2px 0; }
-.dc-cc-attached-md pre.dc-code-block {
-  margin: 6px 0;
-  font-size: 11px;
-}
-.dc-cc-attached-md code.dc-inline-code {
-  font-size: 11px;
 }
 
 /* ── Vote panel ─────────────────────────────────────────── */
@@ -7208,8 +6939,8 @@ span.gc-vote-btn-icon { cursor: default; }
   border: 1px solid transparent;
 }
 .ms-pill-neutral { color: var(--state-neutral); background: var(--state-neutral-bg); }
-/* #695: muted "+N" advisory suffix inside the in-vote pill (dev session
-   header) — non-approver votes recorded beside the approver-only tally. */
+/* #695: muted "+N" advisory suffix inside the in-vote pill —
+   non-approver votes recorded beside the approver-only tally. */
 .ms-advisory { opacity: 0.65; font-weight: 500; }
 .ms-pill-violet  { color: var(--state-progress); background: var(--state-progress-bg); }
 .ms-pill-amber   { color: var(--state-attention); background: var(--state-attention-bg); }
@@ -7699,8 +7430,8 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
    padding), because that screen is where the product already draws a
    conversation in bubbles — and the viewer's own message sits on the RIGHT
    (ChatMessageRow from="me": the row runs right to left, no avatar), in the
-   accent tint a shared transcript gives the author's turns (.dc-msg-user) and the Messages
-   screen gives yours (.messages-message-self). The side says who is
+   accent tint the Messages screen gives yours
+   (.messages-message-self). The side says who is
    speaking. Only the general chat: a topic thread keeps its flat named rows
    and tints yours in place (`#dev-topic-thread .gc-msg-self` below). */
 .gc-bubble {
@@ -12401,19 +12132,6 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   column-gap: 8px;
   align-self: flex-start;
 }
-.dev-change-overview {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 4px 12px 24px;
-}
-.dev-change-workspace {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-.dev-change-overview[hidden], .dev-change-workspace[hidden] { display: none; }
 .dev-change-issues {
   margin: 8px 4px 12px;
   padding: 12px 14px;
@@ -12427,34 +12145,6 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
    scrolled it sideways. Only the wrap for stray long tokens stays. */
 .dev-change-issues { min-width: 0; }
 .dev-change-issues a { min-width: 0; overflow-wrap: anywhere; }
-.dev-change-overview .dev-topic { width: 100%; }
-/* The Discussion sheet (topic/conversation.tsx), and nothing under it. The
-   tabs went first — Activity was three timestamps the card's meta line
-   carries — and the Build sheet followed (#2605): the "Open build" /
-   "Continue building" / "Read the build" pill leaves this page for the
-   change's own dev session. */
-.dev-conversation { min-width: 0; scroll-margin-top: 12px; }
-.dev-conversation-audience { margin: 0 4px 8px; }
-.dev-conversation-chat { height: clamp(300px, 50dvh, 540px); }
-/* The thread's scroller wears `overscroll-contain` for the full-height
-   thread screens, where the page behind it must not move. Here the thread is
-   one sheet in a scrolling page, and the utility trapped the wheel: a reader
-   whose pointer rested on the Discussion could not scroll the page even with
-   the thread at its end. Let the scroll chain to the page. */
-.dev-conversation-chat #gc-thread-scroll { overscroll-behavior: auto; }
-.dev-conversation .dev-thread { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
-.dev-conversation .dev-thread::before, .dev-conversation .dev-thread::after { content: none; }
-#dev-topic-thread .dev-conversation #gc-thread-messages {
-  margin: 0;
-  padding: 0;
-  max-width: none;
-  border-radius: 0;
-  box-shadow: none;
-  background: transparent;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-#dev-topic-thread .dev-conversation #gc-thread-messages::before { content: none; }
 .dev-topic-sheet {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
@@ -14246,7 +13936,7 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-change-pair[data-stuck] { gap: 4px; padding-block: 8px; background-color: var(--dc-sheet-solid); }
 .dev-change-pair[data-stuck] .dev-change-gate { padding: 8px 12px; }
 .dev-change-pair[data-stuck] :is(.dev-change-bar, .dev-change-gate-facts, .dev-change-gate-note,
-  .dev-change-gate-why, .dev-change-gate-fix, .dev-change-gate-refused) { display: none; }
+  .dev-change-gate-why, .dev-change-gate-fix) { display: none; }
 .dev-change-pair[data-stuck] [data-change-gate-line="testing"] .dev-change-gate-act { display: none; }
 .dev-change-gate {
   min-width: 0;
@@ -21027,8 +20717,8 @@ html[data-side-strip="left"] #notifications-sheet {
 
   /* THE STRIP'S GROUND UNDER A SHEET (Evan, 24 Oct 2026). On Home, Discover
      and You the screen is the bare wallpaper, which is the body's own
-     ground and runs under the strip already. Messages, Settings and the
-     agent chats stand on a sheet over it instead, the `.dc-lift-strip`
+     ground and runs under the strip already. Messages and Settings stand
+     on a sheet over it instead, the `.dc-lift-strip`
      plane, and the plane stops at the strip with the body behind it, so the
      strip read as a band of a different colour. (A project's pages and
      Messages' drawer run their sheet under the strip themselves; see the
@@ -22730,8 +22420,8 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
 }
 
 /* ── Messages is one inbox, and says which kind each row is (#2718) ──
-   frontend/src/features/messages/inbox.ts carries the argument: people, app
-   discussions and agent chats in one list, ordered on one clock, told apart
+   frontend/src/features/messages/inbox.ts carries the argument: people, the
+   Homeroom bot and changes in flight in one list, ordered on one clock, told apart
    by a mark rather than by three sidebars — which is what Slack and Teams do
    with a channel, a DM and a bot thread. What lives here is the filter row
    and the two shapes the list grew. */
@@ -25301,7 +24991,7 @@ html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > [da
 html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > [data-settings-section] { max-width: none; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-section-content .ui-secblurb { margin: 0 0 8px; line-height: 1.45; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-section-content :is(.ui-secblurb, .ui-note) + .ui-cap { margin-top: 16px; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > :is([data-settings-section="linked-accounts"], [data-settings-section="phones"], [data-settings-section="agent-files"], [data-settings-section="language"], [data-settings-section="tour"], [data-settings-section="guide"], [data-settings-section="about"], [data-settings-section="experimental"], [data-settings-section="wallet"], [data-settings-section="usernode"]) > div:first-child > .ui-sechead:first-child { display: none; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > :is([data-settings-section="linked-accounts"], [data-settings-section="phones"], [data-settings-section="language"], [data-settings-section="tour"], [data-settings-section="guide"], [data-settings-section="about"], [data-settings-section="experimental"], [data-settings-section="wallet"], [data-settings-section="usernode"]) > div:first-child > .ui-sechead:first-child { display: none; }
 /* A part's own blocks were ruled off from one another (`mt-6 pt-6
    border-t`): the kit stacks them, no hairline. */
 html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content [data-settings-section] .border-t.pt-6 { margin-top: 24px; padding-top: 0; border-top: 0; }
@@ -25397,8 +25087,8 @@ html[data-skin]:where(:not([data-skin="brand"])) #settings-about-legal { margin-
    second class, and is left to it.) */
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .hidden:not([class*=":block"], [class*=":flex"], [class*=":inline"], [class*=":grid"]) { display: none; }
 /* A LIST OF SMALL CARDS (the app permissions, the grants, the CLI's
-   credentials, the agent files, the local agents, the apps set
-   differently): one card, one row each, the name at the row's size. */
+   credentials, the apps set differently): one card, one row each, the name
+   at the row's size. */
 html[data-skin]:where(:not([data-skin="brand"])) #settings-root .ui-card > .ui-mini { border-radius: 0; background: none; padding: 12px 16px; font-size: 13px; color: var(--fr-mut); }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-root .ui-card > .ui-mini + .ui-mini { border-top: 1px solid var(--fr-line2); }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-root .ui-mini .font-medium:not(button, a, .font-mono) { font-size: 15px; font-weight: 650; color: var(--fr-ink); }
@@ -25454,7 +25144,7 @@ html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root
    another; each keeps its own node, id and `hidden`, and only its own card's
    paint is put away. The personal key's label is a field's label inside the
    card. */
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root :is(.ui-onecard, .ui-filecard) > .ui-card, html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-onecard .ui-keyrow { margin: 0; border: 0; border-radius: 0; background: none; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; overflow: visible; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-onecard > .ui-card, html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-onecard .ui-keyrow { margin: 0; border: 0; border-radius: 0; background: none; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; overflow: visible; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-openrouter-personal-controls { padding: 12px 16px 16px; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-openrouter-personal-controls > label { display: block; padding: 0 0 8px; font-size: 13px; font-weight: 650; line-height: 1.45; }
 /* A KEY is a field with its button beside it (the two keys, `.ui-keyrow`):
@@ -25463,18 +25153,6 @@ html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-onecard .ui-keyrow { padding: 0; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-keyrow > div { padding: 0; border: 0; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-keyrow > div:first-child { flex: 1 1 220px; min-width: 0; }
-/* A KIND OF AGENT FILE is one card (s63: `.ui-filecard`): its name, then
-   its empty line or its files, with Upload at the end of the first row.
-   The grid places the button; nothing is moved. A kind with no line under
-   its name (while the files load or fail) is still a card. */
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-filecard { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 12px; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-filecard > div:first-child { display: contents; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-filecard h4 { grid-column: 1; margin: 0; padding-block: 12px; padding-inline-start: 16px; font-size: 15px; font-weight: 650; line-height: 1.45; color: var(--fr-ink); }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-filecard [data-agent-files-upload] { grid-column: 2; grid-row: 1 / span 2; margin-inline-end: 16px; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-filecard > .ui-card { grid-column: 1; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-filecard > .ui-card > p { margin-top: -10px; padding: 0; padding-inline-start: 16px; padding-block-end: 12px; line-height: 1.45; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-filecard:has(.ui-mini) > .ui-card { grid-column: 1 / -1; border-top: 1px solid var(--fr-line2); }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-filecard:has(.ui-mini) [data-agent-files-upload] { grid-row: 1; }
 /* INSIDE A TOOL'S GUIDED SET-UP (s62: what a tool's card opens). The
    product's own nodes, which settings.js writes into by id, in the kit's
    type and tokens: the steps' numbers the kit's lead tile at 24px (the

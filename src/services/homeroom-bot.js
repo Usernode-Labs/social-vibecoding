@@ -175,8 +175,8 @@ const MODEL_ID_RE = defaultModelSetting.MODEL_ID_RE;
 // every other reader goes through): blank is the deploy's
 // OPENROUTER_DEFAULT_CODEX_MODEL, else src/config.js's fallback. It sits
 // on the Models card because the stages above fall back to it, but it is
-// the whole platform's: new agent chats and the catalog's recommended
-// model follow it too.
+// the whole platform's: a coding turn that names no model and the
+// catalog's recommended model follow it too.
 const KEY_DEFAULT_MODEL = defaultModelSetting.KEY;
 // The model the platform's helper calls ask first (services/helper-model.js:
 // titles, the plan at Make it, chat reads, the content review, …). Blank is
@@ -1179,7 +1179,7 @@ function mergeAppCaps(stored, patch) {
 }
 
 /**
- * The platform default is every new agent chat's model, so it must be one
+ * The platform default is the model of every coding turn that names none, so it must be one
  * OpenRouter lists and that can call tools: checked against the stored
  * catalog, the same copy a current bot configuration is checked against
  * (bot-configs.js checkRecipeModels). Without a catalog to check, it is

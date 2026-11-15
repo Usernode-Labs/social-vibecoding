@@ -3503,11 +3503,6 @@
       "expectText": "Staging demo app A"
     },
     {
-      "name": "Settings deep-links Agent instructions & skills with the seeded demo files",
-      "path": "/?demo=1#settings/agent-files",
-      "expectSelector": "[data-settings-section=\"agent-files\"]:not(.hidden) #agent-files-instructions-list [data-agent-file]"
-    },
-    {
       "name": "Settings CLI access empty state explains how to start a local coding agent (#1609)",
       "path": "/?demo=cli-empty#settings/cli",
       "expectText": "Set up a local coding agent",

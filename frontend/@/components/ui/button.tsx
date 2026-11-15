@@ -119,14 +119,17 @@ const buttonVariants = cva('', {
       // The bell drawer's invite Accept button — a `text-xs` action row inside
       // the notifications panel, one radius step up from `compact`.
       pill: 'rounded-md bg-violet-600 hover:bg-violet-500',
-      // #agent-files-save — the same action inside a `text-xs` inline card,
-      // where the smaller radius matches the card.
+      // The settings rows' Re-enable and Use defaults (grants-list.tsx,
+      // app-permissions-list.tsx, notification-prefs-list.tsx) — the same
+      // action inside a `text-xs` row card, where the smaller radius matches
+      // the card.
       compact: 'rounded bg-violet-600 hover:bg-violet-500',
       // #browse-detail-open. Radius only: the browse detail page writes its
       // transition BEFORE the fill, so on that one button the surface travels
       // in `ink` instead — see `fillLate` / `unavailableLate` below.
       roundedFull: 'rounded-full',
-      // #agent-files-cancel — the neutral bordered sibling of `compact`.
+      // The neutral bordered sibling of `compact`: the Connectors pane's Copy
+      // buttons and the welcome tour's Back.
       //
       // THIS VARIANT CARRIES NO INK, and the default ink is `solid` (white).
       // `variant="outline"` on its own therefore renders white text on a
@@ -208,7 +211,8 @@ const buttonVariants = cva('', {
       flushBold: 'py-2 text-sm font-semibold',
       // The members dialog's row actions.
       sm: 'px-3 py-1.5 text-sm font-medium',
-      // #agent-files-save / #agent-files-cancel.
+      // The settings rows' compact Re-enable and Use defaults, and the board's
+      // merges-paused Resume, which inherit their text size from the row.
       xs: 'px-3 py-1 font-medium',
       // The same box, with the text size the bell drawer's invite buttons
       // spell out rather than inherit.
@@ -251,7 +255,8 @@ const buttonVariants = cva('', {
       fillLate: 'transition-colors bg-violet-600 hover:bg-violet-500 text-white',
       unavailableLate:
         'transition-colors bg-zinc-200 dark:bg-zinc-800 text-zinc-500 cursor-not-allowed dark:text-zinc-400',
-      // #agent-files-cancel.
+      // The quiet secondary label: `outline`'s Copy and Back, and the
+      // dialogs' Cancel and Done.
       muted:
         'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors',
       // The ink that goes with `variant: 'neutral'` — near-black, which is

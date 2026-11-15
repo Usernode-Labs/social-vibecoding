@@ -17,7 +17,6 @@ const assert = require('node:assert/strict');
 const express = require('express');
 const {
   issueKindLimiter,
-  agentFileWriteLimiter,
   groupChatWriteLimiter,
 } = require('../src/middleware/rate-limits');
 
@@ -43,8 +42,6 @@ test.before(async () => {
     if (req.query.fail === '1') return res.status(422).json({ error: 'nope' });
     res.json({ ok: true });
   });
-  // Mirrors POST /api/me/agent-files.
-  app.post('/files', agentFileWriteLimiter, (req, res) => res.status(201).json({ ok: true }));
   app.post('/group-chat', groupChatWriteLimiter, (_req, res) => res.status(201).json({ ok: true }));
 
   await new Promise((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
@@ -106,10 +103,6 @@ test('full admins are exempt from the limiters', async () => {
     const r = await post('/issues', { user: 'admin-user', kind: 'general', headers });
     assert.equal(r.status, 200, `admin request #${i + 1} should pass`);
   }
-  for (let i = 0; i < 35; i++) {
-    const r = await post('/files', { user: 'admin-user', headers });
-    assert.equal(r.status, 201, `admin file save #${i + 1} should pass`);
-  }
 });
 
 test('view-only admins stay limited like regular users', async () => {
@@ -138,24 +131,6 @@ test('429 body carries retryAfterSeconds and a neutral message, no code field', 
     'throttle 429s must stay code-free (budget_exceeded is the billing discriminator)');
 });
 
-test('agent-file saves use their own per-minute bucket with an "under a minute" message', async () => {
-  const user = 'files-user';
-  for (let i = 0; i < 30; i++) {
-    const r = await post('/files', { user });
-    assert.equal(r.status, 201, `file save #${i + 1} should pass`);
-  }
-  const blocked = await post('/files', { user });
-  assert.equal(blocked.status, 429);
-  assert.match(blocked.body.error,
-    /^Rate limit reached: up to 30 file saves per minute\. You can try again in under a minute\.$/);
-  assert.equal(typeof blocked.body.retryAfterSeconds, 'number');
-
-  // A fresh save on the ISSUES buckets still passes — the file bucket
-  // being exhausted doesn't bleed into governance actions.
-  const issue = await post('/issues', { user, kind: 'general' });
-  assert.equal(issue.status, 200);
-});
-
 test('native discussion writes have their own bucket of 60 a minute', async () => {
   const user = 'group-chat-user';
   for (let i = 0; i < 60; i++) {
@@ -166,7 +141,7 @@ test('native discussion writes have their own bucket of 60 a minute', async () =
   assert.equal(blocked.status, 429);
   assert.match(blocked.body.error, /Too many discussion messages/);
 
-  // Its own bucket: the file-save limiter is untouched by it.
-  const file = await post('/files', { user });
-  assert.equal(file.status, 201, 'exhausting native discussion writes throttles nothing else');
+  // Its own bucket: the issues limiter is untouched by it.
+  const issue = await post('/issues', { user, kind: 'general' });
+  assert.equal(issue.status, 200, 'exhausting native discussion writes throttles nothing else');
 });

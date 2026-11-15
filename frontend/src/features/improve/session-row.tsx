@@ -277,11 +277,10 @@ function stateOf(session: SessionRowView): {
  * both themes and every state; `border-e-transparent` puts the gap back, since
  * `border-current` would otherwise fill it in and draw a closed ring.
  *
- * Scoped HERE rather than added to app.css on purpose. `.dc-pr-btn-promote
- * .dc-status-spinner-arc` (public/css/app.css) is the precedent for recolouring
- * the shared arc for one surface — "the shared class stays untouched everywhere
- * else" — and this panel is a fully React-owned island, so its override belongs
- * in its own class run. The compiled child selector outspecifies the base class
+ * Scoped HERE rather than added to app.css on purpose. Recolouring the shared
+ * arc for one surface leaves the shared class untouched everywhere else, and
+ * this panel is a fully React-owned island, so its override belongs in its
+ * own class run. The compiled child selector outspecifies the base class
  * and tailwind.css loads after app.css, so it wins on both counts.
  */
 const PILL_BASE =

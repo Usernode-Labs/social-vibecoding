@@ -543,10 +543,9 @@ export function ConnectorsSection() {
                     <pre> and `align-items: stretch` made it a ~210px violet slab
                     — louder than #connector-url-copy, which is the section's real
                     primary action — while taking ~80px of width off a block that
-                    already scrolls sideways on a phone. The row is the idiom
-                    sections/agent-files.tsx uses for its upload controls, and it
-                    is also where the destination filename belongs: the two blocks
-                    are byte-identical, so the file each one is for is the only
+                    already scrolls sideways on a phone. The row is also where
+                    the destination filename belongs: the two blocks are
+                    byte-identical, so the file each one is for is the only
                     thing that distinguishes them.
                 */}
                 <div className="flex items-center justify-between gap-2 mb-1">

@@ -1183,98 +1183,6 @@
     "text": "Link Homeroom Wallet",
     "description": "Button in Settings > Homeroom Wallet: shows a QR code to scan with the Homeroom mobile app, which links that wallet to this account."
   },
-  "agentFiles.title": {
-    "text": "Agent instructions & skills",
-    "description": "Heading of the section in Settings where the person uploads files that the AI coding agent follows when it builds for them."
-  },
-  "agentFiles.intro": {
-    "text": "Personal files the coding agent follows on every build or plan run you start, in any app. Markdown or plain text only, up to 10 of each kind, 48 KB per file. Changes apply from your next run.",
-    "description": "Explanation under the Agent instructions & skills heading in Settings. \"Build\" and \"plan run\" are two kinds of work the AI coding agent does (a plan run writes the plan for a change); \"run\" is a noun. Keep the non-breaking space between 48 and KB."
-  },
-  "agentFiles.instructions.heading": {
-    "text": "Instructions",
-    "description": "Subheading in Settings > Agent instructions & skills over the list of instruction files the person uploaded for the coding agent."
-  },
-  "agentFiles.instructions.upload": {
-    "text": "Upload",
-    "description": "Small button beside the Instructions subheading in Settings > Agent instructions & skills: picks an instruction file from the device to upload (verb)."
-  },
-  "agentFiles.instructions.empty": {
-    "text": "No instruction files yet. Upload a markdown file to guide the coding agent on every build you start.",
-    "description": "Shown under the Instructions subheading in Settings > Agent instructions & skills when the person has uploaded none. \"Build\" is a noun: a piece of work the coding agent does."
-  },
-  "agentFiles.skills.heading": {
-    "text": "Skills",
-    "description": "Subheading in Settings > Agent instructions & skills over the list of skill files: packaged abilities the coding agent can use."
-  },
-  "agentFiles.skills.upload": {
-    "text": "Upload",
-    "description": "Small button beside the Skills subheading in Settings > Agent instructions & skills: picks a skill file from the device to upload (verb)."
-  },
-  "agentFiles.skills.empty": {
-    "text": "No skills yet. Upload a skill file the agent can use while building for you.",
-    "description": "Shown under the Skills subheading in Settings > Agent instructions & skills when the person has uploaded none."
-  },
-  "agentFiles.form.nameLabel": {
-    "text": "Name",
-    "description": "Label of the field in the upload form in Settings > Agent instructions & skills: the name the uploaded file is saved under."
-  },
-  "agentFiles.form.descriptionLabel": {
-    "text": "Description",
-    "description": "Label of the field in the upload form in Settings > Agent instructions & skills, shown for a skill: one line saying what the skill does."
-  },
-  "agentFiles.form.descriptionPlaceholder": {
-    "text": "One line: what this skill does",
-    "description": "Placeholder of the Description field in the skill upload form in Settings > Agent instructions & skills."
-  },
-  "agentFiles.list.loadFailed": {
-    "text": "Failed to load your agent files.",
-    "description": "Error in Settings > Agent instructions & skills when the lists of uploaded files could not be fetched."
-  },
-  "agentFiles.file.size": {
-    "text": "{{size}} KB",
-    "description": "Size shown on a file's row in Settings > Agent instructions & skills. {{size}} is the number of kilobytes."
-  },
-  "agentFiles.file.view": {
-    "text": "View",
-    "description": "Link on a file's row in Settings > Agent instructions & skills: expands the row to show the file's contents."
-  },
-  "agentFiles.file.hide": {
-    "text": "Hide",
-    "description": "Link on a file's row in Settings > Agent instructions & skills while its contents are shown: collapses them again."
-  },
-  "agentFiles.file.viewName": {
-    "text": "View {{file}}",
-    "description": "Accessible name of the View link on a file's row in Settings > Agent instructions & skills. {{file}} is the file's name."
-  },
-  "agentFiles.file.hideName": {
-    "text": "Hide {{file}}",
-    "description": "Accessible name of the Hide link on a file's row in Settings > Agent instructions & skills, which collapses the file's contents. {{file}} is the file's name."
-  },
-  "agentFiles.file.delete": {
-    "text": "Delete",
-    "description": "Red link on a file's row in Settings > Agent instructions & skills: deletes that uploaded file after a confirmation."
-  },
-  "agentFiles.file.deleteName": {
-    "text": "Delete {{file}}",
-    "description": "Accessible name of the Delete link on a file's row in Settings > Agent instructions & skills. {{file}} is the file's name."
-  },
-  "agentFiles.file.loading": {
-    "text": "Loading…",
-    "description": "Shown inside an expanded file row in Settings > Agent instructions & skills while the file's contents are being fetched."
-  },
-  "agentFiles.file.emptyContent": {
-    "text": "(empty)",
-    "description": "Shown inside an expanded file row in Settings > Agent instructions & skills when the uploaded file has no contents. Keep the parentheses."
-  },
-  "agentFiles.file.loadFailedReason": {
-    "text": "Failed to load: {{reason}}",
-    "description": "Shown inside an expanded file row in Settings > Agent instructions & skills when the file's contents could not be fetched. {{reason}} is the error sentence from the server or the browser."
-  },
-  "agentFiles.file.loadFailed": {
-    "text": "Failed to load: fetch failed",
-    "description": "Shown inside an expanded file row in Settings > Agent instructions & skills when the file's contents could not be fetched and the server gave no reason."
-  },
   "experimental.title": {
     "text": "Experimental",
     "description": "Heading of the section in Settings that holds switches for features still being tested."
@@ -2527,10 +2435,6 @@
     "text": "CLI & coding-agent access",
     "description": "Name of a part of Settings: the part listing command-line (CLI) credentials and coding agents attached from a person's own machine. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
-  "nav.part.agentFiles": {
-    "text": "Agent instructions & skills",
-    "description": "Name of a part of Settings: the page where a person writes instruction files and skills that their AI coding agents read. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
-  },
   "nav.part.experimental": {
     "text": "Experimental",
     "description": "Name of a part of Settings: the page of experimental features that can be switched on. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
@@ -2623,10 +2527,6 @@
     "text": "Build from Claude, ChatGPT or a terminal",
     "description": "One muted line under the Connectors & CLI row in the phone's Settings menu, saying what the page is for: connecting AI chat apps or a command line (terminal) to Homeroom so they can build. Claude and ChatGPT are product names. Keep it short; it is cut to one line."
   },
-  "nav.subtitle.agentFiles": {
-    "text": "Tell your coding agents how to work",
-    "description": "One muted line under the Agent instructions & skills row in the phone's Settings menu, saying what the page is for: files that customise how the AI coding agent behaves when it builds. Keep it short; it is cut to one line."
-  },
   "nav.tag.beta": {
     "text": "Beta",
     "description": "A small grey label at the end of a row in the Settings menu (the Experimental row), saying the features behind it are still being tried and may change. One short word."
@@ -2657,7 +2557,7 @@
   },
   "nav.group.integrations": {
     "text": "Integrations & automation",
-    "description": "Heading over a group of rows in the Settings menu: the chat connectors (Claude, ChatGPT, Codex), command-line (CLI) access, and the instruction files and skills that coding agents read."
+    "description": "Heading over a group of rows in the Settings menu: the chat connectors (Claude, ChatGPT, Codex) and command-line (CLI) access."
   },
   "nav.group.preferences": {
     "text": "Preferences",
@@ -2758,10 +2658,6 @@
   "nav.keywords.cli": {
     "text": "terminal token credentials revoke local agent opencode claude code",
     "description": "Not shown on screen. Extra search words for \"CLI & coding-agent access\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
-  },
-  "nav.keywords.agentFiles": {
-    "text": "instructions skills agents md claude md prompt files",
-    "description": "Not shown on screen. Extra search words for \"Agent instructions & skills\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.experimental": {
     "text": "beta labs advanced basic mode look design",
@@ -3794,62 +3690,6 @@
   "appPermissions.status.revokedSome": {
     "text": "Not every permission could be revoked. Any that still show Revoke are still allowed.",
     "description": "Error line in Settings > App device permissions when Revoke all took away some of an app's permissions but at least one request failed."
-  },
-  "agentFiles.status.tooLarge": {
-    "text": "\"{{file}}\" is too large. The limit is 48 KB per file.",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills, when the chosen file is too big to upload. {{file}} is the file's name; keep the quotation marks."
-  },
-  "agentFiles.status.unreadable": {
-    "text": "Could not read that file.",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills, when the browser could not read the chosen file."
-  },
-  "agentFiles.form.titleSkill": {
-    "text": "New skill from \"{{file}}\"",
-    "description": "Title of the small form shown after choosing a file to upload as a skill (a reusable procedure a coding agent can load), in Settings. {{file}} is the chosen file's name; keep the quotation marks."
-  },
-  "agentFiles.form.titleInstruction": {
-    "text": "New instruction file from \"{{file}}\"",
-    "description": "Title of the small form shown after choosing a file to upload as an instruction file (standing guidance a coding agent always reads), in Settings. {{file}} is the chosen file's name; keep the quotation marks."
-  },
-  "agentFiles.status.demoData": {
-    "text": "Demo data: changes are not saved.",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills, when the rows are sample data on a preview server and a change was tried."
-  },
-  "agentFiles.status.nameRequired": {
-    "text": "Give the file a name.",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills, when the name field of the upload form is empty."
-  },
-  "agentFiles.status.saveFailed": {
-    "text": "Failed to save the file.",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills, when the upload could not be saved and the server gave no reason."
-  },
-  "agentFiles.status.saved": {
-    "text": "Saved \"{{name}}\". It applies from your next run.",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills, after a file was uploaded. {{name}} is the name it was saved under; keep the quotation marks. A \"run\" is one job the coding agent does."
-  },
-  "agentFiles.status.networkError": {
-    "text": "Network error: {{reason}}",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills when the request did not reach the server. {{reason}} is the browser's own technical message."
-  },
-  "agentFiles.delete.confirmTitle": {
-    "text": "Delete \"{{name}}\"?",
-    "description": "Title of the confirmation dialog before deleting an instruction file or skill in Settings. {{name}} is the file's name; keep the quotation marks."
-  },
-  "agentFiles.delete.confirmMessage": {
-    "text": "The coding agent stops using it from your next run. This cannot be undone.",
-    "description": "Body of the confirmation dialog before deleting an instruction file or skill in Settings. A \"run\" is one job the coding agent does."
-  },
-  "agentFiles.delete.confirmButton": {
-    "text": "Delete",
-    "description": "Red confirm button in the dialog that deletes an instruction file or skill for coding agents, in Settings."
-  },
-  "agentFiles.status.deleteFailed": {
-    "text": "Failed to delete.",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills, when a file could not be deleted and the server gave no reason."
-  },
-  "agentFiles.status.deleted": {
-    "text": "Deleted \"{{name}}\".",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills, after a file was deleted. {{name}} is the file's name; keep the quotation marks."
   },
   "wallet.status.startFailed": {
     "text": "Failed to start linking.",
