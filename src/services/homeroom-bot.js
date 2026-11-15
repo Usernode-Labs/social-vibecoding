@@ -11219,7 +11219,6 @@ async function retriageApp(pool, { slug, actorId = null, deps = {} } = {}) {
 
 const { AsyncLocalStorage } = require('node:async_hooks');
 const loopRules = require('../workflow/rules/bot-loop.ts');
-const { isAppendOnly } = require('../workflow/rules/append-only-files.ts');
 
 // The look under way in this call chain (lookAt), for the effects deep in
 // it that must happen once across its item's attempts (insertRun, the
@@ -11418,13 +11417,6 @@ async function overlapOthers(pool, { app, issueNumber, github }) {
   });
 }
 
-/** At most three file names, then "and N more". */
-function filesListed(files) {
-  const shown = (files || []).slice(0, 3).map((f) => `\`${f}\``);
-  const rest = (files || []).length - shown.length;
-  return rest > 0 ? `${shown.join(', ')} and ${rest} more` : shown.join(', ');
-}
-
 // What an overlap names as the other side: its pull request, or the change
 // for its request until it has one.
 const overlapSubject = (w) => (w?.prNumber ? `PR #${Number(w.prNumber)}`
@@ -11442,22 +11434,15 @@ async function overlapFor(pool, { app, run, issueNumber, dependsOn = [], deps = 
   return { decision: loopRules.decideOverlap({ files, others, dependsOn }) };
 }
 
-// The note a build's thread gets about what it shares, said once per run:
-// building now beside the other change, or on top of it.
+// The note a build's thread gets when it goes on top of another change, said
+// once per run. A build that only shares files with another change says
+// nothing: it builds beside it, and the merge sync settles the rest.
 function overlapNote(decision) {
   if (decision?.strategy === 'stack' && decision.with) {
     return {
       kind: 'overlap_stack',
       text: `This depends on ${overlapSubject(decision.with)}, so I'm building it on top of that change. `
         + 'Once that merges, this change moves onto main and its checks run again.',
-    };
-  }
-  if (decision?.strategy === 'parallel' && decision.with) {
-    const combined = decision.files.every(isAppendOnly) ? ', which Homeroom combines on its own' : '';
-    return {
-      kind: 'overlap_parallel',
-      text: `This and ${overlapSubject(decision.with)} both touch ${filesListed(decision.files)}${combined}. `
-        + 'Building now; whichever merges second gets an automatic sync with main.',
     };
   }
   return null;
@@ -11515,11 +11500,11 @@ async function startBuild(config, pool, { appId, issueNumber, runId, replyTo, pe
   }
   // #6423, #6428: before the build takes its slot, the files its plan names
   // are compared with what the project's other open changes change. A shared
-  // file never holds it: it builds now, and its thread says what it shares
-  // (said once per run). It goes on top of another change only when its
-  // request depends on that one's. A first version skips it: there is
-  // nothing else open on a project without a first version. A plan-only
-  // pass never reaches a build start.
+  // file never holds it: it builds now, and the shared files are logged for
+  // the bot's own console, not said in the request's thread. It goes on top
+  // of another change only when its request depends on that one's. A first
+  // version skips it: there is nothing else open on a project without a
+  // first version. A plan-only pass never reaches a build start.
   let stackOn = null;
   if (!requester?.firstVersion) {
     const { decision } = await overlapFor(pool, { app, run, issueNumber: Number(issueNumber), deps })
@@ -11529,9 +11514,23 @@ async function startBuild(config, pool, { appId, issueNumber, runId, replyTo, pe
         });
         return { decision: null };
       });
+    if (decision?.strategy === 'parallel' && decision.with) {
+      log.info('homeroom-bot', 'A build shares files with another open change', {
+        app: app.slug,
+        issueNumber,
+        runId,
+        with: {
+          sessionId: decision.with.sessionId,
+          prNumber: decision.with.prNumber,
+          issueNumber: decision.with.issueNumber,
+        },
+        files: decision.files,
+      });
+    }
     // Said once per run (its key, bot-post.js), and only where the request's
     // thread has the bot say it: a build's own news is its stage there, so
-    // the note is recorded (step 4, decision 6).
+    // the note is recorded (step 4, decision 6). Only a build on top of
+    // another change says anything; a parallel overlap is logged above.
     const note = overlapNote(decision);
     if (note) {
       await postThreadNote({
