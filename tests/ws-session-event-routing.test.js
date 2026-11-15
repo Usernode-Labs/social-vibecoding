@@ -376,17 +376,9 @@ test('a socket over the buffer limit is skipped, then told to re-read once', asy
 // ── The client half ────────────────────────────────────────────────────
 
 const APP_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-const DEV_CHAT = fs.readFileSync(
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8');
 
 test('the events socket re-sends every watch when it (re)opens', () => {
   const at = APP_JS.indexOf('App.eventsWs.onopen');
   const body = APP_JS.slice(at, APP_JS.indexOf('};', at));
   assert.match(body, /for \(const id of App\._watchedSessions\.keys\(\)\) App\._sendSessionWatch\('watch_session', id\)/);
-});
-
-test('DevChat\'s open session is what the tab watches', () => {
-  assert.match(DEV_CHAT, /set currentSession\(session\) \{[\s\S]{0,200}window\.App\?\.setDevChatSession\?\.\(/,
-    'every assignment — open, close, a test — reaches the socket');
-  assert.match(APP_JS, /setDevChatSession\(sessionId\) \{[\s\S]{0,300}unwatchSession\(App\._devChatWatchedId, 'devchat'\)[\s\S]{0,200}watchSession\(id, 'devchat'\)/);
 });

@@ -1592,7 +1592,7 @@
     "description": "Button on the viewer's own card for a change in progress when only they can see it: shows it to everyone in the project."
   },
   "session.actions.makeVisibleTitle": {
-    "text": "Show this session in everyone's In progress area. Others can comment and open its live preview, but can't read your chat unless you also share it",
+    "text": "Show this change in everyone's In progress area, where others can comment and open its live preview",
     "description": "Tooltip of the \"Make visible\" button on the viewer's own card for a change in progress."
   },
   "session.shared.working": {
