@@ -312,3 +312,25 @@ test('a ready-made app is built on the kit too, and its notes say so', () => {
     assert.ok(claude.indexOf('## About Demo') < claude.indexOf('\n## Design\n'), `${id}: app-specific, after About`);
   }
 });
+
+// #6681: a ready-made app links the shared kit at /usernode-native/v1/
+// native.css. A design of one keeps that as a kit link (never tries to read
+// it as a repository file), so its drawing is on the kit it is built with.
+test('#6681: the starter\'s own kit link still resolves to the kit through sheetsFor', async () => {
+  const designBot = require('../src/services/design-bot');
+  const files = generate(appTemplates.READY_IDS[0]);
+  const index = file(files, 'public/index.html');
+  assert.match(index, /href="\/usernode-native\/v1\/native\.css"/, 'the ready-made app links the kit');
+  const entry = {
+    found: { app: { slug: 'demo-app-abc123' }, repo: { owner: 'o', repo: 'demo-app-abc123' } },
+    path: 'public/index.html',
+    html: index,
+  };
+  const deps = {
+    mayor: { SECRET_PATH_RE: /(^|\/)\.env/ },
+    github: { async getFileContent() { return null; } },
+  };
+  const sheets = await designBot.sheetsFor(null, { surface: 'app', app: { slug: 'demo-app-abc123' }, entry, deps });
+  assert.deepEqual(sheets.links, ['/usernode-native/v1/native.css'], 'the kit is kept as a link');
+  assert.equal(sheets.tailwind, undefined, 'no runtime, so no compile');
+});

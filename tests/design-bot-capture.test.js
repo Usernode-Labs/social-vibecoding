@@ -160,3 +160,174 @@ test('the prompt lists the pages it can copy, and the working card names the pag
   assert.deepEqual(mayor.doingFor('capture_page', { page: 'Homeroom bot page' }), { kind: 'capturing', page: 'Homeroom bot page' });
   assert.deepEqual(mayor.doingFor('capture_page', {}), { kind: 'capturing' });
 });
+
+// ── #6681: a version rendered, and the bot looking at it ─────────────────
+
+const capture = require('../capture/capture');
+const designCapture = require('../src/services/design-capture');
+const designThreads = require('../src/services/design-threads');
+
+const b64 = (text) => Buffer.from(text, 'utf8').toString('base64');
+
+test('#6681: DESIGN_RENDER renders with JavaScript off and every request aborted', async () => {
+  const out = [];
+  capture.setFrameSink((line) => out.push(line));
+  try {
+    const seen = { js: null, intercept: null, viewport: null, content: null, aborted: 0 };
+    const page = {
+      async setJavaScriptEnabled(value) { seen.js = value; },
+      async setRequestInterception(value) { seen.intercept = value; },
+      on(event, fn) { if (event === 'request') seen.request = fn; },
+      async setViewport(viewport) { seen.viewport = viewport; },
+      async setContent(html) { seen.content = html; },
+      async screenshot() { return Buffer.from('png-main'); },
+      async close() {},
+    };
+    const browser = { async newPage() { return page; }, async close() {} };
+    const spec = capture.parseDesignRender({
+      DESIGN_RENDER: JSON.stringify({
+        html: b64('<p>the version</p>'),
+        viewport: { width: 390, height: 900 },
+        compare: b64('<p>as it is now</p>'),
+      }),
+    });
+    assert.ok(spec, 'the spec parses');
+    await capture.runDesignRender(spec, { launch: async () => browser });
+
+    assert.equal(seen.js, false, 'JavaScript is off');
+    assert.equal(seen.intercept, true, 'requests are intercepted');
+    const aborted = [];
+    seen.request({ abort: async () => { aborted.push('abort'); } });
+    assert.deepEqual(aborted, ['abort'], 'every request is aborted');
+    assert.deepEqual(seen.viewport, { width: 390, height: 900, deviceScaleFactor: 1 });
+    assert.equal(seen.content, '<p>as it is now</p>', 'the last document rendered is the comparison');
+    const frames = designCapture.readRenderFrames(out.join(''));
+    assert.equal(frames.length, 2, 'one picture per image');
+    assert.deepEqual(frames.map((f) => f.toString()), ['png-main', 'png-main']);
+
+    // A render that never starts fails without throwing.
+    assert.equal(capture.parseDesignRender({ DESIGN_RENDER: JSON.stringify({ html: '' }) }), null);
+    assert.equal(capture.parseDesignRender({}), null);
+  } finally {
+    capture.setFrameSink(null);
+  }
+});
+
+test('#6681: a design render inlines the kit, drops scripts, and refuses a document too big', async () => {
+  const inlined = designCapture.inlineSheets(
+    '<html><head><link rel="stylesheet" href="/usernode-native/v1/native.css"><link rel="stylesheet" href="/css/app.css">'
+    + '<script src="/app.js"></script></head><body><main class="x">Hi</main></body></html>');
+  assert.doesNotMatch(inlined, /<script/i, 'scripts are dropped, as the plan drops them');
+  assert.match(inlined, /<style>/, 'the kit is inlined');
+  assert.match(inlined, /--un-/, 'and it is the kit\'s own CSS');
+  assert.match(inlined, /class="x"/, 'the markup stays');
+
+  const job = async ({ env }) => {
+    const spec = JSON.parse(env.DESIGN_RENDER);
+    assert.ok(spec.html, 'the document is sent base64');
+    assert.equal(spec.viewport.width, 390);
+    return `${'__USERNODE_RENDER__ bytes=8\n'}${b64('png!')}\n__USERNODE_RENDER_END__\n`;
+  };
+  const done = await designCapture.renderDesign({}, { html: '<p>x</p>', width: 390, height: 844, deps: { runJob: job } });
+  assert.equal(done.ok, true);
+  assert.equal(done.png.toString(), 'png!');
+
+  const tooBig = await designCapture.renderDesign({}, { html: 'x'.repeat(designCapture.RENDER_MAX_CHARS + 1), width: 390, height: 844 });
+  assert.deepEqual(tooBig, { ok: false, reason: 'too_big' }, 'too big is not sent to the job');
+
+  assert.match(designCapture.readRenderFailure('__USERNODE_RENDER_FAIL__ reason=no_render'), /no_render/);
+  assert.deepEqual(designCapture.readRenderFrames('nothing'), []);
+});
+
+/** A design turn whose render succeeds, so the look can be pinned. */
+function lookTurn({ seesImages = true, compare = null } = {}) {
+  const seen = [];
+  const versions = [];
+  const recorded = [];
+  const steps = [
+    { calls: [{ id: 'cwrite_screen', function: { name: 'write_screen', arguments: JSON.stringify({
+      title: 'Recipes', size: 'phone', html: '<main class="bg-paper"><svg width="20" height="20"></svg>Recipes</main>', note: 'the home list',
+    }) } }] },
+    { calls: [{ id: 'creply', function: { name: 'reply', arguments: JSON.stringify({ text: 'Here is the recipe list.' }) } }] },
+  ];
+  let i = 0;
+  const chat = async (req) => {
+    seen.push(structuredClone(req));
+    // The cheap model's description of the pictures, when it is asked.
+    if (req.tools?.some((t) => t.function?.name === 'describe_pictures')) {
+      return { content: '', toolCalls: [{ id: 'cd', function: { name: 'describe_pictures', arguments: JSON.stringify({
+        pictures: ['a recipe list with a small tile beside each title'],
+      }) } }] };
+    }
+    const step = steps[Math.min(i, steps.length - 1)];
+    i += 1;
+    return { content: step.content || '', toolCalls: step.calls };
+  };
+  const entry = {
+    found: { app: { id: 5, slug: 'recipebot' }, repo: { owner: 'o', repo: 'recipebot' } },
+    path: 'public/index.html',
+    html: '<html><head><script src="__USERNODE_PLATFORM_ORIGIN__/usernode-tailwind/v1/tailwind.js"></script>'
+      + '<script>tailwind.config = { theme: { extend: { colors: { paper: "#f7f1e6" } } } }</script></head>'
+      + '<body><main class="bg-paper">Recipes</main></body></html>',
+  };
+  const design = compare
+    ? { threadId: 7, rootId: 500, state: 'open', title: 'Recipes', surface: 'app', app: { slug: 'recipebot', name: 'RecipeBot' },
+      width: 390, height: 844, latest: 2, versions: [{ version: 1, author: 'capture' }, { version: 2, author: 'bot' }] }
+    : null;
+  const current = compare ? { version: 2, html: '<main class="bg-paper">Old</main>' } : null;
+  const deps = {
+    apiKey: 'sk-test', seesImages, sleep: async () => {}, chat, linkedCss: '',
+    pictureModelSeesImages: true,
+    dm: { async sendDm(_pool, args) { return { messageId: 900 }; } },
+    mayor: Object.assign(Object.create(mayor), {
+      async recordTurn(_pool, args) { recorded.push(args); }, async turnsLastHour() { return 0; },
+      async botKey() { return 'sk-test'; }, async sourceRepo() { return entry.found; },
+      async findApp() { return entry.found.app; }, async canView() { return true; },
+      async modelSeesImages() { return seesImages; },
+    }),
+    github: { async getFileContent(_o, _r, p) { return p === 'public/index.html' ? entry.html : null; } },
+    designThreads: {
+      ...designThreads, surfaceFor: () => 'app',
+      async versionOf(_pool, { version }) { return version === 1 ? { version: 1, html: '<main class="bg-paper">As it is now</main>' } : current; },
+      async ensureDesign() { return { threadId: 7, title: 'Recipes', app: { id: 5, slug: 'recipebot', name: 'RecipeBot' } }; },
+      async addVersion(_pool, args) { versions.push(args); return { version: versions.length }; },
+      async noteVersionMessage() {}, bareNote: designThreads.bareNote, versionLine: designThreads.versionLine,
+    },
+    designCapture: {
+      async renderDesign(_config, { compare: html }) {
+        return { ok: true, png: Buffer.from('png-main'), comparePng: html ? Buffer.from('png-now') : null };
+      },
+    },
+  };
+  const run = designBot.answer({ async query() { return { rows: [] }; } }, { selfAppSlug: 'homeroom' }, {
+    bot: { id: 2, username: 'homeroom_bot' }, user: { id: 9, username: 'evan' }, settings: { mode: 'live' },
+    conversationId: 41, message: { id: 71, content: 'Draw the recipes home screen' },
+    design, thread: { rootId: 500, threadId: 7, conversationId: 41, app: { id: 5, slug: 'recipebot', name: 'RecipeBot' } },
+    handoff: true, deps,
+  });
+  return { run, seen, versions, recorded };
+}
+
+test('#6681: the bot is given its own render, and the screen as it is now beside it', async () => {
+  const turn = lookTurn({ seesImages: true, compare: true });
+  await turn.run;
+  const look = turn.seen.flatMap((r) => r.messages).find((m) => Array.isArray(m.content)
+    && m.content.some((part) => part.type === 'text' && /this is your version as the preview/.test(part.text)));
+  assert.ok(look, 'the look message is sent');
+  assert.match(look.content[0].text, /Compare it with the screen as it is now, shown second/);
+  const images = look.content.filter((part) => part.type === 'image_url');
+  assert.equal(images.length, 2, 'the version and the comparison as pictures');
+  assert.match(images[0].image_url.url, /^data:image\/png;base64,/);
+  assert.ok(turn.recorded.flatMap((r) => r.failures || []).some((f) => /looked$/.test(f)), 'recorded as looked');
+  assert.equal(turn.versions.length, 1, 'the version is still saved once');
+});
+
+test('#6681: a model that reads text gets the render in words', async () => {
+  const turn = lookTurn({ seesImages: false });
+  await turn.run;
+  const text = turn.seen.flatMap((r) => r.messages)
+    .filter((m) => typeof m.content === 'string' && /this is your version as the preview/.test(m.content));
+  assert.ok(text.length, 'the look is sent');
+  assert.match(text[text.length - 1].content, /a model that reads pictures says it shows: a recipe list/);
+  assert.doesNotMatch(text[text.length - 1].content, /Compare it with the screen/);
+});

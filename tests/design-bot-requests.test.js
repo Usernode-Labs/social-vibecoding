@@ -343,7 +343,9 @@ test('one whole screen a turn: a second write_screen is refused and recorded, an
   assert.equal(refused.error, 'You drew this turn\'s screen already. Change or extend it with edit_design: a second '
     + 'write_screen is taken only when the first was refused or empty.');
   assert.equal(toolResult(turn.seen, 'e1').ok, true, 'the edit is taken');
-  assert.deepEqual(turn.turns[0].failures, ['d2:rewrite'], 'recorded among the turn\'s failures');
+  // #6681: the look at the render runs before the version is shown, and this
+  // harness has no capture job, so it records that it was skipped.
+  assert.deepEqual(turn.turns[0].failures.filter((f) => !/:look_skipped$/.test(f)), ['d2:rewrite'], 'recorded among the turn\'s failures');
   const saved = turn.versions[0].html;
   assert.doesNotMatch(saved, /Second screen/);
   assert.match(saved, /Plenty of words written into this screen/);
