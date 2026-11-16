@@ -121,6 +121,12 @@ export interface ChallengeRowView {
   earned: string | null;
 }
 
+/** A weekly challenge in a finished week's preview: its row, and the line under its goal. */
+export interface ChallengePreviewView extends ChallengeRowView {
+  /** "Starts again on Monday · 30 pts", or without the points when it has no reward. */
+  line: string;
+}
+
 /**
  * What the block holds, which names its heading (HomePanels.challengesView):
  * the First challenges, the Next ones, or one line because nothing is open,
@@ -138,6 +144,12 @@ export interface ChallengesView {
   seeAll: boolean;
   /** The cards, in the order drawn; empty under a one-line note. */
   rows: ChallengeRowView[];
+  /**
+   * The weekly challenges that start again on Monday, `done` mode only
+   * (#6661): at most three, drawn as a list under the one line. Empty in
+   * every other mode.
+   */
+  preview: ChallengePreviewView[];
   /** The one line drawn when nothing is open, as a title and a sentence. */
   note: { title: string; text: string } | null;
 }

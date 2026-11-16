@@ -241,6 +241,14 @@ test('the cards are one grid that reflows, two columns at least, and the cards l
   assert.match(src, /export const CARD_GRID = 'grid grid-cols-\[repeat\(auto-fill,minmax\(min\(190px,calc\(50%_-_6px\)\),1fr\)\)\] gap-3';/);
   // One Home (#6361): Home's Communities to join draws them, signed in or out.
   assert.match(read(JOIN), /<div className=\{`\$\{CARD_GRID\} px-1`\}>\s*\{list\.slice\(0, shown\)\.map\(\(app, i\) => \(\s*<Card/);
+  // #6661: Featured is the same cards in a wrapping row, as many across as
+  // the grid fits, whose short last row fills the width. A card stops at
+  // half the row from 768px, so one alone is not the width of the page.
+  assert.match(src, /export const FEATURED_ROW = 'flex flex-wrap gap-3';/);
+  assert.match(src, /export const FEATURED_ITEM = 'flex min-w-0 grow basis-\[min\(190px,calc\(50%_-_7px\)\)\] md:max-w-\[calc\(50%_-_6px\)\] \[&>article\]:flex-1';/);
+  assert.match(read(JOIN), /className=\{`\$\{FEATURED_ROW\} px-1`\}/);
+  assert.match(read(JOIN), /role="listitem" className=\{FEATURED_ITEM\}/);
+  assert.equal((read(JOIN).match(/\$\{CARD_GRID\}/g) || []).length, 3, 'the rest, its skeletons and its loading-more keep the grid');
   assert.doesNotMatch(src, /snap-x|overflow-x-auto/, 'nothing scrolls sideways');
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
   const card = cardOf(html, 'todo-list');
@@ -373,9 +381,10 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   // #6584, #6597: the rest is every community of the kind, most used first,
   // the featured ones left out: a Featured row, then what it does not show.
   assert.deepEqual(cardsOf(html), ['fresh-one']);
-  // #6434: Featured wraps in the same grid as the rest, at the same size,
-  // and the rest get their own heading.
-  assert.match(html, /<div data-home-join-featured=""[^>]*><h3 id="home-join-featured-label" class="text-xs font-bold uppercase tracking-\[0\.06em\][^"]*">Featured<\/h3><div role="list" aria-labelledby="home-join-featured-label" class="grid grid-cols-\[repeat\(auto-fill,[^"]*\] gap-3 px-1"><div role="listitem" class="flex \[&amp;&gt;article\]:flex-1">/);
+  // #6434: Featured wraps as many across as the rest, and the rest get
+  // their own heading. #6661: its row is a wrapping flex row, so a short
+  // last row fills the width.
+  assert.match(html, /<div data-home-join-featured=""[^>]*><h3 id="home-join-featured-label" class="text-xs font-bold uppercase tracking-\[0\.06em\][^"]*">Featured<\/h3><div role="list" aria-labelledby="home-join-featured-label" class="flex flex-wrap gap-3 px-1"><div role="listitem" class="flex min-w-0 grow basis-\[min\(190px,calc\(50%_-_7px\)\)\] md:max-w-\[calc\(50%_-_6px\)\] \[&amp;&gt;article\]:flex-1">/);
   assert.doesNotMatch(read(JOIN), /snap-x|overflow-x-auto|w-\[min\(17rem/, 'nothing in the section scrolls sideways');
   assert.equal(message('home:join.featured'), 'Featured');
   assert.equal(message('home:join.more'), 'More communities');

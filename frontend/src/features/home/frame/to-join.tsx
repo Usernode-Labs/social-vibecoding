@@ -17,7 +17,8 @@
  * the standard landing's is: the community's illustration (its dark twin
  * in a dark theme), else its icon on its own colour, with "New" and the
  * people count on the cover. Featured is as many across as leaves no card
- * alone on its last row (`across`), where the count allows it.
+ * alone on its last row (`across`), where the count allows it, and a short
+ * last row's cards stretch to close the row (#6661, the kit's `.grid.fill`).
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -158,11 +159,11 @@ export function ToJoinView({ apps, failed, onRetry, exclude, query, heading, id,
         <>
           <CapSub>{t('home:join.featured')}</CapSub>
           {pictures ? (
-            <div className={k('grid', wide(featured.length))} data-home-join-featured="">
+            <div className={k('grid', 'fill', wide(featured.length))} data-home-join-featured="">
               {featured.map((app) => <PictureCard key={app.slug} app={app} to={link!(app)} {...picture!(app)} />)}
             </div>
           ) : (
-            <div className={k('grid', 'across', wide(featured.length))} data-home-join-featured="">
+            <div className={k('grid', 'fill', 'across', wide(featured.length))} data-home-join-featured="">
               {featured.map((app) => (
                 <HCard key={app.slug} top={face(app, 44)} end={cardEnd(app)} title={title(app)} line={cardLine ? cardLine(app) : undefined} more={app.description || undefined} {...door(app)} />
               ))}

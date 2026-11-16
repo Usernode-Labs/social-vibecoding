@@ -60,7 +60,7 @@ test('Communities is Home\'s own section: the kinds, and every community a pictu
     [['All', 'true'], ['Games', 'false'], ['Social', 'false'], ['Other', 'false']]);
   // Featured: the whole card is the door. With no illustration the cover is the icon on the community's own
   // colour; the pill on it is how many people used it lately, heard with the name.
-  assert.match(html, /<h3 class="fr-cap fr-sub">Featured<\/h3><div class="fr-grid" data-home-join-featured=""><a class="fr-card fr-fcard" href="\/app\/game-corner" aria-label="Game Corner, 41 people used it lately" data-home-join-card="game-corner"><span class="fr-fcover fr-tc" style="--fr-tc:#[0-9a-f]{6}"><span class="fr-tile" style="--fr-ts:64px;--fr-tc:#3b2d8f" aria-hidden="true">🎮<\/span><span class="fr-pill"><svg[^>]*>.*?<\/svg>41<\/span><\/span><span class="fr-fbody"><span class="fr-t">Game Corner<\/span><\/span><\/a><\/div>/s);
+  assert.match(html, /<h3 class="fr-cap fr-sub">Featured<\/h3><div class="fr-grid fr-fill" data-home-join-featured=""><a class="fr-card fr-fcard" href="\/app\/game-corner" aria-label="Game Corner, 41 people used it lately" data-home-join-card="game-corner"><span class="fr-fcover fr-tc" style="--fr-tc:#[0-9a-f]{6}"><span class="fr-tile" style="--fr-ts:64px;--fr-tc:#3b2d8f" aria-hidden="true">🎮<\/span><span class="fr-pill"><svg[^>]*>.*?<\/svg>41<\/span><\/span><span class="fr-fbody"><span class="fr-t">Game Corner<\/span><\/span><\/a><\/div>/s);
   // The rest: picture cards too, the most used first, each its sentence on one line with the whole of it on hover, "New" for its first 30 days, people from five.
   const rest = html.slice(html.indexOf('data-home-join-rest'), html.indexOf('fr-stack fr-first'));
   assert.deepEqual([...rest.matchAll(/<a class="fr-card fr-fcard" href="\/app\/([a-z-]+)"/g)].map((m) => m[1]), ['todo', 'best-color', 'tier-lists']);
@@ -78,7 +78,7 @@ test('Featured is as many across as leaves no card alone on its last row', () =>
   assert.match(src, /if \(count === 2\) return 2;\s*if \(count < 4 \|\| count % 3 !== 1\) return 3;\s*if \(count % 4 !== 1\) return 4;\s*return count % 2 === 0 \? 2 : 3;/);
   assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 10].map(across), [3, 2, 3, 4, 3, 3, 4, 4]);
   const ten = Array.from({ length: 10 }, (_, i) => app(`f${i}`, `F${i}`, { featured: true, featured_order: i + 1 }));
-  assert.match(render({ apps: ten }), /<div class="fr-grid fr-c4" data-home-join-featured="">/, 'ten featured: four across (4, 4, 2), not three with one alone');
+  assert.match(render({ apps: ten }), /<div class="fr-grid fr-fill fr-c4" data-home-join-featured="">/, 'ten featured: four across (4, 4, 2), not three with one alone');
   assert.match(src, /<SecNote end data-home-join-end="">/, 'and the line that ends the list is centred under it, as the standard section\'s');
 });
 

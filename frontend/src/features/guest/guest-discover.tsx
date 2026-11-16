@@ -83,6 +83,19 @@ export const SMALL_CAPS_LABEL = 'text-xs font-bold uppercase tracking-[0.06em] t
  */
 export const CARD_GRID = 'grid grid-cols-[repeat(auto-fill,minmax(min(190px,calc(50%_-_6px)),1fr))] gap-3';
 
+/**
+ * Featured's own row (#6661): the same cards, as many across as CARD_GRID
+ * fits, but a wrapping flex row, so a short last row's cards share the width
+ * instead of leaving an empty slot. The basis is CARD_GRID's track less a
+ * pixel of slack (two halves and the gap must never round past the row, or
+ * a phone would draw one card across); growing takes the slack back. From
+ * 768px a card stops at half the row: a card alone on its row (one Featured
+ * community of a kind) would otherwise be a picture the width of the page.
+ * On a phone an odd last card takes the whole row.
+ */
+export const FEATURED_ROW = 'flex flex-wrap gap-3';
+export const FEATURED_ITEM = 'flex min-w-0 grow basis-[min(190px,calc(50%_-_7px))] md:max-w-[calc(50%_-_6px)] [&>article]:flex-1';
+
 /** The app's icon, in the tile Discover's rows draw (app-card-view.tsx). `className` overrides the size's radius or shadow. */
 export function GuestIcon({ app, size = 'md', eager = false, className }: { app: GuestApp; size?: 'sm' | 'md' | 'lg' | 'xl'; eager?: boolean; className?: string }) {
   const box = size === 'xl'

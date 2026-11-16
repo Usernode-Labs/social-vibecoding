@@ -492,12 +492,15 @@ async function buildChallengesPanel(pool, user, opts) {
 // deterministically regardless of who is looking. Read-only, obviously
 // fake, written nowhere, and a strict no-op outside staging.
 //
-// `variant` (from ?demo=1&challenges=few|none) picks the SHORT-LIST
+// `variant` (from ?demo=1&challenges=few|none|done) picks the SHORT-LIST
 // states, which a staging clone cannot otherwise reach while the seeded
 // season is live — they are the whole point of this change and so have to be
 // URL-reachable for the checks and the screenshots:
 //   'few'    → two open rows, which is the shrink a full list never shows.
 //   'none'   → nothing open: the compact one-line block.
+//   'done'   → every weekly challenge finished and nothing else open: "All
+//              done for this week", with the list of what starts again on
+//              Monday under it (#6661).
 // (A third, 'locked', drew a new account's season behind its Getting started
 // list; it went with that gate, #4635.)
 // Absent/unknown → the default payload: five open rows, of which the client
@@ -511,6 +514,28 @@ function demoChallengesPanel(opts) {
       season: null, total: 0, all_total: 0, done: 0, points_remaining: null,
       points_total: null, points_earned: null,
       challenges: [], expanded,
+      demo: true,
+    };
+  }
+  if (variant === 'done') {
+    // Three finished WEEKLY rows and nothing else: one with a bare-number
+    // reward, one with no reward, so both of the preview's lines are drawn.
+    const week = [
+      { id: 900520, goal: 'Staging demo challenge: try three apps this week', icon: '🧪', illustration: 'try-three-apps', reward: '30', earned_points: 30 },
+      { id: 900521, goal: 'Staging demo challenge: vote on a change this week', icon: '🗳️', illustration: 'make-a-proposal', reward: '20 pts', earned_points: 20 },
+      { id: 900522, goal: 'Staging demo challenge: say hello in a channel this week', icon: '👋', illustration: null, reward: null, earned_points: 0 },
+    ].map((row) => ({
+      ...row,
+      label: 'WEEKLY',
+      task: 'Finished this week (staging demo).',
+      cta: null,
+      metric: null,
+      progress: { done: true, current: null, target: null },
+    }));
+    return {
+      season: null, total: 0, all_total: week.length, done: week.length, points_remaining: null,
+      points_total: null, points_earned: null,
+      challenges: week, expanded,
       demo: true,
     };
   }
@@ -756,7 +781,7 @@ function homePanelRoutes() {
       // challenges included, row cap lifted). Per-visit UI state, so it
       // rides on the request rather than being stored.
       const expandKey = typeof req.query.expand === 'string' ? req.query.expand : '';
-      // ?demo=1&challenges=few|none picks a demo variant of the challenges
+      // ?demo=1&challenges=few|none|done picks a demo variant of the challenges
       // payload — the short-list states a seeded staging season can't reach.
       // Staging-only (it rides on `demo`, which is already IS_STAGING-gated)
       // and read-only; an unknown value falls through to the default payload.

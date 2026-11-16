@@ -510,6 +510,13 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 .grid.c4{grid-template-columns:repeat(4,minmax(0,1fr))}
 .phone .grid.c4:not(.across){grid-template-columns:repeat(2,minmax(0,1fr))}
 .secnote.end{text-align:center;padding-top:8px}
+/* ---- #6661: a grid whose short last row fills the width. As many across as the grid's own columns (the basis is one column, less a pixel so rounding never wraps a full row early), and the last row's cards grow to close it; a card stops at half the row, so one alone is not a picture the width of the page. On a phone a last odd card takes the row, and the sideways row of text cards stays a grid ---- */
+.grid.fill{display:flex;flex-wrap:wrap}
+.grid.fill>*{flex:1 1 calc((100% - 24px)/3 - 1px);min-width:0;max-width:calc((100% - 12px)/2)}
+.grid.fill.c4>*{flex-basis:calc((100% - 36px)/4 - 1px)}
+.grid.fill.c2>*{flex-basis:calc((100% - 12px)/2 - 1px)}
+.phone .grid.fill>*{flex-basis:calc((100% - 12px)/2 - 1px);max-width:none}
+.phone .grid.across.fill{display:grid}
 /* ---- v2, the left-overs pass: a challenge's picture as a row's lead (its size from the data), and the arrow that ends such a row ---- */
 .cart.sm{width:var(--cs,44px);height:var(--cs,44px);border-radius:12px;font-size:22px;color:var(--mut)}
 .cart.sm img{width:82%;height:82%}

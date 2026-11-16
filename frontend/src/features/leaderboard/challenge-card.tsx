@@ -250,10 +250,12 @@ export function ChallengeMeta({ text = null, earned = false, size = 'md' }: {
 //
 // It never holds the category: headings name it, and a category word in an
 // 80px square was the "ONBOARDIN / G" break on both surfaces.
-export function ChallengeTile({ icon = null, illustration = null, illustrationTone = null }: {
+export function ChallengeTile({ icon = null, illustration = null, illustrationTone = null, size = 'xl' }: {
   icon?: string | null;
   illustration?: string | null;
   illustrationTone?: string | null;
+  /** `sm` is the 44px tile of a list row (Home's finished-week preview, #6661); a card's is `xl`. */
+  size?: 'xl' | 'sm';
 }): ReactNode {
   const art = resolveIllustration(illustration, illustrationTone);
   // Keyed by the file rather than a flag, so a tile handed a different
@@ -261,23 +263,23 @@ export function ChallengeTile({ icon = null, illustration = null, illustrationTo
   const [failed, setFailed] = useState<string | null>(null);
   if (art && failed !== art.src) {
     return (
-      <IconTile size="xl" aria-hidden="true" className={`${art.toneClass} ${TILE_ART} ${TILE_RADIUS}`}>
+      <IconTile size={size} aria-hidden="true" className={`${art.toneClass} ${TILE_ART} ${TILE_RADIUS}`}>
         <img
           src={art.src}
           alt=""
-          width={64}
-          height={64}
+          width={size === 'sm' ? 36 : 64}
+          height={size === 'sm' ? 36 : 64}
           decoding="sync"
           draggable={false}
-          className="object-contain"
+          className={size === 'sm' ? 'h-9 w-9 object-contain' : 'object-contain'}
           onError={() => setFailed(art.src)}
         />
       </IconTile>
     );
   }
   return (
-    <IconTile size="xl" aria-hidden="true" className={TILE_RADIUS}>
-      {icon ? <span className="text-[2.5rem] leading-none">{icon}</span> : null}
+    <IconTile size={size} aria-hidden="true" className={TILE_RADIUS}>
+      {icon ? <span className={size === 'sm' ? 'text-2xl leading-none' : 'text-[2.5rem] leading-none'}>{icon}</span> : null}
     </IconTile>
   );
 }

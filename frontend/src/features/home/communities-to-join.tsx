@@ -11,7 +11,8 @@
  * Kind chips over the cards, fading at whichever edge has more chips past it
  * so the row is never just cut off (the same rail as the AI page's project
  * chips). Then FEATURED, the communities an admin featured, in their order
- * (featured_order), in the same wrapping grid as the rest (#6434): the first
+ * (featured_order), as many across as the rest's grid (#6434) in a row whose
+ * short last line fills the width (#6661, FEATURED_ROW): the first
  * group of the section, of the chosen kind, and left out while a search is
  * typed (its matches are the grid, featured first). Its heading names the
  * chosen kind ("Featured in Games") so the group reads as that kind's. Then
@@ -36,7 +37,7 @@ import { Chip, FadeRail } from '@/components/ui/chip';
 import { Select } from '@/components/ui/select';
 
 import { useMessages } from '../../lib/i18n/react';
-import { CARD_GRID, Card, SMALL_CAPS_LABEL } from '../guest/guest-discover';
+import { CARD_GRID, Card, FEATURED_ITEM, FEATURED_ROW, SMALL_CAPS_LABEL } from '../guest/guest-discover';
 import { featuredApps, presentCategories, sortApps, type GuestApp, type GuestSort } from '../guest/guest-data';
 import { SectionHeading } from './panels/ui';
 import { matchesQuery } from './use-home-query';
@@ -140,10 +141,11 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
           <div
             role="list"
             aria-labelledby={signedIn ? 'home-join-featured-label' : 'guest-join-featured-label'}
-            className={`${CARD_GRID} px-1`}
+            className={`${FEATURED_ROW} px-1`}
           >
+            {/* #6661: a wrapping row, so a short last row fills the width. */}
             {featured.map((app, i) => (
-              <div key={app.slug} role="listitem" className="flex [&>article]:flex-1">
+              <div key={app.slug} role="listitem" className={FEATURED_ITEM}>
                 <Card app={app} eager={i < 3} featured />
               </div>
             ))}

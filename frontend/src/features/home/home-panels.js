@@ -98,6 +98,8 @@ const HomePanels = {
   // challenges" / "Show less" toggle and the in-place expansion it fetched
   // (`?expand=challenges`) went with the Semi design, 2026-10-16.
   NEXT_SLOTS: 3,
+  // How many of the weekly challenges a finished week previews (#6661).
+  PREVIEW_SLOTS: 3,
 
   // `esc()` and `safeHref()` lived here. Both existed for the string
   // renderers: organiser prose (challenge goals, metric labels) landed in BOTH
@@ -259,7 +261,7 @@ const HomePanels = {
     // ?demo=1 rides along exactly like Home.load()'s own demoQS — the
     // server only honours it in staging.
     //
-    // `challenges=few|none` rides along WITH it: the demo variant is chosen
+    // `challenges=few|none|done` rides along WITH it: the demo variant is chosen
     // server-side, so a param left in the address bar but not on the fetch
     // would silently serve the default payload — which is what the deep link,
     // the dapp.json check and the before/after screenshots would then all
@@ -512,6 +514,9 @@ const HomePanels = {
   //   done  — "Challenges" over one line, when nothing is open and every
   //           This week challenge is done: "All done for this week", and how
   //           many start again on Monday (the week the scorer counts by).
+  //           Under it, `preview`: up to PREVIEW_SLOTS of those weekly
+  //           challenges, the ones that start again (#6661). Every other
+  //           mode's `preview` is empty.
   //   none  — "Challenges" over one line, when nothing is open otherwise,
   //           a season with no challenges included: "No challenges right
   //           now". The only mode without "See all": there is nothing behind
@@ -536,6 +541,7 @@ const HomePanels = {
         heading: message('home:challenges.headingFirst'),
         seeAll: true,
         rows: rowsOf(HomePanels.inAdminOrder(setup)),
+        preview: [],
         note: null,
       };
     }
@@ -547,6 +553,7 @@ const HomePanels = {
         heading: message('home:challenges.headingNext'),
         seeAll: true,
         rows: rowsOf(next),
+        preview: [],
         note: null,
       };
     }
@@ -558,6 +565,16 @@ const HomePanels = {
         heading: message('home:challenges.heading'),
         seeAll: true,
         rows: [],
+        // #6661: what comes back on Monday, so the finished week is not a
+        // dead end: up to PREVIEW_SLOTS of the weekly challenges, in the
+        // Challenges tab's order, each with the line its row says.
+        preview: rowsOf(HomePanels.orderRows(weekly, panel.onboarding).slice(0, HomePanels.PREVIEW_SLOTS))
+          .map((row) => ({
+            ...row,
+            line: row.reward
+              ? message('home:challenges.preview.line', { reward: row.reward })
+              : message('home:challenges.preview.lineNoReward'),
+          })),
         note: {
           title: message('home:challenges.allDone.title'),
           text: message('home:challenges.allDone.text', { count: weekly.length }),
@@ -570,6 +587,7 @@ const HomePanels = {
       heading: message('home:challenges.heading'),
       seeAll: false,
       rows: [],
+      preview: [],
       note: {
         title: message('home:challenges.none.title'),
         text: message('home:challenges.none.text'),

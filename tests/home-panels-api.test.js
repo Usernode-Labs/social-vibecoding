@@ -1022,6 +1022,18 @@ test('demoChallengesPanel: the few / none variants, and no standings preview', (
   assert.equal(view(none).seeAll, false);
   assert.equal(view(none).note.title, 'No challenges right now');
 
+  // #6661: `done` is the finished week: every row WEEKLY and done, which
+  // the client draws as "All done for this week" over the preview of what
+  // starts again on Monday, with and without a reward.
+  const done = demoChallengesPanel({ variant: 'done', username: 'tester' });
+  assert.equal(done.challenges.length, 3);
+  assert.ok(done.challenges.every((c) => c.label === 'WEEKLY' && c.progress.done));
+  assert.equal(view(done).mode, 'done');
+  assert.equal(view(done).note.title, 'All done for this week');
+  assert.deepEqual(view(done).preview.map((row) => row.line),
+    ['Starts again on Monday · 30 pts', 'Starts again on Monday · 20 pts', 'Starts again on Monday']);
+  assert.ok(done.challenges.every((c) => !/\u2014/.test(c.goal)));
+
   // An unknown value falls through to that default rather than erroring.
   assert.equal(demoChallengesPanel({ variant: 'wat' }).challenges.length, 5);
 });

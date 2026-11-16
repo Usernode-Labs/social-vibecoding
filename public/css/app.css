@@ -27172,6 +27172,10 @@ html[data-skin] .fr-grid>.fr-fcard{min-width:0}
 html[data-skin] .fr-grid.fr-c2{grid-template-columns:repeat(2,minmax(0,1fr))}
 html[data-skin] .fr-grid.fr-c4{grid-template-columns:repeat(4,minmax(0,1fr))}
 html[data-skin] .fr-secnote.fr-end{text-align:center;padding-top:8px}
+html[data-skin] .fr-grid.fr-fill{display:flex;flex-wrap:wrap}
+html[data-skin] .fr-grid.fr-fill>*{flex:1 1 calc((100% - 24px)/3 - 1px);min-width:0;max-width:calc((100% - 12px)/2)}
+html[data-skin] .fr-grid.fr-fill.fr-c4>*{flex-basis:calc((100% - 36px)/4 - 1px)}
+html[data-skin] .fr-grid.fr-fill.fr-c2>*{flex-basis:calc((100% - 12px)/2 - 1px)}
 html[data-skin] .fr-cart.fr-sm{width:var(--fr-cs,44px);height:var(--fr-cs,44px);border-radius:12px;font-size:22px;color:var(--fr-mut)}
 html[data-skin] .fr-cart.fr-sm img{width:82%;height:82%}
 html[data-skin] .fr-row .fr-arr,html[data-skin]:where(:not([data-skin="brand"])) :is(.ui-lrow,.ui-row,.drawer-ver-row):is(#settings-root *) .fr-arr,html[data-skin]:where(:not([data-skin="brand"])) .rf-help-row .fr-arr,html[data-skin]:where(:not([data-skin="brand"])) .messages-object-card:is(.messages-message *) .fr-arr{width:32px;height:32px;border-radius:10px;background:var(--fr-sunk);color:var(--fr-mut);display:grid;place-items:center;flex:none}
@@ -27251,6 +27255,8 @@ html[data-skin][data-skin] .fr-botpage .fr-head .fr-acts{width:auto}
 html[data-skin][data-skin] .fr-cols.fr-mix>.fr-stack{display:contents}
 html[data-skin][data-skin] .fr-cols.fr-mix>.fr-stack>.fr-tail{order:1}
 html[data-skin][data-skin] .fr-grid.fr-c4:not(.fr-across){grid-template-columns:repeat(2,minmax(0,1fr))}
+html[data-skin][data-skin] .fr-grid.fr-fill>*{flex-basis:calc((100% - 12px)/2 - 1px);max-width:none}
+html[data-skin][data-skin] .fr-grid.fr-across.fr-fill{display:grid}
 html[data-skin][data-skin] .fr-crumb>.fr-keep{color:var(--fr-ink)}
 }
 html[data-skin]:where(:not([data-skin="brand"])) body{--fr-ground:var(--home-ground)}

@@ -13,7 +13,10 @@
  *                      progress, which reshuffled them on screen).
  *   Challenges       — over ONE LINE when nothing is open: "All done for
  *                      this week" when this week's are all done, otherwise
- *                      "No challenges right now".
+ *                      "No challenges right now". Under "All done", up to
+ *                      three of the weekly challenges that start again on
+ *                      Monday (#6661, `view.preview`), each a row that
+ *                      opens its challenge.
  *
  * The heading and its "See all" are ./sections.tsx's (they sit in the static
  * section heading, filled in once the view arrives); this file draws what is
@@ -62,7 +65,7 @@
  * silent on failure); there is no error state to draw.
  */
 
-import { ChallengeCard } from '../../leaderboard/challenge-card';
+import { ChallengeCard, ChallengeTile } from '../../leaderboard/challenge-card';
 import type { ChallengesView } from '../panels-store';
 import { PanelShell, panels } from './ui';
 
@@ -85,6 +88,31 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
               {view.note.text}
             </p>
           </div>
+          {/* #6661: a finished week shows what comes back on Monday, so the
+              line is not a dead end. A list like Home's others (15 over 13),
+              each row the door to its challenge, as a card is. Its rows are
+              not `.home-panel-row`: the one line above stays the block's one
+              row, which the declared checks and `data-rows="0"` count. */}
+          {view.preview.length ? (
+            <ul className="home-challenges-preview mt-2.5 overflow-hidden rounded-[1.25rem] bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900">
+              {view.preview.map((row) => (
+                <li key={row.id} className="[&+li]:shadow-[inset_0_1px_0_var(--app-sheet-line)]">
+                  <button
+                    type="button"
+                    data-challenge-preview-id={row.id}
+                    className="flex min-h-14 w-full items-center gap-3 px-4 py-1.5 text-start active:bg-zinc-100 dark:active:bg-zinc-800"
+                    onClick={() => panels()?.goToChallenge?.(row.eventId, row.id)}
+                  >
+                    <ChallengeTile size="sm" icon={row.icon} illustration={row.illustration} illustrationTone={row.illustrationTone} />
+                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="truncate text-[15px] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">{row.goal}</span>
+                      <span className="truncate text-[13px] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">{row.line}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       </PanelShell>
     );

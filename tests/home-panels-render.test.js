@@ -574,6 +574,22 @@ test('nothing open: "All done for this week" when the weekly ones are done', () 
   assert.equal(view.rows.length, 0);
   assert.deepEqual({ ...view.note },
     { title: 'All done for this week', text: '3 challenges start again on Monday.' });
+  // #6661: the weekly ones, which start again on Monday, are the preview.
+  assert.deepEqual(view.preview.map((row) => row.id), ['2', '3', '4'], 'the weekly challenges only');
+  assert.deepEqual(view.preview.map((row) => row.line), Array(3).fill(`Starts again on Monday · ${view.preview[0].reward}`));
+  assert.equal(message('home:challenges.preview.line', { reward: '30 pts' }), 'Starts again on Monday · 30 pts');
+  const many = HP.challengesView(panel({
+    challenges: [
+      challenge({ id: 9, label: 'WEEKLY', display_order: 4, progress: DONE, reward: '' }),
+      challenge({ id: 8, label: 'WEEKLY', display_order: 3, progress: DONE, reward: '30' }),
+      challenge({ id: 7, label: 'WEEKLY', display_order: 2, progress: DONE }),
+      challenge({ id: 6, label: 'WEEKLY', display_order: 1, progress: DONE }),
+    ],
+  }));
+  assert.deepEqual(many.preview.map((row) => row.id), ['6', '7', '8'], 'three at most, in the Challenges tab\'s order');
+  assert.equal(many.preview[2].line, 'Starts again on Monday · 30 pts');
+  const bare = HP.challengesView(panel({ challenges: [challenge({ id: 9, label: 'WEEKLY', progress: DONE, reward: '' })] }));
+  assert.equal(bare.preview[0].line, 'Starts again on Monday', 'no reward, no dot');
   const one = HP.challengesView(panel({ challenges: [challenge({ id: 2, label: 'WEEKLY', progress: DONE })] }));
   assert.equal(one.note.text, '1 challenge starts again on Monday.', 'the count is a plural pair');
   // A weekly challenge still open is something to do next, not "all done".
@@ -581,6 +597,7 @@ test('nothing open: "All done for this week" when the weekly ones are done', () 
     challenges: [challenge({ id: 2, label: 'WEEKLY', progress: DONE }), challenge({ id: 3, label: 'WEEKLY' })],
   }));
   assert.equal(open.mode, 'next');
+  assert.deepEqual([...open.preview], [], 'something to do: no preview');
 });
 
 test('nothing open: "No challenges right now" otherwise, with no See all', () => {
@@ -596,6 +613,7 @@ test('nothing open: "No challenges right now" otherwise, with no See all', () =>
     assert.equal(view.heading, 'Challenges', why);
     assert.equal(view.seeAll, false, `${why}: nothing behind a See all`);
     assert.deepEqual({ ...view.note }, { title: 'No challenges right now', text: 'New ones will show up here.' }, why);
+    assert.deepEqual([...view.preview], [], `${why}: nothing to preview`);
   }
 });
 
@@ -871,7 +889,7 @@ test('a numeric challenge at full target is a finished line, not a count (#4563)
 
 test("Home draws the Challenges tab's card, not a card of its own", () => {
   const src = challengesSrc();
-  assert.match(src, /import \{ ChallengeCard \} from '\.\.\/\.\.\/leaderboard\/challenge-card'/);
+  assert.match(src, /import \{ ChallengeCard, ChallengeTile \} from '\.\.\/\.\.\/leaderboard\/challenge-card'/);
   // One Home (#6361): one row that scrolls sideways, each card a fixed width
   // so the next one peeks in, snapped to the section's gutter, and still the
   // row's own child, which the declared checks select.
@@ -1119,6 +1137,14 @@ test('render: the one-line card renders for EVERY viewer, with no footer', () =>
   assert.match(allDone, />All done for this week<\/p><p[^>]*>3 challenges start again on Monday\.<\/p>/);
   assert.match(allDone, /data-rows="0"/);
   assert.doesNotMatch(allDone, /data-challenge-id/, 'one line, no cards');
+  // #6661: under the line, the weekly challenges that start again on Monday,
+  // as a list of rows (15 over 13) that each open their challenge. The line
+  // itself is unchanged and stays the block's one `.home-panel-row`.
+  assert.match(allDone, /<div class="home-panel-rows home-panel-row home-challenges-note [^"]*"><p[^>]*>All done for this week<\/p><p[^>]*>3 challenges start again on Monday\.<\/p><\/div><ul class="home-challenges-preview [^"]*rounded-\[1\.25rem\] bg-white[^"]*dark:bg-zinc-900">/);
+  assert.equal((allDone.match(/home-panel-row\b/g) || []).length, 1, 'still one line');
+  assert.deepEqual([...allDone.matchAll(/<button type="button" data-challenge-preview-id="(\d+)"/g)].map((m) => m[1]), ['1', '2', '3']);
+  assert.match(allDone, /<span class="truncate text-\[15px\] font-\[650\][^"]*">[^<]+<\/span><span class="truncate text-\[13px\][^"]*text-zinc-500[^"]*">Starts again on Monday[^<]*<\/span>/);
+  assert.doesNotMatch(empty && renderWith({ registry: [], hidden: [], panels: [empty] }).html, /home-challenges-preview/, 'nothing running: no preview');
 });
 
 test('render: stale hidden metadata cannot suppress fixed sections (#1801)', () => {

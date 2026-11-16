@@ -594,10 +594,33 @@ function Challenges({ challenges }: { challenges: NonNullable<HomePanelsState['c
           ))}
         </Card>
       ) : challenges.note ? (
-        <Card text>
-          <Sub size={15}><b>{challenges.note.title}</b></Sub>
-          <Mut>{challenges.note.text}</Mut>
-        </Card>
+        <>
+          <Card text>
+            <Sub size={15}><b>{challenges.note.title}</b></Sub>
+            <Mut>{challenges.note.text}</Mut>
+          </Card>
+          {/* #6661: a finished week shows the weekly challenges that start again on Monday. */}
+          {challenges.preview.length ? (
+            <Card>
+              {challenges.preview.map((row) => (
+                <Row
+                  key={row.id}
+                  href={row.eventId != null ? `#leaderboard/challenges/${row.eventId}/${row.id}` : '#leaderboard/challenges'}
+                  onClick={(event) => {
+                    if (native(event)) return;
+                    event.preventDefault();
+                    win()?.HomePanels?.goToChallenge?.(row.eventId, row.id);
+                  }}
+                  lead={<ChallengeArt {...art(row)} icon={row.icon} />}
+                  title={row.goal}
+                  line={row.line}
+                  wrap
+                  right={<RowArrow />}
+                />
+              ))}
+            </Card>
+          ) : null}
+        </>
       ) : null}
     </Sec>
   );

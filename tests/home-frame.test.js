@@ -57,7 +57,7 @@ const app = (slug, name, more = {}) => ({
 });
 const group = (html, id) => html.slice(html.indexOf(`id="${id}"`), html.indexOf('</section>', html.indexOf(`id="${id}"`)));
 const count = (html, re) => (html.match(re) || []).length;
-const CHALLENGES = { key: 'next', title: 'Challenges', mode: 'next', heading: 'Next challenges', seeAll: true, note: null, rows: [
+const CHALLENGES = { key: 'next', title: 'Challenges', mode: 'next', heading: 'Next challenges', seeAll: true, note: null, preview: [], rows: [
   { id: '31', eventId: 7, icon: null, illustration: 'make-a-proposal', illustrationTone: null, goal: 'Use apps for 10 minutes', done: false, reward: '1,000 pts', earned: '', state: 'progress', stateLabel: 'Started', fill: 0.4 },
   { id: '32', eventId: null, icon: '🏆', illustration: null, illustrationTone: null, goal: 'Join a community', done: true, reward: '500 pts', earned: '500 pts', state: 'done', stateLabel: 'Done', fill: 1 },
 ] };
@@ -243,7 +243,7 @@ test('Communities to join: the kind filter, Featured first, every one a picture 
   const html = render({ initialDirectory: dir }, homeStubs({ pins: [pin('mine', 'Mine')] }));
   const g = group(html, 'home-frame-to-join');
   assert.match(g, /<h2 class="fr-cap">Communities to join<\/h2><\/div><div class="fr-btnrow fr-chips" role="group" aria-label="[^"]+"><button type="button" class="fr-btn fr-sm" aria-pressed="true" data-home-join-kind="all">All<\/button><button type="button" class="fr-btn fr-quiet fr-sm" aria-pressed="false" data-home-join-kind="games">Games<\/button>/);
-  assert.match(g, /<h3 class="fr-cap fr-sub">Featured<\/h3><div class="fr-grid fr-c2" data-home-join-featured=""><a class="fr-card fr-fcard" href="\/app\/moon\/workshop\?ws=status" data-home-join-card="moon"><span class="fr-fcover[^>]*>.*?🌙.*?<span class="fr-t">Moon<\/span><\/span><\/a>/s, 'in their featured order: the whole card is the door, the picture or the tile on the community\'s colour, then its name');
+  assert.match(g, /<h3 class="fr-cap fr-sub">Featured<\/h3><div class="fr-grid fr-fill fr-c2" data-home-join-featured=""><a class="fr-card fr-fcard" href="\/app\/moon\/workshop\?ws=status" data-home-join-card="moon"><span class="fr-fcover[^>]*>.*?🌙.*?<span class="fr-t">Moon<\/span><\/span><\/a>/s, 'in their featured order: the whole card is the door, the picture or the tile on the community\'s colour, then its name');
   assert.match(g, /<span class="fr-t">Star<\/span><span class="fr-s" title="Twelve small games\.">Twelve small games\.<\/span><\/span><\/a>/, 'one line, the whole sentence on hover (#6659)');
   assert.match(g, /<h3 class="fr-cap fr-sub">More communities<\/h3><div class="fr-grid" data-home-join-rest=""><a class="fr-card fr-fcard" href="\/app\/[a-z]+\/workshop\?ws=status"/, 'the rest follow as the same cards, under their own label whenever Featured is shown (#6584)');
   assert.match(g, /<a class="fr-card fr-fcard" href="\/app\/busy\/workshop\?ws=status" aria-label="Busy, 12 people used it lately" data-home-join-card="busy">.*?<span class="fr-pill"><svg.*?<\/svg>12<\/span>/s, 'who is there, on the cover, from five people');
@@ -275,6 +275,14 @@ test('Next challenges is the side column: Home\'s own strip as rows', () => {
   assert.match(SRC, /win\(\)\?\.HomePanels\?\.goToChallenge\?\.\(row\.eventId, row\.id\)/, 'a row opens its challenge, as the standard card does');
   const none = render({}, homeStubs({ challenges: { ...CHALLENGES, mode: 'none', heading: 'Challenges', seeAll: false, rows: [], note: { title: 'No challenges right now', text: 'New ones will show up here.' } } }));
   assert.match(none, /<h2 class="fr-cap">Challenges<\/h2><\/div><div class="fr-card fr-text"><div class="fr-sub15"><b>No challenges right now<\/b><\/div><span class="fr-mut">New ones will show up here\.<\/span><\/div>/, 'nothing open: the standard note, as one card');
+  assert.doesNotMatch(none, /Starts again on Monday/, 'and no preview under it');
+  // #6661: a finished week lists the weekly challenges that start again on
+  // Monday under the note, each the door to its challenge.
+  const done = render({}, homeStubs({ challenges: { ...CHALLENGES, mode: 'done', heading: 'Challenges', rows: [], note: { title: 'All done for this week', text: '2 challenges start again on Monday.' }, preview: [
+    { ...CHALLENGES.rows[0], state: 'done', line: 'Starts again on Monday · 1,000 pts' },
+    { ...CHALLENGES.rows[1], line: 'Starts again on Monday' },
+  ] } }));
+  assert.match(done, /<div class="fr-card fr-text"><div class="fr-sub15"><b>All done for this week<\/b><\/div><span class="fr-mut">2 challenges start again on Monday\.<\/span><\/div><div class="fr-card"><a class="fr-row fr-wrap" href="#leaderboard\/challenges\/7\/31"><span class="fr-cart fr-sm home-tone-mint"[^>]*><img src="\/illustrations\/challenges\/make-a-proposal\.svg"[^>]*\/><\/span><span class="fr-tx"><span class="fr-t">Use apps for 10 minutes<\/span><span class="fr-s">Starts again on Monday · 1,000 pts<\/span><\/span><span class="fr-arr" aria-hidden="true"><svg.*?<\/svg><\/span><\/a><a class="fr-row fr-wrap" href="#leaderboard\/challenges"><span class="fr-cart fr-sm"[^>]*>🏆<\/span><span class="fr-tx"><span class="fr-t">Join a community<\/span><span class="fr-s">Starts again on Monday<\/span><\/span>/s);
   assert.doesNotMatch(render(), /home-frame-challenges/, 'nothing until the panel is known');
 });
 

@@ -687,6 +687,14 @@
     "text": "{{count}} challenges start again on Monday.",
     "description": "Line under \"All done for this week\" on Home. {{count}} is how many weekly challenges there are; their counts start again on Monday."
   },
+  "challenges.preview.line": {
+    "text": "Starts again on Monday · {{reward}}",
+    "description": "Line under a weekly challenge's name in the list Home's Challenges section shows once every challenge of this week is done. The challenge can be done again from Monday. {{reward}} is its reward as the organisers wrote it, for example \"30 pts\"."
+  },
+  "challenges.preview.lineNoReward": {
+    "text": "Starts again on Monday",
+    "description": "Line under a weekly challenge's name in the list Home's Challenges section shows once every challenge of this week is done, for a challenge with no reward. The challenge can be done again from Monday."
+  },
   "challenges.none.title": {
     "text": "No challenges right now",
     "description": "Title of the one card in Home's Challenges section when no challenge is open."
