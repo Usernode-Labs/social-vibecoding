@@ -291,6 +291,11 @@ export const TrophyIcon = stroked(
  */
 export const CheckIcon = stroked('CheckIcon', 'M5 13l4 4L19 7');
 
+// The long tick (heroicons 24-outline `check`). It left the module with the
+// retired dev chat's banners and is back for the thread rail's Approved step,
+// which needs a tick that does not read as Tested's `CheckIcon` beside it.
+export const CheckLongIcon = stroked('CheckLongIcon', 'M4.5 12.75l6 6 9-13.5');
+
 // Two heroicons 24-outline paths, as their templates carried them.
 export const ClockIcon = stroked('ClockIcon', 'M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z');
 export const WarningTriangleIcon = stroked(
