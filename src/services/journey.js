@@ -353,7 +353,8 @@ const ADMITTED_CTE = `admitted AS (
            w.submitted_at, w.source, w.answers->'discovery'->>'source' AS discovery,
            (w.answers ?| ARRAY[${FOLLOW_UP_KEYS_SQL}]) AS answered_follow_up,
            w.invited_by IS NOT NULL AS referred, w.project_invite_id IS NOT NULL AS project_invite,
-           w.release_page_opened_at, w.release_page_outcome
+           w.release_page_opened_at, w.release_page_outcome,
+           w.reminder_1_sent_at, w.reminder_2_sent_at
       FROM waitlist_signups w
      WHERE w.released_at IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM test_waitlist_releases t WHERE t.signup_id = w.id)
@@ -579,12 +580,28 @@ const FIRST_MILE_INVITED_SQL = `WITH ${ADMITTED_CTE}
 // person who has access or followed an invite link, whenever that was. The
 // cohort queries above cover one admit day, or the last weeks; a chart of the
 // whole funnel needs the people from before them too. $1 the most rows to
-// return, $2 now.
+// return, $2 now. The two reminders of the admit mail (the nudges,
+// services/waitlist-reminders.js) are read from the waitlist row, which keeps
+// when each went for good; the mail log's copy is swept after 30 days. The
+// first session's own question, "What do you want to make?", is answered by
+// the first of a project made from it (app_created from 'first-session',
+// with the template it started from when it started from one) and "Look
+// around first" (first_session_looked_around): 'template', 'custom' or
+// 'look', NULL when neither is on record.
 const EVERYONE_MAX = 5000;
+const EVERYONE_COLUMNS = `a.reminder_1_sent_at AS nudge_1_at, a.reminder_2_sent_at AS nudge_2_at,
+           (SELECT CASE WHEN fs.event_type = 'first_session_looked_around' THEN 'look'
+                        WHEN COALESCE(fs.metadata->>'template', '') <> '' THEN 'template'
+                        ELSE 'custom' END
+              FROM events fs
+             WHERE fs.user_id = u.id
+               AND (fs.event_type = 'first_session_looked_around'
+                 OR (fs.event_type = 'app_created' AND fs.metadata->>'from' = 'first-session'))
+             ORDER BY fs.created_at, fs.id LIMIT 1) AS first_answer`;
 const FIRST_MILE_EVERYONE_SQL = `WITH ${ADMITTED_CTE}
   SELECT x.* FROM (
     SELECT a.signup_id, a.email, a.released_at, 'admitted'::text AS door,
-           ${INVITE_COLUMNS}, ${PERSON_FACTS}
+           ${INVITE_COLUMNS}, ${PERSON_FACTS}, ${EVERYONE_COLUMNS}
       FROM admitted a
       LEFT JOIN users u ON u.id = a.linked_user_id
       ${INVITE_JOIN}
@@ -594,7 +611,7 @@ const FIRST_MILE_EVERYONE_SQL = `WITH ${ADMITTED_CTE}
     UNION ALL
     SELECT NULL::bigint AS signup_id, NULL::text AS email, NULL::timestamptz AS released_at,
            CASE WHEN iv.invite_id IS NOT NULL THEN 'invite_link' ELSE 'code_wallet_or_grant' END AS door,
-           ${INVITE_COLUMNS}, ${PERSON_FACTS}
+           ${INVITE_COLUMNS}, ${PERSON_FACTS}, ${EVERYONE_COLUMNS}
       FROM users u
       LEFT JOIN admitted a ON FALSE
       ${INVITE_JOIN}
@@ -1274,6 +1291,8 @@ async function everyoneMile(pool, { now = new Date(), leftOutIds = [] } = {}) {
   const t = (v) => (v ? new Date(v) : null);
   const people = rows.map((row) => {
     const invitedOnly = row.invite_id != null && !row.released_at && !row.has_platform_access;
+    const link = t(row.mail_link_at);
+    const code = t(row.code_asked_at);
     return {
       ...(invitedOnly ? invitedMilePerson(row, now) : firstMilePerson(row, now)),
       invitedOnly,
@@ -1281,6 +1300,14 @@ async function everyoneMile(pool, { now = new Date(), leftOutIds = [] } = {}) {
       accountAt: t(row.account_at),
       accessAt: t(row.access_at),
       inviteAt: t(row.invite_redeemed_at),
+      // The first sign-in since being let off the waitlist that the record
+      // dates: the admit mail's link followed, or a sign-in code asked for.
+      signedInAt: link && code ? (link < code ? link : code) : (link || code),
+      // When the admit mail's two reminders went, if they did.
+      nudgedAt: [t(row.nudge_1_at), t(row.nudge_2_at)],
+      // Their answer to "What do you want to make?": 'template', 'custom' or
+      // 'look' (Look around first), null when none is on record.
+      firstAnswer: row.first_answer || null,
       cameFrom: cameFromOf(cameFromRecords, { userId: row.user_id, signupId: row.signup_id }),
     };
   });
